@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS alpha_trade.stock_metadata (
-    symbol VARCHAR(10) PRIMARY KEY,
+    symbol VARCHAR(100) PRIMARY KEY,
     id_alpaca VARCHAR(88),
     company_name VARCHAR(255),
     exchange VARCHAR(20),
