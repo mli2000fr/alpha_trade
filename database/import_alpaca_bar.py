@@ -107,8 +107,8 @@ def import_alpaca_bars(timeFrame):
         conn.close()
 
 def main():
-    import_alpaca_bars(TimeFrame.ONE_HOUR)
     import_alpaca_bars(TimeFrame.ONE_DAY)
+    import_alpaca_bars(TimeFrame.ONE_HOUR)
     
     
 if __name__ == "__main__":
