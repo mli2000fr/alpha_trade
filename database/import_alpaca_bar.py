@@ -48,8 +48,9 @@ def main():
     conn = get_db_connection()
     try:
         symbols = get_active_tradable_symbols(conn)
-        for symbol in symbols:
-            print(f"Traitement du symbole : {symbol}")
+        total = len(symbols)
+        for idx, symbol in enumerate(symbols, 1):
+            print(f"Traitement du symbole ({idx} / {total}) : {symbol}")
             last_timestamp = get_last_bar_timestamp(conn, symbol)
             start_date = None
             if last_timestamp:
