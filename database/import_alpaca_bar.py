@@ -12,7 +12,7 @@ def symbol_exists_in_stock_bars(conn, symbol):
 def get_active_tradable_symbols(conn):
     with conn.cursor() as cursor:
         cursor.execute("""
-            SELECT symbol FROM stock_metadata WHERE status='active' AND tradable=1
+            SELECT symbol FROM stock_metadata WHERE status='active' AND tradable=1 AND bars_available=1
         """)
         return [row[0] for row in cursor.fetchall()]
 
