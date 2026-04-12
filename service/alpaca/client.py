@@ -1,5 +1,6 @@
 import os
 import requests
+import dateutil.parser
 
 DEFAULT_START_DATE = '2010-01-01T00:00:00Z'
 
@@ -24,9 +25,9 @@ def fetch_alpaca_assets():
     return response.json()
 
 
-def fetch_hourly_bars(symbol, start_date=None):
+def fetch_bars(symbol, timeframe, start_date=None):
     """
-    Récupère les bars horaires (1H) pour un symbole donné depuis Alpaca.
+    Récupère les bars horaires (1H/1D) pour un symbole donné depuis Alpaca.
     :param symbol: str, le symbole boursier (ex: 'AAPL')
     :param start_date: str ou None, date de début au format 'YYYY-MM-DD' (optionnel)
     :return: list de bars (chaque bar est un dict)
@@ -38,7 +39,7 @@ def fetch_hourly_bars(symbol, start_date=None):
         'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY
     }
     params = {
-        'timeframe': '1Hour',
+        'timeframe': timeframe,
         'limit': 10000  # maximum autorisé par Alpaca
     }
     if start_date:
@@ -51,15 +52,20 @@ def fetch_hourly_bars(symbol, start_date=None):
         if next_token:
             params['page_token'] = next_token
         response = requests.get(endpoint, headers=headers, params=params)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 404:
+                print(f"Alpaca retourne 404 pour {symbol} : aucun bar disponible.")
+                break
+            else:
+                raise
         data = response.json()
         bars = data.get('bars', [])
         if bars is None:
             bars = []
         # Filtrer pour ne garder que les bars strictement > start_date si start_date est fourni
         if start_date:
-            import dateutil.parser
-            import datetime
             start_dt = dateutil.parser.isoparse(start_date)
             bars = [bar for bar in bars if dateutil.parser.isoparse(bar['t']) > start_dt]
         all_bars.extend(bars)

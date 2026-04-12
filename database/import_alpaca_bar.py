@@ -1,7 +1,19 @@
 from database.connection import get_db_connection
-from service.alpaca.client import fetch_hourly_bars
+from service.alpaca.client import fetch_bars
 from dateutil import parser
 from database.import_alpaca_assets import update_bars_available_false
+from enum import Enum
+
+
+class TimeFrame(Enum):
+    ONE_DAY = ('1D', '1Day')
+    ONE_HOUR = ('1H', '1Hour')
+
+    def __init__(self, db_value, api_value):
+        self.db_value = db_value
+        self.api_value = api_value
+
+
 def symbol_exists_in_stock_bars(conn, symbol):
     with conn.cursor() as cursor:
         cursor.execute("""
@@ -16,11 +28,11 @@ def get_active_tradable_symbols(conn):
         """)
         return [row[0] for row in cursor.fetchall()]
 
-def get_last_bar_timestamp(conn, symbol):
+def get_last_bar_timestamp(conn, symbol, timeFrame):
     with conn.cursor() as cursor:
         cursor.execute("""
-            SELECT MAX(timestamp) FROM stock_bars WHERE symbol=%s
-        """, (symbol,))
+            SELECT MAX(timestamp) FROM stock_bars WHERE symbol=%s AND timeframe=%s
+        """, (symbol, timeFrame.db_value))
         result = cursor.fetchone()
         return result[0] if result and result[0] else None
 
@@ -51,14 +63,15 @@ def insert_bars(conn, symbol, bars, timeframe):
             ))
     conn.commit()
 
-def main():
+def import_alpaca_bars(timeFrame):
     conn = get_db_connection()
     try:
         symbols = get_active_tradable_symbols(conn)
         total = len(symbols)
         for idx, symbol in enumerate(symbols, 1):
             print(f"Traitement du symbole ({idx} / {total}) : {symbol}")
-            last_timestamp = get_last_bar_timestamp(conn, symbol)
+            last_timestamp = get_last_bar_timestamp(conn, symbol, timeFrame)
+            print(f"Last bar : {symbol} {last_timestamp}")
             start_date = None
             if last_timestamp:
                 # Alpaca attend un format ISO 8601, conversion si besoin
@@ -76,7 +89,7 @@ def main():
                 else:
                     next_start_call = None
                 print(f"Traitement du symbole : {symbol} {next_start_call}")
-                bars = fetch_hourly_bars(symbol, next_start_call)
+                bars = fetch_bars(symbol, timeFrame.api_value, next_start_call)
                 print(f"Traitement du symbole : {symbol} {len(bars)} bars récupérés")
                 if not bars:
                     # Si aucun bar n'est retourné et que le symbole n'existe pas dans stock_bars, on met à jour bars_available à False
@@ -84,7 +97,7 @@ def main():
                         print(f"Aucun bar trouvé pour {symbol}, mise à jour bars_available à False.")
                         update_bars_available_false(symbol)
                     break
-                insert_bars(conn, symbol, bars, '1H')
+                insert_bars(conn, symbol, bars, timeFrame.db_value)
                 all_bars.extend(bars)
                 # Préparer la date de début pour le prochain appel (bar le plus récent)
                 last_bar_time = bars[-1]['t']
@@ -93,5 +106,10 @@ def main():
     finally:
         conn.close()
 
+def main():
+    import_alpaca_bars(TimeFrame.ONE_HOUR)
+    import_alpaca_bars(TimeFrame.ONE_DAY)
+    
+    
 if __name__ == "__main__":
     main()
