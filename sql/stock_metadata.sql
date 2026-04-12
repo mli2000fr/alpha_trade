@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS alpha_trade.stock_metadata (
+    symbol VARCHAR(10) PRIMARY KEY,
+    id_alpaca VARCHAR(88),
+    company_name VARCHAR(255),
+    exchange VARCHAR(20),
+    asset_class VARCHAR(20),      -- 資產類別 (us_equity)
+    status VARCHAR(20),           -- 狀態 (active/inactive)
+    tradable BOOLEAN,             -- 是否可交易
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
