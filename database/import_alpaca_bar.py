@@ -1,6 +1,13 @@
 from database.connection import get_db_connection
 from service.alpaca.client import fetch_hourly_bars
 from dateutil import parser
+from database.import_alpaca_assets import update_bars_available_false
+def symbol_exists_in_stock_bars(conn, symbol):
+    with conn.cursor() as cursor:
+        cursor.execute("""
+            SELECT 1 FROM stock_bars WHERE symbol=%s LIMIT 1
+        """, (symbol,))
+        return cursor.fetchone() is not None
 
 def get_active_tradable_symbols(conn):
     with conn.cursor() as cursor:
@@ -72,6 +79,10 @@ def main():
                 bars = fetch_hourly_bars(symbol, next_start_call)
                 print(f"Traitement du symbole : {symbol} {len(bars)} bars récupérés")
                 if not bars:
+                    # Si aucun bar n'est retourné et que le symbole n'existe pas dans stock_bars, on met à jour bars_available à False
+                    if not symbol_exists_in_stock_bars(conn, symbol):
+                        print(f"Aucun bar trouvé pour {symbol}, mise à jour bars_available à False.")
+                        update_bars_available_false(symbol)
                     break
                 insert_bars(conn, symbol, bars, '1H')
                 all_bars.extend(bars)

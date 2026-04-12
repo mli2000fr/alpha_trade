@@ -6,5 +6,6 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_metadata (
     asset_class VARCHAR(20),      -- 資產類別 (us_equity)
     status VARCHAR(20),           -- 狀態 (active/inactive)
     tradable BOOLEAN,             -- 是否可交易
+    bars_available BOOLEAN,        -- 是否有K線數據
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
