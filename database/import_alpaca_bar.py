@@ -3,6 +3,7 @@ from service.alpaca.client import fetch_bars
 from dateutil import parser
 from database.import_alpaca_assets import update_bars_available_false
 from enum import Enum
+from common.utils import getLastDateMarche
 
 
 class TimeFrame(Enum):
@@ -72,10 +73,17 @@ def import_alpaca_bars(timeFrame):
             print(f"Traitement du symbole ({idx} / {total}) : {symbol}")
             last_timestamp = get_last_bar_timestamp(conn, symbol, timeFrame)
             print(f"Last bar : {symbol} {last_timestamp}")
-            start_date = None
+            # Vérification de la dernière date d'ouverture du marché
             if last_timestamp:
+                last_date = last_timestamp.date() if hasattr(last_timestamp, 'date') else last_timestamp
+                marche_date = getLastDateMarche()
+                if str(last_date) == str(marche_date):
+                    print(f"{symbol} déjà à jour pour la dernière date de marché ({marche_date}), passage au suivant.")
+                    continue
                 # Alpaca attend un format ISO 8601, conversion si besoin
                 start_date = last_timestamp.strftime('%Y-%m-%dT%H:%M:%SZ') if hasattr(last_timestamp, 'strftime') else str(last_timestamp)
+            else:
+                start_date = None
             all_bars = []
             next_start = start_date
             while True:

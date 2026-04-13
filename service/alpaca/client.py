@@ -1,6 +1,7 @@
 import os
 import requests
 import dateutil.parser
+import time
 
 DEFAULT_START_DATE = '2010-01-01T00:00:00Z'
 
@@ -51,7 +52,19 @@ def fetch_bars(symbol, timeframe, start_date=None):
     while True:
         if next_token:
             params['page_token'] = next_token
-        response = requests.get(endpoint, headers=headers, params=params)
+        timeout_attempts = 0
+        while True:
+            try:
+                response = requests.get(endpoint, headers=headers, params=params, timeout=10)
+                response.raise_for_status()
+                break  # sortie de la boucle de retry timeout
+            except requests.exceptions.Timeout:
+                timeout_attempts += 1
+                print(f"Timeout lors de l'appel Alpaca pour {symbol}, tentative {timeout_attempts}/10. Nouvelle tentative dans 5 secondes...")
+                if timeout_attempts >= 10:
+                    print(f"Abandon après 10 timeouts pour {symbol}.")
+                    return all_bars if all_bars is not None else []
+                time.sleep(5)
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
