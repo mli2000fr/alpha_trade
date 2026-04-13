@@ -9,6 +9,7 @@ from common.utils import getLastDateMarche
 class TimeFrame(Enum):
     ONE_DAY = ('1D', '1Day')
     ONE_HOUR = ('1H', '1Hour')
+    FIFTEEN_MINS = ('15M', '15Min')
 
     def __init__(self, db_value, api_value):
         self.db_value = db_value
@@ -116,7 +117,7 @@ def import_alpaca_bars(timeFrame):
 
 def main():
     import_alpaca_bars(TimeFrame.ONE_DAY)
-    import_alpaca_bars(TimeFrame.ONE_HOUR)
+    # import_alpaca_bars(TimeFrame.ONE_HOUR)
     
     
 if __name__ == "__main__":

@@ -1,0 +1,44 @@
+https://gemini.google.com/share/30ff276da99b
+
+🚀 Data Integrity Engine 實現指令
+
+Role: 你是一位資深的量化交易系統架構師，專精於處理大規模（12,000+ 股票）的 RTH (Regular Trading Hours) 歷史數據。
+Task: 編寫 DataSanitizer 類，實現 Data Integrity Engine (數據完整性與清洗引擎)。
+關鍵約束 (Critical Constraints):
+- 數據限制： 我沒有盤前 (Pre-market) 和盤後 (Post-market) 數據。數據僅包含常規交易時段 (09:30 - 16:00 EST)。
+- 缺口處理： 引擎必須能夠計算 Overnight_Gap（今日開盤價與昨日收盤價的變化），因為這是目前唯一能捕捉非交易時段情緒的指標。
+
+具體功能需求：
+
+1.校準邏輯 (Sanitization):
+- 復權驗證： 檢查數據是否已按拆股/分紅修正。
+- 動態異常檢測： 使用 Rolling MAD (Median Absolute Deviation)。邏輯：若價格偏離過去 20 日中位數 > 5 個 MAD 且當前 Bar 漲跌幅 > 2%，則標記為異常。
+- 成交量校驗： 確保沒有「成交量為 0 但價格變動」或「價格為 0」的錯誤。
+
+2.時序對齊 (Alignment):
+- 基準對齊： 以 $SPY 的 RTH 日曆 (09:30-16:00) 為準。
+- 停牌處理： 發生數據缺失時，使用 Forward Fill 填充價格，但 成交量 (Volume) 必須強制設為 0。
+- 邊界控制： 嚴格遵守 IPO 和退市日期，禁止在有效交易區間外填充數據。
+
+3.多維特徵 (Feature Gen):
+- Parkinson Volatility: 利用 RTH 的 High/Low 計算。
+- Turnover Rate: 成交量 / 流通股數。
+- Relative Volume (RVOL): 今日開盤第一小時成交量與過去 20 日平均的比率（用以補償缺乏盤前數據的劣勢）。
+
+4.性能與輸出:
+- 向量化： 必須使用 Polars 或向量化 Pandas，嚴禁行遍歷。
+- 存儲： 清洗後以 {symbol}.parquet 存儲。
+- 報告： 輸出 JSON 質量報告，記錄異常剔除數與填充數。
+
+技術棧建議： Python 3.12+, Polars (優先) 或 Pandas, NumPy, PyArrow。
+請先提供 DataSanitizer 的核心類結構定義，然後實現核心的清洗算法邏輯。
+
+
+
+
+💡 Copilot 協作建議
+- 分步執行： 如果 Copilot 一次生成的代碼太多導致被截斷，你可以對它說：「先幫我實現 Adjustment_Price_Validator 和 Rolling MAD 的部分。」
+- 性能檢查： 如果它寫了 df.iterrows()，請立刻糾正它：「請將這段代碼改寫為 Polars 的 lazy 模式或 Pandas 的向量化運算，以處理億級數據。」
+- 單元測試： 讓它為 TimeAligner 寫一個測試案例，模擬一隻股票停牌兩天，檢查第 3 天對齊後，那兩天的成交量是否真的為 0。
+
+這份 Prompt 包含了你之前提到的所有補充點（MAD、Parkinson、停牌 Volume 為 0、Parquet 等）。當你把它丟給 Copilot 時，它會意識到這是一個嚴肅的金融工程項目，而不是簡單的練習。
