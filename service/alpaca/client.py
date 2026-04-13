@@ -3,7 +3,7 @@ import requests
 import dateutil.parser
 import time
 
-DEFAULT_START_DATE = '2025-01-01T00:00:00Z'
+DEFAULT_START_DATE = '2010-01-01T00:00:00Z'
 
 def _get_alpaca_credentials():
     """Récupère les credentials Alpaca depuis les variables d'environnement."""
