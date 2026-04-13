@@ -4,12 +4,15 @@ from dateutil import parser
 from database.import_alpaca_assets import update_bars_available_false
 from enum import Enum
 from common.utils import getLastDateMarche
+import pytz
 
 
 class TimeFrame(Enum):
+    ONE_MIN = ('1M', '1Min')
     ONE_DAY = ('1D', '1Day')
     ONE_HOUR = ('1H', '1Hour')
     FIFTEEN_MINS = ('15M', '15Min')
+    THIRTY_MINS = ('30M', '30Min')
 
     def __init__(self, db_value, api_value):
         self.db_value = db_value
@@ -41,6 +44,7 @@ def get_last_bar_timestamp(conn, symbol, timeFrame):
 def insert_bars(conn, symbol, bars, timeframe):
     if not bars:
         return
+    tz_ny = pytz.timezone('America/New_York')
     with conn.cursor() as cursor:
         sql = """
             INSERT INTO stock_bars (symbol, timestamp, timeframe, open_price, high_price, low_price, close_price, volume, trade_count, vwa_price)
@@ -50,7 +54,11 @@ def insert_bars(conn, symbol, bars, timeframe):
         for bar in bars:
             timestamp = bar['t']
             if isinstance(timestamp, str) and 'T' in timestamp:
-                timestamp = parser.isoparse(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                dt_utc = parser.isoparse(timestamp)
+                if dt_utc.tzinfo is None:
+                    dt_utc = dt_utc.replace(tzinfo=pytz.UTC)
+                dt_ny = dt_utc.astimezone(tz_ny)
+                timestamp = dt_ny.strftime('%Y-%m-%d %H:%M:%S')
             cursor.execute(sql, (
                 symbol,
                 timestamp,
@@ -116,8 +124,8 @@ def import_alpaca_bars(timeFrame):
         conn.close()
 
 def main():
-    # import_alpaca_bars(TimeFrame.ONE_HOUR)
     import_alpaca_bars(TimeFrame.ONE_DAY)
+    #import_alpaca_bars(TimeFrame.THIRTY_MINS)
     
     
 if __name__ == "__main__":
