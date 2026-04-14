@@ -11,7 +11,6 @@ from dataIntegrityEngine.screener.db_io import (
     iter_symbol_chunks,
     load_prices_for_chunk,
     load_spy_return_6m,
-    recreate_scores_table,
     write_scores_bulk,
 )
 from dataIntegrityEngine.screener.models import ScreenerConfig
@@ -69,7 +68,6 @@ def run_screener(config: ScreenerConfig, max_workers: Optional[int] = None) -> p
             ]
         )
 
-    recreate_scores_table(engine)
     write_scores_bulk(engine, final_scores, chunksize=1000)
 
     elapsed = time.time() - start

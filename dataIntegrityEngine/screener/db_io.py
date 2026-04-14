@@ -105,25 +105,6 @@ def load_spy_return_6m(engine: Engine, config: ScreenerConfig) -> float:
 	return (end_close / start_close) - 1.0
 
 
-def recreate_scores_table(engine: Engine) -> None:
-	ddl = """
-	DROP TABLE IF EXISTS stock_scores;
-	CREATE TABLE stock_scores (
-		symbol VARCHAR(20) NOT NULL,
-		liquidity_val DOUBLE NOT NULL,
-		relative_strength_index DOUBLE NOT NULL,
-		historical_range_score DOUBLE NOT NULL,
-		total_score DOUBLE NOT NULL,
-		last_updated DATETIME NOT NULL,
-		PRIMARY KEY (symbol),
-		INDEX idx_total_score (total_score)
-	) ENGINE=InnoDB;
-	"""
-	with engine.begin() as conn:
-		for statement in [s.strip() for s in ddl.split(";") if s.strip()]:
-			conn.execute(text(statement))
-
-
 def write_scores_bulk(engine: Engine, scores_df: pd.DataFrame, chunksize: int = 1000) -> None:
 	if scores_df.empty:
 		return
