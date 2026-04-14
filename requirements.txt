@@ -1,4 +1,7 @@
 pymysql
 requests
 python-dotenv
-
+sqlalchemy
+polars
+python-dateutil
+pytz

@@ -6,8 +6,8 @@ Role: 你是一位資深的量化金融開發工程師，專長於構建大規�
 Task: 實現一個名為 DataSanitizer 的 Python 類，用於處理 12,000 隻股票的 10 年 Daily (1D) RTH (09:30-16:00 EST) 歷史數據，並將結果高效存入 MySQL 數據庫。
 
 1. 數據庫結構與連接 (MySQL Schema):
-- 目標表 stock_bars_daily： 包含字段 symbol, date (PK), open, high, low, close, volume, adj_close (復權價), vwap, daily_return, is_filled (布林值)。
-- 審計表 cleaning_audit_log： 包含字段 symbol (PK), last_sync_date, missing_days_count, anomaly_count, status (success/failed), error_msg。
+- 目標表 stock_bars_daily (stock_bars_daily.sql)： 包含字段 symbol, date (PK), open, high, low, close, volume, adj_close (復權價), vwap, daily_return, is_filled (布林值)。
+- 審計表 cleaning_audit_log (cleaning_audit_log.sql)： 包含字段 symbol (PK), last_sync_date, missing_days_count, anomaly_count, status (success/failed), error_msg。
 - 要求： 使用 SQLAlchemy 進行數據庫連接管理。
 
 2.核心清洗與對齊邏輯 (Sanitization & Alignment):
@@ -43,12 +43,40 @@ Task: 實現一個名為 DataSanitizer 的 Python 類，用於處理 12,000 隻�
 這套 Prompt 是目前針對你的需求最完整的版本。祝你的 Alpha Prime 開發順利！
 
 
+J’ai implémenté DataSanitizer avec Polars + SQLAlchemy et intégré le workflow complet demandé.
+Modifications principales
+Nouveau fichier: dataIntegrityEngine/data_sanitizer.py
+Ingestion incrémentale par symbole via cleaning_audit_log.last_sync_date.
+Calendrier RTH basé sur SPY (extended_hours=false) et alignement/forward-fill:
+Jours manquants remplis par le close de la veille pour OHLC, volume=0, is_filled=True.
+Calculs: daily_return (persisté), Parkinson, Overnight Gap, RVOL20 (calculés, non persistés).
+Détection anomalies: Rolling MAD (fenêtre 20), seuil 5*MAD et |ret|>2%, comptage.
+Bulk upsert MySQL (ON DUPLICATE KEY UPDATE) dans stock_bars_daily.
+Audit log mis à jour par symbole: last_sync_date, missing_days_count, anomaly_count, status, error_msg.
+Logging et commit groupé toutes les 50 actions, libération mémoire.
+service/alpaca/client.py: force extended_hours='false' pour ne garder que le RTH.
+requirements.txt: ajout sqlalchemy, polars, python-dateutil, pytz.
+Dépendances installées.
+Pré-requis
+Variables d’environnement:
+LOGIN_DB, PASSWORD_DB pour MySQL.
+ALPACA_API_KEY, ALPACA_SECRET_KEY pour Alpaca.
+Tables MySQL présentes (exécuter les scripts fournis si besoin):
+database/sql/stock_bars_daily.sql
+database/sql/cleaning_audit_log.sql
+database/sql/stock_metadata.sql
 
-
-
-💡 Copilot 協作建議
-- 分步執行： 如果 Copilot 一次生成的代碼太多導致被截斷，你可以對它說：「先幫我實現 Adjustment_Price_Validator 和 Rolling MAD 的部分。」
-- 性能檢查： 如果它寫了 df.iterrows()，請立刻糾正它：「請將這段代碼改寫為 Polars 的 lazy 模式或 Pandas 的向量化運算，以處理億級數據。」
-- 單元測試： 讓它為 TimeAligner 寫一個測試案例，模擬一隻股票停牌兩天，檢查第 3 天對齊後，那兩天的成交量是否真的為 0。
-
-這份 Prompt 包含了你之前提到的所有補充點（MAD、Parkinson、停牌 Volume 為 0、Parquet 等）。當你把它丟給 Copilot 時，它會意識到這是一個嚴肅的金融工程項目，而不是簡單的練習。
+Exécution (PowerShell)
+Installer les deps (déjà fait): python -m pip install -r "C:\Users\MLI\PycharmProjects\alpha_trade\requirements.txt"
+Lancer le pipeline complet:
+python "C:\Users\MLI\PycharmProjects\alpha_trade\dataIntegrityEngine\data_sanitizer.py"
+Tester sur une petite liste:
+Ouvrir un shell Python et exécuter:
+from dataIntegrityEngine.data_sanitizer import DataSanitizer
+DataSanitizer().run_pipeline(symbols=['AAPL','MSFT','TSLA'], commit_every=5)
+Notes
+Respect strict du RTH, pas de pre/post-market.
+Pas de boucles par ligne; tout vectorisé Polars.
+Le calcul de Parkinson suit: parkinson_vol = abs(log(high/low)) * sqrt(1/(4 ln 2)).
+Les features Parkinson/Overnight/RVOL ne sont pas persistés (le schéma stock_bars_daily actuel ne les prévoit pas). Dites si vous souhaitez les ajouter.
+Souhaitez-vous que j’ajoute les colonnes de features dans stock_bars_daily ou une table de features séparée, et un test unitaire simulant 2 jours de suspension pour valider volume=0/is_filled=True?

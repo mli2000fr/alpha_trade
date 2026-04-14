@@ -5,6 +5,7 @@ import time
 
 DEFAULT_START_DATE = '2010-01-01T00:00:00Z'
 
+
 def get_alpaca_credentials():
     """Récupère les credentials Alpaca depuis les variables d'environnement."""
     api_key = os.getenv('ALPACA_API_KEY')
@@ -42,8 +43,8 @@ def fetch_bars(symbol, timeframe, start_date=None):
     params = {
         'timeframe': timeframe,
         'adjustment': 'all',  # 自動處理拆股/分紅
-        # 'extended_hours': 'false',  # <--- 必須加上這一行 Pre-Market和Post-Market數據
-        #'feed': 'iex',
+        'extended_hours': 'false',  # 只保留 RTH
+        # 'feed': 'iex',
         'limit': 1000  # maximum autorisé par Alpaca
     }
     # time.sleep(0.5)  # pour éviter les problèmes de rate limit

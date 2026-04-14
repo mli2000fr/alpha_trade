@@ -67,3 +67,6 @@ A. 數據完整性引擎（確保數據沒問題是量化的第一步）。
 B. 時事感應器模塊（整合 NLP 情緒與板塊影響）。
 
 C. 帶有 Attention 機制的 LSTM 個股模型架構。
+
+
+python -m pip install -r "C:\Users\MLI\PycharmProjects\alpha_trade\requirements.txt"
