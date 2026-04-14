@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Iterator
 
 import pandas as pd
@@ -78,7 +78,7 @@ def load_prices_for_chunk(engine: Engine, symbols: list[str], config: ScreenerCo
 	if not symbols:
 		return pd.DataFrame()
 
-	cutoff = datetime.utcnow() - timedelta(days=365 * config.lookback_history_years + 30)
+	cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=365 * config.lookback_history_years + 30)
 	stmt = text(
 		"""
 		SELECT symbol, `timestamp`, close_price, high_price, low_price, volume
@@ -132,6 +132,37 @@ def load_spy_return_6m(engine: Engine, config: ScreenerConfig) -> float:
 	return (end_close / start_close) - 1.0
 
 
+def _load_metadata_sectors(engine: Engine, symbols: list[str]) -> pd.DataFrame:
+	if not symbols:
+		return pd.DataFrame(columns=["symbol", "sector"])
+
+	stmt = text(
+		"""
+		SELECT symbol, sector
+		FROM stock_metadata
+		WHERE symbol IN :symbols
+		"""
+	).bindparams(bindparam("symbols", expanding=True))
+
+	return pd.read_sql_query(stmt, engine, params={"symbols": symbols})
+
+
+def _enrich_scores_with_metadata_sector(engine: Engine, scores_df: pd.DataFrame) -> pd.DataFrame:
+	if scores_df.empty:
+		return scores_df.copy()
+
+	enriched = scores_df.copy()
+	metadata_sectors = _load_metadata_sectors(engine, enriched["symbol"].astype(str).tolist())
+	if metadata_sectors.empty:
+		return enriched
+
+	metadata_sectors = metadata_sectors.copy()
+	metadata_sectors["sector"] = metadata_sectors["sector"].where(metadata_sectors["sector"].notna(), None)
+	sector_map = metadata_sectors.set_index("symbol")["sector"]
+	enriched["sector"] = enriched["symbol"].map(sector_map).where(lambda column: column.notna(), enriched.get("sector"))
+	return enriched
+
+
 def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 	if scores_df.empty:
 		return scores_df.copy()
@@ -143,7 +174,7 @@ def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 		normalized = normalized.rename(columns={"top_swing": "is_candidate"})
 
 	if "last_updated_score" not in normalized.columns:
-		normalized["last_updated_score"] = datetime.utcnow()
+		normalized["last_updated_score"] = datetime.now(UTC).replace(tzinfo=None)
 	if "is_candidate" not in normalized.columns:
 		normalized["is_candidate"] = 0
 	if "sector" not in normalized.columns:
@@ -169,6 +200,7 @@ def upsert_scores_snapshot(engine: Engine, scores_df: pd.DataFrame, chunksize: i
 			conn.execute(text("DELETE FROM stock_scores"))
 		return
 
+	scores_df = _enrich_scores_with_metadata_sector(engine, scores_df)
 	scores_df = _normalize_scores_snapshot(scores_df)
 	scores_table = _get_scores_table(engine)
 	symbols = scores_df["symbol"].astype(str).tolist()

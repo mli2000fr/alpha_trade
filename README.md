@@ -75,6 +75,7 @@ Le script applique un upsert snapshot sur `stock_scores` : insertion/mise a jour
 ## execution
 import_alpaca_assets.py
 update_sector.py
+
 import_alpaca_bar.py
 stock_screener.py
 add_sector.py

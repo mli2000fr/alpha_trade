@@ -71,6 +71,16 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
 
     monkeypatch.setattr(db_io, "_get_scores_table", lambda current_engine: object())
     monkeypatch.setattr(db_io, "mysql_insert", lambda table: _FakeInsert())
+    monkeypatch.setattr(
+        db_io,
+        "_load_metadata_sectors",
+        lambda current_engine, symbols: pd.DataFrame(
+            [
+                {"symbol": "AAA", "sector": "Technology"},
+                {"symbol": "BBB", "sector": "Industrials"},
+            ]
+        ),
+    )
     monkeypatch.setattr(db_io, "_purge_missing_scores", lambda current_engine, symbols: purge_calls.append(symbols))
 
     scores_df = pd.DataFrame(
@@ -120,7 +130,8 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
     assert first_statement[0] == "upsert"
     assert first_statement[1][0]["last_updated_score"].isoformat(sep=" ") == "2026-01-01 00:00:00"
     assert first_statement[1][0]["is_candidate"] == 1
-    assert first_statement[1][0]["sector"] == "Tech"
+    assert first_statement[1][0]["sector"] == "Technology"
+    assert first_statement[1][1]["sector"] == "Industrials"
     assert first_statement[2]["last_updated_score"] == "last_updated_score"
     assert first_statement[2]["is_candidate"] == "is_candidate"
     assert first_statement[2]["sector"] == "sector"
@@ -133,6 +144,11 @@ def test_upsert_scores_snapshot_accepts_legacy_last_updated_and_top_swing(monkey
 
     monkeypatch.setattr(db_io, "_get_scores_table", lambda current_engine: object())
     monkeypatch.setattr(db_io, "mysql_insert", lambda table: _FakeInsert())
+    monkeypatch.setattr(
+        db_io,
+        "_load_metadata_sectors",
+        lambda current_engine, symbols: pd.DataFrame([{"symbol": "AAA", "sector": "Healthcare"}]),
+    )
     monkeypatch.setattr(db_io, "_purge_missing_scores", lambda current_engine, symbols: purge_calls.append(symbols))
 
     scores_df = pd.DataFrame(
@@ -156,6 +172,28 @@ def test_upsert_scores_snapshot_accepts_legacy_last_updated_and_top_swing(monkey
     record = statement[1][0]
     assert record["last_updated_score"].isoformat(sep=" ") == "2026-01-01 00:00:00"
     assert record["is_candidate"] == 1
-    assert record["sector"] is None
+    assert record["sector"] == "Healthcare"
     assert record["last_updated_scan"].isoformat(sep=" ") == "2026-01-01 00:00:00"
+
+
+    def test_enrich_scores_with_metadata_sector_keeps_existing_when_metadata_missing(monkeypatch) -> None:
+      engine = object()
+      monkeypatch.setattr(
+        db_io,
+        "_load_metadata_sectors",
+        lambda current_engine, symbols: pd.DataFrame([{"symbol": "AAA", "sector": None}]),
+      )
+
+      scores_df = pd.DataFrame(
+        [
+          {"symbol": "AAA", "sector": "LegacySector"},
+          {"symbol": "BBB", "sector": "ExistingSector"},
+        ]
+      )
+
+      enriched = db_io._enrich_scores_with_metadata_sector(engine, scores_df)
+
+      assert enriched.loc[0, "sector"] == "LegacySector"
+      assert enriched.loc[1, "sector"] == "ExistingSector"
+
 
