@@ -4,15 +4,15 @@ CREATE TABLE `stock_bars_daily` (
     `date` DATE NOT NULL COMMENT '交易日期',
 
     -- 標準 OHLCV 數據 (使用 DECIMAL 確保價格精準度，避免浮點數誤差)
-    `open` DECIMAL(16, 4) NOT NULL,
-    `high` DECIMAL(16, 4) NOT NULL,
-    `low` DECIMAL(16, 4) NOT NULL,
-    `close` DECIMAL(16, 4) NOT NULL,
+    `open` DECIMAL(20, 8) NOT NULL,
+    `high` DECIMAL(20, 8) NOT NULL,
+    `low` DECIMAL(20, 8) NOT NULL,
+    `close` DECIMAL(20, 8) NOT NULL,
     `volume` BIGINT UNSIGNED NOT NULL COMMENT '原始成交量',
 
     -- 量化專用字段
-    `adj_close` DECIMAL(16, 4) NOT NULL COMMENT '復權收盤價 (Adjusted Close)',
-    `vwap` DECIMAL(16, 4) DEFAULT NULL COMMENT '成交量加權平均價',
+    `adj_close` DECIMAL(20, 8) NOT NULL COMMENT '復權收盤價 (Adjusted Close)',
+    `vwap` DECIMAL(20, 8) DEFAULT NULL COMMENT '成交量加權平均價',
     `daily_return` DECIMAL(10, 6) DEFAULT NULL COMMENT '當日漲跌幅 (Close/Prev_Close - 1)',
 
     -- 數據完整性標記
