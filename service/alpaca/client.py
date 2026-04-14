@@ -82,8 +82,8 @@ def fetch_bars(
     params: dict[str, Any] = {
         "timeframe": timeframe,
         "adjustment": "all",
-        "extended_hours": "false",
-        "limit": 1000,
+        # "extended_hours": "false",
+        "limit": 5000,
         "start": _normalize_start_date(start_date),
     }
 

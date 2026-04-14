@@ -1,4 +1,4 @@
-CREATE TABLE `cleaning_audit_log` (
+CREATE TABLE alpha_trade.cleaning_audit_log (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `symbol` VARCHAR(20) NOT NULL,
     `last_sync_date` DATE COMMENT '該股票目前同步到的最新日期',
