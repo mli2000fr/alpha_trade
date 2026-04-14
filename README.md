@@ -15,6 +15,7 @@ Le pipeline est execute en chunks de symboles (500 par defaut) et parallelise vi
 - `dataIntegrityEngine/screener/pipeline.py`: calculs pandas vectorises.
 - `dataIntegrityEngine/screener/models.py`: configuration centralisee.
 - `tests/harness_screener.py`: harness local sans DB.
+- `tests/harness_data_sanitizer.py`: smoke test local du sanitizer sans DB.
 
 ## Prerequis
 
@@ -39,12 +40,14 @@ python -m dataIntegrityEngine.stock_screener --chunk-size 500 --max-workers 8 --
 ## Test local rapide (sans DB)
 
 ```powershell
+python -m pytest
 python tests/harness_screener.py
+python tests/harness_data_sanitizer.py
 ```
 
 ## Sortie DB
 
-Le script recree `stock_scores` puis insere rapidement avec `to_sql(method='multi')`:
+Le script applique un upsert snapshot sur `stock_scores` : insertion/mise a jour des symboles calcules, puis purge des symboles absents du snapshot courant.
 
 - `symbol`
 - `liquidity_val`

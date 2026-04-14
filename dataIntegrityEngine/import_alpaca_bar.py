@@ -1,137 +1,175 @@
-from database.connection import get_sqlalchemy_engine, SessionLocal
-from service.alpaca.client import fetch_bars
+import logging
+from datetime import timedelta
+from functools import lru_cache
+from typing import Any, Optional
+
+import pytz
 from dateutil import parser
+from sqlalchemy import MetaData, Table, and_, func, select
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+
+from common.utils import getLastDateMarche
 from database.assets import update_bars_available_false
 from database.bar_metadata import TimeFrame
-from sqlalchemy import Table, Column, String, Boolean, TIMESTAMP, MetaData, select, func, and_, insert as sa_insert
-from sqlalchemy.dialects.mysql import insert as mysql_insert
-from common.utils import getLastDateMarche
-import pytz
+from database.connection import SessionLocal, get_sqlalchemy_engine
+from service.alpaca.client import fetch_bars
 
-# Définition de la table stock_metadata (pour get_active_tradable_symbols)
-engine = get_sqlalchemy_engine()
-metadata = MetaData()
-stock_metadata = Table(
-    'stock_metadata', metadata,
-    autoload_with=engine
-)
-stock_bars = Table(
-    'stock_bars', metadata,
-    autoload_with=engine
-)
+LOGGER = logging.getLogger(__name__)
+TZ_NEW_YORK = pytz.timezone("America/New_York")
 
-def get_active_tradable_symbols(session):
+
+@lru_cache(maxsize=1)
+def _get_tables() -> tuple[Table, Table]:
+    metadata = MetaData()
+    engine = get_sqlalchemy_engine()
+    stock_metadata = Table("stock_metadata", metadata, autoload_with=engine)
+    stock_bars = Table("stock_bars", metadata, autoload_with=engine)
+    return stock_metadata, stock_bars
+
+
+def get_active_tradable_symbols(session) -> list[str]:
+    stock_metadata, _ = _get_tables()
     q = select(stock_metadata.c.symbol).where(
         and_(
-            stock_metadata.c.status == 'active',
-            stock_metadata.c.tradable == True,
-            stock_metadata.c.bars_available == True
+            stock_metadata.c.status == "active",
+            stock_metadata.c.tradable.is_(True),
+            stock_metadata.c.bars_available.is_(True),
         )
     )
-    return [r[0] for r in session.execute(q).all()]
+    return [row[0] for row in session.execute(q).all()]
 
-def symbol_exists_in_stock_bars(session, symbol):
+
+def symbol_exists_in_stock_bars(session, symbol: str) -> bool:
+    _, stock_bars = _get_tables()
     q = select(stock_bars.c.symbol).where(stock_bars.c.symbol == symbol).limit(1)
     return session.execute(q).first() is not None
 
-def get_last_bar_timestamp(session, symbol, timeFrame):
+
+def get_last_bar_timestamp(session, symbol: str, time_frame: TimeFrame):
+    _, stock_bars = _get_tables()
     q = select(func.max(stock_bars.c.timestamp)).where(
-        and_(stock_bars.c.symbol == symbol, stock_bars.c.timeframe == timeFrame.db_value)
+        and_(stock_bars.c.symbol == symbol, stock_bars.c.timeframe == time_frame.db_value)
     )
-    result = session.execute(q).scalar_one_or_none()
-    return result
+    return session.execute(q).scalar_one_or_none()
 
-def insert_bars(session, symbol, bars, timeframe):
-    if not bars:
-        return
-    tz_ny = pytz.timezone('America/New_York')
-    for bar in bars:
-        timestamp = bar['t']
-        if isinstance(timestamp, str) and 'T' in timestamp:
-            dt_utc = parser.isoparse(timestamp)
-            if dt_utc.tzinfo is None:
-                dt_utc = dt_utc.replace(tzinfo=pytz.UTC)
-            dt_ny = dt_utc.astimezone(tz_ny)
-            timestamp = dt_ny.strftime('%Y-%m-%d %H:%M:%S')
-        stmt = mysql_insert(stock_bars).values(
-            symbol=symbol,
-            timestamp=timestamp,
-            timeframe=timeframe,
-            open_price=bar['o'],
-            high_price=bar['h'],
-            low_price=bar['l'],
-            close_price=bar['c'],
-            volume=bar['v'],
-            trade_count=bar.get('n', 0),
-            vwa_price=bar.get('vw', None)
-        )
-        update_dict = {
-            'open_price': stmt.inserted.open_price,
-            'high_price': stmt.inserted.high_price,
-            'low_price': stmt.inserted.low_price,
-            'close_price': stmt.inserted.close_price,
-            'volume': stmt.inserted.volume,
-            'trade_count': stmt.inserted.trade_count,
-            'vwa_price': stmt.inserted.vwa_price
+
+def _normalize_bar_timestamp(raw_timestamp: Any) -> Any:
+    if not (isinstance(raw_timestamp, str) and "T" in raw_timestamp):
+        return raw_timestamp
+
+    dt_utc = parser.isoparse(raw_timestamp)
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=pytz.UTC)
+    return dt_utc.astimezone(TZ_NEW_YORK).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _build_bar_records(symbol: str, bars: list[dict[str, Any]], timeframe: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "symbol": symbol,
+            "timestamp": _normalize_bar_timestamp(bar["t"]),
+            "timeframe": timeframe,
+            "open_price": bar["o"],
+            "high_price": bar["h"],
+            "low_price": bar["l"],
+            "close_price": bar["c"],
+            "volume": bar["v"],
+            "trade_count": bar.get("n", 0),
+            "vwa_price": bar.get("vw"),
         }
-        ondup = stmt.on_duplicate_key_update(**update_dict)
-        session.execute(ondup)
-    session.commit()
+        for bar in bars
+    ]
 
-def import_alpaca_bars(timeFrame):
+
+def insert_bars(session, symbol: str, bars: list[dict[str, Any]], timeframe: str) -> int:
+    if not bars:
+        return 0
+
+    _, stock_bars = _get_tables()
+    stmt = mysql_insert(stock_bars).values(_build_bar_records(symbol, bars, timeframe))
+    update_dict = {
+        "open_price": stmt.inserted.open_price,
+        "high_price": stmt.inserted.high_price,
+        "low_price": stmt.inserted.low_price,
+        "close_price": stmt.inserted.close_price,
+        "volume": stmt.inserted.volume,
+        "trade_count": stmt.inserted.trade_count,
+        "vwa_price": stmt.inserted.vwa_price,
+    }
+    try:
+        session.execute(stmt.on_duplicate_key_update(**update_dict))
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    return len(bars)
+
+
+def _format_last_timestamp(last_timestamp: Any) -> Optional[str]:
+    if last_timestamp is None:
+        return None
+    if hasattr(last_timestamp, "strftime"):
+        return last_timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return str(last_timestamp)
+
+
+def _increment_start_timestamp(raw_timestamp: Optional[str]) -> Optional[str]:
+    if not raw_timestamp:
+        return None
+
+    dt = parser.isoparse(raw_timestamp)
+    next_dt = dt + timedelta(minutes=1)
+    return next_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def import_alpaca_bars(time_frame: TimeFrame) -> None:
     session = SessionLocal()
     try:
         symbols = get_active_tradable_symbols(session)
         total = len(symbols)
+
         for idx, symbol in enumerate(symbols, 1):
-            print(f"Traitement du symbole ({idx} / {total}) : {symbol}")
-            last_timestamp = get_last_bar_timestamp(session, symbol, timeFrame)
-            print(f"Last bar : {symbol} {last_timestamp}")
-            # Vérification de la dernière date d'ouverture du marché
+            LOGGER.info("Traitement du symbole (%s/%s) : %s", idx, total, symbol)
+
+            last_timestamp = get_last_bar_timestamp(session, symbol, time_frame)
+            LOGGER.info("Dernière barre connue | symbol=%s timestamp=%s", symbol, last_timestamp)
+
             if last_timestamp:
-                last_date = last_timestamp.date() if hasattr(last_timestamp, 'date') else last_timestamp
-                marche_date = getLastDateMarche()
-                if str(last_date) == str(marche_date):
-                    print(f"{symbol} déjà à jour pour la dernière date de marché ({marche_date}), passage au suivant.")
+                last_date = last_timestamp.date() if hasattr(last_timestamp, "date") else last_timestamp
+                market_date = getLastDateMarche()
+                if str(last_date) == str(market_date):
+                    LOGGER.info("%s déjà à jour pour la dernière date de marché (%s).", symbol, market_date)
                     continue
-                # Alpaca attend un format ISO 8601, conversion si besoin
-                start_date = last_timestamp.strftime('%Y-%m-%dT%H:%M:%SZ') if hasattr(last_timestamp, 'strftime') else str(last_timestamp)
+                next_start = _format_last_timestamp(last_timestamp)
             else:
-                start_date = None
-            all_bars = []
-            next_start = start_date
+                next_start = None
+
+            inserted_count = 0
             while True:
-                # Ajouter une minute à next_start si défini
-                if next_start:
-                    import dateutil.parser
-                    import datetime
-                    dt = dateutil.parser.isoparse(next_start)
-                    dt_plus = dt + datetime.timedelta(minutes=1)
-                    next_start_call = dt_plus.strftime('%Y-%m-%dT%H:%M:%SZ')
-                else:
-                    next_start_call = None
-                print(f"Traitement du symbole : {symbol} {next_start_call}")
-                bars = fetch_bars(symbol, timeFrame.api_value, next_start_call)
-                print(f"Traitement du symbole : {symbol} {len(bars)} bars récupérés")
+                next_start_call = _increment_start_timestamp(next_start)
+                LOGGER.info("Appel Alpaca | symbol=%s start=%s", symbol, next_start_call)
+                bars = fetch_bars(symbol, time_frame.api_value, next_start_call)
+                LOGGER.info("Réponse Alpaca | symbol=%s bars=%s", symbol, len(bars))
+
                 if not bars:
-                    # Si aucun bar n'est retourné et que le symbole n'existe pas dans stock_bars, on met à jour bars_available à False
                     if not symbol_exists_in_stock_bars(session, symbol):
-                        print(f"Aucun bar trouvé pour {symbol}, mise à jour bars_available à False.")
+                        LOGGER.warning("Aucun bar trouvé pour %s, mise à jour bars_available=False.", symbol)
                         update_bars_available_false(symbol)
                     break
-                insert_bars(session, symbol, bars, timeFrame.db_value)
-                all_bars.extend(bars)
-                # Préparer la date de début pour le prochain appel (bar le plus récent)
-                last_bar_time = bars[-1]['t']
-                next_start = last_bar_time
-            print(f"{len(all_bars)} bars insérés pour {symbol}")
+
+                inserted_count += insert_bars(session, symbol, bars, time_frame.db_value)
+                next_start = bars[-1]["t"]
+
+            LOGGER.info("Import terminé | symbol=%s inserted=%s", symbol, inserted_count)
     finally:
         session.close()
 
-def main():
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     import_alpaca_bars(TimeFrame.ONE_DAY)
-    #import_alpaca_bars(TimeFrame.THIRTY_MINS)
-    
-    
+    # import_alpaca_bars(TimeFrame.THIRTY_MINS)
+
+
 if __name__ == "__main__":
     main()

@@ -7,3 +7,4 @@ numpy
 polars
 python-dateutil
 pytz
+pytest

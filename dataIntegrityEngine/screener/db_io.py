@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
-from typing import Iterator, List
+from typing import Iterator
 
 import pandas as pd
-from sqlalchemy import bindparam, text
+from sqlalchemy import MetaData, Table, bindparam, text
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import Engine
 
 from dataIntegrityEngine.screener.models import ScreenerConfig
@@ -13,7 +14,20 @@ def get_engine() -> Engine:
 	return get_sqlalchemy_engine()
 
 
-def iter_symbol_chunks(engine: Engine, chunk_size: int, timeframe: str) -> Iterator[List[str]]:
+def _get_scores_table(engine: Engine) -> Table:
+	metadata = MetaData()
+	return Table("stock_scores", metadata, autoload_with=engine)
+
+
+def _purge_missing_scores(engine: Engine, symbols: list[str]) -> None:
+	delete_stmt = text("DELETE FROM stock_scores WHERE symbol NOT IN :symbols").bindparams(
+		bindparam("symbols", expanding=True)
+	)
+	with engine.begin() as conn:
+		conn.execute(delete_stmt, {"symbols": symbols})
+
+
+def iter_symbol_chunks(engine: Engine, chunk_size: int, timeframe: str) -> Iterator[list[str]]:
 	offset = 0
 	stmt = text(
 		"""
@@ -47,7 +61,7 @@ def iter_symbol_chunks(engine: Engine, chunk_size: int, timeframe: str) -> Itera
 		offset += chunk_size
 
 
-def load_prices_for_chunk(engine: Engine, symbols: List[str], config: ScreenerConfig) -> pd.DataFrame:
+def load_prices_for_chunk(engine: Engine, symbols: list[str], config: ScreenerConfig) -> pd.DataFrame:
 	if not symbols:
 		return pd.DataFrame()
 
@@ -90,7 +104,7 @@ def load_spy_return_6m(engine: Engine, config: ScreenerConfig) -> float:
 		params={"symbol": config.benchmark_symbol, "timeframe": config.timeframe},
 	)
 	if spy_df.empty:
-		raise RuntimeError(f"Aucune donnee benchmark pour {config.benchmark_symbol}.")
+		raise RuntimeError(f"Aucune donnée benchmark pour {config.benchmark_symbol}.")
 
 	spy_df["timestamp"] = pd.to_datetime(spy_df["timestamp"], utc=False)
 	latest = spy_df["timestamp"].max()
@@ -105,16 +119,27 @@ def load_spy_return_6m(engine: Engine, config: ScreenerConfig) -> float:
 	return (end_close / start_close) - 1.0
 
 
-def write_scores_bulk(engine: Engine, scores_df: pd.DataFrame, chunksize: int = 1000) -> None:
+def upsert_scores_snapshot(engine: Engine, scores_df: pd.DataFrame, chunksize: int = 1000) -> None:
 	if scores_df.empty:
+		with engine.begin() as conn:
+			conn.execute(text("DELETE FROM stock_scores"))
 		return
 
-	scores_df.to_sql(
-		"stock_scores",
-		con=engine,
-		if_exists="append",
-		index=False,
-		method="multi",
-		chunksize=chunksize,
-	)
+	scores_table = _get_scores_table(engine)
+	symbols = scores_df["symbol"].astype(str).tolist()
+
+	with engine.begin() as conn:
+		for start in range(0, len(scores_df), chunksize):
+			chunk_records = scores_df.iloc[start:start + chunksize].to_dict(orient="records")
+			stmt = mysql_insert(scores_table).values(chunk_records)
+			update_dict = {
+				"liquidity_val": stmt.inserted.liquidity_val,
+				"relative_strength_index": stmt.inserted.relative_strength_index,
+				"historical_range_score": stmt.inserted.historical_range_score,
+				"total_score": stmt.inserted.total_score,
+				"last_updated": stmt.inserted.last_updated,
+			}
+			conn.execute(stmt.on_duplicate_key_update(**update_dict))
+
+	_purge_missing_scores(engine, symbols)
 

@@ -1,7 +1,8 @@
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
+from typing import Any
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ScreenerConfig:
     timeframe: str = "1D"
     chunk_size: int = 500
@@ -14,10 +15,34 @@ class ScreenerConfig:
     weight_relative_strength: float = 0.4
     weight_historical_range: float = 0.4
 
-    def to_dict(self) -> dict:
+    def __post_init__(self) -> None:
+        if not self.timeframe:
+            raise ValueError("timeframe ne peut pas être vide.")
+        if self.chunk_size < 1:
+            raise ValueError("chunk_size doit être supérieur ou égal à 1.")
+        if self.liquidity_threshold_usd < 0:
+            raise ValueError("liquidity_threshold_usd doit être positif.")
+        if self.lookback_liquidity_bars < 1:
+            raise ValueError("lookback_liquidity_bars doit être supérieur ou égal à 1.")
+        if self.lookback_relative_days < 1:
+            raise ValueError("lookback_relative_days doit être supérieur ou égal à 1.")
+        if self.lookback_history_years < 1:
+            raise ValueError("lookback_history_years doit être supérieur ou égal à 1.")
+
+        weights = (
+            self.weight_liquidity,
+            self.weight_relative_strength,
+            self.weight_historical_range,
+        )
+        if any(weight < 0 for weight in weights):
+            raise ValueError("Les poids du screener doivent être positifs.")
+        if sum(weights) <= 0:
+            raise ValueError("La somme des poids du screener doit être strictement positive.")
+
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @staticmethod
-    def from_dict(payload: dict) -> "ScreenerConfig":
+    def from_dict(payload: dict[str, Any]) -> "ScreenerConfig":
         return ScreenerConfig(**payload)
 
