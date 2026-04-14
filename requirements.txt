@@ -2,6 +2,8 @@ pymysql
 requests
 python-dotenv
 sqlalchemy
+pandas
+numpy
 polars
 python-dateutil
 pytz

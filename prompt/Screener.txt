@@ -23,7 +23,6 @@ Logique du Pipeline (Les 3 Passages) :
 Format de Sortie :
 - Crée (ou remplace) une table stock_scores avec : symbol, liquidity_val, relative_strength_index, historical_range_score, total_score, last_updated.
 - Utilise df.to_sql avec method='multi' pour une insertion rapide.
-- Affiche une barre de progression avec tqdm.
 
 
 ---------------------------------------------------------
@@ -35,3 +34,21 @@ Pourquoi ce prompt est "blindé"
 Dernier conseil : Une fois que Copilot t'aura généré le code, regarde bien la partie engine = create_engine(...). Tu devras y remplir tes accès MySQL (host, user, password, db_name).
 
 Est-ce que tu veux que je t'explique comment interpréter le score final une fois que ta table sera remplie ?
+
+
+
+--------------------------------------------------------
+Plan: Screener modulaire haute performance
+Ce draft structure un screener Python rapide et maintenable en séparant orchestration, accès SQL, calculs vectorisés et persistance. L’approche lit les données par chunks de 500 symboles, exécute les calculs CPU en ProcessPoolExecutor, applique le short-circuiting entre 3 passages, réutilise SPY téléchargé une seule fois, puis écrit en bulk dans stock_scores via to_sql(method='multi'). Le plan inclut aussi un harness local sans vraie DB et des garde-fous robustesse (index, NaN, timestamps).
+Steps
+1.Définir l’architecture modulaire et points d’entrée dans dataIntegrityEngine/stock_screener.py, dataIntegrityEngine/screener/db_io.py, dataIntegrityEngine/screener/pipeline.py, dataIntegrityEngine/screener/scoring.py, dataIntegrityEngine/screener/models.py autour de run_screener.
+2.Implémenter la couche SQLAlchemy/PyMySQL dans dataIntegrityEngine/screener/db_io.py avec iter_symbol_chunks, load_price_history_chunk, load_spy_benchmark_once et lecture timeframe='1D'.
+3.Concevoir le pipeline vectorisé pandas dans dataIntegrityEngine/screener/pipeline.py avec pass_liquidity_30d, pass_relative_strength_6m, pass_historical_range_10y et short-circuiting sans boucle ligne.
+4.Planifier le parallélisme ProcessPoolExecutor dans dataIntegrityEngine/stock_screener.py, en distribuant les chunks/symboles et en fusionnant des DataFrames de score partiels.
+5.Préparer la persistance rapide dans dataIntegrityEngine/screener/db_io.py via write_scores_bulk (to_sql(method='multi', chunksize=...)) et aligner le schéma/indexes dans database/sql/stock_scores.sql.
+6.Ajouter la stratégie de test locale sans DB réelle avec tests/harness_screener.py, tests/fixtures/sample_prices.csv, doc d’exécution dans README.md, et dépendances pandas/pytest dans requirements.txt.
+
+Further Considerations
+1.Source des prix à figer : stock_bars (close_price, timestamp) ou stock_bars_daily (close, date) ? Option A simplicité (stock_bars_daily) / Option B compatibilité existant (stock_bars).
+2.Index SQL à prioriser : (timeframe, symbol, timestamp) et (symbol, timestamp) sur database/sql/stock_bars.sql, plus vérification idx_total_score sur database/sql/stock_scores.sql.
+3.Politique robustesse NaN/timestamps : normaliser UTC->date marché, exclure symboles incomplets (fenêtres 30j/6m/10y), définir last_updated côté DB versus timestamp applicatif.
