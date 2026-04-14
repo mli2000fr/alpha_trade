@@ -24,6 +24,10 @@ Variables d'environnement MySQL:
 - `LOGIN_DB`
 - `PASSWORD_DB`
 
+Variables d'environnement Finnhub:
+
+- `FINNHUB_API_KEY` (ou `CLE_FINNHUB` pour compatibilité)
+
 ## Installation
 
 ```powershell
@@ -36,6 +40,15 @@ python -m pip install -r requirements.txt
 python -m dataIntegrityEngine.stock_screener
 python -m dataIntegrityEngine.stock_screener --chunk-size 500 --max-workers 8 --benchmark SPY
 ```
+
+## Mise a jour des secteurs depuis Finnhub
+
+```powershell
+python -m dataIntegrityEngine.update_sector
+python -m dataIntegrityEngine.update_sector --limit 100 --sleep-seconds 1.1 --log-every 25
+```
+
+Le script lit les symboles de `stock_metadata` dont `sector` est vide, appelle Finnhub pour chaque symbole, puis met a jour `stock_metadata.sector` avec des logs de progression.
 
 ## Test local rapide (sans DB)
 
@@ -61,6 +74,7 @@ Le script applique un upsert snapshot sur `stock_scores` : insertion/mise a jour
 
 ## execution
 import_alpaca_assets.py
+update_sector.py
 import_alpaca_bar.py
 stock_screener.py
 add_sector.py

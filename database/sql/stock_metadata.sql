@@ -7,5 +7,6 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_metadata (
     status VARCHAR(20),           -- 狀態 (active/inactive)
     tradable BOOLEAN,             -- 是否可交易
     bars_available BOOLEAN,        -- 是否有K線數據
+    sector VARCHAR(50),                     -- 存儲板塊，用於模塊四的「板塊中性化」
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );

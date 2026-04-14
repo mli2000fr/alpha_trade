@@ -12,7 +12,7 @@ from common.utils import getLastDateMarche
 from database.assets import update_bars_available_false
 from database.bar_metadata import TimeFrame
 from database.connection import SessionLocal, get_sqlalchemy_engine
-from service.alpaca.client import fetch_bars
+from service.alpaca.clientAlpaca import fetch_bars
 
 LOGGER = logging.getLogger(__name__)
 TZ_NEW_YORK = pytz.timezone("America/New_York")

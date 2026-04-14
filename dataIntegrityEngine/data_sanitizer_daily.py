@@ -12,7 +12,7 @@ from sqlalchemy import MetaData, Table
 from sqlalchemy.engine import Engine, Connection
 
 from database.connection import get_sqlalchemy_engine
-from service.alpaca.client import fetch_bars
+from service.alpaca.clientAlpaca import fetch_bars
 from database.bar_metadata import TimeFrame
 from database.sanitizer_db_ops import (
     get_last_sync_date,
