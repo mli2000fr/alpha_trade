@@ -1,5 +1,5 @@
-from dataIntegrityEngine.screener.models import ScreenerConfig
-from dataIntegrityEngine.stock_screener import run_screener
+from screener.models import ScreenerConfig
+from screener.stock_screener import run_screener
 
 
 def test_run_screener_upserts_snapshot(monkeypatch) -> None:

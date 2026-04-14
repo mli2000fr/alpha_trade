@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from dataIntegrityEngine.screener import db_io
+from screener import db_io
 
 
 class _FakeConnection:
@@ -40,7 +40,10 @@ class _FakeInsert:
             relative_strength_index="relative_strength_index",
             historical_range_score="historical_range_score",
             total_score="total_score",
-            last_updated="last_updated",
+            last_updated_score="last_updated_score",
+            is_candidate="is_candidate",
+            sector="sector",
+            last_updated_scan="last_updated_scan",
         )
 
     def values(self, records):
@@ -72,9 +75,39 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
 
     scores_df = pd.DataFrame(
         [
-            {"symbol": "AAA", "liquidity_val": 1.0, "relative_strength_index": 2.0, "historical_range_score": 3.0, "total_score": 4.0, "last_updated": "2026-01-01 00:00:00"},
-            {"symbol": "BBB", "liquidity_val": 1.1, "relative_strength_index": 2.1, "historical_range_score": 3.1, "total_score": 4.1, "last_updated": "2026-01-01 00:00:00"},
-            {"symbol": "CCC", "liquidity_val": 1.2, "relative_strength_index": 2.2, "historical_range_score": 3.2, "total_score": 4.2, "last_updated": "2026-01-01 00:00:00"},
+            {
+                "symbol": "AAA",
+                "liquidity_val": 1.0,
+                "relative_strength_index": 2.0,
+                "historical_range_score": 3.0,
+                "total_score": 4.0,
+                "last_updated_score": "2026-01-01 00:00:00",
+                "is_candidate": 1,
+                "sector": "Tech",
+                "last_updated_scan": "2026-01-01 00:05:00",
+            },
+            {
+                "symbol": "BBB",
+                "liquidity_val": 1.1,
+                "relative_strength_index": 2.1,
+                "historical_range_score": 3.1,
+                "total_score": 4.1,
+                "last_updated_score": "2026-01-01 00:00:00",
+                "is_candidate": 0,
+                "sector": None,
+                "last_updated_scan": "2026-01-01 00:05:00",
+            },
+            {
+                "symbol": "CCC",
+                "liquidity_val": 1.2,
+                "relative_strength_index": 2.2,
+                "historical_range_score": 3.2,
+                "total_score": 4.2,
+                "last_updated_score": "2026-01-01 00:00:00",
+                "is_candidate": 0,
+                "sector": "Finance",
+                "last_updated_scan": "2026-01-01 00:05:00",
+            },
         ]
     )
 
@@ -82,4 +115,47 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
 
     assert len(engine.connection.executed) == 2
     assert purge_calls == [["AAA", "BBB", "CCC"]]
+
+    first_statement, _ = engine.connection.executed[0]
+    assert first_statement[0] == "upsert"
+    assert first_statement[1][0]["last_updated_score"].isoformat(sep=" ") == "2026-01-01 00:00:00"
+    assert first_statement[1][0]["is_candidate"] == 1
+    assert first_statement[1][0]["sector"] == "Tech"
+    assert first_statement[2]["last_updated_score"] == "last_updated_score"
+    assert first_statement[2]["is_candidate"] == "is_candidate"
+    assert first_statement[2]["sector"] == "sector"
+    assert first_statement[2]["last_updated_scan"] == "last_updated_scan"
+
+
+def test_upsert_scores_snapshot_accepts_legacy_last_updated_and_top_swing(monkeypatch) -> None:
+    engine = _FakeEngine()
+    purge_calls: list[list[str]] = []
+
+    monkeypatch.setattr(db_io, "_get_scores_table", lambda current_engine: object())
+    monkeypatch.setattr(db_io, "mysql_insert", lambda table: _FakeInsert())
+    monkeypatch.setattr(db_io, "_purge_missing_scores", lambda current_engine, symbols: purge_calls.append(symbols))
+
+    scores_df = pd.DataFrame(
+        [
+            {
+                "symbol": "AAA",
+                "liquidity_val": 1.0,
+                "relative_strength_index": 2.0,
+                "historical_range_score": 3.0,
+                "total_score": 4.0,
+                "last_updated": "2026-01-01 00:00:00",
+                "top_swing": 1,
+            }
+        ]
+    )
+
+    db_io.upsert_scores_snapshot(engine, scores_df, chunksize=1000)
+
+    assert purge_calls == [["AAA"]]
+    statement, _ = engine.connection.executed[0]
+    record = statement[1][0]
+    assert record["last_updated_score"].isoformat(sep=" ") == "2026-01-01 00:00:00"
+    assert record["is_candidate"] == 1
+    assert record["sector"] is None
+    assert record["last_updated_scan"].isoformat(sep=" ") == "2026-01-01 00:00:00"
 

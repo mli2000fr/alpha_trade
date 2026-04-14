@@ -7,15 +7,15 @@ from typing import List, Optional
 
 import pandas as pd
 
-from dataIntegrityEngine.screener.db_io import (
+from screener.db_io import (
     get_engine,
     iter_symbol_chunks,
     load_prices_for_chunk,
     load_spy_return_6m,
     upsert_scores_snapshot,
 )
-from dataIntegrityEngine.screener.models import ScreenerConfig
-from dataIntegrityEngine.screener.pipeline import RESULT_COLUMNS, compute_scores_from_prices
+from screener.models import ScreenerConfig
+from screener import RESULT_COLUMNS, compute_scores_from_prices
 
 LOGGER = logging.getLogger(__name__)
 

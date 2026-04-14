@@ -9,8 +9,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from dataIntegrityEngine.screener.models import ScreenerConfig
-from dataIntegrityEngine.screener.pipeline import compute_scores_from_prices
+from screener.models import ScreenerConfig
+from screener import compute_scores_from_prices
 
 
 def _make_symbol_frame(symbol: str, base_price: float, drift: float, volume: float, rows: int = 2600) -> pd.DataFrame:

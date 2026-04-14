@@ -54,5 +54,14 @@ Le script applique un upsert snapshot sur `stock_scores` : insertion/mise a jour
 - `relative_strength_index`
 - `historical_range_score`
 - `total_score`
-- `last_updated`
+- `last_updated_score`
+- `is_candidate`
+- `sector`
+- `last_updated_scan`
 
+## execution
+import_alpaca_assets.py
+import_alpaca_bar.py
+stock_screener.py
+add_sector.py
+scanner

@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from dataIntegrityEngine.screener.models import ScreenerConfig
-from dataIntegrityEngine.screener.pipeline import RESULT_COLUMNS, compute_scores_from_prices
+from screener.models import ScreenerConfig
+from screener import RESULT_COLUMNS, compute_scores_from_prices
 
 
 def _make_symbol_frame(symbol: str, base_price: float, drift: float, volume: float, rows: int = 2600) -> pd.DataFrame:
@@ -43,6 +43,11 @@ def test_compute_scores_filters_illiquid_symbols_and_sorts_descending() -> None:
     assert "BBB" not in set(scores["symbol"])
     assert list(scores["total_score"]) == sorted(scores["total_score"], reverse=True)
     assert scores.iloc[0]["symbol"] == "AAA"
+    assert set(scores["is_candidate"]) == {0}
+    assert scores["sector"].isna().all()
+    assert scores["last_updated_score"].notna().all()
+    assert scores["last_updated_scan"].notna().all()
+    assert (scores["last_updated_score"] == scores["last_updated_scan"]).all()
 
 
 def test_compute_scores_returns_empty_frame_when_benchmark_is_invalid() -> None:

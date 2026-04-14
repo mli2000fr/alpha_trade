@@ -6,8 +6,21 @@ from sqlalchemy import MetaData, Table, bindparam, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import Engine
 
-from dataIntegrityEngine.screener.models import ScreenerConfig
+from screener.models import ScreenerConfig
 from database.connection import get_sqlalchemy_engine
+
+
+REQUIRED_SCORE_COLUMNS = (
+	"symbol",
+	"liquidity_val",
+	"relative_strength_index",
+	"historical_range_score",
+	"total_score",
+	"last_updated_score",
+	"is_candidate",
+	"sector",
+	"last_updated_scan",
+)
 
 
 def get_engine() -> Engine:
@@ -119,12 +132,44 @@ def load_spy_return_6m(engine: Engine, config: ScreenerConfig) -> float:
 	return (end_close / start_close) - 1.0
 
 
+def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
+	if scores_df.empty:
+		return scores_df.copy()
+
+	normalized = scores_df.copy()
+	if "last_updated_score" not in normalized.columns and "last_updated" in normalized.columns:
+		normalized = normalized.rename(columns={"last_updated": "last_updated_score"})
+	if "is_candidate" not in normalized.columns and "top_swing" in normalized.columns:
+		normalized = normalized.rename(columns={"top_swing": "is_candidate"})
+
+	if "last_updated_score" not in normalized.columns:
+		normalized["last_updated_score"] = datetime.utcnow()
+	if "is_candidate" not in normalized.columns:
+		normalized["is_candidate"] = 0
+	if "sector" not in normalized.columns:
+		normalized["sector"] = None
+	if "last_updated_scan" not in normalized.columns:
+		normalized["last_updated_scan"] = normalized["last_updated_score"]
+
+	normalized["last_updated_score"] = pd.to_datetime(normalized["last_updated_score"], utc=False)
+	normalized["last_updated_scan"] = pd.to_datetime(normalized["last_updated_scan"], utc=False)
+	normalized["is_candidate"] = normalized["is_candidate"].fillna(0).astype(int)
+	normalized["sector"] = normalized["sector"].where(normalized["sector"].notna(), None)
+
+	missing_columns = [column for column in REQUIRED_SCORE_COLUMNS if column not in normalized.columns]
+	if missing_columns:
+		raise ValueError(f"Colonnes manquantes pour stock_scores: {missing_columns}")
+
+	return normalized.loc[:, REQUIRED_SCORE_COLUMNS].copy()
+
+
 def upsert_scores_snapshot(engine: Engine, scores_df: pd.DataFrame, chunksize: int = 1000) -> None:
 	if scores_df.empty:
 		with engine.begin() as conn:
 			conn.execute(text("DELETE FROM stock_scores"))
 		return
 
+	scores_df = _normalize_scores_snapshot(scores_df)
 	scores_table = _get_scores_table(engine)
 	symbols = scores_df["symbol"].astype(str).tolist()
 
@@ -137,7 +182,10 @@ def upsert_scores_snapshot(engine: Engine, scores_df: pd.DataFrame, chunksize: i
 				"relative_strength_index": stmt.inserted.relative_strength_index,
 				"historical_range_score": stmt.inserted.historical_range_score,
 				"total_score": stmt.inserted.total_score,
-				"last_updated": stmt.inserted.last_updated,
+				"last_updated_score": stmt.inserted.last_updated_score,
+				"is_candidate": stmt.inserted.is_candidate,
+				"sector": stmt.inserted.sector,
+				"last_updated_scan": stmt.inserted.last_updated_scan,
 			}
 			conn.execute(stmt.on_duplicate_key_update(**update_dict))
 

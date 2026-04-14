@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from dataIntegrityEngine.screener.models import ScreenerConfig
+from screener.models import ScreenerConfig
 
 
 RESULT_COLUMNS = [
@@ -12,7 +12,10 @@ RESULT_COLUMNS = [
     "relative_strength_index",
     "historical_range_score",
     "total_score",
-    "last_updated",
+    "last_updated_score",
+    "is_candidate",
+    "sector",
+    "last_updated_scan",
 ]
 
 
@@ -104,7 +107,11 @@ def compute_scores_from_prices(
         + scored["relative_strength_index"] * config.weight_relative_strength
         + scored["historical_range_score"] * config.weight_historical_range
     )
-    scored["last_updated"] = datetime.now(timezone.utc).replace(tzinfo=None)
+    calculated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    scored["last_updated_score"] = calculated_at
+    scored["is_candidate"] = 0
+    scored["sector"] = None
+    scored["last_updated_scan"] = calculated_at
 
     result = scored[RESULT_COLUMNS].copy()
     result = result.sort_values("total_score", ascending=False).reset_index(drop=True)
