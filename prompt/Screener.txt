@@ -1,0 +1,37 @@
+Le Prompt à copier dans Copilot (ou un autre assistant IA)
+Objet : Développement d'un Stock Screener haute performance (Python / MySQL)
+
+Contexte :
+J'ai une base de données MySQL contenant 12 000 symboles boursiers. La table stock_bars contient 10 ans de données quotidiennes (Daily bars, tu peux lire le fichier stock_bars.sql pour connecte le structure de la table, timeframe='1D').
+Je veux identifier les meilleures opportunités de Swing Trade en calculant un score de qualité pour chaque symbole.
+
+Objectif du script :
+Crée un script Python modulaire qui exécute un pipeline de filtrage en 3 passages successifs, calcule un score final, et enregistre les résultats dans une table stock_scores.
+
+Contraintes techniques strictes :
+1.Connexion DB : Utilise SQLAlchemy et PyMySQL.
+2.Efficacité de lecture : Ne charge pas les 12 000 symboles d'un coup. Implémente une lecture par "Chunks" (paquets de 500 symboles) pour éviter de saturer la RAM.
+3.Calculs : Utilise pandas de manière vectorisée. Pas de boucles for sur les lignes de prix.
+4.Parallélisme : Utilise concurrent.futures.ProcessPoolExecutor pour distribuer les calculs sur tous les cœurs du CPU.
+5.-Circuiting : Si un stock échoue au Passage 1, il ne doit pas être traité par les passages suivants.
+
+Logique du Pipeline (Les 3 Passages) :
+- Passage 1 (Filtre de Liquidité) : Calculer la valeur moyenne échangée (Volume * Close) sur les 30 derniers jours. Si elle est inférieure à 500 000 USD, le stock est éliminé.
+- Passage 2 (Force Relative) : Télécharger l'historique de l'indice de référence (ex: 'SPY') une seule fois. Calculer le ratio de performance du stock par rapport au SPY sur les 6 derniers mois.
+- Passage 3 (Structure de Prix) : Calculer où se situe le prix actuel (Close) par rapport au plus haut (High) et au plus bas (Low) des 10 dernières années. Score de 0 à 100 (0 = au plus bas historique, 100 = au plus haut).
+
+Format de Sortie :
+- Crée (ou remplace) une table stock_scores avec : symbol, liquidity_val, relative_strength_index, historical_range_score, total_score, last_updated.
+- Utilise df.to_sql avec method='multi' pour une insertion rapide.
+- Affiche une barre de progression avec tqdm.
+
+
+---------------------------------------------------------
+Pourquoi ce prompt est "blindé"
+- Gestion de la RAM : Le traitement par "Chunks" (paquets) est vital. Sans cela, Python essaiera de charger 30 millions de lignes en mémoire, ce qui fera planter ton ordinateur.
+- Vitesse CPU : Le ProcessPoolExecutor permet à Python de contourner ses limitations naturelles et d'utiliser 100% de la puissance de ton processeur.
+- Économie de requêtes : En précisant de télécharger le 'SPY' une seule fois, on évite 11 999 requêtes inutiles vers MySQL.
+
+Dernier conseil : Une fois que Copilot t'aura généré le code, regarde bien la partie engine = create_engine(...). Tu devras y remplir tes accès MySQL (host, user, password, db_name).
+
+Est-ce que tu veux que je t'explique comment interpréter le score final une fois que ta table sera remplie ?

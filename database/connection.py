@@ -1,22 +1,21 @@
 import os
 import pymysql
+from sqlalchemy import create_engine, MetaData
+from sqlalchemy.orm import sessionmaker
 
-def get_db_connection():
+def get_sqlalchemy_engine():
     DB_USER = os.getenv('LOGIN_DB')
     DB_PASSWORD = os.getenv('PASSWORD_DB')
     DB_HOST = 'localhost'
     DB_NAME = 'alpha_trade'
     if not DB_USER or not DB_PASSWORD:
         raise RuntimeError("LOGIN_DB ou PASSWORD_DB non définis dans les variables d'environnement système.")
-    try:
-        conn = pymysql.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME,
-            charset='utf8mb4'
-        )
-        return conn
-    except Exception as e:
-        raise RuntimeError(f"Erreur de connexion à la base de données : {e}")
+    url = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}?charset=utf8mb4"
+    engine = create_engine(url, echo=False, pool_recycle=3600)
+    return engine
 
+# Pour obtenir une session SQLAlchemy
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=get_sqlalchemy_engine())
+
+# Pour obtenir la MetaData (utile pour reflection ou accès aux tables dynamiquement)
+metadata = MetaData()
