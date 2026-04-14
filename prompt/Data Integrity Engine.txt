@@ -2,36 +2,46 @@ https://gemini.google.com/share/30ff276da99b
 
 🚀 Data Integrity Engine 實現指令
 
-Role: 你是一位資深的量化交易系統架構師，專精於處理大規模（12,000+ 股票）的 RTH (Regular Trading Hours) 歷史數據。
-Task: 編寫 DataSanitizer 類，實現 Data Integrity Engine (數據完整性與清洗引擎)。
-關鍵約束 (Critical Constraints):
-- 數據限制： 我沒有盤前 (Pre-market) 和盤後 (Post-market) 數據。數據僅包含常規交易時段 (09:30 - 16:00 EST)。
-- 缺口處理： 引擎必須能夠計算 Overnight_Gap（今日開盤價與昨日收盤價的變化），因為這是目前唯一能捕捉非交易時段情緒的指標。
+Role: 你是一位資深的量化金融開發工程師，專長於構建大規模股票數據清洗流水線 (ETL Pipeline)。
+Task: 實現一個名為 DataSanitizer 的 Python 類，用於處理 12,000 隻股票的 10 年 Daily (1D) RTH (09:30-16:00 EST) 歷史數據，並將結果高效存入 MySQL 數據庫。
 
-具體功能需求：
+1. 數據庫結構與連接 (MySQL Schema):
+- 目標表 stock_bars_daily： 包含字段 symbol, date (PK), open, high, low, close, volume, adj_close (復權價), vwap, daily_return, is_filled (布林值)。
+- 審計表 cleaning_audit_log： 包含字段 symbol (PK), last_sync_date, missing_days_count, anomaly_count, status (success/failed), error_msg。
+- 要求： 使用 SQLAlchemy 進行數據庫連接管理。
 
-1.校準邏輯 (Sanitization):
-- 復權驗證： 檢查數據是否已按拆股/分紅修正。
-- 動態異常檢測： 使用 Rolling MAD (Median Absolute Deviation)。邏輯：若價格偏離過去 20 日中位數 > 5 個 MAD 且當前 Bar 漲跌幅 > 2%，則標記為異常。
-- 成交量校驗： 確保沒有「成交量為 0 但價格變動」或「價格為 0」的錯誤。
+2.核心清洗與對齊邏輯 (Sanitization & Alignment):
+- 時段約束： 僅處理常規交易時段 (RTH)，不涉及盤前盤後數據。
+- 停牌補全 (Forward Fill)： * 參考 $SPY 的交易日曆。若某交易日缺失，使用前一天的 close 填充當天的 OHLC。
+- 關鍵： 補全行的 volume 必須設為 0，且將 is_filled 設為 True。
+- 異常值過濾： 使用 Rolling MAD (5倍中位數絕對偏差)。若價格變動 > 2% 且偏離 MAD 閾值，標記為異常並記錄至 anomaly_count。
+- 生存檢查： 嚴格遵守股票的 IPO 和退市日期，不得在有效區間外填充數據。
 
-2.時序對齊 (Alignment):
-- 基準對齊： 以 $SPY 的 RTH 日曆 (09:30-16:00) 為準。
-- 停牌處理： 發生數據缺失時，使用 Forward Fill 填充價格，但 成交量 (Volume) 必須強制設為 0。
-- 邊界控制： 嚴格遵守 IPO 和退市日期，禁止在有效交易區間外填充數據。
+3.波段交易特徵計算 (Feature Generation):
+- Parkinson Volatility： 基於當日 High/Low 計算。
+- Overnight Gap： $(今日Open / 昨日Close) - 1$。
+- RVOL (Relative Volume)： 當日成交量與過去 20 日平均成交量的比率。
 
-3.多維特徵 (Feature Gen):
-- Parkinson Volatility: 利用 RTH 的 High/Low 計算。
-- Turnover Rate: 成交量 / 流通股數。
-- Relative Volume (RVOL): 今日開盤第一小時成交量與過去 20 日平均的比率（用以補償缺乏盤前數據的劣勢）。
+4.斷點續傳與自動化邏輯 (Workflow Control):
+- Sync Check： 在處理每隻股票前，先從 cleaning_audit_log 讀取 last_sync_date。僅抓取並處理該日期之後的數據（增量更新）。
+- 錯誤隔離： 若某一隻股票處理失敗，捕捉 Exception，將錯誤寫入 error_msg 並標記 status='failed'，然後自動處理下一隻股票。
+- 高效寫入： 使用 INSERT INTO ... ON DUPLICATE KEY UPDATE 進行批量寫入 (Bulk Upsert)，防止重複數據報錯。
 
-4.性能與輸出:
-- 向量化： 必須使用 Polars 或向量化 Pandas，嚴禁行遍歷。
-- 存儲： 清洗後以 {symbol}.parquet 存儲。
-- 報告： 輸出 JSON 質量報告，記錄異常剔除數與填充數。
+5.工程實現要求:
+- 性能： 必須使用 Polars (優先) 或向量化 Pandas，禁止使用 iterrows() 或 for 循環遍歷數據行。
+- 健壯性： 代碼需具備完善的 Logging，並在每處理 50 隻股票時進行一次 db.commit()。
 
-技術棧建議： Python 3.12+, Polars (優先) 或 Pandas, NumPy, PyArrow。
-請先提供 DataSanitizer 的核心類結構定義，然後實現核心的清洗算法邏輯。
+
+---------------------------------
+💡 給你的開發小貼士：
+分模塊調試： 當 Copilot 生成代碼後，你可以先讓它單獨測試 sanitize 函數，確保 Forward Fill + Volume=0 的邏輯完全正確。
+
+記憶體管理： 由於你要處理 1.2 萬隻股票，請確保在 run_pipeline 循環中，每次處理完一隻股票都要主動釋放 DataFrame 變量，避免內存溢出。
+
+初次運行： 第一次跑 10 年歷史數據會很久，建議先用一個包含 10 隻股票的小清單 (List) 測試整個流程（下載 -> 清洗 -> 寫入 MySQL -> 更新 Audit Log）是否通暢。
+
+這套 Prompt 是目前針對你的需求最完整的版本。祝你的 Alpha Prime 開發順利！
+
 
 
 

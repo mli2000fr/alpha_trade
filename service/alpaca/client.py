@@ -5,7 +5,7 @@ import time
 
 DEFAULT_START_DATE = '2010-01-01T00:00:00Z'
 
-def _get_alpaca_credentials():
+def get_alpaca_credentials():
     """Récupère les credentials Alpaca depuis les variables d'environnement."""
     api_key = os.getenv('ALPACA_API_KEY')
     secret_key = os.getenv('ALPACA_SECRET_KEY')
@@ -15,7 +15,7 @@ def _get_alpaca_credentials():
 
 
 def fetch_alpaca_assets():
-    ALPACA_API_KEY, ALPACA_SECRET_KEY = _get_alpaca_credentials()
+    ALPACA_API_KEY, ALPACA_SECRET_KEY = get_alpaca_credentials()
     ALPACA_ENDPOINT = 'https://paper-api.alpaca.markets/v2/assets'
     headers = {
         'APCA-API-KEY-ID': ALPACA_API_KEY,
@@ -33,7 +33,7 @@ def fetch_bars(symbol, timeframe, start_date=None):
     :param start_date: str ou None, date de début au format 'YYYY-MM-DD' (optionnel)
     :return: list de bars (chaque bar est un dict)
     """
-    ALPACA_API_KEY, ALPACA_SECRET_KEY = _get_alpaca_credentials()
+    ALPACA_API_KEY, ALPACA_SECRET_KEY = get_alpaca_credentials()
     endpoint = f"https://data.alpaca.markets/v2/stocks/{symbol}/bars"
     headers = {
         'APCA-API-KEY-ID': ALPACA_API_KEY,

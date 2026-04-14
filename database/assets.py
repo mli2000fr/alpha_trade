@@ -1,4 +1,4 @@
-# Pour exécution directe, corrige l'import relatif pour le mode script
+
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,9 +37,6 @@ def insert_assets_to_db(assets):
     finally:
         conn.close()
 
-# Exécution directe (sans main)
-assets = fetch_alpaca_assets()
-insert_assets_to_db(assets)
 
 # Nouvelle fonction pour mettre à jour bars_available à False pour un symbole donné
 def update_bars_available_false(symbol):
