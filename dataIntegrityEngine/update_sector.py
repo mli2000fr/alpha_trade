@@ -14,6 +14,7 @@ from service.finnhub.clientFinnhub import MIN_REQUEST_INTERVAL_SECONDS, fetch_co
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_LOG_EVERY = 50
+NOT_AVAILABLE = "N/A"
 
 
 def update_missing_sectors(
@@ -49,7 +50,7 @@ def update_missing_sectors(
 			try:
 				profile = fetch_company_profile(symbol, session=session)
 				sector = str(profile.get("finnhubIndustry") or "").strip()
-				if not sector:
+				if not sector or sector == NOT_AVAILABLE:
 					summary["skipped"] += 1
 					LOGGER.warning(
 						"Sector introuvable | symbol=%s progress=%s/%s skipped=%s",
