@@ -20,6 +20,26 @@ from database.connection import get_sqlalchemy_engine
 LOGGER = logging.getLogger(__name__)
 
 PRICE_COLUMNS = ["symbol", "date", "close", "volume", "high", "low"]
+METADATA_COLUMNS = ["symbol", "company_name", "asset_class", "status", "tradable", "bars_available", "sector"]
+ETF_NAME_PATTERNS = (
+    "etf",
+    "etn",
+    "fund",
+    "index fund",
+    "ishares",
+    "spdr",
+    "vanguard",
+    "invesco",
+    "proshares",
+    "direxion",
+    "wisdomtree",
+    "global x",
+    "first trust",
+    "xtrackers",
+    "schwab",
+    "bond",
+    "treasury",
+)
 FACTOR_COLUMNS = [
     "symbol",
     "date",
@@ -79,7 +99,7 @@ class AlphaScannerConfig:
     min_history_days: int = 252
     liquidity_threshold: float = 20_000_000.0
     min_close: float = 5.0
-    max_anomaly_count: int = 5
+    max_anomaly_count: int = 20
     max_missing_days_count: int = 10
     sector_cap_ratio: float = 0.30
     volatility_short_window: int = 10
@@ -182,6 +202,33 @@ class AlphaScanner:
             return pd.DataFrame(columns=SCORE_COLUMNS)
 
         return scores if not scores.empty else pd.DataFrame(columns=SCORE_COLUMNS)
+
+    def fetch_instrument_metadata(self, symbols: Sequence[str]) -> pd.DataFrame:
+        """Charge les métadonnées instrument pour enrichir les secteurs et exclure les ETFs/fonds."""
+        if not symbols:
+            return pd.DataFrame(columns=METADATA_COLUMNS)
+
+        stmt = text(
+            """
+            SELECT symbol,
+                   company_name,
+                   asset_class,
+                   status,
+                   tradable,
+                   bars_available,
+                   sector
+            FROM stock_metadata
+            WHERE symbol IN :symbols
+            """
+        ).bindparams(bindparam("symbols", expanding=True))
+
+        try:
+            metadata_df = pd.read_sql_query(stmt, self.engine, params={"symbols": list(symbols)})
+        except SQLAlchemyError:
+            LOGGER.warning("Lecture stock_metadata indisponible; impossibilité de filtrer explicitement les ETFs.")
+            return pd.DataFrame(columns=METADATA_COLUMNS)
+
+        return metadata_df if not metadata_df.empty else pd.DataFrame(columns=METADATA_COLUMNS)
 
     def compute_factors(self, market_data: pd.DataFrame) -> pd.DataFrame:
         """Calcule MA, range 52 semaines, trend_score Minervini et VCP score."""
@@ -303,7 +350,7 @@ class AlphaScanner:
             filtered = filtered[(filtered["liquidity_val"].isna()) | (filtered["liquidity_val"] > self.config.liquidity_threshold)]
         after_score_liquidity = len(filtered)
         if "anomaly_count" in filtered.columns:
-            filtered = filtered[(filtered["anomaly_count"].isna()) | (filtered["anomaly_count"] < self.config.max_anomaly_count)]
+            filtered = filtered[(filtered["anomaly_count"].isna()) | (filtered["anomaly_count"] <= self.config.max_anomaly_count)]
         after_anomaly = len(filtered)
         if "missing_days_count" in filtered.columns:
             filtered = filtered[(filtered["missing_days_count"].isna()) | (filtered["missing_days_count"] < self.config.max_missing_days_count)]
@@ -355,7 +402,7 @@ class AlphaScanner:
             for sector, group in groups.items():
                 sector_name = str(sector)
                 pointer = pointers[sector]
-                if counts[sector_name] >= sector_cap or pointer >= len(group):
+                if (sector_name != "Unknown" and counts[sector_name] >= sector_cap) or pointer >= len(group):
                     continue
                 available.append((float(group.iloc[pointer]["final_score"]), sector_name))
 
@@ -367,7 +414,7 @@ class AlphaScanner:
                     break
                 pointer = pointers[sector]
                 group = groups[sector]
-                if counts[sector] >= sector_cap or pointer >= len(group):
+                if (sector != "Unknown" and counts[sector] >= sector_cap) or pointer >= len(group):
                     continue
                 selected_rows.append(group.iloc[pointer])
                 pointers[sector] += 1
@@ -544,14 +591,17 @@ class AlphaScanner:
             market_data = self.fetch_market_data(symbols)
             computed = self.compute_factors(market_data)
             scores = self.fetch_scores(symbols)
+            metadata_df = self.fetch_instrument_metadata(symbols)
             merged = self.merge_scores(computed, scores)
+            merged = self._enrich_and_filter_equities(merged, metadata_df)
             filtered = self.apply_filters(merged)
             LOGGER.debug(
-                "Fin chunk | symboles=%s lignes_market=%s facteurs=%s scores=%s fusion=%s filtré=%s",
+                "Fin chunk | symboles=%s lignes_market=%s facteurs=%s scores=%s metadata=%s fusion=%s filtré=%s",
                 len(symbols),
                 len(market_data),
                 len(computed),
                 len(scores),
+                len(metadata_df),
                 len(merged),
                 len(filtered),
             )
@@ -612,6 +662,83 @@ class AlphaScanner:
 
         snapshot = snapshot.where(snapshot.notna(), None)
         return snapshot.to_dict(orient="records")
+
+    def _enrich_and_filter_equities(self, merged_df: pd.DataFrame, metadata_df: pd.DataFrame) -> pd.DataFrame:
+        if merged_df.empty:
+            return merged_df.copy()
+        if metadata_df.empty:
+            LOGGER.info(
+                "Filtre instruments | entrée=%s sortie_actions=%s exclus_total=%s détail=%s",
+                len(merged_df),
+                len(merged_df),
+                0,
+                {"metadata_unavailable": 0},
+            )
+            return merged_df.copy()
+
+        metadata = metadata_df.copy()
+        metadata = metadata.drop_duplicates(subset=["symbol"], keep="last")
+        metadata["company_name"] = metadata["company_name"].fillna("").astype(str)
+        metadata["asset_class"] = metadata["asset_class"].fillna("").astype(str).str.lower()
+        metadata["status"] = metadata["status"].fillna("").astype(str).str.lower()
+        metadata["tradable"] = metadata["tradable"].fillna(False).astype(bool)
+        metadata["bars_available"] = metadata["bars_available"].fillna(False).astype(bool)
+
+        requested_symbols = merged_df["symbol"].astype(str)
+        requested_symbol_set = set(requested_symbols)
+        metadata = metadata[metadata["symbol"].astype(str).isin(requested_symbol_set)].copy()
+
+        company_name_normalized = metadata["company_name"].str.lower()
+        etf_mask = company_name_normalized.apply(
+            lambda value: any(pattern in value for pattern in ETF_NAME_PATTERNS)
+        )
+        reason_masks = {
+            "metadata_missing": pd.Index(sorted(requested_symbol_set.difference(set(metadata["symbol"].astype(str))))),
+            "non_us_equity": metadata.loc[metadata["asset_class"] != "us_equity", "symbol"],
+            "inactive": metadata.loc[metadata["status"] != "active", "symbol"],
+            "non_tradable": metadata.loc[~metadata["tradable"], "symbol"],
+            "bars_unavailable": metadata.loc[~metadata["bars_available"], "symbol"],
+            "etf_name": metadata.loc[etf_mask, "symbol"],
+        }
+        exclusion_details = {
+            reason: sorted({str(symbol) for symbol in symbols if str(symbol) in requested_symbol_set})
+            for reason, symbols in reason_masks.items()
+        }
+        exclusion_counts = {
+            reason: len(symbols)
+            for reason, symbols in exclusion_details.items()
+            if len(symbols) > 0
+        }
+
+        disqualified_symbols = {
+            symbol
+            for symbols in exclusion_details.values()
+            for symbol in symbols
+        }
+        eligible_symbols = sorted(requested_symbol_set.difference(disqualified_symbols))
+
+        eligible_metadata = metadata.loc[metadata["symbol"].astype(str).isin(eligible_symbols), ["symbol", "sector"]].copy()
+        enriched = merged_df.merge(eligible_metadata, on="symbol", how="inner", suffixes=("", "_meta"))
+        if "sector_meta" in enriched.columns:
+            enriched["sector"] = enriched["sector_meta"].where(
+                enriched["sector_meta"].notna() & (enriched["sector_meta"].astype(str).str.strip() != ""),
+                enriched.get("sector"),
+            )
+            enriched = enriched.drop(columns=["sector_meta"])
+
+        LOGGER.info(
+            "Filtre instruments | entrée=%s sortie_actions=%s exclus_total=%s détail=%s",
+            len(merged_df),
+            len(enriched),
+            len(merged_df) - len(enriched),
+            exclusion_counts,
+        )
+        if exclusion_counts:
+            LOGGER.debug(
+                "Filtre instruments détails symboles | %s",
+                {reason: symbols[:5] for reason, symbols in exclusion_details.items() if symbols},
+            )
+        return enriched.reset_index(drop=True)
 
     def _iter_eligible_symbol_chunks(self) -> Iterator[list[str]]:
         """Filtre SQL brut: liquidité 20j, close > 5, historique >= 252 jours."""
@@ -701,6 +828,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-workers", type=int, default=None, help="Nombre maximum de threads")
     parser.add_argument("--liquidity-threshold", type=float, default=20_000_000.0, help="Seuil minimal de liquidité en dollar volume moyen 20j")
     parser.add_argument("--min-close", type=float, default=5.0, help="Prix minimal de clôture")
+    parser.add_argument("--max-anomaly-count", type=int, default=20, help="Nombre maximum d'anomalies accepté par titre")
     parser.add_argument("--sector-cap-ratio", type=float, default=0.30, help="Plafond par secteur, ex. 0.30 = 30%")
     parser.add_argument("--log-level", type=str, default="INFO", help="Niveau de log (DEBUG, INFO, WARNING, ERROR)")
     return parser
@@ -719,6 +847,7 @@ def main() -> None:
         max_workers=args.max_workers,
         liquidity_threshold=args.liquidity_threshold,
         min_close=args.min_close,
+        max_anomaly_count=args.max_anomaly_count,
         sector_cap_ratio=args.sector_cap_ratio,
     )
     result = AlphaScanner(config=config).run()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 
 import numpy as np
 import pandas as pd
@@ -112,7 +113,7 @@ def test_apply_filters_keeps_rows_without_auxiliary_scores_but_removes_bad_quali
                 "latest_close": 50.0,
                 "avg_dollar_volume_20d": 30_000_000.0,
                 "liquidity_val": 25_000_000.0,
-                "anomaly_count": 2,
+                "anomaly_count": 20,
                 "missing_days_count": 1,
             },
             {
@@ -121,7 +122,7 @@ def test_apply_filters_keeps_rows_without_auxiliary_scores_but_removes_bad_quali
                 "latest_close": 50.0,
                 "avg_dollar_volume_20d": 30_000_000.0,
                 "liquidity_val": 25_000_000.0,
-                "anomaly_count": 6,
+                "anomaly_count": 21,
                 "missing_days_count": 1,
             },
             {
@@ -139,6 +140,92 @@ def test_apply_filters_keeps_rows_without_auxiliary_scores_but_removes_bad_quali
     filtered = scanner.apply_filters(merged)
 
     assert set(filtered["symbol"]) == {"AAA", "CCC"}
+
+
+def test_enrich_and_filter_equities_excludes_etfs_and_backfills_sector() -> None:
+    scanner = AlphaScanner(engine=_create_shared_sqlite_engine(), config=AlphaScannerConfig(selection_size=10, max_workers=1))
+    merged = pd.DataFrame(
+        [
+            {"symbol": "AAA", "sector": "Unknown", "final_score": 0.8},
+            {"symbol": "ETF1", "sector": "Unknown", "final_score": 0.9},
+        ]
+    )
+    metadata = pd.DataFrame(
+        [
+            {
+                "symbol": "AAA",
+                "company_name": "Acme Corp",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": True,
+                "sector": "Technology",
+            },
+            {
+                "symbol": "ETF1",
+                "company_name": "Vanguard Total Bond Market ETF",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": True,
+                "sector": None,
+            },
+        ]
+    )
+
+    enriched = scanner._enrich_and_filter_equities(merged, metadata)
+
+    assert list(enriched["symbol"]) == ["AAA"]
+    assert enriched.loc[0, "sector"] == "Technology"
+
+
+def test_enrich_and_filter_equities_logs_exclusion_breakdown(caplog) -> None:
+    scanner = AlphaScanner(engine=_create_shared_sqlite_engine(), config=AlphaScannerConfig(selection_size=10, max_workers=1))
+    merged = pd.DataFrame(
+        [
+            {"symbol": "AAA", "sector": "Unknown", "final_score": 0.8},
+            {"symbol": "ETF1", "sector": "Unknown", "final_score": 0.9},
+            {"symbol": "MISS", "sector": "Unknown", "final_score": 0.7},
+            {"symbol": "INAC", "sector": "Unknown", "final_score": 0.6},
+        ]
+    )
+    metadata = pd.DataFrame(
+        [
+            {
+                "symbol": "AAA",
+                "company_name": "Acme Corp",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": True,
+                "sector": "Technology",
+            },
+            {
+                "symbol": "ETF1",
+                "company_name": "Vanguard Total Bond Market ETF",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": True,
+                "sector": None,
+            },
+            {
+                "symbol": "INAC",
+                "company_name": "Inactive Corp",
+                "asset_class": "us_equity",
+                "status": "inactive",
+                "tradable": True,
+                "bars_available": True,
+                "sector": "Industrials",
+            },
+        ]
+    )
+
+    with caplog.at_level(logging.INFO):
+        enriched = scanner._enrich_and_filter_equities(merged, metadata)
+
+    assert list(enriched["symbol"]) == ["AAA"]
+    assert "détail={'metadata_missing': 1, 'inactive': 1, 'etf_name': 1}" in caplog.text
 
 
 def test_apply_sector_neutrality_caps_each_sector() -> None:
@@ -165,6 +252,42 @@ def test_apply_sector_neutrality_caps_each_sector() -> None:
 
     assert len(selected) == 50
     assert selected["sector"].value_counts().max() <= 15
+
+
+def test_apply_sector_neutrality_does_not_cap_unknown_sector() -> None:
+    config = AlphaScannerConfig(selection_size=20, sector_cap_ratio=0.30, max_workers=1)
+    scanner = AlphaScanner(engine=_create_shared_sqlite_engine(), config=config)
+    rows: list[dict[str, object]] = []
+    score = 1.0
+    for index in range(18):
+        rows.append(
+            {
+                "symbol": f"UK{index:02d}",
+                "sector": "Unknown",
+                "final_score": score,
+                "trend_score": 0.8,
+                "vcp_score": 0.7,
+                "avg_dollar_volume_20d": 30_000_000.0,
+            }
+        )
+        score -= 0.01
+    for index in range(6):
+        rows.append(
+            {
+                "symbol": f"TC{index:02d}",
+                "sector": "Technology",
+                "final_score": score,
+                "trend_score": 0.8,
+                "vcp_score": 0.7,
+                "avg_dollar_volume_20d": 30_000_000.0,
+            }
+        )
+        score -= 0.01
+
+    selected = scanner.apply_sector_neutrality(pd.DataFrame(rows))
+
+    assert len(selected) == 20
+    assert (selected["sector"] == "Unknown").sum() > 6
 
 
 def test_update_database_resets_then_marks_selected_symbols() -> None:
@@ -285,9 +408,25 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_metadata (
+                    symbol TEXT PRIMARY KEY,
+                    company_name TEXT,
+                    asset_class TEXT,
+                    status TEXT,
+                    tradable BOOLEAN,
+                    bars_available BOOLEAN,
+                    sector TEXT
+                )
+                """
+            )
+        )
 
         markets: list[pd.DataFrame] = []
         scores: list[dict[str, object]] = []
+        metadata_rows: list[dict[str, object]] = []
         definitions = [
             ("AAA", "Technology", 0.50),
             ("AAB", "Technology", 0.40),
@@ -302,6 +441,32 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
             market_frame, score_row = _make_market_frame(symbol, sector, drift=drift, rows=260)
             markets.append(market_frame)
             scores.append(score_row)
+            metadata_rows.append(
+                {
+                    "symbol": symbol,
+                    "company_name": f"{symbol} Common Stock",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "sector": sector,
+                }
+            )
+
+        etf_market, etf_score = _make_market_frame("ETF1", "Unknown", drift=0.60, rows=260)
+        markets.append(etf_market)
+        scores.append(etf_score)
+        metadata_rows.append(
+            {
+                "symbol": "ETF1",
+                "company_name": "Vanguard Total Bond Market ETF",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": True,
+                "sector": None,
+            }
+        )
 
         scores.append(
             {
@@ -323,6 +488,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
         market_df = pd.concat(markets, ignore_index=True)
         market_df.to_sql("stock_bars_daily", conn, if_exists="append", index=False)
         pd.DataFrame(scores).to_sql("stock_scores", conn, if_exists="append", index=False)
+        pd.DataFrame(metadata_rows).to_sql("stock_metadata", conn, if_exists="append", index=False)
 
     scanner = AlphaScanner(
         engine=engine,
@@ -334,6 +500,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
     assert len(result) == 4
     assert list(result["rank"]) == [1, 2, 3, 4]
     assert list(result["final_score"]) == sorted(result["final_score"], reverse=True)
+    assert "ETF1" not in set(result["symbol"])
 
     with engine.connect() as conn:
         candidate_rows = conn.execute(
