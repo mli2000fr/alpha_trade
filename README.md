@@ -86,4 +86,4 @@ data_sanitizer_daily.py
 
 
 # au quoditien ou par semaine
-stock_swing-select.py
+alpha_scanner.py

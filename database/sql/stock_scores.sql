@@ -5,6 +5,9 @@ CREATE TABLE alpha_trade.stock_scores (
     relative_strength_index DOUBLE NOT NULL, -- RS 排名
     historical_range_score DOUBLE NOT NULL,  -- VCP 壓縮評分
     total_score DOUBLE NOT NULL,            -- 綜合因子權重
+    trend_score DOUBLE DEFAULT NULL,        -- AlphaScanner 趨勢模板評分 (0~1)
+    vcp_score DOUBLE DEFAULT NULL,          -- AlphaScanner 波動收縮評分 (0~1)
+    final_score DOUBLE DEFAULT NULL,        -- AlphaScanner 最終融合評分
     last_updated_score DATETIME NOT NULL,   -- 分數計算時間
     is_candidate TINYINT(1) DEFAULT 0,      -- 取代 top_swing, 1為入選, 0為落選
     sector VARCHAR(50),                     -- 存儲板塊，用於模塊四的「板塊中性化」
@@ -14,5 +17,6 @@ CREATE TABLE alpha_trade.stock_scores (
     last_updated_audit DATETIME NOT NULL,   -- 審核標記時間
     PRIMARY KEY (symbol),
     INDEX idx_total_score (total_score),
+    INDEX idx_final_score (final_score),
     INDEX idx_scan_candidate (is_candidate, total_score) -- 複合索引：加速模型推理時的讀取
 ) ENGINE=InnoDB;
