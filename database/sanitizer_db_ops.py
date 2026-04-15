@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, time
 from typing import Optional
 
@@ -9,11 +10,14 @@ from sqlalchemy.engine import Connection
 # Les tables doivent être passées en argument (stock_bars_daily, cleaning_audit_log, stock_metadata)
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 def _latest_audit_id_query(cleaning_audit_log, symbol: str):
     return (
         select(cleaning_audit_log.c.id)
         .where(cleaning_audit_log.c.symbol == symbol)
-        .order_by(cleaning_audit_log.c.updated_at.desc())
+        .order_by(cleaning_audit_log.c.updated_at.desc(), cleaning_audit_log.c.id.desc())
         .limit(1)
     )
 
@@ -118,6 +122,24 @@ def get_last_sync_date(conn: Connection, cleaning_audit_log, symbol: str) -> Opt
     return conn.execute(q).scalar_one_or_none()
 
 
+def get_failed_audits(conn: Connection, cleaning_audit_log, limit: Optional[int] = 20) -> list[dict]:
+    q = (
+        select(
+            cleaning_audit_log.c.symbol,
+            cleaning_audit_log.c.last_sync_date,
+            cleaning_audit_log.c.status,
+            cleaning_audit_log.c.error_msg,
+            cleaning_audit_log.c.updated_at,
+        )
+        .where(cleaning_audit_log.c.status == 'failed')
+        .order_by(cleaning_audit_log.c.updated_at.desc(), cleaning_audit_log.c.id.desc())
+    )
+    if limit is not None:
+        q = q.limit(limit)
+
+    return [dict(row) for row in conn.execute(q).mappings().all()]
+
+
 def get_first_last_actual_dates(conn: Connection, stock_bars_daily, symbol: str) -> tuple[Optional[date], Optional[date]]:
     q = select(func.min(stock_bars_daily.c.date), func.max(stock_bars_daily.c.date)).where(stock_bars_daily.c.symbol == symbol)
     mn, mx = conn.execute(q).one_or_none() or (None, None)
@@ -170,6 +192,16 @@ def upsert_audit(
         'status': status,
         'error_msg': error_msg
     }
+    if status == 'failed':
+        LOGGER.error(
+            "Audit en échec | symbol=%s row_id=%s last_sync=%s missing_days=%s anomaly_count=%s error_msg=%s",
+            symbol,
+            row_id,
+            last_sync,
+            missing_days,
+            anomaly_count,
+            error_msg,
+        )
     if row_id is None:
         conn.execute(insert(cleaning_audit_log).values(payload))
     else:

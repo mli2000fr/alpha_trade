@@ -14,6 +14,7 @@ from sqlalchemy.engine import Engine, Connection
 from database.connection import get_sqlalchemy_engine
 from database.bar_metadata import TimeFrame
 from database.sanitizer_db_ops import (
+    get_failed_audits,
     get_stock_bars,
     get_last_sync_date,
     get_prev_close_before,
@@ -61,8 +62,7 @@ class DataSanitizer:
                  db_host: str = 'localhost',
                  db_name: str = 'alpha_trade',
                  log_level: int = logging.INFO):
-        logging.basicConfig(level=log_level,
-                            format='%(asctime)s %(levelname)s %(message)s')
+        self._configure_logging(log_level)
         self.engine: Engine = get_sqlalchemy_engine(
             db_host=db_host,
             db_name=db_name,
@@ -83,6 +83,14 @@ class DataSanitizer:
     @staticmethod
     def _empty_bar_frame() -> pl.DataFrame:
         return EMPTY_BAR_FRAME.clone()
+
+    @staticmethod
+    def _configure_logging(log_level: int) -> None:
+        logging.basicConfig(
+            level=log_level,
+            format='%(asctime)s %(levelname)s %(message)s',
+            force=True,
+        )
 
     @staticmethod
     def _slice_cached_calendar(calendar: pl.DataFrame, start: date, end: date) -> pl.DataFrame:
@@ -136,10 +144,37 @@ class DataSanitizer:
     def _should_commit(processed_count: int, commit_every: int) -> bool:
         return processed_count > 0 and processed_count % commit_every == 0
 
+    @staticmethod
+    def _format_exception_message(exc: Exception) -> str:
+        message = str(exc).strip()
+        if message:
+            return f'{exc.__class__.__name__}: {message}'
+        return exc.__class__.__name__
+
     def _commit_batch(self, transaction, conn: Connection):
         transaction.commit()
         gc.collect()
         return conn.begin()
+
+    def _log_failed_audit_summary(self, conn: Connection, limit: int = 20) -> None:
+        failed_audits = get_failed_audits(conn, self.cleaning_audit_log, limit=limit)
+        if not failed_audits:
+            LOGGER.info('Aucun audit en échec détecté dans cleaning_audit_log.')
+            return
+
+        LOGGER.warning(
+            'Audits en échec détectés dans cleaning_audit_log | count=%s limit=%s',
+            len(failed_audits),
+            limit,
+        )
+        for audit in failed_audits:
+            LOGGER.error(
+                'Audit failed summary | symbol=%s updated_at=%s last_sync=%s error_msg=%s',
+                audit.get('symbol'),
+                audit.get('updated_at'),
+                audit.get('last_sync_date'),
+                audit.get('error_msg'),
+            )
 
     def _process_symbol(self, conn: Connection, symbol: str) -> tuple[bool, dict]:
         last_sync = get_last_sync_date(conn, self.cleaning_audit_log, symbol)
@@ -285,23 +320,33 @@ class DataSanitizer:
                     LOGGER.info("Traitement %s/%s: %s", idx, len(symbols), symbol)
                     try:
                         was_processed, audit_payload = self._process_symbol(conn, symbol)
+                        if audit_payload.get('error_msg'):
+                            LOGGER.warning(
+                                "Audit succès avec message d'erreur résiduel | symbol=%s payload=%s",
+                                symbol,
+                                audit_payload,
+                            )
                         upsert_audit(conn, self.cleaning_audit_log, symbol, **audit_payload)
                         if was_processed:
                             processed += 1
                     except Exception as e:
-                        LOGGER.exception("Echec traitement %s", symbol)
+                        error_message = self._format_exception_message(e)
+                        LOGGER.exception("Echec traitement %s | error_msg=%s", symbol, error_message)
                         fallback_last_sync = get_last_sync_date(conn, self.cleaning_audit_log, symbol)
+                        failed_payload = self._build_audit_payload(fallback_last_sync, 0, 0, 'failed', error_message)
+                        LOGGER.error("Persistance audit échec | symbol=%s payload=%s", symbol, failed_payload)
                         upsert_audit(
                             conn,
                             self.cleaning_audit_log,
                             symbol,
-                            **self._build_audit_payload(fallback_last_sync, 0, 0, 'failed', str(e)),
+                            **failed_payload,
                         )
 
                     if self._should_commit(processed, commit_every):
                         outer_trans = self._commit_batch(outer_trans, conn)
 
                 outer_trans.commit()
+                self._log_failed_audit_summary(conn)
             finally:
                 gc.collect()
 

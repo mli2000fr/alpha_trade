@@ -100,3 +100,40 @@ def test_run_pipeline_rejects_invalid_commit_every(sanitizer: DataSanitizer) -> 
     with pytest.raises(ValueError):
         sanitizer.run_pipeline(commit_every=0)
 
+
+def test_format_exception_message_includes_exception_type_and_message(sanitizer: DataSanitizer) -> None:
+    message = sanitizer._format_exception_message(ValueError("boom"))
+
+    assert message == "ValueError: boom"
+
+
+def test_format_exception_message_falls_back_to_exception_type_when_empty(sanitizer: DataSanitizer) -> None:
+    message = sanitizer._format_exception_message(RuntimeError())
+
+    assert message == "RuntimeError"
+
+
+def test_log_failed_audit_summary_logs_failed_rows(monkeypatch, caplog, sanitizer: DataSanitizer) -> None:
+    sanitizer.cleaning_audit_log = object()
+    fake_conn = cast(Connection, object())
+
+    monkeypatch.setattr(
+        data_sanitizer_daily,
+        "get_failed_audits",
+        lambda conn, table, limit=20: [
+            {
+                "symbol": "AAPL",
+                "updated_at": datetime(2024, 1, 3, 10, 0, 0),
+                "last_sync_date": date(2024, 1, 3),
+                "error_msg": "ValueError: boom",
+            }
+        ],
+    )
+
+    with caplog.at_level("INFO", logger="dataIntegrityEngine.data_sanitizer_daily"):
+        sanitizer._log_failed_audit_summary(fake_conn, limit=5)
+
+    assert any("Audits en échec détectés dans cleaning_audit_log" in message for message in caplog.messages)
+    assert any("Audit failed summary | symbol=AAPL" in message for message in caplog.messages)
+
+

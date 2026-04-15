@@ -1,11 +1,13 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import cast
 
 import polars as pl
 from sqlalchemy import Column, DateTime, Integer, MetaData, Numeric, String, Table, create_engine
+from sqlalchemy.engine import Connection
 
 from database import sanitizer_db_ops
-from database.sanitizer_db_ops import get_stock_bars
+from database.sanitizer_db_ops import get_failed_audits, get_stock_bars
 
 
 class _FakeUpsertConnection:
@@ -14,6 +16,26 @@ class _FakeUpsertConnection:
 
     def execute(self, statement):
         self.executed = statement
+
+
+class _FakeScalarResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class _FakeAuditConnection:
+    def __init__(self, row_id=None) -> None:
+        self.row_id = row_id
+        self.executed: list[object] = []
+
+    def execute(self, statement):
+        self.executed.append(statement)
+        if len(self.executed) == 1:
+            return _FakeScalarResult(self.row_id)
+        return None
 
 
 class _FakeInsert:
@@ -175,7 +197,12 @@ def test_upsert_stock_bars_daily_uses_current_timestamp_for_last_updated(monkeyp
         }
     )
 
-    inserted = sanitizer_db_ops.upsert_stock_bars_daily(fake_conn, stock_bars_daily, "SPY", df)
+    inserted = sanitizer_db_ops.upsert_stock_bars_daily(
+        cast(Connection, fake_conn),
+        stock_bars_daily,
+        "SPY",
+        df,
+    )
 
     assert inserted == 1
     assert fake_conn.executed[0] == "upsert"
@@ -185,5 +212,96 @@ def test_upsert_stock_bars_daily_uses_current_timestamp_for_last_updated(monkeyp
     assert update_dict["open"] == "open_inserted"
     assert "last_updated" in update_dict
     assert "current_timestamp" in str(update_dict["last_updated"]).lower()
+
+
+def test_upsert_audit_logs_failed_payload(caplog) -> None:
+    metadata = MetaData()
+    cleaning_audit_log = Table(
+        "cleaning_audit_log",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("symbol", String(10), nullable=False),
+        Column("last_sync_date", DateTime, nullable=True),
+        Column("missing_days_count", Integer, nullable=False),
+        Column("anomaly_count", Integer, nullable=False),
+        Column("status", String(20), nullable=False),
+        Column("error_msg", String(255), nullable=True),
+        Column("updated_at", DateTime, nullable=True),
+    )
+    conn = _FakeAuditConnection(row_id=None)
+
+    with caplog.at_level("ERROR", logger="database.sanitizer_db_ops"):
+        sanitizer_db_ops.upsert_audit(
+            cast(Connection, conn),
+            cleaning_audit_log,
+            "AAPL",
+            None,
+            0,
+            0,
+            "failed",
+            "ValueError: boom",
+        )
+
+    assert any("Audit en échec | symbol=AAPL" in message for message in caplog.messages)
+
+
+def test_get_failed_audits_returns_recent_failed_rows() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    cleaning_audit_log = Table(
+        "cleaning_audit_log",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("symbol", String(10), nullable=False),
+        Column("last_sync_date", DateTime, nullable=True),
+        Column("missing_days_count", Integer, nullable=False),
+        Column("anomaly_count", Integer, nullable=False),
+        Column("status", String(20), nullable=False),
+        Column("error_msg", String(255), nullable=True),
+        Column("updated_at", DateTime, nullable=True),
+    )
+    metadata.create_all(engine)
+
+    with engine.begin() as conn:
+        conn.execute(
+            cleaning_audit_log.insert(),
+            [
+                {
+                    "id": 1,
+                    "symbol": "AAA",
+                    "last_sync_date": datetime(2024, 1, 1, 0, 0, 0),
+                    "missing_days_count": 0,
+                    "anomaly_count": 0,
+                    "status": "failed",
+                    "error_msg": "first error",
+                    "updated_at": datetime(2024, 1, 1, 10, 0, 0),
+                },
+                {
+                    "id": 2,
+                    "symbol": "BBB",
+                    "last_sync_date": datetime(2024, 1, 2, 0, 0, 0),
+                    "missing_days_count": 0,
+                    "anomaly_count": 0,
+                    "status": "success",
+                    "error_msg": None,
+                    "updated_at": datetime(2024, 1, 2, 10, 0, 0),
+                },
+                {
+                    "id": 3,
+                    "symbol": "CCC",
+                    "last_sync_date": datetime(2024, 1, 3, 0, 0, 0),
+                    "missing_days_count": 0,
+                    "anomaly_count": 0,
+                    "status": "failed",
+                    "error_msg": "latest error",
+                    "updated_at": datetime(2024, 1, 3, 10, 0, 0),
+                },
+            ],
+        )
+
+        failed_audits = get_failed_audits(conn, cleaning_audit_log, limit=10)
+
+    assert [audit["symbol"] for audit in failed_audits] == ["CCC", "AAA"]
+    assert failed_audits[0]["error_msg"] == "latest error"
 
 
