@@ -105,7 +105,7 @@ def insert_assets_to_db(assets: Iterable[Mapping[str, Any]]) -> int:
             "status": stmt.inserted.status,
             "tradable": stmt.inserted.tradable,
             "bars_available": stmt.inserted.bars_available,
-            "last_updated": stmt.inserted.last_updated,
+            "last_updated": func.current_timestamp(),
         }
         session.execute(stmt.on_duplicate_key_update(**update_dict))
         session.commit()

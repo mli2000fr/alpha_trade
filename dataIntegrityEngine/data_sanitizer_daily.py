@@ -1,7 +1,7 @@
 import gc
 import logging
 import math
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import pytz
@@ -12,9 +12,9 @@ from sqlalchemy import MetaData, Table
 from sqlalchemy.engine import Engine, Connection
 
 from database.connection import get_sqlalchemy_engine
-from service.alpaca.clientAlpaca import fetch_bars
 from database.bar_metadata import TimeFrame
 from database.sanitizer_db_ops import (
+    get_stock_bars,
     get_last_sync_date,
     get_prev_close_before,
     get_symbols,
@@ -75,6 +75,7 @@ class DataSanitizer:
         self._spy_calendar_cache: Optional[pl.DataFrame] = None
 
     def _reflect_tables(self) -> None:
+        self.stock_bars = Table('stock_bars', self.metadata, autoload_with=self.engine)
         self.stock_bars_daily = Table('stock_bars_daily', self.metadata, autoload_with=self.engine)
         self.cleaning_audit_log = Table('cleaning_audit_log', self.metadata, autoload_with=self.engine)
         self.stock_metadata = Table('stock_metadata', self.metadata, autoload_with=self.engine)
@@ -93,9 +94,8 @@ class DataSanitizer:
             return False
         return (calendar['date'].min() <= start) and (calendar['date'].max() >= end)
 
-    def _fetch_calendar_dates(self, start: Optional[date]) -> list[date]:
-        start_str = start.isoformat() if start else None
-        bars = fetch_bars(SPY_SYMBOL, TimeFrame.ONE_DAY.api_value, start_str)
+    def _fetch_calendar_dates(self, conn: Connection, start: Optional[date]) -> list[date]:
+        bars = get_stock_bars(conn, self.stock_bars, SPY_SYMBOL, TimeFrame.ONE_DAY.db_value, start)
         return [self._to_ny_date(bar['t']) for bar in bars]
 
     def _build_symbol_frame(self, bars: list[dict]) -> pl.DataFrame:
@@ -144,7 +144,7 @@ class DataSanitizer:
     def _process_symbol(self, conn: Connection, symbol: str) -> tuple[bool, dict]:
         last_sync = get_last_sync_date(conn, self.cleaning_audit_log, symbol)
         start_date = (last_sync + timedelta(days=1)) if last_sync else None
-        df_raw = self.fetch_symbol_bars_1d(symbol, start_date)
+        df_raw = self.fetch_symbol_bars_1d(conn, symbol, start_date)
 
         if df_raw.is_empty():
             LOGGER.info("Aucune donnée pour %s après %s", symbol, start_date)
@@ -152,7 +152,7 @@ class DataSanitizer:
 
         window_start = df_raw['date'][0]
         window_end = df_raw['date'][-1]
-        calendar = self.load_spy_calendar(window_start, window_end)
+        calendar = self.load_spy_calendar(conn, window_start, window_end)
         prev_close = get_prev_close_before(conn, self.stock_bars_daily, symbol, window_start)
         df_aligned, missing_count = self.sanitize_and_align(df_raw, calendar, prev_close)
         df_features, anomaly_count = self.detect_anomalies(df_aligned)
@@ -167,32 +167,35 @@ class DataSanitizer:
         )
 
     # ---------- Calendrier SPY ----------
-    def _to_ny_date(self, ts_str: str) -> date:
-        dt_utc = dtparser.isoparse(ts_str)
-        if dt_utc.tzinfo is None:
-            dt_utc = dt_utc.replace(tzinfo=pytz.UTC)
-        dt_ny = dt_utc.astimezone(self.tz_ny)
+    def _to_ny_date(self, ts_value: date | datetime | str) -> date:
+        if isinstance(ts_value, date) and not isinstance(ts_value, datetime):
+            return ts_value
+
+        dt_value = ts_value if isinstance(ts_value, datetime) else dtparser.isoparse(ts_value)
+        if dt_value.tzinfo is None:
+            dt_ny = self.tz_ny.localize(dt_value)
+        else:
+            dt_ny = dt_value.astimezone(self.tz_ny)
         return dt_ny.date()
 
-    def load_spy_calendar(self, start: date, end: date) -> pl.DataFrame:
+    def load_spy_calendar(self, conn: Connection, start: date, end: date) -> pl.DataFrame:
         """Construit le calendrier RTH via SPY pour [start, end]. Mis en cache au sein de l'instance."""
         if self._spy_calendar_cache is not None:
             if self._covers_date_range(self._spy_calendar_cache, start, end):
                 return self._slice_cached_calendar(self._spy_calendar_cache, start, end)
 
         fetch_start = start - timedelta(days=SPY_FETCH_PADDING_DAYS)
-        dates = self._fetch_calendar_dates(fetch_start)
+        dates = self._fetch_calendar_dates(conn, fetch_start)
         if not dates or max(dates) < end or min(dates) > start:
-            dates = self._fetch_calendar_dates(None)
+            dates = self._fetch_calendar_dates(conn, None)
 
         cal_df = pl.DataFrame({'date': sorted([d for d in dates if start <= d <= end])})
         self._spy_calendar_cache = cal_df
         return cal_df
 
-    # ---------- Fetch Alpaca 1D ----------
-    def fetch_symbol_bars_1d(self, symbol: str, start: Optional[date]) -> pl.DataFrame:
-        start_str = start.isoformat() if start else None
-        bars = fetch_bars(symbol, TimeFrame.ONE_DAY.api_value, start_str)
+    # ---------- Fetch DB 1D ----------
+    def fetch_symbol_bars_1d(self, conn: Connection, symbol: str, start: Optional[date]) -> pl.DataFrame:
+        bars = get_stock_bars(conn, self.stock_bars, symbol, TimeFrame.ONE_DAY.db_value, start)
         return self._build_symbol_frame(bars)
 
     # ---------- Alignement & features ----------

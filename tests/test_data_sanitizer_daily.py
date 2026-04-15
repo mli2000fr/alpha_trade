@@ -1,9 +1,12 @@
-from datetime import date
+from datetime import date, datetime
+from typing import cast
 
 import polars as pl
 import pytest
 import pytz
+from sqlalchemy.engine import Connection
 
+from dataIntegrityEngine import data_sanitizer_daily
 from dataIntegrityEngine.data_sanitizer_daily import DataSanitizer
 
 
@@ -17,6 +20,39 @@ def sanitizer() -> DataSanitizer:
 
 def test_to_ny_date_handles_utc_conversion(sanitizer: DataSanitizer) -> None:
     assert sanitizer._to_ny_date("2024-01-02T01:00:00Z") == date(2024, 1, 1)
+
+
+def test_to_ny_date_handles_naive_new_york_db_timestamp(sanitizer: DataSanitizer) -> None:
+    assert sanitizer._to_ny_date(datetime(2024, 1, 2, 0, 0, 0)) == date(2024, 1, 2)
+
+
+def test_fetch_symbol_bars_1d_reads_from_stock_bars(monkeypatch, sanitizer: DataSanitizer) -> None:
+    calls: list[tuple[object, object, str, str, date | None]] = []
+    sanitizer.stock_bars = object()
+
+    monkeypatch.setattr(
+        data_sanitizer_daily,
+        "get_stock_bars",
+        lambda conn, stock_bars, symbol, timeframe, start: calls.append((conn, stock_bars, symbol, timeframe, start)) or [
+            {
+                "t": datetime(2024, 1, 2, 0, 0, 0),
+                "o": 100.0,
+                "h": 101.0,
+                "l": 99.0,
+                "c": 100.5,
+                "v": 1_500,
+                "vw": 100.25,
+            }
+        ],
+    )
+
+    conn = cast(Connection, object())
+    df = sanitizer.fetch_symbol_bars_1d(conn, "AAPL", date(2024, 1, 2))
+
+    assert calls == [(conn, sanitizer.stock_bars, "AAPL", "1D", date(2024, 1, 2))]
+    assert df["date"].to_list() == [date(2024, 1, 2)]
+    assert df["close"].to_list() == [100.5]
+    assert df["is_filled"].to_list() == [False]
 
 
 def test_sanitize_and_align_forward_fills_missing_days(sanitizer: DataSanitizer) -> None:

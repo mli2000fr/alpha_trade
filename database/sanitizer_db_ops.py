@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, time
 from typing import Optional
 
 import polars as pl
@@ -42,6 +42,72 @@ def _build_stock_bars_daily_records(symbol: str, df: pl.DataFrame) -> list[dict]
     ]).to_dicts()
 
 
+def _build_mysql_update_cols(table, insert_stmt, record_keys: set[str], key_columns: set[str]) -> dict:
+    update_cols = {
+        column.name: insert_stmt.inserted[column.name]
+        for column in table.columns
+        if column.name in record_keys and column.name not in key_columns
+    }
+    if 'last_updated' in table.c and 'last_updated' not in key_columns:
+        update_cols['last_updated'] = func.current_timestamp()
+    return update_cols
+
+
+def _coerce_start_timestamp(start: Optional[date | datetime]) -> Optional[datetime]:
+    if start is None:
+        return None
+    if isinstance(start, datetime):
+        return start
+    return datetime.combine(start, time.min)
+
+
+def get_stock_bars(
+    conn: Connection,
+    stock_bars,
+    symbol: str,
+    timeframe: str,
+    start: Optional[date | datetime] = None,
+) -> list[dict]:
+    """Retourne les bars `stock_bars` triés par timestamp au format attendu par le pipeline."""
+    start_ts = _coerce_start_timestamp(start)
+    q = (
+        select(
+            stock_bars.c.timestamp.label('t'),
+            stock_bars.c.open_price.label('o'),
+            stock_bars.c.high_price.label('h'),
+            stock_bars.c.low_price.label('l'),
+            stock_bars.c.close_price.label('c'),
+            stock_bars.c.volume.label('v'),
+            stock_bars.c.trade_count.label('n'),
+            stock_bars.c.vwa_price.label('vw'),
+        )
+        .where(
+            and_(
+                stock_bars.c.symbol == symbol,
+                stock_bars.c.timeframe == timeframe,
+            )
+        )
+        .order_by(stock_bars.c.timestamp.asc())
+    )
+    if start_ts is not None:
+        q = q.where(stock_bars.c.timestamp >= start_ts)
+
+    rows = conn.execute(q).mappings().all()
+    return [
+        {
+            't': row['t'],
+            'o': float(row['o']),
+            'h': float(row['h']),
+            'l': float(row['l']),
+            'c': float(row['c']),
+            'v': int(row['v']),
+            'n': int(row['n']) if row['n'] is not None else 0,
+            'vw': float(row['vw']) if row['vw'] is not None else None,
+        }
+        for row in rows
+    ]
+
+
 def get_last_sync_date(conn: Connection, cleaning_audit_log, symbol: str) -> Optional[date]:
     q = (
         select(cleaning_audit_log.c.last_sync_date)
@@ -74,7 +140,12 @@ def upsert_stock_bars_daily(conn: Connection, stock_bars_daily, symbol: str, df:
 
     records = _build_stock_bars_daily_records(symbol, df)
     ins = mysql_insert(stock_bars_daily).values(records)
-    update_cols = {c.name: ins.inserted[c.name] for c in stock_bars_daily.columns if c.name not in ('symbol', 'date')}
+    update_cols = _build_mysql_update_cols(
+        stock_bars_daily,
+        ins,
+        set(records[0].keys()),
+        {'symbol', 'date'},
+    )
     ondup = ins.on_duplicate_key_update(**update_cols)
     conn.execute(ondup)
     return len(records)
