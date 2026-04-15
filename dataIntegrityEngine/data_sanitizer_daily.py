@@ -19,6 +19,7 @@ from database.sanitizer_db_ops import (
     get_last_sync_date,
     get_prev_close_before,
     get_symbols,
+    sync_audit_to_stock_scores,
     upsert_audit,
     upsert_stock_bars_daily,
 )
@@ -79,6 +80,7 @@ class DataSanitizer:
         self.stock_bars_daily = Table('stock_bars_daily', self.metadata, autoload_with=self.engine)
         self.cleaning_audit_log = Table('cleaning_audit_log', self.metadata, autoload_with=self.engine)
         self.stock_metadata = Table('stock_metadata', self.metadata, autoload_with=self.engine)
+        self.stock_scores = Table('stock_scores', self.metadata, autoload_with=self.engine)
 
     @staticmethod
     def _empty_bar_frame() -> pl.DataFrame:
@@ -146,6 +148,11 @@ class DataSanitizer:
 
     @staticmethod
     def _format_exception_message(exc: Exception) -> str:
+        orig = getattr(exc, 'orig', None)
+        if orig is not None:
+            orig_message = str(orig).strip()
+            if orig_message:
+                return f'{exc.__class__.__name__}: {orig_message}'
         message = str(exc).strip()
         if message:
             return f'{exc.__class__.__name__}: {message}'
@@ -268,8 +275,14 @@ class DataSanitizer:
         tmp = tmp.with_columns([
             prevc.alias('prev_close')
         ])
+        daily_return = (
+            pl.when(pl.col('prev_close').is_null() | (pl.col('prev_close') <= 0))
+            .then(pl.lit(None, dtype=pl.Float64))
+            .otherwise((pl.col('close') / pl.col('prev_close')) - 1.0)
+            .alias('daily_return')
+        )
         tmp = tmp.with_columns([
-            ((pl.col('close') / pl.col('prev_close')) - 1.0).alias('daily_return')
+            daily_return
         ])
 
         ln2 = math.log(2.0)
@@ -327,6 +340,13 @@ class DataSanitizer:
                                 audit_payload,
                             )
                         upsert_audit(conn, self.cleaning_audit_log, symbol, **audit_payload)
+                        sync_audit_to_stock_scores(
+                            conn,
+                            self.stock_scores,
+                            symbol,
+                            audit_payload['missing_days'],
+                            audit_payload['anomaly_count'],
+                        )
                         if was_processed:
                             processed += 1
                     except Exception as e:
@@ -340,6 +360,13 @@ class DataSanitizer:
                             self.cleaning_audit_log,
                             symbol,
                             **failed_payload,
+                        )
+                        sync_audit_to_stock_scores(
+                            conn,
+                            self.stock_scores,
+                            symbol,
+                            failed_payload['missing_days'],
+                            failed_payload['anomaly_count'],
                         )
 
                     if self._should_commit(processed, commit_every):

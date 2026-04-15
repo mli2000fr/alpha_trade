@@ -77,12 +77,13 @@ Le script applique un upsert snapshot sur `stock_scores` : insertion/mise a jour
 import_alpaca_assets.py
 update_sector.py
 
+# une fois par mois
+stock_screener.py
+
 # au quoditien
 import_alpaca_bar.py
 data_sanitizer_daily.py
 
-# une fois par mois
-stock_screener.py
 
 # au quoditien ou par semaine
 stock_swing-select.py

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import polars as pl
 from sqlalchemy import Column, DateTime, Integer, MetaData, Numeric, String, Table, create_engine
@@ -214,6 +214,109 @@ def test_upsert_stock_bars_daily_uses_current_timestamp_for_last_updated(monkeyp
     assert "current_timestamp" in str(update_dict["last_updated"]).lower()
 
 
+def test_upsert_stock_bars_daily_converts_nan_to_none(monkeypatch) -> None:
+    metadata = MetaData()
+    stock_bars_daily = Table(
+        "stock_bars_daily",
+        metadata,
+        Column("symbol", String(10), primary_key=True),
+        Column("date", DateTime, primary_key=True),
+        Column("open", Numeric(20, 8), nullable=False),
+        Column("high", Numeric(20, 8), nullable=False),
+        Column("low", Numeric(20, 8), nullable=False),
+        Column("close", Numeric(20, 8), nullable=False),
+        Column("volume", Integer, nullable=False),
+        Column("adj_close", Numeric(20, 8), nullable=False),
+        Column("vwap", Numeric(20, 8), nullable=True),
+        Column("daily_return", Numeric(20, 8), nullable=True),
+        Column("is_filled", Integer, nullable=False),
+        Column("last_updated", DateTime, nullable=True),
+    )
+    fake_insert = _FakeInsert()
+    fake_conn = _FakeUpsertConnection()
+    monkeypatch.setattr(sanitizer_db_ops, "mysql_insert", lambda table: fake_insert)
+
+    df = pl.DataFrame(
+        {
+            "date": [datetime(2024, 1, 2, 0, 0, 0)],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "adj_close": [100.5],
+            "vwap": [float("nan")],
+            "daily_return": [float("nan")],
+            "is_filled": [False],
+        }
+    )
+
+    sanitizer_db_ops.upsert_stock_bars_daily(
+        cast(Connection, fake_conn),
+        stock_bars_daily,
+        "SPY",
+        df,
+    )
+
+    records = fake_conn.executed[1]
+    assert records[0]["vwap"] is None
+    assert records[0]["daily_return"] is None
+
+
+def test_upsert_stock_bars_daily_converts_inf_to_none_and_logs_warning(monkeypatch, caplog) -> None:
+    metadata = MetaData()
+    stock_bars_daily = Table(
+        "stock_bars_daily",
+        metadata,
+        Column("symbol", String(10), primary_key=True),
+        Column("date", DateTime, primary_key=True),
+        Column("open", Numeric(20, 8), nullable=False),
+        Column("high", Numeric(20, 8), nullable=False),
+        Column("low", Numeric(20, 8), nullable=False),
+        Column("close", Numeric(20, 8), nullable=False),
+        Column("volume", Integer, nullable=False),
+        Column("adj_close", Numeric(20, 8), nullable=False),
+        Column("vwap", Numeric(20, 8), nullable=True),
+        Column("daily_return", Numeric(20, 8), nullable=True),
+        Column("is_filled", Integer, nullable=False),
+        Column("last_updated", DateTime, nullable=True),
+    )
+    fake_insert = _FakeInsert()
+    fake_conn = _FakeUpsertConnection()
+    monkeypatch.setattr(sanitizer_db_ops, "mysql_insert", lambda table: fake_insert)
+
+    df = pl.DataFrame(
+        {
+            "date": [datetime(2024, 1, 2, 0, 0, 0)],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "adj_close": [100.5],
+            "vwap": [float("inf")],
+            "daily_return": [float("-inf")],
+            "is_filled": [False],
+        }
+    )
+
+    with caplog.at_level("WARNING", logger="database.sanitizer_db_ops"):
+        sanitizer_db_ops.upsert_stock_bars_daily(
+            cast(Connection, fake_conn),
+            stock_bars_daily,
+            "SPY",
+            df,
+        )
+
+    records = fake_conn.executed[1]
+    assert records[0]["vwap"] is None
+    assert records[0]["daily_return"] is None
+    assert any(
+        "Valeurs non finies neutralis" in message and "stock_bars_daily" in message
+        for message in caplog.messages
+    )
+
+
 def test_upsert_audit_logs_failed_payload(caplog) -> None:
     metadata = MetaData()
     cleaning_audit_log = Table(
@@ -243,6 +346,93 @@ def test_upsert_audit_logs_failed_payload(caplog) -> None:
         )
 
     assert any("Audit en échec | symbol=AAPL" in message for message in caplog.messages)
+
+
+def test_upsert_audit_truncates_oversized_error_message() -> None:
+    metadata = MetaData()
+    cleaning_audit_log = Table(
+        "cleaning_audit_log",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("symbol", String(10), nullable=False),
+        Column("last_sync_date", DateTime, nullable=True),
+        Column("missing_days_count", Integer, nullable=False),
+        Column("anomaly_count", Integer, nullable=False),
+        Column("status", String(20), nullable=False),
+        Column("error_msg", String(255), nullable=True),
+        Column("updated_at", DateTime, nullable=True),
+    )
+    conn = _FakeAuditConnection(row_id=None)
+
+    sanitizer_db_ops.upsert_audit(
+        cast(Connection, conn),
+        cleaning_audit_log,
+        "AAPL",
+        None,
+        0,
+        0,
+        "failed",
+        "x" * 400,
+    )
+
+    inserted_statement = cast(Any, conn.executed[1])
+    compiled_params = inserted_statement.compile().params
+    assert len(compiled_params["error_msg"]) <= 255
+    assert "truncated" in compiled_params["error_msg"]
+
+
+def test_sync_audit_to_stock_scores_updates_existing_symbol() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    stock_scores = Table(
+        "stock_scores",
+        metadata,
+        Column("symbol", String(10), primary_key=True),
+        Column("missing_days_count", Integer, nullable=False, default=0),
+        Column("anomaly_count", Integer, nullable=False, default=0),
+        Column("last_updated_audit", DateTime, nullable=False),
+    )
+    metadata.create_all(engine)
+
+    initial_ts = datetime(2024, 1, 1, 9, 0, 0)
+    with engine.begin() as conn:
+        conn.execute(
+            stock_scores.insert().values(
+                symbol="AAPL",
+                missing_days_count=1,
+                anomaly_count=1,
+                last_updated_audit=initial_ts,
+            )
+        )
+
+        updated = sanitizer_db_ops.sync_audit_to_stock_scores(conn, stock_scores, "AAPL", 3, 7)
+        row = conn.execute(stock_scores.select().where(stock_scores.c.symbol == "AAPL")).mappings().one()
+
+    assert updated == 1
+    assert row["missing_days_count"] == 3
+    assert row["anomaly_count"] == 7
+    assert row["last_updated_audit"] >= initial_ts
+
+
+def test_sync_audit_to_stock_scores_ignores_missing_symbol() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    stock_scores = Table(
+        "stock_scores",
+        metadata,
+        Column("symbol", String(10), primary_key=True),
+        Column("missing_days_count", Integer, nullable=False, default=0),
+        Column("anomaly_count", Integer, nullable=False, default=0),
+        Column("last_updated_audit", DateTime, nullable=False),
+    )
+    metadata.create_all(engine)
+
+    with engine.begin() as conn:
+        updated = sanitizer_db_ops.sync_audit_to_stock_scores(conn, stock_scores, "MISSING", 2, 5)
+        rows = conn.execute(stock_scores.select()).all()
+
+    assert updated == 0
+    assert rows == []
 
 
 def test_get_failed_audits_returns_recent_failed_rows() -> None:
