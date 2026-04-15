@@ -7,7 +7,7 @@ Task: 實現一個名為 DataSanitizer 的 Python 類，用於處理 12,000 隻�
 
 1. 數據庫結構與連接 (MySQL Schema):
 - 目標表 stock_bars_daily (stock_bars_daily.sql)： 包含字段 symbol, date (PK), open, high, low, close, volume, adj_close (復權價), vwap, daily_return, is_filled (布林值)。
-- 審計表 cleaning_audit_log (cleaning_audit_log.sql)： 包含字段 symbol (PK), last_sync_date, missing_days_count, anomaly_count, status (success/failed), error_msg。
+- 審計表 cleaning_audit_log (cleaning_audit_log.sql)： 包含字段 symbol (PK), last_sync_date, missing_days_count, anomaly_count, status (success/failed)。
 - 要求： 使用 SQLAlchemy 進行數據庫連接管理。
 
 2.核心清洗與對齊邏輯 (Sanitization & Alignment):
@@ -24,7 +24,7 @@ Task: 實現一個名為 DataSanitizer 的 Python 類，用於處理 12,000 隻�
 
 4.斷點續傳與自動化邏輯 (Workflow Control):
 - Sync Check： 在處理每隻股票前，先從 cleaning_audit_log 讀取 last_sync_date。僅抓取並處理該日期之後的數據（增量更新）。
-- 錯誤隔離： 若某一隻股票處理失敗，捕捉 Exception，將錯誤寫入 error_msg 並標記 status='failed'，然後自動處理下一隻股票。
+- 錯誤隔離： 若某一隻股票處理失敗，捕捉 Exception，標記 status='failed'，並將錯誤詳情寫入應用日誌，然後自動處理下一隻股票。
 - 高效寫入： 使用 INSERT INTO ... ON DUPLICATE KEY UPDATE 進行批量寫入 (Bulk Upsert)，防止重複數據報錯。
 
 5.工程實現要求:
@@ -52,7 +52,7 @@ Jours manquants remplis par le close de la veille pour OHLC, volume=0, is_filled
 Calculs: daily_return (persisté), Parkinson, Overnight Gap, RVOL20 (calculés, non persistés).
 Détection anomalies: Rolling MAD (fenêtre 20), seuil 5*MAD et |ret|>2%, comptage.
 Bulk upsert MySQL (ON DUPLICATE KEY UPDATE) dans stock_bars_daily.
-Audit log mis à jour par symbole: last_sync_date, missing_days_count, anomaly_count, status, error_msg.
+Audit log mis à jour par symbole: last_sync_date, missing_days_count, anomaly_count, status.
 Logging et commit groupé toutes les 50 actions, libération mémoire.
 service/alpaca/client.py: force extended_hours='false' pour ne garder que le RTH.
 requirements.txt: ajout sqlalchemy, polars, python-dateutil, pytz.

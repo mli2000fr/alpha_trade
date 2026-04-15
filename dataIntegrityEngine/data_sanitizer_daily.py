@@ -127,13 +127,12 @@ class DataSanitizer:
         ).sort('date').unique(subset=['date'], keep='last')
 
     @staticmethod
-    def _build_audit_payload(last_sync: Optional[date], missing_days: int, anomaly_count: int, status: str, error_msg: Optional[str]) -> dict:
+    def _build_audit_payload(last_sync: Optional[date], missing_days: int, anomaly_count: int, status: str) -> dict:
         return {
             'last_sync': last_sync,
             'missing_days': missing_days,
             'anomaly_count': anomaly_count,
             'status': status,
-            'error_msg': error_msg,
         }
 
     @staticmethod
@@ -176,11 +175,10 @@ class DataSanitizer:
         )
         for audit in failed_audits:
             LOGGER.error(
-                'Audit failed summary | symbol=%s updated_at=%s last_sync=%s error_msg=%s',
+                'Audit failed summary | symbol=%s updated_at=%s last_sync=%s',
                 audit.get('symbol'),
                 audit.get('updated_at'),
                 audit.get('last_sync_date'),
-                audit.get('error_msg'),
             )
 
     def _process_symbol(self, conn: Connection, symbol: str) -> tuple[bool, dict]:
@@ -190,7 +188,7 @@ class DataSanitizer:
 
         if df_raw.is_empty():
             LOGGER.info("Aucune donnée pour %s après %s", symbol, start_date)
-            return False, self._build_audit_payload(last_sync, 0, 0, 'success', None)
+            return False, self._build_audit_payload(last_sync, 0, 0, 'success')
 
         window_start = df_raw['date'][0]
         window_end = df_raw['date'][-1]
@@ -205,7 +203,6 @@ class DataSanitizer:
             missing_count,
             anomaly_count,
             'success',
-            None,
         )
 
     # ---------- Calendrier SPY ----------
@@ -333,12 +330,6 @@ class DataSanitizer:
                     LOGGER.info("Traitement %s/%s: %s", idx, len(symbols), symbol)
                     try:
                         was_processed, audit_payload = self._process_symbol(conn, symbol)
-                        if audit_payload.get('error_msg'):
-                            LOGGER.warning(
-                                "Audit succès avec message d'erreur résiduel | symbol=%s payload=%s",
-                                symbol,
-                                audit_payload,
-                            )
                         upsert_audit(conn, self.cleaning_audit_log, symbol, **audit_payload)
                         sync_audit_to_stock_scores(
                             conn,
@@ -351,9 +342,9 @@ class DataSanitizer:
                             processed += 1
                     except Exception as e:
                         error_message = self._format_exception_message(e)
-                        LOGGER.exception("Echec traitement %s | error_msg=%s", symbol, error_message)
+                        LOGGER.exception("Echec traitement %s | error_detail=%s", symbol, error_message)
                         fallback_last_sync = get_last_sync_date(conn, self.cleaning_audit_log, symbol)
-                        failed_payload = self._build_audit_payload(fallback_last_sync, 0, 0, 'failed', error_message)
+                        failed_payload = self._build_audit_payload(fallback_last_sync, 0, 0, 'failed')
                         LOGGER.error("Persistance audit échec | symbol=%s payload=%s", symbol, failed_payload)
                         upsert_audit(
                             conn,

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, cast
+from typing import cast
 
 import polars as pl
 from sqlalchemy import Column, DateTime, Integer, MetaData, Numeric, String, Table, create_engine
@@ -328,7 +328,6 @@ def test_upsert_audit_logs_failed_payload(caplog) -> None:
         Column("missing_days_count", Integer, nullable=False),
         Column("anomaly_count", Integer, nullable=False),
         Column("status", String(20), nullable=False),
-        Column("error_msg", String(255), nullable=True),
         Column("updated_at", DateTime, nullable=True),
     )
     conn = _FakeAuditConnection(row_id=None)
@@ -342,43 +341,9 @@ def test_upsert_audit_logs_failed_payload(caplog) -> None:
             0,
             0,
             "failed",
-            "ValueError: boom",
         )
 
     assert any("Audit en échec | symbol=AAPL" in message for message in caplog.messages)
-
-
-def test_upsert_audit_truncates_oversized_error_message() -> None:
-    metadata = MetaData()
-    cleaning_audit_log = Table(
-        "cleaning_audit_log",
-        metadata,
-        Column("id", Integer, primary_key=True),
-        Column("symbol", String(10), nullable=False),
-        Column("last_sync_date", DateTime, nullable=True),
-        Column("missing_days_count", Integer, nullable=False),
-        Column("anomaly_count", Integer, nullable=False),
-        Column("status", String(20), nullable=False),
-        Column("error_msg", String(255), nullable=True),
-        Column("updated_at", DateTime, nullable=True),
-    )
-    conn = _FakeAuditConnection(row_id=None)
-
-    sanitizer_db_ops.upsert_audit(
-        cast(Connection, conn),
-        cleaning_audit_log,
-        "AAPL",
-        None,
-        0,
-        0,
-        "failed",
-        "x" * 400,
-    )
-
-    inserted_statement = cast(Any, conn.executed[1])
-    compiled_params = inserted_statement.compile().params
-    assert len(compiled_params["error_msg"]) <= 255
-    assert "truncated" in compiled_params["error_msg"]
 
 
 def test_sync_audit_to_stock_scores_updates_existing_symbol() -> None:
@@ -447,7 +412,6 @@ def test_get_failed_audits_returns_recent_failed_rows() -> None:
         Column("missing_days_count", Integer, nullable=False),
         Column("anomaly_count", Integer, nullable=False),
         Column("status", String(20), nullable=False),
-        Column("error_msg", String(255), nullable=True),
         Column("updated_at", DateTime, nullable=True),
     )
     metadata.create_all(engine)
@@ -463,7 +427,6 @@ def test_get_failed_audits_returns_recent_failed_rows() -> None:
                     "missing_days_count": 0,
                     "anomaly_count": 0,
                     "status": "failed",
-                    "error_msg": "first error",
                     "updated_at": datetime(2024, 1, 1, 10, 0, 0),
                 },
                 {
@@ -473,7 +436,6 @@ def test_get_failed_audits_returns_recent_failed_rows() -> None:
                     "missing_days_count": 0,
                     "anomaly_count": 0,
                     "status": "success",
-                    "error_msg": None,
                     "updated_at": datetime(2024, 1, 2, 10, 0, 0),
                 },
                 {
@@ -483,7 +445,6 @@ def test_get_failed_audits_returns_recent_failed_rows() -> None:
                     "missing_days_count": 0,
                     "anomaly_count": 0,
                     "status": "failed",
-                    "error_msg": "latest error",
                     "updated_at": datetime(2024, 1, 3, 10, 0, 0),
                 },
             ],
@@ -492,6 +453,5 @@ def test_get_failed_audits_returns_recent_failed_rows() -> None:
         failed_audits = get_failed_audits(conn, cleaning_audit_log, limit=10)
 
     assert [audit["symbol"] for audit in failed_audits] == ["CCC", "AAA"]
-    assert failed_audits[0]["error_msg"] == "latest error"
 
 

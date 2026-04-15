@@ -155,7 +155,6 @@ def test_log_failed_audit_summary_logs_failed_rows(monkeypatch, caplog, sanitize
                 "symbol": "AAPL",
                 "updated_at": datetime(2024, 1, 3, 10, 0, 0),
                 "last_sync_date": date(2024, 1, 3),
-                "error_msg": "ValueError: boom",
             }
         ],
     )
@@ -218,7 +217,6 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
             "missing_days": 2,
             "anomaly_count": 4,
             "status": "success",
-            "error_msg": None,
         }),
     )
     monkeypatch.setattr(
@@ -242,7 +240,6 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
             "missing_days": 2,
             "anomaly_count": 4,
             "status": "success",
-            "error_msg": None,
         },
     )]
     assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", 2, 4)]
@@ -286,7 +283,6 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
             "missing_days": 0,
             "anomaly_count": 0,
             "status": "failed",
-            "error_msg": "RuntimeError: boom",
         },
     )]
     assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", 0, 0)]
