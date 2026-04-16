@@ -113,6 +113,27 @@ class AlphaScannerConfig:
     update_batch_size: int = 500
     max_workers: int | None = None
 
+    # --- Composition des facteurs (P1 — poids configurables) -----------------
+    # Remplace les constantes hardcodées 0.5 / 0.3 / 0.2 dans merge_scores().
+    # Pour passer à un schéma IC-weighted, ajustez ces valeurs après avoir calculé
+    # l'Information Coefficient (corrélation rang-facteur → rendement futur 5/10/20j)
+    # via un backtest (ex. vectorbt / zipline).
+    weight_trend_vcp: float = 0.50    # 50 % : moyenne (trend_score + vcp_score)
+    weight_total_score: float = 0.30  # 30 % : score screener (RSI relatif, range historique)
+    weight_rsi: float = 0.20          # 20 % : RSI relatif vs SPY normalisé
+
+    # --- Winsorisation (P1 — protection contre les outliers) -----------------
+    # Percentiles utilisés pour borner les séries avant normalisation min-max.
+    # Valeurs standard : [1 %, 99 %]. Réduire à [2 %, 98 %] si outliers fréquents.
+    winsor_lower_pct: float = 0.01
+    winsor_upper_pct: float = 0.99
+
+    # --- Neutralisation sectorielle (P0) -------------------------------------
+    # Si True, RSI et total_score sont transformés en z-scores intra-secteur
+    # avant la composition du final_score, ce qui élimine le biais de secteur
+    # (ex. titres Energy surreprésentés en bull sectoriel).
+    neutralize_by_sector: bool = True
+
     def __post_init__(self) -> None:
         if self.chunk_size < 1:
             raise ValueError("chunk_size doit être supérieur ou égal à 1.")
@@ -134,6 +155,14 @@ class AlphaScannerConfig:
             raise ValueError("update_batch_size doit être supérieur ou égal à 1.")
         if self.max_workers is not None and self.max_workers < 1:
             raise ValueError("max_workers doit être supérieur ou égal à 1.")
+        total_weight = self.weight_trend_vcp + self.weight_total_score + self.weight_rsi
+        if not np.isclose(total_weight, 1.0, atol=1e-6):
+            raise ValueError(
+                f"La somme des poids facteurs doit être égale à 1.0 "
+                f"(weight_trend_vcp + weight_total_score + weight_rsi = {total_weight:.6f})."
+            )
+        if not 0.0 <= self.winsor_lower_pct < self.winsor_upper_pct <= 1.0:
+            raise ValueError("winsor_lower_pct et winsor_upper_pct doivent respecter 0 ≤ lower < upper ≤ 1.")
 
 
 class AlphaScanner:
@@ -311,29 +340,138 @@ class AlphaScanner:
         return factor_frame.reset_index(drop=True)
 
     def merge_scores(self, computed_df: pd.DataFrame, scores_df: pd.DataFrame) -> pd.DataFrame:
-        """Fusionne facteurs recalculés et scores auxiliaires, avec normalisation 0-1."""
+        """
+        Fusionne facteurs recalculés et scores auxiliaires.
+
+        Normalisation : winsorisation [winsor_lower_pct, winsor_upper_pct] + min-max → [0, 1].
+        Composition   : poids configurables via AlphaScannerConfig (weight_trend_vcp /
+                        weight_total_score / weight_rsi).
+
+        NOTE : La neutralisation sectorielle (cross-sectional z-score) est appliquée
+        APRÈS cet appel, dans _apply_factor_neutralization(), une fois le secteur connu
+        pour l'ensemble de l'univers (après _enrich_and_filter_equities + concat des chunks).
+        """
         if computed_df.empty:
             return pd.DataFrame(columns=FACTOR_COLUMNS + SCORE_COLUMNS + ["normalized_total_score", "normalized_rsi", "raw_final_score", "final_score"])
 
         scores = scores_df.copy() if not scores_df.empty else pd.DataFrame(columns=SCORE_COLUMNS)
         merged = computed_df.merge(scores, on="symbol", how="left", suffixes=("", "_aux"))
-        merged["normalized_total_score"] = self._normalize_zero_one(merged.get("total_score"))
-        merged["normalized_rsi"] = self._normalize_zero_one(merged.get("relative_strength_index"))
+
+        # Winsorisation + normalisation (remplace le min-max pur sensible aux outliers)
+        merged["normalized_total_score"] = self._winsorize_and_normalize(
+            merged.get("total_score"),
+            lower_pct=self.config.winsor_lower_pct,
+            upper_pct=self.config.winsor_upper_pct,
+        )
+        merged["normalized_rsi"] = self._winsorize_and_normalize(
+            merged.get("relative_strength_index"),
+            lower_pct=self.config.winsor_lower_pct,
+            upper_pct=self.config.winsor_upper_pct,
+        )
         merged["sector"] = merged.get("sector").where(merged.get("sector").notna(), "Unknown") if "sector" in merged.columns else "Unknown"
 
-        factor_component = 0.5 * (merged["trend_score"].fillna(0.0) + merged["vcp_score"].fillna(0.0))
+        # Composition multi-facteurs avec poids configurables
+        # vcp_score : (threshold - vol_ratio) / threshold, clipé [0,1].
+        # Un score proche de 1 = contraction de volatilité forte (signal VCP idéal).
+        # Un score proche de 0 = volatilité récente élevée (pas de setup VCP).
+        factor_component = (
+            self.config.weight_trend_vcp
+            * 0.5
+            * (merged["trend_score"].fillna(0.0) + merged["vcp_score"].fillna(0.0))
+        )
         aux_mask = merged[["total_score", "relative_strength_index"]].notna().any(axis=1)
         merged["raw_final_score"] = factor_component
         merged.loc[aux_mask, "raw_final_score"] = (
             factor_component[aux_mask]
-            + 0.3 * merged.loc[aux_mask, "normalized_total_score"].fillna(0.0)
-            + 0.2 * merged.loc[aux_mask, "normalized_rsi"].fillna(0.0)
+            + self.config.weight_total_score * merged.loc[aux_mask, "normalized_total_score"].fillna(0.0)
+            + self.config.weight_rsi * merged.loc[aux_mask, "normalized_rsi"].fillna(0.0)
         )
         merged["final_score"] = merged["raw_final_score"]
         return merged
 
+    def _apply_factor_neutralization(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Neutralisation cross-sectorielle (P0) — appliquée sur l'univers COMPLET
+        après concaténation de tous les chunks, une fois le secteur connu.
+
+        Pour chaque facteur (relative_strength_index, total_score) :
+          1. Calcule le z-score intra-secteur (mean=0, std=1 par secteur)
+          2. Winsorise + normalise en [0, 1]
+          3. Remplace la composante correspondante dans final_score
+
+        Cela élimine le biais sectoriel : un titre Energy surreprésenté en bull
+        sectoriel ne peut plus dominer un titre Tech simplement grâce à son secteur.
+
+        Si neutralize_by_sector=False ou si la colonne sector est absente, retourne df inchangé.
+        """
+        if not self.config.neutralize_by_sector or df.empty:
+            return df
+
+        if "sector" not in df.columns or df["sector"].isna().all():
+            LOGGER.warning(
+                "Neutralisation sectorielle désactivée : colonne sector absente ou entièrement nulle."
+            )
+            return df
+
+        result = df.copy()
+        result["sector"] = result["sector"].fillna("Unknown").astype(str).str.strip().replace("", "Unknown")
+
+        def _intra_sector_zscore(series: pd.Series) -> pd.Series:
+            """Z-score robuste par secteur (ddof=0, fallback 0.0 si std≈0)."""
+            mu = series.mean()
+            sigma = series.std(ddof=0)
+            if sigma < 1e-9:
+                return pd.Series(0.0, index=series.index)
+            return (series - mu) / sigma
+
+        factors_to_neutralize = [
+            col for col in ["relative_strength_index", "total_score"]
+            if col in result.columns and result[col].notna().any()
+        ]
+
+        for col in factors_to_neutralize:
+            z_col = f"{col}_sector_z"
+            result[z_col] = result.groupby("sector")[col].transform(_intra_sector_zscore)
+            result[f"{col}_neutralized"] = self._winsorize_and_normalize(
+                result[z_col],
+                lower_pct=self.config.winsor_lower_pct,
+                upper_pct=self.config.winsor_upper_pct,
+            )
+
+        LOGGER.info(
+            "Neutralisation sectorielle appliquée | univers=%s secteurs=%s facteurs=%s",
+            len(result),
+            result["sector"].nunique(),
+            factors_to_neutralize,
+        )
+
+        # Recomposer final_score avec les composantes neutralisées
+        factor_component = (
+            self.config.weight_trend_vcp
+            * 0.5
+            * (result["trend_score"].fillna(0.0) + result["vcp_score"].fillna(0.0))
+        )
+
+        rsi_neutralized = result.get("relative_strength_index_neutralized")
+        total_neutralized = result.get("total_score_neutralized")
+
+        aux_mask = pd.Series(False, index=result.index)
+        if rsi_neutralized is not None:
+            aux_mask |= rsi_neutralized.notna()
+        if total_neutralized is not None:
+            aux_mask |= total_neutralized.notna()
+
+        result["raw_final_score"] = factor_component
+        if aux_mask.any():
+            result.loc[aux_mask, "raw_final_score"] = (
+                factor_component[aux_mask]
+                + self.config.weight_total_score * (total_neutralized[aux_mask].fillna(0.0) if total_neutralized is not None else 0.0)
+                + self.config.weight_rsi * (rsi_neutralized[aux_mask].fillna(0.0) if rsi_neutralized is not None else 0.0)
+            )
+        result["final_score"] = result["raw_final_score"]
+        return result
+
     def apply_filters(self, merged_df: pd.DataFrame) -> pd.DataFrame:
-        """Applique les filtres qualité marché + qualité table auxiliaire."""
         if merged_df.empty:
             return merged_df.copy()
 
@@ -578,6 +716,12 @@ class AlphaScanner:
 
         merged_candidates = pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
         LOGGER.info("Agrégation terminée | lignes_candidates=%s", len(merged_candidates))
+
+        # Neutralisation cross-sectorielle sur l'univers COMPLET (après concat de tous les chunks).
+        # Cette étape doit impérativement se faire ici et non dans _process_chunk,
+        # car le z-score intra-secteur n'est significatif que sur l'univers entier.
+        merged_candidates = self._apply_factor_neutralization(merged_candidates)
+
         selected = self.rank_and_select(merged_candidates)
         self.update_database(selected, merged_candidates)
 
@@ -799,7 +943,20 @@ class AlphaScanner:
             offset += self.config.chunk_size
 
     @staticmethod
-    def _normalize_zero_one(series: Optional[pd.Series]) -> pd.Series:
+    def _winsorize_and_normalize(
+        series: Optional[pd.Series],
+        lower_pct: float = 0.01,
+        upper_pct: float = 0.99,
+    ) -> pd.Series:
+        """
+        Winsorise [lower_pct, upper_pct] puis normalise en [0, 1] (min-max).
+
+        Remplace le min-max pur (_normalize_zero_one) qui était sensible aux outliers :
+        1 seule valeur extrême compressait tous les autres scores vers 0 ou 1.
+
+        :param lower_pct: Percentile inférieur de winsorisation (défaut 1 %).
+        :param upper_pct: Percentile supérieur de winsorisation (défaut 99 %).
+        """
         if series is None:
             return pd.Series(dtype=float)
 
@@ -811,14 +968,22 @@ class AlphaScanner:
         if non_null.empty:
             return pd.Series(np.nan, index=numeric.index, dtype=float)
 
-        min_value = float(non_null.min())
-        max_value = float(non_null.max())
-        if np.isclose(max_value, min_value):
-            normalized = pd.Series(np.nan, index=numeric.index, dtype=float)
-            normalized.loc[non_null.index] = 0.5
-            return normalized
+        lo = float(non_null.quantile(lower_pct))
+        hi = float(non_null.quantile(upper_pct))
+        winsorized = numeric.clip(lo, hi)
 
-        return ((numeric - min_value) / (max_value - min_value)).clip(0.0, 1.0)
+        if np.isclose(hi, lo):
+            result = pd.Series(np.nan, index=numeric.index, dtype=float)
+            result.loc[non_null.index] = 0.5
+            return result
+
+        return ((winsorized - lo) / (hi - lo)).clip(0.0, 1.0)
+
+    # Alias de compatibilité conservé pour les appelants externes éventuels.
+    @staticmethod
+    def _normalize_zero_one(series: Optional[pd.Series]) -> pd.Series:
+        """Déprécié — utiliser _winsorize_and_normalize à la place."""
+        return AlphaScanner._winsorize_and_normalize(series)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
