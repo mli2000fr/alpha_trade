@@ -1,0 +1,106 @@
+﻿import logging
+from datetime import date, datetime
+
+import torch
+
+from event_sentiment.models import NormalizedNewsArticle
+from event_sentiment.scoring import FinBERTSentimentService
+
+
+class _FakeTensor:
+    def __init__(self, values):
+        self.values = values
+
+    def to(self, device):
+        return self
+
+
+class _FakeTokenizer:
+    def tokenize(self, text: str):
+        return text.split()
+
+    def __call__(self, texts, truncation, max_length, padding, return_tensors):
+        return {
+            "input_ids": _FakeTensor([[101, 102] for _ in texts]),
+            "attention_mask": _FakeTensor([[1, 1] for _ in texts]),
+        }
+
+
+class _FakeModel:
+    def __init__(self) -> None:
+        self.current_device = "cuda"
+        self.config = type("Config", (), {"id2label": {0: "positive", 1: "neutral", 2: "negative"}})()
+
+    def to(self, device):
+        self.current_device = device
+        return self
+
+    def eval(self):
+        return self
+
+    def __call__(self, **kwargs):
+        if self.current_device == "cuda":
+            raise RuntimeError("CUDA error: no kernel image is available for execution on the device")
+        return type("Output", (), {"logits": torch.tensor([[3.0, 1.0, 0.2]])})()
+
+
+def test_finbert_uses_headline_summary_when_content_missing() -> None:
+    svc = FinBERTSentimentService(batch_size=1, max_length=64)
+    article = NormalizedNewsArticle(
+        article_id="alpaca:1",
+        headline="Apple beats estimates",
+        summary="Revenue was above consensus",
+        content=None,
+        source="Reuters",
+        author=None,
+        url=None,
+        published_at_utc=datetime(2026, 1, 1),
+        event_timestamp_utc=datetime(2026, 1, 1),
+        event_timestamp_ny=datetime(2026, 1, 1),
+        effective_trade_date=date(2026, 1, 2),
+        market_session_tag="post_market",
+    )
+    text, strategy = svc._choose_text(article)
+    assert strategy == "headline_summary"
+    assert "Apple beats estimates" in text
+
+
+def test_finbert_falls_back_to_cpu_after_cuda_failure(monkeypatch, caplog) -> None:
+    svc = FinBERTSentimentService(batch_size=1, max_length=64)
+    svc.tokenizer = _FakeTokenizer()
+    svc.model = _FakeModel()
+    svc.device = "cuda"
+    svc.id2label = {0: "positive", 1: "neutral", 2: "negative"}
+
+    monkeypatch.setattr(svc, "_ensure_model_loaded", lambda: None)
+    monkeypatch.setattr(svc, "_get_torch_module", lambda: torch)
+
+    def _fake_load_model_for_device(device: str, force_reload: bool = False) -> None:
+        svc.device = device
+        svc.model.to(device)
+
+    monkeypatch.setattr(svc, "_load_model_for_device", _fake_load_model_for_device)
+
+    article = NormalizedNewsArticle(
+        article_id="alpaca:2",
+        headline="Fed signals dovish pause",
+        summary="Markets rally",
+        content=None,
+        source="Reuters",
+        author=None,
+        url=None,
+        published_at_utc=datetime(2026, 1, 1),
+        event_timestamp_utc=datetime(2026, 1, 1),
+        event_timestamp_ny=datetime(2026, 1, 1),
+        effective_trade_date=date(2026, 1, 2),
+        market_session_tag="post_market",
+    )
+
+    caplog.set_level(logging.WARNING)
+    records = svc.score_articles([article])
+
+    assert len(records) == 1
+    assert svc.device == "cpu"
+    assert records[0].sentiment_label == "positive"
+    assert "device=cpu (fallback after CUDA failure)" in caplog.text
+

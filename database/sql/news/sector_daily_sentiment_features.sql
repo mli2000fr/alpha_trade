@@ -17,3 +17,4 @@ CREATE TABLE IF NOT EXISTS alpha_trade.sector_daily_sentiment_features (
     KEY idx_sector_daily_trade_date (trade_date, sector),
     KEY idx_sector_daily_macro_flag (trade_date, macro_event_flag)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

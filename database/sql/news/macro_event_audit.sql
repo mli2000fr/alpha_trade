@@ -24,3 +24,4 @@ CREATE TABLE IF NOT EXISTS alpha_trade.macro_event_audit (
         FOREIGN KEY (article_id) REFERENCES alpha_trade.news_raw(article_id)
         ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

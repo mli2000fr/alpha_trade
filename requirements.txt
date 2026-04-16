@@ -7,4 +7,7 @@ numpy
 polars
 python-dateutil
 pytz
+pandas-market-calendars
+transformers
+torch
 pytest

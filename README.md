@@ -50,6 +50,34 @@ python -m dataIntegrityEngine.update_sector --limit 100 --sleep-seconds 1.1 --lo
 
 Le script lit les symboles de `stock_metadata` dont `sector` est vide, appelle Finnhub pour chaque symbole, puis met a jour `stock_metadata.sector` avec des logs de progression.
 
+## Pipeline Event Sentiment (module 2)
+
+Le module `event_sentiment` ingere les news fournisseur, aligne chaque evenement sur la bonne date de trading NYSE, applique un scoring FinBERT, enrichit les tickers/secteurs, calcule les macro impacts explicables, puis agrege les features journalieres par ticker et par secteur.
+
+Schemas SQL associes:
+
+- `database/sql/news/news_raw.sql`
+- `database/sql/news/news_sentiment.sql`
+- `database/sql/news/news_ticker_map.sql`
+- `database/sql/news/macro_event_audit.sql`
+- `database/sql/news/ticker_daily_sentiment_features.sql`
+- `database/sql/news/sector_daily_sentiment_features.sql`
+- `database/sql/news/news_ingestion_checkpoint.sql`
+
+Execution:
+
+```powershell
+python -m event_sentiment
+python -m event_sentiment --start-utc 2026-01-01T00:00:00Z --end-utc 2026-01-31T23:59:59Z --symbols AAPL,MSFT,NVDA
+python -m dataIntegrityEngine.event_sentiment_pipeline
+```
+
+Tests cibles du module:
+
+```powershell
+python -m pytest tests/test_event_temporal_alignment.py tests/test_event_macro_rules.py tests/test_event_aggregation.py tests/test_finbert_preprocessor.py
+```
+
 ## Test local rapide (sans DB)
 
 ```powershell
@@ -84,6 +112,8 @@ stock_screener.py
 import_alpaca_bar.py
 data_sanitizer_daily.py
 
-
 # au quoditien ou par semaine
 alpha_scanner.py
+
+# news sentiment
+sentiment_pipeline.py

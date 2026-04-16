@@ -1,0 +1,151 @@
+
+CREATE TABLE IF NOT EXISTS alpha_trade.news_raw (
+    article_id VARCHAR(128) NOT NULL COMMENT 'ID global unique, ex: alpaca:123456789',
+    headline VARCHAR(1000) NOT NULL,
+    summary TEXT NULL,
+    content MEDIUMTEXT NULL,
+    source VARCHAR(100) NOT NULL,
+    author VARCHAR(255) NULL,
+    published_at_utc DATETIME(6) NOT NULL,
+    event_timestamp_utc DATETIME(6) NOT NULL,
+    event_timestamp_ny DATETIME(6) NOT NULL,
+    effective_trade_date DATE NOT NULL,
+    market_session_tag ENUM('pre_market', 'regular', 'post_market', 'non_trading_day') NOT NULL,
+    url VARCHAR(2083) NULL,
+    ingestion_source VARCHAR(50) NOT NULL DEFAULT 'alpaca',
+    dedupe_hash CHAR(64) NOT NULL,
+    is_major_event TINYINT(1) NOT NULL DEFAULT 0,
+    raw_payload JSON NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (article_id),
+    UNIQUE KEY uk_news_raw_source_hash (ingestion_source, dedupe_hash),
+    KEY idx_news_raw_trade_date (effective_trade_date),
+    KEY idx_news_raw_published_utc (published_at_utc),
+    KEY idx_news_raw_session_trade_date (market_session_tag, effective_trade_date),
+    KEY idx_news_raw_source_published (ingestion_source, published_at_utc)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS alpha_trade.news_sentiment (
+    article_id VARCHAR(128) NOT NULL,
+    model_name VARCHAR(100) NOT NULL,
+    model_version VARCHAR(50) NOT NULL,
+    text_strategy ENUM('content_full', 'headline_summary', 'headline_only') NOT NULL,
+    text_hash CHAR(64) NOT NULL,
+    truncated TINYINT(1) NOT NULL DEFAULT 0,
+    max_length_tokens INT NOT NULL,
+    sentiment_label ENUM('positive', 'neutral', 'negative') NOT NULL,
+    positive_score DOUBLE NOT NULL,
+    neutral_score DOUBLE NOT NULL,
+    negative_score DOUBLE NOT NULL,
+    sentiment_confidence DOUBLE NOT NULL,
+    sentiment_net_score DOUBLE NOT NULL,
+    inference_status ENUM('success', 'failed') NOT NULL DEFAULT 'success',
+    error_message TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (article_id),
+    KEY idx_news_sentiment_label (sentiment_label),
+    KEY idx_news_sentiment_net (sentiment_net_score),
+    CONSTRAINT fk_news_sentiment_article
+        FOREIGN KEY (article_id) REFERENCES alpha_trade.news_raw(article_id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS alpha_trade.news_ticker_map (
+    article_id VARCHAR(128) NOT NULL,
+    symbol VARCHAR(100) NOT NULL,
+    sector VARCHAR(100) NULL,
+    sector_source VARCHAR(50) NULL,
+    sector_updated_at DATETIME(6) NULL,
+    is_primary_ticker TINYINT(1) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (article_id, symbol),
+    KEY idx_news_ticker_map_symbol (symbol),
+    KEY idx_news_ticker_map_sector (sector),
+    CONSTRAINT fk_news_ticker_map_article
+        FOREIGN KEY (article_id) REFERENCES alpha_trade.news_raw(article_id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS alpha_trade.macro_event_audit (
+    article_id VARCHAR(128) NOT NULL,
+    trade_date DATE NOT NULL,
+    sector VARCHAR(100) NOT NULL,
+    macro_event_type ENUM(
+        'monetary_policy',
+        'geopolitics',
+        'inflation_employment',
+        'fiscal_policy',
+        'energy_commodities'
+    ) NOT NULL,
+    impact_direction ENUM('positive', 'neutral', 'negative') NOT NULL,
+    impact_score DOUBLE NOT NULL,
+    macro_event_intensity DOUBLE NOT NULL,
+    rule_version VARCHAR(30) NOT NULL,
+    rule_hits JSON NULL,
+    explanation_text TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (article_id, sector),
+    KEY idx_macro_event_trade_date_sector (trade_date, sector),
+    KEY idx_macro_event_type_trade_date (macro_event_type, trade_date),
+    CONSTRAINT fk_macro_event_article
+        FOREIGN KEY (article_id) REFERENCES alpha_trade.news_raw(article_id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS alpha_trade.ticker_daily_sentiment_features (
+    symbol VARCHAR(100) NOT NULL,
+    trade_date DATE NOT NULL,
+    news_count_1d INT NOT NULL DEFAULT 0,
+    sentiment_pos_mean_1d DOUBLE NOT NULL DEFAULT 0,
+    sentiment_neg_mean_1d DOUBLE NOT NULL DEFAULT 0,
+    sentiment_neu_mean_1d DOUBLE NOT NULL DEFAULT 0,
+    sentiment_net_mean_1d DOUBLE NOT NULL DEFAULT 0,
+    sentiment_net_sum_1d DOUBLE NOT NULL DEFAULT 0,
+    sentiment_confidence_mean_1d DOUBLE NOT NULL DEFAULT 0,
+    major_event_flag TINYINT(1) NOT NULL DEFAULT 0,
+    source_diversity_count INT NOT NULL DEFAULT 0,
+    after_close_news_count INT NOT NULL DEFAULT 0,
+    pre_market_news_count INT NOT NULL DEFAULT 0,
+    latest_event_timestamp_ny DATETIME(6) NULL,
+    feature_version VARCHAR(30) NOT NULL DEFAULT 'v1',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (symbol, trade_date),
+    KEY idx_ticker_daily_trade_date (trade_date, symbol),
+    KEY idx_ticker_daily_major_event (trade_date, major_event_flag)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS alpha_trade.sector_daily_sentiment_features (
+    sector VARCHAR(100) NOT NULL,
+    trade_date DATE NOT NULL,
+    sector_news_count_1d INT NOT NULL DEFAULT 0,
+    sector_sentiment_net_mean_1d DOUBLE NOT NULL DEFAULT 0,
+    sector_sentiment_net_sum_1d DOUBLE NOT NULL DEFAULT 0,
+    sector_positive_ratio DOUBLE NOT NULL DEFAULT 0,
+    sector_negative_ratio DOUBLE NOT NULL DEFAULT 0,
+    sector_impact_score DOUBLE NOT NULL DEFAULT 0,
+    macro_event_flag TINYINT(1) NOT NULL DEFAULT 0,
+    macro_event_intensity DOUBLE NOT NULL DEFAULT 0,
+    latest_event_timestamp_ny DATETIME(6) NULL,
+    feature_version VARCHAR(30) NOT NULL DEFAULT 'v1',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (sector, trade_date),
+    KEY idx_sector_daily_trade_date (trade_date, sector),
+    KEY idx_sector_daily_macro_flag (trade_date, macro_event_flag)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS alpha_trade.news_ingestion_checkpoint (
+    source_name VARCHAR(50) NOT NULL,
+    watermark_published_at_utc DATETIME(6) NULL,
+    next_page_token VARCHAR(255) NULL,
+    status ENUM('idle', 'running', 'success', 'failed') NOT NULL DEFAULT 'idle',
+    last_error TEXT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (source_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

@@ -20,3 +20,4 @@ CREATE TABLE IF NOT EXISTS alpha_trade.ticker_daily_sentiment_features (
     KEY idx_ticker_daily_trade_date (trade_date, symbol),
     KEY idx_ticker_daily_major_event (trade_date, major_event_flag)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
