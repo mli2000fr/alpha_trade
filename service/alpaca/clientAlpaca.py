@@ -81,8 +81,13 @@ def fetch_bars(
     endpoint = ALPACA_BARS_ENDPOINT_TEMPLATE.format(symbol=symbol)
     params: dict[str, Any] = {
         "timeframe": timeframe,
+        # adjustment=all : Alpaca retourne des prix OHLCV entièrement ajustés
+        # (splits + dividendes). En conséquence, close_price = adj_close = prix ajusté.
+        # Si le raw close est nécessaire, utiliser adjustment=raw dans un appel séparé.
         "adjustment": "all",
-        # "extended_hours": "false",
+        # RTH uniquement (09:30–16:00 EST) : exclure les données pre/post-market.
+        "feed": "sip",
+        "extended_hours": "false",
         "limit": 5000,
         "start": _normalize_start_date(start_date),
     }

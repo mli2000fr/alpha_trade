@@ -1,5 +1,5 @@
-from datetime import UTC, datetime, timedelta
-from typing import Iterator
+from datetime import UTC, date, datetime, timedelta
+from typing import Iterator, Optional
 
 import pandas as pd
 from sqlalchemy import MetaData, Table, bindparam, text
@@ -74,48 +74,70 @@ def iter_symbol_chunks(engine: Engine, chunk_size: int, timeframe: str) -> Itera
 		offset += chunk_size
 
 
-def load_prices_for_chunk(engine: Engine, symbols: list[str], config: ScreenerConfig) -> pd.DataFrame:
+def load_prices_for_chunk(
+	engine: Engine,
+	symbols: list[str],
+	config: ScreenerConfig,
+	as_of_date: Optional[date] = None,
+) -> pd.DataFrame:
+	"""
+	Charge l'historique OHLCV pour un chunk de symboles.
+
+	:param as_of_date: Borne supérieure point-in-time (timestamp <= as_of_date).
+	    Si None, aucune borne supérieure n'est appliquée (mode live).
+	    À TOUJOURS spécifier en backtest pour éviter le look-ahead bias.
+	"""
 	if not symbols:
 		return pd.DataFrame()
 
-	cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=365 * config.lookback_history_years + 30)
-	stmt = text(
-		"""
+	ref_dt = datetime.combine(as_of_date, datetime.min.time()) if as_of_date else datetime.now(UTC).replace(tzinfo=None)
+	cutoff_lower = ref_dt - timedelta(days=365 * config.lookback_history_years + 30)
+
+	query = """
 		SELECT symbol, `timestamp`, close_price, high_price, low_price, volume
 		FROM stock_bars
 		WHERE timeframe = :timeframe
 		  AND symbol IN :symbols
-		  AND `timestamp` >= :cutoff
-		ORDER BY symbol, `timestamp`
-		"""
-	).bindparams(bindparam("symbols", expanding=True))
+		  AND `timestamp` >= :cutoff_lower
+	"""
+	params: dict = {
+		"timeframe": config.timeframe,
+		"symbols": symbols,
+		"cutoff_lower": cutoff_lower,
+	}
+	if as_of_date is not None:
+		query += "  AND `timestamp` <= :cutoff_upper\n"
+		params["cutoff_upper"] = ref_dt
 
-	return pd.read_sql_query(
-		stmt,
-		engine,
-		params={
-			"timeframe": config.timeframe,
-			"symbols": symbols,
-			"cutoff": cutoff,
-		},
-	)
+	query += "ORDER BY symbol, `timestamp`"
+	stmt = text(query).bindparams(bindparam("symbols", expanding=True))
+
+	return pd.read_sql_query(stmt, engine, params=params)
 
 
-def load_spy_return_6m(engine: Engine, config: ScreenerConfig) -> float:
-	stmt = text(
-		"""
+def load_spy_return_6m(
+	engine: Engine,
+	config: ScreenerConfig,
+	as_of_date: Optional[date] = None,
+) -> float:
+	"""
+	Calcule le rendement SPY sur la fenêtre relative (lookback_relative_days).
+
+	:param as_of_date: Borne point-in-time. Si None, on prend le dernier bar disponible.
+	"""
+	query = """
 		SELECT `timestamp`, close_price
 		FROM stock_bars
 		WHERE symbol = :symbol
 		  AND timeframe = :timeframe
-		ORDER BY `timestamp`
-		"""
-	)
-	spy_df = pd.read_sql_query(
-		stmt,
-		engine,
-		params={"symbol": config.benchmark_symbol, "timeframe": config.timeframe},
-	)
+	"""
+	params: dict = {"symbol": config.benchmark_symbol, "timeframe": config.timeframe}
+	if as_of_date is not None:
+		query += "  AND `timestamp` <= :cutoff_upper\n"
+		params["cutoff_upper"] = datetime.combine(as_of_date, datetime.min.time())
+
+	query += "ORDER BY `timestamp`"
+	spy_df = pd.read_sql_query(text(query), engine, params=params)
 	if spy_df.empty:
 		raise RuntimeError(f"Aucune donnée benchmark pour {config.benchmark_symbol}.")
 

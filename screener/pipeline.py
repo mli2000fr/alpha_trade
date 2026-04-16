@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -27,13 +28,32 @@ def compute_scores_from_prices(
     prices_df: pd.DataFrame,
     spy_return_6m: float,
     config: ScreenerConfig,
+    as_of_date: Optional[date] = None,
 ) -> pd.DataFrame:
+    """
+    Calcule les scores screener à partir des données de prix.
+
+    :param prices_df: DataFrame multi-symboles avec colonnes [symbol, timestamp, close_price, …]
+    :param spy_return_6m: Rendement SPY sur la fenêtre relative (précalculé, borné à as_of_date)
+    :param config: Paramètres screener
+    :param as_of_date: Date de référence pour l'évaluation (point-in-time).
+        Toutes les données postérieures à cette date sont EXCLUES afin d'éviter
+        tout look-ahead bias en backtest. Si None, on utilise le timestamp max disponible.
+    """
     if prices_df.empty:
         return _empty_result()
 
     prices = prices_df.copy()
     prices["timestamp"] = pd.to_datetime(prices["timestamp"], utc=False)
     prices = prices.sort_values(["symbol", "timestamp"])
+
+    # --- Point-in-time : borner à as_of_date pour éviter le look-ahead bias ---
+    if as_of_date is not None:
+        cutoff_ts = pd.Timestamp(as_of_date)
+        prices = prices[prices["timestamp"] <= cutoff_ts].copy()
+        if prices.empty:
+            return _empty_result()
+
     prices["dollar_volume"] = prices["volume"].astype(float) * prices["close_price"].astype(float)
 
     # Passage 1 - Liquidite moyenne sur les N dernieres barres.
@@ -50,6 +70,7 @@ def compute_scores_from_prices(
     prices_p1 = prices[prices["symbol"].isin(p1["symbol"])].copy()
 
     # Passage 2 - Relative strength versus SPY sur 6 mois.
+    # latest_ts est borné à as_of_date (déjà filtré plus haut).
     latest_ts = prices_p1["timestamp"].max()
     rel_cutoff = latest_ts - pd.Timedelta(days=config.lookback_relative_days)
     rel_window = prices_p1[prices_p1["timestamp"] >= rel_cutoff].copy()
@@ -80,7 +101,10 @@ def compute_scores_from_prices(
     if p2.empty:
         return _empty_result()
 
-    # Passage 3 - Position dans le range historique 10 ans.
+    # Passage 3 - Position dans le range historique (borné à as_of_date).
+    # IMPORTANT — point-in-time correctness :
+    #   prices_p2 est déjà filtré à timestamp <= as_of_date (filtrage en tête de fonction).
+    #   hist_high / hist_low ne peuvent donc pas inclure de données futures → pas de look-ahead bias.
     prices_p2 = prices[prices["symbol"].isin(p2["symbol"])].copy()
     hist_agg = prices_p2.groupby("symbol", as_index=False).agg(
         hist_low=("low_price", "min"),

@@ -118,6 +118,13 @@ class DataSanitizer:
         if not bars:
             return self._empty_bar_frame()
 
+        # Note sur adj_close : l'API Alpaca est appelée avec adjustment="all",
+        # ce qui signifie que les champs OHLCV retournés (bar['c']) sont DÉJÀ
+        # entièrement ajustés (splits + dividendes). Par conséquent,
+        #   close     = prix ajusté (utilisé pour les calculs de rendements)
+        #   adj_close = identique à close (convention maintenue pour compatibilité schema)
+        # Si un prix RAW est nécessaire ultérieurement, appeler fetch_bars avec
+        # adjustment="raw" et stocker dans une colonne raw_close distincte.
         return pl.DataFrame(
             {
                 'date': [self._to_ny_date(bar['t']) for bar in bars],
@@ -126,7 +133,7 @@ class DataSanitizer:
                 'low': [bar['l'] for bar in bars],
                 'close': [bar['c'] for bar in bars],
                 'volume': [bar['v'] for bar in bars],
-                'adj_close': [bar.get('c') for bar in bars],
+                'adj_close': [bar['c'] for bar in bars],  # = close car adjustment=all
                 'vwap': [bar.get('vw') for bar in bars],
                 'is_filled': [False] * len(bars),
             }
@@ -203,7 +210,7 @@ class DataSanitizer:
         df_aligned, missing_count = self.sanitize_and_align(df_raw, calendar, prev_close)
         df_features, anomaly_count = self.detect_anomalies(df_aligned)
 
-        upsert_stock_bars_daily(conn, self.stock_bars_daily, symbol, df_features)
+        upsert_stock_bars_daily(conn, self.stock_bars_daily, symbol, df_features, data_adjustment="all")
         return True, self._build_audit_payload(
             self._last_frame_date(df_features) or last_sync,
             missing_count,

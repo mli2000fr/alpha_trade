@@ -1,0 +1,108 @@
+🏦 Audit Quantitatif — Alpha Trade
+Standard Two Sigma / Citadel · 審查報告
+Verdict global : Maturité intermédiaire-avancée. Architecture modulaire propre, FinBERT intégré, concurrence gérée, dataclasses frozen. Mais des lacunes critiques empêchent une mise en production : absence totale de Risk Management, look-ahead bias dans les facteurs, adj_close non ajusté, et absence de CI/CD.
+
+1. 🏗️ Architecture Design
+✅ Points forts
+Séparation claire des couches : screener / selector / event_sentiment / dataIntegrityEngine
+AlphaScannerConfig en frozen=True dataclass avec __post_init__ validation
+Injection de l'engine SQLAlchemy dans AlphaScanner.__init__
+❌ Problèmes critiques
+Sévérité	Problème	Correction
+P0	common/utils.py : US_MARKET_HOLIDAYS hardcodé avec seulement 4 jours fixes — MLK, Presidents' Day, Good Friday, Memorial Day, Labor Day, Thanksgiving manquants	Remplacer par pandas_market_calendars (déjà dans requirements.txt mais jamais utilisé) et partager trading_calendar.py depuis event_sentiment/ vers common/
+P1	DataSanitizer et _process_chunk du screener appellent get_sqlalchemy_engine() directement dans les workers — couplage fort, anti-pattern dans un contexte multi-process	Standardiser : tous les composants reçoivent un Engine en paramètre
+P1	DataSanitizer._reflect_tables() appelé dans __init__ : introspection DDL à chaque instanciation → overhead	Déclarer les Table en statique dans database/ et les importer
+P2	Aucun Protocol / ABC pour DataFetcher, ScoringEngine, RiskChecker → mocking difficile, remplacement risqué	Définir des Protocol dans un module core/interfaces.py
+2. 🗄️ Data Layer
+✅ Points forts
+pool_pre_ping=True, pool_recycle=3600
+Upsert en batch (chunksize=1000)
+Polars pour les transformations lourdes dans le sanitizer
+❌ Problèmes critiques
+Sévérité	Problème	Correction
+P0	adj_close non ajusté : adj_close est une simple copie de close. Aucun ajustement splits/dividendes → tous les rendements historiques sont biaisés	Utiliser l'endpoint Alpaca qui fournit un adj_close pré-ajusté, ou appliquer un facteur cumulatif
+P0	Look-ahead bias (backtest) : historical_range_score dans screener/pipeline.py calcule hist_high/hist_low sur tout l'historique y compris les données post-date-de-référence	Borner explicitement à timestamp <= as_of_date
+P1	Pas de pool_size explicite : avec ProcessPoolExecutor, chaque processus crée son propre engine → N workers × 5 connexions par défaut	Ajouter pool_size=2, max_overflow=3 + documenter le modèle multi-process
+P1	Pas de versioning des données : impossible de distinguer les versions après re-ingestion	Ajouter colonnes ingested_at TIMESTAMP, source_version VARCHAR dans stock_bars_daily
+3. 📊 Factor Engineering & Signal Generation
+✅ Points forts
+7 critères Minervini implémentés dans trend_score
+VCP score basé sur ratio de volatilité (contraction de range)
+Neutralisation sectorielle avec plafond round-robin
+❌ Problèmes critiques
+Sévérité	Problème	Correction
+P0	Facteurs non-neutralisés cross-section : RSI et historical_range_score non neutralisés par secteur → les titres dans un secteur en bull systématique dominent	Calculer des z-scores cross-sectionnels par secteur avant composition
+P1	Winsorisation absente : _normalize_zero_one() utilise min-max pur → 1 outlier suffit à comprimer tous les scores vers 0	Winsoriser au 1e–99e percentile avant normalisation, ou utiliser un ranking percentile
+P1	Poids hardcodés sans validation IC : final_score = 0.5*(trend+vcp) + 0.3*total_score + 0.2*rsi — arbitraire	Calculer l'IC rolling (corrélation rang facteur → rendement futur 5/10/20j) et utiliser l'IC-weighted combination
+P1	vcp_score non validé empiriquement : pondéré à 50% sans backtest de corrélation	Valider via backtest avant de lui accorder ce poids
+4. ⚠️ Risk Management — MODULE ABSENT (Gap critique P0)
+Aucun module de gestion du risque n'existe dans le projet. Pour un système Swing Trade, c'est le gap le plus dangereux en production.
+
+Ce qui manque absolument
+Composant	Description
+risk/position_sizer.py	ATR-based sizing, Kelly criterion (½-Kelly fraction)
+risk/portfolio_risk.py	VaR paramétrique + historique, CVaR, matrice de corrélation
+risk/drawdown_guard.py	Circuit-breaker si drawdown portefeuille > seuil configurable
+Corrélation inter-positions	La neutralisation sectorielle (30% cap) est une proxy grossière
+risk/
+├── __init__.py
+├── position_sizer.py     # ATR stop, Kelly sizing
+├── portfolio_risk.py     # VaR, CVaR, correlation matrix
+├── drawdown_guard.py     # Circuit-breaker
+└── models.py             # RiskReport dataclass
+5. 📰 Event Sentiment Pipeline
+✅ Points forts
+FinBERT avec fallback CPU automatique
+Stratégie adaptative : content > summary > headline
+Hash SHA-256 pour déduplication
+Versioning model_version + feature_version
+❌ Problèmes critiques
+Sévérité	Problème	Correction
+P0	Fusion sentiment → prix absente : aggregation.py produit des scores mais ils ne sont jamais consommés par AlphaScanner	Créer signal_aggregator.py qui merge scores de sentiment (par symbole/secteur) avec les scores quantitatifs screener/selector
+P1	macro_rules.py : break après la première règle matchée — un article "Fed rate hike + oil spike" ne génère qu'un impact monetary_policy	Retirer le break, implémenter scoring additif avec multi-match
+P1	Intensité macro arbitraire : `0.25keyword_hits + 0.35	net_score
+P1	Double tokenisation : tokenizer.tokenize(text) appelé pour compter les tokens avant inférence, puis re-tokenisé dans _infer_probabilities	Calculer token_count depuis les tenseurs encodés
+6. 🔧 Engineering Quality
+✅ Points forts
+~18 fichiers de tests
+Logging structuré avec paramètres nommés
+ProcessPoolExecutor + backpressure dans le screener
+❌ Problèmes critiques
+Sévérité	Problème	Correction
+P0	Absence de CI/CD : aucun .github/workflows/, Makefile, tox.ini — les tests ne tournent jamais automatiquement	Ajouter GitHub Actions : ruff + mypy + pytest --cov ≥ 80%
+P1	Pas de type-checking : aucun mypy.ini / py.typed — alpha_scanner.py passe Optional[pd.Series] à _normalize_zero_one() sans garde-fou	Activer mypy --strict progressivement, commencer par selector/
+P1	logging.basicConfig(force=True) dans DataSanitizer.__init__ : écrase la configuration de logging de tout l'appelant	Supprimer du constructeur — la config logging appartient au main()
+P1	Absence de monitoring : un run screener qui produit 0 candidats passe silencieusement	Intégrer structlog → sink externe (Datadog / Grafana Loki) + métriques clés
+P2	Pas de pyproject.toml : le projet n'est pas installable, conftest.py manipule sys.path	Migrer vers pyproject.toml avec [tool.setuptools.packages.find]
+P2	pytest.ini minimal : pas de testpaths, pas de --cov	Ajouter addopts = --cov=. --cov-report=term-missing --cov-fail-under=75
+7. 🚀 Path to Production — Plan Priorisé
+Tableau des priorités
+Priorité	Item	Effort estimé
+🔴 P0	Corriger adj_close (vrais ajustements splits/dividendes Alpaca)	1 jour
+🔴 P0	Corriger look-ahead bias dans historical_range_score	½ jour
+🔴 P0	Remplacer calendrier common/utils.py par pandas_market_calendars	½ jour
+🔴 P0	Créer module risk/ (position sizer ATR + drawdown guard)	3 jours
+🔴 P0	Retirer break dans macro_rules.py	1 heure
+🟠 P1	CI/CD GitHub Actions (ruff + mypy + pytest --cov)	1 jour
+🟠 P1	Winsorisation facteurs + IC-weighted combination	2 jours
+🟠 P1	signal_aggregator.py : fusion sentiment → screener	2 jours
+🟠 P1	Pool sizing explicite + documentation multi-process	½ jour
+🟠 P1	Supprimer basicConfig(force=True) du DataSanitizer	1 heure
+🟡 P2	pyproject.toml + supprimer sys.path dans conftest	1 jour
+🟡 P2	Protocol / ABC dans core/interfaces.py	2 jours
+🟡 P2	Monitoring structlog + métriques clés	2 jours
+🔜 Prochain module recommandé : Execution Engine
+execution/
+├── __init__.py
+├── order_manager.py    # Alpaca Trading API (service/alpaca/ existe déjà)
+├── fill_tracker.py     # Suivi fills, slippage vs VWAP
+└── rebalancer.py       # Diff portefeuille cible → ordres
+📦 Stack recommandé à introduire
+Outil	Usage
+ruff	Linter + formatter (remplace flake8 + black + isort)
+mypy --strict	Type safety statique
+structlog	Logging structuré JSON pour production
+alembic	Migrations DB versionnées
+optuna / scipy.optimize	Calibration poids facteurs
+vectorbt / zipline-reloaded	Backtest pour validation IC facteurs
+Rapport généré le 2026-04-16 · Standard de référence : Two Sigma Research Engineering / Citadel Securities Quant

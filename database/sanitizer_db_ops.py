@@ -1,6 +1,6 @@
 import logging
 import math
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from typing import Optional
 
 import polars as pl
@@ -31,7 +31,18 @@ def _active_symbol_clause(stock_metadata):
     )
 
 
-def _build_stock_bars_daily_records(symbol: str, df: pl.DataFrame) -> list[dict]:
+def _build_stock_bars_daily_records(
+    symbol: str,
+    df: pl.DataFrame,
+    data_adjustment: str = "all",
+) -> list[dict]:
+    """
+    Construit les enregistrements à upsert dans stock_bars_daily.
+
+    :param data_adjustment: Paramètre adjustment Alpaca utilisé lors de l'ingestion
+        ('raw' | 'split' | 'dividend' | 'all'). Persisté pour traçabilité (versioning).
+    """
+    ingested_at = datetime.now(timezone.utc).replace(tzinfo=None)
     return df.select([
         pl.lit(symbol).alias('symbol'),
         pl.col('date'),
@@ -44,6 +55,8 @@ def _build_stock_bars_daily_records(symbol: str, df: pl.DataFrame) -> list[dict]
         pl.col('vwap'),
         pl.col('daily_return'),
         pl.col('is_filled'),
+        pl.lit(ingested_at).alias('ingested_at'),
+        pl.lit(data_adjustment).alias('data_adjustment'),
     ]).to_dicts()
 
 
@@ -178,11 +191,23 @@ def get_prev_close_before(conn: Connection, stock_bars_daily, symbol: str, d: da
     return conn.execute(q).scalar_one_or_none()
 
 
-def upsert_stock_bars_daily(conn: Connection, stock_bars_daily, symbol: str, df: pl.DataFrame) -> int:
+def upsert_stock_bars_daily(
+    conn: Connection,
+    stock_bars_daily,
+    symbol: str,
+    df: pl.DataFrame,
+    data_adjustment: str = "all",
+) -> int:
+    """
+    :param data_adjustment: Valeur du paramètre adjustment Alpaca ('raw'|'split'|'dividend'|'all').
+        Persisté dans la colonne data_adjustment pour versioning et auditabilité.
+    """
     if df.is_empty():
         return 0
 
-    records, non_finite_counts = _normalize_mysql_records(_build_stock_bars_daily_records(symbol, df))
+    records, non_finite_counts = _normalize_mysql_records(
+        _build_stock_bars_daily_records(symbol, df, data_adjustment=data_adjustment)
+    )
     if non_finite_counts:
         LOGGER.warning(
             'Valeurs non finies neutralisées avant upsert stock_bars_daily | symbol=%s columns=%s',

@@ -3,6 +3,7 @@ import logging
 import os
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from datetime import date
 from typing import List, Optional
 
 import pandas as pd
@@ -20,17 +21,22 @@ from screener import RESULT_COLUMNS, compute_scores_from_prices
 LOGGER = logging.getLogger(__name__)
 
 
-def _process_chunk(symbols: List[str], config_dict: dict, spy_return_6m: float) -> pd.DataFrame:
+def _process_chunk(
+    symbols: List[str],
+    config_dict: dict,
+    spy_return_6m: float,
+    as_of_date_iso: Optional[str],
+) -> pd.DataFrame:
     """
     Fonction exécutée dans un subprocess (ProcessPoolExecutor).
-    L'engine est créé via get_engine() / lru_cache isolé par processus : chaque worker
-    possède son propre pool (pool_size=2, max_overflow=3 défini dans database/connection.py).
-    Ne pas passer un Engine SQLAlchemy en paramètre : il n'est pas picklable.
+    L'engine est créé via get_engine() / lru_cache isolé par processus.
+    as_of_date est transmis comme ISO string (picklable) et reconverti ici.
     """
     config = ScreenerConfig.from_dict(config_dict)
-    engine = get_engine()  # lru_cache par process → création unique dans ce worker
-    chunk_prices = load_prices_for_chunk(engine, symbols, config)
-    return compute_scores_from_prices(chunk_prices, spy_return_6m, config)
+    engine = get_engine()
+    as_of = date.fromisoformat(as_of_date_iso) if as_of_date_iso else None
+    chunk_prices = load_prices_for_chunk(engine, symbols, config, as_of_date=as_of)
+    return compute_scores_from_prices(chunk_prices, spy_return_6m, config, as_of_date=as_of)
 
 
 def _resolve_worker_count(max_workers: Optional[int]) -> int:
@@ -53,10 +59,24 @@ def _empty_scores() -> pd.DataFrame:
     return pd.DataFrame(columns=RESULT_COLUMNS)
 
 
-def run_screener(config: ScreenerConfig, max_workers: Optional[int] = None) -> pd.DataFrame:
+def run_screener(
+    config: ScreenerConfig,
+    max_workers: Optional[int] = None,
+    as_of_date: Optional[date] = None,
+) -> pd.DataFrame:
+    """
+    :param as_of_date: Date de référence point-in-time (backtest).
+        Si None, utilise les données jusqu'à aujourd'hui (mode live).
+        Toujours spécifier en backtest pour garantir l'absence de look-ahead bias.
+    """
     start = time.time()
     engine = get_engine()
-    spy_return_6m = load_spy_return_6m(engine, config)
+    spy_return_6m = load_spy_return_6m(engine, config, as_of_date=as_of_date)
+
+    workers = _resolve_worker_count(max_workers)
+    max_in_flight = max(2, workers * 2)
+    config_dict = config.to_dict()
+    as_of_iso = as_of_date.isoformat() if as_of_date else None
 
     workers = _resolve_worker_count(max_workers)
     max_in_flight = max(2, workers * 2)
@@ -66,11 +86,12 @@ def run_screener(config: ScreenerConfig, max_workers: Optional[int] = None) -> p
     pending = set()
 
     LOGGER.info(
-        "Démarrage screener | benchmark=%s timeframe=%s chunk_size=%s workers=%s",
+        "Démarrage screener | benchmark=%s timeframe=%s chunk_size=%s workers=%s as_of=%s",
         config.benchmark_symbol,
         config.timeframe,
         config.chunk_size,
         workers,
+        as_of_iso or "live",
     )
 
     with ProcessPoolExecutor(max_workers=workers) as executor:
@@ -79,7 +100,7 @@ def run_screener(config: ScreenerConfig, max_workers: Optional[int] = None) -> p
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 _append_completed_results(done, all_results)
 
-            pending.add(executor.submit(_process_chunk, symbol_chunk, config_dict, spy_return_6m))
+            pending.add(executor.submit(_process_chunk, symbol_chunk, config_dict, spy_return_6m, as_of_iso))
 
         while pending:
             done, pending = wait(pending, return_when=FIRST_COMPLETED)

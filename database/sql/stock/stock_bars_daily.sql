@@ -9,15 +9,18 @@ CREATE TABLE alpha_trade.stock_bars_daily (
     `close` DECIMAL(20, 8) NOT NULL,
     `volume` BIGINT UNSIGNED NOT NULL COMMENT '原始成交量',
     -- 量化專用字段
-    `adj_close` DECIMAL(20, 8) NOT NULL COMMENT '復權收盤價 (Adjusted Close)',
+    `adj_close` DECIMAL(20, 8) NOT NULL COMMENT '復權收盤價 (Adjusted Close) — égal à close car ingestion avec adjustment=all via Alpaca',
     `vwap` DECIMAL(20, 8) DEFAULT NULL COMMENT '成交量加權平均價',
     `daily_return` DECIMAL(10, 6) DEFAULT NULL COMMENT '當日漲跌幅 (Close/Prev_Close - 1)',
     -- 數據完整性標記
     `is_filled` TINYINT(1) DEFAULT 0 COMMENT '0:真實數據, 1:停牌補全數據',
+    -- 數據版本控制 (P1 — Data Versioning)
+    -- Permet de distinguer les re-ingestions et de tracer la source d'ajustement
+    `ingested_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Horodatage UTC d insertion dans la table (pour versioning)',
+    `data_adjustment` VARCHAR(20) NOT NULL DEFAULT 'all' COMMENT 'Paramètre adjustment Alpaca utilisé : raw | split | dividend | all',
     `last_updated` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     -- 核心索引設計
-    -- 1. 聯合主鍵：確保 (股票 + 日期) 唯一，且物理上按股票聚合存放，極大提升單個股票的歷史查詢速度
     PRIMARY KEY (`symbol`, `date`),
-    -- 2. 日期索引：方便進行「全市場掃描」，例如查詢 2024-01-01 當天所有漲幅大於 5% 的股票
-    INDEX `idx_date` (`date`)
+    INDEX `idx_date` (`date`),
+    INDEX `idx_ingested_at` (`ingested_at`) COMMENT 'Permet d auditer les lots de re-ingestion par plage de temps'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=COMPRESSED COMMENT='Alpha Prime 每日行情數據表';
