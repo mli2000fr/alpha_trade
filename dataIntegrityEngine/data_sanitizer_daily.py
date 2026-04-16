@@ -58,41 +58,47 @@ class DataSanitizer:
     """
 
     def __init__(self,
+                 engine: Engine | None = None,
                  db_user_env: str = 'LOGIN_DB',
                  db_pass_env: str = 'PASSWORD_DB',
                  db_host: str = 'localhost',
-                 db_name: str = 'alpha_trade',
-                 log_level: int = logging.INFO):
-        self._configure_logging(log_level)
-        self.engine: Engine = get_sqlalchemy_engine(
-            db_host=db_host,
-            db_name=db_name,
-            db_user_env=db_user_env,
-            db_password_env=db_pass_env,
-        )
+                 db_name: str = 'alpha_trade'):
+        # NOTE: La configuration du logging appartient au point d'entrée (main()).
+        # Ne pas appeler logging.basicConfig() ici pour ne pas écraser la config appelante.
+        if engine is not None:
+            self.engine: Engine = engine
+        else:
+            self.engine = get_sqlalchemy_engine(
+                db_host=db_host,
+                db_name=db_name,
+                db_user_env=db_user_env,
+                db_password_env=db_pass_env,
+            )
         self.tz_ny = pytz.timezone('America/New_York')
-        self.metadata = MetaData()
-        self._reflect_tables()
+        # Les tables sont réfléchies paresseusement au premier appel à run_pipeline().
+        # Cela évite un overhead DDL (autoload_with) à chaque instanciation.
+        self._db_metadata = MetaData()
+        self._tables_reflected: bool = False
         self._spy_calendar_cache: Optional[pl.DataFrame] = None
 
+    def _ensure_tables_reflected(self) -> None:
+        """Réflexion DDL paresseuse : exécutée une seule fois par instance."""
+        if self._tables_reflected:
+            return
+        self._reflect_tables()
+        self._tables_reflected = True
+
     def _reflect_tables(self) -> None:
-        self.stock_bars = Table('stock_bars', self.metadata, autoload_with=self.engine)
-        self.stock_bars_daily = Table('stock_bars_daily', self.metadata, autoload_with=self.engine)
-        self.cleaning_audit_log = Table('cleaning_audit_log', self.metadata, autoload_with=self.engine)
-        self.stock_metadata = Table('stock_metadata', self.metadata, autoload_with=self.engine)
-        self.stock_scores = Table('stock_scores', self.metadata, autoload_with=self.engine)
+        self.stock_bars = Table('stock_bars', self._db_metadata, autoload_with=self.engine)
+        self.stock_bars_daily = Table('stock_bars_daily', self._db_metadata, autoload_with=self.engine)
+        self.cleaning_audit_log = Table('cleaning_audit_log', self._db_metadata, autoload_with=self.engine)
+        self.stock_metadata = Table('stock_metadata', self._db_metadata, autoload_with=self.engine)
+        self.stock_scores = Table('stock_scores', self._db_metadata, autoload_with=self.engine)
 
     @staticmethod
     def _empty_bar_frame() -> pl.DataFrame:
         return EMPTY_BAR_FRAME.clone()
 
-    @staticmethod
-    def _configure_logging(log_level: int) -> None:
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s %(levelname)s %(message)s',
-            force=True,
-        )
 
     @staticmethod
     def _slice_cached_calendar(calendar: pl.DataFrame, start: date, end: date) -> pl.DataFrame:
@@ -319,6 +325,7 @@ class DataSanitizer:
         if commit_every < 1:
             raise ValueError('commit_every doit être supérieur ou égal à 1.')
 
+        self._ensure_tables_reflected()
         processed = 0
         with self.engine.connect() as conn:
             outer_trans = conn.begin()
@@ -370,6 +377,10 @@ class DataSanitizer:
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s %(name)s %(message)s',
+    )
     sanitizer = DataSanitizer()
     sanitizer.run_pipeline(commit_every=DEFAULT_COMMIT_EVERY)
 

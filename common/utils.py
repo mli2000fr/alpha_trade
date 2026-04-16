@@ -1,42 +1,60 @@
-import datetime
+"""
+common/utils.py
+Utilitaires partagés pour le calendrier de marché US (NYSE).
+Utilise pandas_market_calendars pour une précision complète (MLK, Good Friday, Thanksgiving, etc.).
+"""
+import logging
+from datetime import date, timedelta
+from functools import lru_cache
+from typing import Optional
 
-# Liste des jours fériés US (NYSE) pour les années courantes, à compléter si besoin
-US_MARKET_HOLIDAYS = [
-    # Nouvel An
-    (1, 1),
-    # Martin Luther King Jr. Day (3ème lundi de janvier)
-    # Presidents' Day (3ème lundi de février)
-    # Good Friday (variable)
-    # Memorial Day (dernier lundi de mai)
-    # Juneteenth (19 juin)
-    (6, 19),
-    # Independence Day
-    (7, 4),
-    # Labor Day (1er lundi de septembre)
-    # Thanksgiving (4ème jeudi de novembre)
-    # Christmas
-    (12, 25),
-]
+LOGGER = logging.getLogger(__name__)
 
-def is_us_market_holiday(date):
-    # Vérifie si la date est un jour férié fixe (hors calculs dynamiques)
-    return (date.month, date.day) in US_MARKET_HOLIDAYS
 
-def getLastDateMarche(ref_date=None):
+@lru_cache(maxsize=1)
+def _get_nyse_calendar():
     """
-    Retourne la dernière date où le marché US était ouvert (hors week-end et jours fériés principaux).
+    Retourne le calendrier NYSE via pandas_market_calendars (mis en cache au niveau du processus).
+    En cas d'indisponibilité de la librairie, retourne None et active un fallback weekday-only.
+    """
+    try:
+        import pandas_market_calendars as mcal  # noqa: PLC0415
+        return mcal.get_calendar("NYSE")
+    except Exception:
+        LOGGER.warning(
+            "pandas_market_calendars indisponible: fallback weekday-only activé. "
+            "Jours fériés US (MLK, Good Friday, Thanksgiving…) non couverts."
+        )
+        return None
+
+
+def is_trading_day(d: date) -> bool:
+    """Retourne True si le marché NYSE est ouvert ce jour (calendrier complet)."""
+    cal = _get_nyse_calendar()
+    if cal is None:
+        return d.weekday() < 5
+    return not cal.schedule(start_date=d, end_date=d).empty
+
+
+def is_us_market_holiday(d: date) -> bool:
+    """
+    Compatibilité ascendante : retourne True si le marché est FERMÉ ce jour.
+    Couvre maintenant tous les jours fériés NYSE via pandas_market_calendars.
+    """
+    return not is_trading_day(d)
+
+
+def getLastDateMarche(ref_date: Optional[date] = None) -> date:
+    """
+    Retourne la dernière date où le marché US était ouvert.
+
     :param ref_date: date de référence (datetime.date ou None pour aujourd'hui)
     :return: datetime.date
     """
     if ref_date is None:
-        ref_date = datetime.date.today()
+        ref_date = date.today()
     d = ref_date
     while True:
-        d -= datetime.timedelta(days=1)
-        # Marché fermé le samedi (5) et dimanche (6)
-        if d.weekday() >= 5:
-            continue
-        if is_us_market_holiday(d):
-            continue
-        return d
-
+        d -= timedelta(days=1)
+        if is_trading_day(d):
+            return d

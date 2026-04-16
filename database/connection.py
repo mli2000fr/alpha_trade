@@ -50,6 +50,11 @@ def get_sqlalchemy_engine(
         echo=False,
         pool_pre_ping=True,
         pool_recycle=3600,
+        # Sizing explicite pour le modèle multi-process (ProcessPoolExecutor).
+        # Chaque worker subprocess possède son propre engine via lru_cache isolé.
+        # Budget max = pool_size + max_overflow = 5 connexions par worker.
+        pool_size=2,
+        max_overflow=3,
     )
 
 

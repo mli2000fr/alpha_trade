@@ -21,8 +21,14 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _process_chunk(symbols: List[str], config_dict: dict, spy_return_6m: float) -> pd.DataFrame:
+    """
+    Fonction exécutée dans un subprocess (ProcessPoolExecutor).
+    L'engine est créé via get_engine() / lru_cache isolé par processus : chaque worker
+    possède son propre pool (pool_size=2, max_overflow=3 défini dans database/connection.py).
+    Ne pas passer un Engine SQLAlchemy en paramètre : il n'est pas picklable.
+    """
     config = ScreenerConfig.from_dict(config_dict)
-    engine = get_engine()
+    engine = get_engine()  # lru_cache par process → création unique dans ce worker
     chunk_prices = load_prices_for_chunk(engine, symbols, config)
     return compute_scores_from_prices(chunk_prices, spy_return_6m, config)
 
@@ -113,4 +119,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
