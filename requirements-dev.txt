@@ -1,0 +1,29 @@
+# =============================================================================
+# requirements-dev.txt — dépendances de développement
+# =============================================================================
+# Usage :
+#   pip install -r requirements.txt
+#   pip install -r requirements-dev.txt
+# Ou en une seule commande (recommandé) :
+#   pip install -e ".[dev]"
+# =============================================================================
+
+-r requirements.txt
+
+# --- Tests ---
+pytest>=8
+pytest-cov>=5
+pytest-xdist>=3        # parallélisation des tests (-n auto)
+pytest-timeout>=2      # timeout par test (évite les blocages FinBERT en CI)
+
+# --- Lint / Format ---
+ruff>=0.4              # remplace flake8 + isort + pyupgrade
+
+# --- Type checking ---
+mypy>=1.10
+pandas-stubs           # stubs pandas pour mypy
+types-requests         # stubs requests
+types-pytz             # stubs pytz
+types-python-dateutil  # stubs python-dateutil
+sqlalchemy[mypy]       # plugin mypy SQLAlchemy
+

@@ -16,6 +16,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from database.connection import get_sqlalchemy_engine
+from event_sentiment.signal_aggregator import SentimentBoostConfig, SentimentSignalAggregator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -168,9 +169,22 @@ class AlphaScannerConfig:
 class AlphaScanner:
     """Scanner multi-facteurs basé sur prix journaliers + table auxiliaire de scores."""
 
-    def __init__(self, engine: Engine | None = None, config: AlphaScannerConfig | None = None) -> None:
+    def __init__(
+        self,
+        engine: Engine | None = None,
+        config: AlphaScannerConfig | None = None,
+        sentiment_config: SentimentBoostConfig | None = None,
+    ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
         self.config = config or AlphaScannerConfig()
+        # SentimentSignalAggregator optionnel — si sentiment_config est None,
+        # le boost sentiment est désactivé (run() fonctionne en mode purement quantitatif).
+        # Pour l'activer : AlphaScanner(sentiment_config=SentimentBoostConfig())
+        self._sentiment_aggregator: SentimentSignalAggregator | None = (
+            SentimentSignalAggregator(self.engine, sentiment_config)
+            if sentiment_config is not None
+            else None
+        )
 
     def fetch_market_data(self, symbols: Sequence[str]) -> pd.DataFrame:
         """Charge un chunk d'historique marché depuis la table daily."""
@@ -723,10 +737,40 @@ class AlphaScanner:
         merged_candidates = self._apply_factor_neutralization(merged_candidates)
 
         selected = self.rank_and_select(merged_candidates)
+
+        # --- Boost sentiment (optionnel) ---
+        # Appliqué sur la sélection finale APRÈS le classement quantitatif,
+        # pour ajuster légèrement les scores sans modifier l'ordre de sélection initial.
+        # Si _sentiment_aggregator est None (mode par défaut), cette étape est ignorée.
+        if self._sentiment_aggregator is not None and not selected.empty:
+            LOGGER.info("Application boost sentiment | candidats=%s", len(selected))
+            selected = self._sentiment_aggregator.merge(selected)
+            # Re-trier après le boost pour refléter les nouveaux final_scores
+            selected = selected.sort_values(
+                ["final_score", "trend_score", "vcp_score", "avg_dollar_volume_20d"],
+                ascending=False,
+            ).reset_index(drop=True)
+            selected["rank"] = range(1, len(selected) + 1)
+
         self.update_database(selected, merged_candidates)
 
         elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
-        LOGGER.info("AlphaScanner terminé en %.2fs | candidats=%s", elapsed, len(selected))
+
+        # --- Monitoring : alerte si le pipeline produit 0 candidats (P1) ---
+        # Causes possibles : seuil de liquidité trop élevé, table stock_bars_daily vide,
+        # critères Minervini trop stricts en marché baissier.
+        # LOGGER.critical() est visible dans les outils de monitoring (Datadog, CloudWatch…).
+        if selected.empty:
+            LOGGER.critical(
+                "AlphaScanner a produit 0 candidats | durée=%.2fs | "
+                "Vérifier : stock_bars_daily peuplée ? liquidity_threshold trop élevé ? "
+                "Marché en tendance baissière (trend_score=0 pour tous) ?",
+                elapsed,
+            )
+        else:
+            LOGGER.info("AlphaScanner terminé en %.2fs | candidats=%s", elapsed, len(selected))
+
+        return selected
         return selected
 
     def _process_chunk(self, symbols: Sequence[str]) -> pd.DataFrame:
@@ -996,6 +1040,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-anomaly-count", type=int, default=20, help="Nombre maximum d'anomalies accepté par titre")
     parser.add_argument("--sector-cap-ratio", type=float, default=0.30, help="Plafond par secteur, ex. 0.30 = 30%")
     parser.add_argument("--log-level", type=str, default="INFO", help="Niveau de log (DEBUG, INFO, WARNING, ERROR)")
+    parser.add_argument(
+        "--enable-sentiment",
+        action="store_true",
+        default=False,
+        help="Active le boost sentiment FinBERT (SentimentSignalAggregator). Nécessite que "
+             "ticker_daily_features et sector_daily_features soient peuplées par EventSentimentPipeline.",
+    )
+    parser.add_argument("--sentiment-weight", type=float, default=0.15, help="Poids du signal sentiment (défaut 0.15)")
+    parser.add_argument("--macro-weight", type=float, default=0.10, help="Poids du signal macro sectoriel (défaut 0.10)")
     return parser
 
 
@@ -1015,7 +1068,23 @@ def main() -> None:
         max_anomaly_count=args.max_anomaly_count,
         sector_cap_ratio=args.sector_cap_ratio,
     )
-    result = AlphaScanner(config=config).run()
+
+    sentiment_config: SentimentBoostConfig | None = None
+    if args.enable_sentiment:
+        quant_w = 1.0 - args.sentiment_weight - args.macro_weight
+        sentiment_config = SentimentBoostConfig(
+            sentiment_weight=args.sentiment_weight,
+            macro_sector_weight=args.macro_weight,
+            quant_weight=round(quant_w, 6),
+        )
+        LOGGER.info(
+            "Boost sentiment activé | sentiment_weight=%.2f macro_weight=%.2f quant_weight=%.2f",
+            args.sentiment_weight,
+            args.macro_weight,
+            quant_w,
+        )
+
+    result = AlphaScanner(config=config, sentiment_config=sentiment_config).run()
 
     if result.empty:
         print("Aucun candidat retenu.")

@@ -1,0 +1,107 @@
+# =============================================================================
+# CI Pipeline — Alpha Trade
+# =============================================================================
+# Déclenché sur chaque push/PR vers main ou develop.
+# Jobs :
+#   lint  : ruff (style) + mypy (types) — rapide, bloque les PR
+#   test  : pytest avec couverture — résultats publiés en artifact
+#
+# Secrets requis (repo Settings → Secrets and variables → Actions) :
+#   Aucun (pas de connexion DB en CI : tests unitaires uniquement)
+#
+# Pour les tests d'intégration (DataSanitizer + MySQL), utiliser un job séparé
+# avec services: mysql et les secrets LOGIN_DB / PASSWORD_DB.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  lint:
+  # ---------------------------------------------------------------------------
+    name: Lint (ruff + mypy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install lint dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ruff mypy \
+            pandas-stubs \
+            types-requests \
+            types-pytz \
+            types-python-dateutil \
+            sqlalchemy[mypy]
+
+      - name: ruff — style & imports
+        run: ruff check . --output-format=github
+
+      - name: mypy — static type checking
+        run: mypy . --config-file mypy.ini
+
+  # ---------------------------------------------------------------------------
+  test:
+  # ---------------------------------------------------------------------------
+    name: Tests (pytest + coverage)
+    runs-on: ubuntu-latest
+    needs: lint   # ne lance les tests que si le lint passe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          # torch CPU-only en CI (pas de GPU sur runners gratuits)
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-xdist
+
+      - name: Run unit tests
+        env:
+          # Variables factices pour satisfaire les imports de config
+          # Les tests unitaires ne se connectent pas à MySQL
+          LOGIN_DB: ci_user
+          PASSWORD_DB: ci_pass
+          ALPACA_API_KEY: ci_key
+          ALPACA_SECRET_KEY: ci_secret
+        run: |
+          pytest tests/ \
+            --cov=. \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            --cov-fail-under=60 \
+            -x \
+            --timeout=120
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 14
+

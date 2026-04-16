@@ -1,7 +1,10 @@
-import os
-import sys
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if PROJECT_ROOT not in sys.path:
-	sys.path.insert(0, PROJECT_ROOT)
-
+# conftest.py
+#
+# Le sys.path hack a été supprimé (fix P1 — Engineering Quality).
+# Le projet est maintenant installable via : pip install -e ".[dev]"
+# ce qui enregistre tous les packages dans l'environnement et rend
+# toute manipulation manuelle de sys.path inutile.
+#
+# Si vous voyez des ModuleNotFoundError en lançant pytest :
+#   cd C:\Users\PC MLI\PycharmProjects\alpha_trade
+#   pip install -e ".[dev]"

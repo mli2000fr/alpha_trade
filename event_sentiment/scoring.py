@@ -66,6 +66,14 @@ class FinBERTSentimentService:
         self._load_model_for_device(initial_device)
 
     def _infer_probabilities(self, batch_texts: list[str]):
+        """
+        Tokenise et infère les probabilités FinBERT pour un batch de textes.
+
+        Retourne un tuple (probs_tensor, token_counts) :
+          - probs_tensor : Tensor softmax (batch, 3) sur CPU
+          - token_counts : list[int] — nb de tokens par texte (incluant [CLS]/[SEP])
+            Calculé depuis input_ids.shape pour éviter toute double tokenisation.
+        """
         torch = self._get_torch_module()
 
         assert self.tokenizer is not None
@@ -79,11 +87,19 @@ class FinBERTSentimentService:
             padding=True,
             return_tensors="pt",
         )
+        # token_counts dérivés des tenseurs encodés (un seul passage tokeniseur)
+        token_counts: list[int] = encoded["input_ids"].shape[-1 if len(batch_texts) == 1 else 1:]
+        # Pour un batch, compter les tokens non-padding par ligne
+        attention = encoded["attention_mask"]  # (batch, seq_len)
+        token_counts = attention.sum(dim=1).tolist()  # liste d'int, un par texte
+
         encoded = {key: value.to(self.device) for key, value in encoded.items()}
 
         with torch.no_grad():
             logits = self.model(**encoded).logits
-            return torch.softmax(logits, dim=-1).cpu()
+            probs = torch.softmax(logits, dim=-1).cpu()
+
+        return probs, token_counts
 
     def _choose_text(self, article: NormalizedNewsArticle) -> tuple[str, str]:
         headline = (article.headline or "").strip()
@@ -109,16 +125,13 @@ class FinBERTSentimentService:
         assert self.model is not None
         assert self.device is not None
 
+        # Passe 1 — sélection du texte uniquement (aucune tokenisation ici)
         texts: list[str] = []
         strategies: list[str] = []
-        truncated_flags: list[int] = []
-
         for article in article_list:
             text, strategy = self._choose_text(article)
-            token_count = len(self.tokenizer.tokenize(text))
             texts.append(text)
             strategies.append(strategy)
-            truncated_flags.append(int(token_count > self.max_length))
 
         records: list[SentimentRecord] = []
         for start in range(0, len(article_list), self.batch_size):
@@ -126,10 +139,11 @@ class FinBERTSentimentService:
             batch_articles = article_list[start:end]
             batch_texts = texts[start:end]
             batch_strategies = strategies[start:end]
-            batch_truncated = truncated_flags[start:end]
 
             try:
-                probs = self._infer_probabilities(batch_texts)
+                # _infer_probabilities tokenise et retourne aussi les token_counts
+                # → une seule passe tokeniseur par batch (fix double tokenisation P1)
+                probs, batch_token_counts = self._infer_probabilities(batch_texts)
             except RuntimeError as exc:
                 if self.device == "cuda" and self._is_cuda_runtime_error(exc):
                     LOGGER.warning(
@@ -137,7 +151,7 @@ class FinBERTSentimentService:
                         exc,
                     )
                     self._load_model_for_device("cpu", force_reload=True)
-                    probs = self._infer_probabilities(batch_texts)
+                    probs, batch_token_counts = self._infer_probabilities(batch_texts)
                 else:
                     raise
 
@@ -150,6 +164,8 @@ class FinBERTSentimentService:
                 max_idx = int(torch.argmax(probs[idx]).item())
                 sentiment_label = self.id2label.get(max_idx, "neutral")
                 text_hash = hashlib.sha256(batch_texts[idx].encode("utf-8")).hexdigest()
+                # token_count issu des tenseurs encodés (pas de re-tokenisation)
+                token_count = int(batch_token_counts[idx])
 
                 records.append(
                     SentimentRecord(
@@ -158,7 +174,7 @@ class FinBERTSentimentService:
                         model_version=self.model_version,
                         text_strategy=batch_strategies[idx],
                         text_hash=text_hash,
-                        truncated=batch_truncated[idx],
+                        truncated=int(token_count >= self.max_length),
                         max_length_tokens=self.max_length,
                         sentiment_label=sentiment_label,
                         positive_score=positive,

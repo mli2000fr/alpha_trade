@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from event_sentiment.models import MacroImpactRecord, NormalizedNewsArticle, SentimentRecord
 
@@ -10,6 +11,24 @@ class MacroRule:
     positive_cues: tuple[str, ...]
     negative_cues: tuple[str, ...]
     sector_weights: dict[str, float]
+
+
+class IntensityWeights(NamedTuple):
+    """
+    Pondération des trois composantes du calcul d'intensité macro.
+    Somme = 1.0 recommandée mais non imposée (permet des calibrations libres).
+
+    w_keywords   : poids sur le nombre de mots-clés uniques matchés (signal de pertinence)
+    w_net_score  : poids sur |sentiment_net_score| (signal de tonalité FinBERT)
+    w_confidence : poids sur la confiance FinBERT (signal de fiabilité du modèle)
+
+    Valeurs par défaut calquées sur le comportement historique du code.
+    Pour calibrer empiriquement, calculer la corrélation intensité → réaction marché J+1
+    sur les dates de FOMC / CPI historiques via backtesting.
+    """
+    w_keywords: float = 0.25
+    w_net_score: float = 0.35
+    w_confidence: float = 0.40
 
 
 MACRO_RULES = (
@@ -78,12 +97,47 @@ MACRO_RULES = (
 
 
 class MacroRuleEngine:
-    def __init__(self, rule_version: str = "macro_rules_v1") -> None:
+    def __init__(
+        self,
+        rule_version: str = "macro_rules_v1",
+        intensity_weights: IntensityWeights | None = None,
+    ) -> None:
         self.rule_version = rule_version
+        self.intensity_weights = intensity_weights or IntensityWeights()
+
+    def _compute_intensity(self, hits: list[str], sentiment: SentimentRecord) -> float:
+        """
+        Calcule l'intensité de l'impact macro sur [0, 1].
+
+        Formule : w_keywords * unique_hits_norm + w_net_score * |net| + w_confidence * confidence
+        où unique_hits_norm = min(1.0, unique_hits / 3) pour saturer à 3 mots-clés distincts.
+
+        Les poids sont configurables via IntensityWeights (voir calibration empirique).
+        """
+        iw = self.intensity_weights
+        unique_hits_norm = min(1.0, len(set(hits)) / 3.0)
+        raw = (
+            iw.w_keywords * unique_hits_norm
+            + iw.w_net_score * abs(sentiment.sentiment_net_score)
+            + iw.w_confidence * sentiment.sentiment_confidence
+        )
+        return min(1.0, max(0.0, raw))
 
     def classify(self, article: NormalizedNewsArticle, sentiment: SentimentRecord) -> list[MacroImpactRecord]:
+        """
+        Classifie un article selon TOUTES les règles macro applicables (multi-match).
+
+        IMPORTANT — fix du `break` original :
+        Un article multi-thème (ex. "Fed rate hike + oil spike") génère maintenant
+        des MacroImpactRecord pour CHAQUE règle déclenchée (monetary_policy ET
+        energy_commodities), avec des impacts sectoriels distincts.
+
+        La déduplication (article_id, sector, macro_event_type) est gérée en aval
+        par l'upsert en base via ON DUPLICATE KEY UPDATE.
+        """
         text = " ".join(part for part in [article.headline, article.summary or "", article.content or ""] if part).lower()
         records: list[MacroImpactRecord] = []
+        seen_event_sector: set[tuple[str, str]] = set()  # déduplication en mémoire
 
         for rule in MACRO_RULES:
             hits = [kw for kw in rule.keywords if kw in text]
@@ -101,9 +155,14 @@ class MacroRuleEngine:
                 direction = "positive" if net > 0.05 else "negative" if net < -0.05 else "neutral"
                 sign = 1.0 if direction == "positive" else -1.0 if direction == "negative" else 0.0
 
-            intensity = min(1.0, 0.25 * len(set(hits)) + 0.35 * abs(sentiment.sentiment_net_score) + 0.40 * sentiment.sentiment_confidence)
+            intensity = self._compute_intensity(hits, sentiment)
 
             for sector, weight in rule.sector_weights.items():
+                dedup_key = (rule.macro_event_type, sector)
+                if dedup_key in seen_event_sector:
+                    continue  # même (type, secteur) déjà ajouté par une règle précédente
+                seen_event_sector.add(dedup_key)
+
                 impact_score = max(-1.0, min(1.0, sign * intensity * weight))
                 records.append(
                     MacroImpactRecord(
@@ -121,7 +180,6 @@ class MacroRuleEngine:
                         ),
                     )
                 )
-            break
 
         return records
 

@@ -1,0 +1,8 @@
+common
+core
+dataIntegrityEngine
+database
+event_sentiment
+screener
+selector
+service

@@ -119,7 +119,18 @@ def run_screener(
     upsert_scores_snapshot(engine, final_scores, chunksize=1000)
 
     elapsed = time.time() - start
-    LOGGER.info("Screener terminé en %.2fs | symboles scorés=%s", elapsed, len(final_scores))
+
+    # Monitoring : alerte si 0 symboles scorés (P1 — Engineering Quality)
+    if final_scores.empty:
+        LOGGER.critical(
+            "Screener a produit 0 scores | durée=%.2fs as_of=%s | "
+            "Vérifier : stock_bars peuplée ? benchmark SPY présent ? liquidity_threshold trop élevé ?",
+            elapsed,
+            as_of_iso or "live",
+        )
+    else:
+        LOGGER.info("Screener terminé en %.2fs | symboles scorés=%s", elapsed, len(final_scores))
+
     return final_scores
 
 

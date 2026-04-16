@@ -1,0 +1,29 @@
+Metadata-Version: 2.4
+Name: alpha_trade
+Version: 0.1.0
+Summary: Enterprise-grade US Swing Trade system
+Requires-Python: >=3.12
+Requires-Dist: pymysql
+Requires-Dist: requests
+Requires-Dist: python-dotenv
+Requires-Dist: sqlalchemy
+Requires-Dist: pandas
+Requires-Dist: numpy
+Requires-Dist: polars
+Requires-Dist: python-dateutil
+Requires-Dist: pytz
+Requires-Dist: pandas-market-calendars
+Requires-Dist: transformers
+Requires-Dist: torch
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-cov>=5; extra == "dev"
+Requires-Dist: pytest-xdist>=3; extra == "dev"
+Requires-Dist: pytest-timeout>=2; extra == "dev"
+Requires-Dist: ruff>=0.4; extra == "dev"
+Requires-Dist: mypy>=1.10; extra == "dev"
+Requires-Dist: pandas-stubs; extra == "dev"
+Requires-Dist: types-requests; extra == "dev"
+Requires-Dist: types-pytz; extra == "dev"
+Requires-Dist: types-python-dateutil; extra == "dev"
+Requires-Dist: sqlalchemy[mypy]; extra == "dev"

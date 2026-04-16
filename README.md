@@ -117,3 +117,4 @@ alpha_scanner.py
 
 # news sentiment
 sentiment_pipeline.py
+signal_aggregator.py

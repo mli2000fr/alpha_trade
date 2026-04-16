@@ -1,13 +1,31 @@
+# =============================================================================
+# requirements.txt — dépendances RUNTIME uniquement
+# =============================================================================
+# Pour les dépendances de développement (tests, lint, types) :
+#   pip install -e ".[dev]"    (via pyproject.toml)
+# Ou utiliser requirements-dev.txt ci-dessous pour les environnements CI/CD
+# qui ne supportent pas pyproject.toml editable installs.
+# =============================================================================
+
+# --- Base de données ---
 pymysql
+sqlalchemy
+
+# --- HTTP / API ---
 requests
 python-dotenv
-sqlalchemy
+
+# --- Data science ---
 pandas
 numpy
 polars
 python-dateutil
 pytz
 pandas-market-calendars
+
+# --- NLP / FinBERT ---
 transformers
+# torch : installer la variante adaptée à votre hardware :
+#   CPU only  : pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   CUDA 12.x : pip install torch --index-url https://download.pytorch.org/whl/cu121
 torch
-pytest

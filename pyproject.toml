@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alpha_trade"
+version = "0.1.0"
+description = "Enterprise-grade US Swing Trade system"
+requires-python = ">=3.12"
+dependencies = [
+    "pymysql",
+    "requests",
+    "python-dotenv",
+    "sqlalchemy",
+    "pandas",
+    "numpy",
+    "polars",
+    "python-dateutil",
+    "pytz",
+    "pandas-market-calendars",
+    "transformers",
+    "torch",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "pytest-xdist>=3",
+    "pytest-timeout>=2",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "pandas-stubs",
+    "types-requests",
+    "types-pytz",
+    "types-python-dateutil",
+    "sqlalchemy[mypy]",
+]
+
+# ---------------------------------------------------------------------------
+# setuptools : déclare tous les packages pour que pip install -e . fonctionne
+# et que conftest.py n'ait plus besoin de manipuler sys.path.
+# ---------------------------------------------------------------------------
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "common*",
+    "core*",
+    "database*",
+    "dataIntegrityEngine*",
+    "event_sentiment*",
+    "screener*",
+    "selector*",
+    "service*",
+]
+
+# ---------------------------------------------------------------------------
+# ruff — linter rapide (remplace flake8 + isort + pyupgrade)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (géré par line-length)
+    "B008",   # do not perform function calls in default arguments
+    "SIM108", # ternary vs if/else (lisibilité)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # assert autorisé dans les tests
+
+# ---------------------------------------------------------------------------
+# mypy — vérification statique des types
+# (config complète dans mypy.ini pour compatibilité IDE)
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+
+
