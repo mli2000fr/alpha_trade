@@ -1,0 +1,26 @@
+CREATE TABLE IF NOT EXISTS alpha_trade.macro_event_audit (
+    article_id VARCHAR(128) NOT NULL,
+    trade_date DATE NOT NULL,
+    sector VARCHAR(100) NOT NULL,
+    macro_event_type ENUM(
+        'monetary_policy',
+        'geopolitics',
+        'inflation_employment',
+        'fiscal_policy',
+        'energy_commodities'
+    ) NOT NULL,
+    impact_direction ENUM('positive', 'neutral', 'negative') NOT NULL,
+    impact_score DOUBLE NOT NULL,
+    macro_event_intensity DOUBLE NOT NULL,
+    rule_version VARCHAR(30) NOT NULL,
+    rule_hits JSON NULL,
+    explanation_text TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (article_id, sector),
+    KEY idx_macro_event_trade_date_sector (trade_date, sector),
+    KEY idx_macro_event_type_trade_date (macro_event_type, trade_date),
+    CONSTRAINT fk_macro_event_article
+        FOREIGN KEY (article_id) REFERENCES alpha_trade.news_raw(article_id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
