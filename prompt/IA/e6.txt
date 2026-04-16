@@ -1,0 +1,38 @@
+Implémente uniquement le modèle deep learning du module 3.
+
+Objectif :
+- créer un modèle LSTM avec attention temporelle sur les hidden states
+- produire une probabilité binaire pour la classe `future_5d_return > 0`
+- rendre le modèle compatible avec Lightning
+
+Contraintes :
+- entrée : `[batch, seq_len, n_features]`
+- encoder LSTM configurable
+- attention softmax sur l’axe temporel
+- les poids d’attention doivent être récupérables pour inspection
+- sortie classification binaire
+- code lisible et bien découpé
+
+Je veux :
+1. le backbone LSTM
+2. le mécanisme d’attention temporelle
+3. la tête de classification
+4. le LightningModule avec :
+   - training_step
+   - validation_step
+   - test_step
+   - métriques
+   - optimizer
+5. tests unitaires couvrant :
+   - dimensions forward
+   - somme des poids d’attention = 1
+   - stabilité sur batch minimal
+   - sortie probabiliste valide
+
+Choix métriques :
+- best checkpoint sur `val_loss`
+- logger aussi :
+  - directional accuracy
+  - precision
+  - recall
+  - éventuellement auc si simple à intégrer proprement

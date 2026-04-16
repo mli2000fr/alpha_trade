@@ -1,0 +1,34 @@
+Implémente uniquement la couche de lecture des données d’entraînement pour le module 3.
+
+Objectif :
+- charger l’univers `stock_scores.is_candidate = 1`
+- pour un symbole donné, charger son historique depuis `stock_bars_daily`
+- filtrer les symboles non entraînables
+- préparer un DataFrame propre, chronologique et exploitable
+- ne pas encore créer les séquences ni entraîner le modèle
+
+Contraintes :
+- utiliser l’existant du repo quand c’est pertinent
+- split chronologique futur/past only
+- pas de fuite de données
+- gérer les cas limites :
+  - symbole sans assez d’historique
+  - colonnes nulles
+  - `vwap` manquant
+  - `is_filled`
+  - `daily_return` manquant
+- produire une interface propre pour le feature engineering
+
+Je veux dans cette étape :
+1. un repository / service de chargement des symboles candidats
+2. un repository / service de chargement de l’historique par symbole
+3. un préprocesseur tabulaire de base
+4. tests unitaires couvrant :
+   - chargement univers candidat
+   - historique insuffisant
+   - tri chronologique
+   - validation colonnes minimales
+
+À la fin :
+- résume l’API publique créée
+- montre comment elle s’intègre avec la suite du pipeline

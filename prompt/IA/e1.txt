@@ -1,0 +1,34 @@
+Lis le repo existant et ne code rien pour l’instant.
+
+Je veux que tu audites précisément les modules existants suivants :
+- `dataIntegrityEngine/data_sanitizer_daily.py`
+- `database/sanitizer_db_ops.py`
+- `database/sql/stock_bars_daily.sql`
+- `database/sql/stock_scores.sql`
+- `database/sql/stock_metadata.sql`
+- `selector/alpha_scanner.py`
+- `database/connection.py`
+- `requirements.txt`
+- `tests/`
+
+Contexte module 3 à concevoir :
+- V1 classification binaire sur `future_5d_return > 0`
+- univers = `stock_scores.is_candidate = 1`
+- un modèle par symbole
+- exécution parallèle des entraînements
+- LSTM + attention temporelle
+- Lightning
+- GPU si disponible, sinon CPU
+- MySQL pour registre des runs
+- fichiers pour checkpoints/scaler/config
+
+Ce que j’attends dans ta réponse :
+1. un résumé précis de ce qui existe déjà et est réutilisable
+2. les écarts par rapport aux besoins du module 3
+3. une architecture de dossiers/fichiers détaillée et cohérente avec le repo
+4. la liste des classes/services à créer
+5. les dépendances à ajouter
+6. les tables MySQL recommandées
+7. le plan d’implémentation en plusieurs étapes
+
+Ne code rien encore. Je veux seulement le design technique.

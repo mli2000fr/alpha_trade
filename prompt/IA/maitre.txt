@@ -1,0 +1,305 @@
+Lis d’abord l’existant du projet avant toute proposition d’implémentation, et base toutes les décisions sur le code réel du repo.
+
+Contexte workspace :
+- projet Python dans `alpha_trade`
+- base actuelle : MySQL via SQLAlchemy
+- tests via pytest
+- modules déjà présents :
+  - `dataIntegrityEngine/data_sanitizer_daily.py`
+  - `database/sanitizer_db_ops.py`
+  - `database/sql/stock_bars_daily.sql`
+  - `database/sql/stock_scores.sql`
+  - `database/sql/stock_metadata.sql`
+  - `selector/alpha_scanner.py`
+  - `database/connection.py`
+  - `tests/`
+
+Ce qui existe déjà :
+- `stock_bars_daily` contient les données daily nettoyées
+- `stock_scores.is_candidate` marque les titres candidats du selector
+- `stock_metadata` contient les métadonnées titres et le secteur
+- il n’existe pas encore de module deep learning
+- il n’existe pas encore de dépendances torch/lightning
+- le projet utilise déjà pandas, polars, numpy, sqlalchemy, pytest
+
+Mission :
+concevoir et implémenter le module 3 du système Alpha-Prime :
+
+模塊三：個股分佈式模型工廠 (Distributed Model Factory)
+
+Objectif métier :
+construire une usine d’entraînement professionnelle pour le swing trading US equities, où chaque symbole candidat peut avoir son propre modèle séquentiel entraîné à partir des données journalières nettoyées.
+
+Choix fonctionnels imposés pour la V1 :
+1. Target ML :
+   - classification binaire
+   - label = 1 si `future_5d_return > 0`, sinon 0
+   - le modèle doit retourner une probabilité exploitable comme confidence score
+2. Univers :
+   - entraîner uniquement les symboles avec `stock_scores.is_candidate = 1`
+3. Mode distributed :
+   - un modèle indépendant par symbole
+   - exécution parallèle des jobs d’entraînement
+4. Features :
+   - calcul à la volée à partir de `stock_bars_daily`
+   - ne pas exiger de migration SQL pour la V1
+5. Persistance :
+   - checkpoints/scaler/config sur disque
+   - registre des runs, métriques et statuts dans MySQL
+6. Best model :
+   - sélectionner le meilleur checkpoint sur `val_loss`
+   - logger aussi `directional_accuracy`, `precision`, `recall`, éventuellement `auc`
+
+Contraintes d’architecture :
+- utiliser PyTorch Lightning ou Lightning équivalent
+- support GPU si disponible, sinon fallback CPU
+- modèle = LSTM + attention temporelle sur les hidden states
+- attention softmax normalisée sur l’axe temporel
+- pipeline strictement sans fuite de données
+- split chronologique train/val/test
+- scaler fit sur train uniquement
+- code modulaire, testable, maintenable
+
+Source de données :
+- utiliser `stock_bars_daily` comme source principale
+- utiliser `stock_scores` pour filtrer l’univers `is_candidate = 1`
+- utiliser `stock_metadata` si besoin pour enrichissement
+- utiliser au minimum les colonnes existantes :
+  - `open`
+  - `high`
+  - `low`
+  - `close`
+  - `volume`
+  - `adj_close`
+  - `vwap`
+  - `daily_return`
+  - `is_filled`
+- recalculer à la volée les features dérivées nécessaires :
+  - intraday range
+  - overnight gap
+  - rolling volatility
+  - rolling volume features
+  - autres features techniques simples si justifiées
+- ne pas inventer de colonnes absentes de la base
+- concevoir une interface extensible pour ajouter plus tard les features sentiment du module 2
+
+Spécifications dataset :
+- un dataset par symbole
+- séquence temporelle configurable, par défaut 60 jours
+- horizon configurable, par défaut 5 jours
+- historique minimal configurable, par défaut 252 jours
+- split chronologique par symbole
+- aucun shuffle entre passé et futur
+- prise en charge des cas limites :
+  - historique insuffisant
+  - NaN
+  - volumes nuls
+  - lignes forward-filled
+  - symboles candidats mais non entraînables
+
+Persistance attendue :
+- disque :
+  - `artifacts/models/{symbol}/best.ckpt`
+  - `artifacts/models/{symbol}/scaler.pkl`
+  - `artifacts/models/{symbol}/config.json`
+  - `artifacts/models/{symbol}/metrics.json`
+- MySQL :
+  - registre des modèles
+  - runs d’entraînement
+  - métriques résumées
+  - statut de job
+  - prédictions si nécessaire
+
+Sorties attendues :
+1. proposer l’architecture de dossiers/fichiers à créer
+2. proposer les nouvelles dépendances à ajouter
+3. proposer les tables MySQL nécessaires pour le registre ML
+4. implémenter le chargement et la préparation des données
+5. implémenter le builder de séquences et le scaling
+6. implémenter le modèle LSTM + attention
+7. implémenter l’entraînement Lightning
+8. implémenter la sauvegarde checkpoints/scaler/config/métriques
+9. implémenter l’orchestrateur multi-symboles parallèle
+10. implémenter les tests unitaires et d’intégration
+11. documenter le mode d’exécution
+
+Règles d’implémentation :
+- lire les fichiers existants avant toute modification
+- réutiliser les conventions du projet
+- éviter les dépendances inutiles
+- produire du code réellement intégrable au repo
+- ne pas casser les modules existants
+- pour toute décision non évidente, expliquer brièvement le rationnel dans le code ou dans le README du module
+- après chaque étape importante, valider par des tests
+- si une étape est trop grosse, la découper en sous-étapes propres
+
+Style de travail demandé :
+- travailler étape par étape
+- à chaque étape :
+  1. résumer brièvement ce qui existe déjà
+  2. proposer précisément ce qui va être créé
+  3. implémenter
+  4. tester
+  5. résumer les fichiers ajoutés/modifiés et les raisons
+- ne pas essayer d’implémenter tout le module en une seule fois si cela nuit à la qualité
+
+Critères d’acceptation globaux :
+- le modèle accepte un tenseur `[batch, seq_len, n_features]`
+- les poids d’attention somment à 1 sur l’axe temporel
+- le pipeline fonctionne sans GPU
+- le scaler n’est fit que sur train
+- les splits sont chronologiques
+- les artefacts sont bien sauvegardés
+- les runs sont traçables en MySQL
+- l’architecture est prête pour extension vers module 2 et module 4
+
+Commence par :
+1. auditer l’existant du repo,
+2. proposer l’architecture du module 3,
+3. proposer les tables et dépendances,
+4. puis seulement implémenter étape par étape.
+
+
+
+-----------------------------------------
+Étape 1 — Audit + architecture technique uniquement
+Tu dois obtenir :
+une arborescence claire
+les services
+les tables DB
+les dépendances
+le plan complet
+
+Étape 2 — Dépendances + schéma MySQL + modèles de config
+Probablement quelque chose comme :
+modelFactory/config.py
+modelFactory/db_registry.py
+database/sql/model_registry.sql
+database/sql/model_training_run.sql
+database/sql/model_metrics.sql
+tests associés
+
+Étape 3 — Chargement des données d’entraînement depuis la base
+
+Étape 4 — Feature engineering + target + split chronologique
+
+Étape 5 — Scaling + création des séquences
+
+Étape 6 — Modèle LSTM + attention temporelle
+
+Étape 7 — Entraînement Lightning + checkpointing + logging
+
+Étape 8 — Orchestrateur distributed multi-symboles
+
+Étape 9 — Persistance des prédictions et readiness pour module 4
+
+Étape 10 — Tests finaux + documentation + mini runbook
+
+
+--------------------------------------
+
+6) Tables MySQL à viser
+Pour que le prompt soit vraiment “pro”, il faut imposer des tables séparées du snapshot selector.
+Je te recommande d’orienter l’IA vers :
+model_registry
+model_training_run
+model_metrics
+model_predictions
+Rôle de chaque table
+model_registry
+Décrit le modèle logique :
+symbole
+target type
+seq_len
+horizon
+version features
+architecture
+actif/inactif
+model_training_run
+Décrit un run d’entraînement :
+run_id
+symbol
+status
+started_at
+finished_at
+checkpoint_path
+scaler_path
+config_path
+model_metrics
+Résumé des métriques :
+run_id
+val_loss
+test_loss
+val_directional_accuracy
+test_directional_accuracy
+etc.
+model_predictions
+Stocke les scores d’inférence :
+symbol
+prediction_date
+predicted_probability
+predicted_class
+run_id
+
+-------------------------------------------
+ Mon conseil pratique d’utilisation
+Je te conseille de ne pas envoyer tout d’un coup à l’IA si tu veux un bon résultat.
+Meilleure méthode
+Tu envoies d’abord le prompt maître
+Puis tu enchaînes avec :
+Étape 1
+Étape 2
+Étape 3
+etc.
+Pourquoi ?
+Parce qu’une IA qui code tout d’un coup :
+mélange l’architecture et l’implémentation
+oublie les tests
+fait des choix implicites non alignés avec ton repo
+Alors qu’avec le séquencement :
+tu contrôles la qualité
+tu valides chaque base
+tu évites la dérive
+--------------------------------
+9) Recommandation finale
+Si tu veux un rendu vraiment professionnel, demande à l’IA de respecter ces 3 règles supplémentaires :
+Règle 1
+“Ne crée aucune migration SQL implicite dans les tables existantes sans justification claire.”
+Règle 2
+“Réutilise les conventions de database/connection.py et des tests existants.”
+Règle 3
+“Ajoute des tests à chaque étape avant de passer à la suivante.”
+----------------------------------
+Bloc “anti-erreurs” à ajouter si tu utilises une IA qui dérive souvent
+Important :
+- n’invente pas des colonnes DB absentes sans le signaler explicitement
+- ne mélange pas plusieurs responsabilités dans un seul fichier
+- ne saute pas l’écriture des tests
+- ne fais pas de split aléatoire en time series
+- ne fit jamais le scaler sur val/test
+- ne mets pas les checkpoints binaires directement dans MySQL
+- ne transforme pas `stock_scores` en table fourre-tout ML
+- si une dépendance nouvelle est proposée, justifie-la brièvement
+- si une étape est trop grosse, découpe-la avant de coder
+Interdiction de dépasser l’étape demandée.
+Si tu commences l’étape 1, tu t’arrêtes après l’étape 1.
+Commence maintenant par l’étape 1 uniquement.
+------------------
+7) Petit bonus : version “senior quant architect” plus autoritaire
+Je privilégie la robustesse, la traçabilité et l’intégration propre au repo à la vitesse brute.
+Si un choix rapide dégrade la maintenabilité, refuse ce choix et propose une alternative plus professionnelle.
+Toute solution non testée ou non justifiée sera considérée comme incomplète.
+------------------------
+Bloc “style de réponse attendu” pour obtenir une meilleure qualité
+Format de réponse obligatoire à chaque étape :
+
+## Objectif de l’étape
+## Fichiers existants analysés
+## Fichiers à créer/modifier
+## Plan d’implémentation
+## Code
+## Tests exécutés / validation
+## Résumé de l’étape
+## Étape suivante proposée
+
+Sois concret, technique, et aligné avec le repo réel.
