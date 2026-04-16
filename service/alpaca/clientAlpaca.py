@@ -86,8 +86,8 @@ def fetch_bars(
         # Si le raw close est nécessaire, utiliser adjustment=raw dans un appel séparé.
         "adjustment": "all",
         # RTH uniquement (09:30–16:00 EST) : exclure les données pre/post-market.
-        "feed": "sip",
-        "extended_hours": "false",
+        # "feed": "sip",
+        # "extended_hours": "false",
         "limit": 5000,
         "start": _normalize_start_date(start_date),
     }
