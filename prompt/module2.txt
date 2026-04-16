@@ -1,0 +1,179 @@
+模塊二：基於 FinBERT 的事件情緒感知引擎 (Event Sentiment Intelligence Pipeline)
+
+角色設定：
+你是一位頂級對沖基金的量化研究工程師兼機器學習架構師。你的任務不是寫一個 Demo，而是為企業級美股 Swing Trade 系統設計並實現一個可投入生產環境的「事件情緒感知引擎」。此模塊必須具備可擴展性、可回測性、可監控性與嚴格的時間一致性，並可作為模塊三（LSTM / Attention 模型工廠）的標準化特徵輸入層。
+
+總體目標：
+構建一條完整的 Event Sentiment Pipeline，將新聞事件、FinBERT 情緒分類、Ticker / Sector 映射與宏觀事件影響量化整合為結構化因子，最終輸出可供時序模型直接使用的日級特徵。
+
+核心要求：
+
+一、數據接入層 (News Ingestion Layer)
+1. 接入 Alpaca News API 或同等級新聞數據源。
+2. 支持增量拉取、去重、重試、限流控制與錯誤日誌。
+3. 每篇新聞至少保留以下字段：
+   - article_id / 唯一鍵
+   - headline
+   - summary
+   - content 或原文片段
+   - source
+   - author
+   - published_at (UTC)
+   - tickers (多標的關聯)
+   - url
+   - raw_payload
+4. 所有原始新聞必須先落地存儲，不允許只做內存級處理。
+5. 設計時需考慮 API 重複返回、斷點續跑與歷史補數據能力。
+
+二、時間對齊與交易日映射 (Temporal Alignment)
+1. 所有新聞時間戳必須統一轉換為 America/New_York 時區。
+2. 必須明確處理以下場景，避免未來信息洩漏（look-ahead bias）：
+   - 開盤前新聞
+   - 盤中新聞
+   - 收盤後新聞
+   - 非交易日新聞（週末 / 假日）
+3. 為每條新聞生成：
+   - event_timestamp_utc
+   - event_timestamp_ny
+   - effective_trade_date
+   - market_session_tag（pre_market / regular / post_market / non_trading_day）
+4. 特徵歸屬邏輯必須可回測、可審計，且不可依賴人工判斷。
+
+三、NLP 情緒量化層 (FinBERT Sentiment Scoring)
+1. 使用預訓練模型 `ProsusAI/finbert` 對新聞文本進行情緒分類。
+2. 對每篇新聞輸出：
+   - sentiment_label（positive / neutral / negative）
+   - positive_score
+   - neutral_score
+   - negative_score
+   - sentiment_confidence
+   - sentiment_net_score（例如 positive_score - negative_score）
+3. 模型推理必須支持批量處理，避免逐條低效推理。
+4. 需對超長文本提供截斷或摘要策略，並保留處理規則。
+5. 需支持失敗回退機制：當正文缺失時，允許退化為 headline + summary 方案。
+
+四、Ticker 與 Sector 映射層 (Entity & Sector Mapping)
+1. 建立穩定的 ticker-to-sector 映射機制，優先使用本地數據庫中的 `stock_metadata.sector`。
+2. 若本地 sector 缺失，可調用外部資料源補全，但需明確 source 與更新時間。
+3. 一篇新聞可能關聯多個 ticker，系統需支持：
+   - article -> multiple tickers
+   - ticker -> one sector
+4. 除個股情緒外，還需生成板塊級聚合情緒。
+5. 若新聞不指向單一股票，而屬於宏觀事件（如 FOMC、CPI、戰爭、制裁、利率決議），則需允許其映射到多個 sector 並計算 sector impact score。
+
+五、特徵聚合層 (Feature Aggregation Layer)
+請將新聞級結果聚合為「個股-交易日」粒度與「板塊-交易日」粒度兩類特徵。
+
+A. 個股日級特徵（ticker_daily_sentiment_features）
+至少包括：
+- news_count_1d
+- sentiment_pos_mean_1d
+- sentiment_neg_mean_1d
+- sentiment_neu_mean_1d
+- sentiment_net_mean_1d
+- sentiment_net_sum_1d
+- sentiment_confidence_mean_1d
+- major_event_flag
+- source_diversity_count
+- after_close_news_count
+- pre_market_news_count
+
+B. 板塊日級特徵（sector_daily_sentiment_features）
+至少包括：
+- sector_news_count_1d
+- sector_sentiment_net_mean_1d
+- sector_sentiment_net_sum_1d
+- sector_positive_ratio
+- sector_negative_ratio
+- sector_impact_score
+- macro_event_flag
+- macro_event_intensity
+
+六、宏觀事件影響量化 (Macro Event Impact Scoring)
+1. 設計一套規則化或模型化方法，識別宏觀新聞是否屬於：
+   - 貨幣政策
+   - 地緣政治
+   - 通脹 / 就業數據
+   - 財政政策
+   - 能源 / 大宗商品衝擊
+2. 對宏觀事件生成：
+   - macro_event_type
+   - affected_sectors
+   - impact_direction
+   - impact_score（建議標準化到 [-1, 1] 或 [0, 1]）
+3. 此部分可先用規則引擎實現 MVP，後續再升級為分類模型。
+4. 所有 impact score 必須可解釋，不接受黑箱且不可追溯的方案。
+
+七、數據庫與表結構設計 (Data Schema)
+請先設計完整 SQL Schema，再開始寫業務代碼。至少包含以下表：
+1. `news_raw`
+   - 存儲原始新聞
+2. `news_sentiment`
+   - 存儲 FinBERT 單篇新聞推理結果
+3. `news_ticker_map`
+   - 存儲新聞與多個 ticker 的映射
+4. `ticker_daily_sentiment_features`
+   - 個股-交易日聚合情緒特徵
+5. `sector_daily_sentiment_features`
+   - 板塊-交易日聚合情緒特徵
+6. `macro_event_audit`（可選）
+   - 存儲宏觀事件分類與影響審核結果
+
+要求：
+- 所有表需有主鍵、唯一鍵、必要索引與 updated_at 欄位。
+- 必須支持增量更新與 upsert。
+- 必須支持回測時按日期範圍高效查詢。
+
+八、工程化要求 (Production Engineering Requirements)
+1. 代碼需按模塊拆分清晰，例如：
+   - client / ingestion / nlp / mapping / aggregation / db_ops / pipeline
+2. 所有外部請求需有 timeout、retry、rate limit 與結構化日誌。
+3. 對於批量任務，需支持斷點續跑與失敗重試。
+4. 關鍵步驟必須輸出審計日誌：
+   - 拉取了多少篇新聞
+   - 去重了多少篇
+   - 成功推理多少篇
+   - 聚合了多少個 ticker-day / sector-day
+5. 設計單元測試與最小可重現測試數據。
+6. 不要只給高層架構，請直接生成可運行的 Python 代碼框架。
+
+九、與模塊三的接口要求 (Interface to Distributed Model Factory)
+最終輸出必須可直接供 LSTM / Attention 模型讀取，要求：
+1. 特徵粒度為 `symbol + trade_date`
+2. 不允許使用未來新聞信息
+3. 缺失值策略需明確：
+   - 無新聞 = 0 還是 NULL，必須定義一致規則
+4. 請給出最終供模型訓練使用的特徵列清單
+5. 請明確哪些特徵屬於：
+   - article-level
+   - ticker-day level
+   - sector-day level
+   - macro-event level
+
+十、交付標準 (Expected Deliverables)
+請一次性交付以下內容：
+1. 模塊二的整體架構說明
+2. 完整的 SQL 表結構設計
+3. Python 目錄結構建議
+4. 每個核心文件的可運行代碼骨架
+5. 主 pipeline 的執行流程
+6. 關鍵測試案例
+7. 與模塊三對接的 feature schema
+8. 後續可擴展方向（如事件去重、主題建模、cross-asset sentiment）
+
+補充原則：
+- 優先保證時間一致性與可回測性，而不是先追求模型炫技。
+- 優先構建可審計、可維護、可迭代的生產級事件特徵層。
+- 若某一步暫時無法做到 fully automated，請先提供可落地的 MVP，再明確後續升級路線。
+
+補充限制：
+- 禁止使用未來資料。
+- 所有聚合特徵必須可重現、可回測。
+- 代碼需優先與現有 MySQL / SQLAlchemy 結構兼容。
+- 若需要新增依賴，請同時列出 requirements 更新項。
+
+
+請開始設計並生成：
+「模塊二：基於 FinBERT 的事件情緒感知引擎」的企業級實現方案與代碼框架。
+
+
