@@ -1,4 +1,5 @@
 import logging
+import math
 from datetime import timedelta
 from functools import lru_cache
 from typing import Any, Optional
@@ -34,6 +35,7 @@ def get_active_tradable_symbols(session) -> list[str]:
             stock_metadata.c.status == "active",
             stock_metadata.c.tradable.is_(True),
             stock_metadata.c.bars_available.is_(True),
+            stock_metadata.c.asset_class == "us_equity",  # exclut crypto (us_crypto)
         )
     )
     return [row[0] for row in session.execute(q).all()]
@@ -63,22 +65,68 @@ def _normalize_bar_timestamp(raw_timestamp: Any) -> Any:
     return dt_utc.astimezone(TZ_NEW_YORK).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _sanitize_price(value: Any, field: str, symbol: str) -> Optional[float]:
+    """
+    Nettoie une valeur de prix avant insertion MySQL.
+    - None / NaN / Inf → None (sera refusé par NOT NULL, mais mieux qu'un crash silencieux)
+    - Valeur > DECIMAL(20,8) max → loggée et mise à None
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        LOGGER.warning("Valeur non numérique | symbol=%s field=%s value=%r → None", symbol, field, value)
+        return None
+    if not math.isfinite(f):
+        LOGGER.warning("Valeur non finie (inf/nan) | symbol=%s field=%s value=%r → None", symbol, field, f)
+        return None
+    # DECIMAL(20,8) : partie entière max = 12 chiffres
+    if abs(f) > 999_999_999_999.0:
+        LOGGER.warning("Valeur hors plage DECIMAL(20,8) | symbol=%s field=%s value=%r → None", symbol, field, f)
+        return None
+    return f
+
+
 def _build_bar_records(symbol: str, bars: list[dict[str, Any]], timeframe: str) -> list[dict[str, Any]]:
-    return [
-        {
-            "symbol": symbol,
-            "timestamp": _normalize_bar_timestamp(bar["t"]),
-            "timeframe": timeframe,
-            "open_price": bar["o"],
-            "high_price": bar["h"],
-            "low_price": bar["l"],
-            "close_price": bar["c"],
-            "volume": bar["v"],
-            "trade_count": bar.get("n", 0),
-            "vwa_price": bar.get("vw"),
-        }
-        for bar in bars
-    ]
+    records = []
+    skipped = 0
+    for bar in bars:
+        open_price  = _sanitize_price(bar.get("o"),  "open_price",  symbol)
+        high_price  = _sanitize_price(bar.get("h"),  "high_price",  symbol)
+        low_price   = _sanitize_price(bar.get("l"),  "low_price",   symbol)
+        close_price = _sanitize_price(bar.get("c"),  "close_price", symbol)
+        vwa_price   = _sanitize_price(bar.get("vw"), "vwa_price",   symbol)
+
+        # Ignorer la barre si un prix obligatoire est invalide (NOT NULL en DB)
+        if None in (open_price, high_price, low_price, close_price):
+            skipped += 1
+            LOGGER.warning(
+                "Barre ignorée (prix invalide) | symbol=%s timestamp=%s o=%s h=%s l=%s c=%s",
+                symbol, bar.get("t"), bar.get("o"), bar.get("h"), bar.get("l"), bar.get("c"),
+            )
+            continue
+
+        # Fallback vwa_price → close si absent (colonne NOT NULL dans le schéma)
+        if vwa_price is None:
+            vwa_price = close_price
+
+        records.append({
+            "symbol":      symbol,
+            "timestamp":   _normalize_bar_timestamp(bar["t"]),
+            "timeframe":   timeframe,
+            "open_price":  open_price,
+            "high_price":  high_price,
+            "low_price":   low_price,
+            "close_price": close_price,
+            "volume":      int(bar.get("v") or 0),
+            "trade_count": int(bar.get("n") or 0),
+            "vwa_price":   vwa_price,
+        })
+
+    if skipped:
+        LOGGER.warning("Barres ignorées au total | symbol=%s skipped=%s total=%s", symbol, skipped, len(bars))
+    return records
 
 
 def insert_bars(session, symbol: str, bars: list[dict[str, Any]], timeframe: str) -> int:
@@ -86,7 +134,13 @@ def insert_bars(session, symbol: str, bars: list[dict[str, Any]], timeframe: str
         return 0
 
     _, stock_bars = _get_tables()
-    stmt = mysql_insert(stock_bars).values(_build_bar_records(symbol, bars, timeframe))
+    records = _build_bar_records(symbol, bars, timeframe)
+
+    if not records:
+        LOGGER.warning("insert_bars | aucune barre valide après sanitization | symbol=%s total_brut=%s", symbol, len(bars))
+        return 0
+
+    stmt = mysql_insert(stock_bars).values(records)
     update_dict = {
         "open_price": stmt.inserted.open_price,
         "high_price": stmt.inserted.high_price,
@@ -101,6 +155,7 @@ def insert_bars(session, symbol: str, bars: list[dict[str, Any]], timeframe: str
         session.commit()
     except Exception:
         session.rollback()
+        LOGGER.error("Échec insert_bars | symbol=%s timeframe=%s bars=%s", symbol, timeframe, len(bars))
         raise
     return len(bars)
 
