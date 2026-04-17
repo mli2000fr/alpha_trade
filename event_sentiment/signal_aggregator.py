@@ -115,7 +115,7 @@ class SentimentSignalAggregator:
                    sentiment_net_mean_1d,
                    sentiment_confidence_mean_1d,
                    major_event_flag
-            FROM ticker_daily_features
+            FROM ticker_daily_sentiment_features
             WHERE symbol IN :symbols
               AND trade_date >= :cutoff
               AND trade_date <= :trade_date
@@ -133,7 +133,7 @@ class SentimentSignalAggregator:
                        sentiment_net_mean_1d,
                        sentiment_confidence_mean_1d,
                        major_event_flag
-                FROM ticker_daily_features
+                FROM ticker_daily_sentiment_features
                 WHERE symbol IN :symbols
                   AND trade_date >= :cutoff
                   AND trade_date <= :trade_date
@@ -146,7 +146,7 @@ class SentimentSignalAggregator:
                     params={"symbols": symbols, "cutoff": cutoff.date(), "trade_date": trade_date},
                 )
         except Exception:
-            LOGGER.warning("ticker_daily_features indisponible — boost sentiment désactivé.")
+            LOGGER.warning("ticker_daily_sentiment_features indisponible — boost sentiment désactivé.")
             return pd.DataFrame()
 
     def _load_sector_sentiment(self, sectors: list[str], trade_date: date) -> pd.DataFrame:
@@ -164,7 +164,7 @@ class SentimentSignalAggregator:
                        sector_impact_score,
                        macro_event_intensity,
                        macro_event_flag
-                FROM sector_daily_features
+                FROM sector_daily_sentiment_features
                 WHERE sector IN :sectors
                   AND trade_date >= :cutoff
                   AND trade_date <= :trade_date
@@ -177,7 +177,7 @@ class SentimentSignalAggregator:
                     params={"sectors": sectors, "cutoff": cutoff.date(), "trade_date": trade_date},
                 )
         except Exception:
-            LOGGER.warning("sector_daily_features indisponible — boost macro désactivé.")
+            LOGGER.warning("sector_daily_sentiment_features indisponible — boost macro désactivé.")
             return pd.DataFrame()
 
     # ------------------------------------------------------------------
