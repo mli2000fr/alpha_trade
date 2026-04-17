@@ -60,7 +60,7 @@ CREATE TABLE alpha_trade.stock_scores (
     INDEX idx_final_score_sentiment (final_score_sentiment),
     INDEX idx_scan_candidate        (is_candidate, total_score)  COMMENT 'Accélère la lecture Top N en inférence'
 
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 
@@ -112,4 +112,4 @@ CREATE TABLE alpha_trade.stock_scores (
     INDEX idx_final_score_sentiment (final_score_sentiment),
     INDEX idx_scan_candidate        (is_candidate, total_score)
 
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
