@@ -108,12 +108,10 @@ update_sector.py
 
 # au quoditien
 import_alpaca_bar.py
+data_sanitizer_daily.py
 
 # une fois par mois
 stock_screener.py
-
-# au quoditien
-data_sanitizer_daily.py
 
 # au quoditien ou par semaine
 alpha_scanner.py

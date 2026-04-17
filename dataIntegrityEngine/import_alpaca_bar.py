@@ -122,13 +122,34 @@ def _increment_start_timestamp(raw_timestamp: Optional[str]) -> Optional[str]:
     return next_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def import_alpaca_bars(time_frame: TimeFrame) -> None:
+def _normalize_target_symbols(symbols: Optional[list[str]]) -> Optional[list[str]]:
+    if symbols is None:
+        return None
+
+    normalized: list[str] = []
+    for symbol in symbols:
+        cleaned = (symbol or "").strip().upper()
+        if cleaned and cleaned not in normalized:
+            normalized.append(cleaned)
+
+    if not normalized:
+        raise ValueError("symbols doit contenir au moins un symbole non vide.")
+    return normalized
+
+
+def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = None) -> None:
     session = SessionLocal()
     try:
-        symbols = get_active_tradable_symbols(session)
-        total = len(symbols)
+        target_symbols = _normalize_target_symbols(symbols)
+        if target_symbols is None:
+            target_symbols = get_active_tradable_symbols(session)
+            LOGGER.info("Import Alpaca univers complet | timeframe=%s symbols=%s", time_frame.db_value, len(target_symbols))
+        else:
+            LOGGER.info("Import Alpaca ciblé | timeframe=%s symbols=%s", time_frame.db_value, ",".join(target_symbols))
 
-        for idx, symbol in enumerate(symbols, 1):
+        total = len(target_symbols)
+
+        for idx, symbol in enumerate(target_symbols, 1):
             LOGGER.info("Traitement du symbole (%s/%s) : %s", idx, total, symbol)
 
             last_timestamp = get_last_bar_timestamp(session, symbol, time_frame)

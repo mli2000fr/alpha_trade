@@ -114,6 +114,27 @@ class DataSanitizer:
         bars = get_stock_bars(conn, self.stock_bars, SPY_SYMBOL, TimeFrame.ONE_DAY.db_value, start)
         return [self._to_ny_date(bar['t']) for bar in bars]
 
+    def _ensure_spy_1d_available(self, conn: Connection) -> None:
+        if self._fetch_calendar_dates(conn, None):
+            return
+
+        LOGGER.warning(
+            'SPY absent de stock_bars en 1D | import ciblé déclenché automatiquement.'
+        )
+        from dataIntegrityEngine.import_alpaca_bar import import_alpaca_bars
+
+        import_alpaca_bars(TimeFrame.ONE_DAY, symbols=[SPY_SYMBOL])
+        self._spy_calendar_cache = None
+
+        with self.engine.connect() as verification_conn:
+            if self._fetch_calendar_dates(verification_conn, None):
+                return
+
+        if not self._fetch_calendar_dates(conn, None):
+            raise RuntimeError(
+                'Import automatique de SPY échoué : aucune barre SPY 1D disponible dans stock_bars.'
+            )
+
     def _build_symbol_frame(self, bars: list[dict]) -> pl.DataFrame:
         if not bars:
             return self._empty_bar_frame()
@@ -241,7 +262,10 @@ class DataSanitizer:
         if not dates or max(dates) < end or min(dates) > start:
             dates = self._fetch_calendar_dates(conn, None)
 
-        cal_df = pl.DataFrame({'date': sorted([d for d in dates if start <= d <= end])})
+        calendar_dates = sorted([d for d in dates if start <= d <= end])
+        cal_df = pl.DataFrame({
+            'date': pl.Series('date', calendar_dates, dtype=pl.Date),
+        })
         self._spy_calendar_cache = cal_df
         return cal_df
 
@@ -255,6 +279,13 @@ class DataSanitizer:
         """Retourne df aligné sur le calendrier avec forward-fill; renvoie aussi le nombre de jours remplis."""
         if df.is_empty():
             return df, 0
+        if calendar.is_empty():
+            start = df['date'][0]
+            end = df['date'][-1]
+            raise RuntimeError(
+                f'Calendrier SPY introuvable pour la plage {start} -> {end}. '
+                'Vérifier que SPY est bien importé dans stock_bars en 1D.'
+            )
 
         base = calendar.join(df, on='date', how='left')
         base = base.with_columns([
@@ -333,6 +364,9 @@ class DataSanitizer:
             raise ValueError('commit_every doit être supérieur ou égal à 1.')
 
         self._ensure_tables_reflected()
+        with self.engine.connect() as bootstrap_conn:
+            self._ensure_spy_1d_available(bootstrap_conn)
+
         processed = 0
         with self.engine.connect() as conn:
             outer_trans = conn.begin()

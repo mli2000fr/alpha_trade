@@ -15,6 +15,7 @@ def sanitizer() -> DataSanitizer:
     instance = DataSanitizer.__new__(DataSanitizer)
     instance.tz_ny = pytz.timezone("America/New_York")
     instance._spy_calendar_cache = None
+    instance._tables_reflected = True
     return instance
 
 
@@ -102,6 +103,72 @@ def test_sanitize_and_align_sets_daily_return_to_null_when_prev_close_is_zero(sa
     assert aligned_df["daily_return"][0] is None
 
 
+def test_sanitize_and_align_raises_clear_error_when_spy_calendar_is_empty(sanitizer: DataSanitizer) -> None:
+    raw_df = pl.DataFrame(
+        {
+            "date": [date(2024, 1, 2)],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.0],
+            "volume": [1_000],
+            "adj_close": [100.0],
+            "vwap": [100.0],
+            "is_filled": [False],
+        }
+    )
+    empty_calendar = pl.DataFrame({"date": pl.Series("date", [], dtype=pl.Date)})
+
+    with pytest.raises(RuntimeError, match="Calendrier SPY introuvable"):
+        sanitizer.sanitize_and_align(raw_df, empty_calendar, prev_close=None)
+
+
+def test_ensure_spy_1d_available_imports_spy_when_missing(monkeypatch, sanitizer: DataSanitizer) -> None:
+    sanitizer.stock_bars = object()
+    fake_conn = _ContextConnection("stale")
+    verification_conn = _ContextConnection("fresh")
+    sanitizer.engine = _FakeEngine(verification_conn)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        data_sanitizer_daily,
+        "get_stock_bars",
+        lambda conn, stock_bars, symbol, timeframe, start: calls.append(
+            f"read:{getattr(conn, 'label', 'unknown')}:{symbol}:{timeframe}"
+        ) or (
+            [] if getattr(conn, 'label', None) == "stale" else
+            [{"t": datetime(2024, 1, 2, 0, 0, 0), "o": 0.0, "h": 0.0, "l": 0.0, "c": 0.0, "v": 0}]
+        ),
+    )
+    monkeypatch.setattr(
+        "dataIntegrityEngine.import_alpaca_bar.import_alpaca_bars",
+        lambda time_frame, symbols=None: calls.append(f"import:{time_frame.db_value}:{','.join(symbols or [])}"),
+    )
+
+    sanitizer._ensure_spy_1d_available(cast(Connection, fake_conn))
+
+    assert calls == [
+        "read:stale:SPY:1D",
+        "import:1D:SPY",
+        "read:fresh:SPY:1D",
+    ]
+
+
+def test_ensure_spy_1d_available_raises_when_import_does_not_fill_spy(monkeypatch, sanitizer: DataSanitizer) -> None:
+    sanitizer.stock_bars = object()
+    fake_conn = _ContextConnection("stale")
+    sanitizer.engine = _FakeEngine(_ContextConnection("fresh"))
+
+    monkeypatch.setattr(data_sanitizer_daily, "get_stock_bars", lambda conn, stock_bars, symbol, timeframe, start: [])
+    monkeypatch.setattr(
+        "dataIntegrityEngine.import_alpaca_bar.import_alpaca_bars",
+        lambda time_frame, symbols=None: None,
+    )
+
+    with pytest.raises(RuntimeError, match="Import automatique de SPY échoué"):
+        sanitizer._ensure_spy_1d_available(cast(Connection, fake_conn))
+
+
 def test_detect_anomalies_returns_boolean_flags_without_nulls(sanitizer: DataSanitizer) -> None:
     df = pl.DataFrame(
         {
@@ -174,6 +241,17 @@ class _FakeTransaction:
         self.commits += 1
 
 
+class _ContextConnection:
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
 class _FakePipelineConnection:
     def __init__(self) -> None:
         self.transactions: list[_FakeTransaction] = []
@@ -191,10 +269,10 @@ class _FakePipelineConnection:
 
 
 class _FakeEngine:
-    def __init__(self, conn: _FakePipelineConnection) -> None:
+    def __init__(self, conn: object) -> None:
         self._conn = conn
 
-    def connect(self) -> _FakePipelineConnection:
+    def connect(self):
         return self._conn
 
 
@@ -209,6 +287,7 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
     sync_calls: list[tuple[object, object, str, int, int]] = []
 
     monkeypatch.setattr(data_sanitizer_daily, "get_symbols", lambda conn, table: ["AAPL"])
+    monkeypatch.setattr(sanitizer, "_ensure_spy_1d_available", lambda conn: None)
     monkeypatch.setattr(
         sanitizer,
         "_process_symbol",
@@ -256,6 +335,7 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
     sync_calls: list[tuple[object, object, str, int, int]] = []
 
     monkeypatch.setattr(data_sanitizer_daily, "get_symbols", lambda conn, table: ["AAPL"])
+    monkeypatch.setattr(sanitizer, "_ensure_spy_1d_available", lambda conn: None)
     monkeypatch.setattr(
         sanitizer,
         "_process_symbol",
