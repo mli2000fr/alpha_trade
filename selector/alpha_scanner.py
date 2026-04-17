@@ -16,7 +16,6 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from database.connection import get_sqlalchemy_engine
-from event_sentiment.signal_aggregator import SentimentBoostConfig, SentimentSignalAggregator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -173,18 +172,9 @@ class AlphaScanner:
         self,
         engine: Engine | None = None,
         config: AlphaScannerConfig | None = None,
-        sentiment_config: SentimentBoostConfig | None = None,
     ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
         self.config = config or AlphaScannerConfig()
-        # SentimentSignalAggregator optionnel — si sentiment_config est None,
-        # le boost sentiment est désactivé (run() fonctionne en mode purement quantitatif).
-        # Pour l'activer : AlphaScanner(sentiment_config=SentimentBoostConfig())
-        self._sentiment_aggregator: SentimentSignalAggregator | None = (
-            SentimentSignalAggregator(self.engine, sentiment_config)
-            if sentiment_config is not None
-            else None
-        )
 
     def fetch_market_data(self, symbols: Sequence[str]) -> pd.DataFrame:
         """Charge un chunk d'historique marché depuis la table daily."""
@@ -491,6 +481,20 @@ class AlphaScanner:
 
         filtered = merged_df.copy()
         before_count = len(filtered)
+
+        # Exclusion ETF / crypto : seules les actions us_equity actives et tradables sont retenues.
+        # (Le JOIN stock_metadata dans _iter_eligible_symbol_chunks filtre déjà en amont ;
+        #  ce filtre pandas est un filet de sécurité au cas où metadata_df serait partielle.)
+        if "asset_class" in filtered.columns:
+            before_etf = len(filtered)
+            filtered = filtered[filtered["asset_class"].isna() | (filtered["asset_class"] == "us_equity")]
+            after_etf = len(filtered)
+            if before_etf - after_etf:
+                LOGGER.info("Filtre ETF/crypto | rejetés=%s", before_etf - after_etf)
+        if "tradable" in filtered.columns:
+            filtered = filtered[filtered["tradable"].isna() | (filtered["tradable"] == True)]  # noqa: E712
+
+        after_etf_filter = len(filtered)
         filtered = filtered[filtered["history_days"] >= self.config.min_history_days]
         after_history = len(filtered)
         filtered = filtered[filtered["latest_close"] > self.config.min_close]
@@ -508,10 +512,11 @@ class AlphaScanner:
             filtered = filtered[(filtered["missing_days_count"].isna()) | (filtered["missing_days_count"] < self.config.max_missing_days_count)]
 
         LOGGER.info(
-            "Filtres appliqués | entrée=%s sortie=%s rejet_historique=%s rejet_prix=%s rejet_liquidité_marché=%s rejet_liquidité_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
+            "Filtres appliqués | entrée=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidité_marché=%s rejet_liquidité_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
             before_count,
             len(filtered),
-            before_count - after_history,
+            before_count - after_etf_filter,
+            after_etf_filter - after_history,
             after_history - after_close,
             after_close - after_market_liquidity,
             after_market_liquidity - after_score_liquidity,
@@ -738,19 +743,6 @@ class AlphaScanner:
 
         selected = self.rank_and_select(merged_candidates)
 
-        # --- Boost sentiment (optionnel) ---
-        # Appliqué sur la sélection finale APRÈS le classement quantitatif,
-        # pour ajuster légèrement les scores sans modifier l'ordre de sélection initial.
-        # Si _sentiment_aggregator est None (mode par défaut), cette étape est ignorée.
-        if self._sentiment_aggregator is not None and not selected.empty:
-            LOGGER.info("Application boost sentiment | candidats=%s", len(selected))
-            selected = self._sentiment_aggregator.merge(selected)
-            # Re-trier après le boost pour refléter les nouveaux final_scores
-            selected = selected.sort_values(
-                ["final_score", "trend_score", "vcp_score", "avg_dollar_volume_20d"],
-                ascending=False,
-            ).reset_index(drop=True)
-            selected["rank"] = range(1, len(selected) + 1)
 
         self.update_database(selected, merged_candidates)
 
@@ -929,7 +921,8 @@ class AlphaScanner:
         return enriched.reset_index(drop=True)
 
     def _iter_eligible_symbol_chunks(self) -> Iterator[list[str]]:
-        """Filtre SQL brut: liquidité 20j, close > 5, historique >= 252 jours."""
+        """Filtre SQL brut: liquidité 20j, close > 5, historique >= 252 jours,
+        actions US uniquement (asset_class='us_equity', tradable=1, exclut ETF/crypto)."""
         offset = 0
         stmt = text(
             f"""
@@ -941,9 +934,13 @@ class AlphaScanner:
                        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
                 FROM {self.config.price_table}
             ), eligible AS (
-                SELECT symbol
-                FROM ranked
-                GROUP BY symbol
+                SELECT r.symbol
+                FROM ranked r
+                INNER JOIN stock_metadata sm ON sm.symbol = r.symbol
+                WHERE sm.asset_class = 'us_equity'
+                  AND sm.tradable    = 1
+                  AND sm.status      = 'active'
+                GROUP BY r.symbol
                 HAVING COUNT(*) >= :min_history_days
                    AND MAX(CASE WHEN rn = 1 THEN close END) > :min_close
                    AND AVG(CASE WHEN rn <= :liquidity_lookback_days THEN close * volume END) > :liquidity_threshold
@@ -1040,15 +1037,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-anomaly-count", type=int, default=20, help="Nombre maximum d'anomalies accepté par titre")
     parser.add_argument("--sector-cap-ratio", type=float, default=0.30, help="Plafond par secteur, ex. 0.30 = 30%")
     parser.add_argument("--log-level", type=str, default="INFO", help="Niveau de log (DEBUG, INFO, WARNING, ERROR)")
-    parser.add_argument(
-        "--enable-sentiment",
-        action="store_true",
-        default=False,
-        help="Active le boost sentiment FinBERT (SentimentSignalAggregator). Nécessite que "
-             "ticker_daily_features et sector_daily_features soient peuplées par EventSentimentPipeline.",
-    )
-    parser.add_argument("--sentiment-weight", type=float, default=0.15, help="Poids du signal sentiment (défaut 0.15)")
-    parser.add_argument("--macro-weight", type=float, default=0.10, help="Poids du signal macro sectoriel (défaut 0.10)")
     return parser
 
 
@@ -1069,22 +1057,7 @@ def main() -> None:
         sector_cap_ratio=args.sector_cap_ratio,
     )
 
-    sentiment_config: SentimentBoostConfig | None = None
-    if args.enable_sentiment:
-        quant_w = 1.0 - args.sentiment_weight - args.macro_weight
-        sentiment_config = SentimentBoostConfig(
-            sentiment_weight=args.sentiment_weight,
-            macro_sector_weight=args.macro_weight,
-            quant_weight=round(quant_w, 6),
-        )
-        LOGGER.info(
-            "Boost sentiment activé | sentiment_weight=%.2f macro_weight=%.2f quant_weight=%.2f",
-            args.sentiment_weight,
-            args.macro_weight,
-            quant_w,
-        )
-
-    result = AlphaScanner(config=config, sentiment_config=sentiment_config).run()
+    result = AlphaScanner(config=config).run()
 
     if result.empty:
         print("Aucun candidat retenu.")

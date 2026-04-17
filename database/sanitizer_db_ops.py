@@ -265,12 +265,17 @@ def sync_audit_to_stock_scores(
     missing_days: int,
     anomaly_count: int,
 ) -> int:
+    """
+    Met à jour stock_scores avec les compteurs d'audit du dernier run traité.
+    Les valeurs sont CUMULATIVES : on additionne les nouveaux counts aux valeurs existantes.
+    N'est appelé que si was_processed=True (nouvelles barres effectivement traitées).
+    """
     result = conn.execute(
         update(stock_scores)
         .where(stock_scores.c.symbol == symbol)
         .values(
-            missing_days_count=missing_days,
-            anomaly_count=anomaly_count,
+            missing_days_count=stock_scores.c.missing_days_count + missing_days,
+            anomaly_count=stock_scores.c.anomaly_count + anomaly_count,
             last_updated_audit=func.current_timestamp(),
         )
     )

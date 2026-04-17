@@ -379,13 +379,17 @@ class DataSanitizer:
                     try:
                         was_processed, audit_payload = self._process_symbol(conn, symbol)
                         upsert_audit(conn, self.cleaning_audit_log, symbol, **audit_payload)
-                        sync_audit_to_stock_scores(
-                            conn,
-                            self.stock_scores,
-                            symbol,
-                            audit_payload['missing_days'],
-                            audit_payload['anomaly_count'],
-                        )
+                        # sync_audit_to_stock_scores uniquement si de nouvelles barres ont été traitées.
+                        # Si was_processed=False (aucune nouvelle barre), on conserve les valeurs
+                        # existantes dans stock_scores pour ne pas écraser avec 0.
+                        if was_processed:
+                            sync_audit_to_stock_scores(
+                                conn,
+                                self.stock_scores,
+                                symbol,
+                                audit_payload['missing_days'],
+                                audit_payload['anomaly_count'],
+                            )
                         if was_processed:
                             processed += 1
                     except Exception as e:

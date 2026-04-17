@@ -59,3 +59,11 @@ SELECT 'ticker_daily_sentiment_features',                COUNT(*) FROM ticker_da
 UNION ALL
 SELECT 'sector_daily_sentiment_features',                COUNT(*) FROM sector_daily_sentiment_features;
 
+TRUNCATE table alpha_trade.cleaning_audit_log;
+TRUNCATE table alpha_trade.stock_scores;
+TRUNCATE table alpha_trade.news_ingestion_checkpoint;
+TRUNCATE table alpha_trade.news_sentiment;
+TRUNCATE table alpha_trade.news_ticker_map;
+TRUNCATE table alpha_trade.sector_daily_sentiment_features;
+TRUNCATE table alpha_trade.ticker_daily_sentiment_features;
+delete from alpha_trade.news_raw;

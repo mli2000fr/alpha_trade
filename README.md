@@ -108,16 +108,22 @@ import_alpaca_assets.py
 update_sector.py
 
 
-# au quoditien
+# au quotidien
 import_alpaca_bar.py
 data_sanitizer_daily.py
 
 # une fois par mois
 stock_screener.py
 
-# au quoditien ou par semaine
-alpha_scanner.py
+# au quotidien ou par semaine — dans cet ordre strict :
+#  1. alpha_scanner.py       → scores quantitatifs (trend, vcp, final_score) SANS sentiment
+#  2. sentiment_pipeline.py  → news → FinBERT → ticker_daily_features / sector_daily_features
+#  3. signal_aggregator.py   → fusion quant + sentiment → final_score définitif dans stock_scores
 
-# news sentiment
-sentiment_pipeline.py
-signal_aggregator.py
+python -m event_sentiment.signal_aggregator
+python -m event_sentiment.signal_aggregator --all-symbols --trade-date 2026-04-17
+python -m event_sentiment.signal_aggregator --sentiment-weight 0.20 --macro-weight 0.10 --lookback-days 5
+
+# Note : ne PAS utiliser --enable-sentiment dans alpha_scanner.py quand signal_aggregator.py
+# est exécuté séparément (évite une double application du boost sentiment).
+
