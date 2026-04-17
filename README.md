@@ -6,6 +6,8 @@ Screener Swing Trade haute performance (Python + MySQL) avec pipeline en 3 passa
 2. Force relative sur 6 mois versus benchmark (par defaut `SPY`, charge une seule fois).
 3. Position du dernier close dans le range 10 ans (score 0..100).
 
+Le screener lit desormais la table `stock_bars_daily` (donnees daily nettoyees/alignees), et non plus directement `stock_bars`.
+
 Le pipeline est execute en chunks de symboles (500 par defaut) et parallelise via `ProcessPoolExecutor`.
 
 ## Fichiers

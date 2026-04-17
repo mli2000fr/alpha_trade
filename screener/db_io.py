@@ -40,15 +40,14 @@ def _purge_missing_scores(engine: Engine, symbols: list[str]) -> None:
 		conn.execute(delete_stmt, {"symbols": symbols})
 
 
-def iter_symbol_chunks(engine: Engine, chunk_size: int, timeframe: str) -> Iterator[list[str]]:
+def iter_symbol_chunks(engine: Engine, chunk_size: int) -> Iterator[list[str]]:
 	offset = 0
 	stmt = text(
 		"""
 		SELECT symbol
 		FROM (
 			SELECT DISTINCT symbol
-			FROM stock_bars
-			WHERE timeframe = :timeframe
+			FROM stock_bars_daily
 		) s
 		ORDER BY symbol
 		LIMIT :chunk_size OFFSET :offset
@@ -60,7 +59,6 @@ def iter_symbol_chunks(engine: Engine, chunk_size: int, timeframe: str) -> Itera
 			rows = conn.execute(
 				stmt,
 				{
-					"timeframe": timeframe,
 					"chunk_size": chunk_size,
 					"offset": offset,
 				},
@@ -91,25 +89,29 @@ def load_prices_for_chunk(
 		return pd.DataFrame()
 
 	ref_dt = datetime.combine(as_of_date, datetime.min.time()) if as_of_date else datetime.now(UTC).replace(tzinfo=None)
-	cutoff_lower = ref_dt - timedelta(days=365 * config.lookback_history_years + 30)
+	ref_date = ref_dt.date()
+	cutoff_lower = ref_date - timedelta(days=365 * config.lookback_history_years + 30)
 
 	query = """
-		SELECT symbol, `timestamp`, close_price, high_price, low_price, volume
-		FROM stock_bars
-		WHERE timeframe = :timeframe
-		  AND symbol IN :symbols
-		  AND `timestamp` >= :cutoff_lower
+		SELECT symbol,
+		       `date` AS `timestamp`,
+		       COALESCE(adj_close, `close`) AS close_price,
+		       high AS high_price,
+		       low AS low_price,
+		       volume
+		FROM stock_bars_daily
+		WHERE symbol IN :symbols
+		  AND `date` >= :cutoff_lower
 	"""
 	params: dict = {
-		"timeframe": config.timeframe,
 		"symbols": symbols,
 		"cutoff_lower": cutoff_lower,
 	}
 	if as_of_date is not None:
-		query += "  AND `timestamp` <= :cutoff_upper\n"
-		params["cutoff_upper"] = ref_dt
+		query += "  AND `date` <= :cutoff_upper\n"
+		params["cutoff_upper"] = as_of_date
 
-	query += "ORDER BY symbol, `timestamp`"
+	query += "ORDER BY symbol, `date`"
 	stmt = text(query).bindparams(bindparam("symbols", expanding=True))
 
 	return pd.read_sql_query(stmt, engine, params=params)
@@ -126,17 +128,16 @@ def load_spy_return_6m(
 	:param as_of_date: Borne point-in-time. Si None, on prend le dernier bar disponible.
 	"""
 	query = """
-		SELECT `timestamp`, close_price
-		FROM stock_bars
+		SELECT `date` AS `timestamp`, COALESCE(adj_close, `close`) AS close_price
+		FROM stock_bars_daily
 		WHERE symbol = :symbol
-		  AND timeframe = :timeframe
 	"""
-	params: dict = {"symbol": config.benchmark_symbol, "timeframe": config.timeframe}
+	params: dict = {"symbol": config.benchmark_symbol}
 	if as_of_date is not None:
-		query += "  AND `timestamp` <= :cutoff_upper\n"
-		params["cutoff_upper"] = datetime.combine(as_of_date, datetime.min.time())
+		query += "  AND `date` <= :cutoff_upper\n"
+		params["cutoff_upper"] = as_of_date
 
-	query += "ORDER BY `timestamp`"
+	query += "ORDER BY `date`"
 	spy_df = pd.read_sql_query(text(query), engine, params=params)
 	if spy_df.empty:
 		raise RuntimeError(f"Aucune donnée benchmark pour {config.benchmark_symbol}.")

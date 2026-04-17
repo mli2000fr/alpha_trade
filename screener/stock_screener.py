@@ -78,24 +78,19 @@ def run_screener(
     config_dict = config.to_dict()
     as_of_iso = as_of_date.isoformat() if as_of_date else None
 
-    workers = _resolve_worker_count(max_workers)
-    max_in_flight = max(2, workers * 2)
-    config_dict = config.to_dict()
-
     all_results: List[pd.DataFrame] = []
     pending = set()
 
     LOGGER.info(
-        "Démarrage screener | benchmark=%s timeframe=%s chunk_size=%s workers=%s as_of=%s",
+        "Démarrage screener | benchmark=%s chunk_size=%s workers=%s as_of=%s",
         config.benchmark_symbol,
-        config.timeframe,
         config.chunk_size,
         workers,
         as_of_iso or "live",
     )
 
     with ProcessPoolExecutor(max_workers=workers) as executor:
-        for symbol_chunk in iter_symbol_chunks(engine, config.chunk_size, config.timeframe):
+        for symbol_chunk in iter_symbol_chunks(engine, config.chunk_size):
             while len(pending) >= max_in_flight:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 _append_completed_results(done, all_results)
@@ -124,7 +119,7 @@ def run_screener(
     if final_scores.empty:
         LOGGER.critical(
             "Screener a produit 0 scores | durée=%.2fs as_of=%s | "
-            "Vérifier : stock_bars peuplée ? benchmark SPY présent ? liquidity_threshold trop élevé ?",
+            "Vérifier : stock_bars_daily peuplée ? benchmark SPY présent ? liquidity_threshold trop élevé ?",
             elapsed,
             as_of_iso or "live",
         )

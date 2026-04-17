@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from screener import db_io
 
@@ -8,9 +9,23 @@ from screener import db_io
 class _FakeConnection:
     def __init__(self) -> None:
         self.executed: list[object] = []
+        self.rows_queue: list[list[object]] = []
 
     def execute(self, statement, params=None):
         self.executed.append((statement, params))
+        rows = self.rows_queue.pop(0) if self.rows_queue else []
+        return SimpleNamespace(fetchall=lambda: rows)
+
+
+class _FakeConnectContext:
+    def __init__(self, connection: _FakeConnection) -> None:
+        self._connection = connection
+
+    def __enter__(self) -> _FakeConnection:
+        return self._connection
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
 
 
 class _FakeBeginContext:
@@ -30,6 +45,9 @@ class _FakeEngine:
 
     def begin(self) -> _FakeBeginContext:
         return _FakeBeginContext(self.connection)
+
+    def connect(self) -> _FakeConnectContext:
+        return _FakeConnectContext(self.connection)
 
 
 class _FakeInsert:
@@ -174,6 +192,67 @@ def test_upsert_scores_snapshot_accepts_legacy_last_updated_and_top_swing(monkey
     assert record["is_candidate"] == 1
     assert record["sector"] == "Healthcare"
     assert record["last_updated_scan"].isoformat(sep=" ") == "2026-01-01 00:00:00"
+
+
+def test_iter_symbol_chunks_reads_from_stock_bars_daily() -> None:
+    engine = _FakeEngine()
+    engine.connection.rows_queue = [[("AAA",), ("BBB",)], []]
+
+    chunks = list(db_io.iter_symbol_chunks(engine, chunk_size=2))
+
+    assert chunks == [["AAA", "BBB"]]
+    statement, params = engine.connection.executed[0]
+    assert "FROM stock_bars_daily" in str(statement)
+    assert "timeframe" not in params
+
+
+def test_load_prices_for_chunk_reads_daily_table_with_adjusted_close(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        pd,
+        "read_sql_query",
+        lambda stmt, engine, params=None: captured.update({"stmt": stmt, "params": params}) or pd.DataFrame(),
+    )
+
+    config = SimpleNamespace(lookback_history_years=10)
+    db_io.load_prices_for_chunk(object(), ["AAA"], config)
+
+    assert "FROM stock_bars_daily" in str(captured["stmt"])
+    assert "COALESCE(adj_close, `close`) AS close_price" in str(captured["stmt"])
+    assert "timeframe" not in captured["params"]
+
+
+def test_load_spy_return_6m_reads_daily_table(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    spy_df = pd.DataFrame(
+        {
+            "timestamp": ["2026-01-01", "2026-04-01"],
+            "close_price": [100.0, 110.0],
+        }
+    )
+
+    monkeypatch.setattr(
+        pd,
+        "read_sql_query",
+        lambda stmt, engine, params=None: captured.update({"stmt": stmt, "params": params}) or spy_df,
+    )
+
+    config = SimpleNamespace(benchmark_symbol="SPY", lookback_relative_days=183)
+    result = db_io.load_spy_return_6m(object(), config)
+
+    assert result == pytest.approx(0.1)
+    assert "FROM stock_bars_daily" in str(captured["stmt"])
+    assert "COALESCE(adj_close, `close`) AS close_price" in str(captured["stmt"])
+    assert captured["params"] == {"symbol": "SPY"}
+
+
+def test_screener_config_from_dict_ignores_legacy_timeframe() -> None:
+    from screener.models import ScreenerConfig
+
+    config = ScreenerConfig.from_dict({"timeframe": "1D", "chunk_size": 123})
+
+    assert config.chunk_size == 123
 
 
     def test_enrich_scores_with_metadata_sector_keeps_existing_when_metadata_missing(monkeypatch) -> None:

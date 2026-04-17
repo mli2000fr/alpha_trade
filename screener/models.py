@@ -4,7 +4,6 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class ScreenerConfig:
-    timeframe: str = "1D"
     chunk_size: int = 500
     liquidity_threshold_usd: float = 500_000.0
     benchmark_symbol: str = "SPY"
@@ -16,8 +15,6 @@ class ScreenerConfig:
     weight_historical_range: float = 0.4
 
     def __post_init__(self) -> None:
-        if not self.timeframe:
-            raise ValueError("timeframe ne peut pas être vide.")
         if self.chunk_size < 1:
             raise ValueError("chunk_size doit être supérieur ou égal à 1.")
         if self.liquidity_threshold_usd < 0:
@@ -44,5 +41,7 @@ class ScreenerConfig:
 
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "ScreenerConfig":
-        return ScreenerConfig(**payload)
+        normalized_payload = dict(payload)
+        normalized_payload.pop("timeframe", None)
+        return ScreenerConfig(**normalized_payload)
 
