@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS portfolio_targets (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    run_id          VARCHAR(32)   NOT NULL,
+    trade_date      DATE          NOT NULL,
+    symbol          VARCHAR(20)   NOT NULL,
+    shares          INT           NOT NULL,
+    entry_price     DOUBLE        NOT NULL,
+    target_weight   DOUBLE        NOT NULL,
+    sector          VARCHAR(60)   NULL,
+    score_used      DOUBLE        NULL,
+    score_source    VARCHAR(40)   NULL,
+    created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_pt_run       (run_id),
+    INDEX idx_pt_date_sym  (trade_date, symbol)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

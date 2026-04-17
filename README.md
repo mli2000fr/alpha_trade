@@ -127,3 +127,25 @@ python -m event_sentiment.signal_aggregator --sentiment-weight 0.20 --macro-weig
 # Note : ne PAS utiliser --enable-sentiment dans alpha_scanner.py quand signal_aggregator.py
 # est exécuté séparément (évite une double application du boost sentiment).
 
+#  4. risk_management        → gestion de risque, sizing, portefeuille cible
+python -m risk_management
+python -m risk_management --account-equity 100000 --max-positions 10 --dry-run
+python -m risk_management --trade-date 2026-04-17 --log-level DEBUG
+```
+
+## Module Gestion de Risque
+
+Le package `risk_management/` s'exécute **après** `signal_aggregator.py`. Il :
+
+1. Lit les candidats (`is_candidate = 1`) depuis `stock_scores`, triés par `final_score_sentiment` décroissant (score fusionné quant + sentiment, déjà calculé par `signal_aggregator`).
+2. Calcule la taille de position via ATR(20) avec fallback equal-weight.
+3. Vérifie les contraintes de risque (max positions, poids position/secteur, exposition brute, circuit breaker drawdown/daily loss).
+4. Construit le portefeuille cible et journalise chaque décision dans `risk_decisions` et `portfolio_targets`.
+
+Schémas SQL : `database/sql/risk/risk_decisions.sql`, `database/sql/risk/portfolio_targets.sql`.
+
+Tests :
+
+```powershell
+python -m pytest tests/test_position_sizer.py tests/test_constraints.py tests/test_circuit_breaker.py tests/test_risk_checker.py tests/test_portfolio_builder.py
+
