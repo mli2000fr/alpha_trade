@@ -48,7 +48,7 @@ def _print_summary(entries: list[PortfolioEntry], run_id: str, trade_date: date)
     print()
 
 
-def main() -> None:
+def main() -> int:
     args = build_arg_parser().parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s %(message)s")
 
@@ -85,3 +85,6 @@ def main() -> None:
         n_dec = persist_decisions(repo, entries, run_id, trade_date)
         n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date)
         LOGGER.info("Écrit %d décisions et %d cibles en DB.", n_dec, n_tgt)
+
+    return 0
+

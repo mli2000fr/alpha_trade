@@ -11,14 +11,6 @@
             </PendingDiffInfo>
           </value>
         </entry>
-        <entry key="$PROJECT_DIR$/risk_management/__init__.py">
-          <value>
-            <PendingDiffInfo>
-              <option name="filePath" value="$PROJECT_DIR$/risk_management/__init__.py" />
-              <option name="updatedContent" value="&quot;&quot;&quot;&#10;risk_management&#10;===============&#10;Module de gestion de risque pour Alpha Trade.&#10;&#10;S'exécute après ``signal_aggregator.py`` : lit les candidats depuis&#10;``stock_scores``, applique les règles de risque, calcule les tailles de&#10;position, construit un portefeuille cible et journalise les décisions.&#10;&quot;&quot;&quot;&#10;from __future__ import annotations&#10;" />
-            </PendingDiffInfo>
-          </value>
-        </entry>
       </map>
     </option>
   </component>

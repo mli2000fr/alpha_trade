@@ -115,6 +115,12 @@ data_sanitizer_daily.py
 # une fois par mois
 stock_screener.py
 
+alpha_scanner.py
+sentiment_pipeline.py 
+signal_aggregator.py
+run_risk.py
+
+
 # au quotidien ou par semaine — dans cet ordre strict :
 #  1. alpha_scanner.py       → scores quantitatifs (trend, vcp, final_score) SANS sentiment
 #  2. sentiment_pipeline.py  → news → FinBERT → ticker_daily_features / sector_daily_features
@@ -128,9 +134,9 @@ python -m event_sentiment.signal_aggregator --sentiment-weight 0.20 --macro-weig
 # est exécuté séparément (évite une double application du boost sentiment).
 
 #  4. risk_management        → gestion de risque, sizing, portefeuille cible
-python -m risk_management
-python -m risk_management --account-equity 100000 --max-positions 10 --dry-run
-python -m risk_management --trade-date 2026-04-17 --log-level DEBUG
+python -m risk_management.run_risk
+python -m risk_management.run_risk --account-equity 100000 --max-positions 10 --dry-run
+python -m risk_management.run_risk --trade-date 2026-04-17 --log-level DEBUG
 ```
 
 ## Module Gestion de Risque
