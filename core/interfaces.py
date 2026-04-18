@@ -137,3 +137,31 @@ class OrderManager(Protocol):
         """Annule un ordre en attente. Retourne True si annulé avec succès."""
         ...
 
+
+@runtime_checkable
+class BrokerPort(Protocol):
+    """Interface d’abstraction pour un broker (Alpaca, IBKR, etc.)."""
+
+    def submit_order(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        type_: str = "market",
+        **kwargs,
+    ) -> str:
+        """Soumet un ordre. Retourne l’ID de l’ordre broker."""
+        ...
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Annule un ordre en attente. Retourne True si annulé."""
+        ...
+
+    def get_order_status(self, order_id: str) -> str:
+        """Retourne le statut de l’ordre (ex: FILLED, REJECTED, etc.)."""
+        ...
+
+    def get_positions(self) -> list:
+        """Retourne la liste des positions courantes."""
+        ...
+
