@@ -1,0 +1,306 @@
+﻿# Alpha Trade — Documentation Technique
+
+> *Version : 0.1.0 — Python ≥ 3.12 — Dernière mise à jour : avril 2026*
+
+---
+
+## 1. Architecture Générale
+
+### 1.1 Structure des dossiers
+
+```
+alpha_trade/
+├── run_execution.py              ← Point d'entrée principal (CLI interactif ou arguments)
+├── pyproject.toml                ← Config build, dépendances, ruff, mypy
+├── requirements.txt / -dev.txt   ← Dépendances runtime et dev
+├── mypy.ini / pytest.ini         ← Config mypy et pytest (cov ≥ 60%)
+├── README.md                     ← Documentation rapide + ordre d'exécution
+├── core/interfaces.py            ← Contrats (Protocol) : PriceRepository, RiskChecker, etc.
+├── common/utils.py               ← Calendrier NYSE (pandas_market_calendars)
+├── database/                     ← Persistance MySQL (SQLAlchemy + pymysql)
+│   ├── connection.py             ← Engine, Session, pool configuré
+│   ├── assets.py / bar_metadata.py / sanitizer_db_ops.py
+│   └── sql/                      ← DDL : stock/, news/, ml/, risk/, execution/
+├── service/alpaca/               ← Clients HTTP Alpaca (data, news, trading)
+├── service/finnhub/              ← Client HTTP Finnhub (profil société)
+├── dataIntegrityEngine/          ← Ingestion & nettoyage des données
+├── screener/                     ← Screening liquidité/force relative (ProcessPoolExecutor)
+├── selector/                     ← AlphaScanner multi-facteurs (ThreadPoolExecutor)
+├── event_sentiment/              ← Pipeline NLP : news → FinBERT → agrégation → fusion
+├── modelFactory/                 ← LSTM + Temporal Attention (Lightning)
+├── risk_management/              ← Sizing, contraintes, circuit breaker, portefeuille cible
+├── execution_engine/             ← OMS/EMS : ordres, polling, bracket, réconciliation, TCA
+├── artifacts/models/             ← Checkpoints PyTorch
+├── tests/                        ← 35+ tests unitaires (pytest)
+└── htmlcov/                      ← Rapports couverture
+```
+
+### 1.2 Responsabilités par module
+
+| Module | Rôle |
+|---|---|
+| `core/interfaces.py` | Protocols partagés pour découplage et mocking |
+| `database/` | Persistance MySQL (SQLAlchemy Core + pymysql) |
+| `service/` | Clients HTTP (Alpaca data/trading/news, Finnhub) |
+| `dataIntegrityEngine/` | Import et nettoyage données de marché |
+| `screener/` | Scores de base (liquidité, RSI relatif, range historique) |
+| `selector/` | Scoring avancé (Minervini, VCP, neutralisation sectorielle) |
+| `event_sentiment/` | NLP FinBERT + fusion scores quant/sentiment |
+| `modelFactory/` | Entraînement/prédiction LSTM per-symbol |
+| `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
+| `execution_engine/` | OMS/EMS complet (10 phases) |
+
+---
+
+## 2. Analyse Détaillée du Code
+
+### 2.1 Classes principales
+
+**`ProductionExecutor`** (`execution_engine/executor.py`) — Orchestrateur en 10 phases :
+1. Init (build_run_id)
+2. Pre-flight (chargement cibles, circuit breaker, market hours)
+3. Build intents + déduplication par idempotency_key
+4. Submit entries (avec retry réseau, kill switch, throttle batch)
+5. Poll fills (polling broker jusqu'à terminal state)
+6. Submit children (synthetic bracket : TP limit + TS trailing)
+7. *(phase réservée)*
+8. Réconciliation (positions broker vs cibles, rebalance optionnel)
+9. TCA (slippage, implementation shortfall)
+10. Finalize (persist events, update run status)
+
+**`AlphaScanner`** (`selector/alpha_scanner.py`) — Scanner multi-facteurs en chunks parallèles (ThreadPoolExecutor) : `fetch_market_data()` → `compute_factors()` → `merge_scores()` → `apply_filters()` → neutralisation sectorielle cross-sectorielle sur univers complet → `rank_and_select()`.
+
+**`PortfolioBuilder`** (`risk_management/portfolio_builder.py`) — Construction portefeuille : enrichir candidats (conviction score) → trier par conviction DESC → filtre corrélation → sizing ATR/Kelly → check contraintes → ACCEPTED / REDUCED / REJECTED.
+
+**`SentimentSignalAggregator`** (`event_sentiment/signal_aggregator.py`) — Fusion `75% quant + 15% sentiment ticker + 10% macro sectoriel` → `final_score_sentiment`.
+
+**`LSTMAttentionModule`** (`modelFactory/model.py`) — LightningModule : LSTM multi-couche + Temporal Attention (soft-attention axe temporel) + classification binaire (CrossEntropyLoss). Métriques : BinaryAccuracy, BinaryPrecision, BinaryRecall, BinaryAUROC.
+
+**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Seul fichier à modifier pour changer de broker.
+
+**`CircuitBreaker`** (`risk_management/circuit_breaker.py`) — Suspend le trading si drawdown ≥ 15% ou perte daily ≥ 5%.
+
+**`OcoManager`** (`execution_engine/oco_manager.py`) — Gestion OCO synthétique : quand un enfant bracket est FILLED, annule le sibling.
+
+### 2.2 Fonctions clés
+
+| Fonction | Module | Description |
+|---|---|---|
+| `build_entry_intents()` | `order_intents` | Construit OrderIntent d'entrée depuis les ExecutionTarget |
+| `intent_to_alpaca_payload()` | `order_intents` | Convertit OrderIntent → dict API Alpaca |
+| `reconcile_targets_vs_broker()` | `reconciliation` | Compare cibles vs positions → ReconcileDiff[] |
+| `compute_slippage_bps()` | `tca` | Slippage en basis points |
+| `map_alpaca_status()` | `state_machine` | Mapping statuts Alpaca → statuts internes |
+| `compute_conviction()` | `conviction` | score × 40% + prediction × 60% |
+| `filter_correlated()` | `correlation_filter` | Filtre par matrice de corrélation (seuil 0.80) |
+| `_idempotency_key()` | `order_intents` | SHA-256 tronqué pour déduplication |
+
+### 2.3 Modèles de données clés
+
+- `ExecutionTarget` : cible lue depuis `portfolio_targets` (symbol, shares, entry_price, weight, sector)
+- `OrderIntent` : intention d'ordre pré-soumission (idempotency_key, role, decision_price)
+- `BrokerOrder` : ordre soumis au broker (broker_order_id, status, filled_qty, avg_fill_price)
+- `ExecutionFill` : fill reçu (slippage_bps, implementation_shortfall)
+- `ExecutionEvent` : événement auditable (type, message, payload JSON)
+- `CandidateScore` / `EnrichedCandidate` / `PortfolioEntry` : pipeline risk management
+
+---
+
+## 3. Technologies Utilisées
+
+- **Python** ≥ 3.12, build setuptools
+- **DB** : SQLAlchemy + pymysql (MySQL 8.x)
+- **Data** : pandas, numpy, polars
+- **Calendrier** : pandas-market-calendars, pytz, python-dateutil
+- **HTTP** : requests, python-dotenv
+- **NLP** : transformers (HuggingFace), modèle `ProsusAI/finbert`
+- **ML** : PyTorch, Lightning, torchmetrics
+- **Tests** : pytest ≥ 8, pytest-cov ≥ 5, pytest-xdist ≥ 3, pytest-timeout ≥ 2
+- **Lint** : ruff ≥ 0.4 — **Types** : mypy ≥ 1.10
+
+### APIs externes
+
+| API | Base URL | Usage |
+|---|---|---|
+| Alpaca Market Data | `data.alpaca.markets/v2` | Bars OHLCV, assets |
+| Alpaca News | `data.alpaca.markets/v1beta1/news` | Articles financiers |
+| Alpaca Trading paper | `paper-api.alpaca.markets/v2` | Ordres, positions, compte |
+| Alpaca Trading live | `api.alpaca.markets/v2` | Ordres, positions, compte |
+| Finnhub | `finnhub.io/api/v1` | Profil société, secteur |
+
+---
+
+## 4. Configuration Technique
+
+### 4.1 Variables d'environnement
+
+| Variable | Requis | Description |
+|---|---|---|
+| `LOGIN_DB` | ✅ | Utilisateur MySQL |
+| `PASSWORD_DB` | ✅ | Mot de passe MySQL |
+| `ALPACA_API_KEY` | ✅ | Clé API Alpaca |
+| `ALPACA_SECRET_KEY` | ✅ | Secret Alpaca |
+| `FINNHUB_API_KEY` | ⚠️ | Token Finnhub (ou `CLE_FINNHUB`) — requis pour `update_sector` |
+
+### 4.2 Base de données
+
+- **SGBD** : MySQL 8.x, base `alpha_trade`, host `localhost`, charset `utf8mb4`
+- **Pool** : `pool_size=2`, `max_overflow=3`, `pool_pre_ping=True`, `pool_recycle=3600`
+
+### 4.3 Tables SQL (`database/sql/`)
+
+- **stock/** : `stock_metadata`, `stock_bars`, `stock_bars_daily`, `stock_scores`, `cleaning_audit_log`
+- **news/** : `news_raw`, `news_sentiment`, `news_ticker_map`, `macro_event_audit`, `ticker_daily_sentiment_features`, `sector_daily_sentiment_features`, `news_ingestion_checkpoint`
+- **ml/** : `model_registry`, `model_training_run`, `model_metrics`, `model_predictions`
+- **risk/** : `risk_decisions`, `portfolio_targets`
+- **execution/** : `execution_runs`, `execution_orders`, `execution_fills`, `execution_events`, `broker_positions_snapshots`
+
+---
+
+## 5. Flux Techniques
+
+### 5.1 Initialisation (`run_execution.py`)
+
+```python
+config   = ExecutionConfig(**preset)          # dataclass immutable
+repo     = ExecutionRepository()              # lazy SQLAlchemy engine
+client   = AlpacaTradingClient(broker_mode)   # session HTTP persistante
+broker   = BrokerAdapter(client, config)      # couche d'isolation
+oco      = OcoManager(broker, repo)           # OCO synthétique
+executor = ProductionExecutor(config, repo, broker, oco)
+metrics  = executor.execute_run(risk_run_id, trade_date)
+```
+
+### 5.2 Appels API
+
+- Transport via `requests.Session`, headers `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY`
+- Retry : 5 tentatives max, backoff `1.0 * 2^attempt` secondes
+- 4xx → `BrokerApiError` immédiat (pas de retry) ; 429/5xx → retry ; timeout → retry
+
+### 5.3 Gestion des erreurs
+
+| Couche | Stratégie |
+|---|---|
+| Client HTTP | Retry borné + backoff, `BrokerApiError` pour 4xx |
+| Executor | Retry réseau/5xx/429 uniquement, pas de retry 4xx (403 = permanent) |
+| Kill switch | Arrêt après 3 échecs consécutifs |
+| Circuit breaker | Abandon du run si drawdown/perte excessive |
+| DB | `try/except` avec logging, pas de crash si table absente en test |
+| Pipeline chunks | Isolation : un chunk en erreur ne bloque pas les autres |
+
+### 5.4 Logs
+
+- Format : `%(asctime)s %(levelname)-8s %(name)s -- %(message)s`
+- Niveaux : DEBUG / INFO / WARNING / ERROR / CRITICAL
+- Chaque module : `LOGGER = logging.getLogger(__name__)`
+- Sortie : stdout uniquement (pas de handler fichier)
+
+---
+
+## 6. Sécurité
+
+- Secrets via `os.getenv()`, masqués à l'affichage (4 chars + `****`)
+- Pas de secrets en dur dans le code
+- SQLAlchemy `text()` + `bindparam` contre l'injection SQL
+- Confirmation interactive pour le mode live (`oui` requis)
+- **Risques** : credentials en clair dans l'env shell → recommander Vault/AWS SSM ; pas de SSL DB par défaut
+
+---
+
+## 7. Performance / Robustesse
+
+- **Parallélisme** : ProcessPoolExecutor (screener), ThreadPoolExecutor (scanner, I/O bound)
+- **Rate limiting** : 200ms (bars), 350ms (ordres), backoff 20-60s sur 429
+- **Pool DB** : 2+3 connexions/worker, pre-ping, recycle 1h
+- **Idempotence** : clés SHA-256 contre les doublons d'ordres
+- **Kill switch** : 3 échecs consécutifs → arrêt
+- **Batch throttle** : pause tous les 20 ordres
+- **Fill timeout** : 120s (paper) / 180s (live)
+
+---
+
+## 8. Dette Technique
+
+| Élément | Priorité |
+|---|---|
+| Double `return selected` dans `alpha_scanner.py` ligne 766 (code mort) | P0 |
+| `bar_metadata.py` utilise DB-API raw au lieu de SQLAlchemy Core | P1 |
+| Pas de migration DB (Alembic absent) | P1 |
+| Pas de handler fichier pour les logs (stdout seul) | P1 |
+| Import dynamique `risk_management` dans `executor.py` (couplage runtime) | P2 |
+| Méthode `_make_entry` V1 inutilisée dans `portfolio_builder.py` | P2 |
+| Dossier `prompt/` (25 fichiers non structurés, hors code) | P3 |
+| `configure_optimizers()` sans type hint dans `model.py` | P3 |
+
+---
+
+## 9. Recommandations de Refactoring
+
+**Court terme (P0-P1)** :
+1. Supprimer le `return selected` dupliqué dans `alpha_scanner.py:766`
+2. Migrer `bar_metadata.py` vers SQLAlchemy Core
+3. Ajouter Alembic pour les migrations de schéma
+4. Ajouter RotatingFileHandler pour les logs
+5. Supprimer `_make_entry` V1 dans `portfolio_builder.py`
+
+**Moyen terme (P2)** :
+6. Extraire le circuit breaker de l'import dynamique → injection via constructeur
+7. Ajouter une interface `BrokerPort` (Protocol) pour abstraire le broker
+8. Unifier les configs : YAML/TOML centralisé
+9. Tests d'intégration avec MySQL Docker (testcontainers)
+
+**Long terme (P3)** :
+10. Orchestrateur pipeline (Airflow/Prefect)
+11. Monitoring (Prometheus/Grafana)
+12. Containerisation Docker
+13. Framework de backtest intégré
+
+---
+
+## 10. Comment Lancer le Projet Localement
+
+### Installation
+
+```powershell
+pip install -e ".[dev]"
+```
+
+### Configuration
+
+```powershell
+$env:LOGIN_DB = "user"; $env:PASSWORD_DB = "pass"
+$env:ALPACA_API_KEY = "PK..."; $env:ALPACA_SECRET_KEY = "..."
+$env:FINNHUB_API_KEY = "..."   # optionnel
+```
+
+### Créer les tables
+
+Exécuter les `.sql` de `database/sql/` dans MySQL (stock/ → news/ → ml/ → risk/ → execution/).
+
+### Pipeline complet
+
+```powershell
+# Init (une fois)
+python -m dataIntegrityEngine.import_alpaca_assets
+python -m dataIntegrityEngine.update_sector
+
+# Quotidien
+python -m dataIntegrityEngine.import_alpaca_bar
+python -m dataIntegrityEngine.data_sanitizer_daily
+python -m dataIntegrityEngine.stock_screener
+python -m selector.alpha_scanner
+python -m event_sentiment
+python -m event_sentiment.signal_aggregator
+python -m risk_management.run_risk --account-equity 100000
+python run_execution.py simulate   # ou paper / live
+```
+
+### Tests
+
+```powershell
+python -m pytest                # tous les tests
+python -m pytest -v -k executor # tests ciblés
+ruff check .                    # lint
+mypy .                          # types
+python run_execution.py check   # vérif environnement
+```
