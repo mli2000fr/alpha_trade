@@ -30,6 +30,7 @@ alpha_trade/
 ├── modelFactory/                 ← LSTM + Temporal Attention (Lightning)
 ├── risk_management/              ← Sizing, contraintes, circuit breaker, portefeuille cible
 ├── execution_engine/             ← OMS/EMS : ordres, polling, bracket, réconciliation, TCA
+├── corporate_actions/            ← Corporate actions : dividendes, splits, audit, cash ledger
 ├── artifacts/models/             ← Checkpoints PyTorch
 ├── tests/                        ← 35+ tests unitaires (pytest)
 └── htmlcov/                      ← Rapports couverture
@@ -49,6 +50,7 @@ alpha_trade/
 | `modelFactory/` | Entraînement/prédiction LSTM per-symbol |
 | `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
 | `execution_engine/` | OMS/EMS complet (10 phases) |
+| `corporate_actions/` | Gestion dividendes, splits, reverse splits (audit + comptabilité portefeuille) |
 
 ---
 
@@ -82,6 +84,12 @@ alpha_trade/
 
 **`OcoManager`** (`execution_engine/oco_manager.py`) — Gestion OCO synthétique : quand un enfant bracket est FILLED, annule le sibling.
 
+**`CorporateActionEngine`** (`corporate_actions/engine.py`) — Orchestrateur corporate actions en 2 phases : `sync()` (ingestion provider → DB) et `apply()` (application idempotente sur positions). Stratégie : les OHLCV restent gérés par Alpaca (`adjustment="all"`), ce module gère uniquement la comptabilité portefeuille (qty, cost basis, cash).
+
+**`AlpacaCorporateActionProvider`** (`corporate_actions/provider.py`) — Provider abstrait pour l'ingestion des dividendes et splits depuis l'API Alpaca Corporate Actions (`v1beta1/corporate-actions`). Extensible vers Polygon, Finnhub, etc.
+
+**`CorporateActionRepository`** (`corporate_actions/db_io.py`) — Accès DB (SQLAlchemy Core) : insert/load événements, applications, cash ledger. Compatible MySQL et SQLite (tests).
+
 ### 2.2 Fonctions clés
 
 | Fonction | Module | Description |
@@ -94,6 +102,9 @@ alpha_trade/
 | `compute_conviction()` | `conviction` | score × 40% + prediction × 60% |
 | `filter_correlated()` | `correlation_filter` | Filtre par matrice de corrélation (seuil 0.80) |
 | `_idempotency_key()` | `order_intents` | SHA-256 tronqué pour déduplication |
+| `process_dividend()` | `corporate_actions.processors` | Calcul dividende cash : qty × amount → crédit cash ledger |
+| `process_split()` | `corporate_actions.processors` | Ajustement split/reverse : qty × ratio, cost / ratio, cash-in-lieu si fractions |
+| `reconcile_after_corporate_actions()` | `corporate_actions.reconciliation` | Compare positions internes post-CA vs broker |
 
 ### 2.3 Modèles de données clés
 
@@ -103,6 +114,10 @@ alpha_trade/
 - `ExecutionFill` : fill reçu (slippage_bps, implementation_shortfall)
 - `ExecutionEvent` : événement auditable (type, message, payload JSON)
 - `CandidateScore` / `EnrichedCandidate` / `PortfolioEntry` : pipeline risk management
+- `CorporateActionEvent` : événement CA ingéré (provider, symbol, ca_type, ex_date, amount/ratio, idempotency_key)
+- `CorporateActionApplication` : trace immuable d'un ajustement appliqué (qty before/after, cost basis, cash impact)
+- `CashLedgerEntry` : entrée ledger cash (dividend_credit, cash_in_lieu)
+- `PositionSnapshot` : état d'une position pour traitement CA
 
 ---
 
@@ -154,6 +169,7 @@ alpha_trade/
 - **ml/** : `model_registry`, `model_training_run`, `model_metrics`, `model_predictions`
 - **risk/** : `risk_decisions`, `portfolio_targets`
 - **execution/** : `execution_runs`, `execution_orders`, `execution_fills`, `execution_events`, `broker_positions_snapshots`
+- **corporate_actions/** : `corporate_actions_events`, `corporate_actions_applications`, `portfolio_cash_ledger`
 
 ---
 
@@ -275,7 +291,7 @@ $env:FINNHUB_API_KEY = "..."   # optionnel
 
 ### Créer les tables
 
-Exécuter les `.sql` de `database/sql/` dans MySQL (stock/ → news/ → ml/ → risk/ → execution/).
+Exécuter les `.sql` de `database/sql/` dans MySQL (stock/ → news/ → ml/ → risk/ → execution/ → corporate_actions/).
 
 ### Pipeline complet
 
@@ -286,6 +302,8 @@ python -m dataIntegrityEngine.update_sector
 
 # Quotidien
 python -m dataIntegrityEngine.import_alpaca_bar
+python -m corporate_actions sync      # Ingérer dividendes/splits depuis Alpaca
+python -m corporate_actions apply     # Appliquer sur positions (idempotent)
 python -m dataIntegrityEngine.data_sanitizer_daily
 python -m dataIntegrityEngine.stock_screener
 python -m selector.alpha_scanner

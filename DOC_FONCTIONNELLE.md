@@ -121,6 +121,28 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 - Couverture de code ≥ 60% (seuil pytest configuré)
 - Rapport HTML de couverture généré dans `htmlcov/`
 
+### 2.9 Gestion des Corporate Actions (dividendes et splits)
+
+Le module `corporate_actions` assure le suivi automatique des opérations sur titres :
+
+| Fonctionnalité | Description |
+|---|---|
+| **Dividendes cash** | Détection via provider (Alpaca), calcul montant = qty × dividende/action, crédit cash dans un ledger dédié |
+| **Splits** | Ajustement automatique : qty × ratio, cost basis / ratio, conservation de la valeur totale |
+| **Reverse splits** | Idem avec gestion des fractions (cash-in-lieu) |
+| **Idempotence** | Clé SHA-256 déterministe (provider + symbol + type + ex_date + montant/ratio), unicité DB |
+| **Audit trail** | Tables `corporate_actions_events`, `corporate_actions_applications`, `portfolio_cash_ledger` |
+| **Réconciliation** | Comparaison positions internes post-CA vs positions broker |
+
+**Stratégie données de marché** : les barres OHLCV sont ingérées avec `adjustment="all"` (déjà ajustées par Alpaca). Le module corporate actions ne touche pas aux prix historiques — il gère uniquement la comptabilité portefeuille (qty, cost basis, cash).
+
+**Intégration pipeline** : s'exécute entre l'étape 1 (import_alpaca_bar) et l'étape 2 (data_sanitizer_daily) :
+```
+python -m corporate_actions sync    # Ingérer les événements depuis Alpaca
+python -m corporate_actions apply   # Appliquer sur les positions
+python -m corporate_actions status  # Résumé des événements
+```
+
 ---
 
 ## 3. Flux de Fonctionnement Global
@@ -137,6 +159,8 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
                      PIPELINE QUOTIDIEN
      ┌───────────────────────────────────────────────────────┐
      │ 1. import_alpaca_bar         │ → stock_bars           │
+     │ 1b. corporate_actions sync  │ → corporate_actions_events│
+     │ 1c. corporate_actions apply │ → position adjustments  │
      │ 2. data_sanitizer_daily      │ → stock_bars_daily     │
      │ 3. stock_screener            │ → stock_scores         │
      │ 4. alpha_scanner             │ → stock_scores (update)│

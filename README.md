@@ -110,6 +110,14 @@ update_sector.py
 
 # au quotidien
 import_alpaca_bar.py
+
+
+python -m dataIntegrityEngine.import_alpaca_bar
+python -m corporate_actions sync       # Ingérer dividendes/splits depuis Alpaca
+python -m corporate_actions apply      # Appliquer sur positions (idempotent)
+python -m dataIntegrityEngine.data_sanitizer_daily
+# ... reste du pipeline inchangé
+
 data_sanitizer_daily.py
 
 # une fois par mois
@@ -124,6 +132,10 @@ run_train.py
 run_predict.py
 
 run_execution.py 
+
+
+
+---------------------------------------------------
 
 
 # au quotidien ou par semaine — dans cet ordre strict :

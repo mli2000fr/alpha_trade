@@ -1,0 +1,331 @@
+Tu interviens sur le projet Python existant `alpha_trade`, un système de trading algorithmique swing sur actions US.
+
+Je veux intégrer une fonctionnalité critique aujourd’hui absente : la gestion automatique des opérations sur titres (corporate actions), en priorité :
+- dividendes cash
+- splits d’actions
+- reverse splits
+
+==================================================
+CONTEXTE PROJET À PRENDRE EN COMPTE
+==================================================
+
+Le projet n’est pas un projet Java/Spring, mais un codebase Python structuré en modules, avec :
+- Python >= 3.12
+- MySQL 8
+- SQLAlchemy Core + pymysql
+- requests / pandas / polars
+- pytest / pytest-cov / ruff / mypy
+- pipeline batch quotidien, non event-streaming natif
+
+Architecture réelle du projet :
+- `dataIntegrityEngine/` : ingestion et nettoyage des données de marché
+- `service/alpaca/` : clients API Alpaca
+- `risk_management/` : construction du portefeuille cible
+- `execution_engine/` : exécution, journalisation, réconciliation, TCA
+- `database/` + `database/sql/` : schéma SQL et accès DB
+- `run_execution.py` : point d’entrée exécution
+- `DOC_FONCTIONNELLE.md` et `DOC_TECHNIQUE.md` décrivent le système
+
+Pipeline actuel :
+1. `import_alpaca_bar`
+2. `data_sanitizer_daily`
+3. `stock_screener`
+4. `selector.alpha_scanner`
+5. `event_sentiment`
+6. `event_sentiment.signal_aggregator`
+7. `risk_management.run_risk`
+8. `run_execution.py`
+
+IMPORTANT :
+- Le projet utilise aujourd’hui Alpaca avec `adjustment="all"` dans `service/alpaca/clientAlpaca.py`.
+- `dataIntegrityEngine/data_sanitizer_daily.py` part explicitement du principe que les OHLCV reçus sont déjà ajustés.
+- `stock_bars_daily` persiste déjà `adj_close`, `ingested_at` et `data_adjustment`.
+- Il existe déjà des tables et patterns d’audit comme :
+  - `cleaning_audit_log`
+  - `execution_events`
+  - `execution_runs`
+  - `execution_orders`
+  - `execution_fills`
+  - `broker_positions_snapshots`
+  - `portfolio_targets`
+  - `risk_decisions`
+
+La solution doit donc être conçue pour s’intégrer proprement à cette architecture réelle, sans repartir de zéro ni proposer une architecture hors-sol.
+
+==================================================
+OBJECTIF
+==================================================
+
+Concevoir et implémenter un module Python robuste de gestion des corporate actions, cohérent avec `Alpha Trade`, permettant :
+
+1. d’ingérer des événements de corporate actions depuis une source fiable
+   - Alpaca si possible via abstraction de provider
+   - sinon source alternative configurable
+   - mode batch prioritaire, compatible avec le pipeline existant
+
+2. de traiter automatiquement :
+   - les dividendes cash
+   - les splits
+   - les reverse splits
+
+3. de garantir :
+   - exactitude financière
+   - cohérence des positions dérivées
+   - cohérence du P&L / reporting
+   - idempotence stricte
+   - auditabilité complète
+   - reprise sûre après échec partiel
+
+4. d’être extensible vers d’autres corporate actions futures :
+   - mergers
+   - spin-offs
+   - symbol changes
+   - delistings
+   - special dividends
+
+==================================================
+POINTS MÉTIER À COUVRIR
+==================================================
+
+### 1) Dividendes cash
+Lorsqu’un dividende est détecté ou reçu :
+- identifier les positions éligibles à la date ex-dividende / record date selon la stratégie retenue
+- calculer le montant dû = quantité éligible × dividende par action
+- créditer le cash dans un ledger dédié ou une structure équivalente si le projet n’a pas encore de ledger de cash interne complet
+- enregistrer un événement auditable immuable
+- rendre l’impact visible pour le reporting et, si pertinent, le risk / portfolio accounting
+- ne jamais appliquer deux fois le même dividende
+
+### 2) Splits et reverse splits
+Lorsqu’un split est détecté ou reçu :
+- ajuster la quantité de la position selon le ratio
+- ajuster le prix de revient moyen / cost basis de manière cohérente
+- garantir que la valeur économique totale de la position reste inchangée immédiatement après l’opération (hors arrondis explicitement gérés)
+- historiser l’ajustement
+- ne jamais modifier les trades historiques bruts
+- appliquer l’opération de façon idempotente
+
+### 3) Historique prix / données de marché
+Le projet utilise déjà Alpaca avec `adjustment="all"`.
+La solution doit impérativement traiter ce point proprement pour éviter tout double-ajustement.
+
+Je veux une décision d’architecture explicite et justifiée entre deux stratégies possibles :
+- soit conserver l’approche actuelle `adjustment="all"` et utiliser le module corporate actions principalement pour l’audit, la comptabilité portefeuille et la traçabilité
+- soit faire évoluer l’ingestion pour stocker aussi une version raw / semi-ajustée, avec application contrôlée des corporate actions en aval
+
+Dans tous les cas :
+- ne pas casser les modules existants
+- ne pas introduire d’incohérence entre `stock_bars`, `stock_bars_daily`, `risk_management`, `execution_engine` et le reporting
+- expliciter la stratégie retenue dans le code et dans la documentation
+
+==================================================
+EXIGENCES TECHNIQUES
+==================================================
+
+### Architecture
+Créer un sous-module dédié, par exemple :
+- `corporate_actions/__init__.py`
+- `corporate_actions/models.py`
+- `corporate_actions/provider.py`
+- `corporate_actions/db_io.py`
+- `corporate_actions/engine.py`
+- `corporate_actions/processors.py`
+- `corporate_actions/reconciliation.py`
+- `corporate_actions/cli.py`
+
+Tu peux adapter cette structure si tu proposes mieux, mais elle doit rester cohérente avec l’organisation actuelle du projet.
+
+### Base de données
+Créer le schéma nécessaire pour supporter :
+- le stockage immuable des événements corporate actions
+- la trace des applications effectives
+- l’idempotence
+- le cash ledger si nécessaire
+- les ajustements de positions dérivées si nécessaire
+
+Le design doit être compatible avec le style actuel du projet :
+- MySQL 8
+- SQLAlchemy Core
+- SQL déclaratif dans `database/sql/...`
+- et/ou migrations Alembic si tu juges cela pertinent pour l’état actuel du repo
+
+Proposer au minimum des tables du type :
+- `corporate_actions_events`
+- `corporate_actions_applications`
+- `portfolio_cash_ledger` ou équivalent
+- éventuellement `position_adjustment_ledger` si nécessaire
+
+Chaque événement doit avoir :
+- un identifiant provider
+- un type (`cash_dividend`, `split`, `reverse_split`, etc.)
+- symbole
+- dates utiles (announcement / ex / payable / effective)
+- payload brut source
+- hash ou clé d’idempotence
+- statut de traitement
+- timestamps d’ingestion et d’application
+
+### Idempotence
+L’idempotence est non négociable.
+Un même événement corporate action ne doit jamais produire un double crédit cash ni un double ajustement de position.
+
+Prévoir :
+- contrainte d’unicité DB
+- clé d’idempotence déterministe (par ex. provider + symbol + type + ex_date + ratio/montant)
+- logique applicative safe en cas de relance ou retry
+
+### Transactions / robustesse
+Le traitement doit être transactionnel autant que possible.
+En cas d’échec partiel :
+- rollback cohérent
+- statut d’échec traçable
+- possibilité de rejouer proprement
+- aucun effet financier dupliqué
+
+### Logs / audit
+Respecter les conventions actuelles :
+- `LOGGER = logging.getLogger(__name__)`
+- logs structurés
+- messages exploitables en production
+
+En plus des tables dédiées, intégrer les événements importants dans `execution_events` si pertinent, ou proposer un audit trail cohérent avec l’écosystème actuel.
+
+### Intégration pipeline
+La fonctionnalité doit s’intégrer proprement au fonctionnement batch existant.
+Prévoir un point d’entrée explicite, par exemple :
+- `python -m corporate_actions.cli sync`
+- `python -m corporate_actions.cli apply`
+ou une commande équivalente
+
+Définir clairement où cette étape s’insère dans le pipeline quotidien, et pourquoi.
+
+### Style d’implémentation
+Respecter le style du projet :
+- petites fonctions testables
+- séparation claire responsabilités / orchestration / accès DB / provider externe
+- pas de couplage inutile
+- typage Python correct
+- code lisible, production-ready
+
+==================================================
+RÈGLES DE COHÉRENCE DES DONNÉES
+==================================================
+
+Ces règles doivent être strictement respectées :
+
+1. Ne jamais modifier les trades historiques bruts.
+2. Ne modifier que des états dérivés, des ledgers d’ajustement, des snapshots ou de la valorisation dérivée.
+3. Maintenir un historique immuable des corporate actions reçues.
+4. Conserver une piste complète : événement reçu, décision de traitement, effet appliqué, timestamp, source.
+5. Garantir qu’un split ne casse ni les positions, ni les calculs de performance, ni les agrégats de reporting.
+6. Garantir qu’un dividende n’est jamais appliqué deux fois.
+7. Documenter explicitement comment la solution interagit avec les données Alpaca déjà ajustées (`adjustment="all"`).
+8. Si une source broker externe reflète déjà automatiquement le split ou le dividende, documenter précisément la stratégie de réconciliation pour éviter double comptabilisation côté interne.
+9. Prévoir la gestion des cas limites :
+   - fraction de split
+   - reverse split avec reliquat cash-in-lieu si nécessaire
+   - dividende reçu sur position partiellement vendue autour de l’ex-date
+   - événement en retard / re-ingestion
+   - correction d’un événement déjà publié par la source
+
+==================================================
+IMPACTS À COUVRIR DANS LE PROJET
+==================================================
+
+Je veux une solution pensée pour les modules existants, notamment :
+
+### `service/alpaca/`
+- ajouter une abstraction de provider corporate actions
+- ne pas casser les clients existants
+
+### `dataIntegrityEngine/`
+- clarifier si des ajustements de prix supplémentaires sont nécessaires
+- sinon documenter pourquoi l’audit corporate actions reste indispensable malgré `adjustment="all"`
+
+### `database/`
+- créer les accès DB dédiés
+- respecter les patterns existants de repository / db_io / SQLAlchemy Core
+
+### `risk_management/`
+- vérifier l’impact sur les positions, le cost basis, la valorisation et la lecture des expositions
+- ne pas introduire de rupture sur `portfolio_targets` ni sur les décisions de sizing
+
+### `execution_engine/`
+- intégrer l’audit des corporate actions si utile
+- vérifier la cohérence avec `broker_positions_snapshots`
+- prévoir une logique de réconciliation broker vs état interne après split/dividende
+
+### documentation
+Mettre à jour :
+- `DOC_TECHNIQUE.md`
+- `DOC_FONCTIONNELLE.md`
+- éventuellement `README.md`
+
+==================================================
+LIVRABLES ATTENDUS
+==================================================
+
+Je veux une réponse complète avec :
+
+1. une proposition d’architecture détaillée adaptée à ce repo
+2. le code Python complet des nouveaux modules
+3. les changements nécessaires dans les modules existants
+4. le schéma SQL / migrations
+5. un point d’entrée CLI pour synchroniser et appliquer les corporate actions
+6. des tests unitaires et d’intégration
+7. la documentation mise à jour
+8. une explication claire de la stratégie retenue vis-à-vis des prix déjà ajustés Alpaca
+
+==================================================
+TESTS REQUIS
+==================================================
+
+Je veux des tests sérieux, au minimum :
+
+### unitaires
+- calcul dividende cash
+- split 2:1
+- reverse split 1:10
+- idempotence sur relecture du même événement
+- rejet / neutralisation d’un événement invalide
+- gestion des arrondis et cas limites
+
+### intégration
+- ingestion d’un événement corporate action source -> persist DB
+- application sur position existante -> effets attendus
+- replay du même événement -> aucun double effet
+- audit trail écrit correctement
+- cohérence après rollback / erreur simulée
+
+Utiliser le stack de tests du projet :
+- `pytest`
+- mocks si nécessaire
+- style cohérent avec les tests existants dans `tests/`
+
+==================================================
+CRITÈRES D’ACCEPTATION
+==================================================
+
+La tâche n’est considérée réussie que si :
+
+- le design est cohérent avec l’architecture Python réelle de `Alpha Trade`
+- la solution ne suppose pas une stack Java/Spring/Kafka
+- le problème spécifique des données Alpaca déjà ajustées est traité explicitement
+- les dividendes et splits sont gérés de façon fiable et idempotente
+- la piste d’audit est complète
+- les tests passent
+- la documentation est mise à jour
+- le code reste professionnel, sobre, maintenable et prêt pour production
+
+==================================================
+MODE DE TRAVAIL ATTENDU
+==================================================
+
+Avant d’écrire du code :
+1. lire les fichiers réellement pertinents du projet
+2. identifier les points d’intégration exacts
+3. proposer brièvement la stratégie retenue
+4. puis implémenter de façon incrémentale et testée
+
+Ne fais pas une proposition générique.
+Je veux une implémentation réellement adaptée à ce dépôt, à ses conventions, à ses tables et à son pipeline.
