@@ -1,0 +1,362 @@
+Lis d'abord l'existant du projet avant toute proposition d'implémentation, et base toutes les décisions sur le code réel du repo.
+
+================================================================
+CONTEXTE WORKSPACE
+================================================================
+
+Projet Python : alpha_trade
+Base de données : MySQL via SQLAlchemy (pymysql)
+Tests : pytest
+Python 3.12, pyproject.toml avec setuptools
+
+Modules déjà implémentés et fonctionnels :
+  - dataIntegrityEngine/data_sanitizer_daily.py  — nettoyage OHLCV, détection anomalies MAD, alignement calendrier SPY
+  - database/connection.py                       — get_sqlalchemy_engine() avec lru_cache, pool_size=2, pool_pre_ping=True
+  - database/sanitizer_db_ops.py
+  - database/sql/stock/stock_bars_daily.sql
+  - database/sql/stock/stock_scores.sql
+  - database/sql/stock/stock_scores_history.sql  — table d'archivage quotidien des snapshots stock_scores (NEW)
+  - database/sql/stock/stock_metadata.sql
+  - screener/stock_screener.py                   — scoring multi-facteurs avec ProcessPoolExecutor, support as_of_date
+  - screener/db_io.py                            — upsert_scores_snapshot + archive_scores_snapshot (NEW)
+  - selector/alpha_scanner.py                    — AlphaScanner, trend_score/vcp_score, ThreadPoolExecutor
+  - event_sentiment/                             — pipeline FinBERT complet (ingestion, scoring, macro_rules, aggregation)
+  - event_sentiment/signal_aggregator.py         — fusionne quant + sentiment → final_score_sentiment dans stock_scores
+  - risk_management/                             — module complet (PortfolioBuilder, PositionSizer, RiskChecker, CircuitBreaker, ConstraintChecker)
+  - core/interfaces.py                           — Protocol classes (@runtime_checkable)
+  - tests/
+
+================================================================
+MATURITÉ DES DONNÉES — ÉTAT VÉRIFIÉ (CRITIQUE)
+================================================================
+
+Tables avec historique profond (~10 ans, ~2500 trading days/symbole) :
+  ✅ stock_bars_daily  — SEULE source exploitable pour l'entraînement ML
+     Colonnes : symbol, date, open, high, low, close, volume, adj_close, vwap, daily_return, is_filled
+
+Tables SNAPSHOT (écrasement complet à chaque run, AUCUN historique) :
+  ⚠️ stock_scores — PK = symbol, pas de date
+     Le screener écrase + purge les symboles absents (_purge_missing_scores) à chaque run.
+     L'alpha_scanner reset trend_score/vcp_score/final_score/is_candidate.
+     Le signal_aggregator écrase les colonnes sentiment.
+     → Utilisable UNIQUEMENT pour lire l'univers courant (is_candidate=1)
+     → NE PEUT PAS servir de source de features historiques
+     NOTE : stock_scores_history existe maintenant et accumule les snapshots jour par jour,
+     mais ne contient que quelques jours de données au démarrage.
+
+Tables qui accumulent l'historique jour par jour (quelques jours/semaines seulement) :
+  - stock_scores_history                  — NEW, accumulation (PK: snapshot_date+symbol)
+  - ticker_daily_sentiment_features       — accumulation (PK: symbol+trade_date)
+  - sector_daily_sentiment_features       — accumulation (PK: sector+trade_date)
+  - risk_decisions                        — accumulation (INSERT auto-inc)
+  - portfolio_targets                     — accumulation (INSERT auto-inc)
+  - news_raw, news_sentiment              — accumulation
+
+Conséquences directes pour le module 3 V1 :
+  1. FEATURES V1 = EXCLUSIVEMENT stock_bars_daily
+  2. NE PAS lire ticker_daily_sentiment_features ni sector_daily_sentiment_features pour le training
+  3. NE PAS lire stock_scores comme source de features (sauf is_candidate=1 pour l'univers)
+  4. NE PAS lire risk_decisions ni portfolio_targets
+  5. NE PAS lire stock_scores_history (pas assez de profondeur)
+
+Dépendances DÉJÀ présentes dans requirements.txt :
+  pandas, polars, numpy, sqlalchemy, pymysql
+  torch, transformers (déjà installés pour event_sentiment/FinBERT)
+  pandas-market-calendars, python-dotenv
+  MANQUANT : lightning (à ajouter)
+
+================================================================
+PIPELINE QUOTIDIEN ACTUEL (ordre séquentiel)
+================================================================
+
+  1. stock_screener.py           → total_score, liquidity_val, RSI, historical_range_score
+  2. alpha_scanner.py            → trend_score, vcp_score, final_score, is_candidate=1
+  3. sentiment_pipeline.py       → news → FinBERT → ticker/sector daily features
+  4. signal_aggregator.py        → fusion quant + sentiment → final_score_sentiment dans stock_scores
+  5. risk_management/            → lit final_score_sentiment, applique sizing ATR/Kelly, construit portfolio_targets
+  6. [MODULE 3 — À CRÉER]       → LSTM predictions — en V1, tourne en PARALLÈLE du pipeline, pas dans la chaîne critique
+
+================================================================
+MISSION : MODULE 3 — 個股分佈式模型工廠 (Distributed Model Factory)
+================================================================
+
+Objectif métier :
+Construire une usine d'entraînement professionnelle pour le swing trading US equities,
+où chaque symbole candidat a son propre modèle séquentiel entraîné à partir des données
+journalières nettoyées (~10 ans de bars).
+
+================================================================
+CHOIX FONCTIONNELS V1
+================================================================
+
+1. Target ML :
+   - classification binaire
+   - label = 1 si future_5d_return > 0, sinon 0
+   - le modèle retourne une probabilité exploitable comme confidence score
+
+2. Univers :
+   - entraîner uniquement les symboles avec stock_scores.is_candidate = 1
+
+3. Mode distributed :
+   - un modèle indépendant par symbole
+   - exécution parallèle des jobs d'entraînement
+
+4. Features V1 (EXCLUSIVEMENT stock_bars_daily) :
+   - calcul à la volée à partir des colonnes : open, high, low, close, volume, adj_close, vwap, daily_return, is_filled
+   - features dérivées : intraday_range, overnight_gap, rolling_volatility, rolling_volume, etc.
+   - ne pas exiger de migration SQL pour la V1
+   - concevoir une interface extensible (flag include_sentiment_features: bool = False)
+     pour ajouter plus tard les features sentiment quand elles auront > 6 mois d'historique
+
+5. Persistance :
+   - checkpoints/scaler/config sur disque
+   - registre des runs, métriques et statuts dans MySQL
+
+6. Best model :
+   - sélectionner le meilleur checkpoint sur val_loss
+   - logger aussi directional_accuracy, precision, recall, éventuellement auc
+
+================================================================
+CONTRAINTES D'ARCHITECTURE
+================================================================
+
+- PyTorch Lightning (lightning package)
+- support GPU si disponible, sinon fallback CPU
+- modèle = LSTM + attention temporelle sur les hidden states
+- attention softmax normalisée sur l'axe temporel
+- pipeline strictement sans fuite de données
+- split chronologique train/val/test (70/15/15)
+- scaler fit sur train uniquement
+- code modulaire, testable, maintenable
+
+================================================================
+SOURCE DE DONNÉES
+================================================================
+
+- stock_bars_daily comme source UNIQUE de features (~10 ans, ~2500 jours/symbole)
+- stock_scores pour filtrer l'univers is_candidate = 1 (snapshot courant uniquement)
+- stock_metadata si besoin pour enrichissement (sector)
+- Colonnes existantes à utiliser :
+  open, high, low, close, volume, adj_close, vwap, daily_return, is_filled
+- Features dérivées recalculées à la volée :
+  intraday range, overnight gap, rolling volatility, rolling volume features
+  autres features techniques simples si justifiées
+- NE PAS inventer de colonnes absentes de la base
+- NE PAS lire les tables sentiment/risk/signal_aggregator pour le training
+- NE PAS supposer que stock_scores a un historique (c'est un snapshot)
+
+================================================================
+SPÉCIFICATIONS DATASET
+================================================================
+
+- un dataset par symbole
+- séquence temporelle configurable, par défaut 60 jours
+- horizon configurable, par défaut 5 jours
+- historique minimal configurable, par défaut 504 jours (2 ans)
+  Justification : avec 10 ans de bars (~2500 jours), on peut se permettre un minimum élevé.
+  Sur le minimum 504j : Train(70%)=353j, Val(15%)=75j, Test(15%)=75j.
+  Sur les ~2500j réels : Train=1750j, Val=375j, Test=375j — confortable.
+- split chronologique par symbole : 70% train / 15% val / 15% test
+- aucun shuffle entre passé et futur
+- prise en charge des cas limites :
+  - historique insuffisant → status=skipped avec raison
+  - NaN → forward-fill puis drop si nécessaire
+  - volumes nuls → flag mais ne pas exclure
+  - lignes forward-filled (is_filled=1) → flag feature, pas d'exclusion
+  - symboles candidats mais non entraînables → status=skipped avec raison
+
+================================================================
+PERSISTANCE ATTENDUE
+================================================================
+
+Disque :
+  artifacts/models/{symbol}/best.ckpt
+  artifacts/models/{symbol}/scaler.pkl
+  artifacts/models/{symbol}/config.json
+  artifacts/models/{symbol}/metrics.json
+
+MySQL (tables DÉDIÉES, ne pas surcharger stock_scores) :
+  model_registry        — registre des modèles (symbol, architecture, version, actif/inactif)
+  model_training_run    — runs d'entraînement (run_id, symbol, status, timestamps, paths)
+  model_metrics         — métriques résumées (run_id, val_loss, test_loss, directional_accuracy, etc.)
+  model_predictions     — prédictions (symbol, prediction_date, predicted_probability, predicted_class, run_id)
+
+================================================================
+INTÉGRATION AVEC LE PIPELINE AVAL (V1 : MODE OBSERVATION)
+================================================================
+
+En V1, le module 3 tourne en PARALLÈLE du pipeline principal.
+Il n'est PAS dans la chaîne critique de décision.
+Il accumule des prédictions pour validation future.
+
+Pipeline quotidien V1 :
+  1-4. screener → scanner → sentiment → signal_aggregator  (INCHANGÉ)
+  5.   python -m modelFactory --mode predict  → ml_predicted_proba dans model_predictions
+  6.   python -m risk_management              → lit final_score_sentiment (INCHANGÉ en V1)
+
+Le module risk_management n'est PAS modifié en V1.
+La fusion final_score_ml = α * final_score_sentiment + (1-α) * ml_predicted_proba
+est une étape V1.1 qui nécessite un backtest pour calibrer le poids α.
+
+================================================================
+CONVENTIONS DU PROJET À RESPECTER IMPÉRATIVEMENT
+================================================================
+
+- dataclass(frozen=True, slots=True) pour les configs et modèles de données immuables
+- __post_init__ avec validation stricte dans chaque Config
+- @runtime_checkable Protocol dans core/interfaces.py pour les contrats d'interface
+- LOGGER = logging.getLogger(__name__) avec messages structurés (clés=valeurs)
+- Logging INFO pour les jalons, WARNING pour les dégradations
+- Pattern parallèle : ThreadPoolExecutor ou ProcessPoolExecutor + progression
+  (voir alpha_scanner.py et stock_screener.py pour le pattern exact)
+- CLI avec argparse (voir risk_management/cli.py pour le pattern)
+- Tests pytest dans tests/ avec conftest.py partagé
+- database/connection.py : get_sqlalchemy_engine() — singleton partagé
+
+================================================================
+SORTIES ATTENDUES (10 étapes)
+================================================================
+
+1. Proposer l'architecture de dossiers/fichiers à créer
+2. Proposer les nouvelles dépendances à ajouter (lightning uniquement, torch est déjà là)
+3. Proposer les tables MySQL nécessaires pour le registre ML
+4. Implémenter le chargement et la préparation des données
+5. Implémenter le builder de séquences et le scaling
+6. Implémenter le modèle LSTM + attention
+7. Implémenter l'entraînement Lightning
+8. Implémenter la sauvegarde checkpoints/scaler/config/métriques
+9. Implémenter l'orchestrateur multi-symboles parallèle
+10. Implémenter le service de prédiction + persistance model_predictions
+11. Implémenter les tests unitaires et d'intégration
+12. Documenter le mode d'exécution
+
+================================================================
+RÈGLES D'IMPLÉMENTATION
+================================================================
+
+- Lire les fichiers existants avant toute modification
+- Réutiliser les conventions du projet (frozen dataclass, Protocol, structured logging)
+- Éviter les dépendances inutiles
+- Produire du code réellement intégrable au repo
+- Ne pas casser les modules existants
+- Ne pas modifier risk_management/ en V1
+- Pour toute décision non évidente, expliquer brièvement le rationnel
+- Après chaque étape importante, valider par des tests
+- Si une étape est trop grosse, la découper en sous-étapes propres
+- Ne crée aucune migration SQL implicite dans les tables existantes sans justification claire
+- Réutilise les conventions de database/connection.py et des tests existants
+- Ajoute des tests à chaque étape avant de passer à la suivante
+
+================================================================
+STYLE DE TRAVAIL
+================================================================
+
+Travailler étape par étape. À chaque étape :
+  1. Résumer brièvement ce qui existe déjà
+  2. Proposer précisément ce qui va être créé
+  3. Implémenter
+  4. Tester
+  5. Résumer les fichiers ajoutés/modifiés et les raisons
+
+Ne pas essayer d'implémenter tout le module en une seule fois.
+Interdiction de dépasser l'étape demandée.
+
+================================================================
+CRITÈRES D'ACCEPTATION GLOBAUX
+================================================================
+
+- Le modèle accepte un tenseur [batch, seq_len, n_features]
+- Les poids d'attention somment à 1 sur l'axe temporel
+- Le pipeline fonctionne sans GPU
+- Le scaler n'est fit que sur train
+- Les splits sont chronologiques
+- Les artefacts sont bien sauvegardés
+- Les runs sont traçables en MySQL
+- Les prédictions sont écrites dans model_predictions
+- L'architecture est prête pour extension features sentiment V1.1
+
+================================================================
+BLOC ANTI-ERREURS
+================================================================
+
+- N'invente pas des colonnes DB absentes sans le signaler explicitement
+- Ne mélange pas plusieurs responsabilités dans un seul fichier
+- Ne saute pas l'écriture des tests
+- Ne fais pas de split aléatoire en time series
+- Ne fit jamais le scaler sur val/test
+- Ne mets pas les checkpoints binaires directement dans MySQL
+- Ne transforme pas stock_scores en table fourre-tout ML (tables dédiées)
+- Ne lis PAS les tables sentiment/risk/signal_aggregator pour les features d'entraînement
+- Ne suppose PAS que stock_scores a un historique (c'est un snapshot sans date)
+- Ne modifie PAS risk_management/ en V1
+- Si une dépendance nouvelle est proposée, justifie-la brièvement
+- Si une étape est trop grosse, découpe-la avant de coder
+
+================================================================
+FORMAT DE RÉPONSE OBLIGATOIRE À CHAQUE ÉTAPE
+================================================================
+
+## Objectif de l'étape
+## Fichiers existants analysés
+## Fichiers à créer/modifier
+## Plan d'implémentation
+## Code
+## Tests exécutés / validation
+## Résumé de l'étape
+## Étape suivante proposée
+
+Sois concret, technique, et aligné avec le repo réel.
+
+================================================================
+PLAN EN 10 ÉTAPES
+================================================================
+
+Étape 1 — Audit + architecture technique uniquement
+  Obtenir : arborescence, services, tables DB, dépendances, plan complet
+  Ne code rien. Design technique uniquement.
+
+Étape 2 — Dépendances + schéma MySQL + modèles de config
+  modelFactory/__init__.py
+  modelFactory/config.py
+  modelFactory/db_registry.py
+  database/sql/ml/model_registry.sql
+  database/sql/ml/model_training_run.sql
+  database/sql/ml/model_metrics.sql
+  tests associés
+
+Étape 3 — Chargement des données d'entraînement depuis la base
+  Repository symboles candidats, chargement historique, préprocesseur tabulaire, tests
+
+Étape 4 — Feature engineering + target + split chronologique
+  Builder features, builder target, splitter chronologique, tests
+
+Étape 5 — Scaling + création des séquences
+  Scaler, sequence builder, dataset PyTorch, DataModule Lightning, tests
+
+Étape 6 — Modèle LSTM + attention temporelle
+  Backbone LSTM, attention, classification head, LightningModule, tests
+
+Étape 7 — Entraînement Lightning + checkpointing + logging
+  Service mono-symbole, sauvegarde artefacts, registry MySQL, tests
+
+Étape 8 — Orchestrateur distributed multi-symboles
+  Batch orchestrator, workers configurables, résumé final, CLI, tests
+
+Étape 9 — Persistance des prédictions et readiness pour module 4
+  Service inférence, table model_predictions, accès DB, tests
+
+Étape 10 — Tests finaux + documentation + mini runbook
+  README module 3, commandes de lancement, limites V1, évolutions prévues
+
+================================================================
+QUALITÉ
+================================================================
+
+Je privilégie la robustesse, la traçabilité et l'intégration propre au repo à la vitesse brute.
+Si un choix rapide dégrade la maintenabilité, refuse ce choix et propose une alternative plus professionnelle.
+Toute solution non testée ou non justifiée sera considérée comme incomplète.
+
+================================================================
+COMMENCE PAR L'ÉTAPE 1 UNIQUEMENT.
+================================================================
+

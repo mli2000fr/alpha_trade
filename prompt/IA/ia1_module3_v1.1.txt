@@ -1,0 +1,285 @@
+Ce prompt est destiné à être utilisé APRÈS le module 3 V1 fonctionnel,
+quand stock_scores_history + ticker_daily_sentiment_features auront accumulé > 6 mois d'historique.
+
+Prérequis avant d'utiliser ce prompt :
+  - Module 3 V1 fonctionnel (modelFactory/ complet, tests passants)
+  - stock_scores_history avec > 126 trading days de données (6 mois)
+  - ticker_daily_sentiment_features avec > 126 trading days de données
+  - sector_daily_sentiment_features avec > 126 trading days de données
+  - model_predictions avec > 60 jours de prédictions ML accumulées
+
+================================================================
+CONTEXTE V1.1 — UPGRADE DU MODULE 3
+================================================================
+
+Le module 3 V1 est en production et tourne quotidiennement.
+Il produit des prédictions basées UNIQUEMENT sur stock_bars_daily (features prix/volume).
+Les prédictions sont stockées dans model_predictions depuis > 2 mois.
+
+Depuis le déploiement de V1, les tables suivantes ont accumulé de l'historique :
+  ✅ stock_scores_history              — > 6 mois (snapshot_date + symbol)
+     Colonnes exploitables : total_score, trend_score, vcp_score, final_score,
+     is_candidate, final_score_sentiment, signal_active
+  ✅ ticker_daily_sentiment_features   — > 6 mois (symbol + trade_date)
+     Colonnes exploitables : news_count_1d, sentiment_pos_mean_1d, sentiment_neg_mean_1d,
+     sentiment_neu_mean_1d, sentiment_net_mean_1d, sentiment_net_sum_1d,
+     sentiment_confidence_mean_1d, major_event_flag, source_diversity_count,
+     after_close_news_count, pre_market_news_count
+  ✅ sector_daily_sentiment_features   — > 6 mois (sector + trade_date)
+     Colonnes exploitables : sector_news_count_1d, sector_sentiment_net_mean_1d,
+     sector_sentiment_net_sum_1d, sector_positive_ratio, sector_negative_ratio,
+     sector_impact_score, macro_event_flag, macro_event_intensity
+  ✅ model_predictions                 — > 2 mois de prédictions V1
+
+================================================================
+MISSION V1.1 — TROIS AXES
+================================================================
+
+AXE 1 : Intégrer les features sentiment dans le LSTM
+AXE 2 : Intégrer les features scores historiques dans le LSTM
+AXE 3 : Fusionner ml_predicted_proba dans la chaîne de décision risk_management
+
+================================================================
+AXE 1 — FEATURES SENTIMENT DANS LE LSTM
+================================================================
+
+Objectif :
+Enrichir le feature_engineer.py du module 3 avec les données sentiment par ticker et par secteur.
+Le module 3 V1 a déjà prévu un flag include_sentiment_features: bool dans la config.
+
+Implémentation attendue :
+
+1. Activer le flag include_sentiment_features = True dans la config
+
+2. Dans feature_engineer.py, ajouter un bloc conditionnel qui :
+   a. Charge ticker_daily_sentiment_features pour le symbole courant
+      - JOIN sur (symbol, trade_date) ↔ (symbol, date) de stock_bars_daily
+      - LEFT JOIN : si pas de news un jour donné, remplir avec 0 (pas de sentiment = neutre)
+   b. Charge sector_daily_sentiment_features pour le secteur du symbole
+      - Récupérer le secteur depuis stock_metadata
+      - JOIN sur (sector, trade_date) ↔ (sector, date)
+      - LEFT JOIN : remplir avec 0 si absent
+
+3. Features sentiment ticker à ajouter :
+   - news_count_1d                  — volume d'activité news
+   - sentiment_net_mean_1d          — sentiment net moyen du jour
+   - sentiment_confidence_mean_1d   — confiance FinBERT moyenne
+   - major_event_flag               — événement majeur binaire
+   - pre_market_news_count          — news pré-market (forward-looking signal)
+
+4. Features sentiment secteur à ajouter :
+   - sector_sentiment_net_mean_1d   — sentiment sectoriel
+   - sector_impact_score            — impact score sectoriel
+   - macro_event_flag               — flag macro événement
+   - macro_event_intensity          — intensité macro
+
+5. Rolling features sentiment (calculées à la volée comme les features prix) :
+   - sentiment_net_mean_5d = rolling(5).mean() de sentiment_net_mean_1d
+   - sentiment_net_mean_20d = rolling(20).mean() de sentiment_net_mean_1d
+   - news_count_5d = rolling(5).sum() de news_count_1d
+   - sentiment_momentum = sentiment_net_mean_5d - sentiment_net_mean_20d
+
+Contraintes :
+  - Le LEFT JOIN garantit qu'on ne perd aucune ligne de stock_bars_daily
+  - Les NaN issus du LEFT JOIN sont remplis avec 0 (absence de news = neutre)
+  - Les rolling features sentiment utilisent min_periods=1 pour ne pas créer de NaN en début de série
+  - Le scaler est TOUJOURS fit sur train uniquement (inclut les nouvelles features)
+  - Les features sentiment sont ajoutées APRÈS les features prix, dans le même DataFrame
+  - Le nombre total de features (n_features) change → le modèle doit être ré-entraîné
+  - Les anciens artefacts V1 ne sont PAS compatibles → nouveau run complet
+
+Validation requise :
+  - Vérifier que le nombre de lignes ne change pas après le JOIN (LEFT JOIN)
+  - Vérifier que les NaN sentiment sont bien remplis à 0
+  - Vérifier que les features sentiment respectent le split chronologique
+  - Comparer les métriques V1 (prix seul) vs V1.1 (prix + sentiment) sur le test set
+
+================================================================
+AXE 2 — FEATURES SCORES HISTORIQUES DANS LE LSTM
+================================================================
+
+Objectif :
+Utiliser stock_scores_history pour injecter les scores historiques du screener/scanner comme features.
+
+Implémentation attendue :
+
+1. Ajouter un flag include_scores_features: bool = False dans la config
+
+2. Dans feature_engineer.py, ajouter un bloc conditionnel qui :
+   a. Charge stock_scores_history pour le symbole courant
+      - JOIN sur (symbol, snapshot_date) ↔ (symbol, date) de stock_bars_daily
+      - LEFT JOIN : les jours sans snapshot sont remplis avec forward-fill (le dernier score connu)
+
+3. Features scores à ajouter :
+   - total_score_hist               — score screener du jour
+   - final_score_hist               — score final scanner du jour
+   - is_candidate_hist              — était candidat ce jour-là ?
+   - final_score_sentiment_hist     — score sentiment fusionné du jour
+
+4. Rolling features scores :
+   - total_score_5d = rolling(5).mean()
+   - final_score_change_5d = final_score_hist - final_score_hist.shift(5)
+   - candidate_streak = nombre de jours consécutifs is_candidate=1
+
+Contraintes :
+  - Forward-fill des scores manquants (le score du screener ne change pas tous les jours)
+  - Le forward-fill ne doit JAMAIS traverser le split train→val→test
+  - Les features scores ne sont utiles que si stock_scores_history a > 252 jours
+  - Prévoir un seuil minimum configurable (min_scores_history_days: int = 126)
+
+================================================================
+AXE 3 — FUSION ML DANS LA CHAÎNE DE DÉCISION
+================================================================
+
+Objectif :
+Intégrer ml_predicted_proba dans le flux de décision de risk_management.
+
+Prérequis avant activation :
+  1. Les modèles V1.1 sont entraînés avec features sentiment + scores
+  2. Un backtest walk-forward a validé que le score ML améliore les décisions
+  3. Le poids α de fusion est calibré par backtest
+
+Implémentation attendue :
+
+1. Créer un service de fusion dans modelFactory/score_fusion.py :
+
+   def compute_final_score_ml(
+       final_score_sentiment: float,
+       ml_predicted_proba: float,
+       alpha: float = 0.6,    # calibré par backtest, sentiment pèse plus au début
+   ) -> float:
+       """
+       Fusionne le score quant+sentiment avec la prédiction ML.
+       alpha = poids du score sentiment (traditionnel)
+       (1-alpha) = poids de la prédiction ML
+       """
+       return alpha * final_score_sentiment + (1 - alpha) * ml_predicted_proba
+
+2. Ajouter une colonne final_score_ml dans stock_scores :
+   ALTER TABLE stock_scores ADD COLUMN final_score_ml DOUBLE DEFAULT NULL;
+   ALTER TABLE stock_scores ADD COLUMN ml_predicted_proba DOUBLE DEFAULT NULL;
+   ALTER TABLE stock_scores ADD COLUMN ml_run_id VARCHAR(32) DEFAULT NULL;
+
+3. Dans le pipeline quotidien V1.1, APRÈS le signal_aggregator et APRÈS le predict du module 3 :
+   - Lire model_predictions du jour pour chaque symbole candidat
+   - Calculer final_score_ml via le service de fusion
+   - UPDATE stock_scores SET final_score_ml = :score, ml_predicted_proba = :proba WHERE symbol = :sym
+
+4. Modifier risk_management pour OPTIONNELLEMENT lire final_score_ml :
+   - Ajouter un flag use_ml_score: bool = False dans la config risk
+   - Si use_ml_score=True ET final_score_ml IS NOT NULL :
+       score_source = "ml_fusion"
+       score = final_score_ml
+   - Sinon (fallback) :
+       score_source = "sentiment" (comportement V1 inchangé)
+       score = final_score_sentiment
+   - Le changement dans risk_management est MINIMAL : un if/else sur la source du score
+
+5. Pipeline quotidien V1.1 :
+   1. stock_screener.py           → total_score
+   2. alpha_scanner.py            → final_score, is_candidate
+   3. sentiment_pipeline.py       → ticker/sector features
+   4. signal_aggregator.py        → final_score_sentiment
+   5. python -m modelFactory --mode predict  → model_predictions + stock_scores.ml_predicted_proba
+   6. python -m modelFactory --mode fuse     → stock_scores.final_score_ml (NEW)
+   7. python -m risk_management --use-ml-score  → lit final_score_ml au lieu de final_score_sentiment
+
+Contraintes :
+  - Le fallback vers final_score_sentiment DOIT toujours fonctionner
+  - Si model_predictions est vide pour un symbole, final_score_ml = final_score_sentiment (pas de pénalité)
+  - risk_management NE DOIT PAS crasher si final_score_ml est NULL
+  - Le flag --use-ml-score est un opt-in explicite, pas activé par défaut
+
+================================================================
+BACKTEST DE VALIDATION AVANT ACTIVATION AXE 3
+================================================================
+
+Avant d'activer use_ml_score en production, il faut :
+
+1. Accumuler > 60 jours de prédictions model_predictions
+2. Comparer sur ces 60 jours :
+   a. Directional accuracy de ml_predicted_proba vs final_score_sentiment
+   b. Portfolio PnL simulé avec final_score_ml vs final_score_sentiment
+3. Calibrer α par grid search sur la période de validation :
+   - Tester α ∈ {0.3, 0.4, 0.5, 0.6, 0.7}
+   - Choisir le α qui maximise le Sharpe ratio simulé
+4. Documenter les résultats dans un rapport de validation
+
+================================================================
+PLAN D'IMPLÉMENTATION V1.1 (5 étapes)
+================================================================
+
+Étape V1.1-1 — Features sentiment dans feature_engineer.py
+  - Activer include_sentiment_features
+  - Implémenter le LEFT JOIN ticker + sector
+  - Ajouter les features + rolling
+  - Tests : vérifier dimensions, pas de NaN, pas de fuite
+  - Ré-entraîner tous les modèles avec les nouvelles features
+
+Étape V1.1-2 — Features scores historiques dans feature_engineer.py
+  - Activer include_scores_features
+  - Implémenter le LEFT JOIN stock_scores_history
+  - Forward-fill des scores manquants
+  - Tests : vérifier le forward-fill, pas de fuite cross-split
+  - Ré-entraîner les modèles
+
+Étape V1.1-3 — Service de fusion des scores
+  - modelFactory/score_fusion.py
+  - ALTER TABLE stock_scores (ml_predicted_proba, final_score_ml, ml_run_id)
+  - CLI --mode fuse
+  - Tests
+
+Étape V1.1-4 — Modification minimale de risk_management
+  - Flag use_ml_score dans config
+  - If/else sur la source du score dans portfolio_builder.py ou risk_checker.py
+  - CLI --use-ml-score
+  - Tests : vérifier le fallback, vérifier que V1 fonctionne toujours sans le flag
+
+Étape V1.1-5 — Backtest de validation + documentation
+  - Script de backtest comparatif
+  - Grid search α
+  - Rapport de validation
+  - README V1.1
+
+================================================================
+CONVENTIONS ET RÈGLES (identiques à V1)
+================================================================
+
+- Lire les fichiers existants avant toute modification
+- Réutiliser les conventions du projet
+- frozen dataclass, Protocol, structured logging
+- Tests à chaque étape
+- Ne pas casser V1
+- Les modèles V1 (features prix seul) restent fonctionnels si on désactive les flags
+- Backward compatibility : include_sentiment_features=False doit reproduire V1 à l'identique
+
+================================================================
+CRITÈRES D'ACCEPTATION V1.1
+================================================================
+
+- include_sentiment_features=False → résultats identiques à V1
+- include_sentiment_features=True → features enrichies, modèle ré-entraîné
+- include_scores_features=True → features scores historiques ajoutées
+- use_ml_score=False → risk_management identique à V1
+- use_ml_score=True → risk_management utilise final_score_ml
+- final_score_ml NULL → fallback automatique vers final_score_sentiment
+- Les artefacts V1 et V1.1 coexistent (répertoires séparés ou versionnés)
+- Backtest documenté avec résultats quantitatifs
+
+================================================================
+BLOC ANTI-ERREURS V1.1
+================================================================
+
+- Ne casse PAS la compatibilité V1 (les flags par défaut = False)
+- Ne force PAS le ré-entraînement automatiquement — c'est un choix explicite
+- Ne fais PAS de JOIN qui réduit le nombre de lignes (LEFT JOIN uniquement)
+- Ne forward-fill PAS à travers les frontières de split
+- Ne modifie PAS le schema de model_predictions (déjà V1)
+- Ne suppose PAS que tous les symboles ont des prédictions ML (fallback)
+- Le poids α NE DOIT PAS être hardcodé — il doit venir de la config
+- Ne mélange PAS les artefacts V1 et V1.1 dans le même répertoire
+
+================================================================
+COMMENCE PAR L'ÉTAPE V1.1-1 UNIQUEMENT.
+================================================================
+

@@ -100,6 +100,7 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
         ),
     )
     monkeypatch.setattr(db_io, "_purge_missing_scores", lambda current_engine, symbols: purge_calls.append(symbols))
+    monkeypatch.setattr(db_io, "archive_scores_snapshot", lambda engine, snapshot_date=None: 0)
 
     scores_df = pd.DataFrame(
         [
@@ -168,6 +169,7 @@ def test_upsert_scores_snapshot_accepts_legacy_last_updated_and_top_swing(monkey
         lambda current_engine, symbols: pd.DataFrame([{"symbol": "AAA", "sector": "Healthcare"}]),
     )
     monkeypatch.setattr(db_io, "_purge_missing_scores", lambda current_engine, symbols: purge_calls.append(symbols))
+    monkeypatch.setattr(db_io, "archive_scores_snapshot", lambda engine, snapshot_date=None: 0)
 
     scores_df = pd.DataFrame(
         [
@@ -255,24 +257,133 @@ def test_screener_config_from_dict_ignores_legacy_timeframe() -> None:
     assert config.chunk_size == 123
 
 
-    def test_enrich_scores_with_metadata_sector_keeps_existing_when_metadata_missing(monkeypatch) -> None:
-      engine = object()
-      monkeypatch.setattr(
+def test_enrich_scores_with_metadata_sector_keeps_existing_when_metadata_missing(monkeypatch) -> None:
+    engine = object()
+    monkeypatch.setattr(
         db_io,
         "_load_metadata_sectors",
         lambda current_engine, symbols: pd.DataFrame([{"symbol": "AAA", "sector": None}]),
-      )
+    )
 
-      scores_df = pd.DataFrame(
+    scores_df = pd.DataFrame(
         [
-          {"symbol": "AAA", "sector": "LegacySector"},
-          {"symbol": "BBB", "sector": "ExistingSector"},
+            {"symbol": "AAA", "sector": "LegacySector"},
+            {"symbol": "BBB", "sector": "ExistingSector"},
         ]
-      )
+    )
 
-      enriched = db_io._enrich_scores_with_metadata_sector(engine, scores_df)
+    enriched = db_io._enrich_scores_with_metadata_sector(engine, scores_df)
 
-      assert enriched.loc[0, "sector"] == "LegacySector"
-      assert enriched.loc[1, "sector"] == "ExistingSector"
+    assert enriched.loc[0, "sector"] == "LegacySector"
+    assert enriched.loc[1, "sector"] == "ExistingSector"
 
 
+# ---------------------------------------------------------------------------
+# archive_scores_snapshot
+# ---------------------------------------------------------------------------
+
+class _FakeResultProxy:
+    def __init__(self, rowcount: int) -> None:
+        self.rowcount = rowcount
+
+
+def test_archive_scores_snapshot_executes_insert_select() -> None:
+    """archive_scores_snapshot doit exécuter un INSERT … SELECT depuis stock_scores."""
+    from datetime import date as _date
+
+    engine = _FakeEngine()
+    engine.connection.rows_queue = []  # pas de lecture attendue
+
+    # Patch execute pour retourner un rowcount
+    original_execute = engine.connection.execute
+
+    def patched_execute(statement, params=None):
+        original_execute(statement, params)
+        return _FakeResultProxy(rowcount=5)
+
+    engine.connection.execute = patched_execute
+
+    count = db_io.archive_scores_snapshot(engine, snapshot_date=_date(2025, 6, 15))
+
+    assert count == 5
+    # Vérifie qu'on a bien exécuté une requête avec la bonne date
+    assert len(engine.connection.executed) == 1
+    _, params = engine.connection.executed[0]
+    assert params == {"snapshot_date": _date(2025, 6, 15)}
+
+
+def test_archive_scores_snapshot_defaults_to_today() -> None:
+    """Sans snapshot_date, archive_scores_snapshot utilise date.today()."""
+    from datetime import date as _date
+
+    engine = _FakeEngine()
+    engine.connection.execute = lambda stmt, params=None: (
+        engine.connection.executed.append((stmt, params))
+        or _FakeResultProxy(rowcount=0)
+    )
+
+    db_io.archive_scores_snapshot(engine)
+
+    _, params = engine.connection.executed[0]
+    assert params["snapshot_date"] == _date.today()
+
+
+def test_upsert_scores_snapshot_calls_archive(monkeypatch) -> None:
+    """upsert_scores_snapshot doit appeler archive_scores_snapshot à la fin."""
+    archive_calls: list = []
+
+    monkeypatch.setattr(db_io, "archive_scores_snapshot", lambda engine, snapshot_date=None: archive_calls.append(snapshot_date) or 0)
+    monkeypatch.setattr(db_io, "_purge_missing_scores", lambda engine, symbols: None)
+    monkeypatch.setattr(db_io, "_enrich_scores_with_metadata_sector", lambda engine, df: df)
+
+    fake_insert = _FakeInsert()
+    monkeypatch.setattr("screener.db_io.mysql_insert", lambda table: fake_insert)
+    monkeypatch.setattr(db_io, "_get_scores_table", lambda engine: "stock_scores")
+
+    scores_df = pd.DataFrame([{
+        "symbol": "AAPL",
+        "liquidity_val": 1.0,
+        "relative_strength_index": 0.5,
+        "historical_range_score": 0.3,
+        "total_score": 0.8,
+        "last_updated_score": "2025-01-01",
+        "is_candidate": 1,
+        "sector": "Tech",
+        "last_updated_scan": "2025-01-01",
+    }])
+
+    engine = _FakeEngine()
+    db_io.upsert_scores_snapshot(engine, scores_df, chunksize=1000)
+
+    assert len(archive_calls) == 1, "archive_scores_snapshot doit être appelé une fois"
+
+
+def test_upsert_scores_snapshot_archive_failure_does_not_break(monkeypatch) -> None:
+    """Si l'archivage échoue (table absente), le pipeline principal ne casse pas."""
+
+    def failing_archive(engine, snapshot_date=None):
+        raise Exception("Table stock_scores_history does not exist")
+
+    monkeypatch.setattr(db_io, "archive_scores_snapshot", failing_archive)
+    monkeypatch.setattr(db_io, "_purge_missing_scores", lambda engine, symbols: None)
+    monkeypatch.setattr(db_io, "_enrich_scores_with_metadata_sector", lambda engine, df: df)
+
+    fake_insert = _FakeInsert()
+    monkeypatch.setattr("screener.db_io.mysql_insert", lambda table: fake_insert)
+    monkeypatch.setattr(db_io, "_get_scores_table", lambda engine: "stock_scores")
+
+    scores_df = pd.DataFrame([{
+        "symbol": "AAPL",
+        "liquidity_val": 1.0,
+        "relative_strength_index": 0.5,
+        "historical_range_score": 0.3,
+        "total_score": 0.8,
+        "last_updated_score": "2025-01-01",
+        "is_candidate": 1,
+        "sector": "Tech",
+        "last_updated_scan": "2025-01-01",
+    }])
+
+    engine = _FakeEngine()
+    # Ne doit PAS lever d'exception
+    db_io.upsert_scores_snapshot(engine, scores_df, chunksize=1000)

@@ -1,0 +1,68 @@
+Tu es un architecte quantitatif senior dans un hedge fund (Citadel / Two Sigma). Tu travailles
+sur le projet alpha_trade — un système de Swing Trade US enterprise-grade en Python 3.12.
+
+=== CONTEXTE PROJET EXISTANT (NE PAS MODIFIER) ===
+
+Le projet possède déjà 4 modules fonctionnels :
+1. dataIntegrityEngine/ — DataSanitizer : nettoyage OHLCV, alignement calendrier SPY, détection anomalies MAD
+2. event_sentiment/ — Pipeline FinBERT : ingestion news Alpaca, scoring sentiment, macro impact par secteur
+3. screener/ + selector/ — StockScreener (ProcessPoolExecutor) + AlphaScanner multi-facteurs (ThreadPoolExecutor)
+4. risk_management/ — PositionSizer (ATR/Kelly), RiskChecker, PortfolioBuilder, CircuitBreaker, contraintes sectorielles
+
+Base de données : MySQL (pymysql + SQLAlchemy). Tables clés :
+- stock_bars_daily : symbol, date, open, high, low, close, volume, adj_close, vwap, daily_return, is_filled
+- stock_scores : final_score (quant), final_score_sentiment (quant+NLP), sentiment_net_agg,
+  sector_impact_agg, trend_score, vcp_score, is_candidate, sector
+- news_sentiment : article_id, sentiment_net_score, sentiment_confidence
+- ticker_daily_sentiment_features / sector_daily_sentiment_features : features agrégées par jour
+
+Conventions du projet :
+- dataclass(frozen=True, slots=True) pour tous les modèles de données
+- @runtime_checkable Protocol dans core/interfaces.py pour le duck typing
+- Config immutable par module (ex: RiskConfig, AlphaScannerConfig, ScreenerConfig)
+- Logging structuré (LOGGER = logging.getLogger(__name__)) avec messages clés INFO/WARNING/CRITICAL
+- Tests pytest dans tests/ avec conftest.py partagé
+- Validation stricte dans __post_init__ de chaque Config
+- requirements.txt existant : torch, transformers, pandas, numpy, sqlalchemy, pymysql
+
+=== TÂCHE : CRÉER LE MODULE model_factory/ ===
+
+Crée un nouveau package Python `model_factory/` (Distributed Model Factory — 個股分佈式模型工廠)
+qui entraîne un modèle LSTM+Attention **par ticker** pour prédire le rendement forward 5 jours
+(régression) ou la direction (classification binaire up/down).
+
+Structure attendue :
+Tu es un architecte quantitatif senior dans un hedge fund (Citadel / Two Sigma). Tu travailles
+sur le projet alpha_trade — un système de Swing Trade US enterprise-grade en Python 3.12.
+
+=== CONTEXTE PROJET EXISTANT (NE PAS MODIFIER) ===
+
+Le projet possède déjà 4 modules fonctionnels :
+1. dataIntegrityEngine/ — DataSanitizer : nettoyage OHLCV, alignement calendrier SPY, détection anomalies MAD
+2. event_sentiment/ — Pipeline FinBERT : ingestion news Alpaca, scoring sentiment, macro impact par secteur
+3. screener/ + selector/ — StockScreener (ProcessPoolExecutor) + AlphaScanner multi-facteurs (ThreadPoolExecutor)
+4. risk_management/ — PositionSizer (ATR/Kelly), RiskChecker, PortfolioBuilder, CircuitBreaker, contraintes sectorielles
+
+Base de données : MySQL (pymysql + SQLAlchemy). Tables clés :
+- stock_bars_daily : symbol, date, open, high, low, close, volume, adj_close, vwap, daily_return, is_filled
+- stock_scores : final_score (quant), final_score_sentiment (quant+NLP), sentiment_net_agg,
+  sector_impact_agg, trend_score, vcp_score, is_candidate, sector
+- news_sentiment : article_id, sentiment_net_score, sentiment_confidence
+- ticker_daily_sentiment_features / sector_daily_sentiment_features : features agrégées par jour
+
+Conventions du projet :
+- dataclass(frozen=True, slots=True) pour tous les modèles de données
+- @runtime_checkable Protocol dans core/interfaces.py pour le duck typing
+- Config immutable par module (ex: RiskConfig, AlphaScannerConfig, ScreenerConfig)
+- Logging structuré (LOGGER = logging.getLogger(__name__)) avec messages clés INFO/WARNING/CRITICAL
+- Tests pytest dans tests/ avec conftest.py partagé
+- Validation stricte dans __post_init__ de chaque Config
+- requirements.txt existant : torch, transformers, pandas, numpy, sqlalchemy, pymysql
+
+=== TÂCHE : CRÉER LE MODULE model_factory/ ===
+
+Crée un nouveau package Python `model_factory/` (Distributed Model Factory — 個股分佈式模型工廠)
+qui entraîne un modèle LSTM+Attention **par ticker** pour prédire le rendement forward 5 jours
+(régression) ou la direction (classification binaire up/down).
+
+Structure attendue :

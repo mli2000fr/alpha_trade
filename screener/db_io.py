@@ -217,7 +217,59 @@ def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 	return normalized.loc[:, REQUIRED_SCORE_COLUMNS].copy()
 
 
-def upsert_scores_snapshot(engine: Engine, scores_df: pd.DataFrame, chunksize: int = 1000) -> None:
+def archive_scores_snapshot(engine: Engine, snapshot_date: Optional[date] = None) -> int:
+	"""Archive le contenu actuel de stock_scores dans stock_scores_history.
+
+	Copie toutes les lignes de stock_scores vers stock_scores_history pour la date
+	donnée. Utilise ON DUPLICATE KEY UPDATE pour être idempotent (re-exécutable).
+
+	:param engine: SQLAlchemy engine.
+	:param snapshot_date: Date d'archivage. Défaut : aujourd'hui.
+	:return: Nombre de lignes archivées.
+	"""
+	ref_date = snapshot_date or date.today()
+	stmt = text("""
+		INSERT INTO stock_scores_history
+			(snapshot_date, symbol, sector,
+			 liquidity_val, relative_strength_index, historical_range_score, total_score,
+			 trend_score, vcp_score, final_score, is_candidate,
+			 sentiment_net_agg, sector_impact_agg, final_score_sentiment, signal_active,
+			 anomaly_count, missing_days_count)
+		SELECT
+			:snapshot_date, symbol, sector,
+			liquidity_val, relative_strength_index, historical_range_score, total_score,
+			trend_score, vcp_score, final_score, is_candidate,
+			sentiment_net_agg, sector_impact_agg, final_score_sentiment, signal_active,
+			anomaly_count, missing_days_count
+		FROM stock_scores
+		ON DUPLICATE KEY UPDATE
+			sector                  = VALUES(sector),
+			liquidity_val           = VALUES(liquidity_val),
+			relative_strength_index = VALUES(relative_strength_index),
+			historical_range_score  = VALUES(historical_range_score),
+			total_score             = VALUES(total_score),
+			trend_score             = VALUES(trend_score),
+			vcp_score               = VALUES(vcp_score),
+			final_score             = VALUES(final_score),
+			is_candidate            = VALUES(is_candidate),
+			sentiment_net_agg       = VALUES(sentiment_net_agg),
+			sector_impact_agg       = VALUES(sector_impact_agg),
+			final_score_sentiment   = VALUES(final_score_sentiment),
+			signal_active           = VALUES(signal_active),
+			anomaly_count           = VALUES(anomaly_count),
+			missing_days_count      = VALUES(missing_days_count)
+	""")
+	with engine.begin() as conn:
+		result = conn.execute(stmt, {"snapshot_date": ref_date})
+	return result.rowcount
+
+
+def upsert_scores_snapshot(
+	engine: Engine,
+	scores_df: pd.DataFrame,
+	chunksize: int = 1000,
+	snapshot_date: Optional[date] = None,
+) -> None:
 	if scores_df.empty:
 		with engine.begin() as conn:
 			conn.execute(text("DELETE FROM stock_scores"))
@@ -245,4 +297,16 @@ def upsert_scores_snapshot(engine: Engine, scores_df: pd.DataFrame, chunksize: i
 			conn.execute(stmt.on_duplicate_key_update(**update_dict))
 
 	_purge_missing_scores(engine, symbols)
+
+	# --- Archivage automatique dans stock_scores_history ---
+	try:
+		archive_scores_snapshot(engine, snapshot_date=snapshot_date)
+	except Exception:
+		# L'archivage ne doit jamais casser le pipeline principal.
+		# Si la table n'existe pas encore, on ignore silencieusement.
+		import logging
+		logging.getLogger(__name__).warning(
+			"Archivage stock_scores_history échoué (table absente ?). Le pipeline principal n'est pas affecté.",
+			exc_info=True,
+		)
 
