@@ -41,10 +41,13 @@ from execution_engine.order_intents import (
     build_entry_intents,
     build_take_profit_intent,
     build_trailing_stop_intent,
+    build_rebalance_sell_intent,
+    build_rebalance_buy_intent,
 )
 from execution_engine.reconciliation import reconcile_targets_vs_broker
 from execution_engine.state_machine import is_terminal, map_alpaca_status
 from execution_engine.tca import build_tca_summary, compute_implementation_shortfall, compute_slippage_bps
+from service.alpaca.trading_client import BrokerApiError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -76,6 +79,7 @@ class ProductionExecutor:
         exec_run_id = build_run_id()
         metrics: dict[str, int] = {
             "targets": 0, "submitted": 0, "filled": 0, "failed": 0, "skipped": 0,
+            "rebalance_submitted": 0, "rebalance_failed": 0,
         }
         events: list[ExecutionEvent] = []
         fills: list[ExecutionFill] = []
@@ -196,14 +200,32 @@ class ProductionExecutor:
                     batch_count += 1
                     continue
 
-                # Submit to broker with retry
+                # Submit to broker avec retry UNIQUEMENT sur erreurs reseau / 5xx / 429
+                # Les erreurs 4xx (403 = client_order_id duplique, symbole interdit, etc.)
+                # sont des erreurs permanentes : on ne retente PAS.
                 order: BrokerOrder | None = None
                 for attempt in range(self._cfg.max_order_retries + 1):
                     try:
                         order = self._broker.submit_intent(intent)
                         consecutive_failures = 0
                         break
+                    except BrokerApiError as exc:
+                        # Erreur 4xx : permanente, log detaille + pas de retry
+                        body_info = f" — {exc.body[:200]}" if exc.body else ""
+                        LOGGER.error(
+                            "Ordre refuse par le broker [%s] %s : %s%s",
+                            exc.status_code, intent.symbol, exc, body_info,
+                        )
+                        consecutive_failures += 1
+                        metrics["failed"] += 1
+                        events.append(make_event(
+                            exec_run_id, EventType.ORDER_REJECTED,
+                            f"[{exc.status_code}] {intent.symbol}: {str(exc)[:200]}",
+                            symbol=intent.symbol, intent_id=intent.intent_id,
+                        ))
+                        break  # pas de retry sur 4xx
                     except Exception as exc:
+                        # Erreur reseau / timeout : on retente avec backoff
                         LOGGER.warning("Submit failed for %s attempt %d: %s", intent.symbol, attempt, exc)
                         if attempt < self._cfg.max_order_retries:
                             time.sleep(self._cfg.retry_base_delay_seconds * (2 ** attempt))
@@ -274,10 +296,16 @@ class ProductionExecutor:
                     positions = self._broker.get_all_positions()
                     self._repo.snapshot_broker_positions(exec_run_id, self._cfg.broker_mode, positions)
                     diffs = reconcile_targets_vs_broker(targets, positions, self._cfg.reconcile_tolerance_shares)
-                    has_diff = any(d.action != "none" for d in diffs)
-                    if has_diff:
+                    action_diffs = [d for d in diffs if d.action != "none"]
+                    if action_diffs:
                         events.append(make_event(exec_run_id, EventType.RECONCILE_DIFF,
-                                                 f"Reconciliation diffs found: {len([d for d in diffs if d.action != 'none'])}"))
+                                                 f"Reconciliation diffs found: {len(action_diffs)}"))
+                        # Vente / achat automatique si auto_rebalance_on_reconcile
+                        if self._cfg.auto_rebalance_on_reconcile:
+                            rebalance_events = self._submit_rebalance_orders(
+                                action_diffs, exec_run_id, targets, metrics,
+                            )
+                            events.extend(rebalance_events)
                     else:
                         events.append(make_event(exec_run_id, EventType.RECONCILE_OK, "Reconciliation OK"))
                 except Exception as exc:
@@ -378,6 +406,106 @@ class ProductionExecutor:
             f"Bracket children for {parent.symbol}: TP + TS",
             symbol=parent.symbol, intent_id=parent.intent_id,
         ))
+        return events
+
+    def _submit_rebalance_orders(
+        self,
+        action_diffs: list,
+        exec_run_id: str,
+        targets: list,
+        metrics: dict[str, int],
+    ) -> list[ExecutionEvent]:
+        """
+        Soumet des ordres de vente (sell_excess) ou d'achat (buy_more)
+        pour corriger les ecarts detectes en reconciliation.
+        Les ordres 'investigate' (symboles hors cible) sont logues mais ignores
+        pour eviter de solder des positions que l'operateur n'a pas declarees.
+        """
+        events: list[ExecutionEvent] = []
+        risk_run_id = targets[0].risk_run_id if targets else "unknown"
+
+        for diff in action_diffs:
+            if diff.action == "investigate":
+                LOGGER.warning(
+                    "Rebalance SKIP %s (investigate) : %.0f shares broker hors cible — action manuelle requise",
+                    diff.symbol, diff.broker_qty,
+                )
+                events.append(make_event(
+                    exec_run_id, EventType.RECONCILE_DIFF,
+                    f"INVESTIGATE {diff.symbol}: {diff.broker_qty:.0f} broker, hors cible",
+                    symbol=diff.symbol,
+                ))
+                continue
+
+            qty = abs(diff.delta)
+            if qty < 1:
+                continue
+
+            if diff.action == "sell_excess":
+                intent = build_rebalance_sell_intent(
+                    exec_run_id=exec_run_id,
+                    risk_run_id=risk_run_id,
+                    symbol=diff.symbol,
+                    qty=qty,
+                    broker_mode=self._cfg.broker_mode,
+                )
+                action_label = f"SELL EXCESS {diff.symbol}: -{qty:.0f} shares (broker={diff.broker_qty:.0f} > cible={diff.target_qty})"
+            else:  # buy_more
+                intent = build_rebalance_buy_intent(
+                    exec_run_id=exec_run_id,
+                    risk_run_id=risk_run_id,
+                    symbol=diff.symbol,
+                    qty=qty,
+                    broker_mode=self._cfg.broker_mode,
+                )
+                action_label = f"BUY MORE {diff.symbol}: +{qty:.0f} shares (broker={diff.broker_qty:.0f} < cible={diff.target_qty})"
+
+            LOGGER.info("Rebalance: %s", action_label)
+
+            # Persist intent
+            db_dict = order_intent_to_db_dict(intent, exec_run_id)
+            try:
+                self._repo.upsert_execution_order(db_dict)
+            except Exception:
+                pass
+
+            # Submit
+            try:
+                order = self._broker.submit_intent(intent)
+                db_dict["broker_order_id"] = order.broker_order_id
+                db_dict["status"] = order.status
+                try:
+                    self._repo.upsert_execution_order(db_dict)
+                except Exception:
+                    pass
+                metrics["rebalance_submitted"] = metrics.get("rebalance_submitted", 0) + 1
+                events.append(make_event(
+                    exec_run_id, EventType.ORDER_SUBMITTED,
+                    f"Rebalance submitted: {action_label}",
+                    symbol=diff.symbol, broker_order_id=order.broker_order_id,
+                    intent_id=intent.intent_id,
+                ))
+                LOGGER.info("Rebalance order submitted: %s → %s", diff.symbol, order.broker_order_id)
+            except BrokerApiError as exc:
+                LOGGER.error("Rebalance ordre refuse [%s] %s: %s", exc.status_code, diff.symbol, exc)
+                metrics["rebalance_failed"] = metrics.get("rebalance_failed", 0) + 1
+                events.append(make_event(
+                    exec_run_id, EventType.ORDER_REJECTED,
+                    f"Rebalance rejected [{exc.status_code}] {diff.symbol}: {str(exc)[:200]}",
+                    symbol=diff.symbol, intent_id=intent.intent_id,
+                ))
+            except Exception as exc:
+                LOGGER.error("Rebalance submit failed %s: %s", diff.symbol, exc)
+                metrics["rebalance_failed"] = metrics.get("rebalance_failed", 0) + 1
+                events.append(make_event(
+                    exec_run_id, EventType.ORDER_REJECTED,
+                    f"Rebalance failed {diff.symbol}: {str(exc)[:200]}",
+                    symbol=diff.symbol, intent_id=intent.intent_id,
+                ))
+
+            if self._cfg.inter_order_delay_ms > 0:
+                time.sleep(self._cfg.inter_order_delay_ms / 1000.0)
+
         return events
 
     def _persist_events(self, events: list[ExecutionEvent]) -> None:

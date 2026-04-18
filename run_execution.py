@@ -95,7 +95,7 @@ def abort_missing_env() -> None:
 # Menu interactif
 # ---------------------------------------------------------------------------
 
-def interactive_menu() -> tuple[str, str | None, str | None, bool, bool]:
+def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool]:
     print(BANNER)
     print_env_status()
 
@@ -142,8 +142,9 @@ def interactive_menu() -> tuple[str, str | None, str | None, bool, bool]:
 
     debug = input("\nActiver les logs DEBUG ? [o/N] : ").strip().lower() == "o"
     outside_rth = input("Forcer execution hors horaires marche ? [o/N] : ").strip().lower() == "o"
+    rebalance = input("Activer reequilibrage auto sur reconciliation ? [o/N] : ").strip().lower() == "o"
 
-    return mode, run_id, trade_date, debug, outside_rth
+    return mode, run_id, trade_date, debug, outside_rth, rebalance
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +198,7 @@ PRESETS: dict[str, dict] = {
 # Lancement
 # ---------------------------------------------------------------------------
 
-def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allow_outside_rth: bool = False) -> None:
+def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allow_outside_rth: bool = False, auto_rebalance: bool = False) -> None:
     level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(
         level=level,
@@ -209,6 +210,8 @@ def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allo
     preset = dict(PRESETS[mode])  # copie mutable
     if allow_outside_rth:
         preset["allow_outside_rth"] = True
+    if auto_rebalance:
+        preset["auto_rebalance_on_reconcile"] = True
 
     mode_label = {
         "simulate": f"{CYAN}SIMULATION (dry-run){RESET}",
@@ -226,6 +229,8 @@ def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allo
     print(f"  Max slippage: {preset['max_slippage_bps']} bps")
     if allow_outside_rth and not preset.get("dry_run"):
         print(f"  {YELLOW}[!] Execution hors horaires marche activee{RESET}")
+    if auto_rebalance:
+        print(f"  {YELLOW}[!] Reequilibrage automatique sur reconciliation ACTIVE{RESET}")
     print()
 
     try:
@@ -270,6 +275,10 @@ def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allo
     failed = metrics.get('failed', 0)
     print(f"  Echecs      : {(RED if failed else '')}{failed}{RESET}")
     print(f"  Doublons    : {metrics.get('skipped', 0)}")
+    rebal_sub = metrics.get("rebalance_submitted", 0)
+    rebal_fail = metrics.get("rebalance_failed", 0)
+    if rebal_sub or rebal_fail:
+        print(f"  Rebalance   : {GREEN}{rebal_sub} soumis{RESET}  /  {(RED if rebal_fail else '')}{rebal_fail} echecs{RESET}")
     print()
 
     targets_n  = metrics.get("targets", 0)
@@ -316,7 +325,8 @@ Exemples :
     p.add_argument("--date",              dest="trade_date",      metavar="YYYY-MM-DD", help="Date du run (ex: 2026-04-18)")
     p.add_argument("--run-id",            dest="run_id",          metavar="RUN_ID",     help="risk_run_id precis")
     p.add_argument("--debug",             action="store_true",                          help="Active les logs DEBUG")
-    p.add_argument("--allow-outside-rth", dest="allow_outside_rth", action="store_true", help="Execute meme si marche ferme (week-end / hors RTH)")
+    p.add_argument("--allow-outside-rth",      dest="allow_outside_rth",  action="store_true", help="Execute meme si marche ferme (week-end / hors RTH)")
+    p.add_argument("--auto-rebalance",          dest="auto_rebalance",     action="store_true", help="Vend/achete automatiquement les ecarts detectes en reconciliation")
     return p
 
 
@@ -330,20 +340,29 @@ def main() -> None:
         sys.exit(0 if ok else 1)
 
     if args.mode is None:
-        mode, run_id, trade_date, debug, allow_outside_rth = interactive_menu()
+        mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance = interactive_menu()
     else:
-        mode             = args.mode
-        run_id           = args.run_id
-        trade_date       = args.trade_date
-        debug            = args.debug
+        mode              = args.mode
+        run_id            = args.run_id
+        trade_date        = args.trade_date
+        debug             = args.debug
         allow_outside_rth = args.allow_outside_rth
+        auto_rebalance    = args.auto_rebalance
 
     abort_missing_env()
-    run(mode, run_id, trade_date, debug, allow_outside_rth)
+    run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance)
 
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
 
 
 

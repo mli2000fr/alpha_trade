@@ -44,6 +44,7 @@ class ExecutionConfig:
     # --- Reconciliation ---
     reconcile_after_submit: bool = True
     reconcile_tolerance_shares: int = 0
+    auto_rebalance_on_reconcile: bool = False  # si True : soumet des ordres pour corriger les ecarts
 
     # --- TCA ---
     enable_tca: bool = True
