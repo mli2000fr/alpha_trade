@@ -1,0 +1,616 @@
+Refactorise le module `risk_management/` du projet Alpha Trade vers la V2 :
+「組合優化與風控引擎 (Portfolio & Risk Engine) — 投行核心」
+
+Tu travailles EN PRIORITÉ sur l'architecture existante. Pas de greenfield.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ÉTAPE 0 — LIS CES FICHIERS AVANT DE CODER (obligatoire)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Module risque existant (V1) :
+  risk_management/config.py
+  risk_management/models.py
+  risk_management/db_io.py
+  risk_management/position_sizer.py
+  risk_management/constraints.py
+  risk_management/circuit_breaker.py
+  risk_management/risk_checker.py
+  risk_management/portfolio_builder.py
+  risk_management/audit.py
+  risk_management/cli.py
+  risk_management/__init__.py
+  risk_management/__main__.py
+  core/interfaces.py
+
+Producteurs amont (contexte lecture seule) :
+  selector/alpha_scanner.py
+  event_sentiment/signal_aggregator.py
+
+Schémas SQL à connaître :
+  database/sql/stock/stock_scores.sql
+  database/sql/ml/model_predictions.sql
+  database/sql/ml/model_metrics.sql
+  database/sql/risk/risk_decisions.sql
+  database/sql/risk/portfolio_targets.sql
+
+Sources ML :
+  modelFactory/db_registry.py
+  modelFactory/predictor.py
+
+Tests existants (NE PAS LES CASSER) :
+  tests/test_position_sizer.py
+  tests/test_constraints.py
+  tests/test_circuit_breaker.py
+  tests/test_risk_checker.py
+  tests/test_portfolio_builder.py
+
+Infrastructure :
+  database/connection.py
+  pytest.ini
+  tests/conftest.py
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONTEXTE TECHNIQUE CRITIQUE — NE PAS DEVINER, C'EST VÉRIFIÉ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Pipeline actuel exécuté dans cet ordre strict :
+  1. alpha_scanner.py    → écrit final_score, is_candidate dans stock_scores
+  2. signal_aggregator.py → écrit final_score_sentiment dans stock_scores
+  3. risk_management      → lit les candidats is_candidate=1, trié par final_score_sentiment DESC
+
+État actuel de RiskConfig (dataclass frozen=True, slots=True) :
+  account_equity, risk_per_trade_pct, atr_window, atr_stop_multiple,
+  max_positions, max_position_weight (0.10), max_sector_weight (0.30),
+  max_gross_exposure (1.0), min_position_notional (500.0),
+  max_portfolio_drawdown_pct, max_daily_loss_pct, dry_run
+
+État actuel de CandidateScore : symbol, sector, score_used
+État actuel de PriceInfo : symbol, last_close, atr_20 (float | None)
+État actuel de SizingResult : symbol, proposed_shares, method ("atr"|"equal_weight"|"rejected")
+État actuel de PortfolioEntry : symbol, sector, entry_price, score_used, score_source,
+  atr_20, proposed_shares, approved_shares, target_notional, target_weight,
+  decision ("ACCEPTED"|"REDUCED"|"REJECTED"), decision_reason
+
+ATTENTION — RiskRepository.__init__() fait self.engine = get_sqlalchemy_engine() EN DUR.
+  Pour rendre les nouvelles méthodes testables, ajoute un paramètre optionnel engine:
+  def __init__(self, engine: Engine | None = None) -> None:
+      self.engine = engine or get_sqlalchemy_engine()
+  Ceci ne casse PAS les appelants existants (cli.py fait `RiskRepository()` sans args).
+
+ATTENTION — db_io.py construit les placeholders SQL manuellement (`:s0, :s1, ...`),
+  PAS avec bindparam(expanding=True). Conserve ce pattern dans les nouvelles méthodes.
+
+ATTENTION — PortfolioState et PnLSnapshot sont @dataclass(slots=True) SANS frozen=True
+  (mutables volontairement). Ne les rends PAS frozen.
+
+ATTENTION — risk_decisions.reason est VARCHAR(255). Les raisons de rejet corrélation
+  doivent tenir dans 255 caractères.
+
+ATTENTION — model_predictions utilise la colonne `prediction_date` (pas trade_date).
+  UNIQUE KEY = (symbol, prediction_date, run_id).
+
+ATTENTION — model_metrics n'a pas de colonne `finished_at`. Pour trouver le dernier run
+  complété, il faut joindre model_training_run (qui a `status='completed'` et `finished_at`).
+
+ATTENTION — pytest.ini définit les markers : unit, integration, slow.
+  Marque les nouveaux tests sans DB comme @pytest.mark.unit.
+  conftest.py est vide — chaque fichier test est autonome.
+
+ATTENTION — audit.py mappe PortfolioEntry → dict pour l'INSERT SQL.
+  Tout nouveau champ dans PortfolioEntry DOIT être mappé dans audit.py
+  ET correspondre à une colonne dans risk_decisions / portfolio_targets
+  (ou être ignoré volontairement avec un commentaire).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OBJECTIF V2 — 3 EXIGENCES CLÉS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A) SECTOR NEUTRALITY (renforcer l'existant)
+   Aucun secteur > 30% du portefeuille cible en notionnel brut.
+   Déjà implémenté dans ConstraintChecker.check() — NE PAS LE REMPLACER.
+
+B) CORRELATION FILTERING (nouveau)
+   Filtre Pearson greedy pré-sizing :
+   - matrice de corrélation sur rendements close-to-close récents
+   - si corr(A, B) > seuil (défaut 0.80), rejeter le titre avec conviction la plus basse
+   - uniquement corrélation positive > seuil → rejet
+   - déterministe, auditable (symbole bloquant, valeur corr, seuil)
+
+C) KELLY SIZING (nouveau)
+   Sizing Kelly combiné ATR :
+   - p_eff = w1 * predicted_proba + w2 * historical_win_rate
+   - raw_kelly = p_eff - (1 - p_eff) / assumed_payoff_ratio
+   - fractional_kelly = max(0, raw_kelly) * kelly_fraction_multiplier
+   - proposed_shares = min(kelly_shares, atr_shares_cap) quand ATR dispo
+   - fallback: kelly_only → atr → equal_weight → rejected
+   - quand enable_kelly_sizing=False → comportement V1 inchangé (PositionSizer actuel)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PLAN DE FICHIERS — CRÉE / MODIFIE EXACTEMENT CEUX-CI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NOUVEAUX fichiers à créer :
+  risk_management/correlation_filter.py   — filtre de corrélation Pearson
+  risk_management/kelly.py                — Kelly sizer combiné ATR
+  risk_management/conviction.py           — calcul du conviction score unifié
+  database/sql/risk/migration_v2_add_audit_columns.sql — ALTER TABLE additive
+  tests/test_correlation_filter.py        — tests filtre corrélation
+  tests/test_kelly_sizer.py              — tests Kelly sizing
+
+FICHIERS EXISTANTS à modifier :
+  risk_management/config.py       — ajouter les champs V2
+  risk_management/models.py       — ajouter les dataclasses V2
+  risk_management/db_io.py        — engine injectable + 3 nouvelles méthodes de lecture
+  risk_management/portfolio_builder.py — refactorer build() pour pipeline V2
+  risk_management/audit.py        — mapper les nouveaux champs PortfolioEntry
+  risk_management/cli.py          — exposer les nouveaux paramètres CLI
+  tests/test_portfolio_builder.py — ajouter tests V2
+
+FICHIERS à NE PAS MODIFIER :
+  risk_management/constraints.py     — fonctionnel tel quel
+  risk_management/circuit_breaker.py — fonctionnel tel quel
+  risk_management/risk_checker.py    — fonctionnel tel quel
+  risk_management/position_sizer.py  — conservé comme fallback, NE PAS LE MODIFIER
+  core/interfaces.py                 — ne pas toucher aux Protocols
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 1 — risk_management/config.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ajoute ces champs à RiskConfig (après les champs existants, dans l'ordre) :
+
+  # --- Correlation filter V2 ---
+  correlation_threshold: float = 0.80
+  correlation_lookback_days: int = 60
+  correlation_min_overlap: int = 40
+
+  # --- Kelly sizing V2 ---
+  enable_kelly_sizing: bool = False         # False = V1 pure (PositionSizer)
+  assumed_payoff_ratio: float = 1.5         # b dans la formule Kelly
+  kelly_fraction_multiplier: float = 0.25   # fractional Kelly (quart Kelly)
+  min_effective_probability: float = 0.52   # p_eff minimal pour Kelly > 0
+  default_win_rate: float = 0.55            # fallback si model_metrics absent
+
+  # --- Conviction score V2 ---
+  score_weight: float = 0.40               # poids final_score_sentiment
+  prediction_weight: float = 0.60          # poids predicted_proba
+  prediction_confidence_weight: float = 0.60  # poids predicted_proba dans p_eff Kelly
+  historical_win_rate_weight: float = 0.40    # poids win_rate dans p_eff Kelly
+
+Validation dans __post_init__ :
+  - 0 < correlation_threshold <= 1
+  - correlation_lookback_days >= correlation_min_overlap >= 1
+  - assumed_payoff_ratio > 0
+  - 0 < kelly_fraction_multiplier <= 1
+  - 0.5 <= min_effective_probability < 1
+  - 0.5 <= default_win_rate < 1
+  - score_weight + prediction_weight must == 1.0 (tolérance 1e-6)
+  - prediction_confidence_weight + historical_win_rate_weight must == 1.0 (tolérance 1e-6)
+
+NE SUPPRIME AUCUN CHAMP EXISTANT. NE CHANGE AUCUNE VALEUR PAR DÉFAUT EXISTANTE.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 2 — risk_management/models.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Conserve TOUTES les dataclasses existantes INTACTES (CandidateScore, PriceInfo,
+SizingResult, RiskDecisionRow, PortfolioTargetRow).
+
+AJOUTE ces nouvelles dataclasses (frozen=True, slots=True) :
+
+@dataclass(frozen=True, slots=True)
+class PredictionInfo:
+    """Dernière prédiction ML pour un symbole."""
+    symbol: str
+    predicted_proba: float
+    predicted_class: int
+    run_id: str
+
+@dataclass(frozen=True, slots=True)
+class WinRateInfo:
+    """Proxy de win rate historique depuis model_metrics."""
+    symbol: str
+    directional_accuracy: float
+    split_name: str     # "test" | "val"
+    run_id: str
+
+@dataclass(frozen=True, slots=True)
+class CorrelationRejection:
+    """Résultat d'un rejet par filtre de corrélation."""
+    rejected_symbol: str
+    blocker_symbol: str
+    correlation_value: float
+    threshold: float
+
+@dataclass(frozen=True, slots=True)
+class EnrichedCandidate:
+    """Candidat enrichi avec toutes les données V2 avant sizing."""
+    symbol: str
+    sector: str
+    score_used: float           # final_score_sentiment original
+    predicted_proba: float | None
+    historical_win_rate: float | None
+    conviction_score: float     # score unifié pour tri + audit
+
+MODIFIE PortfolioEntry en AJOUTANT ces champs optionnels À LA FIN
+(après decision_reason, pour backward compat) :
+
+    # --- V2 audit fields ---
+    conviction_score: float = 0.0
+    predicted_proba: float | None = None
+    historical_win_rate: float | None = None
+    effective_probability: float | None = None
+    kelly_fraction: float | None = None
+    sizing_method: str = ""                     # "kelly_atr"|"kelly_only"|"atr"|"equal_weight"|"rejected"
+    correlation_blocker: str | None = None      # symbole bloquant si rejeté par corrélation
+    correlation_value: float | None = None      # corrélation observée
+
+Tous les nouveaux champs ont des valeurs par défaut → les appelants existants
+qui construisent PortfolioEntry sans ces champs continuent de fonctionner.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 3 — risk_management/db_io.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+3a) Rends le constructeur injectable (CRITICAL pour les tests) :
+
+  def __init__(self, engine: Engine | None = None) -> None:
+      self.engine = engine or get_sqlalchemy_engine()
+
+3b) Ajoute load_predictions(symbols, trade_date) -> dict[str, PredictionInfo] :
+  - SQL : SELECT symbol, predicted_proba, predicted_class, run_id
+          FROM model_predictions
+          WHERE symbol IN (...) AND prediction_date <= :trade_date
+          ORDER BY prediction_date DESC, created_at DESC
+  - Pour chaque symbole, ne garder que la première ligne (plus récente)
+  - Utilise le pattern de placeholders manuels (:s0, :s1, ...) comme load_prices()
+  - Retourne dict vide si symbols vide ou table absente (try/except graceful)
+
+3c) Ajoute load_win_rates(symbols) -> dict[str, WinRateInfo] :
+  - Jointure model_metrics m + model_training_run t :
+    WHERE t.status = 'completed' AND m.symbol IN (...)
+    AND m.directional_accuracy IS NOT NULL
+  - Préférer split_name='test', fallback 'val'
+  - Pour chaque symbole, garder le run le plus récent (ORDER BY t.finished_at DESC)
+  - Retourne dict vide si table absente (try/except graceful)
+
+3d) Ajoute load_return_matrix(symbols, lookback_days) -> pd.DataFrame :
+  - Charge les `lookback_days` dernières clôtures depuis stock_bars_daily
+  - Pivote en matrice (index=date, columns=symbol, values=close)
+  - Calcule les rendements close-to-close via .pct_change()
+  - Drop la première ligne (NaN)
+  - Retourne DataFrame vide si symbols vide
+
+3e) Mets à jour write_risk_decisions() et write_portfolio_targets()
+  pour mapper les nouveaux champs de PortfolioEntry (conviction_score,
+  predicted_proba, sizing_method, etc.) — SEULEMENT si les colonnes
+  existent dans la table (sinon ignorer silencieusement pour backward compat).
+  En pratique, mappe-les dans audit.py et ajoute-les aux INSERT SQL.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 4 — risk_management/conviction.py (nouveau fichier)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Fonction pure, testable :
+
+def compute_conviction(
+    score_used: float,
+    predicted_proba: float | None,
+    score_weight: float,
+    prediction_weight: float,
+) -> float:
+    if predicted_proba is not None:
+        return score_weight * score_used + prediction_weight * predicted_proba
+    return score_used
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 5 — risk_management/correlation_filter.py (nouveau fichier)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Classe ou fonction pure :
+
+def filter_correlated(
+    candidates: list[EnrichedCandidate],
+    return_matrix: pd.DataFrame,
+    threshold: float,
+    min_overlap: int,
+) -> tuple[list[EnrichedCandidate], list[CorrelationRejection]]:
+    """
+    Filtre greedy déterministe.
+
+    Les candidats DOIVENT être triés par conviction_score DESC avant l'appel.
+
+    Algorithme :
+      retained = []
+      rejections = []
+      for each candidate (déjà trié par conviction DESC) :
+          if symbol pas dans return_matrix.columns :
+              retained.append(candidate)  # pas de données → pas de rejet
+              continue
+          correlated_with_retained = False
+          for each retained_symbol in retained :
+              if retained_symbol pas dans return_matrix.columns :
+                  continue
+              pair_returns = return_matrix[[symbol, retained_symbol]].dropna()
+              if len(pair_returns) < min_overlap :
+                  continue  # données insuffisantes → pas de rejet
+              corr = pair_returns[symbol].corr(pair_returns[retained_symbol])
+              if corr > threshold :
+                  rejections.append(CorrelationRejection(...))
+                  correlated_with_retained = True
+                  break  # un seul bloqueur suffit
+          if not correlated_with_retained :
+              retained.append(candidate)
+
+    Retourne (retained, rejections).
+    """
+
+IMPORTANT :
+- Corrélation NaN (données insuffisantes) → NE PAS rejeter
+- Corrélation négative → NE PAS rejeter
+- La logique est O(n²) ce qui est acceptable pour <= 100 candidats
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 6 — risk_management/kelly.py (nouveau fichier)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Classe KellySizer :
+
+class KellySizer:
+    def __init__(self, config: RiskConfig) -> None: ...
+
+    def compute(
+        self,
+        price_info: PriceInfo,
+        predicted_proba: float | None,
+        historical_win_rate: float | None,
+    ) -> SizingResult:
+        """
+        Pipeline de calcul :
+
+        1. Probabilité effective :
+           pp = predicted_proba or default_win_rate
+           wr = historical_win_rate or default_win_rate
+           p_eff = prediction_confidence_weight * pp + historical_win_rate_weight * wr
+           p_eff = clip(p_eff, 0.001, 0.999)
+
+        2. Si p_eff < min_effective_probability → fallback ATR ou equal_weight
+
+        3. Kelly :
+           q = 1 - p_eff
+           b = assumed_payoff_ratio
+           raw_kelly = p_eff - q / b
+           fractional_kelly = max(0, raw_kelly) * kelly_fraction_multiplier
+           fractional_kelly = min(fractional_kelly, max_position_weight)
+
+        4. Si fractional_kelly <= 0 → fallback ATR ou equal_weight
+
+        5. Shares Kelly :
+           kelly_notional = account_equity * fractional_kelly
+           kelly_shares = floor(kelly_notional / price)
+
+        6. Cap ATR (si atr_20 disponible) :
+           atr_risk_budget = account_equity * risk_per_trade_pct
+           risk_per_share = atr_20 * atr_stop_multiple
+           atr_shares_cap = floor(atr_risk_budget / risk_per_share)
+           proposed_shares = min(kelly_shares, atr_shares_cap)
+           method = "kelly_atr"
+
+        7. Si atr_20 absent :
+           proposed_shares = kelly_shares
+           method = "kelly_only"
+
+        8. Notional minimum check (min_position_notional)
+
+        9. Retourne SizingResult(symbol, proposed_shares, method)
+
+        Le SizingResult.method DOIT être l'un de :
+          "kelly_atr" | "kelly_only" | "atr" | "equal_weight" | "rejected"
+        """
+
+Le fallback ATR/equal_weight réutilise la logique EXACTE de PositionSizer.compute().
+Tu peux soit appeler PositionSizer en interne, soit dupliquer la logique.
+Préférence : composer avec PositionSizer comme fallback interne.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 7 — risk_management/portfolio_builder.py (refactor)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Nouvelle signature de build() — BACKWARD COMPATIBLE via defaults :
+
+def build(
+    self,
+    candidates: list[CandidateScore],
+    prices: dict[str, PriceInfo],
+    predictions: dict[str, PredictionInfo] | None = None,
+    win_rates: dict[str, WinRateInfo] | None = None,
+    return_matrix: pd.DataFrame | None = None,
+) -> list[PortfolioEntry]:
+
+Pipeline V2 dans build() :
+
+  1. Enrichir chaque candidat en EnrichedCandidate (conviction score)
+  2. Trier par conviction_score DESC (déterministe)
+  3. Appliquer filtre corrélation si return_matrix fourni
+     → produire des PortfolioEntry REJECTED pour les rejets corrélation
+        avec decision_reason = "corrélation > {seuil} avec {blocker}" (< 255 chars)
+  4. Pour chaque candidat retenu après corrélation :
+     a. Vérifier prix disponible
+     b. Si enable_kelly_sizing → KellySizer.compute()
+        Sinon → PositionSizer.compute() (V1 inchangé)
+     c. Appliquer ConstraintChecker via RiskCheckerImpl (existant, inchangé)
+     d. Produire PortfolioEntry avec TOUS les champs V2 remplis
+  5. Retourner la liste complète (ACCEPTED + REDUCED + REJECTED)
+
+IMPORTANT :
+- Quand predictions=None et win_rates=None et return_matrix=None,
+  le comportement DOIT être IDENTIQUE à la V1 actuelle.
+- Ne supprime PAS _make_entry(), adapte-le pour les nouveaux champs.
+- Le score_source reste "final_score_sentiment" (c'est la source DB, pas la conviction).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 8 — risk_management/audit.py (adapter)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+persist_decisions() et persist_portfolio_targets() mappent PortfolioEntry → dict.
+Ajoute les nouveaux champs V2 dans le mapping :
+  "conviction_score": e.conviction_score,
+  "predicted_proba": e.predicted_proba,
+  "historical_win_rate": e.historical_win_rate,
+  "effective_probability": e.effective_probability,
+  "kelly_fraction": e.kelly_fraction,
+  "sizing_method": e.sizing_method,
+  "correlation_blocker": e.correlation_blocker,
+  "correlation_value": e.correlation_value,
+
+Ces champs seront NULL en DB si les colonnes n'existent pas encore
+(MySQL ignore silencieusement les colonnes inconnues dans un INSERT
+si la table n'a pas été migrée). Pour être safe, mappe-les quand même
+et crée la migration SQL.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 9 — risk_management/cli.py (étendre)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ajoute ces arguments au parser (APRÈS les existants, ne touche pas aux existants) :
+
+  --correlation-threshold    (float, default 0.80)
+  --correlation-lookback-days (int, default 60)
+  --correlation-min-overlap  (int, default 40)
+  --enable-kelly-sizing      (store_true, default False)
+  --assumed-payoff-ratio     (float, default 1.5)
+  --kelly-fraction-multiplier (float, default 0.25)
+  --score-weight             (float, default 0.40)
+  --prediction-weight        (float, default 0.60)
+
+Mets à jour main() pour :
+  1. Construire RiskConfig avec les nouveaux champs
+  2. Charger predictions via repo.load_predictions(symbols, trade_date)
+  3. Charger win_rates via repo.load_win_rates(symbols)
+  4. Charger return_matrix via repo.load_return_matrix(symbols, config.correlation_lookback_days)
+  5. Passer le tout à PortfolioBuilder.build()
+  6. Mettre à jour _print_summary() pour afficher conviction_score et sizing_method
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 10 — database/sql/risk/migration_v2_add_audit_columns.sql
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Migration additive (ALTER TABLE, pas de DROP) :
+
+ALTER TABLE risk_decisions
+  ADD COLUMN conviction_score    DOUBLE       NULL AFTER sector,
+  ADD COLUMN predicted_proba     DOUBLE       NULL AFTER conviction_score,
+  ADD COLUMN historical_win_rate DOUBLE       NULL AFTER predicted_proba,
+  ADD COLUMN effective_probability DOUBLE     NULL AFTER historical_win_rate,
+  ADD COLUMN kelly_fraction      DOUBLE       NULL AFTER effective_probability,
+  ADD COLUMN sizing_method       VARCHAR(20)  NULL AFTER kelly_fraction,
+  ADD COLUMN correlation_blocker VARCHAR(20)  NULL AFTER sizing_method,
+  ADD COLUMN correlation_value   DOUBLE       NULL AFTER correlation_blocker;
+
+ALTER TABLE portfolio_targets
+  ADD COLUMN conviction_score    DOUBLE       NULL AFTER score_source,
+  ADD COLUMN sizing_method       VARCHAR(20)  NULL AFTER conviction_score,
+  ADD COLUMN kelly_fraction      DOUBLE       NULL AFTER sizing_method;
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 11 — TESTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Style : identique aux tests existants. Import direct, pas de fixtures partagées
+cross-fichiers, conftest.py vide. Utilise @pytest.mark.unit si pertinent.
+
+11a) tests/test_correlation_filter.py :
+  - test_high_correlation_rejects_lower_conviction
+      → 2 titres corr=0.95, conviction [0.9, 0.7] → le 0.7 est rejeté
+  - test_low_correlation_keeps_both
+      → 2 titres corr=0.3 → les deux passent
+  - test_missing_data_no_rejection
+      → symbole absent de la return_matrix → pas de rejet
+  - test_insufficient_overlap_no_rejection
+      → < min_overlap observations communes → pas de rejet
+  - test_negative_correlation_no_rejection
+      → corr=-0.9 → pas de rejet
+  - test_deterministic_order
+      → même input → même output à chaque exécution
+
+11b) tests/test_kelly_sizer.py :
+  - test_kelly_positive_with_atr
+      → p_eff=0.65, b=1.5, atr dispo → method="kelly_atr", shares = min(kelly, atr_cap)
+  - test_kelly_positive_without_atr
+      → p_eff=0.65, atr=None → method="kelly_only"
+  - test_kelly_negative_fallback_atr
+      → p_eff=0.40 (raw_kelly < 0) → fallback method="atr"
+  - test_kelly_disabled_uses_v1_sizer
+      → enable_kelly_sizing=False → method="atr" ou "equal_weight" (V1 pure)
+  - test_kelly_capped_by_max_position_weight
+      → fractional_kelly > max_position_weight → clippé
+  - test_kelly_min_notional_rejection
+      → shares * price < min_position_notional → rejected
+  - test_fallback_equal_weight_when_no_data
+      → predicted_proba=None, win_rate=None, atr=None → method="equal_weight"
+
+11c) tests/test_portfolio_builder.py — AJOUTE ces tests (ne supprime pas les existants) :
+  - test_v2_correlation_rejection_appears_in_entries
+  - test_v2_kelly_sizing_used_when_enabled
+  - test_v2_backward_compat_no_predictions_same_as_v1
+  - test_v2_conviction_score_in_entry
+
+11d) tests/test_conviction.py (nouveau) :
+  - test_with_prediction
+  - test_without_prediction_uses_score_only
+
+11e) tests/test_db_io_v2.py (nouveau) :
+  - Teste load_predictions, load_win_rates, load_return_matrix
+  - Utilise un engine SQLite in-memory avec des tables créées en test
+  - OU mock le engine — au choix, mais DOIT être autonome (pas de MySQL requis)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONVENTIONS STRICTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Python 3.12. from __future__ import annotations en tête de chaque fichier.
+- Type hints partout. Pas de Any sauf dans les dicts SQL.
+- Dataclasses immutables : frozen=True, slots=True (sauf PortfolioState et PnLSnapshot).
+- Logging via LOGGER = logging.getLogger(__name__), pas de print().
+- SQL via sqlalchemy.text(), pas d'ORM.
+- Pas de nouvelle dépendance pip. pandas, numpy, sqlalchemy suffisent.
+- Docstrings en français ou anglais, cohérent avec le fichier existant.
+- Chaque fonction/méthode testable isolément (pas de side-effect caché).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITÈRES D'ACCEPTATION — VÉRIFIE CHAQUE POINT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+☐ Les 5 tests existants passent toujours sans modification
+☐ PortfolioBuilder.build() sans predictions/win_rates/return_matrix
+    produit un résultat IDENTIQUE à la V1
+☐ Filtre corrélation Pearson > 0.80 implémenté et testé
+☐ Kelly sizing implémenté avec fallback ATR/equal_weight et testé
+☐ Conviction score unifié calculé et présent dans chaque PortfolioEntry
+☐ Chaque rejet (corrélation, Kelly négatif, contrainte) est auditable
+☐ Migration SQL créée (ALTER TABLE additive, pas de DROP)
+☐ CLI étendu avec les nouveaux paramètres
+☐ Tous les nouveaux tests passent
+☐ Aucun import cassé, aucun circular import
+☐ mypy (si configuré) ne produit pas de nouvelles erreurs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODE OPÉRATOIRE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Travaille dans cet ordre :
+  1. config.py + models.py (fondations)
+  2. conviction.py (pur, sans dépendance)
+  3. correlation_filter.py + tests/test_correlation_filter.py
+  4. kelly.py + tests/test_kelly_sizer.py
+  5. db_io.py (engine injectable + nouvelles méthodes)
+  6. portfolio_builder.py (refactor build())
+  7. audit.py (mapping nouveaux champs)
+  8. cli.py (nouveaux args + wiring)
+  9. migration SQL
+  10. tests/test_portfolio_builder.py (ajouts V2)
+  11. tests/test_conviction.py + tests/test_db_io_v2.py
+  12. Lance tous les tests, corrige les échecs
+
+Après chaque fichier, lance les tests existants pour vérifier la non-régression.
+En cas d'ambiguïté métier, choisis l'option la plus conservative et documente-la.
