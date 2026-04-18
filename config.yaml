@@ -1,0 +1,15 @@
+database:
+  host: localhost
+  port: 3306
+  user: user
+  password: pass
+  name: alpha_trade
+
+alpaca:
+  api_key: "PK..."
+  secret_key: "..."
+
+risk:
+  max_drawdown: 0.15
+  max_daily_loss: 0.05
+

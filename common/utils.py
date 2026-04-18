@@ -8,6 +8,8 @@ from datetime import date, timedelta
 from functools import lru_cache
 from typing import Optional
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
+import yaml
 
 LOGGER = logging.getLogger(__name__)
 
@@ -74,3 +76,10 @@ def setup_logging_with_file_handler(log_path: str = "alpha_trade.log", max_bytes
     # Évite les doublons si déjà ajouté
     if not any(isinstance(h, RotatingFileHandler) for h in logger.handlers):
         logger.addHandler(file_handler)
+
+
+def load_config(path: str = None) -> dict:
+    """Charge la configuration centralisée YAML (config.yaml)."""
+    config_path = Path(path) if path else Path(__file__).parent.parent / "config.yaml"
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
