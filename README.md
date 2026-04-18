@@ -123,6 +123,8 @@ run_risk.py
 run_train.py
 run_predict.py
 
+run_execution.py 
+
 
 # au quotidien ou par semaine — dans cet ordre strict :
 #  1. alpha_scanner.py       → scores quantitatifs (trend, vcp, final_score) SANS sentiment

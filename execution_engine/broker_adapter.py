@@ -1,0 +1,73 @@
+"""Couche d'isolation broker — seul ce fichier change si on change de broker."""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+from execution_engine.config import ExecutionConfig
+from execution_engine.models import BrokerOrder, OrderIntent, OrderStatus
+from execution_engine.order_intents import intent_to_alpaca_payload
+from execution_engine.state_machine import map_alpaca_status
+from service.alpaca.trading_client import AlpacaTradingClient
+
+LOGGER = logging.getLogger(__name__)
+
+
+class BrokerAdapter:
+    """Adapte AlpacaTradingClient vers les types internes execution_engine."""
+
+    def __init__(self, client: AlpacaTradingClient, config: ExecutionConfig) -> None:
+        self._client = client
+        self._config = config
+
+    def submit_intent(self, intent: OrderIntent) -> BrokerOrder:
+        payload = intent_to_alpaca_payload(intent)
+        resp = self._client.submit_order(payload)
+        return self._resp_to_broker_order(resp, intent.intent_id)
+
+    def poll_order_status(self, broker_order_id: str, intent_id: str = "") -> BrokerOrder:
+        resp = self._client.get_order(broker_order_id)
+        return self._resp_to_broker_order(resp, intent_id)
+
+    def cancel_broker_order(self, broker_order_id: str) -> bool:
+        return self._client.cancel_order(broker_order_id)
+
+    def get_all_positions(self) -> list[dict[str, Any]]:
+        return self._client.get_positions()  # type: ignore[return-value]
+
+    def is_market_open(self) -> bool:
+        return self._client.is_market_open()
+
+    def get_account_equity(self) -> float:
+        acc = self._client.get_account()
+        return float(acc.get("equity", 0))
+
+    @staticmethod
+    def _resp_to_broker_order(resp: dict[str, Any], intent_id: str) -> BrokerOrder:
+        def _ts(val: Any) -> datetime | None:
+            if val is None:
+                return None
+            try:
+                return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                return None
+
+        return BrokerOrder(
+            broker_order_id=str(resp.get("id", "")),
+            client_order_id=str(resp.get("client_order_id", "")),
+            intent_id=intent_id,
+            symbol=str(resp.get("symbol", "")),
+            side=str(resp.get("side", "")),
+            qty=float(resp.get("qty", 0)),
+            filled_qty=float(resp.get("filled_qty", 0)),
+            avg_fill_price=float(resp["filled_avg_price"]) if resp.get("filled_avg_price") else None,
+            status=map_alpaca_status(str(resp.get("status", "failed"))),
+            order_type=str(resp.get("type", "")),
+            limit_price=float(resp["limit_price"]) if resp.get("limit_price") else None,
+            stop_price=float(resp["stop_price"]) if resp.get("stop_price") else None,
+            trail_percent=float(resp["trail_percent"]) if resp.get("trail_percent") else None,
+            created_at=_ts(resp.get("created_at")),
+            updated_at=_ts(resp.get("updated_at")),
+        )
+

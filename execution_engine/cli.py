@@ -1,0 +1,76 @@
+"""CLI du module execution_engine."""
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from datetime import date
+
+from execution_engine.config import ExecutionConfig
+from execution_engine.db_io import ExecutionRepository
+from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.executor import ProductionExecutor
+from execution_engine.oco_manager import OcoManager
+from service.alpaca.trading_client import AlpacaTradingClient
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Alpha Trade — Production Executor")
+    p.add_argument("--trade-date", type=str, default=None)
+    p.add_argument("--risk-run-id", type=str, default=None)
+    p.add_argument("--broker-mode", type=str, default="paper", choices=["paper", "live"])
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--entry-order-type", type=str, default="market", choices=["market", "limit"])
+    p.add_argument("--limit-price-buffer-bps", type=int, default=10)
+    p.add_argument("--profit-taker-pct", type=float, default=0.08)
+    p.add_argument("--trailing-stop-pct", type=float, default=0.05)
+    p.add_argument("--max-order-retries", type=int, default=3)
+    p.add_argument("--poll-interval-seconds", type=float, default=2.0)
+    p.add_argument("--fill-timeout-seconds", type=int, default=120)
+    p.add_argument("--cancel-timeout-seconds", type=int, default=30)
+    p.add_argument("--allow-outside-rth", action="store_true")
+    p.add_argument("--max-slippage-bps", type=int, default=30)
+    p.add_argument("--execution-batch-size", type=int, default=20)
+    p.add_argument("--inter-order-delay-ms", type=int, default=350)
+    p.add_argument("--log-level", type=str, default="INFO")
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO),
+                        format="%(asctime)s [%(levelname)s] %(name)s — %(message)s")
+
+    trade_date_val: date | None = None
+    if args.trade_date:
+        trade_date_val = date.fromisoformat(args.trade_date)
+
+    config = ExecutionConfig(
+        broker_mode=args.broker_mode,
+        dry_run=args.dry_run,
+        entry_order_type=args.entry_order_type,
+        limit_price_buffer_bps=args.limit_price_buffer_bps,
+        profit_taker_pct=args.profit_taker_pct,
+        trailing_stop_pct=args.trailing_stop_pct,
+        max_order_retries=args.max_order_retries,
+        poll_interval_seconds=args.poll_interval_seconds,
+        fill_timeout_seconds=args.fill_timeout_seconds,
+        cancel_timeout_seconds=args.cancel_timeout_seconds,
+        allow_outside_rth=args.allow_outside_rth,
+        max_slippage_bps=args.max_slippage_bps,
+        execution_batch_size=args.execution_batch_size,
+        inter_order_delay_ms=args.inter_order_delay_ms,
+    )
+
+    repo = ExecutionRepository()
+    client = AlpacaTradingClient(broker_mode=config.broker_mode)
+    broker = BrokerAdapter(client, config)
+    oco = OcoManager(broker, repo)
+    executor = ProductionExecutor(config, repo, broker, oco)
+
+    metrics = executor.execute_run(risk_run_id=args.risk_run_id, trade_date=trade_date_val)
+    logging.getLogger(__name__).info("Execution metrics: %s", metrics)
+
+
+if __name__ == "__main__":
+    main()

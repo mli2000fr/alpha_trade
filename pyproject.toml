@@ -55,6 +55,7 @@ include = [
     "selector*",
     "service*",
     "risk_management*",
+    "execution_engine*",
     "modelFactory*",
 ]
 
