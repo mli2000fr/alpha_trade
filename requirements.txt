@@ -29,3 +29,5 @@ transformers
 #   CPU only  : pip install torch --index-url https://download.pytorch.org/whl/cpu
 #   CUDA 12.x : pip install torch --index-url https://download.pytorch.org/whl/cu121
 torch
+lightning
+torchmetrics

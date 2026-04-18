@@ -1,0 +1,282 @@
+"""Tests unitaires pour modelFactory V1."""
+from __future__ import annotations
+
+import json
+import pickle
+from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pandas as pd
+import pytest
+import torch
+
+from modelFactory.config import DataConfig, ModelConfig, TrainingConfig
+from modelFactory.dataset import (
+    ChronoSplit,
+    FeatureScaler,
+    SequenceDataset,
+    build_sequences,
+    chrono_split,
+)
+from modelFactory.features import FEATURE_COLUMNS, build_target, compute_features
+from modelFactory.model import LSTMAttentionClassifier, LSTMAttentionModule, TemporalAttention
+
+
+# ===========================================================================
+# Fixtures
+# ===========================================================================
+
+def _make_bars(n: int = 600) -> pd.DataFrame:
+    """Génère un DataFrame de bars synthétiques."""
+    np.random.seed(42)
+    dates = pd.bdate_range("2015-01-02", periods=n, freq="B")
+    close = 100.0 + np.cumsum(np.random.randn(n) * 0.5)
+    close = np.maximum(close, 1.0)
+    high = close + np.abs(np.random.randn(n) * 0.3)
+    low = close - np.abs(np.random.randn(n) * 0.3)
+    opn = close + np.random.randn(n) * 0.1
+    volume = np.random.randint(100_000, 10_000_000, size=n).astype(float)
+    daily_return = np.concatenate([[0.0], np.diff(close) / close[:-1]])
+    return pd.DataFrame({
+        "symbol": "TEST",
+        "date": dates[:n],
+        "open": opn,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+        "adj_close": close,
+        "vwap": (high + low + close) / 3,
+        "daily_return": daily_return,
+        "is_filled": 0,
+    })
+
+
+# ===========================================================================
+# Config tests
+# ===========================================================================
+
+class TestDataConfig:
+    def test_defaults(self):
+        cfg = DataConfig()
+        assert cfg.sequence_length == 60
+        assert cfg.forecast_horizon == 5
+
+    def test_invalid_sequence_length(self):
+        with pytest.raises(ValueError):
+            DataConfig(sequence_length=0)
+
+    def test_invalid_ratios(self):
+        with pytest.raises(ValueError):
+            DataConfig(train_ratio=0.9, val_ratio=0.2)
+
+
+class TestModelConfig:
+    def test_defaults(self):
+        cfg = ModelConfig()
+        assert cfg.hidden_size == 128
+
+    def test_invalid_hidden_size(self):
+        with pytest.raises(ValueError):
+            ModelConfig(hidden_size=0)
+
+    def test_invalid_dropout(self):
+        with pytest.raises(ValueError):
+            ModelConfig(dropout=1.0)
+
+
+class TestTrainingConfig:
+    def test_defaults(self):
+        cfg = TrainingConfig()
+        assert cfg.max_workers == 4
+
+    def test_invalid_workers(self):
+        with pytest.raises(ValueError):
+            TrainingConfig(max_workers=0)
+
+
+# ===========================================================================
+# Feature tests
+# ===========================================================================
+
+class TestFeatures:
+    def test_compute_features_returns_expected_columns(self):
+        bars = _make_bars(200)
+        df = compute_features(bars)
+        for col in FEATURE_COLUMNS:
+            assert col in df.columns, f"Missing column: {col}"
+        assert not df[FEATURE_COLUMNS].isna().any().any()
+
+    def test_compute_features_drops_warmup(self):
+        bars = _make_bars(200)
+        df = compute_features(bars)
+        assert len(df) < 200  # warm-up rows dropped
+
+    def test_build_target_binary(self):
+        bars = _make_bars(200)
+        df = compute_features(bars)
+        target = build_target(df, horizon=5)
+        assert target.isin([0.0, 1.0]).sum() + target.isna().sum() == len(target)
+        # Last 5 rows should be NaN
+        assert target.iloc[-5:].isna().all()
+
+
+# ===========================================================================
+# Dataset / split tests
+# ===========================================================================
+
+class TestChronoSplit:
+    def test_split_sizes(self):
+        df = pd.DataFrame({"x": range(100)})
+        split = chrono_split(df, 0.7, 0.15)
+        assert len(split.train) == 70
+        assert len(split.val) == 15
+        assert len(split.test) == 15
+
+    def test_no_overlap(self):
+        df = pd.DataFrame({"i": range(100)})
+        split = chrono_split(df, 0.7, 0.15)
+        all_indices = list(split.train["i"]) + list(split.val["i"]) + list(split.test["i"])
+        assert all_indices == list(range(100))
+
+
+class TestFeatureScaler:
+    def test_fit_transform(self):
+        df = pd.DataFrame({col: np.random.randn(50) for col in FEATURE_COLUMNS})
+        scaler = FeatureScaler()
+        scaler.fit(df)
+        transformed = scaler.transform(df)
+        assert transformed.shape == (50, len(FEATURE_COLUMNS))
+        # Mean ~0, std ~1 after transform
+        assert abs(transformed.mean()) < 0.5
+
+    def test_state_dict_roundtrip(self):
+        df = pd.DataFrame({col: np.random.randn(50) for col in FEATURE_COLUMNS})
+        scaler = FeatureScaler()
+        scaler.fit(df)
+        sd = scaler.state_dict()
+        scaler2 = FeatureScaler.from_state_dict(sd)
+        np.testing.assert_array_almost_equal(scaler.mean_, scaler2.mean_)
+        np.testing.assert_array_almost_equal(scaler.std_, scaler2.std_)
+
+
+class TestBuildSequences:
+    def test_shape(self):
+        features = np.random.randn(100, 5).astype(np.float32)
+        targets = np.random.choice([0.0, 1.0], size=100)
+        X, y = build_sequences(features, targets, seq_len=10)
+        assert X.shape[1] == 10
+        assert X.shape[2] == 5
+        assert len(X) == len(y)
+
+    def test_nan_targets_excluded(self):
+        features = np.random.randn(50, 3).astype(np.float32)
+        targets = np.full(50, np.nan)
+        X, y = build_sequences(features, targets, seq_len=10)
+        assert len(X) == 0
+
+
+class TestSequenceDataset:
+    def test_getitem(self):
+        X = np.random.randn(20, 10, 5).astype(np.float32)
+        y = np.random.choice([0.0, 1.0], size=20).astype(np.float32)
+        ds = SequenceDataset(X, y)
+        assert len(ds) == 20
+        x_i, y_i = ds[0]
+        assert x_i.shape == (10, 5)
+        assert y_i.dtype == torch.long
+
+
+# ===========================================================================
+# Model tests
+# ===========================================================================
+
+class TestTemporalAttention:
+    def test_weights_sum_to_one(self):
+        attn = TemporalAttention(hidden_size=32)
+        x = torch.randn(4, 10, 32)
+        context, weights = attn(x)
+        assert context.shape == (4, 32)
+        assert weights.shape == (4, 10)
+        sums = weights.sum(dim=1)
+        torch.testing.assert_close(sums, torch.ones(4), atol=1e-5, rtol=1e-5)
+
+
+class TestLSTMAttentionClassifier:
+    def test_forward_shape(self):
+        model = LSTMAttentionClassifier(input_size=13, hidden_size=32, num_layers=1, dropout=0.0, num_classes=2)
+        x = torch.randn(8, 60, 13)
+        logits, attn_w = model(x)
+        assert logits.shape == (8, 2)
+        assert attn_w.shape == (8, 60)
+
+
+class TestLSTMAttentionModule:
+    def test_training_step(self):
+        model = LSTMAttentionModule(input_size=5, hidden_size=16, num_layers=1, dropout=0.0)
+        x = torch.randn(4, 10, 5)
+        y = torch.randint(0, 2, (4,))
+        loss = model.training_step((x, y), 0)
+        assert loss.shape == ()
+        assert loss.item() > 0
+
+
+# ===========================================================================
+# DB Registry tests (mocked)
+# ===========================================================================
+
+class TestDbRegistry:
+    def test_load_candidate_symbols(self):
+        from modelFactory.db_registry import load_candidate_symbols
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
+        mock_conn.execute.return_value.fetchall.return_value = [("AAPL",), ("MSFT",)]
+        result = load_candidate_symbols(mock_engine)
+        assert result == ["AAPL", "MSFT"]
+
+    def test_insert_predictions_empty(self):
+        from modelFactory.db_registry import insert_predictions
+        mock_engine = MagicMock()
+        n = insert_predictions(mock_engine, pd.DataFrame())
+        assert n == 0
+
+
+# ===========================================================================
+# CLI test
+# ===========================================================================
+
+class TestCli:
+    def test_build_arg_parser(self):
+        from modelFactory.cli import build_arg_parser
+        parser = build_arg_parser()
+        args = parser.parse_args(["--mode", "train", "--max-workers", "2"])
+        assert args.mode == "train"
+        assert args.max_workers == 2
+
+
+# ===========================================================================
+# Integration-like: full pipeline on synthetic data (no DB, no GPU)
+# ===========================================================================
+
+class TestEndToEndSynthetic:
+    def test_datamodule_setup(self):
+        """Test the full DataModule setup pipeline on synthetic bars."""
+        bars = _make_bars(600)
+        data_cfg = DataConfig(sequence_length=20, forecast_horizon=5, min_history_days=100)
+        model_cfg = ModelConfig(batch_size=16)
+        from modelFactory.dataset import SymbolDataModule
+        dm = SymbolDataModule(bars, data_cfg, model_cfg)
+        dm.setup()
+        assert dm.train_ds is not None
+        assert dm.val_ds is not None
+        assert len(dm.train_ds) > 0
+        assert len(dm.val_ds) > 0
+        # Check shapes
+        x, y = dm.train_ds[0]
+        assert x.shape == (20, len(FEATURE_COLUMNS))
+

@@ -20,6 +20,8 @@ dependencies = [
     "pandas-market-calendars",
     "transformers",
     "torch",
+    "lightning",
+    "torchmetrics",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +55,7 @@ include = [
     "selector*",
     "service*",
     "risk_management*",
+    "modelFactory*",
 ]
 
 # ---------------------------------------------------------------------------

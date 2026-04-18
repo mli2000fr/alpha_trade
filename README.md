@@ -120,6 +120,9 @@ sentiment_pipeline.py
 signal_aggregator.py
 run_risk.py
 
+run_train.py
+run_predict.py
+
 
 # au quotidien ou par semaine — dans cet ordre strict :
 #  1. alpha_scanner.py       → scores quantitatifs (trend, vcp, final_score) SANS sentiment
@@ -155,3 +158,33 @@ Tests :
 ```powershell
 python -m pytest tests/test_position_sizer.py tests/test_constraints.py tests/test_circuit_breaker.py tests/test_risk_checker.py tests/test_portfolio_builder.py
 
+
+
+## Module 3 — Model Factory (LSTM per-symbol)
+
+Schémas SQL : `database/sql/ml/model_registry.sql`, `model_training_run.sql`, `model_metrics.sql`, `model_predictions.sql`.
+
+### Entraînement
+
+```powershell
+python -m modelFactory.run_train
+python -m modelFactory.run_train --symbols AAPL MSFT NVDA
+python -m modelFactory.run_train --max-workers 2 --accelerator cpu
+python -m modelFactory.run_train --max-epochs 30 --batch-size 32 --hidden-size 64 --sequence-length 40
+python -m modelFactory.run_train --artifacts-dir artifacts/models_v2 --log-level DEBUG
+```
+
+### Prédiction
+
+```powershell
+python -m modelFactory.run_predict
+python -m modelFactory.run_predict --symbols AAPL MSFT NVDA
+python -m modelFactory.run_predict --artifacts-dir artifacts/models_v2 --log-level DEBUG
+```
+
+### Mode unifié (optionnel)
+
+```powershell
+python -m modelFactory --mode train
+python -m modelFactory --mode predict
+```
