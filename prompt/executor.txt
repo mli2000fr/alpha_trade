@@ -1,0 +1,1541 @@
+Refactorise et implémente le module `execution_engine/` du projet Alpha Trade :
+「生產級執行與監控 (Production Executor) — OMS / EMS institutionnel」
+
+Tu travailles EN PRIORITÉ sur l’architecture existante. Pas de greenfield isolé.
+Le module doit s’intégrer au pipeline existant :
+  alpha_scanner -> signal_aggregator -> risk_management -> execution_engine
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ÉTAPE 0 — LIS CES FICHIERS AVANT DE CODER (obligatoire)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Architecture existante à respecter :
+  core/interfaces.py
+  database/connection.py
+  pyproject.toml
+  requirements.txt
+
+Pipeline amont (lecture seule) :
+  risk_management/config.py
+  risk_management/models.py
+  risk_management/db_io.py
+  risk_management/audit.py
+  risk_management/cli.py
+  risk_management/run_risk.py
+  selector/alpha_scanner.py
+  event_sentiment/signal_aggregator.py
+
+Intégration broker existante (à étendre, pas à casser) :
+  service/alpaca/clientAlpaca.py
+  service/alpaca/clientNewsAlpaca.py
+
+Schémas SQL existants :
+  database/sql/risk/portfolio_targets.sql
+  database/sql/risk/risk_decisions.sql
+
+Tests et infra :
+  pytest.ini
+  tests/conftest.py
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONTEXTE TECHNIQUE CRITIQUE — NE PAS DEVINER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1) Le module `risk_management` persiste déjà les décisions et le portefeuille cible :
+   - `portfolio_targets` = ce qui doit être exécuté
+   - `risk_decisions` = audit de décision
+
+2) `portfolio_targets` contient déjà :
+   run_id, trade_date, symbol, shares, entry_price, target_weight, sector,
+   score_used, score_source, conviction_score, sizing_method, kelly_fraction
+
+3) `core/interfaces.py` contient un `OrderManager` Protocol minimal :
+   - submit_market_order(symbol, qty, side) -> str
+   - cancel_order(order_id) -> bool
+   NE CASSE PAS cette interface. Si tu as besoin de plus riche pour l’executor,
+   crée un protocole local spécialisé ou une implémentation concrète plus riche
+   dans le nouveau module, sans casser les appelants existants.
+
+4) `service/alpaca/clientAlpaca.py` est orienté market data.
+   Il réutilise déjà :
+   - ALPACA_API_KEY
+   - ALPACA_SECRET_KEY
+   Tu dois étendre proprement la couche Alpaca pour le trading.
+
+5) `service/alpaca/clientAlpaca.py` hardcode actuellement une URL paper pour assets.
+   Le nouveau module DOIT gérer un toggle paper/live propre et centralisé.
+
+6) Il n’existe actuellement AUCUNE table SQL d’exécution / ordres / fills.
+   Il faut les créer de façon additive dans `database/sql/execution/`.
+
+7) `pyproject.toml` ne déclare pas de package `execution_engine*`.
+   Si tu crées un package top-level `execution_engine/`, ajoute-le à
+   `[tool.setuptools.packages.find].include`.
+
+8) Aucune nouvelle dépendance pip n’est autorisée.
+   Utilise uniquement stdlib + requests + sqlalchemy + pandas + numpy déjà présents.
+
+9) Logging :
+   - utiliser `LOGGER = logging.getLogger(__name__)`
+   - pas de `print()`
+   - paper et live DOIVENT partager la même logique d’audit et d’event logging
+
+10) Python 3.12, `from __future__ import annotations` en tête de chaque fichier.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OBJECTIF MÉTIER — PRODUCTION EXECUTOR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Construire un module de niveau professionnel pour exécuter les `portfolio_targets`
+issus du moteur risque, avec les exigences suivantes :
+
+A) ORDER MANAGEMENT — BRACKET / SYNTHETIC BRACKET
+   - Entrée long via ordre market ou limit configurable
+   - Protection via stop dynamique (Trailing Stop)
+   - Prise de profit via Profit Taker
+   - Si Alpaca ne supporte pas nativement “bracket + trailing stop” exactement
+     comme souhaité, implémenter un modèle “synthetic bracket” :
+       1. soumettre le parent entry
+       2. attendre fill / partial fill
+       3. créer les ordres enfants OCO : trailing stop + take profit
+   - Tout doit être idempotent et auditable
+
+B) PAPER / LIVE ONE-CLICK TOGGLE
+   - un seul flag de config / CLI
+   - même code path
+   - mêmes logs
+   - mêmes tables d’audit
+   - seul le broker endpoint / mode change
+
+C) EXECUTION BANK-GRADE / INSTITUTIONAL FEATURES
+   Le module doit inclure au minimum :
+   - pre-trade validation (market hours, symbole, qty > 0, dry-run)
+   - idempotency par `(run_id, symbol, side, intent_type)`
+   - order lifecycle state machine
+   - retry réseau borné avec logs
+   - partial fill handling
+   - cancel / replace pour ordres enfants si qty change
+   - end-of-day reconciliation broker vs DB
+   - kill switch / circuit halt
+   - shared audit trail paper/live
+   - observabilité claire par run, order, event, fill
+   - reprise safe après crash/redémarrage
+   - mode dry-run sans appel broker
+   - support d’un “target execution plan” depuis `portfolio_targets`
+
+D) ALIGNEMENT AVEC LE PROJET EXISTANT
+   - la source d’exécution est `portfolio_targets`
+   - ne pas dupliquer la logique de sizing / risk déjà présente
+   - ne pas déplacer la logique risque dans l’executor
+   - l’executor applique uniquement :
+     1. chargement des cibles
+     2. génération d’intentions d’ordre
+     3. soumission / suivi / audit
+     4. reconciliation
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PLAN DE FICHIERS — CRÉE / MODIFIE EXACTEMENT CEUX-CI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NOUVEAUX fichiers à créer :
+  execution_engine/__init__.py
+  execution_engine/config.py
+  execution_engine/models.py
+  execution_engine/db_io.py
+  execution_engine/order_intents.py
+  execution_engine/state_machine.py
+  execution_engine/executor.py
+  execution_engine/reconciliation.py
+  execution_engine/audit.py
+  execution_engine/cli.py
+  execution_engine/__main__.py
+
+  service/alpaca/trading_client.py
+
+  database/sql/execution/execution_runs.sql
+  database/sql/execution/execution_orders.sql
+  database/sql/execution/execution_fills.sql
+  database/sql/execution/execution_events.sql
+  database/sql/execution/broker_positions_snapshots.sql
+
+  tests/test_execution_config.py
+  tests/test_order_intents.py
+  tests/test_state_machine.py
+  tests/test_executor_paper.py
+  tests/test_reconciliation.py
+  tests/test_trading_client.py
+
+FICHIERS EXISTANTS à modifier :
+  pyproject.toml                      — ajouter `execution_engine*` si package top-level
+  service/alpaca/clientAlpaca.py     — factoriser les credentials / endpoints si utile
+  core/interfaces.py                 — NE PAS casser ; ne modifier que si absolument nécessaire
+  requirements.txt                   — ne rien ajouter sauf si strictement nécessaire (préférence : inchangé)
+
+FICHIERS à NE PAS MODIFIER :
+  risk_management/*
+  selector/*
+  event_sentiment/*
+  database/connection.py
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 1 — execution_engine/config.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer :
+
+@dataclass(frozen=True, slots=True)
+class ExecutionConfig:
+    broker_mode: str = "paper"           # "paper" | "live"
+    dry_run: bool = False
+    entry_order_type: str = "market"     # "market" | "limit"
+    limit_price_buffer_bps: int = 10
+    profit_taker_pct: float = 0.08
+    trailing_stop_pct: float = 0.05
+    allow_fractional_shares: bool = False
+    max_slippage_bps: int = 30
+    max_order_retries: int = 3
+    poll_interval_seconds: float = 2.0
+    fill_timeout_seconds: int = 120
+    cancel_timeout_seconds: int = 30
+    market_clock_skew_seconds: int = 5
+    enable_kill_switch: bool = True
+    allow_outside_rth: bool = False
+    execution_batch_size: int = 20
+    reconcile_after_submit: bool = True
+
+Validation __post_init__ :
+  - broker_mode in {"paper", "live"}
+  - entry_order_type in {"market", "limit"}
+  - 0 < profit_taker_pct < 1
+  - 0 < trailing_stop_pct < 1
+  - 0 <= max_slippage_bps <= 500
+  - max_order_retries >= 0
+  - poll_interval_seconds > 0
+  - fill_timeout_seconds > 0
+  - cancel_timeout_seconds > 0
+  - execution_batch_size >= 1
+
+Ajouter helpers :
+  - is_paper() -> bool
+  - is_live() -> bool
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 2 — execution_engine/models.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer des dataclasses immutables (frozen=True, slots=True) pour :
+
+ExecutionTarget
+  run_id: str
+  trade_date: date
+  symbol: str
+  target_shares: int
+  entry_price: float
+  target_weight: float
+  sector: str | None
+  conviction_score: float | None
+  sizing_method: str | None
+
+OrderIntent
+  intent_id: str
+  run_id: str
+  symbol: str
+  side: str                   # "buy" | "sell"
+  qty: float
+  order_type: str             # "market" | "limit"
+  limit_price: float | None
+  take_profit_price: float | None
+  trailing_stop_pct: float | None
+  broker_mode: str            # "paper" | "live"
+  parent_intent_id: str | None
+  intent_role: str            # "entry" | "take_profit" | "trailing_stop"
+  idempotency_key: str
+
+BrokerOrder
+  broker_order_id: str
+  client_order_id: str
+  symbol: str
+  side: str
+  qty: float
+  filled_qty: float
+  status: str
+  order_type: str
+  limit_price: float | None
+  stop_price: float | None
+  trail_percent: float | None
+  created_at: datetime | None
+  updated_at: datetime | None
+
+ExecutionFill
+  broker_fill_id: str
+  broker_order_id: str
+  symbol: str
+  filled_qty: float
+  avg_fill_price: float
+  fill_timestamp: datetime
+
+ExecutionEvent
+  event_id: str
+  run_id: str
+  symbol: str
+  event_type: str
+  event_status: str
+  message: str
+  broker_order_id: str | None = None
+  client_order_id: str | None = None
+  payload_json: str | None = None
+
+ReconcileDiff
+  symbol: str
+  db_target_qty: float
+  broker_position_qty: float
+  delta_qty: float
+  action_required: str        # "none" | "buy" | "sell" | "investigate"
+
+Créer aussi un Enum-like simple ou constantes pour les états :
+  NEW, SUBMITTED, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, FAILED
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 3 — service/alpaca/trading_client.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer un client HTTP Alpaca Trading séparé du client market-data.
+
+Contraintes :
+- réutiliser la logique de credentials de `service/alpaca/clientAlpaca.py`
+- gérer paper/live avec base URL :
+    paper = https://paper-api.alpaca.markets/v2
+    live  = https://api.alpaca.markets/v2
+- pas d’SDK Alpaca : uniquement `requests`
+
+Créer une classe :
+
+class AlpacaTradingClient:
+    def __init__(self, broker_mode: str = "paper", session: requests.Session | None = None) -> None: ...
+    def submit_order(self, payload: dict[str, object]) -> dict[str, object]: ...
+    def get_order(self, order_id: str) -> dict[str, object]: ...
+    def list_orders(self, status: str = "all", limit: int = 500) -> list[dict[str, object]]: ...
+    def cancel_order(self, order_id: str) -> bool: ...
+    def replace_order(self, order_id: str, payload: dict[str, object]) -> dict[str, object]: ...
+    def get_positions(self) -> list[dict[str, object]]: ...
+    def get_clock(self) -> dict[str, object]: ...
+
+Important :
+- retry borné uniquement sur erreurs réseau / timeout / 429 / 5xx
+- logs structurés
+- convertir proprement les erreurs HTTP en exceptions métier locales
+- prendre en charge `client_order_id`
+
+CRITIQUE :
+Ne suppose pas qu’Alpaca supporte nativement “bracket avec trailing stop”.
+Vérifie le comportement API dans le code / tests.
+Si non supporté, le moteur applicatif doit faire :
+  entry parent -> wait fill -> place children OCO logically managed by app
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 4 — execution_engine/db_io.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer un repository SQLAlchemy text-only, testable avec engine injectable :
+
+class ExecutionRepository:
+    def __init__(self, engine: Engine | None = None) -> None:
+        self.engine = engine or get_sqlalchemy_engine()
+
+Méthodes de lecture :
+  load_latest_portfolio_targets(trade_date: date | None = None, run_id: str | None = None) -> list[ExecutionTarget]
+    - si run_id fourni : charger exactement ce run
+    - sinon : charger le dernier run_id disponible (optionnellement filtré par trade_date)
+    - source = `portfolio_targets`
+    - order by target_weight desc, symbol asc
+
+  load_existing_intents(run_id: str) -> set[str]
+    - retourne les idempotency_key déjà soumises
+
+  load_execution_orders(run_id: str) -> list[BrokerOrder]
+  load_execution_fills(run_id: str) -> list[ExecutionFill]
+
+Méthodes d’écriture :
+  insert_execution_run(...)
+  insert_order_intents(...)
+  insert_execution_orders(...)
+  insert_execution_fills(...)
+  insert_execution_events(...)
+  snapshot_broker_positions(...)
+
+SQL :
+- utiliser `sqlalchemy.text()`
+- utiliser le pattern du projet (pas d’ORM)
+- si placeholders IN nécessaires, utiliser le pattern manuel cohérent avec le repo existant
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 5 — execution_engine/order_intents.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Fonction pure, testable :
+
+def build_entry_intents(
+    targets: list[ExecutionTarget],
+    config: ExecutionConfig,
+) -> list[OrderIntent]:
+
+Règles :
+- un intent d’entrée par target_shares > 0
+- side = "buy"
+- qty = target_shares (ou float si fractional activé)
+- order_type = config.entry_order_type
+- si limit :
+    limit_price = entry_price * (1 + limit_price_buffer_bps / 10000)
+- take_profit_price = entry_price * (1 + profit_taker_pct)
+- trailing_stop_pct = config.trailing_stop_pct
+- créer un idempotency_key stable basé sur :
+    run_id|symbol|intent_role|side|qty|broker_mode
+- intent_role = "entry"
+- parent_intent_id = None
+
+Créer aussi :
+
+def build_child_intents_from_fill(
+    parent: OrderIntent,
+    fill_qty: float,
+    avg_fill_price: float,
+    config: ExecutionConfig,
+) -> tuple[OrderIntent, OrderIntent]:
+
+Règles :
+- take-profit child : side = "sell"
+- trailing-stop child : side = "sell"
+- qty = fill_qty
+- prices calculés à partir de avg_fill_price
+- parent_intent_id = parent.intent_id
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 6 — execution_engine/state_machine.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer une state machine d’ordres pure et testable :
+
+allowed transitions :
+  NEW -> SUBMITTED
+  SUBMITTED -> PARTIALLY_FILLED | FILLED | CANCELED | REJECTED | FAILED
+  PARTIALLY_FILLED -> FILLED | CANCELED | FAILED
+  FILLED -> terminal
+  CANCELED -> terminal
+  REJECTED -> terminal
+  FAILED -> terminal
+
+Fonctions :
+  can_transition(old: str, new: str) -> bool
+  require_transition(old: str, new: str) -> None
+  is_terminal(status: str) -> bool
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 7 — execution_engine/executor.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer la classe principale :
+
+class ProductionExecutor:
+    def __init__(
+        self,
+        config: ExecutionConfig,
+        repo: ExecutionRepository,
+        broker: AlpacaTradingClient,
+    ) -> None: ...
+
+    def execute_run(self, trade_date: date | None = None, run_id: str | None = None) -> dict[str, int]:
+        """
+        Pipeline :
+        1. Charger les targets depuis portfolio_targets
+        2. Construire les entry intents
+        3. Filtrer les intents déjà soumis (idempotency)
+        4. Vérifier market clock / RTH si requis
+        5. Soumettre les ordres d’entrée
+        6. Poller jusqu’à FILLED / timeout / terminal state
+        7. Si entry filled ou partial filled :
+             créer les enfants take-profit + trailing stop
+        8. Persister orders, fills, events
+        9. Reconciliation broker vs DB si activée
+        10. Retourner un résumé métrique
+        """
+
+Méthodes internes attendues :
+  _preflight_checks(...)
+  _submit_entry_intent(...)
+  _wait_for_fill(...)
+  _submit_children_after_fill(...)
+  _emit_event(...)
+  _should_skip_intent(...)
+  _handle_partial_fill(...)
+  _handle_timeout(...)
+  _reconcile(...)
+
+Comportements obligatoires :
+- dry_run : ne fait AUCUN appel broker, mais persiste les intents/events simulés
+- kill switch : si clock fermée, broker indisponible ou erreur critique répétée, stop contrôlé
+- partial fills : children seulement sur qty fillée
+- duplicate protection : ne jamais soumettre 2 fois le même intent logique
+- si trailing stop natif comme child impossible : journaliser explicitement
+  “synthetic trailing/OCO managed by app”
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 8 — execution_engine/reconciliation.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer :
+
+def reconcile_targets_vs_broker(
+    targets: list[ExecutionTarget],
+    broker_positions: list[dict[str, object]],
+) -> list[ReconcileDiff]:
+
+Règles :
+- agréger positions broker par symbole
+- comparer à target_shares
+- delta > 0 => action_required = "buy"
+- delta < 0 => action_required = "sell"
+- delta == 0 => "none"
+- si valeur incohérente / symbole absent inattendu => "investigate"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 9 — execution_engine/audit.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer des helpers de mapping dataclass -> dict SQL.
+
+Exigences :
+- même logique de logs paper/live
+- chaque appel broker doit produire au moins un `execution_event`
+- chaque transition d’état importante doit être auditée
+- conserver `payload_json` compact, sérialisable, sans secrets
+
+Types d’événements minimum :
+  RUN_STARTED
+  PRECHECK_OK
+  PRECHECK_FAILED
+  INTENT_BUILT
+  INTENT_SKIPPED_DUPLICATE
+  ORDER_SUBMITTED
+  ORDER_PARTIALLY_FILLED
+  ORDER_FILLED
+  ORDER_CANCELED
+  ORDER_REJECTED
+  CHILDREN_SUBMITTED
+  RECONCILE_DIFF
+  RUN_COMPLETED
+  RUN_FAILED
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 10 — execution_engine/cli.py et __main__.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer une CLI exécutable :
+
+python -m execution_engine --trade-date 2026-04-18 --broker-mode paper
+python -m execution_engine --run-id abc123 --broker-mode live
+python -m execution_engine --run-id abc123 --dry-run
+
+Arguments :
+  --trade-date
+  --run-id
+  --broker-mode              ("paper"|"live", default "paper")
+  --dry-run
+  --entry-order-type         ("market"|"limit")
+  --limit-price-buffer-bps
+  --profit-taker-pct
+  --trailing-stop-pct
+  --max-order-retries
+  --poll-interval-seconds
+  --fill-timeout-seconds
+  --cancel-timeout-seconds
+  --allow-outside-rth
+  --log-level
+
+La CLI doit :
+- construire `ExecutionConfig`
+- instancier repo + broker + executor
+- lancer `execute_run`
+- afficher un résumé final via logging, pas via print
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 11 — SCHÉMAS SQL À CRÉER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer dans `database/sql/execution/` :
+
+1) execution_runs.sql
+   colonnes minimales :
+   - id BIGINT AUTO_INCREMENT PK
+   - run_id VARCHAR(32) NOT NULL
+   - trade_date DATE NULL
+   - broker_mode VARCHAR(10) NOT NULL
+   - status VARCHAR(20) NOT NULL
+   - dry_run BOOLEAN NOT NULL DEFAULT FALSE
+   - started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+   - completed_at TIMESTAMP NULL
+   - error_message VARCHAR(255) NULL
+   - idx(run_id)
+
+2) execution_orders.sql
+   - id BIGINT AUTO_INCREMENT PK
+   - run_id VARCHAR(32) NOT NULL
+   - symbol VARCHAR(20) NOT NULL
+   - intent_id VARCHAR(64) NOT NULL
+   - parent_intent_id VARCHAR(64) NULL
+   - intent_role VARCHAR(20) NOT NULL
+   - idempotency_key VARCHAR(128) NOT NULL
+   - broker_mode VARCHAR(10) NOT NULL
+   - broker_order_id VARCHAR(64) NULL
+   - client_order_id VARCHAR(64) NULL
+   - side VARCHAR(10) NOT NULL
+   - qty DOUBLE NOT NULL
+   - filled_qty DOUBLE NULL
+   - order_type VARCHAR(20) NOT NULL
+   - limit_price DOUBLE NULL
+   - stop_price DOUBLE NULL
+   - trail_percent DOUBLE NULL
+   - status VARCHAR(20) NOT NULL
+   - submitted_at TIMESTAMP NULL
+   - updated_at TIMESTAMP NULL
+   - UNIQUE KEY uq_exec_orders_idem (idempotency_key)
+   - INDEX idx_exec_orders_run (run_id)
+   - INDEX idx_exec_orders_sym (symbol)
+
+3) execution_fills.sql
+   - id BIGINT AUTO_INCREMENT PK
+   - run_id VARCHAR(32) NOT NULL
+   - symbol VARCHAR(20) NOT NULL
+   - broker_fill_id VARCHAR(64) NOT NULL
+   - broker_order_id VARCHAR(64) NOT NULL
+   - filled_qty DOUBLE NOT NULL
+   - avg_fill_price DOUBLE NOT NULL
+   - fill_timestamp DATETIME NOT NULL
+   - UNIQUE KEY uq_exec_fill (broker_fill_id)
+   - INDEX idx_exec_fills_run (run_id)
+
+4) execution_events.sql
+   - id BIGINT AUTO_INCREMENT PK
+   - event_id VARCHAR(64) NOT NULL
+   - run_id VARCHAR(32) NOT NULL
+   - symbol VARCHAR(20) NULL
+   - event_type VARCHAR(40) NOT NULL
+   - event_status VARCHAR(20) NOT NULL
+   - message VARCHAR(255) NOT NULL
+   - broker_order_id VARCHAR(64) NULL
+   - client_order_id VARCHAR(64) NULL
+   - payload_json JSON NULL
+   - created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+   - INDEX idx_exec_events_run (run_id)
+   - INDEX idx_exec_events_sym (symbol)
+
+5) broker_positions_snapshots.sql
+   - id BIGINT AUTO_INCREMENT PK
+   - run_id VARCHAR(32) NOT NULL
+   - broker_mode VARCHAR(10) NOT NULL
+   - symbol VARCHAR(20) NOT NULL
+   - qty DOUBLE NOT NULL
+   - avg_entry_price DOUBLE NULL
+   - market_value DOUBLE NULL
+   - snapshot_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+   - INDEX idx_bps_run (run_id)
+   - INDEX idx_bps_sym (symbol)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 12 — TESTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Style :
+- identique au repo actuel
+- `conftest.py` reste vide
+- tests sans DB réelle marqués `@pytest.mark.unit`
+- si SQLite in-memory suffit, préférer cela
+
+Créer :
+
+tests/test_execution_config.py
+  - validations config
+  - mode paper/live helpers
+
+tests/test_order_intents.py
+  - build_entry_intents_market
+  - build_entry_intents_limit
+  - build_child_intents_from_fill
+  - idempotency_key_stable
+  - skip_zero_targets
+
+tests/test_state_machine.py
+  - allowed transitions
+  - forbidden transitions
+  - terminal states
+
+tests/test_trading_client.py
+  - base_url_paper
+  - base_url_live
+  - submit_order_http_error
+  - cancel_order_success
+  - get_clock_timeout_retry
+  Utiliser mock requests.Session, pas d’appel réseau réel
+
+tests/test_executor_paper.py
+  - execute_run_dry_run_no_broker_calls
+  - execute_run_skips_duplicate_idempotency
+  - execute_run_submits_children_after_fill
+  - execute_run_handles_partial_fill
+  - execute_run_stops_on_precheck_failure
+  - execute_run_persists_events
+
+tests/test_reconciliation.py
+  - exact match => none
+  - missing broker position => buy
+  - excess broker position => sell
+  - unexpected symbol => investigate
+
+CRITIQUE :
+ajoute aussi 1 test d’intégration locale repository avec SQLite in-memory pour :
+  - load_latest_portfolio_targets
+  - insert_execution_orders
+  - insert_execution_events
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONVENTIONS STRICTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Python 3.12
+- `from __future__ import annotations`
+- type hints partout
+- pas de `Any` sauf payloads SQL / JSON bruts
+- dataclasses immutables : `frozen=True, slots=True`
+- SQL via `sqlalchemy.text()`, pas d’ORM
+- logging via `LOGGER = logging.getLogger(__name__)`
+- pas de nouvelle dépendance
+- architecture testable, méthodes pures quand possible
+- toute logique broker doit être mockable
+- ne mets jamais de secrets dans les logs
+- ne casse pas `risk_management`
+- ne casse pas `core/interfaces.OrderManager`
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITÈRES D’ACCEPTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+☐ L’executor charge correctement `portfolio_targets`
+☐ Un toggle `paper/live` existe et suit exactement le même chemin d’audit
+☐ Le mode `dry_run` ne déclenche aucun appel broker
+☐ Le module génère des intents idempotents et auditables
+☐ Les ordres d’entrée peuvent produire take-profit + trailing stop
+☐ Si bracket+trailing n’est pas natif Alpaca, un synthetic bracket applicatif est implémenté
+☐ Les partial fills sont gérés proprement
+☐ Une reconciliation broker vs DB existe
+☐ Des tables SQL d’exécution additives sont créées
+☐ Aucun import cassé, aucun circular import
+☐ Les tests unitaires nouveaux passent
+☐ Le code est compatible mypy/ruff du projet
+☐ `risk_management` reste inchangé fonctionnellement
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODE OPÉRATOIRE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Travaille dans cet ordre :
+  1. lire toute l’architecture et confirmer les points critiques
+  2. créer config.py + models.py
+  3. créer trading_client.py
+  4. créer db_io.py
+  5. créer order_intents.py + state_machine.py
+  6. créer executor.py
+  7. créer reconciliation.py + audit.py
+  8. créer cli.py + __main__.py
+  9. créer les schémas SQL
+ 10. écrire les tests
+ 11. lancer les tests
+ 12. corriger jusqu’à stabilisation complète
+
+Après chaque étape significative, lance les tests ciblés.
+En cas d’ambiguïté API Alpaca, choisis l’option la plus conservative et documente-la dans le code.
+
+
+
+-----------------------------------------------------------------
+Refactorise et implémente le module `execution_engine/` du projet Alpha Trade :
+「生產級執行與監控 (Production Executor) — OMS / EMS institutionnel」
+
+Tu travailles EN PRIORITÉ sur l’architecture existante. Pas de greenfield isolé.
+Le module doit s’intégrer au pipeline existant :
+  alpha_scanner -> signal_aggregator -> risk_management -> execution_engine
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ÉTAPE 0 — LIS CES FICHIERS AVANT DE CODER (obligatoire)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Architecture existante à respecter :
+  core/interfaces.py
+  database/connection.py
+  pyproject.toml
+  requirements.txt
+
+Pipeline amont (lecture seule) :
+  risk_management/config.py
+  risk_management/models.py
+  risk_management/db_io.py
+  risk_management/audit.py
+  risk_management/cli.py
+  risk_management/run_risk.py
+  selector/alpha_scanner.py
+  event_sentiment/signal_aggregator.py
+
+Intégration broker existante (à étendre, pas à casser) :
+  service/alpaca/clientAlpaca.py
+  service/alpaca/clientNewsAlpaca.py
+
+Schémas SQL existants :
+  database/sql/risk/portfolio_targets.sql
+  database/sql/risk/risk_decisions.sql
+
+Tests et infra :
+  pytest.ini
+  tests/conftest.py
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONTEXTE TECHNIQUE CRITIQUE — NE PAS DEVINER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1) Le module `risk_management` persiste déjà les décisions et le portefeuille cible :
+   - `portfolio_targets` = ce qui doit être exécuté
+   - `risk_decisions` = audit de décision
+
+2) `portfolio_targets` contient déjà :
+   run_id, trade_date, symbol, shares, entry_price, target_weight, sector,
+   score_used, score_source, conviction_score, sizing_method, kelly_fraction
+
+3) `core/interfaces.py` contient un `OrderManager` Protocol minimal :
+   - submit_market_order(symbol, qty, side) -> str
+   - cancel_order(order_id) -> bool
+   NE CASSE PAS cette interface. Si tu as besoin de plus riche pour l’executor,
+   crée un protocole local spécialisé ou une implémentation concrète plus riche
+   dans le nouveau module, sans casser les appelants existants.
+
+4) `service/alpaca/clientAlpaca.py` est orienté market data.
+   Il réutilise déjà :
+   - ALPACA_API_KEY
+   - ALPACA_SECRET_KEY
+   Tu dois étendre proprement la couche Alpaca pour le trading.
+
+5) `service/alpaca/clientAlpaca.py` hardcode actuellement une URL paper pour assets.
+   Le nouveau module DOIT gérer un toggle paper/live propre et centralisé.
+
+6) Il n’existe actuellement AUCUNE table SQL d’exécution / ordres / fills.
+   Il faut les créer de façon additive dans `database/sql/execution/`.
+
+7) `pyproject.toml` ne déclare pas de package `execution_engine*`.
+   Si tu crées un package top-level `execution_engine/`, ajoute-le à
+   `[tool.setuptools.packages.find].include`.
+
+8) Aucune nouvelle dépendance pip n’est autorisée.
+   Utilise uniquement stdlib + requests + sqlalchemy + pandas + numpy déjà présents.
+
+9) Logging :
+   - utiliser `LOGGER = logging.getLogger(__name__)`
+   - pas de `print()`
+   - paper et live DOIVENT partager la même logique d’audit et d’event logging
+
+10) Python 3.12, `from __future__ import annotations` en tête de chaque fichier.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OBJECTIF MÉTIER — PRODUCTION EXECUTOR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Construire un module de niveau professionnel pour exécuter les `portfolio_targets`
+issus du moteur risque, avec les exigences suivantes :
+
+A) ORDER MANAGEMENT — BRACKET / SYNTHETIC BRACKET
+   - Entrée long via ordre market ou limit configurable
+   - Protection via stop dynamique (Trailing Stop)
+   - Prise de profit via Profit Taker
+   - Si Alpaca ne supporte pas nativement “bracket + trailing stop” exactement
+     comme souhaité, implémenter un modèle “synthetic bracket” :
+       1. soumettre le parent entry
+       2. attendre fill / partial fill
+       3. créer les ordres enfants OCO : trailing stop + take profit
+   - Tout doit être idempotent et auditable
+
+B) PAPER / LIVE ONE-CLICK TOGGLE
+   - un seul flag de config / CLI
+   - même code path
+   - mêmes logs
+   - mêmes tables d’audit
+   - seul le broker endpoint / mode change
+
+C) EXECUTION BANK-GRADE / INSTITUTIONAL FEATURES
+   Le module doit inclure au minimum :
+   - pre-trade validation (market hours, symbole, qty > 0, dry-run)
+   - idempotency par `(run_id, symbol, side, intent_type)`
+   - order lifecycle state machine
+   - retry réseau borné avec logs
+   - partial fill handling
+   - cancel / replace pour ordres enfants si qty change
+   - end-of-day reconciliation broker vs DB
+   - kill switch / circuit halt
+   - shared audit trail paper/live
+   - observabilité claire par run, order, event, fill
+   - reprise safe après crash/redémarrage
+   - mode dry-run sans appel broker
+   - support d’un “target execution plan” depuis `portfolio_targets`
+
+D) ALIGNEMENT AVEC LE PROJET EXISTANT
+   - la source d’exécution est `portfolio_targets`
+   - ne pas dupliquer la logique de sizing / risk déjà présente
+   - ne pas déplacer la logique risque dans l’executor
+   - l’executor applique uniquement :
+     1. chargement des cibles
+     2. génération d’intentions d’ordre
+     3. soumission / suivi / audit
+     4. reconciliation
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PLAN DE FICHIERS — CRÉE / MODIFIE EXACTEMENT CEUX-CI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NOUVEAUX fichiers à créer :
+  execution_engine/__init__.py
+  execution_engine/config.py
+  execution_engine/models.py
+  execution_engine/db_io.py
+  execution_engine/order_intents.py
+  execution_engine/state_machine.py
+  execution_engine/executor.py
+  execution_engine/reconciliation.py
+  execution_engine/audit.py
+  execution_engine/cli.py
+  execution_engine/__main__.py
+
+  service/alpaca/trading_client.py
+
+  database/sql/execution/execution_runs.sql
+  database/sql/execution/execution_orders.sql
+  database/sql/execution/execution_fills.sql
+  database/sql/execution/execution_events.sql
+  database/sql/execution/broker_positions_snapshots.sql
+
+  tests/test_execution_config.py
+  tests/test_order_intents.py
+  tests/test_state_machine.py
+  tests/test_executor_paper.py
+  tests/test_reconciliation.py
+  tests/test_trading_client.py
+
+FICHIERS EXISTANTS à modifier :
+  pyproject.toml                      — ajouter `execution_engine*` si package top-level
+  service/alpaca/clientAlpaca.py     — factoriser les credentials / endpoints si utile
+  core/interfaces.py                 — NE PAS casser ; ne modifier que si absolument nécessaire
+  requirements.txt                   — ne rien ajouter sauf si strictement nécessaire (préférence : inchangé)
+
+FICHIERS à NE PAS MODIFIER :
+  risk_management/*
+  selector/*
+  event_sentiment/*
+  database/connection.py
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 1 — execution_engine/config.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer :
+
+@dataclass(frozen=True, slots=True)
+class ExecutionConfig:
+    broker_mode: str = "paper"           # "paper" | "live"
+    dry_run: bool = False
+    entry_order_type: str = "market"     # "market" | "limit"
+    limit_price_buffer_bps: int = 10
+    profit_taker_pct: float = 0.08
+    trailing_stop_pct: float = 0.05
+    allow_fractional_shares: bool = False
+    max_slippage_bps: int = 30
+    max_order_retries: int = 3
+    poll_interval_seconds: float = 2.0
+    fill_timeout_seconds: int = 120
+    cancel_timeout_seconds: int = 30
+    market_clock_skew_seconds: int = 5
+    enable_kill_switch: bool = True
+    allow_outside_rth: bool = False
+    execution_batch_size: int = 20
+    reconcile_after_submit: bool = True
+
+Validation __post_init__ :
+  - broker_mode in {"paper", "live"}
+  - entry_order_type in {"market", "limit"}
+  - 0 < profit_taker_pct < 1
+  - 0 < trailing_stop_pct < 1
+  - 0 <= max_slippage_bps <= 500
+  - max_order_retries >= 0
+  - poll_interval_seconds > 0
+  - fill_timeout_seconds > 0
+  - cancel_timeout_seconds > 0
+  - execution_batch_size >= 1
+
+Ajouter helpers :
+  - is_paper() -> bool
+  - is_live() -> bool
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 2 — execution_engine/models.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer des dataclasses immutables (frozen=True, slots=True) pour :
+
+ExecutionTarget
+  run_id: str
+  trade_date: date
+  symbol: str
+  target_shares: int
+  entry_price: float
+  target_weight: float
+  sector: str | None
+  conviction_score: float | None
+  sizing_method: str | None
+
+OrderIntent
+  intent_id: str
+  run_id: str
+  symbol: str
+  side: str                   # "buy" | "sell"
+  qty: float
+  order_type: str             # "market" | "limit"
+  limit_price: float | None
+  take_profit_price: float | None
+  trailing_stop_pct: float | None
+  broker_mode: str            # "paper" | "live"
+  parent_intent_id: str | None
+  intent_role: str            # "entry" | "take_profit" | "trailing_stop"
+  idempotency_key: str
+
+BrokerOrder
+  broker_order_id: str
+  client_order_id: str
+  symbol: str
+  side: str
+  qty: float
+  filled_qty: float
+  status: str
+  order_type: str
+  limit_price: float | None
+  stop_price: float | None
+  trail_percent: float | None
+  created_at: datetime | None
+  updated_at: datetime | None
+
+ExecutionFill
+  broker_fill_id: str
+  broker_order_id: str
+  symbol: str
+  filled_qty: float
+  avg_fill_price: float
+  fill_timestamp: datetime
+
+ExecutionEvent
+  event_id: str
+  run_id: str
+  symbol: str
+  event_type: str
+  event_status: str
+  message: str
+  broker_order_id: str | None = None
+  client_order_id: str | None = None
+  payload_json: str | None = None
+
+ReconcileDiff
+  symbol: str
+  db_target_qty: float
+  broker_position_qty: float
+  delta_qty: float
+  action_required: str        # "none" | "buy" | "sell" | "investigate"
+
+Créer aussi un Enum-like simple ou constantes pour les états :
+  NEW, SUBMITTED, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, FAILED
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 3 — service/alpaca/trading_client.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer un client HTTP Alpaca Trading séparé du client market-data.
+
+Contraintes :
+- réutiliser la logique de credentials de `service/alpaca/clientAlpaca.py`
+- gérer paper/live avec base URL :
+    paper = https://paper-api.alpaca.markets/v2
+    live  = https://api.alpaca.markets/v2
+- pas d’SDK Alpaca : uniquement `requests`
+
+Créer une classe :
+
+class AlpacaTradingClient:
+    def __init__(self, broker_mode: str = "paper", session: requests.Session | None = None) -> None: ...
+    def submit_order(self, payload: dict[str, object]) -> dict[str, object]: ...
+    def get_order(self, order_id: str) -> dict[str, object]: ...
+    def list_orders(self, status: str = "all", limit: int = 500) -> list[dict[str, object]]: ...
+    def cancel_order(self, order_id: str) -> bool: ...
+    def replace_order(self, order_id: str, payload: dict[str, object]) -> dict[str, object]: ...
+    def get_positions(self) -> list[dict[str, object]]: ...
+    def get_clock(self) -> dict[str, object]: ...
+
+Important :
+- retry borné uniquement sur erreurs réseau / timeout / 429 / 5xx
+- logs structurés
+- convertir proprement les erreurs HTTP en exceptions métier locales
+- prendre en charge `client_order_id`
+
+CRITIQUE :
+Ne suppose pas qu’Alpaca supporte nativement “bracket avec trailing stop”.
+Vérifie le comportement API dans le code / tests.
+Si non supporté, le moteur applicatif doit faire :
+  entry parent -> wait fill -> place children OCO logically managed by app
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 4 — execution_engine/db_io.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer un repository SQLAlchemy text-only, testable avec engine injectable :
+
+class ExecutionRepository:
+    def __init__(self, engine: Engine | None = None) -> None:
+        self.engine = engine or get_sqlalchemy_engine()
+
+Méthodes de lecture :
+  load_latest_portfolio_targets(trade_date: date | None = None, run_id: str | None = None) -> list[ExecutionTarget]
+    - si run_id fourni : charger exactement ce run
+    - sinon : charger le dernier run_id disponible (optionnellement filtré par trade_date)
+    - source = `portfolio_targets`
+    - order by target_weight desc, symbol asc
+
+  load_existing_intents(run_id: str) -> set[str]
+    - retourne les idempotency_key déjà soumises
+
+  load_execution_orders(run_id: str) -> list[BrokerOrder]
+  load_execution_fills(run_id: str) -> list[ExecutionFill]
+
+Méthodes d’écriture :
+  insert_execution_run(...)
+  insert_order_intents(...)
+  insert_execution_orders(...)
+  insert_execution_fills(...)
+  insert_execution_events(...)
+  snapshot_broker_positions(...)
+
+SQL :
+- utiliser `sqlalchemy.text()`
+- utiliser le pattern du projet (pas d’ORM)
+- si placeholders IN nécessaires, utiliser le pattern manuel cohérent avec le repo existant
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 5 — execution_engine/order_intents.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Fonction pure, testable :
+
+def build_entry_intents(
+    targets: list[ExecutionTarget],
+    config: ExecutionConfig,
+) -> list[OrderIntent]:
+
+Règles :
+- un intent d’entrée par target_shares > 0
+- side = "buy"
+- qty = target_shares (ou float si fractional activé)
+- order_type = config.entry_order_type
+- si limit :
+    limit_price = entry_price * (1 + limit_price_buffer_bps / 10000)
+- take_profit_price = entry_price * (1 + profit_taker_pct)
+- trailing_stop_pct = config.trailing_stop_pct
+- créer un idempotency_key stable basé sur :
+    run_id|symbol|intent_role|side|qty|broker_mode
+- intent_role = "entry"
+- parent_intent_id = None
+
+Créer aussi :
+
+def build_child_intents_from_fill(
+    parent: OrderIntent,
+    fill_qty: float,
+    avg_fill_price: float,
+    config: ExecutionConfig,
+) -> tuple[OrderIntent, OrderIntent]:
+
+Règles :
+- take-profit child : side = "sell"
+- trailing-stop child : side = "sell"
+- qty = fill_qty
+- prices calculés à partir de avg_fill_price
+- parent_intent_id = parent.intent_id
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 6 — execution_engine/state_machine.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer une state machine d’ordres pure et testable :
+
+allowed transitions :
+  NEW -> SUBMITTED
+  SUBMITTED -> PARTIALLY_FILLED | FILLED | CANCELED | REJECTED | FAILED
+  PARTIALLY_FILLED -> FILLED | CANCELED | FAILED
+  FILLED -> terminal
+  CANCELED -> terminal
+  REJECTED -> terminal
+  FAILED -> terminal
+
+Fonctions :
+  can_transition(old: str, new: str) -> bool
+  require_transition(old: str, new: str) -> None
+  is_terminal(status: str) -> bool
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 7 — execution_engine/executor.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer la classe principale :
+
+class ProductionExecutor:
+    def __init__(
+        self,
+        config: ExecutionConfig,
+        repo: ExecutionRepository,
+        broker: AlpacaTradingClient,
+    ) -> None: ...
+
+    def execute_run(self, trade_date: date | None = None, run_id: str | None = None) -> dict[str, int]:
+        """
+        Pipeline :
+        1. Charger les targets depuis portfolio_targets
+        2. Construire les entry intents
+        3. Filtrer les intents déjà soumis (idempotency)
+        4. Vérifier market clock / RTH si requis
+        5. Soumettre les ordres d’entrée
+        6. Poller jusqu’à FILLED / timeout / terminal state
+        7. Si entry filled ou partial filled :
+             créer les enfants take-profit + trailing stop
+        8. Persister orders, fills, events
+        9. Reconciliation broker vs DB si activée
+        10. Retourner un résumé métrique
+        """
+
+Méthodes internes attendues :
+  _preflight_checks(...)
+  _submit_entry_intent(...)
+  _wait_for_fill(...)
+  _submit_children_after_fill(...)
+  _emit_event(...)
+  _should_skip_intent(...)
+  _handle_partial_fill(...)
+  _handle_timeout(...)
+  _reconcile(...)
+
+Comportements obligatoires :
+- dry_run : ne fait AUCUN appel broker, mais persiste les intents/events simulés
+- kill switch : si clock fermée, broker indisponible ou erreur critique répétée, stop contrôlé
+- partial fills : children seulement sur qty fillée
+- duplicate protection : ne jamais soumettre 2 fois le même intent logique
+- si trailing stop natif comme child impossible : journaliser explicitement
+  “synthetic trailing/OCO managed by app”
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 8 — execution_engine/reconciliation.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer :
+
+def reconcile_targets_vs_broker(
+    targets: list[ExecutionTarget],
+    broker_positions: list[dict[str, object]],
+) -> list[ReconcileDiff]:
+
+Règles :
+- agréger positions broker par symbole
+- comparer à target_shares
+- delta > 0 => action_required = "buy"
+- delta < 0 => action_required = "sell"
+- delta == 0 => "none"
+- si valeur incohérente / symbole absent inattendu => "investigate"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 9 — execution_engine/audit.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer des helpers de mapping dataclass -> dict SQL.
+
+Exigences :
+- même logique de logs paper/live
+- chaque appel broker doit produire au moins un `execution_event`
+- chaque transition d’état importante doit être auditée
+- conserver `payload_json` compact, sérialisable, sans secrets
+
+Types d’événements minimum :
+  RUN_STARTED
+  PRECHECK_OK
+  PRECHECK_FAILED
+  INTENT_BUILT
+  INTENT_SKIPPED_DUPLICATE
+  ORDER_SUBMITTED
+  ORDER_PARTIALLY_FILLED
+  ORDER_FILLED
+  ORDER_CANCELED
+  ORDER_REJECTED
+  CHILDREN_SUBMITTED
+  RECONCILE_DIFF
+  RUN_COMPLETED
+  RUN_FAILED
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 10 — execution_engine/cli.py et __main__.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer une CLI exécutable :
+
+python -m execution_engine --trade-date 2026-04-18 --broker-mode paper
+python -m execution_engine --run-id abc123 --broker-mode live
+python -m execution_engine --run-id abc123 --dry-run
+
+Arguments :
+  --trade-date
+  --run-id
+  --broker-mode              ("paper"|"live", default "paper")
+  --dry-run
+  --entry-order-type         ("market"|"limit")
+  --limit-price-buffer-bps
+  --profit-taker-pct
+  --trailing-stop-pct
+  --max-order-retries
+  --poll-interval-seconds
+  --fill-timeout-seconds
+  --cancel-timeout-seconds
+  --allow-outside-rth
+  --log-level
+
+La CLI doit :
+- construire `ExecutionConfig`
+- instancier repo + broker + executor
+- lancer `execute_run`
+- afficher un résumé final via logging, pas via print
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 11 — SCHÉMAS SQL À CRÉER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer dans `database/sql/execution/` :
+
+1) execution_runs.sql
+   colonnes minimales :
+   - id BIGINT AUTO_INCREMENT PK
+   - run_id VARCHAR(32) NOT NULL
+   - trade_date DATE NULL
+   - broker_mode VARCHAR(10) NOT NULL
+   - status VARCHAR(20) NOT NULL
+   - dry_run BOOLEAN NOT NULL DEFAULT FALSE
+   - started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+   - completed_at TIMESTAMP NULL
+   - error_message VARCHAR(255) NULL
+   - idx(run_id)
+
+2) execution_orders.sql
+   - id BIGINT AUTO_INCREMENT PK
+   - run_id VARCHAR(32) NOT NULL
+   - symbol VARCHAR(20) NOT NULL
+   - intent_id VARCHAR(64) NOT NULL
+   - parent_intent_id VARCHAR(64) NULL
+   - intent_role VARCHAR(20) NOT NULL
+   - idempotency_key VARCHAR(128) NOT NULL
+   - broker_mode VARCHAR(10) NOT NULL
+   - broker_order_id VARCHAR(64) NULL
+   - client_order_id VARCHAR(64) NULL
+   - side VARCHAR(10) NOT NULL
+   - qty DOUBLE NOT NULL
+   - filled_qty DOUBLE NULL
+   - order_type VARCHAR(20) NOT NULL
+   - limit_price DOUBLE NULL
+   - stop_price DOUBLE NULL
+   - trail_percent DOUBLE NULL
+   - status VARCHAR(20) NOT NULL
+   - submitted_at TIMESTAMP NULL
+   - updated_at TIMESTAMP NULL
+   - UNIQUE KEY uq_exec_orders_idem (idempotency_key)
+   - INDEX idx_exec_orders_run (run_id)
+   - INDEX idx_exec_orders_sym (symbol)
+
+3) execution_fills.sql
+   - id BIGINT AUTO_INCREMENT PK
+   - run_id VARCHAR(32) NOT NULL
+   - symbol VARCHAR(20) NOT NULL
+   - broker_fill_id VARCHAR(64) NOT NULL
+   - broker_order_id VARCHAR(64) NOT NULL
+   - filled_qty DOUBLE NOT NULL
+   - avg_fill_price DOUBLE NOT NULL
+   - fill_timestamp DATETIME NOT NULL
+   - UNIQUE KEY uq_exec_fill (broker_fill_id)
+   - INDEX idx_exec_fills_run (run_id)
+
+4) execution_events.sql
+   - id BIGINT AUTO_INCREMENT PK
+   - event_id VARCHAR(64) NOT NULL
+   - run_id VARCHAR(32) NOT NULL
+   - symbol VARCHAR(20) NULL
+   - event_type VARCHAR(40) NOT NULL
+   - event_status VARCHAR(20) NOT NULL
+   - message VARCHAR(255) NOT NULL
+   - broker_order_id VARCHAR(64) NULL
+   - client_order_id VARCHAR(64) NULL
+   - payload_json JSON NULL
+   - created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+   - INDEX idx_exec_events_run (run_id)
+   - INDEX idx_exec_events_sym (symbol)
+
+5) broker_positions_snapshots.sql
+   - id BIGINT AUTO_INCREMENT PK
+   - run_id VARCHAR(32) NOT NULL
+   - broker_mode VARCHAR(10) NOT NULL
+   - symbol VARCHAR(20) NOT NULL
+   - qty DOUBLE NOT NULL
+   - avg_entry_price DOUBLE NULL
+   - market_value DOUBLE NULL
+   - snapshot_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+   - INDEX idx_bps_run (run_id)
+   - INDEX idx_bps_sym (symbol)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPEC 12 — TESTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Style :
+- identique au repo actuel
+- `conftest.py` reste vide
+- tests sans DB réelle marqués `@pytest.mark.unit`
+- si SQLite in-memory suffit, préférer cela
+
+Créer :
+
+tests/test_execution_config.py
+  - validations config
+  - mode paper/live helpers
+
+tests/test_order_intents.py
+  - build_entry_intents_market
+  - build_entry_intents_limit
+  - build_child_intents_from_fill
+  - idempotency_key_stable
+  - skip_zero_targets
+
+tests/test_state_machine.py
+  - allowed transitions
+  - forbidden transitions
+  - terminal states
+
+tests/test_trading_client.py
+  - base_url_paper
+  - base_url_live
+  - submit_order_http_error
+  - cancel_order_success
+  - get_clock_timeout_retry
+  Utiliser mock requests.Session, pas d’appel réseau réel
+
+tests/test_executor_paper.py
+  - execute_run_dry_run_no_broker_calls
+  - execute_run_skips_duplicate_idempotency
+  - execute_run_submits_children_after_fill
+  - execute_run_handles_partial_fill
+  - execute_run_stops_on_precheck_failure
+  - execute_run_persists_events
+
+tests/test_reconciliation.py
+  - exact match => none
+  - missing broker position => buy
+  - excess broker position => sell
+  - unexpected symbol => investigate
+
+CRITIQUE :
+ajoute aussi 1 test d’intégration locale repository avec SQLite in-memory pour :
+  - load_latest_portfolio_targets
+  - insert_execution_orders
+  - insert_execution_events
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONVENTIONS STRICTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Python 3.12
+- `from __future__ import annotations`
+- type hints partout
+- pas de `Any` sauf payloads SQL / JSON bruts
+- dataclasses immutables : `frozen=True, slots=True`
+- SQL via `sqlalchemy.text()`, pas d’ORM
+- logging via `LOGGER = logging.getLogger(__name__)`
+- pas de nouvelle dépendance
+- architecture testable, méthodes pures quand possible
+- toute logique broker doit être mockable
+- ne mets jamais de secrets dans les logs
+- ne casse pas `risk_management`
+- ne casse pas `core/interfaces.OrderManager`
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITÈRES D’ACCEPTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+☐ L’executor charge correctement `portfolio_targets`
+☐ Un toggle `paper/live` existe et suit exactement le même chemin d’audit
+☐ Le mode `dry_run` ne déclenche aucun appel broker
+☐ Le module génère des intents idempotents et auditables
+☐ Les ordres d’entrée peuvent produire take-profit + trailing stop
+☐ Si bracket+trailing n’est pas natif Alpaca, un synthetic bracket applicatif est implémenté
+☐ Les partial fills sont gérés proprement
+☐ Une reconciliation broker vs DB existe
+☐ Des tables SQL d’exécution additives sont créées
+☐ Aucun import cassé, aucun circular import
+☐ Les tests unitaires nouveaux passent
+☐ Le code est compatible mypy/ruff du projet
+☐ `risk_management` reste inchangé fonctionnellement
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODE OPÉRATOIRE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Travaille dans cet ordre :
+  1. lire toute l’architecture et confirmer les points critiques
+  2. créer config.py + models.py
+  3. créer trading_client.py
+  4. créer db_io.py
+  5. créer order_intents.py + state_machine.py
+  6. créer executor.py
+  7. créer reconciliation.py + audit.py
+  8. créer cli.py + __main__.py
+  9. créer les schémas SQL
+ 10. écrire les tests
+ 11. lancer les tests
+ 12. corriger jusqu’à stabilisation complète
+
+Après chaque étape significative, lance les tests ciblés.
+En cas d’ambiguïté API Alpaca, choisis l’option la plus conservative et documente-la dans le code.
+
+Pourquoi ce prompt est bien adapté à ton projet
+Il est aligné avec :
+la sortie réelle du risk engine dans portfolio_targets
+l’audit existant de risk_management
+la présence d’une abstraction OrderManager déjà en place dans core/interfaces.py
+l’intégration Alpaca existante sous service/alpaca/
+le style SQLAlchemy text-only déjà utilisé dans risk_management/db_io.py
+les contraintes de packaging de pyproject.toml
+Deux ajustements pro que je te recommande
+Ne pas demander un “bracket natif trailing stop” sans garde-fou
+Demande explicitement un fallback “synthetic bracket/OCO managed by app”.
+Séparer audit d’exécution et audit de risque
+risk_decisions / portfolio_targets doivent rester la vérité “intention de portefeuille”.
+L’exécution doit avoir ses propres tables.
+
+Si tu veux une version encore plus “banque d’investissement”
+Je peux te générer juste après une V2 du prompt, plus institutionnelle, avec :
+TWAP/VWAP slicing
+close-out / rebalance vs current broker positions
+post-trade TCA (transaction cost analysis)
+kill switch global + symbol-level halts
+staged execution windows
+locate/shortability hooks
+pre-borrow checks
+market calendar + open/close auction rules
+order throttling / rate limit governance
+recovery journal after process crash
+dead-letter queue logique pour ordres en anomalie
