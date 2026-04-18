@@ -23,6 +23,9 @@ python-dateutil
 pytz
 pandas-market-calendars
 
+# --- Tests / Intégration ---
+testcontainers[mysql]
+
 # --- NLP / FinBERT ---
 transformers
 # torch : installer la variante adaptée à votre hardware :
