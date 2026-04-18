@@ -14,11 +14,10 @@ import logging
 import time
 import uuid
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from execution_engine.audit import (
     build_run_id,
-    broker_order_to_db_dict,
     event_to_db_dict,
     fill_to_db_dict,
     make_event,
@@ -32,7 +31,6 @@ from execution_engine.models import (
     EventType,
     ExecutionEvent,
     ExecutionFill,
-    IntentRole,
     OrderIntent,
     OrderStatus,
 )
@@ -45,7 +43,7 @@ from execution_engine.order_intents import (
     build_rebalance_buy_intent,
 )
 from execution_engine.reconciliation import reconcile_targets_vs_broker
-from execution_engine.state_machine import is_terminal, map_alpaca_status
+from execution_engine.state_machine import is_terminal
 from execution_engine.tca import build_tca_summary, compute_implementation_shortfall, compute_slippage_bps
 from service.alpaca.trading_client import BrokerApiError
 
@@ -61,11 +59,13 @@ class ProductionExecutor:
         repo: ExecutionRepository,
         broker: BrokerAdapter,
         oco: OcoManager,
+        circuit_breaker: Optional[Any] = None,
     ) -> None:
         self._cfg = config
         self._repo = repo
         self._broker = broker
         self._oco = oco
+        self._circuit_breaker = circuit_breaker
 
     # ------------------------------------------------------------------
     # Public
@@ -109,25 +109,16 @@ class ProductionExecutor:
                 total_targets=len(targets),
             )
 
-            # Circuit breaker check (import here to avoid coupling at module level)
-            try:
-                from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
-                from risk_management.config import RiskConfig
-                equity = 0.0
-                if not self._cfg.dry_run:
-                    try:
-                        equity = self._broker.get_account_equity()
-                    except Exception:
-                        equity = 100_000.0
-                pnl = PnLSnapshot(portfolio_current_value=equity, portfolio_high_watermark=equity)
-                cb = CircuitBreaker(RiskConfig(account_equity=max(equity, 1.0)), pnl)
-                if cb.is_active():
-                    events.append(make_event(exec_run_id, EventType.CIRCUIT_BREAKER_ACTIVE, "CB active — aborting"))
-                    self._persist_events(events)
-                    self._repo.update_execution_run_status(exec_run_id, "ABORTED")
-                    return metrics
-            except ImportError:
-                LOGGER.warning("risk_management not available — skipping circuit breaker check")
+            # Circuit breaker check (injection)
+            if self._circuit_breaker is not None:
+                try:
+                    if self._circuit_breaker.is_active():
+                        events.append(make_event(exec_run_id, EventType.CIRCUIT_BREAKER_ACTIVE, "CB active — aborting"))
+                        self._persist_events(events)
+                        self._repo.update_execution_run_status(exec_run_id, "ABORTED")
+                        return metrics
+                except Exception as exc:
+                    LOGGER.warning("Circuit breaker check failed: %s", exc)
 
             # Market hours check
             if not self._cfg.allow_outside_rth and not self._cfg.dry_run:
@@ -202,7 +193,7 @@ class ProductionExecutor:
 
                 # Submit to broker avec retry UNIQUEMENT sur erreurs reseau / 5xx / 429
                 # Les erreurs 4xx (403 = client_order_id duplique, symbole interdit, etc.)
-                # sont des erreurs permanentes : on ne retente PAS.
+                # sont des erreurs permanentes : on ne retante PAS.
                 order: BrokerOrder | None = None
                 for attempt in range(self._cfg.max_order_retries + 1):
                     try:

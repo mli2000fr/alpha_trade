@@ -245,6 +245,9 @@ def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allo
         from execution_engine.executor import ProductionExecutor
         from execution_engine.oco_manager import OcoManager
         from service.alpaca.trading_client import AlpacaTradingClient
+        # Ajout pour circuit breaker
+        from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
+        from risk_management.config import RiskConfig
     except ImportError as exc:
         print(f"{RED}Erreur d'import : {exc}{RESET}")
         print("-> Verifie que le projet est installe : pip install -e .")
@@ -255,7 +258,16 @@ def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allo
     client   = AlpacaTradingClient(broker_mode=config.broker_mode)
     broker   = BrokerAdapter(client, config)
     oco      = OcoManager(broker, repo)
-    executor = ProductionExecutor(config, repo, broker, oco)
+    # Construction du circuit breaker
+    equity = 100_000.0
+    if not config.dry_run:
+        try:
+            equity = broker.get_account_equity()
+        except Exception:
+            equity = 100_000.0
+    pnl = PnLSnapshot(portfolio_current_value=equity, portfolio_high_watermark=equity)
+    cb = CircuitBreaker(RiskConfig(account_equity=max(equity, 1.0)), pnl)
+    executor = ProductionExecutor(config, repo, broker, oco, circuit_breaker=cb)
 
     trade_date_val: date | None = None
     if trade_date:
@@ -364,6 +376,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
