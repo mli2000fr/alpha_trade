@@ -7,6 +7,7 @@ import logging
 from datetime import date, timedelta
 from functools import lru_cache
 from typing import Optional
+from logging.handlers import RotatingFileHandler
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,3 +59,18 @@ def getLastDateMarche(ref_date: Optional[date] = None) -> date:
         d -= timedelta(days=1)
         if is_trading_day(d):
             return d
+
+
+def setup_logging_with_file_handler(log_path: str = "alpha_trade.log", max_bytes: int = 5_000_000, backup_count: int = 3):
+    """
+    Ajoute un RotatingFileHandler au root logger, en plus du stdout.
+    Format : %(asctime)s %(levelname)-8s %(name)s -- %(message)s
+    """
+    logger = logging.getLogger()
+    formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s -- %(message)s")
+    file_handler = RotatingFileHandler(log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.INFO)
+    # Évite les doublons si déjà ajouté
+    if not any(isinstance(h, RotatingFileHandler) for h in logger.handlers):
+        logger.addHandler(file_handler)

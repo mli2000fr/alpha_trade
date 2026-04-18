@@ -5,6 +5,7 @@ import argparse
 import logging
 from datetime import date, datetime
 
+from common.utils import setup_logging_with_file_handler
 from risk_management.audit import build_run_id, persist_decisions, persist_portfolio_targets
 from risk_management.config import RiskConfig
 from risk_management.db_io import RiskRepository
@@ -58,8 +59,9 @@ def _print_summary(entries: list[PortfolioEntry], run_id: str, trade_date: date)
     print()
 
 
-def main() -> int:
-    args = build_arg_parser().parse_args()
+def main(args: list[str] | None = None) -> None:
+    setup_logging_with_file_handler("risk_management.log")
+    args = build_arg_parser().parse_args(args)
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s %(message)s")
 
     trade_date = datetime.strptime(args.trade_date, "%Y-%m-%d").date() if args.trade_date else date.today()
@@ -116,6 +118,3 @@ def main() -> int:
         n_dec = persist_decisions(repo, entries, run_id, trade_date)
         n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date)
         LOGGER.info("Écrit %d décisions et %d cibles en DB.", n_dec, n_tgt)
-
-    return 0
-

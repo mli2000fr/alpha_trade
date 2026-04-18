@@ -27,8 +27,13 @@ import os
 import sys
 from datetime import date, datetime
 
+from common.utils import setup_logging_with_file_handler
+
 # active les sequences ANSI sur Windows
 os.system("")
+
+# Active le RotatingFileHandler pour les logs
+setup_logging_with_file_handler()
 
 GREEN  = "\033[32m"
 YELLOW = "\033[33m"
