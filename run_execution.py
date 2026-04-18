@@ -293,6 +293,10 @@ def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allo
         print(f"{YELLOW}    Cause probable : marche ferme (week-end ou hors RTH).{RESET}")
         print(f"{YELLOW}    Prochaine ouverture : lundi 09:30 ET.{RESET}")
         print(f"{YELLOW}    Pour tester hors horaires : utilise 'simulate' ou ajoute --allow-outside-rth{RESET}")
+    elif submitted_n > 0 and metrics.get("filled", 0) == 0 and not PRESETS[mode]["dry_run"]:
+        print(f"{GREEN}[OK] {submitted_n} ordre(s) soumis chez Alpaca.{RESET}")
+        print(f"{YELLOW}    Marche actuellement ferme -> les ordres seront remplis a l'ouverture.{RESET}")
+        print(f"{YELLOW}    Les ordres 'day' expirent si non remplis en fin de prochaine seance.{RESET}")
     else:
         print(f"{GREEN}[OK] Run termine avec succes.{RESET}")
 

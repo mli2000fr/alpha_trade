@@ -258,7 +258,17 @@ class ProductionExecutor:
                 batch_count += 1
 
             # Phase 5 — Poll fills
+            # Si le marche est ferme, les ordres resteront en "accepted" (SUBMITTED)
+            # et ne seront remplis qu'a l'ouverture : on saute le polling pour eviter
+            # d'attendre 120s × N ordres inutilement.
+            market_open_for_poll = True
             if not self._cfg.dry_run:
+                try:
+                    market_open_for_poll = self._broker.is_market_open()
+                except Exception:
+                    market_open_for_poll = False
+
+            if not self._cfg.dry_run and market_open_for_poll:
                 for intent_id, (intent, order) in list(submitted_orders.items()):
                     filled_order = self._poll_until_terminal(order.broker_order_id, intent.intent_id, exec_run_id)
                     if filled_order and filled_order.status == OrderStatus.FILLED:
@@ -289,6 +299,17 @@ class ProductionExecutor:
                             f"{filled_order.status}: {intent.symbol}",
                             symbol=intent.symbol, broker_order_id=filled_order.broker_order_id,
                         ))
+            elif not self._cfg.dry_run and not market_open_for_poll and submitted_orders:
+                LOGGER.info(
+                    "Marche ferme — %d ordres soumis, pas de polling. "
+                    "Les ordres seront remplis a l'ouverture (time_in_force=day).",
+                    len(submitted_orders),
+                )
+                events.append(make_event(
+                    exec_run_id, EventType.PRECHECK_OK,
+                    f"Market closed — {len(submitted_orders)} orders queued, no polling. "
+                    "They will fill at next market open.",
+                ))
 
             # Phase 8 — Reconciliation
             if self._cfg.reconcile_after_submit and not self._cfg.dry_run:
