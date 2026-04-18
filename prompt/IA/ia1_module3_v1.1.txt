@@ -43,6 +43,47 @@ AXE 3 : Fusionner ml_predicted_proba dans la chaîne de décision risk_managemen
 AXE 1 — FEATURES SENTIMENT DANS LE LSTM
 ================================================================
 
+⚠️ CONTRAINTE CRITIQUE : DISCONTINUITÉ DES DONNÉES SENTIMENT
+
+Le pipeline sentiment (event_sentiment/pipeline.py) n'ingère les news
+QUE pour les symboles is_candidate=1 du jour. Comme la liste des candidats
+change quotidiennement, l'historique sentiment d'un symbole donné est DISCONTINU :
+
+  Exemple ticker_daily_sentiment_features pour TSLA :
+    2026-01-05 : ✅ news_count=3, sentiment_net=-0.2  (candidat ce jour)
+    2026-01-06 : ❌ ABSENT (plus candidat → pas de news ingérées)
+    2026-01-07 : ❌ ABSENT
+    ...
+    2026-02-15 : ✅ news_count=1, sentiment_net=0.1   (redevient candidat)
+
+  Conséquence : on ne peut PAS distinguer "absent car pas candidat" de "candidat mais 0 news".
+  Un LEFT JOIN naïf + fill(0) mélangerait les deux cas.
+
+STRATÉGIE V1.1 POUR GÉRER LA DISCONTINUITÉ :
+
+  Option retenue : features sentiment "quand disponibles" + flag de couverture
+
+  1. LEFT JOIN ticker_daily_sentiment_features sur (symbol, date)
+  2. Ajouter une feature binaire : has_sentiment_data = 1 si la ligne existe, 0 sinon
+     → Permet au LSTM de savoir si le sentiment du jour est un vrai signal ou un trou
+  3. Remplir les trous (ABSENT) avec 0 pour les features numériques sentiment
+     SAUF has_sentiment_data qui reste à 0
+  4. Ajouter une feature : sentiment_coverage_20d = rolling(20).mean() de has_sentiment_data
+     → Indique au modèle le % de jours récents avec données sentiment disponibles
+     → Si sentiment_coverage_20d < 0.3, les features sentiment sont peu fiables pour ce symbole
+
+  Ce mécanisme permet au LSTM d'apprendre à :
+  - Pondérer le sentiment quand il est disponible (has_sentiment_data=1)
+  - Ignorer le sentiment quand il est manquant (has_sentiment_data=0)
+  - Évaluer la fiabilité globale via sentiment_coverage_20d
+
+  Alternative rejetée : forward-fill du dernier sentiment connu
+  Raison : un sentiment vieux de 30 jours n'est plus pertinent pour du swing trading 5 jours.
+
+  Alternative future (V2) : ingérer les news pour TOUS les symboles de stock_bars_daily,
+  pas seulement les candidats. Cela nécessite plus d'appels API Alpaca mais résout
+  définitivement le problème de discontinuité.
+
 Objectif :
 Enrichir le feature_engineer.py du module 3 avec les données sentiment par ticker et par secteur.
 Le module 3 V1 a déjà prévu un flag include_sentiment_features: bool dans la config.
@@ -61,19 +102,22 @@ Implémentation attendue :
       - LEFT JOIN : remplir avec 0 si absent
 
 3. Features sentiment ticker à ajouter :
-   - news_count_1d                  — volume d'activité news
-   - sentiment_net_mean_1d          — sentiment net moyen du jour
-   - sentiment_confidence_mean_1d   — confiance FinBERT moyenne
-   - major_event_flag               — événement majeur binaire
-   - pre_market_news_count          — news pré-market (forward-looking signal)
+   - has_sentiment_data             — 1 si données sentiment existent ce jour, 0 si absent (CRITIQUE)
+   - news_count_1d                  — volume d'activité news (0 si absent)
+   - sentiment_net_mean_1d          — sentiment net moyen du jour (0 si absent)
+   - sentiment_confidence_mean_1d   — confiance FinBERT moyenne (0 si absent)
+   - major_event_flag               — événement majeur binaire (0 si absent)
+   - pre_market_news_count          — news pré-market (0 si absent)
 
 4. Features sentiment secteur à ajouter :
-   - sector_sentiment_net_mean_1d   — sentiment sectoriel
-   - sector_impact_score            — impact score sectoriel
-   - macro_event_flag               — flag macro événement
-   - macro_event_intensity          — intensité macro
+   - has_sector_sentiment_data      — 1 si données secteur existent ce jour, 0 si absent
+   - sector_sentiment_net_mean_1d   — sentiment sectoriel (0 si absent)
+   - sector_impact_score            — impact score sectoriel (0 si absent)
+   - macro_event_flag               — flag macro événement (0 si absent)
+   - macro_event_intensity          — intensité macro (0 si absent)
 
 5. Rolling features sentiment (calculées à la volée comme les features prix) :
+   - sentiment_coverage_20d = rolling(20).mean() de has_sentiment_data (CRITIQUE)
    - sentiment_net_mean_5d = rolling(5).mean() de sentiment_net_mean_1d
    - sentiment_net_mean_20d = rolling(20).mean() de sentiment_net_mean_1d
    - news_count_5d = rolling(5).sum() de news_count_1d
@@ -91,15 +135,65 @@ Contraintes :
 Validation requise :
   - Vérifier que le nombre de lignes ne change pas après le JOIN (LEFT JOIN)
   - Vérifier que les NaN sentiment sont bien remplis à 0
+  - Vérifier que has_sentiment_data=0 quand la ligne est absente de ticker_daily_sentiment_features
+  - Vérifier que has_sentiment_data=1 quand la ligne existe (même si news_count=0)
+  - Vérifier que sentiment_coverage_20d ∈ [0, 1]
   - Vérifier que les features sentiment respectent le split chronologique
+  - Logger le taux moyen de couverture sentiment par symbole (utile pour monitoring)
   - Comparer les métriques V1 (prix seul) vs V1.1 (prix + sentiment) sur le test set
+  - Tester sur un symbole avec couverture discontinue (ex: pas candidat 50% du temps)
 
 ================================================================
 AXE 2 — FEATURES SCORES HISTORIQUES DANS LE LSTM
 ================================================================
 
+⚠️ CONTRAINTE CRITIQUE : DISCONTINUITÉ DES SCORES DANS stock_scores_history
+
+Le pipeline quotidien ne calcule PAS tous les scores pour tous les symboles :
+
+  Screener (stock_screener.py) :
+    → total_score, liquidity_val, RSI, historical_range_score
+    → Calculé pour TOUS les symboles (~7000+)
+    → ✅ CONTINU dans stock_scores_history
+
+  Alpha Scanner (alpha_scanner.py) :
+    → trend_score, vcp_score, final_score
+    → Calculé pour un SUBSET filtré (symboles scorés)
+    → Puis is_candidate=1 seulement pour les ~20-50 retenus
+    → _reset_selector_outputs() met trend_score/vcp_score/final_score à NULL pour TOUS avant chaque run
+    → ⚠️ DISCONTINU : NULL les jours où le symbole n'est pas dans le subset scoré
+
+  Signal Aggregator (signal_aggregator.py) :
+    → sentiment_net_agg, sector_impact_agg, final_score_sentiment, signal_active
+    → Calculé UNIQUEMENT pour is_candidate=1
+    → ⚠️ TRÈS DISCONTINU : NULL la majorité du temps
+
+  Conséquence dans stock_scores_history pour un symbole donné :
+    Jour 1 (candidat)      : total_score=0.8, trend_score=0.7, sentiment=0.6  ← COMPLET
+    Jour 2 (plus candidat) : total_score=0.6, trend_score=NULL, sentiment=NULL ← PARTIEL
+    Jour 30 (redevient)    : total_score=0.9, trend_score=0.8, sentiment=0.7  ← COMPLET
+
+STRATÉGIE V1.1 POUR LES FEATURES SCORES :
+
+  Seules les colonnes CONTINUES sont exploitables comme features LSTM :
+    ✅ total_score       — continu (screener tourne sur tous les symboles)
+    ✅ liquidity_val     — continu
+    ✅ historical_range_score — continu
+    ❌ trend_score       — discontinu (NULL quand pas dans le subset scanner)
+    ❌ vcp_score         — discontinu
+    ❌ final_score       — discontinu
+    ❌ final_score_sentiment — très discontinu (seulement candidats)
+    ❌ is_candidate      — binaire discontinu
+
+  Pour les colonnes discontinues, deux options :
+    Option A (retenue V1.1) : NE PAS les utiliser comme features séquentielles
+      → Trop de trous, le LSTM ne peut pas apprendre un pattern stable
+    Option B (V2 future) : les utiliser avec has_score_data flag + coverage
+      → Même stratégie que les features sentiment (Axe 1)
+      → Nécessite validation que le taux de couverture est suffisant
+
 Objectif :
-Utiliser stock_scores_history pour injecter les scores historiques du screener/scanner comme features.
+Utiliser stock_scores_history pour injecter les scores CONTINUS du screener comme features.
 
 Implémentation attendue :
 
@@ -110,22 +204,24 @@ Implémentation attendue :
       - JOIN sur (symbol, snapshot_date) ↔ (symbol, date) de stock_bars_daily
       - LEFT JOIN : les jours sans snapshot sont remplis avec forward-fill (le dernier score connu)
 
-3. Features scores à ajouter :
-   - total_score_hist               — score screener du jour
-   - final_score_hist               — score final scanner du jour
-   - is_candidate_hist              — était candidat ce jour-là ?
-   - final_score_sentiment_hist     — score sentiment fusionné du jour
+3. Features scores à ajouter (UNIQUEMENT les colonnes continues du screener) :
+   - total_score_hist               — score screener du jour (continu, tous les symboles)
+   - liquidity_val_hist             — liquidité (continu)
+   - historical_range_score_hist    — range historique (continu)
+   NE PAS inclure : trend_score, vcp_score, final_score, final_score_sentiment (discontinus)
 
 4. Rolling features scores :
-   - total_score_5d = rolling(5).mean()
-   - final_score_change_5d = final_score_hist - final_score_hist.shift(5)
-   - candidate_streak = nombre de jours consécutifs is_candidate=1
+   - total_score_5d = rolling(5).mean() de total_score_hist
+   - total_score_20d = rolling(20).mean() de total_score_hist
+   - total_score_change_5d = total_score_hist - total_score_hist.shift(5)
 
 Contraintes :
-  - Forward-fill des scores manquants (le score du screener ne change pas tous les jours)
+  - Forward-fill des jours sans snapshot screener (weekends, jours fériés)
   - Le forward-fill ne doit JAMAIS traverser le split train→val→test
-  - Les features scores ne sont utiles que si stock_scores_history a > 252 jours
+  - Les features scores ne sont utiles que si stock_scores_history a > 126 jours de données continues
   - Prévoir un seuil minimum configurable (min_scores_history_days: int = 126)
+  - NE PAS utiliser les colonnes discontinues (trend_score, final_score, sentiment) en V1.1
+  - Documenter dans le README quelles colonnes sont continues vs discontinues
 
 ================================================================
 AXE 3 — FUSION ML DANS LA CHAÎNE DE DÉCISION
@@ -282,4 +378,9 @@ BLOC ANTI-ERREURS V1.1
 ================================================================
 COMMENCE PAR L'ÉTAPE V1.1-1 UNIQUEMENT.
 ================================================================
+
+
+
+
+
 
