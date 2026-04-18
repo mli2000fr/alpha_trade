@@ -31,3 +31,6 @@ transformers
 torch
 lightning
 torchmetrics
+
+# --- Tests / Intégration ---
+testcontainers[mysql]
