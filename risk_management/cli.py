@@ -24,6 +24,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--trade-date", type=str, default=None, help="YYYY-MM-DD (défaut: aujourd'hui)")
     p.add_argument("--dry-run", action="store_true", default=False)
     p.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    # --- V2 arguments ---
+    p.add_argument("--correlation-threshold", type=float, default=0.80)
+    p.add_argument("--correlation-lookback-days", type=int, default=60)
+    p.add_argument("--correlation-min-overlap", type=int, default=40)
+    p.add_argument("--enable-kelly-sizing", action="store_true", default=False)
+    p.add_argument("--assumed-payoff-ratio", type=float, default=1.5)
+    p.add_argument("--kelly-fraction-multiplier", type=float, default=0.25)
+    p.add_argument("--score-weight", type=float, default=0.40)
+    p.add_argument("--prediction-weight", type=float, default=0.60)
     return p
 
 
@@ -40,7 +49,8 @@ def _print_summary(entries: list[PortfolioEntry], run_id: str, trade_date: date)
     for e in accepted:
         print(f"  {e.symbol:<8} {e.decision:<10} shares={e.approved_shares:>6}  "
               f"price={e.entry_price:>8.2f}  weight={e.target_weight:>6.2%}  "
-              f"score={e.score_used:.4f} ({e.score_source})")
+              f"score={e.score_used:.4f} ({e.score_source})  "
+              f"conviction={e.conviction_score:.4f}  sizing={e.sizing_method}")
     if rejected:
         print(f"  --- rejetés ---")
         for e in rejected:
@@ -61,6 +71,14 @@ def main() -> int:
         max_position_weight=args.max_position_weight,
         max_sector_weight=args.max_sector_weight,
         dry_run=args.dry_run,
+        correlation_threshold=args.correlation_threshold,
+        correlation_lookback_days=args.correlation_lookback_days,
+        correlation_min_overlap=args.correlation_min_overlap,
+        enable_kelly_sizing=args.enable_kelly_sizing,
+        assumed_payoff_ratio=args.assumed_payoff_ratio,
+        kelly_fraction_multiplier=args.kelly_fraction_multiplier,
+        score_weight=args.score_weight,
+        prediction_weight=args.prediction_weight,
     )
 
     repo = RiskRepository()
@@ -73,8 +91,21 @@ def main() -> int:
     prices = repo.load_prices(symbols, atr_window=config.atr_window)
     LOGGER.info("Prix chargés pour %d symboles.", len(prices))
 
+    # --- V2 data loading ---
+    LOGGER.info("Chargement des prédictions ML…")
+    predictions = repo.load_predictions(symbols, trade_date)
+    LOGGER.info("Prédictions chargées pour %d symboles.", len(predictions))
+
+    LOGGER.info("Chargement des win rates…")
+    win_rates = repo.load_win_rates(symbols)
+    LOGGER.info("Win rates chargés pour %d symboles.", len(win_rates))
+
+    LOGGER.info("Chargement de la matrice de rendements…")
+    return_matrix = repo.load_return_matrix(symbols, config.correlation_lookback_days)
+    LOGGER.info("Matrice de rendements : %s", return_matrix.shape if not return_matrix.empty else "vide")
+
     builder = PortfolioBuilder(config)
-    entries = builder.build(candidates, prices)
+    entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
 
     run_id = build_run_id()
     _print_summary(entries, run_id, trade_date)

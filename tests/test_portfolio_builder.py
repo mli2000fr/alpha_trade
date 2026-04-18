@@ -1,13 +1,16 @@
 """Tests unitaires — PortfolioBuilder."""
 from __future__ import annotations
 
+import numpy as np
+import pandas as pd
+
 from risk_management.config import RiskConfig
-from risk_management.models import CandidateScore, PriceInfo
+from risk_management.models import CandidateScore, PredictionInfo, PriceInfo, WinRateInfo
 from risk_management.portfolio_builder import PortfolioBuilder
 
 
-def _cfg() -> RiskConfig:
-    return RiskConfig(
+def _cfg(**overrides) -> RiskConfig:  # type: ignore[no-untyped-def]
+    defaults = dict(
         account_equity=100_000,
         risk_per_trade_pct=0.01,
         atr_stop_multiple=2.0,
@@ -16,6 +19,8 @@ def _cfg() -> RiskConfig:
         max_sector_weight=0.30,
         min_position_notional=500.0,
     )
+    defaults.update(overrides)
+    return RiskConfig(**defaults)
 
 
 def _candidates() -> list[CandidateScore]:
@@ -65,4 +70,54 @@ def test_score_source_is_final_score_sentiment() -> None:
     entries = builder.build(_candidates(), _prices())
     for e in entries:
         assert e.score_source == "final_score_sentiment"
+
+
+# ---- V2 tests ----
+
+def test_v2_correlation_rejection_appears_in_entries() -> None:
+    rng = np.random.RandomState(42)
+    base = rng.randn(60)
+    mat = pd.DataFrame({"AAPL": base, "MSFT": base + rng.randn(60) * 0.05})
+    builder = PortfolioBuilder(_cfg())
+    entries = builder.build(_candidates(), _prices(), return_matrix=mat)
+    corr_rejected = [e for e in entries if e.correlation_blocker is not None]
+    assert len(corr_rejected) >= 1
+
+
+def test_v2_kelly_sizing_used_when_enabled() -> None:
+    cfg = _cfg(enable_kelly_sizing=True)
+    builder = PortfolioBuilder(cfg)
+    preds = {"AAPL": PredictionInfo("AAPL", 0.70, 1, "run1")}
+    wrs = {"AAPL": WinRateInfo("AAPL", 0.60, "test", "run1")}
+    entries = builder.build(
+        [CandidateScore("AAPL", "Tech", 0.95)],
+        {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
+        predictions=preds, win_rates=wrs,
+    )
+    accepted = [e for e in entries if e.approved_shares > 0]
+    assert len(accepted) == 1
+    assert accepted[0].sizing_method in ("kelly_atr", "kelly_only")
+
+
+def test_v2_backward_compat_no_predictions_same_as_v1() -> None:
+    builder = PortfolioBuilder(_cfg())
+    v2 = builder.build(_candidates(), _prices())
+    # When no predictions/win_rates/return_matrix, should work like V1
+    for e in v2:
+        assert e.score_source == "final_score_sentiment"
+        assert e.conviction_score == e.score_used  # no prediction → conviction = score
+
+
+def test_v2_conviction_score_in_entry() -> None:
+    preds = {"AAPL": PredictionInfo("AAPL", 0.80, 1, "run1")}
+    builder = PortfolioBuilder(_cfg())
+    entries = builder.build(
+        [CandidateScore("AAPL", "Tech", 0.95)],
+        {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
+        predictions=preds,
+    )
+    e = entries[0]
+    expected = 0.4 * 0.95 + 0.6 * 0.80
+    assert abs(e.conviction_score - expected) < 1e-6
+
 

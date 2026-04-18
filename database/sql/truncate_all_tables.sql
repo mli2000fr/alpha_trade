@@ -67,3 +67,5 @@ TRUNCATE table alpha_trade.news_ticker_map;
 TRUNCATE table alpha_trade.sector_daily_sentiment_features;
 TRUNCATE table alpha_trade.ticker_daily_sentiment_features;
 delete from alpha_trade.news_raw;
+TRUNCATE table alpha_trade.risk_decisions;
+TRUNCATE table alpha_trade.portfolio_targets;

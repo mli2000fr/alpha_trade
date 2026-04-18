@@ -45,6 +45,54 @@ class PortfolioEntry:
     decision: str          # "ACCEPTED" | "REDUCED" | "REJECTED"
     decision_reason: str
 
+    # --- V2 audit fields ---
+    conviction_score: float = 0.0
+    predicted_proba: float | None = None
+    historical_win_rate: float | None = None
+    effective_probability: float | None = None
+    kelly_fraction: float | None = None
+    sizing_method: str = ""
+    correlation_blocker: str | None = None
+    correlation_value: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PredictionInfo:
+    """Dernière prédiction ML pour un symbole."""
+    symbol: str
+    predicted_proba: float
+    predicted_class: int
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class WinRateInfo:
+    """Proxy de win rate historique depuis model_metrics."""
+    symbol: str
+    directional_accuracy: float
+    split_name: str
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class CorrelationRejection:
+    """Résultat d'un rejet par filtre de corrélation."""
+    rejected_symbol: str
+    blocker_symbol: str
+    correlation_value: float
+    threshold: float
+
+
+@dataclass(frozen=True, slots=True)
+class EnrichedCandidate:
+    """Candidat enrichi avec toutes les données V2 avant sizing."""
+    symbol: str
+    sector: str
+    score_used: float
+    predicted_proba: float | None
+    historical_win_rate: float | None
+    conviction_score: float
+
 
 @dataclass(frozen=True, slots=True)
 class RiskDecisionRow:

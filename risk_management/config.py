@@ -24,6 +24,24 @@ class RiskConfig:
 
     dry_run: bool = False
 
+    # --- Correlation filter V2 ---
+    correlation_threshold: float = 0.80
+    correlation_lookback_days: int = 60
+    correlation_min_overlap: int = 40
+
+    # --- Kelly sizing V2 ---
+    enable_kelly_sizing: bool = False
+    assumed_payoff_ratio: float = 1.5
+    kelly_fraction_multiplier: float = 0.25
+    min_effective_probability: float = 0.52
+    default_win_rate: float = 0.55
+
+    # --- Conviction score V2 ---
+    score_weight: float = 0.40
+    prediction_weight: float = 0.60
+    prediction_confidence_weight: float = 0.60
+    historical_win_rate_weight: float = 0.40
+
     def __post_init__(self) -> None:
         if self.account_equity <= 0:
             raise ValueError("account_equity doit être > 0.")
@@ -35,3 +53,22 @@ class RiskConfig:
             raise ValueError("atr_stop_multiple doit être > 0.")
         if self.max_positions < 1:
             raise ValueError("max_positions doit être >= 1.")
+        # --- V2 validations ---
+        if not (0 < self.correlation_threshold <= 1):
+            raise ValueError("correlation_threshold doit être dans ]0, 1].")
+        if self.correlation_lookback_days < self.correlation_min_overlap:
+            raise ValueError("correlation_lookback_days doit être >= correlation_min_overlap.")
+        if self.correlation_min_overlap < 1:
+            raise ValueError("correlation_min_overlap doit être >= 1.")
+        if self.assumed_payoff_ratio <= 0:
+            raise ValueError("assumed_payoff_ratio doit être > 0.")
+        if not (0 < self.kelly_fraction_multiplier <= 1):
+            raise ValueError("kelly_fraction_multiplier doit être dans ]0, 1].")
+        if not (0.5 <= self.min_effective_probability < 1):
+            raise ValueError("min_effective_probability doit être dans [0.5, 1[.")
+        if not (0.5 <= self.default_win_rate < 1):
+            raise ValueError("default_win_rate doit être dans [0.5, 1[.")
+        if abs((self.score_weight + self.prediction_weight) - 1.0) > 1e-6:
+            raise ValueError("score_weight + prediction_weight doit == 1.0.")
+        if abs((self.prediction_confidence_weight + self.historical_win_rate_weight) - 1.0) > 1e-6:
+            raise ValueError("prediction_confidence_weight + historical_win_rate_weight doit == 1.0.")

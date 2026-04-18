@@ -38,6 +38,15 @@ def persist_decisions(
             "approved_shares": e.approved_shares,
             "target_weight": e.target_weight,
             "sector": e.sector,
+            # --- V2 audit fields ---
+            "conviction_score": e.conviction_score,
+            "predicted_proba": e.predicted_proba,
+            "historical_win_rate": e.historical_win_rate,
+            "effective_probability": e.effective_probability,
+            "kelly_fraction": e.kelly_fraction,
+            "sizing_method": e.sizing_method,
+            "correlation_blocker": e.correlation_blocker,
+            "correlation_value": e.correlation_value,
         }
         for e in entries
     ]
@@ -63,6 +72,10 @@ def persist_portfolio_targets(
             "sector": e.sector,
             "score_used": e.score_used,
             "score_source": e.score_source,
+            # --- V2 audit fields ---
+            "conviction_score": e.conviction_score,
+            "sizing_method": e.sizing_method,
+            "kelly_fraction": e.kelly_fraction,
         }
         for e in accepted
     ]

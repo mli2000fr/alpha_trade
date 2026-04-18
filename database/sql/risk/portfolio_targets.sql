@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS portfolio_targets (
     sector          VARCHAR(60)   NULL,
     score_used      DOUBLE        NULL,
     score_source    VARCHAR(40)   NULL,
+    conviction_score    DOUBLE       NULL,
+    sizing_method       VARCHAR(20)  NULL,
+    kelly_fraction      DOUBLE       NULL,
     created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_pt_run       (run_id),
     INDEX idx_pt_date_sym  (trade_date, symbol)
