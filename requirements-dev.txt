@@ -27,3 +27,5 @@ types-pytz             # stubs pytz
 types-python-dateutil  # stubs python-dateutil
 sqlalchemy[mypy]       # plugin mypy SQLAlchemy
 
+# --- Database ---
+alembic>=1.13.0
