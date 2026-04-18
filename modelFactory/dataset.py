@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -136,6 +137,7 @@ class SymbolDataModule(L.LightningDataModule):
         self.val_ds: Optional[SequenceDataset] = None
         self.test_ds: Optional[SequenceDataset] = None
         self.n_features: int = len(FEATURE_COLUMNS)
+        self._num_workers = min(os.cpu_count() or 0, 4)
 
     def setup(self, stage: Optional[str] = None) -> None:
         # 1. Feature engineering
@@ -157,13 +159,19 @@ class SymbolDataModule(L.LightningDataModule):
 
     def train_dataloader(self) -> DataLoader:  # type: ignore[type-arg]
         assert self.train_ds is not None
-        return DataLoader(self.train_ds, batch_size=self.model_cfg.batch_size, shuffle=True, drop_last=False)
+        nw = self._num_workers
+        return DataLoader(self.train_ds, batch_size=self.model_cfg.batch_size, shuffle=True, drop_last=False,
+                          num_workers=nw, persistent_workers=nw > 0)
 
     def val_dataloader(self) -> DataLoader:  # type: ignore[type-arg]
         assert self.val_ds is not None
-        return DataLoader(self.val_ds, batch_size=self.model_cfg.batch_size, shuffle=False)
+        nw = self._num_workers
+        return DataLoader(self.val_ds, batch_size=self.model_cfg.batch_size, shuffle=False,
+                          num_workers=nw, persistent_workers=nw > 0)
 
     def test_dataloader(self) -> DataLoader:  # type: ignore[type-arg]
         assert self.test_ds is not None
-        return DataLoader(self.test_ds, batch_size=self.model_cfg.batch_size, shuffle=False)
+        nw = self._num_workers
+        return DataLoader(self.test_ds, batch_size=self.model_cfg.batch_size, shuffle=False,
+                          num_workers=nw, persistent_workers=nw > 0)
 

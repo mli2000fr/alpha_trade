@@ -67,6 +67,9 @@ def train_symbol(
     """
     import pandas as pd  # noqa: F811 (lazy import pour picklability worker)
 
+    # Optimisation Tensor Cores (RTX 30xx/40xx/50xx)
+    torch.set_float32_matmul_precision("medium")
+
     run_id = f"{symbol}_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
     registry_id: int = 0
 
@@ -96,7 +99,7 @@ def train_symbol(
             return TrainResult(symbol, run_id, "skipped", skip_reason=reason)
 
         # --- Artifact dir ---
-        sym_dir = Path(cfg.artifacts_dir) / symbol
+        sym_dir = (Path(cfg.artifacts_dir) / symbol).resolve()
         sym_dir.mkdir(parents=True, exist_ok=True)
 
         # --- Model ---
@@ -154,13 +157,17 @@ def train_symbol(
             }
 
         # --- Save artifacts ---
-        # Rename best checkpoint
+        # Copy best checkpoint to a canonical name
         best_ckpt = sym_dir / "best.ckpt"
-        if ckpt_callback.best_model_path and Path(ckpt_callback.best_model_path).exists():
-            best_src = Path(ckpt_callback.best_model_path)
-            if best_src != best_ckpt:
-                best_ckpt.unlink(missing_ok=True)
-                best_src.rename(best_ckpt)
+        if ckpt_callback.best_model_path:
+            best_src = Path(ckpt_callback.best_model_path).resolve()
+            best_dst = best_ckpt.resolve()
+            if best_src.exists() and best_src != best_dst:
+                best_dst.unlink(missing_ok=True)
+                best_src.rename(best_dst)
+            elif not best_dst.exists() and best_src.exists():
+                # same file, nothing to do
+                pass
 
         # Scaler
         scaler_path = sym_dir / "scaler.pkl"
