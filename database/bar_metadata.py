@@ -1,8 +1,10 @@
 from enum import Enum
 from typing import Any
 
+
 import pytz
 from dateutil import parser
+from sqlalchemy import text, Engine
 
 TZ_NEW_YORK = pytz.timezone('America/New_York')
 
@@ -30,57 +32,54 @@ def _normalize_bar_timestamp(raw_timestamp: Any) -> Any:
 
 
 def symbol_exists_in_stock_bars(conn, symbol: str) -> bool:
-    """Wrapper legacy DB-API : vérifie l'existence du symbole dans stock_bars."""
-    with conn.cursor() as cursor:
-        cursor.execute("""
-            SELECT 1 FROM stock_bars WHERE symbol=%s LIMIT 1
-        """, (symbol,))
-        return cursor.fetchone() is not None
+    """Vérifie l'existence du symbole dans stock_bars (SQLAlchemy Core)."""
+    sql = text("SELECT 1 FROM stock_bars WHERE symbol=:symbol LIMIT 1")
+    result = conn.execute(sql, {"symbol": symbol})
+    return result.first() is not None
 
 
 def get_active_tradable_symbols(conn) -> list[str]:
-    """Wrapper legacy DB-API : retourne les symboles actifs/tradables avec données disponibles."""
-    with conn.cursor() as cursor:
-        cursor.execute("""
-            SELECT symbol FROM stock_metadata WHERE status='active' AND tradable=1 AND bars_available=1
-        """)
-        return [row[0] for row in cursor.fetchall()]
+    """Retourne les symboles actifs/tradables avec données disponibles (SQLAlchemy Core)."""
+    sql = text("""
+        SELECT symbol FROM stock_metadata WHERE status='active' AND tradable=1 AND bars_available=1
+    """)
+    result = conn.execute(sql)
+    return [row[0] for row in result.fetchall()]
 
 
 def get_last_bar_timestamp(conn, symbol: str, time_frame: TimeFrame):
-    """Wrapper legacy DB-API : retourne le dernier timestamp connu pour un symbole/timeframe."""
-    with conn.cursor() as cursor:
-        cursor.execute("""
-            SELECT MAX(timestamp) FROM stock_bars WHERE symbol=%s AND timeframe=%s
-        """, (symbol, time_frame.db_value))
-        result = cursor.fetchone()
-        return result[0] if result and result[0] else None
+    """Retourne le dernier timestamp connu pour un symbole/timeframe (SQLAlchemy Core)."""
+    sql = text("SELECT MAX(timestamp) FROM stock_bars WHERE symbol=:symbol AND timeframe=:tf")
+    result = conn.execute(sql, {"symbol": symbol, "tf": time_frame.db_value})
+    row = result.first()
+    return row[0] if row and row[0] else None
 
 
 def insert_bars(conn, symbol: str, bars: list[dict[str, Any]], timeframe: str) -> int:
-    """Wrapper legacy DB-API : insère des bars avec upsert MySQL."""
+    """Insère des bars avec upsert MySQL (SQLAlchemy Core)."""
     if not bars:
         return 0
-
-    with conn.cursor() as cursor:
-        sql = """
-            INSERT INTO stock_bars (symbol, timestamp, timeframe, open_price, high_price, low_price, close_price, volume, trade_count, vwa_price)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE open_price=VALUES(open_price), high_price=VALUES(high_price), low_price=VALUES(low_price), close_price=VALUES(close_price), volume=VALUES(volume), trade_count=VALUES(trade_count), vwa_price=VALUES(vwa_price)
-        """
-        for bar in bars:
-            timestamp = _normalize_bar_timestamp(bar['t'])
-            cursor.execute(sql, (
-                symbol,
-                timestamp,
-                timeframe,
-                bar['o'],
-                bar['h'],
-                bar['l'],
-                bar['c'],
-                bar['v'],
-                bar.get('n', 0),
-                bar.get('vw', None)
-            ))
-    conn.commit()
+    sql = text("""
+        INSERT INTO stock_bars (symbol, timestamp, timeframe, open_price, high_price, low_price, close_price, volume, trade_count, vwa_price)
+        VALUES (:symbol, :timestamp, :timeframe, :open_price, :high_price, :low_price, :close_price, :volume, :trade_count, :vwa_price)
+        ON DUPLICATE KEY UPDATE open_price=VALUES(open_price), high_price=VALUES(high_price), low_price=VALUES(low_price), close_price=VALUES(close_price), volume=VALUES(volume), trade_count=VALUES(trade_count), vwa_price=VALUES(vwa_price)
+    """)
+    params = []
+    for bar in bars:
+        timestamp = _normalize_bar_timestamp(bar['t'])
+        params.append({
+            "symbol": symbol,
+            "timestamp": timestamp,
+            "timeframe": timeframe,
+            "open_price": bar['o'],
+            "high_price": bar['h'],
+            "low_price": bar['l'],
+            "close_price": bar['c'],
+            "volume": bar['v'],
+            "trade_count": bar.get('n', 0),
+            "vwa_price": bar.get('vw', None)
+        })
+    with conn.begin():
+        for param in params:
+            conn.execute(sql, param)
     return len(bars)
