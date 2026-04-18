@@ -763,7 +763,6 @@ class AlphaScanner:
             LOGGER.info("AlphaScanner terminé en %.2fs | candidats=%s", elapsed, len(selected))
 
         return selected
-        return selected
 
     def _process_chunk(self, symbols: Sequence[str]) -> pd.DataFrame:
         try:
