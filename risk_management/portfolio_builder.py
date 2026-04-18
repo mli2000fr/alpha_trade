@@ -151,24 +151,6 @@ class PortfolioBuilder:
         return entries
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def _make_entry(
-        cand: CandidateScore,
-        pi: PriceInfo | None,
-        proposed: int,
-        approved: int,
-        decision: str,
-        reason: str,
-    ) -> PortfolioEntry:
-        price = pi.last_close if pi else 0.0
-        atr = pi.atr_20 if pi else None
-        return PortfolioEntry(
-            symbol=cand.symbol, sector=cand.sector, entry_price=price,
-            score_used=cand.score_used, score_source="final_score_sentiment",
-            atr_20=atr, proposed_shares=proposed, approved_shares=approved,
-            target_notional=approved * price, target_weight=0.0,
-            decision=decision, decision_reason=reason,
-        )
 
     @staticmethod
     def _make_entry_v2(

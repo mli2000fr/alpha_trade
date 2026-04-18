@@ -136,10 +136,9 @@ class LSTMAttentionModule(L.LightningModule):
         self.log("test_loss", loss)
         self.log("test_acc", self.val_acc(probs, y))
 
-    def configure_optimizers(self):  # type: ignore[override]
+    def configure_optimizers(self) -> torch.optim.Optimizer:  # type: ignore[override]
         return torch.optim.AdamW(
             self.parameters(),
             lr=self.hparams.learning_rate,  # type: ignore[attr-defined]
             weight_decay=self.hparams.weight_decay,  # type: ignore[attr-defined]
         )
-
