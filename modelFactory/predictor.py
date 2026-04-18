@@ -15,11 +15,35 @@ import torch
 from modelFactory.config import DataConfig
 from modelFactory.data_loader import load_symbol_bars
 from modelFactory.dataset import FeatureScaler
-from modelFactory.db_registry import insert_predictions
+from modelFactory.db_registry import insert_predictions, load_training_run
 from modelFactory.features import compute_features
 from modelFactory.model import LSTMAttentionModule
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _resolve_artifact_paths(
+    symbol: str,
+    artifacts_dir: Path,
+    engine: "Engine",  # type: ignore[name-defined]
+    run_id: Optional[str],
+) -> tuple[Path, Path, Path, Optional[str]]:
+    """Résout les artefacts depuis le registre DB, sinon via le dossier canonique du symbole."""
+    selected_run = load_training_run(engine, symbol, run_id=run_id)
+    if selected_run is not None:
+        ckpt_path = Path(selected_run["checkpoint_path"])
+        scaler_path = Path(selected_run["scaler_path"])
+        config_path = Path(selected_run["config_path"])
+        if ckpt_path.exists() and scaler_path.exists() and config_path.exists():
+            return ckpt_path, scaler_path, config_path, str(selected_run["run_id"])
+        LOGGER.warning(
+            "predict_symbol registry_artifacts_missing symbol=%s run_id=%s fallback=canonical_dir",
+            symbol,
+            selected_run.get("run_id"),
+        )
+
+    sym_dir = artifacts_dir / symbol
+    return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
 
 
 def predict_symbol(
@@ -35,10 +59,7 @@ def predict_symbol(
         DataFrame avec colonnes: symbol, prediction_date, predicted_proba, predicted_class, run_id
         ou None si artefacts manquants.
     """
-    sym_dir = artifacts_dir / symbol
-    ckpt_path = sym_dir / "best.ckpt"
-    scaler_path = sym_dir / "scaler.pkl"
-    config_path = sym_dir / "config.json"
+    ckpt_path, scaler_path, config_path, selected_run_id = _resolve_artifact_paths(symbol, artifacts_dir, engine, run_id)
 
     if not ckpt_path.exists() or not scaler_path.exists() or not config_path.exists():
         LOGGER.warning("predict_symbol no_artifacts symbol=%s", symbol)
@@ -52,7 +73,7 @@ def predict_symbol(
         sequence_length=cfg_data["data"]["sequence_length"],
         forecast_horizon=cfg_data["data"]["forecast_horizon"],
     )
-    run_id = run_id or cfg_data.get("run_id", "unknown")
+    run_id = selected_run_id or cfg_data.get("run_id", "unknown")
 
     # Load scaler
     with open(scaler_path, "rb") as f:
@@ -75,7 +96,7 @@ def predict_symbol(
     x = torch.from_numpy(features.astype(np.float32)).unsqueeze(0)  # [1, seq, feat]
 
     # Load model
-    model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path))
+    model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location="cpu")
     model.eval()
 
     with torch.no_grad():
