@@ -52,9 +52,13 @@ class TradingCalendarAligner:
         if len(valid) == 0:
             raise RuntimeError(f"Aucune prochaine séance NYSE trouvée après {value}.")
         first_valid = valid[0]
-        if hasattr(first_valid, "tz_convert"):
-            return first_valid.tz_convert(TZ_NY).date()
-        return first_valid.date()
+        # pandas_market_calendars retourne des Timestamps tz-aware à minuit UTC.
+        # Un tz_convert(TZ_NY) ferait reculer la date civile d'un jour (ex: 2026-01-06 00:00Z
+        # -> 2026-01-05 19:00-05:00), ce qui casse l'alignement métier attendu.
+        # Ici on veut la DATE DE SÉANCE NYSE, donc on prend directement la date civile.
+        if hasattr(first_valid, "to_pydatetime"):
+            return first_valid.to_pydatetime().date()
+        return date(first_valid.year, first_valid.month, first_valid.day)
 
     def align(self, published_at_utc: datetime) -> TemporalAlignmentResult:
         if published_at_utc.tzinfo is None:

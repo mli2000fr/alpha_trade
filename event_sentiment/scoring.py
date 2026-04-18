@@ -87,11 +87,14 @@ class FinBERTSentimentService:
             padding=True,
             return_tensors="pt",
         )
-        # token_counts dérivés des tenseurs encodés (un seul passage tokeniseur)
-        token_counts: list[int] = encoded["input_ids"].shape[-1 if len(batch_texts) == 1 else 1:]
-        # Pour un batch, compter les tokens non-padding par ligne
         attention = encoded["attention_mask"]  # (batch, seq_len)
-        token_counts = attention.sum(dim=1).tolist()  # liste d'int, un par texte
+        if hasattr(attention, "sum"):
+            # Torch tensor réel
+            token_counts = attention.sum(dim=1).tolist()  # liste d'int, un par texte
+        else:
+            # Fake tensor de tests / objets minimalistes
+            attention_values = getattr(attention, "values", attention)
+            token_counts = [int(sum(row)) for row in attention_values]
 
         encoded = {key: value.to(self.device) for key, value in encoded.items()}
 

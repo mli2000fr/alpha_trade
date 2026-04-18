@@ -378,15 +378,13 @@ class AlphaScanner:
         # vcp_score : (threshold - vol_ratio) / threshold, clipé [0,1].
         # Un score proche de 1 = contraction de volatilité forte (signal VCP idéal).
         # Un score proche de 0 = volatilité récente élevée (pas de setup VCP).
-        factor_component = (
-            self.config.weight_trend_vcp
-            * 0.5
-            * (merged["trend_score"].fillna(0.0) + merged["vcp_score"].fillna(0.0))
+        factor_component = 0.5 * (
+            merged["trend_score"].fillna(0.0) + merged["vcp_score"].fillna(0.0)
         )
         aux_mask = merged[["total_score", "relative_strength_index"]].notna().any(axis=1)
         merged["raw_final_score"] = factor_component
         merged.loc[aux_mask, "raw_final_score"] = (
-            factor_component[aux_mask]
+            self.config.weight_trend_vcp * factor_component[aux_mask]
             + self.config.weight_total_score * merged.loc[aux_mask, "normalized_total_score"].fillna(0.0)
             + self.config.weight_rsi * merged.loc[aux_mask, "normalized_rsi"].fillna(0.0)
         )
@@ -450,10 +448,8 @@ class AlphaScanner:
         )
 
         # Recomposer final_score avec les composantes neutralisées
-        factor_component = (
-            self.config.weight_trend_vcp
-            * 0.5
-            * (result["trend_score"].fillna(0.0) + result["vcp_score"].fillna(0.0))
+        factor_component = 0.5 * (
+            result["trend_score"].fillna(0.0) + result["vcp_score"].fillna(0.0)
         )
 
         rsi_neutralized = result.get("relative_strength_index_neutralized")
@@ -468,7 +464,7 @@ class AlphaScanner:
         result["raw_final_score"] = factor_component
         if aux_mask.any():
             result.loc[aux_mask, "raw_final_score"] = (
-                factor_component[aux_mask]
+                self.config.weight_trend_vcp * factor_component[aux_mask]
                 + self.config.weight_total_score * (total_neutralized[aux_mask].fillna(0.0) if total_neutralized is not None else 0.0)
                 + self.config.weight_rsi * (rsi_neutralized[aux_mask].fillna(0.0) if rsi_neutralized is not None else 0.0)
             )
