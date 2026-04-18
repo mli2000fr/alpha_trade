@@ -1,0 +1,3 @@
+# Exclusion des modèles générés automatiquement
+modelFactory/artifacts/models/
+
