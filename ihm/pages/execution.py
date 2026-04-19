@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
 from ihm.components.status_badges import run_status_badge
 from ihm.components.tables import show_dataframe
@@ -19,12 +20,12 @@ def render() -> None:
     st.header("🚀 Execution Engine")
 
     if not db_available():
-        st.error("DB indisponible.")
+        render_db_unavailable("Execution Engine", form_key="execution_db_form")
         return
 
     runs = get_execution_runs()
     if runs.empty:
-        st.info("Aucun run d'exécution trouvé.")
+        render_query_diagnostic("Aucun run d'exécution trouvé.")
         return
 
     # --- Sélection du run ---

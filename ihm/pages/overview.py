@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import os
+from typing import cast
 
 import streamlit as st
 
+from ihm.components.db_controls import render_db_unavailable
 from ihm.components.metrics import metric_row
 from ihm.components.status_badges import env_badge, run_status_badge
 from ihm.components.tables import show_dataframe
-from ihm.services.db import db_available
+from ihm.services.db import db_available, get_last_query_error
 from ihm.services.queries import (
     get_candidates_count,
     get_latest_exec_run,
@@ -27,7 +29,7 @@ def render() -> None:
 
     # --- Santé DB ---
     if not db_available():
-        st.error("🔴 Base de données indisponible. Vérifiez LOGIN_DB / PASSWORD_DB et que MySQL est démarré.")
+        render_db_unavailable("Vue d'ensemble", form_key="overview_db_form")
         return
 
     st.success("🟢 Connexion DB OK")
@@ -37,16 +39,27 @@ def render() -> None:
     risk_run = get_latest_risk_run_id()
     exec_df = get_latest_exec_run()
 
-    exec_run_id = str(exec_df.iloc[0]["exec_run_id"]) if not exec_df.empty else "—"
-    exec_status = str(exec_df.iloc[0]["status"]) if not exec_df.empty else None
-    total_filled = int(exec_df.iloc[0]["total_filled"]) if not exec_df.empty else 0
+    if get_last_query_error() and exec_df.empty and not risk_run and candidates == 0:
+        st.warning(get_last_query_error())
+        st.caption("La connexion DB existe, mais certaines tables attendues par la vue d'ensemble semblent absentes ou incompatibles.")
 
-    metric_row([
-        ("Candidats", candidates, None),
-        ("Dernier risk_run_id", risk_run or "—", None),
-        ("Dernier exec_run_id", exec_run_id, None),
-        ("Fills dernier run", total_filled, None),
-    ])
+    latest_exec = exec_df.iloc[0].to_dict() if not exec_df.empty else None
+    exec_run_id = str(latest_exec["exec_run_id"]) if latest_exec is not None else "—"
+    exec_status = str(latest_exec["status"]) if latest_exec is not None else None
+    total_filled = int(latest_exec["total_filled"]) if latest_exec is not None else 0
+
+    candidates_value = int(candidates)
+    risk_run_value = risk_run or "—"
+    metrics = cast(
+        list[tuple[str, str | int | float, str | None]],
+        [
+            ("Candidats", candidates_value, None),
+            ("Dernier risk_run_id", risk_run_value, None),
+            ("Dernier exec_run_id", exec_run_id, None),
+            ("Fills dernier run", total_filled, None),
+        ],
+    )
+    metric_row(metrics)
 
     # --- Alertes ---
     if candidates == 0:

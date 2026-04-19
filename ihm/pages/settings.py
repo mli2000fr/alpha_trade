@@ -6,8 +6,9 @@ import sys
 
 import streamlit as st
 
+from ihm.components.db_controls import render_db_connection_form
 from ihm.components.status_badges import env_badge
-from ihm.services.db import db_available
+from ihm.services.db import db_available, get_db_status
 
 
 def _check_import(name: str) -> str:
@@ -28,10 +29,18 @@ def render() -> None:
 
     # --- DB ---
     st.subheader("🗄️ Connexion DB")
+    render_db_connection_form("settings_db_connection_form", show_host_fields=True)
+
+    status = get_db_status()
     if db_available():
         st.success("🟢 Connexion MySQL OK")
     else:
         st.error("🔴 Connexion MySQL échouée. Vérifiez LOGIN_DB, PASSWORD_DB et que MySQL est démarré.")
+    st.caption(
+        f"Source active : `{status.get('source')}` — cible : `{status.get('host')}/{status.get('name')}`"
+    )
+    if status.get("last_query_error"):
+        st.warning(str(status.get("last_query_error")))
 
     # --- Système ---
     st.subheader("🖥️ Système")

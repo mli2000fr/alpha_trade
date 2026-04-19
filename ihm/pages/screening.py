@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available
@@ -13,12 +14,12 @@ def render() -> None:
     st.header("📊 Screening — Stock Scores")
 
     if not db_available():
-        st.error("DB indisponible.")
+        render_db_unavailable("Screening", form_key="screening_db_form")
         return
 
     df = get_stock_scores()
     if df.empty:
-        st.info("Aucune donnée dans stock_scores.")
+        render_query_diagnostic("Aucune donnée dans `stock_scores`.")
         return
 
     # --- KPI ---

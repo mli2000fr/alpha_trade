@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.tables import show_dataframe
-from ihm.services.db import db_available
+from ihm.services.db import db_available, get_last_query_error
 from ihm.services.queries import get_portfolio_targets, get_risk_decisions, get_risk_run_ids
 
 
@@ -12,7 +13,7 @@ def render() -> None:
     st.header("⚖️ Risk Management")
 
     if not db_available():
-        st.error("DB indisponible.")
+        render_db_unavailable("Risk Management", form_key="risk_db_form")
         return
 
     # --- Sélecteur de run ---
@@ -23,7 +24,10 @@ def render() -> None:
         if selected_run == "Dernier run":
             selected_run = run_ids[0] if run_ids else None
     else:
-        st.info("Aucun run de risque trouvé dans risk_decisions.")
+        if get_last_query_error():
+            render_query_diagnostic("Aucun run de risque trouvé dans `risk_decisions`.")
+        else:
+            st.info("Aucun run de risque trouvé dans `risk_decisions`.")
         return
 
     # --- Décisions ---
@@ -48,7 +52,7 @@ def render() -> None:
 
         show_dataframe(decisions, height=400)
     else:
-        st.info("Aucune décision pour ce run.")
+        render_query_diagnostic("Aucune décision pour ce run.")
 
     # --- Portefeuille cible ---
     st.subheader("🎯 Portefeuille cible")
@@ -60,5 +64,5 @@ def render() -> None:
         ] if c in targets.columns]
         show_dataframe(targets[cols_show] if cols_show else targets, height=400)
     else:
-        st.info("Aucun portefeuille cible pour ce run.")
+        render_query_diagnostic("Aucun portefeuille cible pour ce run.")
 
