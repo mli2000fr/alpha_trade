@@ -242,7 +242,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         command = [
             sys.executable,
             "-m",
-            "risk_management.cli",
+            "risk_management",
             "--account-equity",
             str(options.risk_account_equity),
         ]

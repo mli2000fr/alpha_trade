@@ -137,3 +137,8 @@ def main(args: list[str] | None = None) -> None:
         n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=args.account)
         n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=args.account)
         LOGGER.info("Ecrit %d decisions et %d cibles en DB.", n_dec, n_tgt)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

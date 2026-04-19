@@ -48,6 +48,7 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     execution_command = build_pipeline_command("execution", options)
     ca_apply_command = build_pipeline_command("corporate_actions_apply", options)
 
+    assert risk_command[:3] == [risk_command[0], "-m", "risk_management"]
     assert risk_command[-2:] == ["--account", "test1"]
     assert "--trade-date" in risk_command
     assert "125000.0" in risk_command
