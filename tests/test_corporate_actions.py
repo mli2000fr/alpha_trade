@@ -6,6 +6,7 @@ from datetime import date
 import pytest
 from sqlalchemy import create_engine, text
 
+from corporate_actions.cli import _build_parser
 from corporate_actions.db_io import CorporateActionRepository
 from corporate_actions.engine import CorporateActionEngine
 from corporate_actions.models import (
@@ -381,6 +382,13 @@ class TestDbIntegration:
 
         assert repo.load_bars_available_symbols() == ["AAPL", "META"]
 
+    def test_load_existing_event_symbols(self, repo):
+        repo.insert_event_sqlite(_make_dividend_event(symbol="AAPL"))
+        repo.insert_event_sqlite(_make_dividend_event(symbol="MSFT", ex_date=date(2026, 4, 11)))
+
+        assert repo.load_existing_event_symbols() == ["AAPL", "MSFT"]
+        assert repo.load_existing_event_symbols([" msft ", "NVDA"]) == ["MSFT"]
+
 
 class TestAlpacaProviderHelpers:
 
@@ -399,6 +407,14 @@ class TestEngineHelpers:
             ["NVDA", "AMD"],
             ["META"],
         ]
+
+
+class TestCliParser:
+
+    def test_run_parser_accepts_skip_existing_alias(self):
+        args = _build_parser().parse_args(["run", "--skip-existing"])
+        assert args.command == "run"
+        assert args.skip_existing is True
 
 
 # =====================================================================
@@ -531,6 +547,39 @@ class TestEngineIntegration:
         assert calls == [["AAPL", "MSFT"], ["NVDA"]]
         assert stats["fetched"] == 2
         assert stats["inserted"] == 2
+
+    def test_sync_skip_existing_filters_symbols_before_provider_calls(self, repo):
+        calls: list[list[str] | None] = []
+        repo.insert_event_sqlite(_make_dividend_event(symbol="AAPL"))
+
+        class CountingProvider(CorporateActionProvider):
+            def fetch_events(self, symbols=None, start_date=None, end_date=None):
+                calls.append(symbols)
+                if symbols == ["MSFT", "NVDA"]:
+                    return [
+                        _make_dividend_event(symbol="MSFT", ex_date=date(2026, 4, 11)),
+                        _make_dividend_event(symbol="NVDA", ex_date=date(2026, 4, 12)),
+                    ]
+                return []
+
+        ca_engine = CorporateActionEngine(provider=CountingProvider(), repo=repo)
+        stats = ca_engine.sync(symbols=["AAPL", "MSFT", "NVDA"], batch_size=10, skip_existing=True)
+
+        assert calls == [["MSFT", "NVDA"]]
+        assert stats["fetched"] == 2
+        assert stats["inserted"] == 2
+
+    def test_sync_skip_existing_returns_empty_stats_when_all_symbols_exist(self, repo):
+        repo.insert_event_sqlite(_make_dividend_event(symbol="AAPL"))
+
+        class ExplodingProvider(CorporateActionProvider):
+            def fetch_events(self, symbols=None, start_date=None, end_date=None):
+                raise AssertionError("Provider ne doit pas être appelé quand tous les symboles existent déjà")
+
+        ca_engine = CorporateActionEngine(provider=ExplodingProvider(), repo=repo)
+        stats = ca_engine.sync(symbols=["AAPL"], skip_existing=True)
+
+        assert stats == {"fetched": 0, "inserted": 0, "duplicates": 0, "invalid": 0}
 
 
 # =====================================================================

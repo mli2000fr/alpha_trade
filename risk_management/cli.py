@@ -66,8 +66,23 @@ def main(args: list[str] | None = None) -> None:
 
     trade_date = datetime.strptime(args.trade_date, "%Y-%m-%d").date() if args.trade_date else date.today()
 
+    # --- Intégration corporate_actions : enrichir equity avec dividendes cumulés ---
+    effective_equity = args.account_equity
+    try:
+        from corporate_actions.db_io import CorporateActionRepository
+        ca_repo = CorporateActionRepository()
+        total_dividends = ca_repo.get_total_dividends()
+        if total_dividends > 0:
+            effective_equity += total_dividends
+            LOGGER.info(
+                "Dividendes cumulés ajoutés à l'equity | dividendes=%.2f equity_base=%.2f equity_effective=%.2f",
+                total_dividends, args.account_equity, effective_equity,
+            )
+    except Exception as exc:
+        LOGGER.warning("Impossible de charger les dividendes cumulés (corporate_actions) : %s", exc)
+
     config = RiskConfig(
-        account_equity=args.account_equity,
+        account_equity=effective_equity,
         risk_per_trade_pct=args.risk_per_trade_pct,
         max_positions=args.max_positions,
         max_position_weight=args.max_position_weight,

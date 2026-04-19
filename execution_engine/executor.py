@@ -133,6 +133,28 @@ class ProductionExecutor:
 
             events.append(make_event(exec_run_id, EventType.PRECHECK_OK, f"{len(targets)} targets loaded"))
 
+            # Phase 2b — Corporate actions : alerter sur splits/dividendes pending
+            try:
+                from corporate_actions.db_io import CorporateActionRepository
+                ca_repo = CorporateActionRepository(engine=self._repo.engine)
+                pending_events = ca_repo.load_pending_events(as_of=actual_trade_date)
+                if pending_events:
+                    target_symbols = {t.symbol.upper() for t in targets}
+                    pending_for_targets = [e for e in pending_events if e.symbol.upper() in target_symbols]
+                    if pending_for_targets:
+                        symbols_str = ", ".join(sorted({e.symbol for e in pending_for_targets}))
+                        LOGGER.warning(
+                            "Corporate actions pending NON appliquées pour %d symboles ciblés : %s. "
+                            "Les quantités/prix peuvent être obsolètes. Exécuter 'python -m corporate_actions apply' avant.",
+                            len(pending_for_targets), symbols_str,
+                        )
+                        events.append(make_event(
+                            exec_run_id, EventType.PRECHECK_OK,
+                            f"WARNING: {len(pending_for_targets)} corporate actions pending pour {symbols_str}",
+                        ))
+            except Exception as exc:
+                LOGGER.debug("Corporate actions check skipped: %s", exc)
+
             # Phase 3 — Build intents, filter duplicates
             entry_intents = build_entry_intents(targets, self._cfg, exec_run_id)
             existing_keys: set[str] = set()

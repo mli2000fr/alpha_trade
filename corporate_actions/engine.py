@@ -56,6 +56,7 @@ class CorporateActionEngine:
         start_date: date | None = None,
         end_date: date | None = None,
         batch_size: int = 25,
+        skip_existing: bool = False,
     ) -> dict[str, int]:
         """
         Ingère les corporate actions depuis le provider et les persiste en DB.
@@ -63,8 +64,8 @@ class CorporateActionEngine:
         Retourne un résumé : {"fetched": N, "inserted": M, "duplicates": D, "invalid": I}
         """
         LOGGER.info(
-            "Corporate actions sync started | symbols=%s start=%s end=%s batch_size=%s",
-            symbols, start_date, end_date, batch_size,
+            "Corporate actions sync started | symbols=%s start=%s end=%s batch_size=%s skip_existing=%s",
+            symbols, start_date, end_date, batch_size, skip_existing,
         )
 
         if symbols == []:
@@ -73,6 +74,28 @@ class CorporateActionEngine:
 
         if batch_size < 1:
             raise ValueError("batch_size doit être supérieur ou égal à 1.")
+
+        if skip_existing and symbols is not None:
+            existing_symbols = set(self.repo.load_existing_event_symbols(symbols))
+            if existing_symbols:
+                filtered_symbols = [symbol for symbol in symbols if symbol.upper() not in existing_symbols]
+                LOGGER.info(
+                    "Corporate actions sync skip_existing actif | requested=%d existing=%d filtered=%d",
+                    len(symbols),
+                    len(existing_symbols),
+                    len(filtered_symbols),
+                )
+                symbols = filtered_symbols
+
+        if skip_existing and symbols is None:
+            LOGGER.warning(
+                "skip_existing ignoré car le périmètre sync est global (symbols=None). "
+                "Utiliser un périmètre de symboles résolu pour exclure les symboles déjà présents."
+            )
+
+        if symbols == []:
+            LOGGER.info("Corporate actions sync skipped | tous les symboles résolus existent déjà en base.")
+            return {"fetched": 0, "inserted": 0, "duplicates": 0, "invalid": 0}
 
         stats = {"fetched": 0, "inserted": 0, "duplicates": 0, "invalid": 0}
 
@@ -162,6 +185,13 @@ class CorporateActionEngine:
             raw_positions = self.repo.load_latest_positions()
         else:
             raw_positions = positions
+
+        if not raw_positions:
+            LOGGER.warning(
+                "Aucune position broker trouvée dans broker_positions_snapshots. "
+                "L'apply ne peut créditer de dividendes ni ajuster de splits sans positions. "
+                "Vérifier que execution_engine a déjà tourné au moins une fois."
+            )
 
         position_map: dict[str, PositionSnapshot] = {
             str(p.get("symbol", "")).upper(): PositionSnapshot(

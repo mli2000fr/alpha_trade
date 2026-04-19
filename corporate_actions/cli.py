@@ -24,6 +24,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_p = sub.add_parser("sync", help="Ingérer les corporate actions depuis le provider.")
     sync_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
     sync_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramètre symbols.")
+    sync_p.add_argument(
+        "--skip-existing",
+        dest="skip_existing",
+        action="store_true",
+        help="Ignorer les symboles déjà présents dans corporate_actions_events avant l'appel provider.",
+    )
     sync_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. Défaut : 25.")
     sync_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -10 ans.")
     sync_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
@@ -39,6 +45,12 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p = sub.add_parser("run", help="Enchaîner sync puis apply dans un seul appel.")
     run_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
     run_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramètre symbols.")
+    run_p.add_argument(
+        "--skip-existing",
+        dest="skip_existing",
+        action="store_true",
+        help="Ignorer les symboles déjà présents dans corporate_actions_events avant l'appel provider.",
+    )
     run_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. Défaut : 25.")
     run_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -10 ans.")
     run_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
@@ -116,7 +128,13 @@ def _run_sync(args: argparse.Namespace) -> None:
     end_date = date.fromisoformat(args.end) if args.end else date.today()
     symbols = _resolve_sync_symbols_bar(args, repo)
 
-    stats = engine.sync(symbols=symbols, start_date=start_date, end_date=end_date, batch_size=args.batch_size)
+    stats = engine.sync(
+        symbols=symbols,
+        start_date=start_date,
+        end_date=end_date,
+        batch_size=args.batch_size,
+        skip_existing=getattr(args, "skip_existing", False),
+    )
     print(f"Sync terminé : {stats}")
 
 
@@ -164,7 +182,13 @@ def _run_all(args: argparse.Namespace) -> None:
     start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
     end_date = date.fromisoformat(args.end) if args.end else date.today()
     symbols = _resolve_sync_symbols_bar(args, repo)
-    stats_sync = engine.sync(symbols=symbols, start_date=start_date, end_date=end_date, batch_size=args.batch_size)
+    stats_sync = engine.sync(
+        symbols=symbols,
+        start_date=start_date,
+        end_date=end_date,
+        batch_size=args.batch_size,
+        skip_existing=getattr(args, "skip_existing", False),
+    )
     print(f"Sync terminé : {stats_sync}")
     print("[RUN] Application des corporate actions sur les positions...")
     as_of = date.fromisoformat(args.as_of) if getattr(args, "as_of", None) else date.today()

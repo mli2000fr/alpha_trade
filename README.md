@@ -102,19 +102,26 @@ Le script applique un upsert snapshot sur `stock_scores` : insertion/mise a jour
 - `sector`
 - `last_updated_scan`
 
-## execution
-# en une fois
-import_alpaca_assets.py
-update_sector.py
 
-
-# au quotidien
-import_alpaca_bar.py
 
 
 python -m dataIntegrityEngine.import_alpaca_bar
+
+# --- Entrée unique : corporate_action_apply ---
+
+## corporate_action_apply
+
+Cette commande applique les corporate actions (dividendes, splits, etc.) sur les positions en base de façon idempotente.
+
+Exécution :
+```powershell
+python -m corporate_actions apply
+```
+Options disponibles : voir `python -m corporate_actions apply --help`
+
+---
+
 python -m corporate_actions sync       # Ingérer dividendes/splits depuis Alpaca
-python -m corporate_actions apply      # Appliquer sur positions (idempotent)
 python -m dataIntegrityEngine.data_sanitizer_daily
 # ... reste du pipeline inchangé
 
@@ -122,16 +129,32 @@ python -m dataIntegrityEngine.data_sanitizer_daily
 # - par défaut, la sync cible les symboles `stock_metadata` avec `status='active'`,
 #   `tradable=1` et `bars_available=1`
 # - fallback vers `broker_positions_snapshots` si aucun symbole market-data n'est disponible
+# - `--skip-existing` ignore les symboles déjà présents dans `corporate_actions_events`
+#   avant l'appel Alpaca (utile pour éviter de re-fetcher un univers déjà ingéré)
 # - traitement Alpaca par lots (`--batch-size`, défaut 25) avec persistance immédiate en base
 # - progression loggée par plage de symboles, ex. `symbols 1-25/240`
 # - backfill global uniquement si demandé explicitement via `--all-symbols`
 
 # Exemples :
 # python -m corporate_actions sync --batch-size 10
+# python -m corporate_actions sync --skip-existing
 # python -m corporate_actions run --symbols AAPL MSFT NVDA --batch-size 5
+# python corporate_actions/corporate_action_run.py --skip-existing
 # python -m corporate_actions sync --all-symbols --start 2026-01-01 --end 2026-04-19
 
-data_sanitizer_daily.py
+-------------------------------
+
+## execution
+# en une fois
+import_alpaca_assets.py
+update_sector.py
+
+# au quotidien
+import_alpaca_bar.py
+
+python -m corporate_actions sync --skip-existing  # 1. ingérer dividendes/splits (référentiel)
+
+data_sanitizer_daily   # 2. sanitize bars (alignement, ajustement CA, etc.)
 
 # une fois par mois
 stock_screener.py
@@ -139,15 +162,21 @@ stock_screener.py
 alpha_scanner.py
 sentiment_pipeline.py 
 signal_aggregator.py
-run_risk.py
+run_risk.py  # 3. risk (equity enrichie par dividendes passés)
 
 run_train.py
 run_predict.py
 
-run_execution.py 
+run_execution.py
+python -m corporate_actions apply                  # apply CA sur positions existantes (après execution)
 
-
-
+-----------------------
+python -m corporate_actions sync --skip-existing     # 1. ingérer CA (référentiel)
+python -m dataIntegrityEngine.data_sanitizer_daily   # 2. sanitize bars
+# ... screener, alpha_scanner, sentiment, signal_aggregator, risk ...
+python -m risk_management.run_risk                   # 3. risk (equity enrichie par dividendes passés)
+python -m execution_engine                           # 4. exécution (crée positions)
+python -m corporate_actions apply                    # 5. appliquer CA sur positions
 ---------------------------------------------------
 
 
@@ -183,9 +212,8 @@ Schémas SQL : `database/sql/risk/risk_decisions.sql`, `database/sql/risk/portfo
 Tests :
 
 ```powershell
-python -m pytest tests/test_position_sizer.py tests/test_constraints.py tests/test_circuit_breaker.py tests/test_risk_checker.py tests/test_portfolio_builder.py
-
-
+python -m pytest tests/test_position_sizer.py tests/test_constraints.py tests/test_circuit_breaker.py tests/test_risk_checker.py tests:test_portfolio_builder.py
+```
 
 ## Module 3 — Model Factory (LSTM per-symbol)
 
@@ -215,3 +243,37 @@ python -m modelFactory.run_predict --artifacts-dir artifacts/models_v2 --log-lev
 python -m modelFactory --mode train
 python -m modelFactory --mode predict
 ```
+
+### Application des corporate actions (phase 2)
+
+Pour appliquer tous les corporate actions en attente sur les positions :
+
+```powershell
+python -m corporate_actions apply
+# ou
+python corporate_actions/corporate_action_apply.py
+```
+
+### Intégration dans le pipeline
+
+Le module `corporate_actions` a deux phases distinctes à exécuter à des moments différents :
+
+1. **`sync`** (début de journée, avant le pipeline) — Ingère les dividendes/splits depuis Alpaca dans `corporate_actions_events`. Sert de référentiel et permet à `execution_engine` de détecter les splits pending avant d'envoyer des ordres.
+
+2. **`apply`** (après `execution_engine`) — Applique les événements pending sur les positions existantes dans `broker_positions_snapshots`. Crédite les dividendes dans `portfolio_cash_ledger` et ajuste qty/cost_basis pour les splits dans `corporate_actions_applications`.
+
+**⚠️ `apply` nécessite des positions broker.** Si `execution_engine` n'a jamais tourné, `apply` ne fait rien (aucune position à ajuster).
+
+**Impact downstream :**
+- **`risk_management`** — Les dividendes cumulés (`portfolio_cash_ledger`) sont automatiquement ajoutés à `account_equity` lors du calcul de risque.
+- **`execution_engine`** — Un check pré-exécution détecte les corporate actions pending non appliquées et émet un warning.
+
+**Ordre d'exécution recommandé** (quotidien) :
+```powershell
+python -m corporate_actions sync --skip-existing     # 1. ingérer CA (référentiel)
+python -m dataIntegrityEngine.data_sanitizer_daily   # 2. sanitize bars
+# ... screener, sentiment, risk ...
+python -m execution_engine                           # 3. exécution (crée/màj positions)
+python -m corporate_actions apply                    # 4. appliquer CA sur positions
+```
+

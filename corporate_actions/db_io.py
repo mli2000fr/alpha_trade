@@ -300,6 +300,38 @@ class CorporateActionRepository:
             rows = conn.execute(stmt).scalars().all()
         return [str(symbol).strip().upper() for symbol in rows if str(symbol).strip()]
 
+    def load_existing_event_symbols(self, symbols: list[str] | None = None) -> list[str]:
+        """Retourne les symboles déjà présents dans corporate_actions_events."""
+        if symbols == []:
+            return []
+
+        if symbols is None:
+            stmt = text("""
+                SELECT DISTINCT symbol
+                FROM corporate_actions_events
+                WHERE symbol IS NOT NULL
+                  AND TRIM(symbol) <> ''
+                ORDER BY symbol ASC
+            """)
+            params: dict[str, Any] = {}
+        else:
+            normalized_symbols = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
+            if not normalized_symbols:
+                return []
+
+            placeholders = ", ".join(f":symbol_{idx}" for idx in range(len(normalized_symbols)))
+            stmt = text(f"""
+                SELECT DISTINCT symbol
+                FROM corporate_actions_events
+                WHERE UPPER(symbol) IN ({placeholders})
+                ORDER BY symbol ASC
+            """)
+            params = {f"symbol_{idx}": symbol for idx, symbol in enumerate(normalized_symbols)}
+
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, params).scalars().all()
+        return sorted({str(symbol).strip().upper() for symbol in rows if str(symbol).strip()})
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------

@@ -332,3 +332,11 @@ Je veux une implémentation réellement adaptée à ce dépôt, à ses conventio
 
 
 
+
+sync — Ingère les dividendes et splits depuis Alpaca → les stocke dans corporate_actions_events
+apply — Applique ces événements sur les positions broker :
+Dividendes → calcule le cash crédité → écrit dans portfolio_cash_ledger
+Splits → ajuste qty et cost_basis → écrit dans corporate_actions_applications
+
+
+
