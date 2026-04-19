@@ -47,7 +47,7 @@ def _run_sync(args: argparse.Namespace) -> None:
     provider = AlpacaCorporateActionProvider()
     engine = CorporateActionEngine(provider=provider)
 
-    start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=30)
+    start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
     end_date = date.fromisoformat(args.end) if args.end else date.today()
     symbols = [s.upper() for s in args.symbols] if args.symbols else []
 
@@ -95,7 +95,7 @@ def _run_all(args: argparse.Namespace) -> None:
     print("[RUN] Démarrage de l'ingestion des corporate actions...")
     provider = AlpacaCorporateActionProvider()
     engine = CorporateActionEngine(provider=provider)
-    start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=30)
+    start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
     end_date = date.fromisoformat(args.end) if args.end else date.today()
     symbols = [s.upper() for s in args.symbols] if getattr(args, "symbols", None) else []
     stats_sync = engine.sync(symbols=symbols or None, start_date=start_date, end_date=end_date)

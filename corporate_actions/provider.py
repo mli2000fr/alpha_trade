@@ -6,7 +6,7 @@ import time
 from abc import ABC, abstractmethod
 from datetime import date
 from typing import Any
-
+import urllib.parse
 import requests
 
 from corporate_actions.models import CaType, CorporateActionEvent
@@ -47,7 +47,7 @@ class AlpacaCorporateActionProvider(CorporateActionProvider):
     """
     Provider Alpaca pour les corporate actions.
 
-    Utilise l'endpoint v1beta1/corporate-actions de l'API Market Data.
+    Utilise l'endpoint v1/corporate-actions de l'API Market Data.
     Ref: https://docs.alpaca.markets/reference/corporateactions
     """
 
@@ -61,11 +61,17 @@ class AlpacaCorporateActionProvider(CorporateActionProvider):
 
     def _request(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         url = f"{_DATA_BASE}{path}"
+        # Construction de l'URL complète avec les paramètres pour le log
+        full_url = url + "?" + urllib.parse.urlencode(params)
+        LOGGER.info("[Alpaca] GET %s", full_url)
         last_exc: Exception | None = None
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 time.sleep(_PAUSE_BETWEEN_CALLS)
                 resp = self._session.get(url, params=params, timeout=_DEFAULT_TIMEOUT)
+                data = resp.json()
+                print(data.keys())
+                print(data)
                 if resp.status_code == 429 or resp.status_code >= 500:
                     delay = _BACKOFF_BASE * (2 ** attempt)
                     LOGGER.warning("Alpaca CA %s → %s, retry in %.1fs", path, resp.status_code, delay)
@@ -88,35 +94,45 @@ class AlpacaCorporateActionProvider(CorporateActionProvider):
     ) -> list[CorporateActionEvent]:
         """Récupère dividendes et splits depuis Alpaca Corporate Actions API."""
         events: list[CorporateActionEvent] = []
-        # Alpaca ca types: dividend, split, merger, spinoff, ...
-        ca_types_to_fetch = ["dividend", "forward_split", "reverse_split"]
+        # Alpaca ca types: cash_dividend, forward_split, reverse_split, ...
+        ca_types_to_fetch = ["cash_dividend", "forward_split", "reverse_split"]
         params: dict[str, Any] = {
             "types": ",".join(ca_types_to_fetch),
         }
         if symbols:
             params["symbols"] = ",".join(symbols)
         if start_date:
-            params["date_from"] = start_date.isoformat()
+            params["start"] = start_date.isoformat()
         if end_date:
-            params["date_to"] = end_date.isoformat()
+            params["end"] = end_date.isoformat()
 
         try:
-            data = self._request("/v1beta1/corporate-actions", params)
+            data = self._request("/v1/corporate-actions", params)
+            LOGGER.debug("Réponse Alpaca corporate_actions: %r", data)
+            LOGGER.info("Type de data: %s", type(data))
         except Exception:
             LOGGER.exception("Erreur lors de la récupération des corporate actions Alpaca")
             return events
 
-        # Parse dividends
-        for div in data.get("dividends", []):
-            events.append(self._parse_dividend(div))
-
-        # Parse forward splits
-        for split in data.get("forward_splits", []):
-            events.append(self._parse_split(split, CaType.SPLIT))
-
-        # Parse reverse splits
-        for split in data.get("reverse_splits", []):
-            events.append(self._parse_split(split, CaType.REVERSE_SPLIT))
+        # Parsing explicite selon la structure réelle Alpaca
+        # cash_dividends
+        for raw in data.get("cash_dividends", []):
+            if not isinstance(raw, dict):
+                LOGGER.error("cash_dividend inattendu (non-dict): %r", raw)
+                continue
+            events.append(self._parse_dividend(raw))
+        # forward_splits
+        for raw in data.get("forward_splits", []):
+            if not isinstance(raw, dict):
+                LOGGER.error("forward_split inattendu (non-dict): %r", raw)
+                continue
+            events.append(self._parse_split(raw, CaType.SPLIT))
+        # reverse_splits
+        for raw in data.get("reverse_splits", []):
+            if not isinstance(raw, dict):
+                LOGGER.error("reverse_split inattendu (non-dict): %r", raw)
+                continue
+            events.append(self._parse_split(raw, CaType.REVERSE_SPLIT))
 
         LOGGER.info(
             "Alpaca corporate actions fetched | symbols=%s range=%s→%s events=%d",
@@ -155,4 +171,3 @@ class AlpacaCorporateActionProvider(CorporateActionProvider):
             announcement_date=date.fromisoformat(raw["announcement_date"]) if raw.get("announcement_date") else None,
             raw_payload=raw,
         )
-
