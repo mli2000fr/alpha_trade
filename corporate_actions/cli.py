@@ -33,6 +33,13 @@ def _build_parser() -> argparse.ArgumentParser:
     # --- status ---
     sub.add_parser("status", help="Afficher un résumé des événements corporate actions.")
 
+    # --- run ---
+    run_p = sub.add_parser("run", help="Enchaîner sync puis apply dans un seul appel.")
+    run_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
+    run_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -30j.")
+    run_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
+    run_p.add_argument("--as-of", type=str, default=None, help="Date limite pour apply (YYYY-MM-DD). Défaut : aujourd'hui.")
+
     return parser
 
 
@@ -83,6 +90,22 @@ def _run_status(_args: argparse.Namespace) -> None:
     print(f"\nTotal dividendes crédités : ${total_cash:,.2f}")
 
 
+def _run_all(args: argparse.Namespace) -> None:
+    """Enchaîne sync puis apply dans un seul appel CLI."""
+    print("[RUN] Démarrage de l'ingestion des corporate actions...")
+    provider = AlpacaCorporateActionProvider()
+    engine = CorporateActionEngine(provider=provider)
+    start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=30)
+    end_date = date.fromisoformat(args.end) if args.end else date.today()
+    symbols = [s.upper() for s in args.symbols] if getattr(args, "symbols", None) else []
+    stats_sync = engine.sync(symbols=symbols or None, start_date=start_date, end_date=end_date)
+    print(f"Sync terminé : {stats_sync}")
+    print("[RUN] Application des corporate actions sur les positions...")
+    as_of = date.fromisoformat(args.as_of) if getattr(args, "as_of", None) else date.today()
+    stats_apply = engine.apply(as_of=as_of)
+    print(f"Apply terminé : {stats_apply}")
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -97,6 +120,8 @@ def main() -> None:
         _run_apply(args)
     elif args.command == "status":
         _run_status(args)
+    elif args.command == "run":
+        _run_all(args)
     else:
         parser.print_help()
         sys.exit(1)

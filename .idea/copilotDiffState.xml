@@ -12,20 +12,19 @@
             </PendingDiffInfo>
           </value>
         </entry>
+        <entry key="$PROJECT_DIR$/corporate_action_run.py">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/corporate_action_run.py" />
+              <option name="updatedContent" value="&quot;&quot;&quot;&#10;Script d'entrée unique pour lancer l'ingestion et l'application des corporate actions (équivalent à 'python -m corporate_actions run').&#10;&quot;&quot;&quot;&#10;from corporate_actions.cli import _run_all, _build_parser&#10;import logging&#10;import sys&#10;&#10;def main():&#10;    logging.basicConfig(&#10;        level=logging.INFO,&#10;        format=&quot;%(asctime)s %(levelname)-8s %(name)s -- %(message)s&quot;,&#10;    )&#10;    parser = _build_parser()&#10;    args = parser.parse_args()&#10;    # Force la commande 'run' même si non précisée&#10;    if not hasattr(args, 'command') or args.command != 'run':&#10;        args.command = 'run'&#10;    _run_all(args)&#10;&#10;if __name__ == &quot;__main__&quot;:&#10;    main()&#10;" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
         <entry key="$PROJECT_DIR$/dataIntegrityEngine/event_sentiment_pipeline.py">
           <value>
             <PendingDiffInfo>
               <option name="filePath" value="$PROJECT_DIR$/dataIntegrityEngine/event_sentiment_pipeline.py" />
               <option name="updatedContent" value="import os&#10;import sys&#10;&#10;sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))&#10;&#10;from event_sentiment.cli import main&#10;&#10;&#10;if __name__ == &quot;__main__&quot;:&#10;    main()&#10;" />
-            </PendingDiffInfo>
-          </value>
-        </entry>
-        <entry key="$PROJECT_DIR$/requirements.txt">
-          <value>
-            <PendingDiffInfo>
-              <option name="filePath" value="$PROJECT_DIR$/requirements.txt" />
-              <option name="originalContent" value="# =============================================================================&#10;# requirements.txt — dépendances RUNTIME uniquement&#10;# =============================================================================&#10;# Pour les dépendances de développement (tests, lint, types) :&#10;#   pip install -e &quot;.[dev]&quot;    (via pyproject.toml)&#10;# Ou utiliser requirements-dev.txt ci-dessous pour les environnements CI/CD&#10;# qui ne supportent pas pyproject.toml editable installs.&#10;# =============================================================================&#10;&#10;# --- Base de données ---&#10;pymysql&#10;sqlalchemy&#10;&#10;# --- HTTP / API ---&#10;requests&#10;python-dotenv&#10;&#10;# --- Data science ---&#10;pandas&#10;numpy&#10;polars&#10;python-dateutil&#10;pytz&#10;pandas-market-calendars&#10;&#10;# --- NLP / FinBERT ---&#10;transformers&#10;# torch : installer la variante adaptée à votre hardware :&#10;#   CPU only  : pip install torch --index-url https://download.pytorch.org/whl/cpu&#10;#   CUDA 12.x : pip install torch --index-url https://download.pytorch.org/whl/cu121&#10;torch&#10;lightning&#10;torchmetrics&#10;&#10;# --- Tests / Intégration ---&#10;testcontainers[mysql]&#10;" />
-              <option name="updatedContent" value="# =============================================================================&#10;# requirements.txt — dépendances RUNTIME uniquement&#10;# =============================================================================&#10;# Pour les dépendances de développement (tests, lint, types) :&#10;#   pip install -e &quot;.[dev]&quot;    (via pyproject.toml)&#10;# Ou utiliser requirements-dev.txt ci-dessous pour les environnements CI/CD&#10;# qui ne supportent pas pyproject.toml editable installs.&#10;# =============================================================================&#10;&#10;# --- Base de données ---&#10;pymysql&#10;sqlalchemy&#10;&#10;# --- HTTP / API ---&#10;requests&#10;python-dotenv&#10;&#10;# --- Data science ---&#10;pandas&#10;numpy&#10;polars&#10;python-dateutil&#10;pytz&#10;pandas-market-calendars&#10;&#10;# --- Tests / Intégration ---&#10;testcontainers[mysql]&#10;&#10;# --- NLP / FinBERT ---&#10;transformers&#10;# torch : installer la variante adaptée à votre hardware :&#10;#   CPU only  : pip install torch --index-url https://download.pytorch.org/whl/cpu&#10;#   CUDA 12.x : pip install torch --index-url https://download.pytorch.org/whl/cu121&#10;torch&#10;lightning&#10;torchmetrics&#10;&#10;# --- Tests / Intégration ---&#10;testcontainers[mysql]&#10;" />
             </PendingDiffInfo>
           </value>
         </entry>
