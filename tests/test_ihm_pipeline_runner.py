@@ -20,6 +20,8 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
         "alpha_scanner",
         "sentiment_pipeline",
         "signal_aggregator",
+        "ml_train",
+        "ml_predict",
         "risk_management",
         "execution",
         "corporate_actions_apply",
@@ -84,6 +86,17 @@ def test_build_subprocess_env_propagates_db_config_and_pythonpath() -> None:
     assert env["PASSWORD_DB"] == "secret1"
     assert str(PROJECT_ROOT) in env["PYTHONPATH"]
     assert "existing_path" in env["PYTHONPATH"]
+
+
+
+def test_build_pipeline_command_ml_steps() -> None:
+    options = PipelineLaunchOptions()
+
+    train_cmd = build_pipeline_command("ml_train", options)
+    predict_cmd = build_pipeline_command("ml_predict", options)
+
+    assert train_cmd == [train_cmd[0], "-m", "modelFactory", "--mode", "train"]
+    assert predict_cmd == [predict_cmd[0], "-m", "modelFactory", "--mode", "predict"]
 
 
 

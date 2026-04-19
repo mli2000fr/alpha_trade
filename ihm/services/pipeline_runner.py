@@ -70,7 +70,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="corporate_actions_sync",
-        num="1a",
+        num="2",
         name="Corporate Actions Sync",
         desc="Ingestion des dividendes/splits depuis Alpaca (référentiel). Se fait AVANT le sanitizer.",
         tables="corporate_actions_events",
@@ -79,7 +79,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="data_sanitizer_daily",
-        num="2",
+        num="3",
         name="Data Sanitizer Daily",
         desc="Nettoyage, alignement calendrier, détection d'anomalies sur les barres brutes.",
         tables="stock_bars_daily, cleaning_audit_log",
@@ -87,7 +87,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="stock_screener",
-        num="3",
+        num="4",
         name="Stock Screener",
         desc="Scores de base : liquidité 30j, force relative 6m vs SPY, range 10 ans.",
         tables="stock_scores",
@@ -95,7 +95,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="alpha_scanner",
-        num="4",
+        num="5",
         name="Alpha Scanner",
         desc="Scoring avancé Minervini/VCP + neutralisation sectorielle + sélection Top N.",
         tables="stock_scores (update)",
@@ -103,7 +103,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="sentiment_pipeline",
-        num="5",
+        num="6",
         name="Sentiment Pipeline",
         desc="Ingestion news → scoring FinBERT → features ticker/secteur journalières.",
         tables="ticker_daily_sentiment_features, sector_daily_sentiment_features",
@@ -111,24 +111,40 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="signal_aggregator",
-        num="6",
+        num="7",
         name="Signal Aggregator",
         desc="Fusion quant (75%) + sentiment ticker (15%) + macro sectoriel (10%) → final_score_sentiment.",
         tables="stock_scores (update final_score_sentiment)",
         deps="sentiment_pipeline",
     ),
     PipelineStepDefinition(
+        key="ml_train",
+        num="8",
+        name="ML Train (LSTM)",
+        desc="Entraînement des modèles LSTM+Attention par symbole candidat. Périodique (hebdomadaire recommandé).",
+        tables="model_registry, model_training_run, model_metrics",
+        deps="signal_aggregator (is_candidate=1)",
+    ),
+    PipelineStepDefinition(
+        key="ml_predict",
+        num="9",
+        name="ML Predict",
+        desc="Inférence LSTM → predicted_proba par symbole candidat. Quotidien, alimente le score de conviction du risk.",
+        tables="model_predictions",
+        deps="ml_train (modèle entraîné requis)",
+    ),
+    PipelineStepDefinition(
         key="risk_management",
-        num="7",
+        num="10",
         name="Risk Management",
-        desc="Sizing ATR/Kelly, contraintes portefeuille, circuit breaker → portefeuille cible.",
+        desc="Sizing ATR/Kelly, contraintes portefeuille, circuit breaker → portefeuille cible. Utilise les prédictions ML pour le score de conviction.",
         tables="risk_decisions, portfolio_targets",
-        deps="signal_aggregator",
+        deps="ml_predict, signal_aggregator",
         account_usage="alpaca",
     ),
     PipelineStepDefinition(
         key="execution",
-        num="8",
+        num="11",
         name="Execution",
         desc="Soumission ordres Alpaca (market/limit), bracket synthétique TP+TS, réconciliation, TCA.",
         tables="execution_runs, execution_orders, execution_fills, execution_events, broker_positions_snapshots",
@@ -137,7 +153,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="corporate_actions_apply",
-        num="8a",
+        num="12",
         name="Corporate Actions Apply",
         desc="Application des dividendes/splits sur les positions existantes. Se fait APRÈS l'exécution.",
         tables="corporate_actions_applications, portfolio_cash_ledger",
@@ -193,6 +209,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if trade_date:
             command.extend(["--trade-date", trade_date])
         return command
+
+    if step_key == "ml_train":
+        return [sys.executable, "-m", "modelFactory", "--mode", "train"]
+
+    if step_key == "ml_predict":
+        return [sys.executable, "-m", "modelFactory", "--mode", "predict"]
 
     if step_key == "risk_management":
         command = [

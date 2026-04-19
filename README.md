@@ -117,6 +117,8 @@ python -m screener.stock_screener
 python -m selector.alpha_scanner
 python -m event_sentiment
 python -m event_sentiment.signal_aggregator
+python -m modelFactory --mode train            # périodique (hebdomadaire recommandé)
+python -m modelFactory --mode predict           # quotidien
 python -m risk_management.run_risk --account-equity 100000
 python run_execution.py simulate
 python -m corporate_actions apply
@@ -131,7 +133,9 @@ python -m corporate_actions apply
 5. **`alpha_scanner`** : applique le ranking multi-facteurs et sélectionne les meilleurs candidats.
 6. **`event_sentiment`** : traite les news, score le sentiment et calcule les agrégats.
 7. **`signal_aggregator`** : fusionne quant + sentiment + macro en score final.
-8. **`run_risk`** : calcule les tailles, contraintes et portefeuille cible.
+7a. **`modelFactory --mode train`** : entraîne les modèles LSTM+Attention par symbole candidat (périodique).
+7b. **`modelFactory --mode predict`** : produit `predicted_proba` par symbole candidat (quotidien). Alimente le score de conviction du risk.
+8. **`run_risk`** : calcule les tailles, contraintes et portefeuille cible. Utilise les prédictions ML (60%) + score quant (40%) pour le score de conviction.
 9. **`run_execution.py`** : exécute en mode `simulate`, `paper` ou `live`.
 10. **`corporate_actions apply`** : applique les corporate actions pending sur les positions existantes.
 

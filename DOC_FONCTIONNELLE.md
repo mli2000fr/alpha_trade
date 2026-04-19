@@ -19,15 +19,17 @@ Le système cible le **marché actions US (NYSE/NASDAQ)**, en stratégie **swing
 Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 
 1. **Ingestion** des données de marché depuis Alpaca (barres OHLCV journalières)
-1a. **Corporate actions sync** — ingestion des dividendes/splits depuis Alpaca (référentiel)
-2. **Nettoyage** des données (sanitizer, détection d'anomalies)
-3. **Screening** multi-facteurs pour identifier les meilleurs candidats
-4. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
-5. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
-6. **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
-7. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille
-8. **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
-8a. **Corporate actions apply** — application des dividendes/splits sur les positions existantes
+2  **Corporate actions sync** — ingestion des dividendes/splits depuis Alpaca (référentiel)
+3. **Nettoyage** des données (sanitizer, détection d'anomalies)
+4. **Screening** multi-facteurs pour identifier les meilleurs candidats
+5. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
+6. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
+7  **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
+8  **ML Train** — entraînement des modèles LSTM+Attention par symbole candidat (périodique)
+9  **ML Predict** — inférence LSTM → `predicted_proba` par symbole candidat (quotidien)
+10 **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille, score de conviction (40% quant + 60% ML)
+11 **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
+12 **Corporate actions apply** — application des dividendes/splits sur les positions existantes
 
 L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 
@@ -201,18 +203,20 @@ python -m corporate_actions apply --account live1     # appliquer CA sur le comp
                      └───────────────────────┘
 
                      PIPELINE QUOTIDIEN
-     ┌───────────────────────────────────────────────────────┐
-     │ 1.  import_alpaca_bar        │ → stock_bars           │
-     │ 1a. corporate_actions sync   │ → corporate_actions_events│
-     │ 2.  data_sanitizer_daily     │ → stock_bars_daily     │
-     │ 3.  stock_screener           │ → stock_scores         │
-     │ 4.  alpha_scanner            │ → stock_scores (update)│
-     │ 5.  sentiment_pipeline       │ → ticker/sector feats  │
-     │ 6.  signal_aggregator        │ → final_score_sentiment│
-     │ 7.  run_risk                 │ → portfolio_targets    │
-     │ 8.  run_execution            │ → ordres Alpaca        │
-     │ 8a. corporate_actions apply  │ → position adjustments │
-     └───────────────────────────────────────────────────────┘
+     ┌─────────────────────────────────────────────────────────────────────────────┐
+     │ 1.  import_alpaca_bar        │ → stock_bars                                 │
+     │ 2. corporate_actions sync    │ → corporate_actions_events                   │
+     │ 3.  data_sanitizer_daily     │ → stock_bars_daily                           │
+     │ 4.  stock_screener           │ → stock_scores                               │
+     │ 5.  alpha_scanner            │ → stock_scores (update)                      │
+     │ 6.  sentiment_pipeline       │ → ticker/sector feats                        │
+     │ 7.  signal_aggregator        │ → final_score_sentiment                      │
+     │ 8.  ml_train (périodique)    │ → model_registry, model_training_run         │
+     │ 9.  ml_predict (quotidien)   │ → model_predictions                          │
+     │ 10. run_risk                 │ → portfolio_targets                          │
+     │ 11. run_execution            │ → ordres Alpaca                              │
+     │ 12. corporate_actions apply  │ → position adjustments                       │
+     └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 3.2 Cycle d'un trade
