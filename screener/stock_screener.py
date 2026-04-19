@@ -82,7 +82,7 @@ def run_screener(
     pending = set()
 
     LOGGER.info(
-        "Démarrage screener | benchmark=%s chunk_size=%s workers=%s as_of=%s",
+        "Demarrage screener | benchmark=%s chunk_size=%s workers=%s as_of=%s",
         config.benchmark_symbol,
         config.chunk_size,
         workers,
@@ -118,13 +118,13 @@ def run_screener(
     # Monitoring : alerte si 0 symboles scorés (P1 — Engineering Quality)
     if final_scores.empty:
         LOGGER.critical(
-            "Screener a produit 0 scores | durée=%.2fs as_of=%s | "
-            "Vérifier : stock_bars_daily peuplée ? benchmark SPY présent ? liquidity_threshold trop élevé ?",
+            "Screener a produit 0 scores | duree=%.2fs as_of=%s | "
+            "Verifier : stock_bars_daily peuplee ? benchmark SPY present ? liquidity_threshold trop eleve ?",
             elapsed,
             as_of_iso or "live",
         )
     else:
-        LOGGER.info("Screener terminé en %.2fs | symboles scorés=%s", elapsed, len(final_scores))
+        LOGGER.info("Screener termine en %.2fs | symboles scores=%s", elapsed, len(final_scores))
 
     return final_scores
 

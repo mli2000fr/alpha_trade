@@ -145,8 +145,8 @@ class ProductionExecutor:
                     if pending_for_targets:
                         symbols_str = ", ".join(sorted({e.symbol for e in pending_for_targets}))
                         LOGGER.warning(
-                            "Corporate actions pending NON appliquées pour %d symboles ciblés : %s. "
-                            "Les quantités/prix peuvent être obsolètes. Exécuter 'python -m corporate_actions apply' avant.",
+                            "Corporate actions pending NON appliquees pour %d symboles cibles : %s. "
+                            "Les quantites/prix peuvent etre obsoletes. Executer 'python -m corporate_actions apply' avant.",
                             len(pending_for_targets), symbols_str,
                         )
                         events.append(make_event(

@@ -195,7 +195,7 @@ class AlphaScanner:
         try:
             market_data = pd.read_sql_query(stmt, self.engine, params={"symbols": list(symbols)})
         except SQLAlchemyError as exc:
-            LOGGER.exception("Échec lecture %s pour %s symboles.", self.config.price_table, len(symbols))
+            LOGGER.exception("Echec lecture %s pour %s symboles.", self.config.price_table, len(symbols))
             raise RuntimeError("Impossible de charger les données marché.") from exc
 
         if market_data.empty:
@@ -229,7 +229,7 @@ class AlphaScanner:
             scores = pd.read_sql_query(stmt, self.engine, params={"symbols": list(symbols)})
         except SQLAlchemyError:
             LOGGER.warning(
-                "Lecture auxiliaire %s indisponible; poursuite avec facteurs recalculés seulement.",
+                "Lecture auxiliaire %s indisponible; poursuite avec facteurs recalcules seulement.",
                 self.config.score_table,
             )
             return pd.DataFrame(columns=SCORE_COLUMNS)
@@ -258,7 +258,7 @@ class AlphaScanner:
         try:
             metadata_df = pd.read_sql_query(stmt, self.engine, params={"symbols": list(symbols)})
         except SQLAlchemyError:
-            LOGGER.warning("Lecture stock_metadata indisponible; impossibilité de filtrer explicitement les ETFs.")
+            LOGGER.warning("Lecture stock_metadata indisponible; impossibilite de filtrer explicitement les ETFs.")
             return pd.DataFrame(columns=METADATA_COLUMNS)
 
         return metadata_df if not metadata_df.empty else pd.DataFrame(columns=METADATA_COLUMNS)
@@ -411,7 +411,7 @@ class AlphaScanner:
 
         if "sector" not in df.columns or df["sector"].isna().all():
             LOGGER.warning(
-                "Neutralisation sectorielle désactivée : colonne sector absente ou entièrement nulle."
+                "Neutralisation sectorielle desactivee : colonne sector absente ou entierement nulle."
             )
             return df
 
@@ -441,7 +441,7 @@ class AlphaScanner:
             )
 
         LOGGER.info(
-            "Neutralisation sectorielle appliquée | univers=%s secteurs=%s facteurs=%s",
+            "Neutralisation sectorielle appliquee | univers=%s secteurs=%s facteurs=%s",
             len(result),
             result["sector"].nunique(),
             factors_to_neutralize,
@@ -486,7 +486,7 @@ class AlphaScanner:
             filtered = filtered[filtered["asset_class"].isna() | (filtered["asset_class"] == "us_equity")]
             after_etf = len(filtered)
             if before_etf - after_etf:
-                LOGGER.info("Filtre ETF/crypto | rejetés=%s", before_etf - after_etf)
+                LOGGER.info("Filtre ETF/crypto | rejetes=%s", before_etf - after_etf)
         if "tradable" in filtered.columns:
             filtered = filtered[filtered["tradable"].isna() | (filtered["tradable"] == True)]  # noqa: E712
 
@@ -508,7 +508,7 @@ class AlphaScanner:
             filtered = filtered[(filtered["missing_days_count"].isna()) | (filtered["missing_days_count"] < self.config.max_missing_days_count)]
 
         LOGGER.info(
-            "Filtres appliqués | entrée=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidité_marché=%s rejet_liquidité_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
+            "Filtres appliques | entree=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
             before_count,
             len(filtered),
             before_count - after_etf_filter,
@@ -578,7 +578,7 @@ class AlphaScanner:
 
         selected = pd.DataFrame(selected_rows).reset_index(drop=True)
         LOGGER.info(
-            "Neutralisation terminée | retenus=%s secteurs=%s répartition=%s",
+            "Neutralisation terminee | retenus=%s secteurs=%s repartition=%s",
             len(selected),
             selected["sector"].nunique(),
             selected["sector"].value_counts().to_dict(),
@@ -590,7 +590,7 @@ class AlphaScanner:
         if merged_df.empty:
             return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
-        LOGGER.info("Classement final | candidats_éligibles=%s", len(merged_df))
+        LOGGER.info("Classement final | candidats_eligibles=%s", len(merged_df))
 
         ranked = merged_df.sort_values(
             ["final_score", "trend_score", "vcp_score", "avg_dollar_volume_20d"],
@@ -605,7 +605,7 @@ class AlphaScanner:
             ascending=False,
         ).reset_index(drop=True)
         selected.insert(0, "rank", np.arange(1, len(selected) + 1))
-        LOGGER.info("Classement terminé | sélection_finale=%s top3=%s", len(selected), selected["symbol"].head(3).tolist())
+        LOGGER.info("Classement termine | selection_finale=%s top3=%s", len(selected), selected["symbol"].head(3).tolist())
         for column in OUTPUT_COLUMNS:
             if column not in selected.columns:
                 selected[column] = np.nan
@@ -636,7 +636,7 @@ class AlphaScanner:
         updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         LOGGER.info(
-            "Mise à jour DB | table=%s snapshot_scores=%s candidats=%s batch_size=%s",
+            "Mise a jour DB | table=%s snapshot_scores=%s candidats=%s batch_size=%s",
             self.config.score_table,
             len(scores_snapshot),
             len(selected_symbols),
@@ -651,36 +651,36 @@ class AlphaScanner:
                         continue
                     conn.execute(score_stmt, score_batch)
                     LOGGER.info(
-                        "Mise à jour DB | scores selector batch=%s-%s taille=%s",
+                        "Mise a jour DB | scores selector batch=%s-%s taille=%s",
                         start + 1,
                         start + len(score_batch),
                         len(score_batch),
                     )
                 conn.execute(reset_stmt)
-                LOGGER.info("Mise à jour DB | reset is_candidate=0 effectué")
+                LOGGER.info("Mise a jour DB | reset is_candidate=0 effectue")
                 for start in range(0, len(selected_symbols), self.config.update_batch_size):
                     batch = selected_symbols[start:start + self.config.update_batch_size]
                     if not batch:
                         continue
                     conn.execute(mark_stmt, {"updated_at": updated_at, "symbols": batch})
                     LOGGER.info(
-                        "Mise à jour DB | batch=%s-%s taille=%s",
+                        "Mise a jour DB | batch=%s-%s taille=%s",
                         start + 1,
                         start + len(batch),
                         len(batch),
                     )
         except SQLAlchemyError as exc:
-            LOGGER.exception("Échec de mise à jour transactionnelle de %s.", self.config.score_table)
+            LOGGER.exception("Echec de mise a jour transactionnelle de %s.", self.config.score_table)
             raise RuntimeError("Impossible de mettre à jour les candidats en base.") from exc
 
-        LOGGER.info("Mise à jour DB terminée | candidats_mis_à_jour=%s", len(selected_symbols))
+        LOGGER.info("Mise a jour DB terminee | candidats_mis_a_jour=%s", len(selected_symbols))
         return len(selected_symbols)
 
     def run(self) -> pd.DataFrame:
         """Exécute le scan complet et retourne le Top N final."""
         started_at = datetime.now(timezone.utc)
         LOGGER.info(
-            "Démarrage AlphaScanner | table_prix=%s table_scores=%s chunk_size=%s selection=%s workers=%s",
+            "Demarrage AlphaScanner | table_prix=%s table_scores=%s chunk_size=%s selection=%s workers=%s",
             self.config.price_table,
             self.config.score_table,
             self.config.chunk_size,
@@ -703,7 +703,7 @@ class AlphaScanner:
                     done, pending = wait(pending, return_when=FIRST_COMPLETED)
                     completed_chunks += self._collect_completed(done, all_frames)
                     LOGGER.info(
-                        "Progression scan | chunks_terminés=%s chunks_soumis=%s en_vol=%s candidats_cumulés=%s",
+                        "Progression scan | chunks_termines=%s chunks_soumis=%s en_vol=%s candidats_cumules=%s",
                         completed_chunks,
                         submitted_chunks,
                         len(pending),
@@ -722,7 +722,7 @@ class AlphaScanner:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 completed_chunks += self._collect_completed(done, all_frames)
                 LOGGER.info(
-                    "Progression scan | chunks_terminés=%s chunks_soumis=%s en_vol=%s candidats_cumulés=%s",
+                    "Progression scan | chunks_termines=%s chunks_soumis=%s en_vol=%s candidats_cumules=%s",
                     completed_chunks,
                     submitted_chunks,
                     len(pending),
@@ -730,7 +730,7 @@ class AlphaScanner:
                 )
 
         merged_candidates = pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
-        LOGGER.info("Agrégation terminée | lignes_candidates=%s", len(merged_candidates))
+        LOGGER.info("Agregation terminee | lignes_candidates=%s", len(merged_candidates))
 
         # Neutralisation cross-sectorielle sur l'univers COMPLET (après concat de tous les chunks).
         # Cette étape doit impérativement se faire ici et non dans _process_chunk,
@@ -750,19 +750,19 @@ class AlphaScanner:
         # LOGGER.critical() est visible dans les outils de monitoring (Datadog, CloudWatch…).
         if selected.empty:
             LOGGER.critical(
-                "AlphaScanner a produit 0 candidats | durée=%.2fs | "
-                "Vérifier : stock_bars_daily peuplée ? liquidity_threshold trop élevé ? "
-                "Marché en tendance baissière (trend_score=0 pour tous) ?",
+                "AlphaScanner a produit 0 candidats | duree=%.2fs | "
+                "Verifier : stock_bars_daily peuplee ? liquidity_threshold trop eleve ? "
+                "Marche en tendance baissiere (trend_score=0 pour tous) ?",
                 elapsed,
             )
         else:
-            LOGGER.info("AlphaScanner terminé en %.2fs | candidats=%s", elapsed, len(selected))
+            LOGGER.info("AlphaScanner termine en %.2fs | candidats=%s", elapsed, len(selected))
 
         return selected
 
     def _process_chunk(self, symbols: Sequence[str]) -> pd.DataFrame:
         try:
-            LOGGER.debug("Début chunk | symboles=%s", len(symbols))
+            LOGGER.debug("Debut chunk | symboles=%s", len(symbols))
             market_data = self.fetch_market_data(symbols)
             computed = self.compute_factors(market_data)
             scores = self.fetch_scores(symbols)
@@ -771,7 +771,7 @@ class AlphaScanner:
             merged = self._enrich_and_filter_equities(merged, metadata_df)
             filtered = self.apply_filters(merged)
             LOGGER.debug(
-                "Fin chunk | symboles=%s lignes_market=%s facteurs=%s scores=%s metadata=%s fusion=%s filtré=%s",
+                "Fin chunk | symboles=%s lignes_market=%s facteurs=%s scores=%s metadata=%s fusion=%s filtre=%s",
                 len(symbols),
                 len(market_data),
                 len(computed),
@@ -782,7 +782,7 @@ class AlphaScanner:
             )
             return filtered
         except Exception:
-            LOGGER.exception("Chunk en échec | symboles=%s", len(symbols))
+            LOGGER.exception("Chunk en echec | symboles=%s", len(symbols))
             return pd.DataFrame()
 
     def _collect_completed(self, done: set[Future[pd.DataFrame]], all_frames: list[pd.DataFrame]) -> int:
@@ -818,7 +818,7 @@ class AlphaScanner:
             with self.engine.begin() as conn:
                 conn.execute(reset_stmt)
         except SQLAlchemyError as exc:
-            LOGGER.exception("Échec du reset selector sur %s.", self.config.score_table)
+            LOGGER.exception("Echec du reset selector sur %s.", self.config.score_table)
             raise RuntimeError("Impossible de réinitialiser les colonnes selector avant exécution.") from exc
 
     def _prepare_scores_snapshot(self, scored_df: Optional[pd.DataFrame]) -> list[dict[str, object]]:
@@ -843,7 +843,7 @@ class AlphaScanner:
             return merged_df.copy()
         if metadata_df.empty:
             LOGGER.info(
-                "Filtre instruments | entrée=%s sortie_actions=%s exclus_total=%s détail=%s",
+                "Filtre instruments | entree=%s sortie_actions=%s exclus_total=%s detail=%s",
                 len(merged_df),
                 len(merged_df),
                 0,
@@ -902,7 +902,7 @@ class AlphaScanner:
             enriched = enriched.drop(columns=["sector_meta"])
 
         LOGGER.info(
-            "Filtre instruments | entrée=%s sortie_actions=%s exclus_total=%s détail=%s",
+            "Filtre instruments | entree=%s sortie_actions=%s exclus_total=%s detail=%s",
             len(merged_df),
             len(enriched),
             len(merged_df) - len(enriched),
@@ -910,7 +910,7 @@ class AlphaScanner:
         )
         if exclusion_counts:
             LOGGER.debug(
-                "Filtre instruments détails symboles | %s",
+                "Filtre instruments details symboles | %s",
                 {reason: symbols[:5] for reason, symbols in exclusion_details.items() if symbols},
             )
         return enriched.reset_index(drop=True)
@@ -962,7 +962,7 @@ class AlphaScanner:
                         },
                     ).fetchall()
             except SQLAlchemyError as exc:
-                LOGGER.exception("Échec de la présélection SQL sur %s.", self.config.price_table)
+                LOGGER.exception("Echec de la preselection SQL sur %s.", self.config.price_table)
                 raise RuntimeError("Impossible de présélectionner les symboles.") from exc
 
             symbols = [str(row[0]) for row in rows]
@@ -970,7 +970,7 @@ class AlphaScanner:
                 break
 
             LOGGER.info(
-                "Présélection SQL | offset=%s chunk_size=%s retournés=%s",
+                "Preselection SQL | offset=%s chunk_size=%s retournes=%s",
                 offset,
                 self.config.chunk_size,
                 len(symbols),

@@ -119,7 +119,7 @@ class DataSanitizer:
             return
 
         LOGGER.warning(
-            'SPY absent de stock_bars en 1D | import ciblé déclenché automatiquement.'
+            'SPY absent de stock_bars en 1D | import cible declenche automatiquement.'
         )
         from dataIntegrityEngine.import_alpaca_bar import import_alpaca_bars
 
@@ -199,11 +199,11 @@ class DataSanitizer:
     def _log_failed_audit_summary(self, conn: Connection, limit: int = 20) -> None:
         failed_audits = get_failed_audits(conn, self.cleaning_audit_log, limit=limit)
         if not failed_audits:
-            LOGGER.info('Aucun audit en échec détecté dans cleaning_audit_log.')
+            LOGGER.info('Aucun audit en echec detecte dans cleaning_audit_log.')
             return
 
         LOGGER.warning(
-            'Audits en échec détectés dans cleaning_audit_log | count=%s limit=%s',
+            'Audits en echec detectes dans cleaning_audit_log | count=%s limit=%s',
             len(failed_audits),
             limit,
         )
@@ -221,7 +221,7 @@ class DataSanitizer:
         df_raw = self.fetch_symbol_bars_1d(conn, symbol, start_date)
 
         if df_raw.is_empty():
-            LOGGER.info("Aucune donnée pour %s après %s", symbol, start_date)
+            LOGGER.info("Aucune donnee pour %s apres %s", symbol, start_date)
             return False, self._build_audit_payload(last_sync, 0, 0, 'success')
 
         window_start = df_raw['date'][0]
@@ -397,7 +397,7 @@ class DataSanitizer:
                         LOGGER.exception("Echec traitement %s | error_detail=%s", symbol, error_message)
                         fallback_last_sync = get_last_sync_date(conn, self.cleaning_audit_log, symbol)
                         failed_payload = self._build_audit_payload(fallback_last_sync, 0, 0, 'failed')
-                        LOGGER.error("Persistance audit échec | symbol=%s payload=%s", symbol, failed_payload)
+                        LOGGER.error("Persistance audit echec | symbol=%s payload=%s", symbol, failed_payload)
                         upsert_audit(
                             conn,
                             self.cleaning_audit_log,

@@ -82,7 +82,7 @@ def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionReposit
         return broker_symbols
 
     LOGGER.warning(
-        "Aucun symbole explicite ni snapshot broker disponible ; aucune sync Alpaca lancée. "
+        "Aucun symbole explicite ni snapshot broker disponible ; aucune sync Alpaca lancee. "
         "Utiliser --all-symbols pour un backfill large ou --symbols pour cibler manuellement.",
     )
     return []
@@ -110,13 +110,13 @@ def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRep
     broker_symbols = repo.load_latest_position_symbols()
     if broker_symbols:
         LOGGER.warning(
-            "Aucun symbole stock_metadata éligible ; fallback vers latest broker positions | count=%d symbols=%s",
+            "Aucun symbole stock_metadata eligible ; fallback vers latest broker positions | count=%d symbols=%s",
             len(broker_symbols), broker_symbols,
         )
         return broker_symbols
 
     LOGGER.warning(
-        "Aucun symbole explicite, aucun symbole stock_metadata éligible, aucun snapshot broker ; aucune sync Alpaca lancée. "
+        "Aucun symbole explicite, aucun symbole stock_metadata eligible, aucun snapshot broker ; aucune sync Alpaca lancee. "
         "Utiliser --all-symbols pour un backfill large ou --symbols pour cibler manuellement.",
     )
     return []

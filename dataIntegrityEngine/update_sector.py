@@ -37,7 +37,7 @@ def update_missing_sectors(
 	}
 
 	LOGGER.info(
-		"Début mise à jour sector stock_metadata | symboles_a_traiter=%s limit=%s",
+		"Debut mise a jour sector stock_metadata | symboles_a_traiter=%s limit=%s",
 		total,
 		limit,
 	)
@@ -64,7 +64,7 @@ def update_missing_sectors(
 					if rowcount:
 						summary["updated"] += 1
 						LOGGER.info(
-							"Sector mis à jour | symbol=%s sector=%s progress=%s/%s updated=%s",
+							"Sector mis a jour | symbol=%s sector=%s progress=%s/%s updated=%s",
 							symbol,
 							sector,
 							index,
@@ -74,7 +74,7 @@ def update_missing_sectors(
 					else:
 						summary["skipped"] += 1
 						LOGGER.warning(
-							"Aucune ligne mise à jour | symbol=%s progress=%s/%s skipped=%s",
+							"Aucune ligne mise a jour | symbol=%s progress=%s/%s skipped=%s",
 							symbol,
 							index,
 							total,
@@ -83,7 +83,7 @@ def update_missing_sectors(
 			except Exception:
 				summary["failed"] += 1
 				LOGGER.exception(
-					"Erreur mise à jour sector | symbol=%s progress=%s/%s failed=%s",
+					"Erreur mise a jour sector | symbol=%s progress=%s/%s failed=%s",
 					symbol,
 					index,
 					total,
@@ -106,7 +106,7 @@ def update_missing_sectors(
 		session.close()
 
 	LOGGER.info(
-		"Fin mise à jour sector stock_metadata | total=%s updated=%s skipped=%s failed=%s",
+		"Fin mise a jour sector stock_metadata | total=%s updated=%s skipped=%s failed=%s",
 		summary["total"],
 		summary["updated"],
 		summary["skipped"],

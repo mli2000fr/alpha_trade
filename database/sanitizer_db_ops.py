@@ -210,7 +210,7 @@ def upsert_stock_bars_daily(
     )
     if non_finite_counts:
         LOGGER.warning(
-            'Valeurs non finies neutralisées avant upsert stock_bars_daily | symbol=%s columns=%s',
+            'Valeurs non finies neutralisees avant upsert stock_bars_daily | symbol=%s columns=%s',
             symbol,
             non_finite_counts,
         )
@@ -245,7 +245,7 @@ def upsert_audit(
     }
     if status == 'failed':
         LOGGER.error(
-            "Audit en échec | symbol=%s row_id=%s last_sync=%s missing_days=%s anomaly_count=%s",
+            "Audit en echec | symbol=%s row_id=%s last_sync=%s missing_days=%s anomaly_count=%s",
             symbol,
             row_id,
             last_sync,

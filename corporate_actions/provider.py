@@ -94,7 +94,7 @@ class AlpacaCorporateActionProvider(CorporateActionProvider):
                             path,
                         )
                         if timeout_attempts >= _MAX_TIMEOUT_RETRIES:
-                            LOGGER.error("Abandon après %s timeouts pour %s", _MAX_TIMEOUT_RETRIES, full_url)
+                            LOGGER.error("Abandon apres %s timeouts pour %s", _MAX_TIMEOUT_RETRIES, full_url)
                             raise
                         time.sleep(_TIMEOUT_BACKOFF_SECONDS)
             except requests.exceptions.ConnectionError as exc:
@@ -131,13 +131,13 @@ class AlpacaCorporateActionProvider(CorporateActionProvider):
             try:
                 data = self._request("/v1/corporate-actions", params)
             except Exception:
-                LOGGER.exception("Erreur lors de la récupération des corporate actions Alpaca (page %d)", page)
+                LOGGER.exception("Erreur lors de la recuperation des corporate actions Alpaca (page %d)", page)
                 break
 
             # --- Parsing : data["corporate_actions"] est un dict contenant les listes par type ---
             ca_data = data.get("corporate_actions")
             if not isinstance(ca_data, dict):
-                LOGGER.error("Clé 'corporate_actions' absente ou invalide dans la réponse Alpaca (page %d)", page)
+                LOGGER.error("Cle 'corporate_actions' absente ou invalide dans la reponse Alpaca (page %d)", page)
                 break
 
             # cash_dividends

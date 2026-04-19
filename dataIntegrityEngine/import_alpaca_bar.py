@@ -76,7 +76,7 @@ def _sanitize_price(value: Any, field: str, symbol: str) -> Optional[float]:
     try:
         f = float(value)
     except (TypeError, ValueError):
-        LOGGER.warning("Valeur non numérique | symbol=%s field=%s value=%r → None", symbol, field, value)
+        LOGGER.warning("Valeur non numerique | symbol=%s field=%s value=%r → None", symbol, field, value)
         return None
     if not math.isfinite(f):
         LOGGER.warning("Valeur non finie (inf/nan) | symbol=%s field=%s value=%r → None", symbol, field, f)
@@ -102,7 +102,7 @@ def _build_bar_records(symbol: str, bars: list[dict[str, Any]], timeframe: str) 
         if None in (open_price, high_price, low_price, close_price):
             skipped += 1
             LOGGER.warning(
-                "Barre ignorée (prix invalide) | symbol=%s timestamp=%s o=%s h=%s l=%s c=%s",
+                "Barre ignoree (prix invalide) | symbol=%s timestamp=%s o=%s h=%s l=%s c=%s",
                 symbol, bar.get("t"), bar.get("o"), bar.get("h"), bar.get("l"), bar.get("c"),
             )
             continue
@@ -125,7 +125,7 @@ def _build_bar_records(symbol: str, bars: list[dict[str, Any]], timeframe: str) 
         })
 
     if skipped:
-        LOGGER.warning("Barres ignorées au total | symbol=%s skipped=%s total=%s", symbol, skipped, len(bars))
+        LOGGER.warning("Barres ignorees au total | symbol=%s skipped=%s total=%s", symbol, skipped, len(bars))
     return records
 
 
@@ -137,7 +137,7 @@ def insert_bars(session, symbol: str, bars: list[dict[str, Any]], timeframe: str
     records = _build_bar_records(symbol, bars, timeframe)
 
     if not records:
-        LOGGER.warning("insert_bars | aucune barre valide après sanitization | symbol=%s total_brut=%s", symbol, len(bars))
+        LOGGER.warning("insert_bars | aucune barre valide apres sanitization | symbol=%s total_brut=%s", symbol, len(bars))
         return 0
 
     stmt = mysql_insert(stock_bars).values(records)
@@ -155,7 +155,7 @@ def insert_bars(session, symbol: str, bars: list[dict[str, Any]], timeframe: str
         session.commit()
     except Exception:
         session.rollback()
-        LOGGER.error("Échec insert_bars | symbol=%s timeframe=%s bars=%s", symbol, timeframe, len(bars))
+        LOGGER.error("Echec insert_bars | symbol=%s timeframe=%s bars=%s", symbol, timeframe, len(bars))
         raise
     return len(bars)
 
@@ -200,7 +200,7 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
             target_symbols = get_active_tradable_symbols(session)
             LOGGER.info("Import Alpaca univers complet | timeframe=%s symbols=%s", time_frame.db_value, len(target_symbols))
         else:
-            LOGGER.info("Import Alpaca ciblé | timeframe=%s symbols=%s", time_frame.db_value, ",".join(target_symbols))
+            LOGGER.info("Import Alpaca cible | timeframe=%s symbols=%s", time_frame.db_value, ",".join(target_symbols))
 
         total = len(target_symbols)
 
@@ -208,13 +208,13 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
             LOGGER.info("Traitement du symbole (%s/%s) : %s", idx, total, symbol)
 
             last_timestamp = get_last_bar_timestamp(session, symbol, time_frame)
-            LOGGER.info("Dernière barre connue | symbol=%s timestamp=%s", symbol, last_timestamp)
+            LOGGER.info("Derniere barre connue | symbol=%s timestamp=%s", symbol, last_timestamp)
 
             if last_timestamp:
                 last_date = last_timestamp.date() if hasattr(last_timestamp, "date") else last_timestamp
                 market_date = getLastDateMarche()
                 if str(last_date) == str(market_date):
-                    LOGGER.info("%s déjà à jour pour la dernière date de marché (%s).", symbol, market_date)
+                    LOGGER.info("%s deja a jour pour la derniere date de marche (%s).", symbol, market_date)
                     continue
                 next_start = _format_last_timestamp(last_timestamp)
             else:
@@ -225,18 +225,18 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
                 next_start_call = _increment_start_timestamp(next_start)
                 LOGGER.info("Appel Alpaca | symbol=%s start=%s", symbol, next_start_call)
                 bars = fetch_bars(symbol, time_frame.api_value, next_start_call)
-                LOGGER.info("Réponse Alpaca | symbol=%s bars=%s", symbol, len(bars))
+                LOGGER.info("Reponse Alpaca | symbol=%s bars=%s", symbol, len(bars))
 
                 if not bars:
                     if not symbol_exists_in_stock_bars(session, symbol):
-                        LOGGER.warning("Aucun bar trouvé pour %s, mise à jour bars_available=False.", symbol)
+                        LOGGER.warning("Aucun bar trouve pour %s, mise a jour bars_available=False.", symbol)
                         update_bars_available_false(symbol)
                     break
 
                 inserted_count += insert_bars(session, symbol, bars, time_frame.db_value)
                 next_start = bars[-1]["t"]
 
-            LOGGER.info("Import terminé | symbol=%s inserted=%s", symbol, inserted_count)
+            LOGGER.info("Import termine | symbol=%s inserted=%s", symbol, inserted_count)
     finally:
         session.close()
 

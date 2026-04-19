@@ -146,7 +146,7 @@ class SentimentSignalAggregator:
                     params={"symbols": symbols, "cutoff": cutoff.date(), "trade_date": trade_date},
                 )
         except Exception:
-            LOGGER.warning("ticker_daily_sentiment_features indisponible — boost sentiment désactivé.")
+            LOGGER.warning("ticker_daily_sentiment_features indisponible — boost sentiment desactive.")
             return pd.DataFrame()
 
     def _load_sector_sentiment(self, sectors: list[str], trade_date: date) -> pd.DataFrame:
@@ -177,7 +177,7 @@ class SentimentSignalAggregator:
                     params={"sectors": sectors, "cutoff": cutoff.date(), "trade_date": trade_date},
                 )
         except Exception:
-            LOGGER.warning("sector_daily_sentiment_features indisponible — boost macro désactivé.")
+            LOGGER.warning("sector_daily_sentiment_features indisponible — boost macro desactive.")
             return pd.DataFrame()
 
     # ------------------------------------------------------------------
@@ -342,7 +342,7 @@ class SentimentSignalAggregator:
         result["final_score_sentiment"] = (quant_component + sent_component + macro_component).clip(0.0, 1.0)
 
         LOGGER.info(
-            "Boost sentiment appliqué | symboles_actifs=%s delta_score_moyen=%.4f",
+            "Boost sentiment applique | symboles_actifs=%s delta_score_moyen=%.4f",
             int(result["signal_active"].sum()),
             float((result["final_score_sentiment"] - result["final_score"]).mean()),
         )
@@ -430,7 +430,7 @@ class SentimentSignalAggregator:
             conn.execute(stmt, clean_records)
 
         LOGGER.info(
-            "save_to_db | %d lignes upsertées dans stock_scores (colonnes sentiment).",
+            "save_to_db | %d lignes upsertees dans stock_scores (colonnes sentiment).",
             len(clean_records),
         )
         return len(clean_records)
@@ -577,10 +577,10 @@ def main(argv: list[str] | None = None) -> int:
     scores_df = _load_scores_from_db(engine, args.all_symbols)
 
     if scores_df.empty:
-        LOGGER.warning("Aucun symbole trouvé dans stock_scores — arrêt.")
+        LOGGER.warning("Aucun symbole trouve dans stock_scores — arret.")
         return 0
 
-    LOGGER.info("Symboles chargés : %d", len(scores_df))
+    LOGGER.info("Symboles charges : %d", len(scores_df))
 
     # 2. Fusion quant + sentiment
     aggregator = SentimentSignalAggregator(engine, config)
@@ -589,7 +589,7 @@ def main(argv: list[str] | None = None) -> int:
     # 3. Persistance dans stock_scores
     saved = aggregator.save_to_db(enriched)
     LOGGER.info(
-        "=== Terminé | %d symboles mis à jour dans stock_scores ===", saved
+        "=== Termine | %d symboles mis a jour dans stock_scores ===", saved
     )
     return 0
 

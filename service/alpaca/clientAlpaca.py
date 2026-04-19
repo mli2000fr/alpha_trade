@@ -138,7 +138,7 @@ def fetch_bars(
                         MAX_TIMEOUT_RETRIES,
                     )
                     if timeout_attempts >= MAX_TIMEOUT_RETRIES:
-                        LOGGER.error("Abandon après %s timeouts pour %s.", MAX_TIMEOUT_RETRIES, symbol)
+                        LOGGER.error("Abandon apres %s timeouts pour %s.", MAX_TIMEOUT_RETRIES, symbol)
                         return all_bars
                     time.sleep(TIMEOUT_BACKOFF_SECONDS)
                 except requests.exceptions.HTTPError as exc:

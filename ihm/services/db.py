@@ -185,7 +185,7 @@ def safe_query(query: str, params: dict[str, Any] | None = None) -> pd.DataFrame
         return df
     except Exception as exc:
         message = _format_query_error(exc, query)
-        LOGGER.warning("Requête échouée : %s — %s", query[:80], exc)
+        LOGGER.warning("Requete echouee : %s — %s", query[:80], exc)
         _set_last_query_error(message)
         return pd.DataFrame()
 
@@ -204,7 +204,7 @@ def safe_scalar(query: str, params: dict[str, Any] | None = None) -> Any:
         return row[0] if row else None
     except Exception as exc:
         message = _format_query_error(exc, query)
-        LOGGER.warning("Requête scalaire échouée : %s — %s", query[:80], exc)
+        LOGGER.warning("Requete scalaire echouee : %s — %s", query[:80], exc)
         _set_last_query_error(message)
         return None
 

@@ -99,10 +99,10 @@ class AccountRegistry:
         self._load_fallback_env()
 
         if not self._accounts:
-            LOGGER.warning("Aucun compte Alpaca trouvé (ni config.yaml, ni variables d'environnement).")
+            LOGGER.warning("Aucun compte Alpaca trouve (ni config.yaml, ni variables d'environnement).")
         else:
             LOGGER.info(
-                "AccountRegistry chargé | %d compte(s) : %s",
+                "AccountRegistry charge | %d compte(s) : %s",
                 len(self._accounts),
                 list(self._accounts.keys()),
             )

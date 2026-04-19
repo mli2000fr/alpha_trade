@@ -32,7 +32,7 @@ class TradingCalendarAligner:
             return mcal.get_calendar("NYSE")
         except Exception:
             LOGGER.warning(
-                "pandas_market_calendars indisponible: fallback weekday-only activé, précision calendrier réduite."
+                "pandas_market_calendars indisponible: fallback weekday-only active, precision calendrier reduite."
             )
             return None
 

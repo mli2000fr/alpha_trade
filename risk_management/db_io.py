@@ -191,7 +191,7 @@ class RiskRepository:
             with self.engine.connect() as conn:
                 rows = conn.execute(query, params).mappings().all()
         except Exception:
-            LOGGER.warning("Impossible de charger stock_bars_daily pour la matrice de corrélation.", exc_info=True)
+            LOGGER.warning("Impossible de charger stock_bars_daily pour la matrice de correlation.", exc_info=True)
             return pd.DataFrame()
         if not rows:
             return pd.DataFrame()

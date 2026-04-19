@@ -306,7 +306,7 @@ def upsert_scores_snapshot(
 		# Si la table n'existe pas encore, on ignore silencieusement.
 		import logging
 		logging.getLogger(__name__).warning(
-			"Archivage stock_scores_history échoué (table absente ?). Le pipeline principal n'est pas affecté.",
+			"Archivage stock_scores_history echoue (table absente ?). Le pipeline principal n'est pas affecte.",
 			exc_info=True,
 		)
 

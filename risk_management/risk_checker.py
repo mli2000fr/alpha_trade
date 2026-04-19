@@ -30,7 +30,7 @@ class RiskCheckerImpl:
     def check_position_size(self, symbol: str, proposed_shares: float, price: float) -> float:
         """Retourne le nombre de parts autorisé (<= proposed_shares)."""
         if self._cb.is_active():
-            LOGGER.warning("Circuit breaker actif — position rejetée pour %s.", symbol)
+            LOGGER.warning("Circuit breaker actif — position rejetee pour %s.", symbol)
             return 0.0
         sector = self._sector_map.get(symbol, "UNKNOWN")
         approved, reason = self._constraints.check(
@@ -41,7 +41,7 @@ class RiskCheckerImpl:
             state=self._state,
         )
         if approved < proposed_shares and reason != "OK":
-            LOGGER.info("Position réduite pour %s: %s -> %s (%s)", symbol, int(proposed_shares), approved, reason)
+            LOGGER.info("Position reduite pour %s: %s -> %s (%s)", symbol, int(proposed_shares), approved, reason)
         return float(approved)
 
     def is_circuit_breaker_active(self) -> bool:

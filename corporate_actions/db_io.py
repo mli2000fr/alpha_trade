@@ -78,10 +78,10 @@ class CorporateActionRepository:
             result = conn.execute(stmt, params)
             row_id = result.lastrowid
             if result.rowcount == 0:
-                LOGGER.debug("Événement corporate action doublon ignoré | key=%s", event.idempotency_key)
+                LOGGER.debug("Evenement corporate action doublon ignore | key=%s", event.idempotency_key)
                 return -1
             LOGGER.info(
-                "Événement corporate action ingéré | id=%s symbol=%s type=%s ex_date=%s",
+                "Evenement corporate action ingere | id=%s symbol=%s type=%s ex_date=%s",
                 row_id, event.symbol, event.ca_type, event.ex_date,
             )
             return row_id or -1

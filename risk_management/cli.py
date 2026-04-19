@@ -76,11 +76,11 @@ def main(args: list[str] | None = None) -> None:
         if total_dividends > 0:
             effective_equity += total_dividends
             LOGGER.info(
-                "Dividendes cumulés ajoutés à l'equity | dividendes=%.2f equity_base=%.2f equity_effective=%.2f",
+                "Dividendes cumules ajoutes a l'equity | dividendes=%.2f equity_base=%.2f equity_effective=%.2f",
                 total_dividends, args.account_equity, effective_equity,
             )
     except Exception as exc:
-        LOGGER.warning("Impossible de charger les dividendes cumulés (corporate_actions) : %s", exc)
+        LOGGER.warning("Impossible de charger les dividendes cumules (corporate_actions) : %s", exc)
 
     config = RiskConfig(
         account_equity=effective_equity,
@@ -102,21 +102,21 @@ def main(args: list[str] | None = None) -> None:
     repo = RiskRepository()
     LOGGER.info("Chargement des candidats…")
     candidates = repo.load_candidates(config)
-    LOGGER.info("Candidats chargés : %d", len(candidates))
+    LOGGER.info("Candidats charges : %d", len(candidates))
 
     symbols = [c.symbol for c in candidates]
     LOGGER.info("Chargement des prix et ATR…")
     prices = repo.load_prices(symbols, atr_window=config.atr_window)
-    LOGGER.info("Prix chargés pour %d symboles.", len(prices))
+    LOGGER.info("Prix charges pour %d symboles.", len(prices))
 
     # --- V2 data loading ---
-    LOGGER.info("Chargement des prédictions ML…")
+    LOGGER.info("Chargement des predictions ML…")
     predictions = repo.load_predictions(symbols, trade_date)
-    LOGGER.info("Prédictions chargées pour %d symboles.", len(predictions))
+    LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
 
     LOGGER.info("Chargement des win rates…")
     win_rates = repo.load_win_rates(symbols)
-    LOGGER.info("Win rates chargés pour %d symboles.", len(win_rates))
+    LOGGER.info("Win rates charges pour %d symboles.", len(win_rates))
 
     LOGGER.info("Chargement de la matrice de rendements…")
     return_matrix = repo.load_return_matrix(symbols, config.correlation_lookback_days)
@@ -129,8 +129,8 @@ def main(args: list[str] | None = None) -> None:
     _print_summary(entries, run_id, trade_date)
 
     if config.dry_run:
-        LOGGER.info("Mode dry-run — aucune écriture en DB.")
+        LOGGER.info("Mode dry-run — aucune ecriture en DB.")
     else:
         n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=args.account)
         n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=args.account)
-        LOGGER.info("Écrit %d décisions et %d cibles en DB.", n_dec, n_tgt)
+        LOGGER.info("Ecrit %d decisions et %d cibles en DB.", n_dec, n_tgt)

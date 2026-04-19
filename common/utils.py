@@ -25,8 +25,8 @@ def _get_nyse_calendar():
         return mcal.get_calendar("NYSE")
     except Exception:
         LOGGER.warning(
-            "pandas_market_calendars indisponible: fallback weekday-only activé. "
-            "Jours fériés US (MLK, Good Friday, Thanksgiving…) non couverts."
+            "pandas_market_calendars indisponible: fallback weekday-only active. "
+            "Jours feries US (MLK, Good Friday, Thanksgiving…) non couverts."
         )
         return None
 

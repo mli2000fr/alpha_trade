@@ -71,7 +71,7 @@ class CorporateActionEngine:
         )
 
         if symbols == []:
-            LOGGER.info("Corporate actions sync skipped | aucun symbole résolu pour la synchronisation.")
+            LOGGER.info("Corporate actions sync skipped | aucun symbole resolu pour la synchronisation.")
             return {"fetched": 0, "inserted": 0, "duplicates": 0, "invalid": 0}
 
         if batch_size < 1:
@@ -91,12 +91,12 @@ class CorporateActionEngine:
 
         if skip_existing and symbols is None:
             LOGGER.warning(
-                "skip_existing ignoré car le périmètre sync est global (symbols=None). "
-                "Utiliser un périmètre de symboles résolu pour exclure les symboles déjà présents."
+                "skip_existing ignore car le perimetre sync est global (symbols=None). "
+                "Utiliser un perimetre de symboles resolu pour exclure les symboles deja presents."
             )
 
         if symbols == []:
-            LOGGER.info("Corporate actions sync skipped | tous les symboles résolus existent déjà en base.")
+            LOGGER.info("Corporate actions sync skipped | tous les symboles resolus existent deja en base.")
             return {"fetched": 0, "inserted": 0, "duplicates": 0, "invalid": 0}
 
         stats = {"fetched": 0, "inserted": 0, "duplicates": 0, "invalid": 0}
@@ -141,7 +141,7 @@ class CorporateActionEngine:
         for event in events:
             errors = event.validate()
             if errors:
-                LOGGER.warning("Événement corporate action invalide ignoré | symbol=%s errors=%s", event.symbol, errors)
+                LOGGER.warning("Evenement corporate action invalide ignore | symbol=%s errors=%s", event.symbol, errors)
                 stats["invalid"] += 1
                 continue
 
@@ -179,7 +179,7 @@ class CorporateActionEngine:
 
         pending = self.repo.load_pending_events(as_of=as_of)
         if not pending:
-            LOGGER.info("Aucun événement corporate action pending à traiter.")
+            LOGGER.info("Aucun evenement corporate action pending a traiter.")
             return {"applied": 0, "skipped": 0, "failed": 0}
 
         # Charger les positions
@@ -190,9 +190,9 @@ class CorporateActionEngine:
 
         if not raw_positions:
             LOGGER.warning(
-                "Aucune position broker trouvée dans broker_positions_snapshots. "
-                "L'apply ne peut créditer de dividendes ni ajuster de splits sans positions. "
-                "Vérifier que execution_engine a déjà tourné au moins une fois."
+                "Aucune position broker trouvee dans broker_positions_snapshots. "
+                "L'apply ne peut crediter de dividendes ni ajuster de splits sans positions. "
+                "Verifier que execution_engine a deja tourne au moins une fois."
             )
 
         position_map: dict[str, PositionSnapshot] = {
@@ -231,7 +231,7 @@ class CorporateActionEngine:
         """Applique un seul événement corporate action."""
         # Vérification idempotence
         if self.repo.is_event_applied(event.idempotency_key):
-            LOGGER.debug("Événement déjà appliqué (idempotence) | key=%s", event.idempotency_key)
+            LOGGER.debug("Evenement deja applique (idempotence) | key=%s", event.idempotency_key)
             stats["skipped"] += 1
             return
 
@@ -264,7 +264,7 @@ class CorporateActionEngine:
                 pos.avg_entry_price = application.cost_basis_after
 
         else:
-            LOGGER.warning("Type de corporate action non supporté : %s", event.ca_type)
+            LOGGER.warning("Type de corporate action non supporte : %s", event.ca_type)
             if event.id is not None:
                 self.repo.mark_skipped(event.id, f"Unsupported ca_type: {event.ca_type}")
             stats["skipped"] += 1
