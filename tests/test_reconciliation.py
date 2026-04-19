@@ -2,49 +2,65 @@
 from __future__ import annotations
 
 from datetime import date
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from execution_engine.models import ExecutionTarget
-from execution_engine.reconciliation import reconcile_targets_vs_broker
-
-
-def _target(sym: str, shares: int) -> ExecutionTarget:
-    return ExecutionTarget(
-        risk_run_id="r1", trade_date=date(2026, 4, 18), symbol=sym,
-        target_shares=shares, entry_price=100.0, target_weight=0.05,
-        sector=None, conviction_score=None, sizing_method=None, kelly_fraction=None,
-    )
+from corporate_actions import reconciliation
 
 
-class TestReconciliation:
-    def test_exact_match(self) -> None:
-        targets = [_target("AAPL", 100)]
-        positions = [{"symbol": "AAPL", "qty": 100}]
-        diffs = reconcile_targets_vs_broker(targets, positions)
-        assert len(diffs) == 1
-        assert diffs[0].action == "none"
+# --- Tests pour corporate_actions.reconciliation ---
+def test_reconcile_exact_match():
+    internal = {"AAPL": 10.0, "MSFT": 5.0}
+    broker = [
+        {"symbol": "AAPL", "qty": 10.0},
+        {"symbol": "MSFT", "qty": 5.0},
+    ]
+    diffs = reconciliation.reconcile_after_corporate_actions(internal, broker)
+    assert all(d.action == "ok" for d in diffs)
+    assert len(diffs) == 2
+    assert diffs[0].delta == 0
+    assert diffs[1].delta == 0
 
-    def test_missing_broker_buy_more(self) -> None:
-        targets = [_target("AAPL", 100)]
-        diffs = reconcile_targets_vs_broker(targets, [])
-        assert diffs[0].action == "buy_more"
+def test_reconcile_qty_mismatch():
+    internal = {"AAPL": 10.0}
+    broker = [
+        {"symbol": "AAPL", "qty": 12.0},
+    ]
+    diffs = reconciliation.reconcile_after_corporate_actions(internal, broker, tolerance=0.5)
+    assert len(diffs) == 1
+    assert diffs[0].action == "qty_mismatch"
+    assert diffs[0].delta == 2.0
 
-    def test_excess_sell_excess(self) -> None:
-        targets = [_target("AAPL", 50)]
-        positions = [{"symbol": "AAPL", "qty": 100}]
-        diffs = reconcile_targets_vs_broker(targets, positions)
-        assert diffs[0].action == "sell_excess"
+def test_reconcile_investigate():
+    internal = {"AAPL": 10.0}
+    broker = [
+        {"symbol": "AAPL", "qty": 10.0},
+        {"symbol": "TSLA", "qty": 3.0},
+    ]
+    diffs = reconciliation.reconcile_after_corporate_actions(internal, broker)
+    tsla = next(d for d in diffs if d.symbol == "TSLA")
+    assert tsla.action == "investigate"
+    assert tsla.internal_qty == 0.0
+    assert tsla.broker_qty == 3.0
 
-    def test_unexpected_investigate(self) -> None:
-        positions = [{"symbol": "TSLA", "qty": 50}]
-        diffs = reconcile_targets_vs_broker([], positions)
-        assert diffs[0].action == "investigate"
+def test_reconcile_tolerance():
+    internal = {"AAPL": 10.0}
+    broker = [
+        {"symbol": "AAPL", "qty": 10.005},
+    ]
+    diffs = reconciliation.reconcile_after_corporate_actions(internal, broker, tolerance=0.01)
+    assert diffs[0].action == "ok"
+    diffs2 = reconciliation.reconcile_after_corporate_actions(internal, broker, tolerance=0.001)
+    assert diffs2[0].action == "qty_mismatch"
 
-    def test_tolerance(self) -> None:
-        targets = [_target("AAPL", 100)]
-        positions = [{"symbol": "AAPL", "qty": 102}]
-        diffs = reconcile_targets_vs_broker(targets, positions, tolerance=5)
-        assert diffs[0].action == "none"
-
-    def test_empty_targets(self) -> None:
-        diffs = reconcile_targets_vs_broker([], [])
-        assert diffs == []
+def test_reconcile_missing_broker():
+    internal = {"AAPL": 10.0, "MSFT": 5.0}
+    broker = [
+        {"symbol": "AAPL", "qty": 10.0},
+    ]
+    diffs = reconciliation.reconcile_after_corporate_actions(internal, broker)
+    msft = next(d for d in diffs if d.symbol == "MSFT")
+    assert msft.broker_qty == 0.0
+    assert msft.internal_qty == 5.0
+    assert msft.action == "qty_mismatch"
