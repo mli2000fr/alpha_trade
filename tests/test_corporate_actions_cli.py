@@ -18,6 +18,9 @@ def make_args(command, **kwargs):
         if isinstance(v, bool):
             if v:
                 args_list.append(f'--{k.replace("_", "-")}')
+        elif isinstance(v, list):
+            args_list.append(f'--{k.replace("_", "-")}')
+            args_list.extend(str(item) for item in v)
         elif v is not None:
             args_list.append(f'--{k.replace("_", "-")}')
             args_list.append(str(v))
@@ -124,3 +127,51 @@ def test_run_all_invokes_both(monkeypatch):
     assert sync_called['symbols'] == ['AAPL']
     assert sync_called['batch_size'] == 5
     assert str(apply_called['as_of']) == '2026-04-19'
+
+
+class DummyRepoWithLive(DummyRepo):
+    """Repo enrichi pour tester les nouvelles méthodes live positions + pending BUY."""
+    def __init__(self, live_symbols=None, buy_symbols=None, snapshot_symbols=None):
+        self._live = live_symbols or []
+        self._buy = buy_symbols or []
+        self._snapshot = snapshot_symbols or []
+
+    def load_broker_live_position_symbols(self, account_id=None):
+        return self._live
+
+    def load_pending_buy_order_symbols(self, account_id=None):
+        return self._buy
+
+    def load_latest_position_symbols(self):
+        return self._snapshot
+
+    def load_bars_available_symbols(self):
+        return []
+
+
+def test_resolve_portfolio_merges_live_and_buy():
+    repo = DummyRepoWithLive(live_symbols=['AAPL', 'MSFT'], buy_symbols=['NVDA', 'AAPL'])
+    result = cli._resolve_sync_symbols_portfolio(repo)
+    assert result == ['AAPL', 'MSFT', 'NVDA']
+
+
+def test_resolve_portfolio_fallback_snapshot():
+    repo = DummyRepoWithLive(live_symbols=[], buy_symbols=[], snapshot_symbols=['GOOG'])
+    result = cli._resolve_sync_symbols_portfolio(repo)
+    assert result == ['GOOG']
+
+
+def test_resolve_portfolio_empty():
+    repo = DummyRepoWithLive()
+    result = cli._resolve_sync_symbols_portfolio(repo)
+    assert result == []
+
+
+def test_resolve_bar_enriches_with_live_and_buy():
+    repo = DummyRepoWithLive(live_symbols=['AAPL'], buy_symbols=['TSLA'])
+    args = types.SimpleNamespace(all_symbols=False, symbols=None)
+    result = cli._resolve_sync_symbols_bar(args, repo)
+    assert 'AAPL' in result
+    assert 'TSLA' in result
+
+

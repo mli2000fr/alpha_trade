@@ -302,6 +302,42 @@ class CorporateActionRepository:
         }
         return sorted(symbols)
 
+    def load_broker_live_position_symbols(self, account_id: str | None = None) -> list[str]:
+        """Interroge l'API Alpaca Trading pour récupérer les symboles en position *réelle*."""
+        try:
+            from service.alpaca.trading_client import AlpacaTradingClient
+            client = AlpacaTradingClient(broker_mode="paper", account_id=account_id)
+            positions = client.get_positions()
+            symbols = {
+                str(p.get("symbol", "")).strip().upper()
+                for p in positions
+                if str(p.get("symbol", "")).strip() and float(p.get("qty", 0) or 0) != 0.0
+            }
+            LOGGER.info("Broker live positions | count=%d symbols=%s", len(symbols), sorted(symbols))
+            return sorted(symbols)
+        except Exception:
+            LOGGER.warning("Impossible de recuperer les positions live Alpaca, fallback sur snapshot DB.", exc_info=True)
+            return []
+
+    def load_pending_buy_order_symbols(self, account_id: str | None = None) -> list[str]:
+        """Interroge l'API Alpaca Trading pour récupérer les symboles des ordres BUY ouverts (accepted/new/pending_new)."""
+        try:
+            from service.alpaca.trading_client import AlpacaTradingClient
+            client = AlpacaTradingClient(broker_mode="paper", account_id=account_id)
+            orders = client.list_orders(status="open")
+            symbols = {
+                str(o.get("symbol", "")).strip().upper()
+                for o in orders
+                if str(o.get("side", "")).lower() == "buy"
+                and str(o.get("status", "")).lower() in ("new", "accepted", "pending_new", "held")
+                and str(o.get("symbol", "")).strip()
+            }
+            LOGGER.info("Pending BUY orders | count=%d symbols=%s", len(symbols), sorted(symbols))
+            return sorted(symbols)
+        except Exception:
+            LOGGER.warning("Impossible de recuperer les ordres BUY pending Alpaca.", exc_info=True)
+            return []
+
     def load_bars_available_symbols(self) -> list[str]:
         """Retourne les symboles actifs/tradables avec bars disponibles depuis stock_metadata."""
         stmt = text("""

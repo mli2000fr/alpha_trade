@@ -75,23 +75,45 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_sync_symbols_portfolio(repo: CorporateActionRepository) -> list[str]:
-    """Résout le périmètre de sync en se limitant strictement aux positions broker actuelles."""
-    broker_symbols = repo.load_latest_position_symbols()
-    if broker_symbols:
+def _resolve_sync_symbols_portfolio(repo: CorporateActionRepository, account_id: str | None = None) -> list[str]:
+    """Résout le périmètre de sync : positions live Alpaca + ordres BUY pending + snapshot DB (fallback)."""
+    all_symbols: set[str] = set()
+
+    # 1. Positions live sur le compte Alpaca (source de vérité)
+    live_symbols = repo.load_broker_live_position_symbols(account_id=account_id)
+    if live_symbols:
+        LOGGER.info("Portfolio-only : positions live Alpaca | count=%d", len(live_symbols))
+        all_symbols.update(live_symbols)
+
+    # 2. Ordres BUY en attente (accepted/new → deviendront des positions à l'ouverture)
+    buy_symbols = repo.load_pending_buy_order_symbols(account_id=account_id)
+    if buy_symbols:
+        LOGGER.info("Portfolio-only : ordres BUY pending Alpaca | count=%d", len(buy_symbols))
+        all_symbols.update(buy_symbols)
+
+    # 3. Fallback : snapshot DB (broker_positions_snapshots) si aucune donnée live
+    if not all_symbols:
+        broker_symbols = repo.load_latest_position_symbols()
+        if broker_symbols:
+            LOGGER.info("Portfolio-only : fallback snapshot DB | count=%d", len(broker_symbols))
+            all_symbols.update(broker_symbols)
+
+    if all_symbols:
+        result = sorted(all_symbols)
         LOGGER.info(
             "Corporate actions sync scope = portfolio-only | count=%d symbols=%s",
-            len(broker_symbols), broker_symbols,
+            len(result), result,
         )
-        return broker_symbols
+        return result
+
     LOGGER.warning(
-        "Portfolio-only demande mais aucune position broker trouvee dans broker_positions_snapshots. "
+        "Portfolio-only demande mais aucune position broker (live ni snapshot) ni ordre BUY pending. "
         "Verifier que run_execution a tourne au moins une fois. Sync ignoree.",
     )
     return []
 
 
-def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionRepository) -> list[str] | None:
+def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionRepository, account_id: str | None = None) -> list[str] | None:
     """Résout le périmètre de sync: symboles explicites, positions broker, ou all-symbols."""
     if getattr(args, "all_symbols", False):
         LOGGER.info("Corporate actions sync scope = all symbols (pas de filtre symbols).")
@@ -102,22 +124,36 @@ def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionReposit
         LOGGER.info("Corporate actions sync scope = explicit symbols | count=%d", len(explicit_symbols))
         return explicit_symbols
 
+    all_symbols: set[str] = set()
+
+    # Positions live Alpaca
+    live_symbols = repo.load_broker_live_position_symbols(account_id=account_id)
+    all_symbols.update(live_symbols)
+
+    # Ordres BUY pending Alpaca
+    buy_symbols = repo.load_pending_buy_order_symbols(account_id=account_id)
+    all_symbols.update(buy_symbols)
+
+    # Snapshot DB (fallback / complément)
     broker_symbols = repo.load_latest_position_symbols()
-    if broker_symbols:
+    all_symbols.update(broker_symbols)
+
+    if all_symbols:
+        result = sorted(all_symbols)
         LOGGER.info(
-            "Corporate actions sync scope = latest broker positions | count=%d symbols=%s",
-            len(broker_symbols), broker_symbols,
+            "Corporate actions sync scope = live positions + pending BUY + snapshot DB | count=%d symbols=%s",
+            len(result), result,
         )
-        return broker_symbols
+        return result
 
     LOGGER.warning(
-        "Aucun symbole explicite ni snapshot broker disponible ; aucune sync Alpaca lancee. "
+        "Aucun symbole explicite ni position/ordre broker disponible ; aucune sync Alpaca lancee. "
         "Utiliser --all-symbols pour un backfill large ou --symbols pour cibler manuellement.",
     )
     return []
 
 
-def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRepository) -> list[str] | None:
+def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRepository, account_id: str | None = None) -> list[str] | None:
     """Résout le périmètre de sync depuis stock_metadata (univers actif/tradable/bars dispo)."""
     if getattr(args, "all_symbols", False):
         LOGGER.info("Corporate actions sync scope = all symbols (pas de filtre symbols).")
@@ -129,23 +165,30 @@ def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRep
         return explicit_symbols
 
     metadata_symbols = repo.load_bars_available_symbols()
-    if metadata_symbols:
-        LOGGER.info(
-            "Corporate actions sync scope = stock_metadata active/tradable/bars_available | count=%d",
-            len(metadata_symbols),
-        )
-        return metadata_symbols
 
-    broker_symbols = repo.load_latest_position_symbols()
-    if broker_symbols:
-        LOGGER.warning(
-            "Aucun symbole stock_metadata eligible ; fallback vers latest broker positions | count=%d symbols=%s",
-            len(broker_symbols), broker_symbols,
+    # Toujours enrichir avec positions live et ordres BUY pending
+    all_symbols: set[str] = set(metadata_symbols) if metadata_symbols else set()
+
+    live_symbols = repo.load_broker_live_position_symbols(account_id=account_id)
+    all_symbols.update(live_symbols)
+
+    buy_symbols = repo.load_pending_buy_order_symbols(account_id=account_id)
+    all_symbols.update(buy_symbols)
+
+    if not all_symbols:
+        broker_symbols = repo.load_latest_position_symbols()
+        all_symbols.update(broker_symbols)
+
+    if all_symbols:
+        result = sorted(all_symbols)
+        LOGGER.info(
+            "Corporate actions sync scope = metadata + live positions + pending BUY | count=%d",
+            len(result),
         )
-        return broker_symbols
+        return result
 
     LOGGER.warning(
-        "Aucun symbole explicite, aucun symbole stock_metadata eligible, aucun snapshot broker ; aucune sync Alpaca lancee. "
+        "Aucun symbole explicite, aucun symbole stock_metadata eligible, aucune position/ordre broker ; aucune sync Alpaca lancee. "
         "Utiliser --all-symbols pour un backfill large ou --symbols pour cibler manuellement.",
     )
     return []
@@ -161,9 +204,9 @@ def _run_sync(args: argparse.Namespace) -> None:
     end_date = date.fromisoformat(args.end) if args.end else date.today()
 
     if getattr(args, "portfolio_only", False):
-        symbols: list[str] | None = _resolve_sync_symbols_portfolio(repo)
+        symbols: list[str] | None = _resolve_sync_symbols_portfolio(repo, account_id=account_id)
     else:
-        symbols = _resolve_sync_symbols_bar(args, repo)
+        symbols = _resolve_sync_symbols_bar(args, repo, account_id=account_id)
 
     stats = engine.sync(
         symbols=symbols,
@@ -222,9 +265,9 @@ def _run_all(args: argparse.Namespace) -> None:
     end_date = date.fromisoformat(args.end) if args.end else date.today()
 
     if getattr(args, "portfolio_only", False):
-        symbols: list[str] | None = _resolve_sync_symbols_portfolio(repo)
+        symbols: list[str] | None = _resolve_sync_symbols_portfolio(repo, account_id=account_id)
     else:
-        symbols = _resolve_sync_symbols_bar(args, repo)
+        symbols = _resolve_sync_symbols_bar(args, repo, account_id=account_id)
 
     stats_sync = engine.sync(
         symbols=symbols,
