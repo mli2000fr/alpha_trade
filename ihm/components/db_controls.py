@@ -49,9 +49,9 @@ def render_db_connection_form(form_key: str, *, show_host_fields: bool = True) -
         st.caption("Laissez le mot de passe vide pour conserver la valeur déjà active si nécessaire.")
 
         action_col1, action_col2, action_col3 = st.columns(3)
-        connect_clicked = action_col1.form_submit_button("Tester / connecter", use_container_width=True)
-        env_clicked = action_col2.form_submit_button("Utiliser ENV", use_container_width=True)
-        refresh_clicked = action_col3.form_submit_button("Rafraîchir", use_container_width=True)
+        connect_clicked = action_col1.form_submit_button("Tester / connecter", width="stretch")
+        env_clicked = action_col2.form_submit_button("Utiliser ENV", width="stretch")
+        refresh_clicked = action_col3.form_submit_button("Rafraîchir", width="stretch")
 
     if connect_clicked:
         set_runtime_db_config(

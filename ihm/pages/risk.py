@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available, get_last_query_error
@@ -65,4 +66,8 @@ def render() -> None:
         show_dataframe(targets[cols_show] if cols_show else targets, height=400)
     else:
         render_query_diagnostic("Aucun portefeuille cible pour ce run.")
+
+
+run_page_if_standalone(__name__, render)
+
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available
@@ -41,4 +42,8 @@ def render() -> None:
     st.subheader("✅ Applications récentes")
     apps = get_ca_applications()
     show_dataframe(apps, height=300)
+
+
+run_page_if_standalone(__name__, render)
+
 

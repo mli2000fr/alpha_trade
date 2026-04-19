@@ -6,6 +6,7 @@ import sys
 
 import streamlit as st
 
+from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_connection_form
 from ihm.components.status_badges import env_badge
 from ihm.services.db import db_available, get_db_status
@@ -55,4 +56,8 @@ def render() -> None:
     # --- Rappel ---
     st.subheader("🚀 Commande de lancement")
     st.code("python -m streamlit run ihm/app.py", language="powershell")
+
+
+run_page_if_standalone(__name__, render)
+
 

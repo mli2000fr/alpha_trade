@@ -6,6 +6,7 @@ from typing import cast
 
 import streamlit as st
 
+from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable
 from ihm.components.metrics import metric_row
 from ihm.components.status_badges import env_badge, run_status_badge
@@ -70,4 +71,8 @@ def render() -> None:
     # --- Top candidats ---
     st.subheader("🏆 Top 10 candidats par score sentiment")
     show_dataframe(get_top_candidates(10))
+
+
+run_page_if_standalone(__name__, render)
+
 

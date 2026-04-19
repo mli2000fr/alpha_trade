@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
 from ihm.components.tables import show_dataframe
@@ -63,4 +64,8 @@ def render() -> None:
         filtered = filtered[filtered["signal_active"] == 1]
 
     show_dataframe(filtered, f"Résultats ({len(filtered)} lignes)", height=500)
+
+
+run_page_if_standalone(__name__, render)
+
 

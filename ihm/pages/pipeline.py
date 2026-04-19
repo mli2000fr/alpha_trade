@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ihm.pages import run_page_if_standalone
+
 PIPELINE_STEPS = [
     {
         "num": "1", "name": "Import Alpaca Bar",
@@ -87,4 +89,8 @@ def render() -> None:
             st.markdown(f"**Tables impactées** : `{step['tables']}`")
             st.markdown(f"**Dépendances** : {step['deps']}")
             st.code(step["cli"], language="powershell")
+
+
+run_page_if_standalone(__name__, render)
+
 

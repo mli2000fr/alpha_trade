@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
 from ihm.components.status_badges import run_status_badge
@@ -66,4 +67,8 @@ def render() -> None:
     # --- Positions broker ---
     st.subheader("📦 Positions broker (dernier snapshot)")
     show_dataframe(get_broker_positions(), height=300)
+
+
+run_page_if_standalone(__name__, render)
+
 
