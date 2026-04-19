@@ -38,7 +38,7 @@ Cela évite que les pages `Execution`, `Corporate Actions`, `ML`, etc. paraissen
 | Page | Description |
 |---|---|
 | 🏠 Vue d'ensemble | KPI, alertes, top candidats, santé DB |
-| 🔄 Pipeline | 10 étapes du pipeline quotidien (1→1a→2→…→8→8a) |
+| 🔄 Pipeline | 12 étapes du pipeline quotidien (1→1a→2→…→6→6a→6b→7→8→8a), lancement en arrière-plan, arrêt, historique, comparaison et téléchargement des logs |
 | 📊 Screening | Table `stock_scores` avec filtres (symbole, secteur, candidat, score, sentiment) |
 | ⚖️ Risk | Décisions de risque, portefeuille cible, synthèse par secteur |
 | 🚀 Execution | Runs d'exécution, événements, fills, positions broker |
@@ -46,9 +46,22 @@ Cela évite que les pages `Execution`, `Corporate Actions`, `ML`, etc. paraissen
 | 🤖 ML / Prédictions | Runs training, métriques, prédictions LSTM |
 | ⚙️ Paramètres / Santé | Variables d'env, connexion DB, dépendances, version Python |
 
+## Pilotage des pipelines
+
+La page **🔄 Pipeline** permet désormais :
+
+- de lancer une étape **en arrière-plan** sans bloquer la navigation dans l'IHM ;
+- d'**arrêter** un run actif lancé depuis l'interface ;
+- de consulter un **historique centralisé** des exécutions IHM ;
+- de comparer deux runs et leurs logs ;
+- de filtrer l'affichage des logs par **`stdout` / `stderr` / `tout`** ;
+- de **télécharger** les fichiers de logs produits par chaque run.
+
+Les logs IHM sont persistés sous `artifacts/ihm_pipeline_runs/`.
+
 ## Limitations connues
 
-- **Lecture seule** : aucune action destructive, aucun ordre soumis depuis l'IHM
+- **Pilotage encadré** : la page Pipeline peut lancer/arrêter des sous-processus, mais les autres pages restent orientées supervision
 - Si la DB est indisponible, les pages affichent un diagnostic clair et un formulaire de connexion
 - Si une table SQL n'existe pas encore, la page correspondante affiche un message indiquant un schéma ou une migration manquante
 - Le cache Streamlit est configuré à 60 secondes (TTL) sur les requêtes DB

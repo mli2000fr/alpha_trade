@@ -1,90 +1,35 @@
-"""ihm/pages/pipeline.py — Vue séquentielle et pilotage du pipeline métier."""
+"""ihm/pages/pipeline.py — Vue séquentielle et pilotage asynchrone du pipeline métier."""
 from __future__ import annotations
 
 from typing import Any, cast
 
+import pandas as pd
 import streamlit as st
 
 from ihm.pages import run_page_if_standalone
 from ihm.services.db import get_runtime_db_config
-from ihm.services.pipeline_runner import (
-    PipelineLiveSnapshot,
-    PipelineLaunchOptions,
-    build_pipeline_command,
-    format_command_for_display,
-    get_pipeline_steps,
-    run_pipeline_step,
+from ihm.services.pipeline_runner import PipelineLaunchOptions, build_pipeline_command, format_command_for_display, get_pipeline_steps
+from ihm.services.process_registry import (
+    build_log_download_name,
+    get_pipeline_run_record,
+    list_active_pipeline_runs,
+    load_pipeline_history,
+    read_pipeline_logs,
+    start_pipeline_run,
+    stop_pipeline_run,
 )
 
-RESULTS_STATE_KEY = "ihm_pipeline_run_results"
-LAST_STEP_STATE_KEY = "ihm_pipeline_last_step_key"
+SELECTED_RUN_KEY = "ihm_pipeline_selected_run_id"
+COMPARE_RUNS_KEY = "ihm_pipeline_compare_run_ids"
+LOG_FILTER_KEY = "ihm_pipeline_log_filter"
+TAIL_LINES = 250
 
 
-def _tail_text(value: str, max_lines: int = 200) -> str:
+def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
     lines = value.splitlines()
     if len(lines) <= max_lines:
         return value
     return "\n".join(lines[-max_lines:])
-
-
-def _render_live_console(snapshot: PipelineLiveSnapshot | None, step_name: str | None = None) -> None:
-    st.subheader("🖥️ Console d'exécution des pipelines")
-    st.caption(
-        "Affiche l'avancement, les derniers logs et le statut d'une étape en cours ou de la dernière étape exécutée. "
-        "Les pipelines longs peuvent ainsi être investigués directement depuis l'IHM."
-    )
-
-    if snapshot is None:
-        st.info("Aucune exécution en cours. Lancez une étape ci-dessous pour suivre ses logs ici.")
-        return
-
-    status_map = {
-        "starting": "🟦 Démarrage",
-        "running": "🟨 En cours",
-        "completed": "🟢 Terminé",
-        "failed": "🔴 Échec",
-        "timeout": "🟠 Timeout",
-    }
-    if snapshot.status in {"completed"}:
-        st.success(f"{status_map[snapshot.status]} — {step_name or snapshot.step_key}")
-    elif snapshot.status in {"failed", "timeout"}:
-        st.error(f"{status_map[snapshot.status]} — {step_name or snapshot.step_key}")
-    else:
-        st.warning(f"{status_map[snapshot.status]} — {step_name or snapshot.step_key}")
-
-    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
-    metric_col1.metric("Étape", step_name or snapshot.step_key)
-    metric_col2.metric("Durée", f"{snapshot.duration_seconds:.2f}s")
-    metric_col3.metric("Lignes stdout", snapshot.stdout_lines)
-    metric_col4.metric("Lignes stderr", snapshot.stderr_lines)
-
-    meta_col1, meta_col2 = st.columns(2)
-    meta_col1.caption(f"Commande : `{snapshot.command_display}`")
-    meta_col2.caption(f"Compte : `{snapshot.account_id or 'global'}` | Retour : `{snapshot.returncode}`")
-
-    log_col1, log_col2 = st.columns(2)
-    with log_col1:
-        st.markdown("**stdout (tail)**")
-        st.code(_tail_text(snapshot.stdout) or "<aucune sortie stdout>", language="text")
-    with log_col2:
-        st.markdown("**stderr (tail)**")
-        st.code(_tail_text(snapshot.stderr) or "<aucune sortie stderr>", language="text")
-
-
-def _build_snapshot_from_result(step_key: str, result_state: dict[str, object]) -> PipelineLiveSnapshot:
-    return PipelineLiveSnapshot(
-        step_key=step_key,
-        command_display=str(result_state.get("command_display", "")),
-        status="completed" if int(cast(int | str, result_state.get("returncode", -1))) == 0 else "failed",
-        stdout=str(result_state.get("stdout", "") or ""),
-        stderr=str(result_state.get("stderr", "") or ""),
-        duration_seconds=float(cast(float | int | str, result_state.get("duration_seconds", 0.0))),
-        executed_at=str(result_state.get("executed_at", "—")),
-        account_id=cast(str | None, result_state.get("account_id")),
-        returncode=int(cast(int | str, result_state.get("returncode", -1))),
-        stdout_lines=len(str(result_state.get("stdout", "") or "").splitlines()),
-        stderr_lines=len(str(result_state.get("stderr", "") or "").splitlines()),
-    )
 
 
 def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
@@ -92,7 +37,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
 
     with st.expander("⚙️ Paramètres d'exécution", expanded=True):
         st.caption(
-            "Les sous-processus lancés depuis l'IHM héritent de la configuration DB active et, "
+            "Les pipelines sont lancés en arrière-plan depuis l'IHM. Ils héritent de la configuration DB active et, "
             "pour les étapes concernées, du compte Alpaca sélectionné dans la sidebar."
         )
 
@@ -106,7 +51,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             trade_date = st.text_input(
                 "Trade date / as-of (YYYY-MM-DD)",
                 key="pipeline_trade_date",
-                help="Utilisé par Signal Aggregator, Risk, Execution et Corporate Actions Apply.",
+                help="Utilisé par Signal Aggregator, ML Predict, Risk, Execution et Corporate Actions Apply.",
             )
         with col2:
             risk_account_equity = st.number_input(
@@ -175,39 +120,211 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
     )
 
 
-def _render_result(step_key: str, result_state: dict[str, object] | None) -> None:
-    if not result_state:
+def _merge_runs() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    active_runs = list_active_pipeline_runs()
+    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in load_pipeline_history()}
+    for run in active_runs:
+        merged[str(run["run_id"])] = run
+    all_runs = sorted(
+        merged.values(),
+        key=lambda item: str(item.get("finished_at") or item.get("executed_at") or ""),
+        reverse=True,
+    )
+    return active_runs, all_runs
+
+
+def _latest_run_by_step(all_runs: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    latest: dict[str, dict[str, object]] = {}
+    for run in all_runs:
+        step_key = str(run.get("step_key", ""))
+        if step_key and step_key not in latest:
+            latest[step_key] = run
+    return latest
+
+
+def _status_badge(status: str) -> str:
+    return {
+        "starting": "🟦 Démarrage",
+        "running": "🟨 En cours",
+        "completed": "🟢 Terminé",
+        "failed": "🔴 Échec",
+        "timeout": "🟠 Timeout",
+        "stopped": "⏹️ Arrêté",
+    }.get(status, status)
+
+
+@st.fragment(run_every="2s")
+def _render_runtime_center() -> None:
+    active_runs, all_runs = _merge_runs()
+
+    st.subheader("🖥️ Centre d'exécution & d'investigation")
+    st.caption(
+        "Rafraîchissement automatique toutes les 2 secondes pour les runs actifs. "
+        "Vous pouvez changer de page : les pipelines continuent à tourner en arrière-plan."
+    )
+
+    if st.button("🔄 Rafraîchir maintenant", key="pipeline_manual_refresh", use_container_width=False):
+        st.rerun()
+
+    if active_runs:
+        st.markdown("**Runs actifs**")
+        for run in active_runs:
+            run_id = str(run.get("run_id", ""))
+            cols = st.columns([3, 2, 2, 2, 1.5])
+            cols[0].markdown(f"`{run.get('step_label', run.get('step_key', ''))}`  \\n`{run_id}`")
+            cols[1].markdown(_status_badge(str(run.get("status", "running"))))
+            cols[2].markdown(f"⏱️ {float(run.get('duration_seconds', 0.0)):.2f}s")
+            cols[3].markdown(f"🏦 `{run.get('account_id') or 'global'}`")
+            if cols[4].button("⏹️ Arrêter", key=f"stop_run_{run_id}", use_container_width=True):
+                stop_pipeline_run(run_id)
+                st.rerun()
+    else:
+        st.info("Aucun run actif pour le moment.")
+
+    if not all_runs:
+        st.info("Aucun run IHM historisé pour le moment.")
         return
 
-    returncode = int(cast(int | str, result_state.get("returncode", -1)))
-    executed_at = str(result_state.get("executed_at", "—"))
-    duration_seconds = float(cast(float | int | str, result_state.get("duration_seconds", 0.0)))
-    account_id = result_state.get("account_id")
-    command_display = str(result_state.get("command_display", ""))
-    stdout = str(result_state.get("stdout", "") or "")
-    stderr = str(result_state.get("stderr", "") or "")
+    labels = {
+        str(run["run_id"]): (
+            f"{run.get('step_label', run.get('step_key', ''))} | {run.get('run_id')} | "
+            f"{_status_badge(str(run.get('status', '')))} | {run.get('executed_at', '')}"
+        )
+        for run in all_runs
+    }
+    run_ids = list(labels.keys())
 
-    status_label = "✅ Succès" if returncode == 0 else f"❌ Échec (code {returncode})"
-    if returncode == 0:
-        st.success(f"Dernière exécution : {status_label}")
+    default_selected = st.session_state.get(SELECTED_RUN_KEY)
+    if default_selected not in labels:
+        default_selected = run_ids[0]
+        st.session_state[SELECTED_RUN_KEY] = default_selected
+
+    compare_defaults = [rid for rid in cast(list[str], st.session_state.get(COMPARE_RUNS_KEY, [])) if rid in labels][:2]
+    if compare_defaults != st.session_state.get(COMPARE_RUNS_KEY):
+        st.session_state[COMPARE_RUNS_KEY] = compare_defaults
+
+    control_col1, control_col2 = st.columns([2, 3])
+    with control_col1:
+        log_filter = cast(
+            str,
+            st.radio(
+                "Flux à afficher",
+                options=["tout", "stdout", "stderr"],
+                horizontal=True,
+                key=LOG_FILTER_KEY,
+            ),
+        )
+    with control_col2:
+        selected_label = st.selectbox(
+            "Run à inspecter",
+            options=run_ids,
+            format_func=lambda rid: labels[rid],
+            key=SELECTED_RUN_KEY,
+        )
+        compare_ids = st.multiselect(
+            "Comparer 2 runs maximum",
+            options=run_ids,
+            default=compare_defaults,
+            format_func=lambda rid: labels[rid],
+            key=COMPARE_RUNS_KEY,
+        )
+        if len(compare_ids) > 2:
+            compare_ids = compare_ids[:2]
+            st.session_state[COMPARE_RUNS_KEY] = compare_ids
+            st.warning("La comparaison est limitée à 2 runs.")
+
+    stream_map = {"tout": "all", "stdout": "stdout", "stderr": "stderr"}
+    selected_run = get_pipeline_run_record(selected_label)
+    if selected_run is not None:
+        selected_logs = read_pipeline_logs(selected_label, stream=cast(Any, stream_map[log_filter]))
+        status = str(selected_run.get("status", ""))
+        if status == "completed":
+            st.success(f"Run sélectionné : {_status_badge(status)}")
+        elif status in {"failed", "timeout", "stopped"}:
+            st.error(f"Run sélectionné : {_status_badge(status)}")
+        else:
+            st.warning(f"Run sélectionné : {_status_badge(status)}")
+
+        metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+        metric_col1.metric("Étape", str(selected_run.get("step_label", selected_run.get("step_key", ""))))
+        metric_col2.metric("Durée", f"{float(selected_run.get('duration_seconds', 0.0)):.2f}s")
+        metric_col3.metric("Lignes stdout", int(selected_run.get("stdout_lines", 0)))
+        metric_col4.metric("Lignes stderr", int(selected_run.get("stderr_lines", 0)))
+
+        st.caption(
+            f"Commande : `{selected_run.get('command_display', '')}` | "
+            f"Compte : `{selected_run.get('account_id') or 'global'}` | "
+            f"Retour : `{selected_run.get('returncode')}`"
+        )
+        st.download_button(
+            label=f"⬇️ Télécharger le log ({log_filter})",
+            data=selected_logs,
+            file_name=build_log_download_name(selected_label, stream=cast(Any, stream_map[log_filter])),
+            mime="text/plain",
+            key=f"download_selected_{selected_label}_{log_filter}",
+        )
+        st.code(_tail_text(selected_logs), language="text")
+
+    if len(compare_ids) == 2:
+        st.markdown("**Comparaison de runs**")
+        compare_col1, compare_col2 = st.columns(2)
+        for col, run_id in zip((compare_col1, compare_col2), compare_ids):
+            run = get_pipeline_run_record(run_id)
+            logs = read_pipeline_logs(run_id, stream=cast(Any, stream_map[log_filter]))
+            with col:
+                st.markdown(f"`{labels[run_id]}`")
+                st.download_button(
+                    label="⬇️ Télécharger",
+                    data=logs,
+                    file_name=build_log_download_name(run_id, stream=cast(Any, stream_map[log_filter])),
+                    mime="text/plain",
+                    key=f"download_compare_{run_id}_{log_filter}",
+                )
+                st.code(_tail_text(logs), language="text")
+
+    history_df = pd.DataFrame(
+        [
+            {
+                "run_id": run.get("run_id"),
+                "étape": run.get("step_label", run.get("step_key")),
+                "statut": _status_badge(str(run.get("status", ""))),
+                "compte": run.get("account_id") or "global",
+                "début": run.get("executed_at"),
+                "fin": run.get("finished_at") or "—",
+                "durée_s": float(run.get("duration_seconds", 0.0)),
+                "stdout": int(run.get("stdout_lines", 0)),
+                "stderr": int(run.get("stderr_lines", 0)),
+            }
+            for run in all_runs
+        ]
+    )
+    with st.expander("🗃️ Historique centralisé des exécutions IHM", expanded=False):
+        st.dataframe(history_df, use_container_width=True, hide_index=True)
+
+
+def _render_step_result(record: dict[str, object] | None) -> None:
+    if not record:
+        st.caption("Aucune exécution historisée pour cette étape.")
+        return
+
+    status = str(record.get("status", ""))
+    message = f"Dernier run IHM : {_status_badge(status)}"
+    if status == "completed":
+        st.success(message)
+    elif status in {"failed", "timeout", "stopped"}:
+        st.error(message)
     else:
-        st.error(f"Dernière exécution : {status_label}")
+        st.warning(message)
 
-    metric_col1, metric_col2, metric_col3 = st.columns(3)
-    metric_col1.metric("Date/heure", executed_at)
-    metric_col2.metric("Durée", f"{duration_seconds:.2f}s")
-    metric_col3.metric("Compte", str(account_id or "global"))
-
-    if command_display:
-        with st.expander("Commande réellement exécutée", expanded=False):
-            st.code(command_display, language="powershell")
-
-    if stdout:
-        with st.expander("Logs stdout", expanded=returncode != 0):
-            st.code(stdout, language="text")
-    if stderr:
-        with st.expander("Logs stderr", expanded=returncode != 0):
-            st.code(stderr, language="text")
+    cols = st.columns(4)
+    cols[0].metric("Run ID", str(record.get("run_id", "—")))
+    cols[1].metric("Durée", f"{float(record.get('duration_seconds', 0.0)):.2f}s")
+    cols[2].metric("stdout", int(record.get("stdout_lines", 0)))
+    cols[3].metric("stderr", int(record.get("stderr_lines", 0)))
+    st.caption(
+        f"Début : `{record.get('executed_at', '—')}` | Fin : `{record.get('finished_at') or '—'}` | "
+        f"Compte : `{record.get('account_id') or 'global'}`"
+    )
 
 
 def render() -> None:
@@ -216,16 +333,13 @@ def render() -> None:
 
     options, live_confirmed = _build_launch_options()
     db_config = get_runtime_db_config()
-    results = cast(dict[str, dict[str, object]], st.session_state.setdefault(RESULTS_STATE_KEY, {}))
-    last_step_key = cast(str | None, st.session_state.get(LAST_STEP_STATE_KEY))
+    active_runs, all_runs = _merge_runs()
+    latest_by_step = _latest_run_by_step(all_runs)
+    active_by_step: dict[str, list[dict[str, object]]] = {}
+    for run in active_runs:
+        active_by_step.setdefault(str(run.get("step_key", "")), []).append(run)
 
-    console_placeholder = st.empty()
-    with console_placeholder.container():
-        if last_step_key and last_step_key in results:
-            step_name = next((step.name for step in get_pipeline_steps() if step.key == last_step_key), last_step_key)
-            _render_live_console(_build_snapshot_from_result(last_step_key, results[last_step_key]), step_name)
-        else:
-            _render_live_console(None)
+    _render_runtime_center()
 
     for step in get_pipeline_steps():
         command_preview = format_command_for_display(build_pipeline_command(step.key, options))
@@ -244,8 +358,17 @@ def render() -> None:
 
             with action_col:
                 execution_locked = step.key == "execution" and options.execution_mode == "live" and not live_confirmed
+                active_for_step = active_by_step.get(step.key, [])
+                if active_for_step:
+                    st.info(f"{len(active_for_step)} run(s) actif(s) pour cette étape.")
+                    for run in active_for_step:
+                        run_id = str(run.get("run_id", ""))
+                        st.caption(f"Actif : `{run_id}`")
+                        if st.button("⏹️ Arrêter ce run", key=f"stop_step_run_{run_id}", use_container_width=True):
+                            stop_pipeline_run(run_id)
+                            st.rerun()
                 run_clicked = st.button(
-                    "▶️ Exécuter",
+                    "▶️ Lancer en arrière-plan",
                     key=f"run_pipeline_step_{step.key}",
                     type="primary",
                     use_container_width=True,
@@ -255,18 +378,20 @@ def render() -> None:
                     st.warning("Confirmez d'abord le mode LIVE dans les paramètres ci-dessus.")
 
                 if run_clicked:
-                    def _on_update(snapshot: PipelineLiveSnapshot) -> None:
-                        with console_placeholder.container():
-                            _render_live_console(snapshot, step.name)
+                    record = start_pipeline_run(
+                        step.key,
+                        f"{step.num}. {step.name}",
+                        options,
+                        db_config=db_config,
+                    )
+                    st.session_state[SELECTED_RUN_KEY] = record.run_id
+                    compare_ids = cast(list[str], st.session_state.get(COMPARE_RUNS_KEY, []))
+                    if record.run_id not in compare_ids:
+                        st.session_state[COMPARE_RUNS_KEY] = [record.run_id, *compare_ids][:2]
+                    st.success(f"Run démarré en arrière-plan : `{record.run_id}`")
+                    st.rerun()
 
-                    with st.spinner(f"Exécution de {step.name} en cours…"):
-                        result = run_pipeline_step(step.key, options, db_config=db_config, on_update=_on_update)
-                    results[step.key] = result.to_state()
-                    st.session_state[LAST_STEP_STATE_KEY] = step.key
-
-            _render_result(step.key, results.get(step.key))
+            _render_step_result(latest_by_step.get(step.key))
 
 
 run_page_if_standalone(__name__, render)
-
-
