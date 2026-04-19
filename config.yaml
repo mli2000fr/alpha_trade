@@ -19,6 +19,16 @@ alpaca:
       api_key: "${ALPACA_API_KEY}"
       secret_key: "${ALPACA_SECRET_KEY}"
       mode: paper
+    - id: test1
+      label: "Compte test 1 (paper)"
+      api_key: "${ALPACA_KEY_CPT_1}"
+      secret_key: "${ALPACA_SECRET_CPT_1}"
+      mode: paper
+    - id: test2
+      label: "Compte test 2 (paper)"
+      api_key: "${ALPACA_KEY_CPT_2}"
+      secret_key: "${ALPACA_SECRET_CPT_2}"
+      mode: paper
     # - id: live1
     #   label: "Compte live"
     #   api_key: "${ALPACA_LIVE1_API_KEY}"
