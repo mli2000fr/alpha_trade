@@ -6,6 +6,7 @@ import logging
 import sys
 from datetime import date, timedelta
 
+from common.utils import configure_root_logging
 from corporate_actions.db_io import CorporateActionRepository
 from corporate_actions.engine import CorporateActionEngine
 from corporate_actions.provider import AlpacaCorporateActionProvider
@@ -240,9 +241,10 @@ def _run_all(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(
+    configure_root_logging(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s -- %(message)s",
+        log_path="corporate_actions.log",
+        fmt="%(asctime)s %(levelname)-8s %(name)s -- %(message)s",
     )
     parser = _build_parser()
     args = parser.parse_args()

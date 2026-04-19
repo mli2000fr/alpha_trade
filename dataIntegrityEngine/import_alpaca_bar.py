@@ -9,7 +9,7 @@ from dateutil import parser
 from sqlalchemy import MetaData, Table, and_, func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
-from common.utils import getLastDateMarche
+from common.utils import configure_root_logging, getLastDateMarche
 from database.assets import update_bars_available_false
 from database.bar_metadata import TimeFrame
 from database.connection import SessionLocal, get_sqlalchemy_engine
@@ -242,7 +242,11 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_root_logging(
+        level=logging.INFO,
+        log_path="import_alpaca_bar.log",
+        fmt="%(asctime)s %(levelname)s %(message)s",
+    )
     import_alpaca_bars(TimeFrame.ONE_DAY)
     # import_alpaca_bars(TimeFrame.THIRTY_MINS)
 

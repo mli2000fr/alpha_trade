@@ -3,7 +3,7 @@ import logging
 
 import dateutil.parser
 
-from common.utils import setup_logging_with_file_handler
+from common.utils import configure_root_logging
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.db_io import EventSentimentRepository
 from event_sentiment.pipeline import EventSentimentPipeline
@@ -18,8 +18,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    setup_logging_with_file_handler("event_sentiment.log")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_root_logging(
+        level=logging.INFO,
+        log_path="event_sentiment.log",
+        fmt="%(asctime)s %(levelname)s %(message)s",
+    )
     args = build_arg_parser().parse_args()
 
     start_utc = dateutil.parser.isoparse(args.start_utc) if args.start_utc else None

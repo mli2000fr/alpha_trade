@@ -15,6 +15,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from common.utils import configure_root_logging
 from database.connection import get_sqlalchemy_engine
 
 LOGGER = logging.getLogger(__name__)
@@ -1037,9 +1038,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _build_arg_parser().parse_args()
-    logging.basicConfig(
+    configure_root_logging(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        log_path="alpha_scanner.log",
+        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
     config = AlphaScannerConfig(

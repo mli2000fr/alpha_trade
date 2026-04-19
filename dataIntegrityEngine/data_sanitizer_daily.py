@@ -11,6 +11,7 @@ from dateutil import parser as dtparser
 from sqlalchemy import MetaData, Table
 from sqlalchemy.engine import Engine, Connection
 
+from common.utils import configure_root_logging
 from database.connection import get_sqlalchemy_engine
 from database.bar_metadata import TimeFrame
 from database.sanitizer_db_ops import (
@@ -422,9 +423,10 @@ class DataSanitizer:
 
 
 def main() -> None:
-    logging.basicConfig(
+    configure_root_logging(
         level=logging.INFO,
-        format='%(asctime)s %(levelname)s %(name)s %(message)s',
+        log_path="data_sanitizer_daily.log",
+        fmt='%(asctime)s %(levelname)s %(name)s %(message)s',
     )
     sanitizer = DataSanitizer()
     sanitizer.run_pipeline(commit_every=DEFAULT_COMMIT_EVERY)

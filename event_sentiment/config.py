@@ -12,7 +12,8 @@ class EventSentimentConfig:
     sleep_between_requests: float = 0.35
     regular_session_maps_to_same_day: bool = False
     checkpoint_overlap_minutes: int = 60
-    initial_backfill_days: int = 7
+    initial_backfill_days: int = 365
+    candidate_reactivation_backfill_days: int = 365
 
     finbert_model_name: str = "ProsusAI/finbert"
     finbert_model_version: str = "finbert_v1"
@@ -33,6 +34,8 @@ class EventSentimentConfig:
             raise ValueError("checkpoint_overlap_minutes doit être >= 0.")
         if self.initial_backfill_days < 1:
             raise ValueError("initial_backfill_days doit être >= 1.")
+        if self.candidate_reactivation_backfill_days < 1:
+            raise ValueError("candidate_reactivation_backfill_days doit être >= 1.")
         if self.finbert_batch_size < 1:
             raise ValueError("finbert_batch_size doit être >= 1.")
         if self.finbert_max_length < 32:

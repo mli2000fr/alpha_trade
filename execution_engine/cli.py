@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from datetime import date
 
 from execution_engine.config import ExecutionConfig
@@ -12,7 +11,7 @@ from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.executor import ProductionExecutor
 from execution_engine.oco_manager import OcoManager
 from service.alpaca.trading_client import AlpacaTradingClient
-from common.utils import setup_logging_with_file_handler
+from common.utils import configure_root_logging
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -40,10 +39,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
-    setup_logging_with_file_handler("execution_engine.log")
     args = parse_args(argv)
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO),
-                        format="%(asctime)s [%(levelname)s] %(name)s — %(message)s")
+    configure_root_logging(
+        level=getattr(logging, args.log_level.upper(), logging.INFO),
+        log_path="execution_engine.log",
+        fmt="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    )
 
     trade_date_val: date | None = None
     if args.trade_date:

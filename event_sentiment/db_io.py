@@ -58,17 +58,43 @@ class EventSentimentRepository:
             conn.execute(stmt.on_duplicate_key_update(**update_cols))
         return len(records)
 
-    def get_checkpoint(self, source_name: str) -> dict[str, Any] | None:
+    @staticmethod
+    def _normalize_symbol(symbol: str) -> str:
+        normalized = str(symbol).strip().upper()
+        if not normalized:
+            raise ValueError("symbol checkpoint vide.")
+        return normalized
+
+    def get_checkpoint(self, source_name: str, symbol: str) -> dict[str, Any] | None:
         stmt = text(
             """
-            SELECT source_name, watermark_published_at_utc, next_page_token, status, last_error, updated_at
+            SELECT source_name, symbol, watermark_published_at_utc, next_page_token, status, last_error, updated_at
             FROM news_ingestion_checkpoint
-            WHERE source_name = :source_name
+            WHERE source_name = :source_name AND symbol = :symbol
             """
         )
         with self.engine.connect() as conn:
-            row = conn.execute(stmt, {"source_name": source_name}).mappings().first()
+            row = conn.execute(
+                stmt,
+                {"source_name": source_name, "symbol": self._normalize_symbol(symbol)},
+            ).mappings().first()
         return dict(row) if row else None
+
+    def get_checkpoints(self, source_name: str, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        normalized_symbols = [self._normalize_symbol(symbol) for symbol in symbols if symbol and str(symbol).strip()]
+        if not normalized_symbols:
+            return {}
+        stmt = text(
+            """
+            SELECT source_name, symbol, watermark_published_at_utc, next_page_token, status, last_error, updated_at
+            FROM news_ingestion_checkpoint
+            WHERE source_name = :source_name
+              AND symbol IN :symbols
+            """
+        ).bindparams(bindparam("symbols", expanding=True))
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, {"source_name": source_name, "symbols": normalized_symbols}).mappings().all()
+        return {str(row["symbol"]): dict(row) for row in rows}
 
     def load_candidate_symbols(self) -> list[str]:
         stmt = text(
@@ -86,6 +112,7 @@ class EventSentimentRepository:
     def upsert_checkpoint(
         self,
         source_name: str,
+        symbol: str,
         watermark_published_at_utc: datetime | None,
         next_page_token: str | None,
         status: str,
@@ -95,12 +122,13 @@ class EventSentimentRepository:
             "news_ingestion_checkpoint",
             [{
                 "source_name": source_name,
+                "symbol": self._normalize_symbol(symbol),
                 "watermark_published_at_utc": watermark_published_at_utc,
                 "next_page_token": next_page_token,
                 "status": status,
                 "last_error": last_error,
             }],
-            key_columns={"source_name"},
+            key_columns={"source_name", "symbol"},
         )
 
     def get_existing_article_ids(self, article_ids: list[str]) -> set[str]:

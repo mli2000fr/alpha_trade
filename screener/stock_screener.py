@@ -8,6 +8,7 @@ from typing import List, Optional
 
 import pandas as pd
 
+from common.utils import configure_root_logging
 from screener.db_io import (
     get_engine,
     iter_symbol_chunks,
@@ -138,7 +139,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_root_logging(
+        level=logging.INFO,
+        log_path="stock_screener.log",
+        fmt="%(asctime)s %(levelname)s %(message)s",
+    )
     args = _build_arg_parser().parse_args()
     config = ScreenerConfig(chunk_size=args.chunk_size, benchmark_symbol=args.benchmark)
     run_screener(config=config, max_workers=args.max_workers)

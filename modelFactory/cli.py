@@ -7,7 +7,7 @@ from pathlib import Path
 
 from database.connection import get_sqlalchemy_engine
 from modelFactory.config import DataConfig, ModelConfig, TrainingConfig
-from common.utils import setup_logging_with_file_handler
+from common.utils import configure_root_logging
 
 
 LOGGER = logging.getLogger(__name__)
@@ -30,11 +30,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(args: list[str] | None = None) -> None:
-    setup_logging_with_file_handler("model_factory.log")
     parser = build_arg_parser()
     opts = parser.parse_args(args)
 
-    logging.basicConfig(level=getattr(logging, opts.log_level), format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    configure_root_logging(
+        level=getattr(logging, opts.log_level),
+        log_path="model_factory.log",
+        fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
 
     cfg = TrainingConfig(
         data=DataConfig(sequence_length=opts.sequence_length, forecast_horizon=opts.forecast_horizon),

@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import text
+from common.utils import configure_root_logging
 from database.connection import get_sqlalchemy_engine
 from event_sentiment.ingestion import NewsIngestionService
 from event_sentiment.config import EventSentimentConfig
@@ -25,7 +26,11 @@ def main():
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     end_date = datetime.now(timezone.utc)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_root_logging(
+        level=logging.INFO,
+        log_path="importe_news.log",
+        fmt="%(asctime)s %(levelname)s %(message)s",
+    )
     logger = logging.getLogger("importe_news")
 
     logger.info(f"Récupération des symbols depuis stock_bars_daily ...")
@@ -40,7 +45,12 @@ def main():
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i:i+batch_size]
         logger.info(f"Traitement batch {i//batch_size+1} ({len(batch)} symbols): {batch}")
-        summary = ingestion.run(start_utc=start_date, end_utc=end_date, symbols=batch)
+        summary = ingestion.run(
+            start_utc=start_date,
+            end_utc=end_date,
+            symbols=batch,
+            resume_checkpoints=False,
+        )
         logger.info(f"Résultat batch {i//batch_size+1}: {summary}")
 
     logger.info("Import des news terminé.")

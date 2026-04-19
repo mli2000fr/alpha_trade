@@ -57,28 +57,13 @@ class EventSentimentPipeline:
         resolved_end = self._coerce_utc(end_utc) or datetime.now(UTC)
         resolved_start = self._coerce_utc(start_utc)
         if resolved_start is None:
-            checkpoint = self.repository.get_checkpoint(self.config.source_name)
-            watermark = self._coerce_utc(
-                checkpoint.get("watermark_published_at_utc") if checkpoint else None
+            resolved_start = resolved_end - timedelta(days=self.config.initial_backfill_days)
+            LOGGER.info(
+                "Fenêtre news fallback initial | backfill_days=%s start=%s end=%s",
+                self.config.initial_backfill_days,
+                resolved_start,
+                resolved_end,
             )
-            if watermark is not None:
-                resolved_start = watermark - timedelta(minutes=self.config.checkpoint_overlap_minutes)
-                LOGGER.info(
-                    "Fenêtre news dérivée du checkpoint | source=%s watermark=%s overlap_minutes=%s start=%s end=%s",
-                    self.config.source_name,
-                    watermark,
-                    self.config.checkpoint_overlap_minutes,
-                    resolved_start,
-                    resolved_end,
-                )
-            else:
-                resolved_start = resolved_end - timedelta(days=self.config.initial_backfill_days)
-                LOGGER.info(
-                    "Fenêtre news fallback initial | backfill_days=%s start=%s end=%s",
-                    self.config.initial_backfill_days,
-                    resolved_start,
-                    resolved_end,
-                )
 
         if resolved_start >= resolved_end:
             adjusted_start = resolved_end - timedelta(minutes=max(self.config.checkpoint_overlap_minutes, 60))
@@ -92,19 +77,108 @@ class EventSentimentPipeline:
 
         return resolved_start, resolved_end
 
+    def _resolve_symbol_windows(
+        self,
+        start_utc: datetime | None,
+        end_utc: datetime | None,
+        symbols: list[str],
+    ) -> tuple[dict[str, datetime], dict[str, bool], datetime]:
+        explicit_start = self._coerce_utc(start_utc)
+        resolved_end = self._coerce_utc(end_utc) or datetime.now(UTC)
+        if explicit_start is not None:
+            return {symbol: explicit_start for symbol in symbols}, {symbol: False for symbol in symbols}, resolved_end
+
+        checkpoints = self.repository.get_checkpoints(self.config.source_name, symbols)
+        windows: dict[str, datetime] = {}
+        resume_by_symbol: dict[str, bool] = {}
+        for symbol in symbols:
+            checkpoint = checkpoints.get(symbol)
+            watermark = self._coerce_utc(
+                checkpoint.get("watermark_published_at_utc") if checkpoint else None
+            )
+            updated_at = self._coerce_utc(
+                checkpoint.get("updated_at") if checkpoint else None
+            )
+            checkpoint_anchor = watermark or updated_at
+            reactivation_threshold = timedelta(days=self.config.candidate_reactivation_backfill_days)
+
+            if checkpoint_anchor is not None and resolved_end - checkpoint_anchor > reactivation_threshold:
+                resolved_start = checkpoint_anchor
+                resume_by_symbol[symbol] = False
+                LOGGER.info(
+                    "Backfill réactivation forcé | source=%s symbol=%s last_checkpoint=%s threshold_days=%s start=%s end=%s",
+                    self.config.source_name,
+                    symbol,
+                    checkpoint_anchor,
+                    self.config.candidate_reactivation_backfill_days,
+                    resolved_start,
+                    resolved_end,
+                )
+            elif watermark is not None:
+                resolved_start = watermark - timedelta(minutes=self.config.checkpoint_overlap_minutes)
+                resume_by_symbol[symbol] = True
+                LOGGER.info(
+                    "Fenêtre news dérivée du checkpoint symbole | source=%s symbol=%s watermark=%s overlap_minutes=%s start=%s end=%s",
+                    self.config.source_name,
+                    symbol,
+                    watermark,
+                    self.config.checkpoint_overlap_minutes,
+                    resolved_start,
+                    resolved_end,
+                )
+            else:
+                resolved_start = resolved_end - timedelta(days=self.config.initial_backfill_days)
+                resume_by_symbol[symbol] = False
+                LOGGER.info(
+                    "Fenêtre news fallback initial symbole | symbol=%s backfill_days=%s start=%s end=%s",
+                    symbol,
+                    self.config.initial_backfill_days,
+                    resolved_start,
+                    resolved_end,
+                )
+
+            if resolved_start >= resolved_end:
+                adjusted_start = resolved_end - timedelta(minutes=max(self.config.checkpoint_overlap_minutes, 60))
+                LOGGER.warning(
+                    "Fenêtre news invalide détectée pour symbole, ajustement automatique | symbol=%s start=%s end=%s adjusted_start=%s",
+                    symbol,
+                    resolved_start,
+                    resolved_end,
+                    adjusted_start,
+                )
+                resolved_start = adjusted_start
+            windows[symbol] = resolved_start
+        return windows, resume_by_symbol, resolved_end
+
     def run(self, start_utc: datetime | None = None, end_utc: datetime | None = None, symbols: list[str] | None = None) -> dict:
-        start_utc, end_utc = self._resolve_time_window(start_utc=start_utc, end_utc=end_utc)
         resolved_symbols = self._resolve_symbols(symbols)
+        symbol_windows, symbol_resume_modes, end_utc = self._resolve_symbol_windows(
+            start_utc=start_utc,
+            end_utc=end_utc,
+            symbols=resolved_symbols,
+        )
+        aggregation_start = (
+            min(symbol_windows.values())
+            if symbol_windows
+            else self._coerce_utc(start_utc) or self._resolve_time_window(start_utc=start_utc, end_utc=end_utc)[0]
+        )
         LOGGER.info(
             "Début event sentiment run | start_utc=%s end_utc=%s symbol_count=%s",
-            start_utc,
+            aggregation_start,
             end_utc,
             len(resolved_symbols),
         )
 
         stats: dict[str, object] = {}
         if resolved_symbols:
-            stats["ingestion"] = self.ingestion.run(start_utc=start_utc, end_utc=end_utc, symbols=resolved_symbols)
+            stats["ingestion"] = self.ingestion.run(
+                start_utc=None,
+                end_utc=end_utc,
+                symbols=resolved_symbols,
+                symbol_start_overrides=symbol_windows,
+                symbol_resume_overrides=symbol_resume_modes,
+                resume_checkpoints=start_utc is None,
+            )
         else:
             stats["ingestion"] = {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
 
@@ -142,7 +216,7 @@ class EventSentimentPipeline:
 
         stats["macro_rows"] = self.repository.upsert_macro_event_audit([asdict(record) for record in macro_records])
         ticker_df, sector_df, macro_df = self.repository.load_feature_frames(
-            start_date=start_utc.date(),
+            start_date=aggregation_start.date(),
             end_date=end_utc.date() + timedelta(days=5),
         )
 

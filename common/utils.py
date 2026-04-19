@@ -4,6 +4,7 @@ Utilitaires partagés pour le calendrier de marché US (NYSE).
 Utilise pandas_market_calendars pour une précision complète (MLK, Good Friday, Thanksgiving, etc.).
 """
 import logging
+import sys
 from datetime import date, timedelta
 from functools import lru_cache
 from typing import Optional
@@ -12,6 +13,48 @@ from pathlib import Path
 import yaml
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s -- %(message)s"
+
+
+def _reset_root_logging_handlers(logger: logging.Logger) -> None:
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
+
+
+def configure_root_logging(
+    *,
+    level: int = logging.INFO,
+    log_path: str | None = None,
+    fmt: str = DEFAULT_LOG_FORMAT,
+    datefmt: str | None = None,
+    max_bytes: int = 5_000_000,
+    backup_count: int = 3,
+) -> logging.Logger:
+    """Configure le root logger du projet avec sortie stdout et fichier optionnel."""
+    logger = logging.getLogger()
+    logger.setLevel(level)
+    _reset_root_logging_handlers(logger)
+
+    formatter = logging.Formatter(fmt, datefmt=datefmt)
+
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setLevel(level)
+    stdout_handler.setFormatter(formatter)
+    stdout_handler._alpha_trade_managed = True  # type: ignore[attr-defined]
+    logger.addHandler(stdout_handler)
+
+    if log_path:
+        file_handler = RotatingFileHandler(log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(level)
+        file_handler._alpha_trade_managed = True  # type: ignore[attr-defined]
+        logger.addHandler(file_handler)
+
+    return logger
 
 
 @lru_cache(maxsize=1)
@@ -65,17 +108,16 @@ def getLastDateMarche(ref_date: Optional[date] = None) -> date:
 
 def setup_logging_with_file_handler(log_path: str = "alpha_trade.log", max_bytes: int = 5_000_000, backup_count: int = 3):
     """
-    Ajoute un RotatingFileHandler au root logger, en plus du stdout.
+    Configure le root logger du projet sur stdout et ajoute un RotatingFileHandler.
     Format : %(asctime)s %(levelname)-8s %(name)s -- %(message)s
     """
-    logger = logging.getLogger()
-    formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s -- %(message)s")
-    file_handler = RotatingFileHandler(log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.INFO)
-    # Évite les doublons si déjà ajouté
-    if not any(isinstance(h, RotatingFileHandler) for h in logger.handlers):
-        logger.addHandler(file_handler)
+    return configure_root_logging(
+        level=logging.INFO,
+        log_path=log_path,
+        fmt=DEFAULT_LOG_FORMAT,
+        max_bytes=max_bytes,
+        backup_count=backup_count,
+    )
 
 
 def load_config(path: str = None) -> dict:

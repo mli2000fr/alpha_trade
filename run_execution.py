@@ -27,13 +27,10 @@ import os
 import sys
 from datetime import date, datetime
 
-from common.utils import setup_logging_with_file_handler
+from common.utils import configure_root_logging
 
 # active les sequences ANSI sur Windows
 os.system("")
-
-# Active le RotatingFileHandler pour les logs
-setup_logging_with_file_handler()
 
 GREEN  = "\033[32m"
 YELLOW = "\033[33m"
@@ -226,9 +223,10 @@ PRESETS: dict[str, dict] = {
 
 def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allow_outside_rth: bool = False, auto_rebalance: bool = False, account_id: str | None = None) -> None:
     level = logging.DEBUG if debug else logging.INFO
-    logging.basicConfig(
+    configure_root_logging(
         level=level,
-        format="%(asctime)s  %(levelname)-8s  %(name)s -- %(message)s",
+        log_path="alpha_trade.log",
+        fmt="%(asctime)s  %(levelname)-8s  %(name)s -- %(message)s",
         datefmt="%H:%M:%S",
     )
 

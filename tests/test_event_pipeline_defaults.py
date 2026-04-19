@@ -6,8 +6,8 @@ from event_sentiment.pipeline import EventSentimentPipeline
 
 
 class _FakeRepository:
-    def __init__(self, checkpoint=None, candidates=None) -> None:
-        self.checkpoint = checkpoint
+    def __init__(self, checkpoints=None, candidates=None) -> None:
+        self.checkpoints = checkpoints or {}
         self.candidates = candidates or []
         self.ingestion_rows = []
         self.sentiment_rows = []
@@ -15,8 +15,11 @@ class _FakeRepository:
         self.ticker_rows = []
         self.sector_rows = []
 
-    def get_checkpoint(self, source_name: str):
-        return self.checkpoint
+    def get_checkpoint(self, source_name: str, symbol: str):
+        return self.checkpoints.get(symbol)
+
+    def get_checkpoints(self, source_name: str, symbols: list[str]):
+        return {symbol: self.checkpoints[symbol] for symbol in symbols if symbol in self.checkpoints}
 
     def load_candidate_symbols(self) -> list[str]:
         return list(self.candidates)
@@ -50,8 +53,23 @@ class _FakeIngestionService:
     def __init__(self, repository, config) -> None:
         self.calls = []
 
-    def run(self, start_utc, end_utc, symbols):
-        self.calls.append({"start_utc": start_utc, "end_utc": end_utc, "symbols": symbols})
+    def run(
+        self,
+        start_utc,
+        end_utc,
+        symbols,
+        symbol_start_overrides=None,
+        symbol_resume_overrides=None,
+        resume_checkpoints=True,
+    ):
+        self.calls.append({
+            "start_utc": start_utc,
+            "end_utc": end_utc,
+            "symbols": symbols,
+            "symbol_start_overrides": symbol_start_overrides,
+            "symbol_resume_overrides": symbol_resume_overrides,
+            "resume_checkpoints": resume_checkpoints,
+        })
         return {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
 
 
@@ -89,7 +107,7 @@ def test_pipeline_uses_candidate_symbols_when_symbols_none(monkeypatch) -> None:
 
 def test_pipeline_uses_checkpoint_watermark_as_time_fallback(monkeypatch) -> None:
     watermark = datetime(2026, 1, 10, 15, 0, 0)
-    repository = _FakeRepository(checkpoint={"watermark_published_at_utc": watermark}, candidates=["AAPL"])
+    repository = _FakeRepository(checkpoints={"AAPL": {"watermark_published_at_utc": watermark}}, candidates=["AAPL"])
     config = EventSentimentConfig(checkpoint_overlap_minutes=60)
     fake_ingestion = _FakeIngestionService(repository, config)
 
@@ -101,8 +119,77 @@ def test_pipeline_uses_checkpoint_watermark_as_time_fallback(monkeypatch) -> Non
     explicit_end = datetime(2026, 1, 10, 18, 0, 0, tzinfo=UTC)
     pipeline.run(start_utc=None, end_utc=explicit_end, symbols=None)
 
-    assert fake_ingestion.calls[0]["start_utc"] == datetime(2026, 1, 10, 14, 0, 0, tzinfo=UTC)
+    assert fake_ingestion.calls[0]["start_utc"] is None
     assert fake_ingestion.calls[0]["end_utc"] == explicit_end
+    assert fake_ingestion.calls[0]["resume_checkpoints"] is True
+    assert fake_ingestion.calls[0]["symbol_start_overrides"] == {"AAPL": datetime(2026, 1, 10, 14, 0, 0, tzinfo=UTC)}
+    assert fake_ingestion.calls[0]["symbol_resume_overrides"] == {"AAPL": True}
+
+
+def test_pipeline_uses_initial_backfill_for_symbol_without_checkpoint(monkeypatch) -> None:
+    watermark = datetime(2026, 1, 10, 15, 0, 0)
+    repository = _FakeRepository(
+        checkpoints={"MSFT": {"watermark_published_at_utc": watermark}},
+        candidates=["AAPL", "MSFT"],
+    )
+    config = EventSentimentConfig(checkpoint_overlap_minutes=60, initial_backfill_days=7)
+    fake_ingestion = _FakeIngestionService(repository, config)
+
+    monkeypatch.setattr("event_sentiment.pipeline.NewsIngestionService", lambda repository, config: fake_ingestion)
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", _FakeFinBERTSentimentService)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", _FakeMacroRuleEngine)
+
+    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    explicit_end = datetime(2026, 1, 10, 18, 0, 0, tzinfo=UTC)
+    pipeline.run(start_utc=None, end_utc=explicit_end, symbols=None)
+
+    assert fake_ingestion.calls[0]["symbol_start_overrides"] == {
+        "AAPL": datetime(2026, 1, 3, 18, 0, 0, tzinfo=UTC),
+        "MSFT": datetime(2026, 1, 10, 14, 0, 0, tzinfo=UTC),
+    }
+    assert fake_ingestion.calls[0]["symbol_resume_overrides"] == {"AAPL": False, "MSFT": True}
+
+
+def test_pipeline_forces_backfill_from_checkpoint_when_absence_exceeds_threshold(monkeypatch) -> None:
+    watermark = datetime(2026, 1, 1, 12, 0, 0)
+    repository = _FakeRepository(
+        checkpoints={"AAPL": {"watermark_published_at_utc": watermark, "updated_at": watermark}},
+        candidates=["AAPL"],
+    )
+    config = EventSentimentConfig(candidate_reactivation_backfill_days=7)
+    fake_ingestion = _FakeIngestionService(repository, config)
+
+    monkeypatch.setattr("event_sentiment.pipeline.NewsIngestionService", lambda repository, config: fake_ingestion)
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", _FakeFinBERTSentimentService)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", _FakeMacroRuleEngine)
+
+    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    explicit_end = datetime(2026, 1, 12, 12, 0, 1, tzinfo=UTC)
+    pipeline.run(start_utc=None, end_utc=explicit_end, symbols=None)
+
+    assert fake_ingestion.calls[0]["symbol_start_overrides"] == {"AAPL": watermark.replace(tzinfo=UTC)}
+    assert fake_ingestion.calls[0]["symbol_resume_overrides"] == {"AAPL": False}
+
+
+def test_pipeline_keeps_overlap_resume_when_absence_within_threshold(monkeypatch) -> None:
+    watermark = datetime(2026, 1, 10, 15, 0, 0)
+    repository = _FakeRepository(
+        checkpoints={"AAPL": {"watermark_published_at_utc": watermark, "updated_at": watermark}},
+        candidates=["AAPL"],
+    )
+    config = EventSentimentConfig(checkpoint_overlap_minutes=60, candidate_reactivation_backfill_days=7)
+    fake_ingestion = _FakeIngestionService(repository, config)
+
+    monkeypatch.setattr("event_sentiment.pipeline.NewsIngestionService", lambda repository, config: fake_ingestion)
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", _FakeFinBERTSentimentService)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", _FakeMacroRuleEngine)
+
+    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    explicit_end = datetime(2026, 1, 12, 12, 0, 0, tzinfo=UTC)
+    pipeline.run(start_utc=None, end_utc=explicit_end, symbols=None)
+
+    assert fake_ingestion.calls[0]["symbol_start_overrides"] == {"AAPL": datetime(2026, 1, 10, 14, 0, 0, tzinfo=UTC)}
+    assert fake_ingestion.calls[0]["symbol_resume_overrides"] == {"AAPL": True}
 
 
 def test_pipeline_skips_ingestion_when_no_candidate_symbols(monkeypatch) -> None:

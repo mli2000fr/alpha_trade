@@ -42,6 +42,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from common.utils import configure_root_logging
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -535,9 +537,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
+    configure_root_logging(
         level=getattr(logging, args.log_level),
-        format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+        log_path="signal_aggregator.log",
+        fmt="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 

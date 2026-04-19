@@ -10,7 +10,7 @@ from event_sentiment.pipeline import EventSentimentPipeline
 class _InMemoryRepository:
     def __init__(self) -> None:
         self.candidates = ["AAPL"]
-        self.checkpoint = None
+        self.checkpoints: dict[str, dict] = {}
         self.news_raw: dict[str, dict] = {}
         self.news_ticker_map: dict[tuple[str, str], dict] = {}
         self.news_sentiment: dict[str, dict] = {}
@@ -18,8 +18,11 @@ class _InMemoryRepository:
         self.ticker_daily_features: dict[tuple[str, object], dict] = {}
         self.sector_daily_features: dict[tuple[str, object], dict] = {}
 
-    def get_checkpoint(self, source_name: str):
-        return self.checkpoint
+    def get_checkpoint(self, source_name: str, symbol: str):
+        return self.checkpoints.get(symbol)
+
+    def get_checkpoints(self, source_name: str, symbols: list[str]):
+        return {symbol: self.checkpoints[symbol] for symbol in symbols if symbol in self.checkpoints}
 
     def load_candidate_symbols(self) -> list[str]:
         return list(self.candidates)
@@ -106,7 +109,15 @@ class _InMemoryIngestionService:
         self.repository = repository
         self.calls = 0
 
-    def run(self, start_utc, end_utc, symbols):
+    def run(
+        self,
+        start_utc,
+        end_utc,
+        symbols,
+        symbol_start_overrides=None,
+        symbol_resume_overrides=None,
+        resume_checkpoints=True,
+    ):
         self.calls += 1
         article_id = "alpaca:article-1"
         self.repository.upsert_news_raw([

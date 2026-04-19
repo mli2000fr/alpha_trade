@@ -9,6 +9,7 @@ import requests
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from common.utils import configure_root_logging
 from database.assets import get_symbols_missing_sector, update_stock_metadata_sector
 from service.finnhub.clientFinnhub import MIN_REQUEST_INTERVAL_SECONDS, fetch_company_profile
 
@@ -134,7 +135,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-	logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+	configure_root_logging(
+		level=logging.INFO,
+		log_path="update_sector.log",
+		fmt="%(asctime)s %(levelname)s %(message)s",
+	)
 	args = _build_arg_parser().parse_args()
 	update_missing_sectors(limit=args.limit, sleep_seconds=args.sleep_seconds, log_every=args.log_every)
 

@@ -1,7 +1,7 @@
 ﻿import hashlib
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 import dateutil.parser
 import requests
@@ -56,92 +56,161 @@ class NewsIngestionService:
             raw_payload=payload,
             is_major_event=major_flag,
         )
-    def run(self, start_utc: datetime, end_utc: datetime, symbols: list[str] | None = None) -> dict[str, int]:
+
+    @staticmethod
+    def _normalize_symbol_list(symbols: list[str] | None) -> list[str]:
+        if not symbols:
+            return []
+        return sorted({str(symbol).strip().upper() for symbol in symbols if symbol and str(symbol).strip()})
+
+    def _resolve_symbol_start(self, symbol: str, start_utc: datetime | None, end_utc: datetime) -> datetime:
+        if start_utc is not None:
+            return start_utc
+        checkpoint = self.repository.get_checkpoint(self.config.source_name, symbol)
+        watermark = checkpoint.get("watermark_published_at_utc") if checkpoint else None
+        if watermark is not None:
+            return watermark.replace(tzinfo=timezone.utc) - timedelta(minutes=self.config.checkpoint_overlap_minutes)
+        return end_utc - timedelta(days=self.config.initial_backfill_days)
+
+    def _run_symbol(
+        self,
+        symbol: str,
+        start_utc: datetime,
+        end_utc: datetime,
+        resume_checkpoint: bool,
+    ) -> dict[str, int]:
         summary = {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
-        checkpoint = self.repository.get_checkpoint(self.config.source_name)
-        page_token = checkpoint["next_page_token"] if checkpoint else None
+        checkpoint = self.repository.get_checkpoint(self.config.source_name, symbol)
+        page_token = checkpoint["next_page_token"] if checkpoint and resume_checkpoint else None
         previous_watermark = checkpoint["watermark_published_at_utc"] if checkpoint else None
+
         self.repository.upsert_checkpoint(
             self.config.source_name,
+            symbol,
             previous_watermark,
             page_token,
             "running",
         )
-        with requests.Session() as session:
-            for articles, next_token in iter_news_pages(
-                start_utc=start_utc,
-                end_utc=end_utc,
-                symbols=symbols,
-                limit=self.config.page_limit,
-                page_token=page_token,
-                session=session,
-            ):
-                if not articles:
-                    break
-                normalized = [self._normalize_article(payload) for payload in articles]
-                summary["fetched"] += len(normalized)
-                existing = self.repository.get_existing_article_ids([article.article_id for article in normalized])
-                summary["deduped"] += len(existing)
-                raw_rows: list[dict[str, Any]] = []
-                ticker_rows: list[dict[str, Any]] = []
-                ticker_union = sorted({ticker for article in normalized for ticker in article.tickers})
-                sector_lookup = self.mapper.resolve(ticker_union, allow_fallback=self.config.allow_sector_fallback)
-                for article in normalized:
-                    dedupe_key = "|".join([
-                        article.headline,
-                        article.source,
-                        article.url or "",
-                        article.published_at_utc.isoformat(),
-                    ])
-                    dedupe_hash = hashlib.sha256(dedupe_key.encode("utf-8")).hexdigest()
-                    raw_rows.append({
-                        "article_id": article.article_id,
-                        "headline": article.headline,
-                        "summary": article.summary,
-                        "content": article.content,
-                        "source": article.source,
-                        "author": article.author,
-                        "published_at_utc": article.published_at_utc.replace(tzinfo=None),
-                        "event_timestamp_utc": article.event_timestamp_utc.replace(tzinfo=None),
-                        "event_timestamp_ny": article.event_timestamp_ny.replace(tzinfo=None),
-                        "effective_trade_date": article.effective_trade_date,
-                        "market_session_tag": article.market_session_tag,
-                        "url": article.url,
-                        "ingestion_source": self.config.provider_name,
-                        "dedupe_hash": dedupe_hash,
-                        "is_major_event": article.is_major_event,
-                        "raw_payload": article.raw_payload,
-                    })
-                    for idx, symbol in enumerate(article.tickers):
-                        sector_info = sector_lookup.get(symbol, {})
-                        ticker_rows.append({
+
+        try:
+            with requests.Session() as session:
+                for articles, next_token in iter_news_pages(
+                    start_utc=start_utc,
+                    end_utc=end_utc,
+                    symbols=[symbol],
+                    limit=self.config.page_limit,
+                    page_token=page_token,
+                    session=session,
+                ):
+                    if not articles:
+                        break
+                    normalized = [self._normalize_article(payload) for payload in articles]
+                    summary["fetched"] += len(normalized)
+                    existing = self.repository.get_existing_article_ids([article.article_id for article in normalized])
+                    summary["deduped"] += len(existing)
+                    raw_rows: list[dict[str, Any]] = []
+                    ticker_rows: list[dict[str, Any]] = []
+                    ticker_union = sorted({ticker for article in normalized for ticker in article.tickers})
+                    sector_lookup = self.mapper.resolve(ticker_union, allow_fallback=self.config.allow_sector_fallback)
+                    for article in normalized:
+                        dedupe_key = "|".join([
+                            article.headline,
+                            article.source,
+                            article.url or "",
+                            article.published_at_utc.isoformat(),
+                        ])
+                        dedupe_hash = hashlib.sha256(dedupe_key.encode("utf-8")).hexdigest()
+                        raw_rows.append({
                             "article_id": article.article_id,
-                            "symbol": symbol,
-                            "sector": sector_info.get("sector"),
-                            "sector_source": sector_info.get("sector_source"),
-                            "sector_updated_at": sector_info.get("sector_updated_at"),
-                            "is_primary_ticker": int(idx == 0),
+                            "headline": article.headline,
+                            "summary": article.summary,
+                            "content": article.content,
+                            "source": article.source,
+                            "author": article.author,
+                            "published_at_utc": article.published_at_utc.replace(tzinfo=None),
+                            "event_timestamp_utc": article.event_timestamp_utc.replace(tzinfo=None),
+                            "event_timestamp_ny": article.event_timestamp_ny.replace(tzinfo=None),
+                            "effective_trade_date": article.effective_trade_date,
+                            "market_session_tag": article.market_session_tag,
+                            "url": article.url,
+                            "ingestion_source": self.config.provider_name,
+                            "dedupe_hash": dedupe_hash,
+                            "is_major_event": article.is_major_event,
+                            "raw_payload": article.raw_payload,
                         })
-                summary["landed"] += self.repository.upsert_news_raw(raw_rows)
-                summary["ticker_maps"] += self.repository.upsert_news_ticker_map(ticker_rows)
-                watermark = max(article.published_at_utc for article in normalized).replace(tzinfo=None)
-                self.repository.upsert_checkpoint(self.config.source_name, watermark, next_token, "running")
-                page_token = next_token
-                LOGGER.info(
-                    "News ingestion page | fetched=%s deduped=%s landed=%s ticker_maps=%s next_token=%s",
-                    len(normalized),
-                    len(existing),
-                    len(raw_rows),
-                    len(ticker_rows),
-                    next_token,
-                )
-                if not next_token:
-                    break
-                time.sleep(self.config.sleep_between_requests)
-        self.repository.upsert_checkpoint(
-            self.config.source_name,
-            end_utc.replace(tzinfo=None),
-            None,
-            "success",
-        )
+                        for idx, article_symbol in enumerate(article.tickers):
+                            sector_info = sector_lookup.get(article_symbol, {})
+                            ticker_rows.append({
+                                "article_id": article.article_id,
+                                "symbol": article_symbol,
+                                "sector": sector_info.get("sector"),
+                                "sector_source": sector_info.get("sector_source"),
+                                "sector_updated_at": sector_info.get("sector_updated_at"),
+                                "is_primary_ticker": int(idx == 0),
+                            })
+                    summary["landed"] += self.repository.upsert_news_raw(raw_rows)
+                    summary["ticker_maps"] += self.repository.upsert_news_ticker_map(ticker_rows)
+                    watermark = max(article.published_at_utc for article in normalized).replace(tzinfo=None)
+                    self.repository.upsert_checkpoint(self.config.source_name, symbol, watermark, next_token, "running")
+                    page_token = next_token
+                    LOGGER.info(
+                        "News ingestion page | symbol=%s fetched=%s deduped=%s landed=%s ticker_maps=%s next_token=%s",
+                        symbol,
+                        len(normalized),
+                        len(existing),
+                        len(raw_rows),
+                        len(ticker_rows),
+                        next_token,
+                    )
+                    if not next_token:
+                        break
+                    time.sleep(self.config.sleep_between_requests)
+            self.repository.upsert_checkpoint(
+                self.config.source_name,
+                symbol,
+                end_utc.replace(tzinfo=None),
+                None,
+                "success",
+            )
+            return summary
+        except Exception as exc:
+            self.repository.upsert_checkpoint(
+                self.config.source_name,
+                symbol,
+                previous_watermark,
+                page_token,
+                "failed",
+                last_error=str(exc),
+            )
+            raise
+
+    def run(
+        self,
+        start_utc: datetime | None,
+        end_utc: datetime,
+        symbols: list[str] | None = None,
+        symbol_start_overrides: dict[str, datetime] | None = None,
+        symbol_resume_overrides: dict[str, bool] | None = None,
+        resume_checkpoints: bool = True,
+    ) -> dict[str, int]:
+        summary = {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
+        normalized_symbols = self._normalize_symbol_list(symbols)
+        for symbol in normalized_symbols:
+            effective_start = (
+                symbol_start_overrides.get(symbol)
+                if symbol_start_overrides and symbol in symbol_start_overrides
+                else self._resolve_symbol_start(symbol, start_utc=start_utc, end_utc=end_utc)
+            )
+            symbol_summary = self._run_symbol(
+                symbol=symbol,
+                start_utc=effective_start,
+                end_utc=end_utc,
+                resume_checkpoint=(
+                    symbol_resume_overrides.get(symbol)
+                    if symbol_resume_overrides and symbol in symbol_resume_overrides
+                    else resume_checkpoints and start_utc is None
+                ),
+            )
+            for key in summary:
+                summary[key] += symbol_summary[key]
         return summary
