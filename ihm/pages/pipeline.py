@@ -101,9 +101,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
         with col5:
             allow_outside_rth = st.checkbox(
-                "Execution hors RTH",
+                "Execution hors RTH (file d'attente pour l'ouverture)",
                 value=bool(st.session_state.get("pipeline_allow_outside_rth", False)),
                 key="pipeline_allow_outside_rth",
+                help="Soumet les ordres meme si le marche est ferme. En paper/live, ils restent en attente et seront traites a l'ouverture suivante.",
             )
         with col6:
             auto_rebalance = st.checkbox(

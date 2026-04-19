@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
-
-import pytest
 from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.config import ExecutionConfig
 from execution_engine.db_io import ExecutionRepository
@@ -26,6 +24,16 @@ def _filled_order(intent_id: str = "i1", symbol: str = "AAPL") -> BrokerOrder:
         broker_order_id="bo1", client_order_id="c1", intent_id=intent_id,
         symbol=symbol, side="buy", qty=100, filled_qty=100,
         avg_fill_price=150.2, status=OrderStatus.FILLED, order_type="market",
+        limit_price=None, stop_price=None, trail_percent=None,
+        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+    )
+
+
+def _accepted_order(intent_id: str = "i1", symbol: str = "AAPL") -> BrokerOrder:
+    return BrokerOrder(
+        broker_order_id="bo1", client_order_id="c1", intent_id=intent_id,
+        symbol=symbol, side="buy", qty=100, filled_qty=0,
+        avg_fill_price=None, status=OrderStatus.SUBMITTED, order_type="market",
         limit_price=None, stop_price=None, trail_percent=None,
         created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
     )
@@ -94,6 +102,25 @@ class TestExecutor:
         broker.is_market_open.return_value = False
         metrics = executor.execute_run(risk_run_id="r1")
         broker.submit_intent.assert_not_called()
+
+    def test_market_closed_with_allow_outside_rth_submits_and_skips_polling(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True)
+        executor, repo, broker, _ = _make_executor(cfg)
+        broker.is_market_open.return_value = False
+        broker.submit_intent.return_value = _accepted_order()
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        assert metrics["targets"] == 1
+        assert metrics["submitted"] == 1
+        assert metrics["filled"] == 0
+        broker.submit_intent.assert_called_once()
+        broker.poll_order_status.assert_not_called()
+        assert any(
+            "orders queued" in call.args[0]["message"]
+            for call in repo.insert_execution_event.call_args_list
+            if call.args and isinstance(call.args[0], dict)
+        )
 
     def test_handles_partial_fill(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True)

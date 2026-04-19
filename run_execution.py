@@ -328,7 +328,7 @@ def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allo
         print(f"{YELLOW}[!] {targets_n} cible(s) chargee(s) mais AUCUN ordre soumis.{RESET}")
         print(f"{YELLOW}    Cause probable : marche ferme (week-end ou hors RTH).{RESET}")
         print(f"{YELLOW}    Prochaine ouverture : lundi 09:30 ET.{RESET}")
-        print(f"{YELLOW}    Pour tester hors horaires : utilise 'simulate' ou ajoute --allow-outside-rth{RESET}")
+        print(f"{YELLOW}    Pour forcer la soumission : coche 'Execution hors RTH' dans l'IHM ou ajoute --allow-outside-rth{RESET}")
     elif submitted_n > 0 and metrics.get("filled", 0) == 0 and not PRESETS[mode]["dry_run"]:
         print(f"{GREEN}[OK] {submitted_n} ordre(s) soumis chez Alpaca.{RESET}")
         print(f"{YELLOW}    Marche actuellement ferme -> les ordres seront remplis a l'ouverture.{RESET}")
