@@ -58,10 +58,12 @@ class SentimentBoostConfig:
                            (sector_impact_score normalisé). Défaut 10 %.
     quant_weight         : fraction conservée pour le score quantitatif originel.
                            Défaut 75 %. La somme des trois doit être 1.0.
-    lookback_days        : fenêtre en jours pour la moyenne glissante du sentiment
-                           (robustesse au bruit d'un seul article). Défaut 5 jours.
-    min_news_count       : nb minimal d'articles pour activer le boost sentiment
-                           (évite les signaux sur 1 seul article). Défaut 2.
+    lookback_days              : fenêtre en jours pour la moyenne glissante du sentiment
+                                 (robustesse au bruit d'un seul article). Défaut 5 jours.
+    min_news_count             : nb minimal d'articles pour activer le boost sentiment
+                                 (évite les signaux sur 1 seul article). Défaut 2.
+    time_decay_half_life_days  : demi-vie (en jours) de la décroissance exponentielle
+                                 appliquée aux jours anciens dans la fenêtre. Défaut 2 jours.
 
     Validation : sentiment_weight + macro_sector_weight + quant_weight doit ≈ 1.0.
     Pour calibrer les poids, calculer IC (Information Coefficient) sentiment → retour
@@ -72,6 +74,7 @@ class SentimentBoostConfig:
     quant_weight: float = 0.75
     lookback_days: int = 5
     min_news_count: int = 2
+    time_decay_half_life_days: float = 2.0
 
     def __post_init__(self) -> None:
         total = self.sentiment_weight + self.macro_sector_weight + self.quant_weight
@@ -84,6 +87,8 @@ class SentimentBoostConfig:
             raise ValueError("lookback_days doit être >= 1.")
         if self.min_news_count < 1:
             raise ValueError("min_news_count doit être >= 1.")
+        if self.time_decay_half_life_days <= 0:
+            raise ValueError("time_decay_half_life_days doit être > 0.")
 
 
 class SentimentSignalAggregator:
@@ -187,19 +192,48 @@ class SentimentSignalAggregator:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _aggregate_ticker_window(ticker_df: pd.DataFrame, min_news_count: int) -> pd.DataFrame:
+    def _compute_time_decay_weight(
+        trade_dates: pd.Series,
+        reference_date: date,
+        half_life_days: float,
+    ) -> pd.Series:
+        """
+        Calcule un poids de décroissance exponentielle par date.
+
+        Poids = 0.5 ** (age_jours / half_life_days)
+        → le poids est divisé par 2 tous les `half_life_days` jours.
+        """
+        normalized_dates = pd.Series(pd.to_datetime(trade_dates, errors="coerce"), index=trade_dates.index).dt.floor("D")
+        reference_ts = pd.Timestamp(reference_date).normalize()
+        age_days = (reference_ts - normalized_dates).dt.days.clip(lower=0)
+        return pd.Series(np.power(0.5, age_days / half_life_days), index=trade_dates.index, dtype=float)
+
+    @staticmethod
+    def _aggregate_ticker_window(
+        ticker_df: pd.DataFrame,
+        min_news_count: int,
+        reference_date: date,
+        half_life_days: float,
+    ) -> pd.DataFrame:
         """
         Agrège les N derniers jours de sentiment par symbole.
-        Pondère par news_count pour donner plus de poids aux jours avec plus d'articles.
+        Pondère par news_count et par récence pour donner plus de poids aux jours
+        récents et aux jours avec plus d'articles.
         Retourne : [symbol, sentiment_net_agg, major_event_flag_agg, total_news]
         """
         if ticker_df.empty:
             return pd.DataFrame(columns=["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news"])
 
         df = ticker_df.copy()
+        df["trade_date"] = pd.Series(pd.to_datetime(df["trade_date"], errors="coerce"), index=df.index).dt.floor("D")
         df["news_count_1d"] = df["news_count_1d"].fillna(0).astype(float)
         df["sentiment_net_mean_1d"] = df["sentiment_net_mean_1d"].fillna(0.0)
         df["major_event_flag"] = df["major_event_flag"].fillna(0).astype(int)
+        df["time_decay_weight"] = SentimentSignalAggregator._compute_time_decay_weight(
+            df["trade_date"],
+            reference_date=reference_date,
+            half_life_days=half_life_days,
+        )
 
         def _weighted_avg(group: pd.DataFrame) -> pd.Series:
             total_news = group["news_count_1d"].sum()
@@ -210,7 +244,12 @@ class SentimentSignalAggregator:
                     "total_news": int(total_news),
                     "signal_active": False,
                 })
-            weights = group["news_count_1d"] / total_news
+            effective_weights = group["news_count_1d"] * group["time_decay_weight"]
+            weight_sum = effective_weights.sum()
+            if weight_sum <= 0:
+                effective_weights = group["news_count_1d"]
+                weight_sum = effective_weights.sum()
+            weights = effective_weights / weight_sum
             weighted_net = (group["sentiment_net_mean_1d"] * weights).sum()
             return pd.Series({
                 "sentiment_net_agg": float(weighted_net),
@@ -219,33 +258,60 @@ class SentimentSignalAggregator:
                 "signal_active": True,
             })
 
-        return df.groupby("symbol", as_index=False).apply(_weighted_avg).reset_index(drop=True)
+        rows: list[dict[str, object]] = []
+        for symbol, group in df.groupby("symbol", sort=False):
+            aggregated = _weighted_avg(group)
+            rows.append({"symbol": symbol, **aggregated.to_dict()})
+        return pd.DataFrame(rows)
 
     @staticmethod
-    def _aggregate_sector_window(sector_df: pd.DataFrame) -> pd.DataFrame:
+    def _aggregate_sector_window(
+        sector_df: pd.DataFrame,
+        reference_date: date,
+        half_life_days: float,
+    ) -> pd.DataFrame:
         """
         Agrège les N derniers jours d'impact macro par secteur.
+        La moyenne est pondérée par récence pour atténuer les impacts anciens.
         Retourne : [sector, sector_impact_agg, macro_event_flag_agg]
         """
         if sector_df.empty:
             return pd.DataFrame(columns=["sector", "sector_impact_agg", "macro_event_flag_agg"])
 
         df = sector_df.copy()
+        df["trade_date"] = pd.Series(pd.to_datetime(df["trade_date"], errors="coerce"), index=df.index).dt.floor("D")
         df["sector_impact_score"] = df["sector_impact_score"].fillna(0.0)
         df["macro_event_flag"] = df["macro_event_flag"].fillna(0).astype(int)
-
-        return (
-            df.groupby("sector", as_index=False)
-            .agg(
-                sector_impact_agg=("sector_impact_score", "mean"),
-                macro_event_flag_agg=("macro_event_flag", "max"),
-            )
+        df["time_decay_weight"] = SentimentSignalAggregator._compute_time_decay_weight(
+            df["trade_date"],
+            reference_date=reference_date,
+            half_life_days=half_life_days,
         )
+
+        def _weighted_avg(group: pd.DataFrame) -> pd.Series:
+            weights = group["time_decay_weight"]
+            weight_sum = weights.sum()
+            if weight_sum <= 0:
+                weights = pd.Series(1.0, index=group.index, dtype=float)
+                weight_sum = float(len(group.index))
+            normalized_weights = weights / weight_sum
+            weighted_impact = (group["sector_impact_score"] * normalized_weights).sum()
+            return pd.Series({
+                "sector_impact_agg": float(weighted_impact),
+                "macro_event_flag_agg": int(group["macro_event_flag"].max()),
+            })
+
+        rows: list[dict[str, object]] = []
+        for sector, group in df.groupby("sector", sort=False):
+            aggregated = _weighted_avg(group)
+            rows.append({"sector": sector, **aggregated.to_dict()})
+        return pd.DataFrame(rows)
 
     @staticmethod
     def _normalize_to_01(series: pd.Series) -> pd.Series:
         """Normalisation min-max avec winsorisation 1%-99%."""
-        numeric = pd.to_numeric(series, errors="coerce")
+        coerced_values = [pd.to_numeric(value, errors="coerce") for value in series.tolist()]
+        numeric = pd.Series(coerced_values, index=series.index, dtype=float)
         non_null = numeric.dropna()
         if non_null.empty:
             return pd.Series(0.5, index=numeric.index, dtype=float)
@@ -290,8 +356,17 @@ class SentimentSignalAggregator:
         sector_df = self._load_sector_sentiment(sectors, ref_date) if sectors else pd.DataFrame()
 
         # --- Agrégation fenêtrée ---
-        ticker_agg = self._aggregate_ticker_window(ticker_df, self.config.min_news_count)
-        sector_agg = self._aggregate_sector_window(sector_df)
+        ticker_agg = self._aggregate_ticker_window(
+            ticker_df,
+            min_news_count=self.config.min_news_count,
+            reference_date=ref_date,
+            half_life_days=self.config.time_decay_half_life_days,
+        )
+        sector_agg = self._aggregate_sector_window(
+            sector_df,
+            reference_date=ref_date,
+            half_life_days=self.config.time_decay_half_life_days,
+        )
 
         LOGGER.info(
             "SentimentSignalAggregator | trade_date=%s symboles=%s ticker_signaux=%s secteurs=%s",
@@ -322,7 +397,7 @@ class SentimentSignalAggregator:
 
         result["sentiment_net_agg"] = result["sentiment_net_agg"].fillna(0.0)
         result["sector_impact_agg"] = result["sector_impact_agg"].fillna(0.0)
-        result["signal_active"] = result["signal_active"].fillna(False)
+        result["signal_active"] = result["signal_active"].astype("boolean").fillna(False).astype(bool)
 
         # --- Normalisation des signaux sentiment en [0, 1] ---
         # sentiment_net_agg ∈ [-1, 1] → normalisé → 0.5 = neutre
@@ -523,6 +598,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Nombre minimal d'articles pour activer le boost. Défaut 2.",
     )
     parser.add_argument(
+        "--time-decay-half-life-days",
+        type=float,
+        default=2.0,
+        help=(
+            "Demi-vie en jours de la décroissance temporelle exponentielle appliquee "
+            "aux news/scores anciens dans la fenetre. Défaut 2.0."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -570,6 +654,7 @@ def main(argv: list[str] | None = None) -> int:
         quant_weight=quant_weight,
         lookback_days=args.lookback_days,
         min_news_count=args.min_news_count,
+        time_decay_half_life_days=args.time_decay_half_life_days,
     )
 
     from database.connection import get_sqlalchemy_engine
