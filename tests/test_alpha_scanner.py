@@ -225,7 +225,7 @@ def test_enrich_and_filter_equities_logs_exclusion_breakdown(caplog) -> None:
         enriched = scanner._enrich_and_filter_equities(merged, metadata)
 
     assert list(enriched["symbol"]) == ["AAA"]
-    assert "détail={'metadata_missing': 1, 'inactive': 1, 'etf_name': 1}" in caplog.text
+    assert "detail={'metadata_missing': 1, 'inactive': 1, 'etf_name': 1}" in caplog.text
 
 
 def test_apply_sector_neutrality_caps_each_sector() -> None:

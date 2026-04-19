@@ -32,6 +32,7 @@ def engine():
                 trade_date DATE, broker_mode VARCHAR(10), dry_run BOOLEAN,
                 status VARCHAR(20), started_at TIMESTAMP, completed_at TIMESTAMP,
                 error_message TEXT, total_targets INT, total_submitted INT, total_filled INT,
+                account_id VARCHAR(64),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
@@ -77,6 +78,7 @@ def engine():
                 exec_run_id VARCHAR(32), broker_mode VARCHAR(10),
                 symbol VARCHAR(20), qty DOUBLE, avg_entry_price DOUBLE,
                 market_value DOUBLE, unrealized_pnl DOUBLE,
+                account_id VARCHAR(64),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))

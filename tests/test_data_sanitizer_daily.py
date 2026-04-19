@@ -229,7 +229,8 @@ def test_log_failed_audit_summary_logs_failed_rows(monkeypatch, caplog, sanitize
     with caplog.at_level("INFO", logger="dataIntegrityEngine.data_sanitizer_daily"):
         sanitizer._log_failed_audit_summary(fake_conn, limit=5)
 
-    assert any("Audits en échec détectés dans cleaning_audit_log" in message for message in caplog.messages)
+    # Compatibilité logs sans accents (Windows)
+    assert any("Audits en echec detectes dans cleaning_audit_log" in message or "Audits en échec détectés dans cleaning_audit_log" in message for message in caplog.messages)
     assert any("Audit failed summary | symbol=AAPL" in message for message in caplog.messages)
 
 
@@ -366,5 +367,3 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
         },
     )]
     assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", 0, 0)]
-
-

@@ -56,6 +56,7 @@ SQLITE_SCHEMA = """
         cost_basis_after DOUBLE,
         cash_impact DOUBLE DEFAULT 0,
         fractional_shares DOUBLE DEFAULT 0,
+        account_id VARCHAR(64),
         applied_at TIMESTAMP
     );
     CREATE TABLE portfolio_cash_ledger (
@@ -66,6 +67,7 @@ SQLITE_SCHEMA = """
         amount DOUBLE NOT NULL,
         currency VARCHAR(5) DEFAULT 'USD',
         description VARCHAR(255),
+        account_id VARCHAR(64),
         created_at TIMESTAMP
     );
     CREATE TABLE broker_positions_snapshots (
