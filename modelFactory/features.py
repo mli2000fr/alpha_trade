@@ -1,6 +1,8 @@
 """modelFactory/features.py — Feature engineering à partir de stock_bars_daily."""
 from __future__ import annotations
 
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 
@@ -23,12 +25,33 @@ FEATURE_COLUMNS: list[str] = [
     "is_filled",
 ]
 
+# Features sentiment auxiliaires (depuis ticker_daily_sentiment_features)
+SENTIMENT_FEATURE_COLUMNS: list[str] = [
+    "sentiment_net_mean_1d",
+    "sentiment_confidence_mean_1d",
+    "news_count_log",
+    "major_event_flag",
+]
 
-def compute_features(df: pd.DataFrame) -> pd.DataFrame:
+
+def get_feature_columns(include_sentiment: bool = False) -> list[str]:
+    """Retourne la liste complète des colonnes features (OHLCV + optionnel sentiment)."""
+    cols = list(FEATURE_COLUMNS)
+    if include_sentiment:
+        cols.extend(SENTIMENT_FEATURE_COLUMNS)
+    return cols
+
+
+def compute_features(
+    df: pd.DataFrame,
+    sentiment_df: Optional[pd.DataFrame] = None,
+    include_sentiment: bool = False,
+) -> pd.DataFrame:
     """Ajoute les features dérivées à un DataFrame de bars trié par date.
 
     Le DataFrame d'entrée doit avoir : open, high, low, close, volume, adj_close, vwap, daily_return, is_filled.
-    Retourne une copie avec les colonnes FEATURE_COLUMNS ajoutées (certaines existantes mises à jour).
+    Si include_sentiment=True et sentiment_df fourni, merge les colonnes sentiment sur (symbol, date).
+    Retourne une copie avec les colonnes features ajoutées.
     Les premières lignes avec NaN rolling sont supprimées.
     """
     df = df.copy().sort_values("date").reset_index(drop=True)
@@ -77,8 +100,32 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # --- is_filled as float ---
     df["is_filled"] = df["is_filled"].astype(float)
 
+    # --- Sentiment features (optional) ---
+    if include_sentiment:
+        if sentiment_df is not None and not sentiment_df.empty:
+            sent = sentiment_df.copy()
+            # Normaliser la colonne date pour le merge
+            if "trade_date" in sent.columns:
+                sent = sent.rename(columns={"trade_date": "date"})
+            sent["date"] = pd.to_datetime(sent["date"])
+            sent["news_count_log"] = np.log1p(sent.get("news_count_1d", pd.Series(dtype=float)).fillna(0))
+            merge_cols = ["date", "sentiment_net_mean_1d", "sentiment_confidence_mean_1d", "news_count_log", "major_event_flag"]
+            if "symbol" in sent.columns and "symbol" in df.columns:
+                merge_cols.insert(0, "symbol")
+            sent = sent[[c for c in merge_cols if c in sent.columns]]
+            df = df.merge(sent, on=[c for c in ["symbol", "date"] if c in sent.columns and c in df.columns], how="left")
+        # Remplir les jours sans news par des valeurs neutres
+        for col in SENTIMENT_FEATURE_COLUMNS:
+            if col not in df.columns:
+                df[col] = 0.0
+            else:
+                df[col] = df[col].fillna(0.0).astype(float)
+
+    # Determine active feature columns
+    active_features = get_feature_columns(include_sentiment)
+
     # Drop warm-up NaN rows (rolling windows need ~60 rows)
-    df = df.dropna(subset=FEATURE_COLUMNS).reset_index(drop=True)
+    df = df.dropna(subset=active_features).reset_index(drop=True)
     return df
 
 

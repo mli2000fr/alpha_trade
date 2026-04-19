@@ -59,6 +59,7 @@ def train_symbol(
     bars_df: "pd.DataFrame",
     cfg: TrainingConfig,
     engine: Optional[Engine] = None,
+    sentiment_df: "pd.DataFrame | None" = None,
 ) -> TrainResult:
     """Entraîne un modèle LSTM+Attention pour un symbole unique.
 
@@ -88,7 +89,7 @@ def train_symbol(
             return TrainResult(symbol, run_id, "skipped", skip_reason=reason)
 
         # --- DataModule ---
-        dm = SymbolDataModule(bars_df, cfg.data, cfg.model)
+        dm = SymbolDataModule(bars_df, cfg.data, cfg.model, sentiment_df=sentiment_df)
         dm.setup()
 
         if dm.train_ds is None or dm.val_ds is None or len(dm.train_ds) == 0 or len(dm.val_ds) == 0:

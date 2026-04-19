@@ -21,7 +21,7 @@ from modelFactory.dataset import (
     build_sequences,
     chrono_split,
 )
-from modelFactory.features import FEATURE_COLUMNS, build_target, compute_features
+from modelFactory.features import FEATURE_COLUMNS, SENTIMENT_FEATURE_COLUMNS, build_target, compute_features, get_feature_columns
 from modelFactory.model import LSTMAttentionClassifier, LSTMAttentionModule, TemporalAttention
 
 
@@ -52,6 +52,21 @@ def _make_bars(n: int = 600) -> pd.DataFrame:
         "vwap": (high + low + close) / 3,
         "daily_return": daily_return,
         "is_filled": 0,
+    })
+
+
+def _make_sentiment(bars_df: pd.DataFrame) -> pd.DataFrame:
+    """Génère un DataFrame de sentiment synthétique aligné sur les bars."""
+    dates = bars_df["date"].unique()
+    n = len(dates)
+    np.random.seed(99)
+    return pd.DataFrame({
+        "symbol": "TEST",
+        "trade_date": dates,
+        "news_count_1d": np.random.randint(0, 10, size=n).astype(float),
+        "sentiment_net_mean_1d": np.random.uniform(-1, 1, size=n),
+        "sentiment_confidence_mean_1d": np.random.uniform(0, 1, size=n),
+        "major_event_flag": np.random.choice([0.0, 1.0], size=n),
     })
 
 
@@ -122,6 +137,30 @@ class TestFeatures:
         assert target.isin([0.0, 1.0]).sum() + target.isna().sum() == len(target)
         # Last 5 rows should be NaN
         assert target.iloc[-5:].isna().all()
+
+    def test_compute_features_with_sentiment(self):
+        bars = _make_bars(200)
+        sent = _make_sentiment(bars)
+        df = compute_features(bars, sentiment_df=sent, include_sentiment=True)
+        all_cols = get_feature_columns(include_sentiment=True)
+        for col in all_cols:
+            assert col in df.columns, f"Missing column: {col}"
+        assert not df[all_cols].isna().any().any()
+
+    def test_compute_features_sentiment_missing_days_filled(self):
+        """Jours sans news doivent être remplis avec 0.0."""
+        bars = _make_bars(200)
+        # Sentiment vide
+        sent = pd.DataFrame(columns=["symbol", "trade_date", "news_count_1d",
+                                       "sentiment_net_mean_1d", "sentiment_confidence_mean_1d", "major_event_flag"])
+        df = compute_features(bars, sentiment_df=sent, include_sentiment=True)
+        for col in SENTIMENT_FEATURE_COLUMNS:
+            assert (df[col] == 0.0).all(), f"{col} should be 0.0 when no sentiment data"
+
+    def test_get_feature_columns_flag(self):
+        base = get_feature_columns(False)
+        extended = get_feature_columns(True)
+        assert len(extended) == len(base) + len(SENTIMENT_FEATURE_COLUMNS)
 
 
 # ===========================================================================
@@ -280,3 +319,33 @@ class TestEndToEndSynthetic:
         x, y = dm.train_ds[0]
         assert x.shape == (20, len(FEATURE_COLUMNS))
 
+    def test_datamodule_with_sentiment(self):
+        """Test DataModule avec features sentiment activées."""
+        bars = _make_bars(600)
+        sent = _make_sentiment(bars)
+        data_cfg = DataConfig(sequence_length=20, forecast_horizon=5,
+                              min_history_days=100, include_sentiment_features=True)
+        model_cfg = ModelConfig(batch_size=16)
+        from modelFactory.dataset import SymbolDataModule
+        dm = SymbolDataModule(bars, data_cfg, model_cfg, sentiment_df=sent)
+        dm.setup()
+        assert dm.train_ds is not None
+        expected_features = len(FEATURE_COLUMNS) + len(SENTIMENT_FEATURE_COLUMNS)
+        assert dm.n_features == expected_features
+        x, y = dm.train_ds[0]
+        assert x.shape == (20, expected_features)
+        # Scaler state_dict must include sentiment feature names
+        sd = dm.scaler.state_dict()
+        assert len(sd["features"]) == expected_features
+
+    def test_datamodule_without_sentiment_unchanged(self):
+        """Sans flag sentiment, le comportement reste identique."""
+        bars = _make_bars(600)
+        data_cfg = DataConfig(sequence_length=20, forecast_horizon=5, min_history_days=100)
+        model_cfg = ModelConfig(batch_size=16)
+        from modelFactory.dataset import SymbolDataModule
+        dm = SymbolDataModule(bars, data_cfg, model_cfg)
+        dm.setup()
+        assert dm.n_features == len(FEATURE_COLUMNS)
+        x, _ = dm.train_ds[0]
+        assert x.shape == (20, len(FEATURE_COLUMNS))

@@ -24,6 +24,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--hidden-size", type=int, default=128)
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
+    p.add_argument("--include-sentiment", action="store_true", default=False,
+                   help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
     p.add_argument("--accelerator", type=str, default="auto", choices=["auto", "cpu", "gpu"])
     p.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return p
@@ -40,7 +42,11 @@ def main(args: list[str] | None = None) -> None:
     )
 
     cfg = TrainingConfig(
-        data=DataConfig(sequence_length=opts.sequence_length, forecast_horizon=opts.forecast_horizon),
+        data=DataConfig(
+            sequence_length=opts.sequence_length,
+            forecast_horizon=opts.forecast_horizon,
+            include_sentiment_features=opts.include_sentiment,
+        ),
         model=ModelConfig(batch_size=opts.batch_size, hidden_size=opts.hidden_size, max_epochs=opts.max_epochs),
         artifacts_dir=Path(opts.artifacts_dir),
         max_workers=opts.max_workers,

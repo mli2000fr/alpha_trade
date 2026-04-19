@@ -12,7 +12,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from modelFactory.config import DataConfig, ModelConfig
-from modelFactory.features import FEATURE_COLUMNS, build_target, compute_features
+from modelFactory.features import FEATURE_COLUMNS, build_target, compute_features, get_feature_columns
 
 LOGGER = logging.getLogger(__name__)
 
@@ -48,10 +48,10 @@ def chrono_split(df: pd.DataFrame, train_ratio: float, val_ratio: float) -> Chro
 class FeatureScaler:
     """Standard scaler fit on train split only."""
 
-    def __init__(self) -> None:
+    def __init__(self, feature_names: list[str] | None = None) -> None:
         self.mean_: Optional[np.ndarray] = None
         self.std_: Optional[np.ndarray] = None
-        self.feature_names: list[str] = FEATURE_COLUMNS
+        self.feature_names: list[str] = feature_names or list(FEATURE_COLUMNS)
 
     def fit(self, df: pd.DataFrame) -> "FeatureScaler":
         vals = df[self.feature_names].values.astype(np.float64)
@@ -127,21 +127,33 @@ except ImportError:  # pragma: no cover
 class SymbolDataModule(L.LightningDataModule):
     """DataModule pour un symbole unique."""
 
-    def __init__(self, bars_df: pd.DataFrame, data_cfg: DataConfig, model_cfg: ModelConfig) -> None:
+    def __init__(
+        self,
+        bars_df: pd.DataFrame,
+        data_cfg: DataConfig,
+        model_cfg: ModelConfig,
+        sentiment_df: pd.DataFrame | None = None,
+    ) -> None:
         super().__init__()
         self.bars_df = bars_df
         self.data_cfg = data_cfg
         self.model_cfg = model_cfg
-        self.scaler = FeatureScaler()
+        self.sentiment_df = sentiment_df
+        self._feature_cols = get_feature_columns(data_cfg.include_sentiment_features)
+        self.scaler = FeatureScaler(feature_names=self._feature_cols)
         self.train_ds: Optional[SequenceDataset] = None
         self.val_ds: Optional[SequenceDataset] = None
         self.test_ds: Optional[SequenceDataset] = None
-        self.n_features: int = len(FEATURE_COLUMNS)
+        self.n_features: int = len(self._feature_cols)
         self._num_workers = min(os.cpu_count() or 0, 4)
 
     def setup(self, stage: Optional[str] = None) -> None:
-        # 1. Feature engineering
-        df = compute_features(self.bars_df)
+        # 1. Feature engineering (with optional sentiment)
+        df = compute_features(
+            self.bars_df,
+            sentiment_df=self.sentiment_df,
+            include_sentiment=self.data_cfg.include_sentiment_features,
+        )
         # 2. Target
         df["target"] = build_target(df, self.data_cfg.forecast_horizon)
         # 3. Chrono split

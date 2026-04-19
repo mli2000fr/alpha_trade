@@ -13,10 +13,10 @@ import pandas as pd
 import torch
 
 from modelFactory.config import DataConfig
-from modelFactory.data_loader import load_symbol_bars
+from modelFactory.data_loader import load_symbol_bars, load_symbol_sentiment
 from modelFactory.dataset import FeatureScaler
 from modelFactory.db_registry import insert_predictions, load_training_run
-from modelFactory.features import compute_features
+from modelFactory.features import compute_features, get_feature_columns
 from modelFactory.model import LSTMAttentionModule
 
 LOGGER = logging.getLogger(__name__)
@@ -72,6 +72,7 @@ def predict_symbol(
     data_cfg = DataConfig(
         sequence_length=cfg_data["data"]["sequence_length"],
         forecast_horizon=cfg_data["data"]["forecast_horizon"],
+        include_sentiment_features=cfg_data["data"].get("include_sentiment_features", False),
     )
     run_id = selected_run_id or cfg_data.get("run_id", "unknown")
 
@@ -85,8 +86,11 @@ def predict_symbol(
         LOGGER.warning("predict_symbol insufficient_bars symbol=%s", symbol)
         return None
 
-    # Feature engineering
-    df = compute_features(bars)
+    # Feature engineering (with optional sentiment)
+    sentiment_df = None
+    if data_cfg.include_sentiment_features:
+        sentiment_df = load_symbol_sentiment(engine, symbol)
+    df = compute_features(bars, sentiment_df=sentiment_df, include_sentiment=data_cfg.include_sentiment_features)
     if len(df) < data_cfg.sequence_length:
         return None
 

@@ -8,7 +8,7 @@ from typing import Optional
 from sqlalchemy.engine import Engine
 
 from modelFactory.config import TrainingConfig
-from modelFactory.data_loader import load_symbol_bars
+from modelFactory.data_loader import load_symbol_bars, load_symbol_sentiment
 from modelFactory.db_registry import load_candidate_symbols
 from modelFactory.trainer import TrainResult, train_symbol
 
@@ -20,7 +20,10 @@ def _train_worker(symbol: str, cfg: TrainingConfig) -> TrainResult:
     from database.connection import get_sqlalchemy_engine
     engine = get_sqlalchemy_engine()
     bars = load_symbol_bars(engine, symbol)
-    return train_symbol(symbol, bars, cfg, engine)
+    sentiment_df = None
+    if cfg.data.include_sentiment_features:
+        sentiment_df = load_symbol_sentiment(engine, symbol)
+    return train_symbol(symbol, bars, cfg, engine, sentiment_df=sentiment_df)
 
 
 def run_training_batch(

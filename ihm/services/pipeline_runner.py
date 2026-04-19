@@ -233,7 +233,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_train":
-        return [sys.executable, "-m", "modelFactory", "--mode", "train"]
+        return [sys.executable, "-m", "modelFactory", "--mode", "train", "--include-sentiment"]
 
     if step_key == "ml_predict":
         return [sys.executable, "-m", "modelFactory", "--mode", "predict"]
