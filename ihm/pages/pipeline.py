@@ -22,6 +22,8 @@ from ihm.services.process_registry import (
 SELECTED_RUN_KEY = "ihm_pipeline_selected_run_id"
 COMPARE_RUNS_KEY = "ihm_pipeline_compare_run_ids"
 LOG_FILTER_KEY = "ihm_pipeline_log_filter"
+PENDING_SELECTED_RUN_KEY = "ihm_pipeline_pending_selected_run_id"
+PENDING_COMPARE_RUNS_KEY = "ihm_pipeline_pending_compare_run_ids"
 TAIL_LINES = 250
 
 
@@ -30,6 +32,19 @@ def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
     if len(lines) <= max_lines:
         return value
     return "\n".join(lines[-max_lines:])
+
+
+def _render_log_block(title: str, content: str, *, key: str, expanded: bool = False) -> None:
+    tailed = _tail_text(content)
+    suffix = ""
+    if tailed != content:
+        suffix = f" — affichage limite aux {TAIL_LINES} dernieres lignes"
+    with st.expander(f"{title}{suffix}", expanded=expanded):
+        if tailed.strip():
+            with st.container(height=320, key=f"{key}_container"):
+                st.code(tailed, language="text")
+        else:
+            st.info("Aucun log disponible pour le moment. Le contenu apparaitra ici des que le processus ecrira sur stdout/stderr.")
 
 
 def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
@@ -153,6 +168,31 @@ def _status_badge(status: str) -> str:
     }.get(status, status)
 
 
+def _sanitize_compare_ids(run_ids: list[str], labels: dict[str, str], value: object) -> list[str]:
+    candidates = value if isinstance(value, list) else []
+    return [rid for rid in candidates if isinstance(rid, str) and rid in labels and rid in run_ids][:2]
+
+
+def _prime_runtime_center_state(run_ids: list[str], labels: dict[str, str]) -> list[str]:
+    pending_selected = st.session_state.pop(PENDING_SELECTED_RUN_KEY, None)
+    if isinstance(pending_selected, str) and pending_selected in labels:
+        st.session_state[SELECTED_RUN_KEY] = pending_selected
+
+    pending_compare = st.session_state.pop(PENDING_COMPARE_RUNS_KEY, None)
+    if pending_compare is not None:
+        st.session_state[COMPARE_RUNS_KEY] = _sanitize_compare_ids(run_ids, labels, pending_compare)
+
+    default_selected = st.session_state.get(SELECTED_RUN_KEY)
+    if default_selected not in labels:
+        st.session_state[SELECTED_RUN_KEY] = run_ids[0]
+
+    compare_defaults = _sanitize_compare_ids(run_ids, labels, st.session_state.get(COMPARE_RUNS_KEY, []))
+    if compare_defaults != st.session_state.get(COMPARE_RUNS_KEY):
+        st.session_state[COMPARE_RUNS_KEY] = compare_defaults
+
+    return compare_defaults
+
+
 @st.fragment(run_every="2s")
 def _render_runtime_center() -> None:
     active_runs, all_runs = _merge_runs()
@@ -193,15 +233,7 @@ def _render_runtime_center() -> None:
         for run in all_runs
     }
     run_ids = list(labels.keys())
-
-    default_selected = st.session_state.get(SELECTED_RUN_KEY)
-    if default_selected not in labels:
-        default_selected = run_ids[0]
-        st.session_state[SELECTED_RUN_KEY] = default_selected
-
-    compare_defaults = [rid for rid in cast(list[str], st.session_state.get(COMPARE_RUNS_KEY, [])) if rid in labels][:2]
-    if compare_defaults != st.session_state.get(COMPARE_RUNS_KEY):
-        st.session_state[COMPARE_RUNS_KEY] = compare_defaults
+    compare_defaults = _prime_runtime_center_state(run_ids, labels)
 
     control_col1, control_col2 = st.columns([2, 3])
     with control_col1:
@@ -230,8 +262,9 @@ def _render_runtime_center() -> None:
         )
         if len(compare_ids) > 2:
             compare_ids = compare_ids[:2]
-            st.session_state[COMPARE_RUNS_KEY] = compare_ids
+            st.session_state[PENDING_COMPARE_RUNS_KEY] = compare_ids
             st.warning("La comparaison est limitée à 2 runs.")
+            st.rerun()
 
     stream_map = {"tout": "all", "stdout": "stdout", "stderr": "stderr"}
     selected_run = get_pipeline_run_record(selected_label)
@@ -263,7 +296,12 @@ def _render_runtime_center() -> None:
             mime="text/plain",
             key=f"download_selected_{selected_label}_{log_filter}",
         )
-        st.code(_tail_text(selected_logs), language="text")
+        _render_log_block(
+            "Logs du run selectionne",
+            selected_logs,
+            key=f"selected_logs_{selected_label}_{log_filter}",
+            expanded=True,
+        )
 
     if len(compare_ids) == 2:
         st.markdown("**Comparaison de runs**")
@@ -280,7 +318,11 @@ def _render_runtime_center() -> None:
                     mime="text/plain",
                     key=f"download_compare_{run_id}_{log_filter}",
                 )
-                st.code(_tail_text(logs), language="text")
+                _render_log_block(
+                    f"Logs {run_id}",
+                    logs,
+                    key=f"compare_logs_{run_id}_{log_filter}",
+                )
 
     history_df = pd.DataFrame(
         [
@@ -327,19 +369,13 @@ def _render_step_result(record: dict[str, object] | None) -> None:
     )
 
 
-def render() -> None:
-    st.header("🔄 Pipeline Quotidien")
-    st.caption("Ordre d'exécution strict — chaque étape dépend de la précédente.")
-
-    options, live_confirmed = _build_launch_options()
-    db_config = get_runtime_db_config()
+@st.fragment(run_every="2s")
+def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db_config: dict[str, str | None]) -> None:
     active_runs, all_runs = _merge_runs()
     latest_by_step = _latest_run_by_step(all_runs)
     active_by_step: dict[str, list[dict[str, object]]] = {}
     for run in active_runs:
         active_by_step.setdefault(str(run.get("step_key", "")), []).append(run)
-
-    _render_runtime_center()
 
     for step in get_pipeline_steps():
         command_preview = format_command_for_display(build_pipeline_command(step.key, options))
@@ -367,31 +403,48 @@ def render() -> None:
                         if st.button("⏹️ Arrêter ce run", key=f"stop_step_run_{run_id}", use_container_width=True):
                             stop_pipeline_run(run_id)
                             st.rerun()
-                run_clicked = st.button(
-                    "▶️ Lancer en arrière-plan",
-                    key=f"run_pipeline_step_{step.key}",
-                    type="primary",
-                    use_container_width=True,
-                    disabled=execution_locked,
-                )
-                if execution_locked:
-                    st.warning("Confirmez d'abord le mode LIVE dans les paramètres ci-dessus.")
-
-                if run_clicked:
-                    record = start_pipeline_run(
-                        step.key,
-                        f"{step.num}. {step.name}",
-                        options,
-                        db_config=db_config,
+                    st.caption("Le bouton de lancement est masque tant qu'un run de cette etape est en cours.")
+                else:
+                    run_clicked = st.button(
+                        "▶️ Lancer en arrière-plan",
+                        key=f"run_pipeline_step_{step.key}",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=execution_locked,
                     )
-                    st.session_state[SELECTED_RUN_KEY] = record.run_id
-                    compare_ids = cast(list[str], st.session_state.get(COMPARE_RUNS_KEY, []))
-                    if record.run_id not in compare_ids:
-                        st.session_state[COMPARE_RUNS_KEY] = [record.run_id, *compare_ids][:2]
-                    st.success(f"Run démarré en arrière-plan : `{record.run_id}`")
-                    st.rerun()
+                    if execution_locked:
+                        st.warning("Confirmez d'abord le mode LIVE dans les paramètres ci-dessus.")
+
+                    if run_clicked:
+                        record = start_pipeline_run(
+                            step.key,
+                            f"{step.num}. {step.name}",
+                            options,
+                            db_config=db_config,
+                        )
+                        st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                        compare_ids = _sanitize_compare_ids(
+                            [str(run.get("run_id", "")) for run in all_runs if run.get("run_id")],
+                            {str(run.get("run_id", "")): "" for run in all_runs if run.get("run_id")},
+                            st.session_state.get(COMPARE_RUNS_KEY, []),
+                        )
+                        if record.run_id not in compare_ids:
+                            st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *compare_ids][:2]
+                        st.success(f"Run demarre en arriere-plan : `{record.run_id}`")
+                        st.rerun()
 
             _render_step_result(latest_by_step.get(step.key))
+
+
+def render() -> None:
+    st.header("🔄 Pipeline Quotidien")
+    st.caption("Ordre d'exécution strict — chaque étape dépend de la précédente.")
+
+    options, live_confirmed = _build_launch_options()
+    db_config = get_runtime_db_config()
+
+    _render_runtime_center()
+    _render_step_panels(options, live_confirmed, db_config)
 
 
 run_page_if_standalone(__name__, render)

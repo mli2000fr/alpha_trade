@@ -139,7 +139,7 @@ def _run_sync(args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         skip_existing=getattr(args, "skip_existing", False),
     )
-    print(f"Sync terminé : {stats}")
+    print(f"Sync termine : {stats}")
 
 
 def _run_apply(args: argparse.Namespace) -> None:
@@ -150,7 +150,7 @@ def _run_apply(args: argparse.Namespace) -> None:
     as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
 
     stats = engine.apply(as_of=as_of)
-    print(f"Apply terminé : {stats}")
+    print(f"Apply termine : {stats}")
 
 
 def _run_status(_args: argparse.Namespace) -> None:
@@ -166,7 +166,7 @@ def _run_status(_args: argparse.Namespace) -> None:
         """)).mappings().all()
 
     if not rows:
-        print("Aucun événement corporate action en base.")
+        print("Aucun evenement corporate action en base.")
         return
 
     print(f"{'Status':<12} {'Type':<20} {'Count':>6}")
@@ -175,12 +175,12 @@ def _run_status(_args: argparse.Namespace) -> None:
         print(f"{r['status']:<12} {r['ca_type']:<20} {r['cnt']:>6}")
 
     total_cash = repo.get_total_dividends()
-    print(f"\nTotal dividendes crédités : ${total_cash:,.2f}")
+    print(f"\nTotal dividendes credits : ${total_cash:,.2f}")
 
 
 def _run_all(args: argparse.Namespace) -> None:
     """Enchaîne sync puis apply dans un seul appel CLI."""
-    print("[RUN] Démarrage de l'ingestion des corporate actions...")
+    print("[RUN] Demarrage de l'ingestion des corporate actions...")
     account_id = getattr(args, "account", None)
     provider = AlpacaCorporateActionProvider(account_id=account_id)
     repo = CorporateActionRepository()
@@ -195,11 +195,11 @@ def _run_all(args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         skip_existing=getattr(args, "skip_existing", False),
     )
-    print(f"Sync terminé : {stats_sync}")
+    print(f"Sync termine : {stats_sync}")
     print("[RUN] Application des corporate actions sur les positions...")
     as_of = date.fromisoformat(args.as_of) if getattr(args, "as_of", None) else date.today()
     stats_apply = engine.apply(as_of=as_of)
-    print(f"Apply terminé : {stats_apply}")
+    print(f"Apply termine : {stats_apply}")
 
 
 def main() -> None:

@@ -44,8 +44,8 @@ def _print_summary(entries: list[PortfolioEntry], run_id: str, trade_date: date)
     total_notional = sum(e.target_notional for e in accepted)
     print(f"\n{'=' * 70}")
     print(f"  Risk Management — run_id={run_id}  trade_date={trade_date}")
-    print(f"  Candidats évalués : {len(entries)}")
-    print(f"  Positions retenues: {len(accepted)}  |  Rejetées: {len(rejected)}")
+    print(f"  Candidats evalues : {len(entries)}")
+    print(f"  Positions retenues: {len(accepted)}  |  Rejetees: {len(rejected)}")
     print(f"  Notional total    : ${total_notional:,.2f}")
     print(f"{'=' * 70}")
     for e in accepted:
@@ -54,7 +54,7 @@ def _print_summary(entries: list[PortfolioEntry], run_id: str, trade_date: date)
               f"score={e.score_used:.4f} ({e.score_source})  "
               f"conviction={e.conviction_score:.4f}  sizing={e.sizing_method}")
     if rejected:
-        print(f"  --- rejetés ---")
+        print(f"  --- rejetes ---")
         for e in rejected:
             print(f"  {e.symbol:<8} {e.decision:<10} raison={e.decision_reason}")
     print()
