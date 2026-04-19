@@ -1,281 +1,315 @@
-# Alpha Trade - Stock Screener
+# Alpha Trade
 
-Screener Swing Trade haute performance (Python + MySQL) avec pipeline en 3 passages:
+Plateforme Python de **trading algorithmique swing US** orientée production, construite autour d'un pipeline modulaire : ingestion marché, nettoyage, screening, sélection alpha, sentiment news, gestion du risque, exécution et suivi post-trade.
 
-1. Liquidite sur les 30 dernieres barres (`volume * close`).
-2. Force relative sur 6 mois versus benchmark (par defaut `SPY`, charge une seule fois).
-3. Position du dernier close dans le range 10 ans (score 0..100).
+Le projet s'appuie principalement sur **Python 3.12**, **MySQL**, **SQLAlchemy**, **Alpaca**, **Finnhub**, **PyTorch/Lightning** et une **IHM Streamlit** pour la supervision opérateur.
 
-Le screener lit desormais la table `stock_bars_daily` (donnees daily nettoyees/alignees), et non plus directement `stock_bars`.
+---
 
-Le pipeline est execute en chunks de symboles (500 par defaut) et parallelise via `ProcessPoolExecutor`.
+## 1. Vue d'ensemble
 
-## Fichiers
+Le pipeline couvre les besoins suivants :
 
-- `dataIntegrityEngine/stock_screener.py`: orchestrateur principal.
-- `dataIntegrityEngine/screener/db_io.py`: lecture/ecriture SQLAlchemy + PyMySQL.
-- `dataIntegrityEngine/screener/pipeline.py`: calculs pandas vectorises.
-- `dataIntegrityEngine/screener/models.py`: configuration centralisee.
-- `tests/harness_screener.py`: harness local sans DB.
-- `tests/harness_data_sanitizer.py`: smoke test local du sanitizer sans DB.
+- ingestion des actifs et barres de marché depuis Alpaca ;
+- synchronisation et application des **corporate actions** ;
+- nettoyage et alignement des données daily ;
+- screening quantitatif et sélection multi-facteurs ;
+- enrichissement par **sentiment news** via FinBERT ;
+- construction du portefeuille cible avec contraintes de risque ;
+- exécution des ordres en modes simulation, paper ou live ;
+- supervision via une IHM Streamlit.
 
-## Prerequis
+---
 
-Variables d'environnement MySQL:
+## 2. Modules principaux
 
-- `LOGIN_DB`
-- `PASSWORD_DB`
+| Module | Rôle |
+|---|---|
+| `dataIntegrityEngine/` | Import Alpaca, nettoyage daily, enrichissements de données |
+| `screener/` | Screening initial liquidité / force relative / range historique |
+| `selector/` | `AlphaScanner` multi-facteurs et sélection finale |
+| `event_sentiment/` | Pipeline news, FinBERT, agrégations ticker / secteur |
+| `risk_management/` | Sizing, contraintes, circuit breaker, portefeuille cible |
+| `execution_engine/` | Exécution des ordres, fills, réconciliation, TCA |
+| `corporate_actions/` | Sync des événements et application sur les positions |
+| `modelFactory/` | Entraînement et prédiction LSTM par symbole |
+| `ihm/` | IHM Streamlit de supervision et de consultation |
 
-Variables d'environnement Finnhub:
+---
 
-- `FINNHUB_API_KEY` (ou `CLE_FINNHUB` pour compatibilité)
+## 3. Prérequis
 
-## Installation
+### Environnement
+
+- Python **3.12+**
+- MySQL disponible localement ou à distance
+- Accès API Alpaca
+- Token Finnhub pour l'enrichissement secteur
+
+### Variables d'environnement
+
+```powershell
+$env:LOGIN_DB = "user"
+$env:PASSWORD_DB = "pass"
+$env:ALPACA_API_KEY = "PK..."
+$env:ALPACA_SECRET_KEY = "..."
+$env:FINNHUB_API_KEY = "..."
+```
+
+`FINNHUB_API_KEY` peut selon le code être remplacée par `CLE_FINNHUB` pour compatibilité historique.
+
+---
+
+## 4. Installation
+
+Installation recommandée en mode editable :
+
+```powershell
+python -m pip install -e ".[dev]"
+```
+
+Alternative minimale runtime :
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-## Execution du screener
+---
+
+## 5. Initialisation du projet
+
+À exécuter une fois lors de la mise en place de l'environnement :
 
 ```powershell
-python -m dataIntegrityEngine.stock_screener
-python -m dataIntegrityEngine.stock_screener --chunk-size 500 --max-workers 8 --benchmark SPY
-```
-
-## Mise a jour des secteurs depuis Finnhub
-
-```powershell
+python -m dataIntegrityEngine.import_alpaca_assets
 python -m dataIntegrityEngine.update_sector
-python -m dataIntegrityEngine.update_sector --limit 100 --sleep-seconds 1.1 --log-every 25
 ```
 
-Le script lit les symboles de `stock_metadata` dont `sector` est vide, appelle Finnhub pour chaque symbole, puis met a jour `stock_metadata.sector` avec des logs de progression.
+Ces commandes permettent notamment de :
 
-## Pipeline Event Sentiment (module 2)
+- alimenter `stock_metadata` ;
+- enrichir les secteurs depuis Finnhub ;
+- préparer l'univers tradable exploité par le pipeline.
 
-Le module `event_sentiment` ingere les news fournisseur, aligne chaque evenement sur la bonne date de trading NYSE, applique un scoring FinBERT, enrichit les tickers/secteurs, calcule les macro impacts explicables, puis agrege les features journalieres par ticker et par secteur.
+---
 
-Schemas SQL associes:
+## 6. Pipeline quotidien recommandé
 
-- `database/sql/news/news_raw.sql`
-- `database/sql/news/news_sentiment.sql`
-- `database/sql/news/news_ticker_map.sql`
-- `database/sql/news/macro_event_audit.sql`
-- `database/sql/news/ticker_daily_sentiment_features.sql`
-- `database/sql/news/sector_daily_sentiment_features.sql`
-- `database/sql/news/news_ingestion_checkpoint.sql`
+Ordre d'exécution actuel du pipeline :
 
-Execution:
+```powershell
+python -m dataIntegrityEngine.import_alpaca_bar
+python -m corporate_actions sync --skip-existing
+python -m dataIntegrityEngine.data_sanitizer_daily
+python -m screener.stock_screener
+python -m selector.alpha_scanner
+python -m event_sentiment
+python -m event_sentiment.signal_aggregator
+python -m risk_management.run_risk --account-equity 100000
+python run_execution.py simulate
+python -m corporate_actions apply
+```
+
+### Détail des étapes
+
+1. **`import_alpaca_bar`** : importe les barres de marché Alpaca.
+2. **`corporate_actions sync`** : ingère les dividendes / splits dans le référentiel d'événements.
+3. **`data_sanitizer_daily`** : nettoie, aligne et fiabilise les données daily.
+4. **`stock_screener`** : produit les premiers scores quantitatifs.
+5. **`alpha_scanner`** : applique le ranking multi-facteurs et sélectionne les meilleurs candidats.
+6. **`event_sentiment`** : traite les news, score le sentiment et calcule les agrégats.
+7. **`signal_aggregator`** : fusionne quant + sentiment + macro en score final.
+8. **`run_risk`** : calcule les tailles, contraintes et portefeuille cible.
+9. **`run_execution.py`** : exécute en mode `simulate`, `paper` ou `live`.
+10. **`corporate_actions apply`** : applique les corporate actions pending sur les positions existantes.
+
+---
+
+## 7. Corporate Actions
+
+Le module `corporate_actions/` fonctionne en **deux phases distinctes**.
+
+### 7.1 Sync
+
+Ingère les événements depuis Alpaca dans `corporate_actions_events`.
+
+```powershell
+python -m corporate_actions sync
+python -m corporate_actions sync --skip-existing
+python -m corporate_actions sync --batch-size 10
+python -m corporate_actions sync --all-symbols --start 2026-01-01 --end 2026-04-19
+```
+
+Comportement utile à connaître :
+
+- l'univers est résolu en priorité depuis `stock_metadata` ;
+- fallback possible via les positions broker si nécessaire ;
+- `--skip-existing` évite de recharger des symboles déjà présents ;
+- l'ingestion se fait par lots avec persistance immédiate en base.
+
+### 7.2 Apply
+
+Applique les événements pending sur les positions internes / broker snapshot.
+
+```powershell
+python -m corporate_actions apply
+```
+
+Cette étape :
+
+- crédite les dividendes dans `portfolio_cash_ledger` ;
+- ajuste quantités et cost basis pour les splits / reverse splits ;
+- laisse une trace d'application idempotente en base.
+
+> `apply` n'a d'effet que s'il existe déjà des positions à ajuster.
+
+---
+
+## 8. Commandes essentielles par module
+
+### Ingestion / qualité des données
+
+```powershell
+python -m dataIntegrityEngine.import_alpaca_assets
+python -m dataIntegrityEngine.import_alpaca_bar
+python -m dataIntegrityEngine.data_sanitizer_daily
+python -m dataIntegrityEngine.update_sector
+```
+
+### Screening / sélection
+
+```powershell
+python -m screener.stock_screener
+python -m screener.stock_screener --chunk-size 500 --max-workers 8 --benchmark SPY
+python -m selector.alpha_scanner
+```
+
+### Sentiment
 
 ```powershell
 python -m event_sentiment
 python -m event_sentiment --start-utc 2026-01-01T00:00:00Z --end-utc 2026-01-31T23:59:59Z --symbols AAPL,MSFT,NVDA
-python -m dataIntegrityEngine.event_sentiment_pipeline
-```
-
-Tests cibles du module:
-
-```powershell
-python -m pytest tests/test_event_temporal_alignment.py tests/test_event_macro_rules.py tests/test_event_aggregation.py tests/test_finbert_preprocessor.py
-```
-
-## Test local rapide (sans DB)
-
-```powershell
-python -m pytest
-python tests/harness_screener.py
-python tests/harness_data_sanitizer.py
-```
-
-## Sortie DB
-
-Le script applique un upsert snapshot sur `stock_scores` : insertion/mise a jour des symboles calcules, puis purge des symboles absents du snapshot courant.
-
-- `symbol`
-- `liquidity_val`
-- `relative_strength_index`
-- `historical_range_score`
-- `total_score`
-- `last_updated_score`
-- `is_candidate`
-- `sector`
-- `last_updated_scan`
-
-
-
-
-python -m dataIntegrityEngine.import_alpaca_bar
-
-# --- Entrée unique : corporate_action_apply ---
-
-## corporate_action_apply
-
-Cette commande applique les corporate actions (dividendes, splits, etc.) sur les positions en base de façon idempotente.
-
-Exécution :
-```powershell
-python -m corporate_actions apply
-```
-Options disponibles : voir `python -m corporate_actions apply --help`
-
----
-
-python -m corporate_actions sync       # Ingérer dividendes/splits depuis Alpaca
-python -m dataIntegrityEngine.data_sanitizer_daily
-# ... reste du pipeline inchangé
-
-# Détail corporate_actions :
-# - par défaut, la sync cible les symboles `stock_metadata` avec `status='active'`,
-#   `tradable=1` et `bars_available=1`
-# - fallback vers `broker_positions_snapshots` si aucun symbole market-data n'est disponible
-# - `--skip-existing` ignore les symboles déjà présents dans `corporate_actions_events`
-#   avant l'appel Alpaca (utile pour éviter de re-fetcher un univers déjà ingéré)
-# - traitement Alpaca par lots (`--batch-size`, défaut 25) avec persistance immédiate en base
-# - progression loggée par plage de symboles, ex. `symbols 1-25/240`
-# - backfill global uniquement si demandé explicitement via `--all-symbols`
-
-# Exemples :
-# python -m corporate_actions sync --batch-size 10
-# python -m corporate_actions sync --skip-existing
-# python -m corporate_actions run --symbols AAPL MSFT NVDA --batch-size 5
-# python corporate_actions/corporate_action_run.py --skip-existing
-# python -m corporate_actions sync --all-symbols --start 2026-01-01 --end 2026-04-19
-
--------------------------------
-
-## execution
-# en une fois
-import_alpaca_assets.py
-update_sector.py
-
-# au quotidien
-import_alpaca_bar.py
-
-python -m corporate_actions sync --skip-existing  # 1. ingérer dividendes/splits (référentiel)
-
-data_sanitizer_daily   # 2. sanitize bars (alignement, ajustement CA, etc.)
-
-# une fois par mois
-stock_screener.py
-
-alpha_scanner.py
-sentiment_pipeline.py 
-signal_aggregator.py
-run_risk.py  # 3. risk (equity enrichie par dividendes passés)
-
-run_train.py
-run_predict.py
-
-run_execution.py
-python -m corporate_actions apply                  # apply CA sur positions existantes (après execution)
-
-python -m streamlit run ihm/app.py
-
------------------------
-python -m corporate_actions sync --skip-existing     # 1. ingérer CA (référentiel)
-python -m dataIntegrityEngine.data_sanitizer_daily   # 2. sanitize bars
-# ... screener, alpha_scanner, sentiment, signal_aggregator, risk ...
-python -m risk_management.run_risk                   # 3. risk (equity enrichie par dividendes passés)
-python -m execution_engine                           # 4. exécution (crée positions)
-python -m corporate_actions apply                    # 5. appliquer CA sur positions
----------------------------------------------------
-
-
-# au quotidien ou par semaine — dans cet ordre strict :
-#  1. alpha_scanner.py       → scores quantitatifs (trend, vcp, final_score) SANS sentiment
-#  2. sentiment_pipeline.py  → news → FinBERT → ticker_daily_features / sector_daily_features
-#  3. signal_aggregator.py   → fusion quant + sentiment → final_score définitif dans stock_scores
-
 python -m event_sentiment.signal_aggregator
 python -m event_sentiment.signal_aggregator --all-symbols --trade-date 2026-04-17
-python -m event_sentiment.signal_aggregator --sentiment-weight 0.20 --macro-weight 0.10 --lookback-days 5
+```
 
-# Note : ne PAS utiliser --enable-sentiment dans alpha_scanner.py quand signal_aggregator.py
-# est exécuté séparément (évite une double application du boost sentiment).
+> Si `signal_aggregator.py` est exécuté séparément, éviter une double application éventuelle du sentiment côté scanner.
 
-#  4. risk_management        → gestion de risque, sizing, portefeuille cible
+### Gestion du risque
+
+```powershell
 python -m risk_management.run_risk
 python -m risk_management.run_risk --account-equity 100000 --max-positions 10 --dry-run
 python -m risk_management.run_risk --trade-date 2026-04-17 --log-level DEBUG
 ```
 
-## Module Gestion de Risque
-
-Le package `risk_management/` s'exécute **après** `signal_aggregator.py`. Il :
-
-1. Lit les candidats (`is_candidate = 1`) depuis `stock_scores`, triés par `final_score_sentiment` décroissant (score fusionné quant + sentiment, déjà calculé par `signal_aggregator`).
-2. Calcule la taille de position via ATR(20) avec fallback equal-weight.
-3. Vérifie les contraintes de risque (max positions, poids position/secteur, exposition brute, circuit breaker drawdown/daily loss).
-4. Construit le portefeuille cible et journalise chaque décision dans `risk_decisions` et `portfolio_targets`.
-
-Schémas SQL : `database/sql/risk/risk_decisions.sql`, `database/sql/risk/portfolio_targets.sql`.
-
-Tests :
+### Exécution
 
 ```powershell
-python -m pytest tests/test_position_sizer.py tests/test_constraints.py tests/test_circuit_breaker.py tests/test_risk_checker.py tests:test_portfolio_builder.py
+python run_execution.py
+python run_execution.py simulate
+python run_execution.py paper
+python run_execution.py live
+python run_execution.py check
+python -m execution_engine
 ```
 
-## Module 3 — Model Factory (LSTM per-symbol)
-
-Schémas SQL : `database/sql/ml/model_registry.sql`, `model_training_run.sql`, `model_metrics.sql`, `model_predictions.sql`.
-
-### Entraînement
+### Machine Learning
 
 ```powershell
 python -m modelFactory.run_train
-python -m modelFactory.run_train --symbols AAPL MSFT NVDA
-python -m modelFactory.run_train --max-workers 2 --accelerator cpu
-python -m modelFactory.run_train --max-epochs 30 --batch-size 32 --hidden-size 64 --sequence-length 40
-python -m modelFactory.run_train --artifacts-dir artifacts/models_v2 --log-level DEBUG
-```
-
-### Prédiction
-
-```powershell
 python -m modelFactory.run_predict
-python -m modelFactory.run_predict --symbols AAPL MSFT NVDA
-python -m modelFactory.run_predict --artifacts-dir artifacts/models_v2 --log-level DEBUG
-```
-
-### Mode unifié (optionnel)
-
-```powershell
 python -m modelFactory --mode train
 python -m modelFactory --mode predict
 ```
 
-### Application des corporate actions (phase 2)
+---
 
-Pour appliquer tous les corporate actions en attente sur les positions :
+## 9. IHM Streamlit
+
+L'IHM opérateur est disponible dans `ihm/`.
+
+Lancement :
 
 ```powershell
-python -m corporate_actions apply
-# ou
-python corporate_actions/corporate_action_apply.py
+python -m streamlit run ihm/app.py
 ```
 
-### Intégration dans le pipeline
+L'application ouvre en général une interface web locale sur :
 
-Le module `corporate_actions` a deux phases distinctes à exécuter à des moments différents :
+- `http://localhost:8501`
 
-1. **`sync`** (début de journée, avant le pipeline) — Ingère les dividendes/splits depuis Alpaca dans `corporate_actions_events`. Sert de référentiel et permet à `execution_engine` de détecter les splits pending avant d'envoyer des ordres.
+Pour plus de détails sur les pages disponibles, voir `ihm/README.md`.
 
-2. **`apply`** (après `execution_engine`) — Applique les événements pending sur les positions existantes dans `broker_positions_snapshots`. Crédite les dividendes dans `portfolio_cash_ledger` et ajuste qty/cost_basis pour les splits dans `corporate_actions_applications`.
+---
 
-**⚠️ `apply` nécessite des positions broker.** Si `execution_engine` n'a jamais tourné, `apply` ne fait rien (aucune position à ajuster).
+## 10. Tests et qualité
 
-**Impact downstream :**
-- **`risk_management`** — Les dividendes cumulés (`portfolio_cash_ledger`) sont automatiquement ajoutés à `account_equity` lors du calcul de risque.
-- **`execution_engine`** — Un check pré-exécution détecte les corporate actions pending non appliquées et émet un warning.
+### Tests globaux
 
-**Ordre d'exécution recommandé** (quotidien) :
 ```powershell
-python -m corporate_actions sync --skip-existing     # 1. ingérer CA (référentiel)
-python -m dataIntegrityEngine.data_sanitizer_daily   # 2. sanitize bars
-# ... screener, sentiment, risk ...
-python -m execution_engine                           # 3. exécution (crée/màj positions)
-python -m corporate_actions apply                    # 4. appliquer CA sur positions
+python -m pytest
 ```
+
+### Exemples de tests ciblés
+
+```powershell
+python -m pytest tests/test_event_temporal_alignment.py tests/test_event_macro_rules.py tests/test_event_aggregation.py tests/test_finbert_preprocessor.py
+python -m pytest tests/test_position_sizer.py tests/test_constraints.py tests/test_circuit_breaker.py tests/test_risk_checker.py tests/test_portfolio_builder.py
+python -m pytest -v -k executor
+```
+
+### Lint / types
+
+```powershell
+ruff check .
+mypy .
+```
+
+### Vérification environnement exécution
+
+```powershell
+python run_execution.py check
+```
+
+---
+
+## 11. Structure racine simplifiée
+
+```text
+alpha_trade/
+├── run_execution.py
+├── config.yaml
+├── pyproject.toml
+├── README.md
+├── DOC_FONCTIONNELLE.md
+├── DOC_TECHNIQUE.md
+├── dataIntegrityEngine/
+├── screener/
+├── selector/
+├── event_sentiment/
+├── risk_management/
+├── execution_engine/
+├── corporate_actions/
+├── modelFactory/
+├── ihm/
+└── tests/
+```
+
+---
+
+## 12. Documentation complémentaire
+
+- `DOC_FONCTIONNELLE.md` : vision métier et flux fonctionnels
+- `DOC_TECHNIQUE.md` : architecture, composants, dette technique, recommandations
+- `ihm/README.md` : documentation dédiée à l'interface opérateur
+
+---
+
+## 13. Notes utiles
+
+- Le projet repose sur une base MySQL correctement initialisée avec les schémas SQL du dépôt.
+- `run_execution.py` est le point d'entrée le plus pratique pour l'exécution opérateur.
+- L'IHM est en **lecture / supervision**, pas en soumission d'ordres.
+- Les commandes `paper` et surtout `live` nécessitent une validation attentive des variables d'environnement et de la configuration broker.
 

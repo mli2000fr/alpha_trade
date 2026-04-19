@@ -247,30 +247,30 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 
 | Élément | Priorité |
 |---|---|
-| Double `return selected` dans `alpha_scanner.py` ligne 766 (code mort) | P0 |
-| `bar_metadata.py` utilise DB-API raw au lieu de SQLAlchemy Core | P1 |
+| ~~Double `return selected` dans `alpha_scanner.py` ligne 766 (code mort)~~ → ✅ Corrigé | ~~P0~~ |
+| ~~`bar_metadata.py` utilise DB-API raw au lieu de SQLAlchemy Core~~ → ✅ Migré vers `sqlalchemy.text()` | ~~P1~~ |
 | ~~Pas de migration DB (Alembic absent)~~ → ✅ Alembic ajouté | ~~P1~~ |
 | ~~Pas de handler fichier pour les logs (stdout seul)~~ → ✅ RotatingFileHandler ajouté | ~~P1~~ |
-| Import dynamique `risk_management` dans `executor.py` (couplage runtime) | P2 |
-| Méthode `_make_entry` V1 inutilisée dans `portfolio_builder.py` | P2 |
+| ~~Import dynamique `risk_management` dans `executor.py` (couplage runtime)~~ → ✅ Circuit breaker injecté via constructeur | ~~P2~~ |
+| ~~Méthode `_make_entry` V1 inutilisée dans `portfolio_builder.py`~~ → ✅ Supprimée (seul `_make_entry_v2` reste) | ~~P2~~ |
 | Dossier `prompt/` (fichiers non structurés, hors code) | P3 |
-| `configure_optimizers()` sans type hint dans `model.py` | P3 |
-| `corporate_actions*` absent de `pyproject.toml` packages.find.include | P1 |
+| ~~`configure_optimizers()` sans type hint dans `model.py`~~ → ✅ Type hint `-> torch.optim.Optimizer` ajouté | ~~P3~~ |
+| ~~`corporate_actions*` absent de `pyproject.toml` packages.find.include~~ → ✅ Ajouté (`corporate_actions*`, `ihm*`) | ~~P1~~ |
 
 ---
 
 ## 9. Recommandations de Refactoring
 
 **Court terme (P0-P1)** :
-1. Supprimer le `return selected` dupliqué dans `alpha_scanner.py:766`
-2. Migrer `bar_metadata.py` vers SQLAlchemy Core
+1. ~~Supprimer le `return selected` dupliqué dans `alpha_scanner.py:766`~~ → ✅ Fait
+2. ~~Migrer `bar_metadata.py` vers SQLAlchemy Core~~ → ✅ Fait
 3. ~~Ajouter Alembic pour les migrations de schéma~~ → ✅ Fait
 4. ~~Ajouter RotatingFileHandler pour les logs~~ → ✅ Fait
-5. Supprimer `_make_entry` V1 dans `portfolio_builder.py`
-6. Ajouter `corporate_actions*` et `ihm*` dans `pyproject.toml` packages.find.include
+5. ~~Supprimer `_make_entry` V1 dans `portfolio_builder.py`~~ → ✅ Fait
+6. ~~Ajouter `corporate_actions*` et `ihm*` dans `pyproject.toml` packages.find.include~~ → ✅ Fait
 
 **Moyen terme (P2)** :
-7. Extraire le circuit breaker de l'import dynamique → injection via constructeur
+7. ~~Extraire le circuit breaker de l'import dynamique → injection via constructeur~~ → ✅ Fait
 8. Ajouter une interface `BrokerPort` (Protocol) pour abstraire le broker
 9. ~~Unifier les configs : YAML/TOML centralisé~~ → ✅ `config.yaml` + `load_config()` ajoutés
 10. Tests d'intégration avec MySQL Docker (testcontainers)
