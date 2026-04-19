@@ -14,10 +14,12 @@ CREATE TABLE IF NOT EXISTS alpha_trade.portfolio_cash_ledger (
         COMMENT 'Montant positif = crédit, négatif = débit',
     currency        VARCHAR(5)    NOT NULL DEFAULT 'USD',
     description     VARCHAR(255)  NULL,
+    account_id      VARCHAR(32)   NULL DEFAULT 'default',
     created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_pcl_symbol (symbol),
     INDEX idx_pcl_type   (entry_type),
-    INDEX idx_pcl_event  (event_id)
+    INDEX idx_pcl_event  (event_id),
+    INDEX idx_pcl_account (account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     COMMENT='Ledger cash immuable pour dividendes et ajustements corporate actions';
 

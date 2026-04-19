@@ -7,7 +7,9 @@ CREATE TABLE IF NOT EXISTS broker_positions_snapshots (
     avg_entry_price DOUBLE NOT NULL DEFAULT 0,
     market_value    DOUBLE NOT NULL DEFAULT 0,
     unrealized_pnl  DOUBLE NOT NULL DEFAULT 0,
+    account_id      VARCHAR(32) NULL DEFAULT 'default',
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_bps_run (exec_run_id)
+    INDEX idx_bps_run (exec_run_id),
+    INDEX idx_bps_account (account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

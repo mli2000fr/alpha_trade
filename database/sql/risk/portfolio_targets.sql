@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS portfolio_targets (
     conviction_score    DOUBLE       NULL,
     sizing_method       VARCHAR(20)  NULL,
     kelly_fraction      DOUBLE       NULL,
+    account_id      VARCHAR(32)   NULL DEFAULT 'default',
     created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_pt_run       (run_id),
-    INDEX idx_pt_date_sym  (trade_date, symbol)
+    INDEX idx_pt_date_sym  (trade_date, symbol),
+    INDEX idx_pt_account   (account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

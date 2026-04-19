@@ -37,6 +37,21 @@ st.sidebar.caption("Cockpit opérateur — lecture seule")
 with st.sidebar.expander("🗄️ Connexion DB", expanded=False):
     render_db_connection_form("sidebar_db_connection_form", show_host_fields=True)
 
+# --- Sélecteur multi-comptes ---
+try:
+    from service.alpaca.accounts import AccountRegistry
+    _accounts = AccountRegistry.get().list_accounts()
+    if len(_accounts) > 1:
+        _acct_options = {f"{a.label} ({a.account_id}, {a.mode})": a.account_id for a in _accounts}
+        _acct_label = st.sidebar.selectbox("🏦 Compte Alpaca", list(_acct_options.keys()))
+        st.session_state["selected_account_id"] = _acct_options[_acct_label]
+    elif _accounts:
+        st.session_state["selected_account_id"] = _accounts[0].account_id
+    else:
+        st.session_state.setdefault("selected_account_id", "default")
+except Exception:
+    st.session_state.setdefault("selected_account_id", "default")
+
 selection = st.sidebar.radio("Navigation", list(PAGES.keys()), label_visibility="collapsed")
 
 page_key = PAGES[selection]

@@ -49,12 +49,24 @@ Le pipeline couvre les besoins suivants :
 ### Variables d'environnement
 
 ```powershell
+# --- Base de données ---
 $env:LOGIN_DB = "user"
 $env:PASSWORD_DB = "pass"
+
+# --- Compte Alpaca par défaut ---
 $env:ALPACA_API_KEY = "PK..."
 $env:ALPACA_SECRET_KEY = "..."
+
+# --- Comptes supplémentaires (multi-comptes, optionnel) ---
+$env:ALPACA_LIVE1_API_KEY = "AK..."
+$env:ALPACA_LIVE1_SECRET_KEY = "..."
+$env:ALPACA_LIVE1_MODE = "live"
+
+# --- Finnhub (optionnel) ---
 $env:FINNHUB_API_KEY = "..."
 ```
+
+Les comptes peuvent aussi être déclarés dans `config.yaml` (voir section 12).
 
 `FINNHUB_API_KEY` peut selon le code être remplacée par `CLE_FINNHUB` pour compatibilité historique.
 
@@ -122,6 +134,19 @@ python -m corporate_actions apply
 8. **`run_risk`** : calcule les tailles, contraintes et portefeuille cible.
 9. **`run_execution.py`** : exécute en mode `simulate`, `paper` ou `live`.
 10. **`corporate_actions apply`** : applique les corporate actions pending sur les positions existantes.
+
+### Multi-comptes
+
+Pour cibler un compte Alpaca spécifique, ajouter `--account <ID>` aux commandes :
+
+```powershell
+python -m risk_management.run_risk --account-equity 100000 --account live1
+python run_execution.py paper --account live1
+python -m corporate_actions sync --account live1
+python -m corporate_actions apply --account live1
+```
+
+Le menu interactif de `run_execution.py` propose aussi un sélecteur de compte si plusieurs sont configurés.
 
 ---
 
@@ -209,9 +234,11 @@ python -m risk_management.run_risk --trade-date 2026-04-17 --log-level DEBUG
 python run_execution.py
 python run_execution.py simulate
 python run_execution.py paper
-python run_execution.py live
+python run_execution.py paper --account live1
+python run_execution.py live --account live1
 python run_execution.py check
 python -m execution_engine
+python -m execution_engine --account live1
 ```
 
 ### Machine Learning
@@ -298,7 +325,64 @@ alpha_trade/
 
 ---
 
-## 12. Documentation complémentaire
+## 12. Configuration multi-comptes
+
+Alpha Trade supporte **plusieurs comptes Alpaca** en parallèle (paper et/ou live).
+
+### Déclaration dans `config.yaml`
+
+```yaml
+alpaca:
+  accounts:
+    - id: default
+      label: "Compte paper principal"
+      api_key: "${ALPACA_API_KEY}"        # résolu depuis l'env
+      secret_key: "${ALPACA_SECRET_KEY}"
+      mode: paper
+    - id: live1
+      label: "Compte live production"
+      api_key: "${ALPACA_LIVE1_API_KEY}"
+      secret_key: "${ALPACA_LIVE1_SECRET_KEY}"
+      mode: live
+```
+
+### Déclaration par variables d'environnement
+
+Alternative sans `config.yaml` — le système détecte automatiquement les paires :
+
+```powershell
+$env:ALPACA_LIVE1_API_KEY = "AK..."
+$env:ALPACA_LIVE1_SECRET_KEY = "..."
+$env:ALPACA_LIVE1_MODE = "live"
+$env:ALPACA_LIVE1_LABEL = "Compte live"
+```
+
+### Ordre de résolution
+
+1. `config.yaml` → `alpaca.accounts`
+2. Variables d'env préfixées `ALPACA_<ID>_*`
+3. Fallback classique `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` → compte `default`
+
+### IHM Streamlit
+
+Quand plusieurs comptes sont configurés, un **sélecteur de compte** apparaît dans la sidebar de l'IHM. Les données affichées (runs d'exécution, positions broker) sont automatiquement filtrées par le compte sélectionné.
+
+### Tables DB impactées
+
+Les tables suivantes possèdent une colonne `account_id VARCHAR(32)` :
+
+- `execution_runs`
+- `broker_positions_snapshots`
+- `risk_decisions`
+- `portfolio_targets`
+- `corporate_actions_applications`
+- `portfolio_cash_ledger`
+
+Migration : `database/sql/migration_add_account_id.sql` ou Alembic `alembic upgrade head`.
+
+---
+
+## 13. Notes utiles
 
 - `DOC_FONCTIONNELLE.md` : vision métier et flux fonctionnels
 - `DOC_TECHNIQUE.md` : architecture, composants, dette technique, recommandations
@@ -313,3 +397,10 @@ alpha_trade/
 - L'IHM est en **lecture / supervision**, pas en soumission d'ordres.
 - Les commandes `paper` et surtout `live` nécessitent une validation attentive des variables d'environnement et de la configuration broker.
 
+---
+
+## 14. Documentation complémentaire
+
+- `DOC_FONCTIONNELLE.md` : vision métier et flux fonctionnels
+- `DOC_TECHNIQUE.md` : architecture, composants, dette technique, recommandations
+- `ihm/README.md` : documentation dédiée à l'interface opérateur

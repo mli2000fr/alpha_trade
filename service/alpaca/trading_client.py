@@ -34,13 +34,15 @@ class AlpacaTradingClient:
         self,
         broker_mode: str = "paper",
         session: requests.Session | None = None,
+        account_id: str | None = None,
     ) -> None:
         if broker_mode not in ("paper", "live"):
             raise ValueError(f"broker_mode invalide: {broker_mode}")
         self.broker_mode = broker_mode
+        self.account_id = account_id
         self.base_url = PAPER_BASE if broker_mode == "paper" else LIVE_BASE
         self._session = session or requests.Session()
-        api_key, secret_key = get_alpaca_credentials()
+        api_key, secret_key = get_alpaca_credentials(account_id)
         self._session.headers.update({
             "APCA-API-KEY-ID": api_key,
             "APCA-API-SECRET-KEY": secret_key,

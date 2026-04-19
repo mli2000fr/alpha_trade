@@ -6,8 +6,24 @@ database:
   name: alpha_trade
 
 alpaca:
+  # Compte par défaut (rétrocompatibilité)
   api_key: "PK..."
   secret_key: "..."
+
+  # Multi-comptes : liste de comptes broker Alpaca
+  # Chaque compte est identifié par un 'id' unique.
+  # Les credentials peuvent être en clair ou via placeholder env var ${VAR_NAME}.
+  accounts:
+    - id: default
+      label: "Compte principal (paper)"
+      api_key: "${ALPACA_API_KEY}"
+      secret_key: "${ALPACA_SECRET_KEY}"
+      mode: paper
+    # - id: live1
+    #   label: "Compte live"
+    #   api_key: "${ALPACA_LIVE1_API_KEY}"
+    #   secret_key: "${ALPACA_LIVE1_SECRET_KEY}"
+    #   mode: live
 
 risk:
   max_drawdown: 0.15

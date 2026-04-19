@@ -34,6 +34,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--kelly-fraction-multiplier", type=float, default=0.25)
     p.add_argument("--score-weight", type=float, default=0.40)
     p.add_argument("--prediction-weight", type=float, default=0.60)
+    p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes")
     return p
 
 
@@ -130,6 +131,6 @@ def main(args: list[str] | None = None) -> None:
     if config.dry_run:
         LOGGER.info("Mode dry-run — aucune écriture en DB.")
     else:
-        n_dec = persist_decisions(repo, entries, run_id, trade_date)
-        n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date)
+        n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=args.account)
+        n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=args.account)
         LOGGER.info("Écrit %d décisions et %d cibles en DB.", n_dec, n_tgt)

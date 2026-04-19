@@ -107,6 +107,7 @@ class ProductionExecutor:
                 broker_mode=self._cfg.broker_mode,
                 dry_run=self._cfg.dry_run,
                 total_targets=len(targets),
+                account_id=self._cfg.account_id,
             )
 
             # Circuit breaker check (injection)
@@ -328,7 +329,7 @@ class ProductionExecutor:
             if self._cfg.reconcile_after_submit and not self._cfg.dry_run:
                 try:
                     positions = self._broker.get_all_positions()
-                    self._repo.snapshot_broker_positions(exec_run_id, self._cfg.broker_mode, positions)
+                    self._repo.snapshot_broker_positions(exec_run_id, self._cfg.broker_mode, positions, account_id=self._cfg.account_id)
                     diffs = reconcile_targets_vs_broker(targets, positions, self._cfg.reconcile_tolerance_shares)
                     action_diffs = [d for d in diffs if d.action != "none"]
                     if action_diffs:

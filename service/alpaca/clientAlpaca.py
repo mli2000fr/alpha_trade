@@ -17,17 +17,18 @@ ALPACA_BARS_ENDPOINT_TEMPLATE = "https://data.alpaca.markets/v2/stocks/{symbol}/
 LOGGER = logging.getLogger(__name__)
 
 
-def get_alpaca_credentials() -> tuple[str, str]:
-    """Récupère les credentials Alpaca depuis les variables d'environnement."""
-    api_key = os.getenv("ALPACA_API_KEY")
-    secret_key = os.getenv("ALPACA_SECRET_KEY")
-    if not api_key or not secret_key:
-        raise RuntimeError("ALPACA_API_KEY ou ALPACA_SECRET_KEY non définis dans les variables d'environnement système.")
-    return api_key, secret_key
+def get_alpaca_credentials(account_id: Optional[str] = None) -> tuple[str, str]:
+    """Récupère les credentials Alpaca depuis le registre multi-comptes.
+
+    Si *account_id* est ``None``, utilise le premier compte configuré
+    (rétrocompatibilité avec les variables ``ALPACA_API_KEY`` / ``ALPACA_SECRET_KEY``).
+    """
+    from service.alpaca.accounts import AccountRegistry
+    return AccountRegistry.get().get_credentials(account_id)
 
 
-def _build_headers() -> dict[str, str]:
-    api_key, secret_key = get_alpaca_credentials()
+def _build_headers(account_id: Optional[str] = None) -> dict[str, str]:
+    api_key, secret_key = get_alpaca_credentials(account_id)
     return {
         "APCA-API-KEY-ID": api_key,
         "APCA-API-SECRET-KEY": secret_key,
@@ -58,11 +59,11 @@ def _filter_bars_after_start_date(bars: list[dict[str, Any]], start_date: Option
     return [bar for bar in bars if dateutil.parser.isoparse(bar["t"]) > start_dt]
 
 
-def fetch_alpaca_assets(session: Optional[requests.Session] = None) -> list[dict[str, Any]]:
+def fetch_alpaca_assets(session: Optional[requests.Session] = None, account_id: Optional[str] = None) -> list[dict[str, Any]]:
     owned_session = session is None
     client = session or requests.Session()
     try:
-        response = client.get(ALPACA_ASSETS_ENDPOINT, headers=_build_headers(), timeout=DEFAULT_TIMEOUT_SECONDS)
+        response = client.get(ALPACA_ASSETS_ENDPOINT, headers=_build_headers(account_id), timeout=DEFAULT_TIMEOUT_SECONDS)
         response.raise_for_status()
         return response.json()
     finally:
@@ -75,6 +76,7 @@ def fetch_bars(
     timeframe: str,
     start_date: Optional[str] = None,
     session: Optional[requests.Session] = None,
+    account_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     time.sleep(PAUSE_CALL_BAR)
     """Récupère les bars Alpaca pour un symbole et gère la pagination et les timeouts."""
@@ -109,7 +111,7 @@ def fetch_bars(
                 try:
                     response = client.get(
                         endpoint,
-                        headers=_build_headers(),
+                        headers=_build_headers(account_id),
                         params=params,
                         timeout=DEFAULT_TIMEOUT_SECONDS,
                     )

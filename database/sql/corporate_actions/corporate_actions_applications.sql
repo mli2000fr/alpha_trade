@@ -24,10 +24,12 @@ CREATE TABLE IF NOT EXISTS alpha_trade.corporate_actions_applications (
         COMMENT 'Montant cash crédité (dividende) ou débité (cash-in-lieu)',
     fractional_shares   DOUBLE        NOT NULL DEFAULT 0
         COMMENT 'Parts fractionnaires résultant d un split (converties en cash-in-lieu si > 0)',
+    account_id          VARCHAR(32)   NULL DEFAULT 'default',
     -- Audit
     applied_at          TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_caa_event (event_id),
     INDEX idx_caa_sym   (symbol),
+    INDEX idx_caa_account (account_id),
     CONSTRAINT fk_caa_event FOREIGN KEY (event_id)
         REFERENCES corporate_actions_events(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4

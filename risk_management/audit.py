@@ -22,6 +22,7 @@ def persist_decisions(
     entries: list[PortfolioEntry],
     run_id: str,
     trade_date: date,
+    account_id: str | None = None,
 ) -> int:
     """Écrit toutes les décisions dans risk_decisions."""
     records: list[dict[str, Any]] = [
@@ -50,7 +51,7 @@ def persist_decisions(
         }
         for e in entries
     ]
-    return repo.write_risk_decisions(records)
+    return repo.write_risk_decisions(records, account_id=account_id)
 
 
 def persist_portfolio_targets(
@@ -58,6 +59,7 @@ def persist_portfolio_targets(
     entries: list[PortfolioEntry],
     run_id: str,
     trade_date: date,
+    account_id: str | None = None,
 ) -> int:
     """Écrit le portefeuille cible (entrées ACCEPTED/REDUCED uniquement)."""
     accepted = [e for e in entries if e.approved_shares > 0]
@@ -79,4 +81,4 @@ def persist_portfolio_targets(
         }
         for e in accepted
     ]
-    return repo.write_portfolio_targets(records)
+    return repo.write_portfolio_targets(records, account_id=account_id)

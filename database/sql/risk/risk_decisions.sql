@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS risk_decisions (
     sizing_method       VARCHAR(20)  NULL,
     correlation_blocker VARCHAR(20)  NULL,
     correlation_value   DOUBLE       NULL,
+    account_id      VARCHAR(32)   NULL DEFAULT 'default',
     created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_rd_run       (run_id),
-    INDEX idx_rd_date_sym  (trade_date, symbol)
+    INDEX idx_rd_date_sym  (trade_date, symbol),
+    INDEX idx_rd_account   (account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

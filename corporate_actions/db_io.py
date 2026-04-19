@@ -202,18 +202,18 @@ class CorporateActionRepository:
     # Applications & ledger
     # ------------------------------------------------------------------
 
-    def insert_application(self, app: CorporateActionApplication) -> None:
+    def insert_application(self, app: CorporateActionApplication, account_id: str | None = None) -> None:
         stmt = text("""
             INSERT INTO corporate_actions_applications
                 (event_id, symbol, ca_type,
                  position_qty_before, position_qty_after,
                  cost_basis_before, cost_basis_after,
-                 cash_impact, fractional_shares, applied_at)
+                 cash_impact, fractional_shares, account_id, applied_at)
             VALUES
                 (:event_id, :symbol, :ca_type,
                  :qty_before, :qty_after,
                  :cb_before, :cb_after,
-                 :cash_impact, :fractional, :now)
+                 :cash_impact, :fractional, :account_id, :now)
         """)
         with self.engine.begin() as conn:
             conn.execute(stmt, {
@@ -226,15 +226,16 @@ class CorporateActionRepository:
                 "cb_after": app.cost_basis_after,
                 "cash_impact": app.cash_impact,
                 "fractional": app.fractional_shares,
+                "account_id": account_id or "default",
                 "now": datetime.now(timezone.utc),
             })
 
-    def insert_cash_ledger(self, entry: CashLedgerEntry) -> None:
+    def insert_cash_ledger(self, entry: CashLedgerEntry, account_id: str | None = None) -> None:
         stmt = text("""
             INSERT INTO portfolio_cash_ledger
-                (event_id, symbol, entry_type, amount, currency, description, created_at)
+                (event_id, symbol, entry_type, amount, currency, description, account_id, created_at)
             VALUES
-                (:event_id, :symbol, :entry_type, :amount, :currency, :description, :now)
+                (:event_id, :symbol, :entry_type, :amount, :currency, :description, :account_id, :now)
         """)
         with self.engine.begin() as conn:
             conn.execute(stmt, {
@@ -244,6 +245,7 @@ class CorporateActionRepository:
                 "amount": entry.amount,
                 "currency": entry.currency,
                 "description": entry.description,
+                "account_id": account_id or "default",
                 "now": datetime.now(timezone.utc),
             })
 
@@ -262,18 +264,32 @@ class CorporateActionRepository:
     # Positions broker (lecture du dernier snapshot)
     # ------------------------------------------------------------------
 
-    def load_latest_positions(self) -> list[dict[str, Any]]:
-        """Charge le dernier snapshot des positions broker."""
-        stmt = text("""
-            SELECT symbol, qty, avg_entry_price, market_value, unrealized_pnl
-            FROM broker_positions_snapshots
-            WHERE exec_run_id = (
-                SELECT exec_run_id FROM broker_positions_snapshots
-                ORDER BY created_at DESC LIMIT 1
-            )
-        """)
+    def load_latest_positions(self, account_id: str | None = None) -> list[dict[str, Any]]:
+        """Charge le dernier snapshot des positions broker, filtré par account_id si fourni."""
+        if account_id:
+            stmt = text("""
+                SELECT symbol, qty, avg_entry_price, market_value, unrealized_pnl
+                FROM broker_positions_snapshots
+                WHERE account_id = :account_id
+                  AND exec_run_id = (
+                    SELECT exec_run_id FROM broker_positions_snapshots
+                    WHERE account_id = :account_id
+                    ORDER BY created_at DESC LIMIT 1
+                )
+            """)
+            params: dict[str, Any] = {"account_id": account_id}
+        else:
+            stmt = text("""
+                SELECT symbol, qty, avg_entry_price, market_value, unrealized_pnl
+                FROM broker_positions_snapshots
+                WHERE exec_run_id = (
+                    SELECT exec_run_id FROM broker_positions_snapshots
+                    ORDER BY created_at DESC LIMIT 1
+                )
+            """)
+            params = {}
         with self.engine.connect() as conn:
-            rows = conn.execute(stmt).mappings().all()
+            rows = conn.execute(stmt, params).mappings().all()
         return [dict(r) for r in rows]
 
     def load_latest_position_symbols(self) -> list[str]:

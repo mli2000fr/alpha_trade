@@ -1,6 +1,6 @@
 ﻿# Alpha Trade — Documentation Technique
 
-> *Version : 0.2.0 — Python ≥ 3.12 — Dernière mise à jour : avril 2026*
+> *Version : 0.3.0 — Python ≥ 3.12 — Dernière mise à jour : avril 2026*
 
 ---
 
@@ -25,7 +25,7 @@ alpha_trade/
 │   ├── connection.py             ← Engine, Session, pool configuré
 │   ├── assets.py / bar_metadata.py / sanitizer_db_ops.py
 │   └── sql/                      ← DDL : stock/, news/, ml/, risk/, execution/, corporate_actions/
-├── service/alpaca/               ← Clients HTTP Alpaca (data, news, trading)
+├── service/alpaca/               ← Clients HTTP Alpaca (data, news, trading) + registre multi-comptes
 ├── service/finnhub/              ← Client HTTP Finnhub (profil société)
 ├── dataIntegrityEngine/          ← Ingestion & nettoyage des données
 ├── screener/                     ← Screening liquidité/force relative (ProcessPoolExecutor)
@@ -48,7 +48,7 @@ alpha_trade/
 |---|---|
 | `core/interfaces.py` | Protocols partagés pour découplage et mocking |
 | `database/` | Persistance MySQL (SQLAlchemy Core + pymysql) |
-| `service/` | Clients HTTP (Alpaca data/trading/news, Finnhub) |
+| `service/` | Clients HTTP (Alpaca data/trading/news, Finnhub) + registre multi-comptes (`accounts.py`) |
 | `dataIntegrityEngine/` | Import et nettoyage données de marché |
 | `screener/` | Scores de base (liquidité, RSI relatif, range historique) |
 | `selector/` | Scoring avancé (Minervini, VCP, neutralisation sectorielle) |
@@ -96,6 +96,8 @@ alpha_trade/
 **`AlpacaCorporateActionProvider`** (`corporate_actions/provider.py`) — Provider abstrait pour l'ingestion des dividendes et splits depuis l'API Alpaca Corporate Actions (`v1/corporate-actions`). Gère pagination (`next_page_token`), tri `asc`, `limit=1000`, retry réseau/HTTP, et retry spécifique aux timeouts sur le modèle de `fetch_bars` du client Alpaca. Extensible vers Polygon, Finnhub, etc.
 
 **`CorporateActionRepository`** (`corporate_actions/db_io.py`) — Accès DB (SQLAlchemy Core) : insert/load événements, applications, cash ledger, lecture des positions broker et résolution de l'univers de sync depuis `stock_metadata`. Compatible MySQL et SQLite (tests).
+
+**`AccountRegistry`** (`service/alpaca/accounts.py`) — Singleton de résolution multi-comptes. Charge les comptes depuis `config.yaml`, env vars préfixées, ou fallback classique. Fournit `resolve(account_id)` → `BrokerAccount(api_key, secret_key, mode)`. Tous les clients (trading, market data, news, corporate actions) passent par cette résolution.
 
 ### 2.2 Fonctions clés
 
@@ -160,23 +162,56 @@ alpha_trade/
 |---|---|---|
 | `LOGIN_DB` | ✅ | Utilisateur MySQL |
 | `PASSWORD_DB` | ✅ | Mot de passe MySQL |
-| `ALPACA_API_KEY` | ✅ | Clé API Alpaca |
-| `ALPACA_SECRET_KEY` | ✅ | Secret Alpaca |
+| `ALPACA_API_KEY` | ✅ | Clé API Alpaca (compte par défaut) |
+| `ALPACA_SECRET_KEY` | ✅ | Secret Alpaca (compte par défaut) |
+| `ALPACA_<ID>_API_KEY` | ⚠️ | Clé API pour un compte supplémentaire (ex: `ALPACA_LIVE1_API_KEY`) |
+| `ALPACA_<ID>_SECRET_KEY` | ⚠️ | Secret pour un compte supplémentaire |
+| `ALPACA_<ID>_MODE` | ⚠️ | Mode du compte (paper/live, défaut: paper) |
 | `FINNHUB_API_KEY` | ⚠️ | Token Finnhub (ou `CLE_FINNHUB`) — requis pour `update_sector` |
 
-### 4.2 Base de données
+### 4.2 Configuration multi-comptes (`config.yaml`)
+
+Le fichier `config.yaml` permet de déclarer plusieurs comptes Alpaca :
+
+```yaml
+alpaca:
+  accounts:
+    - id: default
+      label: "Compte principal (paper)"
+      api_key: "${ALPACA_API_KEY}"
+      secret_key: "${ALPACA_SECRET_KEY}"
+      mode: paper
+    - id: live1
+      label: "Compte live"
+      api_key: "${ALPACA_LIVE1_API_KEY}"
+      secret_key: "${ALPACA_LIVE1_SECRET_KEY}"
+      mode: live
+```
+
+**Résolution des credentials** (ordre de priorité) :
+1. `config.yaml` → `alpaca.accounts` (placeholders `${VAR}` résolus depuis l'env)
+2. Variables d'env préfixées : `ALPACA_<ID>_API_KEY` / `ALPACA_<ID>_SECRET_KEY`
+3. Fallback classique : `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` → compte `default`
+
+**Classe `AccountRegistry`** (`service/alpaca/accounts.py`) : singleton qui charge les comptes au premier accès. API : `list_accounts()`, `resolve(account_id)`, `get_credentials(account_id)`.
+
+**Propagation** : chaque module accepte un paramètre `--account <ID>` en CLI. Si omis, le premier compte configuré est utilisé (rétrocompatibilité).
+
+### 4.3 Base de données
 
 - **SGBD** : MySQL 8.x, base `alpha_trade`, host `localhost`, charset `utf8mb4`
 - **Pool** : `pool_size=2`, `max_overflow=3`, `pool_pre_ping=True`, `pool_recycle=3600`
 
-### 4.3 Tables SQL (`database/sql/`)
+### 4.4 Tables SQL (`database/sql/`)
 
 - **stock/** : `stock_metadata`, `stock_bars`, `stock_bars_daily`, `stock_scores`, `cleaning_audit_log`
 - **news/** : `news_raw`, `news_sentiment`, `news_ticker_map`, `macro_event_audit`, `ticker_daily_sentiment_features`, `sector_daily_sentiment_features`, `news_ingestion_checkpoint`
 - **ml/** : `model_registry`, `model_training_run`, `model_metrics`, `model_predictions`
-- **risk/** : `risk_decisions`, `portfolio_targets`
-- **execution/** : `execution_runs`, `execution_orders`, `execution_fills`, `execution_events`, `broker_positions_snapshots`
-- **corporate_actions/** : `corporate_actions_events`, `corporate_actions_applications`, `portfolio_cash_ledger`
+- **risk/** : `risk_decisions` ★, `portfolio_targets` ★
+- **execution/** : `execution_runs` ★, `execution_orders`, `execution_fills`, `execution_events`, `broker_positions_snapshots` ★
+- **corporate_actions/** : `corporate_actions_events`, `corporate_actions_applications` ★, `portfolio_cash_ledger` ★
+
+> ★ = tables avec colonne `account_id VARCHAR(32)` pour le support multi-comptes. Migration : `database/sql/migration_add_account_id.sql` ou Alembic `0002_add_account_id`.
 
 ---
 
@@ -185,9 +220,9 @@ alpha_trade/
 ### 5.1 Initialisation (`run_execution.py`)
 
 ```python
-config   = ExecutionConfig(**preset)          # dataclass immutable
+config   = ExecutionConfig(**preset, account_id="live1")  # ou None pour le compte par défaut
 repo     = ExecutionRepository()              # lazy SQLAlchemy engine
-client   = AlpacaTradingClient(broker_mode)   # session HTTP persistante
+client   = AlpacaTradingClient(broker_mode, account_id="live1")  # credentials résolues via AccountRegistry
 broker   = BrokerAdapter(client, config)      # couche d'isolation
 oco      = OcoManager(broker, repo)           # OCO synthétique
 executor = ProductionExecutor(config, repo, broker, oco)
@@ -321,6 +356,12 @@ python -m event_sentiment.signal_aggregator              # 6.  signal aggregator
 python -m risk_management.run_risk --account-equity 100000  # 7.  risk management
 python run_execution.py simulate                         # 8.  execution (ou paper / live)
 python -m corporate_actions apply                        # 8a. appliquer CA sur positions
+
+# Pour cibler un compte spécifique (multi-comptes) :
+python -m risk_management.run_risk --account-equity 100000 --account live1
+python run_execution.py paper --account live1
+python -m corporate_actions sync --account live1
+python -m corporate_actions apply --account live1
 ```
 
 ### IHM Streamlit

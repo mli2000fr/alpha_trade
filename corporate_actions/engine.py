@@ -42,9 +42,11 @@ class CorporateActionEngine:
         self,
         provider: CorporateActionProvider,
         repo: CorporateActionRepository | None = None,
+        account_id: str | None = None,
     ) -> None:
         self.provider = provider
         self.repo = repo or CorporateActionRepository()
+        self.account_id = account_id
 
     # ------------------------------------------------------------------
     # Phase 1 : Synchronisation (ingestion)
@@ -182,7 +184,7 @@ class CorporateActionEngine:
 
         # Charger les positions
         if positions is None:
-            raw_positions = self.repo.load_latest_positions()
+            raw_positions = self.repo.load_latest_positions(account_id=self.account_id)
         else:
             raw_positions = positions
 
@@ -248,14 +250,14 @@ class CorporateActionEngine:
         # Dispatch par type
         if event.ca_type in (CaType.CASH_DIVIDEND, CaType.SPECIAL_DIVIDEND):
             application, ledger = process_dividend(event, pos)
-            self.repo.insert_application(application)
-            self.repo.insert_cash_ledger(ledger)
+            self.repo.insert_application(application, account_id=self.account_id)
+            self.repo.insert_cash_ledger(ledger, account_id=self.account_id)
 
         elif event.ca_type in (CaType.SPLIT, CaType.REVERSE_SPLIT):
             application, ledger = process_split(event, pos)
-            self.repo.insert_application(application)
+            self.repo.insert_application(application, account_id=self.account_id)
             if ledger is not None:
-                self.repo.insert_cash_ledger(ledger)
+                self.repo.insert_cash_ledger(ledger, account_id=self.account_id)
             # Mettre à jour la position en mémoire pour les événements suivants
             pos.qty = application.position_qty_after
             if application.cost_basis_after is not None:

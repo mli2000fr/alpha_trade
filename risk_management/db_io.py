@@ -203,10 +203,27 @@ class RiskRepository:
     # ------------------------------------------------------------------
     # Écriture
     # ------------------------------------------------------------------
-    def write_risk_decisions(self, records: list[dict[str, Any]]) -> int:
-        """Insère dans risk_decisions. Tente le schéma V2 puis fallback V1."""
+    def write_risk_decisions(self, records: list[dict[str, Any]], account_id: str | None = None) -> int:
+        """Insère dans risk_decisions. Tente V3 (account_id) puis V2 puis fallback V1."""
         if not records:
             return 0
+        # Injecter account_id dans chaque record
+        for r in records:
+            r.setdefault("account_id", account_id or "default")
+        stmt_v3 = text("""
+            INSERT INTO risk_decisions
+                (run_id, trade_date, symbol, decision, reason, score_used,
+                 score_source, entry_price, proposed_shares, approved_shares,
+                 target_weight, sector, conviction_score, predicted_proba,
+                 historical_win_rate, effective_probability, kelly_fraction,
+                 sizing_method, correlation_blocker, correlation_value, account_id)
+            VALUES
+                (:run_id, :trade_date, :symbol, :decision, :reason, :score_used,
+                 :score_source, :entry_price, :proposed_shares, :approved_shares,
+                 :target_weight, :sector, :conviction_score, :predicted_proba,
+                 :historical_win_rate, :effective_probability, :kelly_fraction,
+                 :sizing_method, :correlation_blocker, :correlation_value, :account_id)
+        """)
         stmt_v2 = text("""
             INSERT INTO risk_decisions
                 (run_id, trade_date, symbol, decision, reason, score_used,
@@ -233,16 +250,31 @@ class RiskRepository:
         """)
         with self.engine.begin() as conn:
             try:
-                conn.execute(stmt_v2, records)
+                conn.execute(stmt_v3, records)
             except Exception:
-                LOGGER.info("Colonnes V2 absentes dans risk_decisions — fallback V1.")
-                conn.execute(stmt_v1, records)
+                try:
+                    conn.execute(stmt_v2, records)
+                except Exception:
+                    LOGGER.info("Colonnes V2 absentes dans risk_decisions — fallback V1.")
+                    conn.execute(stmt_v1, records)
         return len(records)
 
-    def write_portfolio_targets(self, records: list[dict[str, Any]]) -> int:
-        """Insère dans portfolio_targets. Tente le schéma V2 puis fallback V1."""
+    def write_portfolio_targets(self, records: list[dict[str, Any]], account_id: str | None = None) -> int:
+        """Insère dans portfolio_targets. Tente V3 (account_id) puis V2 puis fallback V1."""
         if not records:
             return 0
+        for r in records:
+            r.setdefault("account_id", account_id or "default")
+        stmt_v3 = text("""
+            INSERT INTO portfolio_targets
+                (run_id, trade_date, symbol, shares, entry_price, target_weight,
+                 sector, score_used, score_source, conviction_score, sizing_method,
+                 kelly_fraction, account_id)
+            VALUES
+                (:run_id, :trade_date, :symbol, :shares, :entry_price, :target_weight,
+                 :sector, :score_used, :score_source, :conviction_score, :sizing_method,
+                 :kelly_fraction, :account_id)
+        """)
         stmt_v2 = text("""
             INSERT INTO portfolio_targets
                 (run_id, trade_date, symbol, shares, entry_price, target_weight,
@@ -263,8 +295,11 @@ class RiskRepository:
         """)
         with self.engine.begin() as conn:
             try:
-                conn.execute(stmt_v2, records)
+                conn.execute(stmt_v3, records)
             except Exception:
-                LOGGER.info("Colonnes V2 absentes dans portfolio_targets — fallback V1.")
-                conn.execute(stmt_v1, records)
+                try:
+                    conn.execute(stmt_v2, records)
+                except Exception:
+                    LOGGER.info("Colonnes V2 absentes dans portfolio_targets — fallback V1.")
+                    conn.execute(stmt_v1, records)
         return len(records)

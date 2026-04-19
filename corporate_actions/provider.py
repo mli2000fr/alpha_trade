@@ -56,9 +56,10 @@ class AlpacaCorporateActionProvider(CorporateActionProvider):
     Ref: https://docs.alpaca.markets/reference/corporateactions
     """
 
-    def __init__(self, session: requests.Session | None = None) -> None:
+    def __init__(self, session: requests.Session | None = None, account_id: str | None = None) -> None:
         self._session = session or requests.Session()
-        api_key, secret_key = get_alpaca_credentials()
+        self.account_id = account_id
+        api_key, secret_key = get_alpaca_credentials(account_id)
         self._session.headers.update({
             "APCA-API-KEY-ID": api_key,
             "APCA-API-SECRET-KEY": secret_key,

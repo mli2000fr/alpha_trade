@@ -100,7 +100,7 @@ def abort_missing_env() -> None:
 # Menu interactif
 # ---------------------------------------------------------------------------
 
-def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool]:
+def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool, str | None]:
     print(BANNER)
     print_env_status()
 
@@ -149,7 +149,28 @@ def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool]:
     outside_rth = input("Forcer execution hors horaires marche ? [o/N] : ").strip().lower() == "o"
     rebalance = input("Activer reequilibrage auto sur reconciliation ? [o/N] : ").strip().lower() == "o"
 
-    return mode, run_id, trade_date, debug, outside_rth, rebalance
+    # Sélection du compte multi-comptes
+    account_id: str | None = None
+    try:
+        from service.alpaca.accounts import AccountRegistry
+        accounts = AccountRegistry.get().list_accounts()
+        if len(accounts) > 1:
+            print(f"\n{BOLD}{SEP}{RESET}")
+            print(f"{BOLD}  Choisir un compte Alpaca{RESET}")
+            print(f"{BOLD}{SEP}{RESET}")
+            for i, acct in enumerate(accounts, 1):
+                print(f"  {CYAN}{i}{RESET}  {acct.label} ({acct.account_id}, {acct.mode})")
+            acct_choice = input(f"Ton choix [1-{len(accounts)}] : ").strip()
+            try:
+                idx = int(acct_choice) - 1
+                if 0 <= idx < len(accounts):
+                    account_id = accounts[idx].account_id
+            except (ValueError, IndexError):
+                pass
+    except Exception:
+        pass
+
+    return mode, run_id, trade_date, debug, outside_rth, rebalance, account_id
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +224,7 @@ PRESETS: dict[str, dict] = {
 # Lancement
 # ---------------------------------------------------------------------------
 
-def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allow_outside_rth: bool = False, auto_rebalance: bool = False) -> None:
+def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allow_outside_rth: bool = False, auto_rebalance: bool = False, account_id: str | None = None) -> None:
     level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(
         level=level,
@@ -253,9 +274,9 @@ def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allo
         print("-> Verifie que le projet est installe : pip install -e .")
         sys.exit(1)
 
-    config   = ExecutionConfig(**preset)
+    config   = ExecutionConfig(**preset, account_id=account_id)
     repo     = ExecutionRepository()
-    client   = AlpacaTradingClient(broker_mode=config.broker_mode)
+    client   = AlpacaTradingClient(broker_mode=config.broker_mode, account_id=account_id)
     broker   = BrokerAdapter(client, config)
     oco      = OcoManager(broker, repo)
     # Construction du circuit breaker
@@ -348,6 +369,7 @@ Exemples :
     p.add_argument("--debug",             action="store_true",                          help="Active les logs DEBUG")
     p.add_argument("--allow-outside-rth",      dest="allow_outside_rth",  action="store_true", help="Execute meme si marche ferme (week-end / hors RTH)")
     p.add_argument("--auto-rebalance",          dest="auto_rebalance",     action="store_true", help="Vend/achete automatiquement les ecarts detectes en reconciliation")
+    p.add_argument("--account",                 dest="account_id",         metavar="ACCOUNT_ID", help="ID du compte Alpaca multi-comptes (defaut: premier compte)")
     return p
 
 
@@ -361,7 +383,7 @@ def main() -> None:
         sys.exit(0 if ok else 1)
 
     if args.mode is None:
-        mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance = interactive_menu()
+        mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id = interactive_menu()
     else:
         mode              = args.mode
         run_id            = args.run_id
@@ -369,9 +391,10 @@ def main() -> None:
         debug             = args.debug
         allow_outside_rth = args.allow_outside_rth
         auto_rebalance    = args.auto_rebalance
+        account_id        = args.account_id
 
     abort_missing_env()
-    run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance)
+    run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ class ExecutionConfig:
     # --- Mode ---
     broker_mode: str = "paper"
     dry_run: bool = False
+    account_id: str | None = None  # None = compte par défaut
 
     # --- Entry order ---
     entry_order_type: str = "market"

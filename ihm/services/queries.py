@@ -96,7 +96,14 @@ def get_portfolio_targets(run_id: str | None = None) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_execution_runs(limit: int = 20) -> pd.DataFrame:
+def get_execution_runs(limit: int = 20, account_id: str | None = None) -> pd.DataFrame:
+    if account_id:
+        return safe_query(f"""
+            SELECT exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
+                   status, started_at, completed_at, total_targets, total_submitted,
+                   total_filled, error_message, account_id
+            FROM execution_runs WHERE account_id = :account_id ORDER BY started_at DESC LIMIT {limit}
+        """, {"account_id": account_id})
     return safe_query(f"""
         SELECT exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
                status, started_at, completed_at, total_targets, total_submitted,
@@ -116,7 +123,16 @@ def get_execution_events(exec_run_id: str | None = None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_broker_positions() -> pd.DataFrame:
+def get_broker_positions(account_id: str | None = None) -> pd.DataFrame:
+    if account_id:
+        return safe_query("""
+            SELECT bps.* FROM broker_positions_snapshots bps
+            INNER JOIN (
+                SELECT MAX(created_at) AS mx FROM broker_positions_snapshots WHERE account_id = :account_id
+            ) t ON bps.created_at = t.mx
+            WHERE bps.account_id = :account_id
+            ORDER BY market_value DESC
+        """, {"account_id": account_id})
     return safe_query("""
         SELECT bps.* FROM broker_positions_snapshots bps
         INNER JOIN (SELECT MAX(created_at) AS mx FROM broker_positions_snapshots) t ON bps.created_at = t.mx

@@ -1,6 +1,6 @@
 # Alpha Trade — Documentation Fonctionnelle
 
-> *Version : 0.2.0 — Dernière mise à jour : avril 2026*
+> *Version : 0.3.0 — Dernière mise à jour : avril 2026*
 
 ---
 
@@ -150,6 +150,43 @@ python -m corporate_actions apply   # Appliquer sur les positions
 python -m corporate_actions status  # Résumé des événements
 ```
 
+### 2.10 Multi-comptes Alpaca
+
+Le système supporte **plusieurs comptes broker Alpaca en parallèle** (paper et/ou live).
+
+| Fonctionnalité | Description |
+|---|---|
+| **Registre centralisé** | `AccountRegistry` charge les comptes depuis `config.yaml`, env vars préfixées, ou fallback classique |
+| **Isolation par compte** | Chaque exécution, chaque run de risk et chaque apply CA peut cibler un compte spécifique via `--account <ID>` |
+| **Traçabilité DB** | Colonne `account_id` sur 6 tables : `execution_runs`, `broker_positions_snapshots`, `risk_decisions`, `portfolio_targets`, `corporate_actions_applications`, `portfolio_cash_ledger` |
+| **IHM** | Sélecteur de compte dans la sidebar Streamlit — filtre automatiquement les données affichées |
+| **Rétrocompatibilité** | Les données existantes (sans `account_id`) sont considérées comme `default` |
+| **Données de marché** | Les barres OHLCV, news et assets sont partagés (non liés à un compte) |
+
+**Configuration** (dans `config.yaml`) :
+```yaml
+alpaca:
+  accounts:
+    - id: default
+      label: "Paper principal"
+      api_key: "${ALPACA_API_KEY}"
+      secret_key: "${ALPACA_SECRET_KEY}"
+      mode: paper
+    - id: live1
+      label: "Compte live"
+      api_key: "${ALPACA_LIVE1_API_KEY}"
+      secret_key: "${ALPACA_LIVE1_SECRET_KEY}"
+      mode: live
+```
+
+**Usage CLI** :
+```
+python run_execution.py paper --account default      # exécuter sur le compte paper
+python run_execution.py live --account live1          # exécuter sur le compte live
+python -m risk_management.run_risk --account live1    # risk pour le compte live
+python -m corporate_actions apply --account live1     # appliquer CA sur le compte live
+```
+
 ---
 
 ## 3. Flux de Fonctionnement Global
@@ -282,7 +319,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 4. **Support short selling** : étendre la stratégie aux positions short
 5. **Streaming WebSocket** : remplacer le polling des fills par un stream Alpaca pour réduire la latence
 6. **Scheduler automatisé** : cron/Airflow/Prefect pour automatiser l'exécution quotidienne du pipeline
-7. **Multi-comptes** : supporter plusieurs comptes broker en parallèle
+7. ~~**Multi-comptes** : supporter plusieurs comptes broker en parallèle~~ → ✅ **Implémenté** : registre multi-comptes (`service/alpaca/accounts.py`), colonne `account_id` sur 6 tables, `--account` CLI sur tous les modules
 8. ~~**Gestion des dividendes et splits**~~ → ✅ **Implémenté** : module `corporate_actions`
 9. **Optimisation des poids** : calibration automatique IC-weighted des facteurs via backtest glissant
 10. **Audit trail enrichi** : export PDF/CSV des rapports TCA et des décisions de risque

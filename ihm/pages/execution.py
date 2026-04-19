@@ -24,7 +24,8 @@ def render() -> None:
         render_db_unavailable("Execution Engine", form_key="execution_db_form")
         return
 
-    runs = get_execution_runs()
+    account_id = st.session_state.get("selected_account_id")
+    runs = get_execution_runs(account_id=account_id)
     if runs.empty:
         render_query_diagnostic("Aucun run d'exécution trouvé.")
         return
@@ -66,7 +67,7 @@ def render() -> None:
 
     # --- Positions broker ---
     st.subheader("📦 Positions broker (dernier snapshot)")
-    show_dataframe(get_broker_positions(), height=300)
+    show_dataframe(get_broker_positions(account_id=account_id), height=300)
 
 
 run_page_if_standalone(__name__, render)

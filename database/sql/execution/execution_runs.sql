@@ -12,9 +12,11 @@ CREATE TABLE IF NOT EXISTS execution_runs (
     total_targets   INT NOT NULL DEFAULT 0,
     total_submitted INT NOT NULL DEFAULT 0,
     total_filled    INT NOT NULL DEFAULT 0,
+    account_id      VARCHAR(32) NULL DEFAULT 'default',
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_er_run (exec_run_id),
     INDEX idx_er_risk (risk_run_id),
-    INDEX idx_er_date (trade_date)
+    INDEX idx_er_date (trade_date),
+    INDEX idx_er_account (account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

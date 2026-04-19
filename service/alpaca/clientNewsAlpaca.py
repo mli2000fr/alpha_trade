@@ -16,8 +16,8 @@ RATE_LIMIT_BACKOFF_SECONDS = 20
 LOGGER = logging.getLogger(__name__)
 
 
-def _build_headers() -> dict[str, str]:
-    api_key, secret_key = get_alpaca_credentials()
+def _build_headers(account_id: str | None = None) -> dict[str, str]:
+    api_key, secret_key = get_alpaca_credentials(account_id)
     return {
         "APCA-API-KEY-ID": api_key,
         "APCA-API-SECRET-KEY": secret_key,

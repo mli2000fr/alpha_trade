@@ -152,14 +152,15 @@ class ExecutionRepository:
         broker_mode: str,
         dry_run: bool,
         total_targets: int,
+        account_id: str | None = None,
     ) -> None:
         stmt = text("""
             INSERT INTO execution_runs
                 (exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
-                 status, started_at, total_targets, total_submitted, total_filled)
+                 status, started_at, total_targets, total_submitted, total_filled, account_id)
             VALUES
                 (:exec_run_id, :risk_run_id, :trade_date, :broker_mode, :dry_run,
-                 'RUNNING', :started_at, :total_targets, 0, 0)
+                 'RUNNING', :started_at, :total_targets, 0, 0, :account_id)
         """)
         with self.engine.begin() as conn:
             conn.execute(stmt, {
@@ -170,6 +171,7 @@ class ExecutionRepository:
                 "dry_run": dry_run,
                 "started_at": datetime.now(timezone.utc),
                 "total_targets": total_targets,
+                "account_id": account_id,
             })
 
     def update_execution_run_status(
@@ -254,16 +256,17 @@ class ExecutionRepository:
         exec_run_id: str,
         broker_mode: str,
         positions: list[dict[str, Any]],
+        account_id: str | None = None,
     ) -> None:
         if not positions:
             return
         stmt = text("""
             INSERT INTO broker_positions_snapshots
                 (exec_run_id, broker_mode, symbol, qty, avg_entry_price,
-                 market_value, unrealized_pnl, created_at)
+                 market_value, unrealized_pnl, created_at, account_id)
             VALUES
                 (:exec_run_id, :broker_mode, :symbol, :qty, :avg_entry_price,
-                 :market_value, :unrealized_pnl, :created_at)
+                 :market_value, :unrealized_pnl, :created_at, :account_id)
         """)
         now = datetime.now(timezone.utc)
         records = [
@@ -276,6 +279,7 @@ class ExecutionRepository:
                 "market_value": float(p.get("market_value", 0)),
                 "unrealized_pnl": float(p.get("unrealized_pl", 0)),
                 "created_at": now,
+                "account_id": account_id,
             }
             for p in positions
         ]

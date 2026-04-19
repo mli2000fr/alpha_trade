@@ -33,10 +33,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. Défaut : 25.")
     sync_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -10 ans.")
     sync_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
+    sync_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
 
     # --- apply ---
     apply_p = sub.add_parser("apply", help="Appliquer les événements pending sur les positions.")
     apply_p.add_argument("--as-of", type=str, default=None, help="Date limite (YYYY-MM-DD). Défaut : aujourd'hui.")
+    apply_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
 
     # --- status ---
     sub.add_parser("status", help="Afficher un résumé des événements corporate actions.")
@@ -55,6 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -10 ans.")
     run_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
     run_p.add_argument("--as-of", type=str, default=None, help="Date limite pour apply (YYYY-MM-DD). Défaut : aujourd'hui.")
+    run_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
 
     return parser
 
@@ -120,9 +123,10 @@ def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRep
 
 
 def _run_sync(args: argparse.Namespace) -> None:
-    provider = AlpacaCorporateActionProvider()
+    account_id = getattr(args, "account", None)
+    provider = AlpacaCorporateActionProvider(account_id=account_id)
     repo = CorporateActionRepository()
-    engine = CorporateActionEngine(provider=provider, repo=repo)
+    engine = CorporateActionEngine(provider=provider, repo=repo, account_id=account_id)
 
     start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
     end_date = date.fromisoformat(args.end) if args.end else date.today()
@@ -139,8 +143,9 @@ def _run_sync(args: argparse.Namespace) -> None:
 
 
 def _run_apply(args: argparse.Namespace) -> None:
-    provider = AlpacaCorporateActionProvider()
-    engine = CorporateActionEngine(provider=provider)
+    account_id = getattr(args, "account", None)
+    provider = AlpacaCorporateActionProvider(account_id=account_id)
+    engine = CorporateActionEngine(provider=provider, account_id=account_id)
 
     as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
 
@@ -176,9 +181,10 @@ def _run_status(_args: argparse.Namespace) -> None:
 def _run_all(args: argparse.Namespace) -> None:
     """Enchaîne sync puis apply dans un seul appel CLI."""
     print("[RUN] Démarrage de l'ingestion des corporate actions...")
-    provider = AlpacaCorporateActionProvider()
+    account_id = getattr(args, "account", None)
+    provider = AlpacaCorporateActionProvider(account_id=account_id)
     repo = CorporateActionRepository()
-    engine = CorporateActionEngine(provider=provider, repo=repo)
+    engine = CorporateActionEngine(provider=provider, repo=repo, account_id=account_id)
     start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
     end_date = date.fromisoformat(args.end) if args.end else date.today()
     symbols = _resolve_sync_symbols_bar(args, repo)
