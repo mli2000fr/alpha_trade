@@ -1,6 +1,6 @@
 # Alpha Trade — Documentation Fonctionnelle
 
-> *Version : 0.1.0 — Dernière mise à jour : avril 2026*
+> *Version : 0.2.0 — Dernière mise à jour : avril 2026*
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### 1.1 Objectif de l'application
 
-**Alpha Trade** est un système de trading algorithmique **Swing Trade** sur actions US, de bout en bout. Il couvre la totalité de la chaîne : ingestion de données de marché, screening quantitatif, analyse de sentiment (NLP/FinBERT), prédiction par modèle LSTM, gestion du risque, construction de portefeuille et exécution automatisée des ordres via le broker **Alpaca**.
+**Alpha Trade** est un système de trading algorithmique **Swing Trade** sur actions US, de bout en bout. Il couvre la totalité de la chaîne : ingestion de données de marché, screening quantitatif, analyse de sentiment (NLP/FinBERT), prédiction par modèle LSTM, gestion du risque, construction de portefeuille, exécution automatisée des ordres via le broker **Alpaca**, et gestion des corporate actions (dividendes, splits). Une **IHM opérateur Streamlit** permet la supervision du pipeline.
 
 ### 1.2 Contexte métier
 
@@ -19,11 +19,17 @@ Le système cible le **marché actions US (NYSE/NASDAQ)**, en stratégie **swing
 Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 
 1. **Ingestion** des données de marché depuis Alpaca (barres OHLCV journalières)
+1a. **Corporate actions sync** — ingestion des dividendes/splits depuis Alpaca (référentiel)
 2. **Nettoyage** des données (sanitizer, détection d'anomalies)
 3. **Screening** multi-facteurs pour identifier les meilleurs candidats
-4. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
-5. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille
-6. **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
+4. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
+5. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
+6. **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
+7. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille
+8. **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
+8a. **Corporate actions apply** — application des dividendes/splits sur les positions existantes
+
+L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 
 ---
 
@@ -118,6 +124,7 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 ### 2.8 Logs métier
 
 - Logs structurés avec niveaux INFO/DEBUG/WARNING/ERROR/CRITICAL
+- **RotatingFileHandler** : logs fichier rotatifs (`alpha_trade.log`, 5 Mo, 3 backups) en plus de stdout
 - Couverture de code ≥ 60% (seuil pytest configuré)
 - Rapport HTML de couverture généré dans `htmlcov/`
 
@@ -158,16 +165,16 @@ python -m corporate_actions status  # Résumé des événements
 
                      PIPELINE QUOTIDIEN
      ┌───────────────────────────────────────────────────────┐
-     │ 1. import_alpaca_bar         │ → stock_bars           │
-     │ 1b. corporate_actions sync  │ → corporate_actions_events│
-     │ 1c. corporate_actions apply │ → position adjustments  │
-     │ 2. data_sanitizer_daily      │ → stock_bars_daily     │
-     │ 3. stock_screener            │ → stock_scores         │
-     │ 4. alpha_scanner             │ → stock_scores (update)│
-     │ 5. sentiment_pipeline        │ → ticker/sector feats  │
-     │ 6. signal_aggregator         │ → final_score_sentiment│
-     │ 7. run_risk                  │ → portfolio_targets    │
-     │ 8. run_execution             │ → ordres Alpaca        │
+     │ 1.  import_alpaca_bar        │ → stock_bars           │
+     │ 1a. corporate_actions sync   │ → corporate_actions_events│
+     │ 2.  data_sanitizer_daily     │ → stock_bars_daily     │
+     │ 3.  stock_screener           │ → stock_scores         │
+     │ 4.  alpha_scanner            │ → stock_scores (update)│
+     │ 5.  sentiment_pipeline       │ → ticker/sector feats  │
+     │ 6.  signal_aggregator        │ → final_score_sentiment│
+     │ 7.  run_risk                 │ → portfolio_targets    │
+     │ 8.  run_execution            │ → ordres Alpaca        │
+     │ 8a. corporate_actions apply  │ → position adjustments │
      └───────────────────────────────────────────────────────┘
 ```
 
@@ -270,13 +277,13 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 ## 7. Suggestions d'Amélioration Métier
 
 1. **Alertes externes** : intégrer Slack/email/SMS pour circuit breaker, slippage, et fin de run
-2. **Dashboard temps réel** : interface web (Streamlit/Grafana) pour suivre le portefeuille et les métriques
+2. ~~**Dashboard temps réel**~~ → ✅ **Implémenté** : IHM Streamlit opérateur (`ihm/app.py`)
 3. **Backtesting intégré** : cadre de backtest (vectorbt/zipline) pour valider les paramètres avant production
 4. **Support short selling** : étendre la stratégie aux positions short
 5. **Streaming WebSocket** : remplacer le polling des fills par un stream Alpaca pour réduire la latence
 6. **Scheduler automatisé** : cron/Airflow/Prefect pour automatiser l'exécution quotidienne du pipeline
 7. **Multi-comptes** : supporter plusieurs comptes broker en parallèle
-8. **Gestion des dividendes et splits** : suivi automatique des corporate actions
+8. ~~**Gestion des dividendes et splits**~~ → ✅ **Implémenté** : module `corporate_actions`
 9. **Optimisation des poids** : calibration automatique IC-weighted des facteurs via backtest glissant
 10. **Audit trail enrichi** : export PDF/CSV des rapports TCA et des décisions de risque
 

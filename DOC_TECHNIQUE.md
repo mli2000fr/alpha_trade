@@ -1,6 +1,6 @@
 ﻿# Alpha Trade — Documentation Technique
 
-> *Version : 0.1.0 — Python ≥ 3.12 — Dernière mise à jour : avril 2026*
+> *Version : 0.2.0 — Python ≥ 3.12 — Dernière mise à jour : avril 2026*
 
 ---
 
@@ -13,14 +13,18 @@ alpha_trade/
 ├── run_execution.py              ← Point d'entrée principal (CLI interactif ou arguments)
 ├── pyproject.toml                ← Config build, dépendances, ruff, mypy
 ├── requirements.txt / -dev.txt   ← Dépendances runtime et dev
+├── config.yaml                   ← Configuration centralisée YAML (DB, Alpaca, risk)
+├── alembic.ini + alembic/        ← Migrations de schéma DB (Alembic)
 ├── mypy.ini / pytest.ini         ← Config mypy et pytest (cov ≥ 60%)
 ├── README.md                     ← Documentation rapide + ordre d'exécution
+├── DOC_FONCTIONNELLE.md          ← Documentation fonctionnelle complète
+├── DOC_TECHNIQUE.md              ← Ce document
 ├── core/interfaces.py            ← Contrats (Protocol) : PriceRepository, RiskChecker, etc.
-├── common/utils.py               ← Calendrier NYSE (pandas_market_calendars)
+├── common/utils.py               ← Calendrier NYSE, RotatingFileHandler, load_config()
 ├── database/                     ← Persistance MySQL (SQLAlchemy + pymysql)
 │   ├── connection.py             ← Engine, Session, pool configuré
 │   ├── assets.py / bar_metadata.py / sanitizer_db_ops.py
-│   └── sql/                      ← DDL : stock/, news/, ml/, risk/, execution/
+│   └── sql/                      ← DDL : stock/, news/, ml/, risk/, execution/, corporate_actions/
 ├── service/alpaca/               ← Clients HTTP Alpaca (data, news, trading)
 ├── service/finnhub/              ← Client HTTP Finnhub (profil société)
 ├── dataIntegrityEngine/          ← Ingestion & nettoyage des données
@@ -31,8 +35,10 @@ alpha_trade/
 ├── risk_management/              ← Sizing, contraintes, circuit breaker, portefeuille cible
 ├── execution_engine/             ← OMS/EMS : ordres, polling, bracket, réconciliation, TCA
 ├── corporate_actions/            ← Corporate actions : dividendes, splits, audit, cash ledger
+├── ihm/                          ← IHM opérateur Streamlit (dashboard de supervision)
 ├── artifacts/models/             ← Checkpoints PyTorch
-├── tests/                        ← 35+ tests unitaires (pytest)
+├── tests/                        ← 40+ tests unitaires (pytest)
+├── .github/                      ← CI/CD GitHub Actions
 └── htmlcov/                      ← Rapports couverture
 ```
 
@@ -51,6 +57,7 @@ alpha_trade/
 | `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
 | `execution_engine/` | OMS/EMS complet (10 phases) |
 | `corporate_actions/` | Gestion dividendes, splits, reverse splits (audit + comptabilité portefeuille) |
+| `ihm/` | IHM Streamlit : supervision pipeline, scores, risque, exécution, CA |
 
 ---
 
@@ -209,7 +216,8 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 - Format : `%(asctime)s %(levelname)-8s %(name)s -- %(message)s`
 - Niveaux : DEBUG / INFO / WARNING / ERROR / CRITICAL
 - Chaque module : `LOGGER = logging.getLogger(__name__)`
-- Sortie : stdout uniquement (pas de handler fichier)
+- Sortie : stdout + **RotatingFileHandler** (`alpha_trade.log`, 5 Mo, 3 backups)
+- Fonction utilitaire : `common.utils.setup_logging_with_file_handler()`
 
 ---
 
@@ -241,12 +249,13 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 |---|---|
 | Double `return selected` dans `alpha_scanner.py` ligne 766 (code mort) | P0 |
 | `bar_metadata.py` utilise DB-API raw au lieu de SQLAlchemy Core | P1 |
-| Pas de migration DB (Alembic absent) | P1 |
-| Pas de handler fichier pour les logs (stdout seul) | P1 |
+| ~~Pas de migration DB (Alembic absent)~~ → ✅ Alembic ajouté | ~~P1~~ |
+| ~~Pas de handler fichier pour les logs (stdout seul)~~ → ✅ RotatingFileHandler ajouté | ~~P1~~ |
 | Import dynamique `risk_management` dans `executor.py` (couplage runtime) | P2 |
 | Méthode `_make_entry` V1 inutilisée dans `portfolio_builder.py` | P2 |
-| Dossier `prompt/` (25 fichiers non structurés, hors code) | P3 |
+| Dossier `prompt/` (fichiers non structurés, hors code) | P3 |
 | `configure_optimizers()` sans type hint dans `model.py` | P3 |
+| `corporate_actions*` absent de `pyproject.toml` packages.find.include | P1 |
 
 ---
 
@@ -255,21 +264,22 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 **Court terme (P0-P1)** :
 1. Supprimer le `return selected` dupliqué dans `alpha_scanner.py:766`
 2. Migrer `bar_metadata.py` vers SQLAlchemy Core
-3. Ajouter Alembic pour les migrations de schéma
-4. Ajouter RotatingFileHandler pour les logs
+3. ~~Ajouter Alembic pour les migrations de schéma~~ → ✅ Fait
+4. ~~Ajouter RotatingFileHandler pour les logs~~ → ✅ Fait
 5. Supprimer `_make_entry` V1 dans `portfolio_builder.py`
+6. Ajouter `corporate_actions*` et `ihm*` dans `pyproject.toml` packages.find.include
 
 **Moyen terme (P2)** :
-6. Extraire le circuit breaker de l'import dynamique → injection via constructeur
-7. Ajouter une interface `BrokerPort` (Protocol) pour abstraire le broker
-8. Unifier les configs : YAML/TOML centralisé
-9. Tests d'intégration avec MySQL Docker (testcontainers)
+7. Extraire le circuit breaker de l'import dynamique → injection via constructeur
+8. Ajouter une interface `BrokerPort` (Protocol) pour abstraire le broker
+9. ~~Unifier les configs : YAML/TOML centralisé~~ → ✅ `config.yaml` + `load_config()` ajoutés
+10. Tests d'intégration avec MySQL Docker (testcontainers)
 
 **Long terme (P3)** :
-10. Orchestrateur pipeline (Airflow/Prefect)
-11. Monitoring (Prometheus/Grafana)
-12. Containerisation Docker
-13. Framework de backtest intégré
+11. Orchestrateur pipeline (Airflow/Prefect)
+12. Monitoring (Prometheus/Grafana)
+13. Containerisation Docker
+14. Framework de backtest intégré
 
 ---
 
@@ -300,17 +310,23 @@ Exécuter les `.sql` de `database/sql/` dans MySQL (stock/ → news/ → ml/ →
 python -m dataIntegrityEngine.import_alpaca_assets
 python -m dataIntegrityEngine.update_sector
 
-# Quotidien
-python -m dataIntegrityEngine.import_alpaca_bar
-python -m corporate_actions sync      # Ingérer dividendes/splits depuis Alpaca
-python -m corporate_actions apply     # Appliquer sur positions (idempotent)
-python -m dataIntegrityEngine.data_sanitizer_daily
-python -m dataIntegrityEngine.stock_screener
-python -m selector.alpha_scanner
-python -m event_sentiment
-python -m event_sentiment.signal_aggregator
-python -m risk_management.run_risk --account-equity 100000
-python run_execution.py simulate   # ou paper / live
+# Quotidien — dans cet ordre strict :
+python -m dataIntegrityEngine.import_alpaca_bar         # 1.  import bars
+python -m corporate_actions sync --skip-existing         # 1a. ingérer CA (référentiel)
+python -m dataIntegrityEngine.data_sanitizer_daily       # 2.  sanitize bars
+python -m dataIntegrityEngine.stock_screener             # 3.  screener
+python -m selector.alpha_scanner                         # 4.  alpha scanner
+python -m event_sentiment                                # 5.  sentiment pipeline
+python -m event_sentiment.signal_aggregator              # 6.  signal aggregator
+python -m risk_management.run_risk --account-equity 100000  # 7.  risk management
+python run_execution.py simulate                         # 8.  execution (ou paper / live)
+python -m corporate_actions apply                        # 8a. appliquer CA sur positions
+```
+
+### IHM Streamlit
+
+```powershell
+python -m streamlit run ihm/app.py
 ```
 
 ### Tests

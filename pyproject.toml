@@ -22,6 +22,8 @@ dependencies = [
     "torch",
     "lightning",
     "torchmetrics",
+    "streamlit",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]
@@ -57,6 +59,8 @@ include = [
     "risk_management*",
     "execution_engine*",
     "modelFactory*",
+    "corporate_actions*",
+    "ihm*",
 ]
 
 # ---------------------------------------------------------------------------

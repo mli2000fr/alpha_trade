@@ -170,6 +170,8 @@ run_predict.py
 run_execution.py
 python -m corporate_actions apply                  # apply CA sur positions existantes (après execution)
 
+python -m streamlit run ihm/app.py
+
 -----------------------
 python -m corporate_actions sync --skip-existing     # 1. ingérer CA (référentiel)
 python -m dataIntegrityEngine.data_sanitizer_daily   # 2. sanitize bars

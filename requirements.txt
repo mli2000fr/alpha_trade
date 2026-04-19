@@ -23,6 +23,12 @@ python-dateutil
 pytz
 pandas-market-calendars
 
+# --- IHM Streamlit ---
+streamlit
+
+# --- Configuration ---
+pyyaml
+
 # --- Tests / Intégration ---
 testcontainers[mysql]
 
@@ -35,5 +41,3 @@ torch
 lightning
 torchmetrics
 
-# --- Tests / Intégration ---
-testcontainers[mysql]

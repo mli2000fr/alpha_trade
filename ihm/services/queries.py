@@ -1,0 +1,184 @@
+"""ihm/services/queries.py — Requêtes SQL centralisées pour l'IHM."""
+from __future__ import annotations
+
+import pandas as pd
+import streamlit as st
+
+from ihm.services.db import safe_query, safe_scalar
+
+
+# ---------------------------------------------------------------------------
+# Overview
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_candidates_count() -> int:
+    v = safe_scalar("SELECT COUNT(*) FROM stock_scores WHERE is_candidate = 1")
+    return int(v) if v is not None else 0
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_top_candidates(n: int = 10) -> pd.DataFrame:
+    return safe_query(f"""
+        SELECT symbol, sector, final_score_sentiment, final_score, total_score, is_candidate
+        FROM stock_scores
+        WHERE is_candidate = 1 AND final_score_sentiment IS NOT NULL
+        ORDER BY final_score_sentiment DESC
+        LIMIT {n}
+    """)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_latest_risk_run_id() -> str | None:
+    v = safe_scalar("SELECT run_id FROM portfolio_targets ORDER BY created_at DESC LIMIT 1")
+    return str(v) if v else None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_latest_exec_run() -> pd.DataFrame:
+    return safe_query("""
+        SELECT exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
+               status, started_at, completed_at, total_targets, total_submitted, total_filled, error_message
+        FROM execution_runs ORDER BY started_at DESC LIMIT 1
+    """)
+
+
+# ---------------------------------------------------------------------------
+# Screening
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_stock_scores() -> pd.DataFrame:
+    return safe_query("""
+        SELECT symbol, sector, is_candidate, total_score, final_score, final_score_sentiment,
+               trend_score, vcp_score, signal_active, total_news,
+               anomaly_count, missing_days_count,
+               last_updated_score, last_updated_scan, last_updated_sentiment
+        FROM stock_scores
+        ORDER BY final_score_sentiment DESC, total_score DESC
+    """)
+
+
+# ---------------------------------------------------------------------------
+# Risk
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_risk_run_ids() -> list[str]:
+    df = safe_query("SELECT DISTINCT run_id FROM risk_decisions ORDER BY run_id DESC LIMIT 50")
+    return df["run_id"].tolist() if not df.empty else []
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_risk_decisions(run_id: str | None = None) -> pd.DataFrame:
+    if run_id:
+        return safe_query("""
+            SELECT * FROM risk_decisions WHERE run_id = :run_id ORDER BY created_at DESC
+        """, {"run_id": run_id})
+    return safe_query("SELECT * FROM risk_decisions ORDER BY created_at DESC LIMIT 200")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_portfolio_targets(run_id: str | None = None) -> pd.DataFrame:
+    if run_id:
+        return safe_query("""
+            SELECT * FROM portfolio_targets WHERE run_id = :run_id ORDER BY target_weight DESC
+        """, {"run_id": run_id})
+    return safe_query("""
+        SELECT * FROM portfolio_targets
+        WHERE run_id = (SELECT run_id FROM portfolio_targets ORDER BY created_at DESC LIMIT 1)
+        ORDER BY target_weight DESC
+    """)
+
+
+# ---------------------------------------------------------------------------
+# Execution
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_runs(limit: int = 20) -> pd.DataFrame:
+    return safe_query(f"""
+        SELECT exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
+               status, started_at, completed_at, total_targets, total_submitted,
+               total_filled, error_message
+        FROM execution_runs ORDER BY started_at DESC LIMIT {limit}
+    """)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_events(exec_run_id: str | None = None) -> pd.DataFrame:
+    if exec_run_id:
+        return safe_query("""
+            SELECT event_type, symbol, message, created_at
+            FROM execution_events WHERE exec_run_id = :eid ORDER BY created_at DESC
+        """, {"eid": exec_run_id})
+    return safe_query("SELECT event_type, symbol, message, created_at FROM execution_events ORDER BY created_at DESC LIMIT 100")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_broker_positions() -> pd.DataFrame:
+    return safe_query("""
+        SELECT bps.* FROM broker_positions_snapshots bps
+        INNER JOIN (SELECT MAX(created_at) AS mx FROM broker_positions_snapshots) t ON bps.created_at = t.mx
+        ORDER BY market_value DESC
+    """)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_fills(exec_run_id: str | None = None) -> pd.DataFrame:
+    if exec_run_id:
+        return safe_query("""
+            SELECT * FROM execution_fills WHERE exec_run_id = :eid ORDER BY fill_timestamp DESC
+        """, {"eid": exec_run_id})
+    return safe_query("SELECT * FROM execution_fills ORDER BY fill_timestamp DESC LIMIT 100")
+
+
+# ---------------------------------------------------------------------------
+# Corporate Actions
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_ca_events_summary() -> pd.DataFrame:
+    return safe_query("""
+        SELECT status, ca_type, COUNT(*) as cnt
+        FROM corporate_actions_events GROUP BY status, ca_type ORDER BY status, ca_type
+    """)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_ca_events(limit: int = 100) -> pd.DataFrame:
+    return safe_query(f"SELECT * FROM corporate_actions_events ORDER BY ex_date DESC LIMIT {limit}")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_ca_applications(limit: int = 50) -> pd.DataFrame:
+    return safe_query(f"SELECT * FROM corporate_actions_applications ORDER BY applied_at DESC LIMIT {limit}")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_total_dividends() -> float:
+    v = safe_scalar("SELECT COALESCE(SUM(amount), 0) FROM portfolio_cash_ledger WHERE entry_type = 'dividend_credit'")
+    return float(v) if v is not None else 0.0
+
+
+# ---------------------------------------------------------------------------
+# ML
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_training_runs(limit: int = 20) -> pd.DataFrame:
+    return safe_query(f"SELECT * FROM model_training_run ORDER BY started_at DESC LIMIT {limit}")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_model_metrics() -> pd.DataFrame:
+    return safe_query("SELECT * FROM model_metrics ORDER BY symbol, split_name")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_predictions(limit: int = 100) -> pd.DataFrame:
+    return safe_query(f"""
+        SELECT symbol, predicted_proba, predicted_class, prediction_date, run_id, created_at
+        FROM model_predictions ORDER BY prediction_date DESC, symbol LIMIT {limit}
+    """)
+
