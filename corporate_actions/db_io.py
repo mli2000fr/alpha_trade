@@ -276,6 +276,30 @@ class CorporateActionRepository:
             rows = conn.execute(stmt).mappings().all()
         return [dict(r) for r in rows]
 
+    def load_latest_position_symbols(self) -> list[str]:
+        """Retourne les symboles distincts du dernier snapshot broker avec qty non nulle."""
+        rows = self.load_latest_positions()
+        symbols = {
+            str(r.get("symbol", "")).strip().upper()
+            for r in rows
+            if str(r.get("symbol", "")).strip() and float(r.get("qty", 0) or 0) != 0.0
+        }
+        return sorted(symbols)
+
+    def load_bars_available_symbols(self) -> list[str]:
+        """Retourne les symboles actifs/tradables avec bars disponibles depuis stock_metadata."""
+        stmt = text("""
+            SELECT symbol
+            FROM stock_metadata
+            WHERE status = 'active'
+              AND tradable = 1
+              AND bars_available = 1
+            ORDER BY symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).scalars().all()
+        return [str(symbol).strip().upper() for symbol in rows if str(symbol).strip()]
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------

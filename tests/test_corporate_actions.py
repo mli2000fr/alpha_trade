@@ -1,8 +1,7 @@
 """Tests unitaires et d'intégration pour le module corporate_actions."""
 from __future__ import annotations
 
-import math
-from datetime import date, datetime, timezone
+from datetime import date
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -10,13 +9,12 @@ from sqlalchemy import create_engine, text
 from corporate_actions.db_io import CorporateActionRepository
 from corporate_actions.engine import CorporateActionEngine
 from corporate_actions.models import (
-    CaStatus,
     CaType,
     CorporateActionEvent,
     PositionSnapshot,
 )
 from corporate_actions.processors import process_dividend, process_split
-from corporate_actions.provider import CorporateActionProvider
+from corporate_actions.provider import AlpacaCorporateActionProvider, CorporateActionProvider
 from corporate_actions.reconciliation import reconcile_after_corporate_actions
 
 
@@ -79,6 +77,12 @@ SQLITE_SCHEMA = """
         market_value DOUBLE DEFAULT 0,
         unrealized_pnl DOUBLE DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE stock_metadata (
+        symbol VARCHAR(20) PRIMARY KEY,
+        status VARCHAR(20),
+        tradable BOOLEAN,
+        bars_available BOOLEAN
     );
 """
 
@@ -349,6 +353,53 @@ class TestDbIntegration:
         total = repo.get_total_dividends(symbol="AAPL")
         assert total == 25.0
 
+    def test_load_latest_position_symbols(self, engine, repo):
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO broker_positions_snapshots
+                    (exec_run_id, broker_mode, symbol, qty, avg_entry_price, market_value, unrealized_pnl)
+                VALUES
+                    ('run-001', 'paper', ' msft ', 10, 100.0, 1000.0, 0.0),
+                    ('run-001', 'paper', 'AAPL', 0, 150.0, 0.0, 0.0),
+                    ('run-001', 'paper', 'NVDA', 5, 800.0, 4000.0, 0.0),
+                    ('run-000', 'paper', 'OLD', 12, 10.0, 120.0, 0.0)
+            """))
+
+        assert repo.load_latest_position_symbols() == ["MSFT", "NVDA"]
+
+    def test_load_bars_available_symbols(self, engine, repo):
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO stock_metadata (symbol, status, tradable, bars_available)
+                VALUES
+                    ('AAPL', 'active', 1, 1),
+                    ('MSFT', 'inactive', 1, 1),
+                    ('NVDA', 'active', 0, 1),
+                    ('AMD', 'active', 1, 0),
+                    ('META', 'active', 1, 1)
+            """))
+
+        assert repo.load_bars_available_symbols() == ["AAPL", "META"]
+
+
+class TestAlpacaProviderHelpers:
+
+    def test_normalize_split_ratio_forward(self):
+        assert AlpacaCorporateActionProvider._normalize_split_ratio(1, 4) == (1, 4)
+
+    def test_normalize_split_ratio_reverse_decimal(self):
+        assert AlpacaCorporateActionProvider._normalize_split_ratio(1, 0.33333) == (3, 1)
+
+
+class TestEngineHelpers:
+
+    def test_chunk_symbols(self):
+        assert CorporateActionEngine._chunk_symbols(["AAPL", "MSFT", "NVDA", "AMD", "META"], 2) == [
+            ["AAPL", "MSFT"],
+            ["NVDA", "AMD"],
+            ["META"],
+        ]
+
 
 # =====================================================================
 # Tests d'intégration — Engine (full flow)
@@ -451,6 +502,35 @@ class TestEngineIntegration:
         stats = ca_engine.sync()
         assert stats["invalid"] == 1
         assert stats["inserted"] == 0
+
+    def test_sync_with_empty_symbol_scope_does_not_call_provider(self, repo):
+        class ExplodingProvider(CorporateActionProvider):
+            def fetch_events(self, symbols=None, start_date=None, end_date=None):
+                raise AssertionError("Provider ne doit pas être appelé quand symbols == []")
+
+        ca_engine = CorporateActionEngine(provider=ExplodingProvider(), repo=repo)
+        stats = ca_engine.sync(symbols=[])
+
+        assert stats == {"fetched": 0, "inserted": 0, "duplicates": 0, "invalid": 0}
+
+    def test_sync_batches_symbols_by_group(self, repo):
+        calls: list[list[str] | None] = []
+
+        class CountingProvider(CorporateActionProvider):
+            def fetch_events(self, symbols=None, start_date=None, end_date=None):
+                calls.append(symbols)
+                if symbols == ["AAPL", "MSFT"]:
+                    return [_make_dividend_event(symbol="AAPL")]
+                if symbols == ["NVDA"]:
+                    return [_make_dividend_event(symbol="MSFT")]
+                return []
+
+        ca_engine = CorporateActionEngine(provider=CountingProvider(), repo=repo)
+        stats = ca_engine.sync(symbols=["AAPL", "MSFT", "NVDA"], batch_size=2)
+
+        assert calls == [["AAPL", "MSFT"], ["NVDA"]]
+        assert stats["fetched"] == 2
+        assert stats["inserted"] == 2
 
 
 # =====================================================================

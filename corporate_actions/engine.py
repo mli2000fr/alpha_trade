@@ -6,6 +6,7 @@ Coordonne : ingestion provider → persist DB → application sur positions → 
 from __future__ import annotations
 
 import logging
+import math
 from datetime import date
 from typing import Any
 
@@ -54,22 +55,64 @@ class CorporateActionEngine:
         symbols: list[str] | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
+        batch_size: int = 25,
     ) -> dict[str, int]:
         """
         Ingère les corporate actions depuis le provider et les persiste en DB.
 
         Retourne un résumé : {"fetched": N, "inserted": M, "duplicates": D, "invalid": I}
         """
-        LOGGER.info("Corporate actions sync started | symbols=%s start=%s end=%s", symbols, start_date, end_date)
-
-        events = self.provider.fetch_events(
-            symbols=symbols or [],
-            start_date=start_date,
-            end_date=end_date,
+        LOGGER.info(
+            "Corporate actions sync started | symbols=%s start=%s end=%s batch_size=%s",
+            symbols, start_date, end_date, batch_size,
         )
 
-        stats = {"fetched": len(events), "inserted": 0, "duplicates": 0, "invalid": 0}
+        if symbols == []:
+            LOGGER.info("Corporate actions sync skipped | aucun symbole résolu pour la synchronisation.")
+            return {"fetched": 0, "inserted": 0, "duplicates": 0, "invalid": 0}
 
+        if batch_size < 1:
+            raise ValueError("batch_size doit être supérieur ou égal à 1.")
+
+        stats = {"fetched": 0, "inserted": 0, "duplicates": 0, "invalid": 0}
+
+        if symbols is None:
+            events = self.provider.fetch_events(
+                symbols=None,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            self._ingest_events(events, stats)
+        else:
+            total_symbols = len(symbols)
+            total_batches = math.ceil(total_symbols / batch_size)
+            for batch_index, batch_symbols in enumerate(self._chunk_symbols(symbols, batch_size), start=1):
+                first_symbol_index = ((batch_index - 1) * batch_size) + 1
+                last_symbol_index = first_symbol_index + len(batch_symbols) - 1
+                LOGGER.info(
+                    "Corporate actions sync batch %d/%d | symbols %d-%d/%d | batch_size=%d | first=%s | last=%s",
+                    batch_index,
+                    total_batches,
+                    first_symbol_index,
+                    last_symbol_index,
+                    total_symbols,
+                    len(batch_symbols),
+                    batch_symbols[0],
+                    batch_symbols[-1],
+                )
+                events = self.provider.fetch_events(
+                    symbols=batch_symbols,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                self._ingest_events(events, stats)
+
+        LOGGER.info("Corporate actions sync completed | stats=%s", stats)
+        return stats
+
+    def _ingest_events(self, events: list[CorporateActionEvent], stats: dict[str, int]) -> None:
+        """Valide et persiste les événements immédiatement après chaque appel provider."""
+        stats["fetched"] += len(events)
         for event in events:
             errors = event.validate()
             if errors:
@@ -83,8 +126,11 @@ class CorporateActionEngine:
             else:
                 stats["inserted"] += 1
 
-        LOGGER.info("Corporate actions sync completed | stats=%s", stats)
-        return stats
+    @staticmethod
+    def _chunk_symbols(symbols: list[str], batch_size: int) -> list[list[str]]:
+        """Découpe une liste de symboles en lots ordonnés de taille maximale batch_size."""
+        return [symbols[i:i + batch_size] for i in range(0, len(symbols), batch_size)]
+
 
     # ------------------------------------------------------------------
     # Phase 2 : Application sur positions

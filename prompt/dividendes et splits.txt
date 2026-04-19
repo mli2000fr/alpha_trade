@@ -329,3 +329,6 @@ Avant d’écrire du code :
 
 Ne fais pas une proposition générique.
 Je veux une implémentation réellement adaptée à ce dépôt, à ses conventions, à ses tables et à son pipeline.
+
+
+

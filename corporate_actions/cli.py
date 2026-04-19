@@ -23,7 +23,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # --- sync ---
     sync_p = sub.add_parser("sync", help="Ingérer les corporate actions depuis le provider.")
     sync_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
-    sync_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -30j.")
+    sync_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramètre symbols.")
+    sync_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. Défaut : 25.")
+    sync_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -10 ans.")
     sync_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
 
     # --- apply ---
@@ -36,22 +38,85 @@ def _build_parser() -> argparse.ArgumentParser:
     # --- run ---
     run_p = sub.add_parser("run", help="Enchaîner sync puis apply dans un seul appel.")
     run_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
-    run_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -30j.")
+    run_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramètre symbols.")
+    run_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. Défaut : 25.")
+    run_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -10 ans.")
     run_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
     run_p.add_argument("--as-of", type=str, default=None, help="Date limite pour apply (YYYY-MM-DD). Défaut : aujourd'hui.")
 
     return parser
 
 
+def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionRepository) -> list[str] | None:
+    """Résout le périmètre de sync: symboles explicites, positions broker, ou all-symbols."""
+    if getattr(args, "all_symbols", False):
+        LOGGER.info("Corporate actions sync scope = all symbols (pas de filtre symbols).")
+        return None
+
+    explicit_symbols = [s.upper() for s in args.symbols] if getattr(args, "symbols", None) else []
+    if explicit_symbols:
+        LOGGER.info("Corporate actions sync scope = explicit symbols | count=%d", len(explicit_symbols))
+        return explicit_symbols
+
+    broker_symbols = repo.load_latest_position_symbols()
+    if broker_symbols:
+        LOGGER.info(
+            "Corporate actions sync scope = latest broker positions | count=%d symbols=%s",
+            len(broker_symbols), broker_symbols,
+        )
+        return broker_symbols
+
+    LOGGER.warning(
+        "Aucun symbole explicite ni snapshot broker disponible ; aucune sync Alpaca lancée. "
+        "Utiliser --all-symbols pour un backfill large ou --symbols pour cibler manuellement.",
+    )
+    return []
+
+
+def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRepository) -> list[str] | None:
+    """Résout le périmètre de sync depuis stock_metadata (univers actif/tradable/bars dispo)."""
+    if getattr(args, "all_symbols", False):
+        LOGGER.info("Corporate actions sync scope = all symbols (pas de filtre symbols).")
+        return None
+
+    explicit_symbols = [s.upper() for s in args.symbols] if getattr(args, "symbols", None) else []
+    if explicit_symbols:
+        LOGGER.info("Corporate actions sync scope = explicit symbols | count=%d", len(explicit_symbols))
+        return explicit_symbols
+
+    metadata_symbols = repo.load_bars_available_symbols()
+    if metadata_symbols:
+        LOGGER.info(
+            "Corporate actions sync scope = stock_metadata active/tradable/bars_available | count=%d",
+            len(metadata_symbols),
+        )
+        return metadata_symbols
+
+    broker_symbols = repo.load_latest_position_symbols()
+    if broker_symbols:
+        LOGGER.warning(
+            "Aucun symbole stock_metadata éligible ; fallback vers latest broker positions | count=%d symbols=%s",
+            len(broker_symbols), broker_symbols,
+        )
+        return broker_symbols
+
+    LOGGER.warning(
+        "Aucun symbole explicite, aucun symbole stock_metadata éligible, aucun snapshot broker ; aucune sync Alpaca lancée. "
+        "Utiliser --all-symbols pour un backfill large ou --symbols pour cibler manuellement.",
+    )
+    return []
+
+
 def _run_sync(args: argparse.Namespace) -> None:
     provider = AlpacaCorporateActionProvider()
-    engine = CorporateActionEngine(provider=provider)
+    repo = CorporateActionRepository()
+    engine = CorporateActionEngine(provider=provider, repo=repo)
 
     start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
     end_date = date.fromisoformat(args.end) if args.end else date.today()
-    symbols = [s.upper() for s in args.symbols] if args.symbols else []
+    symbols = _resolve_sync_symbols_bar(args, repo)
 
-    stats = engine.sync(symbols=symbols or None, start_date=start_date, end_date=end_date)
+    stats = engine.sync(symbols=symbols, start_date=start_date, end_date=end_date, batch_size=args.batch_size)
     print(f"Sync terminé : {stats}")
 
 
@@ -94,11 +159,12 @@ def _run_all(args: argparse.Namespace) -> None:
     """Enchaîne sync puis apply dans un seul appel CLI."""
     print("[RUN] Démarrage de l'ingestion des corporate actions...")
     provider = AlpacaCorporateActionProvider()
-    engine = CorporateActionEngine(provider=provider)
+    repo = CorporateActionRepository()
+    engine = CorporateActionEngine(provider=provider, repo=repo)
     start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
     end_date = date.fromisoformat(args.end) if args.end else date.today()
-    symbols = [s.upper() for s in args.symbols] if getattr(args, "symbols", None) else []
-    stats_sync = engine.sync(symbols=symbols or None, start_date=start_date, end_date=end_date)
+    symbols = _resolve_sync_symbols_bar(args, repo)
+    stats_sync = engine.sync(symbols=symbols, start_date=start_date, end_date=end_date, batch_size=args.batch_size)
     print(f"Sync terminé : {stats_sync}")
     print("[RUN] Application des corporate actions sur les positions...")
     as_of = date.fromisoformat(args.as_of) if getattr(args, "as_of", None) else date.today()

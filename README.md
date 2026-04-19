@@ -118,6 +118,19 @@ python -m corporate_actions apply      # Appliquer sur positions (idempotent)
 python -m dataIntegrityEngine.data_sanitizer_daily
 # ... reste du pipeline inchangé
 
+# Détail corporate_actions :
+# - par défaut, la sync cible les symboles `stock_metadata` avec `status='active'`,
+#   `tradable=1` et `bars_available=1`
+# - fallback vers `broker_positions_snapshots` si aucun symbole market-data n'est disponible
+# - traitement Alpaca par lots (`--batch-size`, défaut 25) avec persistance immédiate en base
+# - progression loggée par plage de symboles, ex. `symbols 1-25/240`
+# - backfill global uniquement si demandé explicitement via `--all-symbols`
+
+# Exemples :
+# python -m corporate_actions sync --batch-size 10
+# python -m corporate_actions run --symbols AAPL MSFT NVDA --batch-size 5
+# python -m corporate_actions sync --all-symbols --start 2026-01-01 --end 2026-04-19
+
 data_sanitizer_daily.py
 
 # une fois par mois
