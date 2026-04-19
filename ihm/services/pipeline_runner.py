@@ -89,25 +89,16 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         deps="—",
     ),
     PipelineStepDefinition(
-        key="corporate_actions_sync",
-        num="2",
-        name="Corporate Actions Sync",
-        desc="Ingestion des dividendes/splits depuis Alpaca (référentiel). Se fait AVANT le sanitizer.",
-        tables="corporate_actions_events",
-        deps="import_alpaca_bar",
-        account_usage="alpaca",
-    ),
-    PipelineStepDefinition(
         key="data_sanitizer_daily",
-        num="3",
+        num="2",
         name="Data Sanitizer Daily",
         desc="Nettoyage, alignement calendrier, détection d'anomalies sur les barres brutes.",
         tables="stock_bars_daily, cleaning_audit_log",
-        deps="import_alpaca_bar, corporate_actions sync",
+        deps="import_alpaca_bar",
     ),
     PipelineStepDefinition(
         key="stock_screener",
-        num="4",
+        num="3",
         name="Stock Screener",
         desc="Scores de base : liquidité 30j, force relative 6m vs SPY, range 10 ans.",
         tables="stock_scores",
@@ -115,7 +106,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="alpha_scanner",
-        num="5",
+        num="4",
         name="Alpha Scanner",
         desc="Scoring avancé Minervini/VCP + neutralisation sectorielle + sélection Top N.",
         tables="stock_scores (update)",
@@ -123,7 +114,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="sentiment_pipeline",
-        num="6",
+        num="5",
         name="Sentiment Pipeline",
         desc="Ingestion news → scoring FinBERT → features ticker/secteur journalières.",
         tables="ticker_daily_sentiment_features, sector_daily_sentiment_features",
@@ -131,7 +122,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="signal_aggregator",
-        num="7",
+        num="6",
         name="Signal Aggregator",
         desc="Fusion quant (75%) + sentiment ticker (15%) + macro sectoriel (10%) → final_score_sentiment.",
         tables="stock_scores (update final_score_sentiment)",
@@ -139,7 +130,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="ml_train",
-        num="8",
+        num="7",
         name="ML Train (LSTM)",
         desc="Entraînement des modèles LSTM+Attention par symbole candidat. Périodique (hebdomadaire recommandé).",
         tables="model_registry, model_training_run, model_metrics",
@@ -147,7 +138,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="ml_predict",
-        num="9",
+        num="8",
         name="ML Predict",
         desc="Inférence LSTM → predicted_proba par symbole candidat. Quotidien, alimente le score de conviction du risk.",
         tables="model_predictions",
@@ -155,7 +146,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="risk_management",
-        num="10",
+        num="9",
         name="Risk Management",
         desc="Sizing ATR/Kelly, contraintes portefeuille, circuit breaker → portefeuille cible. Utilise les prédictions ML pour le score de conviction.",
         tables="risk_decisions, portfolio_targets",
@@ -164,20 +155,29 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
     PipelineStepDefinition(
         key="execution",
-        num="11",
+        num="10",
         name="Execution",
-        desc="Soumission ordres Alpaca (market/limit), bracket synthétique TP+TS, réconciliation, TCA.",
+        desc="Soumission ordres Alpaca (market/limit), bracket synthétique TP+TS, réconciliation, TCA. Photographie les positions broker après exécution.",
         tables="execution_runs, execution_orders, execution_fills, execution_events, broker_positions_snapshots",
         deps="run_risk",
+        account_usage="alpaca",
+    ),
+    PipelineStepDefinition(
+        key="corporate_actions_sync",
+        num="11",
+        name="Corporate Actions Sync",
+        desc="Récupère les dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour).",
+        tables="corporate_actions_events",
+        deps="execution (broker_positions_snapshots requis)",
         account_usage="alpaca",
     ),
     PipelineStepDefinition(
         key="corporate_actions_apply",
         num="12",
         name="Corporate Actions Apply",
-        desc="Application des dividendes/splits sur les positions existantes. Se fait APRÈS l'exécution.",
+        desc="Application des dividendes/splits sur les positions existantes. Se fait APRÈS la sync et l'exécution.",
         tables="corporate_actions_applications, portfolio_cash_ledger",
-        deps="run_execution",
+        deps="corporate_actions_sync",
         account_usage="alpaca",
     ),
 )
@@ -207,7 +207,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-m", "dataIntegrityEngine.import_alpaca_bar"]
 
     if step_key == "corporate_actions_sync":
-        command = [sys.executable, "-m", "corporate_actions", "sync", "--skip-existing"]
+        # --portfolio-only : sync uniquement les symboles détenus en portefeuille
+        # pas de --skip-existing : on re-interroge Alpaca à chaque fois pour ne rater aucun nouvel événement
+        command = [sys.executable, "-m", "corporate_actions", "sync", "--portfolio-only"]
         if account_id:
             command.extend(["--account", account_id])
         return command

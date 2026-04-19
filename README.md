@@ -107,46 +107,75 @@ Ces commandes permettent notamment de :
 
 ## 6. Pipeline quotidien recommandé
 
-Ordre d'exécution actuel du pipeline :
+### Ordre d'exécution
 
 ```powershell
+# 1. Import des barres OHLCV depuis Alpaca
 python -m dataIntegrityEngine.import_alpaca_bar
-python -m corporate_actions sync --skip-existing
+
+# 2. Nettoyage et alignement des données daily
 python -m dataIntegrityEngine.data_sanitizer_daily
+
+# 3. Screening initial (liquidité, force relative, range historique)
 python -m screener.stock_screener
+
+# 4. Scoring avancé Minervini/VCP + neutralisation sectorielle
 python -m selector.alpha_scanner
+
+# 5. Pipeline news FinBERT + agrégats ticker/secteur
 python -m event_sentiment
+
+# 6. Fusion quant + sentiment + macro → score final
 python -m event_sentiment.signal_aggregator
-python -m modelFactory --mode train            # périodique (hebdomadaire recommandé)
-python -m modelFactory --mode predict           # quotidien
+
+# 7. Entraînement LSTM (périodique — hebdomadaire recommandé)
+python -m modelFactory --mode train
+
+# 8. Prédiction LSTM → predicted_proba (quotidien)
+python -m modelFactory --mode predict
+
+# 9. Calcul du portefeuille cible (sizing, contraintes, circuit breaker)
 python -m risk_management.run_risk --account-equity 100000
+
+# 10. Exécution des ordres (simulate | paper | live)
 python run_execution.py simulate
+
+# 11. Sync corporate actions — uniquement les symboles détenus en portefeuille
+#     (re-interroge Alpaca à chaque fois — pas de --skip-existing)
+python -m corporate_actions sync --portfolio-only
+
+# 12. Application des dividendes/splits sur les positions existantes
 python -m corporate_actions apply
 ```
 
 ### Détail des étapes
 
-1. **`import_alpaca_bar`** : importe les barres de marché Alpaca.
-2. **`corporate_actions sync`** : ingère les dividendes / splits dans le référentiel d'événements.
-3. **`data_sanitizer_daily`** : nettoie, aligne et fiabilise les données daily.
-4. **`stock_screener`** : produit les premiers scores quantitatifs.
-5. **`alpha_scanner`** : applique le ranking multi-facteurs et sélectionne les meilleurs candidats.
-6. **`event_sentiment`** : traite les news, score le sentiment et calcule les agrégats.
-7. **`signal_aggregator`** : fusionne quant + sentiment + macro en score final.
-7a. **`modelFactory --mode train`** : entraîne les modèles LSTM+Attention par symbole candidat (périodique).
-7b. **`modelFactory --mode predict`** : produit `predicted_proba` par symbole candidat (quotidien). Alimente le score de conviction du risk.
-8. **`run_risk`** : calcule les tailles, contraintes et portefeuille cible. Utilise les prédictions ML (60%) + score quant (40%) pour le score de conviction.
-9. **`run_execution.py`** : exécute en mode `simulate`, `paper` ou `live`.
-10. **`corporate_actions apply`** : applique les corporate actions pending sur les positions existantes.
+| # | Commande | Rôle |
+|---|---|---|
+| 1 | `import_alpaca_bar` | Import barres OHLCV journalières Alpaca |
+| 2 | `data_sanitizer_daily` | Nettoyage, alignement calendrier, détection anomalies |
+| 3 | `stock_screener` | Scores liquidité / force relative / range |
+| 4 | `alpha_scanner` | Ranking Minervini/VCP, neutralisation sectorielle |
+| 5 | `event_sentiment` | News → FinBERT → features sentiment |
+| 6 | `signal_aggregator` | Fusion quant (75%) + sentiment (15%) + macro (10%) |
+| 7 | `modelFactory --mode train` | Entraînement LSTM+Attention *(périodique)* |
+| 8 | `modelFactory --mode predict` | Inférence → `predicted_proba` *(quotidien)* |
+| 9 | `run_risk` | Portefeuille cible, sizing ATR/Kelly, conviction ML+quant |
+| 10 | `run_execution.py` | Soumission ordres + snapshot positions broker |
+| 11 | `corporate_actions sync --portfolio-only` | Sync CA uniquement pour les positions détenues |
+| 12 | `corporate_actions apply` | Crédit dividendes + ajustement qty/cost basis splits |
+
+> **Pourquoi sync en étape 11 et non au début ?**  
+> `sync --portfolio-only` lit la liste des positions depuis `broker_positions_snapshots`, table qui n'est alimentée qu'après `run_execution` (étape 10). Le placer avant rendrait le périmètre de sync inexact (positions d'hier) ou vide (premier run).
 
 ### Multi-comptes
 
-Pour cibler un compte Alpaca spécifique, ajouter `--account <ID>` aux commandes :
+Pour cibler un compte Alpaca spécifique, ajouter `--account <ID>` :
 
 ```powershell
 python -m risk_management.run_risk --account-equity 100000 --account live1
 python run_execution.py paper --account live1
-python -m corporate_actions sync --account live1
+python -m corporate_actions sync --portfolio-only --account live1
 python -m corporate_actions apply --account live1
 ```
 
@@ -162,19 +191,27 @@ Le module `corporate_actions/` fonctionne en **deux phases distinctes**.
 
 Ingère les événements depuis Alpaca dans `corporate_actions_events`.
 
+**Usage quotidien recommandé** — uniquement les symboles détenus en portefeuille :
+
 ```powershell
-python -m corporate_actions sync
-python -m corporate_actions sync --skip-existing
-python -m corporate_actions sync --batch-size 10
+python -m corporate_actions sync --portfolio-only
+python -m corporate_actions sync --portfolio-only --account live1
+```
+
+**Usage exceptionnel** — backfill complet ou ciblé :
+
+```powershell
 python -m corporate_actions sync --all-symbols --start 2026-01-01 --end 2026-04-19
+python -m corporate_actions sync --symbols AAPL MSFT NVDA
+python -m corporate_actions sync --all-symbols --skip-existing   # backfill sans doublons
 ```
 
 Comportement utile à connaître :
 
-- l'univers est résolu en priorité depuis `stock_metadata` ;
-- fallback possible via les positions broker si nécessaire ;
-- `--skip-existing` évite de recharger des symboles déjà présents ;
-- l'ingestion se fait par lots avec persistance immédiate en base.
+- `--portfolio-only` : lit directement `broker_positions_snapshots` → seulement les positions réelles ; **toujours re-interroge Alpaca** pour ne rater aucun événement récent
+- `--all-symbols` : interroge Alpaca sans filtre de symboles (backfill initial)
+- `--skip-existing` : ignore les symboles déjà présents en base (pour backfill optimisé uniquement)
+- l'ingestion se fait par lots avec persistance immédiate en base
 
 ### 7.2 Apply
 
@@ -182,6 +219,7 @@ Applique les événements pending sur les positions internes / broker snapshot.
 
 ```powershell
 python -m corporate_actions apply
+python -m corporate_actions apply --account live1
 ```
 
 Cette étape :
@@ -260,15 +298,37 @@ python -m modelFactory --mode predict
 
 L'IHM opérateur est disponible dans `ihm/`.
 
-Lancement :
+### Lancement rapide (recommandé)
+
+```powershell
+python run.py
+```
+
+`run.py` est le point d'entrée à la racine du projet. Il lance automatiquement Streamlit avec le bon interpréteur Python.
+
+### Lancement manuel équivalent
 
 ```powershell
 python -m streamlit run ihm/app.py
 ```
 
-L'application ouvre en général une interface web locale sur :
+L'application ouvre une interface web locale sur :
 
 - `http://localhost:8501`
+
+### Pages disponibles
+
+| Page | URL | Rôle |
+|---|---|---|
+| Accueil | `/` | Vue d'ensemble, statut DB, sélecteur de compte |
+| Pipeline Quotidien | `/pipeline` | Lancement et supervision des étapes du pipeline |
+| Screening | `/screening` | Résultats du screener et de l'alpha scanner |
+| Portefeuille | `/portfolio` | Positions, performance, exposition sectorielle |
+| Exécution | `/execution` | Ordres, fills, TCA, réconciliation |
+| ML | `/ml` | Métriques des modèles LSTM, prédictions |
+| Corporate Actions | `/corporate_actions` | Événements CA, dividendes, splits |
+| Reporting | `/reporting` | Rapports agrégés |
+| Paramètres | `/settings` | Configuration DB, comptes Alpaca |
 
 Pour plus de détails sur les pages disponibles, voir `ihm/README.md`.
 
@@ -309,7 +369,8 @@ python run_execution.py check
 
 ```text
 alpha_trade/
-├── run_execution.py
+├── run.py                  ← point d'entrée IHM (python run.py)
+├── run_execution.py        ← point d'entrée exécution ordres
 ├── config.yaml
 ├── pyproject.toml
 ├── README.md
@@ -388,17 +449,10 @@ Migration : `database/sql/migration_add_account_id.sql` ou Alembic `alembic upgr
 
 ## 13. Notes utiles
 
-- `DOC_FONCTIONNELLE.md` : vision métier et flux fonctionnels
-- `DOC_TECHNIQUE.md` : architecture, composants, dette technique, recommandations
-- `ihm/README.md` : documentation dédiée à l'interface opérateur
-
----
-
-## 13. Notes utiles
-
 - Le projet repose sur une base MySQL correctement initialisée avec les schémas SQL du dépôt.
+- `run.py` est le point d'entrée pour lancer l'IHM (`python run.py`).
 - `run_execution.py` est le point d'entrée le plus pratique pour l'exécution opérateur.
-- L'IHM est en **lecture / supervision**, pas en soumission d'ordres.
+- L'IHM permet la **supervision et le lancement des pipelines** depuis l'interface web.
 - Les commandes `paper` et surtout `live` nécessitent une validation attentive des variables d'environnement et de la configuration broker.
 
 ---

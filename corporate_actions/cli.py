@@ -25,6 +25,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
     sync_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramètre symbols.")
     sync_p.add_argument(
+        "--portfolio-only",
+        dest="portfolio_only",
+        action="store_true",
+        help="Restreindre la sync aux symboles actuellement détenus en portefeuille (broker_positions_snapshots). Recommandé en usage quotidien.",
+    )
+    sync_p.add_argument(
         "--skip-existing",
         dest="skip_existing",
         action="store_true",
@@ -48,6 +54,12 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
     run_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramètre symbols.")
     run_p.add_argument(
+        "--portfolio-only",
+        dest="portfolio_only",
+        action="store_true",
+        help="Restreindre la sync aux symboles actuellement détenus en portefeuille (broker_positions_snapshots). Recommandé en usage quotidien.",
+    )
+    run_p.add_argument(
         "--skip-existing",
         dest="skip_existing",
         action="store_true",
@@ -60,6 +72,22 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
 
     return parser
+
+
+def _resolve_sync_symbols_portfolio(repo: CorporateActionRepository) -> list[str]:
+    """Résout le périmètre de sync en se limitant strictement aux positions broker actuelles."""
+    broker_symbols = repo.load_latest_position_symbols()
+    if broker_symbols:
+        LOGGER.info(
+            "Corporate actions sync scope = portfolio-only | count=%d symbols=%s",
+            len(broker_symbols), broker_symbols,
+        )
+        return broker_symbols
+    LOGGER.warning(
+        "Portfolio-only demande mais aucune position broker trouvee dans broker_positions_snapshots. "
+        "Verifier que run_execution a tourne au moins une fois. Sync ignoree.",
+    )
+    return []
 
 
 def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionRepository) -> list[str] | None:
@@ -130,7 +158,11 @@ def _run_sync(args: argparse.Namespace) -> None:
 
     start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
     end_date = date.fromisoformat(args.end) if args.end else date.today()
-    symbols = _resolve_sync_symbols_bar(args, repo)
+
+    if getattr(args, "portfolio_only", False):
+        symbols: list[str] | None = _resolve_sync_symbols_portfolio(repo)
+    else:
+        symbols = _resolve_sync_symbols_bar(args, repo)
 
     stats = engine.sync(
         symbols=symbols,
@@ -187,7 +219,12 @@ def _run_all(args: argparse.Namespace) -> None:
     engine = CorporateActionEngine(provider=provider, repo=repo, account_id=account_id)
     start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
     end_date = date.fromisoformat(args.end) if args.end else date.today()
-    symbols = _resolve_sync_symbols_bar(args, repo)
+
+    if getattr(args, "portfolio_only", False):
+        symbols: list[str] | None = _resolve_sync_symbols_portfolio(repo)
+    else:
+        symbols = _resolve_sync_symbols_bar(args, repo)
+
     stats_sync = engine.sync(
         symbols=symbols,
         start_date=start_date,

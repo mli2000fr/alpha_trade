@@ -19,17 +19,17 @@ Le système cible le **marché actions US (NYSE/NASDAQ)**, en stratégie **swing
 Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 
 1. **Ingestion** des données de marché depuis Alpaca (barres OHLCV journalières)
-2  **Corporate actions sync** — ingestion des dividendes/splits depuis Alpaca (référentiel)
-3. **Nettoyage** des données (sanitizer, détection d'anomalies)
-4. **Screening** multi-facteurs pour identifier les meilleurs candidats
-5. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
-6. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
-7  **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
-8  **ML Train** — entraînement des modèles LSTM+Attention par symbole candidat (périodique)
-9  **ML Predict** — inférence LSTM → `predicted_proba` par symbole candidat (quotidien)
-10 **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille, score de conviction (40% quant + 60% ML)
-11 **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
-12 **Corporate actions apply** — application des dividendes/splits sur les positions existantes
+2. **Nettoyage** des données (sanitizer, détection d'anomalies)
+3. **Screening** multi-facteurs pour identifier les meilleurs candidats
+4. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
+5. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
+6. **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
+7. **ML Train** — entraînement des modèles LSTM+Attention par symbole candidat (périodique)
+8. **ML Predict** — inférence LSTM → `predicted_proba` par symbole candidat (quotidien)
+9. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille, score de conviction (40% quant + 60% ML)
+10. **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
+11. **Corporate actions sync** — récupère dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour)
+12. **Corporate actions apply** — application des dividendes/splits sur les positions existantes
 
 L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 
@@ -145,11 +145,12 @@ Le module `corporate_actions` assure le suivi automatique des opérations sur ti
 
 **Stratégie données de marché** : les barres OHLCV sont ingérées avec `adjustment="all"` (déjà ajustées par Alpaca). Le module corporate actions ne touche pas aux prix historiques — il gère uniquement la comptabilité portefeuille (qty, cost basis, cash).
 
-**Intégration pipeline** : s'exécute entre l'étape 1 (import_alpaca_bar) et l'étape 2 (data_sanitizer_daily) :
+**Intégration pipeline** : s'exécute en fin de pipeline, juste avant l'apply, après que les positions du jour sont connues :
 ```
-python -m corporate_actions sync    # Ingérer les événements depuis Alpaca
-python -m corporate_actions apply   # Appliquer sur les positions
-python -m corporate_actions status  # Résumé des événements
+python -m corporate_actions sync --portfolio-only    # Sync uniquement les symboles détenus en portefeuille
+python -m corporate_actions apply                    # Appliquer sur les positions
+python -m corporate_actions status                   # Résumé des événements
+python -m corporate_actions sync --all-symbols       # Backfill complet (usage exceptionnel)
 ```
 
 ### 2.10 Multi-comptes Alpaca
@@ -205,16 +206,16 @@ python -m corporate_actions apply --account live1     # appliquer CA sur le comp
                      PIPELINE QUOTIDIEN
      ┌─────────────────────────────────────────────────────────────────────────────┐
      │ 1.  import_alpaca_bar        │ → stock_bars                                 │
-     │ 2. corporate_actions sync    │ → corporate_actions_events                   │
-     │ 3.  data_sanitizer_daily     │ → stock_bars_daily                           │
-     │ 4.  stock_screener           │ → stock_scores                               │
-     │ 5.  alpha_scanner            │ → stock_scores (update)                      │
-     │ 6.  sentiment_pipeline       │ → ticker/sector feats                        │
-     │ 7.  signal_aggregator        │ → final_score_sentiment                      │
-     │ 8.  ml_train (périodique)    │ → model_registry, model_training_run         │
-     │ 9.  ml_predict (quotidien)   │ → model_predictions                          │
-     │ 10. run_risk                 │ → portfolio_targets                          │
-     │ 11. run_execution            │ → ordres Alpaca                              │
+     │ 2.  data_sanitizer_daily     │ → stock_bars_daily                           │
+     │ 3.  stock_screener           │ → stock_scores                               │
+     │ 4.  alpha_scanner            │ → stock_scores (update)                      │
+     │ 5.  sentiment_pipeline       │ → ticker/sector feats                        │
+     │ 6.  signal_aggregator        │ → final_score_sentiment                      │
+     │ 7.  ml_train (périodique)    │ → model_registry, model_training_run         │
+     │ 8.  ml_predict (quotidien)   │ → model_predictions                          │
+     │ 9.  run_risk                 │ → portfolio_targets                          │
+     │ 10. run_execution            │ → ordres Alpaca + broker_positions_snapshots  │
+     │ 11. corporate_actions sync   │ → corporate_actions_events (portfolio only)  │
      │ 12. corporate_actions apply  │ → position adjustments                       │
      └─────────────────────────────────────────────────────────────────────────────┘
 ```
