@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+
+import ihm.services.pipeline_runner as pipeline_runner
 from ihm.services.pipeline_runner import (
     PROJECT_ROOT,
     PipelineLaunchOptions,
@@ -7,6 +10,7 @@ from ihm.services.pipeline_runner import (
     build_subprocess_env,
     format_command_for_display,
     get_pipeline_steps,
+    run_pipeline_step,
 )
 
 
@@ -97,6 +101,38 @@ def test_build_pipeline_command_ml_steps() -> None:
 
     assert train_cmd == [train_cmd[0], "-m", "modelFactory", "--mode", "train"]
     assert predict_cmd == [predict_cmd[0], "-m", "modelFactory", "--mode", "predict"]
+
+
+def test_run_pipeline_step_streams_logs_via_callback(monkeypatch) -> None:
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys, time; "
+            "print('stdout-1', flush=True); "
+            "sys.stderr.write('stderr-1\\n'); sys.stderr.flush(); "
+            "time.sleep(0.2); "
+            "print('stdout-2', flush=True)"
+        ),
+    ]
+    monkeypatch.setattr(pipeline_runner, "build_pipeline_command", lambda step_key, options: command)
+
+    updates: list[tuple[str, str, str]] = []
+
+    result = run_pipeline_step(
+        "fake_step",
+        PipelineLaunchOptions(),
+        on_update=lambda snapshot: updates.append((snapshot.status, snapshot.stdout, snapshot.stderr)),
+    )
+
+    assert result.returncode == 0
+    assert "stdout-1" in result.stdout
+    assert "stdout-2" in result.stdout
+    assert "stderr-1" in result.stderr
+    assert updates
+    assert any("stdout-1" in stdout for _, stdout, _ in updates)
+    assert any("stderr-1" in stderr for _, _, stderr in updates)
+    assert updates[-1][0] == "completed"
 
 
 

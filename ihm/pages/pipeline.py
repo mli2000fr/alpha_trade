@@ -8,6 +8,7 @@ import streamlit as st
 from ihm.pages import run_page_if_standalone
 from ihm.services.db import get_runtime_db_config
 from ihm.services.pipeline_runner import (
+    PipelineLiveSnapshot,
     PipelineLaunchOptions,
     build_pipeline_command,
     format_command_for_display,
@@ -16,6 +17,74 @@ from ihm.services.pipeline_runner import (
 )
 
 RESULTS_STATE_KEY = "ihm_pipeline_run_results"
+LAST_STEP_STATE_KEY = "ihm_pipeline_last_step_key"
+
+
+def _tail_text(value: str, max_lines: int = 200) -> str:
+    lines = value.splitlines()
+    if len(lines) <= max_lines:
+        return value
+    return "\n".join(lines[-max_lines:])
+
+
+def _render_live_console(snapshot: PipelineLiveSnapshot | None, step_name: str | None = None) -> None:
+    st.subheader("🖥️ Console d'exécution des pipelines")
+    st.caption(
+        "Affiche l'avancement, les derniers logs et le statut d'une étape en cours ou de la dernière étape exécutée. "
+        "Les pipelines longs peuvent ainsi être investigués directement depuis l'IHM."
+    )
+
+    if snapshot is None:
+        st.info("Aucune exécution en cours. Lancez une étape ci-dessous pour suivre ses logs ici.")
+        return
+
+    status_map = {
+        "starting": "🟦 Démarrage",
+        "running": "🟨 En cours",
+        "completed": "🟢 Terminé",
+        "failed": "🔴 Échec",
+        "timeout": "🟠 Timeout",
+    }
+    if snapshot.status in {"completed"}:
+        st.success(f"{status_map[snapshot.status]} — {step_name or snapshot.step_key}")
+    elif snapshot.status in {"failed", "timeout"}:
+        st.error(f"{status_map[snapshot.status]} — {step_name or snapshot.step_key}")
+    else:
+        st.warning(f"{status_map[snapshot.status]} — {step_name or snapshot.step_key}")
+
+    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+    metric_col1.metric("Étape", step_name or snapshot.step_key)
+    metric_col2.metric("Durée", f"{snapshot.duration_seconds:.2f}s")
+    metric_col3.metric("Lignes stdout", snapshot.stdout_lines)
+    metric_col4.metric("Lignes stderr", snapshot.stderr_lines)
+
+    meta_col1, meta_col2 = st.columns(2)
+    meta_col1.caption(f"Commande : `{snapshot.command_display}`")
+    meta_col2.caption(f"Compte : `{snapshot.account_id or 'global'}` | Retour : `{snapshot.returncode}`")
+
+    log_col1, log_col2 = st.columns(2)
+    with log_col1:
+        st.markdown("**stdout (tail)**")
+        st.code(_tail_text(snapshot.stdout) or "<aucune sortie stdout>", language="text")
+    with log_col2:
+        st.markdown("**stderr (tail)**")
+        st.code(_tail_text(snapshot.stderr) or "<aucune sortie stderr>", language="text")
+
+
+def _build_snapshot_from_result(step_key: str, result_state: dict[str, object]) -> PipelineLiveSnapshot:
+    return PipelineLiveSnapshot(
+        step_key=step_key,
+        command_display=str(result_state.get("command_display", "")),
+        status="completed" if int(cast(int | str, result_state.get("returncode", -1))) == 0 else "failed",
+        stdout=str(result_state.get("stdout", "") or ""),
+        stderr=str(result_state.get("stderr", "") or ""),
+        duration_seconds=float(cast(float | int | str, result_state.get("duration_seconds", 0.0))),
+        executed_at=str(result_state.get("executed_at", "—")),
+        account_id=cast(str | None, result_state.get("account_id")),
+        returncode=int(cast(int | str, result_state.get("returncode", -1))),
+        stdout_lines=len(str(result_state.get("stdout", "") or "").splitlines()),
+        stderr_lines=len(str(result_state.get("stderr", "") or "").splitlines()),
+    )
 
 
 def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
@@ -148,6 +217,15 @@ def render() -> None:
     options, live_confirmed = _build_launch_options()
     db_config = get_runtime_db_config()
     results = cast(dict[str, dict[str, object]], st.session_state.setdefault(RESULTS_STATE_KEY, {}))
+    last_step_key = cast(str | None, st.session_state.get(LAST_STEP_STATE_KEY))
+
+    console_placeholder = st.empty()
+    with console_placeholder.container():
+        if last_step_key and last_step_key in results:
+            step_name = next((step.name for step in get_pipeline_steps() if step.key == last_step_key), last_step_key)
+            _render_live_console(_build_snapshot_from_result(last_step_key, results[last_step_key]), step_name)
+        else:
+            _render_live_console(None)
 
     for step in get_pipeline_steps():
         command_preview = format_command_for_display(build_pipeline_command(step.key, options))
@@ -177,9 +255,14 @@ def render() -> None:
                     st.warning("Confirmez d'abord le mode LIVE dans les paramètres ci-dessus.")
 
                 if run_clicked:
+                    def _on_update(snapshot: PipelineLiveSnapshot) -> None:
+                        with console_placeholder.container():
+                            _render_live_console(snapshot, step.name)
+
                     with st.spinner(f"Exécution de {step.name} en cours…"):
-                        result = run_pipeline_step(step.key, options, db_config=db_config)
+                        result = run_pipeline_step(step.key, options, db_config=db_config, on_update=_on_update)
                     results[step.key] = result.to_state()
+                    st.session_state[LAST_STEP_STATE_KEY] = step.key
 
             _render_result(step.key, results.get(step.key))
 

@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 import os
+import queue
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 AccountUsage = Literal["none", "alpaca"]
+PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +60,23 @@ class PipelineRunResult:
 
     def to_state(self) -> dict[str, object]:
         return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineLiveSnapshot:
+    """État live d'un sous-processus exécuté depuis l'IHM."""
+
+    step_key: str
+    command_display: str
+    status: PipelineExecutionStatus
+    stdout: str
+    stderr: str
+    duration_seconds: float
+    executed_at: str
+    account_id: str | None = None
+    returncode: int | None = None
+    stdout_lines: int = 0
+    stderr_lines: int = 0
 
 
 PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
@@ -289,67 +309,186 @@ def build_subprocess_env(
     return env
 
 
+def _build_live_snapshot(
+    *,
+    step_key: str,
+    command_display: str,
+    status: PipelineExecutionStatus,
+    stdout_lines: list[str],
+    stderr_lines: list[str],
+    started_at: datetime,
+    started_perf: float,
+    account_id: str | None,
+    returncode: int | None = None,
+) -> PipelineLiveSnapshot:
+    return PipelineLiveSnapshot(
+        step_key=step_key,
+        command_display=command_display,
+        status=status,
+        stdout="".join(stdout_lines),
+        stderr="".join(stderr_lines),
+        duration_seconds=round(time.perf_counter() - started_perf, 2),
+        executed_at=started_at.isoformat(timespec="seconds"),
+        account_id=account_id,
+        returncode=returncode,
+        stdout_lines=len(stdout_lines),
+        stderr_lines=len(stderr_lines),
+    )
+
+
+def _stream_subprocess(
+    command: list[str],
+    *,
+    step_key: str,
+    account_id: str | None,
+    env: dict[str, str],
+    cwd: Path,
+    timeout_seconds: int | None = None,
+    on_update: Callable[[PipelineLiveSnapshot], None] | None = None,
+) -> PipelineRunResult:
+    command_display = format_command_for_display(command)
+    started_at = datetime.now()
+    started_perf = time.perf_counter()
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    events: queue.Queue[tuple[str, str]] = queue.Queue()
+
+    process = subprocess.Popen(
+        command,
+        cwd=str(cwd),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+
+    def _reader(stream: subprocess.PIPE | None, stream_name: str) -> None:  # type: ignore[type-arg]
+        if stream is None:
+            return
+        try:
+            for line in iter(stream.readline, ""):
+                events.put((stream_name, line))
+        finally:
+            stream.close()
+
+    stdout_thread = threading.Thread(target=_reader, args=(process.stdout, "stdout"), daemon=True)
+    stderr_thread = threading.Thread(target=_reader, args=(process.stderr, "stderr"), daemon=True)
+    stdout_thread.start()
+    stderr_thread.start()
+
+    if on_update is not None:
+        on_update(
+            _build_live_snapshot(
+                step_key=step_key,
+                command_display=command_display,
+                status="starting",
+                stdout_lines=stdout_lines,
+                stderr_lines=stderr_lines,
+                started_at=started_at,
+                started_perf=started_perf,
+                account_id=account_id,
+            )
+        )
+
+    timed_out = False
+    last_push = 0.0
+
+    while True:
+        drained = False
+        while True:
+            try:
+                stream_name, line = events.get_nowait()
+            except queue.Empty:
+                break
+            drained = True
+            if stream_name == "stdout":
+                stdout_lines.append(line)
+            else:
+                stderr_lines.append(line)
+
+        elapsed = time.perf_counter() - started_perf
+        current_returncode = process.poll()
+
+        if timeout_seconds is not None and elapsed > timeout_seconds and current_returncode is None:
+            process.kill()
+            timed_out = True
+            stderr_lines.append("\nTimeout d'exécution dépassé.\n")
+            current_returncode = -2
+
+        if on_update is not None and (drained or (time.perf_counter() - last_push) >= 0.5):
+            live_status: PipelineExecutionStatus = "timeout" if timed_out else "running"
+            if current_returncode is not None and not timed_out:
+                live_status = "completed" if current_returncode == 0 else "failed"
+            on_update(
+                _build_live_snapshot(
+                    step_key=step_key,
+                    command_display=command_display,
+                    status=live_status,
+                    stdout_lines=stdout_lines,
+                    stderr_lines=stderr_lines,
+                    started_at=started_at,
+                    started_perf=started_perf,
+                    account_id=account_id,
+                    returncode=current_returncode,
+                )
+            )
+            last_push = time.perf_counter()
+
+        if current_returncode is not None and events.empty() and not stdout_thread.is_alive() and not stderr_thread.is_alive():
+            break
+
+        time.sleep(0.1)
+
+    process.wait()
+    final_returncode = -2 if timed_out else process.returncode
+
+    return PipelineRunResult(
+        step_key=step_key,
+        command=command,
+        command_display=command_display,
+        returncode=final_returncode,
+        stdout="".join(stdout_lines),
+        stderr="".join(stderr_lines),
+        duration_seconds=round(time.perf_counter() - started_perf, 2),
+        executed_at=started_at.isoformat(timespec="seconds"),
+        account_id=account_id,
+    )
+
+
 def run_pipeline_step(
     step_key: str,
     options: PipelineLaunchOptions,
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
+    on_update: Callable[[PipelineLiveSnapshot], None] | None = None,
 ) -> PipelineRunResult:
     """Exécute une étape de pipeline et capture stdout/stderr."""
     command = build_pipeline_command(step_key, options)
-    command_display = format_command_for_display(command)
     env = build_subprocess_env(db_config=db_config)
-    started_at = datetime.now()
-    t0 = time.perf_counter()
-
     try:
-        completed = subprocess.run(
+        return _stream_subprocess(
             command,
-            cwd=str(PROJECT_ROOT),
+            step_key=step_key,
+            account_id=options.account_id,
             env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_seconds,
-            check=False,
-        )
-        return PipelineRunResult(
-            step_key=step_key,
-            command=command,
-            command_display=command_display,
-            returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
-            duration_seconds=round(time.perf_counter() - t0, 2),
-            executed_at=started_at.isoformat(timespec="seconds"),
-            account_id=options.account_id,
-        )
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-        return PipelineRunResult(
-            step_key=step_key,
-            command=command,
-            command_display=command_display,
-            returncode=-2,
-            stdout=stdout,
-            stderr=(stderr + "\n\nTimeout d'exécution dépassé.").strip(),
-            duration_seconds=round(time.perf_counter() - t0, 2),
-            executed_at=started_at.isoformat(timespec="seconds"),
-            account_id=options.account_id,
+            cwd=PROJECT_ROOT,
+            timeout_seconds=timeout_seconds,
+            on_update=on_update,
         )
     except Exception as exc:
         return PipelineRunResult(
             step_key=step_key,
             command=command,
-            command_display=command_display,
+            command_display=format_command_for_display(command),
             returncode=-1,
             stdout="",
             stderr=str(exc),
-            duration_seconds=round(time.perf_counter() - t0, 2),
-            executed_at=started_at.isoformat(timespec="seconds"),
+            duration_seconds=0.0,
+            executed_at=datetime.now().isoformat(timespec="seconds"),
             account_id=options.account_id,
         )
 
