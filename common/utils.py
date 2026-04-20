@@ -16,6 +16,25 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s -- %(message)s"
 
 
+def _configure_utf8_stdio() -> None:
+    """Force stdout/stderr en UTF-8 quand le runtime le permet.
+
+    Important sur Windows quand le processus est lancé en arrière-plan ou via des pipes,
+    sinon certains caractères Unicode (accents, flèches, emoji) peuvent casser le logging
+    ou produire du texte illisible.
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 def _reset_root_logging_handlers(logger: logging.Logger) -> None:
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
@@ -35,6 +54,7 @@ def configure_root_logging(
     backup_count: int = 3,
 ) -> logging.Logger:
     """Configure le root logger du projet avec sortie stdout et fichier optionnel."""
+    _configure_utf8_stdio()
     logger = logging.getLogger()
     logger.setLevel(level)
     _reset_root_logging_handlers(logger)

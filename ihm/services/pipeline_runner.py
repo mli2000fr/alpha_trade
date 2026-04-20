@@ -293,6 +293,8 @@ def build_subprocess_env(
     if existing_pythonpath:
         pythonpath_entries.append(existing_pythonpath)
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
 
     if db_config:
         host = db_config.get("host")

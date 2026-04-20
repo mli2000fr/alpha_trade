@@ -464,6 +464,34 @@ class TestBacktestConfig:
             final_value = final_value.iloc[0]
         assert float(final_value) > 0.0
 
+    def test_backtest_engine_uses_integer_share_sizes(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06"])
+        close = pd.DataFrame({"AAPL": [100.0, 103.0, 106.0, 104.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [101.0, 104.0, 108.0, 105.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 102.0, 103.0, 101.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 6),
+                initial_equity=10_000,
+                max_positions=1,
+            )
+        )
+        pf = engine.run(close=close, high=high, low=low, signals_df=signals_df)
+        trades_df = pf.trades.records_readable
+        assert not trades_df.empty
+        assert float(trades_df.iloc[0]["Size"]).is_integer()
+
 
 # ============================================================
 # test report
@@ -566,6 +594,45 @@ class TestReport:
         assert report_open.win_rate_pct == 0.0
         assert report_open.avg_trade_duration_days == 0.0
 
+    def test_save_report_json_and_equity_curve_csv(self, tmp_path):
+        import vectorbt as vbt
+        from backtesting.report import generate_report, save_equity_curve_csv, save_report_json
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06"])
+        close = pd.DataFrame({"AAPL": [100.0, 103.0, 104.0, 106.0]}, index=idx)
+        entries = pd.DataFrame({"AAPL": [True, False, False, False]}, index=idx)
+        exits = pd.DataFrame({"AAPL": [False, False, False, True]}, index=idx)
+
+        pf = vbt.Portfolio.from_signals(
+            close=close,
+            entries=entries,
+            exits=exits,
+            size=1.0,
+            size_type="percent",
+            init_cash=10_000,
+            cash_sharing=True,
+            group_by=True,
+            freq="1D",
+        )
+        report = generate_report(pf, 10_000)
+
+        equity_csv_path = save_equity_curve_csv(pf, output_dir=tmp_path)
+        report_json_path = save_report_json(
+            report,
+            output_dir=tmp_path,
+            artifacts={"equity_curve_csv": str(equity_csv_path)},
+            params={"start": "2025-01-01", "end": "2025-01-06"},
+        )
+
+        assert equity_csv_path.exists()
+        assert report_json_path.exists()
+        equity_df = pd.read_csv(equity_csv_path)
+        assert list(equity_df.columns) == ["trade_date", "portfolio_value"]
+        payload = __import__("json").loads(report_json_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["initial_equity"] == 10000.0
+        assert payload["artifacts"]["equity_curve_csv"] == str(equity_csv_path)
+        assert payload["params"]["start"] == "2025-01-01"
+
 
 # ============================================================
 # test CLI parsing
@@ -623,6 +690,16 @@ class TestCLI:
         assert args.sentiment_mode == "off"
         assert args.artifacts_dir == "artifacts/models"
 
+    def test_parse_run_output_dir(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "run", "--start", "2020-01-01",
+            "--output-dir", "artifacts/ihm_backtesting_runs/run_123/artifacts",
+        ])
+        assert args.output_dir == "artifacts/ihm_backtesting_runs/run_123/artifacts"
+
     def test_parse_backfill_scores_history_command(self):
         from backtesting.cli import _build_parser
 
@@ -641,6 +718,30 @@ class TestCLI:
         assert args.chunk_size == 250
         assert args.selection_size == 50
         assert args.overwrite_existing is True
+
+
+class TestBacktestingRegistry:
+    def test_start_backtesting_run_rejects_duplicate_active_kind(self, monkeypatch):
+        from ihm.services import backtesting_registry
+        from ihm.services.backtesting_runner import BacktestRunOptions
+
+        monkeypatch.setattr(
+            backtesting_registry,
+            "list_active_backtesting_runs_by_kind",
+            lambda run_kind: [{"run_id": "run-active-123", "run_kind": run_kind, "status": "running"}],
+        )
+
+        try:
+            backtesting_registry.start_backtesting_run(
+                "run",
+                "Backtest complet",
+                BacktestRunOptions(start="2025-04-10", end="2025-04-14"),
+            )
+        except RuntimeError as exc:
+            assert "déjà en cours" in str(exc)
+            assert "run-active-123" in str(exc)
+        else:
+            raise AssertionError("Le registre aurait dû bloquer un second run du même type.")
 
 
 

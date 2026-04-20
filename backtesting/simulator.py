@@ -128,6 +128,8 @@ class BacktestEngine:
             # Sizing
             size=size_pct,
             size_type="percent",
+            size_granularity=1.0,
+            allow_partial=False,
             # Config
             init_cash=cfg.initial_equity,
             fees=cfg.fees_pct,

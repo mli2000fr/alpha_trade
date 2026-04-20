@@ -66,6 +66,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default="artifacts/models",
         help="Répertoire des artefacts modèles pour reconstruire les prédictions ML",
     )
+    run_p.add_argument(
+        "--output-dir",
+        default=None,
+        help="Répertoire cible pour sauvegarder les artefacts et le rapport structurés du run",
+    )
 
     # --- backfill-scores-history ---
     backfill_p = sub.add_parser(
@@ -92,7 +97,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     from backtesting.resilience import prepare_predictions_for_ml_mode, prepare_scores_for_sentiment_mode
     from backtesting.signal_replay import replay_signals
     from backtesting.simulator import BacktestConfig, BacktestEngine
-    from backtesting.report import generate_report, save_equity_curve, save_trades_csv
+    from backtesting.report import generate_report, save_equity_curve, save_equity_curve_csv, save_report_json, save_trades_csv
 
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
     end = datetime.strptime(args.end, "%Y-%m-%d").date()
@@ -166,13 +171,66 @@ def _run_backtest(args: argparse.Namespace) -> None:
     report = generate_report(pf, args.equity)
     report.print_summary()
 
+    output_dir = Path(args.output_dir) if args.output_dir else None
+    artifact_paths: dict[str, str] = {}
+
+    if output_dir is not None:
+        _safe_print("📝 Sauvegarde du rapport structuré...")
+        equity_curve_csv_path = save_equity_curve_csv(pf, output_dir=output_dir)
+        artifact_paths["equity_curve_csv"] = str(equity_curve_csv_path)
+        report_json_path = save_report_json(
+            report,
+            output_dir=output_dir,
+            artifacts=artifact_paths,
+            params={
+                "start": args.start,
+                "end": args.end,
+                "equity": args.equity,
+                "tp": args.tp,
+                "ts": args.ts,
+                "max_positions": args.max_positions,
+                "fees": args.fees,
+                "sentiment_lookback": args.sentiment_lookback,
+                "ml_mode": args.ml_mode,
+                "sentiment_mode": args.sentiment_mode,
+                "artifacts_dir": args.artifacts_dir,
+                "no_save": args.no_save,
+            },
+        )
+        artifact_paths["report_json"] = str(report_json_path)
+        _safe_print(f"   → {report_json_path}")
+        _safe_print(f"   → {equity_curve_csv_path}")
+
     # 6. Artefacts
     if not args.no_save:
         _safe_print("💾 Sauvegarde des artefacts...")
-        save_equity_curve(pf)
-        save_trades_csv(pf)
-        _safe_print("   → artifacts/backtesting/equity_curve.png")
-        _safe_print("   → artifacts/backtesting/trades.csv")
+        equity_curve_path = save_equity_curve(pf, output_dir=output_dir)
+        trades_csv_path = save_trades_csv(pf, output_dir=output_dir)
+        artifact_paths["equity_curve_png"] = str(equity_curve_path)
+        artifact_paths["trades_csv"] = str(trades_csv_path)
+        _safe_print(f"   → {equity_curve_path}")
+        _safe_print(f"   → {trades_csv_path}")
+
+        if output_dir is not None:
+            save_report_json(
+                report,
+                output_dir=output_dir,
+                artifacts=artifact_paths,
+                params={
+                    "start": args.start,
+                    "end": args.end,
+                    "equity": args.equity,
+                    "tp": args.tp,
+                    "ts": args.ts,
+                    "max_positions": args.max_positions,
+                    "fees": args.fees,
+                    "sentiment_lookback": args.sentiment_lookback,
+                    "ml_mode": args.ml_mode,
+                    "sentiment_mode": args.sentiment_mode,
+                    "artifacts_dir": args.artifacts_dir,
+                    "no_save": args.no_save,
+                },
+            )
 
     _safe_print("✅ Backtest terminé.\n")
 

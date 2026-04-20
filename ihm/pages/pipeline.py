@@ -6,6 +6,7 @@ from typing import Any, cast
 import pandas as pd
 import streamlit as st
 
+from ihm.components.metrics import format_duration_hhmmss, to_int
 from ihm.pages import run_page_if_standalone
 from ihm.services.db import get_runtime_db_config
 from ihm.services.pipeline_runner import PipelineLaunchOptions, build_pipeline_command, format_command_for_display, get_pipeline_steps
@@ -214,7 +215,7 @@ def _render_runtime_center() -> None:
             cols = st.columns([3, 2, 2, 2, 1.5])
             cols[0].markdown(f"`{run.get('step_label', run.get('step_key', ''))}`  \\n`{run_id}`")
             cols[1].markdown(_status_badge(str(run.get("status", "running"))))
-            cols[2].markdown(f"⏱️ {float(run.get('duration_seconds', 0.0)):.2f}s")
+            cols[2].markdown(f"⏱️ {format_duration_hhmmss(run.get('duration_seconds', 0.0))}")
             cols[3].markdown(f"🏦 `{run.get('account_id') or 'global'}`")
             if cols[4].button("⏹️ Arrêter", key=f"stop_run_{run_id}", use_container_width=True):
                 stop_pipeline_run(run_id)
@@ -281,9 +282,9 @@ def _render_runtime_center() -> None:
 
         metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
         metric_col1.metric("Étape", str(selected_run.get("step_label", selected_run.get("step_key", ""))))
-        metric_col2.metric("Durée", f"{float(selected_run.get('duration_seconds', 0.0)):.2f}s")
-        metric_col3.metric("Lignes stdout", int(selected_run.get("stdout_lines", 0)))
-        metric_col4.metric("Lignes stderr", int(selected_run.get("stderr_lines", 0)))
+        metric_col2.metric("Durée", format_duration_hhmmss(selected_run.get("duration_seconds", 0.0)))
+        metric_col3.metric("Lignes stdout", to_int(selected_run.get("stdout_lines", 0)))
+        metric_col4.metric("Lignes stderr", to_int(selected_run.get("stderr_lines", 0)))
 
         st.caption(
             f"Commande : `{selected_run.get('command_display', '')}` | "
@@ -334,9 +335,9 @@ def _render_runtime_center() -> None:
                 "compte": run.get("account_id") or "global",
                 "début": run.get("executed_at"),
                 "fin": run.get("finished_at") or "—",
-                "durée_s": float(run.get("duration_seconds", 0.0)),
-                "stdout": int(run.get("stdout_lines", 0)),
-                "stderr": int(run.get("stderr_lines", 0)),
+                "durée": format_duration_hhmmss(run.get("duration_seconds", 0.0)),
+                "stdout": to_int(run.get("stdout_lines", 0)),
+                "stderr": to_int(run.get("stderr_lines", 0)),
             }
             for run in all_runs
         ]
@@ -361,9 +362,9 @@ def _render_step_result(record: dict[str, object] | None) -> None:
 
     cols = st.columns(4)
     cols[0].metric("Run ID", str(record.get("run_id", "—")))
-    cols[1].metric("Durée", f"{float(record.get('duration_seconds', 0.0)):.2f}s")
-    cols[2].metric("stdout", int(record.get("stdout_lines", 0)))
-    cols[3].metric("stderr", int(record.get("stderr_lines", 0)))
+    cols[1].metric("Durée", format_duration_hhmmss(record.get("duration_seconds", 0.0)))
+    cols[2].metric("stdout", to_int(record.get("stdout_lines", 0)))
+    cols[3].metric("stderr", to_int(record.get("stderr_lines", 0)))
     st.caption(
         f"Début : `{record.get('executed_at', '—')}` | Fin : `{record.get('finished_at') or '—'}` | "
         f"Compte : `{record.get('account_id') or 'global'}`"

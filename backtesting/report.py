@@ -5,12 +5,11 @@ Génération du rapport de backtest : métriques clés + equity curve.
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-
-import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 ARTIFACTS_DIR = Path("artifacts") / "backtesting"
@@ -51,6 +50,21 @@ class BacktestReport:
     win_rate_pct: float
     avg_trade_duration_days: float
     profit_factor: float
+
+    def to_serializable_dict(self) -> dict[str, float | int]:
+        return {
+            "initial_equity": float(self.initial_equity),
+            "final_value": float(self.final_value),
+            "total_return_pct": float(self.total_return_pct),
+            "cagr_pct": float(self.cagr_pct),
+            "sharpe_ratio": float(self.sharpe_ratio),
+            "sortino_ratio": float(self.sortino_ratio),
+            "max_drawdown_pct": float(self.max_drawdown_pct),
+            "total_trades": int(self.total_trades),
+            "win_rate_pct": float(self.win_rate_pct),
+            "avg_trade_duration_days": float(self.avg_trade_duration_days),
+            "profit_factor": float(self.profit_factor),
+        }
 
     def to_dict(self) -> dict:
         return {
@@ -153,6 +167,43 @@ def save_trades_csv(pf, output_dir: Path | None = None) -> Path:
         LOGGER.info("Trades exportés : %s (%d trades)", filepath, len(trades_df))
     except Exception as exc:
         LOGGER.warning("Impossible d'exporter les trades : %s", exc)
+    return filepath
+
+
+def save_equity_curve_csv(pf, output_dir: Path | None = None) -> Path:
+    """Exporte la série d'equity curve en CSV pour réutilisation IHM."""
+    out = output_dir or ARTIFACTS_DIR
+    out.mkdir(parents=True, exist_ok=True)
+    filepath = out / "equity_curve.csv"
+    try:
+        equity = pf.value()
+        equity_df = equity.reset_index()
+        equity_df.columns = ["trade_date", "portfolio_value"]
+        equity_df.to_csv(str(filepath), index=False)
+        LOGGER.info("Equity curve CSV exportée : %s", filepath)
+    except Exception as exc:
+        LOGGER.warning("Impossible d'exporter l'equity curve CSV : %s", exc)
+    return filepath
+
+
+def save_report_json(
+    report: BacktestReport,
+    output_dir: Path | None = None,
+    *,
+    artifacts: dict[str, str] | None = None,
+    params: dict[str, object] | None = None,
+) -> Path:
+    """Sauvegarde un manifeste JSON des métriques et artefacts du backtest."""
+    out = output_dir or ARTIFACTS_DIR
+    out.mkdir(parents=True, exist_ok=True)
+    filepath = out / "report.json"
+    payload = {
+        "summary": report.to_serializable_dict(),
+        "artifacts": artifacts or {},
+        "params": params or {},
+    }
+    filepath.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    LOGGER.info("Rapport JSON sauvegardé : %s", filepath)
     return filepath
 
 

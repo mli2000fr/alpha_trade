@@ -39,6 +39,7 @@ Cela évite que les pages `Execution`, `Corporate Actions`, `ML`, etc. paraissen
 |---|---|
 | 🏠 Vue d'ensemble | KPI, alertes, top candidats, santé DB |
 | 🔄 Pipeline | 12 étapes du pipeline quotidien (1→1a→2→…→6→6a→6b→7→8→8a), lancement en arrière-plan, arrêt, historique, comparaison et téléchargement des logs |
+| 🧪 Backtesting | Formulaire complet des commandes `backtesting run` et `backfill-scores-history`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis et graphique live des artefacts |
 | 📊 Screening | Table `stock_scores` avec filtres (symbole, secteur, candidat, score, sentiment) |
 | ⚖️ Risk | Décisions de risque, portefeuille cible, synthèse par secteur |
 | 🚀 Execution | Runs d'exécution, événements, fills, positions broker |
@@ -58,6 +59,8 @@ La page **🔄 Pipeline** permet désormais :
 - de **télécharger** les fichiers de logs produits par chaque run.
 
 Les logs IHM sont persistés sous `artifacts/ihm_pipeline_runs/`.
+
+Les runs de backtesting lancés depuis l'IHM sont persistés sous `artifacts/ihm_backtesting_runs/`.
 
 ## Limitations connues
 
