@@ -17,6 +17,7 @@ from ihm.services.process_registry import (
     load_pipeline_history,
     read_pipeline_logs,
     start_pipeline_run,
+    start_pipeline_workflow,
     stop_pipeline_run,
 )
 
@@ -170,6 +171,21 @@ def _status_badge(status: str) -> str:
     }.get(status, status)
 
 
+def _is_workflow_run(run: dict[str, object]) -> bool:
+    return str(run.get("run_kind", "step")) == "workflow"
+
+
+def _workflow_progress(run: dict[str, object]) -> tuple[int, int, float, str]:
+    total = max(to_int(run.get("workflow_total_steps", 0)), 0)
+    completed = max(to_int(run.get("workflow_completed_steps", 0)), 0)
+    fraction = min((completed / total), 1.0) if total else 0.0
+    current_step = str(run.get("workflow_current_step_label") or "").strip()
+    label = f"{completed}/{total} étapes terminées" if total else "Progression indisponible"
+    if total and current_step and str(run.get("status", "")) in {"starting", "running"}:
+        label = f"{label} — en cours : {current_step}"
+    return completed, total, fraction, label
+
+
 def _sanitize_compare_ids(run_ids: list[str], labels: dict[str, str], value: object) -> list[str]:
     candidates = value if isinstance(value, list) else []
     return [rid for rid in candidates if isinstance(rid, str) and rid in labels and rid in run_ids][:2]
@@ -195,6 +211,51 @@ def _prime_runtime_center_state(run_ids: list[str], labels: dict[str, str]) -> l
     return compare_defaults
 
 
+def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bool, db_config: dict[str, str | None]) -> None:
+    active_runs, _ = _merge_runs()
+    active_workflows = [run for run in active_runs if _is_workflow_run(run)]
+    has_other_active_runs = any(not _is_workflow_run(run) for run in active_runs)
+    execution_locked = options.execution_mode == "live" and not live_confirmed
+
+    with st.container(border=True):
+        st.subheader("🚀 Workflow complet 1 → 12")
+        st.caption(
+            "Lance automatiquement les 12 étapes du pipeline dans l'ordre. "
+            "Les sous-runs restent historisés individuellement, et ce workflow fournit une vue globale avec logs consolidés."
+        )
+
+        if active_workflows:
+            workflow_run = active_workflows[0]
+            _, _, progress_fraction, progress_label = _workflow_progress(workflow_run)
+            st.info(f"Workflow déjà actif : `{workflow_run.get('run_id', '')}`")
+            st.progress(progress_fraction)
+            st.caption(progress_label)
+        elif has_other_active_runs:
+            st.warning("Un run pipeline unitaire est déjà en cours. Attendez sa fin avant de lancer le workflow complet.")
+
+        if execution_locked:
+            st.warning("Confirmez d'abord le mode LIVE dans les paramètres ci-dessus pour inclure l'étape Execution dans le workflow.")
+
+        launch_clicked = st.button(
+            "▶️ Lancer le workflow complet",
+            key="run_pipeline_workflow_all_steps",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(active_runs) or execution_locked,
+        )
+        if launch_clicked:
+            try:
+                record = start_pipeline_workflow(options, db_config=db_config)
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                existing_compare = cast(list[str], st.session_state.get(COMPARE_RUNS_KEY, [])) if isinstance(st.session_state.get(COMPARE_RUNS_KEY, []), list) else []
+                st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *existing_compare][:2]
+                st.success(f"Workflow lancé en arrière-plan : `{record.run_id}`")
+                st.rerun()
+
+
 @st.fragment(run_every="2s")
 def _render_runtime_center() -> None:
     active_runs, all_runs = _merge_runs()
@@ -212,14 +273,19 @@ def _render_runtime_center() -> None:
         st.markdown("**Runs actifs**")
         for run in active_runs:
             run_id = str(run.get("run_id", ""))
-            cols = st.columns([3, 2, 2, 2, 1.5])
-            cols[0].markdown(f"`{run.get('step_label', run.get('step_key', ''))}`  \\n`{run_id}`")
-            cols[1].markdown(_status_badge(str(run.get("status", "running"))))
-            cols[2].markdown(f"⏱️ {format_duration_hhmmss(run.get('duration_seconds', 0.0))}")
-            cols[3].markdown(f"🏦 `{run.get('account_id') or 'global'}`")
-            if cols[4].button("⏹️ Arrêter", key=f"stop_run_{run_id}", use_container_width=True):
-                stop_pipeline_run(run_id)
-                st.rerun()
+            with st.container(border=True):
+                cols = st.columns([3, 2, 2, 2, 1.5])
+                cols[0].markdown(f"`{run.get('step_label', run.get('step_key', ''))}`  \\n`{run_id}`")
+                cols[1].markdown(_status_badge(str(run.get("status", "running"))))
+                cols[2].markdown(f"⏱️ {format_duration_hhmmss(run.get('duration_seconds', 0.0))}")
+                cols[3].markdown(f"🏦 `{run.get('account_id') or 'global'}`")
+                if cols[4].button("⏹️ Arrêter", key=f"stop_run_{run_id}", use_container_width=True):
+                    stop_pipeline_run(run_id)
+                    st.rerun()
+                if _is_workflow_run(run):
+                    _, _, progress_fraction, progress_label = _workflow_progress(run)
+                    st.progress(progress_fraction)
+                    st.caption(progress_label)
     else:
         st.info("Aucun run actif pour le moment.")
 
@@ -230,7 +296,8 @@ def _render_runtime_center() -> None:
     labels = {
         str(run["run_id"]): (
             f"{run.get('step_label', run.get('step_key', ''))} | {run.get('run_id')} | "
-            f"{_status_badge(str(run.get('status', '')))} | {run.get('executed_at', '')}"
+            f"{_status_badge(str(run.get('status', '')))}"
+            f"{' | ' + _workflow_progress(run)[3] if _is_workflow_run(run) else ''} | {run.get('executed_at', '')}"
         )
         for run in all_runs
     }
@@ -279,6 +346,19 @@ def _render_runtime_center() -> None:
             st.error(f"Run sélectionné : {_status_badge(status)}")
         else:
             st.warning(f"Run sélectionné : {_status_badge(status)}")
+
+        if _is_workflow_run(selected_run):
+            completed, total, progress_fraction, progress_label = _workflow_progress(selected_run)
+            st.markdown("**Progression globale**")
+            st.progress(progress_fraction)
+            st.caption(progress_label)
+            workflow_cols = st.columns(3)
+            workflow_cols[0].metric("Type", "Workflow 1 → 12")
+            workflow_cols[1].metric("Progression", f"{completed}/{total}")
+            workflow_cols[2].metric("Sous-runs", len(selected_run.get("workflow_child_run_ids", [])) if isinstance(selected_run.get("workflow_child_run_ids", []), list) else 0)
+            current_step_label = str(selected_run.get("workflow_current_step_label") or "").strip()
+            if current_step_label:
+                st.caption(f"Étape en cours : `{current_step_label}`")
 
         metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
         metric_col1.metric("Étape", str(selected_run.get("step_label", selected_run.get("step_key", ""))))
@@ -330,7 +410,13 @@ def _render_runtime_center() -> None:
         [
             {
                 "run_id": run.get("run_id"),
+                "type": "workflow" if _is_workflow_run(run) else "étape",
                 "étape": run.get("step_label", run.get("step_key")),
+                "progression": (
+                    f"{to_int(run.get('workflow_completed_steps', 0))}/{to_int(run.get('workflow_total_steps', 0))}"
+                    if _is_workflow_run(run)
+                    else "—"
+                ),
                 "statut": _status_badge(str(run.get("status", ""))),
                 "compte": run.get("account_id") or "global",
                 "début": run.get("executed_at"),
@@ -375,6 +461,7 @@ def _render_step_result(record: dict[str, object] | None) -> None:
 def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db_config: dict[str, str | None]) -> None:
     active_runs, all_runs = _merge_runs()
     latest_by_step = _latest_run_by_step(all_runs)
+    workflow_active = any(_is_workflow_run(run) for run in active_runs)
     active_by_step: dict[str, list[dict[str, object]]] = {}
     for run in active_runs:
         active_by_step.setdefault(str(run.get("step_key", "")), []).append(run)
@@ -412,10 +499,12 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
                         key=f"run_pipeline_step_{step.key}",
                         type="primary",
                         use_container_width=True,
-                        disabled=execution_locked,
+                        disabled=execution_locked or workflow_active,
                     )
                     if execution_locked:
                         st.warning("Confirmez d'abord le mode LIVE dans les paramètres ci-dessus.")
+                    if workflow_active:
+                        st.warning("Un workflow complet est en cours : le lancement manuel des étapes est temporairement désactivé.")
 
                     if run_clicked:
                         record = start_pipeline_run(
@@ -445,6 +534,7 @@ def render() -> None:
     options, live_confirmed = _build_launch_options()
     db_config = get_runtime_db_config()
 
+    _render_workflow_launcher(options, live_confirmed, db_config)
     _render_runtime_center()
     _render_step_panels(options, live_confirmed, db_config)
 

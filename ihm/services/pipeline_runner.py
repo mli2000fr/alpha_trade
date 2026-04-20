@@ -204,43 +204,44 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     account_id = (options.account_id or "").strip() or None
 
     if step_key == "import_alpaca_bar":
-        return [sys.executable, "-m", "dataIntegrityEngine.import_alpaca_bar"]
+        return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
 
     if step_key == "corporate_actions_sync":
         # --portfolio-only : sync uniquement les symboles détenus en portefeuille
         # pas de --skip-existing : on re-interroge Alpaca à chaque fois pour ne rater aucun nouvel événement
-        command = [sys.executable, "-m", "corporate_actions", "sync", "--portfolio-only"]
+        command = [sys.executable, "-u", "-m", "corporate_actions", "sync", "--portfolio-only"]
         if account_id:
             command.extend(["--account", account_id])
         return command
 
     if step_key == "data_sanitizer_daily":
-        return [sys.executable, "-m", "dataIntegrityEngine.data_sanitizer_daily"]
+        return [sys.executable, "-u", "-m", "dataIntegrityEngine.data_sanitizer_daily"]
 
     if step_key == "stock_screener":
-        return [sys.executable, "-m", "screener.stock_screener"]
+        return [sys.executable, "-u", "-m", "screener.stock_screener"]
 
     if step_key == "alpha_scanner":
-        return [sys.executable, "-m", "selector.alpha_scanner"]
+        return [sys.executable, "-u", "-m", "selector.alpha_scanner"]
 
     if step_key == "sentiment_pipeline":
-        return [sys.executable, "-m", "event_sentiment"]
+        return [sys.executable, "-u", "-m", "event_sentiment"]
 
     if step_key == "signal_aggregator":
-        command = [sys.executable, "-m", "event_sentiment.signal_aggregator"]
+        command = [sys.executable, "-u", "-m", "event_sentiment.signal_aggregator"]
         if trade_date:
             command.extend(["--trade-date", trade_date])
         return command
 
     if step_key == "ml_train":
-        return [sys.executable, "-m", "modelFactory", "--mode", "train", "--include-sentiment"]
+        return [sys.executable, "-u", "-m", "modelFactory", "--mode", "train", "--include-sentiment"]
 
     if step_key == "ml_predict":
-        return [sys.executable, "-m", "modelFactory", "--mode", "predict"]
+        return [sys.executable, "-u", "-m", "modelFactory", "--mode", "predict"]
 
     if step_key == "risk_management":
         command = [
             sys.executable,
+            "-u",
             "-m",
             "risk_management",
             "--account-equity",
@@ -253,7 +254,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "execution":
-        command = [sys.executable, str(PROJECT_ROOT / "run_execution.py"), options.execution_mode]
+        command = [sys.executable, "-u", str(PROJECT_ROOT / "run_execution.py"), options.execution_mode]
         if trade_date:
             command.extend(["--date", trade_date])
         if run_id:
@@ -267,7 +268,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "corporate_actions_apply":
-        command = [sys.executable, "-m", "corporate_actions", "apply"]
+        command = [sys.executable, "-u", "-m", "corporate_actions", "apply"]
         if trade_date:
             command.extend(["--as-of", trade_date])
         if account_id:

@@ -18,7 +18,6 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
     keys = [step.key for step in get_pipeline_steps()]
     assert keys == [
         "import_alpaca_bar",
-        "corporate_actions_sync",
         "data_sanitizer_daily",
         "stock_screener",
         "alpha_scanner",
@@ -28,6 +27,7 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
         "ml_predict",
         "risk_management",
         "execution",
+        "corporate_actions_sync",
         "corporate_actions_apply",
     ]
 
@@ -48,13 +48,13 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     execution_command = build_pipeline_command("execution", options)
     ca_apply_command = build_pipeline_command("corporate_actions_apply", options)
 
-    assert risk_command[:3] == [risk_command[0], "-m", "risk_management"]
+    assert risk_command[:4] == [risk_command[0], "-u", "-m", "risk_management"]
     assert risk_command[-2:] == ["--account", "test1"]
     assert "--trade-date" in risk_command
     assert "125000.0" in risk_command
 
-    assert execution_command[1] == str(PROJECT_ROOT / "run_execution.py")
-    assert execution_command[2] == "paper"
+    assert execution_command[:3] == [execution_command[0], "-u", str(PROJECT_ROOT / "run_execution.py")]
+    assert execution_command[3] == "paper"
     assert execution_command[-2:] == ["--account", "test1"]
     assert "--allow-outside-rth" in execution_command
     assert "--auto-rebalance" in execution_command
@@ -70,7 +70,7 @@ def test_build_pipeline_command_omits_account_for_global_steps() -> None:
 
     command = build_pipeline_command("stock_screener", options)
 
-    assert command == [command[0], "-m", "screener.stock_screener"]
+    assert command == [command[0], "-u", "-m", "screener.stock_screener"]
 
 
 
@@ -100,8 +100,8 @@ def test_build_pipeline_command_ml_steps() -> None:
     train_cmd = build_pipeline_command("ml_train", options)
     predict_cmd = build_pipeline_command("ml_predict", options)
 
-    assert train_cmd == [train_cmd[0], "-m", "modelFactory", "--mode", "train"]
-    assert predict_cmd == [predict_cmd[0], "-m", "modelFactory", "--mode", "predict"]
+    assert train_cmd == [train_cmd[0], "-u", "-m", "modelFactory", "--mode", "train", "--include-sentiment"]
+    assert predict_cmd == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict"]
 
 
 def test_run_pipeline_step_streams_logs_via_callback(monkeypatch) -> None:

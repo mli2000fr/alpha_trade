@@ -8,7 +8,7 @@ import subprocess
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -19,6 +19,7 @@ from ihm.services.pipeline_runner import (
     build_pipeline_command,
     build_subprocess_env,
     format_command_for_display,
+    get_pipeline_steps,
 )
 
 RunStatus = Literal["starting", "running", "completed", "failed", "timeout", "stopped"]
@@ -49,6 +50,13 @@ class PipelineRunRecord:
     stderr_lines: int = 0
     timeout_seconds: int | None = None
     stop_requested: bool = False
+    run_kind: Literal["step", "workflow"] = "step"
+    parent_run_id: str | None = None
+    workflow_total_steps: int = 0
+    workflow_completed_steps: int = 0
+    workflow_current_step_key: str | None = None
+    workflow_current_step_label: str | None = None
+    workflow_child_run_ids: list[str] = field(default_factory=list)
 
     def to_state(self) -> dict[str, object]:
         return asdict(self)
@@ -73,8 +81,21 @@ class _ManagedRun:
             self.stderr_tail = []
 
 
+@dataclass(slots=True)
+class _ManagedWorkflow:
+    record: PipelineRunRecord
+    thread: threading.Thread
+    started_perf: float
+    stop_event: threading.Event
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    stdout_tail: list[str] = field(default_factory=list)
+    stderr_tail: list[str] = field(default_factory=list)
+    current_child_run_id: str | None = None
+
+
 _REGISTRY_LOCK = threading.Lock()
 _ACTIVE_RUNS: dict[str, _ManagedRun] = {}
+_ACTIVE_WORKFLOWS: dict[str, _ManagedWorkflow] = {}
 
 
 def _ensure_storage() -> None:
@@ -243,6 +264,236 @@ def _tail_text(lines: list[str]) -> str:
     return "".join(lines)
 
 
+def _count_lines(text: str) -> int:
+    return len(text.splitlines()) if text else 0
+
+
+def _append_text(path_value: str, content: str) -> None:
+    if not content:
+        return
+    path = Path(path_value)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(content)
+
+
+def _read_new_text(path_value: str, offset: int) -> tuple[str, int]:
+    path = Path(path_value)
+    if not path.exists():
+        return "", offset
+    with path.open("r", encoding="utf-8", errors="replace") as fh:
+        fh.seek(offset)
+        content = fh.read()
+        return content, fh.tell()
+
+
+def _prefix_chunk(content: str, prefix: str) -> str:
+    if not content:
+        return ""
+    return "".join(f"{prefix}{line}" for line in content.splitlines(keepends=True))
+
+
+def _append_workflow_chunk(managed: _ManagedWorkflow, stream: Literal["stdout", "stderr"], content: str, *, prefix: str) -> None:
+    if not content:
+        return
+
+    with managed.lock:
+        record = managed.record
+        line_count = _count_lines(content)
+        if stream == "stdout":
+            _append_text(record.stdout_path, content)
+            _append_text(record.combined_path, _prefix_chunk(content, prefix))
+            for line in content.splitlines(keepends=True):
+                _append_tail(managed.stdout_tail, line)
+            managed.record = _with_updates(record, stdout_lines=record.stdout_lines + line_count)
+        else:
+            _append_text(record.stderr_path, content)
+            _append_text(record.combined_path, _prefix_chunk(content, prefix))
+            for line in content.splitlines(keepends=True):
+                _append_tail(managed.stderr_tail, line)
+            managed.record = _with_updates(record, stderr_lines=record.stderr_lines + line_count)
+        _persist_record(managed.record)
+
+
+def _append_workflow_event(managed: _ManagedWorkflow, message: str, *, is_error: bool = False) -> None:
+    content = message if message.endswith("\n") else f"{message}\n"
+    _append_workflow_chunk(
+        managed,
+        "stderr" if is_error else "stdout",
+        content,
+        prefix="[workflow] ",
+    )
+
+
+def _update_workflow_record(managed: _ManagedWorkflow, **updates: object) -> PipelineRunRecord:
+    with managed.lock:
+        managed.record = _with_updates(managed.record, **updates)
+        _persist_record(managed.record)
+        return managed.record
+
+
+def _finalize_workflow_record(
+    managed: _ManagedWorkflow,
+    *,
+    status: RunStatus,
+    returncode: int | None,
+    workflow_completed_steps: int,
+) -> PipelineRunRecord:
+    return _update_workflow_record(
+        managed,
+        status=status,
+        returncode=returncode,
+        duration_seconds=round(time.perf_counter() - managed.started_perf, 2),
+        finished_at=datetime.now().isoformat(timespec="seconds"),
+        workflow_completed_steps=workflow_completed_steps,
+        workflow_current_step_key=None,
+        workflow_current_step_label=None,
+    )
+
+
+def _sync_child_logs_to_workflow(
+    managed: _ManagedWorkflow,
+    child_snapshot: dict[str, object] | None,
+    *,
+    step_label: str,
+    offsets: dict[str, int],
+) -> None:
+    if child_snapshot is None:
+        return
+
+    stdout_chunk, offsets["stdout"] = _read_new_text(str(child_snapshot.get("stdout_path", "")), offsets["stdout"])
+    stderr_chunk, offsets["stderr"] = _read_new_text(str(child_snapshot.get("stderr_path", "")), offsets["stderr"])
+    if stdout_chunk:
+        _append_workflow_chunk(managed, "stdout", stdout_chunk, prefix=f"[stdout][{step_label}] ")
+    if stderr_chunk:
+        _append_workflow_chunk(managed, "stderr", stderr_chunk, prefix=f"[stderr][{step_label}] ")
+
+
+def _run_pipeline_workflow(
+    managed: _ManagedWorkflow,
+    options: PipelineLaunchOptions,
+    *,
+    db_config: dict[str, str | None] | None = None,
+    timeout_seconds: int | None = None,
+) -> None:
+    steps = get_pipeline_steps()
+    total_steps = len(steps)
+
+    try:
+        _append_workflow_event(managed, f"Démarrage du workflow complet ({total_steps} étapes).")
+        _update_workflow_record(managed, status="running", workflow_total_steps=total_steps, workflow_completed_steps=0)
+
+        completed_steps = 0
+        child_run_ids: list[str] = []
+
+        for index, step in enumerate(steps, start=1):
+            if managed.stop_event.is_set():
+                _append_workflow_event(managed, "Workflow arrêté avant le lancement de l'étape suivante.", is_error=True)
+                _finalize_workflow_record(managed, status="stopped", returncode=-3, workflow_completed_steps=completed_steps)
+                return
+
+            step_label = f"{step.num}. {step.name}"
+            _append_workflow_event(managed, f"=== [{index}/{total_steps}] Démarrage {step_label} ===")
+            child_record = start_pipeline_run(
+                step.key,
+                step_label,
+                options,
+                db_config=db_config,
+                timeout_seconds=timeout_seconds,
+                parent_run_id=managed.record.run_id,
+            )
+            child_run_ids.append(child_record.run_id)
+            with managed.lock:
+                managed.current_child_run_id = child_record.run_id
+            _update_workflow_record(
+                managed,
+                workflow_current_step_key=step.key,
+                workflow_current_step_label=step_label,
+                workflow_child_run_ids=list(child_run_ids),
+                workflow_completed_steps=completed_steps,
+            )
+
+            offsets = {"stdout": 0, "stderr": 0}
+            child_snapshot: dict[str, object] | None = None
+
+            while True:
+                if managed.stop_event.is_set():
+                    stop_pipeline_run(child_record.run_id)
+
+                child_snapshot = poll_pipeline_run(child_record.run_id)
+                _sync_child_logs_to_workflow(managed, child_snapshot, step_label=step_label, offsets=offsets)
+
+                child_status = str(child_snapshot.get("status", "")) if child_snapshot is not None else "failed"
+                _update_workflow_record(
+                    managed,
+                    status="running",
+                    duration_seconds=round(time.perf_counter() - managed.started_perf, 2),
+                    workflow_current_step_key=step.key,
+                    workflow_current_step_label=step_label,
+                    workflow_child_run_ids=list(child_run_ids),
+                    workflow_completed_steps=completed_steps,
+                )
+                if child_status not in {"starting", "running"}:
+                    break
+                time.sleep(0.2)
+
+            _sync_child_logs_to_workflow(managed, child_snapshot, step_label=step_label, offsets=offsets)
+            with managed.lock:
+                managed.current_child_run_id = None
+
+            final_child_status = str(child_snapshot.get("status", "failed")) if child_snapshot is not None else "failed"
+            final_child_returncode_raw = child_snapshot.get("returncode", -1) if child_snapshot is not None else -1
+            final_child_returncode = int(final_child_returncode_raw) if isinstance(final_child_returncode_raw, int) else -1
+            if final_child_status != "completed":
+                _append_workflow_event(
+                    managed,
+                    f"Workflow interrompu sur {step_label} — statut `{final_child_status}` (run `{child_record.run_id}`).",
+                    is_error=final_child_status in {"failed", "timeout", "stopped"},
+                )
+                parent_status: RunStatus = "failed"
+                if final_child_status == "timeout":
+                    parent_status = "timeout"
+                elif final_child_status == "stopped" or managed.stop_event.is_set():
+                    parent_status = "stopped"
+                _finalize_workflow_record(
+                    managed,
+                    status=parent_status,
+                    returncode=final_child_returncode,
+                    workflow_completed_steps=completed_steps,
+                )
+                return
+
+            completed_steps = index
+            _update_workflow_record(managed, workflow_completed_steps=completed_steps, workflow_child_run_ids=list(child_run_ids))
+            _append_workflow_event(managed, f"=== [{index}/{total_steps}] Terminé {step_label} (run `{child_record.run_id}`) ===")
+
+        _append_workflow_event(managed, "Workflow complet terminé avec succès.")
+        _finalize_workflow_record(managed, status="completed", returncode=0, workflow_completed_steps=completed_steps)
+    except Exception as exc:
+        _append_workflow_event(managed, f"Erreur interne du workflow : {exc}", is_error=True)
+        _finalize_workflow_record(managed, status="failed", returncode=-1, workflow_completed_steps=managed.record.workflow_completed_steps)
+
+
+def _poll_workflow_run(run_id: str, managed: _ManagedWorkflow) -> dict[str, object]:
+    with managed.lock:
+        record = managed.record
+        if record.status in {"starting", "running"}:
+            managed.record = _with_updates(record, duration_seconds=round(time.perf_counter() - managed.started_perf, 2))
+            record = managed.record
+            _persist_record(record)
+        snapshot = {
+            **record.to_state(),
+            "stdout_tail": _tail_text(managed.stdout_tail),
+            "stderr_tail": _tail_text(managed.stderr_tail),
+            "is_active": record.status in {"starting", "running"},
+        }
+
+    if not snapshot["is_active"] and not managed.thread.is_alive():
+        with _REGISTRY_LOCK:
+            _ACTIVE_WORKFLOWS.pop(run_id, None)
+    return snapshot
+
+
 def _run_dir_for(step_key: str, run_id: str) -> Path:
     return RUNS_DIR / step_key / run_id
 
@@ -254,6 +505,7 @@ def start_pipeline_run(
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
+    parent_run_id: str | None = None,
 ) -> PipelineRunRecord:
     """Démarre un pipeline en arrière-plan et retourne son enregistrement initial."""
     _ensure_storage()
@@ -303,6 +555,7 @@ def start_pipeline_run(
         stderr_path=str(stderr_path),
         combined_path=str(combined_path),
         timeout_seconds=timeout_seconds,
+        parent_run_id=parent_run_id,
     )
     managed = _ManagedRun(
         record=record,
@@ -319,9 +572,73 @@ def start_pipeline_run(
     return record
 
 
+def start_pipeline_workflow(
+    options: PipelineLaunchOptions,
+    *,
+    db_config: dict[str, str | None] | None = None,
+    timeout_seconds: int | None = None,
+) -> PipelineRunRecord:
+    """Démarre un workflow séquentiel 1→12 en arrière-plan."""
+    if list_active_pipeline_runs():
+        raise RuntimeError("Un run pipeline est déjà actif. Attendez sa fin ou arrêtez-le avant de lancer le workflow complet.")
+
+    _ensure_storage()
+    run_id = f"{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+    run_dir = _run_dir_for("pipeline_workflow", run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = run_dir / "stdout.log"
+    stderr_path = run_dir / "stderr.log"
+    combined_path = run_dir / "combined.log"
+    stdout_path.write_text("", encoding="utf-8")
+    stderr_path.write_text("", encoding="utf-8")
+    combined_path.write_text("", encoding="utf-8")
+
+    steps = get_pipeline_steps()
+    record = PipelineRunRecord(
+        run_id=run_id,
+        step_key="pipeline_workflow",
+        step_label="Workflow complet 1 → 12",
+        command=[step.key for step in steps],
+        command_display="Workflow séquentiel Pipeline 1 → 12",
+        account_id=options.account_id,
+        status="running",
+        executed_at=datetime.now().isoformat(timespec="seconds"),
+        stdout_path=str(stdout_path),
+        stderr_path=str(stderr_path),
+        combined_path=str(combined_path),
+        timeout_seconds=timeout_seconds,
+        run_kind="workflow",
+        workflow_total_steps=len(steps),
+    )
+
+    stop_event = threading.Event()
+    managed: _ManagedWorkflow
+
+    def _workflow_target() -> None:
+        _run_pipeline_workflow(managed, options, db_config=db_config, timeout_seconds=timeout_seconds)
+
+    thread = threading.Thread(target=_workflow_target, daemon=True, name=f"pipeline-workflow-{run_id}")
+    managed = _ManagedWorkflow(
+        record=record,
+        thread=thread,
+        started_perf=time.perf_counter(),
+        stop_event=stop_event,
+    )
+
+    with _REGISTRY_LOCK:
+        _ACTIVE_WORKFLOWS[run_id] = managed
+    _persist_record(record)
+    thread.start()
+    return record
+
+
 def list_active_pipeline_runs() -> list[dict[str, object]]:
     snapshots: list[dict[str, object]] = []
     for run_id in list(_ACTIVE_RUNS.keys()):
+        snapshot = poll_pipeline_run(run_id)
+        if snapshot is not None:
+            snapshots.append(snapshot)
+    for run_id in list(_ACTIVE_WORKFLOWS.keys()):
         snapshot = poll_pipeline_run(run_id)
         if snapshot is not None:
             snapshots.append(snapshot)
@@ -332,7 +649,10 @@ def list_active_pipeline_runs() -> list[dict[str, object]]:
 def poll_pipeline_run(run_id: str) -> dict[str, object] | None:
     """Met à jour un run actif et retourne un snapshot sérialisable."""
     with _REGISTRY_LOCK:
+        workflow = _ACTIVE_WORKFLOWS.get(run_id)
         managed = _ACTIVE_RUNS.get(run_id)
+    if workflow is not None:
+        return _poll_workflow_run(run_id, workflow)
     if managed is None:
         history = _read_history_index()
         return history.get(run_id)
@@ -357,6 +677,17 @@ def stop_pipeline_run(run_id: str) -> bool:
     """Demande l'arrêt d'un run actif."""
     with _REGISTRY_LOCK:
         managed = _ACTIVE_RUNS.get(run_id)
+        workflow = _ACTIVE_WORKFLOWS.get(run_id)
+    if workflow is not None:
+        with workflow.lock:
+            workflow.record = _with_updates(workflow.record, stop_requested=True)
+            child_run_id = workflow.current_child_run_id
+            record = workflow.record
+        _persist_record(record)
+        workflow.stop_event.set()
+        if child_run_id:
+            stop_pipeline_run(child_run_id)
+        return True
     if managed is None:
         return False
 
