@@ -314,6 +314,13 @@ Exemple avec reconstruction automatique des données manquantes :
 python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode rebuild-missing --sentiment-mode rebuild-missing --artifacts-dir artifacts/models
 ```
 
+Exemple optimal pour une période cible :
+
+```powershell
+python -m backtesting run --start 2025-04-10 --end 2026-04-20 --equity 100000 --ml-mode off --sentiment-mode auto
+python -u -m backtesting backfill-scores-history --start 2025-04-10 --end 2026-04-16 --screener-workers 4 --chunk-size 2000
+```
+
 ---
 
 ## 9. Vérifications utiles en base
