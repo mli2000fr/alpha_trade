@@ -5,6 +5,7 @@ import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Optional
 
+import torch
 from sqlalchemy.engine import Engine
 
 from modelFactory.config import TrainingConfig
@@ -13,6 +14,10 @@ from modelFactory.db_registry import load_candidate_symbols
 from modelFactory.trainer import TrainResult, train_symbol
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _gpu_requested_or_available(cfg: TrainingConfig) -> bool:
+    return cfg.accelerator == "gpu" or (cfg.accelerator == "auto" and torch.cuda.is_available())
 
 
 def _train_worker(symbol: str, cfg: TrainingConfig) -> TrainResult:
@@ -48,20 +53,46 @@ def run_training_batch(
         LOGGER.warning("run_training_batch no_candidates")
         return []
 
-    LOGGER.info("run_training_batch start symbols=%d max_workers=%d", len(symbols), cfg.max_workers)
+    use_gpu = _gpu_requested_or_available(cfg)
+    effective_workers = 1 if use_gpu else cfg.max_workers
+    if use_gpu and cfg.max_workers != 1:
+        LOGGER.warning(
+            "run_training_batch gpu_detected accelerator=%s requested_max_workers=%d -> forcing effective_workers=1",
+            cfg.accelerator,
+            cfg.max_workers,
+        )
+
+    LOGGER.info(
+        "run_training_batch start symbols=%d max_workers=%d effective_workers=%d accelerator=%s cuda_available=%s",
+        len(symbols),
+        cfg.max_workers,
+        effective_workers,
+        cfg.accelerator,
+        torch.cuda.is_available(),
+    )
     results: list[TrainResult] = []
 
-    with ProcessPoolExecutor(max_workers=cfg.max_workers) as pool:
-        futures = {pool.submit(_train_worker, sym, cfg): sym for sym in symbols}
-        for future in as_completed(futures):
-            sym = futures[future]
+    if effective_workers == 1:
+        for sym in symbols:
             try:
-                result = future.result()
+                result = _train_worker(sym, cfg)
                 results.append(result)
                 LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
             except Exception as exc:
                 LOGGER.exception("orchestrator worker_exception symbol=%s", sym)
                 results.append(TrainResult(sym, "N/A", "failed", skip_reason=str(exc)))
+    else:
+        with ProcessPoolExecutor(max_workers=effective_workers) as pool:
+            futures = {pool.submit(_train_worker, sym, cfg): sym for sym in symbols}
+            for future in as_completed(futures):
+                sym = futures[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
+                except Exception as exc:
+                    LOGGER.exception("orchestrator worker_exception symbol=%s", sym)
+                    results.append(TrainResult(sym, "N/A", "failed", skip_reason=str(exc)))
 
     # Summary
     completed = sum(1 for r in results if r.status == "completed")

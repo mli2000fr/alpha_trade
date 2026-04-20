@@ -86,6 +86,12 @@ alpha_trade/
 
 **`LSTMAttentionModule`** (`modelFactory/model.py`) — LightningModule : LSTM multi-couche + Temporal Attention (soft-attention axe temporel) + classification binaire (CrossEntropyLoss). Métriques : BinaryAccuracy, BinaryPrecision, BinaryRecall, BinaryAUROC.
 
+**`train_symbol()` / `predict_symbol()`** (`modelFactory/trainer.py`, `modelFactory/predictor.py`) — services d'entraînement et d'inférence par symbole. Les deux chemins supportent désormais `accelerator=auto|cpu|gpu` :
+
+- `train` s'appuie sur Lightning et résout `cuda:0` si disponible ;
+- `predict` charge explicitement le checkpoint sur `cuda:0` en mode `auto`/`gpu` lorsque CUDA est disponible, sinon retombe sur CPU ;
+- les logs du module ML journalisent le `requested_accelerator`, le `resolved_device` et le `device_name` effectif.
+
 **`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Seul fichier à modifier pour changer de broker.
 
 **`CircuitBreaker`** (`risk_management/circuit_breaker.py`) — Suspend le trading si drawdown ≥ 15% ou perte daily ≥ 5%.
@@ -286,6 +292,7 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 - **Kill switch** : 3 échecs consécutifs → arrêt
 - **Batch throttle** : pause tous les 20 ordres
 - **Fill timeout** : 120s (paper) / 180s (live)
+- **ML GPU** : sur une machine avec un seul GPU CUDA, `modelFactory` force l'entraînement séquentiel (`effective_workers=1`) même si `max_workers>1`, afin d'éviter plusieurs sous-processus concurrents sur la même carte. Les `DataLoader` activent `pin_memory=True` quand CUDA est disponible.
 
 ---
 
@@ -358,15 +365,17 @@ python -m dataIntegrityEngine.update_sector
 
 # Quotidien — dans cet ordre strict :
 python -m dataIntegrityEngine.import_alpaca_bar         # 1.  import bars
-python -m corporate_actions sync --skip-existing         # 1a. ingérer CA (référentiel)
 python -m dataIntegrityEngine.data_sanitizer_daily       # 2.  sanitize bars
-python -m dataIntegrityEngine.stock_screener             # 3.  screener
+python -m screener.stock_screener                        # 3.  screener
 python -m selector.alpha_scanner                         # 4.  alpha scanner
 python -m event_sentiment                                # 5.  sentiment pipeline
 python -m event_sentiment.signal_aggregator              # 6.  signal aggregator
-python -m risk_management.run_risk --account-equity 100000  # 7.  risk management
-python run_execution.py simulate                         # 8.  execution (ou paper / live)
-python -m corporate_actions apply                        # 8a. appliquer CA sur positions
+python -m modelFactory --mode train --include-sentiment --accelerator gpu --max-workers 1  # 7.  ML train périodique
+python -m modelFactory --mode predict --accelerator gpu  # 8.  ML predict quotidien
+python -m risk_management.run_risk --account-equity 100000  # 9.  risk management
+python run_execution.py simulate                         # 10. execution (ou paper / live)
+python -m corporate_actions sync --portfolio-only        # 11. sync CA sur positions détenues
+python -m corporate_actions apply                        # 12. appliquer CA sur positions
 
 # Pour cibler un compte spécifique (multi-comptes) :
 python -m risk_management.run_risk --account-equity 100000 --account live1
@@ -375,11 +384,19 @@ python -m corporate_actions sync --account live1
 python -m corporate_actions apply --account live1
 ```
 
+Notes ML GPU :
+
+- `--accelerator auto` : utilise le GPU si CUDA est détecté, sinon CPU ;
+- `--accelerator gpu` : demande explicitement le GPU ; si CUDA est indisponible, l'inférence retombe sur CPU avec un warning, tandis que l'entraînement Lightning reste dépendant du backend disponible ;
+- sur une machine à GPU unique, préférer `--max-workers 1` pour `ml_train`.
+
 ### IHM Streamlit
 
 ```powershell
 python -m streamlit run ihm/app.py
 ```
+
+Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent un paramètre **Accélérateur ML** (`auto | cpu | gpu`). L'IHM détecte la disponibilité locale de CUDA et transmet `--accelerator <mode>` aux sous-processus `modelFactory` lancés en arrière-plan.
 
 ### Backtesting
 

@@ -95,13 +95,13 @@ def test_build_subprocess_env_propagates_db_config_and_pythonpath() -> None:
 
 
 def test_build_pipeline_command_ml_steps() -> None:
-    options = PipelineLaunchOptions()
+    options = PipelineLaunchOptions(ml_accelerator="gpu")
 
     train_cmd = build_pipeline_command("ml_train", options)
     predict_cmd = build_pipeline_command("ml_predict", options)
 
-    assert train_cmd == [train_cmd[0], "-u", "-m", "modelFactory", "--mode", "train", "--include-sentiment"]
-    assert predict_cmd == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict"]
+    assert train_cmd == [train_cmd[0], "-u", "-m", "modelFactory", "--mode", "train", "--include-sentiment", "--accelerator", "gpu"]
+    assert predict_cmd == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict", "--accelerator", "gpu"]
 
 
 def test_run_pipeline_step_streams_logs_via_callback(monkeypatch) -> None:

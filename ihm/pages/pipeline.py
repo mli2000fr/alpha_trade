@@ -9,7 +9,13 @@ import streamlit as st
 from ihm.components.metrics import format_duration_hhmmss, to_int
 from ihm.pages import run_page_if_standalone
 from ihm.services.db import get_runtime_db_config
-from ihm.services.pipeline_runner import PipelineLaunchOptions, build_pipeline_command, format_command_for_display, get_pipeline_steps
+from ihm.services.pipeline_runner import (
+    PipelineLaunchOptions,
+    build_pipeline_command,
+    format_command_for_display,
+    get_pipeline_steps,
+    is_gpu_available,
+)
 from ihm.services.process_registry import (
     build_log_download_name,
     get_pipeline_run_record,
@@ -115,6 +121,29 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_auto_rebalance",
             )
 
+        ml_col1, ml_col2 = st.columns([2, 3])
+        with ml_col1:
+            ml_accelerator = cast(
+                str,
+                st.selectbox(
+                    "Accélérateur ML",
+                    options=["auto", "cpu", "gpu"],
+                    index=["auto", "cpu", "gpu"].index(
+                        cast(str, st.session_state.get("pipeline_ml_accelerator", "auto"))
+                        if st.session_state.get("pipeline_ml_accelerator", "auto") in {"auto", "cpu", "gpu"}
+                        else "auto"
+                    ),
+                    key="pipeline_ml_accelerator",
+                    help="Appliqué aux étapes ML Train et ML Predict. 'auto' utilise le GPU si CUDA est disponible, sinon CPU.",
+                ),
+            )
+        with ml_col2:
+            gpu_detected = is_gpu_available()
+            if gpu_detected:
+                st.success("GPU CUDA détecté dans l'environnement de l'IHM : les jobs ML peuvent être lancés en mode `auto` ou `gpu`.")
+            else:
+                st.info("Aucun GPU CUDA détecté dans l'environnement de l'IHM : le mode `auto` retombera sur CPU.")
+
         live_confirmed = True
         if execution_mode == "live":
             st.warning("Mode LIVE sélectionné : cette action peut envoyer de vrais ordres chez le broker.")
@@ -133,6 +162,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             execution_run_id=execution_run_id,
             allow_outside_rth=bool(allow_outside_rth),
             auto_rebalance=bool(auto_rebalance),
+            ml_accelerator=cast(Any, ml_accelerator),
         ),
         live_confirmed,
     )
@@ -353,9 +383,11 @@ def _render_runtime_center() -> None:
             st.progress(progress_fraction)
             st.caption(progress_label)
             workflow_cols = st.columns(3)
+            child_run_ids = selected_run.get("workflow_child_run_ids", [])
+            child_runs_count = len(child_run_ids) if isinstance(child_run_ids, list) else 0
             workflow_cols[0].metric("Type", "Workflow 1 → 12")
             workflow_cols[1].metric("Progression", f"{completed}/{total}")
-            workflow_cols[2].metric("Sous-runs", len(selected_run.get("workflow_child_run_ids", [])) if isinstance(selected_run.get("workflow_child_run_ids", []), list) else 0)
+            workflow_cols[2].metric("Sous-runs", child_runs_count)
             current_step_label = str(selected_run.get("workflow_current_step_label") or "").strip()
             if current_step_label:
                 st.caption(f"Étape en cours : `{current_step_label}`")

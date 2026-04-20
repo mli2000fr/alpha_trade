@@ -349,3 +349,64 @@ class TestEndToEndSynthetic:
         assert dm.n_features == len(FEATURE_COLUMNS)
         x, _ = dm.train_ds[0]
         assert x.shape == (20, len(FEATURE_COLUMNS))
+
+
+class TestGpuExecutionBehavior:
+    def test_datamodule_enables_pin_memory_when_cuda_available(self, monkeypatch):
+        monkeypatch.setattr("modelFactory.dataset.torch.cuda.is_available", lambda: True)
+        from modelFactory.dataset import SymbolDataModule
+
+        bars = _make_bars(600)
+        dm = SymbolDataModule(bars, DataConfig(sequence_length=20, forecast_horizon=5, min_history_days=100), ModelConfig(batch_size=16))
+        dm.setup()
+
+        assert dm.train_dataloader().pin_memory is True
+
+    def test_orchestrator_runs_sequentially_when_gpu_available_in_auto_mode(self, monkeypatch):
+        from modelFactory.orchestrator import run_training_batch
+
+        cfg = TrainingConfig(max_workers=4, accelerator="auto")
+        engine = MagicMock()
+        train_calls: list[str] = []
+
+        def fake_train_worker(symbol: str, _cfg: TrainingConfig):
+            train_calls.append(symbol)
+            return SimpleResult(symbol)
+
+        @dataclass
+        class SimpleResult:
+            symbol: str
+            run_id: str = "run"
+            status: str = "completed"
+            metrics: dict | None = None
+            skip_reason: str | None = None
+
+        monkeypatch.setattr("modelFactory.orchestrator.torch.cuda.is_available", lambda: True)
+        monkeypatch.setattr("modelFactory.orchestrator.load_candidate_symbols", lambda _engine: ["AAPL", "MSFT"])
+        monkeypatch.setattr("modelFactory.orchestrator._train_worker", fake_train_worker)
+
+        results = run_training_batch(cfg, engine)
+
+        assert train_calls == ["AAPL", "MSFT"]
+        assert [r.symbol for r in results] == ["AAPL", "MSFT"]
+
+
+class TestPredictorDeviceResolution:
+    def test_predictor_device_cpu_when_requested(self):
+        from modelFactory.predictor import _resolve_inference_device
+
+        assert _resolve_inference_device("cpu").type == "cpu"
+
+    def test_predictor_device_auto_uses_cuda_when_available(self, monkeypatch):
+        from modelFactory.predictor import _resolve_inference_device
+
+        monkeypatch.setattr("modelFactory.predictor.torch.cuda.is_available", lambda: True)
+        assert _resolve_inference_device("auto").type == "cuda"
+
+    def test_predictor_device_gpu_falls_back_to_cpu_when_unavailable(self, monkeypatch):
+        from modelFactory.predictor import _resolve_inference_device
+
+        monkeypatch.setattr("modelFactory.predictor.torch.cuda.is_available", lambda: False)
+        assert _resolve_inference_device("gpu").type == "cpu"
+
+

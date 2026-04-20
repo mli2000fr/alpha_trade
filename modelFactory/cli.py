@@ -70,7 +70,7 @@ def main(args: list[str] | None = None) -> None:
         from modelFactory.db_registry import load_candidate_symbols
         from modelFactory.predictor import predict_batch
         symbols = opts.symbols or load_candidate_symbols(engine)
-        preds = predict_batch(symbols, Path(opts.artifacts_dir), engine)
+        preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, accelerator=opts.accelerator)
         print(f"\n{'=' * 60}")
         print(f"  Model Factory — Predictions: {len(preds)} rows")
         print(f"{'=' * 60}")

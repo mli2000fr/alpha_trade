@@ -146,6 +146,7 @@ class SymbolDataModule(L.LightningDataModule):
         self.test_ds: Optional[SequenceDataset] = None
         self.n_features: int = len(self._feature_cols)
         self._num_workers = min(os.cpu_count() or 0, 4)
+        self._pin_memory = torch.cuda.is_available()
 
     def setup(self, stage: Optional[str] = None) -> None:
         # 1. Feature engineering (with optional sentiment)
@@ -171,19 +172,25 @@ class SymbolDataModule(L.LightningDataModule):
 
     def train_dataloader(self) -> DataLoader:  # type: ignore[type-arg]
         assert self.train_ds is not None
-        nw = self._num_workers
-        return DataLoader(self.train_ds, batch_size=self.model_cfg.batch_size, shuffle=True, drop_last=False,
-                          num_workers=nw, persistent_workers=nw > 0)
+        return self._build_dataloader(self.train_ds, shuffle=True)
 
     def val_dataloader(self) -> DataLoader:  # type: ignore[type-arg]
         assert self.val_ds is not None
-        nw = self._num_workers
-        return DataLoader(self.val_ds, batch_size=self.model_cfg.batch_size, shuffle=False,
-                          num_workers=nw, persistent_workers=nw > 0)
+        return self._build_dataloader(self.val_ds, shuffle=False)
 
     def test_dataloader(self) -> DataLoader:  # type: ignore[type-arg]
         assert self.test_ds is not None
+        return self._build_dataloader(self.test_ds, shuffle=False)
+
+    def _build_dataloader(self, dataset: SequenceDataset, *, shuffle: bool) -> DataLoader:  # type: ignore[type-arg]
         nw = self._num_workers
-        return DataLoader(self.test_ds, batch_size=self.model_cfg.batch_size, shuffle=False,
-                          num_workers=nw, persistent_workers=nw > 0)
+        return DataLoader(
+            dataset,
+            batch_size=self.model_cfg.batch_size,
+            shuffle=shuffle,
+            drop_last=False,
+            num_workers=nw,
+            persistent_workers=nw > 0,
+            pin_memory=self._pin_memory,
+        )
 

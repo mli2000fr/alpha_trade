@@ -22,6 +22,23 @@ from modelFactory.model import LSTMAttentionModule
 LOGGER = logging.getLogger(__name__)
 
 
+def _resolve_inference_device(accelerator: str = "auto") -> torch.device:
+    requested = accelerator.strip().lower()
+    if requested not in {"auto", "cpu", "gpu"}:
+        raise ValueError("accelerator doit être 'auto', 'cpu' ou 'gpu'.")
+
+    if requested == "cpu":
+        return torch.device("cpu")
+
+    if requested == "gpu":
+        if torch.cuda.is_available():
+            return torch.device("cuda:0")
+        LOGGER.warning("predict accelerator=gpu requested but cuda unavailable -> fallback cpu")
+        return torch.device("cpu")
+
+    return torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+
+
 def _resolve_artifact_paths(
     symbol: str,
     artifacts_dir: Path,
@@ -54,6 +71,7 @@ def predict_symbol(
     run_id: Optional[str] = None,
     as_of_date: Optional[date] = None,
     persist: bool = True,
+    accelerator: str = "auto",
 ) -> Optional[pd.DataFrame]:
     """Charge le modèle et produit une prédiction pour un symbole.
 
@@ -66,6 +84,8 @@ def predict_symbol(
     if not ckpt_path.exists() or not scaler_path.exists() or not config_path.exists():
         LOGGER.warning("predict_symbol no_artifacts symbol=%s", symbol)
         return None
+
+    device = _resolve_inference_device(accelerator)
 
     # Load config
     with open(config_path) as f:
@@ -101,11 +121,23 @@ def predict_symbol(
     # Take last sequence
     last_rows = df.tail(data_cfg.sequence_length)
     features = scaler.transform(last_rows)
-    x = torch.from_numpy(features.astype(np.float32)).unsqueeze(0)  # [1, seq, feat]
+    x = torch.from_numpy(features.astype(np.float32)).unsqueeze(0).to(device=device, non_blocking=device.type == "cuda")  # [1, seq, feat]
 
     # Load model
-    model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location="cpu")
+    if device.type == "cuda":
+        torch.set_float32_matmul_precision("medium")
+    model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location=device)
+    model.to(device)
     model.eval()
+
+    device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
+    LOGGER.info(
+        "predict_symbol initialized symbol=%s requested_accelerator=%s resolved_device=%s device_name=%s",
+        symbol,
+        accelerator,
+        device,
+        device_name,
+    )
 
     with torch.no_grad():
         logits, _ = model(x)
@@ -136,11 +168,20 @@ def predict_batch(
     prediction_date: Optional[date] = None,
     as_of_date: Optional[date] = None,
     persist: bool = True,
+    accelerator: str = "auto",
 ) -> pd.DataFrame:
     """Exécute les prédictions pour une liste de symboles."""
     all_preds = []
     for sym in symbols:
-        pred = predict_symbol(sym, artifacts_dir, engine, prediction_date, as_of_date=as_of_date, persist=persist)
+        pred = predict_symbol(
+            sym,
+            artifacts_dir,
+            engine,
+            prediction_date,
+            as_of_date=as_of_date,
+            persist=persist,
+            accelerator=accelerator,
+        )
         if pred is not None:
             all_preds.append(pred)
     if all_preds:

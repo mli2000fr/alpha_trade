@@ -15,6 +15,7 @@ from typing import Callable, Literal
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 AccountUsage = Literal["none", "alpaca"]
+MLAccelerator = Literal["auto", "cpu", "gpu"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
 
 
@@ -29,6 +30,7 @@ class PipelineLaunchOptions:
     execution_run_id: str | None = None
     allow_outside_rth: bool = False
     auto_rebalance: bool = False
+    ml_accelerator: MLAccelerator = "auto"
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +199,15 @@ def _normalize_run_id(value: str | None) -> str | None:
     return cleaned or None
 
 
+def is_gpu_available() -> bool:
+    try:
+        import torch
+
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
 def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
     """Construit la commande subprocess correspondant à une étape."""
     trade_date = _normalize_trade_date(options.trade_date)
@@ -233,10 +244,29 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_train":
-        return [sys.executable, "-u", "-m", "modelFactory", "--mode", "train", "--include-sentiment"]
+        return [
+            sys.executable,
+            "-u",
+            "-m",
+            "modelFactory",
+            "--mode",
+            "train",
+            "--include-sentiment",
+            "--accelerator",
+            options.ml_accelerator,
+        ]
 
     if step_key == "ml_predict":
-        return [sys.executable, "-u", "-m", "modelFactory", "--mode", "predict"]
+        return [
+            sys.executable,
+            "-u",
+            "-m",
+            "modelFactory",
+            "--mode",
+            "predict",
+            "--accelerator",
+            options.ml_accelerator,
+        ]
 
     if step_key == "risk_management":
         command = [

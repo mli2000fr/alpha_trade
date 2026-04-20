@@ -135,6 +135,18 @@ def train_symbol(
             enable_model_summary=False,
         )
 
+        root_device = str(trainer.strategy.root_device)
+        device_name = torch.cuda.get_device_name(0) if root_device.startswith("cuda") and torch.cuda.is_available() else root_device
+        LOGGER.info(
+            "trainer initialized symbol=%s requested_accelerator=%s resolved_device=%s device_name=%s batch_size=%d train_workers=%d",
+            symbol,
+            cfg.accelerator,
+            root_device,
+            device_name,
+            cfg.model.batch_size,
+            dm.train_dataloader().num_workers,
+        )
+
         trainer.fit(model, datamodule=dm)
 
         # --- Test ---
