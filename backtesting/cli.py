@@ -20,6 +20,17 @@ from common.utils import configure_root_logging
 LOGGER = logging.getLogger(__name__)
 
 
+def _safe_print(*values: object, sep: str = " ", end: str = "\n") -> None:
+    """Affiche un message même si stdout n'accepte pas certains caractères Unicode."""
+    text = sep.join(str(v) for v in values) + end
+    try:
+        sys.stdout.write(text)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        sanitized = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+        sys.stdout.write(sanitized)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m backtesting",
@@ -86,27 +97,27 @@ def _run_backtest(args: argparse.Namespace) -> None:
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
     end = datetime.strptime(args.end, "%Y-%m-%d").date()
 
-    print(f"\n🚀 Backtest Alpha Trade : {start} → {end}, capital={args.equity:,.0f}$")
-    print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
-    print(f"   ml_mode={args.ml_mode}, sentiment_mode={args.sentiment_mode}\n")
+    _safe_print(f"\n🚀 Backtest Alpha Trade : {start} → {end}, capital={args.equity:,.0f}$")
+    _safe_print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
+    _safe_print(f"   ml_mode={args.ml_mode}, sentiment_mode={args.sentiment_mode}\n")
 
     # 1. Charger les données
     engine = get_sqlalchemy_engine()
 
-    print("📊 Chargement OHLCV...")
+    _safe_print("📊 Chargement OHLCV...")
     ohlcv_df = load_ohlcv(engine, start, end)
     if ohlcv_df.empty:
-        print("❌ Aucune donnée OHLCV trouvée. Vérifiez la base de données.")
+        _safe_print("❌ Aucune donnée OHLCV trouvée. Vérifiez la base de données.")
         sys.exit(1)
 
-    print("📈 Chargement scores...")
+    _safe_print("📈 Chargement scores...")
     scores_df = load_scores(engine, start, end)
     if scores_df.empty:
-        print("❌ Aucun score candidat trouvé sur la période demandée.")
-        print("   Vérifie d'abord :")
-        print("   - que `stock_scores_history` contient des snapshots historiques ;")
-        print("   - ou, à défaut, que `stock_scores` contient un snapshot récent avec `is_candidate = 1`.")
-        print("   Pour un vrai backtest 10 ans, il faut historiser les snapshots dans `stock_scores_history`.")
+        _safe_print("❌ Aucun score candidat trouvé sur la période demandée.")
+        _safe_print("   Vérifie d'abord :")
+        _safe_print("   - que `stock_scores_history` contient des snapshots historiques ;")
+        _safe_print("   - ou, à défaut, que `stock_scores` contient un snapshot récent avec `is_candidate = 1`.")
+        _safe_print("   Pour un vrai backtest 10 ans, il faut historiser les snapshots dans `stock_scores_history`.")
         sys.exit(1)
 
     scores_df = prepare_scores_for_sentiment_mode(
@@ -115,7 +126,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         sentiment_mode=args.sentiment_mode,
     )
 
-    print("🤖 Chargement prédictions ML...")
+    _safe_print("🤖 Chargement prédictions ML...")
     preds_df = load_predictions(engine, start, end)
     preds_df = prepare_predictions_for_ml_mode(
         engine,
@@ -129,14 +140,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
     pivoted = pivot_ohlcv(ohlcv_df)
 
     # 3. Reconstruire les signaux
-    print("🔄 Reconstruction des signaux de conviction...")
+    _safe_print("🔄 Reconstruction des signaux de conviction...")
     signals_df = replay_signals(
         scores_df, preds_df if not preds_df.empty else None,
         max_positions=args.max_positions,
     )
 
     # 4. Backtest
-    print("⚡ Exécution du backtest vectorbt...")
+    _safe_print("⚡ Exécution du backtest vectorbt...")
     bt_config = BacktestConfig(
         start_date=start, end_date=end,
         initial_equity=args.equity,
@@ -157,13 +168,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     # 6. Artefacts
     if not args.no_save:
-        print("💾 Sauvegarde des artefacts...")
+        _safe_print("💾 Sauvegarde des artefacts...")
         save_equity_curve(pf)
         save_trades_csv(pf)
-        print("   → artifacts/backtesting/equity_curve.png")
-        print("   → artifacts/backtesting/trades.csv")
+        _safe_print("   → artifacts/backtesting/equity_curve.png")
+        _safe_print("   → artifacts/backtesting/trades.csv")
 
-    print("✅ Backtest terminé.\n")
+    _safe_print("✅ Backtest terminé.\n")
 
 
 def _run_backfill_scores_history(args: argparse.Namespace) -> None:
@@ -178,8 +189,8 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
     end = datetime.strptime(args.end, "%Y-%m-%d").date() if args.end else None
 
-    print(f"\n🧱 Backfill stock_scores_history : start={start} end={end or 'auto'}")
-    print(
+    _safe_print(f"\n🧱 Backfill stock_scores_history : start={start} end={end or 'auto'}")
+    _safe_print(
         f"   overwrite={args.overwrite_existing} limit_days={args.limit_days or 'all'} "
         f"chunk_size={args.chunk_size} selection_size={args.selection_size}\n"
     )
@@ -197,11 +208,11 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
         limit_days=args.limit_days,
     )
 
-    print("\n✅ Backfill terminé")
-    print(f"   Période résolue     : {result.start_date} → {result.end_date}")
-    print(f"   Séances traitées    : {result.trading_days_processed}/{result.trading_days_requested}")
-    print(f"   Séances ignorées    : {result.trading_days_skipped_existing}")
-    print(f"   Lignes insérées     : {result.rows_inserted}\n")
+    _safe_print("\n✅ Backfill terminé")
+    _safe_print(f"   Période résolue     : {result.start_date} → {result.end_date}")
+    _safe_print(f"   Séances traitées    : {result.trading_days_processed}/{result.trading_days_requested}")
+    _safe_print(f"   Séances ignorées    : {result.trading_days_skipped_existing}")
+    _safe_print(f"   Lignes insérées     : {result.rows_inserted}\n")
 
 
 def main() -> None:

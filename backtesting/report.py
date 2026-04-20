@@ -86,15 +86,15 @@ def generate_report(pf, initial_equity: float) -> BacktestReport:
     sharpe = _clean_metric(_as_float(pf.sharpe_ratio())) if hasattr(pf, "sharpe_ratio") else 0.0
     sortino = _clean_metric(_as_float(pf.sortino_ratio())) if hasattr(pf, "sortino_ratio") else 0.0
     max_dd = _clean_metric(_as_float(pf.max_drawdown()) * 100)
-    trades = pf.trades
+    trades = pf.trades.closed if hasattr(pf.trades, "closed") else pf.trades
     n_trades = _as_int(trades.count()) if hasattr(trades, "count") else 0
     win_rate = _clean_metric(_as_float(trades.win_rate()) * 100) if n_trades > 0 else 0.0
     try:
-        avg_dur = _clean_metric(_as_float(trades.duration.mean()) / pd.Timedelta("1D").value * 1e9)
+        avg_dur = _clean_metric(_as_float(trades.duration.mean())) if n_trades > 0 else 0.0
     except Exception:
         avg_dur = 0.0
     try:
-        pf_factor = _clean_metric(_as_float(trades.profit_factor()))
+        pf_factor = _clean_metric(_as_float(trades.profit_factor())) if n_trades > 0 else 0.0
     except Exception:
         pf_factor = 0.0
     return BacktestReport(

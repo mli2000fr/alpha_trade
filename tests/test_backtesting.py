@@ -526,6 +526,46 @@ class TestReport:
         assert report.final_value > 0.0
         assert isinstance(report.total_trades, int)
 
+    def test_generate_report_ignores_open_trades_and_reports_duration_in_days(self):
+        import vectorbt as vbt
+        from backtesting.report import generate_report
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06"])
+        close = pd.DataFrame({"AAPL": [100.0, 103.0, 104.0, 106.0]}, index=idx)
+        entries = pd.DataFrame({"AAPL": [True, False, False, False]}, index=idx)
+        exits = pd.DataFrame({"AAPL": [False, False, False, True]}, index=idx)
+
+        pf_closed = vbt.Portfolio.from_signals(
+            close=close,
+            entries=entries,
+            exits=exits,
+            size=1.0,
+            size_type="percent",
+            init_cash=10_000,
+            cash_sharing=True,
+            group_by=True,
+            freq="1D",
+        )
+        report_closed = generate_report(pf_closed, 10_000)
+        assert report_closed.total_trades == 1
+        assert report_closed.avg_trade_duration_days == 3.0
+
+        pf_open = vbt.Portfolio.from_signals(
+            close=close.iloc[:2],
+            entries=entries.iloc[:2],
+            exits=pd.DataFrame({"AAPL": [False, False]}, index=idx[:2]),
+            size=1.0,
+            size_type="percent",
+            init_cash=10_000,
+            cash_sharing=True,
+            group_by=True,
+            freq="1D",
+        )
+        report_open = generate_report(pf_open, 10_000)
+        assert report_open.total_trades == 0
+        assert report_open.win_rate_pct == 0.0
+        assert report_open.avg_trade_duration_days == 0.0
+
 
 # ============================================================
 # test CLI parsing
