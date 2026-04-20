@@ -451,6 +451,25 @@ class TestCLI:
         assert args.max_positions == 15
         assert args.no_save is True
 
+    def test_parse_backfill_scores_history_command(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "backfill-scores-history",
+            "--start", "2025-01-01",
+            "--limit-days", "5",
+            "--chunk-size", "250",
+            "--selection-size", "50",
+            "--overwrite-existing",
+        ])
+        assert args.command == "backfill-scores-history"
+        assert args.start == "2025-01-01"
+        assert args.limit_days == 5
+        assert args.chunk_size == 250
+        assert args.selection_size == 50
+        assert args.overwrite_existing is True
+
 
 
 

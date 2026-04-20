@@ -425,7 +425,7 @@ class DataSanitizer:
 def main() -> None:
     configure_root_logging(
         level=logging.INFO,
-        log_path="data_sanitizer_daily.log",
+        log_path="./log/data_sanitizer_daily.log",
         fmt='%(asctime)s %(levelname)s %(name)s %(message)s',
     )
     sanitizer = DataSanitizer()

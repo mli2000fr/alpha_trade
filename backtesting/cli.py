@@ -38,6 +38,19 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--sentiment-lookback", type=int, default=365, help="Lookback sentiment (jours)")
     run_p.add_argument("--no-save", action="store_true", help="Ne pas sauvegarder les artefacts")
 
+    # --- backfill-scores-history ---
+    backfill_p = sub.add_parser(
+        "backfill-scores-history",
+        help="Reconstruire stock_scores_history en point-in-time depuis les bars déjà en base",
+    )
+    backfill_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
+    backfill_p.add_argument("--end", default=None, help="Date de fin explicite (YYYY-MM-DD)")
+    backfill_p.add_argument("--overwrite-existing", action="store_true", help="Recalculer aussi les dates déjà historisées")
+    backfill_p.add_argument("--limit-days", type=int, default=None, help="Limiter à N séances (test progressif)")
+    backfill_p.add_argument("--chunk-size", type=int, default=500, help="Taille des chunks symboles screener/scanner")
+    backfill_p.add_argument("--selection-size", type=int, default=100, help="Nombre final de candidats selector par séance")
+    backfill_p.add_argument("--screener-workers", type=int, default=None, help="Nombre de workers ProcessPool pour le screener PIT")
+
     return parser
 
 
@@ -120,6 +133,44 @@ def _run_backtest(args: argparse.Namespace) -> None:
     print("✅ Backtest terminé.\n")
 
 
+def _run_backfill_scores_history(args: argparse.Namespace) -> None:
+    """Exécute le backfill PIT de stock_scores_history."""
+    from datetime import datetime
+
+    from backtesting.backfill_scores_history import BackfillScoresHistoryService
+    from event_sentiment.signal_aggregator import SentimentBoostConfig
+    from screener.models import ScreenerConfig
+    from selector.alpha_scanner import AlphaScannerConfig
+
+    start = datetime.strptime(args.start, "%Y-%m-%d").date()
+    end = datetime.strptime(args.end, "%Y-%m-%d").date() if args.end else None
+
+    print(f"\n🧱 Backfill stock_scores_history : start={start} end={end or 'auto'}")
+    print(
+        f"   overwrite={args.overwrite_existing} limit_days={args.limit_days or 'all'} "
+        f"chunk_size={args.chunk_size} selection_size={args.selection_size}\n"
+    )
+
+    service = BackfillScoresHistoryService(
+        screener_config=ScreenerConfig(chunk_size=args.chunk_size),
+        scanner_config=AlphaScannerConfig(chunk_size=args.chunk_size, selection_size=args.selection_size),
+        sentiment_config=SentimentBoostConfig(),
+        screener_max_workers=args.screener_workers,
+    )
+    result = service.backfill(
+        start_date=start,
+        end_date=end,
+        overwrite_existing=args.overwrite_existing,
+        limit_days=args.limit_days,
+    )
+
+    print("\n✅ Backfill terminé")
+    print(f"   Période résolue     : {result.start_date} → {result.end_date}")
+    print(f"   Séances traitées    : {result.trading_days_processed}/{result.trading_days_requested}")
+    print(f"   Séances ignorées    : {result.trading_days_skipped_existing}")
+    print(f"   Lignes insérées     : {result.rows_inserted}\n")
+
+
 def main() -> None:
     configure_root_logging()
     parser = _build_parser()
@@ -127,6 +178,8 @@ def main() -> None:
 
     if args.command == "run":
         _run_backtest(args)
+    elif args.command == "backfill-scores-history":
+        _run_backfill_scores_history(args)
     else:
         parser.print_help()
         sys.exit(1)

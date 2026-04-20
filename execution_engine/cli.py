@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     configure_root_logging(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
-        log_path="execution_engine.log",
+        log_path="./log/execution_engine.log",
         fmt="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     )
 

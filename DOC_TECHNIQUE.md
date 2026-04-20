@@ -106,6 +106,8 @@ alpha_trade/
 
 **`BacktestReport`** (`backtesting/report.py`) — Dataclass de résumé : Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor. Génère equity curve PNG et export trades CSV dans `artifacts/backtesting/`.
 
+**`BackfillScoresHistoryService`** (`backtesting/backfill_scores_history.py`) — Orchestrateur de backfill point-in-time de `stock_scores_history`. Rejoue, pour chaque séance manquante, le screener sur `stock_bars_daily`, le scoring `AlphaScanner`, puis la fusion sentiment `SentimentSignalAggregator`, avant insertion idempotente dans `stock_scores_history`. Permet de rendre le backtest réellement exploitable sur plusieurs années sans dépendre d'un snapshot courant unique.
+
 ### 2.2 Fonctions clés
 
 | Fonction | Module | Description |
@@ -393,6 +395,30 @@ python -m backtesting run --start 2023-01-01 --no-save
 #   - equity_curve.png   (courbe de valeur du portefeuille)
 #   - trades.csv         (liste de tous les trades avec P&L)
 ```
+
+### Backfill historique des snapshots de scores
+
+```powershell
+# Test rapide sur 1 séance (validation technique)
+python -m backtesting backfill-scores-history --start 2026-04-17 --limit-days 1 --screener-workers 1
+
+# Backfill complet des séances manquantes depuis 2025-01-01
+# La borne haute est résolue automatiquement jusqu'à la dernière séance AVANT
+# le premier snapshot déjà présent dans stock_scores_history.
+python -m backtesting backfill-scores-history --start 2025-01-01 --screener-workers 1
+
+# Variante avec borne explicite
+python -m backtesting backfill-scores-history --start 2025-01-01 --end 2026-04-16 --screener-workers 1
+
+# Recalcul forcé des jours déjà historisés
+python -m backtesting backfill-scores-history --start 2026-04-17 --end 2026-04-17 --overwrite-existing --screener-workers 1
+```
+
+Notes :
+- le backfill reconstruit `stock_scores_history` directement depuis `stock_bars_daily` + features sentiment déjà en base ;
+- il n'écrit PAS dans `stock_scores` courant ;
+- il saute automatiquement les dates déjà historisées, sauf avec `--overwrite-existing` ;
+- pour un backfill massif, commencer avec `--limit-days 1` ou `--limit-days 5` pour valider le débit sur la machine.
 
 ### Tests
 

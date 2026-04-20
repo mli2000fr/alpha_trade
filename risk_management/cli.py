@@ -64,7 +64,7 @@ def main(args: list[str] | None = None) -> None:
     args = build_arg_parser().parse_args(args)
     configure_root_logging(
         level=getattr(logging, args.log_level),
-        log_path="risk_management.log",
+        log_path="./log/risk_management.log",
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
 

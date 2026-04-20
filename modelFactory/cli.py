@@ -37,7 +37,7 @@ def main(args: list[str] | None = None) -> None:
 
     configure_root_logging(
         level=getattr(logging, opts.log_level),
-        log_path="model_factory.log",
+        log_path="./log/model_factory.log",
         fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 

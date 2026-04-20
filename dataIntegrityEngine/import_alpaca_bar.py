@@ -244,7 +244,7 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
 def main() -> None:
     configure_root_logging(
         level=logging.INFO,
-        log_path="import_alpaca_bar.log",
+        log_path="./log/import_alpaca_bar.log",
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
     import_alpaca_bars(TimeFrame.ONE_DAY)

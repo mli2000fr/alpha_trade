@@ -20,7 +20,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     configure_root_logging(
         level=logging.INFO,
-        log_path="event_sentiment.log",
+        log_path="./log/event_sentiment.log",
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
     args = build_arg_parser().parse_args()

@@ -286,7 +286,7 @@ def _run_all(args: argparse.Namespace) -> None:
 def main() -> None:
     configure_root_logging(
         level=logging.INFO,
-        log_path="corporate_actions.log",
+        log_path="./log/corporate_actions.log",
         fmt="%(asctime)s %(levelname)-8s %(name)s -- %(message)s",
     )
     parser = _build_parser()

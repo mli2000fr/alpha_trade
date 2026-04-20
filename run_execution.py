@@ -225,7 +225,7 @@ def run(mode: str, run_id: str | None, trade_date: str | None, debug: bool, allo
     level = logging.DEBUG if debug else logging.INFO
     configure_root_logging(
         level=level,
-        log_path="alpha_trade.log",
+        log_path="./log/alpha_trade.log",
         fmt="%(asctime)s  %(levelname)-8s  %(name)s -- %(message)s",
         datefmt="%H:%M:%S",
     )

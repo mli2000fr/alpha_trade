@@ -1040,7 +1040,7 @@ def main() -> None:
     args = _build_arg_parser().parse_args()
     configure_root_logging(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
-        log_path="alpha_scanner.log",
+        log_path="./log/alpha_scanner.log",
         fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 

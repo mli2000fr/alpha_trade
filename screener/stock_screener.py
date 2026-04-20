@@ -141,7 +141,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     configure_root_logging(
         level=logging.INFO,
-        log_path="stock_screener.log",
+        log_path="./log/stock_screener.log",
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
     args = _build_arg_parser().parse_args()

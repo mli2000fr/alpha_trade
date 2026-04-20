@@ -9,7 +9,7 @@ import sys
 def main():
     configure_root_logging(
         level=logging.INFO,
-        log_path="corporate_actions.log",
+        log_path="./log/corporate_actions.log",
         fmt="%(asctime)s %(levelname)-8s %(name)s -- %(message)s",
     )
     # Injecte 'run' si aucune sous-commande n'est présente

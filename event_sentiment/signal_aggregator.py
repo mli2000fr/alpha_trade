@@ -623,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
 
     configure_root_logging(
         level=getattr(logging, args.log_level),
-        log_path="signal_aggregator.log",
+        log_path="./log/signal_aggregator.log",
         fmt="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )

@@ -137,7 +137,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
 	configure_root_logging(
 		level=logging.INFO,
-		log_path="update_sector.log",
+		log_path="./log/update_sector.log",
 		fmt="%(asctime)s %(levelname)s %(message)s",
 	)
 	args = _build_arg_parser().parse_args()

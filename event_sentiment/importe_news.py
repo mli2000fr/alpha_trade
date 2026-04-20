@@ -28,7 +28,7 @@ def main():
 
     configure_root_logging(
         level=logging.INFO,
-        log_path="importe_news.log",
+        log_path="./log/importe_news.log",
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
     logger = logging.getLogger("importe_news")
