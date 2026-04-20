@@ -41,3 +41,9 @@ torch
 lightning
 torchmetrics
 
+# --- Backtesting ---
+vectorbt>=0.26
+plotly
+kaleido
+matplotlib
+

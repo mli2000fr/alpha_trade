@@ -1,0 +1,159 @@
+"""
+backtesting/report.py
+======================
+Génération du rapport de backtest : métriques clés + equity curve.
+"""
+from __future__ import annotations
+
+import logging
+import math
+from dataclasses import dataclass
+from pathlib import Path
+
+import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
+ARTIFACTS_DIR = Path("artifacts") / "backtesting"
+
+
+def _as_float(value) -> float:
+    """Convertit une valeur scalaire vectorbt/pandas en float."""
+    if hasattr(value, "iloc"):
+        return float(value.iloc[0])
+    return float(value)
+
+
+def _as_int(value) -> int:
+    """Convertit une valeur scalaire vectorbt/pandas en int."""
+    if hasattr(value, "iloc"):
+        return int(value.iloc[0])
+    return int(value)
+
+
+def _clean_metric(value: float, default: float = 0.0) -> float:
+    """Normalise NaN/inf vers une valeur par défaut pour l'affichage."""
+    if math.isnan(value) or math.isinf(value):
+        return default
+    return value
+
+
+@dataclass
+class BacktestReport:
+    """Résumé des métriques de backtest."""
+    initial_equity: float
+    final_value: float
+    total_return_pct: float
+    cagr_pct: float
+    sharpe_ratio: float
+    sortino_ratio: float
+    max_drawdown_pct: float
+    total_trades: int
+    win_rate_pct: float
+    avg_trade_duration_days: float
+    profit_factor: float
+
+    def to_dict(self) -> dict:
+        return {
+            "Capital initial": f"${self.initial_equity:,.0f}",
+            "Valeur finale": f"${self.final_value:,.2f}",
+            "Rendement total": f"{self.total_return_pct:.2f}%",
+            "CAGR": f"{self.cagr_pct:.2f}%",
+            "Sharpe Ratio": f"{self.sharpe_ratio:.3f}",
+            "Sortino Ratio": f"{self.sortino_ratio:.3f}",
+            "Max Drawdown": f"{self.max_drawdown_pct:.2f}%",
+            "Nombre de trades": self.total_trades,
+            "Win Rate": f"{self.win_rate_pct:.1f}%",
+            "Durée moy. trade (j)": f"{self.avg_trade_duration_days:.1f}",
+            "Profit Factor": f"{self.profit_factor:.2f}",
+        }
+
+    def print_summary(self) -> None:
+        print("\n" + "=" * 60)
+        print("        RAPPORT DE BACKTEST — ALPHA TRADE")
+        print("=" * 60)
+        for k, v in self.to_dict().items():
+            print(f"  {k:<25} {v}")
+        print("=" * 60 + "\n")
+
+
+def generate_report(pf, initial_equity: float) -> BacktestReport:
+    """Extrait les métriques depuis un vbt.Portfolio."""
+    final_val = _as_float(pf.final_value())
+    total_ret = (final_val / initial_equity - 1) * 100
+    n_days = len(pf.wrapper.index)
+    n_years = max(n_days / 252, 0.01)
+    cagr = ((final_val / initial_equity) ** (1 / n_years) - 1) * 100
+    sharpe = _clean_metric(_as_float(pf.sharpe_ratio())) if hasattr(pf, "sharpe_ratio") else 0.0
+    sortino = _clean_metric(_as_float(pf.sortino_ratio())) if hasattr(pf, "sortino_ratio") else 0.0
+    max_dd = _clean_metric(_as_float(pf.max_drawdown()) * 100)
+    trades = pf.trades
+    n_trades = _as_int(trades.count()) if hasattr(trades, "count") else 0
+    win_rate = _clean_metric(_as_float(trades.win_rate()) * 100) if n_trades > 0 else 0.0
+    try:
+        avg_dur = _clean_metric(_as_float(trades.duration.mean()) / pd.Timedelta("1D").value * 1e9)
+    except Exception:
+        avg_dur = 0.0
+    try:
+        pf_factor = _clean_metric(_as_float(trades.profit_factor()))
+    except Exception:
+        pf_factor = 0.0
+    return BacktestReport(
+        initial_equity=initial_equity, final_value=final_val,
+        total_return_pct=total_ret, cagr_pct=cagr,
+        sharpe_ratio=sharpe, sortino_ratio=sortino,
+        max_drawdown_pct=max_dd, total_trades=n_trades,
+        win_rate_pct=win_rate, avg_trade_duration_days=avg_dur,
+        profit_factor=pf_factor,
+    )
+
+
+def save_equity_curve(pf, output_dir: Path | None = None) -> Path:
+    """Sauvegarde l'equity curve en PNG."""
+    out = output_dir or ARTIFACTS_DIR
+    out.mkdir(parents=True, exist_ok=True)
+    filepath = out / "equity_curve.png"
+    try:
+        fig = pf.plot_value()
+        fig.update_layout(
+            title="Alpha Trade — Equity Curve (Backtest)",
+            xaxis_title="Date", yaxis_title="Valeur ($)",
+            template="plotly_white",
+        )
+        fig.write_image(str(filepath), width=1400, height=600)
+        LOGGER.info("Equity curve sauvegardée : %s", filepath)
+    except Exception:
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            equity = pf.value()
+            plt.figure(figsize=(14, 6))
+            plt.plot(equity.index, equity.values, linewidth=1)
+            plt.title("Alpha Trade — Equity Curve (Backtest)")
+            plt.xlabel("Date")
+            plt.ylabel("Valeur ($)")
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(str(filepath), dpi=150)
+            plt.close()
+            LOGGER.info("Equity curve (matplotlib fallback) : %s", filepath)
+        except Exception as exc2:
+            LOGGER.error("Échec sauvegarde equity curve : %s", exc2)
+    return filepath
+
+
+def save_trades_csv(pf, output_dir: Path | None = None) -> Path:
+    """Exporte la liste des trades en CSV."""
+    out = output_dir or ARTIFACTS_DIR
+    out.mkdir(parents=True, exist_ok=True)
+    filepath = out / "trades.csv"
+    try:
+        trades_df = pf.trades.records_readable
+        trades_df.to_csv(str(filepath), index=False)
+        LOGGER.info("Trades exportés : %s (%d trades)", filepath, len(trades_df))
+    except Exception as exc:
+        LOGGER.warning("Impossible d'exporter les trades : %s", exc)
+    return filepath
+
+
+

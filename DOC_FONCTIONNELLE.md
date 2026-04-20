@@ -320,7 +320,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 
 1. **Alertes externes** : intégrer Slack/email/SMS pour circuit breaker, slippage, et fin de run
 2. ~~**Dashboard temps réel**~~ → ✅ **Implémenté** : IHM Streamlit opérateur (`ihm/app.py`)
-3. **Backtesting intégré** : cadre de backtest (vectorbt/zipline) pour valider les paramètres avant production
+3. ~~**Backtesting intégré**~~ → ✅ **Implémenté** : module `backtesting/` basé sur vectorbt — replay signaux conviction + bracket TP/TS, métriques Sharpe/Sortino/CAGR/drawdown, equity curve PNG
 4. **Support short selling** : étendre la stratégie aux positions short
 5. **Streaming WebSocket** : remplacer le polling des fills par un stream Alpaca pour réduire la latence
 6. **Scheduler automatisé** : cron/Airflow/Prefect pour automatiser l'exécution quotidienne du pipeline

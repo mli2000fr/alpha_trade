@@ -24,6 +24,10 @@ dependencies = [
     "torchmetrics",
     "streamlit",
     "pyyaml",
+    "vectorbt>=0.26",
+    "plotly",
+    "kaleido",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]
@@ -60,6 +64,7 @@ include = [
     "execution_engine*",
     "modelFactory*",
     "corporate_actions*",
+    "backtesting*",
     "ihm*",
 ]
 

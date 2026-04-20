@@ -57,6 +57,7 @@ alpha_trade/
 | `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
 | `execution_engine/` | OMS/EMS complet (10 phases) |
 | `corporate_actions/` | Gestion dividendes, splits, reverse splits (audit + comptabilité portefeuille) |
+| `backtesting/` | Backtest intégré vectorbt : replay signaux conviction, bracket TP/TS, métriques, equity curve |
 | `ihm/` | IHM Streamlit : supervision pipeline, scores, risque, exécution, CA |
 
 ---
@@ -98,6 +99,12 @@ alpha_trade/
 **`CorporateActionRepository`** (`corporate_actions/db_io.py`) — Accès DB (SQLAlchemy Core) : insert/load événements, applications, cash ledger, lecture des positions broker et résolution de l'univers de sync depuis `stock_metadata`. Compatible MySQL et SQLite (tests).
 
 **`AccountRegistry`** (`service/alpaca/accounts.py`) — Singleton de résolution multi-comptes. Charge les comptes depuis `config.yaml`, env vars préfixées, ou fallback classique. Fournit `resolve(account_id)` → `BrokerAccount(api_key, secret_key, mode)`. Tous les clients (trading, market data, news, corporate actions) passent par cette résolution.
+
+**`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest vectorbt. Charge les OHLCV pivotés (10 ans max) et les signaux reconstruits, puis exécute `vbt.Portfolio.from_signals()` avec bracket TP/trailing SL. Sizing equal-weight plafonné à `max_positions`. Paramétrable via `BacktestConfig` (hérite de `RiskConfig` + `ExecutionConfig`).
+
+**`replay_signals()`** (`backtesting/signal_replay.py`) — Reconstruction jour par jour des signaux de conviction à partir des scores `stock_scores`, prédictions ML `model_predictions`, en réutilisant `compute_conviction()` du module `risk_management`. Top-N candidats sélectionnés par jour.
+
+**`BacktestReport`** (`backtesting/report.py`) — Dataclass de résumé : Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor. Génère equity curve PNG et export trades CSV dans `artifacts/backtesting/`.
 
 ### 2.2 Fonctions clés
 
@@ -314,7 +321,7 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 11. Orchestrateur pipeline (Airflow/Prefect)
 12. Monitoring (Prometheus/Grafana)
 13. Containerisation Docker
-14. Framework de backtest intégré
+14. ~~Framework de backtest intégré~~ → ✅ Implémenté : module `backtesting/` (vectorbt)
 
 ---
 
@@ -368,6 +375,23 @@ python -m corporate_actions apply --account live1
 
 ```powershell
 python -m streamlit run ihm/app.py
+```
+
+### Backtesting
+
+```powershell
+# Backtest complet sur 10 ans (paramètres production)
+python -m backtesting run --start 2016-01-01 --end 2026-04-20 --equity 100000
+
+# Backtest personnalisé (TP=10%, TS=4%, 15 positions max)
+python -m backtesting run --start 2020-01-01 --end 2026-04-20 --equity 50000 --tp 0.10 --ts 0.04 --max-positions 15
+
+# Sans sauvegarde artefacts (console only)
+python -m backtesting run --start 2023-01-01 --no-save
+
+# Artefacts générés dans artifacts/backtesting/ :
+#   - equity_curve.png   (courbe de valeur du portefeuille)
+#   - trades.csv         (liste de tous les trades avec P&L)
 ```
 
 ### Tests
