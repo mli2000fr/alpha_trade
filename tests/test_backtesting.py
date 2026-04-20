@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
+
 import pandas as pd
 
 
@@ -289,6 +291,120 @@ class TestSignalReplay:
         assert len(result) == 1
         assert result.iloc[0]["score"] == 0.8
 
+    def test_replay_falls_back_per_row_when_final_score_sentiment_missing(self):
+        from backtesting.signal_replay import replay_signals
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL", "MSFT"],
+            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+            "final_score_sentiment": [None, 0.9],
+            "final_score": [0.7, 0.8],
+            "sector": ["Tech", "Tech"],
+        })
+        result = replay_signals(scores, None, max_positions=2)
+        assert result.loc[result["symbol"] == "AAPL", "score"].iloc[0] == 0.7
+        assert result.loc[result["symbol"] == "MSFT", "score"].iloc[0] == 0.9
+
+
+# ============================================================
+# test resilience policies
+# ============================================================
+
+class TestResilience:
+    def test_prepare_scores_sentiment_off_uses_final_score(self):
+        from backtesting.resilience import prepare_scores_for_sentiment_mode
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "final_score": [0.7],
+            "final_score_sentiment": [0.9],
+        })
+        result = prepare_scores_for_sentiment_mode(None, scores, sentiment_mode="off")  # type: ignore[arg-type]
+        assert result.iloc[0]["final_score_sentiment"] == 0.7
+
+    def test_prepare_scores_sentiment_auto_fills_missing(self):
+        from backtesting.resilience import prepare_scores_for_sentiment_mode
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "final_score": [0.7],
+            "final_score_sentiment": [None],
+        })
+        result = prepare_scores_for_sentiment_mode(None, scores, sentiment_mode="auto")  # type: ignore[arg-type]
+        assert result.iloc[0]["final_score_sentiment"] == 0.7
+
+    def test_prepare_predictions_ml_off_returns_empty(self):
+        from backtesting.resilience import prepare_predictions_for_ml_mode
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+        })
+        preds = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "predicted_proba": [0.6],
+            "predicted_class": [1],
+        })
+        result = prepare_predictions_for_ml_mode(None, scores, preds, ml_mode="off", artifacts_dir=Path("artifacts/models"))  # type: ignore[arg-type]
+        assert result.empty
+
+    def test_prepare_predictions_ml_auto_keeps_existing(self):
+        from backtesting.resilience import prepare_predictions_for_ml_mode
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL", "MSFT"],
+            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+        })
+        preds = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "predicted_proba": [0.6],
+            "predicted_class": [1],
+        })
+        result = prepare_predictions_for_ml_mode(None, scores, preds, ml_mode="auto", artifacts_dir=Path("artifacts/models"))  # type: ignore[arg-type]
+        assert len(result) == 1
+        assert result.iloc[0]["symbol"] == "AAPL"
+
+    def test_prepare_predictions_ml_rebuild_missing_calls_predictor(self, monkeypatch):
+        from backtesting import resilience
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL", "MSFT"],
+            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+        })
+        preds = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "predicted_proba": [0.6],
+            "predicted_class": [1],
+        })
+        calls = []
+
+        def fake_predict_symbol(symbol, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=True):
+            calls.append((symbol, prediction_date, as_of_date, persist))
+            return pd.DataFrame({
+                "symbol": [symbol],
+                "prediction_date": [prediction_date],
+                "predicted_proba": [0.55],
+                "predicted_class": [1],
+                "run_id": ["run-x"],
+            })
+
+        monkeypatch.setattr(resilience, "predict_symbol", fake_predict_symbol)
+        result = resilience.prepare_predictions_for_ml_mode(
+            None, scores, preds, ml_mode="rebuild-missing", artifacts_dir=Path("artifacts/models")
+        )  # type: ignore[arg-type]
+        assert len(result) == 2
+        assert calls == [(
+            "MSFT",
+            pd.Timestamp("2025-01-01 00:00:00"),
+            pd.Timestamp("2025-01-01 00:00:00"),
+            True,
+        )]
+
 
 # ============================================================
 # test simulator (BacktestConfig)
@@ -436,6 +552,8 @@ class TestCLI:
         assert args.max_positions == 20
         assert args.fees == 0.001
         assert args.sentiment_lookback == 365
+        assert args.ml_mode == "auto"
+        assert args.sentiment_mode == "auto"
         assert args.no_save is False
 
     def test_parse_custom_params(self):
@@ -450,6 +568,20 @@ class TestCLI:
         assert args.ts == 0.04
         assert args.max_positions == 15
         assert args.no_save is True
+
+    def test_parse_run_modes(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "run", "--start", "2020-01-01",
+            "--ml-mode", "rebuild-missing",
+            "--sentiment-mode", "off",
+            "--artifacts-dir", "artifacts/models",
+        ])
+        assert args.ml_mode == "rebuild-missing"
+        assert args.sentiment_mode == "off"
+        assert args.artifacts_dir == "artifacts/models"
 
     def test_parse_backfill_scores_history_command(self):
         from backtesting.cli import _build_parser

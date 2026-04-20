@@ -102,11 +102,13 @@ alpha_trade/
 
 **`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest vectorbt. Charge les OHLCV pivotés (10 ans max) et les signaux reconstruits, puis exécute `vbt.Portfolio.from_signals()` avec bracket TP/trailing SL. Sizing equal-weight plafonné à `max_positions`. Paramétrable via `BacktestConfig` (hérite de `RiskConfig` + `ExecutionConfig`).
 
-**`replay_signals()`** (`backtesting/signal_replay.py`) — Reconstruction jour par jour des signaux de conviction à partir des scores `stock_scores`, prédictions ML `model_predictions`, en réutilisant `compute_conviction()` du module `risk_management`. Top-N candidats sélectionnés par jour.
+**`replay_signals()`** (`backtesting/signal_replay.py`) — Reconstruction jour par jour des signaux de conviction à partir des scores `stock_scores`, avec fallback ligne par ligne `final_score_sentiment -> final_score` si le sentiment est absent, et fusion optionnelle des prédictions ML `model_predictions`. Top-N candidats sélectionnés par jour.
 
 **`BacktestReport`** (`backtesting/report.py`) — Dataclass de résumé : Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor. Génère equity curve PNG et export trades CSV dans `artifacts/backtesting/`.
 
 **`BackfillScoresHistoryService`** (`backtesting/backfill_scores_history.py`) — Orchestrateur de backfill point-in-time de `stock_scores_history`. Rejoue, pour chaque séance manquante, le screener sur `stock_bars_daily`, le scoring `AlphaScanner`, puis la fusion sentiment `SentimentSignalAggregator`, avant insertion idempotente dans `stock_scores_history`. Permet de rendre le backtest réellement exploitable sur plusieurs années sans dépendre d'un snapshot courant unique.
+
+**`prepare_predictions_for_ml_mode()` / `prepare_scores_for_sentiment_mode()`** (`backtesting/resilience.py`) — Couche de résilience du backtest. Implémente les politiques `auto | off | rebuild-missing` pour les prédictions ML et le sentiment : fallback sans ML, neutralisation du boost sentiment, ou reconstruction ciblée des données manquantes lorsque les artefacts / tables nécessaires sont disponibles.
 
 ### 2.2 Fonctions clés
 
@@ -391,10 +393,28 @@ python -m backtesting run --start 2020-01-01 --end 2026-04-20 --equity 50000 --t
 # Sans sauvegarde artefacts (console only)
 python -m backtesting run --start 2023-01-01 --no-save
 
+# Modes de résilience ML / sentiment
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode off --sentiment-mode off
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode auto --sentiment-mode auto
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode rebuild-missing --artifacts-dir artifacts/models
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --sentiment-mode rebuild-missing
+
+# Reconstruction ML + sentiment en même temps
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode rebuild-missing --sentiment-mode rebuild-missing --artifacts-dir artifacts/models
+
 # Artefacts générés dans artifacts/backtesting/ :
 #   - equity_curve.png   (courbe de valeur du portefeuille)
 #   - trades.csv         (liste de tous les trades avec P&L)
 ```
+
+Notes :
+
+- `--ml-mode auto` (défaut) : utilise les prédictions disponibles et ignore les trous ;
+- `--ml-mode off` : désactive entièrement la composante ML ;
+- `--ml-mode rebuild-missing` : tente de reconstruire les prédictions historiques manquantes depuis `artifacts/models/`, en bornant l'inférence à la date du signal ;
+- `--sentiment-mode auto` (défaut) : utilise `final_score_sentiment` si disponible, sinon fallback sur `final_score` ;
+- `--sentiment-mode off` : neutralise le sentiment (`final_score_sentiment = final_score`) ;
+- `--sentiment-mode rebuild-missing` : tente de reconstruire les snapshots PIT manquants dans `stock_scores_history`, puis applique un fallback sur `final_score` pour les lignes encore incomplètes.
 
 ### Backfill historique des snapshots de scores
 

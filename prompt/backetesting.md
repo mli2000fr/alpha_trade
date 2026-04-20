@@ -39,13 +39,84 @@ Ce document résume l'intégration du module `backtesting/` et les commandes uti
 
 ## 2. Prérequis
 
-Le backtest et le backfill supposent que la base MySQL contient déjà :
+Les tables réellement nécessaires ne sont pas les mêmes selon l'usage.
+
+### 2.1 Pour le backfill de `stock_scores_history`
+
+#### Obligatoires
 
 - `stock_bars_daily`
+- `stock_metadata`
+
+#### Optionnelles mais recommandées
+
+- `ticker_daily_sentiment_features`
+- `sector_daily_sentiment_features`
+
+Si les tables sentiment ne sont pas présentes, le backfill fonctionne quand même,
+mais la composante sentiment est neutralisée / dégradée vers un comportement plus quantitatif.
+
+#### Non nécessaires
+
+- `model_predictions`
+
+Le backfill de `stock_scores_history` n'utilise pas `model_predictions`.
+
+### 2.2 Pour lancer un backtest
+
+#### Obligatoires
+
+- `stock_bars_daily`
+- `stock_scores_history` (ou à défaut `stock_scores`, mais ce n'est pas un vrai backtest PIT)
+
+#### Optionnelles mais utiles
+
 - `model_predictions`
 - `ticker_daily_sentiment_features`
 - `sector_daily_sentiment_features`
-- `stock_metadata`
+
+Le code est tolérant :
+
+- si `model_predictions` est absente ou trop courte, le backtest continue sans composante ML ;
+- si les tables sentiment sont absentes ou incomplètes, le backtest continue avec un signal sentiment neutre / réduit ;
+- plus ces tables sont riches historiquement, plus le backtest se rapproche du pipeline production complet.
+
+### 2.3 Modes `ML` et `sentiment`
+
+Le backtest supporte désormais trois politiques explicites pour le ML et le sentiment.
+
+#### `--ml-mode`
+
+- `auto` : utilise les prédictions disponibles ; si certaines manquent, le backtest continue sans ML pour ces lignes ;
+- `off` : ignore complètement `model_predictions` ;
+- `rebuild-missing` : tente de reconstruire les prédictions manquantes via les artefacts modèles, en mode point-in-time.
+
+#### `--sentiment-mode`
+
+- `auto` : utilise `final_score_sentiment` si présent, sinon fallback sur `final_score` ;
+- `off` : désactive complètement le boost sentiment (`final_score_sentiment = final_score`) ;
+- `rebuild-missing` : tente de reconstruire les snapshots sentiment manquants dans `stock_scores_history`, puis fallback sur `final_score` pour les lignes restant incomplètes.
+
+#### Remarques pratiques
+
+- `rebuild-missing` est plus fidèle mais plus coûteux en temps ;
+- `--ml-mode rebuild-missing` nécessite les checkpoints/scalers/configs modèles dans `artifacts/models/` ;
+- `--sentiment-mode rebuild-missing` peut reconstruire les snapshots PIT quand c'est possible, sinon retombe sur un signal neutre/réduit.
+
+### 2.4 Ce qu'il faut idéalement pour un backtest "research-grade"
+
+Pour un backtest 10 ans vraiment fidèle au pipeline cible, il faudrait idéalement :
+
+- 10 ans de `stock_bars_daily`
+- 10 ans de `stock_scores_history`
+- 365 jours glissants (ou plus) de `ticker_daily_sentiment_features`
+- 365 jours glissants (ou plus) de `sector_daily_sentiment_features`
+- un historique aussi long que possible de `model_predictions`
+
+Mais en pratique :
+
+- **les bars + l'historique des snapshots de scores sont le socle indispensable** ;
+- **les prédictions ML et le sentiment améliorent la fidélité**, mais ne bloquent pas l'exécution du moteur.
 
 Variables d'environnement minimales :
 
@@ -74,6 +145,25 @@ python -m backtesting run --start 2020-01-01 --end 2026-04-20 --equity 50000 --t
 
 ```powershell
 python -m backtesting run --start 2023-01-01 --no-save
+```
+
+### Modes de résilience ML / sentiment
+
+```powershell
+# Désactiver complètement ML et sentiment
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode off --sentiment-mode off
+
+# Mode tolérant (défaut)
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode auto --sentiment-mode auto
+
+# Reconstruction des prédictions ML manquantes
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode rebuild-missing --artifacts-dir artifacts/models
+
+# Reconstruction des snapshots sentiment manquants
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --sentiment-mode rebuild-missing
+
+# Reconstruction des prédictions ML manquantes ET des snapshots sentiment manquants en même temps
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode rebuild-missing --sentiment-mode rebuild-missing --artifacts-dir artifacts/models
 ```
 
 ### Artefacts générés
@@ -200,6 +290,30 @@ Une fois `stock_scores_history` correctement rempli :
 python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000
 ```
 
+### Commande si tu veux reconstruire ML + sentiment en même temps
+
+```powershell
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode rebuild-missing --sentiment-mode rebuild-missing --artifacts-dir artifacts/models
+```
+
+Cette commande :
+
+- tente de reconstruire les `model_predictions` manquantes à partir des artefacts de `artifacts/models/` ;
+- tente de reconstruire les snapshots sentiment manquants dans `stock_scores_history` ;
+- continue quand même avec fallback si certaines données restent indisponibles.
+
+Exemple robuste sans dépendre d'un historique ML complet :
+
+```powershell
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode off --sentiment-mode auto
+```
+
+Exemple avec reconstruction automatique des données manquantes :
+
+```powershell
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode rebuild-missing --sentiment-mode rebuild-missing --artifacts-dir artifacts/models
+```
+
 ---
 
 ## 9. Vérifications utiles en base
@@ -265,7 +379,8 @@ Validation réelle effectuée :
   - `snapshot_date = 2026-04-17`
   - `n = 1957`
   - `candidates = 100`
-- tests passés : `24 passed`
+- validation runtime supplémentaire : `python -m backtesting run --start 2026-04-17 --end 2026-04-20 --equity 100000 --no-save --ml-mode off --sentiment-mode off`
+- tests passés : `31 passed`
 
 ---
 
@@ -284,6 +399,6 @@ Ordre conseillé :
 python -m backtesting backfill-scores-history --start 2025-01-01 --limit-days 1 --screener-workers 2
 python -m backtesting backfill-scores-history --start 2025-01-01 --limit-days 5 --screener-workers 2
 python -m backtesting backfill-scores-history --start 2025-01-01 --screener-workers 2
-python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000
+python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode auto --sentiment-mode auto
 ```
 

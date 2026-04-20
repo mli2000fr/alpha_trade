@@ -13,6 +13,7 @@ import argparse
 import logging
 import sys
 from datetime import date
+from pathlib import Path
 
 from common.utils import configure_root_logging
 
@@ -37,6 +38,23 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--fees", type=float, default=0.001, help="Frais par trade (défaut 0.1%%)")
     run_p.add_argument("--sentiment-lookback", type=int, default=365, help="Lookback sentiment (jours)")
     run_p.add_argument("--no-save", action="store_true", help="Ne pas sauvegarder les artefacts")
+    run_p.add_argument(
+        "--ml-mode",
+        choices=["auto", "off", "rebuild-missing"],
+        default="auto",
+        help="Gestion des prédictions ML manquantes: auto|off|rebuild-missing",
+    )
+    run_p.add_argument(
+        "--sentiment-mode",
+        choices=["auto", "off", "rebuild-missing"],
+        default="auto",
+        help="Gestion du sentiment manquant: auto|off|rebuild-missing",
+    )
+    run_p.add_argument(
+        "--artifacts-dir",
+        default="artifacts/models",
+        help="Répertoire des artefacts modèles pour reconstruire les prédictions ML",
+    )
 
     # --- backfill-scores-history ---
     backfill_p = sub.add_parser(
@@ -60,6 +78,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     from database.connection import get_sqlalchemy_engine
     from backtesting.data_loader import load_ohlcv, load_scores, load_predictions, pivot_ohlcv
+    from backtesting.resilience import prepare_predictions_for_ml_mode, prepare_scores_for_sentiment_mode
     from backtesting.signal_replay import replay_signals
     from backtesting.simulator import BacktestConfig, BacktestEngine
     from backtesting.report import generate_report, save_equity_curve, save_trades_csv
@@ -69,6 +88,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     print(f"\n🚀 Backtest Alpha Trade : {start} → {end}, capital={args.equity:,.0f}$")
     print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
+    print(f"   ml_mode={args.ml_mode}, sentiment_mode={args.sentiment_mode}\n")
 
     # 1. Charger les données
     engine = get_sqlalchemy_engine()
@@ -89,8 +109,21 @@ def _run_backtest(args: argparse.Namespace) -> None:
         print("   Pour un vrai backtest 10 ans, il faut historiser les snapshots dans `stock_scores_history`.")
         sys.exit(1)
 
+    scores_df = prepare_scores_for_sentiment_mode(
+        engine,
+        scores_df,
+        sentiment_mode=args.sentiment_mode,
+    )
+
     print("🤖 Chargement prédictions ML...")
     preds_df = load_predictions(engine, start, end)
+    preds_df = prepare_predictions_for_ml_mode(
+        engine,
+        scores_df,
+        preds_df,
+        ml_mode=args.ml_mode,
+        artifacts_dir=Path(args.artifacts_dir),
+    )
 
     # 2. Pivoter OHLCV
     pivoted = pivot_ohlcv(ohlcv_df)

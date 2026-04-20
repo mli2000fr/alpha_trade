@@ -16,7 +16,7 @@ from modelFactory.config import DataConfig
 from modelFactory.data_loader import load_symbol_bars, load_symbol_sentiment
 from modelFactory.dataset import FeatureScaler
 from modelFactory.db_registry import insert_predictions, load_training_run
-from modelFactory.features import compute_features, get_feature_columns
+from modelFactory.features import compute_features
 from modelFactory.model import LSTMAttentionModule
 
 LOGGER = logging.getLogger(__name__)
@@ -52,6 +52,8 @@ def predict_symbol(
     engine: "Engine",  # type: ignore[name-defined]
     prediction_date: Optional[date] = None,
     run_id: Optional[str] = None,
+    as_of_date: Optional[date] = None,
+    persist: bool = True,
 ) -> Optional[pd.DataFrame]:
     """Charge le modèle et produit une prédiction pour un symbole.
 
@@ -80,8 +82,10 @@ def predict_symbol(
     with open(scaler_path, "rb") as f:
         scaler = FeatureScaler.from_state_dict(pickle.load(f))
 
-    # Load bars (last seq_len + buffer days)
-    bars = load_symbol_bars(engine, symbol)
+    cutoff_date = as_of_date or prediction_date
+
+    # Load bars (last seq_len + buffer days) bornés à cutoff_date pour rester PIT-safe.
+    bars = load_symbol_bars(engine, symbol, end_date=cutoff_date)
     if len(bars) < data_cfg.sequence_length + 60:
         LOGGER.warning("predict_symbol insufficient_bars symbol=%s", symbol)
         return None
@@ -89,7 +93,7 @@ def predict_symbol(
     # Feature engineering (with optional sentiment)
     sentiment_df = None
     if data_cfg.include_sentiment_features:
-        sentiment_df = load_symbol_sentiment(engine, symbol)
+        sentiment_df = load_symbol_sentiment(engine, symbol, end_date=cutoff_date)
     df = compute_features(bars, sentiment_df=sentiment_df, include_sentiment=data_cfg.include_sentiment_features)
     if len(df) < data_cfg.sequence_length:
         return None
@@ -119,7 +123,8 @@ def predict_symbol(
     }])
 
     # Persist
-    insert_predictions(engine, result)
+    if persist:
+        insert_predictions(engine, result)
     LOGGER.info("predict_symbol symbol=%s date=%s proba=%.4f class=%d", symbol, pred_date, proba, pred_class)
     return result
 
@@ -129,11 +134,13 @@ def predict_batch(
     artifacts_dir: Path,
     engine: "Engine",  # type: ignore[name-defined]
     prediction_date: Optional[date] = None,
+    as_of_date: Optional[date] = None,
+    persist: bool = True,
 ) -> pd.DataFrame:
     """Exécute les prédictions pour une liste de symboles."""
     all_preds = []
     for sym in symbols:
-        pred = predict_symbol(sym, artifacts_dir, engine, prediction_date)
+        pred = predict_symbol(sym, artifacts_dir, engine, prediction_date, as_of_date=as_of_date, persist=persist)
         if pred is not None:
             all_preds.append(pred)
     if all_preds:

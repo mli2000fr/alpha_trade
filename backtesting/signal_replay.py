@@ -8,7 +8,7 @@ du module risk_management.
 from __future__ import annotations
 
 import logging
-from datetime import date
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -20,7 +20,7 @@ LOGGER = logging.getLogger(__name__)
 
 def replay_signals(
     scores_df: pd.DataFrame,
-    predictions_df: pd.DataFrame | None,
+    predictions_df: Optional[pd.DataFrame],
     *,
     score_weight: float = 0.40,
     prediction_weight: float = 0.60,
@@ -41,11 +41,24 @@ def replay_signals(
     -------
     DataFrame avec colonnes : trade_date, symbol, score, predicted_proba, conviction, rank, selected
     """
-    # Utiliser final_score_sentiment si disponible, sinon final_score
-    score_col = "final_score_sentiment" if "final_score_sentiment" in scores_df.columns else "final_score"
+    # Utiliser final_score_sentiment si disponible, sinon final_score.
+    # Si final_score_sentiment existe mais contient des trous, fallback ligne par ligne sur final_score.
+    base_columns = [col for col in ["symbol", "trade_date", "final_score_sentiment", "final_score", "sector"] if col in scores_df.columns]
+    df = scores_df[base_columns].copy()
+    if "final_score_sentiment" in df.columns:
+        df["score"] = df["final_score_sentiment"]
+        if "final_score" in df.columns:
+            missing_mask = df["score"].isna()
+            df.loc[missing_mask, "score"] = df.loc[missing_mask, "final_score"]
+    elif "final_score" in df.columns:
+        df["score"] = df["final_score"]
+    else:
+        raise ValueError("scores_df doit contenir final_score_sentiment ou final_score.")
 
-    df = scores_df[["symbol", "trade_date", score_col, "sector"]].copy()
-    df.rename(columns={score_col: "score"}, inplace=True)
+    if "sector" not in df.columns:
+        df["sector"] = None
+
+    df = df[["symbol", "trade_date", "score", "sector"]].copy()
 
     # Merger les prédictions ML si disponibles
     if predictions_df is not None and len(predictions_df) > 0:
