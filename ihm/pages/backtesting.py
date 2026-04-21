@@ -159,7 +159,7 @@ def _build_run_options() -> BacktestRunOptions:
     with col1:
         start = st.text_input(
             "Date de début",
-            value=cast(str, st.session_state.get("bt_run_start", "2025-04-10")),
+            value=cast(str, st.session_state.get("bt_run_start", "2025-04-21")),
             key="bt_run_start",
             help="Format YYYY-MM-DD. C'est la borne basse du backtest.",
         )
@@ -312,7 +312,7 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
     with col1:
         start = st.text_input(
             "Date de début du backfill",
-            value=cast(str, st.session_state.get("bt_backfill_start", "2025-04-10")),
+            value=cast(str, st.session_state.get("bt_backfill_start", "2025-04-21")),
             key="bt_backfill_start",
             help="Première séance à reconstruire au format YYYY-MM-DD.",
         )

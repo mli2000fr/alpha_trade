@@ -767,7 +767,7 @@ class TestBacktestingRegistry:
             backtesting_registry.start_backtesting_run(
                 "run",
                 "Backtest complet",
-                BacktestRunOptions(start="2025-04-10", end="2025-04-14"),
+                BacktestRunOptions(start="2025-04-21", end="2025-04-14"),
             )
         except RuntimeError as exc:
             assert "déjà en cours" in str(exc)
