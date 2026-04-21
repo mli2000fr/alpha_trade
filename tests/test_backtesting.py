@@ -490,7 +490,39 @@ class TestBacktestConfig:
         pf = engine.run(close=close, high=high, low=low, signals_df=signals_df)
         trades_df = pf.trades.records_readable
         assert not trades_df.empty
-        assert float(trades_df.iloc[0]["Size"]).is_integer()
+        assert float(trades_df["Size"].iloc[0]).is_integer()
+
+    def test_to_scalar_supports_series_and_scalar(self):
+        from backtesting.simulator import BacktestEngine, BacktestConfig
+
+        engine = BacktestEngine(BacktestConfig(start_date=date(2025, 1, 1), end_date=date(2025, 1, 2)))
+
+        assert engine._to_scalar(pd.Series([123.4])) == 123.4
+        assert engine._to_scalar(99.0) == 99.0
+
+    def test_backtest_engine_raises_when_no_common_symbols(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        close = pd.DataFrame({"AAPL": [100.0, 101.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [101.0, 102.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 100.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["MSFT"],
+                "selected": [True],
+            }
+        )
+
+        engine = BacktestEngine(BacktestConfig(start_date=date(2025, 1, 1), end_date=date(2025, 1, 2)))
+
+        try:
+            engine.run(close=close, high=high, low=low, signals_df=signals_df)
+        except ValueError as exc:
+            assert "Aucun symbole en commun" in str(exc)
+        else:
+            raise AssertionError("Le moteur aurait dû refuser un backtest sans symbole commun.")
 
 
 # ============================================================

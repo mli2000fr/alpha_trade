@@ -1,0 +1,60 @@
+Recommandations de testabilité
+1. Réduire les opérations pandas implicites dans le cœur métier
+L’environnement courant montre des comportements fragiles sur :
+set_index
+merge
+fillna
+clip
+sum / mean
+Recommandation :
+isoler les conversions DataFrame -> records
+faire l’agrégation métier en Python pur / dataclasses
+réserver pandas aux I/O et à la présentation
+2. Séparer logique pure et accès DB
+Pour execution_engine, selector, modelFactory :
+déplacer les règles métier dans fonctions/classes pures
+garder la DB/réseau dans des adaptateurs minces
+facilite les tests rapides avec pytest
+3. Remplacer les smoke tests par des tests de comportement
+Priorité forte :
+convertir progressivement les tests “importable” en vrais tests métier
+surtout dans execution_engine, selector, risk_management
+4. Introduire davantage de fixtures/fakes métier
+Exemples :
+fake broker
+fake execution repository
+fake sentiment repository
+fake calendar / market clock
+5. Mieux découper signal_aggregator.py
+Même après stabilisation, le fichier reste gros. Je recommande à terme d’extraire :
+normalisation
+agrégation ticker
+agrégation sector
+mapping/jointure
+persistance DB
+
+
+
+
+------------------------
+Voici la liste la plus utile opérationnellement, en combinant architecture, audit des tests et rapports :
+P0
+execution_engine/executor.py
+selector/alpha_scanner.py
+modelFactory/predictor.py
+modelFactory/trainer.py
+backtesting/simulator.py
+dataIntegrityEngine/data_sanitizer_daily.py
+P1
+execution_engine/db_io.py
+execution_engine/reconciliation.py
+event_sentiment/db_io.py
+event_sentiment/pipeline.py
+risk_management/portfolio_builder.py
+risk_management/constraints.py
+risk_management/risk_checker.py
+P2
+ihm/services/*
+ihm/pages/*
+CLI wrappers / __main__.py
+scripts racine run.py, run_execution.py
