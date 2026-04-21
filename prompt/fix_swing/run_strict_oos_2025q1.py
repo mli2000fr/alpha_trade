@@ -79,7 +79,11 @@ def get_history_coverage(start: date, end: date) -> dict[str, Any]:
             ),
             {"start_date": start, "end_date": end},
         ).mappings().one()
-    return dict(row)
+    coverage = dict(row)
+    for key in ("dmin", "dmax"):
+        if coverage.get(key) is not None:
+            coverage[key] = str(coverage[key])
+    return coverage
 
 
 def run_backfill(start: date, end: date, *, chunk_size: int, selection_size: int, screener_workers: int) -> dict[str, Any]:
@@ -184,4 +188,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
