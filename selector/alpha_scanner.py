@@ -48,11 +48,18 @@ FACTOR_COLUMNS = [
     "latest_close",
     "avg_dollar_volume_20d",
     "history_days",
+    "atr_20",
+    "atr_pct_20",
     "ma50",
     "ma150",
     "ma200",
     "high_52w",
     "low_52w",
+    "high_52w_proximity",
+    "weekly_close",
+    "weekly_ma10",
+    "weekly_ma30",
+    "weekly_trend_score",
     "volatility_ratio",
     "trend_score",
     "vcp_score",
@@ -81,11 +88,18 @@ OUTPUT_COLUMNS = [
     "raw_final_score",
     "final_score",
     "volatility_ratio",
+    "atr_20",
+    "atr_pct_20",
     "ma50",
     "ma150",
     "ma200",
     "high_52w",
     "low_52w",
+    "high_52w_proximity",
+    "weekly_close",
+    "weekly_ma10",
+    "weekly_ma30",
+    "weekly_trend_score",
     "history_days",
     "anomaly_count",
     "missing_days_count",
@@ -102,6 +116,12 @@ class AlphaScannerConfig:
     liquidity_threshold: float = 20_000_000.0
     min_close: float = 5.0
     max_volatility_ratio: float | None = None
+    min_relative_strength_index: float | None = None
+    min_high_52w_proximity: float | None = None
+    min_weekly_trend_score: float | None = None
+    min_atr_pct_20: float | None = None
+    max_atr_pct_20: float | None = None
+    require_above_ma200: bool = False
     max_anomaly_count: int = 20
     max_missing_days_count: int = 10
     sector_cap_ratio: float = 0.30
@@ -164,6 +184,22 @@ class AlphaScannerConfig:
             raise ValueError("min_close doit être strictement positif.")
         if self.max_volatility_ratio is not None and self.max_volatility_ratio <= 0:
             raise ValueError("max_volatility_ratio doit être strictement positif lorsqu'il est renseigné.")
+        if self.min_relative_strength_index is not None and self.min_relative_strength_index <= 0:
+            raise ValueError("min_relative_strength_index doit être strictement positif lorsqu'il est renseigné.")
+        if self.min_high_52w_proximity is not None and not 0 < self.min_high_52w_proximity <= 1:
+            raise ValueError("min_high_52w_proximity doit être compris dans ]0, 1] lorsqu'il est renseigné.")
+        if self.min_weekly_trend_score is not None and not 0 <= self.min_weekly_trend_score <= 1:
+            raise ValueError("min_weekly_trend_score doit être compris dans [0, 1] lorsqu'il est renseigné.")
+        if self.min_atr_pct_20 is not None and self.min_atr_pct_20 <= 0:
+            raise ValueError("min_atr_pct_20 doit être strictement positif lorsqu'il est renseigné.")
+        if self.max_atr_pct_20 is not None and self.max_atr_pct_20 <= 0:
+            raise ValueError("max_atr_pct_20 doit être strictement positif lorsqu'il est renseigné.")
+        if (
+            self.min_atr_pct_20 is not None
+            and self.max_atr_pct_20 is not None
+            and self.min_atr_pct_20 > self.max_atr_pct_20
+        ):
+            raise ValueError("min_atr_pct_20 ne peut pas être supérieur à max_atr_pct_20.")
         if not 0 < self.sector_cap_ratio <= 1:
             raise ValueError("sector_cap_ratio doit être compris entre 0 exclus et 1 inclus.")
         if self.volatility_short_window < 2 or self.volatility_long_window <= self.volatility_short_window:
@@ -302,11 +338,18 @@ class AlphaScanner:
         prices["high"] = prices["high"].astype(float) if "high" in prices.columns else prices["close"]
         prices["low"] = prices["low"].astype(float) if "low" in prices.columns else prices["close"]
         prices["dollar_volume"] = prices["close"] * prices["volume"]
+        grouped = prices.groupby("symbol", group_keys=False)
+        prices["prev_close"] = grouped["close"].shift(1)
+        prices["true_range"] = np.maximum.reduce(
+            [
+                (prices["high"] - prices["low"]).to_numpy(dtype=float),
+                (prices["high"] - prices["prev_close"]).abs().fillna(0.0).to_numpy(dtype=float),
+                (prices["low"] - prices["prev_close"]).abs().fillna(0.0).to_numpy(dtype=float),
+            ]
+        )
         prices["daily_return"] = (
             prices.groupby("symbol")["close"].pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
         )
-
-        grouped = prices.groupby("symbol", group_keys=False)
         prices["ma50"] = grouped["close"].rolling(self.config.ma_short_window, min_periods=self.config.ma_short_window).mean().reset_index(level=0, drop=True)
         prices["ma150"] = grouped["close"].rolling(self.config.ma_mid_window, min_periods=self.config.ma_mid_window).mean().reset_index(level=0, drop=True)
         prices["ma200"] = grouped["close"].rolling(self.config.ma_long_window, min_periods=self.config.ma_long_window).mean().reset_index(level=0, drop=True)
@@ -314,6 +357,8 @@ class AlphaScanner:
         prices["high_52w"] = grouped["high"].rolling(self.config.trailing_range_window, min_periods=self.config.trailing_range_window).max().reset_index(level=0, drop=True)
         prices["low_52w"] = grouped["low"].rolling(self.config.trailing_range_window, min_periods=self.config.trailing_range_window).min().reset_index(level=0, drop=True)
         prices["avg_dollar_volume_20d"] = grouped["dollar_volume"].rolling(self.config.liquidity_lookback_days, min_periods=self.config.liquidity_lookback_days).mean().reset_index(level=0, drop=True)
+        prices["atr_20"] = grouped["true_range"].rolling(20, min_periods=20).mean().reset_index(level=0, drop=True)
+        prices["atr_pct_20"] = np.where(prices["close"] > 0, prices["atr_20"] / prices["close"], np.nan)
         prices["vol_10"] = grouped["daily_return"].rolling(self.config.volatility_short_window, min_periods=self.config.volatility_short_window).std(ddof=0).reset_index(level=0, drop=True)
         prices["vol_60"] = grouped["daily_return"].rolling(self.config.volatility_long_window, min_periods=self.config.volatility_long_window).std(ddof=0).reset_index(level=0, drop=True)
         prices["volatility_ratio"] = np.where(prices["vol_60"] > 0, prices["vol_10"] / prices["vol_60"], np.nan)
@@ -321,6 +366,45 @@ class AlphaScanner:
         latest = grouped.tail(1).copy()
         history_days = prices.groupby("symbol", as_index=False)["date"].size().rename(columns={"size": "history_days"})
         latest = latest.merge(history_days, on="symbol", how="left")
+        latest["high_52w_proximity"] = np.where(
+            latest["high_52w"] > 0,
+            latest["close"] / latest["high_52w"],
+            np.nan,
+        )
+
+        weekly_feature_rows: list[dict[str, float | str]] = []
+        for symbol, symbol_prices in prices.groupby("symbol", sort=False):
+            weekly_close = (
+                symbol_prices.set_index("date")["close"]
+                .resample("W-FRI")
+                .last()
+                .dropna()
+            )
+            if weekly_close.empty:
+                weekly_feature_rows.append(
+                    {
+                        "symbol": str(symbol),
+                        "weekly_close": np.nan,
+                        "weekly_ma10": np.nan,
+                        "weekly_ma30": np.nan,
+                    }
+                )
+                continue
+
+            weekly_df = weekly_close.to_frame(name="weekly_close")
+            weekly_df["weekly_ma10"] = weekly_df["weekly_close"].rolling(10, min_periods=10).mean()
+            weekly_df["weekly_ma30"] = weekly_df["weekly_close"].rolling(30, min_periods=30).mean()
+            latest_week = weekly_df.iloc[-1]
+            weekly_feature_rows.append(
+                {
+                    "symbol": str(symbol),
+                    "weekly_close": float(latest_week["weekly_close"]),
+                    "weekly_ma10": float(latest_week["weekly_ma10"]) if pd.notna(latest_week["weekly_ma10"]) else np.nan,
+                    "weekly_ma30": float(latest_week["weekly_ma30"]) if pd.notna(latest_week["weekly_ma30"]) else np.nan,
+                }
+            )
+
+        latest = latest.merge(pd.DataFrame(weekly_feature_rows), on="symbol", how="left")
 
         criteria = pd.DataFrame(
             {
@@ -334,6 +418,13 @@ class AlphaScanner:
             }
         )
         latest["trend_score"] = criteria.fillna(False).astype(float).mean(axis=1)
+        weekly_criteria = pd.DataFrame(
+            {
+                "weekly_close_gt_ma10": latest["weekly_close"] > latest["weekly_ma10"],
+                "weekly_ma10_gt_ma30": latest["weekly_ma10"] > latest["weekly_ma30"],
+            }
+        )
+        latest["weekly_trend_score"] = weekly_criteria.fillna(False).astype(float).mean(axis=1)
         latest["vcp_score"] = (
             (self.config.vcp_ratio_threshold - latest["volatility_ratio"]) / self.config.vcp_ratio_threshold
         ).clip(lower=0.0, upper=1.0)
@@ -346,11 +437,18 @@ class AlphaScanner:
                 "close",
                 "avg_dollar_volume_20d",
                 "history_days",
+                "atr_20",
+                "atr_pct_20",
                 "ma50",
                 "ma150",
                 "ma200",
                 "high_52w",
                 "low_52w",
+                "high_52w_proximity",
+                "weekly_close",
+                "weekly_ma10",
+                "weekly_ma30",
+                "weekly_trend_score",
                 "volatility_ratio",
                 "trend_score",
                 "vcp_score",
@@ -358,7 +456,10 @@ class AlphaScanner:
         ].rename(columns={"close": "latest_close"})
 
         factor_frame["volatility_ratio"] = factor_frame["volatility_ratio"].replace([np.inf, -np.inf], np.nan)
+        factor_frame["atr_pct_20"] = factor_frame["atr_pct_20"].replace([np.inf, -np.inf], np.nan)
+        factor_frame["high_52w_proximity"] = factor_frame["high_52w_proximity"].clip(lower=0.0)
         factor_frame["trend_score"] = factor_frame["trend_score"].clip(0.0, 1.0)
+        factor_frame["weekly_trend_score"] = factor_frame["weekly_trend_score"].clip(0.0, 1.0)
         factor_frame["vcp_score"] = factor_frame["vcp_score"].clip(0.0, 1.0)
         return factor_frame.reset_index(drop=True)
 
@@ -533,6 +634,71 @@ class AlphaScanner:
                 ]
         after_volatility = len(filtered)
 
+        if self.config.min_atr_pct_20 is not None or self.config.max_atr_pct_20 is not None:
+            if "atr_pct_20" not in filtered.columns:
+                LOGGER.warning(
+                    "Filtre ATR %% active mais colonne atr_pct_20 absente; aucun titre retenu."
+                )
+                filtered = filtered.iloc[0:0].copy()
+            else:
+                atr_mask = filtered["atr_pct_20"].notna()
+                if self.config.min_atr_pct_20 is not None:
+                    atr_mask &= filtered["atr_pct_20"] >= self.config.min_atr_pct_20
+                if self.config.max_atr_pct_20 is not None:
+                    atr_mask &= filtered["atr_pct_20"] <= self.config.max_atr_pct_20
+                filtered = filtered[atr_mask]
+        after_atr = len(filtered)
+
+        if self.config.min_relative_strength_index is not None:
+            if "relative_strength_index" not in filtered.columns:
+                LOGGER.warning(
+                    "Filtre force relative active mais colonne relative_strength_index absente; aucun titre retenu."
+                )
+                filtered = filtered.iloc[0:0].copy()
+            else:
+                filtered = filtered[
+                    filtered["relative_strength_index"].notna()
+                    & (filtered["relative_strength_index"] >= self.config.min_relative_strength_index)
+                ]
+        after_relative_strength = len(filtered)
+
+        if self.config.require_above_ma200:
+            required_ma200_cols = {"ma200", "latest_close"}
+            if not required_ma200_cols.issubset(filtered.columns):
+                LOGGER.warning(
+                    "Filtre close>MA200 active mais colonnes requises absentes; aucun titre retenu."
+                )
+                filtered = filtered.iloc[0:0].copy()
+            else:
+                filtered = filtered[filtered["ma200"].notna() & (filtered["latest_close"] > filtered["ma200"])]
+        after_ma200 = len(filtered)
+
+        if self.config.min_high_52w_proximity is not None:
+            if "high_52w_proximity" not in filtered.columns:
+                LOGGER.warning(
+                    "Filtre proximité high 52w active mais colonne high_52w_proximity absente; aucun titre retenu."
+                )
+                filtered = filtered.iloc[0:0].copy()
+            else:
+                filtered = filtered[
+                    filtered["high_52w_proximity"].notna()
+                    & (filtered["high_52w_proximity"] >= self.config.min_high_52w_proximity)
+                ]
+        after_high_52w = len(filtered)
+
+        if self.config.min_weekly_trend_score is not None:
+            if "weekly_trend_score" not in filtered.columns:
+                LOGGER.warning(
+                    "Filtre weekly trend active mais colonne weekly_trend_score absente; aucun titre retenu."
+                )
+                filtered = filtered.iloc[0:0].copy()
+            else:
+                filtered = filtered[
+                    filtered["weekly_trend_score"].notna()
+                    & (filtered["weekly_trend_score"] >= self.config.min_weekly_trend_score)
+                ]
+        after_weekly = len(filtered)
+
         if "liquidity_val" in filtered.columns:
             filtered = filtered[(filtered["liquidity_val"].isna()) | (filtered["liquidity_val"] > self.config.liquidity_threshold)]
         after_score_liquidity = len(filtered)
@@ -543,7 +709,7 @@ class AlphaScanner:
             filtered = filtered[(filtered["missing_days_count"].isna()) | (filtered["missing_days_count"] < self.config.max_missing_days_count)]
 
         LOGGER.info(
-            "Filtres appliques | entree=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_volatilite_relative=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
+            "Filtres appliques | entree=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_volatilite_relative=%s rejet_atr_pct=%s rejet_force_relative=%s rejet_ma200=%s rejet_high_52w=%s rejet_weekly=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
             before_count,
             len(filtered),
             before_count - after_etf_filter,
@@ -551,7 +717,12 @@ class AlphaScanner:
             after_history - after_close,
             after_close - after_market_liquidity,
             after_market_liquidity - after_volatility,
-            after_volatility - after_score_liquidity,
+            after_volatility - after_atr,
+            after_atr - after_relative_strength,
+            after_relative_strength - after_ma200,
+            after_ma200 - after_high_52w,
+            after_high_52w - after_weekly,
+            after_weekly - after_score_liquidity,
             after_score_liquidity - after_anomaly,
             after_anomaly - len(filtered),
         )
@@ -1067,6 +1238,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--liquidity-threshold", type=float, default=None, help="Seuil minimal de liquidité en dollar volume moyen 20j")
     parser.add_argument("--min-close", type=float, default=None, help="Prix minimal de clôture")
     parser.add_argument("--max-volatility-ratio", type=float, default=None, help="Seuil maximal optionnel du ratio de volatilité récente vol10/vol60")
+    parser.add_argument("--min-relative-strength-index", type=float, default=None, help="Force relative minimale vs SPY (100 = performance égale au benchmark)")
+    parser.add_argument("--min-high-52w-proximity", type=float, default=None, help="Proximité minimale du high 52 semaines en ratio close/high_52w")
+    parser.add_argument("--min-weekly-trend-score", type=float, default=None, help="Score trend weekly minimal sur [0,1]")
+    parser.add_argument("--min-atr-pct-20", type=float, default=None, help="ATR20 minimale en pourcentage du prix, ex. 0.02 = 2%%")
+    parser.add_argument("--max-atr-pct-20", type=float, default=None, help="ATR20 maximale en pourcentage du prix, ex. 0.05 = 5%%")
+    parser.add_argument("--require-above-ma200", action="store_true", default=False, help="Exige latest_close > MA200")
     parser.add_argument("--max-anomaly-count", type=int, default=20, help="Nombre maximum d'anomalies accepté par titre")
     parser.add_argument("--sector-cap-ratio", type=float, default=0.30, help="Plafond par secteur, ex. 0.30 = 30%")
     parser.add_argument("--log-level", type=str, default="INFO", help="Niveau de log (DEBUG, INFO, WARNING, ERROR)")
@@ -1081,6 +1258,18 @@ def _build_config_from_args(args: argparse.Namespace) -> AlphaScannerConfig:
         threshold_overrides["min_close"] = args.min_close
     if args.max_volatility_ratio is not None:
         threshold_overrides["max_volatility_ratio"] = args.max_volatility_ratio
+    if args.min_relative_strength_index is not None:
+        threshold_overrides["min_relative_strength_index"] = args.min_relative_strength_index
+    if args.min_high_52w_proximity is not None:
+        threshold_overrides["min_high_52w_proximity"] = args.min_high_52w_proximity
+    if args.min_weekly_trend_score is not None:
+        threshold_overrides["min_weekly_trend_score"] = args.min_weekly_trend_score
+    if args.min_atr_pct_20 is not None:
+        threshold_overrides["min_atr_pct_20"] = args.min_atr_pct_20
+    if args.max_atr_pct_20 is not None:
+        threshold_overrides["max_atr_pct_20"] = args.max_atr_pct_20
+    if args.require_above_ma200:
+        threshold_overrides["require_above_ma200"] = True
 
     common_kwargs = {
         "chunk_size": args.chunk_size,

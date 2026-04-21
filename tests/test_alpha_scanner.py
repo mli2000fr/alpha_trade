@@ -70,8 +70,27 @@ def test_compute_factors_prefers_trending_and_tighter_symbols() -> None:
     assert set(factors["symbol"]) == {"AAA", "BBB"}
     assert 0.0 <= by_symbol.loc["AAA", "trend_score"] <= 1.0
     assert 0.0 <= by_symbol.loc["AAA", "vcp_score"] <= 1.0
+    assert 0.0 <= by_symbol.loc["AAA", "weekly_trend_score"] <= 1.0
+    assert by_symbol.loc["AAA", "atr_pct_20"] > 0.0
     assert by_symbol.loc["AAA", "trend_score"] > by_symbol.loc["BBB", "trend_score"]
+    assert by_symbol.loc["AAA", "weekly_trend_score"] >= by_symbol.loc["BBB", "weekly_trend_score"]
     assert by_symbol.loc["AAA", "latest_close"] > by_symbol.loc["BBB", "latest_close"]
+
+
+def test_compute_factors_exposes_weekly_and_atr_features() -> None:
+    scanner = AlphaScanner(engine=_create_shared_sqlite_engine(), config=AlphaScannerConfig(selection_size=10, max_workers=1))
+    strong_frame, _ = _make_market_frame("AAA", "Technology", drift=0.35, noise_scale=0.01)
+
+    factors = scanner.compute_factors(strong_frame)
+
+    row = factors.to_dict(orient="records")[0]
+    assert row["atr_20"] > 0.0
+    assert 0.0 < row["atr_pct_20"] < 1.0
+    assert row["high_52w_proximity"] > 0.0
+    assert pd.notna(row["weekly_close"])
+    assert pd.notna(row["weekly_ma10"])
+    assert pd.notna(row["weekly_ma30"])
+    assert 0.0 <= row["weekly_trend_score"] <= 1.0
 
 
 def test_merge_scores_falls_back_to_computed_scores_when_auxiliary_scores_are_missing() -> None:
@@ -523,6 +542,99 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
     assert {row[0] for row in candidate_rows} == set(result["symbol"])
     assert all(row[1] is not None and row[2] is not None and row[3] is not None for row in persisted_rows)
     assert legacy_row == ("ZZZ", None, None, None, 0)
+
+
+def test_run_supports_strict_swing_preset_filters() -> None:
+    engine = _create_shared_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_bars_daily (
+                    symbol TEXT NOT NULL,
+                    date DATETIME NOT NULL,
+                    close REAL NOT NULL,
+                    volume REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    PRIMARY KEY(symbol, date)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_scores (
+                    symbol TEXT PRIMARY KEY,
+                    liquidity_val REAL,
+                    relative_strength_index REAL,
+                    total_score REAL,
+                    trend_score REAL,
+                    vcp_score REAL,
+                    final_score REAL,
+                    sector TEXT,
+                    anomaly_count INTEGER,
+                    missing_days_count INTEGER,
+                    is_candidate INTEGER NOT NULL DEFAULT 0,
+                    last_updated_scan DATETIME
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_metadata (
+                    symbol TEXT PRIMARY KEY,
+                    company_name TEXT,
+                    asset_class TEXT,
+                    status TEXT,
+                    tradable BOOLEAN,
+                    bars_available BOOLEAN,
+                    sector TEXT
+                )
+                """
+            )
+        )
+
+        markets: list[pd.DataFrame] = []
+        scores: list[dict[str, object]] = []
+        metadata_rows: list[dict[str, object]] = []
+        definitions = [
+            ("AAA", "Technology", 0.45, 800_000.0),
+            ("BBB", "Finance", 0.30, 800_000.0),
+        ]
+        for symbol, sector, drift, volume in definitions:
+            market_frame, score_row = _make_market_frame(symbol, sector, drift=drift, rows=260, volume=volume, noise_scale=0.02)
+            markets.append(market_frame)
+            score_row["relative_strength_index"] = 110.0 if symbol == "AAA" else 92.0
+            score_row["total_score"] = 95.0 if symbol == "AAA" else 88.0
+            scores.append(score_row)
+            metadata_rows.append(
+                {
+                    "symbol": symbol,
+                    "company_name": f"{symbol} Common Stock",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "sector": sector,
+                }
+            )
+
+        pd.concat(markets, ignore_index=True).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
+        pd.DataFrame(scores).to_sql("stock_scores", conn, if_exists="append", index=False)
+        pd.DataFrame(metadata_rows).to_sql("stock_metadata", conn, if_exists="append", index=False)
+
+    scanner = AlphaScanner(
+        engine=engine,
+        config=AlphaScannerConfig.strict_swing_cash(selection_size=5, chunk_size=2, max_workers=1),
+    )
+
+    result = scanner.run()
+
+    assert list(result["symbol"]) == ["AAA"]
 
 
 

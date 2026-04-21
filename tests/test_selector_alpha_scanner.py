@@ -29,6 +29,12 @@ def test_alpha_scanner_config_strict_swing_cash_uses_shared_profile() -> None:
     assert config.min_close == pytest.approx(10.0)
     assert config.liquidity_threshold == pytest.approx(30_000_000.0)
     assert config.max_volatility_ratio == pytest.approx(0.9)
+    assert config.min_relative_strength_index == pytest.approx(100.0)
+    assert config.min_high_52w_proximity == pytest.approx(0.75)
+    assert config.min_weekly_trend_score == pytest.approx(1.0)
+    assert config.min_atr_pct_20 == pytest.approx(0.015)
+    assert config.max_atr_pct_20 == pytest.approx(0.06)
+    assert config.require_above_ma200 is True
     assert config.selection_size == 42
 
 
@@ -41,6 +47,8 @@ def test_cli_preset_strict_builds_shared_config() -> None:
     assert config.min_close == pytest.approx(10.0)
     assert config.liquidity_threshold == pytest.approx(30_000_000.0)
     assert config.max_volatility_ratio == pytest.approx(0.9)
+    assert config.min_relative_strength_index == pytest.approx(100.0)
+    assert config.require_above_ma200 is True
 
 
 def test_cli_explicit_thresholds_override_strict_preset() -> None:
@@ -54,6 +62,16 @@ def test_cli_explicit_thresholds_override_strict_preset() -> None:
             "50000000",
             "--max-volatility-ratio",
             "0.8",
+            "--min-relative-strength-index",
+            "105",
+            "--min-high-52w-proximity",
+            "0.85",
+            "--min-weekly-trend-score",
+            "0.5",
+            "--min-atr-pct-20",
+            "0.02",
+            "--max-atr-pct-20",
+            "0.04",
         ]
     )
 
@@ -62,6 +80,11 @@ def test_cli_explicit_thresholds_override_strict_preset() -> None:
     assert config.min_close == pytest.approx(12.0)
     assert config.liquidity_threshold == pytest.approx(50_000_000.0)
     assert config.max_volatility_ratio == pytest.approx(0.8)
+    assert config.min_relative_strength_index == pytest.approx(105.0)
+    assert config.min_high_52w_proximity == pytest.approx(0.85)
+    assert config.min_weekly_trend_score == pytest.approx(0.5)
+    assert config.min_atr_pct_20 == pytest.approx(0.02)
+    assert config.max_atr_pct_20 == pytest.approx(0.04)
 
 
 def test_cli_without_preset_keeps_alpha_scanner_defaults() -> None:
@@ -72,6 +95,9 @@ def test_cli_without_preset_keeps_alpha_scanner_defaults() -> None:
     assert config.min_close == pytest.approx(5.0)
     assert config.liquidity_threshold == pytest.approx(20_000_000.0)
     assert config.max_volatility_ratio is None
+    assert config.min_relative_strength_index is None
+    assert config.min_atr_pct_20 is None
+    assert config.require_above_ma200 is False
 
 
 def test_merge_scores_combines_factor_and_aux_scores() -> None:
@@ -167,6 +193,70 @@ def test_apply_filters_rejects_high_or_missing_volatility_ratio_when_enabled() -
                 "symbol": "UNKNOWN", "asset_class": "us_equity", "tradable": True,
                 "history_days": 300, "latest_close": 50.0, "avg_dollar_volume_20d": 30_000_000.0,
                 "volatility_ratio": pd.NA,
+            },
+        ]
+    )
+
+    filtered = scanner.apply_filters(merged_df)
+
+    assert list(filtered["symbol"]) == ["PASS"]
+
+
+def test_apply_filters_supports_explicit_swing_criteria() -> None:
+    scanner = _make_scanner(
+        AlphaScannerConfig(
+            max_volatility_ratio=0.9,
+            min_relative_strength_index=100.0,
+            min_high_52w_proximity=0.75,
+            min_weekly_trend_score=1.0,
+            min_atr_pct_20=0.015,
+            max_atr_pct_20=0.05,
+            require_above_ma200=True,
+        )
+    )
+    merged_df = pd.DataFrame(
+        [
+            {
+                "symbol": "PASS", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 105.0, "avg_dollar_volume_20d": 40_000_000.0,
+                "volatility_ratio": 0.6, "liquidity_val": 40_000_000.0,
+                "relative_strength_index": 110.0, "ma200": 95.0, "high_52w_proximity": 0.84,
+                "weekly_trend_score": 1.0, "atr_pct_20": 0.03,
+            },
+            {
+                "symbol": "LOWRS", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 105.0, "avg_dollar_volume_20d": 40_000_000.0,
+                "volatility_ratio": 0.6, "liquidity_val": 40_000_000.0,
+                "relative_strength_index": 95.0, "ma200": 95.0, "high_52w_proximity": 0.84,
+                "weekly_trend_score": 1.0, "atr_pct_20": 0.03,
+            },
+            {
+                "symbol": "FLAT", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 105.0, "avg_dollar_volume_20d": 40_000_000.0,
+                "volatility_ratio": 0.6, "liquidity_val": 40_000_000.0,
+                "relative_strength_index": 110.0, "ma200": 95.0, "high_52w_proximity": 0.84,
+                "weekly_trend_score": 1.0, "atr_pct_20": 0.005,
+            },
+            {
+                "symbol": "BELOW200", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 90.0, "avg_dollar_volume_20d": 40_000_000.0,
+                "volatility_ratio": 0.6, "liquidity_val": 40_000_000.0,
+                "relative_strength_index": 110.0, "ma200": 95.0, "high_52w_proximity": 0.84,
+                "weekly_trend_score": 1.0, "atr_pct_20": 0.03,
+            },
+            {
+                "symbol": "FARHIGH", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 70.0, "avg_dollar_volume_20d": 40_000_000.0,
+                "volatility_ratio": 0.6, "liquidity_val": 40_000_000.0,
+                "relative_strength_index": 110.0, "ma200": 60.0, "high_52w_proximity": 0.60,
+                "weekly_trend_score": 1.0, "atr_pct_20": 0.03,
+            },
+            {
+                "symbol": "NOWEEK", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 105.0, "avg_dollar_volume_20d": 40_000_000.0,
+                "volatility_ratio": 0.6, "liquidity_val": 40_000_000.0,
+                "relative_strength_index": 110.0, "ma200": 95.0, "high_52w_proximity": 0.84,
+                "weekly_trend_score": 0.5, "atr_pct_20": 0.03,
             },
         ]
     )

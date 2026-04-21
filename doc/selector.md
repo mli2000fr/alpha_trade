@@ -68,6 +68,11 @@ Ce preset applique automatiquement le profil partagé `STRICT_SWING_CASH_FILTERS
 - `min_close = 10`
 - `avg_dollar_volume_20d >= 30_000_000`
 - `max_volatility_ratio = 0.90`
+- `relative_strength_index >= 100`
+- `latest_close > ma200`
+- `latest_close / high_52w >= 0.75`
+- `weekly_trend_score >= 1.0`
+- `atr_pct_20` dans `[1.5 %, 6 %]`
 
 Depuis l'IHM (`Pipeline`), le même comportement peut être activé via la case **`Alpha Scanner — activer le preset strict`** dans les paramètres d'exécution.
 
@@ -131,8 +136,11 @@ Il calcule ensuite des facteurs comme :
 
 - `trend_score`
 - `vcp_score`
+- `atr_20` et `atr_pct_20`
 - moyennes mobiles 50 / 150 / 200 jours
+- structure weekly (`weekly_close`, `weekly_ma10`, `weekly_ma30`, `weekly_trend_score`)
 - `high_52w` / `low_52w`
+- `high_52w_proximity`
 - `volatility_ratio`
 
 Quand `--max-volatility-ratio` (ou `AlphaScannerConfig.max_volatility_ratio`) est renseigné, le scanner exclut ensuite les symboles dont `volatility_ratio > seuil`. Exemple d'usage swing strict petit compte :
@@ -140,6 +148,11 @@ Quand `--max-volatility-ratio` (ou `AlphaScannerConfig.max_volatility_ratio`) es
 - `min_close >= 10`
 - `avg_dollar_volume_20d >= 30_000_000`
 - `volatility_ratio <= 0.90`
+- `relative_strength_index >= 100`
+- `latest_close > ma200`
+- `high_52w_proximity >= 0.75`
+- `weekly_trend_score >= 1.0`
+- `0.015 <= atr_pct_20 <= 0.06`
 
 Pour éviter la duplication, cet exemple correspond désormais au profil partagé `STRICT_SWING_CASH_FILTERS`, consommé via `AlphaScannerConfig.strict_swing_cash()` dans les flows stricts.
 
@@ -170,6 +183,8 @@ Le module met à jour `stock_scores` avec les colonnes avancées comme :
 - `final_score`
 - `sector`
 - drapeaux / colonnes de sélection finale
+
+Les facteurs `atr_pct_20`, `weekly_trend_score` et `high_52w_proximity` sont aujourd'hui utilisés dans le pipeline de sélection en mémoire et dans le résultat retourné par `AlphaScanner`, mais ne sont pas persistés tels quels dans `stock_scores` par défaut.
 
 ---
 
