@@ -58,12 +58,41 @@ L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 
 ### 2.3 Stratégies de trading utilisées
 
+Le système est conçu principalement pour du **swing trading**. Le backtesting permet désormais de simuler explicitement des contraintes réalistes de petit capital Alpaca / compte US :
+
+- **`account_type = margin`** : compte margin simulé ;
+- **`pdt_rule = auto`** : maximum **3 day trades sur 5 jours ouvrés** quand le capital simulé est inférieur à **25 000 $** ;
+- **`account_type = cash`** : pas de règle PDT, mais uniquement du **cash settled** réutilisable après settlement simplifié **T+1** ;
+- **`swing_only = True`** : achat aujourd'hui, revente demain ou plus tard.
+
+Cette API composable permet d'évaluer une stratégie avec **2 000 $** ou un autre petit capital sans surévaluer artificiellement la fréquence de rotation intraday, tout en distinguant proprement :
+
+- le **type de compte**,
+- la **règle réglementaire PDT**,
+- le **style de trading swing**.
+
+Cette logique n'est plus limitée au backtest : le module `execution_engine` applique aussi ces contraintes au moment de la soumission des ordres et de l'armement des sorties.
+
 #### Scanner multi-facteurs (AlphaScanner)
 - **Trend Score** (critères Minervini) : 7 critères techniques (close > MA150, MA150 > MA200, MA200 en hausse, close > MA50, close ≥ 1.25 × low 52w, close ≥ 0.75 × high 52w)
 - **VCP Score** (Volatility Contraction Pattern) : ratio volatilité 10j/60j vs seuil
+- **Filtre de volatilité relative optionnel** : exclusion explicite si `volatility_ratio = vol10 / vol60` dépasse un seuil métier (ex. `0.90`) afin d'éviter les titres en spike de volatilité récent
 - **Score composite** : `50% × (trend+vcp)/2 + 30% × score_screener + 20% × RSI_relatif`
 - **Neutralisation sectorielle** : z-score intra-secteur pour éliminer les biais sectoriels
 - **Winsorisation** : protection contre les outliers (percentiles 1%-99%)
+
+Pour les reruns/backtests "petit compte cash swing" stricts, les seuils durcis utilisés sont :
+
+- `close >= 10 $`
+- `avg_dollar_volume_20d >= 30 M$`
+- `volatility_ratio <= 0.90`
+
+Ces trois filtres visent à réduire les microcaps/penny stocks, améliorer l'exécutabilité réelle et éviter les entrées juste après une explosion de volatilité.
+Ils sont désormais centralisés dans un **profil partagé** (`selector/strict_filter_profiles.py`) pour garantir l'alignement entre :
+
+- le scanner `AlphaScanner`,
+- le backfill point-in-time de `stock_scores_history`,
+- les reruns backtest stricts.
 
 #### Screener de liquidité
 - Pipeline en 3 passes : liquidité (volume × close sur 30j), force relative vs SPY (6 mois), position dans le range 10 ans
@@ -122,6 +151,7 @@ L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 - **Table `portfolio_targets`** : portefeuille cible issu du risk management
 - **Table `broker_positions_snapshots`** : photo des positions broker après chaque run
 - **TCA (Transaction Cost Analysis)** : slippage moyen, max, implementation shortfall agrégé
+- **Rapport de backtest** : exporte aussi des diagnostics métier sur les contraintes de compte (`day trades exécutés`, `sorties same-day bloquées`, `entrées bloquées faute de cash settled`)
 
 ### 2.8 Logs métier
 
@@ -296,6 +326,11 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 8. **Les ordres 4xx du broker ne sont PAS retentés** (erreurs permanentes) ; seuls les 5xx/timeout/réseau sont retentés
 9. **Les positions broker hors cible** (action "investigate") ne sont pas soldées automatiquement pour éviter les erreurs
 10. **Le score de conviction combine** score quantitatif (40%) et probabilité prédite par le modèle ML (60%)
+11. **En backtest, un compte margin peut être soumis à la règle PDT** si `pdt_rule=auto` et `equity < 25k`, avec blocage du 4e day trade sur 5 séances glissantes
+12. **En backtest, l'option `swing_only` peut interdire toute revente le jour même**
+13. **En backtest, un cash account n'utilise que le cash settled** et retarde la réutilisation des fonds après vente jusqu'au settlement `T+1`
+14. **En exécution, un compte cash ne peut pas soumettre d'achats au-delà du cash settled disponible**
+15. **En exécution, `swing_only` et la contrainte PDT peuvent différer l'armement des ordres de sortie le jour même**
 
 ---
 
@@ -313,6 +348,20 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 | **Pas de short selling** | Uniquement des positions long | Limitation de design |
 | **Pas de streaming temps réel** | Polling périodique (2s) pour les fills | Limitation de design |
 | **Pas de notification externe** | Pas d'email/SMS/Slack, logs fichier uniquement | Limitation |
+
+Concernant les contraintes petit capital simulées en backtest :
+
+- la règle `PDT` est modélisée sur la base d'une fenêtre glissante de **5 séances de backtest** ;
+- le paramètre `pdt_rule=auto` n'a d'effet que sur un **compte margin** ; sur un **compte cash**, la règle est neutralisée ;
+- l'option `swing_only` peut être combinée aussi bien avec un compte `margin` qu'avec un compte `cash` ;
+- le mode `cash` repose sur un settlement simplifié **T+1** pour rester testable et lisible ;
+- ces modes s'appliquent au moteur de backtest et n'altèrent pas l'exécution live/paper réelle du broker.
+
+Concernant l'exécution réelle/paper :
+
+- le moteur tient compte du snapshot broker (`buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) ;
+- un compte `margin` et un compte `cash` peuvent donc produire des résultats d'exécution très différents à capital nominal identique ;
+- cet écart est attendu, car la mécanique de capital disponible n'est pas la même.
 
 ---
 

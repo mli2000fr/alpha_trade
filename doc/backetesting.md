@@ -4,7 +4,7 @@
 
 Ce document résume l'intégration du module `backtesting/` et les commandes utiles pour :
 
-- lancer un backtest vectorbt,
+- lancer un backtest journalier cohérent avec exécution au prochain `open`,
 - reconstruire l'historique de `stock_scores_history`,
 - comprendre pourquoi un backtest peut produire `0 trade`,
 - exécuter un vrai backtest exploitable sur une période longue.
@@ -22,7 +22,8 @@ Ce document résume l'intégration du module `backtesting/` et les commandes uti
 | `backtesting/cli.py` | CLI argparse : parsing, orchestration |
 | `backtesting/data_loader.py` | Chargement OHLCV, scores, sentiment, prédictions ML |
 | `backtesting/signal_replay.py` | Reconstruction des signaux de conviction jour par jour |
-| `backtesting/simulator.py` | Moteur vectorbt avec TP + trailing stop |
+| `backtesting/simulator.py` | Moteur de backtest journalier avec TP + trailing stop |
+| `backtesting/trading_constraints.py` | Contraintes de compte composables : `account_type`, `pdt_rule`, `swing_only` |
 | `backtesting/report.py` | Rapport : Sharpe, Sortino, CAGR, drawdown, win rate, profit factor |
 | `backtesting/backfill_scores_history.py` | Backfill point-in-time de `stock_scores_history` |
 | `tests/test_backtesting.py` | Tests unitaires backtesting |
@@ -141,6 +142,62 @@ python -m backtesting run --start 2016-01-01 --end 2026-04-20 --equity 100000
 python -m backtesting run --start 2020-01-01 --end 2026-04-20 --equity 50000 --tp 0.10 --ts 0.04 --max-positions 15
 ```
 
+### Contraintes de compte petit capital / PDT
+
+Le backtest expose désormais une API plus propre pour simuler les contraintes de compte :
+
+- `--account-type margin|cash`
+- `--pdt-rule auto|off`
+- `--swing-only`
+
+Cette séparation permet de distinguer :
+
+- le **type de compte** (`margin` vs `cash`) ;
+- la **règle réglementaire PDT** (`auto` vs `off`) ;
+- le **style de trading** (`--swing-only`).
+
+Comportements principaux :
+
+- `--account-type margin --pdt-rule auto` : applique la règle PDT si l'equity initiale est `< 25 000 $` ;
+- `--account-type margin --pdt-rule off` : baseline non contraint côté PDT ;
+- `--swing-only` : interdit toute sortie le jour même de l'entrée, sans modifier le prix d'entrée ;
+- `--account-type cash` : désactive de facto la règle PDT et n'autorise que le cash settled, avec settlement simplifié en `T+1`.
+
+Convention d'exécution du moteur :
+
+- le signal est daté en `J` ;
+- l'entrée est exécutée au **vrai `open` de la séance suivante (`J+1`)** ;
+- les TP / trailing stops sont évalués à partir de cette séance d'exécution ;
+- `--swing-only` bloque uniquement les sorties same-day sur cette séance d'entrée.
+
+Combinaisons utiles :
+
+- `margin + auto + no swing` : simulation la plus proche d'un petit compte margin soumis à PDT ;
+- `margin + off + swing_only` : swing strict sans règle PDT ;
+- `cash + off + swing_only` : petit compte cash conservateur ;
+- `cash + off + no swing` : cash account sans PDT, mais avec réutilisation différée du capital après vente.
+
+Exemples :
+
+```powershell
+# Compte < 25k avec règle PDT : max 3 day trades / 5 séances
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule auto
+
+# Mode swing strict : jamais de revente le jour même
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule off --swing-only
+
+# Cash account : pas de PDT, mais réutilisation du capital seulement après settlement T+1
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash
+
+# Cash + swing : combine cash settled T+1 et interdiction des sorties same-day
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash --swing-only
+```
+
+Remarques pratiques :
+
+- `--account-type cash` neutralise la règle PDT, même si `--pdt-rule auto` est laissé par défaut ;
+- `--swing-only` correspond bien à l'idée « signal aujourd'hui, achat à la prochaine ouverture, vente le lendemain ou plus tard ».
+
 ### Sans sauvegarde des artefacts
 
 ```powershell
@@ -172,6 +229,7 @@ Dans `artifacts/backtesting/` :
 
 - `equity_curve.png` — courbe de valeur du portefeuille
 - `trades.csv` — liste détaillée des trades
+- `report.json` — résumé structuré incluant désormais les diagnostics de contraintes (`blocked_pdt_day_trades`, `blocked_same_day_exits`, `blocked_cash_entries`, `executed_day_trades`)
 
 ---
 
@@ -317,8 +375,8 @@ python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --
 Exemple optimal pour une période cible :
 
 ```powershell
-python -m backtesting run --start 2025-04-10 --end 2026-04-20 --equity 100000 --ml-mode off --sentiment-mode auto
-python -u -m backtesting backfill-scores-history --start 2025-04-10 --end 2026-04-16 --screener-workers 4 --chunk-size 2000
+python -m backtesting run --start 2025-04-21 --end 2026-04-20 --equity 100000 --ml-mode off --sentiment-mode auto
+python -u -m backtesting backfill-scores-history --start 2025-04-21 --end 2026-04-16 --screener-workers 4 --chunk-size 2000
 ```
 
 ---
@@ -374,6 +432,12 @@ PY
 ```powershell
 python -m pytest tests/test_backtesting.py tests/test_backfill_scores_history.py -q -o addopts=""
 ```
+
+Les tests backtesting couvrent désormais aussi :
+
+- le blocage du 4e day trade avec `account_type=margin` et `pdt_rule=auto` ;
+- l'interdiction de sortie le jour même avec `--swing-only` ;
+- la consommation de cash settled uniquement avec `account_type=cash`.
 
 ---
 

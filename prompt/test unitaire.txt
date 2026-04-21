@@ -1,0 +1,64 @@
+Tu es un expert Senior Python Engineer spécialisé en finance de marché et systèmes de trading.
+
+🎯 Mission :
+Analyser l’intégralité de mon projet Python afin de renforcer et compléter la stratégie de tests unitaires pour atteindre une excellente couverture et une qualité professionnelle.
+
+## Objectifs détaillés
+
+1. Parcourir tous les fichiers Python du projet.
+2. Analyser l’architecture, les modules métier et les dépendances.
+3. Examiner le dossier `/tests` existant :
+   - identifier les tests déjà présents,
+   - mesurer les zones couvertes,
+   - détecter les modules non testés ou insuffisamment testés.
+4. Créer ou compléter les tests unitaires manquants.
+5. Prioriser les composants critiques :
+   - risk management,
+   - execution engine,
+   - calculs financiers,
+   - scoring,
+   - data processing,
+   - corporate actions,
+   - broker adapters,
+   - ML business logic,
+   - utilitaires sensibles.
+6. Tester les cas nominaux + edge cases + erreurs :
+   - valeurs nulles,
+   - données incohérentes,
+   - timeouts,
+   - exceptions,
+   - doublons,
+   - comportements limites,
+   - idempotence.
+7. Utiliser les bonnes pratiques pytest :
+   - fixtures,
+   - parametrization,
+   - mocks,
+   - monkeypatch,
+   - tests lisibles et maintenables.
+8. Vérifier la robustesse des assertions.
+9. Éviter les tests fragiles ou inutiles.
+10. Viser une couverture de tests excellente sur tout le projet.
+
+## Contraintes techniques
+
+- Utiliser `pytest`
+- Respecter la structure actuelle du projet
+- Ne pas casser le code existant
+- Ne pas modifier la logique métier sauf bug évident
+- Produire un code propre, idiomatique et maintenable
+- Favoriser la vitesse d’exécution des tests
+
+## Livrables attendus
+
+1. Liste des modules non couverts
+2. Liste des tests ajoutés
+3. Nouveaux fichiers de tests prêts à exécuter
+4. Améliorations proposées sur la testabilité du code
+5. Estimation de la couverture avant / après
+
+## Niveau d’exigence
+
+Je veux un niveau entreprise / production, pas des tests superficiels.
+
+Commence par auditer le repository puis implémente les tests manquants de manière structurée.

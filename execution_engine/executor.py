@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
@@ -50,6 +51,22 @@ from service.alpaca.trading_client import BrokerApiError
 LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(slots=True)
+class _AccountConstraintState:
+    account_type: str
+    effective_pdt_rule: str
+    swing_only: bool
+    equity: float
+    buying_power_available: float
+    settled_cash_available: float
+    daytrade_count: int
+    remaining_day_trade_slots: int
+
+    @property
+    def pdt_active(self) -> bool:
+        return self.effective_pdt_rule == "auto"
+
+
 class ProductionExecutor:
     """Orchestrateur de l execution."""
 
@@ -80,6 +97,7 @@ class ProductionExecutor:
         metrics: dict[str, int] = {
             "targets": 0, "submitted": 0, "filled": 0, "failed": 0, "skipped": 0,
             "rebalance_submitted": 0, "rebalance_failed": 0,
+            "constraint_blocked": 0, "children_deferred": 0,
         }
         events: list[ExecutionEvent] = []
         fills: list[ExecutionFill] = []
@@ -134,6 +152,26 @@ class ProductionExecutor:
 
             events.append(make_event(exec_run_id, EventType.PRECHECK_OK, f"{len(targets)} targets loaded"))
 
+            account_state = self._build_account_constraint_state()
+            events.append(make_event(
+                exec_run_id,
+                EventType.ACCOUNT_CONSTRAINT_APPLIED,
+                (
+                    f"Account constraints: type={account_state.account_type} "
+                    f"pdt={account_state.effective_pdt_rule} swing_only={account_state.swing_only}"
+                ),
+                payload={
+                    "account_type": account_state.account_type,
+                    "effective_pdt_rule": account_state.effective_pdt_rule,
+                    "swing_only": account_state.swing_only,
+                    "equity": account_state.equity,
+                    "buying_power_available": account_state.buying_power_available,
+                    "settled_cash_available": account_state.settled_cash_available,
+                    "daytrade_count": account_state.daytrade_count,
+                    "remaining_day_trade_slots": account_state.remaining_day_trade_slots,
+                },
+            ))
+
             # Phase 2b — Corporate actions : alerter sur splits/dividendes pending
             try:
                 from corporate_actions.db_io import CorporateActionRepository
@@ -185,6 +223,9 @@ class ProductionExecutor:
             submitted_orders: dict[str, tuple[OrderIntent, BrokerOrder]] = {}
             batch_count = 0
             for intent in new_intents:
+                if not self._reserve_account_capacity_for_intent(intent, account_state, exec_run_id, events, metrics):
+                    continue
+
                 # Kill switch
                 if self._cfg.enable_kill_switch and consecutive_failures >= self._cfg.max_consecutive_failures:
                     events.append(make_event(exec_run_id, EventType.KILL_SWITCH_ACTIVATED,
@@ -303,7 +344,7 @@ class ProductionExecutor:
                             ))
 
                         # Phase 6 — Submit children (synthetic bracket)
-                        child_events = self._submit_children(intent, filled_order, exec_run_id)
+                        child_events = self._submit_children(intent, filled_order, exec_run_id, account_state=account_state, metrics=metrics)
                         events.extend(child_events)
 
                         submitted_orders[intent_id] = (intent, filled_order)
@@ -338,7 +379,7 @@ class ProductionExecutor:
                         # Vente / achat automatique si auto_rebalance_on_reconcile
                         if self._cfg.auto_rebalance_on_reconcile:
                             rebalance_events = self._submit_rebalance_orders(
-                                action_diffs, exec_run_id, targets, metrics,
+                                action_diffs, exec_run_id, targets, metrics, account_state,
                             )
                             events.extend(rebalance_events)
                     else:
@@ -383,6 +424,108 @@ class ProductionExecutor:
     # Private
     # ------------------------------------------------------------------
 
+    def _build_account_constraint_state(self) -> _AccountConstraintState:
+        if self._cfg.dry_run:
+            equity = float(self._cfg.simulated_account_equity)
+            settled_cash = equity
+            buying_power = equity * self._cfg.simulated_margin_buying_power_multiplier if self._cfg.account_type == "margin" else settled_cash
+            daytrade_count = 0
+        else:
+            snapshot = self._broker.get_account_snapshot()
+            equity = self._safe_float(snapshot.get("equity") or snapshot.get("portfolio_value"), default=0.0)
+            settled_cash = self._safe_float(
+                snapshot.get("non_marginable_buying_power") if self._cfg.account_type == "cash" else snapshot.get("cash"),
+                default=0.0,
+            )
+            if settled_cash <= 0:
+                settled_cash = self._safe_float(snapshot.get("cash"), default=0.0)
+            buying_power = self._safe_float(
+                snapshot.get("buying_power") if self._cfg.account_type == "margin" else snapshot.get("non_marginable_buying_power"),
+                default=settled_cash if self._cfg.account_type == "cash" else equity,
+            )
+            if self._cfg.account_type == "cash":
+                buying_power = settled_cash
+            daytrade_count = int(self._safe_float(snapshot.get("daytrade_count"), default=0.0))
+
+        remaining_slots = max(self._cfg.max_day_trades - daytrade_count, 0) if self._cfg.applies_pdt_limit(equity) else 0
+        return _AccountConstraintState(
+            account_type=self._cfg.account_type,
+            effective_pdt_rule=self._cfg.effective_pdt_rule,
+            swing_only=self._cfg.swing_only,
+            equity=equity,
+            buying_power_available=max(buying_power, 0.0),
+            settled_cash_available=max(settled_cash, 0.0),
+            daytrade_count=max(daytrade_count, 0),
+            remaining_day_trade_slots=remaining_slots,
+        )
+
+    @staticmethod
+    def _safe_float(value: object, *, default: float = 0.0) -> float:
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return default
+
+    def _estimate_intent_notional(self, intent: OrderIntent) -> float:
+        price = intent.limit_price if intent.limit_price is not None else intent.decision_price
+        return max(float(intent.qty) * max(float(price), 0.0), 0.0)
+
+    def _reserve_account_capacity_for_intent(
+        self,
+        intent: OrderIntent,
+        account_state: _AccountConstraintState,
+        exec_run_id: str,
+        events: list[ExecutionEvent],
+        metrics: dict[str, int],
+    ) -> bool:
+        if intent.side != "buy":
+            return True
+
+        estimated_notional = self._estimate_intent_notional(intent)
+        available_budget = (
+            account_state.settled_cash_available
+            if account_state.account_type == "cash"
+            else account_state.buying_power_available
+        )
+        if estimated_notional <= available_budget + 1e-9:
+            if account_state.account_type == "cash":
+                account_state.settled_cash_available = max(account_state.settled_cash_available - estimated_notional, 0.0)
+            account_state.buying_power_available = max(account_state.buying_power_available - estimated_notional, 0.0)
+            return True
+
+        metrics["skipped"] += 1
+        metrics["constraint_blocked"] += 1
+        events.append(make_event(
+            exec_run_id,
+            EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT,
+            (
+                f"Blocked by account constraints: {intent.symbol} requires ~{estimated_notional:.2f}, "
+                f"available={available_budget:.2f} ({account_state.account_type})"
+            ),
+            symbol=intent.symbol,
+            intent_id=intent.intent_id,
+            payload={
+                "account_type": account_state.account_type,
+                "estimated_notional": estimated_notional,
+                "available_budget": available_budget,
+                "effective_pdt_rule": account_state.effective_pdt_rule,
+                "swing_only": account_state.swing_only,
+            },
+        ))
+        return False
+
+    def _should_defer_children(
+        self,
+        account_state: _AccountConstraintState,
+    ) -> tuple[bool, str | None]:
+        if account_state.swing_only:
+            return True, "swing_only"
+        if account_state.pdt_active:
+            if account_state.remaining_day_trade_slots <= 0:
+                return True, "pdt_limit"
+            account_state.remaining_day_trade_slots -= 1
+        return False, None
+
     def _poll_until_terminal(self, broker_order_id: str, intent_id: str, exec_run_id: str) -> BrokerOrder | None:
         deadline = time.monotonic() + self._cfg.fill_timeout_seconds
         while time.monotonic() < deadline:
@@ -414,11 +557,38 @@ class ProductionExecutor:
             implementation_shortfall=ishort,
         )
 
-    def _submit_children(self, parent: OrderIntent, filled_order: BrokerOrder, exec_run_id: str) -> list[ExecutionEvent]:
+    def _submit_children(
+        self,
+        parent: OrderIntent,
+        filled_order: BrokerOrder,
+        exec_run_id: str,
+        *,
+        account_state: _AccountConstraintState,
+        metrics: dict[str, int],
+    ) -> list[ExecutionEvent]:
         events: list[ExecutionEvent] = []
         fill_qty = filled_order.filled_qty
         fill_price = filled_order.avg_fill_price or parent.decision_price
         if fill_qty <= 0:
+            return events
+
+        defer_children, reason = self._should_defer_children(account_state)
+        if defer_children:
+            metrics["children_deferred"] += 1
+            events.append(make_event(
+                exec_run_id,
+                EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT,
+                f"Children deferred for {parent.symbol} due to {reason}",
+                symbol=parent.symbol,
+                intent_id=parent.intent_id,
+                payload={
+                    "reason": reason,
+                    "account_type": account_state.account_type,
+                    "effective_pdt_rule": account_state.effective_pdt_rule,
+                    "swing_only": account_state.swing_only,
+                    "remaining_day_trade_slots": account_state.remaining_day_trade_slots,
+                },
+            ))
             return events
 
         tp_intent = build_take_profit_intent(parent, fill_qty, fill_price, self._cfg)
@@ -449,6 +619,7 @@ class ProductionExecutor:
         exec_run_id: str,
         targets: list,
         metrics: dict[str, int],
+        account_state: _AccountConstraintState,
     ) -> list[ExecutionEvent]:
         """
         Soumet des ordres de vente (sell_excess) ou d'achat (buy_more)
@@ -494,6 +665,10 @@ class ProductionExecutor:
                     broker_mode=self._cfg.broker_mode,
                 )
                 action_label = f"BUY MORE {diff.symbol}: +{qty:.0f} shares (broker={diff.broker_qty:.0f} < cible={diff.target_qty})"
+
+                if not self._reserve_account_capacity_for_intent(intent, account_state, exec_run_id, events, metrics):
+                    LOGGER.info("Rebalance buy blocked by account constraints: %s", diff.symbol)
+                    continue
 
             LOGGER.info("Rebalance: %s", action_label)
 

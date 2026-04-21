@@ -42,6 +42,9 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
         execution_run_id="risk-123",
         allow_outside_rth=True,
         auto_rebalance=True,
+        execution_account_type="cash",
+        execution_pdt_rule="auto",
+        execution_swing_only=True,
     )
 
     risk_command = build_pipeline_command("risk_management", options)
@@ -58,6 +61,11 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert execution_command[-2:] == ["--account", "test1"]
     assert "--allow-outside-rth" in execution_command
     assert "--auto-rebalance" in execution_command
+    assert "--account-type" in execution_command
+    assert execution_command[execution_command.index("--account-type") + 1] == "cash"
+    assert "--pdt-rule" in execution_command
+    assert execution_command[execution_command.index("--pdt-rule") + 1] == "auto"
+    assert "--swing-only" in execution_command
     assert "risk-123" in execution_command
 
     assert ca_apply_command[-2:] == ["--account", "test1"]
@@ -71,6 +79,20 @@ def test_build_pipeline_command_omits_account_for_global_steps() -> None:
     command = build_pipeline_command("stock_screener", options)
 
     assert command == [command[0], "-u", "-m", "screener.stock_screener"]
+
+
+def test_build_pipeline_command_alpha_scanner_can_enable_strict_preset() -> None:
+    strict_command = build_pipeline_command(
+        "alpha_scanner",
+        PipelineLaunchOptions(alpha_scanner_use_strict_preset=True),
+    )
+    default_command = build_pipeline_command(
+        "alpha_scanner",
+        PipelineLaunchOptions(alpha_scanner_use_strict_preset=False),
+    )
+
+    assert strict_command == [strict_command[0], "-u", "-m", "selector.alpha_scanner", "--preset", "strict"]
+    assert default_command == [default_command[0], "-u", "-m", "selector.alpha_scanner"]
 
 
 
@@ -102,6 +124,18 @@ def test_build_pipeline_command_ml_steps() -> None:
 
     assert train_cmd == [train_cmd[0], "-u", "-m", "modelFactory", "--mode", "train", "--include-sentiment", "--accelerator", "gpu"]
     assert predict_cmd == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict", "--accelerator", "gpu"]
+
+
+def test_build_pipeline_command_import_news() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+    )
+
+    command = build_pipeline_command("import_news", options)
+
+    assert command[:3] == [command[0], "-u", str(PROJECT_ROOT / "event_sentiment" / "importe_news.py")]
+    assert command[-4:] == ["--start-date", "2026-04-01", "--end-date", "2026-04-15"]
 
 
 def test_run_pipeline_step_streams_logs_via_callback(monkeypatch) -> None:

@@ -1,0 +1,47 @@
+{
+  "summary": {
+    "initial_equity": 2000.0,
+    "final_value": 2805.1858008250056,
+    "total_return_pct": 40.25929004125028,
+    "cagr_pct": 314.10728657127754,
+    "sharpe_ratio": 2.5725956300578607,
+    "sortino_ratio": 6.030296272714267,
+    "max_drawdown_pct": 8.525747135856044,
+    "total_trades": 51,
+    "win_rate_pct": 52.94117647058824,
+    "avg_trade_duration_days": 1.9411764705882353,
+    "profit_factor": 1.7733979991885267
+  },
+  "diagnostics": {
+    "blocked_same_day_exits": 32,
+    "blocked_pdt_day_trades": 0,
+    "blocked_cash_entries": 0,
+    "executed_day_trades": 0
+  },
+  "filters": {
+    "min_close": 10.0,
+    "min_avg_dollar_volume_20d": 30000000.0,
+    "max_volatility_ratio": 0.9
+  },
+  "filtered_score_rows": 2662,
+  "filtered_days": 60,
+  "selected_entries": 120,
+  "top3_trades_share_pct": 67.07853330571774,
+  "top3_symbols_share_pct": 92.39521058257272,
+  "top_symbols_pnl": {
+    "HSAI": 401.494277,
+    "GEO": 167.169098,
+    "DFNS": 122.52765,
+    "FUBO": 122.397848,
+    "RKLB": 70.467684,
+    "AXSM": 33.936021,
+    "WGS": 2.954518,
+    "RGTI": -7.847038,
+    "QURE": -15.415484,
+    "BROS": -45.405735
+  },
+  "median_trade_pnl": 6.646387499999946,
+  "non_positive_trade_pct": 47.05882352941176,
+  "unique_symbols": 12,
+  "report_path": "prompt\\fix_swing\\cash_eq2000_mp2_filtered_f2_oos_2025Q1_strict\\report.json"
+}

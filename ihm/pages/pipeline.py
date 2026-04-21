@@ -1,6 +1,8 @@
 """ihm/pages/pipeline.py — Vue séquentielle et pilotage asynchrone du pipeline métier."""
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import date, timedelta
 from typing import Any, cast
 
 import pandas as pd
@@ -8,6 +10,11 @@ import streamlit as st
 
 from ihm.components.metrics import format_duration_hhmmss, to_int
 from ihm.pages import run_page_if_standalone
+from ihm.services.account_defaults import (
+    PDT_EQUITY_THRESHOLD,
+    PipelineExecutionDefaults,
+    get_pipeline_execution_defaults,
+)
 from ihm.services.db import get_runtime_db_config
 from ihm.services.pipeline_runner import (
     PipelineLaunchOptions,
@@ -33,6 +40,12 @@ LOG_FILTER_KEY = "ihm_pipeline_log_filter"
 PENDING_SELECTED_RUN_KEY = "ihm_pipeline_pending_selected_run_id"
 PENDING_COMPARE_RUNS_KEY = "ihm_pipeline_pending_compare_run_ids"
 TAIL_LINES = 250
+EXECUTION_DEFAULTS_ACCOUNT_KEY = "pipeline_execution_defaults_applied_account_id"
+ALPHA_SCANNER_PRESET_PREFS_KEY = "pipeline_alpha_scanner_strict_preset_by_account"
+ALPHA_SCANNER_PRESET_LAST_ACCOUNT_KEY = "pipeline_alpha_scanner_strict_preset_last_account"
+ALPHA_SCANNER_PRESET_WIDGET_KEY = "pipeline_alpha_scanner_use_strict_preset"
+IMPORT_NEWS_START_DATE_KEY = "pipeline_import_news_start_date"
+IMPORT_NEWS_END_DATE_KEY = "pipeline_import_news_end_date"
 
 
 def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
@@ -55,8 +68,87 @@ def _render_log_block(title: str, content: str, *, key: str, expanded: bool = Fa
             st.info("Aucun log disponible pour le moment. Le contenu apparaitra ici des que le processus ecrira sur stdout/stderr.")
 
 
+def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecutionDefaults | None:
+    cleaned_account_id = (selected_account_id or "").strip() or None
+    if cleaned_account_id is None:
+        return None
+
+    try:
+        defaults = get_pipeline_execution_defaults(cleaned_account_id)
+    except Exception:
+        st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
+        return None
+
+    if defaults is None:
+        st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
+        return None
+
+    account_changed = st.session_state.get(EXECUTION_DEFAULTS_ACCOUNT_KEY) != cleaned_account_id
+    if defaults.account_type in {"margin", "cash"} and (
+        account_changed or "pipeline_execution_account_type" not in st.session_state
+    ):
+        st.session_state["pipeline_execution_account_type"] = defaults.account_type
+    if defaults.pdt_rule in {"auto", "off"} and (
+        account_changed or "pipeline_execution_pdt_rule" not in st.session_state
+    ):
+        st.session_state["pipeline_execution_pdt_rule"] = defaults.pdt_rule
+    if defaults.swing_only is not None and (
+        account_changed or "pipeline_execution_swing_only" not in st.session_state
+    ):
+        st.session_state["pipeline_execution_swing_only"] = defaults.swing_only
+
+    st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
+    return defaults
+
+
+def _build_execution_prefill_caption(defaults: PipelineExecutionDefaults | None) -> str | None:
+    if defaults is None:
+        return None
+
+    notes: list[str] = []
+    if defaults.account_type:
+        notes.append(f"type de compte prérempli via broker : `{defaults.account_type}`")
+    if defaults.pdt_rule:
+        notes.append(f"règle PDT préremplie : `{defaults.pdt_rule}`")
+    if defaults.equity is not None:
+        notes.append(f"equity broker ≈ `{defaults.equity:,.2f}` (seuil PDT `{PDT_EQUITY_THRESHOLD:,.0f}`)")
+    notes.append("`swing only` reste manuel car ce choix ne se déduit pas fiablement du seul montant du compte")
+    return " | ".join(notes)
+
+
+def _normalize_alpha_scanner_preset_account_bucket(account_id: str | None) -> str:
+    cleaned = (account_id or "").strip()
+    return cleaned or "default"
+
+
+def _sync_alpha_scanner_strict_preset_preference(
+    selected_account_id: str | None,
+    session_state: dict[str, Any],
+) -> bool:
+    bucket = _normalize_alpha_scanner_preset_account_bucket(selected_account_id)
+    prefs_raw = session_state.get(ALPHA_SCANNER_PRESET_PREFS_KEY)
+    prefs = dict(prefs_raw) if isinstance(prefs_raw, dict) else {}
+    last_bucket = session_state.get(ALPHA_SCANNER_PRESET_LAST_ACCOUNT_KEY)
+
+    if last_bucket != bucket:
+        restored_value = bool(prefs.get(bucket, False))
+        session_state[ALPHA_SCANNER_PRESET_WIDGET_KEY] = restored_value
+        session_state[ALPHA_SCANNER_PRESET_LAST_ACCOUNT_KEY] = bucket
+        prefs.setdefault(bucket, restored_value)
+        session_state[ALPHA_SCANNER_PRESET_PREFS_KEY] = prefs
+        return restored_value
+
+    current_value = bool(session_state.get(ALPHA_SCANNER_PRESET_WIDGET_KEY, prefs.get(bucket, False)))
+    prefs[bucket] = current_value
+    session_state[ALPHA_SCANNER_PRESET_PREFS_KEY] = prefs
+    session_state[ALPHA_SCANNER_PRESET_LAST_ACCOUNT_KEY] = bucket
+    return current_value
+
+
 def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
     selected_account_id = cast(str | None, st.session_state.get("selected_account_id"))
+    execution_defaults = _apply_execution_prefills(selected_account_id)
+    alpha_scanner_strict_default = _sync_alpha_scanner_strict_preset_preference(selected_account_id, st.session_state)
 
     with st.expander("⚙️ Paramètres d'exécution", expanded=True):
         st.caption(
@@ -121,6 +213,71 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_auto_rebalance",
             )
 
+        exec_col1, exec_col2, exec_col3 = st.columns(3)
+        st.warning(
+            "⚠️ différence potentiellement forte entre margin et cash\n\n"
+            "- `margin` utilise le buying power broker ; `cash` se limite au cash settled / non-marginable buying power.\n"
+            "- À equity identique, cela peut changer fortement le nombre d'ordres soumis et la capacité de rebalancing.\n"
+            "- Sur un compte `margin` < 25k, la logique PDT peut différer les sorties le jour même ; `swing only` force aussi ce comportement.\n"
+            "- Résultat : les fills, les exits armés (TP/TS) et donc les performances observées peuvent diverger fortement entre `margin` et `cash`."
+        )
+        prefill_caption = _build_execution_prefill_caption(execution_defaults)
+        if prefill_caption:
+            st.caption(prefill_caption)
+        with exec_col1:
+            execution_account_type = cast(
+                str,
+                st.selectbox(
+                    "Execution — type de compte",
+                    options=["margin", "cash"],
+                    index=["margin", "cash"].index(
+                        cast(str, st.session_state.get("pipeline_execution_account_type", "margin"))
+                        if st.session_state.get("pipeline_execution_account_type", "margin") in {"margin", "cash"}
+                        else "margin"
+                    ),
+                    key="pipeline_execution_account_type",
+                    help="`margin` utilise le buying power ; `cash` utilise uniquement le cash settled disponible.",
+                ),
+            )
+        with exec_col2:
+            execution_pdt_rule = cast(
+                str,
+                st.selectbox(
+                    "Execution — règle PDT",
+                    options=["auto", "off"],
+                    index=["auto", "off"].index(
+                        cast(str, st.session_state.get("pipeline_execution_pdt_rule", "auto"))
+                        if st.session_state.get("pipeline_execution_pdt_rule", "auto") in {"auto", "off"}
+                        else "auto"
+                    ),
+                    key="pipeline_execution_pdt_rule",
+                    help="`auto` applique la règle PDT sur un compte margin < 25k ; `off` la neutralise côté exécution.",
+                ),
+            )
+        with exec_col3:
+            execution_swing_only = st.checkbox(
+                "Execution — swing only",
+                value=bool(st.session_state.get("pipeline_execution_swing_only", False)),
+                key="pipeline_execution_swing_only",
+                help="Si coché, le moteur diffère l'armement des sorties le jour même du fill.",
+            )
+
+        effective_execution_pdt_rule = "off" if execution_account_type == "cash" else execution_pdt_rule
+        constraint_notes = [
+            f"Type de compte : `{execution_account_type}`",
+            f"Règle PDT effective : `{effective_execution_pdt_rule}`",
+            f"Swing only : `{bool(execution_swing_only)}`",
+        ]
+        if execution_account_type == "cash":
+            constraint_notes.append("En `cash`, le moteur se base sur le cash settled / non-marginable buying power.")
+        else:
+            constraint_notes.append("En `margin`, le moteur se base sur le buying power broker.")
+        if effective_execution_pdt_rule == "auto":
+            constraint_notes.append("Si l'equity broker est < 25k, le quota de day trades peut différer les exits le jour même.")
+        if execution_swing_only:
+            constraint_notes.append("Les children TP/TS sont différés le jour même du fill.")
+        st.info(" | ".join(constraint_notes))
+
         ml_col1, ml_col2 = st.columns([2, 3])
         with ml_col1:
             ml_accelerator = cast(
@@ -144,6 +301,19 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             else:
                 st.info("Aucun GPU CUDA détecté dans l'environnement de l'IHM : le mode `auto` retombera sur CPU.")
 
+        alpha_scanner_use_strict_preset = st.checkbox(
+            "Alpha Scanner — activer le preset strict",
+            value=bool(alpha_scanner_strict_default),
+            key=ALPHA_SCANNER_PRESET_WIDGET_KEY,
+            help="Ajoute `--preset strict` lors du lancement IHM de l'étape Alpha Scanner et du workflow complet.",
+        )
+        _sync_alpha_scanner_strict_preset_preference(selected_account_id, st.session_state)
+        if alpha_scanner_use_strict_preset:
+            st.caption(
+                "Le workflow IHM lancera `selector.alpha_scanner --preset strict` : "
+                "`min_close=10`, `ADV20>=30M`, `max_volatility_ratio<=0.90`."
+            )
+
         live_confirmed = True
         if execution_mode == "live":
             st.warning("Mode LIVE sélectionné : cette action peut envoyer de vrais ordres chez le broker.")
@@ -157,11 +327,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         PipelineLaunchOptions(
             account_id=selected_account_id,
             trade_date=trade_date,
+            alpha_scanner_use_strict_preset=bool(alpha_scanner_use_strict_preset),
             risk_account_equity=float(risk_account_equity),
             execution_mode=cast(Any, execution_mode),
             execution_run_id=execution_run_id,
             allow_outside_rth=bool(allow_outside_rth),
             auto_rebalance=bool(auto_rebalance),
+            execution_account_type=cast(Any, execution_account_type),
+            execution_pdt_rule=cast(Any, execution_pdt_rule),
+            execution_swing_only=bool(execution_swing_only),
             ml_accelerator=cast(Any, ml_accelerator),
         ),
         live_confirmed,
@@ -489,6 +663,104 @@ def _render_step_result(record: dict[str, object] | None) -> None:
     )
 
 
+def _render_import_news_panel(
+    options: PipelineLaunchOptions,
+    db_config: dict[str, str | None],
+    *,
+    workflow_active: bool,
+    active_by_step: dict[str, list[dict[str, object]]],
+    all_runs: list[dict[str, object]],
+    latest_by_step: dict[str, dict[str, object]],
+) -> None:
+    today = date.today()
+    default_start = cast(date, st.session_state.get(IMPORT_NEWS_START_DATE_KEY, today - timedelta(days=7)))
+    default_end = cast(date, st.session_state.get(IMPORT_NEWS_END_DATE_KEY, today))
+
+    with st.container(border=True):
+        st.markdown("**5.bis Import des news brutes**")
+        st.caption(
+            "Lance `event_sentiment/importe_news.py` avec une date de début et une date de fin. "
+            "Ce run peut être utilisé avant le Sentiment Pipeline complet pour réinjecter une période précise."
+        )
+
+        date_col1, date_col2 = st.columns(2)
+        with date_col1:
+            start_value = cast(
+                date,
+                st.date_input(
+                    "Date de début",
+                    value=default_start,
+                    key=IMPORT_NEWS_START_DATE_KEY,
+                    format="YYYY-MM-DD",
+                ),
+            )
+        with date_col2:
+            end_value = cast(
+                date,
+                st.date_input(
+                    "Date de fin",
+                    value=default_end,
+                    key=IMPORT_NEWS_END_DATE_KEY,
+                    format="YYYY-MM-DD",
+                ),
+            )
+
+        import_options = replace(
+            options,
+            news_import_start_date=start_value.isoformat(),
+            news_import_end_date=end_value.isoformat(),
+        )
+        import_command_preview = format_command_for_display(build_pipeline_command("import_news", import_options))
+        st.code(import_command_preview, language="powershell")
+
+        import_active_runs = active_by_step.get("import_news", [])
+        locked_by_sentiment = bool(active_by_step.get("sentiment_pipeline"))
+        import_locked = workflow_active or locked_by_sentiment
+
+        if workflow_active:
+            st.warning("Un workflow complet est en cours : l'import manuel de news est temporairement désactivé.")
+        elif locked_by_sentiment:
+            st.warning("Le Sentiment Pipeline est déjà actif : attendez sa fin avant de relancer un import de news.")
+
+        if start_value > end_value:
+            st.error("La date de début doit être antérieure ou égale à la date de fin.")
+        elif import_active_runs:
+            st.info(f"{len(import_active_runs)} import(s) de news déjà actif(s).")
+            for run in import_active_runs:
+                run_id = str(run.get("run_id", ""))
+                st.caption(f"Actif : `{run_id}`")
+                if st.button("⏹️ Arrêter cet import", key=f"stop_import_news_run_{run_id}", use_container_width=True):
+                    stop_pipeline_run(run_id)
+                    st.rerun()
+        else:
+            run_clicked = st.button(
+                "📰 Importer les news sur la période",
+                key="run_pipeline_import_news",
+                type="primary",
+                use_container_width=True,
+                disabled=import_locked or start_value > end_value,
+            )
+            if run_clicked:
+                record = start_pipeline_run(
+                    "import_news",
+                    "5.bis Import News",
+                    import_options,
+                    db_config=db_config,
+                )
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                compare_ids = _sanitize_compare_ids(
+                    [str(run.get("run_id", "")) for run in all_runs if run.get("run_id")],
+                    {str(run.get("run_id", "")): "" for run in all_runs if run.get("run_id")},
+                    st.session_state.get(COMPARE_RUNS_KEY, []),
+                )
+                if record.run_id not in compare_ids:
+                    st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *compare_ids][:2]
+                st.success(f"Import news démarré en arrière-plan : `{record.run_id}`")
+                st.rerun()
+
+        _render_step_result(latest_by_step.get("import_news"))
+
+
 @st.fragment(run_every="2s")
 def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db_config: dict[str, str | None]) -> None:
     active_runs, all_runs = _merge_runs()
@@ -511,6 +783,17 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
                     st.caption(f"🏦 Cette étape utilise le compte Alpaca sélectionné : `{options.account_id or 'default'}`")
                 else:
                     st.caption("🌐 Cette étape est globale et n'utilise pas le sélecteur de compte Alpaca.")
+                if step.key == "alpha_scanner":
+                    st.caption(
+                        "🎛️ Preset strict Alpha Scanner : "
+                        f"`{'activé' if options.alpha_scanner_use_strict_preset else 'désactivé'}`"
+                    )
+                if step.key == "execution":
+                    effective_pdt = "off" if options.execution_account_type == "cash" else options.execution_pdt_rule
+                    st.caption(
+                        "⚖️ Contraintes d'exécution : "
+                        f"compte=`{options.execution_account_type}` | pdt=`{effective_pdt}` | swing_only=`{options.execution_swing_only}`"
+                    )
                 st.code(command_preview, language="powershell")
 
             with action_col:
@@ -557,6 +840,15 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
                         st.rerun()
 
             _render_step_result(latest_by_step.get(step.key))
+            if step.key == "sentiment_pipeline":
+                _render_import_news_panel(
+                    options,
+                    db_config,
+                    workflow_active=workflow_active,
+                    active_by_step=active_by_step,
+                    all_runs=all_runs,
+                    latest_by_step=latest_by_step,
+                )
 
 
 def render() -> None:

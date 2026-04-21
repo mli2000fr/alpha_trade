@@ -10,6 +10,9 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
+
+import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 ARTIFACTS_DIR = Path("artifacts") / "backtesting"
@@ -34,6 +37,37 @@ def _clean_metric(value: float, default: float = 0.0) -> float:
     if math.isnan(value) or math.isinf(value):
         return default
     return value
+
+
+def _extract_equity_curve(pf) -> pd.Series:
+    """Retourne la courbe de valeur sous forme de Series pandas."""
+    equity = pf.value() if hasattr(pf, "value") else getattr(pf, "equity_curve")
+    if isinstance(equity, pd.DataFrame):
+        if equity.shape[1] != 1:
+            raise ValueError("Equity curve ambigüe: plusieurs colonnes détectées.")
+        equity = equity.iloc[:, 0]
+    if not isinstance(equity, pd.Series):
+        equity = pd.Series(equity)
+    return equity.astype(float)
+
+
+def _extract_closed_trades_df(pf) -> Optional[pd.DataFrame]:
+    return getattr(pf, "closed_trades_df", None)
+
+
+def extract_diagnostics(pf) -> dict[str, object]:
+    diagnostics = getattr(pf, "diagnostics", None)
+    if diagnostics is None:
+        return {}
+    to_dict = getattr(diagnostics, "to_dict", None)
+    if callable(to_dict):
+        result = to_dict()
+        if isinstance(result, dict):
+            return result
+        return {}
+    if isinstance(diagnostics, dict):
+        return diagnostics
+    return {}
 
 
 @dataclass
@@ -91,7 +125,64 @@ class BacktestReport:
 
 
 def generate_report(pf, initial_equity: float) -> BacktestReport:
-    """Extrait les métriques depuis un vbt.Portfolio."""
+    """Extrait les métriques depuis un portefeuille compatible vectorbt/BacktestResult."""
+    closed_trades_df = _extract_closed_trades_df(pf)
+    if closed_trades_df is not None:
+        equity = _extract_equity_curve(pf)
+        final_val = float(equity.iloc[-1]) if not equity.empty else float(initial_equity)
+        total_ret = (final_val / initial_equity - 1) * 100 if initial_equity else 0.0
+        n_days = len(equity)
+        n_years = max(n_days / 252, 0.01)
+        cagr = ((final_val / initial_equity) ** (1 / n_years) - 1) * 100 if initial_equity > 0 else 0.0
+
+        daily_returns = equity.pct_change().dropna()
+        sharpe = 0.0
+        sortino = 0.0
+        if not daily_returns.empty:
+            returns_std = float(daily_returns.std(ddof=0))
+            if returns_std > 0:
+                sharpe = _clean_metric(float(daily_returns.mean() / returns_std) * math.sqrt(252))
+            downside = daily_returns[daily_returns < 0]
+            downside_std = float(downside.std(ddof=0)) if not downside.empty else 0.0
+            if downside_std > 0:
+                sortino = _clean_metric(float(daily_returns.mean() / downside_std) * math.sqrt(252))
+
+        if equity.empty:
+            max_dd = 0.0
+        else:
+            running_peak = equity.cummax()
+            drawdown = (equity / running_peak) - 1.0
+            max_dd = _clean_metric(abs(float(drawdown.min())) * 100)
+
+        trades_df = closed_trades_df.copy()
+        n_trades = int(len(trades_df))
+        if n_trades > 0:
+            pnl = trades_df["pnl"].astype(float)
+            win_rate = float((pnl > 0).mean() * 100)
+            avg_dur = float(trades_df["holding_days"].astype(float).mean())
+            gains = float(pnl[pnl > 0].sum())
+            losses = float(pnl[pnl < 0].sum())
+            pf_factor = gains / abs(losses) if losses < 0 else (float("inf") if gains > 0 else 0.0)
+            pf_factor = _clean_metric(pf_factor, default=0.0)
+        else:
+            win_rate = 0.0
+            avg_dur = 0.0
+            pf_factor = 0.0
+
+        return BacktestReport(
+            initial_equity=initial_equity,
+            final_value=final_val,
+            total_return_pct=total_ret,
+            cagr_pct=cagr,
+            sharpe_ratio=sharpe,
+            sortino_ratio=sortino,
+            max_drawdown_pct=max_dd,
+            total_trades=n_trades,
+            win_rate_pct=win_rate,
+            avg_trade_duration_days=avg_dur,
+            profit_factor=pf_factor,
+        )
+
     final_val = _as_float(pf.final_value())
     total_ret = (final_val / initial_equity - 1) * 100
     n_days = len(pf.wrapper.index)
@@ -140,7 +231,7 @@ def save_equity_curve(pf, output_dir: Path | None = None) -> Path:
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
-            equity = pf.value()
+            equity = _extract_equity_curve(pf)
             plt.figure(figsize=(14, 6))
             plt.plot(equity.index, equity.values, linewidth=1)
             plt.title("Alpha Trade — Equity Curve (Backtest)")
@@ -162,7 +253,8 @@ def save_trades_csv(pf, output_dir: Path | None = None) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     filepath = out / "trades.csv"
     try:
-        trades_df = pf.trades.records_readable
+        closed_trades_df = _extract_closed_trades_df(pf)
+        trades_df = pf.trades.records_readable if closed_trades_df is None else pf.trades.records_readable
         trades_df.to_csv(str(filepath), index=False)
         LOGGER.info("Trades exportés : %s (%d trades)", filepath, len(trades_df))
     except Exception as exc:
@@ -176,7 +268,7 @@ def save_equity_curve_csv(pf, output_dir: Path | None = None) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     filepath = out / "equity_curve.csv"
     try:
-        equity = pf.value()
+        equity = _extract_equity_curve(pf)
         equity_df = equity.reset_index()
         equity_df.columns = ["trade_date", "portfolio_value"]
         equity_df.to_csv(str(filepath), index=False)
@@ -192,6 +284,7 @@ def save_report_json(
     *,
     artifacts: dict[str, str] | None = None,
     params: dict[str, object] | None = None,
+    diagnostics: dict[str, object] | None = None,
 ) -> Path:
     """Sauvegarde un manifeste JSON des métriques et artefacts du backtest."""
     out = output_dir or ARTIFACTS_DIR
@@ -201,6 +294,7 @@ def save_report_json(
         "summary": report.to_serializable_dict(),
         "artifacts": artifacts or {},
         "params": params or {},
+        "diagnostics": diagnostics or {},
     }
     filepath.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     LOGGER.info("Rapport JSON sauvegardé : %s", filepath)

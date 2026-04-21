@@ -43,12 +43,9 @@ class PositionSizer:
 
         # notional minimum
         if shares * price < self._cfg.min_position_notional:
-            if price > 0:
-                min_shares = math.ceil(self._cfg.min_position_notional / price)
-                if min_shares <= shares or shares == 0:
-                    shares = 0
-                    LOGGER.info("Notional insuffisant pour %s — rejet.", symbol)
-                    return SizingResult(symbol=symbol, proposed_shares=0, method="rejected")
+            shares = 0
+            LOGGER.info("Notional insuffisant pour %s — rejet.", symbol)
+            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected")
 
         # au moins 1 share
         if shares < 1:
