@@ -3,6 +3,7 @@ modelFactory/artifacts/models/
 artifacts/
 checkpoints/
 log/
+test/
 ./*.ckpt
 ./*.log
 ./*.txt
