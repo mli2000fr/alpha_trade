@@ -126,9 +126,19 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "max_positions", "Explication": "Nombre maximal de positions simultanées.", "Défaut": "20"},
             {"Paramètre": "fees", "Explication": "Frais/slippage simulés par trade.", "Défaut": "0.001"},
             {
-                "Paramètre": "account_constraint_mode",
-                "Explication": "Contraintes de compte simulées : standard / pdt / swing / cash.",
-                "Défaut": "standard",
+                "Paramètre": "account_type",
+                "Explication": "Type de compte simulé : margin / cash.",
+                "Défaut": "margin",
+            },
+            {
+                "Paramètre": "pdt_rule",
+                "Explication": "Application de la règle PDT sur un compte margin : auto / off.",
+                "Défaut": "auto",
+            },
+            {
+                "Paramètre": "swing_only",
+                "Explication": "Interdit les sorties le jour même de l'entrée.",
+                "Défaut": "False",
             },
             {"Paramètre": "sentiment_lookback", "Explication": "Fenêtre historique sentiment passée à la CLI backtesting.", "Défaut": "365"},
             {"Paramètre": "no_save", "Explication": "Désactive l'écriture des artefacts PNG/CSV.", "Défaut": "False"},
@@ -232,24 +242,43 @@ def _build_run_options() -> BacktestRunOptions:
 
     col8, col9, col10, col11 = st.columns(4)
     with col8:
-        account_constraint_mode = cast(
+        account_type = cast(
             str,
             st.selectbox(
-                "Contraintes de compte",
-                options=["standard", "pdt", "swing", "cash"],
-                index=["standard", "pdt", "swing", "cash"].index(
-                    cast(str, st.session_state.get("bt_run_account_constraint_mode", "standard"))
-                    if st.session_state.get("bt_run_account_constraint_mode", "standard") in {"standard", "pdt", "swing", "cash"}
-                    else "standard"
+                "Type de compte",
+                options=["margin", "cash"],
+                index=["margin", "cash"].index(
+                    cast(str, st.session_state.get("bt_run_account_type", "margin"))
+                    if st.session_state.get("bt_run_account_type", "margin") in {"margin", "cash"}
+                    else "margin"
                 ),
-                key="bt_run_account_constraint_mode",
-                help=(
-                    "`standard` = comportement historique. `pdt` = max 3 day trades / 5 séances sous 25k. "
-                    "`swing` = aucune sortie le jour même. `cash` = cash settled uniquement (T+1 par défaut)."
-                ),
+                key="bt_run_account_type",
+                help="`margin` = compte standard/margin ; `cash` = cash settled uniquement, sans PDT.",
             ),
         )
     with col9:
+        pdt_rule = cast(
+            str,
+            st.selectbox(
+                "Règle PDT",
+                options=["auto", "off"],
+                index=["auto", "off"].index(
+                    cast(str, st.session_state.get("bt_run_pdt_rule", "auto"))
+                    if st.session_state.get("bt_run_pdt_rule", "auto") in {"auto", "off"}
+                    else "auto"
+                ),
+                key="bt_run_pdt_rule",
+                help="`auto` applique la règle PDT sur compte margin < 25k ; `off` la désactive dans le backtest.",
+            ),
+        )
+    with col10:
+        swing_only = st.checkbox(
+            "Swing only",
+            value=bool(st.session_state.get("bt_run_swing_only", False)),
+            key="bt_run_swing_only",
+            help="Si coché, une position ne peut pas être revendue le jour même.",
+        )
+    with col11:
         sentiment_lookback = st.number_input(
             "Sentiment lookback (jours)",
             min_value=1,
@@ -259,7 +288,8 @@ def _build_run_options() -> BacktestRunOptions:
             key="bt_run_sentiment_lookback",
             help="Paramètre CLI exposé par le backtesting. À conserver cohérent avec vos hypothèses research.",
         )
-    with col10:
+    col12, col13, col14 = st.columns(3)
+    with col12:
         ml_mode = cast(
             str,
             st.selectbox(
@@ -274,7 +304,7 @@ def _build_run_options() -> BacktestRunOptions:
                 help="`auto` utilise ce qui existe, `off` ignore ML, `rebuild-missing` tente une reconstruction PIT des prédictions manquantes.",
             ),
         )
-    with col11:
+    with col13:
         sentiment_mode = cast(
             str,
             st.selectbox(
@@ -290,17 +320,22 @@ def _build_run_options() -> BacktestRunOptions:
             ),
         )
 
-    col12, col13 = st.columns(2)
-    with col12:
+    with col14:
         no_save = st.checkbox(
             "Ne pas sauver les artefacts",
             value=bool(st.session_state.get("bt_run_no_save", False)),
             key="bt_run_no_save",
             help="Si coché, le PNG d'equity curve et le CSV des trades ne seront pas écrits dans `artifacts/backtesting/`.",
         )
-    with col13:
+
+    info_col1, info_col2 = st.columns(2)
+    with info_col1:
         st.caption(
-            "Mode `pdt` : la 4e tentative de day trade sur 5 séances est bloquée et reportée au lendemain."
+            "Règle `PDT` : en mode `auto`, la 4e tentative de day trade sur 5 séances est bloquée pour un compte margin < 25k."
+        )
+    with info_col2:
+        st.caption(
+            "`cash` + `swing_only` est supporté : cash settled T+1 et aucune sortie le jour même."
         )
 
     artifacts_dir = st.text_input(
@@ -318,7 +353,9 @@ def _build_run_options() -> BacktestRunOptions:
         ts=float(ts),
         max_positions=int(max_positions),
         fees=float(fees),
-        account_constraint_mode=cast(Any, account_constraint_mode),
+        account_type=cast(Any, account_type),
+        pdt_rule=cast(Any, pdt_rule),
+        swing_only=bool(swing_only),
         sentiment_lookback=int(sentiment_lookback),
         no_save=bool(no_save),
         ml_mode=cast(Any, ml_mode),

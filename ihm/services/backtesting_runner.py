@@ -22,7 +22,9 @@ class BacktestRunOptions:
     ts: float = 0.05
     max_positions: int = 20
     fees: float = 0.001
-    account_constraint_mode: Literal["standard", "pdt", "swing", "cash"] = "standard"
+    account_type: Literal["margin", "cash"] = "margin"
+    pdt_rule: Literal["auto", "off"] = "auto"
+    swing_only: bool = False
     sentiment_lookback: int = 365
     no_save: bool = False
     ml_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
@@ -63,12 +65,15 @@ def build_backtesting_command(
             "--ts", str(options.ts),
             "--max-positions", str(options.max_positions),
             "--fees", str(options.fees),
-            "--account-constraint-mode", options.account_constraint_mode,
+            "--account-type", options.account_type,
+            "--pdt-rule", options.pdt_rule,
             "--sentiment-lookback", str(options.sentiment_lookback),
             "--ml-mode", options.ml_mode,
             "--sentiment-mode", options.sentiment_mode,
             "--artifacts-dir", options.artifacts_dir,
         ])
+        if options.swing_only:
+            command.append("--swing-only")
         if options.output_dir:
             command.extend(["--output-dir", options.output_dir])
         if options.no_save:

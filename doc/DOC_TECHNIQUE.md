@@ -108,7 +108,7 @@ alpha_trade/
 
 **`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest. En mode `standard`, il s'appuie sur vectorbt (`vbt.Portfolio.from_signals()`) avec bracket TP/trailing SL. Quand une contrainte de compte est activée, il bascule sur une simulation Python stateful pour appliquer correctement les règles `PDT`, `swing-only` et `cash account` (cash settled T+1). Sizing equal-weight plafonné à `max_positions`. Paramétrable via `BacktestConfig` (hérite de `RiskConfig` + `ExecutionConfig`).
 
-**`TradingConstraintConfig`** (`backtesting/trading_constraints.py`) — Dataclass pure décrivant les contraintes de compte backtesting : `standard`, `pdt`, `swing`, `cash`. Encapsule le seuil `25 000 $`, la limite `3 day trades / 5 séances` et le settlement simplifié `T+1` pour les cash accounts.
+**`TradingConstraintConfig`** (`backtesting/trading_constraints.py`) — Dataclass pure décrivant les contraintes de compte backtesting via trois axes indépendants : `account_type` (`margin|cash`), `pdt_rule` (`auto|off`) et `swing_only` (`bool`). Encapsule le seuil `25 000 $`, la limite `3 day trades / 5 séances` et le settlement simplifié `T+1` pour les cash accounts. Un mapping legacy depuis `standard|pdt|swing|cash` est conservé temporairement pour compatibilité CLI.
 
 **`replay_signals()`** (`backtesting/signal_replay.py`) — Reconstruction jour par jour des signaux de conviction à partir des scores `stock_scores`, avec fallback ligne par ligne `final_score_sentiment -> final_score` si le sentiment est absent, et fusion optionnelle des prédictions ML `model_predictions`. Top-N candidats sélectionnés par jour.
 
@@ -410,13 +410,16 @@ python -m backtesting run --start 2016-01-01 --end 2026-04-20 --equity 100000
 python -m backtesting run --start 2020-01-01 --end 2026-04-20 --equity 50000 --tp 0.10 --ts 0.04 --max-positions 15
 
 # Compte < 25k avec règle PDT (3 day trades max sur 5 séances)
-python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-constraint-mode pdt
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule auto
 
 # Swing strict : aucune sortie le jour même
-python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-constraint-mode swing
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule off --swing-only
 
 # Cash account : cash settled uniquement (T+1)
-python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-constraint-mode cash
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash
+
+# Cash account + swing strict
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash --swing-only
 
 # Sans sauvegarde artefacts (console only)
 python -m backtesting run --start 2023-01-01 --no-save
@@ -440,10 +443,12 @@ Notes :
 - `--ml-mode auto` (défaut) : utilise les prédictions disponibles et ignore les trous ;
 - `--ml-mode off` : désactive entièrement la composante ML ;
 - `--ml-mode rebuild-missing` : tente de reconstruire les prédictions historiques manquantes depuis `artifacts/models/`, en bornant l'inférence à la date du signal ;
-- `--account-constraint-mode standard` (défaut) : moteur historique sans contrainte additionnelle ;
-- `--account-constraint-mode pdt` : applique la règle Pattern Day Trader si `equity < 25 000 $` en bloquant le 4e day trade sur 5 séances glissantes ;
-- `--account-constraint-mode swing` : interdit les sorties le jour même de l'entrée ;
-- `--account-constraint-mode cash` : désactive la règle PDT mais n'autorise que l'utilisation du cash settled avec settlement simplifié `T+1` ;
+- `--account-type margin` (défaut) : simule un compte margin ;
+- `--account-type cash` : simule un cash account, sans levier implicite et avec utilisation du cash settled uniquement ;
+- `--pdt-rule auto` (défaut) : applique la règle PDT sur un compte margin si `equity < 25 000 $` ;
+- `--pdt-rule off` : désactive la contrainte PDT dans le backtest ;
+- `--swing-only` : interdit les sorties le jour même de l'entrée ;
+- `--account-constraint-mode ...` : alias legacy déprécié, encore accepté temporairement pour compatibilité ;
 - `--sentiment-mode auto` (défaut) : utilise `final_score_sentiment` si disponible, sinon fallback sur `final_score` ;
 - `--sentiment-mode off` : neutralise le sentiment (`final_score_sentiment = final_score`) ;
 - `--sentiment-mode rebuild-missing` : tente de reconstruire les snapshots PIT manquants dans `stock_scores_history`, puis applique un fallback sur `final_score` pour les lignes encore incomplètes.

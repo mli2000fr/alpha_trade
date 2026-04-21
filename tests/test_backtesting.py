@@ -419,6 +419,9 @@ class TestBacktestConfig:
         assert cfg.trailing_stop_pct == 0.05
         assert cfg.max_positions == 20
         assert cfg.initial_equity == 100_000
+        assert cfg.trading_constraints.account_type == "margin"
+        assert cfg.trading_constraints.pdt_rule == "auto"
+        assert cfg.trading_constraints.swing_only is False
 
     def test_config_from_risk_and_exec(self):
         from backtesting.simulator import BacktestConfig
@@ -547,7 +550,7 @@ class TestBacktestConfig:
                 end_date=date(2025, 1, 2),
                 initial_equity=10_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(mode="swing"),
+                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=True),
             )
         )
 
@@ -582,7 +585,7 @@ class TestBacktestConfig:
                 end_date=date(2025, 1, 7),
                 initial_equity=2_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(mode="standard"),
+                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=False),
             )
         )
 
@@ -614,7 +617,7 @@ class TestBacktestConfig:
                 end_date=date(2025, 1, 7),
                 initial_equity=30_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(mode="pdt"),
+                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="auto", swing_only=False),
             )
         )
 
@@ -647,7 +650,7 @@ class TestBacktestConfig:
                 end_date=date(2025, 1, 7),
                 initial_equity=2_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(mode="pdt"),
+                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="auto", swing_only=False),
             )
         )
 
@@ -700,7 +703,7 @@ class TestBacktestConfig:
                 end_date=date(2025, 1, 6),
                 initial_equity=10_000,
                 max_positions=1,
-                trading_constraints=TradingConstraintConfig(mode="cash"),
+                trading_constraints=TradingConstraintConfig(account_type="cash", pdt_rule="auto", swing_only=False),
             )
         )
 
@@ -711,6 +714,38 @@ class TestBacktestConfig:
         assert trades_df.iloc[1]["symbol"] == "MSFT"
         assert trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-01")
         assert trades_df.iloc[1]["entry_date"] == pd.Timestamp("2025-01-03")
+
+    def test_trading_constraint_config_legacy_mapping(self):
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        standard = TradingConstraintConfig.from_legacy_mode("standard")
+        assert standard.account_type == "margin"
+        assert standard.pdt_rule == "off"
+        assert standard.swing_only is False
+
+        pdt = TradingConstraintConfig.from_legacy_mode("pdt")
+        assert pdt.account_type == "margin"
+        assert pdt.pdt_rule == "auto"
+        assert pdt.swing_only is False
+
+        swing = TradingConstraintConfig.from_legacy_mode("swing")
+        assert swing.account_type == "margin"
+        assert swing.pdt_rule == "off"
+        assert swing.swing_only is True
+
+        cash = TradingConstraintConfig.from_legacy_mode("cash")
+        assert cash.account_type == "cash"
+        assert cash.effective_pdt_rule == "off"
+
+    def test_trading_constraint_config_supports_cash_plus_swing_combination(self):
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        cfg = TradingConstraintConfig(account_type="cash", pdt_rule="auto", swing_only=True)
+
+        assert cfg.use_settled_cash_only is True
+        assert cfg.restrict_same_day_exit is True
+        assert cfg.effective_pdt_rule == "off"
+        assert cfg.requires_stateful_simulation(2_000) is True
 
 
 # ============================================================
@@ -880,7 +915,10 @@ class TestCLI:
         assert args.ts == 0.05
         assert args.max_positions == 20
         assert args.fees == 0.001
-        assert args.account_constraint_mode == "standard"
+        assert args.account_type == "margin"
+        assert args.pdt_rule == "auto"
+        assert args.swing_only is False
+        assert args.account_constraint_mode is None
         assert args.sentiment_lookback == 365
         assert args.ml_mode == "auto"
         assert args.sentiment_mode == "auto"
@@ -899,21 +937,37 @@ class TestCLI:
         assert args.max_positions == 15
         assert args.no_save is True
 
-    def test_parse_run_modes(self):
+    def test_parse_run_account_constraints(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "run", "--start", "2020-01-01",
+            "--account-type", "cash",
+            "--pdt-rule", "off",
+            "--swing-only",
+            "--ml-mode", "rebuild-missing",
+            "--sentiment-mode", "off",
+            "--artifacts-dir", "artifacts/models",
+        ])
+        assert args.account_type == "cash"
+        assert args.pdt_rule == "off"
+        assert args.swing_only is True
+        assert args.ml_mode == "rebuild-missing"
+        assert args.sentiment_mode == "off"
+        assert args.artifacts_dir == "artifacts/models"
+
+    def test_parse_run_legacy_account_constraint_mode(self):
         from backtesting.cli import _build_parser
 
         parser = _build_parser()
         args = parser.parse_args([
             "run", "--start", "2020-01-01",
             "--account-constraint-mode", "pdt",
-            "--ml-mode", "rebuild-missing",
-            "--sentiment-mode", "off",
-            "--artifacts-dir", "artifacts/models",
         ])
         assert args.account_constraint_mode == "pdt"
-        assert args.ml_mode == "rebuild-missing"
-        assert args.sentiment_mode == "off"
-        assert args.artifacts_dir == "artifacts/models"
+        assert args.account_type == "margin"
+        assert args.pdt_rule == "auto"
 
     def test_parse_run_output_dir(self):
         from backtesting.cli import _build_parser

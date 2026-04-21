@@ -144,33 +144,53 @@ python -m backtesting run --start 2020-01-01 --end 2026-04-20 --equity 50000 --t
 
 ### Contraintes de compte petit capital / PDT
 
-Le backtest expose un nouveau paramètre `--account-constraint-mode` pour simuler un compte US inférieur à 25k ou une politique plus conservatrice.
+Le backtest expose désormais une API plus propre pour simuler les contraintes de compte :
 
-Modes disponibles :
+- `--account-type margin|cash`
+- `--pdt-rule auto|off`
+- `--swing-only`
 
-- `standard` : comportement historique, aucune contrainte supplémentaire ; ce mode correspond au **baseline du moteur** et non à une modélisation exhaustive d'un vrai margin account US (pas de levier 2:1 ni de short simulé ici) ;
-- `pdt` : si l'equity initiale est `< 25 000 $`, le moteur bloque le 4e day trade sur une fenêtre glissante de 5 séances ;
-- `swing` : interdit toute sortie le jour même de l'entrée ;
-- `cash` : désactive la règle PDT, mais n'autorise que le cash settled, avec settlement simplifié en `T+1`.
+Cette séparation permet de distinguer :
+
+- le **type de compte** (`margin` vs `cash`) ;
+- la **règle réglementaire PDT** (`auto` vs `off`) ;
+- le **style de trading** (`--swing-only`).
+
+Comportements principaux :
+
+- `--account-type margin --pdt-rule auto` : applique la règle PDT si l'equity initiale est `< 25 000 $` ;
+- `--account-type margin --pdt-rule off` : baseline non contraint côté PDT ;
+- `--swing-only` : interdit toute sortie le jour même de l'entrée ;
+- `--account-type cash` : désactive de facto la règle PDT et n'autorise que le cash settled, avec settlement simplifié en `T+1`.
+
+Combinaisons utiles :
+
+- `margin + auto + no swing` : simulation la plus proche d'un petit compte margin soumis à PDT ;
+- `margin + off + swing_only` : swing strict sans règle PDT ;
+- `cash + off + swing_only` : petit compte cash conservateur ;
+- `cash + off + no swing` : cash account sans PDT, mais avec réutilisation différée du capital après vente.
 
 Exemples :
 
 ```powershell
 # Compte < 25k avec règle PDT : max 3 day trades / 5 séances
-python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-constraint-mode pdt
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule auto
 
 # Mode swing strict : jamais de revente le jour même
-python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-constraint-mode swing
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule off --swing-only
 
 # Cash account : pas de PDT, mais réutilisation du capital seulement après settlement T+1
-python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-constraint-mode cash
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash
+
+# Cash + swing : combine cash settled T+1 et interdiction des sorties same-day
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash --swing-only
 ```
 
 Remarques pratiques :
 
-- le mode `pdt` reste compatible avec une logique swing ;
-- le mode `swing` correspond bien à l'idée « achat aujourd'hui, vente demain ou plus tard » ;
-- le mode `cash` est utile pour évaluer un bot petit capital sans recourir à un compte margin.
+- `--account-type cash` neutralise la règle PDT, même si `--pdt-rule auto` est laissé par défaut ;
+- `--swing-only` correspond bien à l'idée « achat aujourd'hui, vente demain ou plus tard » ;
+- l'ancien flag `--account-constraint-mode` reste accepté temporairement comme alias legacy, mais il est déprécié.
 
 ### Sans sauvegarde des artefacts
 

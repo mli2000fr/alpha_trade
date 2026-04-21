@@ -4,46 +4,71 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-SmallAccountMode = Literal["standard", "pdt", "swing", "cash"]
+LegacySmallAccountMode = Literal["standard", "pdt", "swing", "cash"]
+AccountType = Literal["margin", "cash"]
+PDTRule = Literal["auto", "off"]
 
 
 @dataclass(frozen=True, slots=True)
 class TradingConstraintConfig:
     """Contraintes de compte applicables pendant un backtest.
 
-    Modes supportés
-    ----------------
-    - ``standard`` : comportement historique, sans contrainte additionnelle.
-    - ``pdt`` : limite les day trades à 3 sur 5 séances si l'equity est < 25k.
-    - ``swing`` : interdit toute sortie le jour même de l'entrée.
-    - ``cash`` : pas de règle PDT, mais seules les liquidités settled sont réutilisables.
+    Axes supportés
+    --------------
+    - ``account_type`` : ``margin`` ou ``cash``
+    - ``pdt_rule`` : ``auto`` ou ``off``
+    - ``swing_only`` : interdit les sorties le jour même quand activé
+
+    Compatibilité legacy
+    --------------------
+    Un pont `from_legacy_mode()` est conservé pour migrer l'ancien mode exclusif
+    ``standard|pdt|swing|cash`` vers cette API plus expressive.
     """
 
-    mode: SmallAccountMode = "standard"
+    account_type: AccountType = "margin"
+    pdt_rule: PDTRule = "auto"
+    swing_only: bool = False
     pdt_equity_threshold: float = 25_000.0
     max_day_trades: int = 3
     rolling_window_days: int = 5
     cash_settlement_days: int = 1
 
     @property
-    def enabled(self) -> bool:
-        return self.mode != "standard"
-
-    @property
     def restrict_same_day_exit(self) -> bool:
-        return self.mode == "swing"
+        return self.swing_only
 
     @property
     def use_settled_cash_only(self) -> bool:
-        return self.mode == "cash"
+        return self.account_type == "cash"
+
+    @property
+    def effective_pdt_rule(self) -> PDTRule:
+        if self.account_type == "cash":
+            return "off"
+        return self.pdt_rule
 
     def applies_pdt_limit(self, equity: float) -> bool:
-        return self.mode == "pdt" and equity < self.pdt_equity_threshold
+        return self.effective_pdt_rule == "auto" and equity < self.pdt_equity_threshold
+
+    def requires_stateful_simulation(self, equity: float) -> bool:
+        return self.restrict_same_day_exit or self.use_settled_cash_only or self.applies_pdt_limit(equity)
+
+    @classmethod
+    def from_legacy_mode(cls, mode: LegacySmallAccountMode) -> TradingConstraintConfig:
+        mapping: dict[LegacySmallAccountMode, TradingConstraintConfig] = {
+            "standard": cls(account_type="margin", pdt_rule="off", swing_only=False),
+            "pdt": cls(account_type="margin", pdt_rule="auto", swing_only=False),
+            "swing": cls(account_type="margin", pdt_rule="off", swing_only=True),
+            "cash": cls(account_type="cash", pdt_rule="off", swing_only=False),
+        }
+        return mapping[mode]
 
     def to_dict(self) -> dict[str, int | float | str | bool]:
         return {
-            "mode": self.mode,
-            "enabled": self.enabled,
+            "account_type": self.account_type,
+            "pdt_rule": self.pdt_rule,
+            "effective_pdt_rule": self.effective_pdt_rule,
+            "swing_only": self.swing_only,
             "pdt_equity_threshold": float(self.pdt_equity_threshold),
             "max_day_trades": int(self.max_day_trades),
             "rolling_window_days": int(self.rolling_window_days),

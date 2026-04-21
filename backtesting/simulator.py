@@ -187,7 +187,7 @@ class BacktestEngine:
         high = high[symbols].copy()
         low = low[symbols].copy()
 
-        if constraints.enabled:
+        if constraints.requires_stateful_simulation(cfg.initial_equity):
             LOGGER.info("Backtest avec contraintes actives: %s", constraints.to_dict())
             return self._run_with_constraints(close=close, high=high, low=low, signals_df=selected)
 

@@ -60,11 +60,16 @@ L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 
 Le système est conçu principalement pour du **swing trading**. Le backtesting permet désormais de simuler explicitement des contraintes réalistes de petit capital Alpaca / compte US :
 
-- **mode `swing`** : achat aujourd'hui, revente demain ou plus tard ;
-- **mode `pdt`** : maximum **3 day trades sur 5 jours ouvrés** quand le capital simulé est inférieur à **25 000 $** ;
-- **mode `cash`** : pas de règle PDT, mais uniquement du **cash settled** réutilisable après settlement simplifié **T+1**.
+- **`account_type = margin`** : compte margin simulé ;
+- **`pdt_rule = auto`** : maximum **3 day trades sur 5 jours ouvrés** quand le capital simulé est inférieur à **25 000 $** ;
+- **`account_type = cash`** : pas de règle PDT, mais uniquement du **cash settled** réutilisable après settlement simplifié **T+1** ;
+- **`swing_only = True`** : achat aujourd'hui, revente demain ou plus tard.
 
-Ces modes permettent d'évaluer une stratégie avec **2 000 $** ou un autre petit capital sans surévaluer artificiellement la fréquence de rotation intraday.
+Cette API composable permet d'évaluer une stratégie avec **2 000 $** ou un autre petit capital sans surévaluer artificiellement la fréquence de rotation intraday, tout en distinguant proprement :
+
+- le **type de compte**,
+- la **règle réglementaire PDT**,
+- le **style de trading swing**.
 
 #### Scanner multi-facteurs (AlphaScanner)
 - **Trend Score** (critères Minervini) : 7 critères techniques (close > MA150, MA150 > MA200, MA200 en hausse, close > MA50, close ≥ 1.25 × low 52w, close ≥ 0.75 × high 52w)
@@ -305,8 +310,8 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 8. **Les ordres 4xx du broker ne sont PAS retentés** (erreurs permanentes) ; seuls les 5xx/timeout/réseau sont retentés
 9. **Les positions broker hors cible** (action "investigate") ne sont pas soldées automatiquement pour éviter les erreurs
 10. **Le score de conviction combine** score quantitatif (40%) et probabilité prédite par le modèle ML (60%)
-11. **En backtest, un compte < 25k peut être simulé en mode PDT** avec blocage du 4e day trade sur 5 séances glissantes
-12. **En backtest, un mode swing strict peut interdire toute revente le jour même**
+11. **En backtest, un compte margin peut être soumis à la règle PDT** si `pdt_rule=auto` et `equity < 25k`, avec blocage du 4e day trade sur 5 séances glissantes
+12. **En backtest, l'option `swing_only` peut interdire toute revente le jour même**
 13. **En backtest, un cash account n'utilise que le cash settled** et retarde la réutilisation des fonds après vente jusqu'au settlement `T+1`
 
 ---
@@ -329,6 +334,8 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 Concernant les contraintes petit capital simulées en backtest :
 
 - la règle `PDT` est modélisée sur la base d'une fenêtre glissante de **5 séances de backtest** ;
+- le paramètre `pdt_rule=auto` n'a d'effet que sur un **compte margin** ; sur un **compte cash**, la règle est neutralisée ;
+- l'option `swing_only` peut être combinée aussi bien avec un compte `margin` qu'avec un compte `cash` ;
 - le mode `cash` repose sur un settlement simplifié **T+1** pour rester testable et lisible ;
 - ces modes s'appliquent au moteur de backtest et n'altèrent pas l'exécution live/paper réelle du broker.
 
