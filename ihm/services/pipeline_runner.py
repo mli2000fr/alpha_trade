@@ -25,12 +25,18 @@ class PipelineLaunchOptions:
 
     account_id: str | None = None
     trade_date: str | None = None
+    alpha_scanner_use_strict_preset: bool = False
     risk_account_equity: float = 100_000.0
     execution_mode: Literal["simulate", "paper", "live"] = "simulate"
     execution_run_id: str | None = None
     allow_outside_rth: bool = False
     auto_rebalance: bool = False
+    execution_account_type: Literal["margin", "cash"] = "margin"
+    execution_pdt_rule: Literal["auto", "off"] = "auto"
+    execution_swing_only: bool = False
     ml_accelerator: MLAccelerator = "auto"
+    news_import_start_date: str | None = None
+    news_import_end_date: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +205,11 @@ def _normalize_run_id(value: str | None) -> str | None:
     return cleaned or None
 
 
+def _normalize_optional_date(value: str | None) -> str | None:
+    cleaned = (value or "").strip()
+    return cleaned or None
+
+
 def is_gpu_available() -> bool:
     try:
         import torch
@@ -213,6 +224,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     trade_date = _normalize_trade_date(options.trade_date)
     run_id = _normalize_run_id(options.execution_run_id)
     account_id = (options.account_id or "").strip() or None
+    news_import_start_date = _normalize_optional_date(options.news_import_start_date)
+    news_import_end_date = _normalize_optional_date(options.news_import_end_date)
 
     if step_key == "import_alpaca_bar":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
@@ -232,10 +245,27 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-u", "-m", "screener.stock_screener"]
 
     if step_key == "alpha_scanner":
-        return [sys.executable, "-u", "-m", "selector.alpha_scanner"]
+        command = [sys.executable, "-u", "-m", "selector.alpha_scanner"]
+        if options.alpha_scanner_use_strict_preset:
+            command.extend(["--preset", "strict"])
+        return command
 
     if step_key == "sentiment_pipeline":
         return [sys.executable, "-u", "-m", "event_sentiment"]
+
+    if step_key == "import_news":
+        if news_import_start_date is None:
+            raise ValueError("La date de début est obligatoire pour l'import des news.")
+        command = [
+            sys.executable,
+            "-u",
+            str(PROJECT_ROOT / "event_sentiment" / "importe_news.py"),
+            "--start-date",
+            news_import_start_date,
+        ]
+        if news_import_end_date:
+            command.extend(["--end-date", news_import_end_date])
+        return command
 
     if step_key == "signal_aggregator":
         command = [sys.executable, "-u", "-m", "event_sentiment.signal_aggregator"]
@@ -293,6 +323,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--allow-outside-rth")
         if options.auto_rebalance:
             command.append("--auto-rebalance")
+        command.extend(["--account-type", options.execution_account_type])
+        command.extend(["--pdt-rule", options.execution_pdt_rule])
+        if options.execution_swing_only:
+            command.append("--swing-only")
         if account_id:
             command.extend(["--account", account_id])
         return command

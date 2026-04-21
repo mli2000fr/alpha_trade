@@ -23,6 +23,7 @@ st.set_page_config(
 PAGES = {
     "🏠 Vue d'ensemble": "overview",
     "🔄 Pipeline": "pipeline",
+    "🗃️ Administration DB": "db_admin",
     "🧪 Backtesting": "backtesting",
     "📊 Screening": "screening",
     "⚖️ Risk": "risk",
@@ -63,6 +64,7 @@ page_key = PAGES[selection]
 PAGE_IMPORTS = {
     "overview": "ihm.pages.overview",
     "pipeline": "ihm.pages.pipeline",
+    "db_admin": "ihm.pages.db_admin",
     "backtesting": "ihm.pages.backtesting",
     "screening": "ihm.pages.screening",
     "risk": "ihm.pages.risk",

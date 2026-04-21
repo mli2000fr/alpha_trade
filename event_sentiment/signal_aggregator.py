@@ -35,7 +35,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -203,10 +203,17 @@ class SentimentSignalAggregator:
         Poids = 0.5 ** (age_jours / half_life_days)
         → le poids est divisé par 2 tous les `half_life_days` jours.
         """
-        normalized_dates = pd.Series(pd.to_datetime(trade_dates, errors="coerce"), index=trade_dates.index).dt.floor("D")
         reference_ts = pd.Timestamp(reference_date).normalize()
-        age_days = (reference_ts - normalized_dates).dt.days.clip(lower=0)
-        return pd.Series(np.power(0.5, age_days / half_life_days), index=trade_dates.index, dtype=float)
+        weights: list[float] = []
+        for raw_value in trade_dates.tolist():
+            parsed = pd.to_datetime(raw_value, errors="coerce")
+            if pd.isna(parsed):
+                age_days = 0
+            else:
+                normalized = pd.Timestamp(parsed).normalize()
+                age_days = max((reference_ts - normalized).days, 0)
+            weights.append(float(np.power(0.5, age_days / half_life_days)))
+        return pd.Series(weights, index=trade_dates.index, dtype=float)
 
     @staticmethod
     def _aggregate_ticker_window(
@@ -224,44 +231,65 @@ class SentimentSignalAggregator:
         if ticker_df.empty:
             return pd.DataFrame(columns=["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news"])
 
-        df = ticker_df.copy()
-        df["trade_date"] = pd.Series(pd.to_datetime(df["trade_date"], errors="coerce"), index=df.index).dt.floor("D")
-        df["news_count_1d"] = df["news_count_1d"].fillna(0).astype(float)
-        df["sentiment_net_mean_1d"] = df["sentiment_net_mean_1d"].fillna(0.0)
-        df["major_event_flag"] = df["major_event_flag"].fillna(0).astype(int)
-        df["time_decay_weight"] = SentimentSignalAggregator._compute_time_decay_weight(
-            df["trade_date"],
+        records = ticker_df.to_dict(orient="records")
+        trade_dates = pd.Series([record.get("trade_date") for record in records], dtype="object")
+        time_weights = SentimentSignalAggregator._compute_time_decay_weight(
+            trade_dates,
             reference_date=reference_date,
             half_life_days=half_life_days,
-        )
+        ).tolist()
 
-        def _weighted_avg(group: pd.DataFrame) -> pd.Series:
-            total_news = group["news_count_1d"].sum()
-            if total_news < min_news_count:
-                return pd.Series({
-                    "sentiment_net_agg": 0.0,
-                    "major_event_flag_agg": 0,
-                    "total_news": int(total_news),
-                    "signal_active": False,
-                })
-            effective_weights = group["news_count_1d"] * group["time_decay_weight"]
-            weight_sum = effective_weights.sum()
-            if weight_sum <= 0:
-                effective_weights = group["news_count_1d"]
-                weight_sum = effective_weights.sum()
-            weights = effective_weights / weight_sum
-            weighted_net = (group["sentiment_net_mean_1d"] * weights).sum()
-            return pd.Series({
-                "sentiment_net_agg": float(weighted_net),
-                "major_event_flag_agg": int(group["major_event_flag"].max()),
-                "total_news": int(total_news),
-                "signal_active": True,
-            })
+        grouped: dict[str, list[dict[str, float | int]]] = {}
+        for record, time_weight in zip(records, time_weights, strict=False):
+            symbol = str(record.get("symbol", ""))
+            if not symbol:
+                continue
+            news_count = float(record.get("news_count_1d") or 0.0)
+            sentiment_net = float(record.get("sentiment_net_mean_1d") or 0.0)
+            major_event_flag = int(record.get("major_event_flag") or 0)
+            grouped.setdefault(symbol, []).append(
+                {
+                    "news_count_1d": news_count,
+                    "sentiment_net_mean_1d": sentiment_net,
+                    "major_event_flag": major_event_flag,
+                    "time_decay_weight": float(time_weight),
+                }
+            )
 
         rows: list[dict[str, object]] = []
-        for symbol, group in df.groupby("symbol", sort=False):
-            aggregated = _weighted_avg(group)
-            rows.append({"symbol": symbol, **aggregated.to_dict()})
+        for symbol, group in grouped.items():
+            total_news = sum(float(item["news_count_1d"]) for item in group)
+            if total_news < min_news_count:
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "sentiment_net_agg": 0.0,
+                        "major_event_flag_agg": 0,
+                        "total_news": int(total_news),
+                        "signal_active": False,
+                    }
+                )
+                continue
+
+            effective_weights = [float(item["news_count_1d"]) * float(item["time_decay_weight"]) for item in group]
+            weight_sum = sum(effective_weights)
+            if weight_sum <= 0:
+                effective_weights = [float(item["news_count_1d"]) for item in group]
+                weight_sum = sum(effective_weights)
+
+            weighted_net = sum(
+                float(item["sentiment_net_mean_1d"]) * (weight / weight_sum)
+                for item, weight in zip(group, effective_weights, strict=False)
+            ) if weight_sum > 0 else 0.0
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "sentiment_net_agg": float(weighted_net),
+                    "major_event_flag_agg": max(int(item["major_event_flag"]) for item in group),
+                    "total_news": int(total_news),
+                    "signal_active": True,
+                }
+            )
         return pd.DataFrame(rows)
 
     @staticmethod
@@ -278,48 +306,90 @@ class SentimentSignalAggregator:
         if sector_df.empty:
             return pd.DataFrame(columns=["sector", "sector_impact_agg", "macro_event_flag_agg"])
 
-        df = sector_df.copy()
-        df["trade_date"] = pd.Series(pd.to_datetime(df["trade_date"], errors="coerce"), index=df.index).dt.floor("D")
-        df["sector_impact_score"] = df["sector_impact_score"].fillna(0.0)
-        df["macro_event_flag"] = df["macro_event_flag"].fillna(0).astype(int)
-        df["time_decay_weight"] = SentimentSignalAggregator._compute_time_decay_weight(
-            df["trade_date"],
+        records = sector_df.to_dict(orient="records")
+        trade_dates = pd.Series([record.get("trade_date") for record in records], dtype="object")
+        time_weights = SentimentSignalAggregator._compute_time_decay_weight(
+            trade_dates,
             reference_date=reference_date,
             half_life_days=half_life_days,
-        )
+        ).tolist()
 
-        def _weighted_avg(group: pd.DataFrame) -> pd.Series:
-            weights = group["time_decay_weight"]
-            weight_sum = weights.sum()
-            if weight_sum <= 0:
-                weights = pd.Series(1.0, index=group.index, dtype=float)
-                weight_sum = float(len(group.index))
-            normalized_weights = weights / weight_sum
-            weighted_impact = (group["sector_impact_score"] * normalized_weights).sum()
-            return pd.Series({
-                "sector_impact_agg": float(weighted_impact),
-                "macro_event_flag_agg": int(group["macro_event_flag"].max()),
-            })
+        grouped: dict[str, list[dict[str, float | int]]] = {}
+        for record, time_weight in zip(records, time_weights, strict=False):
+            sector = str(record.get("sector", ""))
+            if not sector:
+                continue
+            grouped.setdefault(sector, []).append(
+                {
+                    "sector_impact_score": float(record.get("sector_impact_score") or 0.0),
+                    "macro_event_flag": int(record.get("macro_event_flag") or 0),
+                    "time_decay_weight": float(time_weight),
+                }
+            )
 
         rows: list[dict[str, object]] = []
-        for sector, group in df.groupby("sector", sort=False):
-            aggregated = _weighted_avg(group)
-            rows.append({"sector": sector, **aggregated.to_dict()})
+        for sector, group in grouped.items():
+            weights = [float(item["time_decay_weight"]) for item in group]
+            weight_sum = sum(weights)
+            if weight_sum <= 0:
+                weights = [1.0 for _ in group]
+                weight_sum = float(len(group))
+            weighted_impact = sum(
+                float(item["sector_impact_score"]) * (weight / weight_sum)
+                for item, weight in zip(group, weights, strict=False)
+            ) if weight_sum > 0 else 0.0
+            rows.append(
+                {
+                    "sector": sector,
+                    "sector_impact_agg": float(weighted_impact),
+                    "macro_event_flag_agg": max(int(item["macro_event_flag"]) for item in group),
+                }
+            )
         return pd.DataFrame(rows)
 
     @staticmethod
     def _normalize_to_01(series: pd.Series) -> pd.Series:
         """Normalisation min-max avec winsorisation 1%-99%."""
-        coerced_values = [pd.to_numeric(value, errors="coerce") for value in series.tolist()]
-        numeric = pd.Series(coerced_values, index=series.index, dtype=float)
-        non_null = numeric.dropna()
-        if non_null.empty:
-            return pd.Series(0.5, index=numeric.index, dtype=float)
-        lo, hi = float(non_null.quantile(0.01)), float(non_null.quantile(0.99))
-        clipped = numeric.clip(lo, hi)
+        def _percentile(values: list[float], q: float) -> float:
+            ordered = sorted(values)
+            if len(ordered) == 1:
+                return ordered[0]
+            position = (len(ordered) - 1) * q
+            lower_index = int(position)
+            upper_index = min(lower_index + 1, len(ordered) - 1)
+            if lower_index == upper_index:
+                return ordered[lower_index]
+            fraction = position - lower_index
+            return ordered[lower_index] + ((ordered[upper_index] - ordered[lower_index]) * fraction)
+
+        numeric_values: list[float] = []
+        valid_values: list[float] = []
+        for value in series.tolist():
+            numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
+            if pd.isna(numeric_value):
+                numeric_values.append(float("nan"))
+            else:
+                as_float = float(numeric_value)
+                numeric_values.append(as_float)
+                valid_values.append(as_float)
+
+        if not valid_values:
+            return pd.Series([0.5] * len(numeric_values), index=series.index, dtype=float)
+
+        lo = _percentile(valid_values, 0.01)
+        hi = _percentile(valid_values, 0.99)
         if np.isclose(hi, lo):
-            return pd.Series(0.5, index=numeric.index, dtype=float)
-        return ((clipped - lo) / (hi - lo)).clip(0.0, 1.0)
+            return pd.Series([0.5] * len(numeric_values), index=series.index, dtype=float)
+
+        normalized: list[float] = []
+        for value in numeric_values:
+            if np.isnan(value):
+                normalized.append(0.5)
+                continue
+            clipped = min(max(value, lo), hi)
+            normalized.append(min(max((clipped - lo) / (hi - lo), 0.0), 1.0))
+
+        return pd.Series(normalized, index=series.index, dtype=float)
 
     # ------------------------------------------------------------------
     # Point d'entrée principal
@@ -372,16 +442,33 @@ class SentimentSignalAggregator:
             "SentimentSignalAggregator | trade_date=%s symboles=%s ticker_signaux=%s secteurs=%s",
             ref_date,
             len(symbols),
-            int(ticker_agg.get("signal_active", pd.Series(False)).sum()) if not ticker_agg.empty else 0,
+            sum(bool(value) for value in ticker_agg.get("signal_active", pd.Series(dtype=bool)).tolist()) if not ticker_agg.empty else 0,
             len(sector_agg),
         )
 
         # --- Jointure scores quantitatifs ← ticker sentiment ---
         if not ticker_agg.empty and "symbol" in ticker_agg.columns:
-            result = result.merge(
-                ticker_agg[["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news", "signal_active"]],
-                on="symbol", how="left",
-            )
+            ticker_map = {
+                str(row.get("symbol")): row
+                for row in ticker_agg.to_dict(orient="records")
+                if row.get("symbol") is not None
+            }
+            result["sentiment_net_agg"] = [
+                ticker_map.get(str(symbol), {}).get("sentiment_net_agg")
+                for symbol in result["symbol"].tolist()
+            ]
+            result["major_event_flag_agg"] = [
+                ticker_map.get(str(symbol), {}).get("major_event_flag_agg")
+                for symbol in result["symbol"].tolist()
+            ]
+            result["total_news"] = [
+                ticker_map.get(str(symbol), {}).get("total_news")
+                for symbol in result["symbol"].tolist()
+            ]
+            result["signal_active"] = [
+                ticker_map.get(str(symbol), {}).get("signal_active")
+                for symbol in result["symbol"].tolist()
+            ]
         else:
             result["sentiment_net_agg"] = 0.0
             result["major_event_flag_agg"] = 0
@@ -390,14 +477,45 @@ class SentimentSignalAggregator:
 
         # --- Jointure scores quantitatifs ← impact macro sectoriel ---
         if not sector_agg.empty and "sector" in result.columns:
-            result = result.merge(sector_agg, on="sector", how="left")
+            sector_map = {
+                str(row.get("sector")): row
+                for row in sector_agg.to_dict(orient="records")
+                if row.get("sector") is not None
+            }
+            result["sector_impact_agg"] = [
+                sector_map.get(str(sector), {}).get("sector_impact_agg")
+                for sector in result["sector"].tolist()
+            ]
+            result["macro_event_flag_agg"] = [
+                sector_map.get(str(sector), {}).get("macro_event_flag_agg")
+                for sector in result["sector"].tolist()
+            ]
         else:
             result["sector_impact_agg"] = 0.0
             result["macro_event_flag_agg"] = 0
 
-        result["sentiment_net_agg"] = result["sentiment_net_agg"].fillna(0.0)
-        result["sector_impact_agg"] = result["sector_impact_agg"].fillna(0.0)
-        result["signal_active"] = result["signal_active"].astype("boolean").fillna(False).astype(bool)
+        def _coalesce_float(values: list[object], default: float = 0.0) -> list[float]:
+            normalized: list[float] = []
+            for value in values:
+                if value is None or bool(pd.isna(value)):
+                    normalized.append(default)
+                else:
+                    numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
+                    normalized.append(default if pd.isna(numeric_value) else float(numeric_value))
+            return normalized
+
+        def _coalesce_bool(values: list[object], default: bool = False) -> list[bool]:
+            normalized: list[bool] = []
+            for value in values:
+                if value is None or bool(pd.isna(value)):
+                    normalized.append(default)
+                else:
+                    normalized.append(bool(value))
+            return normalized
+
+        result["sentiment_net_agg"] = _coalesce_float(result["sentiment_net_agg"].tolist())
+        result["sector_impact_agg"] = _coalesce_float(result["sector_impact_agg"].tolist())
+        result["signal_active"] = _coalesce_bool(result["signal_active"].tolist())
 
         # --- Normalisation des signaux sentiment en [0, 1] ---
         # sentiment_net_agg ∈ [-1, 1] → normalisé → 0.5 = neutre
@@ -418,10 +536,19 @@ class SentimentSignalAggregator:
 
         result["final_score_sentiment"] = (quant_component + sent_component + macro_component).clip(0.0, 1.0)
 
+        score_deltas = [
+            float(final_score_sentiment) - float(final_score)
+            for final_score_sentiment, final_score in zip(
+                result["final_score_sentiment"].tolist(),
+                result["final_score"].tolist(),
+                strict=False,
+            )
+        ]
+        avg_delta = (sum(score_deltas) / len(score_deltas)) if score_deltas else 0.0
         LOGGER.info(
             "Boost sentiment applique | symboles_actifs=%s delta_score_moyen=%.4f",
-            int(result["signal_active"].sum()),
-            float((result["final_score_sentiment"] - result["final_score"]).mean()),
+            sum(bool(value) for value in result["signal_active"].tolist()),
+            avg_delta,
         )
         return result
 
@@ -463,32 +590,35 @@ class SentimentSignalAggregator:
         if enriched_df.empty:
             return 0
 
-        now = pd.Timestamp.utcnow().replace(tzinfo=None)
+        now = pd.Timestamp.utcnow().replace(tzinfo=None).to_pydatetime()
 
-        subset = enriched_df[["symbol"] + SENTIMENT_COLS].copy()
-        subset["last_updated_sentiment"] = now
+        def _is_missing(value: object) -> bool:
+            return value is None or bool(pd.isna(value))
 
-        # Conversion des types booléens pour MySQL
-        for bool_col in ("signal_active", "major_event_flag_agg", "macro_event_flag_agg"):
-            if bool_col in subset.columns:
-                subset[bool_col] = subset[bool_col].fillna(False).astype(int)
+        float_cols = (
+            "sentiment_net_agg",
+            "sector_impact_agg",
+            "sentiment_signal_norm",
+            "macro_signal_norm",
+            "final_score_sentiment",
+        )
+        bool_cols = ("signal_active", "major_event_flag_agg", "macro_event_flag_agg")
 
-        for float_col in ("sentiment_net_agg", "sector_impact_agg",
-                          "sentiment_signal_norm", "macro_signal_norm",
-                          "final_score_sentiment"):
-            if float_col in subset.columns:
-                subset[float_col] = pd.to_numeric(subset[float_col], errors="coerce")
-
-        subset["total_news"] = subset["total_news"].fillna(0).astype(int)
-
-        records = subset.to_dict(orient="records")
-
-        # Nettoyage des NaN → None pour MySQL
-        clean_records = [
-            {k: (None if (isinstance(v, float) and np.isnan(v)) else v)
-             for k, v in row.items()}
-            for row in records
-        ]
+        clean_records: list[dict[str, object]] = []
+        for row in enriched_df.to_dict(orient="records"):
+            clean_row: dict[str, object] = {
+                "symbol": row["symbol"],
+                "last_updated_sentiment": now,
+            }
+            for col in float_cols:
+                value = row.get(col)
+                clean_row[col] = None if _is_missing(value) else float(value)
+            for col in bool_cols:
+                value = row.get(col)
+                clean_row[col] = int(bool(value)) if not _is_missing(value) else 0
+            total_news = row.get("total_news")
+            clean_row["total_news"] = 0 if _is_missing(total_news) else int(total_news)
+            clean_records.append(clean_row)
 
         update_set = ", ".join(
             f"{col} = :{col}"

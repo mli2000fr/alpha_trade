@@ -47,6 +47,23 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--ts", type=float, default=0.05, help="Trailing stop %% (défaut 0.05)")
     run_p.add_argument("--max-positions", type=int, default=20, help="Positions max simultanées")
     run_p.add_argument("--fees", type=float, default=0.001, help="Frais par trade (défaut 0.1%%)")
+    run_p.add_argument(
+        "--account-type",
+        choices=["margin", "cash"],
+        default="margin",
+        help="Type de compte simulé: margin|cash",
+    )
+    run_p.add_argument(
+        "--pdt-rule",
+        choices=["auto", "off"],
+        default="auto",
+        help="Application de la règle PDT: auto|off",
+    )
+    run_p.add_argument(
+        "--swing-only",
+        action="store_true",
+        help="Interdire toute sortie le jour même de l'entrée",
+    )
     run_p.add_argument("--sentiment-lookback", type=int, default=365, help="Lookback sentiment (jours)")
     run_p.add_argument("--no-save", action="store_true", help="Ne pas sauvegarder les artefacts")
     run_p.add_argument(
@@ -96,15 +113,37 @@ def _run_backtest(args: argparse.Namespace) -> None:
     from backtesting.data_loader import load_ohlcv, load_scores, load_predictions, pivot_ohlcv
     from backtesting.resilience import prepare_predictions_for_ml_mode, prepare_scores_for_sentiment_mode
     from backtesting.signal_replay import replay_signals
+    from backtesting.trading_constraints import TradingConstraintConfig
     from backtesting.simulator import BacktestConfig, BacktestEngine
-    from backtesting.report import generate_report, save_equity_curve, save_equity_curve_csv, save_report_json, save_trades_csv
+    from backtesting.report import (
+        extract_diagnostics,
+        generate_report,
+        save_equity_curve,
+        save_equity_curve_csv,
+        save_report_json,
+        save_trades_csv,
+    )
 
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
     end = datetime.strptime(args.end, "%Y-%m-%d").date()
 
+    trading_constraints = TradingConstraintConfig(
+        account_type=args.account_type,
+        pdt_rule=args.pdt_rule,
+        swing_only=args.swing_only,
+    )
+
     _safe_print(f"\n🚀 Backtest Alpha Trade : {start} → {end}, capital={args.equity:,.0f}$")
     _safe_print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
     _safe_print(f"   ml_mode={args.ml_mode}, sentiment_mode={args.sentiment_mode}\n")
+    _safe_print(
+        "   account_type={} pdt_rule={} swing_only={}\n".format(
+            trading_constraints.account_type,
+            trading_constraints.effective_pdt_rule,
+            trading_constraints.swing_only,
+        )
+    )
+    _safe_print("   convention_exécution=signal J → entrée J+1 au vrai open\n")
 
     # 1. Charger les données
     engine = get_sqlalchemy_engine()
@@ -160,12 +199,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
         trailing_stop_pct=args.ts,
         max_positions=args.max_positions,
         fees_pct=args.fees,
+        trading_constraints=trading_constraints,
     )
     bt_engine = BacktestEngine(bt_config)
     pf = bt_engine.run(
-        close=pivoted["close"], high=pivoted["high"], low=pivoted["low"],
+        open=pivoted["open"], close=pivoted["close"], high=pivoted["high"], low=pivoted["low"],
         signals_df=signals_df,
     )
+    diagnostics = extract_diagnostics(pf)
 
     # 5. Rapport
     report = generate_report(pf, args.equity)
@@ -190,12 +231,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 "ts": args.ts,
                 "max_positions": args.max_positions,
                 "fees": args.fees,
+                "account_type": trading_constraints.account_type,
+                "pdt_rule": trading_constraints.pdt_rule,
+                "effective_pdt_rule": trading_constraints.effective_pdt_rule,
+                "swing_only": trading_constraints.swing_only,
                 "sentiment_lookback": args.sentiment_lookback,
                 "ml_mode": args.ml_mode,
                 "sentiment_mode": args.sentiment_mode,
                 "artifacts_dir": args.artifacts_dir,
+                "execution_timing": bt_config.execution_timing,
+                "entry_price_source": "next_session_open",
                 "no_save": args.no_save,
             },
+            diagnostics=diagnostics,
         )
         artifact_paths["report_json"] = str(report_json_path)
         _safe_print(f"   → {report_json_path}")
@@ -224,12 +272,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     "ts": args.ts,
                     "max_positions": args.max_positions,
                     "fees": args.fees,
+                    "account_type": trading_constraints.account_type,
+                    "pdt_rule": trading_constraints.pdt_rule,
+                    "effective_pdt_rule": trading_constraints.effective_pdt_rule,
+                    "swing_only": trading_constraints.swing_only,
                     "sentiment_lookback": args.sentiment_lookback,
                     "ml_mode": args.ml_mode,
                     "sentiment_mode": args.sentiment_mode,
                     "artifacts_dir": args.artifacts_dir,
+                    "execution_timing": bt_config.execution_timing,
+                    "entry_price_source": "next_session_open",
                     "no_save": args.no_save,
                 },
+                diagnostics=diagnostics,
             )
 
     _safe_print("✅ Backtest terminé.\n")

@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from execution_engine.config import ExecutionConfig
-from execution_engine.models import BrokerOrder, OrderIntent, OrderStatus
+from execution_engine.models import BrokerOrder, OrderIntent
 from execution_engine.order_intents import intent_to_alpaca_payload
 from execution_engine.state_machine import map_alpaca_status
 from service.alpaca.trading_client import AlpacaTradingClient
@@ -39,8 +39,11 @@ class BrokerAdapter:
     def is_market_open(self) -> bool:
         return self._client.is_market_open()
 
+    def get_account_snapshot(self) -> dict[str, Any]:
+        return self._client.get_account()  # type: ignore[return-value]
+
     def get_account_equity(self) -> float:
-        acc = self._client.get_account()
+        acc = self.get_account_snapshot()
         return float(acc.get("equity", 0))
 
     @staticmethod

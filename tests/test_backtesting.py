@@ -419,7 +419,9 @@ class TestBacktestConfig:
         assert cfg.trailing_stop_pct == 0.05
         assert cfg.max_positions == 20
         assert cfg.initial_equity == 100_000
-
+        assert cfg.trading_constraints.account_type == "margin"
+        assert cfg.trading_constraints.pdt_rule == "auto"
+        assert cfg.trading_constraints.swing_only is False
     def test_config_from_risk_and_exec(self):
         from backtesting.simulator import BacktestConfig
         from risk_management.config import RiskConfig
@@ -439,6 +441,7 @@ class TestBacktestConfig:
         from backtesting.simulator import BacktestConfig, BacktestEngine
 
         idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 101.0, 104.0, 103.0]}, index=idx)
         close = pd.DataFrame({"AAPL": [100.0, 103.0, 106.0, 104.0]}, index=idx)
         high = pd.DataFrame({"AAPL": [101.0, 104.0, 108.0, 105.0]}, index=idx)
         low = pd.DataFrame({"AAPL": [99.0, 102.0, 103.0, 101.0]}, index=idx)
@@ -458,7 +461,7 @@ class TestBacktestConfig:
                 max_positions=1,
             )
         )
-        pf = engine.run(close=close, high=high, low=low, signals_df=signals_df)
+        pf = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
         final_value = pf.final_value()
         if hasattr(final_value, "iloc"):
             final_value = final_value.iloc[0]
@@ -468,6 +471,7 @@ class TestBacktestConfig:
         from backtesting.simulator import BacktestConfig, BacktestEngine
 
         idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 101.0, 104.0, 103.0]}, index=idx)
         close = pd.DataFrame({"AAPL": [100.0, 103.0, 106.0, 104.0]}, index=idx)
         high = pd.DataFrame({"AAPL": [101.0, 104.0, 108.0, 105.0]}, index=idx)
         low = pd.DataFrame({"AAPL": [99.0, 102.0, 103.0, 101.0]}, index=idx)
@@ -487,10 +491,370 @@ class TestBacktestConfig:
                 max_positions=1,
             )
         )
-        pf = engine.run(close=close, high=high, low=low, signals_df=signals_df)
+        pf = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
         trades_df = pf.trades.records_readable
         assert not trades_df.empty
-        assert float(trades_df.iloc[0]["Size"]).is_integer()
+        assert float(trades_df["Size"].iloc[0]).is_integer()
+
+    def test_to_scalar_supports_series_and_scalar(self):
+        from backtesting.simulator import BacktestEngine, BacktestConfig
+
+        engine = BacktestEngine(BacktestConfig(start_date=date(2025, 1, 1), end_date=date(2025, 1, 2)))
+
+        assert engine._to_scalar(pd.Series([123.4])) == 123.4
+        assert engine._to_scalar(99.0) == 99.0
+
+    def test_backtest_engine_raises_when_no_common_symbols(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 101.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 101.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [101.0, 102.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 100.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["MSFT"],
+                "selected": [True],
+            }
+        )
+
+        engine = BacktestEngine(BacktestConfig(start_date=date(2025, 1, 1), end_date=date(2025, 1, 2)))
+
+        try:
+            engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+        except ValueError as exc:
+            assert "Aucun symbole en commun" in str(exc)
+        else:
+            raise AssertionError("Le moteur aurait dû refuser un backtest sans symbole commun.")
+
+    def test_backtest_engine_swing_mode_blocks_same_day_exit(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 105.0, 120.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 118.0, 121.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [110.0, 120.0, 122.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 104.0, 119.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 2),
+                initial_equity=10_000,
+                max_positions=1,
+                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=True),
+            )
+        )
+
+        result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+        trades_df = result.closed_trades_df
+        assert len(trades_df) == 1
+        assert trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
+        assert trades_df.iloc[0]["entry_price"] == 105.0
+        assert trades_df.iloc[0]["holding_days"] == 1
+        assert bool(trades_df.iloc[0]["is_day_trade"]) is False
+        assert result.diagnostics.blocked_same_day_exits == 1
+        assert result.diagnostics.executed_day_trades == 0
+
+    def test_backtest_engine_standard_mode_uses_next_open_execution(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine, BacktestResult
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 101.0, 102.0, 103.0, 104.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 101.0, 102.0, 103.0, 104.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [110.0, 111.0, 112.0, 113.0, 114.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 100.0, 101.0, 102.0, 103.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": idx,
+                "symbol": ["AAPL"] * len(idx),
+                "selected": [True] * len(idx),
+                "rank": [1.0] * len(idx),
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 7),
+                initial_equity=2_000,
+                max_positions=1,
+                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=False),
+            )
+        )
+
+        result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+        assert isinstance(result, BacktestResult)
+        assert hasattr(result, "final_value")
+        assert hasattr(result, "trades")
+        assert not result.closed_trades_df.empty
+        assert result.closed_trades_df.iloc[0]["signal_date"] == pd.Timestamp("2025-01-01")
+        assert result.closed_trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
+        assert result.closed_trades_df.iloc[0]["entry_price"] == 101.0
+        assert result.diagnostics.blocked_same_day_exits == 0
+
+    def test_backtest_engine_pdt_mode_is_not_active_above_25k(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine, BacktestResult
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 101.0, 102.0, 103.0, 104.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 101.0, 102.0, 103.0, 104.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [110.0, 111.0, 112.0, 113.0, 114.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 100.0, 101.0, 102.0, 103.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": idx,
+                "symbol": ["AAPL"] * len(idx),
+                "selected": [True] * len(idx),
+                "rank": [1.0] * len(idx),
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 7),
+                initial_equity=30_000,
+                max_positions=1,
+                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="auto", swing_only=False),
+            )
+        )
+
+        result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+        assert isinstance(result, BacktestResult)
+        assert hasattr(result, "trades")
+        assert hasattr(result, "final_value")
+        assert result.diagnostics.blocked_pdt_day_trades == 0
+        assert result.diagnostics.executed_day_trades > 0
+
+    def test_backtest_engine_pdt_mode_blocks_fourth_day_trade_in_rolling_window(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07", "2025-01-08"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [110.0, 111.0, 112.0, 113.0, 114.0, 115.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 100.0, 101.0, 102.0, 103.0, 104.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": idx[:4],
+                "symbol": ["AAPL"] * 4,
+                "selected": [True] * 4,
+                "rank": [1.0] * 4,
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 7),
+                initial_equity=2_000,
+                max_positions=1,
+                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="auto", swing_only=False),
+            )
+        )
+
+        result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+        trades_df = result.closed_trades_df
+        assert len(trades_df) == 4
+        assert int(trades_df["is_day_trade"].sum()) == 3
+        assert trades_df.iloc[-1]["holding_days"] == 1
+        assert result.diagnostics.executed_day_trades == 3
+        assert result.diagnostics.blocked_pdt_day_trades == 1
+
+    def test_backtest_engine_cash_mode_uses_settled_cash_only(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06"])
+        open_ = pd.DataFrame(
+            {
+                "AAPL": [100.0, 104.0, 104.0, 104.0],
+                "MSFT": [100.0, 100.0, 100.0, 104.0],
+            },
+            index=idx,
+        )
+        close = pd.DataFrame(
+            {
+                "AAPL": [100.0, 104.0, 104.0, 104.0],
+                "MSFT": [100.0, 100.0, 100.0, 104.0],
+            },
+            index=idx,
+        )
+        high = pd.DataFrame(
+            {
+                "AAPL": [100.0, 112.0, 104.0, 104.0],
+                "MSFT": [100.0, 100.0, 100.0, 113.0],
+            },
+            index=idx,
+        )
+        low = pd.DataFrame(
+            {
+                "AAPL": [99.0, 103.0, 103.0, 103.0],
+                "MSFT": [99.0, 99.0, 99.0, 103.0],
+            },
+            index=idx,
+        )
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"]),
+                "symbol": ["AAPL", "MSFT", "MSFT"],
+                "selected": [True, True, True],
+                "rank": [1.0, 1.0, 1.0],
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 6),
+                initial_equity=10_000,
+                max_positions=1,
+                trading_constraints=TradingConstraintConfig(account_type="cash", pdt_rule="auto", swing_only=False),
+            )
+        )
+
+        result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+        trades_df = result.closed_trades_df
+        assert len(trades_df) == 2
+        assert trades_df.iloc[0]["symbol"] == "AAPL"
+        assert trades_df.iloc[1]["symbol"] == "MSFT"
+        assert trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
+        assert trades_df.iloc[1]["entry_date"] == pd.Timestamp("2025-01-06")
+
+    def test_backtest_engine_standard_and_swing_share_same_entry_price(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 105.0, 120.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 118.0, 121.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [110.0, 120.0, 122.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 104.0, 119.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+            }
+        )
+
+        standard = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=1,
+                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=False),
+            )
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        swing = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=1,
+                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=True),
+            )
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        assert standard.closed_trades_df.iloc[0]["entry_price"] == 105.0
+        assert swing.closed_trades_df.iloc[0]["entry_price"] == 105.0
+        assert standard.closed_trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
+        assert swing.closed_trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
+        assert standard.closed_trades_df.iloc[0]["exit_date"] == pd.Timestamp("2025-01-02")
+        assert swing.closed_trades_df.iloc[0]["exit_date"] == pd.Timestamp("2025-01-03")
+
+    def test_backtest_engine_ignores_signal_without_next_session_open(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 101.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 101.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [101.0, 102.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 100.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-02"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+            }
+        )
+
+        result = BacktestEngine(
+            BacktestConfig(start_date=date(2025, 1, 1), end_date=date(2025, 1, 2), initial_equity=10_000, max_positions=1)
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        assert result.closed_trades_df.empty
+        assert result.final_value() == 10_000
+
+    def test_backtest_engine_conservative_trailing_stop_does_not_rachet_on_same_bar(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [10.0, 10.0, 10.1]}, index=idx)
+        close = pd.DataFrame({"AAPL": [10.0, 10.2, 9.9]}, index=idx)
+        high = pd.DataFrame({"AAPL": [10.0, 10.6, 10.1]}, index=idx)
+        low = pd.DataFrame({"AAPL": [10.0, 10.0, 9.4]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+            }
+        )
+
+        result = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=1,
+            )
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        assert len(result.closed_trades_df) == 1
+        trade = result.closed_trades_df.iloc[0]
+        assert trade["entry_date"] == pd.Timestamp("2025-01-02")
+        assert trade["exit_date"] == pd.Timestamp("2025-01-03")
+        assert trade["exit_reason"] == "trailing_stop"
+        assert abs(float(trade["exit_price"]) - 10.07) < 1e-9
+
+    def test_trading_constraint_config_effective_pdt_rule_is_disabled_for_cash(self):
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        cfg = TradingConstraintConfig(account_type="cash", pdt_rule="auto", swing_only=False)
+
+        assert cfg.effective_pdt_rule == "off"
+        assert cfg.applies_pdt_limit(2_000) is False
+
+    def test_trading_constraint_config_supports_cash_plus_swing_combination(self):
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        cfg = TradingConstraintConfig(account_type="cash", pdt_rule="auto", swing_only=True)
+
+        assert cfg.use_settled_cash_only is True
+        assert cfg.restrict_same_day_exit is True
+        assert cfg.effective_pdt_rule == "off"
+        assert cfg.requires_stateful_simulation(2_000) is True
 
 
 # ============================================================
@@ -622,6 +986,7 @@ class TestReport:
             output_dir=tmp_path,
             artifacts={"equity_curve_csv": str(equity_csv_path)},
             params={"start": "2025-01-01", "end": "2025-01-06"},
+            diagnostics={"blocked_pdt_day_trades": 1},
         )
 
         assert equity_csv_path.exists()
@@ -632,6 +997,7 @@ class TestReport:
         assert payload["summary"]["initial_equity"] == 10000.0
         assert payload["artifacts"]["equity_curve_csv"] == str(equity_csv_path)
         assert payload["params"]["start"] == "2025-01-01"
+        assert payload["diagnostics"]["blocked_pdt_day_trades"] == 1
 
 
 # ============================================================
@@ -658,6 +1024,9 @@ class TestCLI:
         assert args.ts == 0.05
         assert args.max_positions == 20
         assert args.fees == 0.001
+        assert args.account_type == "margin"
+        assert args.pdt_rule == "auto"
+        assert args.swing_only is False
         assert args.sentiment_lookback == 365
         assert args.ml_mode == "auto"
         assert args.sentiment_mode == "auto"
@@ -676,19 +1045,26 @@ class TestCLI:
         assert args.max_positions == 15
         assert args.no_save is True
 
-    def test_parse_run_modes(self):
+    def test_parse_run_account_constraints(self):
         from backtesting.cli import _build_parser
 
         parser = _build_parser()
         args = parser.parse_args([
             "run", "--start", "2020-01-01",
+            "--account-type", "cash",
+            "--pdt-rule", "off",
+            "--swing-only",
             "--ml-mode", "rebuild-missing",
             "--sentiment-mode", "off",
             "--artifacts-dir", "artifacts/models",
         ])
+        assert args.account_type == "cash"
+        assert args.pdt_rule == "off"
+        assert args.swing_only is True
         assert args.ml_mode == "rebuild-missing"
         assert args.sentiment_mode == "off"
         assert args.artifacts_dir == "artifacts/models"
+
 
     def test_parse_run_output_dir(self):
         from backtesting.cli import _build_parser
@@ -735,7 +1111,7 @@ class TestBacktestingRegistry:
             backtesting_registry.start_backtesting_run(
                 "run",
                 "Backtest complet",
-                BacktestRunOptions(start="2025-04-10", end="2025-04-14"),
+                BacktestRunOptions(start="2025-04-21", end="2025-04-14"),
             )
         except RuntimeError as exc:
             assert "déjà en cours" in str(exc)

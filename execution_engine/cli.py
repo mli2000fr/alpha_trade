@@ -32,9 +32,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--max-slippage-bps", type=int, default=30)
     p.add_argument("--execution-batch-size", type=int, default=20)
     p.add_argument("--inter-order-delay-ms", type=int, default=350)
+    p.add_argument("--account-type", type=str, default="margin", choices=["margin", "cash"])
+    p.add_argument("--pdt-rule", type=str, default="auto", choices=["auto", "off"])
+    p.add_argument("--swing-only", action="store_true")
     p.add_argument("--account", type=str, default=None, help="Account ID multi-comptes (défaut: premier compte)")
     p.add_argument("--log-level", type=str, default="INFO")
-    p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes")
     return p.parse_args(argv)
 
 
@@ -65,6 +67,9 @@ def main(argv: list[str] | None = None) -> None:
         max_slippage_bps=args.max_slippage_bps,
         execution_batch_size=args.execution_batch_size,
         inter_order_delay_ms=args.inter_order_delay_ms,
+        account_type=args.account_type,
+        pdt_rule=args.pdt_rule,
+        swing_only=args.swing_only,
         account_id=args.account,
     )
 

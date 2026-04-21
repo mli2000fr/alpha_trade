@@ -48,7 +48,17 @@ def test_negative_price_rejected(sizer: PositionSizer) -> None:
 
 
 def test_very_high_atr_yields_few_shares(sizer: PositionSizer) -> None:
-    pi = PriceInfo(symbol="VOL", last_close=100.0, atr_20=400.0)
+    pi = PriceInfo(symbol="VOL", last_close=600.0, atr_20=400.0)
     result = sizer.compute(pi)
-    # risk_budget=1000, risk_per_share=800 => 1 share
+    # risk_budget=1000, risk_per_share=800 => 1 share ; notional=600 > min_position_notional
     assert result.proposed_shares == 1
+
+
+def test_below_min_position_notional_is_rejected(sizer: PositionSizer) -> None:
+    pi = PriceInfo(symbol="SMALL", last_close=100.0, atr_20=250.0)
+
+    result = sizer.compute(pi)
+
+    assert result.proposed_shares == 0
+    assert result.method == "rejected"
+

@@ -17,14 +17,20 @@ def get_all_symbols_from_stock_bars_daily():
         result = conn.execute(text("SELECT DISTINCT symbol FROM stock_bars_daily")).fetchall()
         return [row[0] for row in result]
 
+# python ./event_sentiment/importe_news.py --start-date 2025-01-01 --end-date 2025-04-20
 
 def main():
+
     parser = argparse.ArgumentParser(description="Importe les news pour tous les symbols présents dans stock_bars_daily sur une période donnée.")
     parser.add_argument("--start-date", type=str, required=True, help="Date de début au format YYYY-MM-DD (ex: 2024-05-06)")
+    parser.add_argument("--end-date", type=str, required=False, help="Date de fin au format YYYY-MM-DD (ex: 2024-05-10). Par défaut: aujourd'hui.")
     args = parser.parse_args()
 
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    end_date = datetime.now(timezone.utc)
+    if args.end_date:
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    else:
+        end_date = datetime.now(timezone.utc)
 
     configure_root_logging(
         level=logging.INFO,

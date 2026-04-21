@@ -141,6 +141,28 @@ La page `Pipeline` s'appuie sur `ihm/services/pipeline_runner.py` pour construir
 11. corporate actions sync,
 12. corporate actions apply.
 
+Pour l'étape `Execution`, l'IHM expose aussi les contraintes de compte/trading :
+
+- type de compte `margin|cash` ;
+- règle `PDT auto|off` ;
+- option `swing_only`.
+
+Pour l'étape `Alpha Scanner`, l'IHM expose aussi un paramètre d'exécution dédié :
+
+- **`Alpha Scanner — activer le preset strict`**
+
+Quand cette option est cochée, la commande IHM devient :
+
+```powershell
+python -m selector.alpha_scanner --preset strict
+```
+
+Le workflow complet 1→12 réutilise la même option pour l'étape 4. Cela permet de choisir explicitement, depuis l'interface, si l'on veut appliquer ou non le preset strict partagé `STRICT_SWING_CASH_FILTERS`.
+
+Ce choix est désormais **mémorisé pendant la session IHM, par compte Alpaca** : si l'opérateur active le preset strict pour un compte puis change de compte et revient, la case est automatiquement restaurée avec la dernière valeur utilisée pour ce compte.
+
+L'interface affiche un résumé explicite de ces contraintes avant lancement afin que l'opérateur comprenne pourquoi un run `cash` peut se comporter différemment d'un run `margin`.
+
 ### 4.4 Pilotage du backtesting
 
 La page `Backtesting` utilise des services dédiés pour :
@@ -158,6 +180,15 @@ Le cockpit reste majoritairement orienté :
 - **déclenchement contrôlé** de sous-processus.
 
 Il ne remplace pas la logique métier des modules back-end eux-mêmes.
+
+### 4.6 Page Execution
+
+La page `Execution` affiche pour chaque `exec_run_id` :
+
+- le statut global du run ;
+- les événements et fills ;
+- les positions broker ;
+- et, quand disponible, le snapshot de contraintes appliquées (`account_type`, `PDT effectif`, `swing_only`, budget broker observé).
 
 ---
 

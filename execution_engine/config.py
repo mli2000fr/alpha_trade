@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,6 +13,14 @@ class ExecutionConfig:
     broker_mode: str = "paper"
     dry_run: bool = False
     account_id: str | None = None  # None = compte par défaut
+    account_type: Literal["margin", "cash"] = "margin"
+    pdt_rule: Literal["auto", "off"] = "auto"
+    swing_only: bool = False
+    pdt_equity_threshold: float = 25_000.0
+    max_day_trades: int = 3
+    cash_settlement_days: int = 1
+    simulated_account_equity: float = 100_000.0
+    simulated_margin_buying_power_multiplier: float = 2.0
 
     # --- Entry order ---
     entry_order_type: str = "market"
@@ -53,6 +62,10 @@ class ExecutionConfig:
     def __post_init__(self) -> None:
         if self.broker_mode not in ("paper", "live"):
             raise ValueError("broker_mode doit être 'paper' ou 'live'.")
+        if self.account_type not in ("margin", "cash"):
+            raise ValueError("account_type doit être 'margin' ou 'cash'.")
+        if self.pdt_rule not in ("auto", "off"):
+            raise ValueError("pdt_rule doit être 'auto' ou 'off'.")
         if self.entry_order_type not in ("market", "limit"):
             raise ValueError("entry_order_type doit être 'market' ou 'limit'.")
         if not (0 < self.profit_taker_pct < 1):
@@ -77,6 +90,25 @@ class ExecutionConfig:
             raise ValueError("execution_batch_size doit être >= 1.")
         if self.max_consecutive_failures < 1:
             raise ValueError("max_consecutive_failures doit être >= 1.")
+        if self.pdt_equity_threshold <= 0:
+            raise ValueError("pdt_equity_threshold doit être > 0.")
+        if self.max_day_trades < 1:
+            raise ValueError("max_day_trades doit être >= 1.")
+        if self.cash_settlement_days < 1:
+            raise ValueError("cash_settlement_days doit être >= 1.")
+        if self.simulated_account_equity <= 0:
+            raise ValueError("simulated_account_equity doit être > 0.")
+        if self.simulated_margin_buying_power_multiplier < 1:
+            raise ValueError("simulated_margin_buying_power_multiplier doit être >= 1.")
+
+    @property
+    def effective_pdt_rule(self) -> Literal["auto", "off"]:
+        if self.account_type == "cash":
+            return "off"
+        return self.pdt_rule
+
+    def applies_pdt_limit(self, equity: float) -> bool:
+        return self.effective_pdt_rule == "auto" and equity < self.pdt_equity_threshold
 
     def is_paper(self) -> bool:
         return self.broker_mode == "paper"

@@ -4,16 +4,19 @@ import warnings
 
 import pandas as pd
 import pytest
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from event_sentiment import signal_aggregator
 from event_sentiment.signal_aggregator import SentimentBoostConfig, SentimentSignalAggregator
 
-def test_signal_aggregator_main(monkeypatch):
-    called = {}
-    monkeypatch.setattr(signal_aggregator, "main", lambda: called.setdefault("main", True))
-    signal_aggregator.main()
-    assert called["main"] is True
+
+def test_signal_aggregator_main_rejects_invalid_weight_sum(monkeypatch) -> None:
+    monkeypatch.setattr(signal_aggregator, "configure_root_logging", lambda **_: None)
+
+    result = signal_aggregator.main(["--sentiment-weight", "0.8", "--macro-weight", "0.3"])
+
+    assert result == 1
 
 
 def test_aggregate_ticker_window_applies_time_decay_to_old_news() -> None:
@@ -161,10 +164,101 @@ def test_merge_handles_missing_signal_active_without_futurewarning(monkeypatch) 
         warnings.simplefilter("error", FutureWarning)
         result = aggregator.merge(scores_df, trade_date=date(2026, 4, 19))
 
-    by_symbol = result.set_index("symbol")
-    assert bool(by_symbol.loc["AAPL", "signal_active"]) is True
-    assert bool(by_symbol.loc["MSFT", "signal_active"]) is False
-    assert by_symbol.loc["MSFT", "sentiment_net_agg"] == 0.0
-    assert by_symbol.loc["MSFT", "final_score_sentiment"] == pytest.approx(0.575, rel=1e-6)
+    by_symbol = {
+        str(row["symbol"]): row
+        for row in result.to_dict(orient="records")
+    }
+    assert bool(by_symbol["AAPL"]["signal_active"]) is True
+    assert bool(by_symbol["MSFT"]["signal_active"]) is False
+    assert by_symbol["MSFT"]["sentiment_net_agg"] == 0.0
+    assert by_symbol["MSFT"]["final_score_sentiment"] == pytest.approx(0.575, rel=1e-6)
+
+
+def test_normalize_to_01_returns_neutral_value_for_constant_series() -> None:
+    series = pd.Series([7.0, 7.0, 7.0])
+
+    normalized = SentimentSignalAggregator._normalize_to_01(series)
+
+    assert normalized.tolist() == [0.5, 0.5, 0.5]
+
+
+def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as conn:
+        conn.execute(text(
+            """
+            CREATE TABLE stock_scores (
+                symbol TEXT PRIMARY KEY,
+                sentiment_net_agg REAL,
+                sector_impact_agg REAL,
+                sentiment_signal_norm REAL,
+                macro_signal_norm REAL,
+                final_score_sentiment REAL,
+                signal_active INTEGER,
+                major_event_flag_agg INTEGER,
+                macro_event_flag_agg INTEGER,
+                total_news INTEGER,
+                last_updated_sentiment TIMESTAMP
+            )
+            """
+        ))
+        conn.execute(text("INSERT INTO stock_scores (symbol) VALUES ('AAPL'), ('MSFT')"))
+
+    aggregator = SentimentSignalAggregator(engine=engine)
+    enriched_df = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "sentiment_net_agg": 0.8,
+                "sector_impact_agg": 0.3,
+                "sentiment_signal_norm": 0.9,
+                "macro_signal_norm": 0.7,
+                "final_score_sentiment": 0.81,
+                "signal_active": True,
+                "major_event_flag_agg": True,
+                "macro_event_flag_agg": False,
+                "total_news": 4,
+            },
+            {
+                "symbol": "MSFT",
+                "sentiment_net_agg": 0.0,
+                "sector_impact_agg": -0.1,
+                "sentiment_signal_norm": 0.5,
+                "macro_signal_norm": 0.4,
+                "final_score_sentiment": 0.62,
+                "signal_active": False,
+                "major_event_flag_agg": False,
+                "macro_event_flag_agg": True,
+                "total_news": 0,
+            },
+        ]
+    )
+
+    updated = aggregator.save_to_db(enriched_df)
+
+    assert updated == 2
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT symbol, signal_active, major_event_flag_agg, macro_event_flag_agg, total_news, final_score_sentiment "
+                "FROM stock_scores ORDER BY symbol"
+            )
+        ).mappings().all()
+
+    by_symbol = {row["symbol"]: row for row in rows}
+    assert by_symbol["AAPL"]["signal_active"] == 1
+    assert by_symbol["AAPL"]["major_event_flag_agg"] == 1
+    assert by_symbol["AAPL"]["macro_event_flag_agg"] == 0
+    assert by_symbol["MSFT"]["signal_active"] == 0
+    assert by_symbol["MSFT"]["macro_event_flag_agg"] == 1
+    assert by_symbol["MSFT"]["total_news"] == 0
+    assert by_symbol["AAPL"]["final_score_sentiment"] == pytest.approx(0.81)
+
+
+def test_save_to_db_rejects_missing_required_columns() -> None:
+    aggregator = SentimentSignalAggregator(engine=cast(Engine, object()))
+
+    with pytest.raises(ValueError, match="colonnes manquantes"):
+        aggregator.save_to_db(pd.DataFrame([{"symbol": "AAPL"}]))
 
 

@@ -51,7 +51,7 @@ alpha_trade/
 | `service/` | Clients HTTP (Alpaca data/trading/news, Finnhub) + registre multi-comptes (`accounts.py`) |
 | `dataIntegrityEngine/` | Import et nettoyage données de marché |
 | `screener/` | Scores de base (liquidité, RSI relatif, range historique) |
-| `selector/` | Scoring avancé (Minervini, VCP, neutralisation sectorielle) |
+| `selector/` | Scoring avancé (Minervini, VCP, neutralisation sectorielle) + profils de filtres stricts partagés |
 | `event_sentiment/` | NLP FinBERT + fusion scores quant/sentiment |
 | `modelFactory/` | Entraînement/prédiction LSTM per-symbol |
 | `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
@@ -68,17 +68,23 @@ alpha_trade/
 
 **`ProductionExecutor`** (`execution_engine/executor.py`) — Orchestrateur en 10 phases :
 1. Init (build_run_id)
-2. Pre-flight (chargement cibles, circuit breaker, market hours)
-3. Build intents + déduplication par idempotency_key
+2. Pre-flight (chargement cibles, circuit breaker, market hours, snapshot contraintes de compte)
+3. Build intents + déduplication par idempotency_key + filtrage capital/PDT/cash/swing
 4. Submit entries (avec retry réseau, kill switch, throttle batch)
 5. Poll fills (polling broker jusqu'à terminal state)
-6. Submit children (synthetic bracket : TP limit + TS trailing)
+6. Submit children (synthetic bracket : TP limit + TS trailing), avec report possible en cas de `swing_only` / `PDT`
 7. *(phase réservée)*
 8. Réconciliation (positions broker vs cibles, rebalance optionnel)
 9. TCA (slippage, implementation shortfall)
 10. Finalize (persist events, update run status)
 
 **`AlphaScanner`** (`selector/alpha_scanner.py`) — Scanner multi-facteurs en chunks parallèles (ThreadPoolExecutor) : `fetch_market_data()` → `compute_factors()` → `merge_scores()` → `apply_filters()` → neutralisation sectorielle cross-sectorielle sur univers complet → `rank_and_select()`.
+
+Points d'implémentation importants :
+
+- les filtres `min_close` et `liquidity_threshold` existent à la fois en présélection SQL et en filet de sécurité pandas ;
+- le filtre `max_volatility_ratio` est appliqué **dans `apply_filters()`**, pas dans la présélection SQL, car il dépend de `compute_factors()` (`vol_10`, `vol_60`, puis `volatility_ratio = vol_10 / vol_60`) ;
+- les seuils stricts swing cash sont centralisés dans `selector/strict_filter_profiles.py` (`STRICT_SWING_CASH_FILTERS`) ; `AlphaScannerConfig.strict_swing_cash()` les projette côté scanner, tandis que les scripts `prompt/fix_swing/` réutilisent le même profil côté backfill et filtrage PIT backtest.
 
 **`PortfolioBuilder`** (`risk_management/portfolio_builder.py`) — Construction portefeuille : enrichir candidats (conviction score) → trier par conviction DESC → filtre corrélation → sizing ATR/Kelly → check contraintes → ACCEPTED / REDUCED / REJECTED.
 
@@ -92,7 +98,7 @@ alpha_trade/
 - `predict` charge explicitement le checkpoint sur `cuda:0` en mode `auto`/`gpu` lorsque CUDA est disponible, sinon retombe sur CPU ;
 - les logs du module ML journalisent le `requested_accelerator`, le `resolved_device` et le `device_name` effectif.
 
-**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Seul fichier à modifier pour changer de broker.
+**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes `margin/cash/PDT` côté exécution. Seul fichier à modifier pour changer de broker.
 
 **`CircuitBreaker`** (`risk_management/circuit_breaker.py`) — Suspend le trading si drawdown ≥ 15% ou perte daily ≥ 5%.
 
@@ -106,13 +112,15 @@ alpha_trade/
 
 **`AccountRegistry`** (`service/alpaca/accounts.py`) — Singleton de résolution multi-comptes. Charge les comptes depuis `config.yaml`, env vars préfixées, ou fallback classique. Fournit `resolve(account_id)` → `BrokerAccount(api_key, secret_key, mode)`. Tous les clients (trading, market data, news, corporate actions) passent par cette résolution.
 
-**`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest vectorbt. Charge les OHLCV pivotés (10 ans max) et les signaux reconstruits, puis exécute `vbt.Portfolio.from_signals()` avec bracket TP/trailing SL. Sizing equal-weight plafonné à `max_positions`. Paramétrable via `BacktestConfig` (hérite de `RiskConfig` + `ExecutionConfig`).
+**`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest. En mode `standard`, il s'appuie sur vectorbt (`vbt.Portfolio.from_signals()`) avec bracket TP/trailing SL. Quand une contrainte de compte est activée, il bascule sur une simulation Python stateful pour appliquer correctement les règles `PDT`, `swing-only` et `cash account` (cash settled T+1). Sizing equal-weight plafonné à `max_positions`. Paramétrable via `BacktestConfig` (hérite de `RiskConfig` + `ExecutionConfig`).
+
+**`TradingConstraintConfig`** (`backtesting/trading_constraints.py`) — Dataclass pure décrivant les contraintes de compte backtesting via trois axes indépendants : `account_type` (`margin|cash`), `pdt_rule` (`auto|off`) et `swing_only` (`bool`). Encapsule le seuil `25 000 $`, la limite `3 day trades / 5 séances` et le settlement simplifié `T+1` pour les cash accounts. Un mapping legacy depuis `standard|pdt|swing|cash` est conservé temporairement pour compatibilité CLI.
 
 **`replay_signals()`** (`backtesting/signal_replay.py`) — Reconstruction jour par jour des signaux de conviction à partir des scores `stock_scores`, avec fallback ligne par ligne `final_score_sentiment -> final_score` si le sentiment est absent, et fusion optionnelle des prédictions ML `model_predictions`. Top-N candidats sélectionnés par jour.
 
 **`BacktestReport`** (`backtesting/report.py`) — Dataclass de résumé : Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor. Génère equity curve PNG et export trades CSV dans `artifacts/backtesting/`.
 
-**`BackfillScoresHistoryService`** (`backtesting/backfill_scores_history.py`) — Orchestrateur de backfill point-in-time de `stock_scores_history`. Rejoue, pour chaque séance manquante, le screener sur `stock_bars_daily`, le scoring `AlphaScanner`, puis la fusion sentiment `SentimentSignalAggregator`, avant insertion idempotente dans `stock_scores_history`. Permet de rendre le backtest réellement exploitable sur plusieurs années sans dépendre d'un snapshot courant unique.
+**`BackfillScoresHistoryService`** (`backtesting/backfill_scores_history.py`) — Orchestrateur de backfill point-in-time de `stock_scores_history`. Rejoue, pour chaque séance manquante, le screener sur `stock_bars_daily`, le scoring `AlphaScanner`, puis la fusion sentiment `SentimentSignalAggregator`, avant insertion idempotente dans `stock_scores_history`. Permet de rendre le backtest réellement exploitable sur plusieurs années sans dépendre d'un snapshot courant unique. Quand un run strict impose des filtres d'éligibilité plus durs (prix, liquidité, volatilité relative), ceux-ci doivent être injectés dans `scanner_config` dès le backfill pour que les snapshots PIT reflètent exactement le même univers que le rerun.
 
 **`prepare_predictions_for_ml_mode()` / `prepare_scores_for_sentiment_mode()`** (`backtesting/resilience.py`) — Couche de résilience du backtest. Implémente les politiques `auto | off | rebuild-missing` pour les prédictions ML et le sentiment : fallback sans ML, neutralisation du boost sentiment, ou reconstruction ciblée des données manquantes lorsque les artefacts / tables nécessaires sont disponibles.
 
@@ -407,6 +415,18 @@ python -m backtesting run --start 2016-01-01 --end 2026-04-20 --equity 100000
 # Backtest personnalisé (TP=10%, TS=4%, 15 positions max)
 python -m backtesting run --start 2020-01-01 --end 2026-04-20 --equity 50000 --tp 0.10 --ts 0.04 --max-positions 15
 
+# Compte < 25k avec règle PDT (3 day trades max sur 5 séances)
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule auto
+
+# Swing strict : aucune sortie le jour même
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule off --swing-only
+
+# Cash account : cash settled uniquement (T+1)
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash
+
+# Cash account + swing strict
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash --swing-only
+
 # Sans sauvegarde artefacts (console only)
 python -m backtesting run --start 2023-01-01 --no-save
 
@@ -429,9 +449,31 @@ Notes :
 - `--ml-mode auto` (défaut) : utilise les prédictions disponibles et ignore les trous ;
 - `--ml-mode off` : désactive entièrement la composante ML ;
 - `--ml-mode rebuild-missing` : tente de reconstruire les prédictions historiques manquantes depuis `artifacts/models/`, en bornant l'inférence à la date du signal ;
+- `--account-type margin` (défaut) : simule un compte margin ;
+- `--account-type cash` : simule un cash account, sans levier implicite et avec utilisation du cash settled uniquement ;
+- `--pdt-rule auto` (défaut) : applique la règle PDT sur un compte margin si `equity < 25 000 $` ;
+- `--pdt-rule off` : désactive la contrainte PDT dans le backtest ;
+- `--swing-only` : interdit les sorties le jour même de l'entrée ;
 - `--sentiment-mode auto` (défaut) : utilise `final_score_sentiment` si disponible, sinon fallback sur `final_score` ;
 - `--sentiment-mode off` : neutralise le sentiment (`final_score_sentiment = final_score`) ;
 - `--sentiment-mode rebuild-missing` : tente de reconstruire les snapshots PIT manquants dans `stock_scores_history`, puis applique un fallback sur `final_score` pour les lignes encore incomplètes.
+
+Le manifeste `report.json` produit par le backtest inclut désormais un bloc `diagnostics` permettant d'auditer l'effet de ces contraintes (`blocked_pdt_day_trades`, `blocked_same_day_exits`, `blocked_cash_entries`, `executed_day_trades`).
+
+### Execution Engine — contraintes de compte
+
+Le moteur d'exécution applique désormais la même sémantique métier que le backtesting autour de trois axes :
+
+- `account_type = margin|cash`
+- `pdt_rule = auto|off`
+- `swing_only = True|False`
+
+Effets principaux :
+
+- en `margin`, l'executor se base sur `buying_power` broker pour autoriser les achats ;
+- en `cash`, il se base sur `non_marginable_buying_power` / `cash` settled ;
+- si `pdt_rule=auto` et `equity < 25 000 $`, les armements de children susceptibles de produire du day trading peuvent être différés quand le quota de day trades est épuisé ;
+- si `swing_only=True`, le take-profit et le trailing stop ne sont pas armés le jour même du fill.
 
 ### Backfill historique des snapshots de scores
 
