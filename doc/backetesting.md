@@ -429,9 +429,9 @@ python -m pytest tests/test_backtesting.py tests/test_backfill_scores_history.py
 
 Les tests backtesting couvrent désormais aussi :
 
-- le blocage du 4e day trade en mode `pdt` ;
-- l'interdiction de sortie le jour même en mode `swing` ;
-- la consommation de cash settled uniquement en mode `cash`.
+- le blocage du 4e day trade avec `account_type=margin` et `pdt_rule=auto` ;
+- l'interdiction de sortie le jour même avec `--swing-only` ;
+- la consommation de cash settled uniquement avec `account_type=cash`.
 
 ---
 
