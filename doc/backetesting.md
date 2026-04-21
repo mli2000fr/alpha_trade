@@ -23,6 +23,7 @@ Ce document résume l'intégration du module `backtesting/` et les commandes uti
 | `backtesting/data_loader.py` | Chargement OHLCV, scores, sentiment, prédictions ML |
 | `backtesting/signal_replay.py` | Reconstruction des signaux de conviction jour par jour |
 | `backtesting/simulator.py` | Moteur vectorbt avec TP + trailing stop |
+| `backtesting/trading_constraints.py` | Contraintes de compte petit capital / PDT (`standard`, `pdt`, `swing`, `cash`) |
 | `backtesting/report.py` | Rapport : Sharpe, Sortino, CAGR, drawdown, win rate, profit factor |
 | `backtesting/backfill_scores_history.py` | Backfill point-in-time de `stock_scores_history` |
 | `tests/test_backtesting.py` | Tests unitaires backtesting |
@@ -141,6 +142,36 @@ python -m backtesting run --start 2016-01-01 --end 2026-04-20 --equity 100000
 python -m backtesting run --start 2020-01-01 --end 2026-04-20 --equity 50000 --tp 0.10 --ts 0.04 --max-positions 15
 ```
 
+### Contraintes de compte petit capital / PDT
+
+Le backtest expose un nouveau paramètre `--account-constraint-mode` pour simuler un compte US inférieur à 25k ou une politique plus conservatrice.
+
+Modes disponibles :
+
+- `standard` : comportement historique, aucune contrainte supplémentaire ;
+- `pdt` : si l'equity initiale est `< 25 000 $`, le moteur bloque le 4e day trade sur une fenêtre glissante de 5 séances ;
+- `swing` : interdit toute sortie le jour même de l'entrée ;
+- `cash` : désactive la règle PDT, mais n'autorise que le cash settled, avec settlement simplifié en `T+1`.
+
+Exemples :
+
+```powershell
+# Compte < 25k avec règle PDT : max 3 day trades / 5 séances
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-constraint-mode pdt
+
+# Mode swing strict : jamais de revente le jour même
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-constraint-mode swing
+
+# Cash account : pas de PDT, mais réutilisation du capital seulement après settlement T+1
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-constraint-mode cash
+```
+
+Remarques pratiques :
+
+- le mode `pdt` reste compatible avec une logique swing ;
+- le mode `swing` correspond bien à l'idée « achat aujourd'hui, vente demain ou plus tard » ;
+- le mode `cash` est utile pour évaluer un bot petit capital sans recourir à un compte margin.
+
 ### Sans sauvegarde des artefacts
 
 ```powershell
@@ -172,6 +203,7 @@ Dans `artifacts/backtesting/` :
 
 - `equity_curve.png` — courbe de valeur du portefeuille
 - `trades.csv` — liste détaillée des trades
+- `report.json` — résumé structuré incluant désormais les diagnostics de contraintes (`blocked_pdt_day_trades`, `blocked_same_day_exits`, `blocked_cash_entries`, `executed_day_trades`)
 
 ---
 
@@ -374,6 +406,12 @@ PY
 ```powershell
 python -m pytest tests/test_backtesting.py tests/test_backfill_scores_history.py -q -o addopts=""
 ```
+
+Les tests backtesting couvrent désormais aussi :
+
+- le blocage du 4e day trade en mode `pdt` ;
+- l'interdiction de sortie le jour même en mode `swing` ;
+- la consommation de cash settled uniquement en mode `cash`.
 
 ---
 

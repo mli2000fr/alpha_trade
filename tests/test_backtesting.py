@@ -524,6 +524,129 @@ class TestBacktestConfig:
         else:
             raise AssertionError("Le moteur aurait dû refuser un backtest sans symbole commun.")
 
+    def test_backtest_engine_swing_mode_blocks_same_day_exit(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        close = pd.DataFrame({"AAPL": [100.0, 118.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [110.0, 121.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 117.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 2),
+                initial_equity=10_000,
+                max_positions=1,
+                trading_constraints=TradingConstraintConfig(mode="swing"),
+            )
+        )
+
+        result = engine.run(close=close, high=high, low=low, signals_df=signals_df)
+        trades_df = result.closed_trades_df
+        assert len(trades_df) == 1
+        assert trades_df.iloc[0]["holding_days"] == 1
+        assert bool(trades_df.iloc[0]["is_day_trade"]) is False
+        assert result.diagnostics.blocked_same_day_exits == 1
+        assert result.diagnostics.executed_day_trades == 0
+
+    def test_backtest_engine_pdt_mode_blocks_fourth_day_trade_in_rolling_window(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07"])
+        close = pd.DataFrame({"AAPL": [100.0, 101.0, 102.0, 103.0, 104.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [110.0, 111.0, 112.0, 113.0, 114.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 100.0, 101.0, 102.0, 103.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": idx,
+                "symbol": ["AAPL"] * len(idx),
+                "selected": [True] * len(idx),
+                "rank": [1.0] * len(idx),
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 7),
+                initial_equity=2_000,
+                max_positions=1,
+                trading_constraints=TradingConstraintConfig(mode="pdt"),
+            )
+        )
+
+        result = engine.run(close=close, high=high, low=low, signals_df=signals_df)
+        trades_df = result.closed_trades_df
+        assert len(trades_df) == 4
+        assert int(trades_df["is_day_trade"].sum()) == 3
+        assert trades_df.iloc[-1]["holding_days"] == 1
+        assert result.diagnostics.executed_day_trades == 3
+        assert result.diagnostics.blocked_pdt_day_trades == 1
+
+    def test_backtest_engine_cash_mode_uses_settled_cash_only(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06"])
+        close = pd.DataFrame(
+            {
+                "AAPL": [100.0, 104.0, 104.0, 104.0],
+                "MSFT": [100.0, 100.0, 100.0, 104.0],
+            },
+            index=idx,
+        )
+        high = pd.DataFrame(
+            {
+                "AAPL": [100.0, 112.0, 104.0, 104.0],
+                "MSFT": [100.0, 100.0, 100.0, 112.0],
+            },
+            index=idx,
+        )
+        low = pd.DataFrame(
+            {
+                "AAPL": [99.0, 103.0, 103.0, 103.0],
+                "MSFT": [99.0, 99.0, 99.0, 103.0],
+            },
+            index=idx,
+        )
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"]),
+                "symbol": ["AAPL", "MSFT", "MSFT"],
+                "selected": [True, True, True],
+                "rank": [1.0, 1.0, 1.0],
+            }
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 6),
+                initial_equity=10_000,
+                max_positions=1,
+                trading_constraints=TradingConstraintConfig(mode="cash"),
+            )
+        )
+
+        result = engine.run(close=close, high=high, low=low, signals_df=signals_df)
+        trades_df = result.closed_trades_df
+        assert len(trades_df) == 2
+        assert trades_df.iloc[0]["symbol"] == "AAPL"
+        assert trades_df.iloc[1]["symbol"] == "MSFT"
+        assert trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-01")
+        assert trades_df.iloc[1]["entry_date"] == pd.Timestamp("2025-01-03")
+
 
 # ============================================================
 # test report
@@ -654,6 +777,7 @@ class TestReport:
             output_dir=tmp_path,
             artifacts={"equity_curve_csv": str(equity_csv_path)},
             params={"start": "2025-01-01", "end": "2025-01-06"},
+            diagnostics={"blocked_pdt_day_trades": 1},
         )
 
         assert equity_csv_path.exists()
@@ -664,6 +788,7 @@ class TestReport:
         assert payload["summary"]["initial_equity"] == 10000.0
         assert payload["artifacts"]["equity_curve_csv"] == str(equity_csv_path)
         assert payload["params"]["start"] == "2025-01-01"
+        assert payload["diagnostics"]["blocked_pdt_day_trades"] == 1
 
 
 # ============================================================
@@ -690,6 +815,7 @@ class TestCLI:
         assert args.ts == 0.05
         assert args.max_positions == 20
         assert args.fees == 0.001
+        assert args.account_constraint_mode == "standard"
         assert args.sentiment_lookback == 365
         assert args.ml_mode == "auto"
         assert args.sentiment_mode == "auto"
@@ -714,10 +840,12 @@ class TestCLI:
         parser = _build_parser()
         args = parser.parse_args([
             "run", "--start", "2020-01-01",
+            "--account-constraint-mode", "pdt",
             "--ml-mode", "rebuild-missing",
             "--sentiment-mode", "off",
             "--artifacts-dir", "artifacts/models",
         ])
+        assert args.account_constraint_mode == "pdt"
         assert args.ml_mode == "rebuild-missing"
         assert args.sentiment_mode == "off"
         assert args.artifacts_dir == "artifacts/models"

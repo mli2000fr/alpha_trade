@@ -38,14 +38,14 @@ TAIL_LINES = 250
 
 def _to_float(value: object, default: float = 0.0) -> float:
     try:
-        return float(value)
+        return float(cast(Any, value))
     except (TypeError, ValueError):
         return default
 
 
 def _to_int(value: object, default: int = 0) -> int:
     try:
-        return int(value)
+        return int(cast(Any, value))
     except (TypeError, ValueError):
         return default
 
@@ -125,6 +125,11 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "ts", "Explication": "Trailing stop en fraction (0.05 = 5%).", "Défaut": "0.05"},
             {"Paramètre": "max_positions", "Explication": "Nombre maximal de positions simultanées.", "Défaut": "20"},
             {"Paramètre": "fees", "Explication": "Frais/slippage simulés par trade.", "Défaut": "0.001"},
+            {
+                "Paramètre": "account_constraint_mode",
+                "Explication": "Contraintes de compte simulées : standard / pdt / swing / cash.",
+                "Défaut": "standard",
+            },
             {"Paramètre": "sentiment_lookback", "Explication": "Fenêtre historique sentiment passée à la CLI backtesting.", "Défaut": "365"},
             {"Paramètre": "no_save", "Explication": "Désactive l'écriture des artefacts PNG/CSV.", "Défaut": "False"},
             {"Paramètre": "ml_mode", "Explication": "auto/off/rebuild-missing pour la composante ML.", "Défaut": "auto"},
@@ -227,6 +232,24 @@ def _build_run_options() -> BacktestRunOptions:
 
     col8, col9, col10, col11 = st.columns(4)
     with col8:
+        account_constraint_mode = cast(
+            str,
+            st.selectbox(
+                "Contraintes de compte",
+                options=["standard", "pdt", "swing", "cash"],
+                index=["standard", "pdt", "swing", "cash"].index(
+                    cast(str, st.session_state.get("bt_run_account_constraint_mode", "standard"))
+                    if st.session_state.get("bt_run_account_constraint_mode", "standard") in {"standard", "pdt", "swing", "cash"}
+                    else "standard"
+                ),
+                key="bt_run_account_constraint_mode",
+                help=(
+                    "`standard` = comportement historique. `pdt` = max 3 day trades / 5 séances sous 25k. "
+                    "`swing` = aucune sortie le jour même. `cash` = cash settled uniquement (T+1 par défaut)."
+                ),
+            ),
+        )
+    with col9:
         sentiment_lookback = st.number_input(
             "Sentiment lookback (jours)",
             min_value=1,
@@ -236,7 +259,7 @@ def _build_run_options() -> BacktestRunOptions:
             key="bt_run_sentiment_lookback",
             help="Paramètre CLI exposé par le backtesting. À conserver cohérent avec vos hypothèses research.",
         )
-    with col9:
+    with col10:
         ml_mode = cast(
             str,
             st.selectbox(
@@ -251,7 +274,7 @@ def _build_run_options() -> BacktestRunOptions:
                 help="`auto` utilise ce qui existe, `off` ignore ML, `rebuild-missing` tente une reconstruction PIT des prédictions manquantes.",
             ),
         )
-    with col10:
+    with col11:
         sentiment_mode = cast(
             str,
             st.selectbox(
@@ -266,12 +289,18 @@ def _build_run_options() -> BacktestRunOptions:
                 help="`auto` garde le meilleur signal disponible, `off` neutralise le sentiment, `rebuild-missing` reconstruit les snapshots manquants si possible.",
             ),
         )
-    with col11:
+
+    col12, col13 = st.columns(2)
+    with col12:
         no_save = st.checkbox(
             "Ne pas sauver les artefacts",
             value=bool(st.session_state.get("bt_run_no_save", False)),
             key="bt_run_no_save",
             help="Si coché, le PNG d'equity curve et le CSV des trades ne seront pas écrits dans `artifacts/backtesting/`.",
+        )
+    with col13:
+        st.caption(
+            "Mode `pdt` : la 4e tentative de day trade sur 5 séances est bloquée et reportée au lendemain."
         )
 
     artifacts_dir = st.text_input(
@@ -289,6 +318,7 @@ def _build_run_options() -> BacktestRunOptions:
         ts=float(ts),
         max_positions=int(max_positions),
         fees=float(fees),
+        account_constraint_mode=cast(Any, account_constraint_mode),
         sentiment_lookback=int(sentiment_lookback),
         no_save=bool(no_save),
         ml_mode=cast(Any, ml_mode),
@@ -472,6 +502,7 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     summary = cast(dict[str, object], report_payload.get("summary", {}))
     params = cast(dict[str, object], report_payload.get("params", {}))
     artifacts = cast(dict[str, object], report_payload.get("artifacts", {}))
+    diagnostics = cast(dict[str, object], report_payload.get("diagnostics", {}))
 
     st.markdown("**📌 KPIs du rapport**")
     col1, col2, col3, col4 = st.columns(4)
@@ -495,6 +526,10 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     if artifacts:
         with st.expander("📦 Artefacts structurés du run", expanded=False):
             st.json(artifacts)
+
+    if diagnostics:
+        with st.expander("🧭 Diagnostics des contraintes de compte", expanded=False):
+            st.json(diagnostics)
     return True
 
 

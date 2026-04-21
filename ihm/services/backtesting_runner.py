@@ -22,6 +22,7 @@ class BacktestRunOptions:
     ts: float = 0.05
     max_positions: int = 20
     fees: float = 0.001
+    account_constraint_mode: Literal["standard", "pdt", "swing", "cash"] = "standard"
     sentiment_lookback: int = 365
     no_save: bool = False
     ml_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
@@ -62,6 +63,7 @@ def build_backtesting_command(
             "--ts", str(options.ts),
             "--max-positions", str(options.max_positions),
             "--fees", str(options.fees),
+            "--account-constraint-mode", options.account_constraint_mode,
             "--sentiment-lookback", str(options.sentiment_lookback),
             "--ml-mode", options.ml_mode,
             "--sentiment-mode", options.sentiment_mode,
