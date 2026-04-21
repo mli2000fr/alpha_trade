@@ -57,10 +57,30 @@ $env:PASSWORD_DB = "pass"
 python -m selector.alpha_scanner
 ```
 
+### Lancement direct avec le preset strict swing cash
+
+```powershell
+python -m selector.alpha_scanner --preset strict
+```
+
+Ce preset applique automatiquement le profil partagé `STRICT_SWING_CASH_FILTERS`, c'est-à-dire :
+
+- `min_close = 10`
+- `avg_dollar_volume_20d >= 30_000_000`
+- `max_volatility_ratio = 0.90`
+
+Depuis l'IHM (`Pipeline`), le même comportement peut être activé via la case **`Alpha Scanner — activer le preset strict`** dans les paramètres d'exécution.
+
 ### Taille de chunk et sélection finale
 
 ```powershell
 python -m selector.alpha_scanner --chunk-size 500 --selection-size 50
+```
+
+Le preset strict peut être combiné avec les autres paramètres usuels :
+
+```powershell
+python -m selector.alpha_scanner --preset strict --selection-size 100 --chunk-size 1000
 ```
 
 ### Paramètres de filtrage personnalisés
@@ -68,6 +88,14 @@ python -m selector.alpha_scanner --chunk-size 500 --selection-size 50
 ```powershell
 python -m selector.alpha_scanner --liquidity-threshold 20000000 --min-close 5 --max-volatility-ratio 0.90 --max-anomaly-count 20 --sector-cap-ratio 0.30
 ```
+
+Les seuils explicites passés en CLI gardent la priorité sur le preset. Exemple :
+
+```powershell
+python -m selector.alpha_scanner --preset strict --min-close 12 --max-volatility-ratio 0.80
+```
+
+Ici, le preset strict est chargé, puis `min_close` et `max_volatility_ratio` sont surchargés avec les valeurs explicites.
 
 ### Logs détaillés
 

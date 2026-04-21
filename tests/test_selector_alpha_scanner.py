@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 from sqlalchemy.engine import Engine
 
-from selector.alpha_scanner import AlphaScanner, AlphaScannerConfig
+from selector.alpha_scanner import AlphaScanner, AlphaScannerConfig, _build_arg_parser, _build_config_from_args
 
 
 def _make_scanner(config: AlphaScannerConfig | None = None) -> AlphaScanner:
@@ -30,6 +30,48 @@ def test_alpha_scanner_config_strict_swing_cash_uses_shared_profile() -> None:
     assert config.liquidity_threshold == pytest.approx(30_000_000.0)
     assert config.max_volatility_ratio == pytest.approx(0.9)
     assert config.selection_size == 42
+
+
+def test_cli_preset_strict_builds_shared_config() -> None:
+    args = _build_arg_parser().parse_args(["--preset", "strict", "--selection-size", "12"])
+
+    config = _build_config_from_args(args)
+
+    assert config.selection_size == 12
+    assert config.min_close == pytest.approx(10.0)
+    assert config.liquidity_threshold == pytest.approx(30_000_000.0)
+    assert config.max_volatility_ratio == pytest.approx(0.9)
+
+
+def test_cli_explicit_thresholds_override_strict_preset() -> None:
+    args = _build_arg_parser().parse_args(
+        [
+            "--preset",
+            "strict",
+            "--min-close",
+            "12",
+            "--liquidity-threshold",
+            "50000000",
+            "--max-volatility-ratio",
+            "0.8",
+        ]
+    )
+
+    config = _build_config_from_args(args)
+
+    assert config.min_close == pytest.approx(12.0)
+    assert config.liquidity_threshold == pytest.approx(50_000_000.0)
+    assert config.max_volatility_ratio == pytest.approx(0.8)
+
+
+def test_cli_without_preset_keeps_alpha_scanner_defaults() -> None:
+    args = _build_arg_parser().parse_args([])
+
+    config = _build_config_from_args(args)
+
+    assert config.min_close == pytest.approx(5.0)
+    assert config.liquidity_threshold == pytest.approx(20_000_000.0)
+    assert config.max_volatility_ratio is None
 
 
 def test_merge_scores_combines_factor_and_aux_scores() -> None:

@@ -25,6 +25,7 @@ class PipelineLaunchOptions:
 
     account_id: str | None = None
     trade_date: str | None = None
+    alpha_scanner_use_strict_preset: bool = False
     risk_account_equity: float = 100_000.0
     execution_mode: Literal["simulate", "paper", "live"] = "simulate"
     execution_run_id: str | None = None
@@ -235,7 +236,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-u", "-m", "screener.stock_screener"]
 
     if step_key == "alpha_scanner":
-        return [sys.executable, "-u", "-m", "selector.alpha_scanner"]
+        command = [sys.executable, "-u", "-m", "selector.alpha_scanner"]
+        if options.alpha_scanner_use_strict_preset:
+            command.extend(["--preset", "strict"])
+        return command
 
     if step_key == "sentiment_pipeline":
         return [sys.executable, "-u", "-m", "event_sentiment"]

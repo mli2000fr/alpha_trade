@@ -81,6 +81,20 @@ def test_build_pipeline_command_omits_account_for_global_steps() -> None:
     assert command == [command[0], "-u", "-m", "screener.stock_screener"]
 
 
+def test_build_pipeline_command_alpha_scanner_can_enable_strict_preset() -> None:
+    strict_command = build_pipeline_command(
+        "alpha_scanner",
+        PipelineLaunchOptions(alpha_scanner_use_strict_preset=True),
+    )
+    default_command = build_pipeline_command(
+        "alpha_scanner",
+        PipelineLaunchOptions(alpha_scanner_use_strict_preset=False),
+    )
+
+    assert strict_command == [strict_command[0], "-u", "-m", "selector.alpha_scanner", "--preset", "strict"]
+    assert default_command == [default_command[0], "-u", "-m", "selector.alpha_scanner"]
+
+
 
 def test_build_subprocess_env_propagates_db_config_and_pythonpath() -> None:
     env = build_subprocess_env(

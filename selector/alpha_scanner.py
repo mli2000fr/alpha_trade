@@ -143,7 +143,9 @@ class AlphaScannerConfig:
         profile: StrictFilterProfile,
         **overrides: object,
     ) -> "AlphaScannerConfig":
-        return cls(**profile.to_scanner_config_kwargs(), **overrides)
+        merged_kwargs = profile.to_scanner_config_kwargs()
+        merged_kwargs.update(overrides)
+        return cls(**merged_kwargs)
 
     @classmethod
     def strict_swing_cash(cls, **overrides: object) -> "AlphaScannerConfig":
@@ -1058,16 +1060,40 @@ class AlphaScanner:
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AlphaScanner multi-facteurs")
+    parser.add_argument("--preset", choices=["strict"], default=None, help="Preset de filtres prêt à l'emploi")
     parser.add_argument("--chunk-size", type=int, default=500, help="Taille des chunks de symboles")
     parser.add_argument("--selection-size", type=int, default=50, help="Nombre final de titres à retenir")
     parser.add_argument("--max-workers", type=int, default=None, help="Nombre maximum de threads")
-    parser.add_argument("--liquidity-threshold", type=float, default=20_000_000.0, help="Seuil minimal de liquidité en dollar volume moyen 20j")
-    parser.add_argument("--min-close", type=float, default=5.0, help="Prix minimal de clôture")
+    parser.add_argument("--liquidity-threshold", type=float, default=None, help="Seuil minimal de liquidité en dollar volume moyen 20j")
+    parser.add_argument("--min-close", type=float, default=None, help="Prix minimal de clôture")
     parser.add_argument("--max-volatility-ratio", type=float, default=None, help="Seuil maximal optionnel du ratio de volatilité récente vol10/vol60")
     parser.add_argument("--max-anomaly-count", type=int, default=20, help="Nombre maximum d'anomalies accepté par titre")
     parser.add_argument("--sector-cap-ratio", type=float, default=0.30, help="Plafond par secteur, ex. 0.30 = 30%")
     parser.add_argument("--log-level", type=str, default="INFO", help="Niveau de log (DEBUG, INFO, WARNING, ERROR)")
     return parser
+
+
+def _build_config_from_args(args: argparse.Namespace) -> AlphaScannerConfig:
+    threshold_overrides: dict[str, object] = {}
+    if args.liquidity_threshold is not None:
+        threshold_overrides["liquidity_threshold"] = args.liquidity_threshold
+    if args.min_close is not None:
+        threshold_overrides["min_close"] = args.min_close
+    if args.max_volatility_ratio is not None:
+        threshold_overrides["max_volatility_ratio"] = args.max_volatility_ratio
+
+    common_kwargs = {
+        "chunk_size": args.chunk_size,
+        "selection_size": args.selection_size,
+        "max_workers": args.max_workers,
+        "max_anomaly_count": args.max_anomaly_count,
+        "sector_cap_ratio": args.sector_cap_ratio,
+        **threshold_overrides,
+    }
+
+    if args.preset == "strict":
+        return AlphaScannerConfig.strict_swing_cash(**common_kwargs)
+    return AlphaScannerConfig(**common_kwargs)
 
 
 def main() -> None:
@@ -1078,16 +1104,7 @@ def main() -> None:
         fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    config = AlphaScannerConfig(
-        chunk_size=args.chunk_size,
-        selection_size=args.selection_size,
-        max_workers=args.max_workers,
-        liquidity_threshold=args.liquidity_threshold,
-        min_close=args.min_close,
-        max_volatility_ratio=args.max_volatility_ratio,
-        max_anomaly_count=args.max_anomaly_count,
-        sector_cap_ratio=args.sector_cap_ratio,
-    )
+    config = _build_config_from_args(args)
 
     result = AlphaScanner(config=config).run()
 
