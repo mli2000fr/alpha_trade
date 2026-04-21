@@ -7,7 +7,7 @@ import pytest
 
 from execution_engine import executor as executor_module
 from execution_engine.config import ExecutionConfig
-from execution_engine.executor import ProductionExecutor
+from execution_engine.executor import ProductionExecutor, _AccountConstraintState
 from execution_engine.models import BrokerOrder, EventType, OrderIntent, OrderStatus
 
 
@@ -55,6 +55,13 @@ def _make_executor(config: ExecutionConfig | None = None) -> tuple[ProductionExe
     cfg = config or ExecutionConfig(dry_run=False, allow_outside_rth=True, inter_order_delay_ms=0, poll_interval_seconds=0.01)
     repo = MagicMock()
     broker = MagicMock()
+    broker.get_account_snapshot.return_value = {
+        "equity": 100_000.0,
+        "cash": 100_000.0,
+        "buying_power": 200_000.0,
+        "non_marginable_buying_power": 100_000.0,
+        "daytrade_count": 0,
+    }
     oco = MagicMock()
     return ProductionExecutor(cfg, repo, broker, oco), repo, broker, oco
 
@@ -110,7 +117,18 @@ def test_submit_children_submits_take_profit_and_trailing_stop() -> None:
         _make_order(status=OrderStatus.SUBMITTED, filled_qty=0.0),
     ]
 
-    events = executor._submit_children(parent, filled_order, exec_run_id="exec-1")
+    account_state = _AccountConstraintState(
+        account_type="margin",
+        effective_pdt_rule="off",
+        swing_only=False,
+        equity=100_000.0,
+        buying_power_available=200_000.0,
+        settled_cash_available=100_000.0,
+        daytrade_count=0,
+        remaining_day_trade_slots=0,
+    )
+
+    events = executor._submit_children(parent, filled_order, exec_run_id="exec-1", account_state=account_state, metrics={"children_deferred": 0})
 
     assert broker.submit_intent.call_count == 2
     assert repo.upsert_execution_order.call_count == 2
@@ -122,10 +140,57 @@ def test_submit_children_skips_when_fill_quantity_is_zero() -> None:
     executor, repo, broker, _ = _make_executor()
     parent = _make_parent_intent()
     unfilled_order = _make_order(status=OrderStatus.SUBMITTED, filled_qty=0.0)
+    account_state = _AccountConstraintState(
+        account_type="margin",
+        effective_pdt_rule="off",
+        swing_only=False,
+        equity=100_000.0,
+        buying_power_available=200_000.0,
+        settled_cash_available=100_000.0,
+        daytrade_count=0,
+        remaining_day_trade_slots=0,
+    )
 
-    events = executor._submit_children(parent, unfilled_order, exec_run_id="exec-1")
+    events = executor._submit_children(parent, unfilled_order, exec_run_id="exec-1", account_state=account_state, metrics={"children_deferred": 0})
 
     assert events == []
     broker.submit_intent.assert_not_called()
     repo.upsert_execution_order.assert_not_called()
+
+
+def test_build_account_constraint_state_uses_simulated_margin_multiplier_in_dry_run() -> None:
+    executor, _, _, _ = _make_executor(
+        ExecutionConfig(
+            dry_run=True,
+            allow_outside_rth=True,
+            account_type="margin",
+            simulated_account_equity=2_000.0,
+            simulated_margin_buying_power_multiplier=2.0,
+        )
+    )
+
+    state = executor._build_account_constraint_state()
+
+    assert state.buying_power_available == 4_000.0
+    assert state.settled_cash_available == 2_000.0
+
+
+def test_should_defer_children_for_swing_only() -> None:
+    executor, _, _, _ = _make_executor()
+    state = _AccountConstraintState(
+        account_type="margin",
+        effective_pdt_rule="off",
+        swing_only=True,
+        equity=2_000.0,
+        buying_power_available=4_000.0,
+        settled_cash_available=2_000.0,
+        daytrade_count=0,
+        remaining_day_trade_slots=0,
+    )
+
+    defer, reason = executor._should_defer_children(state)
+
+    assert defer is True
+    assert reason == "swing_only"
+
 

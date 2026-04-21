@@ -23,7 +23,7 @@ Ce document résume l'intégration du module `backtesting/` et les commandes uti
 | `backtesting/data_loader.py` | Chargement OHLCV, scores, sentiment, prédictions ML |
 | `backtesting/signal_replay.py` | Reconstruction des signaux de conviction jour par jour |
 | `backtesting/simulator.py` | Moteur vectorbt avec TP + trailing stop |
-| `backtesting/trading_constraints.py` | Contraintes de compte petit capital / PDT (`standard`, `pdt`, `swing`, `cash`) |
+| `backtesting/trading_constraints.py` | Contraintes de compte composables : `account_type`, `pdt_rule`, `swing_only` |
 | `backtesting/report.py` | Rapport : Sharpe, Sortino, CAGR, drawdown, win rate, profit factor |
 | `backtesting/backfill_scores_history.py` | Backfill point-in-time de `stock_scores_history` |
 | `tests/test_backtesting.py` | Tests unitaires backtesting |
@@ -189,8 +189,7 @@ python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --ac
 Remarques pratiques :
 
 - `--account-type cash` neutralise la règle PDT, même si `--pdt-rule auto` est laissé par défaut ;
-- `--swing-only` correspond bien à l'idée « achat aujourd'hui, vente demain ou plus tard » ;
-- l'ancien flag `--account-constraint-mode` reste accepté temporairement comme alias legacy, mais il est déprécié.
+- `--swing-only` correspond bien à l'idée « achat aujourd'hui, vente demain ou plus tard ».
 
 ### Sans sauvegarde des artefacts
 

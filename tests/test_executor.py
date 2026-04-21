@@ -49,6 +49,13 @@ def _make_executor(config: ExecutionConfig | None = None, targets: list[Executio
     broker.poll_order_status.return_value = _filled_order()
     broker.is_market_open.return_value = True
     broker.get_account_equity.return_value = 100_000.0
+    broker.get_account_snapshot.return_value = {
+        "equity": 100_000.0,
+        "cash": 100_000.0,
+        "buying_power": 200_000.0,
+        "non_marginable_buying_power": 100_000.0,
+        "daytrade_count": 0,
+    }
     broker.get_all_positions.return_value = [{"symbol": "AAPL", "qty": 100}]
     oco = MagicMock(spec=OcoManager)
     oco.check_and_cancel_sibling.return_value = []
@@ -153,3 +160,65 @@ class TestExecutor:
         metrics = executor.execute_run(risk_run_id="r1")
         # After 1 failure, kill switch activates, so not all 3 submitted
         assert metrics["failed"] >= 1
+
+    def test_cash_account_blocks_entry_when_settled_cash_is_insufficient(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="cash", pdt_rule="off")
+        executor, repo, broker, _ = _make_executor(cfg)
+        broker.get_account_snapshot.return_value = {
+            "equity": 2_000.0,
+            "cash": 100.0,
+            "buying_power": 100.0,
+            "non_marginable_buying_power": 100.0,
+            "daytrade_count": 0,
+        }
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        broker.submit_intent.assert_not_called()
+        assert metrics["constraint_blocked"] == 1
+        event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
+        assert EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT in event_types
+
+    def test_margin_account_allows_buying_power_above_cash(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", pdt_rule="off")
+        executor, repo, broker, _ = _make_executor(cfg)
+        broker.get_account_snapshot.return_value = {
+            "equity": 2_000.0,
+            "cash": 100.0,
+            "buying_power": 20_000.0,
+            "non_marginable_buying_power": 100.0,
+            "daytrade_count": 0,
+        }
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        assert metrics["submitted"] == 1
+        broker.submit_intent.assert_called()
+
+    def test_pdt_limit_defers_children_when_daytrade_slots_exhausted(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", pdt_rule="auto")
+        executor, repo, broker, _ = _make_executor(cfg)
+        broker.get_account_snapshot.return_value = {
+            "equity": 2_000.0,
+            "cash": 2_000.0,
+            "buying_power": 20_000.0,
+            "non_marginable_buying_power": 2_000.0,
+            "daytrade_count": 3,
+        }
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        assert metrics["children_deferred"] == 1
+        event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
+        assert EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT in event_types
+
+    def test_swing_only_defers_children_even_without_pdt_limit(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", pdt_rule="off", swing_only=True)
+        executor, repo, broker, _ = _make_executor(cfg)
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        assert metrics["children_deferred"] == 1
+        event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
+        assert EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT in event_types
+

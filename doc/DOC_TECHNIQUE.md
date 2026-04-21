@@ -68,11 +68,11 @@ alpha_trade/
 
 **`ProductionExecutor`** (`execution_engine/executor.py`) — Orchestrateur en 10 phases :
 1. Init (build_run_id)
-2. Pre-flight (chargement cibles, circuit breaker, market hours)
-3. Build intents + déduplication par idempotency_key
+2. Pre-flight (chargement cibles, circuit breaker, market hours, snapshot contraintes de compte)
+3. Build intents + déduplication par idempotency_key + filtrage capital/PDT/cash/swing
 4. Submit entries (avec retry réseau, kill switch, throttle batch)
 5. Poll fills (polling broker jusqu'à terminal state)
-6. Submit children (synthetic bracket : TP limit + TS trailing)
+6. Submit children (synthetic bracket : TP limit + TS trailing), avec report possible en cas de `swing_only` / `PDT`
 7. *(phase réservée)*
 8. Réconciliation (positions broker vs cibles, rebalance optionnel)
 9. TCA (slippage, implementation shortfall)
@@ -92,7 +92,7 @@ alpha_trade/
 - `predict` charge explicitement le checkpoint sur `cuda:0` en mode `auto`/`gpu` lorsque CUDA est disponible, sinon retombe sur CPU ;
 - les logs du module ML journalisent le `requested_accelerator`, le `resolved_device` et le `device_name` effectif.
 
-**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Seul fichier à modifier pour changer de broker.
+**`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes `margin/cash/PDT` côté exécution. Seul fichier à modifier pour changer de broker.
 
 **`CircuitBreaker`** (`risk_management/circuit_breaker.py`) — Suspend le trading si drawdown ≥ 15% ou perte daily ≥ 5%.
 
@@ -448,12 +448,26 @@ Notes :
 - `--pdt-rule auto` (défaut) : applique la règle PDT sur un compte margin si `equity < 25 000 $` ;
 - `--pdt-rule off` : désactive la contrainte PDT dans le backtest ;
 - `--swing-only` : interdit les sorties le jour même de l'entrée ;
-- `--account-constraint-mode ...` : alias legacy déprécié, encore accepté temporairement pour compatibilité ;
 - `--sentiment-mode auto` (défaut) : utilise `final_score_sentiment` si disponible, sinon fallback sur `final_score` ;
 - `--sentiment-mode off` : neutralise le sentiment (`final_score_sentiment = final_score`) ;
 - `--sentiment-mode rebuild-missing` : tente de reconstruire les snapshots PIT manquants dans `stock_scores_history`, puis applique un fallback sur `final_score` pour les lignes encore incomplètes.
 
 Le manifeste `report.json` produit par le backtest inclut désormais un bloc `diagnostics` permettant d'auditer l'effet de ces contraintes (`blocked_pdt_day_trades`, `blocked_same_day_exits`, `blocked_cash_entries`, `executed_day_trades`).
+
+### Execution Engine — contraintes de compte
+
+Le moteur d'exécution applique désormais la même sémantique métier que le backtesting autour de trois axes :
+
+- `account_type = margin|cash`
+- `pdt_rule = auto|off`
+- `swing_only = True|False`
+
+Effets principaux :
+
+- en `margin`, l'executor se base sur `buying_power` broker pour autoriser les achats ;
+- en `cash`, il se base sur `non_marginable_buying_power` / `cash` settled ;
+- si `pdt_rule=auto` et `equity < 25 000 $`, les armements de children susceptibles de produire du day trading peuvent être différés quand le quota de day trades est épuisé ;
+- si `swing_only=True`, le take-profit et le trailing stop ne sont pas armés le jour même du fill.
 
 ### Backfill historique des snapshots de scores
 

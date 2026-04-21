@@ -65,6 +65,12 @@ $env:ALPACA_SECRET_KEY = "..."
 
 Le moteur supporte `--account <ID>` via `service.alpaca.accounts.AccountRegistry`.
 
+Il supporte aussi désormais des contraintes de compte/trading explicites :
+
+- `--account-type margin|cash`
+- `--pdt-rule auto|off`
+- `--swing-only`
+
 ---
 
 ## 3. Commandes utiles
@@ -93,6 +99,19 @@ python run_execution.py paper
 python run_execution.py live --account live1
 ```
 
+### Exécution avec contraintes de compte
+
+```powershell
+# Compte margin soumis à PDT
+python run_execution.py paper --account default --account-type margin --pdt-rule auto
+
+# Compte cash : capital disponible limité au cash settled
+python run_execution.py paper --account default --account-type cash
+
+# Swing strict : ne pas armer les exits le jour même
+python run_execution.py paper --account default --account-type margin --pdt-rule off --swing-only
+```
+
 ### Vérification de l'environnement
 
 ```powershell
@@ -119,7 +138,8 @@ python -m execution_engine --trade-date 2026-04-21 --risk-run-id abc123 --broker
 3. crée la ligne `execution_runs` ;
 4. vérifie éventuellement le circuit breaker ;
 5. vérifie les horaires de marché ;
-6. alerte s'il existe des corporate actions pending sur les symboles cibles.
+6. construit un snapshot de contraintes de compte (`margin|cash`, `PDT`, `swing_only`) ;
+7. alerte s'il existe des corporate actions pending sur les symboles cibles.
 
 ### 4.2 Construction et soumission des intents
 
@@ -127,8 +147,15 @@ Le module :
 
 1. transforme les cibles en `OrderIntent` ;
 2. filtre les doublons via `idempotency_key` ;
-3. persiste les intents ;
-4. soumet les ordres d'entrée au broker.
+3. bloque les achats qui dépassent le capital réellement mobilisable selon le type de compte ;
+4. persiste les intents ;
+5. soumet les ordres d'entrée au broker.
+
+En particulier :
+
+- en `margin`, le moteur s'appuie sur `buying_power` broker ;
+- en `cash`, le moteur s'appuie sur `non_marginable_buying_power` / `cash` settled ;
+- en `dry_run`, un multiplicateur de buying power simulé permet de distinguer un compte `margin` d'un compte `cash`.
 
 ### 4.3 Bracket synthétique
 
@@ -141,6 +168,8 @@ Le pattern utilisé est :
 3. soumettre séparément le take-profit limit ;
 4. soumettre séparément le trailing stop ;
 5. laisser `OcoManager` annuler le sibling si un des deux est exécuté.
+
+Quand `--swing-only` est activé, ou quand une contrainte PDT ne laisse plus de slot de day trade, le moteur diffère l'armement des children le jour même. Le run journalise alors un événement `CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT`.
 
 ### 4.4 Réconciliation et TCA
 
@@ -170,7 +199,8 @@ Causes probables :
 1. circuit breaker actif ;
 2. marché fermé et `allow_outside_rth = False` ;
 3. environnement Alpaca incomplet ;
-4. erreur broker lors du contrôle d'horloge.
+4. erreur broker lors du contrôle d'horloge ;
+5. contraintes de capital/cash account trop restrictives pour soumettre les achats.
 
 ### 5.3 Ordres rejetés
 

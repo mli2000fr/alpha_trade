@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-LegacySmallAccountMode = Literal["standard", "pdt", "swing", "cash"]
 AccountType = Literal["margin", "cash"]
 PDTRule = Literal["auto", "off"]
 
@@ -19,10 +18,6 @@ class TradingConstraintConfig:
     - ``pdt_rule`` : ``auto`` ou ``off``
     - ``swing_only`` : interdit les sorties le jour même quand activé
 
-    Compatibilité legacy
-    --------------------
-    Un pont `from_legacy_mode()` est conservé pour migrer l'ancien mode exclusif
-    ``standard|pdt|swing|cash`` vers cette API plus expressive.
     """
 
     account_type: AccountType = "margin"
@@ -53,15 +48,6 @@ class TradingConstraintConfig:
     def requires_stateful_simulation(self, equity: float) -> bool:
         return self.restrict_same_day_exit or self.use_settled_cash_only or self.applies_pdt_limit(equity)
 
-    @classmethod
-    def from_legacy_mode(cls, mode: LegacySmallAccountMode) -> TradingConstraintConfig:
-        mapping: dict[LegacySmallAccountMode, TradingConstraintConfig] = {
-            "standard": cls(account_type="margin", pdt_rule="off", swing_only=False),
-            "pdt": cls(account_type="margin", pdt_rule="auto", swing_only=False),
-            "swing": cls(account_type="margin", pdt_rule="off", swing_only=True),
-            "cash": cls(account_type="cash", pdt_rule="off", swing_only=False),
-        }
-        return mapping[mode]
 
     def to_dict(self) -> dict[str, int | float | str | bool]:
         return {

@@ -64,12 +64,6 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Interdire toute sortie le jour même de l'entrée",
     )
-    run_p.add_argument(
-        "--account-constraint-mode",
-        choices=["standard", "pdt", "swing", "cash"],
-        default=None,
-        help="Alias legacy déprécié vers la nouvelle API account-type/pdt-rule/swing-only",
-    )
     run_p.add_argument("--sentiment-lookback", type=int, default=365, help="Lookback sentiment (jours)")
     run_p.add_argument("--no-save", action="store_true", help="Ne pas sauvegarder les artefacts")
     run_p.add_argument(
@@ -133,18 +127,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
     end = datetime.strptime(args.end, "%Y-%m-%d").date()
 
-    if args.account_constraint_mode is not None:
-        trading_constraints = TradingConstraintConfig.from_legacy_mode(args.account_constraint_mode)
-        _safe_print(
-            "   ⚠️ `--account-constraint-mode` est déprécié ; utilise plutôt "
-            "`--account-type`, `--pdt-rule` et `--swing-only`.\n"
-        )
-    else:
-        trading_constraints = TradingConstraintConfig(
-            account_type=args.account_type,
-            pdt_rule=args.pdt_rule,
-            swing_only=args.swing_only,
-        )
+    trading_constraints = TradingConstraintConfig(
+        account_type=args.account_type,
+        pdt_rule=args.pdt_rule,
+        swing_only=args.swing_only,
+    )
 
     _safe_print(f"\n🚀 Backtest Alpha Trade : {start} → {end}, capital={args.equity:,.0f}$")
     _safe_print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
@@ -247,7 +234,6 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 "pdt_rule": trading_constraints.pdt_rule,
                 "effective_pdt_rule": trading_constraints.effective_pdt_rule,
                 "swing_only": trading_constraints.swing_only,
-                "legacy_account_constraint_mode": args.account_constraint_mode,
                 "sentiment_lookback": args.sentiment_lookback,
                 "ml_mode": args.ml_mode,
                 "sentiment_mode": args.sentiment_mode,
@@ -287,7 +273,6 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     "pdt_rule": trading_constraints.pdt_rule,
                     "effective_pdt_rule": trading_constraints.effective_pdt_rule,
                     "swing_only": trading_constraints.swing_only,
-                    "legacy_account_constraint_mode": args.account_constraint_mode,
                     "sentiment_lookback": args.sentiment_lookback,
                     "ml_mode": args.ml_mode,
                     "sentiment_mode": args.sentiment_mode,

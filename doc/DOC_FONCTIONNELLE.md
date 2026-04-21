@@ -71,6 +71,8 @@ Cette API composable permet d'évaluer une stratégie avec **2 000 $** ou un aut
 - la **règle réglementaire PDT**,
 - le **style de trading swing**.
 
+Cette logique n'est plus limitée au backtest : le module `execution_engine` applique aussi ces contraintes au moment de la soumission des ordres et de l'armement des sorties.
+
 #### Scanner multi-facteurs (AlphaScanner)
 - **Trend Score** (critères Minervini) : 7 critères techniques (close > MA150, MA150 > MA200, MA200 en hausse, close > MA50, close ≥ 1.25 × low 52w, close ≥ 0.75 × high 52w)
 - **VCP Score** (Volatility Contraction Pattern) : ratio volatilité 10j/60j vs seuil
@@ -313,6 +315,8 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 11. **En backtest, un compte margin peut être soumis à la règle PDT** si `pdt_rule=auto` et `equity < 25k`, avec blocage du 4e day trade sur 5 séances glissantes
 12. **En backtest, l'option `swing_only` peut interdire toute revente le jour même**
 13. **En backtest, un cash account n'utilise que le cash settled** et retarde la réutilisation des fonds après vente jusqu'au settlement `T+1`
+14. **En exécution, un compte cash ne peut pas soumettre d'achats au-delà du cash settled disponible**
+15. **En exécution, `swing_only` et la contrainte PDT peuvent différer l'armement des ordres de sortie le jour même**
 
 ---
 
@@ -338,6 +342,12 @@ Concernant les contraintes petit capital simulées en backtest :
 - l'option `swing_only` peut être combinée aussi bien avec un compte `margin` qu'avec un compte `cash` ;
 - le mode `cash` repose sur un settlement simplifié **T+1** pour rester testable et lisible ;
 - ces modes s'appliquent au moteur de backtest et n'altèrent pas l'exécution live/paper réelle du broker.
+
+Concernant l'exécution réelle/paper :
+
+- le moteur tient compte du snapshot broker (`buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) ;
+- un compte `margin` et un compte `cash` peuvent donc produire des résultats d'exécution très différents à capital nominal identique ;
+- cet écart est attendu, car la mécanique de capital disponible n'est pas la même.
 
 ---
 

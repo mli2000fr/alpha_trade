@@ -7,6 +7,8 @@ from execution_engine.config import ExecutionConfig
     ("kwargs", "message"),
     [
         ({"broker_mode": "sandbox"}, "broker_mode"),
+        ({"account_type": "leveraged"}, "account_type"),
+        ({"pdt_rule": "strict"}, "pdt_rule"),
         ({"entry_order_type": "stop"}, "entry_order_type"),
         ({"profit_taker_pct": 0}, "profit_taker_pct"),
         ({"trailing_stop_pct": 1}, "trailing_stop_pct"),
@@ -19,6 +21,11 @@ from execution_engine.config import ExecutionConfig
         ({"cancel_timeout_seconds": 0}, "cancel_timeout_seconds"),
         ({"execution_batch_size": 0}, "execution_batch_size"),
         ({"max_consecutive_failures": 0}, "max_consecutive_failures"),
+        ({"pdt_equity_threshold": 0}, "pdt_equity_threshold"),
+        ({"max_day_trades": 0}, "max_day_trades"),
+        ({"cash_settlement_days": 0}, "cash_settlement_days"),
+        ({"simulated_account_equity": 0}, "simulated_account_equity"),
+        ({"simulated_margin_buying_power_multiplier": 0.5}, "simulated_margin_buying_power_multiplier"),
     ],
 )
 def test_execution_config_validates_invalid_values(kwargs, message):
@@ -38,4 +45,12 @@ def test_execution_config_is_live_when_requested() -> None:
 
     assert cfg.is_live() is True
     assert cfg.is_paper() is False
+
+
+def test_execution_config_disables_effective_pdt_for_cash_account() -> None:
+    cfg = ExecutionConfig(account_type="cash", pdt_rule="auto")
+
+    assert cfg.effective_pdt_rule == "off"
+    assert cfg.applies_pdt_limit(2_000.0) is False
+
 

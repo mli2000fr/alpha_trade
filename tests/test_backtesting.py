@@ -422,7 +422,6 @@ class TestBacktestConfig:
         assert cfg.trading_constraints.account_type == "margin"
         assert cfg.trading_constraints.pdt_rule == "auto"
         assert cfg.trading_constraints.swing_only is False
-
     def test_config_from_risk_and_exec(self):
         from backtesting.simulator import BacktestConfig
         from risk_management.config import RiskConfig
@@ -714,27 +713,13 @@ class TestBacktestConfig:
         assert trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-01")
         assert trades_df.iloc[1]["entry_date"] == pd.Timestamp("2025-01-03")
 
-    def test_trading_constraint_config_legacy_mapping(self):
+    def test_trading_constraint_config_effective_pdt_rule_is_disabled_for_cash(self):
         from backtesting.trading_constraints import TradingConstraintConfig
 
-        standard = TradingConstraintConfig.from_legacy_mode("standard")
-        assert standard.account_type == "margin"
-        assert standard.pdt_rule == "off"
-        assert standard.swing_only is False
+        cfg = TradingConstraintConfig(account_type="cash", pdt_rule="auto", swing_only=False)
 
-        pdt = TradingConstraintConfig.from_legacy_mode("pdt")
-        assert pdt.account_type == "margin"
-        assert pdt.pdt_rule == "auto"
-        assert pdt.swing_only is False
-
-        swing = TradingConstraintConfig.from_legacy_mode("swing")
-        assert swing.account_type == "margin"
-        assert swing.pdt_rule == "off"
-        assert swing.swing_only is True
-
-        cash = TradingConstraintConfig.from_legacy_mode("cash")
-        assert cash.account_type == "cash"
-        assert cash.effective_pdt_rule == "off"
+        assert cfg.effective_pdt_rule == "off"
+        assert cfg.applies_pdt_limit(2_000) is False
 
     def test_trading_constraint_config_supports_cash_plus_swing_combination(self):
         from backtesting.trading_constraints import TradingConstraintConfig
@@ -917,7 +902,6 @@ class TestCLI:
         assert args.account_type == "margin"
         assert args.pdt_rule == "auto"
         assert args.swing_only is False
-        assert args.account_constraint_mode is None
         assert args.sentiment_lookback == 365
         assert args.ml_mode == "auto"
         assert args.sentiment_mode == "auto"
@@ -956,17 +940,6 @@ class TestCLI:
         assert args.sentiment_mode == "off"
         assert args.artifacts_dir == "artifacts/models"
 
-    def test_parse_run_legacy_account_constraint_mode(self):
-        from backtesting.cli import _build_parser
-
-        parser = _build_parser()
-        args = parser.parse_args([
-            "run", "--start", "2020-01-01",
-            "--account-constraint-mode", "pdt",
-        ])
-        assert args.account_constraint_mode == "pdt"
-        assert args.account_type == "margin"
-        assert args.pdt_rule == "auto"
 
     def test_parse_run_output_dir(self):
         from backtesting.cli import _build_parser
