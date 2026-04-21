@@ -1,0 +1,199 @@
+
+🎯 OBJECTIF :
+Réaliser un audit COMPLET du projet comme si tu étais un expert mandaté pour préparer une V2 industrielle / scalable / maintenable.
+
+Je veux que tu examines l’architecture, la qualité du code, les modules métier, la robustesse technique, la performance, la sécurité, la dette technique et les axes d’amélioration.
+
+---
+
+# CONTEXTE PROJET
+
+Alpha Trade est une plateforme Python de trading algorithmique comprenant :
+
+- ingestion données marché Alpaca
+- nettoyage & data integrity
+- screener actions
+- scanner multi-facteurs
+- NLP FinBERT sentiment
+- ML LSTM + Attention (PyTorch Lightning)
+- risk management
+- execution engine OMS/EMS
+- corporate actions
+- backtesting vectorbt
+- dashboard Streamlit
+- MySQL + SQLAlchemy
+- multi-comptes Alpaca
+
+---
+
+# TA MISSION
+
+Analyse le projet comme si tu avais accès au repository complet.
+
+Je veux un rapport structuré ultra-professionnel.
+
+---
+
+# LIVRABLE ATTENDU
+
+## 1. Diagnostic global (/10)
+
+Donne une note sur :
+
+- Architecture logicielle
+- Qualité code Python
+- Maintainability
+- Scalabilité
+- Robustesse prod
+- Sécurité
+- Performance
+- Testabilité
+- Niveau professionnel global
+
+---
+
+## 2. Forces actuelles
+
+Liste les points forts du projet :
+
+- ce qui est bien pensé
+- ce qui dépasse un niveau amateur
+- ce qui montre un vrai niveau senior
+
+---
+
+## 3. Faiblesses critiques
+
+Détecte :
+
+- goulots d’étranglement
+- risques techniques
+- modules fragiles
+- code smells probables
+- anti-patterns fréquents
+- dette cachée
+
+Classe par priorité :
+
+P0 = critique
+P1 = important
+P2 = amélioration
+
+---
+
+## 4. Analyse architecture détaillée
+
+Évalue :
+
+- structure packages
+- découplage modules
+- dépendances croisées
+- Domain Driven Design possible ?
+- Hexagonal Architecture possible ?
+- CQRS/Event Driven pertinent ?
+- microservices utiles ou non ?
+- monolithe modulaire viable ?
+
+---
+
+## 5. Analyse Python Expert
+
+Vérifie ce qu’un senior Python améliorerait :
+
+- typing
+- Protocol/interfaces
+- dataclasses / pydantic
+- async IO possible ?
+- multiprocessing/threading cohérent ?
+- packaging pyproject
+- logs structurés
+- config management
+- erreurs custom
+- clean code
+
+---
+
+## 6. Analyse Data / IA / Quant
+
+Évalue :
+
+- pipeline FinBERT
+- LSTM Attention pertinent ou dépassé ?
+- risques d’overfitting
+- leakage backtest
+- features manquantes
+- meilleurs modèles possibles en 2026
+- XGBoost / TFT / TabNet / Transformers Time Series ?
+- MLOps manquant ?
+
+---
+
+## 7. Analyse Trading System
+
+Évalue :
+
+- risk management
+- OMS/EMS
+- idempotence ordres
+- circuit breaker
+- slippage
+- reconciliation
+- corporate actions
+- paper/live readiness
+
+Dis franchement si le système est crédible pour gérer de l’argent réel.
+
+---
+
+## 8. Refactoring recommandé
+
+Donne un plan concret :
+
+### Quick Wins (1 semaine)
+### Moyen terme (1 mois)
+### Refonte V2 (3 mois)
+
+---
+
+## 9. Roadmap V2 Professionnelle
+
+Si tu devais transformer ce projet en startup SaaS ou hedge fund grade :
+
+- architecture cible
+- stack cible
+- infra cloud
+- CI/CD
+- monitoring
+- observability
+- data lake
+- orchestration
+- sécurité secrets
+- coût raisonnable
+
+---
+
+## 10. Verdict Final
+
+Dis honnêtement :
+
+- Niveau Junior / Confirmé / Senior / Expert
+- Peut impressionner recruteur ?
+- Peut être vendu à client ?
+- Peut devenir produit réel ?
+- Potentiel marché ?
+
+---
+
+# STYLE DE RÉPONSE
+
+Je veux un ton direct, expert, sans flatterie.
+Si quelque chose est mauvais, dis-le franchement.
+Si quelque chose est excellent, dis-le aussi.
+
+---
+
+# DOCUMENTATION DU PROJET
+Doce technique et fonctionnel dans le répertoire doc/
+
+A la fin de ton audit, propose une checklist d’améliorations concrètes à implémenter pour faire passer le projet au niveau supérieur.
+créer un fichier audit_report.md avec ton rapport complet et la checklist d’améliorations.
