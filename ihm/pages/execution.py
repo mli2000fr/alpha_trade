@@ -10,6 +10,7 @@ from ihm.components.status_badges import run_status_badge
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available
 from ihm.services.queries import (
+    get_execution_account_constraints,
     get_broker_positions,
     get_execution_events,
     get_execution_fills,
@@ -47,6 +48,31 @@ def render() -> None:
 
     if row.get("error_message"):
         st.error(f"Erreur : {row['error_message']}")
+
+    constraints = get_execution_account_constraints(selected)
+    if constraints:
+        st.subheader("⚖️ Contraintes de compte appliquées")
+        account_type = str(constraints.get("account_type", "—") or "—")
+        effective_pdt_rule = str(constraints.get("effective_pdt_rule", "—") or "—")
+        swing_only = bool(constraints.get("swing_only", False))
+        equity = constraints.get("equity")
+        buying_power = constraints.get("buying_power_available")
+        settled_cash = constraints.get("settled_cash_available")
+        daytrade_count = constraints.get("daytrade_count")
+        remaining_slots = constraints.get("remaining_day_trade_slots")
+
+        metric_row([
+            ("Type de compte", account_type, None),
+            ("PDT effectif", effective_pdt_rule, None),
+            ("Swing only", "Oui" if swing_only else "Non", None),
+            ("Day trades restants", int(remaining_slots or 0), None),
+        ])
+        st.caption(
+            f"Equity = `{equity}` | Buying power = `{buying_power}` | Cash settled = `{settled_cash}` | Daytrade count broker = `{daytrade_count}`"
+        )
+        message = str(constraints.get("message", "") or "").strip()
+        if message:
+            st.info(message)
 
     # --- Runs récents ---
     with st.expander("Historique des runs", expanded=False):

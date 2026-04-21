@@ -1,6 +1,8 @@
 """ihm/services/queries.py — Requêtes SQL centralisées pour l'IHM."""
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import streamlit as st
 
@@ -116,10 +118,40 @@ def get_execution_runs(limit: int = 20, account_id: str | None = None) -> pd.Dat
 def get_execution_events(exec_run_id: str | None = None) -> pd.DataFrame:
     if exec_run_id:
         return safe_query("""
-            SELECT event_type, symbol, message, created_at
+            SELECT event_type, symbol, message, payload_json, created_at
             FROM execution_events WHERE exec_run_id = :eid ORDER BY created_at DESC
         """, {"eid": exec_run_id})
-    return safe_query("SELECT event_type, symbol, message, created_at FROM execution_events ORDER BY created_at DESC LIMIT 100")
+    return safe_query("SELECT event_type, symbol, message, payload_json, created_at FROM execution_events ORDER BY created_at DESC LIMIT 100")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_account_constraints(exec_run_id: str) -> dict[str, object]:
+    df = safe_query(
+        """
+        SELECT message, payload_json, created_at
+        FROM execution_events
+        WHERE exec_run_id = :eid AND event_type = 'ACCOUNT_CONSTRAINT_APPLIED'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        {"eid": exec_run_id},
+    )
+    if df.empty:
+        return {}
+
+    row = df.iloc[0]
+    payload_raw = row.get("payload_json")
+    payload: dict[str, object] = {}
+    if isinstance(payload_raw, str) and payload_raw.strip():
+        try:
+            parsed = json.loads(payload_raw)
+            if isinstance(parsed, dict):
+                payload = parsed
+        except Exception:
+            payload = {}
+    payload.setdefault("message", row.get("message", ""))
+    payload.setdefault("created_at", row.get("created_at"))
+    return payload
 
 
 @st.cache_data(ttl=60, show_spinner=False)

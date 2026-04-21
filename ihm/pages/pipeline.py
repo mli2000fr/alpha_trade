@@ -121,6 +121,61 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_auto_rebalance",
             )
 
+        exec_col1, exec_col2, exec_col3 = st.columns(3)
+        with exec_col1:
+            execution_account_type = cast(
+                str,
+                st.selectbox(
+                    "Execution — type de compte",
+                    options=["margin", "cash"],
+                    index=["margin", "cash"].index(
+                        cast(str, st.session_state.get("pipeline_execution_account_type", "margin"))
+                        if st.session_state.get("pipeline_execution_account_type", "margin") in {"margin", "cash"}
+                        else "margin"
+                    ),
+                    key="pipeline_execution_account_type",
+                    help="`margin` utilise le buying power ; `cash` utilise uniquement le cash settled disponible.",
+                ),
+            )
+        with exec_col2:
+            execution_pdt_rule = cast(
+                str,
+                st.selectbox(
+                    "Execution — règle PDT",
+                    options=["auto", "off"],
+                    index=["auto", "off"].index(
+                        cast(str, st.session_state.get("pipeline_execution_pdt_rule", "auto"))
+                        if st.session_state.get("pipeline_execution_pdt_rule", "auto") in {"auto", "off"}
+                        else "auto"
+                    ),
+                    key="pipeline_execution_pdt_rule",
+                    help="`auto` applique la règle PDT sur un compte margin < 25k ; `off` la neutralise côté exécution.",
+                ),
+            )
+        with exec_col3:
+            execution_swing_only = st.checkbox(
+                "Execution — swing only",
+                value=bool(st.session_state.get("pipeline_execution_swing_only", False)),
+                key="pipeline_execution_swing_only",
+                help="Si coché, le moteur diffère l'armement des sorties le jour même du fill.",
+            )
+
+        effective_execution_pdt_rule = "off" if execution_account_type == "cash" else execution_pdt_rule
+        constraint_notes = [
+            f"Type de compte : `{execution_account_type}`",
+            f"Règle PDT effective : `{effective_execution_pdt_rule}`",
+            f"Swing only : `{bool(execution_swing_only)}`",
+        ]
+        if execution_account_type == "cash":
+            constraint_notes.append("En `cash`, le moteur se base sur le cash settled / non-marginable buying power.")
+        else:
+            constraint_notes.append("En `margin`, le moteur se base sur le buying power broker.")
+        if effective_execution_pdt_rule == "auto":
+            constraint_notes.append("Si l'equity broker est < 25k, le quota de day trades peut différer les exits le jour même.")
+        if execution_swing_only:
+            constraint_notes.append("Les children TP/TS sont différés le jour même du fill.")
+        st.info(" | ".join(constraint_notes))
+
         ml_col1, ml_col2 = st.columns([2, 3])
         with ml_col1:
             ml_accelerator = cast(
@@ -162,6 +217,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             execution_run_id=execution_run_id,
             allow_outside_rth=bool(allow_outside_rth),
             auto_rebalance=bool(auto_rebalance),
+            execution_account_type=cast(Any, execution_account_type),
+            execution_pdt_rule=cast(Any, execution_pdt_rule),
+            execution_swing_only=bool(execution_swing_only),
             ml_accelerator=cast(Any, ml_accelerator),
         ),
         live_confirmed,
@@ -511,6 +569,12 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
                     st.caption(f"🏦 Cette étape utilise le compte Alpaca sélectionné : `{options.account_id or 'default'}`")
                 else:
                     st.caption("🌐 Cette étape est globale et n'utilise pas le sélecteur de compte Alpaca.")
+                if step.key == "execution":
+                    effective_pdt = "off" if options.execution_account_type == "cash" else options.execution_pdt_rule
+                    st.caption(
+                        "⚖️ Contraintes d'exécution : "
+                        f"compte=`{options.execution_account_type}` | pdt=`{effective_pdt}` | swing_only=`{options.execution_swing_only}`"
+                    )
                 st.code(command_preview, language="powershell")
 
             with action_col:

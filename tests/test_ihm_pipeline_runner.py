@@ -42,6 +42,9 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
         execution_run_id="risk-123",
         allow_outside_rth=True,
         auto_rebalance=True,
+        execution_account_type="cash",
+        execution_pdt_rule="auto",
+        execution_swing_only=True,
     )
 
     risk_command = build_pipeline_command("risk_management", options)
@@ -58,6 +61,11 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert execution_command[-2:] == ["--account", "test1"]
     assert "--allow-outside-rth" in execution_command
     assert "--auto-rebalance" in execution_command
+    assert "--account-type" in execution_command
+    assert execution_command[execution_command.index("--account-type") + 1] == "cash"
+    assert "--pdt-rule" in execution_command
+    assert execution_command[execution_command.index("--pdt-rule") + 1] == "auto"
+    assert "--swing-only" in execution_command
     assert "risk-123" in execution_command
 
     assert ca_apply_command[-2:] == ["--account", "test1"]

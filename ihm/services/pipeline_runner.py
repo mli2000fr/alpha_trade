@@ -30,6 +30,9 @@ class PipelineLaunchOptions:
     execution_run_id: str | None = None
     allow_outside_rth: bool = False
     auto_rebalance: bool = False
+    execution_account_type: Literal["margin", "cash"] = "margin"
+    execution_pdt_rule: Literal["auto", "off"] = "auto"
+    execution_swing_only: bool = False
     ml_accelerator: MLAccelerator = "auto"
 
 
@@ -293,6 +296,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--allow-outside-rth")
         if options.auto_rebalance:
             command.append("--auto-rebalance")
+        command.extend(["--account-type", options.execution_account_type])
+        command.extend(["--pdt-rule", options.execution_pdt_rule])
+        if options.execution_swing_only:
+            command.append("--swing-only")
         if account_id:
             command.extend(["--account", account_id])
         return command
