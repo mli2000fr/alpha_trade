@@ -126,6 +126,18 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert predict_cmd == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict", "--accelerator", "gpu"]
 
 
+def test_build_pipeline_command_import_news() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+    )
+
+    command = build_pipeline_command("import_news", options)
+
+    assert command[:3] == [command[0], "-u", str(PROJECT_ROOT / "event_sentiment" / "importe_news.py")]
+    assert command[-4:] == ["--start-date", "2026-04-01", "--end-date", "2026-04-15"]
+
+
 def test_run_pipeline_step_streams_logs_via_callback(monkeypatch) -> None:
     command = [
         sys.executable,
