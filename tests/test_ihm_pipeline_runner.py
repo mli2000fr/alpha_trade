@@ -138,6 +138,7 @@ def test_build_pipeline_command_import_news() -> None:
     assert command[-4:] == ["--start-date", "2026-04-01", "--end-date", "2026-04-15"]
 
 
+def test_run_pipeline_step_streams_logs_via_callback(monkeypatch) -> None:
     command = [
         sys.executable,
         "-c",

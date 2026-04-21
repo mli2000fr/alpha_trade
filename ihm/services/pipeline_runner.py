@@ -35,6 +35,8 @@ class PipelineLaunchOptions:
     execution_pdt_rule: Literal["auto", "off"] = "auto"
     execution_swing_only: bool = False
     ml_accelerator: MLAccelerator = "auto"
+    news_import_start_date: str | None = None
+    news_import_end_date: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +205,11 @@ def _normalize_run_id(value: str | None) -> str | None:
     return cleaned or None
 
 
+def _normalize_optional_date(value: str | None) -> str | None:
+    cleaned = (value or "").strip()
+    return cleaned or None
+
+
 def is_gpu_available() -> bool:
     try:
         import torch
@@ -217,6 +224,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     trade_date = _normalize_trade_date(options.trade_date)
     run_id = _normalize_run_id(options.execution_run_id)
     account_id = (options.account_id or "").strip() or None
+    news_import_start_date = _normalize_optional_date(options.news_import_start_date)
+    news_import_end_date = _normalize_optional_date(options.news_import_end_date)
 
     if step_key == "import_alpaca_bar":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
@@ -243,6 +252,21 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
 
     if step_key == "sentiment_pipeline":
         return [sys.executable, "-u", "-m", "event_sentiment"]
+
+    if step_key == "import_news":
+        if news_import_start_date is None:
+            raise ValueError("La date de début est obligatoire pour l'import des news.")
+        command = [
+            sys.executable,
+            "-u",
+            str(PROJECT_ROOT / "event_sentiment" / "importe_news.py"),
+            "--start-date",
+            news_import_start_date,
+        ]
+        if news_import_end_date:
+            command.extend(["--end-date", news_import_end_date])
+        return command
+
     if step_key == "signal_aggregator":
         command = [sys.executable, "-u", "-m", "event_sentiment.signal_aggregator"]
         if trade_date:
