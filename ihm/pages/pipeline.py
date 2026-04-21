@@ -8,6 +8,11 @@ import streamlit as st
 
 from ihm.components.metrics import format_duration_hhmmss, to_int
 from ihm.pages import run_page_if_standalone
+from ihm.services.account_defaults import (
+    PDT_EQUITY_THRESHOLD,
+    PipelineExecutionDefaults,
+    get_pipeline_execution_defaults,
+)
 from ihm.services.db import get_runtime_db_config
 from ihm.services.pipeline_runner import (
     PipelineLaunchOptions,
@@ -33,6 +38,7 @@ LOG_FILTER_KEY = "ihm_pipeline_log_filter"
 PENDING_SELECTED_RUN_KEY = "ihm_pipeline_pending_selected_run_id"
 PENDING_COMPARE_RUNS_KEY = "ihm_pipeline_pending_compare_run_ids"
 TAIL_LINES = 250
+EXECUTION_DEFAULTS_ACCOUNT_KEY = "pipeline_execution_defaults_applied_account_id"
 
 
 def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
@@ -55,8 +61,57 @@ def _render_log_block(title: str, content: str, *, key: str, expanded: bool = Fa
             st.info("Aucun log disponible pour le moment. Le contenu apparaitra ici des que le processus ecrira sur stdout/stderr.")
 
 
+def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecutionDefaults | None:
+    cleaned_account_id = (selected_account_id or "").strip() or None
+    if cleaned_account_id is None:
+        return None
+
+    try:
+        defaults = get_pipeline_execution_defaults(cleaned_account_id)
+    except Exception:
+        st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
+        return None
+
+    if defaults is None:
+        st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
+        return None
+
+    account_changed = st.session_state.get(EXECUTION_DEFAULTS_ACCOUNT_KEY) != cleaned_account_id
+    if defaults.account_type in {"margin", "cash"} and (
+        account_changed or "pipeline_execution_account_type" not in st.session_state
+    ):
+        st.session_state["pipeline_execution_account_type"] = defaults.account_type
+    if defaults.pdt_rule in {"auto", "off"} and (
+        account_changed or "pipeline_execution_pdt_rule" not in st.session_state
+    ):
+        st.session_state["pipeline_execution_pdt_rule"] = defaults.pdt_rule
+    if defaults.swing_only is not None and (
+        account_changed or "pipeline_execution_swing_only" not in st.session_state
+    ):
+        st.session_state["pipeline_execution_swing_only"] = defaults.swing_only
+
+    st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
+    return defaults
+
+
+def _build_execution_prefill_caption(defaults: PipelineExecutionDefaults | None) -> str | None:
+    if defaults is None:
+        return None
+
+    notes: list[str] = []
+    if defaults.account_type:
+        notes.append(f"type de compte prérempli via broker : `{defaults.account_type}`")
+    if defaults.pdt_rule:
+        notes.append(f"règle PDT préremplie : `{defaults.pdt_rule}`")
+    if defaults.equity is not None:
+        notes.append(f"equity broker ≈ `{defaults.equity:,.2f}` (seuil PDT `{PDT_EQUITY_THRESHOLD:,.0f}`)")
+    notes.append("`swing only` reste manuel car ce choix ne se déduit pas fiablement du seul montant du compte")
+    return " | ".join(notes)
+
+
 def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
     selected_account_id = cast(str | None, st.session_state.get("selected_account_id"))
+    execution_defaults = _apply_execution_prefills(selected_account_id)
 
     with st.expander("⚙️ Paramètres d'exécution", expanded=True):
         st.caption(
@@ -122,6 +177,16 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
 
         exec_col1, exec_col2, exec_col3 = st.columns(3)
+        st.warning(
+            "⚠️ différence potentiellement forte entre margin et cash\n\n"
+            "- `margin` utilise le buying power broker ; `cash` se limite au cash settled / non-marginable buying power.\n"
+            "- À equity identique, cela peut changer fortement le nombre d'ordres soumis et la capacité de rebalancing.\n"
+            "- Sur un compte `margin` < 25k, la logique PDT peut différer les sorties le jour même ; `swing only` force aussi ce comportement.\n"
+            "- Résultat : les fills, les exits armés (TP/TS) et donc les performances observées peuvent diverger fortement entre `margin` et `cash`."
+        )
+        prefill_caption = _build_execution_prefill_caption(execution_defaults)
+        if prefill_caption:
+            st.caption(prefill_caption)
         with exec_col1:
             execution_account_type = cast(
                 str,
