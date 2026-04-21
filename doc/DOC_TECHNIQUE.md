@@ -51,7 +51,7 @@ alpha_trade/
 | `service/` | Clients HTTP (Alpaca data/trading/news, Finnhub) + registre multi-comptes (`accounts.py`) |
 | `dataIntegrityEngine/` | Import et nettoyage données de marché |
 | `screener/` | Scores de base (liquidité, RSI relatif, range historique) |
-| `selector/` | Scoring avancé (Minervini, VCP, neutralisation sectorielle) |
+| `selector/` | Scoring avancé (Minervini, VCP, neutralisation sectorielle) + profils de filtres stricts partagés |
 | `event_sentiment/` | NLP FinBERT + fusion scores quant/sentiment |
 | `modelFactory/` | Entraînement/prédiction LSTM per-symbol |
 | `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
@@ -79,6 +79,12 @@ alpha_trade/
 10. Finalize (persist events, update run status)
 
 **`AlphaScanner`** (`selector/alpha_scanner.py`) — Scanner multi-facteurs en chunks parallèles (ThreadPoolExecutor) : `fetch_market_data()` → `compute_factors()` → `merge_scores()` → `apply_filters()` → neutralisation sectorielle cross-sectorielle sur univers complet → `rank_and_select()`.
+
+Points d'implémentation importants :
+
+- les filtres `min_close` et `liquidity_threshold` existent à la fois en présélection SQL et en filet de sécurité pandas ;
+- le filtre `max_volatility_ratio` est appliqué **dans `apply_filters()`**, pas dans la présélection SQL, car il dépend de `compute_factors()` (`vol_10`, `vol_60`, puis `volatility_ratio = vol_10 / vol_60`) ;
+- les seuils stricts swing cash sont centralisés dans `selector/strict_filter_profiles.py` (`STRICT_SWING_CASH_FILTERS`) ; `AlphaScannerConfig.strict_swing_cash()` les projette côté scanner, tandis que les scripts `prompt/fix_swing/` réutilisent le même profil côté backfill et filtrage PIT backtest.
 
 **`PortfolioBuilder`** (`risk_management/portfolio_builder.py`) — Construction portefeuille : enrichir candidats (conviction score) → trier par conviction DESC → filtre corrélation → sizing ATR/Kelly → check contraintes → ACCEPTED / REDUCED / REJECTED.
 
@@ -114,7 +120,7 @@ alpha_trade/
 
 **`BacktestReport`** (`backtesting/report.py`) — Dataclass de résumé : Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor. Génère equity curve PNG et export trades CSV dans `artifacts/backtesting/`.
 
-**`BackfillScoresHistoryService`** (`backtesting/backfill_scores_history.py`) — Orchestrateur de backfill point-in-time de `stock_scores_history`. Rejoue, pour chaque séance manquante, le screener sur `stock_bars_daily`, le scoring `AlphaScanner`, puis la fusion sentiment `SentimentSignalAggregator`, avant insertion idempotente dans `stock_scores_history`. Permet de rendre le backtest réellement exploitable sur plusieurs années sans dépendre d'un snapshot courant unique.
+**`BackfillScoresHistoryService`** (`backtesting/backfill_scores_history.py`) — Orchestrateur de backfill point-in-time de `stock_scores_history`. Rejoue, pour chaque séance manquante, le screener sur `stock_bars_daily`, le scoring `AlphaScanner`, puis la fusion sentiment `SentimentSignalAggregator`, avant insertion idempotente dans `stock_scores_history`. Permet de rendre le backtest réellement exploitable sur plusieurs années sans dépendre d'un snapshot courant unique. Quand un run strict impose des filtres d'éligibilité plus durs (prix, liquidité, volatilité relative), ceux-ci doivent être injectés dans `scanner_config` dès le backfill pour que les snapshots PIT reflètent exactement le même univers que le rerun.
 
 **`prepare_predictions_for_ml_mode()` / `prepare_scores_for_sentiment_mode()`** (`backtesting/resilience.py`) — Couche de résilience du backtest. Implémente les politiques `auto | off | rebuild-missing` pour les prédictions ML et le sentiment : fallback sans ML, neutralisation du boost sentiment, ou reconstruction ciblée des données manquantes lorsque les artefacts / tables nécessaires sont disponibles.
 

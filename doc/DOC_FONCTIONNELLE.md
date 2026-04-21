@@ -76,9 +76,23 @@ Cette logique n'est plus limitée au backtest : le module `execution_engine` app
 #### Scanner multi-facteurs (AlphaScanner)
 - **Trend Score** (critères Minervini) : 7 critères techniques (close > MA150, MA150 > MA200, MA200 en hausse, close > MA50, close ≥ 1.25 × low 52w, close ≥ 0.75 × high 52w)
 - **VCP Score** (Volatility Contraction Pattern) : ratio volatilité 10j/60j vs seuil
+- **Filtre de volatilité relative optionnel** : exclusion explicite si `volatility_ratio = vol10 / vol60` dépasse un seuil métier (ex. `0.90`) afin d'éviter les titres en spike de volatilité récent
 - **Score composite** : `50% × (trend+vcp)/2 + 30% × score_screener + 20% × RSI_relatif`
 - **Neutralisation sectorielle** : z-score intra-secteur pour éliminer les biais sectoriels
 - **Winsorisation** : protection contre les outliers (percentiles 1%-99%)
+
+Pour les reruns/backtests "petit compte cash swing" stricts, les seuils durcis utilisés sont :
+
+- `close >= 10 $`
+- `avg_dollar_volume_20d >= 30 M$`
+- `volatility_ratio <= 0.90`
+
+Ces trois filtres visent à réduire les microcaps/penny stocks, améliorer l'exécutabilité réelle et éviter les entrées juste après une explosion de volatilité.
+Ils sont désormais centralisés dans un **profil partagé** (`selector/strict_filter_profiles.py`) pour garantir l'alignement entre :
+
+- le scanner `AlphaScanner`,
+- le backfill point-in-time de `stock_scores_history`,
+- les reruns backtest stricts.
 
 #### Screener de liquidité
 - Pipeline en 3 passes : liquidité (volume × close sur 30j), force relative vs SPY (6 mois), position dans le range 10 ans

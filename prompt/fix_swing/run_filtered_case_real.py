@@ -27,16 +27,13 @@ from backtesting.signal_replay import replay_signals
 from backtesting.simulator import BacktestConfig, BacktestEngine
 from backtesting.trading_constraints import TradingConstraintConfig
 from database.connection import get_sqlalchemy_engine
+from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS
 
 START = pd.Timestamp("2025-04-21").date()
 END = pd.Timestamp("2026-04-20").date()
 LOOKBACK_START = pd.Timestamp("2024-12-20").date()
 OUTPUT_DIR = Path("prompt/fix_swing/cash_eq2000_mp2_filtered_f2")
-FILTERS = {
-    "min_close": 10.0,
-    "min_avg_dollar_volume_20d": 30_000_000.0,
-    "max_volatility_ratio": 0.9,
-}
+FILTERS = STRICT_SWING_CASH_FILTERS.to_backtest_filter_dict()
 EQUITY: Final[float] = 2000.0
 TP: Final[float] = 0.08
 TS: Final[float] = 0.05
@@ -126,11 +123,7 @@ def main() -> None:
 
     features = build_point_in_time_filters(ohlcv_full, start, end)
     filtered_scores = scores_df.merge(features, on=["symbol", "trade_date"], how="left")
-    filtered_scores = filtered_scores[
-        (filtered_scores["latest_close"] >= FILTERS["min_close"])
-        & (filtered_scores["avg_dollar_volume_20d"] >= FILTERS["min_avg_dollar_volume_20d"])
-        & (filtered_scores["volatility_ratio"] <= FILTERS["max_volatility_ratio"])
-    ].copy()
+    filtered_scores = STRICT_SWING_CASH_FILTERS.apply_to_frame(filtered_scores)
 
     signals = replay_signals(
         filtered_scores,

@@ -20,6 +20,7 @@ from database.connection import get_sqlalchemy_engine
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from screener.models import ScreenerConfig
 from selector.alpha_scanner import AlphaScannerConfig
+from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS
 
 DEFAULT_BACKFILL_START = pd.Timestamp("2025-01-01").date()
 DEFAULT_BACKFILL_END = pd.Timestamp("2025-03-31").date()
@@ -29,6 +30,7 @@ DEFAULT_LOG_PATH = Path("prompt/fix_swing/strict_oos_2025Q1_manifest.json")
 DEFAULT_CHUNK_SIZE = 10_000
 DEFAULT_SELECTION_SIZE = 100
 DEFAULT_SCREENER_WORKERS = 8
+STRICT_FILTERS = STRICT_SWING_CASH_FILTERS.to_backtest_filter_dict()
 
 
 def _parse_date(value: str) -> date:
@@ -89,7 +91,10 @@ def get_history_coverage(start: date, end: date) -> dict[str, Any]:
 def run_backfill(start: date, end: date, *, chunk_size: int, selection_size: int, screener_workers: int) -> dict[str, Any]:
     service = BackfillScoresHistoryService(
         screener_config=ScreenerConfig(chunk_size=chunk_size),
-        scanner_config=AlphaScannerConfig(chunk_size=chunk_size, selection_size=selection_size),
+        scanner_config=AlphaScannerConfig.strict_swing_cash(
+            chunk_size=chunk_size,
+            selection_size=selection_size,
+        ),
         sentiment_config=SentimentBoostConfig(),
         screener_max_workers=screener_workers,
     )
@@ -150,6 +155,7 @@ def main() -> None:
             "selection_size": args.selection_size,
             "screener_workers": args.screener_workers,
             "skip_purge": bool(args.skip_purge),
+            "filters": STRICT_FILTERS,
         }
     }
 

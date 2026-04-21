@@ -21,6 +21,7 @@ Ce document résume le fonctionnement du module `selector/` et les commandes uti
 | `selector/alpha_scanner.py` | Scanner multi-facteurs principal |
 
 Le module `selector/` est volontairement compact : l'essentiel de la logique est concentré dans `AlphaScanner`.
+Les seuils stricts réutilisés par les reruns swing cash sont centralisés dans `selector/strict_filter_profiles.py` pour éviter toute divergence entre scanner, backfill et backtest PIT.
 
 ---
 
@@ -65,7 +66,7 @@ python -m selector.alpha_scanner --chunk-size 500 --selection-size 50
 ### Paramètres de filtrage personnalisés
 
 ```powershell
-python -m selector.alpha_scanner --liquidity-threshold 20000000 --min-close 5 --max-anomaly-count 20 --sector-cap-ratio 0.30
+python -m selector.alpha_scanner --liquidity-threshold 20000000 --min-close 5 --max-volatility-ratio 0.90 --max-anomaly-count 20 --sector-cap-ratio 0.30
 ```
 
 ### Logs détaillés
@@ -88,6 +89,8 @@ python -m selector.alpha_scanner --log-level DEBUG
 - statut actif / tradable,
 - univers actions US.
 
+Le filtre de **volatilité relative** n'est volontairement pas traité ici : il nécessite le calcul des fenêtres roulantes `vol_10` / `vol_60` et donc intervient plus loin, dans `apply_filters()`.
+
 ### 4.2 Chargement et calcul des facteurs
 
 Pour chaque chunk, le scanner charge :
@@ -103,6 +106,14 @@ Il calcule ensuite des facteurs comme :
 - moyennes mobiles 50 / 150 / 200 jours
 - `high_52w` / `low_52w`
 - `volatility_ratio`
+
+Quand `--max-volatility-ratio` (ou `AlphaScannerConfig.max_volatility_ratio`) est renseigné, le scanner exclut ensuite les symboles dont `volatility_ratio > seuil`. Exemple d'usage swing strict petit compte :
+
+- `min_close >= 10`
+- `avg_dollar_volume_20d >= 30_000_000`
+- `volatility_ratio <= 0.90`
+
+Pour éviter la duplication, cet exemple correspond désormais au profil partagé `STRICT_SWING_CASH_FILTERS`, consommé via `AlphaScannerConfig.strict_swing_cash()` dans les flows stricts.
 
 ### 4.3 Composition du score final
 

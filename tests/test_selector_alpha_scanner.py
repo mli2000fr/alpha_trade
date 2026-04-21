@@ -18,6 +18,20 @@ def test_alpha_scanner_config_rejects_invalid_weight_sum() -> None:
         AlphaScannerConfig(weight_trend_vcp=0.6, weight_total_score=0.3, weight_rsi=0.3)
 
 
+def test_alpha_scanner_config_rejects_invalid_max_volatility_ratio() -> None:
+    with pytest.raises(ValueError, match="max_volatility_ratio"):
+        AlphaScannerConfig(max_volatility_ratio=0.0)
+
+
+def test_alpha_scanner_config_strict_swing_cash_uses_shared_profile() -> None:
+    config = AlphaScannerConfig.strict_swing_cash(selection_size=42)
+
+    assert config.min_close == pytest.approx(10.0)
+    assert config.liquidity_threshold == pytest.approx(30_000_000.0)
+    assert config.max_volatility_ratio == pytest.approx(0.9)
+    assert config.selection_size == 42
+
+
 def test_merge_scores_combines_factor_and_aux_scores() -> None:
     scanner = _make_scanner()
     computed_df = pd.DataFrame(
@@ -59,23 +73,30 @@ def test_merge_scores_combines_factor_and_aux_scores() -> None:
 
 
 def test_apply_filters_removes_non_eligible_rows() -> None:
-    scanner = _make_scanner(AlphaScannerConfig(liquidity_threshold=20_000_000.0, min_history_days=252, min_close=5.0))
+    scanner = _make_scanner(
+        AlphaScannerConfig(
+            liquidity_threshold=20_000_000.0,
+            min_history_days=252,
+            min_close=5.0,
+            max_volatility_ratio=0.9,
+        )
+    )
     merged_df = pd.DataFrame(
         [
             {
                 "symbol": "AAPL", "asset_class": "us_equity", "tradable": True,
                 "history_days": 300, "latest_close": 150.0, "avg_dollar_volume_20d": 25_000_000.0,
-                "liquidity_val": 25_000_000.0, "anomaly_count": 0, "missing_days_count": 0,
+                "volatility_ratio": 0.5, "liquidity_val": 25_000_000.0, "anomaly_count": 0, "missing_days_count": 0,
             },
             {
                 "symbol": "ETF1", "asset_class": "etf", "tradable": True,
                 "history_days": 300, "latest_close": 150.0, "avg_dollar_volume_20d": 25_000_000.0,
-                "liquidity_val": 25_000_000.0, "anomaly_count": 0, "missing_days_count": 0,
+                "volatility_ratio": 0.4, "liquidity_val": 25_000_000.0, "anomaly_count": 0, "missing_days_count": 0,
             },
             {
                 "symbol": "ILLQ", "asset_class": "us_equity", "tradable": True,
                 "history_days": 300, "latest_close": 4.0, "avg_dollar_volume_20d": 1_000_000.0,
-                "liquidity_val": 1_000_000.0, "anomaly_count": 99, "missing_days_count": 20,
+                "volatility_ratio": 1.2, "liquidity_val": 1_000_000.0, "anomaly_count": 99, "missing_days_count": 20,
             },
         ]
     )
@@ -84,6 +105,33 @@ def test_apply_filters_removes_non_eligible_rows() -> None:
 
     rows = filtered.to_dict(orient="records")
     assert [row["symbol"] for row in rows] == ["AAPL"]
+
+
+def test_apply_filters_rejects_high_or_missing_volatility_ratio_when_enabled() -> None:
+    scanner = _make_scanner(AlphaScannerConfig(max_volatility_ratio=0.9))
+    merged_df = pd.DataFrame(
+        [
+            {
+                "symbol": "PASS", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 50.0, "avg_dollar_volume_20d": 30_000_000.0,
+                "volatility_ratio": 0.7,
+            },
+            {
+                "symbol": "SPIKE", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 50.0, "avg_dollar_volume_20d": 30_000_000.0,
+                "volatility_ratio": 1.1,
+            },
+            {
+                "symbol": "UNKNOWN", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 50.0, "avg_dollar_volume_20d": 30_000_000.0,
+                "volatility_ratio": pd.NA,
+            },
+        ]
+    )
+
+    filtered = scanner.apply_filters(merged_df)
+
+    assert list(filtered["symbol"]) == ["PASS"]
 
 
 def test_apply_sector_neutrality_respects_sector_cap() -> None:

@@ -17,6 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from common.utils import configure_root_logging
 from database.connection import get_sqlalchemy_engine
+from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ class AlphaScannerConfig:
     min_history_days: int = 252
     liquidity_threshold: float = 20_000_000.0
     min_close: float = 5.0
+    max_volatility_ratio: float | None = None
     max_anomaly_count: int = 20
     max_missing_days_count: int = 10
     sector_cap_ratio: float = 0.30
@@ -135,6 +137,18 @@ class AlphaScannerConfig:
     # (ex. titres Energy surreprésentés en bull sectoriel).
     neutralize_by_sector: bool = True
 
+    @classmethod
+    def from_filter_profile(
+        cls,
+        profile: StrictFilterProfile,
+        **overrides: object,
+    ) -> "AlphaScannerConfig":
+        return cls(**profile.to_scanner_config_kwargs(), **overrides)
+
+    @classmethod
+    def strict_swing_cash(cls, **overrides: object) -> "AlphaScannerConfig":
+        return cls.from_filter_profile(STRICT_SWING_CASH_FILTERS, **overrides)
+
     def __post_init__(self) -> None:
         if self.chunk_size < 1:
             raise ValueError("chunk_size doit être supérieur ou égal à 1.")
@@ -146,6 +160,8 @@ class AlphaScannerConfig:
             raise ValueError("liquidity_threshold doit être strictement positif.")
         if self.min_close <= 0:
             raise ValueError("min_close doit être strictement positif.")
+        if self.max_volatility_ratio is not None and self.max_volatility_ratio <= 0:
+            raise ValueError("max_volatility_ratio doit être strictement positif lorsqu'il est renseigné.")
         if not 0 < self.sector_cap_ratio <= 1:
             raise ValueError("sector_cap_ratio doit être compris entre 0 exclus et 1 inclus.")
         if self.volatility_short_window < 2 or self.volatility_long_window <= self.volatility_short_window:
@@ -499,6 +515,22 @@ class AlphaScanner:
         filtered = filtered[filtered["avg_dollar_volume_20d"] > self.config.liquidity_threshold]
         after_market_liquidity = len(filtered)
 
+        # Le filtre de volatilité relative dépend de facteurs calculés en pandas
+        # (vol_10 / vol_60). Il est donc appliqué ici, après compute_factors(),
+        # et non dans la présélection SQL brute.
+        if self.config.max_volatility_ratio is not None:
+            if "volatility_ratio" not in filtered.columns:
+                LOGGER.warning(
+                    "Filtre volatilite relative active mais colonne volatility_ratio absente; aucun titre retenu."
+                )
+                filtered = filtered.iloc[0:0].copy()
+            else:
+                filtered = filtered[
+                    filtered["volatility_ratio"].notna()
+                    & (filtered["volatility_ratio"] <= self.config.max_volatility_ratio)
+                ]
+        after_volatility = len(filtered)
+
         if "liquidity_val" in filtered.columns:
             filtered = filtered[(filtered["liquidity_val"].isna()) | (filtered["liquidity_val"] > self.config.liquidity_threshold)]
         after_score_liquidity = len(filtered)
@@ -509,14 +541,15 @@ class AlphaScanner:
             filtered = filtered[(filtered["missing_days_count"].isna()) | (filtered["missing_days_count"] < self.config.max_missing_days_count)]
 
         LOGGER.info(
-            "Filtres appliques | entree=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
+            "Filtres appliques | entree=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_volatilite_relative=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
             before_count,
             len(filtered),
             before_count - after_etf_filter,
             after_etf_filter - after_history,
             after_history - after_close,
             after_close - after_market_liquidity,
-            after_market_liquidity - after_score_liquidity,
+            after_market_liquidity - after_volatility,
+            after_volatility - after_score_liquidity,
             after_score_liquidity - after_anomaly,
             after_anomaly - len(filtered),
         )
@@ -1030,6 +1063,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-workers", type=int, default=None, help="Nombre maximum de threads")
     parser.add_argument("--liquidity-threshold", type=float, default=20_000_000.0, help="Seuil minimal de liquidité en dollar volume moyen 20j")
     parser.add_argument("--min-close", type=float, default=5.0, help="Prix minimal de clôture")
+    parser.add_argument("--max-volatility-ratio", type=float, default=None, help="Seuil maximal optionnel du ratio de volatilité récente vol10/vol60")
     parser.add_argument("--max-anomaly-count", type=int, default=20, help="Nombre maximum d'anomalies accepté par titre")
     parser.add_argument("--sector-cap-ratio", type=float, default=0.30, help="Plafond par secteur, ex. 0.30 = 30%")
     parser.add_argument("--log-level", type=str, default="INFO", help="Niveau de log (DEBUG, INFO, WARNING, ERROR)")
@@ -1050,6 +1084,7 @@ def main() -> None:
         max_workers=args.max_workers,
         liquidity_threshold=args.liquidity_threshold,
         min_close=args.min_close,
+        max_volatility_ratio=args.max_volatility_ratio,
         max_anomaly_count=args.max_anomaly_count,
         sector_cap_ratio=args.sector_cap_ratio,
     )
