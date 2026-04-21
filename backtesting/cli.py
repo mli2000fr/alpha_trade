@@ -143,6 +143,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             trading_constraints.swing_only,
         )
     )
+    _safe_print("   convention_exécution=signal J → entrée J+1 au vrai open\n")
 
     # 1. Charger les données
     engine = get_sqlalchemy_engine()
@@ -202,7 +203,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     )
     bt_engine = BacktestEngine(bt_config)
     pf = bt_engine.run(
-        close=pivoted["close"], high=pivoted["high"], low=pivoted["low"],
+        open=pivoted["open"], close=pivoted["close"], high=pivoted["high"], low=pivoted["low"],
         signals_df=signals_df,
     )
     diagnostics = extract_diagnostics(pf)
@@ -238,6 +239,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 "ml_mode": args.ml_mode,
                 "sentiment_mode": args.sentiment_mode,
                 "artifacts_dir": args.artifacts_dir,
+                "execution_timing": bt_config.execution_timing,
+                "entry_price_source": "next_session_open",
                 "no_save": args.no_save,
             },
             diagnostics=diagnostics,
@@ -277,6 +280,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     "ml_mode": args.ml_mode,
                     "sentiment_mode": args.sentiment_mode,
                     "artifacts_dir": args.artifacts_dir,
+                    "execution_timing": bt_config.execution_timing,
+                    "entry_price_source": "next_session_open",
                     "no_save": args.no_save,
                 },
                 diagnostics=diagnostics,

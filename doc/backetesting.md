@@ -4,7 +4,7 @@
 
 Ce document résume l'intégration du module `backtesting/` et les commandes utiles pour :
 
-- lancer un backtest vectorbt,
+- lancer un backtest journalier cohérent avec exécution au prochain `open`,
 - reconstruire l'historique de `stock_scores_history`,
 - comprendre pourquoi un backtest peut produire `0 trade`,
 - exécuter un vrai backtest exploitable sur une période longue.
@@ -22,7 +22,7 @@ Ce document résume l'intégration du module `backtesting/` et les commandes uti
 | `backtesting/cli.py` | CLI argparse : parsing, orchestration |
 | `backtesting/data_loader.py` | Chargement OHLCV, scores, sentiment, prédictions ML |
 | `backtesting/signal_replay.py` | Reconstruction des signaux de conviction jour par jour |
-| `backtesting/simulator.py` | Moteur vectorbt avec TP + trailing stop |
+| `backtesting/simulator.py` | Moteur de backtest journalier avec TP + trailing stop |
 | `backtesting/trading_constraints.py` | Contraintes de compte composables : `account_type`, `pdt_rule`, `swing_only` |
 | `backtesting/report.py` | Rapport : Sharpe, Sortino, CAGR, drawdown, win rate, profit factor |
 | `backtesting/backfill_scores_history.py` | Backfill point-in-time de `stock_scores_history` |
@@ -160,8 +160,15 @@ Comportements principaux :
 
 - `--account-type margin --pdt-rule auto` : applique la règle PDT si l'equity initiale est `< 25 000 $` ;
 - `--account-type margin --pdt-rule off` : baseline non contraint côté PDT ;
-- `--swing-only` : interdit toute sortie le jour même de l'entrée ;
+- `--swing-only` : interdit toute sortie le jour même de l'entrée, sans modifier le prix d'entrée ;
 - `--account-type cash` : désactive de facto la règle PDT et n'autorise que le cash settled, avec settlement simplifié en `T+1`.
+
+Convention d'exécution du moteur :
+
+- le signal est daté en `J` ;
+- l'entrée est exécutée au **vrai `open` de la séance suivante (`J+1`)** ;
+- les TP / trailing stops sont évalués à partir de cette séance d'exécution ;
+- `--swing-only` bloque uniquement les sorties same-day sur cette séance d'entrée.
 
 Combinaisons utiles :
 
@@ -189,7 +196,7 @@ python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --ac
 Remarques pratiques :
 
 - `--account-type cash` neutralise la règle PDT, même si `--pdt-rule auto` est laissé par défaut ;
-- `--swing-only` correspond bien à l'idée « achat aujourd'hui, vente demain ou plus tard ».
+- `--swing-only` correspond bien à l'idée « signal aujourd'hui, achat à la prochaine ouverture, vente le lendemain ou plus tard ».
 
 ### Sans sauvegarde des artefacts
 

@@ -125,7 +125,7 @@ class BacktestReport:
 
 
 def generate_report(pf, initial_equity: float) -> BacktestReport:
-    """Extrait les métriques depuis un vbt.Portfolio."""
+    """Extrait les métriques depuis un portefeuille compatible vectorbt/BacktestResult."""
     closed_trades_df = _extract_closed_trades_df(pf)
     if closed_trades_df is not None:
         equity = _extract_equity_curve(pf)

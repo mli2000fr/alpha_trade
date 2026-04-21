@@ -193,6 +193,16 @@ def pivot_ohlcv(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     -------
     dict avec clés 'open', 'high', 'low', 'close', 'volume'
     """
+    required_columns = {"symbol", "trade_date", "open", "high", "low", "close", "volume"}
+    missing_columns = required_columns.difference(df.columns)
+    if missing_columns:
+        raise ValueError(
+            "pivot_ohlcv requiert les colonnes {} (manquantes: {}).".format(
+                sorted(required_columns),
+                sorted(missing_columns),
+            )
+        )
+
     result = {}
     for col in ("open", "high", "low", "close", "volume"):
         pivoted = df.pivot_table(index="trade_date", columns="symbol", values=col)

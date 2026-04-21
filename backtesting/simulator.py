@@ -15,7 +15,6 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
-import vectorbt as vbt
 
 from backtesting.trading_constraints import TradingConstraintConfig
 from risk_management.config import RiskConfig
@@ -41,6 +40,7 @@ class BacktestConfig:
     # Frais de transaction (slippage simulé)
     fees_pct: float = 0.001  # 10 bps
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
+    execution_timing: str = "next_open"
 
     def __post_init__(self) -> None:
         if self.risk_config:
@@ -71,6 +71,7 @@ class BacktestDiagnostics:
 @dataclass(slots=True)
 class _OpenPosition:
     symbol: str
+    signal_date: pd.Timestamp
     entry_date: pd.Timestamp
     entry_idx: int
     entry_price: float
@@ -94,7 +95,7 @@ class _ReadableTradesAccessor:
         if self._closed_trades_df.empty:
             return pd.DataFrame(
                 columns=[
-                    "Column", "Size", "Entry Timestamp", "Exit Timestamp",
+                    "Column", "Size", "Signal Timestamp", "Entry Timestamp", "Exit Timestamp",
                     "Avg Entry Price", "Avg Exit Price", "PnL", "Return [%]",
                     "Duration", "Exit Reason", "Day Trade",
                 ]
@@ -103,6 +104,7 @@ class _ReadableTradesAccessor:
             columns={
                 "symbol": "Column",
                 "quantity": "Size",
+                "signal_date": "Signal Timestamp",
                 "entry_date": "Entry Timestamp",
                 "exit_date": "Exit Timestamp",
                 "entry_price": "Avg Entry Price",
@@ -141,7 +143,7 @@ class BacktestResult:
 
 
 class BacktestEngine:
-    """Exécute le backtest vectorbt à partir des signaux reconstruits."""
+    """Exécute le backtest à partir des signaux reconstruits."""
 
     def __init__(self, config: BacktestConfig) -> None:
         self.config = config
@@ -155,11 +157,12 @@ class BacktestEngine:
 
     def run(
         self,
+        open: pd.DataFrame,
         close: pd.DataFrame,
         high: pd.DataFrame,
         low: pd.DataFrame,
         signals_df: pd.DataFrame,
-    ) -> vbt.Portfolio | BacktestResult:
+    ) -> BacktestResult:
         """Lance le backtest.
 
         Parameters
@@ -172,7 +175,7 @@ class BacktestEngine:
 
         Returns
         -------
-        vbt.Portfolio
+        BacktestResult
         """
         cfg = self.config
         constraints = cfg.trading_constraints
@@ -183,68 +186,54 @@ class BacktestEngine:
         if not symbols:
             raise ValueError("Aucun symbole en commun entre signaux et OHLCV.")
 
+        open = open[symbols].copy()
         close = close[symbols].copy()
         high = high[symbols].copy()
         low = low[symbols].copy()
 
+        if cfg.execution_timing != "next_open":
+            raise ValueError(f"Convention d'exécution non supportée: {cfg.execution_timing}")
+
         if constraints.requires_stateful_simulation(cfg.initial_equity):
             LOGGER.info("Backtest avec contraintes actives: %s", constraints.to_dict())
-            return self._run_with_constraints(close=close, high=high, low=low, signals_df=selected)
-
-        # Construire la matrice d'entrées (entries) : True quand le symbole est sélectionné ce jour
-        entries = pd.DataFrame(False, index=close.index, columns=close.columns)
-        for _, row in selected.iterrows():
-            td = pd.Timestamp(row["trade_date"])
-            sym = str(row["symbol"])
-            if td in entries.index and sym in entries.columns:
-                entries.loc[td, sym] = True
-
-        # Sizing : répartition equal-weight parmi les positions sélectionnées par jour
-        # vectorbt gère le sizing via size + size_type
-        n_selected_per_day = entries.sum(axis=1).replace(0, np.nan)
-        size_pct = entries.div(n_selected_per_day, axis=0).fillna(0.0)
-        # Limiter au max_positions
-        size_pct = size_pct.clip(upper=1.0 / max(cfg.max_positions, 1))
+            return self._run_with_constraints(open=open, close=close, high=high, low=low, signals_df=selected)
 
         LOGGER.info(
-            "Backtest : %d symboles, %d jours, TP=%.1f%%, TS=%.1f%%, equity=%.0f",
+            "Backtest standard (signal J, entrée J+1 open) : %d symboles, %d jours, TP=%.1f%%, TS=%.1f%%, equity=%.0f",
             len(symbols), len(close), cfg.profit_taker_pct * 100,
             cfg.trailing_stop_pct * 100, cfg.initial_equity,
         )
 
-        # Exécuter via vectorbt from_signals avec TP et trailing SL
-        pf = vbt.Portfolio.from_signals(
-            close=close,
-            entries=entries,
-            exits=pd.DataFrame(False, index=close.index, columns=close.columns),
-            open=high,  # conservatif : entrée au high
-            high=high,
-            low=low,
-            # Bracket : take-profit et trailing stop
-            tp_stop=cfg.profit_taker_pct,
-            sl_stop=cfg.trailing_stop_pct,
-            sl_trail=True,  # trailing stop loss
-            # Sizing
-            size=size_pct,
-            size_type="percent",
-            size_granularity=1.0,
-            allow_partial=False,
-            # Config
-            init_cash=cfg.initial_equity,
-            fees=cfg.fees_pct,
-            freq="1D",
-            cash_sharing=True,
-            group_by=True,
-            accumulate=False,  # pas d'accumulation sur même symbole
-            upon_opposite_entry="close",  # fermer avant de ré-entrer
-        )
+        return self._run_with_constraints(open=open, close=close, high=high, low=low, signals_df=selected)
 
-        LOGGER.info("Backtest terminé — valeur finale : %.2f", self._to_scalar(pf.final_value()))
-        return pf
+    @staticmethod
+    def _schedule_signals_for_execution(
+        signals_df: pd.DataFrame,
+        trading_days: pd.DatetimeIndex,
+    ) -> pd.DataFrame:
+        """Décale chaque signal sur la prochaine séance disponible (J+1 open)."""
+        if signals_df.empty:
+            return signals_df.copy()
+
+        scheduled = signals_df.copy()
+        scheduled["trade_date"] = pd.to_datetime(scheduled["trade_date"])
+        execution_indices = trading_days.searchsorted(
+            scheduled["trade_date"].to_numpy(dtype="datetime64[ns]"),
+            side="right",
+        )
+        valid_mask = execution_indices < len(trading_days)
+        scheduled = scheduled.loc[valid_mask].copy()
+        if scheduled.empty:
+            return scheduled
+
+        scheduled["signal_date"] = scheduled["trade_date"]
+        scheduled["execution_date"] = trading_days.take(execution_indices[valid_mask]).values
+        return scheduled
 
     def _run_with_constraints(
         self,
         *,
+        open: pd.DataFrame,
         close: pd.DataFrame,
         high: pd.DataFrame,
         low: pd.DataFrame,
@@ -260,10 +249,20 @@ class BacktestEngine:
         if "rank" not in signals.columns:
             signals["rank"] = 1.0
 
-        signals_by_day: dict[pd.Timestamp, pd.DataFrame] = {
-            day: day_df.sort_values(["rank", "symbol"]).copy()
-            for day, day_df in signals.groupby("trade_date", sort=True)
-        }
+        scheduled_signals = self._schedule_signals_for_execution(signals, trading_days)
+        skipped_signals = len(signals) - len(scheduled_signals)
+        if skipped_signals > 0:
+            LOGGER.info(
+                "Signaux ignorés faute de séance d'exécution suivante (J+1 open) : %d",
+                skipped_signals,
+            )
+
+        signals_by_day: dict[pd.Timestamp, pd.DataFrame] = {}
+        if not scheduled_signals.empty:
+            signals_by_day = {
+                day: day_df.sort_values(["rank", "symbol"]).copy()
+                for day, day_df in scheduled_signals.groupby("execution_date", sort=True)
+            }
 
         settled_cash = float(cfg.initial_equity)
         unsettled_cash = 0.0
@@ -293,7 +292,7 @@ class BacktestEngine:
 
             for candidate_pos, row in enumerate(candidate_rows):
                 symbol = str(row["symbol"])
-                entry_price = float(high.at[trade_day, symbol])
+                entry_price = float(open.at[trade_day, symbol])
                 if not np.isfinite(entry_price) or entry_price <= 0:
                     continue
 
@@ -321,6 +320,7 @@ class BacktestEngine:
                 settled_cash -= entry_cost
                 positions[symbol] = _OpenPosition(
                     symbol=symbol,
+                    signal_date=pd.Timestamp(row["signal_date"]),
                     entry_date=trade_day,
                     entry_idx=day_idx,
                     entry_price=entry_price,
@@ -337,9 +337,10 @@ class BacktestEngine:
                 if not np.isfinite(day_high) or not np.isfinite(day_low):
                     continue
 
-                peak_high = max(position.peak_high, day_high)
+                previous_peak_high = position.peak_high
+                peak_high = max(previous_peak_high, day_high)
                 take_profit_price = position.entry_price * (1.0 + cfg.profit_taker_pct)
-                trailing_stop_price = peak_high * (1.0 - cfg.trailing_stop_pct)
+                trailing_stop_price = previous_peak_high * (1.0 - cfg.trailing_stop_pct)
                 is_same_day = trade_day.normalize() == position.entry_date.normalize()
 
                 hit_take_profit = day_high >= take_profit_price
@@ -391,6 +392,7 @@ class BacktestEngine:
                 closed_trades.append(
                     {
                         "symbol": symbol,
+                        "signal_date": position.signal_date,
                         "quantity": position.quantity,
                         "entry_date": position.entry_date,
                         "exit_date": trade_day,
