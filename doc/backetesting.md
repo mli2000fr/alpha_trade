@@ -148,7 +148,7 @@ Le backtest expose un nouveau paramètre `--account-constraint-mode` pour simule
 
 Modes disponibles :
 
-- `standard` : comportement historique, aucune contrainte supplémentaire ;
+- `standard` : comportement historique, aucune contrainte supplémentaire ; ce mode correspond au **baseline du moteur** et non à une modélisation exhaustive d'un vrai margin account US (pas de levier 2:1 ni de short simulé ici) ;
 - `pdt` : si l'equity initiale est `< 25 000 $`, le moteur bloque le 4e day trade sur une fenêtre glissante de 5 séances ;
 - `swing` : interdit toute sortie le jour même de l'entrée ;
 - `cash` : désactive la règle PDT, mais n'autorise que le cash settled, avec settlement simplifié en `T+1`.
