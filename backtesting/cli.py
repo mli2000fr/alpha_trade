@@ -310,7 +310,10 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
 
     service = BackfillScoresHistoryService(
         screener_config=ScreenerConfig(chunk_size=args.chunk_size),
-        scanner_config=AlphaScannerConfig(chunk_size=args.chunk_size, selection_size=args.selection_size),
+        scanner_config=AlphaScannerConfig.strict_swing_cash(
+            chunk_size=args.chunk_size,
+            selection_size=args.selection_size,
+        ),
         sentiment_config=SentimentBoostConfig(),
         screener_max_workers=args.screener_workers,
     )

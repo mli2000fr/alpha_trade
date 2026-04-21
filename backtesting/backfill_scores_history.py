@@ -32,6 +32,12 @@ HISTORY_COLUMNS = [
     "trend_score",
     "vcp_score",
     "final_score",
+    "market_cap",
+    "beta_126",
+    "spread_bps",
+    "earnings_date",
+    "days_to_earnings",
+    "earnings_blackout",
     "is_candidate",
     "sentiment_net_agg",
     "sector_impact_agg",
@@ -65,7 +71,7 @@ class BackfillScoresHistoryService:
     ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
         self.screener_config = screener_config or ScreenerConfig()
-        self.scanner_config = scanner_config or AlphaScannerConfig()
+        self.scanner_config = scanner_config or AlphaScannerConfig.strict_swing_cash()
         self.sentiment_config = sentiment_config or SentimentBoostConfig()
         self.screener_max_workers = screener_max_workers
         self.scanner = AlphaScanner(engine=self.engine, config=self.scanner_config)
@@ -266,8 +272,11 @@ class BackfillScoresHistoryService:
             computed = self.scanner.compute_factors(market_data)
             aux_scores = screener_df[screener_df["symbol"].isin(chunk_symbols)].copy()
             metadata_df = self.scanner.fetch_instrument_metadata(chunk_symbols)
+            quotes_df = self.scanner.fetch_quote_snapshots(chunk_symbols, reference_date=as_of_date)
+            earnings_df = self.scanner.fetch_next_earnings(chunk_symbols, reference_date=as_of_date)
             merged = self.scanner.merge_scores(computed, aux_scores)
             merged = self.scanner._enrich_and_filter_equities(merged, metadata_df)
+            merged = self.scanner._merge_optional_symbol_overlays(merged, quotes_df, earnings_df)
             filtered = self.scanner.apply_filters(merged)
             if not filtered.empty:
                 all_frames.append(filtered)
@@ -318,6 +327,12 @@ class BackfillScoresHistoryService:
             "trend_score": None,
             "vcp_score": None,
             "final_score": None,
+            "market_cap": None,
+            "beta_126": None,
+            "spread_bps": None,
+            "earnings_date": None,
+            "days_to_earnings": None,
+            "earnings_blackout": 0,
             "is_candidate": 0,
             "sentiment_net_agg": 0.0,
             "sector_impact_agg": 0.0,
@@ -332,8 +347,11 @@ class BackfillScoresHistoryService:
 
         history_df["signal_active"] = history_df["signal_active"].fillna(False).astype(int)
         history_df["is_candidate"] = history_df["is_candidate"].fillna(0).astype(int)
+        history_df["earnings_blackout"] = history_df["earnings_blackout"].fillna(0).astype(int)
         history_df["anomaly_count"] = history_df["anomaly_count"].fillna(0).astype(int)
         history_df["missing_days_count"] = history_df["missing_days_count"].fillna(0).astype(int)
+        earnings_dates = pd.to_datetime(history_df["earnings_date"], errors="coerce", utc=False)
+        history_df["earnings_date"] = earnings_dates.dt.date
         history_df["symbol"] = history_df["symbol"].astype(str)
         history_df = history_df.loc[:, HISTORY_COLUMNS].copy()
         history_df = history_df.drop_duplicates(subset=["snapshot_date", "symbol"], keep="last")
@@ -361,13 +379,17 @@ class BackfillScoresHistoryService:
             INSERT INTO stock_scores_history (
                 snapshot_date, symbol, sector,
                 liquidity_val, relative_strength_index, historical_range_score, total_score,
-                trend_score, vcp_score, final_score, is_candidate,
+                trend_score, vcp_score, final_score,
+                market_cap, beta_126, spread_bps, earnings_date, days_to_earnings, earnings_blackout,
+                is_candidate,
                 sentiment_net_agg, sector_impact_agg, final_score_sentiment, signal_active,
                 anomaly_count, missing_days_count
             ) VALUES (
                 :snapshot_date, :symbol, :sector,
                 :liquidity_val, :relative_strength_index, :historical_range_score, :total_score,
-                :trend_score, :vcp_score, :final_score, :is_candidate,
+                :trend_score, :vcp_score, :final_score,
+                :market_cap, :beta_126, :spread_bps, :earnings_date, :days_to_earnings, :earnings_blackout,
+                :is_candidate,
                 :sentiment_net_agg, :sector_impact_agg, :final_score_sentiment, :signal_active,
                 :anomaly_count, :missing_days_count
             )

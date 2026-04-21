@@ -18,6 +18,10 @@ class StrictFilterProfile:
     min_weekly_trend_score: float | None = None
     min_atr_pct_20: float | None = None
     max_atr_pct_20: float | None = None
+    min_market_cap: float | None = None
+    min_beta_126: float | None = None
+    max_spread_bps: float | None = None
+    earnings_blackout_days: int | None = None
     require_above_ma200: bool = False
 
     def __post_init__(self) -> None:
@@ -37,6 +41,14 @@ class StrictFilterProfile:
             raise ValueError("min_atr_pct_20 doit être strictement positif lorsqu'il est renseigné.")
         if self.max_atr_pct_20 is not None and self.max_atr_pct_20 <= 0:
             raise ValueError("max_atr_pct_20 doit être strictement positif lorsqu'il est renseigné.")
+        if self.min_market_cap is not None and self.min_market_cap <= 0:
+            raise ValueError("min_market_cap doit être strictement positif lorsqu'il est renseigné.")
+        if self.min_beta_126 is not None and self.min_beta_126 <= 0:
+            raise ValueError("min_beta_126 doit être strictement positif lorsqu'il est renseigné.")
+        if self.max_spread_bps is not None and self.max_spread_bps <= 0:
+            raise ValueError("max_spread_bps doit être strictement positif lorsqu'il est renseigné.")
+        if self.earnings_blackout_days is not None and self.earnings_blackout_days < 0:
+            raise ValueError("earnings_blackout_days doit être positif ou nul lorsqu'il est renseigné.")
         if (
             self.min_atr_pct_20 is not None
             and self.max_atr_pct_20 is not None
@@ -57,6 +69,10 @@ class StrictFilterProfile:
             "min_weekly_trend_score": self.min_weekly_trend_score,
             "min_atr_pct_20": self.min_atr_pct_20,
             "max_atr_pct_20": self.max_atr_pct_20,
+            "min_market_cap": self.min_market_cap,
+            "min_beta_126": self.min_beta_126,
+            "max_spread_bps": self.max_spread_bps,
+            "earnings_blackout_days": self.earnings_blackout_days,
         }
         payload.update({key: value for key, value in optional_fields.items() if value is not None})
         return payload
@@ -74,6 +90,10 @@ class StrictFilterProfile:
             "min_weekly_trend_score": self.min_weekly_trend_score,
             "min_atr_pct_20": self.min_atr_pct_20,
             "max_atr_pct_20": self.max_atr_pct_20,
+            "min_market_cap": self.min_market_cap,
+            "min_beta_126": self.min_beta_126,
+            "max_spread_bps": self.max_spread_bps,
+            "earnings_blackout_days": self.earnings_blackout_days,
         }
         payload.update({key: value for key, value in optional_fields.items() if value is not None})
         return payload
@@ -90,6 +110,10 @@ class StrictFilterProfile:
         weekly_trend_col: str = "weekly_trend_score",
         ma200_col: str = "ma200",
         high_52w_col: str = "high_52w",
+        market_cap_col: str = "market_cap",
+        beta_col: str = "beta_126",
+        spread_col: str = "spread_bps",
+        earnings_blackout_col: str = "earnings_blackout",
     ) -> pd.DataFrame:
         if frame.empty:
             return frame.copy()
@@ -144,6 +168,22 @@ class StrictFilterProfile:
             if self.max_atr_pct_20 is not None:
                 atr_mask &= filtered[atr_pct_col] <= self.max_atr_pct_20
             filtered = filtered[atr_mask]
+        if self.min_market_cap is not None:
+            if market_cap_col not in filtered.columns:
+                raise ValueError(f"Colonne manquante pour appliquer {self.name}: {market_cap_col}")
+            filtered = filtered[filtered[market_cap_col].notna() & (filtered[market_cap_col] >= self.min_market_cap)]
+        if self.min_beta_126 is not None:
+            if beta_col not in filtered.columns:
+                raise ValueError(f"Colonne manquante pour appliquer {self.name}: {beta_col}")
+            filtered = filtered[filtered[beta_col].notna() & (filtered[beta_col] >= self.min_beta_126)]
+        if self.max_spread_bps is not None:
+            if spread_col not in filtered.columns:
+                raise ValueError(f"Colonne manquante pour appliquer {self.name}: {spread_col}")
+            filtered = filtered[filtered[spread_col].notna() & (filtered[spread_col] <= self.max_spread_bps)]
+        if self.earnings_blackout_days is not None:
+            if earnings_blackout_col not in filtered.columns:
+                raise ValueError(f"Colonne manquante pour appliquer {self.name}: {earnings_blackout_col}")
+            filtered = filtered[(filtered[earnings_blackout_col].fillna(0).astype(int)) == 0]
         return filtered.copy()
 
 
@@ -157,6 +197,10 @@ STRICT_SWING_CASH_FILTERS = StrictFilterProfile(
     min_weekly_trend_score=1.0,
     min_atr_pct_20=0.015,
     max_atr_pct_20=0.06,
+    min_market_cap=2_000_000_000.0,
+    min_beta_126=1.0,
+    max_spread_bps=25.0,
+    earnings_blackout_days=3,
     require_above_ma200=True,
 )
 

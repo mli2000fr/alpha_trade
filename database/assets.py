@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Any, Iterable, Mapping
 
-from sqlalchemy import Boolean, Column, String, TIMESTAMP, Table, and_, func, or_, select, text
+from sqlalchemy import Boolean, Column, Float, String, TIMESTAMP, Table, and_, func, or_, select, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from database.connection import get_sqlalchemy_engine, SessionLocal, metadata
 from service.alpaca.clientAlpaca import fetch_alpaca_assets
@@ -20,6 +20,7 @@ def get_stock_metadata_table() -> Table:
         Column("tradable", Boolean),
         Column("bars_available", Boolean),
         Column("sector", String(50)),
+        Column("market_cap", Float),
         Column("last_updated", TIMESTAMP),
         autoload_with=get_sqlalchemy_engine(),
     )
@@ -28,6 +29,11 @@ def get_stock_metadata_table() -> Table:
 def _require_sector_column(stock_metadata: Table) -> None:
     if "sector" not in stock_metadata.c:
         raise RuntimeError("La colonne stock_metadata.sector est absente du schéma SQL courant.")
+
+
+def _require_market_cap_column(stock_metadata: Table) -> None:
+    if "market_cap" not in stock_metadata.c:
+        raise RuntimeError("La colonne stock_metadata.market_cap est absente du schéma SQL courant.")
 
 
 def get_symbols_missing_sector(limit: int | None = None) -> list[str]:
@@ -58,20 +64,70 @@ def get_symbols_missing_sector(limit: int | None = None) -> list[str]:
         return [str(symbol) for symbol in conn.execute(stmt).scalars().all()]
 
 
-def update_stock_metadata_sector(symbol: str, sector: str) -> int:
-    normalized_symbol = (symbol or "").strip().upper()
-    normalized_sector = (sector or "").strip()
-    if not normalized_symbol:
-        raise ValueError("symbol ne peut pas être vide.")
-    if not normalized_sector:
-        raise ValueError("sector ne peut pas être vide.")
+def get_symbols_missing_fundamentals(limit: int | None = None) -> list[str]:
+    if limit is not None and limit < 1:
+        raise ValueError("limit doit être supérieur ou égal à 1.")
 
     stock_metadata = get_stock_metadata_table()
     _require_sector_column(stock_metadata)
+    _require_market_cap_column(stock_metadata)
+    stmt = (
+        select(stock_metadata.c.symbol)
+        .where(
+            and_(
+                stock_metadata.c.status == "active",
+                stock_metadata.c.tradable.is_(True),
+                stock_metadata.c.bars_available.is_(True),
+                or_(
+                    stock_metadata.c.sector.is_(None),
+                    func.trim(stock_metadata.c.sector) == "",
+                    stock_metadata.c.market_cap.is_(None),
+                ),
+            )
+        )
+        .order_by(stock_metadata.c.symbol)
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
+    with get_sqlalchemy_engine().connect() as conn:
+        return [str(symbol) for symbol in conn.execute(stmt).scalars().all()]
+
+
+def update_stock_metadata_sector(symbol: str, sector: str) -> int:
+    return update_stock_metadata_fundamentals(symbol, sector=sector)
+
+
+def update_stock_metadata_fundamentals(
+    symbol: str,
+    *,
+    sector: str | None = None,
+    market_cap: float | None = None,
+) -> int:
+    normalized_symbol = (symbol or "").strip().upper()
+    if not normalized_symbol:
+        raise ValueError("symbol ne peut pas être vide.")
+    normalized_sector = (sector or "").strip() or None
+    normalized_market_cap = None if market_cap is None else float(market_cap)
+    if normalized_sector is None and normalized_market_cap is None:
+        raise ValueError("Au moins une valeur parmi sector ou market_cap doit être renseignée.")
+
+    stock_metadata = get_stock_metadata_table()
+    assignments: list[str] = []
+    params: dict[str, object] = {"symbol": normalized_symbol}
+    if normalized_sector is not None:
+        _require_sector_column(stock_metadata)
+        assignments.append("sector = :sector")
+        params["sector"] = normalized_sector
+    if normalized_market_cap is not None:
+        _require_market_cap_column(stock_metadata)
+        assignments.append("market_cap = :market_cap")
+        params["market_cap"] = normalized_market_cap
+
     with get_sqlalchemy_engine().begin() as conn:
         result = conn.execute(
-            text("UPDATE stock_metadata SET sector = :sector WHERE symbol = :symbol"),
-            {"symbol": normalized_symbol, "sector": normalized_sector},
+            text(f"UPDATE stock_metadata SET {', '.join(assignments)} WHERE symbol = :symbol"),
+            params,
         )
         return int(result.rowcount or 0)
 
@@ -88,6 +144,7 @@ def insert_assets_to_db(assets: Iterable[Mapping[str, Any]]) -> int:
             "status": asset.get("status", ""),
             "tradable": asset.get("tradable", False),
             "bars_available": True,
+            "market_cap": None,
         }
         for asset in assets
     ]
@@ -105,6 +162,7 @@ def insert_assets_to_db(assets: Iterable[Mapping[str, Any]]) -> int:
             "status": stmt.inserted.status,
             "tradable": stmt.inserted.tradable,
             "bars_available": stmt.inserted.bars_available,
+            "market_cap": stmt.inserted.market_cap,
             "last_updated": func.current_timestamp(),
         }
         session.execute(stmt.on_duplicate_key_update(**update_dict))

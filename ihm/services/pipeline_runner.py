@@ -25,7 +25,6 @@ class PipelineLaunchOptions:
 
     account_id: str | None = None
     trade_date: str | None = None
-    alpha_scanner_use_strict_preset: bool = False
     risk_account_equity: float = 100_000.0
     execution_mode: Literal["simulate", "paper", "live"] = "simulate"
     execution_run_id: str | None = None
@@ -245,10 +244,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-u", "-m", "screener.stock_screener"]
 
     if step_key == "alpha_scanner":
-        command = [sys.executable, "-u", "-m", "selector.alpha_scanner"]
-        if options.alpha_scanner_use_strict_preset:
-            command.extend(["--preset", "strict"])
-        return command
+        return [sys.executable, "-u", "-m", "selector.alpha_scanner"]
 
     if step_key == "sentiment_pipeline":
         return [sys.executable, "-u", "-m", "event_sentiment"]
@@ -513,6 +509,26 @@ def _stream_subprocess(
 
     process.wait()
     final_returncode = -2 if timed_out else process.returncode
+
+    if on_update is not None:
+        final_status: PipelineExecutionStatus
+        if timed_out:
+            final_status = "timeout"
+        else:
+            final_status = "completed" if final_returncode == 0 else "failed"
+        on_update(
+            _build_live_snapshot(
+                step_key=step_key,
+                command_display=command_display,
+                status=final_status,
+                stdout_lines=stdout_lines,
+                stderr_lines=stderr_lines,
+                started_at=started_at,
+                started_perf=started_perf,
+                account_id=account_id,
+                returncode=final_returncode,
+            )
+        )
 
     return PipelineRunResult(
         step_key=step_key,

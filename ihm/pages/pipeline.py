@@ -41,9 +41,6 @@ PENDING_SELECTED_RUN_KEY = "ihm_pipeline_pending_selected_run_id"
 PENDING_COMPARE_RUNS_KEY = "ihm_pipeline_pending_compare_run_ids"
 TAIL_LINES = 250
 EXECUTION_DEFAULTS_ACCOUNT_KEY = "pipeline_execution_defaults_applied_account_id"
-ALPHA_SCANNER_PRESET_PREFS_KEY = "pipeline_alpha_scanner_strict_preset_by_account"
-ALPHA_SCANNER_PRESET_LAST_ACCOUNT_KEY = "pipeline_alpha_scanner_strict_preset_last_account"
-ALPHA_SCANNER_PRESET_WIDGET_KEY = "pipeline_alpha_scanner_use_strict_preset"
 IMPORT_NEWS_START_DATE_KEY = "pipeline_import_news_start_date"
 IMPORT_NEWS_END_DATE_KEY = "pipeline_import_news_end_date"
 
@@ -116,39 +113,9 @@ def _build_execution_prefill_caption(defaults: PipelineExecutionDefaults | None)
     return " | ".join(notes)
 
 
-def _normalize_alpha_scanner_preset_account_bucket(account_id: str | None) -> str:
-    cleaned = (account_id or "").strip()
-    return cleaned or "default"
-
-
-def _sync_alpha_scanner_strict_preset_preference(
-    selected_account_id: str | None,
-    session_state: dict[str, Any],
-) -> bool:
-    bucket = _normalize_alpha_scanner_preset_account_bucket(selected_account_id)
-    prefs_raw = session_state.get(ALPHA_SCANNER_PRESET_PREFS_KEY)
-    prefs = dict(prefs_raw) if isinstance(prefs_raw, dict) else {}
-    last_bucket = session_state.get(ALPHA_SCANNER_PRESET_LAST_ACCOUNT_KEY)
-
-    if last_bucket != bucket:
-        restored_value = bool(prefs.get(bucket, False))
-        session_state[ALPHA_SCANNER_PRESET_WIDGET_KEY] = restored_value
-        session_state[ALPHA_SCANNER_PRESET_LAST_ACCOUNT_KEY] = bucket
-        prefs.setdefault(bucket, restored_value)
-        session_state[ALPHA_SCANNER_PRESET_PREFS_KEY] = prefs
-        return restored_value
-
-    current_value = bool(session_state.get(ALPHA_SCANNER_PRESET_WIDGET_KEY, prefs.get(bucket, False)))
-    prefs[bucket] = current_value
-    session_state[ALPHA_SCANNER_PRESET_PREFS_KEY] = prefs
-    session_state[ALPHA_SCANNER_PRESET_LAST_ACCOUNT_KEY] = bucket
-    return current_value
-
-
 def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
     selected_account_id = cast(str | None, st.session_state.get("selected_account_id"))
     execution_defaults = _apply_execution_prefills(selected_account_id)
-    alpha_scanner_strict_default = _sync_alpha_scanner_strict_preset_preference(selected_account_id, st.session_state)
 
     with st.expander("⚙️ Paramètres d'exécution", expanded=True):
         st.caption(
@@ -301,18 +268,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             else:
                 st.info("Aucun GPU CUDA détecté dans l'environnement de l'IHM : le mode `auto` retombera sur CPU.")
 
-        alpha_scanner_use_strict_preset = st.checkbox(
-            "Alpha Scanner — activer le preset strict",
-            value=bool(alpha_scanner_strict_default),
-            key=ALPHA_SCANNER_PRESET_WIDGET_KEY,
-            help="Ajoute `--preset strict` lors du lancement IHM de l'étape Alpha Scanner et du workflow complet.",
+        st.caption(
+            "Alpha Scanner est lancé systématiquement en mode strict depuis l'IHM : "
+            "`selector.alpha_scanner` "
+            "(`min_close=10`, `ADV20>=30M`, `RS>=100`, `close>MA200`, `high52w>=75%`, `weekly=1.0`, `ATR 1.5%-6%`)."
         )
-        _sync_alpha_scanner_strict_preset_preference(selected_account_id, st.session_state)
-        if alpha_scanner_use_strict_preset:
-            st.caption(
-                "Le workflow IHM lancera `selector.alpha_scanner --preset strict` : "
-                "`min_close=10`, `ADV20>=30M`, `max_volatility_ratio<=0.90`."
-            )
 
         live_confirmed = True
         if execution_mode == "live":
@@ -327,7 +287,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         PipelineLaunchOptions(
             account_id=selected_account_id,
             trade_date=trade_date,
-            alpha_scanner_use_strict_preset=bool(alpha_scanner_use_strict_preset),
             risk_account_equity=float(risk_account_equity),
             execution_mode=cast(Any, execution_mode),
             execution_run_id=execution_run_id,
@@ -783,11 +742,6 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
                     st.caption(f"🏦 Cette étape utilise le compte Alpaca sélectionné : `{options.account_id or 'default'}`")
                 else:
                     st.caption("🌐 Cette étape est globale et n'utilise pas le sélecteur de compte Alpaca.")
-                if step.key == "alpha_scanner":
-                    st.caption(
-                        "🎛️ Preset strict Alpha Scanner : "
-                        f"`{'activé' if options.alpha_scanner_use_strict_preset else 'désactivé'}`"
-                    )
                 if step.key == "execution":
                     effective_pdt = "off" if options.execution_account_type == "cash" else options.execution_pdt_rule
                     st.caption(

@@ -10,7 +10,7 @@ import requests
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common.utils import configure_root_logging
-from database.assets import get_symbols_missing_sector, update_stock_metadata_sector
+from database.assets import get_symbols_missing_fundamentals, update_stock_metadata_fundamentals
 from service.finnhub.clientFinnhub import MIN_REQUEST_INTERVAL_SECONDS, fetch_company_profile
 
 LOGGER = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def update_missing_sectors(
 	if log_every < 1:
 		raise ValueError("log_every doit être supérieur ou égal à 1.")
 
-	symbols = get_symbols_missing_sector(limit=limit)
+	symbols = get_symbols_missing_fundamentals(limit=limit)
 	total = len(symbols)
 	summary = {
 		"total": total,
@@ -38,7 +38,7 @@ def update_missing_sectors(
 	}
 
 	LOGGER.info(
-		"Debut mise a jour sector stock_metadata | symboles_a_traiter=%s limit=%s",
+		"Debut mise a jour fondamentaux stock_metadata | symboles_a_traiter=%s limit=%s",
 		total,
 		limit,
 	)
@@ -51,23 +51,31 @@ def update_missing_sectors(
 			try:
 				profile = fetch_company_profile(symbol, session=session)
 				sector = str(profile.get("finnhubIndustry") or "").strip()
-				if not sector or sector == NOT_AVAILABLE:
+				market_cap_raw = profile.get("marketCapitalization")
+				market_cap = float(market_cap_raw) * 1_000_000.0 if market_cap_raw not in (None, "") else None
+
+				if (not sector or sector == NOT_AVAILABLE) and market_cap is None:
 					summary["skipped"] += 1
 					LOGGER.warning(
-						"Sector introuvable | symbol=%s progress=%s/%s skipped=%s",
+						"Fondamentaux introuvables | symbol=%s progress=%s/%s skipped=%s",
 						symbol,
 						index,
 						total,
 						summary["skipped"],
 					)
 				else:
-					rowcount = update_stock_metadata_sector(symbol, sector)
+					rowcount = update_stock_metadata_fundamentals(
+						symbol,
+						sector=None if not sector or sector == NOT_AVAILABLE else sector,
+						market_cap=market_cap,
+					)
 					if rowcount:
 						summary["updated"] += 1
 						LOGGER.info(
-							"Sector mis a jour | symbol=%s sector=%s progress=%s/%s updated=%s",
+							"Fondamentaux mis a jour | symbol=%s sector=%s market_cap=%s progress=%s/%s updated=%s",
 							symbol,
-							sector,
+							None if not sector or sector == NOT_AVAILABLE else sector,
+							market_cap,
 							index,
 							total,
 							summary["updated"],
@@ -84,7 +92,7 @@ def update_missing_sectors(
 			except Exception:
 				summary["failed"] += 1
 				LOGGER.exception(
-					"Erreur mise a jour sector | symbol=%s progress=%s/%s failed=%s",
+					"Erreur mise a jour fondamentaux | symbol=%s progress=%s/%s failed=%s",
 					symbol,
 					index,
 					total,
@@ -93,7 +101,7 @@ def update_missing_sectors(
 
 			if index % log_every == 0 or index == total:
 				LOGGER.info(
-					"Progression sector | current=%s/%s updated=%s skipped=%s failed=%s",
+					"Progression fondamentaux | current=%s/%s updated=%s skipped=%s failed=%s",
 					index,
 					total,
 					summary["updated"],
@@ -107,7 +115,7 @@ def update_missing_sectors(
 		session.close()
 
 	LOGGER.info(
-		"Fin mise a jour sector stock_metadata | total=%s updated=%s skipped=%s failed=%s",
+		"Fin mise a jour fondamentaux stock_metadata | total=%s updated=%s skipped=%s failed=%s",
 		summary["total"],
 		summary["updated"],
 		summary["skipped"],
@@ -117,7 +125,7 @@ def update_missing_sectors(
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-	parser = argparse.ArgumentParser(description="Met à jour stock_metadata.sector depuis Finnhub")
+	parser = argparse.ArgumentParser(description="Met à jour stock_metadata.sector et market_cap depuis Finnhub")
 	parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles à traiter")
 	parser.add_argument(
 		"--sleep-seconds",
