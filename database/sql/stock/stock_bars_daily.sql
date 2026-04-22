@@ -1,4 +1,4 @@
-CREATE TABLE alpha_trade.stock_bars_daily (
+CREATE TABLE IF NOT EXISTS alpha_trade.stock_bars_daily (
     -- 識別信息
     `symbol` VARCHAR(20) NOT NULL COMMENT '股票代碼，如 AAPL',
     `date` DATE NOT NULL COMMENT '交易日期',

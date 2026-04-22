@@ -1,8 +1,14 @@
+backtesting
 common
 core
+corporate_actions
 dataIntegrityEngine
 database
 event_sentiment
+execution_engine
+ihm
+modelFactory
+risk_management
 screener
 selector
 service
