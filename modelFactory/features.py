@@ -56,15 +56,16 @@ def compute_features(
     """
     df = df.copy().sort_values("date").reset_index(drop=True)
 
-    close = df["close"].astype(float)
-    high = df["high"].astype(float)
-    low = df["low"].astype(float)
-    opn = df["open"].astype(float)
+    adj_prices = _build_adjusted_price_frame(df)
+    close = adj_prices["close"]
+    high = adj_prices["high"]
+    low = adj_prices["low"]
+    opn = adj_prices["open"]
     volume = df["volume"].astype(float)
-    vwap = df["vwap"].astype(float)
+    vwap = adj_prices["vwap"]
 
-    # --- daily_return : utilise la colonne existante, forward-fill NaN ---
-    df["daily_return"] = df["daily_return"].astype(float).fillna(0.0)
+    # --- daily_return : recalculé depuis la série ajustée pour absorber splits/dividendes ---
+    df["daily_return"] = close.pct_change(fill_method=None).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     # --- log return ---
     df["log_return"] = np.log(close / close.shift(1))
@@ -129,20 +130,66 @@ def compute_features(
     return df
 
 
-def build_target(df: pd.DataFrame, horizon: int = 5) -> pd.Series:
-    """Construit la target binaire : 1 si future_Xd_return > 0.
+def build_target(
+    df: pd.DataFrame,
+    horizon: int = 5,
+    mode: str = "binary",
+    positive_threshold: float = 0.0,
+    negative_threshold: float = 0.0,
+) -> pd.Series:
+    """Construit la target pour l'horizon futur.
 
     Retourne une Series alignée sur l'index de df.
     Les dernières `horizon` lignes seront NaN.
+
+    Modes
+    -----
+    - `binary`     : 1 si future_return > positive_threshold, sinon 0.
+    - `swing_cash` : 1 si future_return >= positive_threshold,
+                     0 si future_return <= negative_threshold,
+                     NaN entre les deux (zone no-trade ignorée à l'entraînement).
     """
-    close = df["close"].astype(float)
+    close = _build_adjusted_price_frame(df)["close"]
     future_return = close.shift(-horizon) / close - 1.0
-    return (future_return > 0).astype(float).where(future_return.notna())
+    if mode == "binary":
+        return (future_return > positive_threshold).astype(float).where(future_return.notna())
+    if mode == "swing_cash":
+        target = pd.Series(np.nan, index=df.index, dtype=float)
+        target = target.mask(future_return >= positive_threshold, 1.0)
+        target = target.mask(future_return <= negative_threshold, 0.0)
+        return target.where(future_return.notna())
+    raise ValueError(f"Unsupported target mode: {mode}")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _build_adjusted_price_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Reconstruit un OHLCV prix ajusté à partir de `adj_close` quand disponible.
+
+    Pour des barres journalières actions, appliquer le ratio `adj_close / close`
+    à OHLC/VWAP permet d'éviter que les splits/dividendes polluent les returns,
+    la target et les indicateurs de volatilité.
+    """
+    close = pd.to_numeric(df["close"], errors="coerce").astype(float)
+    adj_close_raw = pd.to_numeric(df["adj_close"], errors="coerce").astype(float) if "adj_close" in df.columns else close.copy()
+
+    ratio = (adj_close_raw / close.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
+    ratio = ratio.where(ratio > 0.0, np.nan).fillna(1.0)
+
+    def _scaled_col(name: str) -> pd.Series:
+        base = df[name] if name in df.columns else close
+        return pd.to_numeric(base, errors="coerce").astype(float) * ratio
+
+    adjusted = pd.DataFrame({
+        "open": _scaled_col("open"),
+        "high": _scaled_col("high"),
+        "low": _scaled_col("low"),
+        "close": close * ratio,
+        "vwap": _scaled_col("vwap"),
+    })
+    return adjusted
 
 def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()

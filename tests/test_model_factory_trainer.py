@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import cast
 
 import pandas as pd
+import torch
 from sqlalchemy.engine import Engine
 
 from modelFactory.config import DataConfig, ModelConfig, TrainingConfig
@@ -81,4 +82,12 @@ def test_train_symbol_returns_failed_when_datamodule_setup_raises(monkeypatch, t
     assert result.status == "failed"
     assert result.skip_reason is not None and "dataset boom" in result.skip_reason
     assert updates and updates[-1]["status"] == "failed"
+
+
+def test_extract_best_epoch_reads_lightning_checkpoint(tmp_path: Path) -> None:
+    ckpt_path = tmp_path / "best.ckpt"
+    torch.save({"epoch": 7}, ckpt_path)
+
+    assert trainer._extract_best_epoch(ckpt_path) == 7
+
 

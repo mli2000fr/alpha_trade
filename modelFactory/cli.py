@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from database.connection import get_sqlalchemy_engine
-from modelFactory.config import DataConfig, ModelConfig, TrainingConfig
+from modelFactory.config import CalibrationConfig, DataConfig, ModelConfig, TrainingConfig, WalkForwardConfig
 from common.utils import configure_root_logging
 
 
@@ -26,6 +26,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
     p.add_argument("--include-sentiment", action="store_true", default=False,
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
+    p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash"])
+    p.add_argument("--target-up-threshold", type=float, default=0.0,
+                   help="Seuil de rendement futur pour classer une hausse tradeable")
+    p.add_argument("--target-down-threshold", type=float, default=0.0,
+                   help="Seuil de rendement futur pour classer une baisse marquée / zone no-trade")
+    p.add_argument("--decision-threshold", type=float, default=0.5,
+                   help="Seuil de probabilité pour émettre un signal long (sinon no-trade)")
+    p.add_argument("--calibration-method", type=str, default="none", choices=["none", "platt"])
+    p.add_argument("--calibration-min-samples", type=int, default=64)
+    p.add_argument("--calibration-max-iter", type=int, default=100)
+    p.add_argument("--walkforward", action="store_true", default=False,
+                   help="Active une évaluation walk-forward avant l'entraînement final")
+    p.add_argument("--wf-min-train-size", type=int, default=504)
+    p.add_argument("--wf-val-size", type=int, default=126)
+    p.add_argument("--wf-test-size", type=int, default=126)
+    p.add_argument("--wf-step-size", type=int, default=126)
+    p.add_argument("--wf-max-splits", type=int, default=3)
     p.add_argument("--accelerator", type=str, default="auto", choices=["auto", "cpu", "gpu"])
     p.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return p
@@ -46,8 +63,25 @@ def main(args: list[str] | None = None) -> None:
             sequence_length=opts.sequence_length,
             forecast_horizon=opts.forecast_horizon,
             include_sentiment_features=opts.include_sentiment,
+            target_mode=opts.target_mode,
+            target_up_threshold=opts.target_up_threshold,
+            target_down_threshold=opts.target_down_threshold,
+            decision_threshold=opts.decision_threshold,
         ),
         model=ModelConfig(batch_size=opts.batch_size, hidden_size=opts.hidden_size, max_epochs=opts.max_epochs),
+        calibration=CalibrationConfig(
+            method=opts.calibration_method,
+            min_samples=opts.calibration_min_samples,
+            max_iter=opts.calibration_max_iter,
+        ),
+        walk_forward=WalkForwardConfig(
+            enabled=opts.walkforward,
+            min_train_size=opts.wf_min_train_size,
+            val_size=opts.wf_val_size,
+            test_size=opts.wf_test_size,
+            step_size=opts.wf_step_size,
+            max_splits=opts.wf_max_splits,
+        ),
         artifacts_dir=Path(opts.artifacts_dir),
         max_workers=opts.max_workers,
         accelerator=opts.accelerator,

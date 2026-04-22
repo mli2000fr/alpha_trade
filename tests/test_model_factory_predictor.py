@@ -135,3 +135,71 @@ def test_predict_batch_skips_missing_predictions(monkeypatch, tmp_path: Path) ->
     assert len(rows) == 1
     assert rows[0]["symbol"] == "AAPL"
 
+
+def test_predict_symbol_applies_saved_calibration_and_decision_threshold(tmp_path: Path, monkeypatch) -> None:
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat1"]}, cast(Any, fh))
+    with open(symbol_dir / "calibrator.pkl", "wb") as fh:
+        pickle.dump({"method": "platt", "slope": 1.0, "intercept": -2.0, "fitted": True, "max_iter": 100}, cast(Any, fh))
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                    "decision_threshold": 0.6,
+                    "target_mode": "swing_cash",
+                    "target_up_threshold": 0.02,
+                    "target_down_threshold": -0.01,
+                },
+                "run_id": "run-config",
+                "calibrator_path": str(symbol_dir / "calibrator.pkl"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"close": list(range(62))})
+    features = pd.DataFrame({"feat1": [float(i) for i in range(62)]})
+
+    class FakeModel:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, x):
+            return torch.tensor([[0.0, 2.0]], dtype=torch.float32), torch.tensor([[1.0]])
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(predictor, "compute_features", lambda bars, sentiment_df=None, include_sentiment=False: features.copy())
+    monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(
+        predictor.LSTMAttentionModule,
+        "load_from_checkpoint",
+        lambda path, map_location=None: FakeModel(),
+    )
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is not None
+    row = result.to_dict(orient="records")[0]
+    assert row["predicted_proba"] == 0.5
+    assert row["raw_proba"] > row["predicted_proba"]
+    assert row["predicted_class"] == 0
+    assert row["signal_label"] == "no_trade"
+
+

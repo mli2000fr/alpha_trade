@@ -16,6 +16,10 @@ class DataConfig:
     val_ratio: float = 0.15
     # test = 1 - train - val
     include_sentiment_features: bool = False
+    target_mode: str = "binary"  # binary | swing_cash
+    target_up_threshold: float = 0.0
+    target_down_threshold: float = 0.0
+    decision_threshold: float = 0.5
 
     def __post_init__(self) -> None:
         if self.sequence_length < 1:
@@ -30,6 +34,53 @@ class DataConfig:
             raise ValueError("val_ratio doit être dans ]0, 1[.")
         if self.train_ratio + self.val_ratio >= 1.0:
             raise ValueError("train_ratio + val_ratio doit être < 1.")
+        if self.target_mode not in {"binary", "swing_cash"}:
+            raise ValueError("target_mode doit être 'binary' ou 'swing_cash'.")
+        if not (0.0 < self.decision_threshold < 1.0):
+            raise ValueError("decision_threshold doit être dans ]0, 1[.")
+        if self.target_down_threshold > self.target_up_threshold:
+            raise ValueError("target_down_threshold doit être <= target_up_threshold.")
+
+
+@dataclass(frozen=True, slots=True)
+class CalibrationConfig:
+    """Paramètres de calibration des probabilités."""
+
+    method: str = "none"  # none | platt
+    min_samples: int = 64
+    max_iter: int = 100
+
+    def __post_init__(self) -> None:
+        if self.method not in {"none", "platt"}:
+            raise ValueError("calibration.method doit être 'none' ou 'platt'.")
+        if self.min_samples < 2:
+            raise ValueError("calibration.min_samples doit être >= 2.")
+        if self.max_iter < 1:
+            raise ValueError("calibration.max_iter doit être >= 1.")
+
+
+@dataclass(frozen=True, slots=True)
+class WalkForwardConfig:
+    """Paramètres d'évaluation walk-forward."""
+
+    enabled: bool = False
+    min_train_size: int = 504
+    val_size: int = 126
+    test_size: int = 126
+    step_size: int = 126
+    max_splits: int = 3
+
+    def __post_init__(self) -> None:
+        if self.min_train_size < 2:
+            raise ValueError("walk_forward.min_train_size doit être >= 2.")
+        if self.val_size < 1:
+            raise ValueError("walk_forward.val_size doit être >= 1.")
+        if self.test_size < 1:
+            raise ValueError("walk_forward.test_size doit être >= 1.")
+        if self.step_size < 1:
+            raise ValueError("walk_forward.step_size doit être >= 1.")
+        if self.max_splits < 1:
+            raise ValueError("walk_forward.max_splits doit être >= 1.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +119,8 @@ class TrainingConfig:
 
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
+    walk_forward: WalkForwardConfig = field(default_factory=WalkForwardConfig)
     artifacts_dir: Path = Path("artifacts/models")
     max_workers: int = 4
     accelerator: str = "auto"  # auto | cpu | gpu

@@ -29,6 +29,16 @@ class ChronoSplit:
     test: pd.DataFrame
 
 
+@dataclass(frozen=True, slots=True)
+class WalkForwardSplit:
+    """Fenêtre d'évaluation walk-forward."""
+
+    split_index: int
+    train: pd.DataFrame
+    val: pd.DataFrame
+    test: pd.DataFrame
+
+
 def chrono_split(df: pd.DataFrame, train_ratio: float, val_ratio: float) -> ChronoSplit:
     """Split chronologique sans shuffle. Le df doit être trié par date."""
     n = len(df)
@@ -39,6 +49,40 @@ def chrono_split(df: pd.DataFrame, train_ratio: float, val_ratio: float) -> Chro
         val=df.iloc[i_train:i_val].reset_index(drop=True),
         test=df.iloc[i_val:].reset_index(drop=True),
     )
+
+
+def generate_walk_forward_splits(
+    df: pd.DataFrame,
+    *,
+    min_train_size: int,
+    val_size: int,
+    test_size: int,
+    step_size: int,
+    max_splits: int,
+) -> list[WalkForwardSplit]:
+    """Construit des splits walk-forward en fenêtre expanding."""
+    splits: list[WalkForwardSplit] = []
+    train_end = min_train_size
+    split_index = 0
+    n = len(df)
+
+    while split_index < max_splits:
+        val_end = train_end + val_size
+        test_end = val_end + test_size
+        if test_end > n:
+            break
+        splits.append(
+            WalkForwardSplit(
+                split_index=split_index,
+                train=df.iloc[:train_end].reset_index(drop=True),
+                val=df.iloc[train_end:val_end].reset_index(drop=True),
+                test=df.iloc[val_end:test_end].reset_index(drop=True),
+            )
+        )
+        split_index += 1
+        train_end += step_size
+
+    return splits
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +142,14 @@ def build_sequences(features: np.ndarray, targets: np.ndarray, seq_len: int) -> 
     return np.array(X_list, dtype=np.float32), np.array(y_list, dtype=np.float32)
 
 
+def build_sequence_dataset(df: pd.DataFrame, scaler: FeatureScaler, seq_len: int) -> SequenceDataset | None:
+    """Construit un `SequenceDataset` à partir d'un split préparé."""
+    feats = scaler.transform(df)
+    targets = df["target"].values
+    X, y = build_sequences(feats, targets, seq_len)
+    return SequenceDataset(X, y) if len(X) > 0 else None
+
+
 # ---------------------------------------------------------------------------
 # PyTorch Dataset
 # ---------------------------------------------------------------------------
@@ -144,31 +196,27 @@ class SymbolDataModule(L.LightningDataModule):
         self.train_ds: Optional[SequenceDataset] = None
         self.val_ds: Optional[SequenceDataset] = None
         self.test_ds: Optional[SequenceDataset] = None
+        self.prepared_df: Optional[pd.DataFrame] = None
         self.n_features: int = len(self._feature_cols)
         self._num_workers = min(os.cpu_count() or 0, 4)
         self._pin_memory = torch.cuda.is_available()
 
     def setup(self, stage: Optional[str] = None) -> None:
-        # 1. Feature engineering (with optional sentiment)
-        df = compute_features(
+        df = prepare_symbol_frame(
             self.bars_df,
+            self.data_cfg,
             sentiment_df=self.sentiment_df,
-            include_sentiment=self.data_cfg.include_sentiment_features,
         )
-        # 2. Target
-        df["target"] = build_target(df, self.data_cfg.forecast_horizon)
-        # 3. Chrono split
+        self.prepared_df = df
+        # 2. Chrono split
         split = chrono_split(df, self.data_cfg.train_ratio, self.data_cfg.val_ratio)
-        # 4. Fit scaler on train
+        # 3. Fit scaler on train
         self.scaler.fit(split.train)
-        # 5. Transform + build sequences
+        # 4. Transform + build sequences
         for name, part in [("train", split.train), ("val", split.val), ("test", split.test)]:
-            feats = self.scaler.transform(part)
-            targets = part["target"].values
-            X, y = build_sequences(feats, targets, self.data_cfg.sequence_length)
-            ds = SequenceDataset(X, y) if len(X) > 0 else None
+            ds = build_sequence_dataset(part, self.scaler, self.data_cfg.sequence_length)
             setattr(self, f"{name}_ds", ds)
-            LOGGER.info("dataset split=%s sequences=%d", name, len(X))
+            LOGGER.info("dataset split=%s sequences=%d", name, len(ds) if ds is not None else 0)
 
     def train_dataloader(self) -> DataLoader:  # type: ignore[type-arg]
         assert self.train_ds is not None
@@ -193,4 +241,26 @@ class SymbolDataModule(L.LightningDataModule):
             persistent_workers=nw > 0,
             pin_memory=self._pin_memory,
         )
+
+
+def prepare_symbol_frame(
+    bars_df: pd.DataFrame,
+    data_cfg: DataConfig,
+    sentiment_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Prépare le DataFrame final features + target pour un symbole."""
+    df = compute_features(
+        bars_df,
+        sentiment_df=sentiment_df,
+        include_sentiment=data_cfg.include_sentiment_features,
+    )
+    df["target"] = build_target(
+        df,
+        horizon=data_cfg.forecast_horizon,
+        mode=data_cfg.target_mode,
+        positive_threshold=data_cfg.target_up_threshold,
+        negative_threshold=data_cfg.target_down_threshold,
+    )
+    return df.reset_index(drop=True)
+
 

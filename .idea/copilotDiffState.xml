@@ -92,14 +92,6 @@
             </PendingDiffInfo>
           </value>
         </entry>
-        <entry key="$PROJECT_DIR$/tests/test_pages_db_admin.py">
-          <value>
-            <PendingDiffInfo>
-              <option name="filePath" value="$PROJECT_DIR$/tests/test_pages_db_admin.py" />
-              <option name="updatedContent" value="from ihm.pages import db_admin&#10;&#10;&#10;def test_pages_db_admin_importable() -&gt; None:&#10;    assert hasattr(db_admin, &quot;__doc__&quot;)&#10;" />
-            </PendingDiffInfo>
-          </value>
-        </entry>
       </map>
     </option>
   </component>

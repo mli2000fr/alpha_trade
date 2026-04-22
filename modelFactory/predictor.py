@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from modelFactory.calibration import calibrator_from_state_dict, margin_from_logits
 from modelFactory.config import DataConfig
 from modelFactory.data_loader import load_symbol_bars, load_symbol_sentiment
 from modelFactory.dataset import FeatureScaler
@@ -95,12 +96,23 @@ def predict_symbol(
         sequence_length=cfg_data["data"]["sequence_length"],
         forecast_horizon=cfg_data["data"]["forecast_horizon"],
         include_sentiment_features=cfg_data["data"].get("include_sentiment_features", False),
+        target_mode=cfg_data["data"].get("target_mode", "binary"),
+        target_up_threshold=cfg_data["data"].get("target_up_threshold", 0.0),
+        target_down_threshold=cfg_data["data"].get("target_down_threshold", 0.0),
+        decision_threshold=cfg_data["data"].get("decision_threshold", 0.5),
     )
     run_id = selected_run_id or cfg_data.get("run_id", "unknown")
 
     # Load scaler
     with open(scaler_path, "rb") as f:
         scaler = FeatureScaler.from_state_dict(pickle.load(f))
+
+    calibrator = None
+    calibrator_path_raw = cfg_data.get("calibrator_path")
+    calibrator_path = Path(calibrator_path_raw) if calibrator_path_raw else config_path.with_name("calibrator.pkl")
+    if calibrator_path.exists():
+        with open(calibrator_path, "rb") as f:
+            calibrator = calibrator_from_state_dict(pickle.load(f))
 
     cutoff_date = as_of_date or prediction_date
 
@@ -141,10 +153,15 @@ def predict_symbol(
 
     with torch.no_grad():
         logits, _ = model(x)
-        proba = torch.softmax(logits, dim=1)[0, 1].item()
+        raw_proba = torch.softmax(logits, dim=1)[0, 1].item()
+
+    proba = raw_proba
+    if calibrator is not None and calibrator.fitted:
+        proba = float(calibrator.predict_proba(margin_from_logits(logits.cpu().numpy()))[0])
 
     pred_date = prediction_date or date.today()
-    pred_class = 1 if proba > 0.5 else 0
+    pred_class = 1 if proba >= data_cfg.decision_threshold else 0
+    signal_label = "long" if pred_class == 1 else "no_trade"
 
     result = pd.DataFrame([{
         "symbol": symbol,
@@ -152,12 +169,24 @@ def predict_symbol(
         "predicted_proba": round(proba, 6),
         "predicted_class": pred_class,
         "run_id": run_id,
+        "raw_proba": round(raw_proba, 6),
+        "decision_threshold": data_cfg.decision_threshold,
+        "signal_label": signal_label,
+        "calibration_method": getattr(calibrator, "method", "none") if calibrator is not None and calibrator.fitted else "none",
     }])
 
     # Persist
     if persist:
         insert_predictions(engine, result)
-    LOGGER.info("predict_symbol symbol=%s date=%s proba=%.4f class=%d", symbol, pred_date, proba, pred_class)
+    LOGGER.info(
+        "predict_symbol symbol=%s date=%s proba=%.4f raw_proba=%.4f class=%d signal=%s",
+        symbol,
+        pred_date,
+        proba,
+        raw_proba,
+        pred_class,
+        signal_label,
+    )
     return result
 
 
