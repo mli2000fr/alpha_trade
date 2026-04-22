@@ -10,6 +10,14 @@ pytz
 pandas-market-calendars
 transformers
 torch
+lightning
+torchmetrics
+streamlit
+pyyaml
+vectorbt>=0.26
+plotly
+kaleido
+matplotlib
 
 [dev]
 pytest>=8
