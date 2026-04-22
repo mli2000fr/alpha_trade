@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Any, cast
 
@@ -262,6 +262,7 @@ class BackfillScoresHistoryService:
         if screener_df.empty:
             return pd.DataFrame()
 
+        scanner, quotes_available, earnings_available = self._resolve_pit_scanner(as_of_date)
         all_frames: list[pd.DataFrame] = []
         symbols = screener_df["symbol"].dropna().astype(str).tolist()
         chunk_size = max(1, self.scanner_config.chunk_size)
@@ -269,15 +270,21 @@ class BackfillScoresHistoryService:
         for start in range(0, len(symbols), chunk_size):
             chunk_symbols = symbols[start:start + chunk_size]
             market_data = self._load_market_data(chunk_symbols, as_of_date)
-            computed = self.scanner.compute_factors(market_data)
+            computed = scanner.compute_factors(market_data)
             aux_scores = screener_df[screener_df["symbol"].isin(chunk_symbols)].copy()
-            metadata_df = self.scanner.fetch_instrument_metadata(chunk_symbols)
-            quotes_df = self.scanner.fetch_quote_snapshots(chunk_symbols, reference_date=as_of_date)
-            earnings_df = self.scanner.fetch_next_earnings(chunk_symbols, reference_date=as_of_date)
-            merged = self.scanner.merge_scores(computed, aux_scores)
-            merged = self.scanner._enrich_and_filter_equities(merged, metadata_df)
-            merged = self.scanner._merge_optional_symbol_overlays(merged, quotes_df, earnings_df)
-            filtered = self.scanner.apply_filters(merged)
+            metadata_df = scanner.fetch_instrument_metadata(chunk_symbols)
+            quotes_df = (
+                scanner.fetch_quote_snapshots(chunk_symbols, reference_date=as_of_date)
+                if quotes_available else pd.DataFrame(columns=["symbol", "quote_date", "spread_bps"])
+            )
+            earnings_df = (
+                scanner.fetch_next_earnings(chunk_symbols, reference_date=as_of_date)
+                if earnings_available else pd.DataFrame(columns=["symbol", "earnings_date", "days_to_earnings", "earnings_blackout"])
+            )
+            merged = scanner.merge_scores(computed, aux_scores)
+            merged = scanner._enrich_and_filter_equities(merged, metadata_df)
+            merged = scanner._merge_optional_symbol_overlays(merged, quotes_df, earnings_df)
+            filtered = scanner.apply_filters(merged)
             if not filtered.empty:
                 all_frames.append(filtered)
 
@@ -285,11 +292,69 @@ class BackfillScoresHistoryService:
             return pd.DataFrame()
 
         merged_candidates = cast(pd.DataFrame, pd.concat(all_frames, ignore_index=True))
-        merged_candidates = cast(pd.DataFrame, self.scanner._apply_factor_neutralization(merged_candidates))
-        selected = self.scanner.rank_and_select(merged_candidates)
+        merged_candidates = cast(pd.DataFrame, scanner._apply_factor_neutralization(merged_candidates))
+        selected = scanner.rank_and_select(merged_candidates)
         selected_symbols = set(selected["symbol"].astype(str).tolist()) if not selected.empty else set()
         merged_candidates["is_candidate"] = merged_candidates["symbol"].astype(str).isin(selected_symbols).astype(int)
         return merged_candidates
+
+    def _has_quote_snapshot_coverage(self, as_of_date: date) -> bool:
+        """Indique si un historique de quotes exploitable existe au plus tard à `as_of_date`."""
+        stmt = text(
+            """
+            SELECT 1
+            FROM stock_quote_snapshots
+            WHERE quote_date <= :as_of_date
+            LIMIT 1
+            """
+        )
+        try:
+            with self.engine.connect() as conn:
+                return conn.execute(stmt, {"as_of_date": as_of_date}).first() is not None
+        except Exception:
+            return False
+
+    def _has_earnings_calendar_coverage(self, as_of_date: date) -> bool:
+        """Indique si un calendrier earnings exploitable existe à partir de `as_of_date`."""
+        stmt = text(
+            """
+            SELECT 1
+            FROM stock_earnings_calendar
+            WHERE earnings_date >= :as_of_date
+            LIMIT 1
+            """
+        )
+        try:
+            with self.engine.connect() as conn:
+                return conn.execute(stmt, {"as_of_date": as_of_date}).first() is not None
+        except Exception:
+            return False
+
+    def _resolve_pit_scanner(self, as_of_date: date) -> tuple[AlphaScanner, bool, bool]:
+        """Construit un scanner PIT strict, avec fallback automatique sur les overlays non couverts."""
+        quotes_available = self._has_quote_snapshot_coverage(as_of_date)
+        earnings_available = self._has_earnings_calendar_coverage(as_of_date)
+
+        overrides: dict[str, object] = {}
+        disabled_filters: list[str] = []
+
+        if self.scanner_config.max_spread_bps is not None and not quotes_available:
+            overrides["max_spread_bps"] = None
+            disabled_filters.append(f"spread_bps<={self.scanner_config.max_spread_bps}")
+        if self.scanner_config.earnings_blackout_days is not None and not earnings_available:
+            overrides["earnings_blackout_days"] = None
+            disabled_filters.append(f"earnings_blackout_days={self.scanner_config.earnings_blackout_days}")
+
+        if not overrides:
+            return self.scanner, quotes_available, earnings_available
+
+        LOGGER.warning(
+            "Backfill PIT | date=%s couverture overlays absente; filtres stricts desactives=%s",
+            as_of_date,
+            ", ".join(disabled_filters),
+        )
+        effective_config = replace(self.scanner_config, **overrides)
+        return AlphaScanner(engine=self.engine, config=effective_config), quotes_available, earnings_available
 
     def _load_market_data(self, symbols: list[str], as_of_date: date) -> pd.DataFrame:
         """Charge l'historique de marché borné à `as_of_date` pour un lot de symboles."""

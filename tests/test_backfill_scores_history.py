@@ -129,3 +129,61 @@ def test_backfill_orchestrates_dates_and_persistence(monkeypatch) -> None:
     assert result.rows_inserted == 2
     assert inserted_dates == [date(2026, 4, 15), date(2026, 4, 16)]
 
+
+def test_resolve_pit_scanner_disables_overlay_filters_when_historical_coverage_is_missing() -> None:
+    engine = _build_sqlite_engine()
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+
+    scanner, quotes_available, earnings_available = service._resolve_pit_scanner(date(2026, 4, 17))
+
+    assert quotes_available is False
+    assert earnings_available is False
+    assert scanner.config.max_spread_bps is None
+    assert scanner.config.earnings_blackout_days is None
+    assert service.scanner_config.max_spread_bps == 25.0
+    assert service.scanner_config.earnings_blackout_days == 3
+
+
+def test_resolve_pit_scanner_keeps_strict_overlay_filters_when_historical_coverage_exists() -> None:
+    engine = _build_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE stock_quote_snapshots (symbol TEXT, quote_date DATE, spread_bps REAL)"))
+        conn.execute(text("CREATE TABLE stock_earnings_calendar (symbol TEXT, earnings_date DATE)"))
+        conn.execute(
+            text("INSERT INTO stock_quote_snapshots(symbol, quote_date, spread_bps) VALUES (:s, :d, :v)"),
+            [{"s": "AAPL", "d": date(2026, 4, 16), "v": 12.0}],
+        )
+        conn.execute(
+            text("INSERT INTO stock_earnings_calendar(symbol, earnings_date) VALUES (:s, :d)"),
+            [{"s": "AAPL", "d": date(2026, 4, 18)}],
+        )
+
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+
+    scanner, quotes_available, earnings_available = service._resolve_pit_scanner(date(2026, 4, 17))
+
+    assert quotes_available is True
+    assert earnings_available is True
+    assert scanner.config.max_spread_bps == 25.0
+    assert scanner.config.earnings_blackout_days == 3
+
+
+def test_resolve_pit_scanner_disables_only_missing_overlay_filter() -> None:
+    engine = _build_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE stock_quote_snapshots (symbol TEXT, quote_date DATE, spread_bps REAL)"))
+        conn.execute(
+            text("INSERT INTO stock_quote_snapshots(symbol, quote_date, spread_bps) VALUES (:s, :d, :v)"),
+            [{"s": "AAPL", "d": date(2026, 4, 16), "v": 12.0}],
+        )
+
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+
+    scanner, quotes_available, earnings_available = service._resolve_pit_scanner(date(2026, 4, 17))
+
+    assert quotes_available is True
+    assert earnings_available is False
+    assert scanner.config.max_spread_bps == 25.0
+    assert scanner.config.earnings_blackout_days is None
+
+
