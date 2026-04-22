@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import logging
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -64,14 +65,33 @@ def test_compute_factors_prefers_trending_and_tighter_symbols() -> None:
     bull_frame, _ = _make_market_frame("AAA", "Technology", drift=0.45, noise_scale=0.001)
     weak_frame, _ = _make_market_frame("BBB", "Finance", drift=-0.10, noise_scale=0.05)
 
-    factors = scanner.compute_factors(pd.concat([bull_frame, weak_frame], ignore_index=True))
+    factors = scanner.compute_factors(cast(pd.DataFrame, pd.concat([bull_frame, weak_frame], ignore_index=True)))
     by_symbol = factors.set_index("symbol")
 
     assert set(factors["symbol"]) == {"AAA", "BBB"}
     assert 0.0 <= by_symbol.loc["AAA", "trend_score"] <= 1.0
     assert 0.0 <= by_symbol.loc["AAA", "vcp_score"] <= 1.0
+    assert 0.0 <= by_symbol.loc["AAA", "weekly_trend_score"] <= 1.0
+    assert by_symbol.loc["AAA", "atr_pct_20"] > 0.0
     assert by_symbol.loc["AAA", "trend_score"] > by_symbol.loc["BBB", "trend_score"]
+    assert by_symbol.loc["AAA", "weekly_trend_score"] >= by_symbol.loc["BBB", "weekly_trend_score"]
     assert by_symbol.loc["AAA", "latest_close"] > by_symbol.loc["BBB", "latest_close"]
+
+
+def test_compute_factors_exposes_weekly_and_atr_features() -> None:
+    scanner = AlphaScanner(engine=_create_shared_sqlite_engine(), config=AlphaScannerConfig(selection_size=10, max_workers=1))
+    strong_frame, _ = _make_market_frame("AAA", "Technology", drift=0.35, noise_scale=0.01)
+
+    factors = scanner.compute_factors(strong_frame)
+
+    row = factors.to_dict(orient="records")[0]
+    assert row["atr_20"] > 0.0
+    assert 0.0 < row["atr_pct_20"] < 1.0
+    assert row["high_52w_proximity"] > 0.0
+    assert pd.notna(row["weekly_close"])
+    assert pd.notna(row["weekly_ma10"])
+    assert pd.notna(row["weekly_ma30"])
+    assert 0.0 <= row["weekly_trend_score"] <= 1.0
 
 
 def test_merge_scores_falls_back_to_computed_scores_when_auxiliary_scores_are_missing() -> None:
@@ -298,6 +318,12 @@ def test_update_database_resets_then_marks_selected_symbols() -> None:
                 """
                 CREATE TABLE stock_scores (
                     symbol TEXT PRIMARY KEY,
+                    market_cap REAL,
+                    beta_126 REAL,
+                    spread_bps REAL,
+                    earnings_date DATE,
+                    days_to_earnings INTEGER,
+                    earnings_blackout INTEGER DEFAULT 0,
                     is_candidate INTEGER NOT NULL DEFAULT 0,
                     last_updated_scan DATETIME
                 )
@@ -334,6 +360,12 @@ def test_update_database_persists_selector_scores() -> None:
                     trend_score REAL,
                     vcp_score REAL,
                     final_score REAL,
+                    market_cap REAL,
+                    beta_126 REAL,
+                    spread_bps REAL,
+                    earnings_date DATE,
+                    days_to_earnings INTEGER,
+                    earnings_blackout INTEGER DEFAULT 0,
                     is_candidate INTEGER NOT NULL DEFAULT 0,
                     last_updated_scan DATETIME
                 )
@@ -351,8 +383,16 @@ def test_update_database_persists_selector_scores() -> None:
     selected = pd.DataFrame({"symbol": ["AAA"]})
     scored = pd.DataFrame(
         [
-            {"symbol": "AAA", "trend_score": 0.80, "vcp_score": 0.60, "final_score": 1.10},
-            {"symbol": "BBB", "trend_score": 0.55, "vcp_score": 0.40, "final_score": 0.82},
+            {
+                "symbol": "AAA", "trend_score": 0.80, "vcp_score": 0.60, "final_score": 1.10,
+                "market_cap": 5_000_000_000.0, "beta_126": 1.15, "spread_bps": 12.0,
+                "earnings_date": date(2026, 4, 30), "days_to_earnings": 8, "earnings_blackout": 0,
+            },
+            {
+                "symbol": "BBB", "trend_score": 0.55, "vcp_score": 0.40, "final_score": 0.82,
+                "market_cap": 3_000_000_000.0, "beta_126": 0.95, "spread_bps": 30.0,
+                "earnings_date": date(2026, 4, 24), "days_to_earnings": 2, "earnings_blackout": 1,
+            },
         ]
     )
 
@@ -360,13 +400,16 @@ def test_update_database_persists_selector_scores() -> None:
 
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT symbol, trend_score, vcp_score, final_score, is_candidate FROM stock_scores ORDER BY symbol")
+            text(
+                "SELECT symbol, trend_score, vcp_score, final_score, market_cap, beta_126, spread_bps, days_to_earnings, earnings_blackout, is_candidate "
+                "FROM stock_scores ORDER BY symbol"
+            )
         ).fetchall()
 
     assert updated_count == 1
     assert rows == [
-        ("AAA", 0.8, 0.6, 1.1, 1),
-        ("BBB", 0.55, 0.4, 0.82, 0),
+        ("AAA", 0.8, 0.6, 1.1, 5_000_000_000.0, 1.15, 12.0, 8, 0, 1),
+        ("BBB", 0.55, 0.4, 0.82, 3_000_000_000.0, 0.95, 30.0, 2, 1, 0),
     ]
 
 
@@ -400,6 +443,12 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
                     vcp_score REAL,
                     final_score REAL,
                     sector TEXT,
+                    market_cap REAL,
+                    beta_126 REAL,
+                    spread_bps REAL,
+                    earnings_date DATE,
+                    days_to_earnings INTEGER,
+                    earnings_blackout INTEGER DEFAULT 0,
                     anomaly_count INTEGER,
                     missing_days_count INTEGER,
                     is_candidate INTEGER NOT NULL DEFAULT 0,
@@ -418,7 +467,8 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
                     status TEXT,
                     tradable BOOLEAN,
                     bars_available BOOLEAN,
-                    sector TEXT
+                    sector TEXT,
+                    market_cap REAL
                 )
                 """
             )
@@ -450,6 +500,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
                     "tradable": True,
                     "bars_available": True,
                     "sector": sector,
+                    "market_cap": 5_000_000_000.0,
                 }
             )
 
@@ -465,6 +516,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
                 "tradable": True,
                 "bars_available": True,
                 "sector": None,
+                "market_cap": None,
             }
         )
 
@@ -523,6 +575,145 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
     assert {row[0] for row in candidate_rows} == set(result["symbol"])
     assert all(row[1] is not None and row[2] is not None and row[3] is not None for row in persisted_rows)
     assert legacy_row == ("ZZZ", None, None, None, 0)
+
+
+def test_run_supports_strict_swing_preset_filters() -> None:
+    engine = _create_shared_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_bars_daily (
+                    symbol TEXT NOT NULL,
+                    date DATETIME NOT NULL,
+                    close REAL NOT NULL,
+                    volume REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    PRIMARY KEY(symbol, date)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_scores (
+                    symbol TEXT PRIMARY KEY,
+                    liquidity_val REAL,
+                    relative_strength_index REAL,
+                    total_score REAL,
+                    trend_score REAL,
+                    vcp_score REAL,
+                    final_score REAL,
+                    sector TEXT,
+                    market_cap REAL,
+                    beta_126 REAL,
+                    spread_bps REAL,
+                    earnings_date DATE,
+                    days_to_earnings INTEGER,
+                    earnings_blackout INTEGER DEFAULT 0,
+                    anomaly_count INTEGER,
+                    missing_days_count INTEGER,
+                    is_candidate INTEGER NOT NULL DEFAULT 0,
+                    last_updated_scan DATETIME
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_metadata (
+                    symbol TEXT PRIMARY KEY,
+                    company_name TEXT,
+                    asset_class TEXT,
+                    status TEXT,
+                    tradable BOOLEAN,
+                    bars_available BOOLEAN,
+                    sector TEXT,
+                    market_cap REAL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_quote_snapshots (
+                    symbol TEXT NOT NULL,
+                    quote_date DATE NOT NULL,
+                    spread_bps REAL,
+                    PRIMARY KEY(symbol, quote_date)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_earnings_calendar (
+                    symbol TEXT NOT NULL,
+                    earnings_date DATE NOT NULL,
+                    PRIMARY KEY(symbol, earnings_date)
+                )
+                """
+            )
+        )
+
+        markets: list[pd.DataFrame] = []
+        scores: list[dict[str, object]] = []
+        metadata_rows: list[dict[str, object]] = []
+        definitions = [
+            ("AAA", "Technology", 0.45, 800_000.0),
+            ("BBB", "Finance", 0.30, 800_000.0),
+        ]
+        for symbol, sector, drift, volume in definitions:
+            market_frame, score_row = _make_market_frame(symbol, sector, drift=drift, rows=260, volume=volume, noise_scale=0.02)
+            markets.append(market_frame)
+            score_row["relative_strength_index"] = 110.0 if symbol == "AAA" else 92.0
+            score_row["total_score"] = 95.0 if symbol == "AAA" else 88.0
+            scores.append(score_row)
+            metadata_rows.append(
+                {
+                    "symbol": symbol,
+                    "company_name": f"{symbol} Common Stock",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "sector": sector,
+                    "market_cap": 5_000_000_000.0,
+                }
+            )
+
+        spy_market, _ = _make_market_frame("SPY", "Benchmark", drift=0.20, rows=260, volume=2_000_000.0, noise_scale=0.01)
+        markets.append(spy_market)
+
+        pd.concat(markets, ignore_index=True).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
+        pd.DataFrame(scores).to_sql("stock_scores", conn, if_exists="append", index=False)
+        pd.DataFrame(metadata_rows).to_sql("stock_metadata", conn, if_exists="append", index=False)
+        pd.DataFrame(
+            [
+                {"symbol": "AAA", "quote_date": date(2026, 4, 22), "spread_bps": 12.0},
+                {"symbol": "BBB", "quote_date": date(2026, 4, 22), "spread_bps": 40.0},
+            ]
+        ).to_sql("stock_quote_snapshots", conn, if_exists="append", index=False)
+        pd.DataFrame(
+            [
+                {"symbol": "AAA", "earnings_date": date(2026, 5, 5)},
+                {"symbol": "BBB", "earnings_date": date(2026, 4, 23)},
+            ]
+        ).to_sql("stock_earnings_calendar", conn, if_exists="append", index=False)
+
+    scanner = AlphaScanner(
+        engine=engine,
+        config=AlphaScannerConfig.strict_swing_cash(selection_size=5, chunk_size=2, max_workers=1, min_beta_126=None),
+    )
+
+    result = scanner.run()
+
+    assert list(result["symbol"]) == ["AAA"]
 
 
 

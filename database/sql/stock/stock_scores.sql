@@ -28,6 +28,12 @@ CREATE TABLE alpha_trade.stock_scores (
     -- Métadonnées symbole
     -- -------------------------------------------------------------------------
     sector                  VARCHAR(50)    DEFAULT NULL    COMMENT 'Secteur (neutralisation sectorielle)',
+    market_cap              DOUBLE         DEFAULT NULL    COMMENT 'Capitalisation boursière USD (Finnhub)',
+    beta_126                DOUBLE         DEFAULT NULL    COMMENT 'Bêta 126 séances vs SPY',
+    spread_bps              DOUBLE         DEFAULT NULL    COMMENT 'Spread bid/ask snapshot en bps',
+    earnings_date           DATE           DEFAULT NULL    COMMENT 'Prochaine date earnings connue',
+    days_to_earnings        INT            DEFAULT NULL    COMMENT 'Nombre de jours jusqu aux prochains earnings',
+    earnings_blackout       TINYINT(1)     DEFAULT 0       COMMENT '1 si earnings dans la fenêtre de blackout',
 
     -- -------------------------------------------------------------------------
     -- Audit qualité données — écrits par data_sanitizer_daily.py
@@ -82,6 +88,12 @@ CREATE TABLE alpha_trade.stock_scores (
     -- alpha_scanner.py (quotidien/hebdo)
     trend_score             DOUBLE         DEFAULT NULL,
     vcp_score               DOUBLE         DEFAULT NULL,
+    market_cap              DOUBLE         DEFAULT NULL,
+    beta_126                DOUBLE         DEFAULT NULL,
+    spread_bps              DOUBLE         DEFAULT NULL,
+    earnings_date           DATE           DEFAULT NULL,
+    days_to_earnings        INT            DEFAULT NULL,
+    earnings_blackout       TINYINT(1)     DEFAULT 0,
     final_score             DOUBLE         DEFAULT NULL,
     is_candidate            TINYINT(1)     DEFAULT 0,
     last_updated_scan       DATETIME       DEFAULT NULL,

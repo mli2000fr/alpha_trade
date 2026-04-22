@@ -78,13 +78,16 @@ alpha_trade/
 9. TCA (slippage, implementation shortfall)
 10. Finalize (persist events, update run status)
 
-**`AlphaScanner`** (`selector/alpha_scanner.py`) — Scanner multi-facteurs en chunks parallèles (ThreadPoolExecutor) : `fetch_market_data()` → `compute_factors()` → `merge_scores()` → `apply_filters()` → neutralisation sectorielle cross-sectorielle sur univers complet → `rank_and_select()`.
+**`AlphaScanner`** (`selector/alpha_scanner.py`) — Scanner multi-facteurs en chunks parallèles (ThreadPoolExecutor) : `fetch_market_data()` → `compute_factors()` → `merge_scores()` → enrichissement instrument / quotes / earnings → `apply_filters()` → neutralisation sectorielle cross-sectorielle sur univers complet → `rank_and_select()`.
 
 Points d'implémentation importants :
 
 - les filtres `min_close` et `liquidity_threshold` existent à la fois en présélection SQL et en filet de sécurité pandas ;
 - le filtre `max_volatility_ratio` est appliqué **dans `apply_filters()`**, pas dans la présélection SQL, car il dépend de `compute_factors()` (`vol_10`, `vol_60`, puis `volatility_ratio = vol_10 / vol_60`) ;
-- les seuils stricts swing cash sont centralisés dans `selector/strict_filter_profiles.py` (`STRICT_SWING_CASH_FILTERS`) ; `AlphaScannerConfig.strict_swing_cash()` les projette côté scanner, tandis que les scripts `prompt/fix_swing/` réutilisent le même profil côté backfill et filtrage PIT backtest.
+- les seuils stricts swing cash sont centralisés dans `selector/strict_filter_profiles.py` (`STRICT_SWING_CASH_FILTERS`) ; `AlphaScannerConfig.strict_swing_cash()` les projette côté scanner, et le chemin CLI standard charge désormais ce profil implicitement ;
+- les filtres `market_cap`, `beta_126`, `spread_bps` et `earnings_blackout` sont appliqués dans `apply_filters()` après enrichissement via `stock_metadata`, `stock_quote_snapshots` et `stock_earnings_calendar` ;
+- `beta_126` est calculé localement contre `SPY` à partir des rendements journaliers alignés ;
+- `fetch_quote_snapshots(..., reference_date=...)` et `fetch_next_earnings(..., reference_date=...)` permettent au live et au backfill PIT de réutiliser exactement les mêmes règles métier.
 
 **`PortfolioBuilder`** (`risk_management/portfolio_builder.py`) — Construction portefeuille : enrichir candidats (conviction score) → trier par conviction DESC → filtre corrélation → sizing ATR/Kelly → check contraintes → ACCEPTED / REDUCED / REJECTED.
 
@@ -175,7 +178,7 @@ Points d'implémentation importants :
 | Alpaca News | `data.alpaca.markets/v1beta1/news` | Articles financiers |
 | Alpaca Trading paper | `paper-api.alpaca.markets/v2` | Ordres, positions, compte |
 | Alpaca Trading live | `api.alpaca.markets/v2` | Ordres, positions, compte |
-| Finnhub | `finnhub.io/api/v1` | Profil société, secteur |
+| Finnhub | `finnhub.io/api/v1` | Profil société, secteur, market cap, earnings calendar |
 
 ---
 
@@ -229,7 +232,7 @@ alpaca:
 
 ### 4.4 Tables SQL (`database/sql/`)
 
-- **stock/** : `stock_metadata`, `stock_bars`, `stock_bars_daily`, `stock_scores`, `cleaning_audit_log`
+- **stock/** : `stock_metadata`, `stock_bars`, `stock_bars_daily`, `stock_scores`, `stock_scores_history`, `stock_quote_snapshots`, `stock_earnings_calendar`, `cleaning_audit_log`
 - **news/** : `news_raw`, `news_sentiment`, `news_ticker_map`, `macro_event_audit`, `ticker_daily_sentiment_features`, `sector_daily_sentiment_features`, `news_ingestion_checkpoint`
 - **ml/** : `model_registry`, `model_training_run`, `model_metrics`, `model_predictions`
 - **risk/** : `risk_decisions` ★, `portfolio_targets` ★
@@ -404,7 +407,7 @@ Notes ML GPU :
 python -m streamlit run ihm/app.py
 ```
 
-Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent un paramètre **Accélérateur ML** (`auto | cpu | gpu`). L'IHM détecte la disponibilité locale de CUDA et transmet `--accelerator <mode>` aux sous-processus `modelFactory` lancés en arrière-plan.
+Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent un paramètre **Accélérateur ML** (`auto | cpu | gpu`). L'IHM détecte la disponibilité locale de CUDA et transmet `--accelerator <mode>` aux sous-processus `modelFactory` lancés en arrière-plan. L'étape `Alpha Scanner` n'expose plus de toggle de preset : `python -m selector.alpha_scanner` applique déjà le profil strict partagé.
 
 ### Backtesting
 
@@ -495,6 +498,7 @@ python -m backtesting backfill-scores-history --start 2026-04-17 --end 2026-04-1
 
 Notes :
 - le backfill reconstruit `stock_scores_history` directement depuis `stock_bars_daily` + features sentiment déjà en base ;
+- il recharge aussi les overlays `market_cap`, `spread_bps` et `earnings` de manière point-in-time via `reference_date=as_of_date` ;
 - il n'écrit PAS dans `stock_scores` courant ;
 - il saute automatiquement les dates déjà historisées, sauf avec `--overwrite-existing` ;
 - pour un backfill massif, commencer avec `--limit-days 1` ou `--limit-days 5` pour valider le débit sur la machine.

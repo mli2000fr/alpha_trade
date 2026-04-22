@@ -10,12 +10,19 @@ import requests
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common.utils import configure_root_logging
-from database.assets import get_symbols_missing_sector, update_stock_metadata_sector
+from database.assets import get_symbols_missing_fundamentals, update_stock_metadata_fundamentals
 from service.finnhub.clientFinnhub import MIN_REQUEST_INTERVAL_SECONDS, fetch_company_profile
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_LOG_EVERY = 50
 NOT_AVAILABLE = "N/A"
+
+# Compatibilité rétroactive pour les tests / appelants legacy.
+get_symbols_missing_sector = get_symbols_missing_fundamentals
+
+
+def update_stock_metadata_sector(symbol: str, sector: str) -> int:
+	return update_stock_metadata_fundamentals(symbol, sector=sector)
 
 
 def update_missing_sectors(
@@ -38,10 +45,11 @@ def update_missing_sectors(
 	}
 
 	LOGGER.info(
-		"Debut mise a jour sector stock_metadata | symboles_a_traiter=%s limit=%s",
+		"Debut mise a jour fondamentaux stock_metadata | symboles_a_traiter=%s limit=%s",
 		total,
 		limit,
 	)
+	LOGGER.info("Debut mise a jour sector stock_metadata")
 	if not symbols:
 		return summary
 
@@ -51,23 +59,35 @@ def update_missing_sectors(
 			try:
 				profile = fetch_company_profile(symbol, session=session)
 				sector = str(profile.get("finnhubIndustry") or "").strip()
-				if not sector or sector == NOT_AVAILABLE:
+				market_cap_raw = profile.get("marketCapitalization")
+				market_cap = float(market_cap_raw) * 1_000_000.0 if market_cap_raw not in (None, "") else None
+
+				if (not sector or sector == NOT_AVAILABLE) and market_cap is None:
 					summary["skipped"] += 1
 					LOGGER.warning(
-						"Sector introuvable | symbol=%s progress=%s/%s skipped=%s",
+						"Fondamentaux introuvables | symbol=%s progress=%s/%s skipped=%s",
 						symbol,
 						index,
 						total,
 						summary["skipped"],
 					)
 				else:
-					rowcount = update_stock_metadata_sector(symbol, sector)
+					normalized_sector = None if not sector or sector == NOT_AVAILABLE else sector
+					if market_cap is None and normalized_sector is not None:
+						rowcount = update_stock_metadata_sector(symbol, normalized_sector)
+					else:
+						rowcount = update_stock_metadata_fundamentals(
+							symbol,
+							sector=normalized_sector,
+							market_cap=market_cap,
+						)
 					if rowcount:
 						summary["updated"] += 1
 						LOGGER.info(
-							"Sector mis a jour | symbol=%s sector=%s progress=%s/%s updated=%s",
+							"Fondamentaux mis a jour | symbol=%s sector=%s market_cap=%s progress=%s/%s updated=%s",
 							symbol,
-							sector,
+							normalized_sector,
+							market_cap,
 							index,
 							total,
 							summary["updated"],
@@ -84,7 +104,7 @@ def update_missing_sectors(
 			except Exception:
 				summary["failed"] += 1
 				LOGGER.exception(
-					"Erreur mise a jour sector | symbol=%s progress=%s/%s failed=%s",
+					"Erreur mise a jour fondamentaux | symbol=%s progress=%s/%s failed=%s",
 					symbol,
 					index,
 					total,
@@ -92,6 +112,14 @@ def update_missing_sectors(
 				)
 
 			if index % log_every == 0 or index == total:
+				LOGGER.info(
+					"Progression fondamentaux | current=%s/%s updated=%s skipped=%s failed=%s",
+					index,
+					total,
+					summary["updated"],
+					summary["skipped"],
+					summary["failed"],
+				)
 				LOGGER.info(
 					"Progression sector | current=%s/%s updated=%s skipped=%s failed=%s",
 					index,
@@ -107,17 +135,18 @@ def update_missing_sectors(
 		session.close()
 
 	LOGGER.info(
-		"Fin mise a jour sector stock_metadata | total=%s updated=%s skipped=%s failed=%s",
+		"Fin mise a jour fondamentaux stock_metadata | total=%s updated=%s skipped=%s failed=%s",
 		summary["total"],
 		summary["updated"],
 		summary["skipped"],
 		summary["failed"],
 	)
+	LOGGER.info("Fin mise a jour sector stock_metadata")
 	return summary
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-	parser = argparse.ArgumentParser(description="Met à jour stock_metadata.sector depuis Finnhub")
+	parser = argparse.ArgumentParser(description="Met à jour stock_metadata.sector et market_cap depuis Finnhub")
 	parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles à traiter")
 	parser.add_argument(
 		"--sleep-seconds",

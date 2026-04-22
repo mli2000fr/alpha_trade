@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from typing import Any, Optional
 
@@ -13,6 +12,7 @@ TIMEOUT_BACKOFF_SECONDS = 5
 PAUSE_CALL_BAR = 0.2
 ALPACA_ASSETS_ENDPOINT = "https://paper-api.alpaca.markets/v2/assets"
 ALPACA_BARS_ENDPOINT_TEMPLATE = "https://data.alpaca.markets/v2/stocks/{symbol}/bars"
+ALPACA_LATEST_QUOTES_ENDPOINT = "https://data.alpaca.markets/v2/stocks/quotes/latest"
 
 LOGGER = logging.getLogger(__name__)
 
@@ -152,3 +152,42 @@ def fetch_bars(
     finally:
         if owned_session:
             client.close()
+
+
+def fetch_latest_quotes(
+    symbols: list[str],
+    session: Optional[requests.Session] = None,
+    account_id: Optional[str] = None,
+) -> dict[str, dict[str, Any]]:
+    """Récupère les dernières quotes Alpaca pour une liste de symboles."""
+    if not symbols:
+        return {}
+
+    normalized_symbols = []
+    for symbol in symbols:
+        cleaned = (symbol or "").strip().upper()
+        if cleaned and cleaned not in normalized_symbols:
+            normalized_symbols.append(cleaned)
+    if not normalized_symbols:
+        return {}
+
+    owned_session = session is None
+    client = session or requests.Session()
+    try:
+        response = client.get(
+            ALPACA_LATEST_QUOTES_ENDPOINT,
+            headers=_build_headers(account_id),
+            params={"symbols": ",".join(normalized_symbols)},
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        quotes = payload.get("quotes") or {}
+        if not isinstance(quotes, dict):
+            raise RuntimeError("Réponse latest quotes Alpaca invalide.")
+        return {str(symbol): quote for symbol, quote in quotes.items() if isinstance(quote, dict)}
+    finally:
+        if owned_session:
+            client.close()
+
+

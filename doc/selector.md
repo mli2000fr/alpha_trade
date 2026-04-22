@@ -39,6 +39,8 @@ Les seuils stricts réutilisés par les reruns swing cash sont centralisés dans
 
 - données daily suffisamment longues pour calculer MA50 / MA150 / MA200 et range 52 semaines
 - `stock_scores` pré-alimentée par `screener`
+- `stock_quote_snapshots` pour alimenter le filtre de spread bid/ask
+- `stock_earnings_calendar` pour alimenter le blackout résultats
 
 ### 2.2 Variables d'environnement minimales
 
@@ -57,19 +59,22 @@ $env:PASSWORD_DB = "pass"
 python -m selector.alpha_scanner
 ```
 
-### Lancement direct avec le preset strict swing cash
-
-```powershell
-python -m selector.alpha_scanner --preset strict
-```
-
-Ce preset applique automatiquement le profil partagé `STRICT_SWING_CASH_FILTERS`, c'est-à-dire :
+Le lancement standard applique désormais automatiquement le profil partagé `STRICT_SWING_CASH_FILTERS`, c'est-à-dire :
 
 - `min_close = 10`
 - `avg_dollar_volume_20d >= 30_000_000`
 - `max_volatility_ratio = 0.90`
+- `relative_strength_index >= 100`
+- `latest_close > ma200`
+- `latest_close / high_52w >= 0.75`
+- `weekly_trend_score >= 1.0`
+- `atr_pct_20` dans `[1.5 %, 6 %]`
+- `market_cap >= 2 Md$`
+- `beta_126 >= 1.0`
+- `spread_bps <= 25`
+- exclusion si `earnings_date` tombe dans les `3` prochains jours
 
-Depuis l'IHM (`Pipeline`), le même comportement peut être activé via la case **`Alpha Scanner — activer le preset strict`** dans les paramètres d'exécution.
+L'option legacy `--preset strict` reste tolérée comme alias de compatibilité, mais n'est plus nécessaire.
 
 ### Taille de chunk et sélection finale
 
@@ -77,10 +82,10 @@ Depuis l'IHM (`Pipeline`), le même comportement peut être activé via la case 
 python -m selector.alpha_scanner --chunk-size 500 --selection-size 50
 ```
 
-Le preset strict peut être combiné avec les autres paramètres usuels :
+Le mode strict implicite peut être combiné avec les autres paramètres usuels :
 
 ```powershell
-python -m selector.alpha_scanner --preset strict --selection-size 100 --chunk-size 1000
+python -m selector.alpha_scanner --selection-size 100 --chunk-size 1000
 ```
 
 ### Paramètres de filtrage personnalisés
@@ -89,13 +94,13 @@ python -m selector.alpha_scanner --preset strict --selection-size 100 --chunk-si
 python -m selector.alpha_scanner --liquidity-threshold 20000000 --min-close 5 --max-volatility-ratio 0.90 --max-anomaly-count 20 --sector-cap-ratio 0.30
 ```
 
-Les seuils explicites passés en CLI gardent la priorité sur le preset. Exemple :
+Les seuils explicites passés en CLI gardent la priorité sur le profil strict implicite. Exemple :
 
 ```powershell
-python -m selector.alpha_scanner --preset strict --min-close 12 --max-volatility-ratio 0.80
+python -m selector.alpha_scanner --min-close 12 --max-volatility-ratio 0.80 --max-spread-bps 20
 ```
 
-Ici, le preset strict est chargé, puis `min_close` et `max_volatility_ratio` sont surchargés avec les valeurs explicites.
+Ici, le profil strict est chargé, puis `min_close`, `max_volatility_ratio` et `max_spread_bps` sont surchargés avec les valeurs explicites.
 
 ### Logs détaillés
 
@@ -125,21 +130,39 @@ Pour chaque chunk, le scanner charge :
 
 - les prix depuis `stock_bars_daily`,
 - les scores auxiliaires depuis `stock_scores`,
-- les métadonnées instrument depuis `stock_metadata`.
+- les métadonnées instrument depuis `stock_metadata`,
+- le dernier snapshot de spread depuis `stock_quote_snapshots`,
+- la prochaine date de résultats depuis `stock_earnings_calendar`.
 
 Il calcule ensuite des facteurs comme :
 
 - `trend_score`
 - `vcp_score`
+- `atr_20` et `atr_pct_20`
+- `beta_126` vs `SPY`
 - moyennes mobiles 50 / 150 / 200 jours
+- structure weekly (`weekly_close`, `weekly_ma10`, `weekly_ma30`, `weekly_trend_score`)
 - `high_52w` / `low_52w`
+- `high_52w_proximity`
 - `volatility_ratio`
+- `market_cap`
+- `spread_bps`
+- `earnings_date`, `days_to_earnings`, `earnings_blackout`
 
 Quand `--max-volatility-ratio` (ou `AlphaScannerConfig.max_volatility_ratio`) est renseigné, le scanner exclut ensuite les symboles dont `volatility_ratio > seuil`. Exemple d'usage swing strict petit compte :
 
 - `min_close >= 10`
 - `avg_dollar_volume_20d >= 30_000_000`
 - `volatility_ratio <= 0.90`
+- `relative_strength_index >= 100`
+- `latest_close > ma200`
+- `high_52w_proximity >= 0.75`
+- `weekly_trend_score >= 1.0`
+- `0.015 <= atr_pct_20 <= 0.06`
+- `market_cap >= 2_000_000_000`
+- `beta_126 >= 1.0`
+- `spread_bps <= 25`
+- `earnings_blackout = 0`
 
 Pour éviter la duplication, cet exemple correspond désormais au profil partagé `STRICT_SWING_CASH_FILTERS`, consommé via `AlphaScannerConfig.strict_swing_cash()` dans les flows stricts.
 
@@ -169,7 +192,15 @@ Le module met à jour `stock_scores` avec les colonnes avancées comme :
 - `vcp_score`
 - `final_score`
 - `sector`
+- `market_cap`
+- `beta_126`
+- `spread_bps`
+- `earnings_date`
+- `days_to_earnings`
+- `earnings_blackout`
 - drapeaux / colonnes de sélection finale
+
+Les facteurs `atr_pct_20`, `weekly_trend_score` et `high_52w_proximity` sont aujourd'hui utilisés dans le pipeline de sélection en mémoire et dans le résultat retourné par `AlphaScanner`, mais ne sont pas persistés tels quels dans `stock_scores` par défaut.
 
 ---
 

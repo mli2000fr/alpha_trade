@@ -147,19 +147,13 @@ Pour l'étape `Execution`, l'IHM expose aussi les contraintes de compte/trading 
 - règle `PDT auto|off` ;
 - option `swing_only`.
 
-Pour l'étape `Alpha Scanner`, l'IHM expose aussi un paramètre d'exécution dédié :
-
-- **`Alpha Scanner — activer le preset strict`**
-
-Quand cette option est cochée, la commande IHM devient :
+Pour l'étape `Alpha Scanner`, l'IHM lance désormais directement la commande standard suivante :
 
 ```powershell
-python -m selector.alpha_scanner --preset strict
+python -m selector.alpha_scanner
 ```
 
-Le workflow complet 1→12 réutilise la même option pour l'étape 4. Cela permet de choisir explicitement, depuis l'interface, si l'on veut appliquer ou non le preset strict partagé `STRICT_SWING_CASH_FILTERS`.
-
-Ce choix est désormais **mémorisé pendant la session IHM, par compte Alpaca** : si l'opérateur active le preset strict pour un compte puis change de compte et revient, la case est automatiquement restaurée avec la dernière valeur utilisée pour ce compte.
+Le workflow complet 1→12 réutilise exactement cette même commande pour l'étape 4. Le profil strict partagé `STRICT_SWING_CASH_FILTERS` est donc appliqué de manière implicite et homogène entre CLI, IHM et backfill PIT.
 
 L'interface affiche un résumé explicite de ces contraintes avant lancement afin que l'opérateur comprenne pourquoi un run `cash` peut se comporter différemment d'un run `margin`.
 
