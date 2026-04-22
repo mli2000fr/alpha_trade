@@ -23,6 +23,7 @@ from ihm.services.pipeline_runner import (
     get_pipeline_steps,
     is_gpu_available,
 )
+from ihm.services.queries import SELECTOR_DEPENDENCY_HEALTH_THRESHOLDS, get_selector_dependency_health
 from ihm.services.process_registry import (
     build_log_download_name,
     get_pipeline_run_record,
@@ -50,6 +51,290 @@ def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
     if len(lines) <= max_lines:
         return value
     return "\n".join(lines[-max_lines:])
+
+
+def _normalize_health_date(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return pd.to_datetime(value).date()
+    except Exception:
+        return None
+
+
+def _classify_selector_dependency_health(
+    dependency_key: str,
+    payload: dict[str, object],
+    active_symbols: int,
+) -> tuple[str, str]:
+    covered = int(payload.get("symbols_covered") or 0)
+    coverage_pct = float(payload.get("coverage_pct") or 0.0)
+    if dependency_key == "quotes":
+        latest_date = _normalize_health_date(payload.get("latest_date"))
+        if covered <= 0 or latest_date is None:
+            return "error", "🔴 latest_date=— | couverture=0.0% | N symboles=0"
+        if latest_date < (date.today() - timedelta(days=int(SELECTOR_DEPENDENCY_HEALTH_THRESHOLDS["quotes_max_age_days"]))):
+            return "warn", (
+                f"🟠 latest_date={latest_date.isoformat()} | couverture={coverage_pct:.1f}% | "
+                f"N symboles={covered}/{active_symbols or covered}"
+            )
+        if active_symbols > 0 and float(payload.get("coverage_ratio") or 0.0) < float(SELECTOR_DEPENDENCY_HEALTH_THRESHOLDS["quotes_min_coverage_ratio"]):
+            return "warn", (
+                f"🟠 latest_date={latest_date.isoformat()} | couverture={coverage_pct:.1f}% | "
+                f"N symboles={covered}/{active_symbols}"
+            )
+        return "ok", (
+            f"🟢 latest_date={latest_date.isoformat()} | couverture={coverage_pct:.1f}% | "
+            f"N symboles={covered}/{active_symbols or covered}"
+        )
+
+    latest_date = _normalize_health_date(payload.get("latest_date") or payload.get("max_date"))
+    if covered <= 0 or latest_date is None:
+        return "error", "🔴 latest_date=— | couverture=0.0% | N symboles=0"
+    min_expected = max(
+        int(SELECTOR_DEPENDENCY_HEALTH_THRESHOLDS["earnings_min_coverage_symbols"]),
+        int(active_symbols * float(SELECTOR_DEPENDENCY_HEALTH_THRESHOLDS["earnings_min_coverage_ratio"])),
+    ) if active_symbols > 0 else int(SELECTOR_DEPENDENCY_HEALTH_THRESHOLDS["earnings_min_coverage_symbols"])
+    if latest_date < date.today():
+        return "warn", (
+            f"🟠 latest_date={latest_date.isoformat()} | couverture={coverage_pct:.1f}% | "
+            f"N symboles={covered}/{active_symbols or covered}"
+        )
+    if covered < min_expected:
+        return "warn", (
+            f"🟠 latest_date={latest_date.isoformat()} | couverture={coverage_pct:.1f}% | "
+            f"N symboles={covered}/{active_symbols or covered}"
+        )
+    return "ok", (
+        f"🟢 latest_date={latest_date.isoformat()} | couverture={coverage_pct:.1f}% | "
+        f"N symboles={covered}/{active_symbols or covered}"
+    )
+
+
+def _format_selector_dependency_indicator(step_key: str, health: dict[str, object]) -> str | None:
+    active_symbols = int(health.get("active_symbols") or 0)
+    if step_key == "sync_latest_quotes":
+        _, label = _classify_selector_dependency_health(
+            "quotes",
+            cast(dict[str, object], health.get("quotes") or {}),
+            active_symbols,
+        )
+        return f"Indicateur table `stock_quote_snapshots` : {label}"
+    if step_key == "sync_earnings_calendar":
+        _, label = _classify_selector_dependency_health(
+            "earnings",
+            cast(dict[str, object], health.get("earnings") or {}),
+            active_symbols,
+        )
+        return f"Indicateur table `stock_earnings_calendar` : {label}"
+    return None
+
+
+def _build_selector_dependency_diagnostic(
+    dependency_key: str,
+    payload: dict[str, object],
+    active_symbols: int,
+) -> dict[str, object] | None:
+    status, label = _classify_selector_dependency_health(dependency_key, payload, active_symbols)
+    if status == "ok":
+        return None
+
+    covered = int(payload.get("symbols_covered") or 0)
+    latest_date = _normalize_health_date(payload.get("latest_date") or payload.get("max_date"))
+    coverage_pct = float(payload.get("coverage_pct") or 0.0)
+
+    if dependency_key == "quotes":
+        reason = "Aucun snapshot exploitable trouvé dans `stock_quote_snapshots`."
+        if latest_date is not None and covered > 0:
+            if latest_date < (date.today() - timedelta(days=int(SELECTOR_DEPENDENCY_HEALTH_THRESHOLDS["quotes_max_age_days"]))):
+                reason = (
+                    f"Les latest quotes sont datées du `{latest_date.isoformat()}` : la table semble stale pour un scan courant."
+                )
+            else:
+                reason = (
+                    f"La couverture quotes est trop faible ({coverage_pct:.1f}% — {covered}/{active_symbols or covered} symboles)."
+                )
+        return {
+            "status": status,
+            "title": "Diagnostic `Sync Latest Quotes`",
+            "summary": label,
+            "reason": reason,
+            "command": "python -m dataIntegrityEngine.sync_latest_quotes",
+            "step_key": "sync_latest_quotes",
+            "action_label": "▶️ Lancer Sync Latest Quotes",
+        }
+
+    reason = "Aucune earnings future exploitable trouvée dans `stock_earnings_calendar`."
+    if latest_date is not None and covered > 0:
+        if latest_date < date.today():
+            reason = f"Le calendrier earnings est expiré (borne max `{latest_date.isoformat()}`)."
+        else:
+            reason = (
+                f"La couverture earnings est trop faible ({coverage_pct:.1f}% — {covered}/{active_symbols or covered} symboles)."
+            )
+    return {
+        "status": status,
+        "title": "Diagnostic `Sync Earnings Calendar`",
+        "summary": label,
+        "reason": reason,
+        "command": "python -m dataIntegrityEngine.sync_earnings_calendar",
+        "step_key": "sync_earnings_calendar",
+        "action_label": "▶️ Lancer Sync Earnings Calendar",
+    }
+
+
+def _build_alpha_scanner_dependency_diagnostics(health: dict[str, object]) -> list[dict[str, object]]:
+    active_symbols = int(health.get("active_symbols") or 0)
+    diagnostics: list[dict[str, object]] = []
+    quotes_diag = _build_selector_dependency_diagnostic(
+        "quotes",
+        cast(dict[str, object], health.get("quotes") or {}),
+        active_symbols,
+    )
+    earnings_diag = _build_selector_dependency_diagnostic(
+        "earnings",
+        cast(dict[str, object], health.get("earnings") or {}),
+        active_symbols,
+    )
+    if quotes_diag:
+        diagnostics.append(quotes_diag)
+    if earnings_diag:
+        diagnostics.append(earnings_diag)
+    return diagnostics
+
+
+def _build_alpha_scanner_dependency_warning(health: dict[str, object]) -> tuple[str, str] | None:
+    active_symbols = int(health.get("active_symbols") or 0)
+    quotes_status, quotes_label = _classify_selector_dependency_health(
+        "quotes",
+        cast(dict[str, object], health.get("quotes") or {}),
+        active_symbols,
+    )
+    earnings_status, earnings_label = _classify_selector_dependency_health(
+        "earnings",
+        cast(dict[str, object], health.get("earnings") or {}),
+        active_symbols,
+    )
+    if quotes_status == "ok" and earnings_status == "ok":
+        return None
+    if quotes_status == "error" and earnings_status == "error":
+        return (
+            "error",
+            "Blocage visuel `Alpha Scanner` : `stock_quote_snapshots` et `stock_earnings_calendar` sont toutes deux critiques. "
+            f"Quotes: {quotes_label} | Earnings: {earnings_label}. Les filtres `spread_bps` et `earnings_blackout` seront indisponibles ou très dégradés.",
+        )
+    problematic = [
+        f"quotes={quotes_label}" if quotes_status != "ok" else None,
+        f"earnings={earnings_label}" if earnings_status != "ok" else None,
+    ]
+    details = " | ".join(part for part in problematic if part)
+    return (
+        "warning",
+        "Dépendances `Alpha Scanner` incomplètes : "
+        + details
+        + ". Les filtres `spread_bps` / `earnings_blackout` peuvent être partiels ou indisponibles.",
+    )
+
+
+def _render_dependency_diagnostic_expander(
+    diagnostic: dict[str, object],
+    *,
+    key: str,
+    options: PipelineLaunchOptions | None = None,
+    db_config: dict[str, str | None] | None = None,
+    workflow_active: bool = False,
+    active_by_step: dict[str, list[dict[str, object]]] | None = None,
+    all_runs: list[dict[str, object]] | None = None,
+    step_labels: dict[str, str] | None = None,
+    button_key: str | None = None,
+) -> None:
+    with st.expander(str(diagnostic.get("title") or "Diagnostic dépendance"), expanded=False):
+        st.caption(str(diagnostic.get("summary") or ""))
+        st.markdown(f"**Pourquoi ?** {diagnostic.get('reason', '')}")
+        st.markdown("**Commande corrective**")
+        st.code(str(diagnostic.get("command") or ""), language="powershell")
+        if (
+            options is not None
+            and db_config is not None
+            and active_by_step is not None
+            and all_runs is not None
+            and step_labels is not None
+            and button_key is not None
+        ):
+            _render_dependency_quick_action(
+                diagnostic,
+                options=options,
+                db_config=db_config,
+                workflow_active=workflow_active,
+                active_by_step=active_by_step,
+                all_runs=all_runs,
+                step_labels=step_labels,
+                button_key=button_key,
+            )
+
+
+def _launch_pipeline_step_from_diagnostic(
+    step_key: str,
+    step_label: str,
+    options: PipelineLaunchOptions,
+    db_config: dict[str, str | None],
+    all_runs: list[dict[str, object]],
+) -> None:
+    record = start_pipeline_run(
+        step_key,
+        step_label,
+        options,
+        db_config=db_config,
+    )
+    st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+    compare_ids = _sanitize_compare_ids(
+        [str(run.get("run_id", "")) for run in all_runs if run.get("run_id")],
+        {str(run.get("run_id", "")): "" for run in all_runs if run.get("run_id")},
+        st.session_state.get(COMPARE_RUNS_KEY, []),
+    )
+    if record.run_id not in compare_ids:
+        st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *compare_ids][:2]
+    st.success(f"Run demarre en arriere-plan : `{record.run_id}`")
+    st.rerun()
+
+
+def _render_dependency_quick_action(
+    diagnostic: dict[str, object],
+    *,
+    options: PipelineLaunchOptions,
+    db_config: dict[str, str | None],
+    workflow_active: bool,
+    active_by_step: dict[str, list[dict[str, object]]],
+    all_runs: list[dict[str, object]],
+    step_labels: dict[str, str],
+    button_key: str,
+) -> None:
+    step_key = str(diagnostic.get("step_key") or "").strip()
+    if not step_key:
+        return
+
+    st.markdown("**Action rapide**")
+    if workflow_active:
+        st.info("Action rapide indisponible : un workflow complet est déjà en cours.")
+        return
+
+    active_for_step = active_by_step.get(step_key, [])
+    if active_for_step:
+        run_ids = ", ".join(f"`{run.get('run_id', '')}`" for run in active_for_step)
+        st.info(f"Un run de cette étape est déjà actif : {run_ids}")
+        return
+
+    action_label = str(diagnostic.get("action_label") or f"▶️ Lancer {step_key}")
+    if st.button(action_label, key=button_key, use_container_width=True):
+        _launch_pipeline_step_from_diagnostic(
+            step_key,
+            step_labels.get(step_key, step_key),
+            options,
+            db_config,
+            all_runs,
+        )
 
 
 def _render_log_block(title: str, content: str, *, key: str, expanded: bool = False) -> None:
@@ -725,6 +1010,8 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
     active_runs, all_runs = _merge_runs()
     latest_by_step = _latest_run_by_step(all_runs)
     workflow_active = any(_is_workflow_run(run) for run in active_runs)
+    selector_dependency_health = get_selector_dependency_health()
+    step_labels = {step.key: f"{step.num}. {step.name}" for step in get_pipeline_steps()}
     active_by_step: dict[str, list[dict[str, object]]] = {}
     for run in active_runs:
         active_by_step.setdefault(str(run.get("step_key", "")), []).append(run)
@@ -738,6 +1025,59 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
                 st.markdown(f"**Description** : {step.desc}")
                 st.markdown(f"**Tables impactées** : `{step.tables}`")
                 st.markdown(f"**Dépendances** : {step.deps}")
+                dependency_indicator = _format_selector_dependency_indicator(step.key, selector_dependency_health)
+                if dependency_indicator:
+                    st.caption(dependency_indicator)
+                if step.key in {"sync_latest_quotes", "sync_earnings_calendar"}:
+                    active_symbols = int(selector_dependency_health.get("active_symbols") or 0)
+                    dependency_key = "quotes" if step.key == "sync_latest_quotes" else "earnings"
+                    diagnostic = _build_selector_dependency_diagnostic(
+                        dependency_key,
+                        cast(dict[str, object], selector_dependency_health.get(dependency_key) or {}),
+                        active_symbols,
+                    )
+                    if diagnostic is not None:
+                        _render_dependency_diagnostic_expander(
+                            diagnostic,
+                            key=f"{step.key}_diagnostic",
+                            options=options,
+                            db_config=db_config,
+                            workflow_active=workflow_active,
+                            active_by_step=active_by_step,
+                            all_runs=all_runs,
+                            step_labels=step_labels,
+                            button_key=f"{step.key}_diagnostic_quick_action",
+                        )
+                if step.key == "alpha_scanner":
+                    alpha_warning = _build_alpha_scanner_dependency_warning(selector_dependency_health)
+                    if alpha_warning:
+                        severity, message = alpha_warning
+                        if severity == "error":
+                            st.error(message)
+                        else:
+                            st.warning(message)
+                        diagnostics = _build_alpha_scanner_dependency_diagnostics(selector_dependency_health)
+                        if diagnostics:
+                            with st.expander("Diagnostic dépendances `Alpha Scanner`", expanded=(severity == "error")):
+                                st.markdown(
+                                    "Les dépendances ci-dessous expliquent pourquoi l'état est orange/rouge et quelles commandes lancer pour corriger la situation."
+                                )
+                                for index, diagnostic in enumerate(diagnostics, start=1):
+                                    st.markdown(f"**{index}. {diagnostic.get('title', 'Diagnostic')}**")
+                                    st.caption(str(diagnostic.get("summary") or ""))
+                                    st.markdown(f"- **Pourquoi ?** {diagnostic.get('reason', '')}")
+                                    st.markdown("- **Commande corrective**")
+                                    st.code(str(diagnostic.get("command") or ""), language="powershell")
+                                    _render_dependency_quick_action(
+                                        diagnostic,
+                                        options=options,
+                                        db_config=db_config,
+                                        workflow_active=workflow_active,
+                                        active_by_step=active_by_step,
+                                        all_runs=all_runs,
+                                        step_labels=step_labels,
+                                        button_key=f"alpha_scanner_diag_quick_action_{index}_{diagnostic.get('step_key', '')}",
+                                    )
                 if step.account_usage == "alpaca":
                     st.caption(f"🏦 Cette étape utilise le compte Alpaca sélectionné : `{options.account_id or 'default'}`")
                 else:
