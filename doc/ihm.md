@@ -131,15 +131,17 @@ La page `Pipeline` s'appuie sur `ihm/services/pipeline_runner.py` pour construir
 1. import bars,
 2. sanitize daily,
 3. screener,
-4. alpha scanner,
-5. sentiment pipeline,
-6. signal aggregator,
-7. ml train,
-8. ml predict,
-9. risk management,
-10. execution,
-11. corporate actions sync,
-12. corporate actions apply.
+4. sync latest quotes,
+5. sync earnings calendar,
+6. alpha scanner,
+7. sentiment pipeline,
+8. signal aggregator,
+9. ml train,
+10. ml predict,
+11. risk management,
+12. execution,
+13. corporate actions sync,
+14. corporate actions apply.
 
 Pour l'étape `Execution`, l'IHM expose aussi les contraintes de compte/trading :
 
@@ -147,13 +149,28 @@ Pour l'étape `Execution`, l'IHM expose aussi les contraintes de compte/trading 
 - règle `PDT auto|off` ;
 - option `swing_only`.
 
-Pour l'étape `Alpha Scanner`, l'IHM lance désormais directement la commande standard suivante :
+Pour l'étape `Alpha Scanner` (désormais étape 6 du workflow complet), l'IHM lance directement la commande standard suivante :
 
 ```powershell
 python -m selector.alpha_scanner
 ```
 
-Le workflow complet 1→12 réutilise exactement cette même commande pour l'étape 4. Le profil strict partagé `STRICT_SWING_CASH_FILTERS` est donc appliqué de manière implicite et homogène entre CLI, IHM et backfill PIT.
+Le workflow complet 1→14 réutilise exactement cette même commande pour l'étape 6. Le profil strict partagé `STRICT_SWING_CASH_FILTERS` est donc appliqué de manière implicite et homogène entre CLI, IHM et backfill PIT.
+
+Le workflow complet 1→14 exécute désormais automatiquement, juste avant `Alpha Scanner`, les commandes suivantes afin d'alimenter les tables de référence du filtre strict :
+
+```powershell
+python -m dataIntegrityEngine.sync_latest_quotes
+python -m dataIntegrityEngine.sync_earnings_calendar
+```
+
+L'étape `Alpha Scanner` reste lancée via :
+
+```powershell
+python -m selector.alpha_scanner
+```
+
+Le pipeline IHM tente donc maintenant de préparer `stock_quote_snapshots` et `stock_earnings_calendar` avant le scan, ce qui améliore la disponibilité des filtres `spread_bps` et `earnings_blackout` en mode live/opérationnel.
 
 L'interface affiche un résumé explicite de ces contraintes avant lancement afin que l'opérateur comprenne pourquoi un run `cash` peut se comporter différemment d'un run `margin`.
 

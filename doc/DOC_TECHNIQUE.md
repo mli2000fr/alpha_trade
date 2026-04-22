@@ -407,7 +407,7 @@ Notes ML GPU :
 python -m streamlit run ihm/app.py
 ```
 
-Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent un paramètre **Accélérateur ML** (`auto | cpu | gpu`). L'IHM détecte la disponibilité locale de CUDA et transmet `--accelerator <mode>` aux sous-processus `modelFactory` lancés en arrière-plan. L'étape `Alpha Scanner` n'expose plus de toggle de preset : `python -m selector.alpha_scanner` applique déjà le profil strict partagé.
+Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent un paramètre **Accélérateur ML** (`auto | cpu | gpu`). L'IHM détecte la disponibilité locale de CUDA et transmet `--accelerator <mode>` aux sous-processus `modelFactory` lancés en arrière-plan. Le workflow complet IHM insère désormais `python -m dataIntegrityEngine.sync_latest_quotes` puis `python -m dataIntegrityEngine.sync_earnings_calendar` avant `Alpha Scanner`, afin d'alimenter automatiquement `stock_quote_snapshots` et `stock_earnings_calendar`. L'étape `Alpha Scanner` n'expose plus de toggle de preset : `python -m selector.alpha_scanner` applique déjà le profil strict partagé.
 
 ### Backtesting
 

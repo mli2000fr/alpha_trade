@@ -22,6 +22,8 @@ Ce document résume le fonctionnement du module `dataIntegrityEngine/` et les co
 | `dataIntegrityEngine/import_alpaca_bar.py` | Import des barres OHLCV Alpaca vers `stock_bars` |
 | `dataIntegrityEngine/data_sanitizer_daily.py` | Nettoyage, alignement calendrier et anomalies sur les daily |
 | `dataIntegrityEngine/update_sector.py` | Enrichissement `stock_metadata.sector` via Finnhub |
+| `dataIntegrityEngine/sync_latest_quotes.py` | Snapshot des dernières quotes Alpaca vers `stock_quote_snapshots` |
+| `dataIntegrityEngine/sync_earnings_calendar.py` | Synchronisation du calendrier earnings Finnhub vers `stock_earnings_calendar` |
 
 ---
 
@@ -95,6 +97,18 @@ python -m dataIntegrityEngine.update_sector
 python -m dataIntegrityEngine.update_sector --limit 50 --sleep-seconds 1.1 --log-every 10
 ```
 
+### Snapshot des latest quotes
+
+```powershell
+python -m dataIntegrityEngine.sync_latest_quotes
+```
+
+### Synchronisation du calendrier earnings
+
+```powershell
+python -m dataIntegrityEngine.sync_earnings_calendar
+```
+
 ---
 
 ## 4. Ce que fait le module
@@ -142,6 +156,24 @@ Si `SPY` est absent de `stock_bars`, le sanitizeur peut déclencher un import ci
 3. renseigne `stock_metadata.sector` ;
 4. journalise `updated`, `skipped`, `failed`.
 
+### 4.6 Snapshot latest quotes
+
+`sync_latest_quotes.py` :
+
+1. charge les symboles actifs/tradables ;
+2. appelle les latest quotes Alpaca par batch ;
+3. calcule `spread_bps` à partir du bid/ask ;
+4. upsert dans `stock_quote_snapshots`.
+
+### 4.7 Calendrier earnings
+
+`sync_earnings_calendar.py` :
+
+1. charge les symboles actifs/tradables ;
+2. interroge Finnhub sur une fenêtre bornée ;
+3. normalise `earnings_date` et métadonnées associées ;
+4. upsert dans `stock_earnings_calendar`.
+
 ---
 
 ## 5. Pourquoi le module peut échouer ou produire peu de données
@@ -171,6 +203,15 @@ Causes probables :
 1. token Finnhub absent ;
 2. Finnhub ne retourne pas de secteur ;
 3. symboles inactifs ou peu renseignés.
+
+### 5.4 Quotes / earnings manquants
+
+Causes probables :
+
+1. étapes `sync_latest_quotes` / `sync_earnings_calendar` jamais lancées ;
+2. credentials Alpaca ou Finnhub absents ;
+3. couverture historique insuffisante pour un backfill PIT ancien ;
+4. rate limit ou retour partiel des fournisseurs.
 
 ---
 
@@ -223,7 +264,9 @@ Ordre conseillé :
 2. importer les bars ;
 3. lancer le sanitizeur ;
 4. enrichir les secteurs ;
-5. seulement ensuite lancer `screener` et la suite du pipeline.
+5. lancer `screener` ;
+6. synchroniser quotes et earnings ;
+7. seulement ensuite lancer `selector` et la suite du pipeline.
 
 ### Séquence recommandée
 
@@ -232,4 +275,7 @@ python -m dataIntegrityEngine.import_alpaca_assets
 python -m dataIntegrityEngine.import_alpaca_bar
 python -m dataIntegrityEngine.data_sanitizer_daily
 python -m dataIntegrityEngine.update_sector
+python -m screener.stock_screener --chunk-size 500 --max-workers 8
+python -m dataIntegrityEngine.sync_latest_quotes
+python -m dataIntegrityEngine.sync_earnings_calendar
 ```

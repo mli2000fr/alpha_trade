@@ -780,9 +780,30 @@ class AlphaScanner:
         result["final_score"] = result["raw_final_score"]
         return result
 
-    def apply_filters(self, merged_df: pd.DataFrame) -> pd.DataFrame:
+    def _apply_filters_with_stats(self, merged_df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
         if merged_df.empty:
-            return merged_df.copy()
+            empty_stats = {
+                "input": 0,
+                "output": 0,
+                "rejected_etf": 0,
+                "rejected_history": 0,
+                "rejected_price": 0,
+                "rejected_market_liquidity": 0,
+                "rejected_volatility": 0,
+                "rejected_atr": 0,
+                "rejected_relative_strength": 0,
+                "rejected_ma200": 0,
+                "rejected_high_52w": 0,
+                "rejected_weekly": 0,
+                "rejected_market_cap": 0,
+                "rejected_beta": 0,
+                "rejected_spread": 0,
+                "rejected_earnings_blackout": 0,
+                "rejected_score_liquidity": 0,
+                "rejected_anomalies": 0,
+                "rejected_missing_days": 0,
+            }
+            return merged_df.copy(), empty_stats
 
         filtered = merged_df.copy()
         before_count = len(filtered)
@@ -948,30 +969,56 @@ class AlphaScanner:
         if "missing_days_count" in filtered.columns:
             filtered = filtered[(filtered["missing_days_count"].isna()) | (filtered["missing_days_count"] < self.config.max_missing_days_count)]
 
+        stats = {
+            "input": before_count,
+            "output": len(filtered),
+            "rejected_etf": before_count - after_etf_filter,
+            "rejected_history": after_etf_filter - after_history,
+            "rejected_price": after_history - after_close,
+            "rejected_market_liquidity": after_close - after_market_liquidity,
+            "rejected_volatility": after_market_liquidity - after_volatility,
+            "rejected_atr": after_volatility - after_atr,
+            "rejected_relative_strength": after_atr - after_relative_strength,
+            "rejected_ma200": after_relative_strength - after_ma200,
+            "rejected_high_52w": after_ma200 - after_high_52w,
+            "rejected_weekly": after_high_52w - after_weekly,
+            "rejected_market_cap": after_weekly - after_market_cap,
+            "rejected_beta": after_market_cap - after_beta,
+            "rejected_spread": after_beta - after_spread,
+            "rejected_earnings_blackout": after_spread - after_earnings_blackout,
+            "rejected_score_liquidity": after_earnings_blackout - after_score_liquidity,
+            "rejected_anomalies": after_score_liquidity - after_anomaly,
+            "rejected_missing_days": after_anomaly - len(filtered),
+        }
+        return filtered.reset_index(drop=True), stats
+
+    def apply_filters(self, merged_df: pd.DataFrame) -> pd.DataFrame:
+        filtered, stats = self._apply_filters_with_stats(merged_df)
+
         LOGGER.info(
             "Filtres appliques | entree=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_volatilite_relative=%s rejet_atr_pct=%s rejet_force_relative=%s rejet_ma200=%s rejet_high_52w=%s rejet_weekly=%s rejet_market_cap=%s rejet_beta=%s rejet_spread=%s rejet_earnings_blackout=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
-            before_count,
-            len(filtered),
-            before_count - after_etf_filter,
-            after_etf_filter - after_history,
-            after_history - after_close,
-            after_close - after_market_liquidity,
-            after_market_liquidity - after_volatility,
-            after_volatility - after_atr,
-            after_atr - after_relative_strength,
-            after_relative_strength - after_ma200,
-            after_ma200 - after_high_52w,
-            after_high_52w - after_weekly,
-            after_weekly - after_market_cap,
-            after_market_cap - after_beta,
-            after_beta - after_spread,
-            after_spread - after_earnings_blackout,
-            after_earnings_blackout - after_score_liquidity,
-            after_score_liquidity - after_anomaly,
-            after_anomaly - len(filtered),
+            stats["input"],
+            stats["output"],
+            stats["rejected_etf"],
+            stats["rejected_history"],
+            stats["rejected_price"],
+            stats["rejected_market_liquidity"],
+            stats["rejected_volatility"],
+            stats["rejected_atr"],
+            stats["rejected_relative_strength"],
+            stats["rejected_ma200"],
+            stats["rejected_high_52w"],
+            stats["rejected_weekly"],
+            stats["rejected_market_cap"],
+            stats["rejected_beta"],
+            stats["rejected_spread"],
+            stats["rejected_earnings_blackout"],
+            stats["rejected_score_liquidity"],
+            stats["rejected_anomalies"],
+            stats["rejected_missing_days"],
         )
 
-        return filtered.reset_index(drop=True)
+        return filtered
 
     def apply_sector_neutrality(self, ranked_df: pd.DataFrame) -> pd.DataFrame:
         """Sélection round-robin avec plafond sectoriel."""

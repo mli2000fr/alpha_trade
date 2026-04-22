@@ -264,6 +264,27 @@ class BackfillScoresHistoryService:
 
         scanner, quotes_available, earnings_available = self._resolve_pit_scanner(as_of_date)
         all_frames: list[pd.DataFrame] = []
+        aggregated_filter_stats = {
+            "input": 0,
+            "output": 0,
+            "rejected_etf": 0,
+            "rejected_history": 0,
+            "rejected_price": 0,
+            "rejected_market_liquidity": 0,
+            "rejected_volatility": 0,
+            "rejected_atr": 0,
+            "rejected_relative_strength": 0,
+            "rejected_ma200": 0,
+            "rejected_high_52w": 0,
+            "rejected_weekly": 0,
+            "rejected_market_cap": 0,
+            "rejected_beta": 0,
+            "rejected_spread": 0,
+            "rejected_earnings_blackout": 0,
+            "rejected_score_liquidity": 0,
+            "rejected_anomalies": 0,
+            "rejected_missing_days": 0,
+        }
         symbols = screener_df["symbol"].dropna().astype(str).tolist()
         chunk_size = max(1, self.scanner_config.chunk_size)
 
@@ -284,9 +305,37 @@ class BackfillScoresHistoryService:
             merged = scanner.merge_scores(computed, aux_scores)
             merged = scanner._enrich_and_filter_equities(merged, metadata_df)
             merged = scanner._merge_optional_symbol_overlays(merged, quotes_df, earnings_df)
-            filtered = scanner.apply_filters(merged)
+            filtered, filter_stats = scanner._apply_filters_with_stats(merged)
+            for key, value in filter_stats.items():
+                aggregated_filter_stats[key] += value
             if not filtered.empty:
                 all_frames.append(filtered)
+
+        LOGGER.info(
+            "Backfill PIT summary | date=%s quotes_available=%s earnings_available=%s avant_filtres=%s apres_filtres=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_volatilite_relative=%s rejet_atr_pct=%s rejet_force_relative=%s rejet_ma200=%s rejet_high_52w=%s rejet_weekly=%s rejet_market_cap=%s rejet_beta=%s rejet_spread=%s rejet_earnings_blackout=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
+            as_of_date,
+            quotes_available,
+            earnings_available,
+            aggregated_filter_stats["input"],
+            aggregated_filter_stats["output"],
+            aggregated_filter_stats["rejected_etf"],
+            aggregated_filter_stats["rejected_history"],
+            aggregated_filter_stats["rejected_price"],
+            aggregated_filter_stats["rejected_market_liquidity"],
+            aggregated_filter_stats["rejected_volatility"],
+            aggregated_filter_stats["rejected_atr"],
+            aggregated_filter_stats["rejected_relative_strength"],
+            aggregated_filter_stats["rejected_ma200"],
+            aggregated_filter_stats["rejected_high_52w"],
+            aggregated_filter_stats["rejected_weekly"],
+            aggregated_filter_stats["rejected_market_cap"],
+            aggregated_filter_stats["rejected_beta"],
+            aggregated_filter_stats["rejected_spread"],
+            aggregated_filter_stats["rejected_earnings_blackout"],
+            aggregated_filter_stats["rejected_score_liquidity"],
+            aggregated_filter_stats["rejected_anomalies"],
+            aggregated_filter_stats["rejected_missing_days"],
+        )
 
         if not all_frames:
             return pd.DataFrame()

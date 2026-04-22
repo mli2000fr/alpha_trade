@@ -42,6 +42,8 @@ Les seuils stricts réutilisés par les reruns swing cash sont centralisés dans
 - `stock_quote_snapshots` pour alimenter le filtre de spread bid/ask
 - `stock_earnings_calendar` pour alimenter le blackout résultats
 
+Depuis l'IHM Streamlit, le workflow complet déclenche automatiquement `sync_latest_quotes` puis `sync_earnings_calendar` juste avant `Alpha Scanner`, de sorte que ces tables soient rafraîchies avant le scan live/opérationnel.
+
 ### 2.2 Variables d'environnement minimales
 
 ```powershell
@@ -133,6 +135,8 @@ Pour chaque chunk, le scanner charge :
 - les métadonnées instrument depuis `stock_metadata`,
 - le dernier snapshot de spread depuis `stock_quote_snapshots`,
 - la prochaine date de résultats depuis `stock_earnings_calendar`.
+
+Dans le workflow complet IHM, ces deux tables de référence sont maintenant alimentées automatiquement par les étapes `Sync Latest Quotes` et `Sync Earnings Calendar` avant le lancement de `Alpha Scanner`.
 
 Il calcule ensuite des facteurs comme :
 

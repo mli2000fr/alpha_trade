@@ -381,9 +381,9 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
     execution_locked = options.execution_mode == "live" and not live_confirmed
 
     with st.container(border=True):
-        st.subheader("🚀 Workflow complet 1 → 12")
+        st.subheader("🚀 Workflow complet 1 → 14")
         st.caption(
-            "Lance automatiquement les 12 étapes du pipeline dans l'ordre. "
+            "Lance automatiquement les 14 étapes du pipeline dans l'ordre. "
             "Les sous-runs restent historisés individuellement, et ce workflow fournit une vue globale avec logs consolidés."
         )
 
@@ -518,7 +518,7 @@ def _render_runtime_center() -> None:
             workflow_cols = st.columns(3)
             child_run_ids = selected_run.get("workflow_child_run_ids", [])
             child_runs_count = len(child_run_ids) if isinstance(child_run_ids, list) else 0
-            workflow_cols[0].metric("Type", "Workflow 1 → 12")
+            workflow_cols[0].metric("Type", "Workflow 1 → 14")
             workflow_cols[1].metric("Progression", f"{completed}/{total}")
             workflow_cols[2].metric("Sous-runs", child_runs_count)
             current_step_label = str(selected_run.get("workflow_current_step_label") or "").strip()

@@ -21,15 +21,17 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 1. **Ingestion** des données de marché depuis Alpaca (barres OHLCV journalières)
 2. **Nettoyage** des données (sanitizer, détection d'anomalies)
 3. **Screening** multi-facteurs pour identifier les meilleurs candidats
-4. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
-5. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
-6. **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
-7. **ML Train** — entraînement des modèles LSTM+Attention par symbole candidat (périodique)
-8. **ML Predict** — inférence LSTM → `predicted_proba` par symbole candidat (quotidien)
-9. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille, score de conviction (40% quant + 60% ML)
-10. **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
-11. **Corporate actions sync** — récupère dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour)
-12. **Corporate actions apply** — application des dividendes/splits sur les positions existantes
+4. **Sync Latest Quotes** — snapshot des dernières quotes Alpaca pour alimenter le filtre de spread
+5. **Sync Earnings Calendar** — synchronisation du calendrier earnings Finnhub pour alimenter le blackout résultats
+6. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
+7. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
+8. **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
+9. **ML Train** — entraînement des modèles LSTM+Attention par symbole candidat (périodique)
+10. **ML Predict** — inférence LSTM → `predicted_proba` par symbole candidat (quotidien)
+11. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille, score de conviction (40% quant + 60% ML)
+12. **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
+13. **Corporate actions sync** — récupère dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour)
+14. **Corporate actions apply** — application des dividendes/splits sur les positions existantes
 
 L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 
@@ -107,7 +109,7 @@ Ils sont désormais centralisés dans un **profil partagé** (`selector/strict_f
 - le backfill point-in-time de `stock_scores_history`,
 - les reruns backtest stricts.
 
-Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : le lancement standard de l'étape 4 applique déjà ce profil strict implicite.
+Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : le lancement standard de l'étape 6 applique déjà ce profil strict implicite, après exécution automatique des synchronisations `Sync Latest Quotes` et `Sync Earnings Calendar` dans le workflow complet.
 
 #### Screener de liquidité
 - Pipeline en 3 passes : liquidité (volume × close sur 30j), force relative vs SPY (6 mois), position dans le range 10 ans

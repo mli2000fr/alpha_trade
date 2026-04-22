@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 import pandas as pd
@@ -185,5 +186,87 @@ def test_resolve_pit_scanner_disables_only_missing_overlay_filter() -> None:
     assert earnings_available is False
     assert scanner.config.max_spread_bps == 25.0
     assert scanner.config.earnings_blackout_days is None
+
+
+def test_compute_selector_snapshot_logs_aggregated_pit_summary(monkeypatch, caplog) -> None:
+    engine = _build_sqlite_engine()
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+
+    class _FakeScanner:
+        def compute_factors(self, market_data: pd.DataFrame) -> pd.DataFrame:
+            return pd.DataFrame({"symbol": market_data["symbol"].astype(str).unique()})
+
+        def fetch_instrument_metadata(self, symbols: list[str]) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def fetch_quote_snapshots(self, symbols: list[str], *, reference_date: date | None = None) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def fetch_next_earnings(self, symbols: list[str], *, reference_date: date | None = None) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def merge_scores(self, computed: pd.DataFrame, aux_scores: pd.DataFrame) -> pd.DataFrame:
+            return computed.copy()
+
+        def _enrich_and_filter_equities(self, merged: pd.DataFrame, metadata_df: pd.DataFrame) -> pd.DataFrame:
+            return merged
+
+        def _merge_optional_symbol_overlays(
+            self,
+            merged: pd.DataFrame,
+            quotes_df: pd.DataFrame,
+            earnings_df: pd.DataFrame,
+        ) -> pd.DataFrame:
+            return merged
+
+        def _apply_filters_with_stats(self, merged: pd.DataFrame):
+            filtered = merged.iloc[:1].copy()
+            stats = {
+                "input": 2,
+                "output": 1,
+                "rejected_etf": 0,
+                "rejected_history": 1,
+                "rejected_price": 0,
+                "rejected_market_liquidity": 0,
+                "rejected_volatility": 0,
+                "rejected_atr": 0,
+                "rejected_relative_strength": 0,
+                "rejected_ma200": 0,
+                "rejected_high_52w": 0,
+                "rejected_weekly": 0,
+                "rejected_market_cap": 0,
+                "rejected_beta": 0,
+                "rejected_spread": 0,
+                "rejected_earnings_blackout": 0,
+                "rejected_score_liquidity": 0,
+                "rejected_anomalies": 0,
+                "rejected_missing_days": 0,
+            }
+            return filtered, stats
+
+        def _apply_factor_neutralization(self, df: pd.DataFrame) -> pd.DataFrame:
+            return df
+
+        def rank_and_select(self, df: pd.DataFrame) -> pd.DataFrame:
+            return df
+
+    screener_df = pd.DataFrame({"symbol": ["AAA", "BBB"]})
+    monkeypatch.setattr(
+        service,
+        "_resolve_pit_scanner",
+        lambda as_of_date: (_FakeScanner(), True, False),
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_market_data",
+        lambda symbols, as_of_date: pd.DataFrame({"symbol": symbols}),
+    )
+
+    with caplog.at_level(logging.INFO):
+        result = service._compute_selector_snapshot(screener_df, date(2026, 4, 17))
+
+    assert len(result) == 1
+    assert "Backfill PIT summary | date=2026-04-17 quotes_available=True earnings_available=False avant_filtres=2 apres_filtres=1" in caplog.text
+    assert "rejet_historique=1" in caplog.text
 
 

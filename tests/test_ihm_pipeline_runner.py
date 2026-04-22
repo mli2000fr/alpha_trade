@@ -20,6 +20,8 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
         "import_alpaca_bar",
         "data_sanitizer_daily",
         "stock_screener",
+        "sync_latest_quotes",
+        "sync_earnings_calendar",
         "alpha_scanner",
         "sentiment_pipeline",
         "signal_aggregator",
@@ -85,6 +87,14 @@ def test_build_pipeline_command_alpha_scanner_is_always_strict_implicitly() -> N
     command = build_pipeline_command("alpha_scanner", PipelineLaunchOptions())
 
     assert command == [command[0], "-u", "-m", "selector.alpha_scanner"]
+
+
+def test_build_pipeline_command_selector_reference_sync_steps() -> None:
+    quotes_command = build_pipeline_command("sync_latest_quotes", PipelineLaunchOptions())
+    earnings_command = build_pipeline_command("sync_earnings_calendar", PipelineLaunchOptions())
+
+    assert quotes_command == [quotes_command[0], "-u", "-m", "dataIntegrityEngine.sync_latest_quotes"]
+    assert earnings_command == [earnings_command[0], "-u", "-m", "dataIntegrityEngine.sync_earnings_calendar"]
 
 
 
