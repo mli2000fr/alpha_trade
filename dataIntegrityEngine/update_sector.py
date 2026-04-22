@@ -17,6 +17,13 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_LOG_EVERY = 50
 NOT_AVAILABLE = "N/A"
 
+# Compatibilité rétroactive pour les tests / appelants legacy.
+get_symbols_missing_sector = get_symbols_missing_fundamentals
+
+
+def update_stock_metadata_sector(symbol: str, sector: str) -> int:
+	return update_stock_metadata_fundamentals(symbol, sector=sector)
+
 
 def update_missing_sectors(
 	limit: int | None = None,
@@ -28,7 +35,7 @@ def update_missing_sectors(
 	if log_every < 1:
 		raise ValueError("log_every doit être supérieur ou égal à 1.")
 
-	symbols = get_symbols_missing_fundamentals(limit=limit)
+	symbols = get_symbols_missing_sector(limit=limit)
 	total = len(symbols)
 	summary = {
 		"total": total,
@@ -42,6 +49,7 @@ def update_missing_sectors(
 		total,
 		limit,
 	)
+	LOGGER.info("Debut mise a jour sector stock_metadata")
 	if not symbols:
 		return summary
 
@@ -64,17 +72,21 @@ def update_missing_sectors(
 						summary["skipped"],
 					)
 				else:
-					rowcount = update_stock_metadata_fundamentals(
-						symbol,
-						sector=None if not sector or sector == NOT_AVAILABLE else sector,
-						market_cap=market_cap,
-					)
+					normalized_sector = None if not sector or sector == NOT_AVAILABLE else sector
+					if market_cap is None and normalized_sector is not None:
+						rowcount = update_stock_metadata_sector(symbol, normalized_sector)
+					else:
+						rowcount = update_stock_metadata_fundamentals(
+							symbol,
+							sector=normalized_sector,
+							market_cap=market_cap,
+						)
 					if rowcount:
 						summary["updated"] += 1
 						LOGGER.info(
 							"Fondamentaux mis a jour | symbol=%s sector=%s market_cap=%s progress=%s/%s updated=%s",
 							symbol,
-							None if not sector or sector == NOT_AVAILABLE else sector,
+							normalized_sector,
 							market_cap,
 							index,
 							total,
@@ -108,6 +120,14 @@ def update_missing_sectors(
 					summary["skipped"],
 					summary["failed"],
 				)
+				LOGGER.info(
+					"Progression sector | current=%s/%s updated=%s skipped=%s failed=%s",
+					index,
+					total,
+					summary["updated"],
+					summary["skipped"],
+					summary["failed"],
+				)
 
 			if index < total:
 				time.sleep(sleep_seconds)
@@ -121,6 +141,7 @@ def update_missing_sectors(
 		summary["skipped"],
 		summary["failed"],
 	)
+	LOGGER.info("Fin mise a jour sector stock_metadata")
 	return summary
 
 

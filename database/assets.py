@@ -162,7 +162,6 @@ def insert_assets_to_db(assets: Iterable[Mapping[str, Any]]) -> int:
             "status": stmt.inserted.status,
             "tradable": stmt.inserted.tradable,
             "bars_available": stmt.inserted.bars_available,
-            "market_cap": stmt.inserted.market_cap,
             "last_updated": func.current_timestamp(),
         }
         session.execute(stmt.on_duplicate_key_update(**update_dict))
@@ -182,8 +181,9 @@ def sync_assets_from_alpaca() -> int:
 def update_bars_available_false(symbol: str) -> None:
     stock_metadata = get_stock_metadata_table()
     session = SessionLocal()
+    normalized_symbol = str(symbol).strip().upper()
     try:
-        stmt = stock_metadata.update().where(stock_metadata.c.symbol == symbol).values(bars_available=False)
+        stmt = stock_metadata.update().where(stock_metadata.c.symbol == normalized_symbol).values(bars_available=False)
         session.execute(stmt)
         session.commit()
     except Exception:

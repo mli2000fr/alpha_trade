@@ -14,6 +14,15 @@ import yaml
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s -- %(message)s"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_log_path(log_path: str) -> Path:
+    candidate = Path(log_path)
+    if not candidate.is_absolute():
+        candidate = PROJECT_ROOT / candidate
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    return candidate
 
 
 def _configure_utf8_stdio() -> None:
@@ -68,7 +77,8 @@ def configure_root_logging(
     logger.addHandler(stdout_handler)
 
     if log_path:
-        file_handler = RotatingFileHandler(log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
+        resolved_log_path = _resolve_log_path(log_path)
+        file_handler = RotatingFileHandler(resolved_log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
         file_handler.setFormatter(formatter)
         file_handler.setLevel(level)
         file_handler._alpha_trade_managed = True  # type: ignore[attr-defined]

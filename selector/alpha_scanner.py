@@ -7,7 +7,7 @@ from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Iterator, Optional, Sequence
+from typing import Any, Iterator, Optional, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -191,8 +191,9 @@ class AlphaScannerConfig:
         profile: StrictFilterProfile,
         **overrides: object,
     ) -> "AlphaScannerConfig":
-        merged_kwargs = profile.to_scanner_config_kwargs()
-        merged_kwargs.update(overrides)
+        merged_kwargs: dict[str, object] = dict(profile.to_scanner_config_kwargs())
+        for key, value in overrides.items():
+            merged_kwargs[key] = value
         return cls(**merged_kwargs)
 
     @classmethod
@@ -284,7 +285,11 @@ class AlphaScanner:
         ).bindparams(bindparam("symbols", expanding=True))
 
         try:
-            market_data = pd.read_sql_query(stmt, self.engine, params={"symbols": list(symbols)})
+            market_data = pd.read_sql_query(
+                stmt,
+                self.engine,
+                params=cast(dict[str, Any], {"symbols": list(symbols)}),
+            )
         except SQLAlchemyError as exc:
             LOGGER.exception("Echec lecture %s pour %s symboles.", self.config.price_table, len(symbols))
             raise RuntimeError("Impossible de charger les données marché.") from exc
@@ -323,7 +328,11 @@ class AlphaScanner:
         ).bindparams(bindparam("symbols", expanding=True))
 
         try:
-            scores = pd.read_sql_query(stmt, self.engine, params={"symbols": list(symbols)})
+            scores = pd.read_sql_query(
+                stmt,
+                self.engine,
+                params=cast(dict[str, Any], {"symbols": list(symbols)}),
+            )
         except SQLAlchemyError:
             LOGGER.warning(
                 "Lecture auxiliaire %s indisponible; poursuite avec facteurs recalcules seulement.",
@@ -354,7 +363,11 @@ class AlphaScanner:
         ).bindparams(bindparam("symbols", expanding=True))
 
         try:
-            metadata_df = pd.read_sql_query(stmt, self.engine, params={"symbols": list(symbols)})
+            metadata_df = pd.read_sql_query(
+                stmt,
+                self.engine,
+                params=cast(dict[str, Any], {"symbols": list(symbols)}),
+            )
         except SQLAlchemyError:
             LOGGER.warning("Lecture stock_metadata indisponible; impossibilite de filtrer explicitement les ETFs.")
             return pd.DataFrame(columns=METADATA_COLUMNS)
@@ -456,13 +469,16 @@ class AlphaScanner:
         if earnings_df.empty:
             return pd.DataFrame(columns=["symbol", "earnings_date", "days_to_earnings", "earnings_blackout"])
 
-        earnings_df["earnings_date"] = pd.to_datetime(earnings_df["earnings_date"], utc=False).dt.date
-        earnings_df["days_to_earnings"] = (
-            pd.to_datetime(earnings_df["earnings_date"], utc=False) - pd.Timestamp(effective_reference_date)
-        ).dt.days
+        earnings_timestamps = pd.to_datetime(earnings_df["earnings_date"], utc=False)
+        earnings_df["earnings_date"] = earnings_timestamps.dt.date
+        days_to_earnings = (earnings_timestamps - pd.Timestamp(effective_reference_date)).dt.days
+        earnings_df["days_to_earnings"] = pd.Series(days_to_earnings, index=earnings_df.index)
         blackout_days = self.config.earnings_blackout_days if self.config.earnings_blackout_days is not None else 0
         earnings_df["earnings_blackout"] = (
-            pd.to_numeric(earnings_df["days_to_earnings"], errors="coerce").fillna(9999).astype(int) <= blackout_days
+            pd.Series(pd.to_numeric(earnings_df["days_to_earnings"], errors="coerce"), index=earnings_df.index)
+            .fillna(9999)
+            .astype(int)
+            <= blackout_days
         ).astype(int)
         return earnings_df
 
@@ -534,7 +550,7 @@ class AlphaScanner:
         prices["volatility_ratio"] = np.where(prices["vol_60"] > 0, prices["vol_10"] / prices["vol_60"], np.nan)
 
         latest = grouped.tail(1).copy()
-        history_days = prices.groupby("symbol", as_index=False)["date"].size().rename(columns={"size": "history_days"})
+        history_days = prices.groupby("symbol")["date"].size().reset_index(name="history_days")
         latest = latest.merge(history_days, on="symbol", how="left")
         latest = latest.merge(pd.DataFrame(beta_rows), on="symbol", how="left")
         latest["high_52w_proximity"] = np.where(
