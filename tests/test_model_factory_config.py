@@ -23,3 +23,21 @@ def test_calibration_config_rejects_unknown_method() -> None:
         config.CalibrationConfig(method="isotonic")
 
 
+def test_data_config_accepts_expert_feature_set() -> None:
+    cfg = config.DataConfig(feature_set="expert", benchmark_symbol="SPY")
+
+    assert cfg.feature_set == "expert"
+    assert cfg.benchmark_symbol == "SPY"
+
+
+def test_baseline_config_defaults_to_lightgbm() -> None:
+    cfg = config.BaselineConfig(enabled=True)
+
+    assert cfg.model_name == "lightgbm"
+
+
+def test_target_optimization_requires_candidate_horizons() -> None:
+    with pytest.raises(ValueError, match="candidate_horizons"):
+        config.TargetOptimizationConfig(candidate_horizons=())
+
+

@@ -9,7 +9,7 @@ import torch
 from sqlalchemy.engine import Engine
 
 from modelFactory.config import TrainingConfig
-from modelFactory.data_loader import load_symbol_bars, load_symbol_sentiment
+from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment
 from modelFactory.db_registry import load_candidate_symbols
 from modelFactory.trainer import TrainResult, train_symbol
 
@@ -25,10 +25,13 @@ def _train_worker(symbol: str, cfg: TrainingConfig) -> TrainResult:
     from database.connection import get_sqlalchemy_engine
     engine = get_sqlalchemy_engine()
     bars = load_symbol_bars(engine, symbol)
+    benchmark_df = None
+    if cfg.data.feature_set == "expert":
+        benchmark_df = load_benchmark_bars(engine, cfg.data.benchmark_symbol)
     sentiment_df = None
     if cfg.data.include_sentiment_features:
         sentiment_df = load_symbol_sentiment(engine, symbol)
-    return train_symbol(symbol, bars, cfg, engine, sentiment_df=sentiment_df)
+    return train_symbol(symbol, bars, cfg, engine, sentiment_df=sentiment_df, benchmark_df=benchmark_df)
 
 
 def run_training_batch(

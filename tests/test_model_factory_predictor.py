@@ -87,7 +87,11 @@ def test_predict_symbol_returns_dataframe_and_persists(tmp_path: Path, monkeypat
 
     monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
     monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
-    monkeypatch.setattr(predictor, "compute_features", lambda bars, sentiment_df=None, include_sentiment=False: features.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
         predictor.LSTMAttentionModule,
@@ -179,7 +183,11 @@ def test_predict_symbol_applies_saved_calibration_and_decision_threshold(tmp_pat
 
     monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
     monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
-    monkeypatch.setattr(predictor, "compute_features", lambda bars, sentiment_df=None, include_sentiment=False: features.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
         predictor.LSTMAttentionModule,

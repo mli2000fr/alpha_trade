@@ -14,7 +14,7 @@ import torch
 
 from modelFactory.calibration import calibrator_from_state_dict, margin_from_logits
 from modelFactory.config import DataConfig
-from modelFactory.data_loader import load_symbol_bars, load_symbol_sentiment
+from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment
 from modelFactory.dataset import FeatureScaler
 from modelFactory.db_registry import insert_predictions, load_training_run
 from modelFactory.features import compute_features
@@ -96,6 +96,8 @@ def predict_symbol(
         sequence_length=cfg_data["data"]["sequence_length"],
         forecast_horizon=cfg_data["data"]["forecast_horizon"],
         include_sentiment_features=cfg_data["data"].get("include_sentiment_features", False),
+        feature_set=cfg_data["data"].get("feature_set", "v1"),
+        benchmark_symbol=cfg_data["data"].get("benchmark_symbol", "SPY"),
         target_mode=cfg_data["data"].get("target_mode", "binary"),
         target_up_threshold=cfg_data["data"].get("target_up_threshold", 0.0),
         target_down_threshold=cfg_data["data"].get("target_down_threshold", 0.0),
@@ -126,7 +128,16 @@ def predict_symbol(
     sentiment_df = None
     if data_cfg.include_sentiment_features:
         sentiment_df = load_symbol_sentiment(engine, symbol, end_date=cutoff_date)
-    df = compute_features(bars, sentiment_df=sentiment_df, include_sentiment=data_cfg.include_sentiment_features)
+    benchmark_df = None
+    if data_cfg.feature_set == "expert":
+        benchmark_df = load_benchmark_bars(engine, data_cfg.benchmark_symbol, end_date=cutoff_date)
+    df = compute_features(
+        bars,
+        sentiment_df=sentiment_df,
+        include_sentiment=data_cfg.include_sentiment_features,
+        benchmark_df=benchmark_df,
+        feature_set=data_cfg.feature_set,
+    )
     if len(df) < data_cfg.sequence_length:
         return None
 

@@ -5,7 +5,7 @@ import json
 import logging
 import pickle
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -39,8 +39,11 @@ from modelFactory.db_registry import (
     insert_training_run,
     update_training_run,
 )
+from modelFactory.evaluation import align_sequence_rows, bucket_analysis
 from modelFactory.features import get_feature_columns
+from modelFactory.lightgbm_baseline import run_lightgbm_baseline
 from modelFactory.model import LSTMAttentionModule
+from modelFactory.target_optimization import optimize_target_horizon
 
 LOGGER = logging.getLogger(__name__)
 
@@ -188,6 +191,7 @@ def _compute_metrics(
     *,
     decision_threshold: float,
     calibrator: PlattCalibrator | None = None,
+    future_returns: np.ndarray | None = None,
 ) -> dict[str, Any]:
     labels = outputs["labels"]
     logits = outputs["logits"]
@@ -223,6 +227,7 @@ def _compute_metrics(
         "decision_threshold": decision_threshold,
         "calibration_method": calibrator.method if calibrator is not None and calibrator.fitted else "none",
         "n_samples": int(len(labels)),
+        "bucket_analysis": bucket_analysis(proba, labels, future_returns, n_buckets=5),
     }
     return metrics
 
@@ -253,6 +258,8 @@ def _evaluate_best_checkpoint(
     batch_size: int,
     val_ds: SequenceDataset | None,
     test_ds: SequenceDataset | None,
+    val_frame: "pd.DataFrame | None",
+    test_frame: "pd.DataFrame | None",
     cfg: TrainingConfig,
 ) -> tuple[dict[str, Any], dict[str, Any], PlattCalibrator | None]:
     model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location="cpu")
@@ -263,6 +270,7 @@ def _evaluate_best_checkpoint(
         val_outputs,
         decision_threshold=cfg.data.decision_threshold,
         calibrator=calibrator,
+        future_returns=val_frame["future_return"].to_numpy() if val_frame is not None and "future_return" in val_frame else None,
     )
 
     test_metrics: dict[str, Any] = {}
@@ -272,6 +280,7 @@ def _evaluate_best_checkpoint(
             test_outputs,
             decision_threshold=cfg.data.decision_threshold,
             calibrator=calibrator,
+            future_returns=test_frame["future_return"].to_numpy() if test_frame is not None and "future_return" in test_frame else None,
         )
     return val_metrics, test_metrics, calibrator
 
@@ -328,7 +337,7 @@ def _run_walk_forward_validation(
         LOGGER.warning("walk_forward skipped symbol=%s reason=no_valid_split", symbol)
         return {}
 
-    feature_cols = get_feature_columns(cfg.data.include_sentiment_features)
+    feature_cols = get_feature_columns(cfg.data.include_sentiment_features, feature_set=cfg.data.feature_set)
     fold_metrics: list[dict[str, Any]] = []
 
     for split in splits:
@@ -385,6 +394,8 @@ def _run_walk_forward_validation(
                 batch_size=cfg.model.batch_size,
                 val_ds=val_ds,
                 test_ds=test_ds,
+                val_frame=align_sequence_rows(split.val, cfg.data.sequence_length),
+                test_frame=align_sequence_rows(split.test, cfg.data.sequence_length),
                 cfg=cfg,
             )
             if test_metrics:
@@ -419,6 +430,7 @@ def train_symbol(
     cfg: TrainingConfig,
     engine: Optional[Engine] = None,
     sentiment_df: "pd.DataFrame | None" = None,
+    benchmark_df: "pd.DataFrame | None" = None,
 ) -> TrainResult:
     """Entraîne un modèle LSTM+Attention pour un symbole unique.
 
@@ -444,7 +456,37 @@ def train_symbol(
                 update_training_run(engine, run_id, status="skipped", skip_reason=reason, finished_at=datetime.now(timezone.utc))
             return TrainResult(symbol, run_id, "skipped", skip_reason=reason)
 
-        dm = SymbolDataModule(bars_df, cfg.data, cfg.model, sentiment_df=sentiment_df)
+        effective_cfg = cfg
+        target_optimization_summary: dict[str, Any] = {}
+        if cfg.target_optimization.enabled:
+            target_optimization_summary = optimize_target_horizon(
+                bars_df,
+                data_cfg=cfg.data,
+                opt_cfg=cfg.target_optimization,
+            )
+            selected_horizon = int(target_optimization_summary.get("selected_horizon", cfg.data.forecast_horizon))
+            if selected_horizon != cfg.data.forecast_horizon:
+                effective_cfg = replace(
+                    cfg,
+                    data=replace(cfg.data, forecast_horizon=selected_horizon),
+                )
+                LOGGER.info(
+                    "target optimization selected horizon symbol=%s original=%d selected=%d score=%.6f",
+                    symbol,
+                    cfg.data.forecast_horizon,
+                    selected_horizon,
+                    float(target_optimization_summary.get("selected_score", 0.0)),
+                )
+
+        datamodule_kwargs: dict[str, Any] = {"sentiment_df": sentiment_df}
+        if benchmark_df is not None:
+            datamodule_kwargs["benchmark_df"] = benchmark_df
+        dm = SymbolDataModule(
+            bars_df,
+            effective_cfg.data,
+            effective_cfg.model,
+            **datamodule_kwargs,
+        )
         dm.setup()
 
         if dm.train_ds is None or dm.val_ds is None or len(dm.train_ds) == 0 or len(dm.val_ds) == 0:
@@ -457,19 +499,23 @@ def train_symbol(
         walk_forward_metrics: dict[str, Any] = {}
         prepared_df = getattr(dm, "prepared_df", None)
         if prepared_df is not None:
-            walk_forward_metrics = _run_walk_forward_validation(symbol, prepared_df, cfg)
+            walk_forward_metrics = _run_walk_forward_validation(symbol, prepared_df, effective_cfg)
+
+        baseline_metrics: dict[str, Any] = {}
+        if prepared_df is not None and effective_cfg.baseline.enabled:
+            baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg)
 
         sym_dir = (Path(cfg.artifacts_dir) / symbol).resolve()
         sym_dir.mkdir(parents=True, exist_ok=True)
 
         model = LSTMAttentionModule(
             input_size=dm.n_features,
-            hidden_size=cfg.model.hidden_size,
-            num_layers=cfg.model.num_layers,
-            dropout=cfg.model.dropout,
-            learning_rate=cfg.model.learning_rate,
-            weight_decay=cfg.model.weight_decay,
-            num_classes=cfg.model.num_classes,
+            hidden_size=effective_cfg.model.hidden_size,
+            num_layers=effective_cfg.model.num_layers,
+            dropout=effective_cfg.model.dropout,
+            learning_rate=effective_cfg.model.learning_rate,
+            weight_decay=effective_cfg.model.weight_decay,
+            num_classes=effective_cfg.model.num_classes,
         )
 
         ckpt_callback = ModelCheckpoint(
@@ -479,11 +525,11 @@ def train_symbol(
             mode="min",
             save_top_k=1,
         )
-        early_stop = EarlyStopping(monitor="val_loss", patience=cfg.model.patience, mode="min")
+        early_stop = EarlyStopping(monitor="val_loss", patience=effective_cfg.model.patience, mode="min")
 
         trainer = L.Trainer(
-            max_epochs=cfg.model.max_epochs,
-            accelerator=cfg.accelerator,
+            max_epochs=effective_cfg.model.max_epochs,
+            accelerator=effective_cfg.accelerator,
             devices=1,
             callbacks=[ckpt_callback, early_stop],
             enable_progress_bar=False,
@@ -496,22 +542,27 @@ def train_symbol(
         LOGGER.info(
             "trainer initialized symbol=%s requested_accelerator=%s resolved_device=%s device_name=%s batch_size=%d train_workers=%d",
             symbol,
-            cfg.accelerator,
+            effective_cfg.accelerator,
             root_device,
             device_name,
-            cfg.model.batch_size,
+            effective_cfg.model.batch_size,
             dm.train_dataloader().num_workers,
         )
 
         trainer.fit(model, datamodule=dm)
 
         best_source = Path(ckpt_callback.best_model_path) if ckpt_callback.best_model_path else sym_dir / "best.ckpt"
+        split = dm.split
+        val_frame = align_sequence_rows(split.val, effective_cfg.data.sequence_length) if split is not None else None
+        test_frame = align_sequence_rows(split.test, effective_cfg.data.sequence_length) if split is not None else None
         val_metrics, test_metrics, calibrator = _evaluate_best_checkpoint(
             best_source,
-            batch_size=cfg.model.batch_size,
+            batch_size=effective_cfg.model.batch_size,
             val_ds=dm.val_ds,
             test_ds=dm.test_ds,
-            cfg=cfg,
+            val_frame=val_frame,
+            test_frame=test_frame,
+            cfg=effective_cfg,
         )
 
         best_ckpt = sym_dir / "best.ckpt"
@@ -534,14 +585,17 @@ def train_symbol(
 
         config_path = sym_dir / "config.json"
         config_data = {
-            "data": asdict(cfg.data),
-            "model": {**asdict(cfg.model), "input_size": dm.n_features},
-            "calibration": asdict(cfg.calibration),
-            "walk_forward": asdict(cfg.walk_forward),
+            "data": asdict(effective_cfg.data),
+            "model": {**asdict(effective_cfg.model), "input_size": dm.n_features},
+            "calibration": asdict(effective_cfg.calibration),
+            "walk_forward": asdict(effective_cfg.walk_forward),
+            "baseline": asdict(effective_cfg.baseline),
+            "target_optimization": asdict(effective_cfg.target_optimization),
             "symbol": symbol,
             "run_id": run_id,
             "feature_columns": dm.scaler.feature_names,
             "calibrator_path": calibrator_path,
+            "selected_forecast_horizon": effective_cfg.data.forecast_horizon,
         }
         with open(config_path, "w") as f:
             json.dump(config_data, f, indent=2, default=str)
@@ -550,6 +604,8 @@ def train_symbol(
             "val": val_metrics,
             "test": test_metrics,
             "walk_forward": walk_forward_metrics,
+            "baseline_lightgbm": baseline_metrics,
+            "target_optimization": target_optimization_summary,
         }
         with open(sym_dir / "metrics.json", "w") as f:
             json.dump(all_metrics, f, indent=2)

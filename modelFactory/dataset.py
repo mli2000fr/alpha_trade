@@ -12,7 +12,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from modelFactory.config import DataConfig, ModelConfig
-from modelFactory.features import FEATURE_COLUMNS, build_target, compute_features, get_feature_columns
+from modelFactory.features import FEATURE_COLUMNS, build_target, compute_features, compute_future_return, get_feature_columns
 
 LOGGER = logging.getLogger(__name__)
 
@@ -185,18 +185,21 @@ class SymbolDataModule(L.LightningDataModule):
         data_cfg: DataConfig,
         model_cfg: ModelConfig,
         sentiment_df: pd.DataFrame | None = None,
+        benchmark_df: pd.DataFrame | None = None,
     ) -> None:
         super().__init__()
         self.bars_df = bars_df
         self.data_cfg = data_cfg
         self.model_cfg = model_cfg
         self.sentiment_df = sentiment_df
-        self._feature_cols = get_feature_columns(data_cfg.include_sentiment_features)
+        self.benchmark_df = benchmark_df
+        self._feature_cols = get_feature_columns(data_cfg.include_sentiment_features, feature_set=data_cfg.feature_set)
         self.scaler = FeatureScaler(feature_names=self._feature_cols)
         self.train_ds: Optional[SequenceDataset] = None
         self.val_ds: Optional[SequenceDataset] = None
         self.test_ds: Optional[SequenceDataset] = None
         self.prepared_df: Optional[pd.DataFrame] = None
+        self.split: Optional[ChronoSplit] = None
         self.n_features: int = len(self._feature_cols)
         self._num_workers = min(os.cpu_count() or 0, 4)
         self._pin_memory = torch.cuda.is_available()
@@ -206,10 +209,12 @@ class SymbolDataModule(L.LightningDataModule):
             self.bars_df,
             self.data_cfg,
             sentiment_df=self.sentiment_df,
+            benchmark_df=self.benchmark_df,
         )
         self.prepared_df = df
         # 2. Chrono split
         split = chrono_split(df, self.data_cfg.train_ratio, self.data_cfg.val_ratio)
+        self.split = split
         # 3. Fit scaler on train
         self.scaler.fit(split.train)
         # 4. Transform + build sequences
@@ -247,13 +252,17 @@ def prepare_symbol_frame(
     bars_df: pd.DataFrame,
     data_cfg: DataConfig,
     sentiment_df: pd.DataFrame | None = None,
+    benchmark_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Prépare le DataFrame final features + target pour un symbole."""
     df = compute_features(
         bars_df,
         sentiment_df=sentiment_df,
         include_sentiment=data_cfg.include_sentiment_features,
+        benchmark_df=benchmark_df,
+        feature_set=data_cfg.feature_set,
     )
+    df["future_return"] = compute_future_return(df, horizon=data_cfg.forecast_horizon)
     df["target"] = build_target(
         df,
         horizon=data_cfg.forecast_horizon,

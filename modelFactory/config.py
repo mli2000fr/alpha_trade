@@ -16,6 +16,8 @@ class DataConfig:
     val_ratio: float = 0.15
     # test = 1 - train - val
     include_sentiment_features: bool = False
+    feature_set: str = "v1"  # v1 | expert
+    benchmark_symbol: str = "SPY"
     target_mode: str = "binary"  # binary | swing_cash
     target_up_threshold: float = 0.0
     target_down_threshold: float = 0.0
@@ -34,12 +36,16 @@ class DataConfig:
             raise ValueError("val_ratio doit être dans ]0, 1[.")
         if self.train_ratio + self.val_ratio >= 1.0:
             raise ValueError("train_ratio + val_ratio doit être < 1.")
+        if self.feature_set not in {"v1", "expert"}:
+            raise ValueError("feature_set doit être 'v1' ou 'expert'.")
         if self.target_mode not in {"binary", "swing_cash"}:
             raise ValueError("target_mode doit être 'binary' ou 'swing_cash'.")
         if not (0.0 < self.decision_threshold < 1.0):
             raise ValueError("decision_threshold doit être dans ]0, 1[.")
         if self.target_down_threshold > self.target_up_threshold:
             raise ValueError("target_down_threshold doit être <= target_up_threshold.")
+        if not self.benchmark_symbol.strip():
+            raise ValueError("benchmark_symbol ne doit pas être vide.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +90,45 @@ class WalkForwardConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class BaselineConfig:
+    """Paramètres de comparaison de baseline tabulaire."""
+
+    enabled: bool = False
+    model_name: str = "lightgbm"
+    max_depth: int = 4
+    n_estimators: int = 200
+    learning_rate: float = 0.05
+    random_state: int = 42
+
+    def __post_init__(self) -> None:
+        if self.model_name != "lightgbm":
+            raise ValueError("baseline.model_name doit être 'lightgbm'.")
+        if self.max_depth < 1:
+            raise ValueError("baseline.max_depth doit être >= 1.")
+        if self.n_estimators < 10:
+            raise ValueError("baseline.n_estimators doit être >= 10.")
+        if self.learning_rate <= 0:
+            raise ValueError("baseline.learning_rate doit être > 0.")
+
+
+@dataclass(frozen=True, slots=True)
+class TargetOptimizationConfig:
+    """Paramètres d'optimisation de la target par horizon swing."""
+
+    enabled: bool = False
+    candidate_horizons: tuple[int, ...] = (3, 5, 10, 15)
+    min_trades_fraction: float = 0.15
+
+    def __post_init__(self) -> None:
+        if not self.candidate_horizons:
+            raise ValueError("target_optimization.candidate_horizons ne doit pas être vide.")
+        if any(h < 1 for h in self.candidate_horizons):
+            raise ValueError("Tous les candidate_horizons doivent être >= 1.")
+        if not (0.0 < self.min_trades_fraction <= 1.0):
+            raise ValueError("target_optimization.min_trades_fraction doit être dans ]0, 1].")
+
+
+@dataclass(frozen=True, slots=True)
 class ModelConfig:
     """Hyper-paramètres du modèle LSTM + attention."""
 
@@ -121,6 +166,8 @@ class TrainingConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
     walk_forward: WalkForwardConfig = field(default_factory=WalkForwardConfig)
+    baseline: BaselineConfig = field(default_factory=BaselineConfig)
+    target_optimization: TargetOptimizationConfig = field(default_factory=TargetOptimizationConfig)
     artifacts_dir: Path = Path("artifacts/models")
     max_workers: int = 4
     accelerator: str = "auto"  # auto | cpu | gpu

@@ -6,7 +6,15 @@ import logging
 from pathlib import Path
 
 from database.connection import get_sqlalchemy_engine
-from modelFactory.config import CalibrationConfig, DataConfig, ModelConfig, TrainingConfig, WalkForwardConfig
+from modelFactory.config import (
+    BaselineConfig,
+    CalibrationConfig,
+    DataConfig,
+    ModelConfig,
+    TargetOptimizationConfig,
+    TrainingConfig,
+    WalkForwardConfig,
+)
 from common.utils import configure_root_logging
 
 
@@ -26,6 +34,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
     p.add_argument("--include-sentiment", action="store_true", default=False,
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
+    p.add_argument("--feature-set", type=str, default="v1", choices=["v1", "expert"])
+    p.add_argument("--benchmark-symbol", type=str, default="SPY")
     p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash"])
     p.add_argument("--target-up-threshold", type=float, default=0.0,
                    help="Seuil de rendement futur pour classer une hausse tradeable")
@@ -43,6 +53,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--wf-test-size", type=int, default=126)
     p.add_argument("--wf-step-size", type=int, default=126)
     p.add_argument("--wf-max-splits", type=int, default=3)
+    p.add_argument("--compare-lightgbm", action="store_true", default=False,
+                   help="Entraîne aussi une baseline LightGBM et compare ses métriques")
+    p.add_argument("--lgbm-max-depth", type=int, default=4)
+    p.add_argument("--lgbm-n-estimators", type=int, default=200)
+    p.add_argument("--lgbm-learning-rate", type=float, default=0.05)
+    p.add_argument("--optimize-target", action="store_true", default=False,
+                   help="Sélectionne automatiquement le meilleur horizon swing parmi plusieurs candidats")
+    p.add_argument("--candidate-horizons", nargs="*", type=int, default=[3, 5, 10, 15])
+    p.add_argument("--min-trades-fraction", type=float, default=0.15)
     p.add_argument("--accelerator", type=str, default="auto", choices=["auto", "cpu", "gpu"])
     p.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return p
@@ -63,6 +82,8 @@ def main(args: list[str] | None = None) -> None:
             sequence_length=opts.sequence_length,
             forecast_horizon=opts.forecast_horizon,
             include_sentiment_features=opts.include_sentiment,
+            feature_set=opts.feature_set,
+            benchmark_symbol=opts.benchmark_symbol,
             target_mode=opts.target_mode,
             target_up_threshold=opts.target_up_threshold,
             target_down_threshold=opts.target_down_threshold,
@@ -81,6 +102,18 @@ def main(args: list[str] | None = None) -> None:
             test_size=opts.wf_test_size,
             step_size=opts.wf_step_size,
             max_splits=opts.wf_max_splits,
+        ),
+        baseline=BaselineConfig(
+            enabled=opts.compare_lightgbm,
+            model_name="lightgbm",
+            max_depth=opts.lgbm_max_depth,
+            n_estimators=opts.lgbm_n_estimators,
+            learning_rate=opts.lgbm_learning_rate,
+        ),
+        target_optimization=TargetOptimizationConfig(
+            enabled=opts.optimize_target,
+            candidate_horizons=tuple(opts.candidate_horizons),
+            min_trades_fraction=opts.min_trades_fraction,
         ),
         artifacts_dir=Path(opts.artifacts_dir),
         max_workers=opts.max_workers,

@@ -32,6 +32,13 @@ def load_symbol_bars(engine: Engine, symbol: str, end_date: date | None = None) 
     return df
 
 
+def load_benchmark_bars(engine: Engine, benchmark_symbol: str = "SPY", end_date: date | None = None) -> pd.DataFrame:
+    """Charge les barres du benchmark marché utilisé pour les features contextuelles."""
+    df = load_symbol_bars(engine, benchmark_symbol, end_date=end_date)
+    LOGGER.info("load_benchmark_bars benchmark_symbol=%s rows=%d", benchmark_symbol, len(df))
+    return df
+
+
 def load_symbol_sentiment(engine: Engine, symbol: str, end_date: date | None = None) -> pd.DataFrame:
     """Charge les features sentiment quotidiennes depuis ticker_daily_sentiment_features.
 

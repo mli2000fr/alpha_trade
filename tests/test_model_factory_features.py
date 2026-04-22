@@ -77,3 +77,47 @@ def test_build_target_swing_cash_creates_neutral_zone() -> None:
     assert pd.isna(target.iloc[4])
 
 
+def test_compute_features_expert_adds_trend_relative_strength_and_regime() -> None:
+    n = 260
+    dates = pd.date_range("2020-01-01", periods=n, freq="D")
+    close = pd.Series(np.linspace(100.0, 150.0, n), dtype=float)
+    benchmark_close = pd.Series(np.linspace(90.0, 120.0, n), dtype=float)
+
+    bars = pd.DataFrame(
+        {
+            "symbol": ["AAPL"] * n,
+            "date": dates,
+            "open": close * 0.99,
+            "high": close * 1.01,
+            "low": close * 0.98,
+            "close": close,
+            "volume": np.linspace(1_000_000, 1_100_000, n),
+            "adj_close": close,
+            "vwap": close,
+            "daily_return": 0.0,
+            "is_filled": 0,
+        }
+    )
+    benchmark = pd.DataFrame(
+        {
+            "symbol": ["SPY"] * n,
+            "date": dates,
+            "open": benchmark_close * 0.99,
+            "high": benchmark_close * 1.01,
+            "low": benchmark_close * 0.98,
+            "close": benchmark_close,
+            "volume": np.linspace(2_000_000, 2_200_000, n),
+            "adj_close": benchmark_close,
+            "vwap": benchmark_close,
+            "daily_return": 0.0,
+            "is_filled": 0,
+        }
+    )
+
+    result = features.compute_features(bars, benchmark_df=benchmark, feature_set="expert")
+
+    for col in ["sma20_distance", "relative_strength_20", "market_volatility_20", "regime_bull_market"]:
+        assert col in result.columns
+    assert not result[["sma20_distance", "relative_strength_20", "market_volatility_20"]].isna().any().any()
+
+
