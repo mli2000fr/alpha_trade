@@ -39,11 +39,11 @@ from modelFactory.db_registry import (
     insert_training_run,
     update_training_run,
 )
-from modelFactory.evaluation import align_sequence_rows, bucket_analysis
+from modelFactory.evaluation import align_sequence_rows, compute_threshold_metrics, optimize_decision_threshold
 from modelFactory.features import get_feature_columns
 from modelFactory.lightgbm_baseline import run_lightgbm_baseline
 from modelFactory.model import LSTMAttentionModule
-from modelFactory.target_optimization import optimize_target_horizon
+from modelFactory.target_optimization import optimize_target_parameters
 
 LOGGER = logging.getLogger(__name__)
 
@@ -201,14 +201,13 @@ def _compute_metrics(
     raw_proba = outputs["raw_proba"]
     margins = outputs["margins"]
     proba = calibrator.predict_proba(margins) if calibrator is not None and calibrator.fitted else raw_proba
-    pred = (proba >= decision_threshold).astype(np.int64)
-
-    tp = int(((pred == 1) & (labels == 1)).sum())
-    fp = int(((pred == 1) & (labels == 0)).sum())
-    fn = int(((pred == 0) & (labels == 1)).sum())
-
-    precision = tp / (tp + fp) if (tp + fp) else 0.0
-    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    threshold_metrics = compute_threshold_metrics(
+        proba,
+        labels,
+        future_returns,
+        decision_threshold=decision_threshold,
+        n_buckets=5,
+    )
     loss = float(torch.nn.functional.cross_entropy(
         torch.as_tensor(logits, dtype=torch.float32),
         torch.as_tensor(labels, dtype=torch.long),
@@ -216,18 +215,17 @@ def _compute_metrics(
 
     metrics: dict[str, Any] = {
         "loss": loss,
-        "directional_accuracy": float((pred == labels).mean()),
-        "precision": float(precision),
-        "recall": float(recall),
+        "directional_accuracy": float(((proba >= decision_threshold).astype(np.int64) == labels).mean()),
+        "precision": float(threshold_metrics["precision_long"]),
+        "recall": float(threshold_metrics["recall_long"]),
         "auc": _binary_auc(labels, proba),
         "brier_score": float(np.mean((proba - labels) ** 2)),
         "ece": _expected_calibration_error(labels, proba),
-        "action_rate": float(pred.mean()),
+        "action_rate": float(threshold_metrics["coverage_at_threshold"]),
         "base_rate": float(labels.mean()),
-        "decision_threshold": decision_threshold,
         "calibration_method": calibrator.method if calibrator is not None and calibrator.fitted else "none",
         "n_samples": int(len(labels)),
-        "bucket_analysis": bucket_analysis(proba, labels, future_returns, n_buckets=5),
+        **threshold_metrics,
     }
     return metrics
 
@@ -261,16 +259,42 @@ def _evaluate_best_checkpoint(
     val_frame: "pd.DataFrame | None",
     test_frame: "pd.DataFrame | None",
     cfg: TrainingConfig,
-) -> tuple[dict[str, Any], dict[str, Any], PlattCalibrator | None]:
+ ) -> tuple[dict[str, Any], dict[str, Any], PlattCalibrator | None, dict[str, Any], float]:
     model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location="cpu")
     device = torch.device("cpu")
     val_outputs = _collect_outputs(model, _build_loader(val_ds, batch_size, shuffle=False), device)
     calibrator = _fit_calibrator(val_outputs, cfg)
+    selected_decision_threshold = float(cfg.data.decision_threshold)
+    val_future_returns = val_frame["future_return"].to_numpy() if val_frame is not None and "future_return" in val_frame else None
+    threshold_optimization_summary: dict[str, Any] = {
+        "enabled": False,
+        "selection_status": "disabled",
+        "selected_threshold": selected_decision_threshold,
+        "candidates": [],
+    }
+    if cfg.threshold_optimization.enabled and len(val_outputs["labels"]) > 0:
+        calibrated_val_proba = (
+            calibrator.predict_proba(val_outputs["margins"])
+            if calibrator is not None and calibrator.fitted
+            else val_outputs["raw_proba"]
+        )
+        threshold_optimization_summary = optimize_decision_threshold(
+            calibrated_val_proba,
+            val_outputs["labels"],
+            val_future_returns,
+            candidate_thresholds=cfg.threshold_optimization.candidate_decision_thresholds,
+            default_threshold=cfg.data.decision_threshold,
+            min_action_rate=cfg.threshold_optimization.min_action_rate,
+            max_action_rate=cfg.threshold_optimization.max_action_rate,
+            min_precision_long=cfg.threshold_optimization.min_precision_long,
+            n_buckets=5,
+        )
+        selected_decision_threshold = float(threshold_optimization_summary.get("selected_threshold", selected_decision_threshold))
     val_metrics = _compute_metrics(
         val_outputs,
-        decision_threshold=cfg.data.decision_threshold,
+        decision_threshold=selected_decision_threshold,
         calibrator=calibrator,
-        future_returns=val_frame["future_return"].to_numpy() if val_frame is not None and "future_return" in val_frame else None,
+        future_returns=val_future_returns,
     )
 
     test_metrics: dict[str, Any] = {}
@@ -278,11 +302,11 @@ def _evaluate_best_checkpoint(
         test_outputs = _collect_outputs(model, _build_loader(test_ds, batch_size, shuffle=False), device)
         test_metrics = _compute_metrics(
             test_outputs,
-            decision_threshold=cfg.data.decision_threshold,
+            decision_threshold=selected_decision_threshold,
             calibrator=calibrator,
             future_returns=test_frame["future_return"].to_numpy() if test_frame is not None and "future_return" in test_frame else None,
         )
-    return val_metrics, test_metrics, calibrator
+    return val_metrics, test_metrics, calibrator, threshold_optimization_summary, selected_decision_threshold
 
 
 
@@ -294,11 +318,24 @@ def _aggregate_walk_forward_metrics(split_metrics: list[dict[str, Any]]) -> dict
         "directional_accuracy",
         "precision",
         "recall",
+        "precision_long",
+        "recall_long",
         "auc",
         "brier_score",
         "ece",
         "action_rate",
+        "coverage_at_threshold",
         "base_rate",
+        "avg_future_return_on_actions",
+        "median_future_return_on_actions",
+        "hit_rate_on_actions",
+        "payoff_ratio",
+        "top_bucket_hit_rate",
+        "top_bucket_avg_future_return",
+        "top_minus_bottom_bucket_hit_rate",
+        "top_minus_bottom_bucket_return",
+        "threshold_business_score",
+        "decision_threshold",
     ]
     mean_metrics: dict[str, float | None] = {}
     std_metrics: dict[str, float | None] = {}
@@ -389,7 +426,7 @@ def _run_walk_forward_validation(
             best_path = Path(ckpt_callback.best_model_path) if ckpt_callback.best_model_path else Path(tmp_dir) / "best.ckpt"
             if not best_path.exists():
                 continue
-            _, test_metrics, calibrator = _evaluate_best_checkpoint(
+            _, test_metrics, calibrator, threshold_summary, _ = _evaluate_best_checkpoint(
                 best_path,
                 batch_size=cfg.model.batch_size,
                 val_ds=val_ds,
@@ -405,6 +442,7 @@ def _run_walk_forward_validation(
                     "val_rows": len(split.val),
                     "test_rows": len(split.test),
                     "calibration_method": calibrator.method if calibrator is not None and calibrator.fitted else "none",
+                    "threshold_optimization": threshold_summary,
                     **test_metrics,
                 })
 
@@ -459,22 +497,37 @@ def train_symbol(
         effective_cfg = cfg
         target_optimization_summary: dict[str, Any] = {}
         if cfg.target_optimization.enabled:
-            target_optimization_summary = optimize_target_horizon(
+            target_optimization_summary = optimize_target_parameters(
                 bars_df,
                 data_cfg=cfg.data,
                 opt_cfg=cfg.target_optimization,
             )
             selected_horizon = int(target_optimization_summary.get("selected_horizon", cfg.data.forecast_horizon))
-            if selected_horizon != cfg.data.forecast_horizon:
+            selected_up_threshold = float(target_optimization_summary.get("selected_target_up_threshold", cfg.data.target_up_threshold))
+            selected_down_threshold = float(target_optimization_summary.get("selected_target_down_threshold", cfg.data.target_down_threshold))
+            if (
+                selected_horizon != cfg.data.forecast_horizon
+                or selected_up_threshold != cfg.data.target_up_threshold
+                or selected_down_threshold != cfg.data.target_down_threshold
+            ):
                 effective_cfg = replace(
                     cfg,
-                    data=replace(cfg.data, forecast_horizon=selected_horizon),
+                    data=replace(
+                        cfg.data,
+                        forecast_horizon=selected_horizon,
+                        target_up_threshold=selected_up_threshold,
+                        target_down_threshold=selected_down_threshold,
+                    ),
                 )
                 LOGGER.info(
-                    "target optimization selected horizon symbol=%s original=%d selected=%d score=%.6f",
+                    "target optimization selected params symbol=%s horizon=%d->%d up=%.4f->%.4f down=%.4f->%.4f score=%.6f",
                     symbol,
                     cfg.data.forecast_horizon,
                     selected_horizon,
+                    cfg.data.target_up_threshold,
+                    selected_up_threshold,
+                    cfg.data.target_down_threshold,
+                    selected_down_threshold,
                     float(target_optimization_summary.get("selected_score", 0.0)),
                 )
 
@@ -500,10 +553,6 @@ def train_symbol(
         prepared_df = getattr(dm, "prepared_df", None)
         if prepared_df is not None:
             walk_forward_metrics = _run_walk_forward_validation(symbol, prepared_df, effective_cfg)
-
-        baseline_metrics: dict[str, Any] = {}
-        if prepared_df is not None and effective_cfg.baseline.enabled:
-            baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg)
 
         sym_dir = (Path(cfg.artifacts_dir) / symbol).resolve()
         sym_dir.mkdir(parents=True, exist_ok=True)
@@ -555,7 +604,7 @@ def train_symbol(
         split = dm.split
         val_frame = align_sequence_rows(split.val, effective_cfg.data.sequence_length) if split is not None else None
         test_frame = align_sequence_rows(split.test, effective_cfg.data.sequence_length) if split is not None else None
-        val_metrics, test_metrics, calibrator = _evaluate_best_checkpoint(
+        val_metrics, test_metrics, calibrator, threshold_optimization_summary, selected_decision_threshold = _evaluate_best_checkpoint(
             best_source,
             batch_size=effective_cfg.model.batch_size,
             val_ds=dm.val_ds,
@@ -564,6 +613,15 @@ def train_symbol(
             test_frame=test_frame,
             cfg=effective_cfg,
         )
+        if selected_decision_threshold != effective_cfg.data.decision_threshold:
+            effective_cfg = replace(
+                effective_cfg,
+                data=replace(effective_cfg.data, decision_threshold=selected_decision_threshold),
+            )
+
+        baseline_metrics: dict[str, Any] = {}
+        if prepared_df is not None and effective_cfg.baseline.enabled:
+            baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg)
 
         best_ckpt = sym_dir / "best.ckpt"
         if best_source.exists() and best_source.resolve() != best_ckpt.resolve():
@@ -591,11 +649,15 @@ def train_symbol(
             "walk_forward": asdict(effective_cfg.walk_forward),
             "baseline": asdict(effective_cfg.baseline),
             "target_optimization": asdict(effective_cfg.target_optimization),
+            "threshold_optimization": asdict(effective_cfg.threshold_optimization),
             "symbol": symbol,
             "run_id": run_id,
             "feature_columns": dm.scaler.feature_names,
             "calibrator_path": calibrator_path,
             "selected_forecast_horizon": effective_cfg.data.forecast_horizon,
+            "selected_target_up_threshold": effective_cfg.data.target_up_threshold,
+            "selected_target_down_threshold": effective_cfg.data.target_down_threshold,
+            "selected_decision_threshold": effective_cfg.data.decision_threshold,
         }
         with open(config_path, "w") as f:
             json.dump(config_data, f, indent=2, default=str)
@@ -606,6 +668,11 @@ def train_symbol(
             "walk_forward": walk_forward_metrics,
             "baseline_lightgbm": baseline_metrics,
             "target_optimization": target_optimization_summary,
+            "threshold_optimization": threshold_optimization_summary,
+            "optimization": {
+                "target_search": target_optimization_summary,
+                "decision_threshold_search": threshold_optimization_summary,
+            },
         }
         with open(sym_dir / "metrics.json", "w") as f:
             json.dump(all_metrics, f, indent=2)
@@ -630,11 +697,12 @@ def train_symbol(
                 insert_metrics(engine, run_id, symbol, "wf", wf_mean)
 
         LOGGER.info(
-            "train_symbol completed symbol=%s run_id=%s val_loss=%.4f calibration=%s",
+            "train_symbol completed symbol=%s run_id=%s val_loss=%.4f calibration=%s decision_threshold=%.2f",
             symbol,
             run_id,
             float(val_metrics.get("loss", -1.0) or -1.0),
             calibrator.method if calibrator is not None and calibrator.fitted else "none",
+            effective_cfg.data.decision_threshold,
         )
         return TrainResult(symbol, run_id, "completed", metrics=all_metrics)
 

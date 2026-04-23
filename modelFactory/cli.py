@@ -11,6 +11,7 @@ from modelFactory.config import (
     CalibrationConfig,
     DataConfig,
     ModelConfig,
+    ThresholdOptimizationConfig,
     TargetOptimizationConfig,
     TrainingConfig,
     WalkForwardConfig,
@@ -61,7 +62,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--optimize-target", action="store_true", default=False,
                    help="Sélectionne automatiquement le meilleur horizon swing parmi plusieurs candidats")
     p.add_argument("--candidate-horizons", nargs="*", type=int, default=[3, 5, 10, 15])
+    p.add_argument("--candidate-up-thresholds", nargs="*", type=float, default=[0.0, 0.01, 0.02])
+    p.add_argument("--candidate-down-thresholds", nargs="*", type=float, default=[0.0, -0.005, -0.01])
     p.add_argument("--min-trades-fraction", type=float, default=0.15)
+    p.add_argument("--optimize-thresholds", action="store_true", default=False,
+                   help="Sélectionne automatiquement le meilleur decision_threshold sur validation")
+    p.add_argument("--candidate-decision-thresholds", nargs="*", type=float, default=[0.50, 0.55, 0.60, 0.65, 0.70])
+    p.add_argument("--min-action-rate", type=float, default=0.03)
+    p.add_argument("--max-action-rate", type=float, default=0.35)
+    p.add_argument("--min-precision-long", type=float, default=0.52)
     p.add_argument("--accelerator", type=str, default="auto", choices=["auto", "cpu", "gpu"])
     p.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return p
@@ -113,7 +122,16 @@ def main(args: list[str] | None = None) -> None:
         target_optimization=TargetOptimizationConfig(
             enabled=opts.optimize_target,
             candidate_horizons=tuple(opts.candidate_horizons),
+            candidate_up_thresholds=tuple(opts.candidate_up_thresholds),
+            candidate_down_thresholds=tuple(opts.candidate_down_thresholds),
             min_trades_fraction=opts.min_trades_fraction,
+        ),
+        threshold_optimization=ThresholdOptimizationConfig(
+            enabled=opts.optimize_thresholds,
+            candidate_decision_thresholds=tuple(opts.candidate_decision_thresholds),
+            min_action_rate=opts.min_action_rate,
+            max_action_rate=opts.max_action_rate,
+            min_precision_long=opts.min_precision_long,
         ),
         artifacts_dir=Path(opts.artifacts_dir),
         max_workers=opts.max_workers,

@@ -41,3 +41,23 @@ def test_target_optimization_requires_candidate_horizons() -> None:
         config.TargetOptimizationConfig(candidate_horizons=())
 
 
+def test_target_optimization_accepts_partially_valid_threshold_grid() -> None:
+    cfg = config.TargetOptimizationConfig(
+        candidate_horizons=(3, 5),
+        candidate_up_thresholds=(0.0, 0.02),
+        candidate_down_thresholds=(-0.01, 0.01),
+    )
+
+    assert cfg.candidate_up_thresholds == (0.0, 0.02)
+
+
+def test_threshold_optimization_rejects_invalid_candidate_decision_threshold() -> None:
+    with pytest.raises(ValueError, match="candidate_decision_thresholds"):
+        config.ThresholdOptimizationConfig(candidate_decision_thresholds=(0.0, 0.5))
+
+
+def test_threshold_optimization_rejects_invalid_action_rate_bounds() -> None:
+    with pytest.raises(ValueError, match="min_action_rate"):
+        config.ThresholdOptimizationConfig(min_action_rate=0.40, max_action_rate=0.20)
+
+
