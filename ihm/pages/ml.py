@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from io import BytesIO, StringIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -225,22 +226,107 @@ def _artifact_export_json_bytes(
     return json.dumps(payload, indent=2, ensure_ascii=False, default=str).encode("utf-8")
 
 
+def _build_ml_run_export_readme_bytes(
+    *,
+    export_df: pd.DataFrame,
+    artifact_report: dict[str, object] | None,
+    focused_audit_row: pd.DataFrame,
+    selected_navigation: dict[str, str] | None,
+    exported_at: str,
+    run_id: str,
+    symbol: str | None,
+) -> bytes:
+    sections = sorted({str(value) for value in export_df.get("section", pd.Series(dtype="object")).dropna().tolist()})
+    artifact_symbol = str(artifact_report.get("symbol") or "—") if artifact_report else "—"
+    artifact_run_id = str(artifact_report.get("run_id") or "—") if artifact_report else "—"
+    selected_row = focused_audit_row.iloc[0].to_dict() if not focused_audit_row.empty else {}
+    alignment_status = (
+        str(selected_row.get("governance_link_status") or "").strip()
+        or str((selected_navigation or {}).get("governance_link_status") or "").strip()
+        or "—"
+    )
+    selected_served_model = (
+        str(selected_row.get("served_model") or "").strip()
+        or str((selected_navigation or {}).get("served_model") or "").strip()
+        or "—"
+    )
+    selected_selection_mode = (
+        str(selected_row.get("governance_selection_mode") or "").strip()
+        or str((selected_navigation or {}).get("selection_mode") or "").strip()
+        or "—"
+    )
+    fallback_note = ""
+    if artifact_report is None:
+        fallback_note = (
+            "- Les fichiers `config.json` et `metrics.json` exportés sont des placeholders, car aucun artefact n'a pu être résolu "
+            "pour ce run.\n"
+        )
+    elif artifact_report.get("errors"):
+        fallback_note = (
+            "- Certains manifestes artefacts ont été reconstruits à partir des données déjà chargées en mémoire, car les fichiers source "
+            "n'étaient pas tous disponibles au moment de l'export.\n"
+        )
+    readme = (
+        "Alpha Trade — Export ML du run sélectionné\n"
+        "==========================================\n\n"
+        "Résumé d'export\n"
+        "----------------\n"
+        f"Horodatage d'export (UTC) : {exported_at}\n"
+        f"Run exporté : {run_id}\n"
+        f"Symbole DB : {symbol or '—'}\n"
+        f"Modèle servi sur la ligne sélectionnée : {selected_served_model}\n"
+        f"Statut d'alignement de la ligne sélectionnée : {alignment_status}\n"
+        f"Mode de sélection associé : {selected_selection_mode}\n"
+        f"Symbole artefact : {artifact_symbol}\n"
+        f"Run artefact courant : {artifact_run_id}\n\n"
+        "Contenu de l'archive\n"
+        "--------------------\n"
+        "- `ml_run_audit_<symbol>_<run>.csv` : export tabulaire consolidé du run sélectionné. La colonne `section` indique la provenance "
+        "des lignes (audit, gouvernance, prédictions, snapshots artefacts).\n"
+        "- `config.json` : manifeste de serving du symbole/artefact ciblé.\n"
+        "- `metrics.json` : manifeste de métriques et de gouvernance challengers/champion du symbole/artefact ciblé.\n"
+        "- `export_manifest.json` : méta-informations techniques sur l'archive produite.\n\n"
+        "Sections possibles du CSV\n"
+        "-------------------------\n"
+        f"- {', '.join(sections) if sections else 'aucune section exportée'}\n\n"
+        "Notes d'interprétation\n"
+        "----------------------\n"
+        "- Le CSV décrit le run sélectionné dans l'IHM au moment de l'export.\n"
+        "- Les fichiers `config.json` et `metrics.json` correspondent à l'artefact actuellement disponible pour le symbole ciblé.\n"
+        "- Si le run d'artefact diffère du `run_id` demandé, cela signifie généralement qu'un run plus récent a remplacé les artefacts sur disque.\n"
+        f"{fallback_note}"
+    )
+    return readme.encode("utf-8")
+
+
 def _build_ml_run_export_zip_bytes(
     *,
     export_df: pd.DataFrame,
     artifact_report: dict[str, object] | None,
+    focused_audit_row: pd.DataFrame,
+    selected_navigation: dict[str, str] | None,
+    exported_at: str,
     run_id: str,
     symbol: str | None,
 ) -> bytes:
     csv_name = _build_ml_run_export_filename(run_id, symbol)
     config_bytes = _artifact_export_json_bytes(artifact_report, key="config", path_key="config_path")
     metrics_bytes = _artifact_export_json_bytes(artifact_report, key="metrics", path_key="metrics_path")
+    readme_bytes = _build_ml_run_export_readme_bytes(
+        export_df=export_df,
+        artifact_report=artifact_report,
+        focused_audit_row=focused_audit_row,
+        selected_navigation=selected_navigation,
+        exported_at=exported_at,
+        run_id=run_id,
+        symbol=symbol,
+    )
     manifest = {
         "run_id": run_id,
         "symbol": symbol,
         "artifact_symbol": artifact_report.get("symbol") if artifact_report else None,
         "artifact_run_id": artifact_report.get("run_id") if artifact_report else None,
-        "archive_contents": [csv_name, "config.json", "metrics.json"],
+        "archive_contents": [csv_name, "config.json", "metrics.json", "export_manifest.json", "README.txt"],
     }
     zip_buffer = BytesIO()
     with ZipFile(zip_buffer, mode="w", compression=ZIP_DEFLATED) as archive:
@@ -248,6 +334,7 @@ def _build_ml_run_export_zip_bytes(
         archive.writestr("config.json", config_bytes)
         archive.writestr("metrics.json", metrics_bytes)
         archive.writestr("export_manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False, default=str).encode("utf-8"))
+        archive.writestr("README.txt", readme_bytes)
     return zip_buffer.getvalue()
 
 
@@ -515,6 +602,9 @@ def render() -> None:
             export_zip_bytes = _build_ml_run_export_zip_bytes(
                 export_df=export_df,
                 artifact_report=artifact_report_for_navigation,
+                focused_audit_row=focused_audit_row,
+                selected_navigation=selected_navigation,
+                exported_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 run_id=run_id,
                 symbol=selected_navigation.get("symbol"),
             )
