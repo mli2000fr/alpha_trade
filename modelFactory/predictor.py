@@ -14,10 +14,11 @@ import torch
 
 from modelFactory.calibration import calibrator_from_state_dict, margin_from_logits
 from modelFactory.config import DataConfig
-from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment
+from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
+from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment, load_universe_bars
 from modelFactory.dataset import FeatureScaler
-from modelFactory.db_registry import insert_predictions, load_training_run
-from modelFactory.features import compute_features
+from modelFactory.db_registry import insert_predictions, load_candidate_symbols, load_training_run
+from modelFactory.features import compute_features, get_feature_columns
 from modelFactory.model import LSTMAttentionModule
 
 LOGGER = logging.getLogger(__name__)
@@ -129,6 +130,8 @@ def predict_symbol(
         sequence_length=cfg_data["data"]["sequence_length"],
         forecast_horizon=cfg_data["data"]["forecast_horizon"],
         include_sentiment_features=cfg_data["data"].get("include_sentiment_features", False),
+        enable_cross_sectional_features=cfg_data["data"].get("enable_cross_sectional_features", False),
+        cross_sectional_min_universe=cfg_data["data"].get("cross_sectional_min_universe", 20),
         feature_set=cfg_data["data"].get("feature_set", "v1"),
         benchmark_symbol=cfg_data["data"].get("benchmark_symbol", "SPY"),
         target_mode=cfg_data["data"].get("target_mode", "binary"),
@@ -162,7 +165,7 @@ def predict_symbol(
     if data_cfg.include_sentiment_features:
         sentiment_df = load_symbol_sentiment(engine, symbol, end_date=cutoff_date)
     benchmark_df = None
-    if data_cfg.feature_set == "expert":
+    if data_cfg.feature_set == "expert" or data_cfg.enable_cross_sectional_features:
         benchmark_df = load_benchmark_bars(engine, data_cfg.benchmark_symbol, end_date=cutoff_date)
     df = compute_features(
         bars,
@@ -171,6 +174,23 @@ def predict_symbol(
         benchmark_df=benchmark_df,
         feature_set=data_cfg.feature_set,
     )
+    if data_cfg.enable_cross_sectional_features:
+        universe_symbols = load_candidate_symbols(engine)
+        if symbol not in universe_symbols:
+            universe_symbols.append(symbol)
+        universe_df = load_universe_bars(engine, universe_symbols, end_date=cutoff_date)
+        cross_sectional_df, _ = build_cross_sectional_features(
+            universe_df,
+            benchmark_df=benchmark_df,
+            min_universe_size=data_cfg.cross_sectional_min_universe,
+        )
+        df = merge_cross_sectional_features(df, cross_sectional_df)
+        active_features = get_feature_columns(
+            data_cfg.include_sentiment_features,
+            feature_set=data_cfg.feature_set,
+            include_cross_sectional=True,
+        )
+        df = df.dropna(subset=active_features).reset_index(drop=True)
     if len(df) < data_cfg.sequence_length:
         return None
 

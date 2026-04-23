@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from modelFactory.config import DataConfig, ModelConfig
+from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, build_cross_sectional_features, merge_cross_sectional_features
 from modelFactory.features import FEATURE_COLUMNS, build_target, compute_features, compute_future_return, get_feature_columns
 
 LOGGER = logging.getLogger(__name__)
@@ -186,6 +187,7 @@ class SymbolDataModule(L.LightningDataModule):
         model_cfg: ModelConfig,
         sentiment_df: pd.DataFrame | None = None,
         benchmark_df: pd.DataFrame | None = None,
+        universe_df: pd.DataFrame | None = None,
     ) -> None:
         super().__init__()
         self.bars_df = bars_df
@@ -193,7 +195,12 @@ class SymbolDataModule(L.LightningDataModule):
         self.model_cfg = model_cfg
         self.sentiment_df = sentiment_df
         self.benchmark_df = benchmark_df
-        self._feature_cols = get_feature_columns(data_cfg.include_sentiment_features, feature_set=data_cfg.feature_set)
+        self.universe_df = universe_df
+        self._feature_cols = get_feature_columns(
+            data_cfg.include_sentiment_features,
+            feature_set=data_cfg.feature_set,
+            include_cross_sectional=data_cfg.enable_cross_sectional_features,
+        )
         self.scaler = FeatureScaler(feature_names=self._feature_cols)
         self.train_ds: Optional[SequenceDataset] = None
         self.val_ds: Optional[SequenceDataset] = None
@@ -201,6 +208,8 @@ class SymbolDataModule(L.LightningDataModule):
         self.prepared_df: Optional[pd.DataFrame] = None
         self.split: Optional[ChronoSplit] = None
         self.n_features: int = len(self._feature_cols)
+        self.cross_sectional_feature_columns: list[str] = list(CROSS_SECTIONAL_FEATURE_COLUMNS) if data_cfg.enable_cross_sectional_features else []
+        self.cross_sectional_diagnostics: dict[str, object] = {}
         self._num_workers = min(os.cpu_count() or 0, 4)
         self._pin_memory = torch.cuda.is_available()
 
@@ -210,8 +219,10 @@ class SymbolDataModule(L.LightningDataModule):
             self.data_cfg,
             sentiment_df=self.sentiment_df,
             benchmark_df=self.benchmark_df,
+            universe_df=self.universe_df,
         )
         self.prepared_df = df
+        self.cross_sectional_diagnostics = dict(df.attrs.get("cross_sectional_diagnostics", {}))
         # 2. Chrono split
         split = chrono_split(df, self.data_cfg.train_ratio, self.data_cfg.val_ratio)
         self.split = split
@@ -253,6 +264,7 @@ def prepare_symbol_frame(
     data_cfg: DataConfig,
     sentiment_df: pd.DataFrame | None = None,
     benchmark_df: pd.DataFrame | None = None,
+    universe_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Prépare le DataFrame final features + target pour un symbole."""
     df = compute_features(
@@ -262,6 +274,14 @@ def prepare_symbol_frame(
         benchmark_df=benchmark_df,
         feature_set=data_cfg.feature_set,
     )
+    cross_sectional_diagnostics: dict[str, object] = {}
+    if data_cfg.enable_cross_sectional_features:
+        cross_sectional_df, cross_sectional_diagnostics = build_cross_sectional_features(
+            universe_df,
+            benchmark_df=benchmark_df,
+            min_universe_size=data_cfg.cross_sectional_min_universe,
+        )
+        df = merge_cross_sectional_features(df, cross_sectional_df)
     df["future_return"] = compute_future_return(df, horizon=data_cfg.forecast_horizon)
     df["target"] = build_target(
         df,
@@ -270,6 +290,13 @@ def prepare_symbol_frame(
         positive_threshold=data_cfg.target_up_threshold,
         negative_threshold=data_cfg.target_down_threshold,
     )
-    return df.reset_index(drop=True)
+    active_features = get_feature_columns(
+        data_cfg.include_sentiment_features,
+        feature_set=data_cfg.feature_set,
+        include_cross_sectional=data_cfg.enable_cross_sectional_features,
+    )
+    df = df.dropna(subset=active_features).reset_index(drop=True)
+    df.attrs["cross_sectional_diagnostics"] = cross_sectional_diagnostics
+    return df
 
 

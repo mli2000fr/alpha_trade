@@ -128,6 +128,7 @@ def run_tabular_baseline(
 	feature_columns = get_feature_columns(
 		include_sentiment=cfg.data.include_sentiment_features,
 		feature_set=cfg.data.feature_set,
+		include_cross_sectional=cfg.data.enable_cross_sectional_features,
 	)
 	train_df, val_df, test_df = tabular_split(
 		prepared_df,

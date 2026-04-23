@@ -9,7 +9,7 @@ import torch
 from sqlalchemy.engine import Engine
 
 from modelFactory.config import TrainingConfig
-from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment
+from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment, load_universe_bars
 from modelFactory.db_registry import load_candidate_symbols
 from modelFactory.trainer import TrainResult, train_symbol
 
@@ -20,18 +20,22 @@ def _gpu_requested_or_available(cfg: TrainingConfig) -> bool:
     return cfg.accelerator == "gpu" or (cfg.accelerator == "auto" and torch.cuda.is_available())
 
 
-def _train_worker(symbol: str, cfg: TrainingConfig) -> TrainResult:
+def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] | None = None) -> TrainResult:
     """Worker function exécutée dans un sous-process. Crée son propre engine."""
     from database.connection import get_sqlalchemy_engine
     engine = get_sqlalchemy_engine()
     bars = load_symbol_bars(engine, symbol)
     benchmark_df = None
-    if cfg.data.feature_set == "expert":
+    if cfg.data.feature_set == "expert" or cfg.data.enable_cross_sectional_features:
         benchmark_df = load_benchmark_bars(engine, cfg.data.benchmark_symbol)
     sentiment_df = None
     if cfg.data.include_sentiment_features:
         sentiment_df = load_symbol_sentiment(engine, symbol)
-    return train_symbol(symbol, bars, cfg, engine, sentiment_df=sentiment_df, benchmark_df=benchmark_df)
+    universe_df = None
+    if cfg.data.enable_cross_sectional_features:
+        effective_universe = list(dict.fromkeys((universe_symbols or []) + [symbol]))
+        universe_df = load_universe_bars(engine, effective_universe)
+    return train_symbol(symbol, bars, cfg, engine, sentiment_df=sentiment_df, benchmark_df=benchmark_df, universe_df=universe_df)
 
 
 def run_training_batch(
@@ -78,7 +82,10 @@ def run_training_batch(
     if effective_workers == 1:
         for sym in symbols:
             try:
-                result = _train_worker(sym, cfg)
+                if cfg.data.enable_cross_sectional_features:
+                    result = _train_worker(sym, cfg, symbols)
+                else:
+                    result = _train_worker(sym, cfg)
                 results.append(result)
                 LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
             except Exception as exc:
@@ -86,7 +93,10 @@ def run_training_batch(
                 results.append(TrainResult(sym, "N/A", "failed", skip_reason=str(exc)))
     else:
         with ProcessPoolExecutor(max_workers=effective_workers) as pool:
-            futures = {pool.submit(_train_worker, sym, cfg): sym for sym in symbols}
+            if cfg.data.enable_cross_sectional_features:
+                futures = {pool.submit(_train_worker, sym, cfg, symbols): sym for sym in symbols}
+            else:
+                futures = {pool.submit(_train_worker, sym, cfg): sym for sym in symbols}
             for future in as_completed(futures):
                 sym = futures[future]
                 try:

@@ -243,3 +243,81 @@ def test_predict_symbol_applies_saved_calibration_and_decision_threshold(tmp_pat
     assert row["selected_model"] == "lstm_attention"
 
 
+def test_predict_symbol_supports_cross_sectional_features(tmp_path: Path, monkeypatch) -> None:
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0, 0.0], "std": [1.0, 1.0], "features": ["feat1", "ret_20_rank"]}, cast(Any, fh))
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                    "enable_cross_sectional_features": True,
+                    "cross_sectional_min_universe": 2,
+                },
+                "run_id": "run-config",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"symbol": [symbol] * 62, "date": pd.date_range("2024-01-01", periods=62, freq="D"), "close": list(range(62))})
+    features = pd.DataFrame({"symbol": [symbol] * 62, "date": pd.date_range("2024-01-01", periods=62, freq="D"), "feat1": [float(i) for i in range(62)]})
+    cross_sectional = pd.DataFrame({"symbol": [symbol] * 62, "date": pd.date_range("2024-01-01", periods=62, freq="D"), "ret_20_rank": [0.8] * 62})
+
+    class FakeModel:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, x):
+            return torch.tensor([[0.0, 2.0]], dtype=torch.float32), torch.tensor([[1.0]])
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(predictor, "load_benchmark_bars", lambda engine, benchmark_symbol, end_date=None: bars.assign(symbol="SPY"))
+    monkeypatch.setattr(predictor, "load_candidate_symbols", lambda engine: ["AAPL", "MSFT"])
+    monkeypatch.setattr(predictor, "load_universe_bars", lambda engine, symbols, end_date=None: bars.assign(symbol="AAPL"))
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(
+        predictor,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1", "ret_20_rank"],
+    )
+    monkeypatch.setattr(
+        predictor,
+        "build_cross_sectional_features",
+        lambda universe_df, benchmark_df=None, min_universe_size=20: (cross_sectional.copy(), {"enabled": True}),
+    )
+    monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(
+        predictor.LSTMAttentionModule,
+        "load_from_checkpoint",
+        lambda path, map_location=None: FakeModel(),
+    )
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is not None
+    row = result.to_dict(orient="records")[0]
+    assert row["selected_model"] == "lstm_attention"
+    assert row["predicted_class"] == 1
+
+

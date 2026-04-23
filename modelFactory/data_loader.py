@@ -39,6 +39,35 @@ def load_benchmark_bars(engine: Engine, benchmark_symbol: str = "SPY", end_date:
     return df
 
 
+def load_universe_bars(
+    engine: Engine,
+    symbols: list[str] | None = None,
+    end_date: date | None = None,
+) -> pd.DataFrame:
+    """Charge un panel historique minimal de l'univers pour les features cross-sectionnelles."""
+    where_clauses: list[str] = []
+    params: dict[str, object] = {}
+    if symbols:
+        symbol_params = []
+        for idx, symbol in enumerate(symbols):
+            key = f"sym_{idx}"
+            params[key] = symbol
+            symbol_params.append(f":{key}")
+        where_clauses.append(f"symbol IN ({', '.join(symbol_params)})")
+    if end_date is not None:
+        where_clauses.append("`date` <= :end_date")
+        params["end_date"] = end_date
+    where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    query = text(
+        "SELECT symbol, `date`, `open`, high, low, `close`, volume, adj_close, vwap, daily_return, is_filled "
+        f"FROM stock_bars_daily {where_clause} ORDER BY symbol, `date`"
+    )
+    with engine.connect() as conn:
+        df = pd.read_sql(query, conn, params=params, parse_dates=["date"])
+    LOGGER.info("load_universe_bars symbols=%s rows=%d", len(symbols) if symbols else "ALL", len(df))
+    return df
+
+
 def load_symbol_sentiment(engine: Engine, symbol: str, end_date: date | None = None) -> pd.DataFrame:
     """Charge les features sentiment quotidiennes depuis ticker_daily_sentiment_features.
 

@@ -16,6 +16,8 @@ class DataConfig:
     val_ratio: float = 0.15
     # test = 1 - train - val
     include_sentiment_features: bool = False
+    enable_cross_sectional_features: bool = False
+    cross_sectional_min_universe: int = 20
     feature_set: str = "v1"  # v1 | expert
     benchmark_symbol: str = "SPY"
     target_mode: str = "binary"  # binary | swing_cash
@@ -38,6 +40,8 @@ class DataConfig:
             raise ValueError("train_ratio + val_ratio doit être < 1.")
         if self.feature_set not in {"v1", "expert"}:
             raise ValueError("feature_set doit être 'v1' ou 'expert'.")
+        if self.cross_sectional_min_universe < 2:
+            raise ValueError("cross_sectional_min_universe doit être >= 2.")
         if self.target_mode not in {"binary", "swing_cash"}:
             raise ValueError("target_mode doit être 'binary' ou 'swing_cash'.")
         if not (0.0 < self.decision_threshold < 1.0):

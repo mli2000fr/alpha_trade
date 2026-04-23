@@ -30,6 +30,18 @@ def test_data_config_accepts_expert_feature_set() -> None:
     assert cfg.benchmark_symbol == "SPY"
 
 
+def test_data_config_accepts_cross_sectional_fields() -> None:
+    cfg = config.DataConfig(enable_cross_sectional_features=True, cross_sectional_min_universe=10)
+
+    assert cfg.enable_cross_sectional_features is True
+    assert cfg.cross_sectional_min_universe == 10
+
+
+def test_data_config_rejects_cross_sectional_min_universe_below_two() -> None:
+    with pytest.raises(ValueError, match="cross_sectional_min_universe"):
+        config.DataConfig(cross_sectional_min_universe=1)
+
+
 def test_baseline_config_defaults_to_lightgbm() -> None:
     cfg = config.BaselineConfig(enabled=True)
 

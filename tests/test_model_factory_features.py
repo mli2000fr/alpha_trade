@@ -121,3 +121,10 @@ def test_compute_features_expert_adds_trend_relative_strength_and_regime() -> No
     assert not result[["sma20_distance", "relative_strength_20", "market_volatility_20"]].isna().any().any()
 
 
+def test_get_feature_columns_can_include_cross_sectional_features() -> None:
+    cols = features.get_feature_columns(include_sentiment=False, feature_set="expert", include_cross_sectional=True)
+
+    assert "relative_strength_20" in cols
+    assert "ret_20_rank" in cols
+
+

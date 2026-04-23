@@ -46,3 +46,16 @@ def test_cli_parser_accepts_catboost_options() -> None:
     assert opts.catboost_learning_rate == 0.05
 
 
+def test_cli_parser_accepts_cross_sectional_options() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "train",
+        "--enable-cross-sectional",
+        "--cross-sectional-min-universe", "12",
+    ])
+
+    assert opts.enable_cross_sectional is True
+    assert opts.cross_sectional_min_universe == 12
+
+

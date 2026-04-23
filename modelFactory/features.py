@@ -55,11 +55,19 @@ SENTIMENT_FEATURE_COLUMNS: list[str] = [
 ]
 
 
-def get_feature_columns(include_sentiment: bool = False, feature_set: str = "v1") -> list[str]:
+def get_feature_columns(
+    include_sentiment: bool = False,
+    feature_set: str = "v1",
+    include_cross_sectional: bool = False,
+) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnel sentiment)."""
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":
         cols.extend(EXPERT_FEATURE_COLUMNS)
+    if include_cross_sectional:
+        from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS
+
+        cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)
     if include_sentiment:
         cols.extend(SENTIMENT_FEATURE_COLUMNS)
     return cols

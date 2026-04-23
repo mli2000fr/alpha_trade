@@ -53,3 +53,37 @@ def test_prepare_symbol_frame_adds_future_return() -> None:
     assert "relative_strength_20" in prepared.columns
 
 
+def test_prepare_symbol_frame_merges_cross_sectional_features() -> None:
+    n = 260
+    dates = pd.date_range("2020-01-01", periods=n, freq="D")
+
+    def _bars(symbol: str, base: float) -> pd.DataFrame:
+        close = pd.Series([base + i for i in range(n)], dtype=float)
+        return pd.DataFrame(
+            {
+                "symbol": [symbol] * n,
+                "date": dates,
+                "open": close * 0.99,
+                "high": close * 1.01,
+                "low": close * 0.98,
+                "close": close,
+                "volume": [1_000_000.0] * n,
+                "adj_close": close,
+                "vwap": close,
+                "daily_return": [0.0] * n,
+                "is_filled": [0] * n,
+            }
+        )
+
+    bars = _bars("AAPL", 100.0)
+    benchmark = _bars("SPY", 90.0)
+    universe = pd.concat([bars, _bars("MSFT", 110.0), _bars("NVDA", 120.0)], ignore_index=True)
+    cfg = dataset.DataConfig(feature_set="expert", benchmark_symbol="SPY", enable_cross_sectional_features=True, cross_sectional_min_universe=2)
+
+    prepared = dataset.prepare_symbol_frame(bars, cfg, benchmark_df=benchmark, universe_df=universe)
+
+    assert "ret_20_rank" in prepared.columns
+    assert "relative_strength_20_rank" in prepared.columns
+    assert prepared.attrs["cross_sectional_diagnostics"]["enabled"] is True
+
+

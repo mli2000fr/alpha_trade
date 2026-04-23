@@ -436,7 +436,11 @@ def _run_walk_forward_validation(
         LOGGER.warning("walk_forward skipped symbol=%s reason=no_valid_split", symbol)
         return {}
 
-    feature_cols = get_feature_columns(cfg.data.include_sentiment_features, feature_set=cfg.data.feature_set)
+    feature_cols = get_feature_columns(
+        cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
     fold_metrics: list[dict[str, Any]] = []
 
     for split in splits:
@@ -531,6 +535,7 @@ def train_symbol(
     engine: Optional[Engine] = None,
     sentiment_df: "pd.DataFrame | None" = None,
     benchmark_df: "pd.DataFrame | None" = None,
+    universe_df: "pd.DataFrame | None" = None,
 ) -> TrainResult:
     """Entraîne un modèle LSTM+Attention pour un symbole unique.
 
@@ -596,6 +601,8 @@ def train_symbol(
         datamodule_kwargs: dict[str, Any] = {"sentiment_df": sentiment_df}
         if benchmark_df is not None:
             datamodule_kwargs["benchmark_df"] = benchmark_df
+        if universe_df is not None:
+            datamodule_kwargs["universe_df"] = universe_df
         dm = SymbolDataModule(
             bars_df,
             effective_cfg.data,
@@ -722,6 +729,8 @@ def train_symbol(
         }
         selected_architecture = "lstm_attention"
         challenger_ranking = _build_challenger_ranking(challengers, selected_architecture)
+        cross_sectional_feature_columns = list(getattr(dm, "cross_sectional_feature_columns", []))
+        cross_sectional_diagnostics = dict(getattr(dm, "cross_sectional_diagnostics", {}))
         config_data = {
             "data": asdict(effective_cfg.data),
             "model": {**asdict(effective_cfg.model), "input_size": dm.n_features},
@@ -733,6 +742,8 @@ def train_symbol(
             "symbol": symbol,
             "run_id": run_id,
             "feature_columns": dm.scaler.feature_names,
+            "cross_sectional_feature_columns": cross_sectional_feature_columns,
+            "cross_sectional_diagnostics": cross_sectional_diagnostics,
             "calibrator_path": calibrator_path,
             "selected_forecast_horizon": effective_cfg.data.forecast_horizon,
             "selected_target_up_threshold": effective_cfg.data.target_up_threshold,
@@ -775,6 +786,11 @@ def train_symbol(
             "optimization": {
                 "target_search": target_optimization_summary,
                 "decision_threshold_search": threshold_optimization_summary,
+            },
+            "diagnostics": {
+                "feature_columns": dm.scaler.feature_names,
+                "cross_sectional_feature_columns": cross_sectional_feature_columns,
+                "cross_sectional_diagnostics": cross_sectional_diagnostics,
             },
             "champion": {
                 "model_name": selected_architecture,

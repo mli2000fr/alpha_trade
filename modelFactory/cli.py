@@ -35,6 +35,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
     p.add_argument("--include-sentiment", action="store_true", default=False,
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
+    p.add_argument("--enable-cross-sectional", action="store_true", default=False,
+                   help="Active les features cross-sectionnelles PIT-safe calculées depuis l'univers historique")
+    p.add_argument("--cross-sectional-min-universe", type=int, default=20,
+                   help="Nombre minimum de symboles disponibles par date pour calculer des ranks cross-sectionnels fiables")
     p.add_argument("--feature-set", type=str, default="v1", choices=["v1", "expert"])
     p.add_argument("--benchmark-symbol", type=str, default="SPY")
     p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash"])
@@ -96,6 +100,8 @@ def main(args: list[str] | None = None) -> None:
             sequence_length=opts.sequence_length,
             forecast_horizon=opts.forecast_horizon,
             include_sentiment_features=opts.include_sentiment,
+            enable_cross_sectional_features=opts.enable_cross_sectional,
+            cross_sectional_min_universe=opts.cross_sectional_min_universe,
             feature_set=opts.feature_set,
             benchmark_symbol=opts.benchmark_symbol,
             target_mode=opts.target_mode,
