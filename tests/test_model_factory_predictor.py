@@ -6,12 +6,18 @@ from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 import pytest
 import torch
 from sqlalchemy.engine import Engine
 
 from modelFactory import predictor
+
+
+class PickleableFakeGlobalModel:
+    def predict_proba(self, X):
+        return np.array([[0.2, 0.8]], dtype=float)
 
 
 def test_resolve_inference_device_rejects_invalid_accelerator() -> None:
@@ -50,7 +56,7 @@ def test_resolve_artifact_paths_prefers_registry_when_files_exist(tmp_path: Path
     assert resolved == (ckpt, scaler, config, "run-registry")
 
 
-def test_resolve_routed_lstm_artifacts_uses_routing_block(tmp_path: Path) -> None:
+def test_resolve_selected_model_route_uses_routing_block(tmp_path: Path) -> None:
     routed_ckpt = tmp_path / "routed.ckpt"
     routed_scaler = tmp_path / "routed.pkl"
     routed_config = tmp_path / "routed.json"
@@ -68,16 +74,16 @@ def test_resolve_routed_lstm_artifacts_uses_routing_block(tmp_path: Path) -> Non
         },
     }
 
-    resolved_ckpt, resolved_scaler, selected_model = predictor._resolve_routed_lstm_artifacts(
+    route = predictor._resolve_selected_model_route(
         cfg_data,
         tmp_path / "default.ckpt",
         tmp_path / "default.pkl",
         tmp_path / "default.json",
     )
 
-    assert resolved_ckpt == routed_ckpt
-    assert resolved_scaler == routed_scaler
-    assert selected_model == "catboost"
+    assert route["selected_model"] == "lstm_attention"
+    assert route["checkpoint_path"] == routed_ckpt
+    assert route["scaler_path"] == routed_scaler
 
 
 def test_predict_symbol_returns_dataframe_and_persists(tmp_path: Path, monkeypatch) -> None:
@@ -318,6 +324,81 @@ def test_predict_symbol_supports_cross_sectional_features(tmp_path: Path, monkey
     assert result is not None
     row = result.to_dict(orient="records")[0]
     assert row["selected_model"] == "lstm_attention"
+    assert row["predicted_class"] == 1
+
+
+def test_predict_symbol_can_route_to_global_model(tmp_path: Path, monkeypatch) -> None:
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    global_dir = tmp_path / "__GLOBAL__"
+    symbol_dir.mkdir(parents=True)
+    global_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat1"]}, cast(Any, fh))
+    with open(global_dir / "global_model.pkl", "wb") as fh:
+        pickle.dump(PickleableFakeGlobalModel(), cast(Any, fh))
+    (global_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                    "decision_threshold": 0.6,
+                },
+                "feature_columns": ["feat1"],
+                "artifact_symbol": "__GLOBAL__",
+                "architecture_selected": "global_model",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                },
+                "artifact_routes": {
+                    "selected_model": "global_model",
+                    "models": {
+                        "global_model": {
+                            "inference_backend": "global_tabular",
+                            "config_path": str(global_dir / "config.json"),
+                            "model_path": str(global_dir / "global_model.pkl"),
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"symbol": [symbol] * 62, "date": pd.date_range("2024-01-01", periods=62, freq="D"), "close": list(range(62))})
+    features = pd.DataFrame({"symbol": [symbol] * 62, "date": pd.date_range("2024-01-01", periods=62, freq="D"), "feat1": [float(i) for i in range(62)]})
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is not None
+    row = result.to_dict(orient="records")[0]
+    assert row["selected_model"] == "global_model"
     assert row["predicted_class"] == 1
 
 

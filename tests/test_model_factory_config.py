@@ -54,6 +54,12 @@ def test_baseline_config_accepts_catboost_model_name() -> None:
     assert cfg.model_name == "catboost"
 
 
+def test_global_model_config_accepts_lightgbm() -> None:
+    cfg = config.GlobalModelConfig(enabled=True, model_name="lightgbm", artifact_symbol="__GLOBAL__")
+
+    assert cfg.model_name == "lightgbm"
+
+
 def test_target_optimization_requires_candidate_horizons() -> None:
     with pytest.raises(ValueError, match="candidate_horizons"):
         config.TargetOptimizationConfig(candidate_horizons=())

@@ -1,8 +1,10 @@
 """modelFactory/orchestrator.py — Orchestrateur distribué multi-symboles."""
 from __future__ import annotations
 
+import json
 import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
 from typing import Optional
 
 import torch
@@ -11,9 +13,101 @@ from sqlalchemy.engine import Engine
 from modelFactory.config import TrainingConfig
 from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment, load_universe_bars
 from modelFactory.db_registry import load_candidate_symbols
+from modelFactory.global_model import train_global_model
 from modelFactory.trainer import TrainResult, train_symbol
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _selection_score_from_result(result: dict) -> float:
+    if not result or result.get("status") != "completed":
+        return float("-inf")
+    return float(
+        result.get("selection_score")
+        or result.get("test", {}).get("threshold_business_score")
+        or result.get("test", {}).get("auc")
+        or result.get("val", {}).get("threshold_business_score")
+        or 0.0
+    )
+
+
+def _build_ranking(challengers: dict[str, dict], champion_name: str) -> list[dict[str, object]]:
+    sortable = sorted(challengers.items(), key=lambda item: _selection_score_from_result(item[1]), reverse=True)
+    ranking: list[dict[str, object]] = []
+    for idx, (model_name, result) in enumerate(sortable, start=1):
+        status = result.get("status", "unknown")
+        if model_name == champion_name and status == "completed":
+            status = "selected_default_champion"
+        ranking.append(
+            {
+                "rank": idx,
+                "model_name": model_name,
+                "selection_score": None if _selection_score_from_result(result) == float("-inf") else _selection_score_from_result(result),
+                "status": status,
+                "reason": result.get("reason"),
+            }
+        )
+    return ranking
+
+
+def _inject_global_model_into_symbol_artifacts(
+    symbol: str,
+    cfg: TrainingConfig,
+    global_result: dict,
+) -> None:
+    symbol_dir = (Path(cfg.artifacts_dir) / symbol).resolve()
+    config_path = symbol_dir / "config.json"
+    metrics_path = symbol_dir / "metrics.json"
+    if not config_path.exists() or not metrics_path.exists():
+        return
+
+    with open(config_path, encoding="utf-8") as fh:
+        config_data = json.load(fh)
+    with open(metrics_path, encoding="utf-8") as fh:
+        metrics = json.load(fh)
+
+    symbol_global = global_result.get("by_symbol", {}).get(symbol)
+    if symbol_global is None:
+        symbol_global = {
+            "status": global_result.get("status", "unknown"),
+            "model_name": "global_model",
+            "backend_model_name": global_result.get("backend_model_name"),
+            "reason": global_result.get("reason", "symbol_not_available_in_global_test"),
+            "selection_score": global_result.get("selection_score"),
+            "val": global_result.get("val", {}),
+            "test": global_result.get("test", {}),
+        }
+    else:
+        symbol_global = {
+            **symbol_global,
+            "artifact_symbol": global_result.get("artifact_symbol"),
+            "artifact_paths": global_result.get("artifact_paths", {}),
+        }
+
+    artifact_routes = config_data.get("artifact_routes") or {"selected_model": config_data.get("architecture_selected", "lstm_attention"), "models": {}}
+    models = artifact_routes.setdefault("models", {})
+    models["global_model"] = {
+        "status": symbol_global.get("status", global_result.get("status", "unknown")),
+        "artifact_symbol": global_result.get("artifact_symbol"),
+        "model_path": global_result.get("artifact_paths", {}).get("model_path"),
+        "config_path": global_result.get("artifact_paths", {}).get("config_path"),
+        "calibrator_path": global_result.get("artifact_paths", {}).get("calibrator_path"),
+        "inference_backend": "global_tabular",
+        "backend_model_name": global_result.get("backend_model_name"),
+    }
+    config_data["artifact_routes"] = artifact_routes
+
+    challengers = metrics.get("challengers") or {}
+    challengers["global_model"] = symbol_global
+    challenger_map = {k: v for k, v in challengers.items() if k != "ranking"}
+    challengers["ranking"] = _build_ranking(challenger_map, config_data.get("architecture_selected", "lstm_attention"))
+    metrics["challengers"] = challengers
+    metrics["global_model"] = symbol_global
+
+    with open(config_path, "w", encoding="utf-8") as fh:
+        json.dump(config_data, fh, indent=2, default=str)
+    with open(metrics_path, "w", encoding="utf-8") as fh:
+        json.dump(metrics, fh, indent=2, default=str)
 
 
 def _gpu_requested_or_available(cfg: TrainingConfig) -> bool:
@@ -111,6 +205,15 @@ def run_training_batch(
     completed = sum(1 for r in results if r.status == "completed")
     skipped = sum(1 for r in results if r.status == "skipped")
     failed = sum(1 for r in results if r.status == "failed")
+
+    if cfg.global_model.enabled and symbols:
+        global_result = train_global_model(symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine)
+        LOGGER.info("run_training_batch global_model status=%s", global_result.get("status"))
+        for result in results:
+            if result.status != "completed":
+                continue
+            _inject_global_model_into_symbol_artifacts(result.symbol, cfg, global_result)
+            result.metrics["global_model"] = global_result.get("by_symbol", {}).get(result.symbol, global_result)
     LOGGER.info("run_training_batch finished completed=%d skipped=%d failed=%d", completed, skipped, failed)
     return results
 

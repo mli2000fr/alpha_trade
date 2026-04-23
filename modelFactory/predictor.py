@@ -65,68 +65,41 @@ def _resolve_artifact_paths(
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
 
 
-def _resolve_routed_lstm_artifacts(
+def _resolve_selected_model_route(
     cfg_data: dict,
     ckpt_path: Path,
     scaler_path: Path,
     config_path: Path,
-) -> tuple[Path, Path, str]:
+) -> dict[str, object]:
     routing = cfg_data.get("artifact_routes") or {}
     selected_model = str(routing.get("selected_model") or cfg_data.get("architecture_selected") or "lstm_attention")
     models = routing.get("models") or {}
-    lstm_route = models.get("lstm_attention") or {}
+    if selected_model == "global_model":
+        global_route = models.get("global_model") or {}
+        if global_route.get("inference_backend") == "global_tabular" and global_route.get("config_path"):
+            return {
+                "selected_model": "global_model",
+                "inference_backend": "global_tabular",
+                "config_path": Path(global_route["config_path"]),
+                "model_path": Path(global_route["model_path"]) if global_route.get("model_path") else None,
+                "calibrator_path": Path(global_route["calibrator_path"]) if global_route.get("calibrator_path") else None,
+            }
+        LOGGER.warning("predict_symbol selected_model=global_model but route missing -> fallback lstm_attention")
 
+    lstm_route = models.get("lstm_attention") or {}
     routed_ckpt = Path(lstm_route.get("checkpoint_path")) if lstm_route.get("checkpoint_path") else ckpt_path
     routed_scaler = Path(lstm_route.get("scaler_path")) if lstm_route.get("scaler_path") else scaler_path
-    routed_config = Path(lstm_route.get("config_path")) if lstm_route.get("config_path") else config_path
+    return {
+        "selected_model": "lstm_attention",
+        "inference_backend": "lstm_attention",
+        "checkpoint_path": routed_ckpt,
+        "scaler_path": routed_scaler,
+        "config_path": config_path,
+    }
 
-    if selected_model != "lstm_attention":
-        LOGGER.warning(
-            "predict_symbol selected_model=%s but only lstm_attention inference is active -> fallback lstm_attention",
-            selected_model,
-        )
-    return routed_ckpt, routed_scaler, str(selected_model)
 
-
-def predict_symbol(
-    symbol: str,
-    artifacts_dir: Path,
-    engine: "Engine",  # type: ignore[name-defined]
-    prediction_date: Optional[date] = None,
-    run_id: Optional[str] = None,
-    as_of_date: Optional[date] = None,
-    persist: bool = True,
-    accelerator: str = "auto",
-) -> Optional[pd.DataFrame]:
-    """Charge le modèle et produit une prédiction pour un symbole.
-
-    Returns:
-        DataFrame avec colonnes: symbol, prediction_date, predicted_proba, predicted_class, run_id
-        ou None si artefacts manquants.
-    """
-    ckpt_path, scaler_path, config_path, selected_run_id = _resolve_artifact_paths(symbol, artifacts_dir, engine, run_id)
-
-    if not ckpt_path.exists() or not scaler_path.exists() or not config_path.exists():
-        LOGGER.warning("predict_symbol no_artifacts symbol=%s", symbol)
-        return None
-
-    device = _resolve_inference_device(accelerator)
-
-    # Load config
-    with open(config_path) as f:
-        cfg_data = json.load(f)
-
-    ckpt_path, scaler_path, selected_architecture = _resolve_routed_lstm_artifacts(
-        cfg_data,
-        ckpt_path,
-        scaler_path,
-        config_path,
-    )
-    if not ckpt_path.exists() or not scaler_path.exists():
-        LOGGER.warning("predict_symbol routed_artifacts_missing symbol=%s selected_model=%s", symbol, selected_architecture)
-        return None
-
-    data_cfg = DataConfig(
+def _load_data_cfg_from_payload(cfg_data: dict) -> DataConfig:
+    return DataConfig(
         sequence_length=cfg_data["data"]["sequence_length"],
         forecast_horizon=cfg_data["data"]["forecast_horizon"],
         include_sentiment_features=cfg_data["data"].get("include_sentiment_features", False),
@@ -137,30 +110,22 @@ def predict_symbol(
         target_mode=cfg_data["data"].get("target_mode", "binary"),
         target_up_threshold=cfg_data["data"].get("target_up_threshold", 0.0),
         target_down_threshold=cfg_data["data"].get("target_down_threshold", 0.0),
-        decision_threshold=cfg_data["data"].get("decision_threshold", 0.5),
+        decision_threshold=cfg_data["data"].get("decision_threshold", cfg_data.get("selected_decision_threshold", 0.5)),
     )
-    run_id = selected_run_id or cfg_data.get("run_id", "unknown")
 
-    # Load scaler
-    with open(scaler_path, "rb") as f:
-        scaler = FeatureScaler.from_state_dict(pickle.load(f))
 
-    calibrator = None
-    calibrator_path_raw = cfg_data.get("calibrator_path")
-    calibrator_path = Path(calibrator_path_raw) if calibrator_path_raw else config_path.with_name("calibrator.pkl")
-    if calibrator_path.exists():
-        with open(calibrator_path, "rb") as f:
-            calibrator = calibrator_from_state_dict(pickle.load(f))
-
-    cutoff_date = as_of_date or prediction_date
-
-    # Load bars (last seq_len + buffer days) bornés à cutoff_date pour rester PIT-safe.
+def _prepare_prediction_frame(
+    symbol: str,
+    *,
+    data_cfg: DataConfig,
+    engine: "Engine",  # type: ignore[name-defined]
+    cutoff_date: date | None,
+) -> pd.DataFrame:
     bars = load_symbol_bars(engine, symbol, end_date=cutoff_date)
     if len(bars) < data_cfg.sequence_length + 60:
         LOGGER.warning("predict_symbol insufficient_bars symbol=%s", symbol)
-        return None
+        return pd.DataFrame()
 
-    # Feature engineering (with optional sentiment)
     sentiment_df = None
     if data_cfg.include_sentiment_features:
         sentiment_df = load_symbol_sentiment(engine, symbol, end_date=cutoff_date)
@@ -191,6 +156,136 @@ def predict_symbol(
             include_cross_sectional=True,
         )
         df = df.dropna(subset=active_features).reset_index(drop=True)
+    return df
+
+
+def _predict_with_global_model(
+    symbol: str,
+    *,
+    cfg_data: dict,
+    model_path: Path,
+    calibrator_path: Path | None,
+    engine: "Engine",  # type: ignore[name-defined]
+    prediction_date: date | None,
+    as_of_date: date | None,
+    persist: bool,
+) -> Optional[pd.DataFrame]:
+    if not model_path.exists():
+        LOGGER.warning("predict_symbol global_model_missing symbol=%s path=%s", symbol, model_path)
+        return None
+    data_cfg = _load_data_cfg_from_payload(cfg_data)
+    cutoff_date = as_of_date or prediction_date
+    df = _prepare_prediction_frame(symbol, data_cfg=data_cfg, engine=engine, cutoff_date=cutoff_date)
+    feature_columns = cfg_data.get("feature_columns") or get_feature_columns(
+        data_cfg.include_sentiment_features,
+        feature_set=data_cfg.feature_set,
+        include_cross_sectional=data_cfg.enable_cross_sectional_features,
+    )
+    if df.empty or len(df) == 0:
+        return None
+    last_row = df.tail(1)
+    with open(model_path, "rb") as fh:
+        model = pickle.load(fh)
+    raw_proba = float(model.predict_proba(last_row[feature_columns])[:, 1][0])
+    calibrator = None
+    if calibrator_path is not None and calibrator_path.exists():
+        with open(calibrator_path, "rb") as fh:
+            calibrator = calibrator_from_state_dict(pickle.load(fh))
+    proba = raw_proba
+    if calibrator is not None and calibrator.fitted:
+        eps = 1e-6
+        margin = np.log(np.clip(raw_proba, eps, 1 - eps) / np.clip(1 - raw_proba, eps, 1 - eps))
+        proba = float(calibrator.predict_proba(np.array([margin], dtype=np.float64))[0])
+    pred_date = prediction_date or date.today()
+    pred_class = 1 if proba >= data_cfg.decision_threshold else 0
+    signal_label = "long" if pred_class == 1 else "no_trade"
+    result = pd.DataFrame([{
+        "symbol": symbol,
+        "prediction_date": pred_date,
+        "predicted_proba": round(proba, 6),
+        "predicted_class": pred_class,
+        "run_id": cfg_data.get("run_id", cfg_data.get("artifact_symbol", "global_model")),
+        "raw_proba": round(raw_proba, 6),
+        "decision_threshold": data_cfg.decision_threshold,
+        "signal_label": signal_label,
+        "calibration_method": getattr(calibrator, "method", "none") if calibrator is not None and calibrator.fitted else "none",
+        "selected_model": "global_model",
+    }])
+    if persist:
+        insert_predictions(engine, result)
+    return result
+
+
+def predict_symbol(
+    symbol: str,
+    artifacts_dir: Path,
+    engine: "Engine",  # type: ignore[name-defined]
+    prediction_date: Optional[date] = None,
+    run_id: Optional[str] = None,
+    as_of_date: Optional[date] = None,
+    persist: bool = True,
+    accelerator: str = "auto",
+) -> Optional[pd.DataFrame]:
+    """Charge le modèle et produit une prédiction pour un symbole.
+
+    Returns:
+        DataFrame avec colonnes: symbol, prediction_date, predicted_proba, predicted_class, run_id
+        ou None si artefacts manquants.
+    """
+    ckpt_path, scaler_path, config_path, selected_run_id = _resolve_artifact_paths(symbol, artifacts_dir, engine, run_id)
+
+    if not ckpt_path.exists() or not scaler_path.exists() or not config_path.exists():
+        LOGGER.warning("predict_symbol no_artifacts symbol=%s", symbol)
+        return None
+
+    device = _resolve_inference_device(accelerator)
+
+    # Load config
+    with open(config_path) as f:
+        cfg_data = json.load(f)
+
+    route = _resolve_selected_model_route(cfg_data, ckpt_path, scaler_path, config_path)
+    selected_architecture = str(route["selected_model"])
+    if route.get("inference_backend") == "global_tabular":
+        global_config_path = route.get("config_path")
+        if global_config_path is None or not Path(global_config_path).exists():
+            LOGGER.warning("predict_symbol global_route_missing_config symbol=%s", symbol)
+            return None
+        with open(Path(global_config_path), encoding="utf-8") as fh:
+            global_cfg_data = json.load(fh)
+        return _predict_with_global_model(
+            symbol,
+            cfg_data=global_cfg_data,
+            model_path=Path(route["model_path"]),
+            calibrator_path=Path(route["calibrator_path"]) if route.get("calibrator_path") else None,
+            engine=engine,
+            prediction_date=prediction_date,
+            as_of_date=as_of_date,
+            persist=persist,
+        )
+
+    ckpt_path = Path(route["checkpoint_path"])
+    scaler_path = Path(route["scaler_path"])
+    if not ckpt_path.exists() or not scaler_path.exists():
+        LOGGER.warning("predict_symbol routed_artifacts_missing symbol=%s selected_model=%s", symbol, selected_architecture)
+        return None
+
+    data_cfg = _load_data_cfg_from_payload(cfg_data)
+    run_id = selected_run_id or cfg_data.get("run_id", "unknown")
+
+    # Load scaler
+    with open(scaler_path, "rb") as f:
+        scaler = FeatureScaler.from_state_dict(pickle.load(f))
+
+    calibrator = None
+    calibrator_path_raw = cfg_data.get("calibrator_path")
+    calibrator_path = Path(calibrator_path_raw) if calibrator_path_raw else config_path.with_name("calibrator.pkl")
+    if calibrator_path.exists():
+        with open(calibrator_path, "rb") as f:
+            calibrator = calibrator_from_state_dict(pickle.load(f))
+
+    cutoff_date = as_of_date or prediction_date
+    df = _prepare_prediction_frame(symbol, data_cfg=data_cfg, engine=engine, cutoff_date=cutoff_date)
     if len(df) < data_cfg.sequence_length:
         return None
 

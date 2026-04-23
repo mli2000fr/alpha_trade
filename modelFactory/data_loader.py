@@ -90,3 +90,32 @@ def load_symbol_sentiment(engine: Engine, symbol: str, end_date: date | None = N
     return df
 
 
+def load_symbols_sentiment(
+    engine: Engine,
+    symbols: list[str],
+    end_date: date | None = None,
+) -> pd.DataFrame:
+    """Charge les features sentiment pour une liste de symboles."""
+    if not symbols:
+        return pd.DataFrame(columns=["symbol", "trade_date", "news_count_1d", "sentiment_net_mean_1d", "sentiment_confidence_mean_1d", "major_event_flag"])
+    symbol_params = []
+    params: dict[str, object] = {}
+    for idx, symbol in enumerate(symbols):
+        key = f"sym_{idx}"
+        params[key] = symbol
+        symbol_params.append(f":{key}")
+    where_clause = f"WHERE symbol IN ({', '.join(symbol_params)})"
+    if end_date is not None:
+        where_clause += " AND trade_date <= :end_date"
+        params["end_date"] = end_date
+    query = text(
+        "SELECT symbol, trade_date, news_count_1d, sentiment_net_mean_1d, "
+        "sentiment_confidence_mean_1d, major_event_flag "
+        f"FROM ticker_daily_sentiment_features {where_clause} ORDER BY symbol, trade_date"
+    )
+    with engine.connect() as conn:
+        df = pd.read_sql(query, conn, params=params, parse_dates=["trade_date"])
+    LOGGER.info("load_symbols_sentiment symbols=%d rows=%d", len(symbols), len(df))
+    return df
+
+

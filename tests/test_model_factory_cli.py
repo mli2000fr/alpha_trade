@@ -59,3 +59,18 @@ def test_cli_parser_accepts_cross_sectional_options() -> None:
     assert opts.cross_sectional_min_universe == 12
 
 
+def test_cli_parser_accepts_global_model_options() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "train",
+        "--enable-global-model",
+        "--global-model-name", "lightgbm",
+        "--global-artifact-symbol", "__GLOB__",
+    ])
+
+    assert opts.enable_global_model is True
+    assert opts.global_model_name == "lightgbm"
+    assert opts.global_artifact_symbol == "__GLOB__"
+
+
