@@ -74,3 +74,18 @@ def test_cli_parser_accepts_global_model_options() -> None:
     assert opts.global_artifact_symbol == "__GLOB__"
 
 
+def test_cli_parser_accepts_champion_selection_options() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "train",
+        "--select-champion",
+        "--default-champion", "global_model",
+        "--champion-selection-metric", "business_score",
+    ])
+
+    assert opts.select_champion is True
+    assert opts.default_champion == "global_model"
+    assert opts.champion_selection_metric == "business_score"
+
+

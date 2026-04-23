@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover
 from sqlalchemy.engine import Engine
 
 from modelFactory.calibration import PlattCalibrator, margin_from_logits
+from modelFactory.champion_selection import build_challenger_ranking, select_champion
 from modelFactory.config import TrainingConfig
 from modelFactory.dataset import (
     FeatureScaler,
@@ -107,16 +108,6 @@ def _selection_score_from_metrics(metrics: dict[str, Any]) -> float:
     )
 
 
-def _selection_score_from_result(result: dict[str, Any]) -> float:
-    if not result or result.get("status") != "completed":
-        return float("-inf")
-    return float(
-        result.get("selection_score")
-        or _selection_score_from_metrics(result.get("test", {}))
-        or _selection_score_from_metrics(result.get("val", {}))
-    )
-
-
 def _build_challenger_summary(
     *,
     val_metrics: dict[str, Any],
@@ -134,30 +125,6 @@ def _build_challenger_summary(
         "calibration_method": calibration_method,
         "selection_score": selection_score,
     }
-
-
-def _build_challenger_ranking(challengers: dict[str, dict[str, Any]], champion_name: str) -> list[dict[str, Any]]:
-    sortable = sorted(
-        challengers.items(),
-        key=lambda item: _selection_score_from_result(item[1]),
-        reverse=True,
-    )
-    ranking: list[dict[str, Any]] = []
-    for idx, (model_name, result) in enumerate(sortable, start=1):
-        status = result.get("status", "unknown")
-        if model_name == champion_name and status == "completed":
-            status = "selected_default_champion"
-        ranking.append(
-            {
-                "rank": idx,
-                "model_name": model_name,
-                "selection_score": None if _selection_score_from_result(result) == float("-inf") else _selection_score_from_result(result),
-                "status": status,
-                "reason": result.get("reason"),
-            }
-        )
-    return ranking
-
 
 
 def _collect_outputs(model: LSTMAttentionModule, dataloader: DataLoader | None, device: torch.device) -> dict[str, np.ndarray]:
@@ -716,6 +683,23 @@ def train_symbol(
         config_path = sym_dir / "config.json"
         calibration_method = calibrator.method if calibrator is not None and calibrator.fitted else "none"
         lstm_selection_score = _selection_score_from_metrics(test_metrics or val_metrics)
+        artifact_routes_models = {
+            "lstm_attention": {
+                "checkpoint_path": str(sym_dir / "best.ckpt"),
+                "scaler_path": str(sym_dir / "scaler.pkl"),
+                "config_path": str(config_path),
+                "calibrator_path": calibrator_path,
+                "inference_backend": "lstm_attention",
+            },
+            "lightgbm": {
+                "status": baseline_metrics.get("status", "disabled") if baseline_metrics else "disabled",
+                "inference_backend": "not_yet_supported",
+            },
+            "catboost": {
+                "status": catboost_metrics.get("status", "disabled") if catboost_metrics else "disabled",
+                "inference_backend": "not_yet_supported",
+            },
+        }
         challengers = {
             "lstm_attention": _build_challenger_summary(
                 val_metrics=val_metrics,
@@ -727,8 +711,17 @@ def train_symbol(
             "lightgbm": baseline_metrics,
             "catboost": catboost_metrics,
         }
-        selected_architecture = "lstm_attention"
-        challenger_ranking = _build_challenger_ranking(challengers, selected_architecture)
+        champion_decision = select_champion(challengers, artifact_routes_models, effective_cfg.champion_selection)
+        challengers = champion_decision["annotated_challengers"]
+        selected_architecture = str(champion_decision["selected_model"])
+        selection_mode = str(champion_decision["selection_mode"])
+        challenger_ranking = build_challenger_ranking(
+            challengers,
+            artifact_routes_models,
+            selected_architecture,
+            selection_mode=selection_mode,
+            champion_cfg=effective_cfg.champion_selection,
+        )
         cross_sectional_feature_columns = list(getattr(dm, "cross_sectional_feature_columns", []))
         cross_sectional_diagnostics = dict(getattr(dm, "cross_sectional_diagnostics", {}))
         config_data = {
@@ -737,6 +730,7 @@ def train_symbol(
             "calibration": asdict(effective_cfg.calibration),
             "walk_forward": asdict(effective_cfg.walk_forward),
             "baseline": asdict(effective_cfg.baseline),
+            "champion_selection": asdict(effective_cfg.champion_selection),
             "target_optimization": asdict(effective_cfg.target_optimization),
             "threshold_optimization": asdict(effective_cfg.threshold_optimization),
             "symbol": symbol,
@@ -750,26 +744,10 @@ def train_symbol(
             "selected_target_down_threshold": effective_cfg.data.target_down_threshold,
             "selected_decision_threshold": effective_cfg.data.decision_threshold,
             "architecture_selected": selected_architecture,
-            "selection_mode": "default_lstm_champion",
+            "selection_mode": selection_mode,
             "artifact_routes": {
                 "selected_model": selected_architecture,
-                "models": {
-                    "lstm_attention": {
-                        "checkpoint_path": str(sym_dir / "best.ckpt"),
-                        "scaler_path": str(sym_dir / "scaler.pkl"),
-                        "config_path": str(config_path),
-                        "calibrator_path": calibrator_path,
-                        "inference_backend": "lstm_attention",
-                    },
-                    "lightgbm": {
-                        "status": baseline_metrics.get("status", "disabled") if baseline_metrics else "disabled",
-                        "inference_backend": "not_yet_supported",
-                    },
-                    "catboost": {
-                        "status": catboost_metrics.get("status", "disabled") if catboost_metrics else "disabled",
-                        "inference_backend": "not_yet_supported",
-                    },
-                },
+                "models": artifact_routes_models,
             },
         }
         with open(config_path, "w") as f:
@@ -794,8 +772,9 @@ def train_symbol(
             },
             "champion": {
                 "model_name": selected_architecture,
-                "selection_mode": "default_lstm_champion",
-                "selection_score": lstm_selection_score,
+                "selection_mode": selection_mode,
+                "selection_metric": effective_cfg.champion_selection.selection_metric,
+                "selection_score": champion_decision.get("selection_score", challengers.get(selected_architecture, {}).get("selection_score", lstm_selection_score)),
             },
             "challengers": {
                 "ranking": challenger_ranking,

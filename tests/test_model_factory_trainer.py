@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 from sqlalchemy.engine import Engine
 
-from modelFactory.config import BaselineConfig, DataConfig, ModelConfig, TrainingConfig
+from modelFactory.config import BaselineConfig, ChampionSelectionConfig, DataConfig, ModelConfig, TrainingConfig
 from modelFactory import trainer
 
 
@@ -216,5 +216,97 @@ def test_train_symbol_persists_challenger_ranking_and_routing(monkeypatch, tmp_p
     assert metrics["baseline_catboost"]["model_name"] == "catboost"
     assert metrics["challengers"]["lstm_attention"]["model_name"] == "lstm_attention"
     assert {row["model_name"] for row in metrics["challengers"]["ranking"]} == {"lstm_attention", "lightgbm", "catboost"}
+
+
+def test_train_symbol_auto_selection_keeps_lstm_when_other_models_are_not_inferable(monkeypatch, tmp_path: Path) -> None:
+    class FakeScaler:
+        feature_names = ["feat1"]
+
+        @staticmethod
+        def state_dict() -> dict:
+            return {"mean": [0.0], "std": [1.0], "features": ["feat1"]}
+
+    class FakeLoader:
+        num_workers = 0
+
+    class FakeDataModule:
+        def __init__(self, bars_df, data_cfg, model_cfg, **kwargs) -> None:
+            frame = pd.DataFrame({"feat1": [0.1, 0.2, 0.3, 0.4], "target": [1.0, 0.0, 1.0, 0.0], "future_return": [0.02, -0.01, 0.03, -0.02]})
+            self.train_ds = [1]
+            self.val_ds = [1]
+            self.test_ds = [1]
+            self.prepared_df = frame.copy()
+            self.split = type("Split", (), {"val": frame.copy(), "test": frame.copy()})()
+            self.n_features = 1
+            self.scaler = FakeScaler()
+
+        def setup(self) -> None:
+            return None
+
+        def train_dataloader(self):
+            return FakeLoader()
+
+    class FakeModel:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class FakeCheckpoint:
+        def __init__(self, dirpath=None, filename=None, monitor=None, mode=None, save_top_k=None):
+            self.best_model_path = str(Path(dirpath) / "best.ckpt") if dirpath else ""
+
+    class FakeEarlyStopping:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class FakeLightningTrainer:
+        def __init__(self, *args, **kwargs) -> None:
+            self.strategy = type("Strategy", (), {"root_device": "cpu"})()
+            self.current_epoch = 1
+
+        def fit(self, model, datamodule=None, train_dataloaders=None, val_dataloaders=None) -> None:
+            target_path = tmp_path / "AAPL" / "best.ckpt"
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text("checkpoint", encoding="utf-8")
+
+    cfg = TrainingConfig(
+        data=DataConfig(sequence_length=2, forecast_horizon=1, min_history_days=10, train_ratio=0.6, val_ratio=0.2),
+        model=ModelConfig(batch_size=4, max_epochs=1, patience=1),
+        baseline=BaselineConfig(enabled=True, enable_catboost=True),
+        champion_selection=ChampionSelectionConfig(enabled=True, allow_auto_selection=True, default_champion="lstm_attention"),
+        artifacts_dir=tmp_path,
+        accelerator="cpu",
+    )
+
+    monkeypatch.setattr(trainer, "SymbolDataModule", FakeDataModule)
+    monkeypatch.setattr(trainer, "LSTMAttentionModule", FakeModel)
+    monkeypatch.setattr(trainer, "ModelCheckpoint", FakeCheckpoint)
+    monkeypatch.setattr(trainer, "EarlyStopping", FakeEarlyStopping)
+    monkeypatch.setattr(trainer.L, "Trainer", FakeLightningTrainer)
+    monkeypatch.setattr(
+        trainer,
+        "_evaluate_best_checkpoint",
+        lambda *args, **kwargs: (
+            {"loss": 0.4, "auc": 0.70, "threshold_business_score": 0.65},
+            {"loss": 0.5, "auc": 0.68, "threshold_business_score": 0.60},
+            None,
+            {"enabled": False, "selected_threshold": 0.5, "candidates": []},
+            0.5,
+        ),
+    )
+    monkeypatch.setattr(trainer, "run_lightgbm_baseline", lambda prepared_df, cfg: {"status": "completed", "model_name": "lightgbm", "selection_score": 0.90, "val": {"auc": 0.90}, "test": {"auc": 0.90, "threshold_business_score": 0.90}})
+    monkeypatch.setattr(trainer, "run_catboost_baseline", lambda prepared_df, cfg: {"status": "completed", "model_name": "catboost", "selection_score": 0.88, "val": {"auc": 0.88}, "test": {"auc": 0.88, "threshold_business_score": 0.88}})
+
+    result = trainer.train_symbol("AAPL", pd.DataFrame({"close": list(range(12))}), cfg, engine=None)
+
+    assert result.status == "completed"
+    with open(tmp_path / "AAPL" / "config.json", encoding="utf-8") as fh:
+        config_data = json.load(fh)
+    with open(tmp_path / "AAPL" / "metrics.json", encoding="utf-8") as fh:
+        metrics = json.load(fh)
+
+    assert config_data["architecture_selected"] == "lstm_attention"
+    assert config_data["selection_mode"] == "auto_selected_champion"
+    assert metrics["champion"]["model_name"] == "lstm_attention"
+    assert any(row["model_name"] == "lightgbm" and row["selection_eligible"] is False for row in metrics["challengers"]["ranking"])
 
 

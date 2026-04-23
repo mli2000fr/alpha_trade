@@ -9,6 +9,7 @@ from database.connection import get_sqlalchemy_engine
 from modelFactory.config import (
     BaselineConfig,
     CalibrationConfig,
+    ChampionSelectionConfig,
     DataConfig,
     GlobalModelConfig,
     ModelConfig,
@@ -67,6 +68,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne aussi un modèle global multi-symboles en comparaison")
     p.add_argument("--global-model-name", type=str, default="catboost", choices=["catboost", "lightgbm"])
     p.add_argument("--global-artifact-symbol", type=str, default="__GLOBAL__")
+    p.add_argument("--select-champion", action="store_true", default=False,
+                   help="Active la sélection automatique du champion parmi les modèles éligibles à l’inférence")
+    p.add_argument("--default-champion", type=str, default="lstm_attention",
+                   choices=["lstm_attention", "lightgbm", "catboost", "global_model"])
+    p.add_argument("--champion-selection-metric", type=str, default="selection_score",
+                   choices=["selection_score", "business_score", "auc"])
     p.add_argument("--lgbm-max-depth", type=int, default=4)
     p.add_argument("--lgbm-n-estimators", type=int, default=200)
     p.add_argument("--lgbm-learning-rate", type=float, default=0.05)
@@ -144,6 +151,12 @@ def main(args: list[str] | None = None) -> None:
             model_name=opts.global_model_name,
             artifact_symbol=opts.global_artifact_symbol,
             use_cross_sectional_features=opts.enable_cross_sectional,
+        ),
+        champion_selection=ChampionSelectionConfig(
+            enabled=opts.select_champion,
+            allow_auto_selection=opts.select_champion,
+            default_champion=opts.default_champion,
+            selection_metric=opts.champion_selection_metric,
         ),
         target_optimization=TargetOptimizationConfig(
             enabled=opts.optimize_target,

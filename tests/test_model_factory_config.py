@@ -60,6 +60,17 @@ def test_global_model_config_accepts_lightgbm() -> None:
     assert cfg.model_name == "lightgbm"
 
 
+def test_champion_selection_config_accepts_business_score() -> None:
+    cfg = config.ChampionSelectionConfig(enabled=True, allow_auto_selection=True, selection_metric="business_score")
+
+    assert cfg.selection_metric == "business_score"
+
+
+def test_champion_selection_config_rejects_unknown_metric() -> None:
+    with pytest.raises(ValueError, match="selection_metric"):
+        config.ChampionSelectionConfig(selection_metric="sharpe")
+
+
 def test_target_optimization_requires_candidate_horizons() -> None:
     with pytest.raises(ValueError, match="candidate_horizons"):
         config.TargetOptimizationConfig(candidate_horizons=())

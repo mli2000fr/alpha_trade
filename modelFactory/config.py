@@ -194,6 +194,22 @@ class ThresholdOptimizationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ChampionSelectionConfig:
+    """Paramètres de sélection du modèle champion servi en inférence."""
+
+    enabled: bool = False
+    allow_auto_selection: bool = False
+    default_champion: str = "lstm_attention"
+    selection_metric: str = "selection_score"  # selection_score | business_score | auc
+
+    def __post_init__(self) -> None:
+        if self.default_champion not in {"lstm_attention", "lightgbm", "catboost", "global_model"}:
+            raise ValueError("champion_selection.default_champion invalide.")
+        if self.selection_metric not in {"selection_score", "business_score", "auc"}:
+            raise ValueError("champion_selection.selection_metric doit être 'selection_score', 'business_score' ou 'auc'.")
+
+
+@dataclass(frozen=True, slots=True)
 class ModelConfig:
     """Hyper-paramètres du modèle LSTM + attention."""
 
@@ -235,6 +251,7 @@ class TrainingConfig:
     global_model: GlobalModelConfig = field(default_factory=GlobalModelConfig)
     target_optimization: TargetOptimizationConfig = field(default_factory=TargetOptimizationConfig)
     threshold_optimization: ThresholdOptimizationConfig = field(default_factory=ThresholdOptimizationConfig)
+    champion_selection: ChampionSelectionConfig = field(default_factory=ChampionSelectionConfig)
     artifacts_dir: Path = Path("artifacts/models")
     max_workers: int = 4
     accelerator: str = "auto"  # auto | cpu | gpu

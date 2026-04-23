@@ -86,6 +86,35 @@ def test_resolve_selected_model_route_uses_routing_block(tmp_path: Path) -> None
     assert route["scaler_path"] == routed_scaler
 
 
+def test_resolve_selected_model_route_can_return_global_model_route(tmp_path: Path) -> None:
+    global_model_path = tmp_path / "global.pkl"
+    global_config_path = tmp_path / "global.json"
+    cfg_data = {
+        "architecture_selected": "global_model",
+        "artifact_routes": {
+            "selected_model": "global_model",
+            "models": {
+                "global_model": {
+                    "inference_backend": "global_tabular",
+                    "config_path": str(global_config_path),
+                    "model_path": str(global_model_path),
+                }
+            },
+        },
+    }
+
+    route = predictor._resolve_selected_model_route(
+        cfg_data,
+        tmp_path / "default.ckpt",
+        tmp_path / "default.pkl",
+        tmp_path / "default.json",
+    )
+
+    assert route["selected_model"] == "global_model"
+    assert route["inference_backend"] == "global_tabular"
+    assert route["model_path"] == global_model_path
+
+
 def test_predict_symbol_returns_dataframe_and_persists(tmp_path: Path, monkeypatch) -> None:
     symbol = "AAPL"
     symbol_dir = tmp_path / symbol

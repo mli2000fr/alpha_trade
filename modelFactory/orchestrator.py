@@ -10,6 +10,7 @@ from typing import Optional
 import torch
 from sqlalchemy.engine import Engine
 
+from modelFactory.champion_selection import build_challenger_ranking, select_champion
 from modelFactory.config import TrainingConfig
 from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment, load_universe_bars
 from modelFactory.db_registry import load_candidate_symbols
@@ -17,37 +18,6 @@ from modelFactory.global_model import train_global_model
 from modelFactory.trainer import TrainResult, train_symbol
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _selection_score_from_result(result: dict) -> float:
-    if not result or result.get("status") != "completed":
-        return float("-inf")
-    return float(
-        result.get("selection_score")
-        or result.get("test", {}).get("threshold_business_score")
-        or result.get("test", {}).get("auc")
-        or result.get("val", {}).get("threshold_business_score")
-        or 0.0
-    )
-
-
-def _build_ranking(challengers: dict[str, dict], champion_name: str) -> list[dict[str, object]]:
-    sortable = sorted(challengers.items(), key=lambda item: _selection_score_from_result(item[1]), reverse=True)
-    ranking: list[dict[str, object]] = []
-    for idx, (model_name, result) in enumerate(sortable, start=1):
-        status = result.get("status", "unknown")
-        if model_name == champion_name and status == "completed":
-            status = "selected_default_champion"
-        ranking.append(
-            {
-                "rank": idx,
-                "model_name": model_name,
-                "selection_score": None if _selection_score_from_result(result) == float("-inf") else _selection_score_from_result(result),
-                "status": status,
-                "reason": result.get("reason"),
-            }
-        )
-    return ranking
 
 
 def _inject_global_model_into_symbol_artifacts(
@@ -95,14 +65,34 @@ def _inject_global_model_into_symbol_artifacts(
         "inference_backend": "global_tabular",
         "backend_model_name": global_result.get("backend_model_name"),
     }
-    config_data["artifact_routes"] = artifact_routes
 
     challengers = metrics.get("challengers") or {}
     challengers["global_model"] = symbol_global
     challenger_map = {k: v for k, v in challengers.items() if k != "ranking"}
-    challengers["ranking"] = _build_ranking(challenger_map, config_data.get("architecture_selected", "lstm_attention"))
+    champion_decision = select_champion(challenger_map, models, config_data.get("champion_selection", {}) and cfg.champion_selection or cfg.champion_selection)
+    annotated = champion_decision["annotated_challengers"]
+    selected_model = str(champion_decision["selected_model"])
+    selection_mode = str(champion_decision["selection_mode"])
+    artifact_routes["selected_model"] = selected_model
+    config_data["artifact_routes"] = artifact_routes
+    config_data["architecture_selected"] = selected_model
+    config_data["selection_mode"] = selection_mode
+    challengers = {**annotated}
+    challengers["ranking"] = build_challenger_ranking(
+        annotated,
+        models,
+        selected_model,
+        selection_mode=selection_mode,
+        champion_cfg=cfg.champion_selection,
+    )
     metrics["challengers"] = challengers
     metrics["global_model"] = symbol_global
+    metrics["champion"] = {
+        "model_name": selected_model,
+        "selection_mode": selection_mode,
+        "selection_metric": cfg.champion_selection.selection_metric,
+        "selection_score": champion_decision.get("selection_score", annotated.get(selected_model, {}).get("selection_score")),
+    }
 
     with open(config_path, "w", encoding="utf-8") as fh:
         json.dump(config_data, fh, indent=2, default=str)
