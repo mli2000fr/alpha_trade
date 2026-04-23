@@ -50,6 +50,36 @@ def test_resolve_artifact_paths_prefers_registry_when_files_exist(tmp_path: Path
     assert resolved == (ckpt, scaler, config, "run-registry")
 
 
+def test_resolve_routed_lstm_artifacts_uses_routing_block(tmp_path: Path) -> None:
+    routed_ckpt = tmp_path / "routed.ckpt"
+    routed_scaler = tmp_path / "routed.pkl"
+    routed_config = tmp_path / "routed.json"
+    cfg_data = {
+        "architecture_selected": "catboost",
+        "artifact_routes": {
+            "selected_model": "catboost",
+            "models": {
+                "lstm_attention": {
+                    "checkpoint_path": str(routed_ckpt),
+                    "scaler_path": str(routed_scaler),
+                    "config_path": str(routed_config),
+                }
+            },
+        },
+    }
+
+    resolved_ckpt, resolved_scaler, selected_model = predictor._resolve_routed_lstm_artifacts(
+        cfg_data,
+        tmp_path / "default.ckpt",
+        tmp_path / "default.pkl",
+        tmp_path / "default.json",
+    )
+
+    assert resolved_ckpt == routed_ckpt
+    assert resolved_scaler == routed_scaler
+    assert selected_model == "catboost"
+
+
 def test_predict_symbol_returns_dataframe_and_persists(tmp_path: Path, monkeypatch) -> None:
     symbol = "AAPL"
     symbol_dir = tmp_path / symbol
@@ -115,6 +145,7 @@ def test_predict_symbol_returns_dataframe_and_persists(tmp_path: Path, monkeypat
     assert row["predicted_class"] == 1
     assert row["predicted_proba"] > 0.8
     assert row["run_id"] == "run-config"
+    assert row["selected_model"] == "lstm_attention"
     assert len(persisted) == 1
 
 
@@ -209,5 +240,6 @@ def test_predict_symbol_applies_saved_calibration_and_decision_threshold(tmp_pat
     assert row["raw_proba"] > row["predicted_proba"]
     assert row["predicted_class"] == 0
     assert row["signal_label"] == "no_trade"
+    assert row["selected_model"] == "lstm_attention"
 
 

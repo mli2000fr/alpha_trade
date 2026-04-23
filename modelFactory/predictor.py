@@ -64,6 +64,29 @@ def _resolve_artifact_paths(
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
 
 
+def _resolve_routed_lstm_artifacts(
+    cfg_data: dict,
+    ckpt_path: Path,
+    scaler_path: Path,
+    config_path: Path,
+) -> tuple[Path, Path, str]:
+    routing = cfg_data.get("artifact_routes") or {}
+    selected_model = str(routing.get("selected_model") or cfg_data.get("architecture_selected") or "lstm_attention")
+    models = routing.get("models") or {}
+    lstm_route = models.get("lstm_attention") or {}
+
+    routed_ckpt = Path(lstm_route.get("checkpoint_path")) if lstm_route.get("checkpoint_path") else ckpt_path
+    routed_scaler = Path(lstm_route.get("scaler_path")) if lstm_route.get("scaler_path") else scaler_path
+    routed_config = Path(lstm_route.get("config_path")) if lstm_route.get("config_path") else config_path
+
+    if selected_model != "lstm_attention":
+        LOGGER.warning(
+            "predict_symbol selected_model=%s but only lstm_attention inference is active -> fallback lstm_attention",
+            selected_model,
+        )
+    return routed_ckpt, routed_scaler, str(selected_model)
+
+
 def predict_symbol(
     symbol: str,
     artifacts_dir: Path,
@@ -91,6 +114,16 @@ def predict_symbol(
     # Load config
     with open(config_path) as f:
         cfg_data = json.load(f)
+
+    ckpt_path, scaler_path, selected_architecture = _resolve_routed_lstm_artifacts(
+        cfg_data,
+        ckpt_path,
+        scaler_path,
+        config_path,
+    )
+    if not ckpt_path.exists() or not scaler_path.exists():
+        LOGGER.warning("predict_symbol routed_artifacts_missing symbol=%s selected_model=%s", symbol, selected_architecture)
+        return None
 
     data_cfg = DataConfig(
         sequence_length=cfg_data["data"]["sequence_length"],
@@ -184,6 +217,7 @@ def predict_symbol(
         "decision_threshold": data_cfg.decision_threshold,
         "signal_label": signal_label,
         "calibration_method": getattr(calibrator, "method", "none") if calibrator is not None and calibrator.fitted else "none",
+        "selected_model": selected_architecture,
     }])
 
     # Persist

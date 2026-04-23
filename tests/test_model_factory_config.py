@@ -36,6 +36,12 @@ def test_baseline_config_defaults_to_lightgbm() -> None:
     assert cfg.model_name == "lightgbm"
 
 
+def test_baseline_config_accepts_catboost_model_name() -> None:
+    cfg = config.BaselineConfig(enabled=True, model_name="catboost")
+
+    assert cfg.model_name == "catboost"
+
+
 def test_target_optimization_requires_candidate_horizons() -> None:
     with pytest.raises(ValueError, match="candidate_horizons"):
         config.TargetOptimizationConfig(candidate_horizons=())

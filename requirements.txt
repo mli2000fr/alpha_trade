@@ -41,6 +41,8 @@ torch
 lightning
 torchmetrics
 lightgbm
+# Optionnel pour le challenger tabulaire phase 4 :
+# catboost
 
 # --- Backtesting ---
 vectorbt>=0.26

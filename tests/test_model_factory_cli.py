@@ -29,3 +29,20 @@ def test_cli_parser_accepts_threshold_optimization_options() -> None:
     assert opts.min_precision_long == 0.6
 
 
+def test_cli_parser_accepts_catboost_options() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "train",
+        "--enable-catboost",
+        "--catboost-depth", "8",
+        "--catboost-iterations", "400",
+        "--catboost-learning-rate", "0.05",
+    ])
+
+    assert opts.enable_catboost is True
+    assert opts.catboost_depth == 8
+    assert opts.catboost_iterations == 400
+    assert opts.catboost_learning_rate == 0.05
+
+

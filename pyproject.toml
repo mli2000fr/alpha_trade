@@ -45,6 +45,9 @@ dev = [
     "types-python-dateutil",
     "sqlalchemy[mypy]",
 ]
+ml-challengers = [
+    "catboost",
+]
 
 # ---------------------------------------------------------------------------
 # setuptools : déclare tous les packages pour que pip install -e . fonctionne

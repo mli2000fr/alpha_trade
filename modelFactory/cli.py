@@ -56,9 +56,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--wf-max-splits", type=int, default=3)
     p.add_argument("--compare-lightgbm", action="store_true", default=False,
                    help="Entraîne aussi une baseline LightGBM et compare ses métriques")
+    p.add_argument("--enable-catboost", action="store_true", default=False,
+                   help="Entraîne aussi une baseline CatBoost et compare ses métriques")
     p.add_argument("--lgbm-max-depth", type=int, default=4)
     p.add_argument("--lgbm-n-estimators", type=int, default=200)
     p.add_argument("--lgbm-learning-rate", type=float, default=0.05)
+    p.add_argument("--catboost-depth", type=int, default=6)
+    p.add_argument("--catboost-iterations", type=int, default=300)
+    p.add_argument("--catboost-learning-rate", type=float, default=0.03)
     p.add_argument("--optimize-target", action="store_true", default=False,
                    help="Sélectionne automatiquement le meilleur horizon swing parmi plusieurs candidats")
     p.add_argument("--candidate-horizons", nargs="*", type=int, default=[3, 5, 10, 15])
@@ -114,10 +119,14 @@ def main(args: list[str] | None = None) -> None:
         ),
         baseline=BaselineConfig(
             enabled=opts.compare_lightgbm,
+            enable_catboost=opts.enable_catboost,
             model_name="lightgbm",
             max_depth=opts.lgbm_max_depth,
             n_estimators=opts.lgbm_n_estimators,
             learning_rate=opts.lgbm_learning_rate,
+            catboost_depth=opts.catboost_depth,
+            catboost_iterations=opts.catboost_iterations,
+            catboost_learning_rate=opts.catboost_learning_rate,
         ),
         target_optimization=TargetOptimizationConfig(
             enabled=opts.optimize_target,

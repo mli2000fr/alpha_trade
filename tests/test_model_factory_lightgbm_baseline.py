@@ -67,3 +67,5 @@ def test_run_lightgbm_baseline_returns_metrics(monkeypatch) -> None:
     assert result["status"] == "completed"
     assert result["model_name"] == "lightgbm"
     assert "bucket_analysis" in result["test"]
+    assert "threshold_optimization" in result
+    assert "selection_score" in result

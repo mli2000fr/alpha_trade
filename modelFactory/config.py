@@ -105,8 +105,8 @@ class BaselineConfig:
     random_state: int = 42
 
     def __post_init__(self) -> None:
-        if self.model_name != "lightgbm":
-            raise ValueError("baseline.model_name doit être 'lightgbm'.")
+        if self.model_name not in {"lightgbm", "catboost"}:
+            raise ValueError("baseline.model_name doit être 'lightgbm' ou 'catboost'.")
         if self.max_depth < 1:
             raise ValueError("baseline.max_depth doit être >= 1.")
         if self.n_estimators < 10:

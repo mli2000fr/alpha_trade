@@ -41,6 +41,7 @@ from modelFactory.db_registry import (
 )
 from modelFactory.evaluation import align_sequence_rows, compute_threshold_metrics, optimize_decision_threshold
 from modelFactory.features import get_feature_columns
+from modelFactory.catboost_baseline import run_catboost_baseline
 from modelFactory.lightgbm_baseline import run_lightgbm_baseline
 from modelFactory.model import LSTMAttentionModule
 from modelFactory.target_optimization import optimize_target_parameters
@@ -95,6 +96,67 @@ def _build_loader(dataset: SequenceDataset | None, batch_size: int, *, shuffle: 
         persistent_workers=False,
         pin_memory=False,
     )
+
+
+def _selection_score_from_metrics(metrics: dict[str, Any]) -> float:
+    return float(
+        metrics.get("threshold_business_score")
+        or metrics.get("auc")
+        or metrics.get("directional_accuracy")
+        or 0.0
+    )
+
+
+def _selection_score_from_result(result: dict[str, Any]) -> float:
+    if not result or result.get("status") != "completed":
+        return float("-inf")
+    return float(
+        result.get("selection_score")
+        or _selection_score_from_metrics(result.get("test", {}))
+        or _selection_score_from_metrics(result.get("val", {}))
+    )
+
+
+def _build_challenger_summary(
+    *,
+    val_metrics: dict[str, Any],
+    test_metrics: dict[str, Any],
+    walk_forward_metrics: dict[str, Any],
+    calibration_method: str,
+    selection_score: float,
+) -> dict[str, Any]:
+    return {
+        "status": "completed",
+        "model_name": "lstm_attention",
+        "val": val_metrics,
+        "test": test_metrics,
+        "walk_forward": walk_forward_metrics,
+        "calibration_method": calibration_method,
+        "selection_score": selection_score,
+    }
+
+
+def _build_challenger_ranking(challengers: dict[str, dict[str, Any]], champion_name: str) -> list[dict[str, Any]]:
+    sortable = sorted(
+        challengers.items(),
+        key=lambda item: _selection_score_from_result(item[1]),
+        reverse=True,
+    )
+    ranking: list[dict[str, Any]] = []
+    for idx, (model_name, result) in enumerate(sortable, start=1):
+        status = result.get("status", "unknown")
+        if model_name == champion_name and status == "completed":
+            status = "selected_default_champion"
+        ranking.append(
+            {
+                "rank": idx,
+                "model_name": model_name,
+                "selection_score": None if _selection_score_from_result(result) == float("-inf") else _selection_score_from_result(result),
+                "status": status,
+                "reason": result.get("reason"),
+            }
+        )
+    return ranking
 
 
 
@@ -622,6 +684,9 @@ def train_symbol(
         baseline_metrics: dict[str, Any] = {}
         if prepared_df is not None and effective_cfg.baseline.enabled:
             baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg)
+        catboost_metrics: dict[str, Any] = {}
+        if prepared_df is not None and effective_cfg.baseline.enable_catboost:
+            catboost_metrics = run_catboost_baseline(prepared_df, effective_cfg)
 
         best_ckpt = sym_dir / "best.ckpt"
         if best_source.exists() and best_source.resolve() != best_ckpt.resolve():
@@ -642,6 +707,21 @@ def train_symbol(
             calibrator_path = str(cal_path)
 
         config_path = sym_dir / "config.json"
+        calibration_method = calibrator.method if calibrator is not None and calibrator.fitted else "none"
+        lstm_selection_score = _selection_score_from_metrics(test_metrics or val_metrics)
+        challengers = {
+            "lstm_attention": _build_challenger_summary(
+                val_metrics=val_metrics,
+                test_metrics=test_metrics,
+                walk_forward_metrics=walk_forward_metrics,
+                calibration_method=calibration_method,
+                selection_score=lstm_selection_score,
+            ),
+            "lightgbm": baseline_metrics,
+            "catboost": catboost_metrics,
+        }
+        selected_architecture = "lstm_attention"
+        challenger_ranking = _build_challenger_ranking(challengers, selected_architecture)
         config_data = {
             "data": asdict(effective_cfg.data),
             "model": {**asdict(effective_cfg.model), "input_size": dm.n_features},
@@ -658,6 +738,28 @@ def train_symbol(
             "selected_target_up_threshold": effective_cfg.data.target_up_threshold,
             "selected_target_down_threshold": effective_cfg.data.target_down_threshold,
             "selected_decision_threshold": effective_cfg.data.decision_threshold,
+            "architecture_selected": selected_architecture,
+            "selection_mode": "default_lstm_champion",
+            "artifact_routes": {
+                "selected_model": selected_architecture,
+                "models": {
+                    "lstm_attention": {
+                        "checkpoint_path": str(sym_dir / "best.ckpt"),
+                        "scaler_path": str(sym_dir / "scaler.pkl"),
+                        "config_path": str(config_path),
+                        "calibrator_path": calibrator_path,
+                        "inference_backend": "lstm_attention",
+                    },
+                    "lightgbm": {
+                        "status": baseline_metrics.get("status", "disabled") if baseline_metrics else "disabled",
+                        "inference_backend": "not_yet_supported",
+                    },
+                    "catboost": {
+                        "status": catboost_metrics.get("status", "disabled") if catboost_metrics else "disabled",
+                        "inference_backend": "not_yet_supported",
+                    },
+                },
+            },
         }
         with open(config_path, "w") as f:
             json.dump(config_data, f, indent=2, default=str)
@@ -667,11 +769,21 @@ def train_symbol(
             "test": test_metrics,
             "walk_forward": walk_forward_metrics,
             "baseline_lightgbm": baseline_metrics,
+            "baseline_catboost": catboost_metrics,
             "target_optimization": target_optimization_summary,
             "threshold_optimization": threshold_optimization_summary,
             "optimization": {
                 "target_search": target_optimization_summary,
                 "decision_threshold_search": threshold_optimization_summary,
+            },
+            "champion": {
+                "model_name": selected_architecture,
+                "selection_mode": "default_lstm_champion",
+                "selection_score": lstm_selection_score,
+            },
+            "challengers": {
+                "ranking": challenger_ranking,
+                **challengers,
             },
         }
         with open(sym_dir / "metrics.json", "w") as f:
