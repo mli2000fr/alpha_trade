@@ -268,6 +268,101 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             else:
                 st.info("Aucun GPU CUDA détecté dans l'environnement de l'IHM : le mode `auto` retombera sur CPU.")
 
+        st.markdown("#### Paramètres Model Factory")
+        st.caption(
+            "Ces options pilotent directement `python -m modelFactory --mode train`. "
+            "L'objectif est d'aligner l'IHM sur la gouvernance multi-modèles réellement disponible côté backend."
+        )
+
+        ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
+        with ml_opt_col1:
+            ml_include_sentiment = st.checkbox(
+                "Inclure les features sentiment",
+                value=bool(st.session_state.get("pipeline_ml_include_sentiment", True)),
+                key="pipeline_ml_include_sentiment",
+                help="Ajoute `--include-sentiment` à `ml_train`.",
+            )
+            ml_enable_lightgbm = st.checkbox(
+                "Comparer LightGBM local",
+                value=bool(st.session_state.get("pipeline_ml_enable_lightgbm", True)),
+                key="pipeline_ml_enable_lightgbm",
+                help="Ajoute `--compare-lightgbm`.",
+            )
+            ml_enable_catboost = st.checkbox(
+                "Comparer CatBoost local",
+                value=bool(st.session_state.get("pipeline_ml_enable_catboost", True)),
+                key="pipeline_ml_enable_catboost",
+                help="Ajoute `--enable-catboost`.",
+            )
+        with ml_opt_col2:
+            ml_select_champion = st.checkbox(
+                "Activer la sélection automatique du champion",
+                value=bool(st.session_state.get("pipeline_ml_select_champion", True)),
+                key="pipeline_ml_select_champion",
+                help="Ajoute `--select-champion` et permet de servir automatiquement le meilleur modèle éligible.",
+            )
+            ml_champion_selection_metric = cast(
+                str,
+                st.selectbox(
+                    "Métrique de sélection du champion",
+                    options=["selection_score", "business_score", "auc"],
+                    index=["selection_score", "business_score", "auc"].index(
+                        cast(str, st.session_state.get("pipeline_ml_champion_selection_metric", "selection_score"))
+                        if st.session_state.get("pipeline_ml_champion_selection_metric", "selection_score") in {"selection_score", "business_score", "auc"}
+                        else "selection_score"
+                    ),
+                    key="pipeline_ml_champion_selection_metric",
+                    disabled=not ml_select_champion,
+                ),
+            )
+            ml_optimize_thresholds = st.checkbox(
+                "Optimiser le seuil de décision",
+                value=bool(st.session_state.get("pipeline_ml_optimize_thresholds", True)),
+                key="pipeline_ml_optimize_thresholds",
+                help="Ajoute `--optimize-thresholds` pour sélectionner le meilleur `decision_threshold` sur validation.",
+            )
+        with ml_opt_col3:
+            ml_enable_global_model = st.checkbox(
+                "Entraîner aussi un modèle global multi-symboles",
+                value=bool(st.session_state.get("pipeline_ml_enable_global_model", False)),
+                key="pipeline_ml_enable_global_model",
+                help="Ajoute `--enable-global-model`.",
+            )
+            ml_global_model_name = cast(
+                str,
+                st.selectbox(
+                    "Backend du modèle global",
+                    options=["catboost", "lightgbm"],
+                    index=["catboost", "lightgbm"].index(
+                        cast(str, st.session_state.get("pipeline_ml_global_model_name", "catboost"))
+                        if st.session_state.get("pipeline_ml_global_model_name", "catboost") in {"catboost", "lightgbm"}
+                        else "catboost"
+                    ),
+                    key="pipeline_ml_global_model_name",
+                    disabled=not ml_enable_global_model,
+                ),
+            )
+            ml_enable_cross_sectional = st.checkbox(
+                "Activer les features cross-sectionnelles",
+                value=bool(st.session_state.get("pipeline_ml_enable_cross_sectional", False)),
+                key="pipeline_ml_enable_cross_sectional",
+                help="Ajoute `--enable-cross-sectional` pour enrichir les features séquentielles et le modèle global.",
+            )
+
+        ml_adv_col1, ml_adv_col2 = st.columns(2)
+        with ml_adv_col1:
+            ml_optimize_target = st.checkbox(
+                "Optimiser l'horizon / la target swing",
+                value=bool(st.session_state.get("pipeline_ml_optimize_target", False)),
+                key="pipeline_ml_optimize_target",
+                help="Ajoute `--optimize-target`.",
+            )
+        with ml_adv_col2:
+            st.info(
+                "`ML Predict` n'entraîne rien : il réutilise le `selected_model` présent dans les artefacts symbole. "
+                "Si `ml_train` a activé les challengers et la sélection champion, l'inférence quotidienne suivra automatiquement ce routage."
+            )
+
         st.caption(
             "Alpha Scanner est lancé systématiquement en mode strict depuis l'IHM : "
             "`selector.alpha_scanner` "
@@ -296,6 +391,16 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             execution_pdt_rule=cast(Any, execution_pdt_rule),
             execution_swing_only=bool(execution_swing_only),
             ml_accelerator=cast(Any, ml_accelerator),
+            ml_include_sentiment=bool(ml_include_sentiment),
+            ml_enable_lightgbm=bool(ml_enable_lightgbm),
+            ml_enable_catboost=bool(ml_enable_catboost),
+            ml_enable_global_model=bool(ml_enable_global_model),
+            ml_global_model_name=cast(Any, ml_global_model_name),
+            ml_enable_cross_sectional=bool(ml_enable_cross_sectional),
+            ml_select_champion=bool(ml_select_champion),
+            ml_champion_selection_metric=cast(Any, ml_champion_selection_metric),
+            ml_optimize_thresholds=bool(ml_optimize_thresholds),
+            ml_optimize_target=bool(ml_optimize_target),
         ),
         live_confirmed,
     )

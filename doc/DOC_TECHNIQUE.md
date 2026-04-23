@@ -53,7 +53,7 @@ alpha_trade/
 | `screener/` | Scores de base (liquidité, RSI relatif, range historique) |
 | `selector/` | Scoring avancé (Minervini, VCP, neutralisation sectorielle) + profils de filtres stricts partagés |
 | `event_sentiment/` | NLP FinBERT + fusion scores quant/sentiment |
-| `modelFactory/` | Entraînement/prédiction LSTM per-symbol |
+| `modelFactory/` | Gouvernance ML multi-modèles : LSTM per-symbol, challengers tabulaires locaux, modèle global optionnel, sélection du champion et serving d'inférence |
 | `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
 | `execution_engine/` | OMS/EMS complet (10 phases) |
 | `corporate_actions/` | Gestion dividendes, splits, reverse splits (audit + comptabilité portefeuille) |
@@ -95,11 +95,19 @@ Points d'implémentation importants :
 
 **`LSTMAttentionModule`** (`modelFactory/model.py`) — LightningModule : LSTM multi-couche + Temporal Attention (soft-attention axe temporel) + classification binaire (CrossEntropyLoss). Métriques : BinaryAccuracy, BinaryPrecision, BinaryRecall, BinaryAUROC.
 
-**`train_symbol()` / `predict_symbol()`** (`modelFactory/trainer.py`, `modelFactory/predictor.py`) — services d'entraînement et d'inférence par symbole. Les deux chemins supportent désormais `accelerator=auto|cpu|gpu` :
+**`train_symbol()` / `predict_symbol()`** (`modelFactory/trainer.py`, `modelFactory/predictor.py`) — services d'entraînement et d'inférence par symbole. Ils ne se limitent plus au LSTM : `train_symbol()` peut désormais produire un manifeste d'artefacts multi-backends (`lstm_attention`, `lightgbm`, `catboost`, `global_model`) et `predict_symbol()` route vers le backend réellement sélectionné. Les deux chemins supportent `accelerator=auto|cpu|gpu` :
 
 - `train` s'appuie sur Lightning et résout `cuda:0` si disponible ;
 - `predict` charge explicitement le checkpoint sur `cuda:0` en mode `auto`/`gpu` lorsque CUDA est disponible, sinon retombe sur CPU ;
 - les logs du module ML journalisent le `requested_accelerator`, le `resolved_device` et le `device_name` effectif.
+
+Points d'implémentation importants côté `modelFactory` :
+
+- `trainer.py` persiste `config.json` et `metrics.json` comme **manifeste d'inférence** et **rapport de gouvernance** par symbole ;
+- `tabular_baseline.py` persiste désormais les artefacts tabulaires locaux (`lightgbm_model.pkl`, `catboost_model.pkl`, calibrateurs associés) ;
+- `champion_selection.py` n'autorise un champion que s'il est **réellement inférable** (backend + chemins artefacts présents) ;
+- `predictor.py` sait router vers `lstm_attention`, `lightgbm_tabular`, `catboost_tabular` et `global_tabular` ;
+- la base MySQL reste volontairement **résumée** : la gouvernance détaillée des challengers vit surtout dans les artefacts disque.
 
 **`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes `margin/cash/PDT` côté exécution. Seul fichier à modifier pour changer de broker.
 
@@ -282,6 +290,43 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 - Sortie : stdout + **RotatingFileHandler** (`alpha_trade.log`, 5 Mo, 3 backups)
 - Fonction utilitaire : `common.utils.setup_logging_with_file_handler()`
 
+### 5.5 Flux techniques `modelFactory`
+
+#### Entraînement (`python -m modelFactory --mode train`)
+
+1. résolution de l'univers depuis `--symbols` ou `stock_scores.is_candidate=1` ;
+2. chargement des bars, benchmark, sentiment et univers selon les options activées ;
+3. entraînement du `LSTMAttentionModule` ;
+4. calibration / optimisation de seuil côté LSTM ;
+5. entraînement optionnel des challengers locaux `LightGBM` et `CatBoost` ;
+6. entraînement optionnel du `global_model` ;
+7. construction des `artifact_routes` par symbole ;
+8. évaluation de l'éligibilité de chaque backend ;
+9. sélection du champion servi (`default`, `fallback_default_champion` ou `auto_selected_champion`) ;
+10. persistance des artefacts sur disque et des résumés DB.
+
+#### Inférence (`python -m modelFactory --mode predict`)
+
+1. résolution `config.json` / artefacts ;
+2. lecture de `artifact_routes.selected_model` ;
+3. routage du backend effectivement servi ;
+4. rechargement PIT-safe des données jusqu'à `prediction_date` / `as_of_date` ;
+5. génération des features ;
+6. calcul de `predicted_proba` et `predicted_class` ;
+7. insertion dans `model_predictions` si `persist=True`.
+
+#### Limite DB actuelle
+
+`model_predictions` ne persiste aujourd'hui que :
+
+- `symbol`
+- `prediction_date`
+- `predicted_proba`
+- `predicted_class`
+- `run_id`
+
+Le détail de serving (`selected_model`, `decision_threshold`, `signal_label`, `calibration_method`) est présent dans les résultats en mémoire et les artefacts, mais pas encore dans le schéma SQL.
+
 ---
 
 ## 6. Sécurité
@@ -375,18 +420,20 @@ python -m dataIntegrityEngine.import_alpaca_assets
 python -m dataIntegrityEngine.update_sector
 
 # Quotidien — dans cet ordre strict :
-python -m dataIntegrityEngine.import_alpaca_bar         # 1.  import bars
-python -m dataIntegrityEngine.data_sanitizer_daily       # 2.  sanitize bars
-python -m screener.stock_screener                        # 3.  screener
-python -m selector.alpha_scanner                         # 4.  alpha scanner
-python -m event_sentiment                                # 5.  sentiment pipeline
-python -m event_sentiment.signal_aggregator              # 6.  signal aggregator
-python -m modelFactory --mode train --include-sentiment --accelerator gpu --max-workers 1  # 7.  ML train périodique
-python -m modelFactory --mode predict --accelerator gpu  # 8.  ML predict quotidien
-python -m risk_management.run_risk --account-equity 100000  # 9.  risk management
-python run_execution.py simulate                         # 10. execution (ou paper / live)
-python -m corporate_actions sync --portfolio-only        # 11. sync CA sur positions détenues
-python -m corporate_actions apply                        # 12. appliquer CA sur positions
+python -m dataIntegrityEngine.import_alpaca_bar           # 1.  import bars
+python -m dataIntegrityEngine.data_sanitizer_daily        # 2.  sanitize bars
+python -m screener.stock_screener                         # 3.  screener
+python -m dataIntegrityEngine.sync_latest_quotes          # 4.  snapshot quotes pour filtre de spread
+python -m dataIntegrityEngine.sync_earnings_calendar      # 5.  earnings blackout
+python -m selector.alpha_scanner                          # 6.  alpha scanner
+python -m event_sentiment                                 # 7.  sentiment pipeline
+python -m event_sentiment.signal_aggregator               # 8.  signal aggregator
+python -m modelFactory --mode train --include-sentiment --compare-lightgbm --enable-catboost --select-champion --optimize-thresholds --accelerator gpu --max-workers 1  # 9.  ML train périodique
+python -m modelFactory --mode predict --accelerator gpu   # 10. ML predict quotidien
+python -m risk_management.run_risk --account-equity 100000  # 11. risk management
+python run_execution.py simulate                          # 12. execution (ou paper / live)
+python -m corporate_actions sync --portfolio-only         # 13. sync CA sur positions détenues
+python -m corporate_actions apply                         # 14. appliquer CA sur positions
 
 # Pour cibler un compte spécifique (multi-comptes) :
 python -m risk_management.run_risk --account-equity 100000 --account live1
@@ -407,7 +454,19 @@ Notes ML GPU :
 python -m streamlit run ihm/app.py
 ```
 
-Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent un paramètre **Accélérateur ML** (`auto | cpu | gpu`). L'IHM détecte la disponibilité locale de CUDA et transmet `--accelerator <mode>` aux sous-processus `modelFactory` lancés en arrière-plan. Le workflow complet IHM insère désormais `python -m dataIntegrityEngine.sync_latest_quotes` puis `python -m dataIntegrityEngine.sync_earnings_calendar` avant `Alpha Scanner`, afin d'alimenter automatiquement `stock_quote_snapshots` et `stock_earnings_calendar`. L'étape `Alpha Scanner` n'expose plus de toggle de preset : `python -m selector.alpha_scanner` applique déjà le profil strict partagé.
+Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent désormais un sous-ensemble cohérent des options `modelFactory` :
+
+- **Accélérateur ML** (`auto | cpu | gpu`) ;
+- inclusion du **sentiment** ;
+- activation des challengers **LightGBM** et **CatBoost** ;
+- activation optionnelle du **modèle global** ;
+- activation des **features cross-sectionnelles** ;
+- activation de la **sélection automatique du champion** ;
+- choix de la **métrique de sélection** ;
+- optimisation du **seuil de décision** ;
+- optimisation optionnelle de la **target**.
+
+`ML Predict` n'expose pas de choix de backend manuel : il réutilise le `selected_model` trouvé dans les artefacts du symbole. Le workflow complet IHM insère désormais `python -m dataIntegrityEngine.sync_latest_quotes` puis `python -m dataIntegrityEngine.sync_earnings_calendar` avant `Alpha Scanner`, afin d'alimenter automatiquement `stock_quote_snapshots` et `stock_earnings_calendar`. L'étape `Alpha Scanner` n'expose plus de toggle de preset : `python -m selector.alpha_scanner` applique déjà le profil strict partagé.
 
 ### Backtesting
 

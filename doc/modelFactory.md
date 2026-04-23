@@ -1,254 +1,787 @@
-# Model Factory — Guide d'usage
+# Model Factory — Référence complète
 
 ## Objectif
 
-Ce document résume le fonctionnement du module `modelFactory/` et les commandes utiles pour :
+`modelFactory/` est le module ML opérationnel du projet. Il ne se limite plus à un simple entraînement LSTM par symbole.
 
-- entraîner des modèles LSTM + attention par symbole,
-- produire des prédictions de probabilité directionnelle,
-- persister les artefacts modèles et les métriques,
-- alimenter `model_predictions` pour le module `risk_management` et le backtesting.
+Aujourd'hui, il assure :
+
+- l'entraînement **par symbole** d'un modèle séquentiel `LSTM + Attention` ;
+- l'entraînement de **challengers tabulaires locaux** `LightGBM` et `CatBoost` ;
+- l'entraînement optionnel d'un **modèle global multi-symboles** ;
+- la **calibration** des probabilités ;
+- l'**optimisation du seuil de décision** ;
+- l'**optimisation optionnelle de la target** (horizon / seuils swing) ;
+- la **gouvernance multi-modèles** avec sélection automatique du champion servi ;
+- l'**inférence batch ou ciblée** en rechargeant automatiquement le backend servi (`lstm_attention`, `lightgbm`, `catboost`, `global_model`) ;
+- l'alimentation de la base via `model_training_run`, `model_metrics` et `model_predictions`.
+
+Ce document doit être lu comme la **source de vérité métier et technique** du module. Si une personne reprend le projet, elle doit pouvoir comprendre ici :
+
+1. ce que fait réellement `modelFactory` ;
+2. quels artefacts il produit ;
+3. comment le pipeline et l'IHM l'utilisent ;
+4. quelles sont ses limites de persistance DB ;
+5. comment le diagnostiquer et le faire évoluer.
 
 ---
 
-## 1. Ce que contient le module
+## 1. Vue d'ensemble fonctionnelle
 
-### Fichiers clés
+### 1.1 Rôle dans le pipeline global
+
+Dans le pipeline quotidien, `modelFactory` intervient après :
+
+- les données de marché nettoyées (`stock_bars_daily`) ;
+- le screening / scoring (`stock_scores`) ;
+- le pipeline sentiment (`ticker_daily_sentiment_features`) si activé ;
+- le `signal_aggregator` qui prépare l'univers final candidat.
+
+Il intervient en deux temps :
+
+1. **`train`** : entraînement périodique des modèles et publication des artefacts ;
+2. **`predict`** : inférence quotidienne sur les candidats pour alimenter `risk_management`.
+
+### 1.2 Familles de modèles supportées
+
+#### Modèle principal local
+
+- `lstm_attention`
+
+#### Challengers locaux par symbole
+
+- `lightgbm`
+- `catboost`
+
+#### Modèle global optionnel
+
+- `global_model` avec backend tabulaire `lightgbm` ou `catboost`
+
+### 1.3 Ce qui est réellement servi en prédiction
+
+Le backend servi n'est **pas forcément** le LSTM.
+
+Le backend réellement utilisé par `predict_symbol()` dépend des artefacts présents dans `artifacts/models/<SYMBOL>/config.json` :
+
+- `artifact_routes.selected_model`
+- `artifact_routes.models.*`
+
+Le prédicteur sait aujourd'hui router vers :
+
+- `lstm_attention`
+- `lightgbm_tabular`
+- `catboost_tabular`
+- `global_tabular`
+
+---
+
+## 2. Structure du module
+
+### 2.1 Fichiers clés
 
 | Fichier | Rôle |
 |---|---|
-| `modelFactory/__init__.py` | Package Python |
-| `modelFactory/__main__.py` | Point d'entrée `python -m modelFactory` |
-| `modelFactory/cli.py` | CLI train / predict |
-| `modelFactory/orchestrator.py` | Orchestration multi-symboles |
-| `modelFactory/trainer.py` | Entraînement mono-symbole |
-| `modelFactory/predictor.py` | Inférence mono-symbole et batch |
-| `modelFactory/data_loader.py` | Chargement depuis `stock_bars_daily` et sentiment |
-| `modelFactory/features.py` | Feature engineering |
-| `modelFactory/dataset.py` | DataModule et scaling |
-| `modelFactory/model.py` | `LSTMAttentionModule` |
-| `modelFactory/db_registry.py` | Registre DB, métriques, prédictions |
-| `modelFactory/run_train.py` | Lanceur `train` |
-| `modelFactory/run_predict.py` | Lanceur `predict` |
-| `artifacts/models/` | Répertoire cible des artefacts |
+| `modelFactory/__main__.py` | point d'entrée `python -m modelFactory` |
+| `modelFactory/cli.py` | CLI unifiée `train` / `predict` |
+| `modelFactory/orchestrator.py` | orchestration multi-symboles, parallélisme, injection du modèle global |
+| `modelFactory/trainer.py` | entraînement mono-symbole, persistance artefacts, sélection du champion |
+| `modelFactory/predictor.py` | inférence mono-symbole et batch, routage du backend servi |
+| `modelFactory/model.py` | implémentation Lightning du `LSTMAttentionModule` |
+| `modelFactory/dataset.py` | `SymbolDataModule`, scaling, datasets séquentiels |
+| `modelFactory/data_loader.py` | chargement DB des bars, benchmark, sentiment et univers |
+| `modelFactory/features.py` | feature engineering local |
+| `modelFactory/cross_sectional.py` | features cross-sectionnelles PIT-safe |
+| `modelFactory/lightgbm_baseline.py` | challenger local LightGBM |
+| `modelFactory/catboost_baseline.py` | challenger local CatBoost |
+| `modelFactory/tabular_baseline.py` | helper commun des challengers tabulaires |
+| `modelFactory/global_model.py` | entraînement du modèle global multi-symboles |
+| `modelFactory/champion_selection.py` | gouvernance et éligibilité du champion |
+| `modelFactory/calibration.py` | calibration Platt |
+| `modelFactory/evaluation.py` | métriques, scores business, optimisation de seuil |
+| `modelFactory/target_optimization.py` | optimisation horizon / seuils de target |
+| `modelFactory/db_registry.py` | persistance DB résumée |
+| `modelFactory/run_train.py` | wrapper `python -m modelFactory.run_train` |
+| `modelFactory/run_predict.py` | wrapper `python -m modelFactory.run_predict` |
+
+### 2.2 Répertoire d'artefacts
+
+Par défaut :
+
+```text
+artifacts/models/
+```
+
+Convention :
+
+```text
+artifacts/models/
+  AAPL/
+    best.ckpt
+    scaler.pkl
+    calibrator.pkl                # LSTM si calibration activée
+    lightgbm_model.pkl            # si challenger LightGBM entraîné
+    lightgbm_calibrator.pkl       # si calibration LightGBM
+    catboost_model.pkl            # si challenger CatBoost entraîné
+    catboost_calibrator.pkl       # si calibration CatBoost
+    config.json
+    metrics.json
+  MSFT/
+    ...
+  __GLOBAL__/
+    global_model.pkl
+    calibrator.pkl                # si calibration modèle global
+    config.json
+    metrics.json
+```
 
 ---
 
-## 2. Prérequis
+## 3. Données et prérequis
 
-### 2.1 Données minimales pour l'entraînement
+### 3.1 Tables requises côté DB
 
-#### Obligatoires
+#### Requises pour l'entraînement
 
 - `stock_bars_daily`
-- `stock_scores` avec `is_candidate = 1` si aucun symbole n'est fourni explicitement
+- `stock_scores` si aucun `--symbols` explicite n'est fourni
 - `model_registry`
 - `model_training_run`
 - `model_metrics`
 
-#### Optionnelles
-
-- `ticker_daily_sentiment_features` si `--include-sentiment` est activé
-
-### 2.2 Données minimales pour la prédiction
-
-#### Obligatoires
+#### Requises pour la prédiction
 
 - `stock_bars_daily`
-- artefacts présents sous `artifacts/models/<SYMBOL>/`
 - `model_predictions`
+- artefacts présents sur disque dans `artifacts/models/`
 
-#### Optionnelles
+#### Optionnelles selon les options activées
 
-- `ticker_daily_sentiment_features` si le modèle entraîné utilisait des features sentiment
+- `ticker_daily_sentiment_features` si `--include-sentiment`
+- univers multi-symboles si `--enable-cross-sectional`
+- artefacts globaux si `global_model` est sélectionné
 
-### 2.3 Variables d'environnement minimales
+### 3.2 Variables d'environnement minimales
 
 ```powershell
 $env:LOGIN_DB = "user"
 $env:PASSWORD_DB = "pass"
 ```
 
-### 2.4 Artefacts produits
+Suivant l'environnement, `DB_HOST` et `DB_NAME` peuvent aussi être nécessaires.
 
-Par symbole, le module crée typiquement :
+### 3.3 Prérequis runtime ML
 
-- `best.ckpt`
-- `scaler.pkl`
-- `config.json`
-- `metrics.json`
+- Python 3.12+
+- PyTorch / Lightning pour le chemin `lstm_attention`
+- `lightgbm` si `--compare-lightgbm`
+- `catboost` si `--enable-catboost` ou `--global-model-name catboost`
+
+En l'absence d'une dépendance challenger, le run ne plante pas nécessairement : le challenger concerné peut être marqué `unavailable`.
 
 ---
 
-## 3. Commandes utiles
+## 4. CLI complète
 
-### Entraînement via le point d'entrée principal
+### 4.1 Point d'entrée principal
 
 ```powershell
 python -m modelFactory --mode train
-```
-
-### Entraînement avec sentiment et accélérateur auto
-
-```powershell
-python -m modelFactory --mode train --include-sentiment --accelerator auto --max-workers 1
-```
-
-### Entraînement ciblé
-
-```powershell
-python -m modelFactory --mode train --symbols AAPL MSFT NVDA --max-epochs 20 --batch-size 32 --sequence-length 60 --forecast-horizon 5
-```
-
-### Prédiction batch
-
-```powershell
 python -m modelFactory --mode predict
 ```
 
-### Prédiction ciblée
+### 4.2 Modes supportés
+
+- `--mode train`
+- `--mode predict`
+
+### 4.3 Options d'univers et d'exécution
+
+| Option | Rôle |
+|---|---|
+| `--symbols ...` | liste explicite de symboles |
+| `--max-workers` | parallélisme CPU côté orchestrateur |
+| `--artifacts-dir` | dossier racine des artefacts |
+| `--accelerator auto|cpu|gpu` | résolution device train/predict |
+| `--log-level` | niveau de log CLI |
+
+### 4.4 Options data / features
+
+| Option | Rôle |
+|---|---|
+| `--sequence-length` | longueur de séquence LSTM |
+| `--forecast-horizon` | horizon de prédiction |
+| `--include-sentiment` | ajoute les features sentiment ticker |
+| `--enable-cross-sectional` | active les features cross-sectionnelles |
+| `--cross-sectional-min-universe` | taille minimale d'univers par date |
+| `--feature-set v1|expert` | set de features |
+| `--benchmark-symbol` | benchmark pour features expert / cross-sectionnelles |
+
+### 4.5 Options target et décision
+
+| Option | Rôle |
+|---|---|
+| `--target-mode binary|swing_cash` | sémantique de target |
+| `--target-up-threshold` | seuil de hausse tradeable |
+| `--target-down-threshold` | seuil de baisse / no-trade |
+| `--decision-threshold` | seuil par défaut pour classer `long` vs `no_trade` |
+| `--optimize-target` | recherche du meilleur horizon / seuils swing |
+| `--optimize-thresholds` | recherche du meilleur seuil de décision |
+
+### 4.6 Options calibration et évaluation
+
+| Option | Rôle |
+|---|---|
+| `--calibration-method none|platt` | calibration des probabilités |
+| `--calibration-min-samples` | taille mini pour calibrer |
+| `--calibration-max-iter` | itérations max du calibrateur |
+| `--walkforward` | active la validation walk-forward |
+| `--wf-min-train-size`, `--wf-val-size`, `--wf-test-size`, `--wf-step-size`, `--wf-max-splits` | paramètres walk-forward |
+
+### 4.7 Options challengers / gouvernance
+
+| Option | Rôle |
+|---|---|
+| `--compare-lightgbm` | entraîne le challenger local LightGBM |
+| `--enable-catboost` | entraîne le challenger local CatBoost |
+| `--enable-global-model` | entraîne aussi un modèle global multi-symboles |
+| `--global-model-name catboost|lightgbm` | backend du modèle global |
+| `--global-artifact-symbol` | dossier d'artefacts du modèle global |
+| `--select-champion` | active la sélection automatique du modèle servi |
+| `--default-champion` | fallback explicite si pas d'auto-sélection |
+| `--champion-selection-metric` | métrique de sélection (`selection_score`, `business_score`, `auc`) |
+
+### 4.8 Options hyperparamètres challengers tabulaires
+
+| Option | Rôle |
+|---|---|
+| `--lgbm-max-depth` | profondeur LightGBM |
+| `--lgbm-n-estimators` | nombre d'arbres LightGBM |
+| `--lgbm-learning-rate` | LR LightGBM |
+| `--catboost-depth` | profondeur CatBoost |
+| `--catboost-iterations` | itérations CatBoost |
+| `--catboost-learning-rate` | LR CatBoost |
+
+---
+
+## 5. Commandes recommandées
+
+### 5.1 Entraînement minimal
+
+```powershell
+python -m modelFactory --mode train --accelerator auto
+```
+
+### 5.2 Entraînement orienté production locale multi-modèles
+
+```powershell
+python -m modelFactory --mode train --include-sentiment --compare-lightgbm --enable-catboost --select-champion --optimize-thresholds --accelerator auto --max-workers 1
+```
+
+### 5.3 Entraînement avec modèle global et features cross-sectionnelles
+
+```powershell
+python -m modelFactory --mode train --include-sentiment --enable-cross-sectional --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --select-champion --optimize-thresholds --accelerator auto --max-workers 1
+```
+
+### 5.4 Entraînement ciblé sur quelques symboles
+
+```powershell
+python -m modelFactory --mode train --symbols AAPL MSFT NVDA --include-sentiment --compare-lightgbm --enable-catboost --select-champion --accelerator cpu --max-epochs 20 --batch-size 32
+```
+
+### 5.5 Prédiction quotidienne batch
+
+```powershell
+python -m modelFactory --mode predict --accelerator auto
+```
+
+### 5.6 Prédiction ciblée
 
 ```powershell
 python -m modelFactory --mode predict --symbols AAPL MSFT NVDA --accelerator cpu
 ```
 
-### Lanceurs dédiés
+### 5.7 Lanceurs dédiés
 
 ```powershell
-python -m modelFactory.run_train --include-sentiment --accelerator gpu --max-workers 1
+python -m modelFactory.run_train --include-sentiment --compare-lightgbm --enable-catboost --select-champion --accelerator gpu --max-workers 1
 python -m modelFactory.run_predict --accelerator auto
 ```
 
 ---
 
-## 4. Ce que fait le module
+## 6. Déroulé réel de l'entraînement
 
-### 4.1 Résolution de l'univers
+### 6.1 Résolution de l'univers
 
-Si aucun symbole n'est fourni, `db_registry.load_candidate_symbols()` charge les symboles `is_candidate = 1` depuis `stock_scores`.
+Si `--symbols` est absent, `load_candidate_symbols()` lit `stock_scores.is_candidate = 1`.
 
-### 4.2 Entraînement
-
-Pour chaque symbole, `train_symbol()` :
-
-1. vérifie qu'il y a assez d'historique ;
-2. construit le `SymbolDataModule` ;
-3. instancie `LSTMAttentionModule` ;
-4. entraîne avec Lightning ;
-5. sauvegarde checkpoint, scaler, config et métriques ;
-6. met à jour `model_training_run` et `model_metrics`.
-
-### 4.3 Parallélisme et GPU
+### 6.2 Orchestration batch
 
 `run_training_batch()` :
 
-- utilise plusieurs processus sur CPU ;
-- force `effective_workers = 1` si le GPU est demandé ou disponible en mode `auto`.
+1. résout l'univers ;
+2. choisit le parallélisme effectif ;
+3. force `effective_workers = 1` si le GPU est demandé ou détecté en mode `auto` ;
+4. entraîne chaque symbole ;
+5. entraîne éventuellement le modèle global ;
+6. réinjecte les routes et la gouvernance du `global_model` dans les artefacts symbole.
 
-Cela évite plusieurs workers concurrents sur une même carte CUDA.
+### 6.3 `train_symbol()` — détail par symbole
 
-### 4.4 Prédiction
+Pour chaque symbole :
+
+1. vérifie `min_history_days` ;
+2. prépare le `SymbolDataModule` ;
+3. saute le symbole si les séquences deviennent insuffisantes après split ;
+4. exécute éventuellement l'optimisation de target ;
+5. exécute éventuellement le walk-forward ;
+6. entraîne le `LSTMAttentionModule` ;
+7. recharge le meilleur checkpoint ;
+8. calcule métriques `val` / `test` ;
+9. calibre les probabilités si demandé ;
+10. optimise éventuellement le `decision_threshold` ;
+11. entraîne éventuellement `lightgbm` ;
+12. entraîne éventuellement `catboost` ;
+13. construit les routes d'inférence ;
+14. évalue l'éligibilité de chaque challenger ;
+15. sélectionne le champion servi ;
+16. persiste `config.json`, `metrics.json`, scaler, checkpoint et calibrateurs ;
+17. écrit les résumés DB.
+
+### 6.4 Ce qui est écrit en base
+
+#### `model_training_run`
+
+Contient un historique **résumé** du run :
+
+- `run_id`
+- `symbol`
+- `status`
+- `skip_reason`
+- `started_at`, `finished_at`
+- `checkpoint_path`
+- `scaler_path`
+- `config_path`
+
+#### `model_metrics`
+
+Contient des métriques **résumées** par split :
+
+- `loss`
+- `directional_accuracy`
+- `precision`
+- `recall`
+- `auc`
+
+Important : la DB **ne contient pas toute la richesse** de `metrics.json`.
+Les détails challengers, rankings, champion et métriques business avancées vivent surtout sur disque.
+
+---
+
+## 7. Contrat des artefacts
+
+### 7.1 Artefacts communs symbole
+
+Chaque symbole complété possède a minima :
+
+- `config.json`
+- `metrics.json`
+
+Suivant le backend :
+
+- `best.ckpt` + `scaler.pkl` pour le LSTM ;
+- `lightgbm_model.pkl` pour LightGBM ;
+- `catboost_model.pkl` pour CatBoost.
+
+### 7.2 `config.json` — rôle stratégique
+
+`config.json` est le **manifeste de serving** du symbole.
+
+Il contient notamment :
+
+- la config data / model / calibration ;
+- les features utilisées ;
+- `selected_decision_threshold` ;
+- `architecture_selected` ;
+- `selection_mode` ;
+- `artifact_routes.selected_model` ;
+- `artifact_routes.models.*`.
+
+### 7.3 Routes d'inférence actuellement supportées
+
+#### `lstm_attention`
+
+```json
+{
+  "checkpoint_path": ".../best.ckpt",
+  "scaler_path": ".../scaler.pkl",
+  "config_path": ".../config.json",
+  "calibrator_path": ".../calibrator.pkl",
+  "inference_backend": "lstm_attention"
+}
+```
+
+#### `lightgbm`
+
+```json
+{
+  "status": "completed",
+  "model_path": ".../lightgbm_model.pkl",
+  "calibrator_path": ".../lightgbm_calibrator.pkl",
+  "config_path": ".../config.json",
+  "feature_columns": ["..."],
+  "selected_decision_threshold": 0.61,
+  "inference_backend": "lightgbm_tabular"
+}
+```
+
+#### `catboost`
+
+```json
+{
+  "status": "completed",
+  "model_path": ".../catboost_model.pkl",
+  "calibrator_path": ".../catboost_calibrator.pkl",
+  "config_path": ".../config.json",
+  "feature_columns": ["..."],
+  "selected_decision_threshold": 0.59,
+  "inference_backend": "catboost_tabular"
+}
+```
+
+#### `global_model`
+
+```json
+{
+  "status": "completed",
+  "artifact_symbol": "__GLOBAL__",
+  "model_path": ".../__GLOBAL__/global_model.pkl",
+  "config_path": ".../__GLOBAL__/config.json",
+  "calibrator_path": ".../__GLOBAL__/calibrator.pkl",
+  "inference_backend": "global_tabular"
+}
+```
+
+---
+
+## 8. Gouvernance multi-modèles
+
+### 8.1 Principe
+
+Un modèle ne peut pas être champion seulement parce qu'il score bien.
+Il doit aussi être **servable**.
+
+### 8.2 Éligibilité actuelle
+
+#### `lstm_attention`
+
+Éligible si :
+
+- status `completed`
+- backend `lstm_attention`
+- `checkpoint_path` présent
+- `scaler_path` présent
+
+#### `lightgbm`
+
+Éligible si :
+
+- status `completed`
+- backend `lightgbm_tabular`
+- `config_path` présent
+- `model_path` présent
+
+#### `catboost`
+
+Éligible si :
+
+- status `completed`
+- backend `catboost_tabular`
+- `config_path` présent
+- `model_path` présent
+
+#### `global_model`
+
+Éligible si :
+
+- status `completed`
+- backend `global_tabular`
+- `config_path` présent
+- `model_path` présent
+
+### 8.3 Modes de sélection
+
+- `default_champion` : l'auto-sélection est désactivée
+- `fallback_default_champion` : aucun challenger éligible, on revient au défaut
+- `auto_selected_champion` : meilleur modèle éligible retenu
+
+### 8.4 Où lire le résultat de gouvernance
+
+#### Dans `config.json`
+
+- `architecture_selected`
+- `selection_mode`
+- `artifact_routes.selected_model`
+
+#### Dans `metrics.json`
+
+- `champion`
+- `challengers.ranking`
+- détail de chaque challenger
+
+---
+
+## 9. Déroulé réel de la prédiction
+
+### 9.1 Résolution des artefacts
 
 `predict_symbol()` :
 
-1. résout les artefacts depuis le registre DB ou le dossier symbole ;
-2. recharge la config et le scaler ;
-3. recharge les données jusqu'à `prediction_date` ou `as_of_date` ;
-4. calcule les features ;
-5. produit `predicted_proba` et `predicted_class` ;
-6. écrit dans `model_predictions` si `persist=True`.
+1. essaie d'abord `load_training_run()` via la DB ;
+2. retombe sinon sur le dossier canonique `artifacts/models/<SYMBOL>/`.
 
-### 4.5 Sécurité PIT
+### 9.2 Résolution du backend servi
 
-Le prédicteur borne le chargement des données à `end_date <= cutoff_date`, ce qui permet une utilisation compatible avec le backtesting et la reconstruction historique sans look-ahead évident au niveau chargement.
+Le prédicteur lit `config.json`, puis `_resolve_selected_model_route()` choisit :
+
+- `global_tabular` si `selected_model = global_model` ;
+- `lightgbm_tabular` ou `catboost_tabular` si `selected_model` vaut l'un de ces challengers ;
+- sinon fallback sur `lstm_attention`.
+
+### 9.3 Préparation des données
+
+Le prédicteur recharge les données **bornées à la date de coupe** :
+
+- `cutoff_date = as_of_date or prediction_date`
+- chargement des bars jusqu'à cette date
+- chargement du sentiment si nécessaire
+- chargement benchmark / univers si features expertes ou cross-sectionnelles
+
+Cette logique est essentielle pour la compatibilité backtesting / replay sans look-ahead trivial.
+
+### 9.4 Chemin LSTM
+
+Le prédicteur :
+
+1. recharge `scaler.pkl` ;
+2. transforme les `sequence_length` dernières lignes ;
+3. recharge `best.ckpt` ;
+4. applique éventuellement `calibrator.pkl` ;
+5. compare la proba au `decision_threshold`.
+
+### 9.5 Chemin tabulaire local ou global
+
+Le prédicteur :
+
+1. recharge le modèle picklé ;
+2. reconstruit le dernier `DataFrame` de features ;
+3. contrôle la présence des `feature_columns` ;
+4. appelle `predict_proba()` ;
+5. applique le calibrateur tabulaire si présent ;
+6. compare la proba au `selected_decision_threshold` de la route ou au `decision_threshold` de config.
+
+### 9.6 Ce qui est écrit dans `model_predictions`
+
+La persistance DB actuelle est volontairement compacte :
+
+- `symbol`
+- `prediction_date`
+- `predicted_proba`
+- `predicted_class`
+- `run_id`
+
+Important : la sortie en mémoire contient aussi, selon le backend :
+
+- `raw_proba`
+- `decision_threshold`
+- `signal_label`
+- `calibration_method`
+- `selected_model`
+
+mais ces champs **ne sont pas encore persistés en base** par `db_registry.insert_predictions()`.
+
+Conséquence :
+
+- la table `model_predictions` est suffisante pour `risk_management` ;
+- elle n'est pas encore une table d'audit complète de gouvernance du champion.
 
 ---
 
-## 5. Pourquoi un symbole peut être ignoré
+## 10. Intégration avec l'IHM
 
-### 5.1 Historique insuffisant
+### 10.1 Étape `ML Train`
 
-Causes probables :
+L'IHM (`ihm/services/pipeline_runner.py`) lance désormais une commande `modelFactory` cohérente avec la gouvernance multi-modèles :
 
-1. moins de `min_history_days` lignes en `stock_bars_daily` ;
-2. trop peu de séquences après split train / val / test ;
-3. sentiment demandé mais données sentiment trop pauvres.
+- accélérateur `auto|cpu|gpu`
+- sentiment optionnel
+- challengers LightGBM / CatBoost optionnels
+- modèle global optionnel
+- features cross-sectionnelles optionnelles
+- sélection champion optionnelle
+- optimisation de seuil optionnelle
+- optimisation target optionnelle
 
-### 5.2 Prédiction impossible
+### 10.2 Étape `ML Predict`
 
-Causes probables :
+L'IHM ne décide pas du backend au moment du predict.
+Elle déclenche simplement :
 
-1. artefacts absents ;
-2. `best.ckpt`, `scaler.pkl` ou `config.json` manquants ;
-3. historique de bars insuffisant ;
-4. modèle entraîné avec sentiment mais features sentiment indisponibles.
+```powershell
+python -m modelFactory --mode predict --accelerator auto
+```
 
-### 5.3 GPU non utilisé
+Le backend réellement servi dépend des artefacts symbole existants.
 
-Causes probables :
+### 10.3 Page `ML`
 
-1. `--accelerator cpu` forcé ;
-2. `--accelerator gpu` demandé mais CUDA indisponible ;
-3. fallback automatique vers CPU en inférence.
+La page `ihm/pages/ml.py` affiche uniquement les **tables DB de synthèse**. Pour le détail riche :
+
+- ouvrir `artifacts/models/<SYMBOL>/config.json`
+- ouvrir `artifacts/models/<SYMBOL>/metrics.json`
 
 ---
 
-## 6. Vérifications utiles
+## 11. Causes fréquentes de skip / échec
+
+### 11.1 Skip en entraînement
+
+Causes typiques :
+
+1. `history_too_short`
+2. `insufficient_sequences_after_split`
+3. aucun split walk-forward valide
+4. challenger indisponible (`lightgbm` ou `catboost` non installés)
+
+### 11.2 Prédiction impossible
+
+Causes typiques :
+
+1. `config.json` absent
+2. artefact ciblé absent (`best.ckpt`, `lightgbm_model.pkl`, etc.)
+3. features manquantes au moment du predict
+4. historique insuffisant pour reconstruire la dernière fenêtre
+5. route `selected_model` invalide ou incomplète
+
+### 11.3 GPU non utilisé
+
+Causes typiques :
+
+1. `--accelerator cpu`
+2. `--accelerator gpu` demandé sans CUDA disponible
+3. fallback automatique vers CPU en prédiction
+
+---
+
+## 12. Vérifications opérationnelles utiles
 
 ### Vérifier les derniers runs d'entraînement
 
 ```powershell
-python -c 'from database.connection import get_sqlalchemy_engine; from sqlalchemy import text; engine = get_sqlalchemy_engine();
+python -c "from database.connection import get_sqlalchemy_engine; from sqlalchemy import text; engine = get_sqlalchemy_engine();
 with engine.connect() as conn:
-    rows = conn.execute(text("SELECT run_id, symbol, status, started_at, finished_at FROM model_training_run ORDER BY started_at DESC LIMIT 10")).mappings().all();
-    print([dict(r) for r in rows])'
+    rows = conn.execute(text('SELECT run_id, symbol, status, started_at, finished_at, checkpoint_path, config_path FROM model_training_run ORDER BY started_at DESC LIMIT 10')).mappings().all();
+    print([dict(r) for r in rows])"
 ```
 
-### Vérifier les dernières prédictions
+### Vérifier les dernières métriques DB
 
 ```powershell
-python -c 'from database.connection import get_sqlalchemy_engine; from sqlalchemy import text; engine = get_sqlalchemy_engine();
+python -c "from database.connection import get_sqlalchemy_engine; from sqlalchemy import text; engine = get_sqlalchemy_engine();
 with engine.connect() as conn:
-    rows = conn.execute(text("SELECT symbol, prediction_date, predicted_proba, predicted_class, run_id FROM model_predictions ORDER BY prediction_date DESC LIMIT 10")).mappings().all();
-    print([dict(r) for r in rows])'
+    rows = conn.execute(text('SELECT run_id, symbol, split_name, loss, directional_accuracy, auc FROM model_metrics ORDER BY created_at DESC LIMIT 20')).mappings().all();
+    print([dict(r) for r in rows])"
+```
+
+### Vérifier les dernières prédictions persistées
+
+```powershell
+python -c "from database.connection import get_sqlalchemy_engine; from sqlalchemy import text; engine = get_sqlalchemy_engine();
+with engine.connect() as conn:
+    rows = conn.execute(text('SELECT symbol, prediction_date, predicted_proba, predicted_class, run_id FROM model_predictions ORDER BY prediction_date DESC, symbol LIMIT 20')).mappings().all();
+    print([dict(r) for r in rows])"
 ```
 
 ### Vérifier les artefacts d'un symbole
 
 ```powershell
-Get-ChildItem "C:\Users\PC MLI\PycharmProjects\alpha_trade\artifacts\models\AAPL"
+Get-ChildItem "C:\Users\MLI\PycharmProjects\alpha_trade\artifacts\models\AAPL"
+Get-Content "C:\Users\MLI\PycharmProjects\alpha_trade\artifacts\models\AAPL\config.json"
+Get-Content "C:\Users\MLI\PycharmProjects\alpha_trade\artifacts\models\AAPL\metrics.json"
 ```
 
 ---
 
-## 7. Tests
+## 13. Tests utiles
 
-### Tests ciblés configuration / dataset / entraînement
+### Suite ciblée modèle / entraînement / prédiction
 
 ```powershell
-python -m pytest tests/test_model_factory_config.py tests/test_model_factory_dataset.py tests/test_model_factory_trainer.py tests/test_model_factory_orchestrator.py tests/test_model_factory_model.py -q -o addopts=""
+python -m pytest tests/test_model_factory_config.py tests/test_model_factory_dataset.py tests/test_model_factory_trainer.py tests/test_model_factory_predictor.py tests/test_model_factory_orchestrator.py tests/test_model_factory_cli.py -q --no-cov
 ```
 
-### Tests ciblés prédiction / registry / CLI
+### Suite challengers tabulaires et gouvernance
 
 ```powershell
-python -m pytest tests/test_model_factory_predictor.py tests/test_model_factory_db_registry.py tests/test_model_factory_cli.py tests/test_model_factory_run_train.py tests/test_model_factory_run_predict.py tests/test_model_factory_main.py -q -o addopts=""
+python -m pytest tests/test_model_factory_lightgbm_baseline.py tests/test_model_factory_catboost_baseline.py tests/test_model_factory_trainer.py tests/test_model_factory_predictor.py tests/test_model_factory_orchestrator.py -q --no-cov
+```
+
+### Suite complète `modelFactory`
+
+```powershell
+$files = Get-ChildItem "tests\test_model_factory*.py" | ForEach-Object { $_.FullName }
+python -m pytest $files -q --no-cov
 ```
 
 ---
 
-## 8. Recommandation pratique
+## 14. Recommandation opérateur
 
-Ordre conseillé :
+### Cadence recommandée
 
-1. valider `stock_bars_daily` ;
-2. entraîner périodiquement avec `train` ;
-3. produire les prédictions quotidiennes avec `predict` ;
-4. laisser `risk_management` consommer `model_predictions`.
+#### Hebdomadaire ou événementielle
 
-### Séquence recommandée
+- `train`
+
+#### Quotidienne
+
+- `predict`
+
+### Séquence conseillée en production locale
 
 ```powershell
-python -m modelFactory --mode train --include-sentiment --accelerator auto --max-workers 1
+python -m modelFactory --mode train --include-sentiment --compare-lightgbm --enable-catboost --select-champion --optimize-thresholds --accelerator auto --max-workers 1
 python -m modelFactory --mode predict --accelerator auto
 ```
+
+### Quand activer le modèle global
+
+Activer `--enable-global-model` si :
+
+- l'univers est suffisamment large ;
+- les features cross-sectionnelles sont stables ;
+- on veut comparer un backend mutualisé à la logique purement locale par symbole.
+
+Le laisser désactivé si l'objectif est de rester sur une gouvernance locale légère et robuste.
+
+---
+
+## 15. Limites connues
+
+1. `model_metrics` et `model_predictions` sont des tables **résumées**, pas des manifestes complets de gouvernance.
+2. Le routage complet du champion vit surtout dans les artefacts disque.
+3. Les modèles tabulaires locaux sont persistés via `pickle` ; c'est pratique et rapide, mais pas le format le plus strict à long terme.
+4. L'IHM expose les options principales de gouvernance, mais pas encore l'intégralité de la CLI `modelFactory`.
+5. Le chemin `predict` est PIT-safe côté chargement de données, mais toute nouvelle feature devra conserver cette discipline.
+
+---
+
+## 16. Priorités d'évolution si reprise du projet
+
+1. enrichir `model_predictions` avec `selected_model`, `decision_threshold`, `signal_label`, `calibration_method` ;
+2. enrichir `model_metrics` ou ajouter une table dédiée pour la gouvernance challengers / champion ;
+3. versionner plus finement les artefacts tabulaires ;
+4. ajouter des contrôles de compatibilité de features encore plus explicites au chargement ;
+5. éventuellement migrer les persistences tabulaires vers des formats natifs (`LightGBM`, `CatBoost`) si le besoin d'interopérabilité augmente.
+

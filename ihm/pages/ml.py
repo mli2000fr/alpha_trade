@@ -11,7 +11,11 @@ from ihm.services.queries import get_model_metrics, get_predictions, get_trainin
 
 
 def render() -> None:
-    st.header("🤖 Model Factory — ML / Prédictions")
+    st.header("🤖 Model Factory — Entraînement & prédictions")
+    st.caption(
+        "Cette page affiche les tables DB de synthèse (`model_training_run`, `model_metrics`, `model_predictions`). "
+        "Les détails riches de gouvernance multi-modèles (challengers, champion, routes d'artefacts) restent principalement dans les artefacts `config.json` / `metrics.json` par symbole."
+    )
 
     if not db_available():
         render_db_unavailable("ML / Prédictions", form_key="ml_db_form")
@@ -19,6 +23,7 @@ def render() -> None:
 
     # --- Training runs ---
     st.subheader("🏋️ Runs d'entraînement")
+    st.caption("Historique des runs `modelFactory` persistés en base, quel que soit le backend finalement servi en inférence.")
     runs = get_training_runs()
     if runs.empty:
         render_query_diagnostic("Aucun run d'entraînement ML trouvé.")
@@ -27,6 +32,7 @@ def render() -> None:
 
     # --- Métriques ---
     st.subheader("📈 Métriques par symbole")
+    st.caption("Vue DB résumée par split (`val`, `test`, `wf`). Les comparatifs détaillés challengers/champion sont stockés dans les artefacts disque du symbole.")
     metrics = get_model_metrics()
     if metrics.empty:
         render_query_diagnostic("Aucune métrique ML disponible.")
@@ -35,6 +41,7 @@ def render() -> None:
 
     # --- Prédictions ---
     st.subheader("🔮 Prédictions récentes")
+    st.caption("La table `model_predictions` reste volontairement compacte. Elle trace la sortie servie, mais pas encore tout le détail de routage du champion sélectionné.")
     preds = get_predictions()
     if preds.empty:
         render_query_diagnostic("Aucune prédiction récente disponible.")

@@ -16,6 +16,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
+MLGlobalModelName = Literal["catboost", "lightgbm"]
+MLChampionMetric = Literal["selection_score", "business_score", "auc"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
 
 
@@ -34,6 +36,16 @@ class PipelineLaunchOptions:
     execution_pdt_rule: Literal["auto", "off"] = "auto"
     execution_swing_only: bool = False
     ml_accelerator: MLAccelerator = "auto"
+    ml_include_sentiment: bool = True
+    ml_enable_lightgbm: bool = True
+    ml_enable_catboost: bool = True
+    ml_enable_global_model: bool = False
+    ml_global_model_name: MLGlobalModelName = "catboost"
+    ml_enable_cross_sectional: bool = False
+    ml_select_champion: bool = True
+    ml_champion_selection_metric: MLChampionMetric = "selection_score"
+    ml_optimize_thresholds: bool = True
+    ml_optimize_target: bool = False
     news_import_start_date: str | None = None
     news_import_end_date: str | None = None
 
@@ -154,8 +166,8 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     PipelineStepDefinition(
         key="ml_train",
         num="9",
-        name="ML Train (LSTM)",
-        desc="Entraînement des modèles LSTM+Attention par symbole candidat. Périodique (hebdomadaire recommandé).",
+        name="ML Train (Model Factory)",
+        desc="Entraînement `modelFactory` par symbole candidat : LSTM+Attention, challengers locaux LightGBM/CatBoost, modèle global optionnel et sélection éventuelle du champion servi.",
         tables="model_registry, model_training_run, model_metrics",
         deps="signal_aggregator (is_candidate=1)",
     ),
@@ -163,7 +175,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="ml_predict",
         num="10",
         name="ML Predict",
-        desc="Inférence LSTM → predicted_proba par symbole candidat. Quotidien, alimente le score de conviction du risk.",
+        desc="Inférence `modelFactory` sur le champion sélectionné par symbole (LSTM, LightGBM, CatBoost ou global_model selon les artefacts disponibles). Quotidien, alimente le score de conviction du risk.",
         tables="model_predictions",
         deps="ml_train (modèle entraîné requis)",
     ),
@@ -292,17 +304,33 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_train":
-        return [
+        command = [
             sys.executable,
             "-u",
             "-m",
             "modelFactory",
             "--mode",
             "train",
-            "--include-sentiment",
             "--accelerator",
             options.ml_accelerator,
         ]
+        if options.ml_include_sentiment:
+            command.append("--include-sentiment")
+        if options.ml_enable_lightgbm:
+            command.append("--compare-lightgbm")
+        if options.ml_enable_catboost:
+            command.append("--enable-catboost")
+        if options.ml_enable_global_model:
+            command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
+        if options.ml_enable_cross_sectional:
+            command.append("--enable-cross-sectional")
+        if options.ml_select_champion:
+            command.extend(["--select-champion", "--champion-selection-metric", options.ml_champion_selection_metric])
+        if options.ml_optimize_thresholds:
+            command.append("--optimize-thresholds")
+        if options.ml_optimize_target:
+            command.append("--optimize-target")
+        return command
 
     if step_key == "ml_predict":
         return [

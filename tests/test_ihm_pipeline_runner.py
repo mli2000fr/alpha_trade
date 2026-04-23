@@ -124,8 +124,57 @@ def test_build_pipeline_command_ml_steps() -> None:
     train_cmd = build_pipeline_command("ml_train", options)
     predict_cmd = build_pipeline_command("ml_predict", options)
 
-    assert train_cmd == [train_cmd[0], "-u", "-m", "modelFactory", "--mode", "train", "--include-sentiment", "--accelerator", "gpu"]
+    assert train_cmd == [
+        train_cmd[0],
+        "-u",
+        "-m",
+        "modelFactory",
+        "--mode",
+        "train",
+        "--accelerator",
+        "gpu",
+        "--include-sentiment",
+        "--compare-lightgbm",
+        "--enable-catboost",
+        "--select-champion",
+        "--champion-selection-metric",
+        "selection_score",
+        "--optimize-thresholds",
+    ]
     assert predict_cmd == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict", "--accelerator", "gpu"]
+
+
+def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options() -> None:
+    options = PipelineLaunchOptions(
+        ml_accelerator="cpu",
+        ml_include_sentiment=False,
+        ml_enable_lightgbm=False,
+        ml_enable_catboost=False,
+        ml_enable_global_model=True,
+        ml_global_model_name="lightgbm",
+        ml_enable_cross_sectional=True,
+        ml_select_champion=False,
+        ml_optimize_thresholds=False,
+        ml_optimize_target=True,
+    )
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert train_cmd == [
+        train_cmd[0],
+        "-u",
+        "-m",
+        "modelFactory",
+        "--mode",
+        "train",
+        "--accelerator",
+        "cpu",
+        "--enable-global-model",
+        "--global-model-name",
+        "lightgbm",
+        "--enable-cross-sectional",
+        "--optimize-target",
+    ]
 
 
 def test_build_pipeline_command_import_news() -> None:

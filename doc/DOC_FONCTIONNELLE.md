@@ -8,7 +8,7 @@
 
 ### 1.1 Objectif de l'application
 
-**Alpha Trade** est un système de trading algorithmique **Swing Trade** sur actions US, de bout en bout. Il couvre la totalité de la chaîne : ingestion de données de marché, screening quantitatif, analyse de sentiment (NLP/FinBERT), prédiction par modèle LSTM, gestion du risque, construction de portefeuille, exécution automatisée des ordres via le broker **Alpaca**, et gestion des corporate actions (dividendes, splits). Une **IHM opérateur Streamlit** permet la supervision du pipeline.
+**Alpha Trade** est un système de trading algorithmique **Swing Trade** sur actions US, de bout en bout. Il couvre la totalité de la chaîne : ingestion de données de marché, screening quantitatif, analyse de sentiment (NLP/FinBERT), prédiction par **gouvernance multi-modèles `modelFactory`** (LSTM local, challengers tabulaires locaux, modèle global optionnel), gestion du risque, construction de portefeuille, exécution automatisée des ordres via le broker **Alpaca**, et gestion des corporate actions (dividendes, splits). Une **IHM opérateur Streamlit** permet la supervision du pipeline.
 
 ### 1.2 Contexte métier
 
@@ -26,8 +26,8 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 6. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
 7. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
 8. **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
-9. **ML Train** — entraînement des modèles LSTM+Attention par symbole candidat (périodique)
-10. **ML Predict** — inférence LSTM → `predicted_proba` par symbole candidat (quotidien)
+9. **ML Train** — entraînement `modelFactory` par symbole candidat : LSTM+Attention, challengers locaux `LightGBM` / `CatBoost`, modèle global optionnel et sélection éventuelle du champion servi (périodique)
+10. **ML Predict** — inférence quotidienne sur le **champion sélectionné** par symbole (`lstm_attention`, `lightgbm`, `catboost` ou `global_model` selon les artefacts disponibles)
 11. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille, score de conviction (40% quant + 60% ML)
 12. **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
 13. **Corporate actions sync** — récupère dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour)
@@ -120,10 +120,14 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 - Fusion : `75% quant + 15% sentiment ticker + 10% macro sectoriel` (poids configurables)
 - Fenêtre glissante de 5 jours, pondérée par le nombre d'articles
 
-#### Prédiction LSTM
-- Modèle LSTM + Temporal Attention par symbole
-- Classification binaire : hausse/baisse à horizon 5 jours
-- Métriques : accuracy, precision, recall, AUC
+#### Model Factory — gouvernance multi-modèles
+- Modèle séquentiel principal : **LSTM + Temporal Attention** par symbole
+- Challengers tabulaires locaux optionnels : **LightGBM** et **CatBoost**
+- Modèle global multi-symboles optionnel : backend **LightGBM** ou **CatBoost**
+- Calibration possible des probabilités (`none` ou `platt`)
+- Optimisation possible du seuil de décision et de la target swing
+- Sélection automatique du **champion réellement inférable** parmi les modèles éligibles
+- Inférence quotidienne sur le backend sélectionné, avec sortie `predicted_proba` / `predicted_class`
 
 ### 2.4 Gestion du portefeuille
 
@@ -255,15 +259,17 @@ python -m corporate_actions apply --account live1     # appliquer CA sur le comp
      │ 1.  import_alpaca_bar        │ → stock_bars                                 │
      │ 2.  data_sanitizer_daily     │ → stock_bars_daily                           │
      │ 3.  stock_screener           │ → stock_scores                               │
-     │ 4.  alpha_scanner            │ → stock_scores (update)                      │
-     │ 5.  sentiment_pipeline       │ → ticker/sector feats                        │
-     │ 6.  signal_aggregator        │ → final_score_sentiment                      │
-     │ 7.  ml_train (périodique)    │ → model_registry, model_training_run         │
-     │ 8.  ml_predict (quotidien)   │ → model_predictions                          │
-     │ 9.  run_risk                 │ → portfolio_targets                          │
-     │ 10. run_execution            │ → ordres Alpaca + broker_positions_snapshots  │
-     │ 11. corporate_actions sync   │ → corporate_actions_events (portfolio only)  │
-     │ 12. corporate_actions apply  │ → position adjustments                       │
+     │ 4.  sync_latest_quotes       │ → stock_quote_snapshots                      │
+     │ 5.  sync_earnings_calendar   │ → stock_earnings_calendar                    │
+     │ 6.  alpha_scanner            │ → stock_scores (update)                      │
+     │ 7.  sentiment_pipeline       │ → ticker/sector feats                        │
+     │ 8.  signal_aggregator        │ → final_score_sentiment                      │
+     │ 9.  ml_train (périodique)    │ → artefacts Model Factory + champion servi   │
+     │ 10. ml_predict (quotidien)   │ → model_predictions                          │
+     │ 11. run_risk                 │ → portfolio_targets                          │
+     │ 12. run_execution            │ → ordres Alpaca + broker_positions_snapshots │
+     │ 13. corporate_actions sync   │ → corporate_actions_events (portfolio only)  │
+     │ 14. corporate_actions apply  │ → position adjustments                       │
      └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -342,7 +348,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 7. **L'idempotence est garantie** par une clé SHA-256, un même portefeuille cible ne génère pas de doublons
 8. **Les ordres 4xx du broker ne sont PAS retentés** (erreurs permanentes) ; seuls les 5xx/timeout/réseau sont retentés
 9. **Les positions broker hors cible** (action "investigate") ne sont pas soldées automatiquement pour éviter les erreurs
-10. **Le score de conviction combine** score quantitatif (40%) et probabilité prédite par le modèle ML (60%)
+10. **Le score de conviction combine** score quantitatif (40%) et probabilité prédite par le backend `modelFactory` effectivement servi (60%)
 11. **En backtest, un compte margin peut être soumis à la règle PDT** si `pdt_rule=auto` et `equity < 25k`, avec blocage du 4e day trade sur 5 séances glissantes
 12. **En backtest, l'option `swing_only` peut interdire toute revente le jour même**
 13. **En backtest, un cash account n'utilise que le cash settled** et retarde la réutilisation des fonds après vente jusqu'au settlement `T+1`
@@ -357,7 +363,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 |---|---|---|
 | **Marché fermé** (week-end, fériés) | Aucun ordre soumis, run avorté | Élevée si exécution non planifiée |
 | **Pas de news pour un symbole** | Boost sentiment neutre (0.5), signal quant seul | Moyenne |
-| **Modèle LSTM non entraîné** | Pas de prediction_proba, conviction dégradée | Moyenne |
+| **Aucun backend `modelFactory` servi disponible** | Pas de prediction_proba exploitable, conviction dégradée | Moyenne |
 | **Latence Alpaca API** | Fill timeout, ordres children non soumis | Faible |
 | **Circuit breaker déclenché** | Aucune allocation possible | Faible (sauf crash marché) |
 | **Corrélation élevée entre candidats** | Portefeuille réduit (moins de positions) | Moyenne |
