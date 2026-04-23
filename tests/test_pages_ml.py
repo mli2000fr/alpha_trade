@@ -69,3 +69,38 @@ def test_build_prediction_audit_filter_options_merges_audit_and_governance_sourc
     assert options["run_ids"] == ["run-3", "run-2", "run-1"]
 
 
+def test_build_prediction_audit_navigation_options_prefers_artifact_symbols() -> None:
+    audit_df = pd.DataFrame(
+        [
+            {
+                "prediction_date": "2026-04-23",
+                "symbol": "AAPL",
+                "run_id": "run-1",
+                "served_model": "global_model",
+                "governance_link_status": "aligned",
+                "governance_selection_mode": "auto_selected_champion",
+                "governance_champion_artifact_symbol": "__GLOBAL__",
+                "governance_served_artifact_symbol": "AAPL",
+            }
+        ]
+    )
+
+    options = ml._build_prediction_audit_navigation_options(audit_df)
+
+    assert len(options) == 1
+    assert options[0]["run_id"] == "run-1"
+    assert options[0]["artifact_symbol"] == "__GLOBAL__"
+    assert "servi=global_model" in options[0]["label"]
+
+
+def test_resolve_navigation_symbol_falls_back_to_symbol() -> None:
+    option = {
+        "artifact_symbol": "__GLOBAL__",
+        "symbol": "AAPL",
+    }
+
+    resolved = ml._resolve_navigation_symbol(option, ["AAPL", "MSFT"])
+
+    assert resolved == "AAPL"
+
+

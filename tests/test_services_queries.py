@@ -104,6 +104,8 @@ def test_get_prediction_governance_audit_can_filter_by_symbol(monkeypatch):
     assert "LEFT JOIN model_governance champion" in captured["query"]
     assert "served.model_name = p.selected_model" in captured["query"]
     assert "champion.is_selected_model = 1" in captured["query"]
+    assert "governance_served_artifact_symbol" in captured["query"]
+    assert "governance_champion_artifact_symbol" in captured["query"]
     assert "WHERE symbol = :symbol" in captured["query"]
     assert "governance_link_status" in captured["query"]
     assert captured["params"] == {"symbol": "AAPL"}

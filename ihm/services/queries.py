@@ -357,6 +357,7 @@ def get_prediction_governance_audit(
                    served.backend_model_name AS governance_served_backend_model_name,
                    served.calibration_method AS governance_served_calibration_method,
                    served.decision_threshold AS governance_served_decision_threshold,
+                   served.artifact_symbol AS governance_served_artifact_symbol,
                    champion.model_name AS governance_champion_model,
                    champion.selection_mode AS governance_selection_mode,
                    champion.selection_metric AS governance_selection_metric,
@@ -364,6 +365,7 @@ def get_prediction_governance_audit(
                    champion.inference_backend AS governance_champion_backend,
                    champion.calibration_method AS governance_champion_calibration_method,
                    champion.decision_threshold AS governance_champion_decision_threshold,
+                   champion.artifact_symbol AS governance_champion_artifact_symbol,
                    CASE
                        WHEN champion.run_id IS NULL THEN 'missing_governance_snapshot'
                        WHEN p.selected_model IS NULL OR p.selected_model = '' THEN 'prediction_missing_selected_model'
