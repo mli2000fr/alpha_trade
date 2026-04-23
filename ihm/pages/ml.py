@@ -22,6 +22,32 @@ from ihm.services.queries import (
 
 
 ML_SELECTED_SYMBOL_KEY = "ihm_ml_selected_symbol"
+ML_AUDIT_FILTER_SOURCE_LIMIT = 500
+
+
+def _sorted_non_empty_strings(values: list[object], *, reverse: bool = False) -> list[str]:
+    normalized = {str(value).strip() for value in values if str(value).strip()}
+    return sorted(normalized, reverse=reverse)
+
+
+def _build_prediction_audit_filter_options(
+    audit_df: pd.DataFrame,
+    governance_df: pd.DataFrame,
+) -> dict[str, list[str]]:
+    audit_run_ids = audit_df["run_id"].tolist() if "run_id" in audit_df.columns else []
+    governance_run_ids = governance_df["run_id"].tolist() if "run_id" in governance_df.columns else []
+    audit_selection_modes = (
+        audit_df["governance_selection_mode"].tolist() if "governance_selection_mode" in audit_df.columns else []
+    )
+    governance_selection_modes = governance_df["selection_mode"].tolist() if "selection_mode" in governance_df.columns else []
+    return {
+        "governance_link_statuses": _sorted_non_empty_strings(
+            audit_df["governance_link_status"].tolist() if "governance_link_status" in audit_df.columns else []
+        ),
+        "selection_modes": _sorted_non_empty_strings(audit_selection_modes + governance_selection_modes),
+        "served_models": _sorted_non_empty_strings(audit_df["served_model"].tolist() if "served_model" in audit_df.columns else []),
+        "run_ids": _sorted_non_empty_strings(audit_run_ids + governance_run_ids, reverse=True),
+    }
 
 
 def _summarize_prediction_governance_audit(audit_df: pd.DataFrame) -> dict[str, object]:
@@ -114,6 +140,38 @@ def render() -> None:
         return
 
     selected_symbol_for_db = st.session_state.get(ML_SELECTED_SYMBOL_KEY) if symbols else None
+    symbol_filter = selected_symbol_for_db if isinstance(selected_symbol_for_db, str) else None
+
+    governance_filter_source = get_model_governance(limit=ML_AUDIT_FILTER_SOURCE_LIMIT, symbol=symbol_filter)
+    prediction_audit_filter_source = get_prediction_governance_audit(limit=ML_AUDIT_FILTER_SOURCE_LIMIT, symbol=symbol_filter)
+    filter_options = _build_prediction_audit_filter_options(prediction_audit_filter_source, governance_filter_source)
+
+    st.subheader("🎛️ Filtres d'audit DB")
+    st.caption(
+        "Ces filtres pilotent les vues `model_governance`, l'audit joint `model_predictions ↔ model_governance` "
+        "et, quand pertinent, la table des prédictions récentes."
+    )
+    col1, col2, col3, col4 = st.columns(4)
+    selected_link_statuses = col1.multiselect(
+        "governance_link_status",
+        options=filter_options["governance_link_statuses"],
+        key="ml_audit_filter_link_status",
+    )
+    selected_selection_modes = col2.multiselect(
+        "selection_mode",
+        options=filter_options["selection_modes"],
+        key="ml_audit_filter_selection_mode",
+    )
+    selected_served_models = col3.multiselect(
+        "served_model",
+        options=filter_options["served_models"],
+        key="ml_audit_filter_served_model",
+    )
+    selected_run_ids = col4.multiselect(
+        "run_id",
+        options=filter_options["run_ids"],
+        key="ml_audit_filter_run_id",
+    )
 
     # --- Training runs ---
     st.subheader("🏋️ Runs d'entraînement")
@@ -139,7 +197,12 @@ def render() -> None:
         "La table `model_governance` persiste par run et par symbole le ranking challengers/champion, "
         "le backend d'inférence, l'éligibilité de sélection et les scores utiles à l'audit quotidien."
     )
-    governance = get_model_governance(symbol=selected_symbol_for_db if isinstance(selected_symbol_for_db, str) else None)
+    governance = get_model_governance(
+        limit=ML_AUDIT_FILTER_SOURCE_LIMIT,
+        symbol=symbol_filter,
+        run_ids=selected_run_ids or None,
+        selection_modes=selected_selection_modes or None,
+    )
     if governance.empty:
         render_query_diagnostic("Aucune gouvernance ML persistée en base pour le moment.")
     else:
@@ -152,7 +215,12 @@ def render() -> None:
         "afin d'expliquer quel champion a été servi et si la prédiction est alignée avec la gouvernance persistée."
     )
     prediction_audit = get_prediction_governance_audit(
-        symbol=selected_symbol_for_db if isinstance(selected_symbol_for_db, str) else None
+        limit=ML_AUDIT_FILTER_SOURCE_LIMIT,
+        symbol=symbol_filter,
+        run_ids=selected_run_ids or None,
+        selection_modes=selected_selection_modes or None,
+        served_models=selected_served_models or None,
+        governance_link_statuses=selected_link_statuses or None,
     )
     if prediction_audit.empty:
         render_query_diagnostic("Aucun audit joint prédiction/gouvernance disponible.")
@@ -173,7 +241,12 @@ def render() -> None:
     # --- Prédictions ---
     st.subheader("🔮 Prédictions récentes")
     st.caption("La table `model_predictions` contient désormais les champs d'audit de serving utiles au quotidien : `selected_model`, `decision_threshold`, `signal_label`, `calibration_method`.")
-    preds = get_predictions(symbol=selected_symbol_for_db if isinstance(selected_symbol_for_db, str) else None)
+    preds = get_predictions(
+        limit=ML_AUDIT_FILTER_SOURCE_LIMIT,
+        symbol=symbol_filter,
+        run_ids=selected_run_ids or None,
+        served_models=selected_served_models or None,
+    )
     if preds.empty:
         render_query_diagnostic("Aucune prédiction récente disponible.")
     else:

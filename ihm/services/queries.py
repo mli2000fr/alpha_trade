@@ -213,6 +213,33 @@ def get_total_dividends() -> float:
 # ML
 # ---------------------------------------------------------------------------
 
+def _normalize_filter_values(values: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    for value in values or []:
+        text_value = str(value).strip()
+        if text_value:
+            normalized.append(text_value)
+    return normalized
+
+
+def _append_in_clause(
+    conditions: list[str],
+    params: dict[str, object],
+    *,
+    column_sql: str,
+    param_prefix: str,
+    values: list[str] | None,
+) -> None:
+    normalized = _normalize_filter_values(values)
+    if not normalized:
+        return
+    placeholders: list[str] = []
+    for index, value in enumerate(normalized):
+        param_name = f"{param_prefix}_{index}"
+        params[param_name] = value
+        placeholders.append(f":{param_name}")
+    conditions.append(f"{column_sql} IN ({', '.join(placeholders)})")
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_training_runs(limit: int = 20) -> pd.DataFrame:
     return safe_query(f"SELECT * FROM model_training_run ORDER BY started_at DESC LIMIT {limit}")
@@ -224,23 +251,20 @@ def get_model_metrics() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_model_governance(limit: int = 200, symbol: str | None = None) -> pd.DataFrame:
+def get_model_governance(
+    limit: int = 200,
+    symbol: str | None = None,
+    run_ids: list[str] | None = None,
+    selection_modes: list[str] | None = None,
+) -> pd.DataFrame:
+    params: dict[str, object] = {}
+    conditions: list[str] = []
     if symbol:
-        return safe_query(
-            f"""
-            SELECT run_id, symbol, model_name, `rank`, is_selected_model, selection_mode, selection_metric,
-                   selection_score, model_status, selection_eligible, eligibility_reason, reason,
-                   inference_backend, backend_model_name, calibration_method, decision_threshold,
-                   artifact_symbol, val_auc, test_auc, wf_auc,
-                   val_threshold_business_score, test_threshold_business_score, wf_threshold_business_score,
-                   created_at
-            FROM model_governance
-            WHERE symbol = :symbol
-            ORDER BY created_at DESC, run_id DESC, is_selected_model DESC, `rank` ASC, model_name ASC
-            LIMIT {limit}
-            """,
-            {"symbol": symbol},
-        )
+        params["symbol"] = symbol
+        conditions.append("symbol = :symbol")
+    _append_in_clause(conditions, params, column_sql="run_id", param_prefix="run_id", values=run_ids)
+    _append_in_clause(conditions, params, column_sql="selection_mode", param_prefix="selection_mode", values=selection_modes)
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     return safe_query(f"""
         SELECT run_id, symbol, model_name, `rank`, is_selected_model, selection_mode, selection_metric,
                selection_score, model_status, selection_eligible, eligibility_reason, reason,
@@ -249,9 +273,10 @@ def get_model_governance(limit: int = 200, symbol: str | None = None) -> pd.Data
                val_threshold_business_score, test_threshold_business_score, wf_threshold_business_score,
                created_at
         FROM model_governance
+        {where_clause}
         ORDER BY created_at DESC, run_id DESC, symbol ASC, is_selected_model DESC, `rank` ASC, model_name ASC
         LIMIT {limit}
-    """)
+    """, params or None)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -261,82 +286,106 @@ def get_prediction_symbols(limit: int = 200) -> list[str]:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_predictions(limit: int = 100, symbol: str | None = None) -> pd.DataFrame:
+def get_predictions(
+    limit: int = 100,
+    symbol: str | None = None,
+    run_ids: list[str] | None = None,
+    served_models: list[str] | None = None,
+) -> pd.DataFrame:
+    params: dict[str, object] = {}
+    conditions: list[str] = []
     if symbol:
-        return safe_query(
-            f"""
-            SELECT symbol, predicted_proba, predicted_class, prediction_date, run_id,
-                   selected_model, decision_threshold, signal_label, calibration_method, created_at
-            FROM model_predictions
-            WHERE symbol = :symbol
-            ORDER BY prediction_date DESC, created_at DESC
-            LIMIT {limit}
-            """,
-            {"symbol": symbol},
-        )
+        params["symbol"] = symbol
+        conditions.append("symbol = :symbol")
+    _append_in_clause(conditions, params, column_sql="run_id", param_prefix="prediction_run_id", values=run_ids)
+    _append_in_clause(conditions, params, column_sql="selected_model", param_prefix="served_model", values=served_models)
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     return safe_query(f"""
         SELECT symbol, predicted_proba, predicted_class, prediction_date, run_id,
                selected_model, decision_threshold, signal_label, calibration_method, created_at
-        FROM model_predictions ORDER BY prediction_date DESC, symbol LIMIT {limit}
-    """)
+        FROM model_predictions
+        {where_clause}
+        ORDER BY prediction_date DESC, symbol LIMIT {limit}
+    """, params or None)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_prediction_governance_audit(limit: int = 100, symbol: str | None = None) -> pd.DataFrame:
-    where_clause = ""
-    params: dict[str, object] | None = None
+def get_prediction_governance_audit(
+    limit: int = 100,
+    symbol: str | None = None,
+    run_ids: list[str] | None = None,
+    selection_modes: list[str] | None = None,
+    served_models: list[str] | None = None,
+    governance_link_statuses: list[str] | None = None,
+) -> pd.DataFrame:
+    params: dict[str, object] = {}
+    conditions: list[str] = []
     if symbol:
-        where_clause = "WHERE p.symbol = :symbol"
-        params = {"symbol": symbol}
+        params["symbol"] = symbol
+        conditions.append("symbol = :symbol")
+    _append_in_clause(conditions, params, column_sql="run_id", param_prefix="audit_run_id", values=run_ids)
+    _append_in_clause(conditions, params, column_sql="governance_selection_mode", param_prefix="audit_selection_mode", values=selection_modes)
+    _append_in_clause(conditions, params, column_sql="served_model", param_prefix="audit_served_model", values=served_models)
+    _append_in_clause(
+        conditions,
+        params,
+        column_sql="governance_link_status",
+        param_prefix="audit_link_status",
+        values=governance_link_statuses,
+    )
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     return safe_query(
         f"""
-        SELECT p.symbol,
-               p.prediction_date,
-               p.run_id,
-               p.predicted_proba,
-               p.predicted_class,
-               p.selected_model AS served_model,
-               p.decision_threshold AS served_decision_threshold,
-               p.signal_label,
-               p.calibration_method AS served_calibration_method,
-               p.created_at,
-               served.model_name AS governance_served_model,
-               served.`rank` AS governance_served_rank,
-               served.selection_eligible AS governance_served_eligible,
-               served.eligibility_reason AS governance_served_eligibility_reason,
-               served.reason AS governance_served_reason,
-               served.inference_backend AS governance_served_backend,
-               served.backend_model_name AS governance_served_backend_model_name,
-               served.calibration_method AS governance_served_calibration_method,
-               served.decision_threshold AS governance_served_decision_threshold,
-               champion.model_name AS governance_champion_model,
-               champion.selection_mode AS governance_selection_mode,
-               champion.selection_metric AS governance_selection_metric,
-               champion.selection_score AS governance_champion_selection_score,
-               champion.inference_backend AS governance_champion_backend,
-               champion.calibration_method AS governance_champion_calibration_method,
-               champion.decision_threshold AS governance_champion_decision_threshold,
-               CASE
-                   WHEN champion.run_id IS NULL THEN 'missing_governance_snapshot'
-                   WHEN p.selected_model IS NULL OR p.selected_model = '' THEN 'prediction_missing_selected_model'
-                   WHEN served.model_name IS NULL THEN 'served_model_missing_in_governance'
-                   WHEN champion.model_name <> p.selected_model THEN 'served_model_differs_from_governance_champion'
-                   ELSE 'aligned'
-               END AS governance_link_status
-        FROM model_predictions p
-        LEFT JOIN model_governance served
-               ON served.run_id = p.run_id
-              AND served.symbol = p.symbol
-              AND served.model_name = p.selected_model
-        LEFT JOIN model_governance champion
-               ON champion.run_id = p.run_id
-              AND champion.symbol = p.symbol
-              AND champion.is_selected_model = 1
+        SELECT *
+        FROM (
+            SELECT p.symbol,
+                   p.prediction_date,
+                   p.run_id,
+                   p.predicted_proba,
+                   p.predicted_class,
+                   p.selected_model AS served_model,
+                   p.decision_threshold AS served_decision_threshold,
+                   p.signal_label,
+                   p.calibration_method AS served_calibration_method,
+                   p.created_at,
+                   served.model_name AS governance_served_model,
+                   served.`rank` AS governance_served_rank,
+                   served.selection_eligible AS governance_served_eligible,
+                   served.eligibility_reason AS governance_served_eligibility_reason,
+                   served.reason AS governance_served_reason,
+                   served.inference_backend AS governance_served_backend,
+                   served.backend_model_name AS governance_served_backend_model_name,
+                   served.calibration_method AS governance_served_calibration_method,
+                   served.decision_threshold AS governance_served_decision_threshold,
+                   champion.model_name AS governance_champion_model,
+                   champion.selection_mode AS governance_selection_mode,
+                   champion.selection_metric AS governance_selection_metric,
+                   champion.selection_score AS governance_champion_selection_score,
+                   champion.inference_backend AS governance_champion_backend,
+                   champion.calibration_method AS governance_champion_calibration_method,
+                   champion.decision_threshold AS governance_champion_decision_threshold,
+                   CASE
+                       WHEN champion.run_id IS NULL THEN 'missing_governance_snapshot'
+                       WHEN p.selected_model IS NULL OR p.selected_model = '' THEN 'prediction_missing_selected_model'
+                       WHEN served.model_name IS NULL THEN 'served_model_missing_in_governance'
+                       WHEN champion.model_name <> p.selected_model THEN 'served_model_differs_from_governance_champion'
+                       ELSE 'aligned'
+                   END AS governance_link_status
+            FROM model_predictions p
+            LEFT JOIN model_governance served
+                   ON served.run_id = p.run_id
+                  AND served.symbol = p.symbol
+                  AND served.model_name = p.selected_model
+            LEFT JOIN model_governance champion
+                   ON champion.run_id = p.run_id
+                  AND champion.symbol = p.symbol
+                  AND champion.is_selected_model = 1
+        ) audit
         {where_clause}
-        ORDER BY p.prediction_date DESC, p.created_at DESC, p.symbol ASC
+        ORDER BY prediction_date DESC, created_at DESC, symbol ASC
         LIMIT {limit}
         """,
-        params,
+        params or None,
     )
 
 
