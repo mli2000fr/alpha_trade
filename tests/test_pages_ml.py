@@ -1,4 +1,7 @@
+from io import BytesIO
+
 import pandas as pd
+from zipfile import ZipFile
 
 from ihm.pages import ml
 
@@ -102,5 +105,137 @@ def test_resolve_navigation_symbol_falls_back_to_symbol() -> None:
     resolved = ml._resolve_navigation_symbol(option, ["AAPL", "MSFT"])
 
     assert resolved == "AAPL"
+
+
+def test_focus_dataframe_on_navigation_row_moves_selected_row_first() -> None:
+    audit_df = pd.DataFrame(
+        [
+            {"prediction_date": "2026-04-22", "symbol": "AAPL", "run_id": "run-1", "served_model": "catboost"},
+            {"prediction_date": "2026-04-23", "symbol": "AAPL", "run_id": "run-1", "served_model": "lightgbm"},
+        ]
+    )
+    navigation_option = {
+        "label": "2026-04-23 | AAPL | run-1 | servi=lightgbm | statut=aligned",
+        "symbol": "AAPL",
+        "run_id": "run-1",
+        "served_model": "lightgbm",
+    }
+
+    ordered, focused = ml._focus_dataframe_on_navigation_row(audit_df, navigation_option)
+
+    assert len(focused) == 1
+    assert focused.iloc[0]["served_model"] == "lightgbm"
+    assert ordered.iloc[0]["served_model"] == "lightgbm"
+
+
+def test_build_ml_run_export_dataframe_includes_sections() -> None:
+    focused = pd.DataFrame([{"run_id": "run-1", "symbol": "AAPL"}])
+    governance = pd.DataFrame([{"run_id": "run-1", "model_name": "lightgbm"}])
+    audit_rows = pd.DataFrame([{"run_id": "run-1", "served_model": "lightgbm"}])
+    predictions = pd.DataFrame([{"run_id": "run-1", "predicted_class": 1}])
+    artifact_report = {
+        "symbol": "AAPL",
+        "run_id": "run-1",
+        "selected_model": "lightgbm",
+        "selection_mode": "auto_selected_champion",
+        "selected_decision_threshold": 0.61,
+        "config_path": "config.json",
+        "metrics_path": "metrics.json",
+        "routes_df": pd.DataFrame([{"model_name": "lightgbm"}]),
+        "ranking_df": pd.DataFrame([{"model_name": "lightgbm", "rank": 1}]),
+    }
+
+    export_df = ml._build_ml_run_export_dataframe(
+        run_id="run-1",
+        focused_audit_row=focused,
+        run_governance=governance,
+        run_audit_rows=audit_rows,
+        run_predictions=predictions,
+        artifact_report=artifact_report,
+    )
+
+    assert set(export_df["section"].dropna().unique()) == {
+        "selected_audit_row",
+        "run_governance",
+        "run_prediction_audit",
+        "run_predictions",
+        "artifact_summary",
+        "artifact_routes_snapshot",
+        "artifact_ranking_snapshot",
+    }
+
+
+def test_build_ml_run_export_filename_sanitizes_inputs() -> None:
+    filename = ml._build_ml_run_export_filename("run/1:test", "AAPL")
+
+    assert filename == "ml_run_audit_AAPL_run_1_test.csv"
+
+
+def test_build_ml_run_export_zip_filename_sanitizes_inputs() -> None:
+    filename = ml._build_ml_run_export_zip_filename("run/1:test", "AAPL")
+
+    assert filename == "ml_run_audit_AAPL_run_1_test.zip"
+
+
+def test_build_ml_run_export_zip_bytes_contains_csv_and_artifact_manifests(tmp_path) -> None:
+    export_df = pd.DataFrame([{"section": "run_predictions", "run_id": "run-1", "symbol": "AAPL"}])
+    config_path = tmp_path / "config.json"
+    metrics_path = tmp_path / "metrics.json"
+    config_path.write_text('{"run_id": "run-1", "selection_mode": "auto_selected_champion"}', encoding="utf-8")
+    metrics_path.write_text('{"champion": {"model_name": "lightgbm"}}', encoding="utf-8")
+    artifact_report = {
+        "symbol": "AAPL",
+        "run_id": "run-1",
+        "config_path": config_path,
+        "metrics_path": metrics_path,
+        "config": {"run_id": "run-1"},
+        "metrics": {"champion": {"model_name": "lightgbm"}},
+        "errors": [],
+    }
+
+    zip_bytes = ml._build_ml_run_export_zip_bytes(
+        export_df=export_df,
+        artifact_report=artifact_report,
+        run_id="run-1",
+        symbol="AAPL",
+    )
+
+    with ZipFile(BytesIO(zip_bytes)) as archive:
+        assert set(archive.namelist()) == {
+            "ml_run_audit_AAPL_run-1.csv",
+            "config.json",
+            "metrics.json",
+            "export_manifest.json",
+        }
+        assert "run_predictions" in archive.read("ml_run_audit_AAPL_run-1.csv").decode("utf-8-sig")
+        assert '"selection_mode": "auto_selected_champion"' in archive.read("config.json").decode("utf-8")
+        assert '"model_name": "lightgbm"' in archive.read("metrics.json").decode("utf-8")
+
+
+def test_build_ml_run_export_zip_bytes_falls_back_to_loaded_json_when_files_missing() -> None:
+    export_df = pd.DataFrame([{"section": "run_predictions", "run_id": "run-1"}])
+    artifact_report = {
+        "symbol": "AAPL",
+        "run_id": "run-1",
+        "config_path": "missing_config.json",
+        "metrics_path": "missing_metrics.json",
+        "config": {"run_id": "run-1", "selection_mode": "default_champion"},
+        "metrics": {"champion": {"model_name": "lstm_attention"}},
+        "errors": ["Fichier absent : `config.json`"],
+    }
+
+    zip_bytes = ml._build_ml_run_export_zip_bytes(
+        export_df=export_df,
+        artifact_report=artifact_report,
+        run_id="run-1",
+        symbol="AAPL",
+    )
+
+    with ZipFile(BytesIO(zip_bytes)) as archive:
+        config_payload = archive.read("config.json").decode("utf-8")
+        metrics_payload = archive.read("metrics.json").decode("utf-8")
+        assert '"selection_mode": "default_champion"' in config_payload
+        assert '"model_name": "lstm_attention"' in metrics_payload
+        assert "warning" in config_payload
 
 

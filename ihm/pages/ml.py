@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO, StringIO
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 import streamlit as st
@@ -91,6 +94,161 @@ def _resolve_navigation_symbol(navigation_option: dict[str, str], available_symb
     if symbol and symbol in available_symbols:
         return symbol
     return None
+
+
+def _match_navigation_row(audit_df: pd.DataFrame, navigation_option: dict[str, str]) -> pd.Series:
+    if audit_df.empty:
+        return pd.Series(False, index=audit_df.index, dtype="bool")
+    mask = pd.Series(True, index=audit_df.index, dtype="bool")
+    comparisons = {
+        "run_id": navigation_option.get("run_id"),
+        "symbol": navigation_option.get("symbol"),
+        "served_model": navigation_option.get("served_model"),
+    }
+    for column, value in comparisons.items():
+        if column in audit_df.columns and value:
+            mask &= audit_df[column].fillna("").astype(str) == str(value)
+    if "prediction_date" in audit_df.columns and navigation_option.get("label"):
+        prediction_date = navigation_option["label"].split(" | ", 1)[0]
+        mask &= audit_df["prediction_date"].fillna("").astype(str) == prediction_date
+    return mask
+
+
+def _focus_dataframe_on_navigation_row(
+    audit_df: pd.DataFrame,
+    navigation_option: dict[str, str],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if audit_df.empty:
+        return audit_df, audit_df
+    mask = _match_navigation_row(audit_df, navigation_option)
+    focused = audit_df[mask].copy()
+    if focused.empty:
+        return audit_df, focused
+    remaining = audit_df[~mask].copy()
+    return pd.concat([focused, remaining], ignore_index=True), focused.head(1).reset_index(drop=True)
+
+
+def _build_section_export_frame(section: str, frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame()
+    export_frame = frame.copy()
+    export_frame.insert(0, "section", section)
+    return export_frame
+
+
+def _build_ml_run_export_dataframe(
+    *,
+    run_id: str,
+    focused_audit_row: pd.DataFrame,
+    run_governance: pd.DataFrame,
+    run_audit_rows: pd.DataFrame,
+    run_predictions: pd.DataFrame,
+    artifact_report: dict[str, object] | None,
+) -> pd.DataFrame:
+    sections: list[pd.DataFrame] = []
+    if not focused_audit_row.empty:
+        sections.append(_build_section_export_frame("selected_audit_row", focused_audit_row))
+    if not run_governance.empty:
+        sections.append(_build_section_export_frame("run_governance", run_governance))
+    if not run_audit_rows.empty:
+        sections.append(_build_section_export_frame("run_prediction_audit", run_audit_rows))
+    if not run_predictions.empty:
+        sections.append(_build_section_export_frame("run_predictions", run_predictions))
+    if artifact_report:
+        summary_row = pd.DataFrame(
+            [
+                {
+                    "run_id": run_id,
+                    "artifact_symbol": artifact_report.get("symbol"),
+                    "artifact_run_id": artifact_report.get("run_id"),
+                    "artifact_selected_model": artifact_report.get("selected_model"),
+                    "artifact_selection_mode": artifact_report.get("selection_mode"),
+                    "artifact_selected_decision_threshold": artifact_report.get("selected_decision_threshold"),
+                    "artifact_config_path": str(artifact_report.get("config_path") or ""),
+                    "artifact_metrics_path": str(artifact_report.get("metrics_path") or ""),
+                }
+            ]
+        )
+        sections.append(_build_section_export_frame("artifact_summary", summary_row))
+        routes_df = artifact_report.get("routes_df")
+        if isinstance(routes_df, pd.DataFrame) and not routes_df.empty:
+            sections.append(_build_section_export_frame("artifact_routes_snapshot", routes_df))
+        ranking_df = artifact_report.get("ranking_df")
+        if isinstance(ranking_df, pd.DataFrame) and not ranking_df.empty:
+            sections.append(_build_section_export_frame("artifact_ranking_snapshot", ranking_df))
+    if not sections:
+        return pd.DataFrame(columns=["section", "run_id"])
+    return pd.concat(sections, ignore_index=True, sort=False)
+
+
+def _build_ml_run_export_filename(run_id: str, symbol: str | None = None) -> str:
+    safe_run_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in run_id).strip("_") or "run"
+    safe_symbol = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in (symbol or "all")).strip("_") or "all"
+    return f"ml_run_audit_{safe_symbol}_{safe_run_id}.csv"
+
+
+def _build_ml_run_export_zip_filename(run_id: str, symbol: str | None = None) -> str:
+    return _build_ml_run_export_filename(run_id, symbol).removesuffix(".csv") + ".zip"
+
+
+def _to_csv_bytes(df: pd.DataFrame) -> bytes:
+    buffer = StringIO()
+    df.to_csv(buffer, index=False)
+    return buffer.getvalue().encode("utf-8-sig")
+
+
+def _artifact_export_json_bytes(
+    artifact_report: dict[str, object] | None,
+    *,
+    key: str,
+    path_key: str,
+) -> bytes:
+    if artifact_report is None:
+        payload = {"errors": ["Aucun artefact sélectionné pour cet export."], "kind": key}
+        return json.dumps(payload, indent=2, ensure_ascii=False, default=str).encode("utf-8")
+    path_value = artifact_report.get(path_key)
+    try:
+        if path_value:
+            path = Path(path_value)
+            if path.exists() and path.is_file():
+                return path.read_bytes()
+    except Exception:
+        pass
+    payload = {
+        "kind": key,
+        "symbol": artifact_report.get("symbol"),
+        "run_id": artifact_report.get("run_id"),
+        key: artifact_report.get(key) or {},
+        "errors": artifact_report.get("errors") or [],
+        "warning": f"Fichier source indisponible pour `{path_key}` ; export depuis les données chargées en mémoire.",
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False, default=str).encode("utf-8")
+
+
+def _build_ml_run_export_zip_bytes(
+    *,
+    export_df: pd.DataFrame,
+    artifact_report: dict[str, object] | None,
+    run_id: str,
+    symbol: str | None,
+) -> bytes:
+    csv_name = _build_ml_run_export_filename(run_id, symbol)
+    config_bytes = _artifact_export_json_bytes(artifact_report, key="config", path_key="config_path")
+    metrics_bytes = _artifact_export_json_bytes(artifact_report, key="metrics", path_key="metrics_path")
+    manifest = {
+        "run_id": run_id,
+        "symbol": symbol,
+        "artifact_symbol": artifact_report.get("symbol") if artifact_report else None,
+        "artifact_run_id": artifact_report.get("run_id") if artifact_report else None,
+        "archive_contents": [csv_name, "config.json", "metrics.json"],
+    }
+    zip_buffer = BytesIO()
+    with ZipFile(zip_buffer, mode="w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr(csv_name, _to_csv_bytes(export_df))
+        archive.writestr("config.json", config_bytes)
+        archive.writestr("metrics.json", metrics_bytes)
+        archive.writestr("export_manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False, default=str).encode("utf-8"))
+    return zip_buffer.getvalue()
 
 
 def _summarize_prediction_governance_audit(audit_df: pd.DataFrame) -> dict[str, object]:
@@ -251,6 +409,13 @@ def render() -> None:
     else:
         show_dataframe(governance, height=360)
 
+    preds = get_predictions(
+        limit=ML_AUDIT_FILTER_SOURCE_LIMIT,
+        symbol=symbol_filter,
+        run_ids=selected_run_ids or None,
+        served_models=selected_served_models or None,
+    )
+
     # --- Audit serving ↔ gouvernance ---
     st.subheader("🔗 Audit serving ↔ gouvernance")
     st.caption(
@@ -329,6 +494,38 @@ def render() -> None:
 
             run_governance = governance[governance["run_id"] == run_id] if "run_id" in governance.columns else pd.DataFrame()
             run_audit_rows = prediction_audit[prediction_audit["run_id"] == run_id] if "run_id" in prediction_audit.columns else pd.DataFrame()
+            ordered_run_audit_rows, focused_audit_row = _focus_dataframe_on_navigation_row(run_audit_rows, selected_navigation)
+            run_predictions = preds[preds["run_id"] == run_id] if "run_id" in preds.columns else pd.DataFrame()
+            artifact_report_for_navigation = load_ml_artifact_report(target_symbol) if target_symbol is not None else None
+
+            st.markdown("**Focus automatique sur la ligne choisie**")
+            if focused_audit_row.empty:
+                render_query_diagnostic("La ligne d'audit sélectionnée n'a pas pu être retrouvée dans le tableau filtré.")
+            else:
+                show_dataframe(focused_audit_row, height=120)
+
+            export_df = _build_ml_run_export_dataframe(
+                run_id=run_id,
+                focused_audit_row=focused_audit_row,
+                run_governance=run_governance,
+                run_audit_rows=ordered_run_audit_rows,
+                run_predictions=run_predictions,
+                artifact_report=artifact_report_for_navigation,
+            )
+            export_zip_bytes = _build_ml_run_export_zip_bytes(
+                export_df=export_df,
+                artifact_report=artifact_report_for_navigation,
+                run_id=run_id,
+                symbol=selected_navigation.get("symbol"),
+            )
+            st.download_button(
+                "📦 Export ZIP du run sélectionné",
+                data=export_zip_bytes,
+                file_name=_build_ml_run_export_zip_filename(run_id, selected_navigation.get("symbol")),
+                mime="application/zip",
+                key="ml_selected_run_export_zip",
+                use_container_width=True,
+            )
 
             detail_col_1, detail_col_2 = st.columns(2)
             with detail_col_1:
@@ -339,13 +536,13 @@ def render() -> None:
                     show_dataframe(run_governance, height=240)
             with detail_col_2:
                 st.markdown("**Lignes d'audit du run**")
-                if run_audit_rows.empty:
+                if ordered_run_audit_rows.empty:
                     render_query_diagnostic("Aucune ligne d'audit filtrée pour ce run.")
                 else:
-                    show_dataframe(run_audit_rows, height=240)
+                    show_dataframe(ordered_run_audit_rows, height=240)
 
-            if target_symbol is not None:
-                run_report = load_ml_artifact_report(target_symbol)
+            if target_symbol is not None and artifact_report_for_navigation is not None:
+                run_report = artifact_report_for_navigation
                 st.markdown("**Artefact ciblé par la navigation**")
                 info_col_1, info_col_2, info_col_3, info_col_4 = st.columns(4)
                 info_col_1.metric("Artefact symbole", str(run_report["symbol"]))
@@ -364,12 +561,6 @@ def render() -> None:
     # --- Prédictions ---
     st.subheader("🔮 Prédictions récentes")
     st.caption("La table `model_predictions` contient désormais les champs d'audit de serving utiles au quotidien : `selected_model`, `decision_threshold`, `signal_label`, `calibration_method`.")
-    preds = get_predictions(
-        limit=ML_AUDIT_FILTER_SOURCE_LIMIT,
-        symbol=symbol_filter,
-        run_ids=selected_run_ids or None,
-        served_models=selected_served_models or None,
-    )
     if preds.empty:
         render_query_diagnostic("Aucune prédiction récente disponible.")
     else:
