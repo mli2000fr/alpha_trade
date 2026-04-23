@@ -32,6 +32,8 @@ PAGES = {
     "🤖 ML / Prédictions": "ml",
     "⚙️ Paramètres / Santé": "settings",
 }
+NAVIGATION_RADIO_KEY = "ihm_sidebar_navigation"
+NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
 
 st.sidebar.title("📈 Alpha Trade")
 st.sidebar.caption("Cockpit opérateur — lecture seule")
@@ -54,7 +56,14 @@ try:
 except Exception:
     st.session_state.setdefault("selected_account_id", "default")
 
-selection = st.sidebar.radio("Navigation", list(PAGES.keys()), label_visibility="collapsed")
+requested_page_key = st.session_state.pop(NAVIGATION_TARGET_PAGE_KEY, None)
+if requested_page_key in PAGES.values():
+    for label, key in PAGES.items():
+        if key == requested_page_key:
+            st.session_state[NAVIGATION_RADIO_KEY] = label
+            break
+
+selection = st.sidebar.radio("Navigation", list(PAGES.keys()), label_visibility="collapsed", key=NAVIGATION_RADIO_KEY)
 
 page_key = PAGES[selection]
 

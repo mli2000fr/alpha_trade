@@ -155,3 +155,73 @@ def test_run_training_batch_can_auto_select_global_model(monkeypatch, tmp_path) 
     assert metrics["champion"]["model_name"] == "global_model"
 
 
+def test_inject_global_model_persists_model_governance(monkeypatch, tmp_path) -> None:
+    symbol_dir = tmp_path / "AAPL"
+    symbol_dir.mkdir(parents=True, exist_ok=True)
+    with open(symbol_dir / "config.json", "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "run_id": "run-AAPL",
+                "architecture_selected": "lstm_attention",
+                "artifact_routes": {
+                    "selected_model": "lstm_attention",
+                    "models": {
+                        "lstm_attention": {
+                            "checkpoint_path": "best.ckpt",
+                            "scaler_path": "scaler.pkl",
+                            "config_path": str(symbol_dir / "config.json"),
+                            "inference_backend": "lstm_attention",
+                        }
+                    },
+                },
+            },
+            fh,
+        )
+    with open(symbol_dir / "metrics.json", "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "challengers": {
+                    "lstm_attention": {"status": "completed", "model_name": "lstm_attention", "selection_score": 0.60, "test": {"auc": 0.60}},
+                    "ranking": [{"rank": 1, "model_name": "lstm_attention", "status": "selected_default_champion", "selection_score": 0.60}],
+                },
+                "champion": {"model_name": "lstm_attention", "selection_mode": "default_champion", "selection_score": 0.60},
+            },
+            fh,
+        )
+
+    governance_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(orchestrator, "replace_model_governance", lambda engine, **kwargs: governance_calls.append(kwargs) or 2)
+
+    cfg = TrainingConfig(
+        data=DataConfig(),
+        model=ModelConfig(max_epochs=1),
+        global_model=TrainingConfig().global_model.__class__(enabled=True, model_name="lightgbm", artifact_symbol="__GLOBAL__"),
+        champion_selection=ChampionSelectionConfig(enabled=True, allow_auto_selection=True, default_champion="lstm_attention"),
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+    global_result = {
+        "status": "completed",
+        "artifact_symbol": "__GLOBAL__",
+        "backend_model_name": "lightgbm",
+        "artifact_paths": {
+            "model_path": str(tmp_path / "__GLOBAL__" / "global_model.pkl"),
+            "config_path": str(tmp_path / "__GLOBAL__" / "config.json"),
+            "calibrator_path": None,
+        },
+        "selection_score": 0.85,
+        "by_symbol": {
+            "AAPL": {"status": "completed", "model_name": "global_model", "selection_score": 0.85, "test": {"auc": 0.85}},
+        },
+    }
+
+    orchestrator._inject_global_model_into_symbol_artifacts("AAPL", cfg, global_result, engine=object())
+
+    assert len(governance_calls) == 1
+    governance_call = governance_calls[0]
+    assert governance_call["run_id"] == "run-AAPL"
+    assert governance_call["selected_model"] == "global_model"
+    assert any(row["model_name"] == "global_model" for row in governance_call["ranking"])
+
+

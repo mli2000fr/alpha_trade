@@ -13,7 +13,7 @@ from sqlalchemy.engine import Engine
 from modelFactory.champion_selection import build_challenger_ranking, select_champion
 from modelFactory.config import TrainingConfig
 from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment, load_universe_bars
-from modelFactory.db_registry import load_candidate_symbols
+from modelFactory.db_registry import load_candidate_symbols, replace_model_governance
 from modelFactory.global_model import train_global_model
 from modelFactory.trainer import TrainResult, train_symbol
 
@@ -24,6 +24,7 @@ def _inject_global_model_into_symbol_artifacts(
     symbol: str,
     cfg: TrainingConfig,
     global_result: dict,
+    engine: Engine | None = None,
 ) -> None:
     symbol_dir = (Path(cfg.artifacts_dir) / symbol).resolve()
     config_path = symbol_dir / "config.json"
@@ -98,6 +99,20 @@ def _inject_global_model_into_symbol_artifacts(
         json.dump(config_data, fh, indent=2, default=str)
     with open(metrics_path, "w", encoding="utf-8") as fh:
         json.dump(metrics, fh, indent=2, default=str)
+
+    run_id = config_data.get("run_id")
+    if engine is not None and isinstance(run_id, str) and run_id:
+        replace_model_governance(
+            engine,
+            run_id=run_id,
+            symbol=symbol,
+            challengers=annotated,
+            artifact_routes_models=models,
+            selected_model=selected_model,
+            selection_mode=selection_mode,
+            selection_metric=cfg.champion_selection.selection_metric,
+            ranking=challengers.get("ranking"),
+        )
 
 
 def _gpu_requested_or_available(cfg: TrainingConfig) -> bool:
@@ -202,7 +217,7 @@ def run_training_batch(
         for result in results:
             if result.status != "completed":
                 continue
-            _inject_global_model_into_symbol_artifacts(result.symbol, cfg, global_result)
+            _inject_global_model_into_symbol_artifacts(result.symbol, cfg, global_result, engine)
             result.metrics["global_model"] = global_result.get("by_symbol", {}).get(result.symbol, global_result)
     LOGGER.info("run_training_batch finished completed=%d skipped=%d failed=%d", completed, skipped, failed)
     return results

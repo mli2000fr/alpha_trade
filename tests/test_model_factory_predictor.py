@@ -221,6 +221,11 @@ def test_predict_symbol_returns_dataframe_and_persists(tmp_path: Path, monkeypat
     assert row["run_id"] == "run-config"
     assert row["selected_model"] == "lstm_attention"
     assert len(persisted) == 1
+    persisted_row = persisted[0].to_dict(orient="records")[0]
+    assert persisted_row["selected_model"] == "lstm_attention"
+    assert persisted_row["decision_threshold"] == 0.5
+    assert persisted_row["signal_label"] == "long"
+    assert persisted_row["calibration_method"] == "none"
 
 
 def test_predict_batch_skips_missing_predictions(monkeypatch, tmp_path: Path) -> None:

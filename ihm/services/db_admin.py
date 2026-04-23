@@ -52,6 +52,7 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
         "model_registry",
         "model_training_run",
         "model_metrics",
+        "model_governance",
         "model_predictions",
     ),
     "Risk / Portefeuille": (
@@ -366,4 +367,5 @@ def execute_table_purge(engine: Engine, plan: TablePurgePlan) -> TablePurgeResul
         executed_statements=tuple(executed_statements),
         total_rows_affected=total_rows_affected,
     )
+
 

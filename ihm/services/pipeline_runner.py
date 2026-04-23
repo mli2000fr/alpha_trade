@@ -168,7 +168,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         num="9",
         name="ML Train (Model Factory)",
         desc="Entraînement `modelFactory` par symbole candidat : LSTM+Attention, challengers locaux LightGBM/CatBoost, modèle global optionnel et sélection éventuelle du champion servi.",
-        tables="model_registry, model_training_run, model_metrics",
+        tables="model_registry, model_training_run, model_metrics, model_governance",
         deps="signal_aggregator (is_candidate=1)",
     ),
     PipelineStepDefinition(

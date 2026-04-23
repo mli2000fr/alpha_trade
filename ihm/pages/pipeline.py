@@ -16,6 +16,7 @@ from ihm.services.account_defaults import (
     get_pipeline_execution_defaults,
 )
 from ihm.services.db import get_runtime_db_config
+from ihm.services.ml_artifacts import list_ml_artifact_symbols
 from ihm.services.pipeline_runner import (
     PipelineLaunchOptions,
     build_pipeline_command,
@@ -43,6 +44,8 @@ TAIL_LINES = 250
 EXECUTION_DEFAULTS_ACCOUNT_KEY = "pipeline_execution_defaults_applied_account_id"
 IMPORT_NEWS_START_DATE_KEY = "pipeline_import_news_start_date"
 IMPORT_NEWS_END_DATE_KEY = "pipeline_import_news_end_date"
+ML_SELECTED_SYMBOL_KEY = "ihm_ml_selected_symbol"
+NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
 
 
 def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
@@ -727,6 +730,26 @@ def _render_step_result(record: dict[str, object] | None) -> None:
     )
 
 
+def _render_ml_inspection_link(step_key: str) -> None:
+    if step_key not in {"ml_train", "ml_predict"}:
+        return
+    symbols = list_ml_artifact_symbols()
+    if not symbols:
+        st.caption("Aucun artefact ML détecté pour proposer une navigation ciblée vers la page ML.")
+        return
+    inspect_key = f"pipeline_ml_inspect_symbol_{step_key}"
+    selected_symbol = st.selectbox(
+        "Inspecter un symbole dans la page ML",
+        options=symbols,
+        format_func=lambda sym: f"{sym} — modèle global" if sym.startswith("__") else sym,
+        key=inspect_key,
+    )
+    if st.button("🔎 Ouvrir dans la page ML", key=f"pipeline_open_ml_{step_key}", use_container_width=True):
+        st.session_state[ML_SELECTED_SYMBOL_KEY] = selected_symbol
+        st.session_state[NAVIGATION_TARGET_PAGE_KEY] = "ml"
+        st.rerun()
+
+
 def _render_import_news_panel(
     options: PipelineLaunchOptions,
     db_config: dict[str, str | None],
@@ -897,6 +920,10 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
                             st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *compare_ids][:2]
                         st.success(f"Run demarre en arriere-plan : `{record.run_id}`")
                         st.rerun()
+
+                if step.key in {"ml_train", "ml_predict"}:
+                    st.divider()
+                    _render_ml_inspection_link(step.key)
 
             _render_step_result(latest_by_step.get(step.key))
             if step.key == "sentiment_pipeline":

@@ -224,9 +224,119 @@ def get_model_metrics() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_predictions(limit: int = 100) -> pd.DataFrame:
+def get_model_governance(limit: int = 200, symbol: str | None = None) -> pd.DataFrame:
+    if symbol:
+        return safe_query(
+            f"""
+            SELECT run_id, symbol, model_name, `rank`, is_selected_model, selection_mode, selection_metric,
+                   selection_score, model_status, selection_eligible, eligibility_reason, reason,
+                   inference_backend, backend_model_name, calibration_method, decision_threshold,
+                   artifact_symbol, val_auc, test_auc, wf_auc,
+                   val_threshold_business_score, test_threshold_business_score, wf_threshold_business_score,
+                   created_at
+            FROM model_governance
+            WHERE symbol = :symbol
+            ORDER BY created_at DESC, run_id DESC, is_selected_model DESC, `rank` ASC, model_name ASC
+            LIMIT {limit}
+            """,
+            {"symbol": symbol},
+        )
     return safe_query(f"""
-        SELECT symbol, predicted_proba, predicted_class, prediction_date, run_id, created_at
+        SELECT run_id, symbol, model_name, `rank`, is_selected_model, selection_mode, selection_metric,
+               selection_score, model_status, selection_eligible, eligibility_reason, reason,
+               inference_backend, backend_model_name, calibration_method, decision_threshold,
+               artifact_symbol, val_auc, test_auc, wf_auc,
+               val_threshold_business_score, test_threshold_business_score, wf_threshold_business_score,
+               created_at
+        FROM model_governance
+        ORDER BY created_at DESC, run_id DESC, symbol ASC, is_selected_model DESC, `rank` ASC, model_name ASC
+        LIMIT {limit}
+    """)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_prediction_symbols(limit: int = 200) -> list[str]:
+    df = safe_query(f"SELECT DISTINCT symbol FROM model_predictions ORDER BY symbol LIMIT {limit}")
+    return df["symbol"].tolist() if not df.empty else []
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_predictions(limit: int = 100, symbol: str | None = None) -> pd.DataFrame:
+    if symbol:
+        return safe_query(
+            f"""
+            SELECT symbol, predicted_proba, predicted_class, prediction_date, run_id,
+                   selected_model, decision_threshold, signal_label, calibration_method, created_at
+            FROM model_predictions
+            WHERE symbol = :symbol
+            ORDER BY prediction_date DESC, created_at DESC
+            LIMIT {limit}
+            """,
+            {"symbol": symbol},
+        )
+    return safe_query(f"""
+        SELECT symbol, predicted_proba, predicted_class, prediction_date, run_id,
+               selected_model, decision_threshold, signal_label, calibration_method, created_at
         FROM model_predictions ORDER BY prediction_date DESC, symbol LIMIT {limit}
     """)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_prediction_governance_audit(limit: int = 100, symbol: str | None = None) -> pd.DataFrame:
+    where_clause = ""
+    params: dict[str, object] | None = None
+    if symbol:
+        where_clause = "WHERE p.symbol = :symbol"
+        params = {"symbol": symbol}
+    return safe_query(
+        f"""
+        SELECT p.symbol,
+               p.prediction_date,
+               p.run_id,
+               p.predicted_proba,
+               p.predicted_class,
+               p.selected_model AS served_model,
+               p.decision_threshold AS served_decision_threshold,
+               p.signal_label,
+               p.calibration_method AS served_calibration_method,
+               p.created_at,
+               served.model_name AS governance_served_model,
+               served.`rank` AS governance_served_rank,
+               served.selection_eligible AS governance_served_eligible,
+               served.eligibility_reason AS governance_served_eligibility_reason,
+               served.reason AS governance_served_reason,
+               served.inference_backend AS governance_served_backend,
+               served.backend_model_name AS governance_served_backend_model_name,
+               served.calibration_method AS governance_served_calibration_method,
+               served.decision_threshold AS governance_served_decision_threshold,
+               champion.model_name AS governance_champion_model,
+               champion.selection_mode AS governance_selection_mode,
+               champion.selection_metric AS governance_selection_metric,
+               champion.selection_score AS governance_champion_selection_score,
+               champion.inference_backend AS governance_champion_backend,
+               champion.calibration_method AS governance_champion_calibration_method,
+               champion.decision_threshold AS governance_champion_decision_threshold,
+               CASE
+                   WHEN champion.run_id IS NULL THEN 'missing_governance_snapshot'
+                   WHEN p.selected_model IS NULL OR p.selected_model = '' THEN 'prediction_missing_selected_model'
+                   WHEN served.model_name IS NULL THEN 'served_model_missing_in_governance'
+                   WHEN champion.model_name <> p.selected_model THEN 'served_model_differs_from_governance_champion'
+                   ELSE 'aligned'
+               END AS governance_link_status
+        FROM model_predictions p
+        LEFT JOIN model_governance served
+               ON served.run_id = p.run_id
+              AND served.symbol = p.symbol
+              AND served.model_name = p.selected_model
+        LEFT JOIN model_governance champion
+               ON champion.run_id = p.run_id
+              AND champion.symbol = p.symbol
+              AND champion.is_selected_model = 1
+        {where_clause}
+        ORDER BY p.prediction_date DESC, p.created_at DESC, p.symbol ASC
+        LIMIT {limit}
+        """,
+        params,
+    )
+
 

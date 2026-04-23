@@ -14,14 +14,14 @@ Aujourd'hui, il assure :
 - l'**optimisation optionnelle de la target** (horizon / seuils swing) ;
 - la **gouvernance multi-modèles** avec sélection automatique du champion servi ;
 - l'**inférence batch ou ciblée** en rechargeant automatiquement le backend servi (`lstm_attention`, `lightgbm`, `catboost`, `global_model`) ;
-- l'alimentation de la base via `model_training_run`, `model_metrics` et `model_predictions`.
+- l'alimentation de la base via `model_training_run`, `model_metrics`, `model_governance` et `model_predictions`.
 
 Ce document doit être lu comme la **source de vérité métier et technique** du module. Si une personne reprend le projet, elle doit pouvoir comprendre ici :
 
 1. ce que fait réellement `modelFactory` ;
 2. quels artefacts il produit ;
 3. comment le pipeline et l'IHM l'utilisent ;
-4. quelles sont ses limites de persistance DB ;
+4. quelles données de gouvernance et de serving il persiste réellement en base ;
 5. comment le diagnostiquer et le faire évoluer.
 
 ---
@@ -347,7 +347,7 @@ Pour chaque symbole :
 14. évalue l'éligibilité de chaque challenger ;
 15. sélectionne le champion servi ;
 16. persiste `config.json`, `metrics.json`, scaler, checkpoint et calibrateurs ;
-17. écrit les résumés DB.
+17. écrit les résumés DB et le snapshot de gouvernance du champion/challengers.
 
 ### 6.4 Ce qui est écrit en base
 
@@ -376,6 +376,28 @@ Contient des métriques **résumées** par split :
 
 Important : la DB **ne contient pas toute la richesse** de `metrics.json`.
 Les détails challengers, rankings, champion et métriques business avancées vivent surtout sur disque.
+
+#### `model_governance`
+
+Contient un snapshot **par `run_id` / `symbol` / `model_name`** de la gouvernance multi-modèles :
+
+- `rank`
+- `is_selected_model`
+- `selection_mode`
+- `selection_metric`
+- `selection_score`
+- `selection_eligible`
+- `eligibility_reason`
+- `reason`
+- `inference_backend`
+- `backend_model_name`
+- `calibration_method`
+- `decision_threshold`
+- `artifact_symbol`
+- chemins d'artefacts utiles à l'audit
+- métriques résumées (`val_auc`, `test_auc`, `wf_auc`, scores business)
+
+Cette table sert de **snapshot SQL de justification** du champion retenu et des challengers présents au moment du run.
 
 ---
 
@@ -583,28 +605,25 @@ Le prédicteur :
 
 ### 9.6 Ce qui est écrit dans `model_predictions`
 
-La persistance DB actuelle est volontairement compacte :
+La persistance DB de prédiction conserve désormais à la fois le résultat et le contexte de serving minimal :
 
 - `symbol`
 - `prediction_date`
 - `predicted_proba`
 - `predicted_class`
 - `run_id`
-
-Important : la sortie en mémoire contient aussi, selon le backend :
-
-- `raw_proba`
+- `selected_model`
 - `decision_threshold`
 - `signal_label`
 - `calibration_method`
-- `selected_model`
 
-mais ces champs **ne sont pas encore persistés en base** par `db_registry.insert_predictions()`.
+Important : certains champs restent **uniquement en mémoire** ou dans les artefacts, notamment `raw_proba` et le détail complet de la gouvernance challengers/champion.
 
 Conséquence :
 
-- la table `model_predictions` est suffisante pour `risk_management` ;
-- elle n'est pas encore une table d'audit complète de gouvernance du champion.
+- `model_predictions` suffit pour l'audit quotidien du backend réellement servi ;
+- `model_governance` apporte la justification SQL du champion ;
+- les artefacts restent la source la plus riche pour le manifeste brut complet.
 
 ---
 
@@ -636,10 +655,18 @@ Le backend réellement servi dépend des artefacts symbole existants.
 
 ### 10.3 Page `ML`
 
-La page `ihm/pages/ml.py` affiche uniquement les **tables DB de synthèse**. Pour le détail riche :
+La page `ihm/pages/ml.py` combine désormais trois niveaux de lecture :
 
-- ouvrir `artifacts/models/<SYMBOL>/config.json`
-- ouvrir `artifacts/models/<SYMBOL>/metrics.json`
+1. **artefacts disque** (`config.json`, `metrics.json`) pour le manifeste complet ;
+2. **tables DB de synthèse** (`model_training_run`, `model_metrics`, `model_governance`, `model_predictions`) ;
+3. **vue jointe serving ↔ gouvernance** qui relie une ligne de `model_predictions` au snapshot `model_governance` du même `run_id` / `symbol`.
+
+Cette vue jointe permet de vérifier rapidement :
+
+- quel modèle a été servi ;
+- quel champion était déclaré par la gouvernance ;
+- si le serving et la gouvernance sont alignés ;
+- quel backend, quelle calibration et quel seuil étaient attendus côté snapshot.
 
 ---
 
@@ -699,7 +726,16 @@ with engine.connect() as conn:
 ```powershell
 python -c "from database.connection import get_sqlalchemy_engine; from sqlalchemy import text; engine = get_sqlalchemy_engine();
 with engine.connect() as conn:
-    rows = conn.execute(text('SELECT symbol, prediction_date, predicted_proba, predicted_class, run_id FROM model_predictions ORDER BY prediction_date DESC, symbol LIMIT 20')).mappings().all();
+    rows = conn.execute(text('SELECT symbol, prediction_date, predicted_proba, predicted_class, run_id, selected_model, decision_threshold, signal_label, calibration_method FROM model_predictions ORDER BY prediction_date DESC, symbol LIMIT 20')).mappings().all();
+    print([dict(r) for r in rows])"
+```
+
+### Vérifier la cohérence serving ↔ gouvernance
+
+```powershell
+python -c "from database.connection import get_sqlalchemy_engine; from sqlalchemy import text; engine = get_sqlalchemy_engine();
+with engine.connect() as conn:
+    rows = conn.execute(text('SELECT p.symbol, p.prediction_date, p.run_id, p.selected_model, g.model_name AS governance_champion, g.selection_mode FROM model_predictions p LEFT JOIN model_governance g ON g.run_id = p.run_id AND g.symbol = p.symbol AND g.is_selected_model = 1 ORDER BY p.prediction_date DESC, p.symbol LIMIT 20')).mappings().all();
     print([dict(r) for r in rows])"
 ```
 
@@ -769,8 +805,8 @@ Le laisser désactivé si l'objectif est de rester sur une gouvernance locale l�
 
 ## 15. Limites connues
 
-1. `model_metrics` et `model_predictions` sont des tables **résumées**, pas des manifestes complets de gouvernance.
-2. Le routage complet du champion vit surtout dans les artefacts disque.
+1. `model_metrics`, `model_governance` et `model_predictions` restent des tables **résumées**, pas des manifestes complets de gouvernance.
+2. Le routage complet du champion et certains détails challengers vivent toujours surtout dans les artefacts disque.
 3. Les modèles tabulaires locaux sont persistés via `pickle` ; c'est pratique et rapide, mais pas le format le plus strict à long terme.
 4. L'IHM expose les options principales de gouvernance, mais pas encore l'intégralité de la CLI `modelFactory`.
 5. Le chemin `predict` est PIT-safe côté chargement de données, mais toute nouvelle feature devra conserver cette discipline.
@@ -779,9 +815,9 @@ Le laisser désactivé si l'objectif est de rester sur une gouvernance locale l�
 
 ## 16. Priorités d'évolution si reprise du projet
 
-1. enrichir `model_predictions` avec `selected_model`, `decision_threshold`, `signal_label`, `calibration_method` ;
-2. enrichir `model_metrics` ou ajouter une table dédiée pour la gouvernance challengers / champion ;
-3. versionner plus finement les artefacts tabulaires ;
-4. ajouter des contrôles de compatibilité de features encore plus explicites au chargement ;
-5. éventuellement migrer les persistences tabulaires vers des formats natifs (`LightGBM`, `CatBoost`) si le besoin d'interopérabilité augmente.
+1. ajouter des filtres IHM plus fins sur les statuts d'alignement serving ↔ gouvernance ;
+2. versionner plus finement les artefacts tabulaires ;
+3. ajouter des contrôles de compatibilité de features encore plus explicites au chargement ;
+4. éventuellement migrer les persistences tabulaires vers des formats natifs (`LightGBM`, `CatBoost`) si le besoin d'interopérabilité augmente ;
+5. enrichir encore la navigation IHM par `run_id` pour passer d'une prédiction au manifeste artefact exact qui l'a produite.
 

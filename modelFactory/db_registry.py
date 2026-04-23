@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -10,6 +11,89 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_governance_rows(
+    *,
+    run_id: str,
+    symbol: str,
+    challengers: dict[str, Any],
+    artifact_routes_models: dict[str, Any],
+    selected_model: str,
+    selection_mode: str,
+    selection_metric: str,
+    ranking: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    ranking_rows = ranking or []
+    ranking_by_model = {
+        str(row.get("model_name")): row
+        for row in ranking_rows
+        if isinstance(row, dict) and row.get("model_name")
+    }
+    rows: list[dict[str, Any]] = []
+    for model_name, challenger in challengers.items():
+        if model_name == "ranking" or not isinstance(challenger, dict):
+            continue
+        route = artifact_routes_models.get(model_name, {}) if isinstance(artifact_routes_models.get(model_name, {}), dict) else {}
+        ranking_row = ranking_by_model.get(model_name, {})
+        val_metrics = challenger.get("val") if isinstance(challenger.get("val"), dict) else {}
+        test_metrics = challenger.get("test") if isinstance(challenger.get("test"), dict) else {}
+        walk_forward_metrics = challenger.get("walk_forward") if isinstance(challenger.get("walk_forward"), dict) else {}
+        wf_mean = walk_forward_metrics.get("mean") if isinstance(walk_forward_metrics.get("mean"), dict) else {}
+        rows.append(
+            {
+                "run_id": run_id,
+                "symbol": symbol,
+                "model_name": model_name,
+                "rank": _optional_int(ranking_row.get("rank")),
+                "is_selected_model": 1 if model_name == selected_model else 0,
+                "selection_mode": selection_mode,
+                "selection_metric": selection_metric,
+                "selection_score": _optional_float(
+                    challenger.get("selection_score", ranking_row.get("selection_score"))
+                ),
+                "model_status": ranking_row.get("status") or challenger.get("status"),
+                "selection_eligible": 1 if bool(challenger.get("selection_eligible", ranking_row.get("selection_eligible", False))) else 0,
+                "eligibility_reason": challenger.get("eligibility_reason", ranking_row.get("eligibility_reason")),
+                "reason": challenger.get("reason", ranking_row.get("reason")),
+                "inference_backend": route.get("inference_backend"),
+                "backend_model_name": challenger.get("backend_model_name") or route.get("backend_model_name"),
+                "calibration_method": challenger.get("calibration_method"),
+                "decision_threshold": _optional_float(route.get("selected_decision_threshold")),
+                "artifact_symbol": route.get("artifact_symbol"),
+                "checkpoint_path": route.get("checkpoint_path"),
+                "scaler_path": route.get("scaler_path"),
+                "model_path": route.get("model_path"),
+                "config_path": route.get("config_path"),
+                "calibrator_path": route.get("calibrator_path"),
+                "val_auc": _optional_float(val_metrics.get("auc")),
+                "test_auc": _optional_float(test_metrics.get("auc")),
+                "wf_auc": _optional_float(wf_mean.get("auc")),
+                "val_threshold_business_score": _optional_float(val_metrics.get("threshold_business_score")),
+                "test_threshold_business_score": _optional_float(test_metrics.get("threshold_business_score")),
+                "wf_threshold_business_score": _optional_float(wf_mean.get("threshold_business_score")),
+            }
+        )
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -116,28 +200,101 @@ def insert_metrics(engine: Engine, run_id: str, symbol: str, split_name: str, me
         )
 
 
+def replace_model_governance(
+    engine: Engine,
+    *,
+    run_id: str,
+    symbol: str,
+    challengers: dict[str, Any],
+    artifact_routes_models: dict[str, Any],
+    selected_model: str,
+    selection_mode: str,
+    selection_metric: str,
+    ranking: list[dict[str, Any]] | None = None,
+) -> int:
+    rows = build_governance_rows(
+        run_id=run_id,
+        symbol=symbol,
+        challengers=challengers,
+        artifact_routes_models=artifact_routes_models,
+        selected_model=selected_model,
+        selection_mode=selection_mode,
+        selection_metric=selection_metric,
+        ranking=ranking,
+    )
+    if not rows:
+        return 0
+
+    delete_stmt = text("DELETE FROM model_governance WHERE run_id = :run_id AND symbol = :symbol")
+    insert_stmt = text(
+        "INSERT INTO model_governance ("
+        "run_id, symbol, model_name, `rank`, is_selected_model, selection_mode, selection_metric, selection_score, "
+        "model_status, selection_eligible, eligibility_reason, reason, inference_backend, backend_model_name, "
+        "calibration_method, decision_threshold, artifact_symbol, checkpoint_path, scaler_path, model_path, config_path, "
+        "calibrator_path, val_auc, test_auc, wf_auc, val_threshold_business_score, test_threshold_business_score, wf_threshold_business_score"
+        ") VALUES ("
+        ":run_id, :symbol, :model_name, :rank, :is_selected_model, :selection_mode, :selection_metric, :selection_score, "
+        ":model_status, :selection_eligible, :eligibility_reason, :reason, :inference_backend, :backend_model_name, "
+        ":calibration_method, :decision_threshold, :artifact_symbol, :checkpoint_path, :scaler_path, :model_path, :config_path, "
+        ":calibrator_path, :val_auc, :test_auc, :wf_auc, :val_threshold_business_score, :test_threshold_business_score, :wf_threshold_business_score"
+        ")"
+    )
+    with engine.begin() as conn:
+        conn.execute(delete_stmt, {"run_id": run_id, "symbol": symbol})
+        for row in rows:
+            conn.execute(insert_stmt, row)
+    LOGGER.info("replace_model_governance rows=%d run_id=%s symbol=%s", len(rows), run_id, symbol)
+    return len(rows)
+
+
 # ---------------------------------------------------------------------------
 # Predictions
 # ---------------------------------------------------------------------------
 
 def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
-    """Insert prediction rows. DataFrame cols: symbol, prediction_date, predicted_proba, predicted_class, run_id."""
+    """Insert prediction rows sur le schéma courant.
+
+    Colonnes supportées côté DataFrame :
+    - symbol
+    - prediction_date
+    - predicted_proba
+    - predicted_class
+    - run_id
+    - selected_model
+    - decision_threshold
+    - signal_label
+    - calibration_method
+    """
     if predictions.empty:
         return 0
+    stmt_v2 = text(
+        "INSERT INTO model_predictions ("
+        "symbol, prediction_date, predicted_proba, predicted_class, run_id, "
+        "selected_model, decision_threshold, signal_label, calibration_method"
+        ") VALUES ("
+        ":sym, :pd, :pp, :pc, :rid, :selected_model, :decision_threshold, :signal_label, :calibration_method"
+        ") ON DUPLICATE KEY UPDATE "
+        "predicted_proba = VALUES(predicted_proba), "
+        "predicted_class = VALUES(predicted_class), "
+        "selected_model = VALUES(selected_model), "
+        "decision_threshold = VALUES(decision_threshold), "
+        "signal_label = VALUES(signal_label), "
+        "calibration_method = VALUES(calibration_method)"
+    )
     with engine.begin() as conn:
         for _, row in predictions.iterrows():
-            conn.execute(
-                text(
-                    "INSERT INTO model_predictions (symbol, prediction_date, predicted_proba, predicted_class, run_id) "
-                    "VALUES (:sym, :pd, :pp, :pc, :rid) "
-                    "ON DUPLICATE KEY UPDATE predicted_proba = VALUES(predicted_proba), predicted_class = VALUES(predicted_class)"
-                ),
-                {
-                    "sym": row["symbol"], "pd": row["prediction_date"],
-                    "pp": float(row["predicted_proba"]), "pc": int(row["predicted_class"]),
-                    "rid": row["run_id"],
-                },
-            )
+            params = {
+                "sym": row["symbol"],
+                "pd": row["prediction_date"],
+                "pp": float(row["predicted_proba"]),
+                "pc": int(row["predicted_class"]),
+                "rid": row["run_id"],
+                "selected_model": row.get("selected_model"),
+                "decision_threshold": float(row["decision_threshold"]) if row.get("decision_threshold") is not None else None,
+                "signal_label": row.get("signal_label"),
+                "calibration_method": row.get("calibration_method"),
+            }
+            conn.execute(stmt_v2, params)
     LOGGER.info("insert_predictions rows=%d", len(predictions))
     return len(predictions)
 

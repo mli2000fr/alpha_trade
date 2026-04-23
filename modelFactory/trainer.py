@@ -38,6 +38,7 @@ from modelFactory.db_registry import (
     ensure_registry_entry,
     insert_metrics,
     insert_training_run,
+    replace_model_governance,
     update_training_run,
 )
 from modelFactory.evaluation import align_sequence_rows, compute_threshold_metrics, optimize_decision_threshold
@@ -812,6 +813,17 @@ def train_symbol(
             wf_mean = walk_forward_metrics.get("mean") if walk_forward_metrics else None
             if wf_mean:
                 insert_metrics(engine, run_id, symbol, "wf", wf_mean)
+            replace_model_governance(
+                engine,
+                run_id=run_id,
+                symbol=symbol,
+                challengers=challengers,
+                artifact_routes_models=artifact_routes_models,
+                selected_model=selected_architecture,
+                selection_mode=selection_mode,
+                selection_metric=effective_cfg.champion_selection.selection_metric,
+                ranking=challenger_ranking,
+            )
 
         LOGGER.info(
             "train_symbol completed symbol=%s run_id=%s val_loss=%.4f calibration=%s decision_threshold=%.2f",
