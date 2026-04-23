@@ -7,6 +7,18 @@ from modelFactory.catboost_baseline import run_catboost_baseline
 from modelFactory.config import BaselineConfig, CalibrationConfig, DataConfig, TargetOptimizationConfig, TrainingConfig, WalkForwardConfig
 
 
+class FakePickleableCatBoostModel:
+	def __init__(self, **kwargs):
+		self.kwargs = kwargs
+
+	def fit(self, X, y):
+		return self
+
+	def predict_proba(self, X):
+		p = np.clip(np.asarray(X["daily_return"], dtype=float), 0.05, 0.95)
+		return np.column_stack([1.0 - p, p])
+
+
 def _prepared_df(n: int = 120) -> pd.DataFrame:
 	x = np.linspace(0.0, 1.0, n)
 	target = (x > 0.45).astype(float)
@@ -78,5 +90,23 @@ def test_run_catboost_baseline_returns_metrics(monkeypatch) -> None:
 	assert "bucket_analysis" in result["test"]
 	assert "threshold_optimization" in result
 	assert "selection_score" in result
+
+
+def test_run_catboost_baseline_can_persist_local_artifacts(monkeypatch, tmp_path) -> None:
+	monkeypatch.setattr("modelFactory.catboost_baseline._import_catboost", lambda: FakePickleableCatBoostModel)
+
+	cfg = TrainingConfig(
+		data=DataConfig(),
+		calibration=CalibrationConfig(method="none"),
+		walk_forward=WalkForwardConfig(),
+		baseline=BaselineConfig(enabled=True, enable_catboost=True),
+		target_optimization=TargetOptimizationConfig(),
+	)
+
+	result = run_catboost_baseline(_prepared_df(), cfg, artifact_dir=tmp_path)
+
+	assert result["inference_backend"] == "catboost_tabular"
+	assert result["artifact_paths"]["model_path"].endswith("catboost_model.pkl")
+	assert (tmp_path / "catboost_model.pkl").exists()
 
 

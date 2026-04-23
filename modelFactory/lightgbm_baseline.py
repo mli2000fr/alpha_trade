@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -18,7 +19,12 @@ def _import_lightgbm() -> Any:
     return lgb
 
 
-def run_lightgbm_baseline(prepared_df: pd.DataFrame, cfg: TrainingConfig) -> dict[str, Any]:
+def run_lightgbm_baseline(
+    prepared_df: pd.DataFrame,
+    cfg: TrainingConfig,
+    *,
+    artifact_dir: Path | None = None,
+) -> dict[str, Any]:
     if not cfg.baseline.enabled:
         return {}
 
@@ -39,5 +45,6 @@ def run_lightgbm_baseline(prepared_df: pd.DataFrame, cfg: TrainingConfig) -> dic
             learning_rate=cfg.baseline.learning_rate,
             random_state=cfg.baseline.random_state,
         ),
+        artifact_dir=artifact_dir,
     )
 

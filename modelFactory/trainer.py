@@ -657,10 +657,10 @@ def train_symbol(
 
         baseline_metrics: dict[str, Any] = {}
         if prepared_df is not None and effective_cfg.baseline.enabled:
-            baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg)
+            baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir)
         catboost_metrics: dict[str, Any] = {}
         if prepared_df is not None and effective_cfg.baseline.enable_catboost:
-            catboost_metrics = run_catboost_baseline(prepared_df, effective_cfg)
+            catboost_metrics = run_catboost_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir)
 
         best_ckpt = sym_dir / "best.ckpt"
         if best_source.exists() and best_source.resolve() != best_ckpt.resolve():
@@ -693,11 +693,21 @@ def train_symbol(
             },
             "lightgbm": {
                 "status": baseline_metrics.get("status", "disabled") if baseline_metrics else "disabled",
-                "inference_backend": "not_yet_supported",
+                "model_path": (baseline_metrics.get("artifact_paths") or {}).get("model_path") if baseline_metrics else None,
+                "calibrator_path": (baseline_metrics.get("artifact_paths") or {}).get("calibrator_path") if baseline_metrics else None,
+                "config_path": str(config_path),
+                "feature_columns": baseline_metrics.get("feature_columns") if baseline_metrics else None,
+                "selected_decision_threshold": baseline_metrics.get("selected_decision_threshold") if baseline_metrics else None,
+                "inference_backend": baseline_metrics.get("inference_backend", "lightgbm_tabular") if baseline_metrics else "lightgbm_tabular",
             },
             "catboost": {
                 "status": catboost_metrics.get("status", "disabled") if catboost_metrics else "disabled",
-                "inference_backend": "not_yet_supported",
+                "model_path": (catboost_metrics.get("artifact_paths") or {}).get("model_path") if catboost_metrics else None,
+                "calibrator_path": (catboost_metrics.get("artifact_paths") or {}).get("calibrator_path") if catboost_metrics else None,
+                "config_path": str(config_path),
+                "feature_columns": catboost_metrics.get("feature_columns") if catboost_metrics else None,
+                "selected_decision_threshold": catboost_metrics.get("selected_decision_threshold") if catboost_metrics else None,
+                "inference_backend": catboost_metrics.get("inference_backend", "catboost_tabular") if catboost_metrics else "catboost_tabular",
             },
         }
         challengers = {

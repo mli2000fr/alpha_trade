@@ -55,6 +55,18 @@ def evaluate_selection_eligibility(
         if not route.get("config_path") or not route.get("model_path"):
             return False, "artifact_path_missing"
         return True, None
+    if model_name == "lightgbm":
+        if backend != "lightgbm_tabular":
+            return False, "inference_backend_missing"
+        if not route.get("config_path") or not route.get("model_path"):
+            return False, "artifact_path_missing"
+        return True, None
+    if model_name == "catboost":
+        if backend != "catboost_tabular":
+            return False, "inference_backend_missing"
+        if not route.get("config_path") or not route.get("model_path"):
+            return False, "artifact_path_missing"
+        return True, None
     return False, "inference_not_supported"
 
 

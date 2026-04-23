@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -18,7 +19,12 @@ def _import_catboost() -> Any:
 	return CatBoostClassifier
 
 
-def run_catboost_baseline(prepared_df: pd.DataFrame, cfg: TrainingConfig) -> dict[str, Any]:
+def run_catboost_baseline(
+	prepared_df: pd.DataFrame,
+	cfg: TrainingConfig,
+	*,
+	artifact_dir: Path | None = None,
+) -> dict[str, Any]:
 	if not cfg.baseline.enable_catboost:
 		return {}
 
@@ -40,6 +46,7 @@ def run_catboost_baseline(prepared_df: pd.DataFrame, cfg: TrainingConfig) -> dic
 			loss_function="Logloss",
 			verbose=False,
 		),
+		artifact_dir=artifact_dir,
 	)
 
 

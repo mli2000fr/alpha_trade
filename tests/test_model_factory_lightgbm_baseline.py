@@ -2,9 +2,22 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from types import SimpleNamespace
 
 from modelFactory.config import BaselineConfig, CalibrationConfig, DataConfig, TargetOptimizationConfig, TrainingConfig, WalkForwardConfig
 from modelFactory.lightgbm_baseline import run_lightgbm_baseline
+
+
+class FakePickleableLGBMClassifier:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def fit(self, X, y):
+        return self
+
+    def predict_proba(self, X):
+        p = np.clip(np.asarray(X["daily_return"], dtype=float), 0.05, 0.95)
+        return np.column_stack([1.0 - p, p])
 
 
 def _prepared_df(n: int = 120) -> pd.DataFrame:
@@ -69,3 +82,26 @@ def test_run_lightgbm_baseline_returns_metrics(monkeypatch) -> None:
     assert "bucket_analysis" in result["test"]
     assert "threshold_optimization" in result
     assert "selection_score" in result
+
+
+def test_run_lightgbm_baseline_can_persist_local_artifacts(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "modelFactory.lightgbm_baseline._import_lightgbm",
+        lambda: SimpleNamespace(LGBMClassifier=FakePickleableLGBMClassifier),
+    )
+
+    cfg = TrainingConfig(
+        data=DataConfig(),
+        calibration=CalibrationConfig(method="none"),
+        walk_forward=WalkForwardConfig(),
+        baseline=BaselineConfig(enabled=True),
+        target_optimization=TargetOptimizationConfig(),
+    )
+
+    result = run_lightgbm_baseline(_prepared_df(), cfg, artifact_dir=tmp_path)
+
+    assert result["inference_backend"] == "lightgbm_tabular"
+    assert result["artifact_paths"]["model_path"].endswith("lightgbm_model.pkl")
+    assert (tmp_path / "lightgbm_model.pkl").exists()
+
+

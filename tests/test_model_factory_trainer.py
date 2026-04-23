@@ -181,23 +181,31 @@ def test_train_symbol_persists_challenger_ranking_and_routing(monkeypatch, tmp_p
     monkeypatch.setattr(
         trainer,
         "run_lightgbm_baseline",
-        lambda prepared_df, cfg: {
+        lambda prepared_df, cfg, artifact_dir=None: {
             "status": "completed",
             "model_name": "lightgbm",
             "selection_score": 0.72,
             "val": {"auc": 0.71},
             "test": {"auc": 0.72, "threshold_business_score": 0.72},
+            "feature_columns": ["feat1"],
+            "selected_decision_threshold": 0.58,
+            "inference_backend": "lightgbm_tabular",
+            "artifact_paths": {"model_path": str(tmp_path / "AAPL" / "lightgbm_model.pkl"), "calibrator_path": None},
         },
     )
     monkeypatch.setattr(
         trainer,
         "run_catboost_baseline",
-        lambda prepared_df, cfg: {
+        lambda prepared_df, cfg, artifact_dir=None: {
             "status": "completed",
             "model_name": "catboost",
             "selection_score": 0.69,
             "val": {"auc": 0.70},
             "test": {"auc": 0.69, "threshold_business_score": 0.69},
+            "feature_columns": ["feat1"],
+            "selected_decision_threshold": 0.57,
+            "inference_backend": "catboost_tabular",
+            "artifact_paths": {"model_path": str(tmp_path / "AAPL" / "catboost_model.pkl"), "calibrator_path": None},
         },
     )
 
@@ -211,6 +219,8 @@ def test_train_symbol_persists_challenger_ranking_and_routing(monkeypatch, tmp_p
 
     assert config_data["architecture_selected"] == "lstm_attention"
     assert config_data["artifact_routes"]["selected_model"] == "lstm_attention"
+    assert config_data["artifact_routes"]["models"]["lightgbm"]["inference_backend"] == "lightgbm_tabular"
+    assert config_data["artifact_routes"]["models"]["catboost"]["inference_backend"] == "catboost_tabular"
     assert metrics["champion"]["model_name"] == "lstm_attention"
     assert metrics["baseline_lightgbm"]["model_name"] == "lightgbm"
     assert metrics["baseline_catboost"]["model_name"] == "catboost"
@@ -218,7 +228,7 @@ def test_train_symbol_persists_challenger_ranking_and_routing(monkeypatch, tmp_p
     assert {row["model_name"] for row in metrics["challengers"]["ranking"]} == {"lstm_attention", "lightgbm", "catboost"}
 
 
-def test_train_symbol_auto_selection_keeps_lstm_when_other_models_are_not_inferable(monkeypatch, tmp_path: Path) -> None:
+def test_train_symbol_auto_selection_can_promote_lightgbm_when_inferable(monkeypatch, tmp_path: Path) -> None:
     class FakeScaler:
         feature_names = ["feat1"]
 
@@ -293,8 +303,36 @@ def test_train_symbol_auto_selection_keeps_lstm_when_other_models_are_not_infera
             0.5,
         ),
     )
-    monkeypatch.setattr(trainer, "run_lightgbm_baseline", lambda prepared_df, cfg: {"status": "completed", "model_name": "lightgbm", "selection_score": 0.90, "val": {"auc": 0.90}, "test": {"auc": 0.90, "threshold_business_score": 0.90}})
-    monkeypatch.setattr(trainer, "run_catboost_baseline", lambda prepared_df, cfg: {"status": "completed", "model_name": "catboost", "selection_score": 0.88, "val": {"auc": 0.88}, "test": {"auc": 0.88, "threshold_business_score": 0.88}})
+    monkeypatch.setattr(
+        trainer,
+        "run_lightgbm_baseline",
+        lambda prepared_df, cfg, artifact_dir=None: {
+            "status": "completed",
+            "model_name": "lightgbm",
+            "selection_score": 0.90,
+            "val": {"auc": 0.90},
+            "test": {"auc": 0.90, "threshold_business_score": 0.90},
+            "feature_columns": ["feat1"],
+            "selected_decision_threshold": 0.61,
+            "inference_backend": "lightgbm_tabular",
+            "artifact_paths": {"model_path": str(tmp_path / "AAPL" / "lightgbm_model.pkl"), "calibrator_path": None},
+        },
+    )
+    monkeypatch.setattr(
+        trainer,
+        "run_catboost_baseline",
+        lambda prepared_df, cfg, artifact_dir=None: {
+            "status": "completed",
+            "model_name": "catboost",
+            "selection_score": 0.88,
+            "val": {"auc": 0.88},
+            "test": {"auc": 0.88, "threshold_business_score": 0.88},
+            "feature_columns": ["feat1"],
+            "selected_decision_threshold": 0.59,
+            "inference_backend": "catboost_tabular",
+            "artifact_paths": {"model_path": str(tmp_path / "AAPL" / "catboost_model.pkl"), "calibrator_path": None},
+        },
+    )
 
     result = trainer.train_symbol("AAPL", pd.DataFrame({"close": list(range(12))}), cfg, engine=None)
 
@@ -304,9 +342,10 @@ def test_train_symbol_auto_selection_keeps_lstm_when_other_models_are_not_infera
     with open(tmp_path / "AAPL" / "metrics.json", encoding="utf-8") as fh:
         metrics = json.load(fh)
 
-    assert config_data["architecture_selected"] == "lstm_attention"
+    assert config_data["architecture_selected"] == "lightgbm"
     assert config_data["selection_mode"] == "auto_selected_champion"
-    assert metrics["champion"]["model_name"] == "lstm_attention"
-    assert any(row["model_name"] == "lightgbm" and row["selection_eligible"] is False for row in metrics["challengers"]["ranking"])
+    assert config_data["artifact_routes"]["selected_model"] == "lightgbm"
+    assert metrics["champion"]["model_name"] == "lightgbm"
+    assert any(row["model_name"] == "lightgbm" and row["selection_eligible"] is True for row in metrics["challengers"]["ranking"])
 
 

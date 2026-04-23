@@ -1,6 +1,8 @@
 """modelFactory/tabular_baseline.py — Helpers communs aux challengers tabulaires."""
 from __future__ import annotations
 
+import pickle
+from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
@@ -124,6 +126,7 @@ def run_tabular_baseline(
 	*,
 	model_name: str,
 	model_builder: Callable[[], Any],
+	artifact_dir: Path | None = None,
 ) -> dict[str, Any]:
 	feature_columns = get_feature_columns(
 		include_sentiment=cfg.data.include_sentiment_features,
@@ -187,7 +190,7 @@ def run_tabular_baseline(
 		or val_metrics.get("threshold_business_score")
 		or 0.0
 	)
-	return {
+	result = {
 		"status": "completed",
 		"model_name": model_name,
 		"feature_columns": feature_columns,
@@ -195,7 +198,25 @@ def run_tabular_baseline(
 		"test": test_metrics,
 		"calibration_method": calibrator.method if calibrator is not None and calibrator.fitted else "none",
 		"threshold_optimization": threshold_summary,
+		"selected_decision_threshold": selected_threshold,
+		"inference_backend": f"{model_name}_tabular",
 		"selection_score": selection_score,
 	}
+	if artifact_dir is not None:
+		artifact_dir.mkdir(parents=True, exist_ok=True)
+		model_path = artifact_dir / f"{model_name}_model.pkl"
+		with open(model_path, "wb") as fh:
+			pickle.dump(model, fh)
+		calibrator_path: str | None = None
+		if calibrator is not None and calibrator.fitted:
+			cal_path = artifact_dir / f"{model_name}_calibrator.pkl"
+			with open(cal_path, "wb") as fh:
+				pickle.dump(calibrator.state_dict(), fh)
+			calibrator_path = str(cal_path)
+		result["artifact_paths"] = {
+			"model_path": str(model_path),
+			"calibrator_path": calibrator_path,
+		}
+	return result
 
 

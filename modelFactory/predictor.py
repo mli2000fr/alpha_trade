@@ -86,6 +86,22 @@ def _resolve_selected_model_route(
             }
         LOGGER.warning("predict_symbol selected_model=global_model but route missing -> fallback lstm_attention")
 
+    if selected_model in {"lightgbm", "catboost"}:
+        local_route = models.get(selected_model) or {}
+        expected_backend = f"{selected_model}_tabular"
+        route_config_path = Path(local_route["config_path"]) if local_route.get("config_path") else config_path
+        if local_route.get("inference_backend") == expected_backend and local_route.get("model_path"):
+            return {
+                "selected_model": selected_model,
+                "inference_backend": expected_backend,
+                "config_path": route_config_path,
+                "model_path": Path(local_route["model_path"]),
+                "calibrator_path": Path(local_route["calibrator_path"]) if local_route.get("calibrator_path") else None,
+                "feature_columns": list(local_route.get("feature_columns") or []),
+                "selected_decision_threshold": local_route.get("selected_decision_threshold"),
+            }
+        LOGGER.warning("predict_symbol selected_model=%s but local_tabular route missing -> fallback lstm_attention", selected_model)
+
     lstm_route = models.get("lstm_attention") or {}
     routed_ckpt = Path(lstm_route.get("checkpoint_path")) if lstm_route.get("checkpoint_path") else ckpt_path
     routed_scaler = Path(lstm_route.get("scaler_path")) if lstm_route.get("scaler_path") else scaler_path
@@ -170,23 +186,61 @@ def _predict_with_global_model(
     as_of_date: date | None,
     persist: bool,
 ) -> Optional[pd.DataFrame]:
+    return _predict_with_tabular_model(
+        symbol,
+        selected_model="global_model",
+        cfg_data=cfg_data,
+        model_path=model_path,
+        calibrator_path=calibrator_path,
+        engine=engine,
+        prediction_date=prediction_date,
+        as_of_date=as_of_date,
+        persist=persist,
+        feature_columns=cfg_data.get("feature_columns"),
+        decision_threshold=cfg_data.get("selected_decision_threshold"),
+    )
+
+
+def _predict_with_tabular_model(
+    symbol: str,
+    *,
+    selected_model: str,
+    cfg_data: dict,
+    model_path: Path,
+    calibrator_path: Path | None,
+    engine: "Engine",  # type: ignore[name-defined]
+    prediction_date: date | None,
+    as_of_date: date | None,
+    persist: bool,
+    feature_columns: list[str] | None = None,
+    decision_threshold: float | None = None,
+) -> Optional[pd.DataFrame]:
     if not model_path.exists():
-        LOGGER.warning("predict_symbol global_model_missing symbol=%s path=%s", symbol, model_path)
+        LOGGER.warning("predict_symbol tabular_model_missing symbol=%s selected_model=%s path=%s", symbol, selected_model, model_path)
         return None
     data_cfg = _load_data_cfg_from_payload(cfg_data)
     cutoff_date = as_of_date or prediction_date
     df = _prepare_prediction_frame(symbol, data_cfg=data_cfg, engine=engine, cutoff_date=cutoff_date)
-    feature_columns = cfg_data.get("feature_columns") or get_feature_columns(
+    resolved_feature_columns = list(feature_columns or cfg_data.get("feature_columns") or get_feature_columns(
         data_cfg.include_sentiment_features,
         feature_set=data_cfg.feature_set,
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
-    )
+    ))
     if df.empty or len(df) == 0:
         return None
     last_row = df.tail(1)
+    missing_columns = [col for col in resolved_feature_columns if col not in last_row.columns]
+    if missing_columns:
+        LOGGER.warning(
+            "predict_symbol missing_feature_columns symbol=%s selected_model=%s missing=%s",
+            symbol,
+            selected_model,
+            missing_columns,
+        )
+        return None
     with open(model_path, "rb") as fh:
         model = pickle.load(fh)
-    raw_proba = float(model.predict_proba(last_row[feature_columns])[:, 1][0])
+    raw_proba = float(model.predict_proba(last_row[resolved_feature_columns])[:, 1][0])
     calibrator = None
     if calibrator_path is not None and calibrator_path.exists():
         with open(calibrator_path, "rb") as fh:
@@ -196,20 +250,25 @@ def _predict_with_global_model(
         eps = 1e-6
         margin = np.log(np.clip(raw_proba, eps, 1 - eps) / np.clip(1 - raw_proba, eps, 1 - eps))
         proba = float(calibrator.predict_proba(np.array([margin], dtype=np.float64))[0])
+    effective_threshold = float(
+        decision_threshold
+        if decision_threshold is not None
+        else cfg_data.get("selected_decision_threshold", data_cfg.decision_threshold)
+    )
     pred_date = prediction_date or date.today()
-    pred_class = 1 if proba >= data_cfg.decision_threshold else 0
+    pred_class = 1 if proba >= effective_threshold else 0
     signal_label = "long" if pred_class == 1 else "no_trade"
     result = pd.DataFrame([{
         "symbol": symbol,
         "prediction_date": pred_date,
         "predicted_proba": round(proba, 6),
         "predicted_class": pred_class,
-        "run_id": cfg_data.get("run_id", cfg_data.get("artifact_symbol", "global_model")),
+        "run_id": cfg_data.get("run_id", cfg_data.get("artifact_symbol", selected_model)),
         "raw_proba": round(raw_proba, 6),
-        "decision_threshold": data_cfg.decision_threshold,
+        "decision_threshold": effective_threshold,
         "signal_label": signal_label,
         "calibration_method": getattr(calibrator, "method", "none") if calibrator is not None and calibrator.fitted else "none",
-        "selected_model": "global_model",
+        "selected_model": selected_model,
     }])
     if persist:
         insert_predictions(engine, result)
@@ -234,7 +293,7 @@ def predict_symbol(
     """
     ckpt_path, scaler_path, config_path, selected_run_id = _resolve_artifact_paths(symbol, artifacts_dir, engine, run_id)
 
-    if not ckpt_path.exists() or not scaler_path.exists() or not config_path.exists():
+    if not config_path.exists():
         LOGGER.warning("predict_symbol no_artifacts symbol=%s", symbol)
         return None
 
@@ -262,6 +321,29 @@ def predict_symbol(
             prediction_date=prediction_date,
             as_of_date=as_of_date,
             persist=persist,
+        )
+
+    if route.get("inference_backend") in {"lightgbm_tabular", "catboost_tabular"}:
+        local_config_path = Path(route["config_path"])
+        if not local_config_path.exists():
+            LOGGER.warning("predict_symbol local_route_missing_config symbol=%s selected_model=%s", symbol, selected_architecture)
+            return None
+        local_cfg_data = cfg_data
+        if local_config_path.resolve() != config_path.resolve():
+            with open(local_config_path, encoding="utf-8") as fh:
+                local_cfg_data = json.load(fh)
+        return _predict_with_tabular_model(
+            symbol,
+            selected_model=selected_architecture,
+            cfg_data=local_cfg_data,
+            model_path=Path(route["model_path"]),
+            calibrator_path=Path(route["calibrator_path"]) if route.get("calibrator_path") else None,
+            engine=engine,
+            prediction_date=prediction_date,
+            as_of_date=as_of_date,
+            persist=persist,
+            feature_columns=list(route.get("feature_columns") or []),
+            decision_threshold=float(route["selected_decision_threshold"]) if route.get("selected_decision_threshold") is not None else None,
         )
 
     ckpt_path = Path(route["checkpoint_path"])

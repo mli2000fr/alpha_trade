@@ -20,6 +20,14 @@ class PickleableFakeGlobalModel:
         return np.array([[0.2, 0.8]], dtype=float)
 
 
+class PickleableFakeLocalModel:
+    def __init__(self, proba: float = 0.76) -> None:
+        self.proba = proba
+
+    def predict_proba(self, X):
+        return np.array([[1.0 - self.proba, self.proba]], dtype=float)
+
+
 def test_resolve_inference_device_rejects_invalid_accelerator() -> None:
     with pytest.raises(ValueError, match="accelerator"):
         predictor._resolve_inference_device("tpu")
@@ -113,6 +121,37 @@ def test_resolve_selected_model_route_can_return_global_model_route(tmp_path: Pa
     assert route["selected_model"] == "global_model"
     assert route["inference_backend"] == "global_tabular"
     assert route["model_path"] == global_model_path
+
+
+def test_resolve_selected_model_route_can_return_local_tabular_route(tmp_path: Path) -> None:
+    model_path = tmp_path / "lightgbm_model.pkl"
+    cfg_data = {
+        "architecture_selected": "lightgbm",
+        "artifact_routes": {
+            "selected_model": "lightgbm",
+            "models": {
+                "lightgbm": {
+                    "inference_backend": "lightgbm_tabular",
+                    "config_path": str(tmp_path / "config.json"),
+                    "model_path": str(model_path),
+                    "feature_columns": ["feat1"],
+                    "selected_decision_threshold": 0.61,
+                }
+            },
+        },
+    }
+
+    route = predictor._resolve_selected_model_route(
+        cfg_data,
+        tmp_path / "default.ckpt",
+        tmp_path / "default.pkl",
+        tmp_path / "default.json",
+    )
+
+    assert route["selected_model"] == "lightgbm"
+    assert route["inference_backend"] == "lightgbm_tabular"
+    assert route["model_path"] == model_path
+    assert route["feature_columns"] == ["feat1"]
 
 
 def test_predict_symbol_returns_dataframe_and_persists(tmp_path: Path, monkeypatch) -> None:
@@ -354,6 +393,81 @@ def test_predict_symbol_supports_cross_sectional_features(tmp_path: Path, monkey
     row = result.to_dict(orient="records")[0]
     assert row["selected_model"] == "lstm_attention"
     assert row["predicted_class"] == 1
+
+
+@pytest.mark.parametrize(
+    ("model_name", "backend", "file_name", "decision_threshold", "expected_class"),
+    [
+        ("lightgbm", "lightgbm_tabular", "lightgbm_model.pkl", 0.60, 1),
+        ("catboost", "catboost_tabular", "catboost_model.pkl", 0.80, 0),
+    ],
+)
+def test_predict_symbol_can_route_to_local_tabular_model(
+    tmp_path: Path,
+    monkeypatch,
+    model_name: str,
+    backend: str,
+    file_name: str,
+    decision_threshold: float,
+    expected_class: int,
+) -> None:
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    model_path = symbol_dir / file_name
+    with open(model_path, "wb") as fh:
+        pickle.dump(PickleableFakeLocalModel(), cast(Any, fh))
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                    "decision_threshold": 0.5,
+                },
+                "run_id": "run-config",
+                "artifact_routes": {
+                    "selected_model": model_name,
+                    "models": {
+                        model_name: {
+                            "inference_backend": backend,
+                            "config_path": str(symbol_dir / "config.json"),
+                            "model_path": str(model_path),
+                            "feature_columns": ["feat1"],
+                            "selected_decision_threshold": decision_threshold,
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"symbol": [symbol] * 62, "date": pd.date_range("2024-01-01", periods=62, freq="D"), "close": list(range(62))})
+    features = pd.DataFrame({"symbol": [symbol] * 62, "date": pd.date_range("2024-01-01", periods=62, freq="D"), "feat1": [float(i) for i in range(62)]})
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is not None
+    row = result.to_dict(orient="records")[0]
+    assert row["selected_model"] == model_name
+    assert row["decision_threshold"] == decision_threshold
+    assert row["predicted_class"] == expected_class
 
 
 def test_predict_symbol_can_route_to_global_model(tmp_path: Path, monkeypatch) -> None:
