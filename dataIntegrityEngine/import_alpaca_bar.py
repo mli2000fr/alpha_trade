@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 from collections import Counter
@@ -13,6 +14,7 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from common.utils import configure_root_logging, getLastDateMarche, is_trading_day
 from database.assets import (
+    build_eligible_stock_metadata_filters,
     HISTORY_STATUS_NO_HISTORY,
     HISTORY_STATUS_PENDING,
     HISTORY_STATUS_PROVIDER_ERROR,
@@ -31,6 +33,7 @@ TZ_NEW_YORK = pytz.timezone("America/New_York")
 DATA_ADJUSTMENT = "split"
 MAX_STALENESS_CALENDAR_DAYS = 7
 MAX_STALENESS_TRADING_DAYS = 5
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 
 
 def _utc_now_naive() -> datetime:
@@ -39,6 +42,13 @@ def _utc_now_naive() -> datetime:
 
 def _build_run_id(prefix: str) -> str:
     return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+
+
+def _emit_run_summary(summary: dict[str, Any]) -> None:
+    print(
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+        flush=True,
+    )
 
 
 def _coerce_to_date(value: Any) -> Any:
@@ -96,14 +106,7 @@ def _get_tables() -> tuple[Table, Table]:
 
 def get_active_tradable_symbols(session) -> list[str]:
     stock_metadata, _ = _get_tables()
-    q = select(stock_metadata.c.symbol).where(
-        and_(
-            stock_metadata.c.status == "active",
-            stock_metadata.c.tradable.is_(True),
-            stock_metadata.c.bars_available.is_(True),
-            stock_metadata.c.asset_class == "us_equity",  # exclut crypto (us_crypto)
-        )
-    )
+    q = select(stock_metadata.c.symbol).where(and_(*build_eligible_stock_metadata_filters(stock_metadata)))
     return [row[0] for row in session.execute(q).all()]
 
 
@@ -531,7 +534,8 @@ def main() -> None:
         log_path="./log/import_alpaca_bar.log",
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
-    import_alpaca_bars(TimeFrame.ONE_DAY)
+    summary = import_alpaca_bars(TimeFrame.ONE_DAY)
+    _emit_run_summary(summary)
     # import_alpaca_bars(TimeFrame.THIRTY_MINS)
 
 

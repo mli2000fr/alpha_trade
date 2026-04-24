@@ -3,10 +3,10 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any, Iterable
 
-from sqlalchemy import Column, Date, DateTime, Float, MetaData, String, Table, func, select, and_, or_
+from sqlalchemy import Column, Date, DateTime, Float, MetaData, String, Table, func
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
-from database.assets import HISTORY_STATUS_PENDING, HISTORY_STATUS_READY
+from database.assets import list_eligible_stock_symbols
 from database.connection import SessionLocal, get_sqlalchemy_engine
 
 
@@ -48,34 +48,7 @@ def get_stock_earnings_calendar_table() -> Table:
 
 
 def list_active_tradable_symbols(limit: int | None = None) -> list[str]:
-    metadata = MetaData()
-    stock_metadata = Table("stock_metadata", metadata, autoload_with=get_sqlalchemy_engine())
-    filters: list[Any] = [
-        stock_metadata.c.status == "active",
-        stock_metadata.c.tradable.is_(True),
-        stock_metadata.c.bars_available.is_(True),
-        stock_metadata.c.asset_class == "us_equity",
-    ]
-    if "history_status" in stock_metadata.c:
-        filters.append(
-            or_(
-                stock_metadata.c.history_status.is_(None),
-                func.trim(stock_metadata.c.history_status) == "",
-                func.lower(func.trim(stock_metadata.c.history_status)).in_(
-                    (HISTORY_STATUS_PENDING, HISTORY_STATUS_READY)
-                ),
-            )
-        )
-    stmt = (
-        select(stock_metadata.c.symbol)
-        .where(and_(*filters))
-        .order_by(stock_metadata.c.symbol)
-    )
-    if limit is not None:
-        stmt = stmt.limit(limit)
-
-    with get_sqlalchemy_engine().connect() as conn:
-        return [str(symbol) for symbol in conn.execute(stmt).scalars().all()]
+    return list_eligible_stock_symbols(limit=limit, engine=get_sqlalchemy_engine())
 
 
 def upsert_quote_snapshots(records: Iterable[dict[str, Any]]) -> int:

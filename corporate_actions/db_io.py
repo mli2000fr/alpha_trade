@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import MetaData, Table, and_, select, text
 from sqlalchemy.engine import Engine
 
 from corporate_actions.models import (
@@ -15,6 +15,7 @@ from corporate_actions.models import (
     CorporateActionApplication,
     CorporateActionEvent,
 )
+from database.assets import build_eligible_stock_metadata_filters
 from database.connection import get_sqlalchemy_engine
 
 LOGGER = logging.getLogger(__name__)
@@ -340,14 +341,12 @@ class CorporateActionRepository:
 
     def load_bars_available_symbols(self) -> list[str]:
         """Retourne les symboles actifs/tradables avec bars disponibles depuis stock_metadata."""
-        stmt = text("""
-            SELECT symbol
-            FROM stock_metadata
-            WHERE status = 'active'
-              AND tradable = 1
-              AND bars_available = 1
-            ORDER BY symbol ASC
-        """)
+        stock_metadata = Table("stock_metadata", MetaData(), autoload_with=self.engine)
+        stmt = (
+            select(stock_metadata.c.symbol)
+            .where(and_(*build_eligible_stock_metadata_filters(stock_metadata)))
+            .order_by(stock_metadata.c.symbol.asc())
+        )
         with self.engine.connect() as conn:
             rows = conn.execute(stmt).scalars().all()
         return [str(symbol).strip().upper() for symbol in rows if str(symbol).strip()]

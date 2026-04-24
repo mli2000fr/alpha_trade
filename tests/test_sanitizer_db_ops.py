@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import cast
 
 import polars as pl
-from sqlalchemy import Column, Date, DateTime, Integer, MetaData, Numeric, String, Table, create_engine
+from sqlalchemy import Boolean, Column, Date, DateTime, Integer, MetaData, Numeric, String, Table, create_engine
 from sqlalchemy.engine import Connection
 
 from database import sanitizer_db_ops
@@ -490,5 +490,35 @@ def test_get_last_sync_date_reads_from_cleaning_audit_latest() -> None:
         last_sync = sanitizer_db_ops.get_last_sync_date(conn, cleaning_audit_latest, "AAPL")
 
     assert last_sync == date(2024, 1, 9)
+
+
+def test_get_symbols_excludes_blocked_history_statuses_when_available() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    stock_metadata = Table(
+        "stock_metadata",
+        metadata,
+        Column("symbol", String(20), primary_key=True),
+        Column("status", String(20)),
+        Column("tradable", Boolean),
+        Column("bars_available", Boolean),
+        Column("history_status", String(32)),
+        Column("asset_class", String(20)),
+    )
+    metadata.create_all(engine)
+
+    with engine.begin() as conn:
+        conn.execute(
+            stock_metadata.insert(),
+            [
+                {"symbol": "AAPL", "status": "active", "tradable": True, "bars_available": True, "history_status": "ready", "asset_class": "us_equity"},
+                {"symbol": "MSFT", "status": "active", "tradable": True, "bars_available": True, "history_status": "pending", "asset_class": "us_equity"},
+                {"symbol": "NVDA", "status": "active", "tradable": True, "bars_available": True, "history_status": "provider_error", "asset_class": "us_equity"},
+            ],
+        )
+
+        symbols = sanitizer_db_ops.get_symbols(conn, stock_metadata)
+
+    assert symbols == ["AAPL", "MSFT"]
 
 

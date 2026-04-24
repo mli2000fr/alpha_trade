@@ -8,16 +8,14 @@ from sqlalchemy import and_, func, insert, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import Connection
 
+from database.assets import build_eligible_stock_metadata_filters
+
 # Les tables doivent être passées en argument (stock_bars_daily, cleaning_audit_latest, cleaning_audit_runs, stock_metadata)
 
 
 LOGGER = logging.getLogger(__name__)
 def _active_symbol_clause(stock_metadata):
-    return and_(
-        stock_metadata.c.status == 'active',
-        stock_metadata.c.tradable.is_(True),
-        stock_metadata.c.bars_available.is_(True),
-    )
+    return and_(*build_eligible_stock_metadata_filters(stock_metadata))
 
 
 def _build_stock_bars_daily_records(

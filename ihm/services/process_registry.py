@@ -26,6 +26,7 @@ RunStatus = Literal["starting", "running", "completed", "failed", "timeout", "st
 TAIL_MAX_LINES = 400
 RUNS_DIR = PROJECT_ROOT / "artifacts" / "ihm_pipeline_runs"
 HISTORY_INDEX_PATH = RUNS_DIR / "history_index.json"
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +58,7 @@ class PipelineRunRecord:
     workflow_current_step_key: str | None = None
     workflow_current_step_label: str | None = None
     workflow_child_run_ids: list[str] = field(default_factory=list)
+    run_summary: dict[str, object] = field(default_factory=dict)
 
     def to_state(self) -> dict[str, object]:
         return asdict(self)
@@ -166,9 +168,24 @@ def _with_updates(record: PipelineRunRecord, **updates: object) -> PipelineRunRe
     return PipelineRunRecord(**data)
 
 
+def _extract_run_summary(line: str) -> dict[str, object] | None:
+    cleaned = line.strip()
+    if not cleaned.startswith(RUN_SUMMARY_PREFIX):
+        return None
+    payload = cleaned[len(RUN_SUMMARY_PREFIX):].strip()
+    if not payload:
+        return None
+    try:
+        parsed = json.loads(payload)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
+
+
 def _drain_events(managed: _ManagedRun) -> bool:
     stdout_chunk: list[str] = []
     stderr_chunk: list[str] = []
+    latest_summary: dict[str, object] | None = None
     drained = False
     while True:
         try:
@@ -176,6 +193,10 @@ def _drain_events(managed: _ManagedRun) -> bool:
         except queue.Empty:
             break
         drained = True
+        summary = _extract_run_summary(line)
+        if summary is not None:
+            latest_summary = summary
+            continue
         if stream_name == "stdout":
             stdout_chunk.append(line)
             _append_tail(managed.stdout_tail or [], line)
@@ -204,6 +225,9 @@ def _drain_events(managed: _ManagedRun) -> bool:
             managed.record,
             stderr_lines=managed.record.stderr_lines + len(stderr_chunk),
         )
+
+    if latest_summary is not None:
+        managed.record = _with_updates(managed.record, run_summary=latest_summary)
 
     return drained
 

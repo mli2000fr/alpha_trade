@@ -122,6 +122,58 @@ def test_get_symbols_missing_sector_filters_active_tradable_and_bars_available(m
     assert "limit" in statement_sql
 
 
+def test_get_symbols_missing_sector_includes_history_status_filter_when_column_exists(monkeypatch) -> None:
+    metadata = MetaData()
+    stock_metadata = Table(
+        "stock_metadata",
+        metadata,
+        Column("symbol", String(100), primary_key=True),
+        Column("status", String(20)),
+        Column("tradable", Boolean),
+        Column("bars_available", Boolean),
+        Column("history_status", String(32)),
+        Column("sector", String(50)),
+    )
+    fake_connection = _FakeConnection(["AAPL"])
+
+    monkeypatch.setattr(assets, "get_stock_metadata_table", lambda: stock_metadata)
+    monkeypatch.setattr(assets, "get_sqlalchemy_engine", lambda: _FakeEngine(fake_connection))
+
+    symbols = assets.get_symbols_missing_sector()
+
+    assert symbols == ["AAPL"]
+    statement_sql = str(fake_connection.statement).lower()
+    assert "history_status" in statement_sql
+    assert "lower(trim(stock_metadata.history_status))" in statement_sql
+
+
+def test_list_eligible_stock_symbols_uses_centralized_filters(monkeypatch) -> None:
+    metadata = MetaData()
+    stock_metadata = Table(
+        "stock_metadata",
+        metadata,
+        Column("symbol", String(100), primary_key=True),
+        Column("status", String(20)),
+        Column("tradable", Boolean),
+        Column("bars_available", Boolean),
+        Column("history_status", String(32)),
+        Column("asset_class", String(20)),
+    )
+    fake_connection = _FakeConnection(["AAPL", "MSFT"])
+
+    symbols = assets.list_eligible_stock_symbols(
+        engine=_FakeEngine(fake_connection),
+        stock_metadata=stock_metadata,
+        limit=10,
+    )
+
+    assert symbols == ["AAPL", "MSFT"]
+    statement_sql = str(fake_connection.statement).lower()
+    assert "bars_available is true" in statement_sql
+    assert "asset_class" in statement_sql
+    assert "history_status" in statement_sql
+
+
 def test_insert_assets_to_db_uses_current_timestamp_for_last_updated(monkeypatch) -> None:
     metadata = MetaData()
     stock_metadata = Table(

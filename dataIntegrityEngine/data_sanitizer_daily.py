@@ -1,4 +1,5 @@
 import gc
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -37,6 +38,7 @@ ANOMALY_RETURN_THRESHOLD = 0.02
 DEFAULT_COMMIT_EVERY = 50
 MAX_CONSECUTIVE_FILLED_DAYS = 3
 DATA_ADJUSTMENT = "split"
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 EMPTY_BAR_FRAME = pl.DataFrame(
     {
         "date": [],
@@ -58,6 +60,13 @@ def _utc_now_naive() -> datetime:
 
 def _build_run_id(prefix: str) -> str:
     return f'{prefix}-{_utc_now_naive().strftime("%Y%m%d%H%M%S")}-{uuid4().hex[:6]}'
+
+
+def _emit_run_summary(summary: dict[str, object]) -> None:
+    print(
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+        flush=True,
+    )
 
 
 class DataQualityError(RuntimeError):
@@ -551,7 +560,8 @@ def main() -> None:
         fmt='%(asctime)s %(levelname)s %(name)s %(message)s',
     )
     sanitizer = DataSanitizer()
-    sanitizer.run_pipeline(commit_every=DEFAULT_COMMIT_EVERY)
+    summary = sanitizer.run_pipeline(commit_every=DEFAULT_COMMIT_EVERY)
+    _emit_run_summary(summary)
 
 
 if __name__ == '__main__':

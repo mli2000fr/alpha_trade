@@ -183,6 +183,23 @@ def test_load_bars_available_symbols(repo, engine):
     symbols = repo.load_bars_available_symbols()
     assert symbols == ['AAPL', 'META']
 
+
+def test_load_bars_available_symbols_excludes_blocked_history_statuses_when_column_exists(repo, engine):
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE stock_metadata ADD COLUMN history_status VARCHAR(32)"))
+        conn.execute(text("ALTER TABLE stock_metadata ADD COLUMN asset_class VARCHAR(20)"))
+        conn.execute(text("""
+            INSERT INTO stock_metadata (symbol, status, tradable, bars_available, history_status, asset_class)
+            VALUES ('AAPL', 'active', 1, 1, 'ready', 'us_equity'),
+                   ('MSFT', 'active', 1, 1, 'pending', 'us_equity'),
+                   ('NVDA', 'active', 1, 1, 'provider_error', 'us_equity'),
+                   ('AMD', 'active', 1, 1, 'suspended_or_stale', 'us_equity')
+        """))
+
+    symbols = repo.load_bars_available_symbols()
+
+    assert symbols == ['AAPL', 'MSFT']
+
 def test_load_existing_event_symbols(repo):
     repo.insert_event(make_event(symbol="AAPL"))
     repo.insert_event(make_event(symbol="MSFT", ex_date=date(2026, 4, 11)))

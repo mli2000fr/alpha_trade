@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Any, Iterable, Mapping
 
-from sqlalchemy import Boolean, Column, Float, String, TIMESTAMP, Table, and_, func, or_, select, text
+from sqlalchemy import Boolean, Column, Float, MetaData, String, TIMESTAMP, Table, and_, func, or_, select, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from database.connection import get_sqlalchemy_engine, SessionLocal, metadata
 from service.alpaca.clientAlpaca import fetch_alpaca_assets
@@ -12,6 +12,10 @@ HISTORY_STATUS_NO_HISTORY = "no_history"
 HISTORY_STATUS_PROVIDER_ERROR = "provider_error"
 HISTORY_STATUS_SUSPENDED_OR_STALE = "suspended_or_stale"
 HISTORY_STATUS_EXCLUDED_BY_POLICY = "excluded_by_policy"
+ELIGIBLE_HISTORY_STATUSES: tuple[str, ...] = (
+    HISTORY_STATUS_PENDING,
+    HISTORY_STATUS_READY,
+)
 
 @lru_cache(maxsize=1)
 def get_stock_metadata_table() -> Table:
@@ -48,6 +52,53 @@ def _has_history_status_column(stock_metadata: Table) -> bool:
     return "history_status" in stock_metadata.c
 
 
+def build_eligible_stock_metadata_filters(stock_metadata: Table) -> list[Any]:
+    filters: list[Any] = []
+    if "status" in stock_metadata.c:
+        filters.append(stock_metadata.c.status == "active")
+    if "tradable" in stock_metadata.c:
+        filters.append(stock_metadata.c.tradable.is_(True))
+    if "bars_available" in stock_metadata.c:
+        filters.append(stock_metadata.c.bars_available.is_(True))
+    if "asset_class" in stock_metadata.c:
+        filters.append(stock_metadata.c.asset_class == "us_equity")
+    if _has_history_status_column(stock_metadata):
+        filters.append(
+            or_(
+                stock_metadata.c.history_status.is_(None),
+                func.trim(stock_metadata.c.history_status) == "",
+                func.lower(func.trim(stock_metadata.c.history_status)).in_(ELIGIBLE_HISTORY_STATUSES),
+            )
+        )
+    return filters
+
+
+def list_eligible_stock_symbols(
+    limit: int | None = None,
+    *,
+    engine=None,
+    stock_metadata: Table | None = None,
+) -> list[str]:
+    if limit is not None and limit < 1:
+        raise ValueError("limit doit être supérieur ou égal à 1.")
+
+    resolved_engine = engine or get_sqlalchemy_engine()
+    if stock_metadata is None:
+        stock_metadata = Table("stock_metadata", MetaData(), autoload_with=resolved_engine)
+
+    stmt = (
+        select(stock_metadata.c.symbol)
+        .where(and_(*build_eligible_stock_metadata_filters(stock_metadata)))
+        .order_by(stock_metadata.c.symbol)
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
+    with resolved_engine.connect() as conn:
+        rows = conn.execute(stmt).scalars().all()
+    return [str(symbol).strip().upper() for symbol in rows if str(symbol).strip()]
+
+
 def get_symbols_missing_sector(limit: int | None = None) -> list[str]:
     if limit is not None and limit < 1:
         raise ValueError("limit doit être supérieur ou égal à 1.")
@@ -58,9 +109,7 @@ def get_symbols_missing_sector(limit: int | None = None) -> list[str]:
         select(stock_metadata.c.symbol)
         .where(
             and_(
-                stock_metadata.c.status == "active",
-                stock_metadata.c.tradable.is_(True),
-                stock_metadata.c.bars_available.is_(True),
+                *build_eligible_stock_metadata_filters(stock_metadata),
                 or_(
                     stock_metadata.c.sector.is_(None),
                     func.trim(stock_metadata.c.sector) == "",
@@ -87,9 +136,7 @@ def get_symbols_missing_fundamentals(limit: int | None = None) -> list[str]:
         select(stock_metadata.c.symbol)
         .where(
             and_(
-                stock_metadata.c.status == "active",
-                stock_metadata.c.tradable.is_(True),
-                stock_metadata.c.bars_available.is_(True),
+                *build_eligible_stock_metadata_filters(stock_metadata),
                 or_(
                     stock_metadata.c.sector.is_(None),
                     func.trim(stock_metadata.c.sector) == "",

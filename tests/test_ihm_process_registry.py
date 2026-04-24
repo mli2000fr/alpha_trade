@@ -59,6 +59,37 @@ def test_background_run_completes_and_persists_logs(monkeypatch, tmp_path: Path)
     assert any(item["run_id"] == record.run_id for item in history)
 
 
+def test_background_run_captures_structured_run_summary(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import json; "
+            "print('before', flush=True); "
+            "print('::alpha_trade_run_summary::' + json.dumps({'targeted_symbols': 3, 'successful_symbols': 2, 'history_status_counts': {'ready': 2, 'provider_error': 1}}), flush=True); "
+            "print('after', flush=True)"
+        ),
+    ]
+    monkeypatch.setattr(registry, "build_pipeline_command", lambda step_key, options: command)
+
+    record = registry.start_pipeline_run("fake_summary_step", "Fake Summary Step", PipelineLaunchOptions())
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=40)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert snapshot["run_summary"] == {
+        "targeted_symbols": 3,
+        "successful_symbols": 2,
+        "history_status_counts": {"ready": 2, "provider_error": 1},
+    }
+    logs = registry.read_pipeline_logs(record.run_id, "stdout")
+    assert "before" in logs
+    assert "after" in logs
+    assert registry.RUN_SUMMARY_PREFIX not in logs
+
+
 
 def test_background_run_can_be_stopped(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)

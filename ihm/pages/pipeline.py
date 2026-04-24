@@ -46,6 +46,24 @@ IMPORT_NEWS_START_DATE_KEY = "pipeline_import_news_start_date"
 IMPORT_NEWS_END_DATE_KEY = "pipeline_import_news_end_date"
 ML_SELECTED_SYMBOL_KEY = "ihm_ml_selected_symbol"
 NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
+RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
+    "import_alpaca_bar": [
+        ("Cibles", "targeted_symbols"),
+        ("Succès", "successful_symbols"),
+        ("No data", "no_data_symbols"),
+        ("Stale", "stale_symbols"),
+        ("Err. provider", "provider_error_symbols"),
+        ("Bars insérées", "inserted_bars"),
+    ],
+    "data_sanitizer_daily": [
+        ("Cibles", "targeted_symbols"),
+        ("Succès", "successful_symbols"),
+        ("Skip", "skipped_symbols"),
+        ("Échecs", "failed_symbols"),
+        ("Dégradés", "degraded_symbols"),
+        ("Rows upsert", "upserted_rows"),
+    ],
+}
 
 
 def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
@@ -53,6 +71,80 @@ def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
     if len(lines) <= max_lines:
         return value
     return "\n".join(lines[-max_lines:])
+
+
+def _get_run_summary(record: dict[str, object] | None) -> dict[str, object]:
+    if not record:
+        return {}
+    payload = record.get("run_summary")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _build_run_summary_caption(record: dict[str, object] | None) -> str:
+    summary = _get_run_summary(record)
+    if not summary:
+        return "—"
+
+    step_key = str(record.get("step_key", "")) if record else ""
+    metric_keys = RUN_SUMMARY_METRICS.get(step_key, [])
+    if metric_keys:
+        parts = [
+            f"{label.lower()}={summary[key]}"
+            for label, key in metric_keys
+            if key in summary and summary.get(key) not in (None, "")
+        ]
+        if parts:
+            return " | ".join(parts)
+
+    generic_parts = [
+        f"{key}={value}"
+        for key, value in summary.items()
+        if isinstance(value, (int, float, str)) and key not in {"run_id", "started_at", "finished_at"}
+    ]
+    return " | ".join(generic_parts[:6]) if generic_parts else "—"
+
+
+def _render_run_summary(record: dict[str, object] | None, *, compact: bool = False) -> None:
+    summary = _get_run_summary(record)
+    if not summary:
+        return
+
+    step_key = str(record.get("step_key", "")) if record else ""
+    metric_specs = RUN_SUMMARY_METRICS.get(step_key, [])
+    if metric_specs:
+        st.markdown("**Résumé métier**")
+        cols = st.columns(min(len(metric_specs), 6))
+        for index, (label, key) in enumerate(metric_specs):
+            value = summary.get(key, "—")
+            cols[index % len(cols)].metric(label, to_int(value) if isinstance(value, (int, float)) else value)
+
+    if "history_status_counts" in summary and isinstance(summary["history_status_counts"], dict):
+        st.caption("Breakdown history_status")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"statut": key, "compteur": value}
+                    for key, value in cast(dict[str, object], summary["history_status_counts"]).items()
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    if "status_breakdown" in summary and isinstance(summary["status_breakdown"], dict):
+        st.caption("Breakdown statuts")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"statut": key, "compteur": value}
+                    for key, value in cast(dict[str, object], summary["status_breakdown"]).items()
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    if not compact:
+        with st.expander("Voir le payload résumé brut", expanded=False):
+            st.json(summary)
 
 
 def _render_log_block(title: str, content: str, *, key: str, expanded: bool = False) -> None:
@@ -638,6 +730,7 @@ def _render_runtime_center() -> None:
         metric_col2.metric("Durée", format_duration_hhmmss(selected_run.get("duration_seconds", 0.0)))
         metric_col3.metric("Lignes stdout", to_int(selected_run.get("stdout_lines", 0)))
         metric_col4.metric("Lignes stderr", to_int(selected_run.get("stderr_lines", 0)))
+        _render_run_summary(selected_run)
 
         st.caption(
             f"Commande : `{selected_run.get('command_display', '')}` | "
@@ -697,6 +790,7 @@ def _render_runtime_center() -> None:
                 "durée": format_duration_hhmmss(run.get("duration_seconds", 0.0)),
                 "stdout": to_int(run.get("stdout_lines", 0)),
                 "stderr": to_int(run.get("stderr_lines", 0)),
+                "résumé métier": _build_run_summary_caption(run),
             }
             for run in all_runs
         ]
@@ -728,6 +822,7 @@ def _render_step_result(record: dict[str, object] | None) -> None:
         f"Début : `{record.get('executed_at', '—')}` | Fin : `{record.get('finished_at') or '—'}` | "
         f"Compte : `{record.get('account_id') or 'global'}`"
     )
+    _render_run_summary(record, compact=True)
 
 
 def _render_ml_inspection_link(step_key: str) -> None:
