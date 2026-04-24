@@ -6,6 +6,7 @@ import streamlit as st
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
+from ihm.components.run_summary import render_persistent_business_summary
 from ihm.components.status_badges import run_status_badge
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available
@@ -17,7 +18,6 @@ from ihm.services.queries import (
     get_execution_fills,
     get_execution_runs,
 )
-from ihm.services.run_summary import get_run_summary, get_run_summary_metric_items
 
 
 def render() -> None:
@@ -40,7 +40,6 @@ def render() -> None:
     row = runs[runs["exec_run_id"] == selected].iloc[0]
     status = str(row.get("status", ""))
     summary_record = get_latest_run_business_summary(step_key="execution", entity_run_id=selected, account_id=account_id)
-    summary_payload = get_run_summary(summary_record)
 
     # --- KPI ---
     metric_row([
@@ -50,12 +49,7 @@ def render() -> None:
         ("Remplis", int(row.get("total_filled", 0)), None),
     ])
 
-    if summary_payload:
-        st.subheader("🧭 Résumé métier persistant")
-        metric_items = get_run_summary_metric_items(summary_record)
-        if metric_items:
-            metric_row([(label, value, None) for label, value in metric_items[:6]])
-        st.caption(str(summary_record.get("summary_caption", "—") or "—"))
+    render_persistent_business_summary(summary_record)
 
     if row.get("error_message"):
         st.error(f"Erreur : {row['error_message']}")

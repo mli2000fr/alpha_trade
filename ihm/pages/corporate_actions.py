@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from ihm.components.metrics import metric_row
+from ihm.components.run_summary import render_persistent_business_summary
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.tables import show_dataframe
@@ -16,7 +16,6 @@ from ihm.services.queries import (
     get_run_business_summaries,
     get_total_dividends,
 )
-from ihm.services.run_summary import get_run_summary, get_run_summary_metric_items
 
 
 def render() -> None:
@@ -46,14 +45,7 @@ def render() -> None:
         ("🧭 Résumé métier persistant — Application", latest_apply),
         ("🧭 Résumé métier persistant — Workflow", latest_run),
     ):
-        summary_payload = get_run_summary(record)
-        if not summary_payload:
-            continue
-        st.subheader(title)
-        metric_items = get_run_summary_metric_items(record)
-        if metric_items:
-            metric_row([(label, value, None) for label, value in metric_items[:6]])
-        st.caption(str(record.get("summary_caption", "—") or "—"))
+        render_persistent_business_summary(record, title=title)
 
     # --- Dividendes cumulés ---
     total_div = get_total_dividends()

@@ -4,12 +4,12 @@ from __future__ import annotations
 import streamlit as st
 
 from ihm.components.metrics import metric_row
+from ihm.components.run_summary import render_persistent_business_summary
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available, get_last_query_error
 from ihm.services.queries import get_latest_run_business_summary, get_portfolio_targets, get_risk_decisions, get_risk_run_ids
-from ihm.services.run_summary import get_run_summary, get_run_summary_metric_items
 
 
 def render() -> None:
@@ -33,14 +33,9 @@ def render() -> None:
             st.info("Aucun run de risque trouvé dans `risk_decisions`.")
         return
 
-    summary_record = get_latest_run_business_summary(step_key="risk_management", entity_run_id=selected_run)
-    summary_payload = get_run_summary(summary_record)
-    if summary_payload:
-        st.subheader("🧭 Résumé métier persistant")
-        metric_items = get_run_summary_metric_items(summary_record)
-        if metric_items:
-            metric_row([(label, value, None) for label, value in metric_items[:6]])
-        st.caption(str(summary_record.get("summary_caption", "—") or "—"))
+    render_persistent_business_summary(
+        get_latest_run_business_summary(step_key="risk_management", entity_run_id=selected_run)
+    )
 
     # --- Décisions ---
     st.subheader("📋 Décisions de risque")
