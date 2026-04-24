@@ -132,6 +132,17 @@ def _process_chunk_two_passes(
         )
 
 
+def _process_chunk(
+    symbols: List[str],
+    config_dict: dict,
+    spy_return_6m: float,
+    as_of_date_iso: Optional[str],
+) -> pd.DataFrame:
+    """Compatibilité backfill PIT: retourne seulement le DataFrame de scores."""
+    scores, _ = _process_chunk_two_passes(symbols, config_dict, spy_return_6m, as_of_date_iso)
+    return scores
+
+
 def _resolve_worker_count(max_workers: Optional[int]) -> int:
     available_workers = os.cpu_count() or 1
     if max_workers is None:

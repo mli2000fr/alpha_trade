@@ -102,6 +102,46 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill_p.add_argument("--selection-size", type=int, default=100, help="Nombre final de candidats selector par séance")
     backfill_p.add_argument("--screener-workers", type=int, default=None, help="Nombre de workers ProcessPool pour le screener PIT")
 
+    # --- diagnose-screener ---
+    diag_p = sub.add_parser(
+        "diagnose-screener",
+        help="Mesurer l'impact PIT des paramètres screener jusqu'au portefeuille cible",
+    )
+    diag_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
+    diag_p.add_argument("--end", default=str(date.today()), help="Date de fin (YYYY-MM-DD)")
+    diag_p.add_argument("--limit-days", type=int, default=None, help="Limiter à N séances (validation incrémentale)")
+    diag_p.add_argument("--mode", choices=["oat", "grid"], default="oat", help="Balayage one-at-a-time ou grille complète")
+    diag_p.add_argument("--chunk-size", type=int, default=500, help="Taille des chunks symboles screener/scanner")
+    diag_p.add_argument("--selection-size", type=int, default=100, help="Nombre final de candidats selector par séance")
+    diag_p.add_argument("--max-positions", type=int, default=20, help="Nombre maximum de positions dans le portefeuille cible")
+    diag_p.add_argument("--screener-workers", type=int, default=None, help="Nombre de workers ProcessPool pour le screener PIT")
+    diag_p.add_argument("--max-scenarios", type=int, default=64, help="Garde-fou sur le nombre total de scénarios en mode grid")
+    diag_p.add_argument(
+        "--rs-values",
+        default="100,102,105",
+        help="Liste CSV des seuils min_relative_strength_index à tester",
+    )
+    diag_p.add_argument(
+        "--range-lookback-values",
+        default="252,504,756",
+        help="Liste CSV des lookbacks historical_range_lookback_days à tester",
+    )
+    diag_p.add_argument(
+        "--historical-range-score-values",
+        default="65,70,75",
+        help="Liste CSV des seuils min_historical_range_score à tester",
+    )
+    diag_p.add_argument(
+        "--liquidity-threshold-values",
+        default="5000000,10000000,20000000",
+        help="Liste CSV des seuils liquidity_threshold_usd à tester",
+    )
+    diag_p.add_argument(
+        "--output-dir",
+        default="artifacts/screener_diagnostics",
+        help="Répertoire cible pour les CSV/JSON diagnostics",
+    )
+
     return parser
 
 
@@ -331,6 +371,117 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
     _safe_print(f"   Lignes insérées     : {result.rows_inserted}\n")
 
 
+def _parse_csv_values(raw: str, *, cast_type):
+    values = []
+    for token in (part.strip() for part in raw.split(",")):
+        if not token:
+            continue
+        values.append(cast_type(token))
+    return values
+
+
+def _run_screener_diagnostics(args: argparse.Namespace) -> None:
+    """Exécute le diagnostic PIT phase 4 du screener."""
+    from datetime import datetime
+
+    from backtesting.screener_diagnostics import (
+        ScreenerDiagnosticsService,
+        build_screener_grid_scenarios,
+        build_screener_oat_scenarios,
+        export_screener_diagnostics,
+    )
+    from event_sentiment.signal_aggregator import SentimentBoostConfig
+    from risk_management.config import RiskConfig
+    from screener.models import ScreenerConfig
+    from selector.alpha_scanner import AlphaScannerConfig
+
+    start = datetime.strptime(args.start, "%Y-%m-%d").date()
+    end = datetime.strptime(args.end, "%Y-%m-%d").date()
+    rs_values = _parse_csv_values(args.rs_values, cast_type=float)
+    range_values = _parse_csv_values(args.range_lookback_values, cast_type=int)
+    hist_score_values = _parse_csv_values(args.historical_range_score_values, cast_type=float)
+    liquidity_values = _parse_csv_values(args.liquidity_threshold_values, cast_type=float)
+
+    base_screener_config = ScreenerConfig(chunk_size=args.chunk_size)
+    if args.mode == "grid":
+        scenarios = build_screener_grid_scenarios(
+            base_screener_config,
+            rs_values=rs_values,
+            range_lookback_values=range_values,
+            historical_range_score_values=hist_score_values,
+            liquidity_threshold_values=liquidity_values,
+            max_scenarios=args.max_scenarios,
+        )
+    else:
+        scenarios = build_screener_oat_scenarios(
+            base_screener_config,
+            rs_values=rs_values,
+            range_lookback_values=range_values,
+            historical_range_score_values=hist_score_values,
+            liquidity_threshold_values=liquidity_values,
+        )
+
+    _safe_print(f"\n🧪 Diagnostic screener phase 4 : {start} → {end}")
+    _safe_print(
+        f"   mode={args.mode} scénarios={len(scenarios)} limit_days={args.limit_days or 'all'} "
+        f"chunk_size={args.chunk_size} selection_size={args.selection_size} max_positions={args.max_positions}\n"
+    )
+
+    service = ScreenerDiagnosticsService(
+        base_screener_config=base_screener_config,
+        scanner_config=AlphaScannerConfig.strict_swing_cash(
+            chunk_size=args.chunk_size,
+            selection_size=args.selection_size,
+        ),
+        sentiment_config=SentimentBoostConfig(),
+        risk_config=RiskConfig(max_positions=args.max_positions),
+        screener_max_workers=args.screener_workers,
+    )
+    result = service.analyze_period(
+        start_date=start,
+        end_date=end,
+        scenarios=scenarios,
+        limit_days=args.limit_days,
+    )
+    artifacts = export_screener_diagnostics(result, args.output_dir)
+
+    _safe_print("✅ Diagnostic terminé")
+    _safe_print(f"   Séances évaluées    : {len(result.trading_dates)}")
+    _safe_print(f"   Baseline            : {result.baseline_name}")
+    _safe_print(f"   Résumé CSV          : {artifacts['summary_metrics']}")
+    _safe_print(f"   Journal quotidien   : {artifacts['daily_metrics']}")
+    _safe_print(f"   Scénarios           : {artifacts['scenarios']}")
+    _safe_print(f"   Métadonnées         : {artifacts['metadata']}\n")
+
+    if not result.summary_metrics.empty:
+        preferred_columns = [
+            column
+            for column in [
+                "scenario_name",
+                "days_evaluated",
+                "days_failed",
+                "selector_candidate_count_mean",
+                "portfolio_target_count_mean",
+                "portfolio_survival_ratio_mean",
+                "selector_forward_return_20d_mean",
+                "portfolio_forward_return_20d_mean",
+                "delta_portfolio_survival_ratio_mean",
+                "delta_portfolio_forward_return_20d_mean",
+            ]
+            if column in result.summary_metrics.columns
+        ]
+        preview = result.summary_metrics.loc[:, preferred_columns].copy()
+        sort_column = (
+            "portfolio_forward_return_20d_mean"
+            if "portfolio_forward_return_20d_mean" in preview.columns
+            else "portfolio_survival_ratio_mean"
+        )
+        preview = preview.sort_values(sort_column, ascending=False).head(10)
+        _safe_print("Top scénarios (aperçu):")
+        _safe_print(preview.to_string(index=False))
+        _safe_print()
+
+
 def main() -> None:
     configure_root_logging()
     parser = _build_parser()
@@ -340,6 +491,8 @@ def main() -> None:
         _run_backtest(args)
     elif args.command == "backfill-scores-history":
         _run_backfill_scores_history(args)
+    elif args.command == "diagnose-screener":
+        _run_screener_diagnostics(args)
     else:
         parser.print_help()
         sys.exit(1)
