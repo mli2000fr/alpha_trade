@@ -6,6 +6,13 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 from database.connection import get_sqlalchemy_engine, SessionLocal, metadata
 from service.alpaca.clientAlpaca import fetch_alpaca_assets
 
+HISTORY_STATUS_PENDING = "pending"
+HISTORY_STATUS_READY = "ready"
+HISTORY_STATUS_NO_HISTORY = "no_history"
+HISTORY_STATUS_PROVIDER_ERROR = "provider_error"
+HISTORY_STATUS_SUSPENDED_OR_STALE = "suspended_or_stale"
+HISTORY_STATUS_EXCLUDED_BY_POLICY = "excluded_by_policy"
+
 @lru_cache(maxsize=1)
 def get_stock_metadata_table() -> Table:
     return Table(
@@ -19,6 +26,7 @@ def get_stock_metadata_table() -> Table:
         Column("status", String(20)),
         Column("tradable", Boolean),
         Column("bars_available", Boolean),
+        Column("history_status", String(32)),
         Column("sector", String(50)),
         Column("market_cap", Float),
         Column("last_updated", TIMESTAMP),
@@ -34,6 +42,10 @@ def _require_sector_column(stock_metadata: Table) -> None:
 def _require_market_cap_column(stock_metadata: Table) -> None:
     if "market_cap" not in stock_metadata.c:
         raise RuntimeError("La colonne stock_metadata.market_cap est absente du schéma SQL courant.")
+
+
+def _has_history_status_column(stock_metadata: Table) -> bool:
+    return "history_status" in stock_metadata.c
 
 
 def get_symbols_missing_sector(limit: int | None = None) -> list[str]:
@@ -136,15 +148,18 @@ def insert_assets_to_db(assets: Iterable[Mapping[str, Any]]) -> int:
     stock_metadata = get_stock_metadata_table()
     asset_rows = [
         {
-            "symbol": asset["symbol"],
-            "id_alpaca": asset["id"],
-            "company_name": asset.get("name", ""),
-            "exchange": asset.get("exchange", ""),
-            "asset_class": asset.get("class", ""),
-            "status": asset.get("status", ""),
-            "tradable": asset.get("tradable", False),
-            "bars_available": True,
-            "market_cap": None,
+            **{
+                "symbol": asset["symbol"],
+                "id_alpaca": asset["id"],
+                "company_name": asset.get("name", ""),
+                "exchange": asset.get("exchange", ""),
+                "asset_class": asset.get("class", ""),
+                "status": asset.get("status", ""),
+                "tradable": asset.get("tradable", False),
+                "bars_available": True,
+                "market_cap": None,
+            },
+            **({"history_status": HISTORY_STATUS_PENDING} if _has_history_status_column(stock_metadata) else {}),
         }
         for asset in assets
     ]
@@ -164,6 +179,8 @@ def insert_assets_to_db(assets: Iterable[Mapping[str, Any]]) -> int:
             "bars_available": stmt.inserted.bars_available,
             "last_updated": func.current_timestamp(),
         }
+        if _has_history_status_column(stock_metadata):
+            update_dict["history_status"] = stmt.inserted.history_status
         session.execute(stmt.on_duplicate_key_update(**update_dict))
         session.commit()
         return len(asset_rows)
@@ -179,13 +196,34 @@ def sync_assets_from_alpaca() -> int:
 
 
 def update_bars_available_false(symbol: str) -> None:
+    update_symbol_history_status(symbol, HISTORY_STATUS_NO_HISTORY, bars_available=False)
+
+
+def mark_symbol_history_ready(symbol: str) -> int:
+    return update_symbol_history_status(symbol, HISTORY_STATUS_READY, bars_available=True)
+
+
+def update_symbol_history_status(
+    symbol: str,
+    history_status: str,
+    *,
+    bars_available: bool | None = None,
+) -> int:
     stock_metadata = get_stock_metadata_table()
     session = SessionLocal()
     normalized_symbol = str(symbol).strip().upper()
+    values: dict[str, object] = {}
+    if bars_available is not None:
+        values["bars_available"] = bool(bars_available)
+    if _has_history_status_column(stock_metadata):
+        values["history_status"] = str(history_status).strip().lower()
+    if not values:
+        return 0
     try:
-        stmt = stock_metadata.update().where(stock_metadata.c.symbol == normalized_symbol).values(bars_available=False)
+        stmt = stock_metadata.update().where(stock_metadata.c.symbol == normalized_symbol).values(**values)
         session.execute(stmt)
         session.commit()
+        return 1
     except Exception:
         session.rollback()
         raise

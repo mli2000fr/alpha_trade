@@ -1,9 +1,10 @@
 import logging
 import math
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Optional
+from uuid import uuid4
 
 import pytz
 from dateutil import parser
@@ -11,14 +12,41 @@ from sqlalchemy import MetaData, Table, and_, func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from common.utils import configure_root_logging, getLastDateMarche
-from database.assets import update_bars_available_false
-from database.bar_metadata import TimeFrame
+from database.assets import (
+    HISTORY_STATUS_PROVIDER_ERROR,
+    HISTORY_STATUS_SUSPENDED_OR_STALE,
+    mark_symbol_history_ready,
+    update_bars_available_false,
+    update_symbol_history_status,
+)
+from database.bar_metadata import TimeFrame, validate_data_integrity_timeframe
 from database.connection import SessionLocal, get_sqlalchemy_engine
 from service.alpaca.clientAlpaca import AlpacaBarsFetchError, fetch_bars
 
 LOGGER = logging.getLogger(__name__)
 TZ_NEW_YORK = pytz.timezone("America/New_York")
 DATA_ADJUSTMENT = "split"
+MAX_STALENESS_CALENDAR_DAYS = 7
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _build_run_id(prefix: str) -> str:
+    return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+
+
+def _is_symbol_stale(last_timestamp: Any, market_date: Any) -> bool:
+    if last_timestamp is None or market_date is None:
+        return False
+    last_date = last_timestamp.date() if hasattr(last_timestamp, "date") else last_timestamp
+    if not hasattr(last_date, "__sub__"):
+        return False
+    try:
+        return (market_date - last_date).days > MAX_STALENESS_CALENDAR_DAYS
+    except Exception:
+        return False
 
 
 @lru_cache(maxsize=1)
@@ -279,8 +307,24 @@ def _normalize_target_symbols(symbols: Optional[list[str]]) -> Optional[list[str
     return normalized
 
 
-def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = None) -> None:
+def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = None) -> dict[str, Any]:
+    validate_data_integrity_timeframe(time_frame)
     session = SessionLocal()
+    started_at = _utc_now_naive()
+    summary = {
+        "run_id": _build_run_id("import-bars"),
+        "timeframe": time_frame.db_value,
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": None,
+        "duration_seconds": 0.0,
+        "targeted_symbols": 0,
+        "successful_symbols": 0,
+        "failed_symbols": 0,
+        "skipped_symbols": 0,
+        "no_data_symbols": 0,
+        "stale_symbols": 0,
+        "inserted_bars": 0,
+    }
     try:
         target_symbols = _normalize_target_symbols(symbols)
         if target_symbols is None:
@@ -290,10 +334,21 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
             LOGGER.info("Import Alpaca cible | timeframe=%s symbols=%s", time_frame.db_value, ",".join(target_symbols))
 
         total = len(target_symbols)
+        summary["targeted_symbols"] = total
+        LOGGER.info(
+            "Demarrage import Alpaca | run_id=%s timeframe=%s targeted_symbols=%s adjustment=%s",
+            summary["run_id"],
+            time_frame.db_value,
+            total,
+            DATA_ADJUSTMENT,
+        )
 
         for idx, symbol in enumerate(target_symbols, 1):
             LOGGER.info("Traitement du symbole (%s/%s) : %s", idx, total, symbol)
             try:
+                symbol_no_data = False
+                symbol_skipped = False
+                symbol_stale = False
                 last_timestamp = get_last_bar_timestamp(session, symbol, time_frame)
                 LOGGER.info(
                     "Derniere barre connue | symbol=%s timestamp=%s adjustment=%s",
@@ -307,6 +362,8 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
                     market_date = getLastDateMarche()
                     if str(last_date) == str(market_date):
                         LOGGER.info("%s deja a jour pour la derniere date de marche (%s).", symbol, market_date)
+                        summary["skipped_symbols"] += 1
+                        symbol_skipped = True
                         continue
                     next_start = _format_last_timestamp(last_timestamp)
                 else:
@@ -326,12 +383,29 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
                                 symbol,
                             )
                             update_bars_available_false(symbol)
+                            summary["no_data_symbols"] += 1
+                            symbol_no_data = True
+                        else:
+                            market_date = getLastDateMarche()
+                            if _is_symbol_stale(last_timestamp, market_date):
+                                update_symbol_history_status(symbol, HISTORY_STATUS_SUSPENDED_OR_STALE)
+                                summary["stale_symbols"] += 1
+                                symbol_stale = True
+                            else:
+                                summary["skipped_symbols"] += 1
+                                symbol_skipped = True
                         break
 
                     inserted_count += insert_bars(session, symbol, bars, time_frame.db_value)
                     next_start = bars[-1]["t"]
 
                 LOGGER.info("Import termine | symbol=%s inserted=%s adjustment=%s", symbol, inserted_count, DATA_ADJUSTMENT)
+                if inserted_count > 0:
+                    mark_symbol_history_ready(symbol)
+                    summary["successful_symbols"] += 1
+                    summary["inserted_bars"] += inserted_count
+                elif not symbol_no_data and not symbol_skipped and not symbol_stale:
+                    summary["skipped_symbols"] += 1
             except AlpacaBarsFetchError as exc:
                 LOGGER.error(
                     "Incident technique Alpaca | symbol=%s timeframe=%s error=%s | bars_available conserve",
@@ -339,9 +413,28 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
                     time_frame.db_value,
                     exc,
                 )
+                update_symbol_history_status(symbol, HISTORY_STATUS_PROVIDER_ERROR)
+                summary["failed_symbols"] += 1
                 continue
     finally:
+        finished_at = _utc_now_naive()
+        summary["finished_at"] = finished_at.isoformat(timespec="seconds")
+        summary["duration_seconds"] = round((finished_at - started_at).total_seconds(), 2)
+        LOGGER.info(
+            "Resume import Alpaca | run_id=%s timeframe=%s targeted=%s success=%s failed=%s skipped=%s no_data=%s stale=%s inserted_bars=%s duration_s=%s",
+            summary["run_id"],
+            summary["timeframe"],
+            summary["targeted_symbols"],
+            summary["successful_symbols"],
+            summary["failed_symbols"],
+            summary["skipped_symbols"],
+            summary["no_data_symbols"],
+            summary["stale_symbols"],
+            summary["inserted_bars"],
+            summary["duration_seconds"],
+        )
         session.close()
+    return summary
 
 
 def main() -> None:

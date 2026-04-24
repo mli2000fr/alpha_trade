@@ -134,6 +134,30 @@ def test_sanitize_and_align_sets_daily_return_to_null_when_prev_close_is_zero(sa
     assert aligned_df["daily_return"][0] is None
 
 
+def test_sanitize_and_align_does_not_compute_non_persisted_features(sanitizer: DataSanitizer) -> None:
+    raw_df = pl.DataFrame(
+        {
+            "date": [date(2024, 1, 2), date(2024, 1, 3)],
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.0, 101.0],
+            "volume": [1_000, 1_100],
+            "adj_close": [100.0, 101.0],
+            "vwap": [100.0, 101.0],
+            "is_filled": [False, False],
+        }
+    )
+    calendar_df = pl.DataFrame({"date": [date(2024, 1, 2), date(2024, 1, 3)]})
+
+    aligned_df, _ = sanitizer.sanitize_and_align(raw_df, calendar_df, prev_close=99.0)
+
+    assert "daily_return" in aligned_df.columns
+    assert "parkinson_vol" not in aligned_df.columns
+    assert "overnight_gap" not in aligned_df.columns
+    assert "rvol20" not in aligned_df.columns
+
+
 def test_sanitize_and_align_raises_clear_error_when_spy_calendar_is_empty(sanitizer: DataSanitizer) -> None:
     raw_df = pl.DataFrame(
         {
@@ -331,7 +355,7 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
             "anomaly_count": 4,
             "status": "success",
             "error_message": None,
-        }),
+        }, 12),
     )
     monkeypatch.setattr(
         data_sanitizer_daily,
@@ -345,7 +369,7 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
     )
     monkeypatch.setattr(sanitizer, "_log_failed_audit_summary", lambda conn: None)
 
-    sanitizer.run_pipeline(commit_every=10)
+    summary = sanitizer.run_pipeline(commit_every=10)
 
     assert upsert_calls == [(
         "AAPL",
@@ -358,6 +382,10 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
         },
     )]
     assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", 2, 4, "success")]
+    assert summary["successful_symbols"] == 1
+    assert summary["failed_symbols"] == 0
+    assert summary["skipped_symbols"] == 0
+    assert summary["upserted_rows"] == 12
 
 
 def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatch, sanitizer: DataSanitizer) -> None:
@@ -391,7 +419,7 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
     )
     monkeypatch.setattr(sanitizer, "_log_failed_audit_summary", lambda conn: None)
 
-    sanitizer.run_pipeline(commit_every=10)
+    summary = sanitizer.run_pipeline(commit_every=10)
 
     assert upsert_calls == [(
         "AAPL",
@@ -404,6 +432,9 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
         },
     )]
     assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", None, None, "failed")]
+    assert summary["successful_symbols"] == 0
+    assert summary["failed_symbols"] == 1
+    assert summary["degraded_symbols"] == 0
 
 
 def test_process_symbol_rebuilds_with_gliding_lookback(monkeypatch, sanitizer: DataSanitizer) -> None:
@@ -438,8 +469,35 @@ def test_process_symbol_rebuilds_with_gliding_lookback(monkeypatch, sanitizer: D
     monkeypatch.setattr(sanitizer, "detect_anomalies", lambda df: (df, 0))
     monkeypatch.setattr(data_sanitizer_daily, "upsert_stock_bars_daily", lambda conn, table, symbol, df, data_adjustment=None: len(df))
 
-    was_processed, payload = sanitizer._process_symbol(conn, "AAPL")
+    was_processed, payload, upserted_rows = sanitizer._process_symbol(conn, "AAPL")
 
     assert was_processed is True
     assert fetch_calls == [date(2023, 4, 28)]
     assert payload["status"] == "success"
+    assert upserted_rows == 2
+
+
+def test_run_pipeline_counts_data_quality_failures_as_degraded(monkeypatch, sanitizer: DataSanitizer) -> None:
+    fake_conn = _FakePipelineConnection()
+    sanitizer.engine = _FakeEngine(fake_conn)
+    sanitizer.stock_metadata = object()
+    sanitizer.cleaning_audit_latest = object()
+    sanitizer.cleaning_audit_runs = object()
+    sanitizer.stock_scores = object()
+
+    monkeypatch.setattr(data_sanitizer_daily, "get_symbols", lambda conn, table: ["AAPL"])
+    monkeypatch.setattr(sanitizer, "_ensure_spy_1d_available", lambda conn: None)
+    monkeypatch.setattr(
+        sanitizer,
+        "_process_symbol",
+        lambda conn, symbol: (_ for _ in ()).throw(DataQualityError("fill streak")),
+    )
+    monkeypatch.setattr(data_sanitizer_daily, "get_last_sync_date", lambda conn, table, symbol: date(2024, 1, 3))
+    monkeypatch.setattr(data_sanitizer_daily, "upsert_audit", lambda conn, latest_table, runs_table, symbol, **payload: None)
+    monkeypatch.setattr(data_sanitizer_daily, "sync_audit_to_stock_scores", lambda conn, table, symbol, missing_days, anomaly_count, sanitizer_status: 1)
+    monkeypatch.setattr(sanitizer, "_log_failed_audit_summary", lambda conn: None)
+
+    summary = sanitizer.run_pipeline(commit_every=10)
+
+    assert summary["failed_symbols"] == 1
+    assert summary["degraded_symbols"] == 1

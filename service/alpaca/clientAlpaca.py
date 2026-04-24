@@ -1,11 +1,12 @@
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import dateutil.parser
 import requests
 
-DEFAULT_START_DATE = "2010-01-01T00:00:00Z"
+DEFAULT_HISTORY_YEARS = 11
 DEFAULT_TIMEOUT_SECONDS = 10
 MAX_TIMEOUT_RETRIES = 10
 TIMEOUT_BACKOFF_SECONDS = 5
@@ -44,7 +45,7 @@ def _build_headers(account_id: Optional[str] = None) -> dict[str, str]:
 
 def _normalize_start_date(start_date: Optional[str]) -> str:
     if not start_date:
-        return DEFAULT_START_DATE
+        return _default_start_date()
 
     try:
         start_dt = dateutil.parser.isoparse(start_date)
@@ -52,6 +53,11 @@ def _normalize_start_date(start_date: Optional[str]) -> str:
         return start_date
 
     return start_dt.strftime("%Y-%m-%d")
+
+
+def _default_start_date() -> str:
+    default_start = datetime.now(timezone.utc) - timedelta(days=365 * DEFAULT_HISTORY_YEARS)
+    return default_start.strftime("%Y-%m-%d")
 
 
 def _filter_bars_after_start_date(bars: list[dict[str, Any]], start_date: Optional[str]) -> list[dict[str, Any]]:

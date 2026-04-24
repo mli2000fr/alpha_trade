@@ -21,6 +21,17 @@ class TimeFrame(Enum):
         self.api_value = api_value
 
 
+    SUPPORTED_DATA_INTEGRITY_TIMEFRAMES: tuple[TimeFrame, ...] = (TimeFrame.ONE_DAY,)
+
+
+def validate_data_integrity_timeframe(time_frame: TimeFrame) -> None:
+    if time_frame not in SUPPORTED_DATA_INTEGRITY_TIMEFRAMES:
+        supported = ", ".join(tf.db_value for tf in SUPPORTED_DATA_INTEGRITY_TIMEFRAMES)
+        raise ValueError(
+            f"dataIntegrityEngine supporte uniquement les timeframes daily pour l'instant: {supported}."
+        )
+
+
 def _normalize_bar_timestamp(raw_timestamp: Any) -> Any:
     if not (isinstance(raw_timestamp, str) and 'T' in raw_timestamp):
         return raw_timestamp

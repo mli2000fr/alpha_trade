@@ -1,8 +1,8 @@
 import gc
 import logging
-import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
+from uuid import uuid4
 
 import pytz
 import polars as pl
@@ -52,6 +52,14 @@ EMPTY_BAR_FRAME = pl.DataFrame(
 )
 
 
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _build_run_id(prefix: str) -> str:
+    return f'{prefix}-{_utc_now_naive().strftime("%Y%m%d%H%M%S")}-{uuid4().hex[:6]}'
+
+
 class DataQualityError(RuntimeError):
     """Erreur de qualité bloquante sur une série daily nettoyée."""
 
@@ -61,8 +69,9 @@ class DataSanitizer:
     Pipeline de nettoyage et d'alignement des données Daily (RTH) avec Polars, et upsert MySQL via SQLAlchemy.
     - Forward-fill des jours manquants (volume=0, is_filled=True) basé sur le calendrier SPY
     - Détection d'anomalies via Rolling MAD (fenêtre 20, seuil 5*MAD et |ret|>2%)
-    - Calcul des features: daily_return (persisté), Parkinson, Overnight Gap, RVOL20 (calculés mais non persistés ici)
+    - Calcul et persistance de `daily_return` uniquement (les autres features restent recalculées à l'aval)
     - Incrémental via cleaning_audit_latest.last_sync_date
+    - Résumé run-level (run_id, volumes traités, succès/échecs/skips, lignes upsertées)
     """
 
     def __init__(self,
@@ -250,14 +259,14 @@ class DataSanitizer:
                 audit.get('error_message'),
             )
 
-    def _process_symbol(self, conn: Connection, symbol: str) -> tuple[bool, dict]:
+    def _process_symbol(self, conn: Connection, symbol: str) -> tuple[bool, dict, int]:
         last_sync = get_last_sync_date(conn, self.cleaning_audit_latest, symbol)
         rebuild_start = self._compute_rebuild_start_date(last_sync)
         df_raw = self.fetch_symbol_bars_1d(conn, symbol, rebuild_start)
 
         if df_raw.is_empty():
             LOGGER.info("Aucune donnee brute pour %s a partir de %s", symbol, rebuild_start)
-            return False, self._build_audit_payload(last_sync, None, None, 'success')
+            return False, self._build_audit_payload(last_sync, None, None, 'success'), 0
 
         window_start = df_raw['date'][0]
         window_end = df_raw['date'][-1]
@@ -266,13 +275,13 @@ class DataSanitizer:
         df_aligned, missing_count = self.sanitize_and_align(df_raw, calendar, prev_close)
         df_features, anomaly_count = self.detect_anomalies(df_aligned)
 
-        upsert_stock_bars_daily(conn, self.stock_bars_daily, symbol, df_features, data_adjustment=DATA_ADJUSTMENT)
+        rows_upserted = upsert_stock_bars_daily(conn, self.stock_bars_daily, symbol, df_features, data_adjustment=DATA_ADJUSTMENT)
         return True, self._build_audit_payload(
             self._last_frame_date(df_features) or last_sync,
             missing_count,
             anomaly_count,
             'success',
-        )
+        ), rows_upserted
 
     # ---------- Calendrier SPY ----------
     def _to_ny_date(self, ts_value: date | datetime | str) -> date:
@@ -366,11 +375,6 @@ class DataSanitizer:
             daily_return
         ])
 
-        ln2 = math.log(2.0)
-        parkinson = ((pl.col('high') / pl.col('low')).log().abs() / (4 * ln2)).sqrt().alias('parkinson_vol')
-        overnight_gap = ((pl.col('open') / pl.col('prev_close')) - 1.0).alias('overnight_gap')
-        rvol20 = (pl.col('volume') / pl.col('volume').rolling_mean(window_size=20, min_samples=1).shift(1)).alias('rvol20')
-        tmp = tmp.with_columns([parkinson, overnight_gap, rvol20])
 
         tmp = tmp.drop(['prev_close'])
         filled_count = int(tmp['is_filled'].sum())
@@ -407,7 +411,7 @@ class DataSanitizer:
 
     # ---------- Orchestration ----------
 
-    def run_pipeline(self, symbols: Optional[list[str]] = None, commit_every: int = DEFAULT_COMMIT_EVERY) -> None:
+    def run_pipeline(self, symbols: Optional[list[str]] = None, commit_every: int = DEFAULT_COMMIT_EVERY) -> dict[str, object]:
         if commit_every < 1:
             raise ValueError('commit_every doit être supérieur ou égal à 1.')
 
@@ -415,17 +419,39 @@ class DataSanitizer:
         with self.engine.connect() as bootstrap_conn:
             self._ensure_spy_1d_available(bootstrap_conn)
 
+        started_at = _utc_now_naive()
+        summary: dict[str, object] = {
+            'run_id': _build_run_id('sanitize-daily'),
+            'started_at': started_at.isoformat(timespec='seconds'),
+            'finished_at': None,
+            'duration_seconds': 0.0,
+            'targeted_symbols': 0,
+            'successful_symbols': 0,
+            'failed_symbols': 0,
+            'skipped_symbols': 0,
+            'degraded_symbols': 0,
+            'upserted_rows': 0,
+        }
+
         processed = 0
         with self.engine.connect() as conn:
             outer_trans = conn.begin()
             try:
                 if symbols is None:
                     symbols = get_symbols(conn, self.stock_metadata)
+                summary['targeted_symbols'] = len(symbols)
+                LOGGER.info(
+                    'Demarrage sanitizeur daily | run_id=%s targeted_symbols=%s commit_every=%s adjustment=%s',
+                    summary['run_id'],
+                    summary['targeted_symbols'],
+                    commit_every,
+                    DATA_ADJUSTMENT,
+                )
 
                 for idx, symbol in enumerate(symbols, 1):
                     LOGGER.info("Traitement %s/%s: %s", idx, len(symbols), symbol)
                     try:
-                        was_processed, audit_payload = self._process_symbol(conn, symbol)
+                        was_processed, audit_payload, rows_upserted = self._process_symbol(conn, symbol)
                         upsert_audit(
                             conn,
                             self.cleaning_audit_latest,
@@ -447,6 +473,10 @@ class DataSanitizer:
                             )
                         if was_processed:
                             processed += 1
+                            summary['successful_symbols'] = int(summary['successful_symbols']) + 1
+                            summary['upserted_rows'] = int(summary['upserted_rows']) + rows_upserted
+                        else:
+                            summary['skipped_symbols'] = int(summary['skipped_symbols']) + 1
                     except Exception as e:
                         error_message = self._format_exception_message(e)
                         LOGGER.exception("Echec traitement %s | error_detail=%s", symbol, error_message)
@@ -468,6 +498,9 @@ class DataSanitizer:
                             failed_payload['anomaly_count'],
                             failed_payload['status'],
                         )
+                        summary['failed_symbols'] = int(summary['failed_symbols']) + 1
+                        if isinstance(e, DataQualityError):
+                            summary['degraded_symbols'] = int(summary['degraded_symbols']) + 1
 
                     if self._should_commit(processed, commit_every):
                         outer_trans = self._commit_batch(outer_trans, conn)
@@ -476,6 +509,22 @@ class DataSanitizer:
                 self._log_failed_audit_summary(conn)
             finally:
                 gc.collect()
+
+        finished_at = _utc_now_naive()
+        summary['finished_at'] = finished_at.isoformat(timespec='seconds')
+        summary['duration_seconds'] = round((finished_at - started_at).total_seconds(), 2)
+        LOGGER.info(
+            'Resume sanitizeur daily | run_id=%s targeted=%s success=%s failed=%s skipped=%s degraded=%s upserted_rows=%s duration_s=%s',
+            summary['run_id'],
+            summary['targeted_symbols'],
+            summary['successful_symbols'],
+            summary['failed_symbols'],
+            summary['skipped_symbols'],
+            summary['degraded_symbols'],
+            summary['upserted_rows'],
+            summary['duration_seconds'],
+        )
+        return summary
 
 
 def main() -> None:

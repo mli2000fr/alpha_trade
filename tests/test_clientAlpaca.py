@@ -53,6 +53,20 @@ def test_fetch_bars_requests_split_adjustment(monkeypatch) -> None:
     assert session.calls[0]["params"]["adjustment"] == "split"
 
 
+def test_fetch_bars_uses_rolling_default_start_date(monkeypatch) -> None:
+    session = _FakeSession([
+        _FakeResponse({"bars": [{"t": "2026-01-02T21:00:00Z", "o": 1.0, "h": 1.0, "l": 1.0, "c": 1.0, "v": 1}], "next_page_token": None})
+    ])
+
+    monkeypatch.setattr(clientAlpaca, "_build_headers", lambda account_id=None: {"X": "Y"})
+    monkeypatch.setattr(clientAlpaca, "_default_start_date", lambda: "2015-04-24")
+    monkeypatch.setattr(clientAlpaca.time, "sleep", lambda seconds: None)
+
+    clientAlpaca.fetch_bars("AAPL", "1Day", session=session)
+
+    assert session.calls[0]["params"]["start"] == "2015-04-24"
+
+
 def test_fetch_bars_raises_technical_error_after_timeout_exhaustion(monkeypatch) -> None:
     session = _FakeSession([requests.exceptions.Timeout(), requests.exceptions.Timeout()])
 

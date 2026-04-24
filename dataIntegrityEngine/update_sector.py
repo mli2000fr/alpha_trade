@@ -1,13 +1,10 @@
 import argparse
 import logging
-import os
-import sys
 import time
 from typing import Any
 
 import requests
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common.utils import configure_root_logging
 from database.assets import get_symbols_missing_fundamentals, update_stock_metadata_fundamentals
