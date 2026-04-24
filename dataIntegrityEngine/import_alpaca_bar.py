@@ -1,5 +1,6 @@
 import logging
 import math
+from collections import Counter
 from datetime import timedelta
 from functools import lru_cache
 from typing import Any, Optional
@@ -89,44 +90,129 @@ def _sanitize_price(value: Any, field: str, symbol: str) -> Optional[float]:
     return f
 
 
+def _sanitize_non_negative_int(value: Any, field: str, symbol: str) -> Optional[int]:
+    if value is None:
+        return 0
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        LOGGER.warning("Valeur entiere invalide | symbol=%s field=%s value=%r → None", symbol, field, value)
+        return None
+    if not math.isfinite(numeric_value):
+        LOGGER.warning("Valeur entiere non finie | symbol=%s field=%s value=%r → None", symbol, field, value)
+        return None
+    if numeric_value < 0:
+        LOGGER.warning("Valeur entiere negative | symbol=%s field=%s value=%r → None", symbol, field, value)
+        return None
+    if not float(numeric_value).is_integer():
+        LOGGER.warning("Valeur entiere non entiere | symbol=%s field=%s value=%r → None", symbol, field, value)
+        return None
+    return int(numeric_value)
+
+
+def _validate_bar_business_rules(
+    *,
+    symbol: str,
+    timestamp: Any,
+    open_price: float,
+    high_price: float,
+    low_price: float,
+    close_price: float,
+    volume: int,
+    trade_count: int,
+    vwa_price: Optional[float],
+) -> Optional[str]:
+    if min(open_price, high_price, low_price, close_price) <= 0:
+        return "prix_non_positif"
+    if high_price < max(open_price, low_price, close_price):
+        return "high_inferieur_aux_prix"
+    if low_price > min(open_price, high_price, close_price):
+        return "low_superieur_aux_prix"
+    if volume < 0:
+        return "volume_negatif"
+    if trade_count < 0:
+        return "trade_count_negatif"
+    if vwa_price is not None and vwa_price <= 0:
+        return "vwap_non_positif"
+    return None
+
+
 def _build_bar_records(symbol: str, bars: list[dict[str, Any]], timeframe: str) -> list[dict[str, Any]]:
     records = []
-    skipped = 0
+    skip_reasons: Counter[str] = Counter()
     for bar in bars:
+        timestamp = bar.get("t")
+        if timestamp is None:
+            skip_reasons["timestamp_absent"] += 1
+            LOGGER.warning("Barre ignoree (timestamp absent) | symbol=%s raw=%r", symbol, bar)
+            continue
+
         open_price  = _sanitize_price(bar.get("o"),  "open_price",  symbol)
         high_price  = _sanitize_price(bar.get("h"),  "high_price",  symbol)
         low_price   = _sanitize_price(bar.get("l"),  "low_price",   symbol)
         close_price = _sanitize_price(bar.get("c"),  "close_price", symbol)
         vwa_price   = _sanitize_price(bar.get("vw"), "vwa_price",   symbol)
+        volume = _sanitize_non_negative_int(bar.get("v"), "volume", symbol)
+        trade_count = _sanitize_non_negative_int(bar.get("n"), "trade_count", symbol)
 
         # Ignorer la barre si un prix obligatoire est invalide (NOT NULL en DB)
-        if None in (open_price, high_price, low_price, close_price):
-            skipped += 1
+        if None in (open_price, high_price, low_price, close_price, volume, trade_count):
+            skip_reasons["champ_obligatoire_invalide"] += 1
             LOGGER.warning(
-                "Barre ignoree (prix invalide) | symbol=%s timestamp=%s o=%s h=%s l=%s c=%s",
-                symbol, bar.get("t"), bar.get("o"), bar.get("h"), bar.get("l"), bar.get("c"),
+                "Barre ignoree (champ obligatoire invalide) | symbol=%s timestamp=%s o=%s h=%s l=%s c=%s v=%s n=%s",
+                symbol, timestamp, bar.get("o"), bar.get("h"), bar.get("l"), bar.get("c"), bar.get("v"), bar.get("n"),
             )
             continue
 
-        # Fallback vwa_price → close si absent (colonne NOT NULL dans le schéma)
-        if vwa_price is None:
-            vwa_price = close_price
+        rejection_reason = _validate_bar_business_rules(
+            symbol=symbol,
+            timestamp=timestamp,
+            open_price=open_price,
+            high_price=high_price,
+            low_price=low_price,
+            close_price=close_price,
+            volume=volume,
+            trade_count=trade_count,
+            vwa_price=vwa_price,
+        )
+        if rejection_reason is not None:
+            skip_reasons[rejection_reason] += 1
+            LOGGER.warning(
+                "Barre ignoree (validation metier) | symbol=%s timestamp=%s reason=%s o=%s h=%s l=%s c=%s v=%s n=%s vw=%s",
+                symbol,
+                timestamp,
+                rejection_reason,
+                open_price,
+                high_price,
+                low_price,
+                close_price,
+                volume,
+                trade_count,
+                vwa_price,
+            )
+            continue
 
         records.append({
             "symbol":      symbol,
-            "timestamp":   _normalize_bar_timestamp(bar["t"]),
+            "timestamp":   _normalize_bar_timestamp(timestamp),
             "timeframe":   timeframe,
             "open_price":  open_price,
             "high_price":  high_price,
             "low_price":   low_price,
             "close_price": close_price,
-            "volume":      int(bar.get("v") or 0),
-            "trade_count": int(bar.get("n") or 0),
+            "volume":      volume,
+            "trade_count": trade_count,
             "vwa_price":   vwa_price,
         })
 
-    if skipped:
-        LOGGER.warning("Barres ignorees au total | symbol=%s skipped=%s total=%s", symbol, skipped, len(bars))
+    if skip_reasons:
+        LOGGER.warning(
+            "Barres ignorees au total | symbol=%s skipped=%s total=%s reasons=%s",
+            symbol,
+            sum(skip_reasons.values()),
+            len(bars),
+            dict(skip_reasons),
+        )
     return records
 
 

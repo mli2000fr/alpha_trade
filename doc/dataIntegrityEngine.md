@@ -44,7 +44,8 @@ Ce document résume le fonctionnement du module `dataIntegrityEngine/` et les co
 
 - `stock_bars`
 - `stock_bars_daily`
-- `cleaning_audit_log`
+- `cleaning_audit_latest`
+- `cleaning_audit_runs`
 - `stock_scores`
 - `stock_metadata`
 
@@ -127,9 +128,10 @@ python -m dataIntegrityEngine.sync_earnings_calendar
 
 1. récupère les symboles actifs/tradables ;
 2. détecte la dernière barre connue par symbole ;
-3. appelle Alpaca avec `adjustment="all"` ;
-4. upsert les barres dans `stock_bars` ;
-5. marque `bars_available=False` si aucun historique n'est récupérable.
+3. appelle Alpaca avec `adjustment="split"` ;
+4. valide strictement les barres OHLCV avant insertion ;
+5. upsert les barres valides dans `stock_bars` ;
+6. marque `bars_available=False` uniquement si l'absence d'historique est confirmée par Alpaca.
 
 ### 4.3 Sanitizeur daily
 
@@ -141,7 +143,8 @@ python -m dataIntegrityEngine.sync_earnings_calendar
 4. calcule `daily_return` et autres features techniques ;
 5. détecte des anomalies ;
 6. upsert dans `stock_bars_daily` ;
-7. met à jour `cleaning_audit_log`.
+7. met à jour le snapshot courant `cleaning_audit_latest` ;
+8. historise chaque exécution dans `cleaning_audit_runs`.
 
 ### 4.4 Gestion automatique de SPY
 
@@ -240,7 +243,7 @@ with engine.connect() as conn:
 ```powershell
 python -c 'from database.connection import get_sqlalchemy_engine; from sqlalchemy import text; engine = get_sqlalchemy_engine();
 with engine.connect() as conn:
-    rows = conn.execute(text("SELECT symbol, status, last_sync_date, updated_at FROM cleaning_audit_log WHERE status = \"failed\" ORDER BY updated_at DESC LIMIT 20")).mappings().all();
+    rows = conn.execute(text("SELECT symbol, status, last_sync_date, latest_run_at, error_message FROM cleaning_audit_latest WHERE status = \"failed\" ORDER BY latest_run_at DESC LIMIT 20")).mappings().all();
     print([dict(r) for r in rows])'
 ```
 

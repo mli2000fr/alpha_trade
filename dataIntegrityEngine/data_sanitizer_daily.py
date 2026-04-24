@@ -62,7 +62,7 @@ class DataSanitizer:
     - Forward-fill des jours manquants (volume=0, is_filled=True) basé sur le calendrier SPY
     - Détection d'anomalies via Rolling MAD (fenêtre 20, seuil 5*MAD et |ret|>2%)
     - Calcul des features: daily_return (persisté), Parkinson, Overnight Gap, RVOL20 (calculés mais non persistés ici)
-    - Incrémental via cleaning_audit_log.last_sync_date
+    - Incrémental via cleaning_audit_latest.last_sync_date
     """
 
     def __init__(self,
@@ -99,7 +99,8 @@ class DataSanitizer:
     def _reflect_tables(self) -> None:
         self.stock_bars = Table('stock_bars', self._db_metadata, autoload_with=self.engine)
         self.stock_bars_daily = Table('stock_bars_daily', self._db_metadata, autoload_with=self.engine)
-        self.cleaning_audit_log = Table('cleaning_audit_log', self._db_metadata, autoload_with=self.engine)
+        self.cleaning_audit_latest = Table('cleaning_audit_latest', self._db_metadata, autoload_with=self.engine)
+        self.cleaning_audit_runs = Table('cleaning_audit_runs', self._db_metadata, autoload_with=self.engine)
         self.stock_metadata = Table('stock_metadata', self._db_metadata, autoload_with=self.engine)
         self.stock_scores = Table('stock_scores', self._db_metadata, autoload_with=self.engine)
 
@@ -174,12 +175,14 @@ class DataSanitizer:
         missing_days: Optional[int],
         anomaly_count: Optional[int],
         status: str,
+        error_message: Optional[str] = None,
     ) -> dict:
         return {
             'last_sync': last_sync,
             'missing_days': missing_days,
             'anomaly_count': anomaly_count,
             'status': status,
+            'error_message': error_message,
         }
 
     @staticmethod
@@ -228,26 +231,27 @@ class DataSanitizer:
         return conn.begin()
 
     def _log_failed_audit_summary(self, conn: Connection, limit: int = 20) -> None:
-        failed_audits = get_failed_audits(conn, self.cleaning_audit_log, limit=limit)
+        failed_audits = get_failed_audits(conn, self.cleaning_audit_latest, limit=limit)
         if not failed_audits:
-            LOGGER.info('Aucun audit en echec detecte dans cleaning_audit_log.')
+            LOGGER.info('Aucun audit en echec detecte dans cleaning_audit_latest.')
             return
 
         LOGGER.warning(
-            'Audits en echec detectes dans cleaning_audit_log | count=%s limit=%s',
+            'Audits en echec detectes dans cleaning_audit_latest | count=%s limit=%s',
             len(failed_audits),
             limit,
         )
         for audit in failed_audits:
             LOGGER.error(
-                'Audit failed summary | symbol=%s updated_at=%s last_sync=%s',
+                'Audit failed summary | symbol=%s latest_run_at=%s last_sync=%s error=%s',
                 audit.get('symbol'),
-                audit.get('updated_at'),
+                audit.get('latest_run_at'),
                 audit.get('last_sync_date'),
+                audit.get('error_message'),
             )
 
     def _process_symbol(self, conn: Connection, symbol: str) -> tuple[bool, dict]:
-        last_sync = get_last_sync_date(conn, self.cleaning_audit_log, symbol)
+        last_sync = get_last_sync_date(conn, self.cleaning_audit_latest, symbol)
         rebuild_start = self._compute_rebuild_start_date(last_sync)
         df_raw = self.fetch_symbol_bars_1d(conn, symbol, rebuild_start)
 
@@ -422,7 +426,13 @@ class DataSanitizer:
                     LOGGER.info("Traitement %s/%s: %s", idx, len(symbols), symbol)
                     try:
                         was_processed, audit_payload = self._process_symbol(conn, symbol)
-                        upsert_audit(conn, self.cleaning_audit_log, symbol, **audit_payload)
+                        upsert_audit(
+                            conn,
+                            self.cleaning_audit_latest,
+                            self.cleaning_audit_runs,
+                            symbol,
+                            **audit_payload,
+                        )
                         # sync_audit_to_stock_scores uniquement si de nouvelles barres ont été traitées.
                         # Si was_processed=False (aucune nouvelle barre), on conserve les valeurs
                         # existantes dans stock_scores pour ne pas écraser avec 0.
@@ -440,12 +450,13 @@ class DataSanitizer:
                     except Exception as e:
                         error_message = self._format_exception_message(e)
                         LOGGER.exception("Echec traitement %s | error_detail=%s", symbol, error_message)
-                        fallback_last_sync = get_last_sync_date(conn, self.cleaning_audit_log, symbol)
-                        failed_payload = self._build_audit_payload(fallback_last_sync, None, None, 'failed')
+                        fallback_last_sync = get_last_sync_date(conn, self.cleaning_audit_latest, symbol)
+                        failed_payload = self._build_audit_payload(fallback_last_sync, None, None, 'failed', error_message)
                         LOGGER.error("Persistance audit echec | symbol=%s payload=%s", symbol, failed_payload)
                         upsert_audit(
                             conn,
-                            self.cleaning_audit_log,
+                            self.cleaning_audit_latest,
+                            self.cleaning_audit_runs,
                             symbol,
                             **failed_payload,
                         )

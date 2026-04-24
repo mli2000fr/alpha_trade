@@ -112,7 +112,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         num="2",
         name="Data Sanitizer Daily",
         desc="Nettoyage, alignement calendrier, détection d'anomalies sur les barres brutes.",
-        tables="stock_bars_daily, cleaning_audit_log",
+        tables="stock_bars_daily, cleaning_audit_latest, cleaning_audit_runs",
         deps="import_alpaca_bar",
     ),
     PipelineStepDefinition(

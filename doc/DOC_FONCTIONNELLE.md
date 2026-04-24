@@ -194,7 +194,7 @@ Le module `corporate_actions` assure le suivi automatique des opérations sur ti
 | **Audit trail** | Tables `corporate_actions_events`, `corporate_actions_applications`, `portfolio_cash_ledger` |
 | **Réconciliation** | Comparaison positions internes post-CA vs positions broker |
 
-**Stratégie données de marché** : les barres OHLCV sont ingérées avec `adjustment="all"` (déjà ajustées par Alpaca). Le module corporate actions ne touche pas aux prix historiques — il gère uniquement la comptabilité portefeuille (qty, cost basis, cash).
+**Stratégie données de marché** : les barres OHLCV sont ingérées avec `adjustment="split"` (splits neutralisés, dividendes non réinjectés dans le passé). Le module corporate actions ne touche pas aux prix historiques — il gère uniquement la comptabilité portefeuille (qty, cost basis, cash).
 
 **Intégration pipeline** : s'exécute en fin de pipeline, juste avant l'apply, après que les positions du jour sont connues :
 ```

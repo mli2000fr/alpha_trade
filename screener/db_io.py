@@ -195,18 +195,12 @@ def _load_latest_audit_metrics(engine: Engine, symbols: list[str]) -> pd.DataFra
 
 	stmt = text(
 		"""
-		SELECT audit.symbol,
-		       audit.anomaly_count,
-		       audit.missing_days_count,
-		       audit.status AS sanitizer_status
-		FROM cleaning_audit_log audit
-		INNER JOIN (
-			SELECT symbol, MAX(id) AS max_id
-			FROM cleaning_audit_log
-			WHERE symbol IN :symbols
-			GROUP BY symbol
-		) latest ON latest.max_id = audit.id
-		WHERE audit.symbol IN :symbols
+		SELECT symbol,
+		       anomaly_count,
+		       missing_days_count,
+		       status AS sanitizer_status
+		FROM cleaning_audit_latest
+		WHERE symbol IN :symbols
 		"""
 	).bindparams(bindparam("symbols", expanding=True))
 

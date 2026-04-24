@@ -13,3 +13,7 @@ Tu lit les doc ainsi les codes sources, tu propose des améliorations, niveau pr
 
 je vais réinitialiser toutes les tables pour partir sur une base saine, donc pas besoin de faire les modificaiton pour garantir la rétro compatibilité avec les données existants.
 je ne veux pas de variant de prix, rester simple, alpaca retourne déjà split_adjusted  ou all, tu décide le quel est plus adapter à mon projet. a la fin sauvegarder la synthèse dans prompt/dataIntegrityEngine/1.audit.md
+----------------------------
+
+cleaning_audit_runs
+cleaning_audit_latest

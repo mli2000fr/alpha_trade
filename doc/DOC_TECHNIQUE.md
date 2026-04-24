@@ -115,7 +115,7 @@ Points d'implémentation importants côté `modelFactory` :
 
 **`OcoManager`** (`execution_engine/oco_manager.py`) — Gestion OCO synthétique : quand un enfant bracket est FILLED, annule le sibling.
 
-**`CorporateActionEngine`** (`corporate_actions/engine.py`) — Orchestrateur corporate actions en 2 phases : `sync()` (ingestion provider → DB) et `apply()` (application idempotente sur positions). Stratégie : les OHLCV restent gérés par Alpaca (`adjustment="all"`), ce module gère uniquement la comptabilité portefeuille (qty, cost basis, cash). La sync résout par défaut l'univers depuis `stock_metadata` (`status='active'`, `tradable=1`, `bars_available=1`), puis interroge Alpaca par lots configurables (`batch_size`, défaut 25) avec persistance immédiate en base après chaque lot.
+**`CorporateActionEngine`** (`corporate_actions/engine.py`) — Orchestrateur corporate actions en 2 phases : `sync()` (ingestion provider → DB) et `apply()` (application idempotente sur positions). Stratégie : les OHLCV restent gérés par Alpaca avec la convention projet `adjustment="split"`, ce module gère uniquement la comptabilité portefeuille (qty, cost basis, cash). La sync résout par défaut l'univers depuis `stock_metadata` (`status='active'`, `tradable=1`, `bars_available=1`), puis interroge Alpaca par lots configurables (`batch_size`, défaut 25) avec persistance immédiate en base après chaque lot.
 
 **`AlpacaCorporateActionProvider`** (`corporate_actions/provider.py`) — Provider abstrait pour l'ingestion des dividendes et splits depuis l'API Alpaca Corporate Actions (`v1/corporate-actions`). Gère pagination (`next_page_token`), tri `asc`, `limit=1000`, retry réseau/HTTP, et retry spécifique aux timeouts sur le modèle de `fetch_bars` du client Alpaca. Extensible vers Polygon, Finnhub, etc.
 
@@ -240,7 +240,7 @@ alpaca:
 
 ### 4.4 Tables SQL (`database/sql/`)
 
-- **stock/** : `stock_metadata`, `stock_bars`, `stock_bars_daily`, `stock_scores`, `stock_scores_history`, `stock_quote_snapshots`, `stock_earnings_calendar`, `cleaning_audit_log`
+- **stock/** : `stock_metadata`, `stock_bars`, `stock_bars_daily`, `stock_scores`, `stock_scores_history`, `stock_quote_snapshots`, `stock_earnings_calendar`, `cleaning_audit_latest`, `cleaning_audit_runs`
 - **news/** : `news_raw`, `news_sentiment`, `news_ticker_map`, `macro_event_audit`, `ticker_daily_sentiment_features`, `sector_daily_sentiment_features`, `news_ingestion_checkpoint`
 - **ml/** : `model_registry`, `model_training_run`, `model_metrics`, `model_predictions`
 - **risk/** : `risk_decisions` ★, `portfolio_targets` ★

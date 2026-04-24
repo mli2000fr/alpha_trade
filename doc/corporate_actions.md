@@ -59,7 +59,7 @@ Ce document résume le fonctionnement du module `corporate_actions/` et les comm
 
 Le module **n'ajuste pas** `stock_bars` ni `stock_bars_daily`.
 
-Les prix de marché étant déjà ingérés via Alpaca avec `adjustment="all"`, le module corporate actions gère uniquement :
+Les prix de marché étant déjà ingérés via Alpaca avec `adjustment="split"`, le module corporate actions gère uniquement :
 
 - la comptabilité portefeuille,
 - les quantités,

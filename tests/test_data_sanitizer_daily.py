@@ -242,7 +242,7 @@ def test_format_exception_message_prefers_dbapi_origin_message(sanitizer: DataSa
 
 
 def test_log_failed_audit_summary_logs_failed_rows(monkeypatch, caplog, sanitizer: DataSanitizer) -> None:
-    sanitizer.cleaning_audit_log = object()
+    sanitizer.cleaning_audit_latest = object()
     fake_conn = cast(Connection, object())
 
     monkeypatch.setattr(
@@ -251,8 +251,9 @@ def test_log_failed_audit_summary_logs_failed_rows(monkeypatch, caplog, sanitize
         lambda conn, table, limit=20: [
             {
                 "symbol": "AAPL",
-                "updated_at": datetime(2024, 1, 3, 10, 0, 0),
+                "latest_run_at": datetime(2024, 1, 3, 10, 0, 0),
                 "last_sync_date": date(2024, 1, 3),
+                "error_message": "RuntimeError: boom",
             }
         ],
     )
@@ -261,7 +262,7 @@ def test_log_failed_audit_summary_logs_failed_rows(monkeypatch, caplog, sanitize
         sanitizer._log_failed_audit_summary(fake_conn, limit=5)
 
     # Compatibilité logs sans accents (Windows)
-    assert any("Audits en echec detectes dans cleaning_audit_log" in message or "Audits en échec détectés dans cleaning_audit_log" in message for message in caplog.messages)
+    assert any("Audits en echec detectes dans cleaning_audit_latest" in message or "Audits en échec détectés dans cleaning_audit_latest" in message for message in caplog.messages)
     assert any("Audit failed summary | symbol=AAPL" in message for message in caplog.messages)
 
 
@@ -312,7 +313,8 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
     fake_conn = _FakePipelineConnection()
     sanitizer.engine = _FakeEngine(fake_conn)
     sanitizer.stock_metadata = object()
-    sanitizer.cleaning_audit_log = object()
+    sanitizer.cleaning_audit_latest = object()
+    sanitizer.cleaning_audit_runs = object()
     sanitizer.stock_scores = object()
 
     upsert_calls: list[tuple[str, dict]] = []
@@ -328,12 +330,13 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
             "missing_days": 2,
             "anomaly_count": 4,
             "status": "success",
+            "error_message": None,
         }),
     )
     monkeypatch.setattr(
         data_sanitizer_daily,
         "upsert_audit",
-        lambda conn, table, symbol, **payload: upsert_calls.append((symbol, payload)),
+        lambda conn, latest_table, runs_table, symbol, **payload: upsert_calls.append((symbol, payload)),
     )
     monkeypatch.setattr(
         data_sanitizer_daily,
@@ -351,6 +354,7 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
             "missing_days": 2,
             "anomaly_count": 4,
             "status": "success",
+            "error_message": None,
         },
     )]
     assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", 2, 4, "success")]
@@ -360,7 +364,8 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
     fake_conn = _FakePipelineConnection()
     sanitizer.engine = _FakeEngine(fake_conn)
     sanitizer.stock_metadata = object()
-    sanitizer.cleaning_audit_log = object()
+    sanitizer.cleaning_audit_latest = object()
+    sanitizer.cleaning_audit_runs = object()
     sanitizer.stock_scores = object()
 
     upsert_calls: list[tuple[str, dict]] = []
@@ -377,7 +382,7 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
     monkeypatch.setattr(
         data_sanitizer_daily,
         "upsert_audit",
-        lambda conn, table, symbol, **payload: upsert_calls.append((symbol, payload)),
+        lambda conn, latest_table, runs_table, symbol, **payload: upsert_calls.append((symbol, payload)),
     )
     monkeypatch.setattr(
         data_sanitizer_daily,
@@ -395,13 +400,14 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
             "missing_days": None,
             "anomaly_count": None,
             "status": "failed",
+            "error_message": "RuntimeError: boom",
         },
     )]
     assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", None, None, "failed")]
 
 
 def test_process_symbol_rebuilds_with_gliding_lookback(monkeypatch, sanitizer: DataSanitizer) -> None:
-    sanitizer.cleaning_audit_log = object()
+    sanitizer.cleaning_audit_latest = object()
     sanitizer.stock_bars = object()
     sanitizer.stock_bars_daily = object()
     sanitizer.stock_scores = object()

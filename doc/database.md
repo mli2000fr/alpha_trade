@@ -128,7 +128,8 @@ Ce fichier encapsule la plomberie SQL du sanitizeur :
 - chargement des audits,
 - récupération des bornes de dates,
 - upsert dans `stock_bars_daily`,
-- écriture dans `cleaning_audit_log`.
+- écriture dans `cleaning_audit_latest` (snapshot courant),
+- écriture append-only dans `cleaning_audit_runs` (historique des runs).
 
 ---
 

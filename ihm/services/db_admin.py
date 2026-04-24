@@ -37,7 +37,8 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
         "stock_bars_daily",
         "stock_metadata",
         "stock_scores",
-        "cleaning_audit_log",
+        "cleaning_audit_latest",
+        "cleaning_audit_runs",
     ),
     "News / Sentiment": (
         "news_raw",
