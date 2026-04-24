@@ -60,3 +60,33 @@ def test_render_persistent_business_summary_prefers_existing_summary_caption(mon
 
     assert captions == ["caption déjà calculé"]
 
+
+def test_render_run_summary_block_supports_markdown_heading_without_caption(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(run_summary_component.st, "subheader", lambda value: calls.append(("subheader", value)))
+    monkeypatch.setattr(run_summary_component.st, "markdown", lambda value: calls.append(("markdown", value)))
+    monkeypatch.setattr(run_summary_component.st, "caption", lambda value: calls.append(("caption", value)))
+    monkeypatch.setattr(run_summary_component, "metric_row", lambda metrics: calls.append(("metric_row", metrics)))
+
+    rendered = run_summary_component.render_run_summary_block(
+        {
+            "step_key": "pipeline_workflow",
+            "run_summary": {
+                "workflow_steps_with_summary": 2,
+                "targeted_symbols": 6,
+                "successful_symbols": 5,
+            },
+        },
+        title="**Résumé métier**",
+        max_metrics=2,
+        heading_level="markdown",
+        show_caption=False,
+    )
+
+    assert rendered is True
+    assert calls == [
+        ("markdown", "**Résumé métier**"),
+        ("metric_row", [("Étapes résumées", 2, None), ("Cibles", 6, None)]),
+    ]
+
+

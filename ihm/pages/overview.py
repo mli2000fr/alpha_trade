@@ -9,6 +9,7 @@ import streamlit as st
 
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable
+from ihm.components.run_summary import render_run_summary_block
 from ihm.components.metrics import metric_row
 from ihm.components.status_badges import env_badge, run_status_badge
 from ihm.components.tables import show_dataframe
@@ -16,7 +17,6 @@ from ihm.services.process_registry import list_active_pipeline_runs, load_pipeli
 from ihm.services.run_summary import (
     build_run_summary_caption,
     find_latest_run_with_summary,
-    get_run_summary,
 )
 from ihm.services.db import db_available, get_last_query_error
 from ihm.services.queries import (
@@ -112,17 +112,7 @@ def render() -> None:
 
     pipeline_runs = _merge_pipeline_runs()
     latest_workflow = find_latest_run_with_summary(pipeline_runs, run_kind="workflow")
-    workflow_summary = get_run_summary(latest_workflow)
-    if workflow_summary:
-        st.subheader("🧭 Dernier workflow pipeline")
-        workflow_metrics = [
-            ("Étapes résumées", int(workflow_summary.get("workflow_steps_with_summary", 0)), None),
-            ("Cibles", int(workflow_summary.get("targeted_symbols", 0)), None),
-            ("Succès", int(workflow_summary.get("successful_symbols", 0)), None),
-            ("Échecs", int(workflow_summary.get("failed_symbols", 0)), None),
-        ]
-        metric_row(workflow_metrics)
-        st.caption(build_run_summary_caption(latest_workflow))
+    render_run_summary_block(latest_workflow, title="🧭 Dernier workflow pipeline", max_metrics=4)
 
     summary_rows = _build_pipeline_summary_rows(pipeline_runs)
     if not summary_rows.empty:

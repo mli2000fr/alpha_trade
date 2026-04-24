@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from ihm.components.metrics import format_duration_hhmmss, to_int
+from ihm.components.run_summary import render_run_summary_block
 from ihm.pages import run_page_if_standalone
 from ihm.services.account_defaults import (
     PDT_EQUITY_THRESHOLD,
@@ -34,11 +35,7 @@ from ihm.services.process_registry import (
     start_pipeline_workflow,
     stop_pipeline_run,
 )
-from ihm.services.run_summary import (
-    RUN_SUMMARY_METRICS,
-    build_run_summary_caption,
-    get_run_summary,
-)
+from ihm.services.run_summary import get_run_summary
 
 SELECTED_RUN_KEY = "ihm_pipeline_selected_run_id"
 COMPARE_RUNS_KEY = "ihm_pipeline_compare_run_ids"
@@ -61,18 +58,11 @@ def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
 
 
 def _render_run_summary(record: dict[str, object] | None, *, compact: bool = False) -> None:
-    summary = _get_run_summary(record)
+    summary = get_run_summary(record)
     if not summary:
         return
 
-    step_key = str(record.get("step_key", "")) if record else ""
-    metric_specs = RUN_SUMMARY_METRICS.get(step_key, [])
-    if metric_specs:
-        st.markdown("**Résumé métier**")
-        cols = st.columns(min(len(metric_specs), 6))
-        for index, (label, key) in enumerate(metric_specs):
-            value = summary.get(key, "—")
-            cols[index % len(cols)].metric(label, to_int(value) if isinstance(value, (int, float)) else value)
+    render_run_summary_block(record, title="**Résumé métier**", max_metrics=6, heading_level="markdown", show_caption=False)
 
     if "history_status_counts" in summary and isinstance(summary["history_status_counts"], dict):
         st.caption("Breakdown history_status")
