@@ -386,6 +386,9 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
     assert summary["failed_symbols"] == 0
     assert summary["skipped_symbols"] == 0
     assert summary["upserted_rows"] == 12
+    assert summary["audit_rows_written"] == 1
+    assert summary["batch_commits"] == 1
+    assert summary["status_breakdown"] == {"success": 1, "failed": 0, "skipped": 0}
 
 
 def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatch, sanitizer: DataSanitizer) -> None:
@@ -435,6 +438,8 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
     assert summary["successful_symbols"] == 0
     assert summary["failed_symbols"] == 1
     assert summary["degraded_symbols"] == 0
+    assert summary["audit_rows_written"] == 1
+    assert summary["status_breakdown"] == {"success": 0, "failed": 1, "skipped": 0}
 
 
 def test_process_symbol_rebuilds_with_gliding_lookback(monkeypatch, sanitizer: DataSanitizer) -> None:
@@ -501,3 +506,4 @@ def test_run_pipeline_counts_data_quality_failures_as_degraded(monkeypatch, sani
 
     assert summary["failed_symbols"] == 1
     assert summary["degraded_symbols"] == 1
+    assert summary["status_breakdown"] == {"success": 0, "failed": 1, "skipped": 0}

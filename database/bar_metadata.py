@@ -21,7 +21,7 @@ class TimeFrame(Enum):
         self.api_value = api_value
 
 
-    SUPPORTED_DATA_INTEGRITY_TIMEFRAMES: tuple[TimeFrame, ...] = (TimeFrame.ONE_DAY,)
+SUPPORTED_DATA_INTEGRITY_TIMEFRAMES: tuple[TimeFrame, ...] = (TimeFrame.ONE_DAY,)
 
 
 def validate_data_integrity_timeframe(time_frame: TimeFrame) -> None:

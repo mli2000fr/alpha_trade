@@ -3,7 +3,7 @@ from datetime import date, datetime
 import pytest
 
 from database.bar_metadata import TimeFrame
-from dataIntegrityEngine.import_alpaca_bar import _build_bar_records, import_alpaca_bars
+from dataIntegrityEngine.import_alpaca_bar import _assess_staleness, _build_bar_records, import_alpaca_bars
 from service.alpaca.clientAlpaca import AlpacaBarsFetchError
 
 
@@ -43,8 +43,11 @@ def test_import_alpaca_bars_accepts_targeted_symbols(monkeypatch) -> None:
     assert calls == [("SPY", "1Day", None)]
     assert history_calls == []
     assert summary["targeted_symbols"] == 1
+    assert summary["first_import_symbols"] == 1
+    assert summary["existing_history_symbols"] == 0
     assert summary["successful_symbols"] == 0
     assert summary["skipped_symbols"] == 1
+    assert summary["up_to_date_symbols"] == 0
     assert summary["failed_symbols"] == 0
 
 
@@ -73,7 +76,9 @@ def test_import_alpaca_bars_keeps_bars_available_on_technical_error(monkeypatch)
     assert status_calls == [("AAPL", "provider_error")]
     assert summary["targeted_symbols"] == 1
     assert summary["failed_symbols"] == 1
+    assert summary["provider_error_symbols"] == 1
     assert summary["successful_symbols"] == 0
+    assert summary["history_status_counts"]["provider_error"] == 1
 
 
 def test_import_alpaca_bars_marks_symbol_ready_after_success(monkeypatch) -> None:
@@ -96,6 +101,7 @@ def test_import_alpaca_bars_marks_symbol_ready_after_success(monkeypatch) -> Non
     assert history_calls == ["AAPL"]
     assert summary["successful_symbols"] == 1
     assert summary["inserted_bars"] == 1
+    assert summary["history_status_counts"]["ready"] == 1
 
 
 def test_import_alpaca_bars_marks_stale_symbol_when_existing_history_is_too_old(monkeypatch) -> None:
@@ -119,6 +125,46 @@ def test_import_alpaca_bars_marks_stale_symbol_when_existing_history_is_too_old(
     assert status_calls == [("AAPL", "suspended_or_stale")]
     assert summary["stale_symbols"] == 1
     assert summary["skipped_symbols"] == 0
+    assert summary["existing_history_symbols"] == 1
+    assert summary["max_calendar_gap_days"] >= 13
+    assert summary["max_trading_gap_days"] >= 8
+    assert summary["history_status_counts"]["suspended_or_stale"] == 1
+
+
+def test_import_alpaca_bars_reports_no_history_breakdown(monkeypatch) -> None:
+    no_history_calls: list[str] = []
+
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.getLastDateMarche", lambda: date(2026, 1, 15))
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.get_last_bar_timestamp", lambda session, symbol, time_frame: None)
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.fetch_bars", lambda symbol, api_value, start: [])
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.symbol_exists_in_stock_bars", lambda session, symbol: False)
+    monkeypatch.setattr(
+        "dataIntegrityEngine.import_alpaca_bar.update_bars_available_false",
+        lambda symbol: no_history_calls.append(symbol),
+    )
+
+    summary = import_alpaca_bars(TimeFrame.ONE_DAY, symbols=["aapl"])
+
+    assert no_history_calls == ["AAPL"]
+    assert summary["market_date"] == "2026-01-15"
+    assert summary["first_import_symbols"] == 1
+    assert summary["no_data_symbols"] == 1
+    assert summary["history_status_counts"]["no_history"] == 1
+
+
+def test_assess_staleness_uses_trading_days_instead_of_simple_calendar_gap(monkeypatch) -> None:
+    thanksgiving = date(2026, 11, 26)
+    monkeypatch.setattr(
+        "dataIntegrityEngine.import_alpaca_bar.is_trading_day",
+        lambda value: value.weekday() < 5 and value != thanksgiving,
+    )
+
+    staleness = _assess_staleness(datetime(2026, 11, 25, 0, 0, 0), date(2026, 12, 3))
+
+    assert staleness["calendar_days"] == 8
+    assert staleness["trading_days"] == 5
+    assert staleness["is_stale"] is False
 
 
 def test_build_bar_records_rejects_inconsistent_ohlc_bar() -> None:

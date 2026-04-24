@@ -11,9 +11,12 @@ from dateutil import parser
 from sqlalchemy import MetaData, Table, and_, func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
-from common.utils import configure_root_logging, getLastDateMarche
+from common.utils import configure_root_logging, getLastDateMarche, is_trading_day
 from database.assets import (
+    HISTORY_STATUS_NO_HISTORY,
+    HISTORY_STATUS_PENDING,
     HISTORY_STATUS_PROVIDER_ERROR,
+    HISTORY_STATUS_READY,
     HISTORY_STATUS_SUSPENDED_OR_STALE,
     mark_symbol_history_ready,
     update_bars_available_false,
@@ -27,6 +30,7 @@ LOGGER = logging.getLogger(__name__)
 TZ_NEW_YORK = pytz.timezone("America/New_York")
 DATA_ADJUSTMENT = "split"
 MAX_STALENESS_CALENDAR_DAYS = 7
+MAX_STALENESS_TRADING_DAYS = 5
 
 
 def _utc_now_naive() -> datetime:
@@ -37,16 +41,48 @@ def _build_run_id(prefix: str) -> str:
     return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
 
 
-def _is_symbol_stale(last_timestamp: Any, market_date: Any) -> bool:
-    if last_timestamp is None or market_date is None:
-        return False
-    last_date = last_timestamp.date() if hasattr(last_timestamp, "date") else last_timestamp
-    if not hasattr(last_date, "__sub__"):
-        return False
+def _coerce_to_date(value: Any) -> Any:
+    if value is None:
+        return None
+    return value.date() if hasattr(value, "date") else value
+
+
+def _count_trading_days_between(start_date: Any, end_date: Any) -> Optional[int]:
+    if start_date is None or end_date is None or not hasattr(end_date, "__sub__"):
+        return None
+    if end_date <= start_date:
+        return 0
+    current = start_date + timedelta(days=1)
+    trading_days = 0
+    while current <= end_date:
+        if is_trading_day(current):
+            trading_days += 1
+        current += timedelta(days=1)
+    return trading_days
+
+
+def _assess_staleness(last_timestamp: Any, market_date: Any) -> dict[str, Any]:
+    last_date = _coerce_to_date(last_timestamp)
+    market_day = _coerce_to_date(market_date)
+    if last_date is None or market_day is None or not hasattr(market_day, "__sub__"):
+        return {"last_date": last_date, "market_date": market_day, "calendar_days": None, "trading_days": None, "is_stale": False}
     try:
-        return (market_date - last_date).days > MAX_STALENESS_CALENDAR_DAYS
+        calendar_gap = max(0, int((market_day - last_date).days))
     except Exception:
-        return False
+        return {"last_date": last_date, "market_date": market_day, "calendar_days": None, "trading_days": None, "is_stale": False}
+    trading_gap = _count_trading_days_between(last_date, market_day)
+    is_stale = False
+    if trading_gap is not None:
+        is_stale = trading_gap > MAX_STALENESS_TRADING_DAYS
+    elif calendar_gap is not None:
+        is_stale = calendar_gap > MAX_STALENESS_CALENDAR_DAYS
+    return {
+        "last_date": last_date,
+        "market_date": market_day,
+        "calendar_days": calendar_gap,
+        "trading_days": trading_gap,
+        "is_stale": is_stale,
+    }
 
 
 @lru_cache(maxsize=1)
@@ -311,19 +347,36 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
     validate_data_integrity_timeframe(time_frame)
     session = SessionLocal()
     started_at = _utc_now_naive()
+    market_date = getLastDateMarche()
     summary = {
         "run_id": _build_run_id("import-bars"),
         "timeframe": time_frame.db_value,
         "started_at": started_at.isoformat(timespec="seconds"),
         "finished_at": None,
         "duration_seconds": 0.0,
+        "market_date": market_date.isoformat() if hasattr(market_date, "isoformat") else str(market_date),
         "targeted_symbols": 0,
+        "existing_history_symbols": 0,
+        "first_import_symbols": 0,
         "successful_symbols": 0,
         "failed_symbols": 0,
+        "provider_error_symbols": 0,
         "skipped_symbols": 0,
+        "up_to_date_symbols": 0,
         "no_data_symbols": 0,
         "stale_symbols": 0,
         "inserted_bars": 0,
+        "max_calendar_gap_days": 0,
+        "max_trading_gap_days": 0,
+        "staleness_calendar_days_threshold": MAX_STALENESS_CALENDAR_DAYS,
+        "staleness_trading_days_threshold": MAX_STALENESS_TRADING_DAYS,
+        "history_status_counts": {
+            HISTORY_STATUS_PENDING: 0,
+            HISTORY_STATUS_READY: 0,
+            HISTORY_STATUS_NO_HISTORY: 0,
+            HISTORY_STATUS_PROVIDER_ERROR: 0,
+            HISTORY_STATUS_SUSPENDED_OR_STALE: 0,
+        },
     }
     try:
         target_symbols = _normalize_target_symbols(symbols)
@@ -350,6 +403,10 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
                 symbol_skipped = False
                 symbol_stale = False
                 last_timestamp = get_last_bar_timestamp(session, symbol, time_frame)
+                if last_timestamp:
+                    summary["existing_history_symbols"] += 1
+                else:
+                    summary["first_import_symbols"] += 1
                 LOGGER.info(
                     "Derniere barre connue | symbol=%s timestamp=%s adjustment=%s",
                     symbol,
@@ -359,10 +416,10 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
 
                 if last_timestamp:
                     last_date = last_timestamp.date() if hasattr(last_timestamp, "date") else last_timestamp
-                    market_date = getLastDateMarche()
                     if str(last_date) == str(market_date):
                         LOGGER.info("%s deja a jour pour la derniere date de marche (%s).", symbol, market_date)
                         summary["skipped_symbols"] += 1
+                        summary["up_to_date_symbols"] += 1
                         symbol_skipped = True
                         continue
                     next_start = _format_last_timestamp(last_timestamp)
@@ -384,13 +441,33 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
                             )
                             update_bars_available_false(symbol)
                             summary["no_data_symbols"] += 1
+                            summary["history_status_counts"][HISTORY_STATUS_NO_HISTORY] += 1
                             symbol_no_data = True
                         else:
-                            market_date = getLastDateMarche()
-                            if _is_symbol_stale(last_timestamp, market_date):
+                            staleness = _assess_staleness(last_timestamp, market_date)
+                            if staleness["calendar_days"] is not None:
+                                summary["max_calendar_gap_days"] = max(
+                                    int(summary["max_calendar_gap_days"]),
+                                    int(staleness["calendar_days"]),
+                                )
+                            if staleness["trading_days"] is not None:
+                                summary["max_trading_gap_days"] = max(
+                                    int(summary["max_trading_gap_days"]),
+                                    int(staleness["trading_days"]),
+                                )
+                            if staleness["is_stale"]:
                                 update_symbol_history_status(symbol, HISTORY_STATUS_SUSPENDED_OR_STALE)
                                 summary["stale_symbols"] += 1
+                                summary["history_status_counts"][HISTORY_STATUS_SUSPENDED_OR_STALE] += 1
                                 symbol_stale = True
+                                LOGGER.warning(
+                                    "Symbole stale detecte | symbol=%s last_date=%s market_date=%s trading_gap=%s calendar_gap=%s",
+                                    symbol,
+                                    staleness["last_date"],
+                                    staleness["market_date"],
+                                    staleness["trading_days"],
+                                    staleness["calendar_days"],
+                                )
                             else:
                                 summary["skipped_symbols"] += 1
                                 symbol_skipped = True
@@ -404,6 +481,7 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
                     mark_symbol_history_ready(symbol)
                     summary["successful_symbols"] += 1
                     summary["inserted_bars"] += inserted_count
+                    summary["history_status_counts"][HISTORY_STATUS_READY] += 1
                 elif not symbol_no_data and not symbol_skipped and not symbol_stale:
                     summary["skipped_symbols"] += 1
             except AlpacaBarsFetchError as exc:
@@ -415,22 +493,32 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
                 )
                 update_symbol_history_status(symbol, HISTORY_STATUS_PROVIDER_ERROR)
                 summary["failed_symbols"] += 1
+                summary["provider_error_symbols"] += 1
+                summary["history_status_counts"][HISTORY_STATUS_PROVIDER_ERROR] += 1
                 continue
     finally:
         finished_at = _utc_now_naive()
         summary["finished_at"] = finished_at.isoformat(timespec="seconds")
         summary["duration_seconds"] = round((finished_at - started_at).total_seconds(), 2)
         LOGGER.info(
-            "Resume import Alpaca | run_id=%s timeframe=%s targeted=%s success=%s failed=%s skipped=%s no_data=%s stale=%s inserted_bars=%s duration_s=%s",
+            "Resume import Alpaca | run_id=%s timeframe=%s market_date=%s targeted=%s first_import=%s existing_history=%s up_to_date=%s success=%s failed=%s provider_error=%s skipped=%s no_data=%s stale=%s inserted_bars=%s max_calendar_gap=%s max_trading_gap=%s status_breakdown=%s duration_s=%s",
             summary["run_id"],
             summary["timeframe"],
+            summary["market_date"],
             summary["targeted_symbols"],
+            summary["first_import_symbols"],
+            summary["existing_history_symbols"],
+            summary["up_to_date_symbols"],
             summary["successful_symbols"],
             summary["failed_symbols"],
+            summary["provider_error_symbols"],
             summary["skipped_symbols"],
             summary["no_data_symbols"],
             summary["stale_symbols"],
             summary["inserted_bars"],
+            summary["max_calendar_gap_days"],
+            summary["max_trading_gap_days"],
+            summary["history_status_counts"],
             summary["duration_seconds"],
         )
         session.close()

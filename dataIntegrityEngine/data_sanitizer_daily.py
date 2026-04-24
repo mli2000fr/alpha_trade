@@ -431,6 +431,13 @@ class DataSanitizer:
             'skipped_symbols': 0,
             'degraded_symbols': 0,
             'upserted_rows': 0,
+            'audit_rows_written': 0,
+            'batch_commits': 0,
+            'status_breakdown': {
+                'success': 0,
+                'failed': 0,
+                'skipped': 0,
+            },
         }
 
         processed = 0
@@ -459,6 +466,7 @@ class DataSanitizer:
                             symbol,
                             **audit_payload,
                         )
+                        summary['audit_rows_written'] = int(summary['audit_rows_written']) + 1
                         # sync_audit_to_stock_scores uniquement si de nouvelles barres ont été traitées.
                         # Si was_processed=False (aucune nouvelle barre), on conserve les valeurs
                         # existantes dans stock_scores pour ne pas écraser avec 0.
@@ -475,8 +483,10 @@ class DataSanitizer:
                             processed += 1
                             summary['successful_symbols'] = int(summary['successful_symbols']) + 1
                             summary['upserted_rows'] = int(summary['upserted_rows']) + rows_upserted
+                            summary['status_breakdown']['success'] = int(summary['status_breakdown']['success']) + 1
                         else:
                             summary['skipped_symbols'] = int(summary['skipped_symbols']) + 1
+                            summary['status_breakdown']['skipped'] = int(summary['status_breakdown']['skipped']) + 1
                     except Exception as e:
                         error_message = self._format_exception_message(e)
                         LOGGER.exception("Echec traitement %s | error_detail=%s", symbol, error_message)
@@ -490,6 +500,7 @@ class DataSanitizer:
                             symbol,
                             **failed_payload,
                         )
+                        summary['audit_rows_written'] = int(summary['audit_rows_written']) + 1
                         sync_audit_to_stock_scores(
                             conn,
                             self.stock_scores,
@@ -499,13 +510,16 @@ class DataSanitizer:
                             failed_payload['status'],
                         )
                         summary['failed_symbols'] = int(summary['failed_symbols']) + 1
+                        summary['status_breakdown']['failed'] = int(summary['status_breakdown']['failed']) + 1
                         if isinstance(e, DataQualityError):
                             summary['degraded_symbols'] = int(summary['degraded_symbols']) + 1
 
                     if self._should_commit(processed, commit_every):
                         outer_trans = self._commit_batch(outer_trans, conn)
+                        summary['batch_commits'] = int(summary['batch_commits']) + 1
 
                 outer_trans.commit()
+                summary['batch_commits'] = int(summary['batch_commits']) + 1
                 self._log_failed_audit_summary(conn)
             finally:
                 gc.collect()
@@ -514,7 +528,7 @@ class DataSanitizer:
         summary['finished_at'] = finished_at.isoformat(timespec='seconds')
         summary['duration_seconds'] = round((finished_at - started_at).total_seconds(), 2)
         LOGGER.info(
-            'Resume sanitizeur daily | run_id=%s targeted=%s success=%s failed=%s skipped=%s degraded=%s upserted_rows=%s duration_s=%s',
+            'Resume sanitizeur daily | run_id=%s targeted=%s success=%s failed=%s skipped=%s degraded=%s upserted_rows=%s audit_rows=%s batch_commits=%s status_breakdown=%s duration_s=%s',
             summary['run_id'],
             summary['targeted_symbols'],
             summary['successful_symbols'],
@@ -522,6 +536,9 @@ class DataSanitizer:
             summary['skipped_symbols'],
             summary['degraded_symbols'],
             summary['upserted_rows'],
+            summary['audit_rows_written'],
+            summary['batch_commits'],
+            summary['status_breakdown'],
             summary['duration_seconds'],
         )
         return summary

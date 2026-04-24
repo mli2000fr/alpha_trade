@@ -11,18 +11,37 @@ from typing import Any, Iterator, Optional, Sequence, cast
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from common.utils import configure_root_logging
 from database.connection import get_sqlalchemy_engine
+from database.assets import (
+    HISTORY_STATUS_EXCLUDED_BY_POLICY,
+    HISTORY_STATUS_NO_HISTORY,
+    HISTORY_STATUS_PENDING,
+    HISTORY_STATUS_PROVIDER_ERROR,
+    HISTORY_STATUS_READY,
+    HISTORY_STATUS_SUSPENDED_OR_STALE,
+)
 from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
 
 LOGGER = logging.getLogger(__name__)
 
 PRICE_COLUMNS = ["symbol", "date", "close", "volume", "high", "low"]
-METADATA_COLUMNS = ["symbol", "company_name", "asset_class", "status", "tradable", "bars_available", "sector", "market_cap"]
+METADATA_COLUMNS = [
+    "symbol",
+    "company_name",
+    "asset_class",
+    "status",
+    "tradable",
+    "bars_available",
+    "history_status",
+    "sector",
+    "market_cap",
+]
+ELIGIBLE_HISTORY_STATUSES = {HISTORY_STATUS_PENDING, HISTORY_STATUS_READY}
 ETF_NAME_PATTERNS = (
     "etf",
     "etn",
@@ -268,6 +287,20 @@ class AlphaScanner:
     ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
         self.config = config or AlphaScannerConfig.strict_swing_cash()
+        self._stock_metadata_columns_cache: set[str] | None = None
+
+    def _get_stock_metadata_columns(self) -> set[str]:
+        if self._stock_metadata_columns_cache is not None:
+            return self._stock_metadata_columns_cache
+        try:
+            self._stock_metadata_columns_cache = {
+                str(column.get("name"))
+                for column in inspect(self.engine).get_columns("stock_metadata")
+            }
+        except Exception:
+            LOGGER.warning("Inspection stock_metadata indisponible; fallback sans history_status explicite.")
+            self._stock_metadata_columns_cache = set()
+        return self._stock_metadata_columns_cache
 
     def fetch_market_data(self, symbols: Sequence[str]) -> pd.DataFrame:
         """Charge un chunk d'historique marché depuis la table daily."""
@@ -349,16 +382,25 @@ class AlphaScanner:
         if not symbols:
             return pd.DataFrame(columns=METADATA_COLUMNS)
 
+        available_columns = self._get_stock_metadata_columns()
+        select_columns = [
+            "symbol",
+            "company_name",
+            "asset_class",
+            "status",
+            "tradable",
+            "bars_available",
+        ]
+        if "history_status" in available_columns:
+            select_columns.append("history_status")
+        if "sector" in available_columns:
+            select_columns.append("sector")
+        if "market_cap" in available_columns:
+            select_columns.append("market_cap")
+
         stmt = text(
-            """
-            SELECT symbol,
-                   company_name,
-                   asset_class,
-                   status,
-                   tradable,
-                   bars_available,
-                   sector,
-                   market_cap
+            f"""
+            SELECT {', '.join(select_columns)}
             FROM stock_metadata
             WHERE symbol IN :symbols
             """
@@ -374,7 +416,13 @@ class AlphaScanner:
             LOGGER.warning("Lecture stock_metadata indisponible; impossibilite de filtrer explicitement les ETFs.")
             return pd.DataFrame(columns=METADATA_COLUMNS)
 
-        return metadata_df if not metadata_df.empty else pd.DataFrame(columns=METADATA_COLUMNS)
+        if metadata_df.empty:
+            return pd.DataFrame(columns=METADATA_COLUMNS)
+
+        for column in METADATA_COLUMNS:
+            if column not in metadata_df.columns:
+                metadata_df[column] = pd.NA
+        return metadata_df.loc[:, METADATA_COLUMNS]
 
     def _load_benchmark_returns(self, start_date: date, end_date: date) -> pd.DataFrame:
         stmt = text(
@@ -1390,11 +1438,15 @@ class AlphaScanner:
 
         metadata = metadata_df.copy()
         metadata = metadata.drop_duplicates(subset=["symbol"], keep="last")
+        for column in METADATA_COLUMNS:
+            if column not in metadata.columns:
+                metadata[column] = pd.NA
         metadata["company_name"] = metadata["company_name"].fillna("").astype(str)
         metadata["asset_class"] = metadata["asset_class"].fillna("").astype(str).str.lower()
         metadata["status"] = metadata["status"].fillna("").astype(str).str.lower()
         metadata["tradable"] = metadata["tradable"].fillna(False).astype(bool)
         metadata["bars_available"] = metadata["bars_available"].fillna(False).astype(bool)
+        metadata["history_status"] = metadata["history_status"].fillna("").astype(str).str.lower().str.strip()
 
         requested_symbols = merged_df["symbol"].astype(str)
         requested_symbol_set = set(requested_symbols)
@@ -1410,6 +1462,10 @@ class AlphaScanner:
             "inactive": metadata.loc[metadata["status"] != "active", "symbol"],
             "non_tradable": metadata.loc[~metadata["tradable"], "symbol"],
             "bars_unavailable": metadata.loc[~metadata["bars_available"], "symbol"],
+            "history_no_history": metadata.loc[metadata["history_status"] == HISTORY_STATUS_NO_HISTORY, "symbol"],
+            "history_provider_error": metadata.loc[metadata["history_status"] == HISTORY_STATUS_PROVIDER_ERROR, "symbol"],
+            "history_suspended_or_stale": metadata.loc[metadata["history_status"] == HISTORY_STATUS_SUSPENDED_OR_STALE, "symbol"],
+            "history_excluded_by_policy": metadata.loc[metadata["history_status"] == HISTORY_STATUS_EXCLUDED_BY_POLICY, "symbol"],
             "etf_name": metadata.loc[etf_mask, "symbol"],
         }
         exclusion_details = {
@@ -1429,7 +1485,7 @@ class AlphaScanner:
         }
         eligible_symbols = sorted(requested_symbol_set.difference(disqualified_symbols))
 
-        eligible_metadata_columns = ["symbol", "sector"]
+        eligible_metadata_columns = ["symbol", "sector", "history_status"]
         if "market_cap" in metadata.columns:
             eligible_metadata_columns.append("market_cap")
         eligible_metadata = metadata.loc[
@@ -1526,6 +1582,16 @@ class AlphaScanner:
         """Filtre SQL brut: liquidité 20j, close > 5, historique >= 252 jours,
         actions US uniquement (asset_class='us_equity', tradable=1, exclut ETF/crypto)."""
         offset = 0
+        history_status_filter = ""
+        if "history_status" in self._get_stock_metadata_columns():
+            eligible_statuses = ", ".join(f"'{status}'" for status in sorted(ELIGIBLE_HISTORY_STATUSES))
+            history_status_filter = f"""
+                  AND (
+                        sm.history_status IS NULL
+                     OR TRIM(sm.history_status) = ''
+                     OR LOWER(TRIM(sm.history_status)) IN ({eligible_statuses})
+                  )
+            """
         stmt = text(
             f"""
             WITH ranked AS (
@@ -1542,6 +1608,8 @@ class AlphaScanner:
                 WHERE sm.asset_class = 'us_equity'
                   AND sm.tradable    = 1
                   AND sm.status      = 'active'
+                  AND sm.bars_available = 1
+                  {history_status_filter}
                 GROUP BY r.symbol
                 HAVING COUNT(*) >= :min_history_days
                    AND MAX(CASE WHEN rn = 1 THEN close END) > :min_close
