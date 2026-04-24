@@ -15,7 +15,7 @@ from ihm.components.status_badges import env_badge, run_status_badge
 from ihm.components.tables import show_dataframe
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
 from ihm.services.run_summary import (
-    build_run_summary_caption,
+    build_latest_run_summary_rows,
     find_latest_run_with_summary,
 )
 from ihm.services.db import db_available, get_last_query_error
@@ -39,27 +39,16 @@ def _merge_pipeline_runs() -> list[dict[str, object]]:
 
 
 def _build_pipeline_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
-    latest_workflow = find_latest_run_with_summary(runs, run_kind="workflow")
-    latest_import = find_latest_run_with_summary(runs, step_keys=["import_alpaca_bar"])
-    latest_sanitizer = find_latest_run_with_summary(runs, step_keys=["data_sanitizer_daily"])
-
-    rows: list[dict[str, object]] = []
-    for label, record in (
-        ("Workflow complet", latest_workflow),
-        ("Import Alpaca Bar", latest_import),
-        ("Data Sanitizer Daily", latest_sanitizer),
-    ):
-        if not record:
-            continue
-        rows.append(
-            {
-                "scope": label,
-                "statut": str(record.get("status", "—") or "—"),
-                "run_id": str(record.get("run_id", "—") or "—"),
-                "résumé métier": build_run_summary_caption(record),
-            }
+    return pd.DataFrame(
+        build_latest_run_summary_rows(
+            runs,
+            [
+                {"label": "Workflow complet", "run_kind": "workflow"},
+                {"label": "Import Alpaca Bar", "step_keys": ["import_alpaca_bar"]},
+                {"label": "Data Sanitizer Daily", "step_keys": ["data_sanitizer_daily"]},
+            ],
         )
-    return pd.DataFrame(rows)
+    )
 
 
 def render() -> None:

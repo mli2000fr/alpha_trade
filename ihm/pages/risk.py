@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-from ihm.components.metrics import metric_row
 from ihm.components.run_summary import render_persistent_business_summary
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic

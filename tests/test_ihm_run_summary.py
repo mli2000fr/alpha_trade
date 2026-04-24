@@ -1,4 +1,4 @@
-from ihm.services.run_summary import aggregate_workflow_run_summary, build_run_summary_caption
+from ihm.services.run_summary import aggregate_workflow_run_summary, build_latest_run_summary_rows, build_run_summary_caption
 
 
 def test_aggregate_workflow_run_summary_merges_numeric_and_nested_counters() -> None:
@@ -133,5 +133,43 @@ def test_build_run_summary_caption_uses_harmonized_labels_for_execution_and_corp
     assert "en attente=6" in apply_caption
     assert "appliqués=4" in apply_caption
     assert "ignorés=1" in apply_caption
+
+
+def test_build_latest_run_summary_rows_preserves_scope_order_and_filters_missing_summaries() -> None:
+    rows = build_latest_run_summary_rows(
+        [
+            {
+                "run_id": "wf-1",
+                "run_kind": "workflow",
+                "step_key": "pipeline_workflow",
+                "status": "completed",
+                "run_summary": {"workflow_steps_with_summary": 2, "targeted_symbols": 6},
+            },
+            {
+                "run_id": "imp-1",
+                "run_kind": "step",
+                "step_key": "import_alpaca_bar",
+                "status": "completed",
+                "run_summary": {"targeted_symbols": 3, "successful_symbols": 2},
+            },
+            {
+                "run_id": "san-empty",
+                "run_kind": "step",
+                "step_key": "data_sanitizer_daily",
+                "status": "completed",
+                "run_summary": {},
+            },
+        ],
+        [
+            {"label": "Workflow complet", "run_kind": "workflow"},
+            {"label": "Import Alpaca Bar", "step_keys": ["import_alpaca_bar"]},
+            {"label": "Data Sanitizer Daily", "step_keys": ["data_sanitizer_daily"]},
+        ],
+    )
+
+    assert [row["scope"] for row in rows] == ["Workflow complet", "Import Alpaca Bar"]
+    assert rows[0]["run_id"] == "wf-1"
+    assert rows[1]["run_id"] == "imp-1"
+    assert "cibles=3" in str(rows[1]["résumé métier"])
 
 

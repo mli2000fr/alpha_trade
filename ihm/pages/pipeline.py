@@ -35,7 +35,7 @@ from ihm.services.process_registry import (
     start_pipeline_workflow,
     stop_pipeline_run,
 )
-from ihm.services.run_summary import get_run_summary
+from ihm.services.run_summary import build_run_summary_caption, get_run_summary
 
 SELECTED_RUN_KEY = "ihm_pipeline_selected_run_id"
 COMPARE_RUNS_KEY = "ihm_pipeline_compare_run_ids"
@@ -65,7 +65,7 @@ def _render_run_summary(record: dict[str, object] | None, *, compact: bool = Fal
     render_run_summary_block(record, title="**Résumé métier**", max_metrics=6, heading_level="markdown", show_caption=False)
 
     if "history_status_counts" in summary and isinstance(summary["history_status_counts"], dict):
-        st.caption("Breakdown history_status")
+        st.caption("Répartition history_status")
         st.dataframe(
             pd.DataFrame(
                 [
@@ -77,7 +77,7 @@ def _render_run_summary(record: dict[str, object] | None, *, compact: bool = Fal
             hide_index=True,
         )
     if "status_breakdown" in summary and isinstance(summary["status_breakdown"], dict):
-        st.caption("Breakdown statuts")
+        st.caption("Répartition des statuts")
         st.dataframe(
             pd.DataFrame(
                 [
@@ -114,7 +114,7 @@ def _render_log_block(title: str, content: str, *, key: str, expanded: bool = Fa
     tailed = _tail_text(content)
     suffix = ""
     if tailed != content:
-        suffix = f" — affichage limite aux {TAIL_LINES} dernieres lignes"
+        suffix = f" — affichage limité aux {TAIL_LINES} dernières lignes"
     with st.expander(f"{title}{suffix}", expanded=expanded):
         if tailed.strip():
             with st.container(height=320, key=f"{key}_container"):
@@ -512,6 +512,32 @@ def _workflow_progress(run: dict[str, object]) -> tuple[int, int, float, str]:
     return completed, total, fraction, label
 
 
+def _build_history_rows(all_runs: list[dict[str, object]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "run_id": run.get("run_id"),
+                "type": "workflow" if _is_workflow_run(run) else "étape",
+                "étape": run.get("step_label", run.get("step_key")),
+                "progression": (
+                    f"{to_int(run.get('workflow_completed_steps', 0))}/{to_int(run.get('workflow_total_steps', 0))}"
+                    if _is_workflow_run(run)
+                    else "—"
+                ),
+                "statut": _status_badge(str(run.get("status", ""))),
+                "compte": run.get("account_id") or "global",
+                "début": run.get("executed_at"),
+                "fin": run.get("finished_at") or "—",
+                "durée": format_duration_hhmmss(run.get("duration_seconds", 0.0)),
+                "stdout": to_int(run.get("stdout_lines", 0)),
+                "stderr": to_int(run.get("stderr_lines", 0)),
+                "résumé métier": build_run_summary_caption(run),
+            }
+            for run in all_runs
+        ]
+    )
+
+
 def _sanitize_compare_ids(run_ids: list[str], labels: dict[str, str], value: object) -> list[str]:
     candidates = value if isinstance(value, list) else []
     return [rid for rid in candidates if isinstance(rid, str) and rid in labels and rid in run_ids][:2]
@@ -735,29 +761,7 @@ def _render_runtime_center() -> None:
                     key=f"compare_logs_{run_id}_{log_filter}",
                 )
 
-    history_df = pd.DataFrame(
-        [
-            {
-                "run_id": run.get("run_id"),
-                "type": "workflow" if _is_workflow_run(run) else "étape",
-                "étape": run.get("step_label", run.get("step_key")),
-                "progression": (
-                    f"{to_int(run.get('workflow_completed_steps', 0))}/{to_int(run.get('workflow_total_steps', 0))}"
-                    if _is_workflow_run(run)
-                    else "—"
-                ),
-                "statut": _status_badge(str(run.get("status", ""))),
-                "compte": run.get("account_id") or "global",
-                "début": run.get("executed_at"),
-                "fin": run.get("finished_at") or "—",
-                "durée": format_duration_hhmmss(run.get("duration_seconds", 0.0)),
-                "stdout": to_int(run.get("stdout_lines", 0)),
-                "stderr": to_int(run.get("stderr_lines", 0)),
-                "résumé métier": _build_run_summary_caption(run),
-            }
-            for run in all_runs
-        ]
-    )
+    history_df = _build_history_rows(all_runs)
     with st.expander("🗃️ Historique centralisé des exécutions IHM", expanded=False):
         st.dataframe(history_df, use_container_width=True, hide_index=True)
 

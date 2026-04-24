@@ -1,6 +1,7 @@
 """Helpers de normalisation / agrégation / présentation des run_summary IHM."""
 from __future__ import annotations
 
+from collections.abc import Sequence as SequenceABC
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -140,6 +141,33 @@ def find_latest_run_with_summary(
         if get_run_summary(record):
             return dict(record)
     return None
+
+
+def build_latest_run_summary_rows(
+    records: Sequence[Mapping[str, object]],
+    scopes: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for scope in scopes:
+        label = str(scope.get("label", "") or "").strip()
+        if not label:
+            continue
+        run_kind_raw = scope.get("run_kind")
+        run_kind = str(run_kind_raw).strip() if run_kind_raw not in (None, "") else None
+        step_keys_raw = scope.get("step_keys")
+        step_keys = step_keys_raw if isinstance(step_keys_raw, SequenceABC) and not isinstance(step_keys_raw, (str, bytes)) else None
+        record = find_latest_run_with_summary(records, run_kind=run_kind, step_keys=step_keys)
+        if not record:
+            continue
+        rows.append(
+            {
+                "scope": label,
+                "statut": str(record.get("status", "—") or "—"),
+                "run_id": str(record.get("run_id", "—") or "—"),
+                "résumé métier": build_run_summary_caption(record),
+            }
+        )
+    return rows
 
 
 def _is_number(value: Any) -> bool:
