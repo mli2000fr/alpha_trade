@@ -35,7 +35,7 @@ def render() -> None:
 
     # --- Sélection du run ---
     run_ids = runs["exec_run_id"].tolist()
-    selected = st.selectbox("Exec Run ID", run_ids)
+    selected = st.selectbox("Run d'exécution", run_ids)
 
     row = runs[runs["exec_run_id"] == selected].iloc[0]
     status = str(row.get("status", ""))
@@ -45,9 +45,9 @@ def render() -> None:
     # --- KPI ---
     metric_row([
         ("Statut", run_status_badge(status), None),
-        ("Targets", int(row.get("total_targets", 0)), None),
-        ("Submitted", int(row.get("total_submitted", 0)), None),
-        ("Filled", int(row.get("total_filled", 0)), None),
+        ("Cibles", int(row.get("total_targets", 0)), None),
+        ("Soumis", int(row.get("total_submitted", 0)), None),
+        ("Remplis", int(row.get("total_filled", 0)), None),
     ])
 
     if summary_payload:
@@ -75,11 +75,11 @@ def render() -> None:
         metric_row([
             ("Type de compte", account_type, None),
             ("PDT effectif", effective_pdt_rule, None),
-            ("Swing only", "Oui" if swing_only else "Non", None),
+            ("Mode swing uniquement", "Oui" if swing_only else "Non", None),
             ("Day trades restants", int(remaining_slots or 0), None),
         ])
         st.caption(
-            f"Equity = `{equity}` | Buying power = `{buying_power}` | Cash settled = `{settled_cash}` | Daytrade count broker = `{daytrade_count}`"
+            f"Capital = `{equity}` | Pouvoir d'achat = `{buying_power}` | Trésorerie réglée = `{settled_cash}` | Day trades broker = `{daytrade_count}`"
         )
         message = str(constraints.get("message", "") or "").strip()
         if message:
@@ -95,7 +95,7 @@ def render() -> None:
     show_dataframe(events, height=300)
 
     # --- Fills ---
-    st.subheader("💰 Fills")
+    st.subheader("💰 Exécutions")
     fills = get_execution_fills(selected)
     if not fills.empty and "slippage_bps" in fills.columns:
         avg_slip = fills["slippage_bps"].mean()
@@ -103,7 +103,7 @@ def render() -> None:
     show_dataframe(fills, height=300)
 
     # --- Positions broker ---
-    st.subheader("📦 Positions broker (dernier snapshot)")
+    st.subheader("📦 Positions broker — dernier snapshot")
     show_dataframe(get_broker_positions(account_id=account_id), height=300)
 
 

@@ -23,7 +23,7 @@ def render() -> None:
     run_ids = get_risk_run_ids()
     selected_run = None
     if run_ids:
-        selected_run = st.selectbox("Run ID", ["Dernier run"] + run_ids)
+        selected_run = st.selectbox("Run de risque", ["Dernier run"] + run_ids)
         if selected_run == "Dernier run":
             selected_run = run_ids[0] if run_ids else None
     else:
@@ -36,7 +36,7 @@ def render() -> None:
     summary_record = get_latest_run_business_summary(step_key="risk_management", entity_run_id=selected_run)
     summary_payload = get_run_summary(summary_record)
     if summary_payload:
-        st.subheader("🧭 Résumé métier du run")
+        st.subheader("🧭 Résumé métier persistant")
         metric_items = get_run_summary_metric_items(summary_record)
         if metric_items:
             metric_row([(label, value, None) for label, value in metric_items[:6]])
@@ -52,9 +52,9 @@ def render() -> None:
             rejected = len(decisions[decisions["decision"].str.upper() == "REJECTED"])
             reduced = len(decisions[decisions["decision"].str.upper() == "REDUCED"])
             c1, c2, c3 = st.columns(3)
-            c1.metric("🟢 Accepted", accepted)
-            c2.metric("🟡 Reduced", reduced)
-            c3.metric("🔴 Rejected", rejected)
+            c1.metric("🟢 Acceptés", accepted)
+            c2.metric("🟡 Réduits", reduced)
+            c3.metric("🔴 Rejetés", rejected)
 
         # Synthèse par secteur
         if "sector" in decisions.columns and "decision" in decisions.columns:

@@ -42,9 +42,9 @@ def render() -> None:
     latest_apply = get_latest_run_business_summary(step_key="corporate_actions_apply")
     latest_run = get_latest_run_business_summary(step_key="corporate_actions_run")
     for title, record in (
-        ("🔄 Dernière sync corporate actions", latest_sync),
-        ("✅ Dernier apply corporate actions", latest_apply),
-        ("🧭 Dernier run corporate actions", latest_run),
+        ("🧭 Résumé métier persistant — Synchronisation", latest_sync),
+        ("🧭 Résumé métier persistant — Application", latest_apply),
+        ("🧭 Résumé métier persistant — Workflow", latest_run),
     ):
         summary_payload = get_run_summary(record)
         if not summary_payload:
@@ -61,7 +61,7 @@ def render() -> None:
 
     history = get_run_business_summaries(step_keys=["corporate_actions_sync", "corporate_actions_apply", "corporate_actions_run"], limit=20)
     if not history.empty:
-        st.subheader("🗃️ Historique résumés corporate actions")
+        st.subheader("🗃️ Historique des résumés métier")
         show_dataframe(history[["step_key", "status", "trade_date", "summary_caption"]], height=240)
 
     # --- Événements ---

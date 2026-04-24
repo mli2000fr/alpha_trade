@@ -100,3 +100,38 @@ def test_aggregate_workflow_run_summary_uses_weighted_average_and_latest_thresho
     assert aggregated["account_ids"] == ["paper-a", "paper-b"]
     assert aggregated["dry_run"] is True
 
+
+def test_build_run_summary_caption_uses_harmonized_labels_for_execution_and_corporate_actions() -> None:
+    execution_caption = build_run_summary_caption(
+        {
+            "step_key": "execution",
+            "run_summary": {
+                "targeted_symbols": 5,
+                "submitted_orders": 4,
+                "filled_orders": 3,
+                "skipped_orders": 1,
+                "fill_rate": 0.75,
+            },
+        }
+    )
+    apply_caption = build_run_summary_caption(
+        {
+            "step_key": "corporate_actions_apply",
+            "run_summary": {
+                "pending_events": 6,
+                "applied_events": 4,
+                "skipped_events": 1,
+            },
+        }
+    )
+
+    assert "cibles=5" in execution_caption
+    assert "soumis=4" in execution_caption
+    assert "remplis=3" in execution_caption
+    assert "ignorés=1" in execution_caption
+    assert "taux d'exécution=0.75" in execution_caption
+    assert "en attente=6" in apply_caption
+    assert "appliqués=4" in apply_caption
+    assert "ignorés=1" in apply_caption
+
+
