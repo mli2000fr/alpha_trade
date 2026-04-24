@@ -83,26 +83,18 @@ def iter_symbol_chunks(engine: Engine, chunk_size: int) -> Iterator[list[str]]:
 		last_symbol = symbols[-1]
 
 
-def load_prices_for_chunk(
+def _resolve_reference_date(as_of_date: Optional[date]) -> date:
+	ref_dt = datetime.combine(as_of_date, datetime.min.time()) if as_of_date else datetime.now(UTC).replace(tzinfo=None)
+	return ref_dt.date()
+
+
+def _load_price_frame(
 	engine: Engine,
 	symbols: list[str],
-	config: ScreenerConfig,
+	*,
+	cutoff_lower: date,
 	as_of_date: Optional[date] = None,
 ) -> pd.DataFrame:
-	"""
-	Charge l'historique OHLCV pour un chunk de symboles.
-
-	:param as_of_date: Borne supérieure point-in-time (timestamp <= as_of_date).
-	    Si None, aucune borne supérieure n'est appliquée (mode live).
-	    À TOUJOURS spécifier en backtest pour éviter le look-ahead bias.
-	"""
-	if not symbols:
-		return pd.DataFrame()
-
-	ref_dt = datetime.combine(as_of_date, datetime.min.time()) if as_of_date else datetime.now(UTC).replace(tzinfo=None)
-	ref_date = ref_dt.date()
-	cutoff_lower = ref_date - timedelta(days=365 * config.lookback_history_years + 30)
-
 	query = """
 		SELECT symbol,
 		       `date` AS `timestamp`,
@@ -123,6 +115,85 @@ def load_prices_for_chunk(
 		params["cutoff_upper"] = as_of_date
 
 	query += "ORDER BY symbol, `date`"
+	stmt = text(query).bindparams(bindparam("symbols", expanding=True))
+	return pd.read_sql_query(stmt, engine, params=params)
+
+
+def load_recent_prices_for_chunk(
+	engine: Engine,
+	symbols: list[str],
+	config: ScreenerConfig,
+	as_of_date: Optional[date] = None,
+) -> pd.DataFrame:
+	"""Charge uniquement la fenêtre récente nécessaire à la passe 1 du screener."""
+	if not symbols:
+		return pd.DataFrame()
+
+	ref_date = _resolve_reference_date(as_of_date)
+	cutoff_lower = ref_date - timedelta(days=config.first_pass_window_days)
+	return _load_price_frame(
+		engine,
+		symbols,
+		cutoff_lower=cutoff_lower,
+		as_of_date=as_of_date,
+	)
+
+
+def load_prices_for_chunk(
+	engine: Engine,
+	symbols: list[str],
+	config: ScreenerConfig,
+	as_of_date: Optional[date] = None,
+) -> pd.DataFrame:
+	"""
+	Charge l'historique OHLCV pour un chunk de symboles.
+
+	:param as_of_date: Borne supérieure point-in-time (timestamp <= as_of_date).
+	    Si None, aucune borne supérieure n'est appliquée (mode live).
+	    À TOUJOURS spécifier en backtest pour éviter le look-ahead bias.
+	"""
+	if not symbols:
+		return pd.DataFrame()
+
+	ref_date = _resolve_reference_date(as_of_date)
+	cutoff_lower = ref_date - timedelta(days=365 * config.lookback_history_years + 30)
+	return _load_price_frame(
+		engine,
+		symbols,
+		cutoff_lower=cutoff_lower,
+		as_of_date=as_of_date,
+	)
+
+
+def load_historical_range_stats_for_symbols(
+	engine: Engine,
+	symbols: list[str],
+	config: ScreenerConfig,
+	as_of_date: Optional[date] = None,
+) -> pd.DataFrame:
+	"""Charge uniquement les agrégats min/max historiques nécessaires au range score."""
+	if not symbols:
+		return pd.DataFrame(columns=["symbol", "hist_low", "hist_high"])
+
+	ref_date = _resolve_reference_date(as_of_date)
+	cutoff_lower = ref_date - timedelta(days=365 * config.lookback_history_years + 30)
+	query = """
+		SELECT symbol,
+		       MIN(low) AS hist_low,
+		       MAX(high) AS hist_high
+		FROM stock_bars_daily
+		WHERE symbol IN :symbols
+		  AND `date` >= :cutoff_lower
+	"""
+	params: dict = {
+		"symbols": symbols,
+		"cutoff_lower": cutoff_lower,
+	}
+	if as_of_date is not None:
+		query += "  AND `date` <= :cutoff_upper\n"
+		params["cutoff_upper"] = as_of_date
+
+	query += "GROUP BY symbol ORDER BY symbol"
 	stmt = text(query).bindparams(bindparam("symbols", expanding=True))
 
 	return pd.read_sql_query(stmt, engine, params=params)

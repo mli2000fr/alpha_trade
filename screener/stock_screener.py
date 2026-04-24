@@ -1,10 +1,12 @@
 import argparse
+import json
 import logging
 import os
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import List, Optional
+from uuid import uuid4
 
 import pandas as pd
 
@@ -12,32 +14,122 @@ from common.utils import configure_root_logging
 from screener.db_io import (
     get_engine,
     iter_symbol_chunks,
+    load_historical_range_stats_for_symbols,
     load_prices_for_chunk,
+    load_recent_prices_for_chunk,
     load_spy_return_6m,
     upsert_scores_snapshot,
 )
-from screener.models import ScreenerConfig
+from screener.models import ScreenerChunkMetrics, ScreenerConfig, ScreenerRunReport
 from screener import RESULT_COLUMNS, compute_scores_from_prices
+from screener.pipeline import finalize_scores_with_historical_range, screen_recent_prices
 
 LOGGER = logging.getLogger(__name__)
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+APPROX_TRADING_DAYS_PER_YEAR = 252
 
 
-def _process_chunk(
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _build_run_id(prefix: str) -> str:
+    return f'{prefix}-{_utc_now_naive().strftime("%Y%m%d%H%M%S")}-{uuid4().hex[:6]}'
+
+
+def _emit_run_summary(summary: dict[str, object]) -> None:
+    print(
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+        flush=True,
+    )
+
+
+def _estimate_full_history_rows(symbol_count: int, config: ScreenerConfig) -> int:
+    history_rows_per_symbol = max(config.min_history_days, config.lookback_history_years * APPROX_TRADING_DAYS_PER_YEAR)
+    return symbol_count * history_rows_per_symbol
+
+
+def _process_chunk_two_passes(
     symbols: List[str],
     config_dict: dict,
     spy_return_6m: float,
     as_of_date_iso: Optional[str],
-) -> pd.DataFrame:
-    """
-    Fonction exécutée dans un subprocess (ProcessPoolExecutor).
-    L'engine est créé via get_engine() / lru_cache isolé par processus.
-    as_of_date est transmis comme ISO string (picklable) et reconverti ici.
-    """
+) -> tuple[pd.DataFrame, ScreenerChunkMetrics]:
+    """Exécute un chunk du screener dans un subprocess avec chargement en 2 passes."""
+    started = time.perf_counter()
     config = ScreenerConfig.from_dict(config_dict)
     engine = get_engine()
     as_of = date.fromisoformat(as_of_date_iso) if as_of_date_iso else None
-    chunk_prices = load_prices_for_chunk(engine, symbols, config, as_of_date=as_of)
-    return compute_scores_from_prices(chunk_prices, spy_return_6m, config, as_of_date=as_of)
+
+    try:
+        if not config.enable_two_pass_loading:
+            chunk_prices = load_prices_for_chunk(engine, symbols, config, as_of_date=as_of)
+            scores = compute_scores_from_prices(chunk_prices, spy_return_6m, config, as_of_date=as_of)
+            metrics = ScreenerChunkMetrics(
+                input_symbols=len(symbols),
+                recent_rows_loaded=len(chunk_prices),
+                symbols_final=len(scores),
+                duration_seconds=round(time.perf_counter() - started, 4),
+            )
+            return scores, metrics
+
+        pass1_started = time.perf_counter()
+        recent_prices = load_recent_prices_for_chunk(engine, symbols, config, as_of_date=as_of)
+        candidates, stage_counts = screen_recent_prices(
+            recent_prices,
+            spy_return_6m=spy_return_6m,
+            config=config,
+            as_of_date=as_of,
+        )
+        pass1_seconds = round(time.perf_counter() - pass1_started, 4)
+
+        if candidates.empty:
+            metrics = ScreenerChunkMetrics(
+                input_symbols=len(symbols),
+                recent_rows_loaded=len(recent_prices),
+                symbols_pass_history=stage_counts["symbols_pass_history"],
+                symbols_pass_liquidity=stage_counts["symbols_pass_liquidity"],
+                symbols_pass_relative_strength=stage_counts["symbols_pass_relative_strength"],
+                pass1_seconds=pass1_seconds,
+                duration_seconds=round(time.perf_counter() - started, 4),
+            )
+            return pd.DataFrame(columns=RESULT_COLUMNS), metrics
+
+        pass2_started = time.perf_counter()
+        historical_range_df = load_historical_range_stats_for_symbols(
+            engine,
+            candidates["symbol"].astype(str).tolist(),
+            config,
+            as_of_date=as_of,
+        )
+        scores = finalize_scores_with_historical_range(candidates, historical_range_df, config)
+        pass2_seconds = round(time.perf_counter() - pass2_started, 4)
+        rows_avoided_estimate = max(
+            _estimate_full_history_rows(stage_counts["symbols_pass_relative_strength"], config) - len(historical_range_df),
+            0,
+        )
+        metrics = ScreenerChunkMetrics(
+            input_symbols=len(symbols),
+            recent_rows_loaded=len(recent_prices),
+            range_rows_loaded=len(historical_range_df),
+            symbols_pass_history=stage_counts["symbols_pass_history"],
+            symbols_pass_liquidity=stage_counts["symbols_pass_liquidity"],
+            symbols_pass_relative_strength=stage_counts["symbols_pass_relative_strength"],
+            symbols_final=len(scores),
+            rows_avoided_estimate=rows_avoided_estimate,
+            pass1_seconds=pass1_seconds,
+            pass2_seconds=pass2_seconds,
+            duration_seconds=round(time.perf_counter() - started, 4),
+        )
+        return scores, metrics
+    except Exception as exc:
+        LOGGER.exception("Chunk screener en echec | symboles=%s", len(symbols))
+        return pd.DataFrame(columns=RESULT_COLUMNS), ScreenerChunkMetrics(
+            input_symbols=len(symbols),
+            failed=True,
+            error_message=str(exc),
+            duration_seconds=round(time.perf_counter() - started, 4),
+        )
 
 
 def _resolve_worker_count(max_workers: Optional[int]) -> int:
@@ -49,15 +141,149 @@ def _resolve_worker_count(max_workers: Optional[int]) -> int:
     return max_workers
 
 
-def _append_completed_results(done, all_results: List[pd.DataFrame]) -> None:
+def _empty_scores() -> pd.DataFrame:
+    return pd.DataFrame(columns=RESULT_COLUMNS)
+
+
+def _merge_run_metrics(summary: dict[str, object], chunk_metrics: ScreenerChunkMetrics) -> None:
+    summary["chunks_completed"] = int(summary["chunks_completed"]) + 1
+    summary["chunk_failures"] = int(summary["chunk_failures"]) + int(chunk_metrics.failed)
+    summary["recent_rows_loaded"] = int(summary["recent_rows_loaded"]) + int(chunk_metrics.recent_rows_loaded)
+    summary["range_rows_loaded"] = int(summary["range_rows_loaded"]) + int(chunk_metrics.range_rows_loaded)
+    summary["symbols_pass_history"] = int(summary["symbols_pass_history"]) + int(chunk_metrics.symbols_pass_history)
+    summary["symbols_pass_liquidity"] = int(summary["symbols_pass_liquidity"]) + int(chunk_metrics.symbols_pass_liquidity)
+    summary["symbols_pass_relative_strength"] = int(summary["symbols_pass_relative_strength"]) + int(chunk_metrics.symbols_pass_relative_strength)
+    summary["rows_avoided_estimate"] = int(summary["rows_avoided_estimate"]) + int(chunk_metrics.rows_avoided_estimate)
+    summary["pass1_seconds"] = round(float(summary["pass1_seconds"]) + float(chunk_metrics.pass1_seconds), 4)
+    summary["pass2_seconds"] = round(float(summary["pass2_seconds"]) + float(chunk_metrics.pass2_seconds), 4)
+
+
+def _append_completed_results(done, all_results: List[pd.DataFrame], summary: dict[str, object]) -> None:
     for future in done:
-        chunk_result = future.result()
+        chunk_result, chunk_metrics = future.result()
+        _merge_run_metrics(summary, chunk_metrics)
         if not chunk_result.empty:
             all_results.append(chunk_result)
 
 
-def _empty_scores() -> pd.DataFrame:
-    return pd.DataFrame(columns=RESULT_COLUMNS)
+def _build_run_report(summary: dict[str, object]) -> ScreenerRunReport:
+    return ScreenerRunReport(**summary)
+
+
+def _log_run_report(report: ScreenerRunReport) -> None:
+    LOGGER.info("Resume screener | %s", report.to_summary_dict())
+
+
+def run_screener_with_report(
+    config: ScreenerConfig,
+    max_workers: Optional[int] = None,
+    as_of_date: Optional[date] = None,
+) -> tuple[pd.DataFrame, ScreenerRunReport]:
+    """Exécute le screener et retourne les scores ainsi qu'un rapport détaillé."""
+    started_at = _utc_now_naive()
+    start_perf = time.perf_counter()
+    engine = get_engine()
+    workers = _resolve_worker_count(max_workers)
+    as_of_iso = as_of_date.isoformat() if as_of_date else None
+    summary: dict[str, object] = {
+        "run_id": _build_run_id("stock-screener"),
+        "benchmark_symbol": config.benchmark_symbol,
+        "chunk_size": config.chunk_size,
+        "workers": workers,
+        "as_of_date": as_of_iso,
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": None,
+        "duration_seconds": 0.0,
+        "targeted_symbols": 0,
+        "chunks_total": 0,
+        "chunks_completed": 0,
+        "chunk_failures": 0,
+        "recent_rows_loaded": 0,
+        "range_rows_loaded": 0,
+        "symbols_pass_history": 0,
+        "symbols_pass_liquidity": 0,
+        "symbols_pass_relative_strength": 0,
+        "symbols_final": 0,
+        "rows_avoided_estimate": 0,
+        "benchmark_load_seconds": 0.0,
+        "pass1_seconds": 0.0,
+        "pass2_seconds": 0.0,
+        "upsert_seconds": 0.0,
+    }
+
+    benchmark_started = time.perf_counter()
+    spy_return_6m = load_spy_return_6m(engine, config, as_of_date=as_of_date)
+    summary["benchmark_load_seconds"] = round(time.perf_counter() - benchmark_started, 4)
+
+    max_in_flight = max(2, workers * 2)
+    config_dict = config.to_dict()
+    all_results: List[pd.DataFrame] = []
+    pending = set()
+
+    LOGGER.info(
+        "Demarrage screener | benchmark=%s chunk_size=%s workers=%s as_of=%s two_pass=%s first_pass_window_days=%s",
+        config.benchmark_symbol,
+        config.chunk_size,
+        workers,
+        as_of_iso or "live",
+        config.enable_two_pass_loading,
+        config.first_pass_window_days,
+    )
+
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        for symbol_chunk in iter_symbol_chunks(engine, config.chunk_size):
+            summary["chunks_total"] = int(summary["chunks_total"]) + 1
+            summary["targeted_symbols"] = int(summary["targeted_symbols"]) + len(symbol_chunk)
+            while len(pending) >= max_in_flight:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                _append_completed_results(done, all_results, summary)
+
+            pending.add(executor.submit(_process_chunk_two_passes, symbol_chunk, config_dict, spy_return_6m, as_of_iso))
+
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            _append_completed_results(done, all_results, summary)
+
+    if all_results:
+        final_scores = pd.concat(all_results, ignore_index=True)
+        final_scores = (
+            final_scores.sort_values("total_score", ascending=False)
+            .drop_duplicates("symbol")
+            .reset_index(drop=True)
+        )
+    else:
+        final_scores = _empty_scores()
+
+    summary["symbols_final"] = len(final_scores)
+
+    upsert_started = time.perf_counter()
+    upsert_scores_snapshot(engine, final_scores, chunksize=1000)
+    summary["upsert_seconds"] = round(time.perf_counter() - upsert_started, 4)
+
+    finished_at = _utc_now_naive()
+    summary["finished_at"] = finished_at.isoformat(timespec="seconds")
+    summary["duration_seconds"] = round(time.perf_counter() - start_perf, 4)
+    report = _build_run_report(summary)
+    _log_run_report(report)
+
+    if final_scores.empty:
+        LOGGER.critical(
+            "Screener a produit 0 scores | duree=%.2fs as_of=%s | "
+            "Verifier : stock_bars_daily peuplee ? benchmark SPY present ? liquidity_threshold trop eleve ?",
+            report.duration_seconds,
+            as_of_iso or "live",
+        )
+    else:
+        LOGGER.info(
+            "Screener termine en %.2fs | symboles scores=%s recent_rows=%s range_rows=%s rows_avoided_estimate=%s",
+            report.duration_seconds,
+            len(final_scores),
+            report.recent_rows_loaded,
+            report.range_rows_loaded,
+            report.rows_avoided_estimate,
+        )
+
+    return final_scores, report
 
 
 def run_screener(
@@ -70,64 +296,12 @@ def run_screener(
         Si None, utilise les données jusqu'à aujourd'hui (mode live).
         Toujours spécifier en backtest pour garantir l'absence de look-ahead bias.
     """
-    start = time.time()
-    engine = get_engine()
-    spy_return_6m = load_spy_return_6m(engine, config, as_of_date=as_of_date)
-
-    workers = _resolve_worker_count(max_workers)
-    max_in_flight = max(2, workers * 2)
-    config_dict = config.to_dict()
-    as_of_iso = as_of_date.isoformat() if as_of_date else None
-
-    all_results: List[pd.DataFrame] = []
-    pending = set()
-
-    LOGGER.info(
-        "Demarrage screener | benchmark=%s chunk_size=%s workers=%s as_of=%s",
-        config.benchmark_symbol,
-        config.chunk_size,
-        workers,
-        as_of_iso or "live",
+    scores, _ = run_screener_with_report(
+        config=config,
+        max_workers=max_workers,
+        as_of_date=as_of_date,
     )
-
-    with ProcessPoolExecutor(max_workers=workers) as executor:
-        for symbol_chunk in iter_symbol_chunks(engine, config.chunk_size):
-            while len(pending) >= max_in_flight:
-                done, pending = wait(pending, return_when=FIRST_COMPLETED)
-                _append_completed_results(done, all_results)
-
-            pending.add(executor.submit(_process_chunk, symbol_chunk, config_dict, spy_return_6m, as_of_iso))
-
-        while pending:
-            done, pending = wait(pending, return_when=FIRST_COMPLETED)
-            _append_completed_results(done, all_results)
-
-    if all_results:
-        final_scores = pd.concat(all_results, ignore_index=True)
-        final_scores = (
-            final_scores.sort_values("total_score", ascending=False)
-            .drop_duplicates("symbol")
-            .reset_index(drop=True)
-        )
-    else:
-        final_scores = _empty_scores()
-
-    upsert_scores_snapshot(engine, final_scores, chunksize=1000)
-
-    elapsed = time.time() - start
-
-    # Monitoring : alerte si 0 symboles scorés (P1 — Engineering Quality)
-    if final_scores.empty:
-        LOGGER.critical(
-            "Screener a produit 0 scores | duree=%.2fs as_of=%s | "
-            "Verifier : stock_bars_daily peuplee ? benchmark SPY present ? liquidity_threshold trop eleve ?",
-            elapsed,
-            as_of_iso or "live",
-        )
-    else:
-        LOGGER.info("Screener termine en %.2fs | symboles scores=%s", elapsed, len(final_scores))
-
-    return final_scores
+    return scores
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -135,6 +309,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--chunk-size", type=int, default=500, help="Taille des chunks de symboles")
     parser.add_argument("--max-workers", type=int, default=None, help="Nombre de processus")
     parser.add_argument("--benchmark", type=str, default="SPY", help="Symbole benchmark")
+    parser.add_argument("--first-pass-window-days", type=int, default=400, help="Fenêtre calendaire chargée en passe 1")
+    parser.add_argument("--disable-two-pass-loading", action="store_true", help="Désactive le chargement en 2 passes")
     return parser
 
 
@@ -145,8 +321,14 @@ def main() -> None:
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
     args = _build_arg_parser().parse_args()
-    config = ScreenerConfig(chunk_size=args.chunk_size, benchmark_symbol=args.benchmark)
-    run_screener(config=config, max_workers=args.max_workers)
+    config = ScreenerConfig(
+        chunk_size=args.chunk_size,
+        benchmark_symbol=args.benchmark,
+        enable_two_pass_loading=not args.disable_two_pass_loading,
+        first_pass_window_days=args.first_pass_window_days,
+    )
+    _, report = run_screener_with_report(config=config, max_workers=args.max_workers)
+    _emit_run_summary(report.to_summary_dict())
 
 
 if __name__ == "__main__":

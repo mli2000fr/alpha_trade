@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pandas as pd
@@ -249,6 +250,41 @@ def test_load_prices_for_chunk_reads_daily_table_with_adjusted_close(monkeypatch
     assert "FROM stock_bars_daily" in str(captured["stmt"])
     assert "COALESCE(adj_close, `close`) AS close_price" in str(captured["stmt"])
     assert "timeframe" not in captured["params"]
+
+
+def test_load_recent_prices_for_chunk_uses_first_pass_window(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    as_of_date = date(2026, 4, 24)
+
+    monkeypatch.setattr(
+        pd,
+        "read_sql_query",
+        lambda stmt, engine, params=None: captured.update({"stmt": stmt, "params": params}) or pd.DataFrame(),
+    )
+
+    config = SimpleNamespace(first_pass_window_days=400)
+    db_io.load_recent_prices_for_chunk(object(), ["AAA"], config, as_of_date=as_of_date)
+
+    assert "FROM stock_bars_daily" in str(captured["stmt"])
+    assert captured["params"]["cutoff_lower"] == as_of_date - timedelta(days=400)
+    assert captured["params"]["cutoff_upper"] == as_of_date
+
+
+def test_load_historical_range_stats_for_symbols_uses_aggregates(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        pd,
+        "read_sql_query",
+        lambda stmt, engine, params=None: captured.update({"stmt": stmt, "params": params}) or pd.DataFrame(),
+    )
+
+    config = SimpleNamespace(lookback_history_years=10)
+    db_io.load_historical_range_stats_for_symbols(object(), ["AAA", "BBB"], config)
+
+    assert "MIN(low) AS hist_low" in str(captured["stmt"])
+    assert "MAX(high) AS hist_high" in str(captured["stmt"])
+    assert "GROUP BY symbol" in str(captured["stmt"])
 
 
 def test_load_spy_return_6m_reads_daily_table(monkeypatch) -> None:
