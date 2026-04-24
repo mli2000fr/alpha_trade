@@ -29,6 +29,45 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Skip", "skipped_symbols"),
         ("No data", "no_data_symbols"),
     ],
+    "risk_management": [
+        ("Candidats", "targeted_symbols"),
+        ("Acceptés", "accepted_symbols"),
+        ("Réduits", "reduced_symbols"),
+        ("Rejetés", "rejected_symbols"),
+        ("Positions", "target_positions"),
+        ("Notional total", "total_target_notional"),
+    ],
+    "execution": [
+        ("Cibles", "targeted_symbols"),
+        ("Soumis", "submitted_orders"),
+        ("Remplis", "filled_orders"),
+        ("Échecs", "failed_orders"),
+        ("Skip", "skipped_orders"),
+        ("Fill rate", "fill_rate"),
+    ],
+    "corporate_actions_sync": [
+        ("Cibles", "targeted_symbols"),
+        ("Fetch", "fetched_events"),
+        ("Insérés", "inserted_events"),
+        ("Doublons", "duplicate_events"),
+        ("Invalides", "invalid_events"),
+    ],
+    "corporate_actions_apply": [
+        ("Pending", "pending_events"),
+        ("Appliqués", "applied_events"),
+        ("Skip", "skipped_events"),
+        ("Échecs", "failed_events"),
+        ("Dividendes", "dividend_credits"),
+        ("Splits", "split_applications"),
+    ],
+    "corporate_actions_run": [
+        ("Étapes résumées", "workflow_steps_with_summary"),
+        ("Fetch", "fetched_events"),
+        ("Appliqués", "applied_events"),
+        ("Échecs", "failed_events"),
+        ("Skip", "skipped_events"),
+        ("Doublons", "duplicate_events"),
+    ],
 }
 
 _SUMMARY_METADATA_KEYS = {
@@ -117,7 +156,10 @@ def _merge_nested_counts(target: dict[str, object], key: str, value: Mapping[str
 
 
 def _merge_scalar_metric(target: dict[str, object], key: str, value: int | float) -> None:
-    if key.startswith("max_") or key.endswith("_threshold"):
+    if key.endswith("_threshold"):
+        target[key] = value
+        return
+    if key.startswith("max_"):
         current = target.get(key)
         target[key] = value if not _is_number(current) else max(float(current), float(value))
         return
@@ -133,11 +175,56 @@ def _merge_scalar_metric(target: dict[str, object], key: str, value: int | float
         target[key] = int(value) if float(value).is_integer() else round(float(value), 2)
 
 
+def _metric_rule(key: str, value: object) -> str:
+    if isinstance(value, bool):
+        return "bool_or"
+    if key.endswith("_threshold"):
+        return "latest"
+    if key.startswith("max_"):
+        return "max"
+    if key == "duration_seconds":
+        return "sum_duration"
+    if key.startswith("avg_") or key.endswith("_rate"):
+        return "weighted_avg"
+    if key.endswith("_pct") and key not in {"profit_taker_pct", "trailing_stop_pct"}:
+        return "weighted_avg"
+    return "sum"
+
+
+def _infer_weight_key(summary: Mapping[str, object], key: str) -> str | None:
+    candidates_by_key: dict[str, tuple[str, ...]] = {
+        "avg_slippage_bps": ("filled_orders", "filled", "successful_symbols"),
+        "avg_implementation_shortfall": ("filled_orders", "filled"),
+        "fill_rate": ("submitted_orders", "submitted", "targeted_symbols", "targets"),
+        "success_rate": ("targeted_symbols", "targets", "pending_events"),
+        "failure_rate": ("targeted_symbols", "targets", "pending_events"),
+    }
+    generic_candidates = (
+        "filled_orders",
+        "filled",
+        "submitted_orders",
+        "submitted",
+        "successful_symbols",
+        "targeted_symbols",
+        "targets",
+        "pending_events",
+        "fetched_events",
+    )
+    for candidate in (*candidates_by_key.get(key, ()), *generic_candidates):
+        if candidate in summary and _is_number(summary[candidate]) and float(summary[candidate]) > 0:
+            return candidate
+    return None
+
+
 def aggregate_workflow_run_summary(child_runs: Iterable[Mapping[str, object]]) -> dict[str, object]:
     aggregated: dict[str, object] = {}
     step_summaries: list[dict[str, object]] = []
     timeframes: set[str] = set()
     market_dates: set[str] = set()
+    list_unions: dict[str, set[str]] = {}
+    weighted_totals: dict[str, float] = {}
+    weighted_weights: dict[str, float] = {}
+    weighted_counts: dict[str, int] = {}
 
     for child_run in child_runs:
         summary = get_run_summary(child_run)
@@ -166,8 +253,38 @@ def aggregate_workflow_run_summary(child_runs: Iterable[Mapping[str, object]]) -
                 continue
             if isinstance(value, Mapping):
                 _merge_nested_counts(aggregated, key, value)
+            elif isinstance(value, (list, tuple, set)):
+                union_target = list_unions.setdefault(key, set())
+                union_target.update(str(item) for item in value if str(item).strip())
+            elif isinstance(value, bool):
+                aggregated[key] = bool(aggregated.get(key, False) or value)
             elif _is_number(value):
+                rule = _metric_rule(key, value)
+                if rule == "weighted_avg":
+                    weight_key = _infer_weight_key(summary, key)
+                    weight_value = summary.get(weight_key) if weight_key else None
+                    if _is_number(weight_value) and float(weight_value) > 0:
+                        weighted_totals[key] = weighted_totals.get(key, 0.0) + (float(value) * float(weight_value))
+                        weighted_weights[key] = weighted_weights.get(key, 0.0) + float(weight_value)
+                    else:
+                        weighted_totals[key] = weighted_totals.get(key, 0.0) + float(value)
+                        weighted_counts[key] = weighted_counts.get(key, 0) + 1
+                    continue
                 _merge_scalar_metric(aggregated, key, value)
+            elif key.endswith("_mode") or key.endswith("_id") or key.endswith("_date"):
+                aggregated[key] = value
+
+    for key, total in weighted_totals.items():
+        weight = weighted_weights.get(key, 0.0)
+        if weight > 0:
+            aggregated[key] = round(total / weight, 4)
+        else:
+            count = max(weighted_counts.get(key, 1), 1)
+            aggregated[key] = round(total / count, 4)
+
+    for key, values in list_unions.items():
+        if values:
+            aggregated[key] = sorted(values)
 
     if not step_summaries:
         return {}

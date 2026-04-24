@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
+
+from execution_engine.audit import build_execution_run_summary
 from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.config import ExecutionConfig
 from execution_engine.db_io import ExecutionRepository
@@ -64,6 +66,40 @@ def _make_executor(config: ExecutionConfig | None = None, targets: list[Executio
 
 
 class TestExecutor:
+    def test_build_execution_run_summary_computes_fill_rate(self) -> None:
+        summary = build_execution_run_summary(
+            {
+                "exec_run_id": "exec-1",
+                "risk_run_id": "risk-1",
+                "trade_date": "2026-04-24",
+                "status": "COMPLETED",
+                "targets": 3,
+                "submitted": 2,
+                "filled": 1,
+                "failed": 1,
+                "skipped": 0,
+                "rebalance_submitted": 1,
+                "rebalance_failed": 0,
+                "constraint_blocked": 2,
+                "children_deferred": 1,
+            },
+            started_at=datetime(2026, 4, 24, 10, 0, 0),
+            finished_at=datetime(2026, 4, 24, 10, 0, 10),
+            execution_mode="paper",
+            broker_mode="paper",
+            account_id="acct-1",
+            account_type="margin",
+            effective_pdt_rule="auto",
+            swing_only=False,
+            dry_run=False,
+            allow_outside_rth=False,
+        )
+
+        assert summary["run_id"] == "exec-1"
+        assert summary["submitted_orders"] == 2
+        assert summary["filled_orders"] == 1
+        assert summary["fill_rate"] == 0.5
+
     def test_dry_run_no_broker_calls(self) -> None:
         executor, repo, broker, _ = _make_executor()
         metrics = executor.execute_run(risk_run_id="r1")

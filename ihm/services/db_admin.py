@@ -28,6 +28,7 @@ FUNCTIONALITY_GROUP_ORDER: tuple[str, ...] = (
     "Risk / Portefeuille",
     "Exécution broker",
     "Corporate Actions",
+    "Observabilité / Runs",
     "Autres / non classées",
 )
 
@@ -71,6 +72,9 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
     "Corporate Actions": (
         "corporate_actions_events",
         "corporate_actions_applications",
+    ),
+    "Observabilité / Runs": (
+        "run_business_summaries",
     ),
 }
 

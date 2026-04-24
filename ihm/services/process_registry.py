@@ -22,6 +22,7 @@ from ihm.services.pipeline_runner import (
     get_pipeline_steps,
 )
 from ihm.services.run_summary import aggregate_workflow_run_summary
+from database.run_business_summaries import persist_pipeline_run_record_summary
 
 RunStatus = Literal["starting", "running", "completed", "failed", "timeout", "stopped"]
 TAIL_MAX_LINES = 400
@@ -281,6 +282,10 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
         duration_seconds=round(time.perf_counter() - managed.started_perf, 2),
         finished_at=datetime.now().isoformat(timespec="seconds"),
     )
+    try:
+        persist_pipeline_run_record_summary(managed.record)
+    except Exception:
+        pass
     _persist_record(managed.record)
     return managed.record
 
@@ -364,7 +369,7 @@ def _finalize_workflow_record(
     returncode: int | None,
     workflow_completed_steps: int,
 ) -> PipelineRunRecord:
-    return _update_workflow_record(
+    record = _update_workflow_record(
         managed,
         status=status,
         returncode=returncode,
@@ -374,6 +379,11 @@ def _finalize_workflow_record(
         workflow_current_step_key=None,
         workflow_current_step_label=None,
     )
+    try:
+        persist_pipeline_run_record_summary(record)
+    except Exception:
+        pass
+    return record
 
 
 def _sync_child_logs_to_workflow(

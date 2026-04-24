@@ -92,9 +92,13 @@ class ProductionExecutor:
         self,
         risk_run_id: str | None = None,
         trade_date: date | None = None,
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         exec_run_id = build_run_id()
-        metrics: dict[str, int] = {
+        metrics: dict[str, Any] = {
+            "exec_run_id": exec_run_id,
+            "risk_run_id": risk_run_id,
+            "trade_date": trade_date.isoformat() if hasattr(trade_date, "isoformat") else trade_date,
+            "status": "RUNNING",
             "targets": 0, "submitted": 0, "filled": 0, "failed": 0, "skipped": 0,
             "rebalance_submitted": 0, "rebalance_failed": 0,
             "constraint_blocked": 0, "children_deferred": 0,
@@ -112,6 +116,7 @@ class ProductionExecutor:
             if not targets:
                 events.append(make_event(exec_run_id, EventType.PRECHECK_FAILED, "No portfolio targets found"))
                 self._persist_events(events)
+                metrics["status"] = "ABORTED"
                 return metrics
 
             actual_risk_run_id = targets[0].risk_run_id
@@ -135,6 +140,7 @@ class ProductionExecutor:
                         events.append(make_event(exec_run_id, EventType.CIRCUIT_BREAKER_ACTIVE, "CB active — aborting"))
                         self._persist_events(events)
                         self._repo.update_execution_run_status(exec_run_id, "ABORTED")
+                        metrics["status"] = "ABORTED"
                         return metrics
                 except Exception as exc:
                     LOGGER.warning("Circuit breaker check failed: %s", exc)
@@ -146,6 +152,7 @@ class ProductionExecutor:
                         events.append(make_event(exec_run_id, EventType.PRECHECK_FAILED, "Market closed"))
                         self._persist_events(events)
                         self._repo.update_execution_run_status(exec_run_id, "ABORTED")
+                        metrics["status"] = "ABORTED"
                         return metrics
                 except Exception:
                     LOGGER.warning("Cannot check market clock — proceeding")
@@ -408,6 +415,7 @@ class ProductionExecutor:
                 exec_run_id, "COMPLETED",
                 total_submitted=metrics["submitted"], total_filled=metrics["filled"],
             )
+            metrics["status"] = "COMPLETED"
 
         except Exception as exc:
             LOGGER.exception("Execution run failed: %s", exc)
@@ -416,6 +424,7 @@ class ProductionExecutor:
                 self._repo.update_execution_run_status(exec_run_id, "FAILED", error_message=str(exc)[:255])
             except Exception:
                 pass
+            metrics["status"] = "FAILED"
 
         self._persist_events(events)
         return metrics

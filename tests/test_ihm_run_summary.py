@@ -56,3 +56,47 @@ def test_build_run_summary_caption_uses_workflow_metrics() -> None:
     assert "étapes résumées=2" in caption
     assert "cibles=6" in caption
     assert "succès=5" in caption
+
+
+def test_aggregate_workflow_run_summary_uses_weighted_average_and_latest_thresholds() -> None:
+    aggregated = aggregate_workflow_run_summary(
+        [
+            {
+                "run_id": "run-exec-1",
+                "step_key": "execution",
+                "step_label": "Execution 1",
+                "status": "completed",
+                "run_summary": {
+                    "submitted_orders": 2,
+                    "filled_orders": 1,
+                    "fill_rate": 0.5,
+                    "avg_slippage_bps": 10.0,
+                    "max_slippage_bps_threshold": 30,
+                    "account_ids": ["paper-a"],
+                    "dry_run": False,
+                },
+            },
+            {
+                "run_id": "run-exec-2",
+                "step_key": "execution",
+                "step_label": "Execution 2",
+                "status": "completed",
+                "run_summary": {
+                    "submitted_orders": 4,
+                    "filled_orders": 4,
+                    "fill_rate": 1.0,
+                    "avg_slippage_bps": 20.0,
+                    "max_slippage_bps_threshold": 25,
+                    "account_ids": ["paper-b", "paper-a"],
+                    "dry_run": True,
+                },
+            },
+        ]
+    )
+
+    assert aggregated["fill_rate"] == 0.8333
+    assert aggregated["avg_slippage_bps"] == 18.0
+    assert aggregated["max_slippage_bps_threshold"] == 25
+    assert aggregated["account_ids"] == ["paper-a", "paper-b"]
+    assert aggregated["dry_run"] is True
+

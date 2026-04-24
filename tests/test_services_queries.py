@@ -160,3 +160,61 @@ def test_get_prediction_governance_audit_without_symbol_has_no_params(monkeypatc
     assert captured["params"] is None
 
 
+def test_get_run_business_summaries_builds_filters_and_caption(monkeypatch):
+    import pandas as pd
+
+    captured = {}
+
+    def fake_safe_query(query, params=None):
+        captured["query"] = query
+        captured["params"] = params
+        return pd.DataFrame(
+            {
+                "summary_run_id": ["risk-1"],
+                "source_run_id": ["risk-1"],
+                "entity_run_id": ["risk-1"],
+                "parent_summary_run_id": [None],
+                "step_key": ["risk_management"],
+                "run_kind": ["step"],
+                "status": ["completed"],
+                "account_id": ["acct-1"],
+                "trade_date": ["2026-04-24"],
+                "started_at": ["2026-04-24T10:00:00"],
+                "finished_at": ["2026-04-24T10:00:05"],
+                "summary_json": ['{"targeted_symbols": 5, "accepted_symbols": 3}'],
+                "created_at": ["2026-04-24T10:00:05"],
+                "updated_at": ["2026-04-24T10:00:05"],
+            }
+        )
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_run_business_summaries(step_keys=["risk_management"], entity_run_id="risk-1", account_id="acct-1", limit=10)
+
+    assert "FROM run_business_summaries" in captured["query"]
+    assert "entity_run_id = :entity_run_id" in captured["query"]
+    assert "account_id = :account_id" in captured["query"]
+    assert "step_key IN (:summary_step_key_0)" in captured["query"]
+    assert captured["params"] == {"entity_run_id": "risk-1", "account_id": "acct-1", "summary_step_key_0": "risk_management"}
+    assert df.iloc[0]["run_summary"] == {"targeted_symbols": 5, "accepted_symbols": 3}
+    assert "candidats=5" in df.iloc[0]["summary_caption"]
+
+
+def test_get_latest_run_business_summary_returns_first_row(monkeypatch):
+    import pandas as pd
+
+    monkeypatch.setattr(
+        queries,
+        "get_run_business_summaries",
+        lambda **kwargs: pd.DataFrame(
+            [{"summary_run_id": "exec-1", "step_key": "execution", "run_summary": {"submitted_orders": 4}, "summary_caption": "soumis=4"}]
+        ),
+    )
+
+    row = queries.get_latest_run_business_summary(step_key="execution", entity_run_id="exec-1")
+
+    assert row is not None
+    assert row["summary_run_id"] == "exec-1"
+    assert row["run_summary"] == {"submitted_orders": 4}
+
+

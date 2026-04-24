@@ -28,6 +28,7 @@ import sys
 from datetime import date, datetime
 
 from common.utils import configure_root_logging
+from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 
 # active les sequences ANSI sur Windows
 os.system("")
@@ -288,6 +289,7 @@ def run(
     print()
 
     try:
+        from execution_engine.audit import build_execution_run_summary
         from execution_engine.broker_adapter import BrokerAdapter
         from execution_engine.config import ExecutionConfig
         from execution_engine.db_io import ExecutionRepository
@@ -329,7 +331,39 @@ def run(
     print(f"{BOLD}Execution en cours...{RESET}\n")
     t0 = datetime.now()
     metrics = executor.execute_run(risk_run_id=run_id, trade_date=trade_date_val)
-    elapsed = (datetime.now() - t0).total_seconds()
+    finished_at = datetime.now()
+    elapsed = (finished_at - t0).total_seconds()
+
+    summary = build_execution_run_summary(
+        metrics,
+        started_at=t0,
+        finished_at=finished_at,
+        execution_mode=mode,
+        broker_mode=config.broker_mode,
+        account_id=account_id,
+        account_type=config.account_type,
+        effective_pdt_rule=config.effective_pdt_rule,
+        swing_only=config.swing_only,
+        dry_run=config.dry_run,
+        allow_outside_rth=config.allow_outside_rth,
+    )
+    try:
+        persist_run_business_summary(
+            summary=summary,
+            step_key="execution",
+            run_kind="step",
+            status=str(summary.get("status", "") or "") or None,
+            summary_run_id=str(summary.get("run_id", "") or "") or None,
+            entity_run_id=str(summary.get("run_id", "") or "") or None,
+            parent_summary_run_id=run_id,
+            account_id=account_id,
+            trade_date=summary.get("trade_date"),
+            started_at=summary.get("started_at"),
+            finished_at=summary.get("finished_at"),
+        )
+    except Exception:
+        logging.getLogger(__name__).debug("Persistance run_business_summaries indisponible pour execution.", exc_info=True)
+    emit_run_summary(summary)
 
     print(f"\n{BOLD}{SEP}{RESET}")
     print(f"{BOLD}  Resultats{RESET}")

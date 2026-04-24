@@ -6,6 +6,7 @@ import logging
 from datetime import date, datetime
 
 from common.utils import configure_root_logging
+from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from risk_management.audit import build_run_id, persist_decisions, persist_portfolio_targets
 from risk_management.config import RiskConfig
 from risk_management.db_io import RiskRepository
@@ -67,6 +68,8 @@ def main(args: list[str] | None = None) -> None:
         log_path="./log/risk_management.log",
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
+
+    started_at = datetime.now()
 
     trade_date = datetime.strptime(args.trade_date, "%Y-%m-%d").date() if args.trade_date else date.today()
 
@@ -137,6 +140,41 @@ def main(args: list[str] | None = None) -> None:
         n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=args.account)
         n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=args.account)
         LOGGER.info("Ecrit %d decisions et %d cibles en DB.", n_dec, n_tgt)
+
+    accepted_entries = [entry for entry in entries if entry.approved_shares > 0 and str(entry.decision).upper() == "ACCEPTED"]
+    reduced_entries = [entry for entry in entries if entry.approved_shares > 0 and str(entry.decision).upper() == "REDUCED"]
+    rejected_entries = [entry for entry in entries if entry.approved_shares == 0]
+    finished_at = datetime.now()
+    summary = {
+        "run_id": run_id,
+        "trade_date": trade_date.isoformat(),
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "targeted_symbols": len(entries),
+        "accepted_symbols": len(accepted_entries),
+        "reduced_symbols": len(reduced_entries),
+        "rejected_symbols": len(rejected_entries),
+        "target_positions": len([entry for entry in entries if entry.approved_shares > 0]),
+        "total_target_shares": int(sum(entry.approved_shares for entry in entries if entry.approved_shares > 0)),
+        "total_target_notional": round(sum(entry.target_notional for entry in entries if entry.approved_shares > 0), 2),
+        "dry_run": bool(config.dry_run),
+        "effective_equity": round(float(effective_equity), 2),
+        "account_equity": round(float(args.account_equity), 2),
+    }
+    persist_run_business_summary(
+        summary=summary,
+        step_key="risk_management",
+        run_kind="step",
+        status="completed",
+        summary_run_id=run_id,
+        entity_run_id=run_id,
+        account_id=args.account,
+        trade_date=trade_date,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+    emit_run_summary(summary)
 
 
 if __name__ == "__main__":

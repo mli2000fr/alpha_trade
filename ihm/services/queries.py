@@ -6,6 +6,8 @@ import json
 import pandas as pd
 import streamlit as st
 
+from database.run_business_summaries import parse_summary_json
+from ihm.services.run_summary import build_run_summary_caption
 from ihm.services.db import safe_query, safe_scalar
 
 
@@ -239,6 +241,73 @@ def _append_in_clause(
         params[param_name] = value
         placeholders.append(f":{param_name}")
     conditions.append(f"{column_sql} IN ({', '.join(placeholders)})")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_run_business_summaries(
+    *,
+    limit: int = 50,
+    step_keys: list[str] | None = None,
+    entity_run_id: str | None = None,
+    account_id: str | None = None,
+    run_kind: str | None = None,
+) -> pd.DataFrame:
+    params: dict[str, object] = {}
+    conditions: list[str] = []
+    if entity_run_id:
+        params["entity_run_id"] = entity_run_id
+        conditions.append("entity_run_id = :entity_run_id")
+    if account_id:
+        params["account_id"] = account_id
+        conditions.append("account_id = :account_id")
+    if run_kind:
+        params["run_kind"] = run_kind
+        conditions.append("run_kind = :run_kind")
+    _append_in_clause(conditions, params, column_sql="step_key", param_prefix="summary_step_key", values=step_keys)
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    df = safe_query(
+        f"""
+        SELECT summary_run_id, source_run_id, entity_run_id, parent_summary_run_id,
+               step_key, run_kind, status, account_id, trade_date, started_at, finished_at,
+               summary_json, created_at, updated_at
+        FROM run_business_summaries
+        {where_clause}
+        ORDER BY COALESCE(finished_at, started_at, created_at) DESC, summary_run_id DESC
+        LIMIT {limit}
+        """,
+        params or None,
+    )
+    if df.empty:
+        return df
+
+    df = df.copy()
+    df["run_summary"] = df["summary_json"].apply(parse_summary_json)
+    df["summary_caption"] = df.apply(
+        lambda row: build_run_summary_caption({"step_key": row.get("step_key"), "run_summary": row.get("run_summary")}),
+        axis=1,
+    )
+    return df
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_latest_run_business_summary(
+    *,
+    step_key: str,
+    entity_run_id: str | None = None,
+    account_id: str | None = None,
+    run_kind: str | None = None,
+) -> dict[str, object] | None:
+    df = get_run_business_summaries(
+        limit=1,
+        step_keys=[step_key],
+        entity_run_id=entity_run_id,
+        account_id=account_id,
+        run_kind=run_kind,
+    )
+    if df.empty:
+        return None
+    row = df.iloc[0].to_dict()
+    return row if isinstance(row, dict) else None
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_training_runs(limit: int = 20) -> pd.DataFrame:

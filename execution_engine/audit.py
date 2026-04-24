@@ -118,3 +118,53 @@ def event_to_db_dict(event: ExecutionEvent) -> dict[str, Any]:
         "created_at": event.created_at or datetime.now(timezone.utc),
     }
 
+
+def build_execution_run_summary(
+    metrics: dict[str, Any],
+    *,
+    started_at: datetime,
+    finished_at: datetime,
+    execution_mode: str,
+    broker_mode: str,
+    account_id: str | None,
+    account_type: str,
+    effective_pdt_rule: str,
+    swing_only: bool,
+    dry_run: bool,
+    allow_outside_rth: bool,
+) -> dict[str, Any]:
+    submitted_orders = int(metrics.get("submitted", 0) or 0)
+    filled_orders = int(metrics.get("filled", 0) or 0)
+    targeted_symbols = int(metrics.get("targets", 0) or 0)
+    failed_orders = int(metrics.get("failed", 0) or 0)
+    skipped_orders = int(metrics.get("skipped", 0) or 0)
+    fill_rate = round((filled_orders / submitted_orders), 4) if submitted_orders > 0 else 0.0
+    return {
+        "run_id": str(metrics.get("exec_run_id", "") or ""),
+        "risk_run_id": str(metrics.get("risk_run_id", "") or "") or None,
+        "trade_date": metrics.get("trade_date"),
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "execution_mode": execution_mode,
+        "broker_mode": broker_mode,
+        "status": str(metrics.get("status", "UNKNOWN") or "UNKNOWN"),
+        "targeted_symbols": targeted_symbols,
+        "submitted_orders": submitted_orders,
+        "filled_orders": filled_orders,
+        "failed_orders": failed_orders,
+        "skipped_orders": skipped_orders,
+        "rebalance_submitted_orders": int(metrics.get("rebalance_submitted", 0) or 0),
+        "rebalance_failed_orders": int(metrics.get("rebalance_failed", 0) or 0),
+        "constraint_blocked_orders": int(metrics.get("constraint_blocked", 0) or 0),
+        "children_deferred_orders": int(metrics.get("children_deferred", 0) or 0),
+        "fill_rate": fill_rate,
+        "account_type": account_type,
+        "effective_pdt_rule": effective_pdt_rule,
+        "swing_only": bool(swing_only),
+        "dry_run": bool(dry_run),
+        "allow_outside_rth": bool(allow_outside_rth),
+        "account_id": account_id,
+    }
+
+

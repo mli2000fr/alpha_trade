@@ -17,3 +17,4 @@ je ne veux pas de variant de prix, rester simple, alpaca retourne déjà split_a
 
 cleaning_audit_runs
 cleaning_audit_latest
+run_business_summaries
