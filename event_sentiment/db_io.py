@@ -7,6 +7,7 @@ from sqlalchemy import MetaData, Table, bindparam, func, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from database.connection import get_sqlalchemy_engine
+from database.stock_scores import list_candidate_symbols
 
 
 class EventSentimentRepository:
@@ -97,17 +98,7 @@ class EventSentimentRepository:
         return {str(row["symbol"]): dict(row) for row in rows}
 
     def load_candidate_symbols(self) -> list[str]:
-        stmt = text(
-            """
-            SELECT symbol
-            FROM stock_scores
-            WHERE is_candidate = 1
-            ORDER BY total_score DESC, symbol ASC
-            """
-        )
-        with self.engine.connect() as conn:
-            rows = conn.execute(stmt).fetchall()
-        return [str(row[0]).strip().upper() for row in rows if row and row[0]]
+        return list_candidate_symbols(engine=self.engine)
 
     def upsert_checkpoint(
         self,

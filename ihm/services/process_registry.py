@@ -21,6 +21,7 @@ from ihm.services.pipeline_runner import (
     format_command_for_display,
     get_pipeline_steps,
 )
+from ihm.services.run_summary import aggregate_workflow_run_summary
 
 RunStatus = Literal["starting", "running", "completed", "failed", "timeout", "stopped"]
 TAIL_MAX_LINES = 400
@@ -409,6 +410,7 @@ def _run_pipeline_workflow(
 
         completed_steps = 0
         child_run_ids: list[str] = []
+        child_runs_with_summary: dict[str, dict[str, object]] = {}
 
         for index, step in enumerate(steps, start=1):
             if managed.stop_event.is_set():
@@ -446,6 +448,9 @@ def _run_pipeline_workflow(
 
                 child_snapshot = poll_pipeline_run(child_record.run_id)
                 _sync_child_logs_to_workflow(managed, child_snapshot, step_label=step_label, offsets=offsets)
+                if child_snapshot is not None and isinstance(child_snapshot.get("run_summary"), dict) and child_snapshot.get("run_summary"):
+                    child_runs_with_summary[child_record.run_id] = dict(child_snapshot)
+                aggregated_summary = aggregate_workflow_run_summary(child_runs_with_summary.values())
 
                 child_status = str(child_snapshot.get("status", "")) if child_snapshot is not None else "failed"
                 _update_workflow_record(
@@ -456,6 +461,7 @@ def _run_pipeline_workflow(
                     workflow_current_step_label=step_label,
                     workflow_child_run_ids=list(child_run_ids),
                     workflow_completed_steps=completed_steps,
+                    run_summary=aggregated_summary,
                 )
                 if child_status not in {"starting", "running"}:
                     break
@@ -602,7 +608,7 @@ def start_pipeline_workflow(
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
 ) -> PipelineRunRecord:
-    """Démarre un workflow séquentiel 1→12 en arrière-plan."""
+    """Démarre un workflow séquentiel complet en arrière-plan."""
     if list_active_pipeline_runs():
         raise RuntimeError("Un run pipeline est déjà actif. Attendez sa fin ou arrêtez-le avant de lancer le workflow complet.")
 
@@ -621,9 +627,9 @@ def start_pipeline_workflow(
     record = PipelineRunRecord(
         run_id=run_id,
         step_key="pipeline_workflow",
-        step_label="Workflow complet 1 → 12",
+        step_label=f"Workflow complet 1 → {len(steps)}",
         command=[step.key for step in steps],
-        command_display="Workflow séquentiel Pipeline 1 → 12",
+        command_display=f"Workflow séquentiel Pipeline 1 → {len(steps)}",
         account_id=options.account_id,
         status="running",
         executed_at=datetime.now().isoformat(timespec="seconds"),

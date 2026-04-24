@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from typing import cast
 
+import pandas as pd
 import streamlit as st
 
 from ihm.pages import run_page_if_standalone
@@ -11,6 +12,12 @@ from ihm.components.db_controls import render_db_unavailable
 from ihm.components.metrics import metric_row
 from ihm.components.status_badges import env_badge, run_status_badge
 from ihm.components.tables import show_dataframe
+from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
+from ihm.services.run_summary import (
+    build_run_summary_caption,
+    find_latest_run_with_summary,
+    get_run_summary,
+)
 from ihm.services.db import db_available, get_last_query_error
 from ihm.services.queries import (
     get_candidates_count,
@@ -18,6 +25,41 @@ from ihm.services.queries import (
     get_latest_risk_run_id,
     get_top_candidates,
 )
+
+
+def _merge_pipeline_runs() -> list[dict[str, object]]:
+    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in load_pipeline_history()}
+    for run in list_active_pipeline_runs():
+        merged[str(run["run_id"])] = run
+    return sorted(
+        merged.values(),
+        key=lambda item: str(item.get("finished_at") or item.get("executed_at") or ""),
+        reverse=True,
+    )
+
+
+def _build_pipeline_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
+    latest_workflow = find_latest_run_with_summary(runs, run_kind="workflow")
+    latest_import = find_latest_run_with_summary(runs, step_keys=["import_alpaca_bar"])
+    latest_sanitizer = find_latest_run_with_summary(runs, step_keys=["data_sanitizer_daily"])
+
+    rows: list[dict[str, object]] = []
+    for label, record in (
+        ("Workflow complet", latest_workflow),
+        ("Import Alpaca Bar", latest_import),
+        ("Data Sanitizer Daily", latest_sanitizer),
+    ):
+        if not record:
+            continue
+        rows.append(
+            {
+                "scope": label,
+                "statut": str(record.get("status", "—") or "—"),
+                "run_id": str(record.get("run_id", "—") or "—"),
+                "résumé métier": build_run_summary_caption(record),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def render() -> None:
@@ -67,6 +109,25 @@ def render() -> None:
         st.warning("⚠️ Aucun candidat (`is_candidate=1`) dans stock_scores.")
     if exec_status and exec_status.upper() not in ("COMPLETED", "SUCCESS"):
         st.warning(f"⚠️ Dernière exécution : {run_status_badge(exec_status)}")
+
+    pipeline_runs = _merge_pipeline_runs()
+    latest_workflow = find_latest_run_with_summary(pipeline_runs, run_kind="workflow")
+    workflow_summary = get_run_summary(latest_workflow)
+    if workflow_summary:
+        st.subheader("🧭 Dernier workflow pipeline")
+        workflow_metrics = [
+            ("Étapes résumées", int(workflow_summary.get("workflow_steps_with_summary", 0)), None),
+            ("Cibles", int(workflow_summary.get("targeted_symbols", 0)), None),
+            ("Succès", int(workflow_summary.get("successful_symbols", 0)), None),
+            ("Échecs", int(workflow_summary.get("failed_symbols", 0)), None),
+        ]
+        metric_row(workflow_metrics)
+        st.caption(build_run_summary_caption(latest_workflow))
+
+    summary_rows = _build_pipeline_summary_rows(pipeline_runs)
+    if not summary_rows.empty:
+        st.subheader("📋 Résumés pipeline récents")
+        show_dataframe(summary_rows)
 
     # --- Top candidats ---
     st.subheader("🏆 Top 10 candidats par score sentiment")

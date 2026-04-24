@@ -34,6 +34,11 @@ from ihm.services.process_registry import (
     start_pipeline_workflow,
     stop_pipeline_run,
 )
+from ihm.services.run_summary import (
+    RUN_SUMMARY_METRICS,
+    build_run_summary_caption,
+    get_run_summary,
+)
 
 SELECTED_RUN_KEY = "ihm_pipeline_selected_run_id"
 COMPARE_RUNS_KEY = "ihm_pipeline_compare_run_ids"
@@ -46,24 +51,6 @@ IMPORT_NEWS_START_DATE_KEY = "pipeline_import_news_start_date"
 IMPORT_NEWS_END_DATE_KEY = "pipeline_import_news_end_date"
 ML_SELECTED_SYMBOL_KEY = "ihm_ml_selected_symbol"
 NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
-RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
-    "import_alpaca_bar": [
-        ("Cibles", "targeted_symbols"),
-        ("Succès", "successful_symbols"),
-        ("No data", "no_data_symbols"),
-        ("Stale", "stale_symbols"),
-        ("Err. provider", "provider_error_symbols"),
-        ("Bars insérées", "inserted_bars"),
-    ],
-    "data_sanitizer_daily": [
-        ("Cibles", "targeted_symbols"),
-        ("Succès", "successful_symbols"),
-        ("Skip", "skipped_symbols"),
-        ("Échecs", "failed_symbols"),
-        ("Dégradés", "degraded_symbols"),
-        ("Rows upsert", "upserted_rows"),
-    ],
-}
 
 
 def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
@@ -71,37 +58,6 @@ def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
     if len(lines) <= max_lines:
         return value
     return "\n".join(lines[-max_lines:])
-
-
-def _get_run_summary(record: dict[str, object] | None) -> dict[str, object]:
-    if not record:
-        return {}
-    payload = record.get("run_summary")
-    return payload if isinstance(payload, dict) else {}
-
-
-def _build_run_summary_caption(record: dict[str, object] | None) -> str:
-    summary = _get_run_summary(record)
-    if not summary:
-        return "—"
-
-    step_key = str(record.get("step_key", "")) if record else ""
-    metric_keys = RUN_SUMMARY_METRICS.get(step_key, [])
-    if metric_keys:
-        parts = [
-            f"{label.lower()}={summary[key]}"
-            for label, key in metric_keys
-            if key in summary and summary.get(key) not in (None, "")
-        ]
-        if parts:
-            return " | ".join(parts)
-
-    generic_parts = [
-        f"{key}={value}"
-        for key, value in summary.items()
-        if isinstance(value, (int, float, str)) and key not in {"run_id", "started_at", "finished_at"}
-    ]
-    return " | ".join(generic_parts[:6]) if generic_parts else "—"
 
 
 def _render_run_summary(record: dict[str, object] | None, *, compact: bool = False) -> None:
@@ -142,6 +98,23 @@ def _render_run_summary(record: dict[str, object] | None, *, compact: bool = Fal
             use_container_width=True,
             hide_index=True,
         )
+    workflow_step_summaries = summary.get("workflow_step_summaries")
+    if isinstance(workflow_step_summaries, list) and workflow_step_summaries:
+        st.caption("Résumé agrégé par sous-run workflow")
+        rows = []
+        for step_summary in workflow_step_summaries:
+            if not isinstance(step_summary, dict):
+                continue
+            rows.append(
+                {
+                    "étape": step_summary.get("step_label") or step_summary.get("step_key") or "—",
+                    "statut": step_summary.get("status") or "—",
+                    "run_id": step_summary.get("run_id") or "—",
+                    "résumé métier": step_summary.get("caption") or "—",
+                }
+            )
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     if not compact:
         with st.expander("Voir le payload résumé brut", expanded=False):
             st.json(summary)

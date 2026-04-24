@@ -157,6 +157,44 @@ def test_pipeline_workflow_runs_steps_in_order_and_aggregates_logs(monkeypatch, 
     assert "step_3" in logs
 
 
+def test_pipeline_workflow_aggregates_child_run_summaries(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("step_import", "1", "Import", "", "", "—"),
+        PipelineStepDefinition("step_sanitize", "2", "Sanitize", "", "", "step_import"),
+    )
+    monkeypatch.setattr(registry, "get_pipeline_steps", lambda: steps)
+
+    def _command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
+        if step_key == "step_import":
+            payload = (
+                "import json; "
+                "print('::alpha_trade_run_summary::' + json.dumps({'targeted_symbols': 3, 'successful_symbols': 2, 'history_status_counts': {'ready': 2, 'provider_error': 1}}), flush=True)"
+            )
+        else:
+            payload = (
+                "import json; "
+                "print('::alpha_trade_run_summary::' + json.dumps({'targeted_symbols': 3, 'successful_symbols': 3, 'status_breakdown': {'success': 3, 'failed': 0}}), flush=True)"
+            )
+        return [sys.executable, "-c", payload]
+
+    monkeypatch.setattr(registry, "build_pipeline_command", _command)
+
+    record = registry.start_pipeline_workflow(PipelineLaunchOptions())
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=120)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    run_summary = snapshot["run_summary"]
+    assert run_summary["workflow_steps_with_summary"] == 2
+    assert run_summary["targeted_symbols"] == 6
+    assert run_summary["successful_symbols"] == 5
+    assert run_summary["history_status_counts"] == {"ready": 2, "provider_error": 1}
+    assert run_summary["status_breakdown"] == {"success": 3, "failed": 0}
+    assert len(run_summary["workflow_step_summaries"]) == 2
+
+
 def test_pipeline_workflow_stops_on_failed_step(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
 

@@ -1,6 +1,7 @@
 """ihm/pages/screening.py — Consultation des scores stock_scores."""
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from ihm.pages import run_page_if_standalone
@@ -8,7 +9,41 @@ from ihm.components.db_controls import render_db_unavailable, render_query_diagn
 from ihm.components.metrics import metric_row
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available
+from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
+from ihm.services.run_summary import build_run_summary_caption, find_latest_run_with_summary
 from ihm.services.queries import get_stock_scores
+
+
+def _merge_pipeline_runs() -> list[dict[str, object]]:
+    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in load_pipeline_history()}
+    for run in list_active_pipeline_runs():
+        merged[str(run["run_id"])] = run
+    return sorted(
+        merged.values(),
+        key=lambda item: str(item.get("finished_at") or item.get("executed_at") or ""),
+        reverse=True,
+    )
+
+
+def _build_quality_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for label, step_key in (
+        ("Import Alpaca Bar", "import_alpaca_bar"),
+        ("Data Sanitizer Daily", "data_sanitizer_daily"),
+        ("Workflow complet", "pipeline_workflow"),
+    ):
+        record = find_latest_run_with_summary(runs, run_kind="workflow" if step_key == "pipeline_workflow" else None, step_keys=None if step_key == "pipeline_workflow" else [step_key])
+        if not record:
+            continue
+        rows.append(
+            {
+                "scope": label,
+                "statut": str(record.get("status", "—") or "—"),
+                "run_id": str(record.get("run_id", "—") or "—"),
+                "résumé métier": build_run_summary_caption(record),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def render() -> None:
@@ -32,6 +67,11 @@ def render() -> None:
         ("Candidats", candidates, None),
         ("Secteurs", sectors, None),
     ])
+
+    quality_rows = _build_quality_summary_rows(_merge_pipeline_runs())
+    if not quality_rows.empty:
+        st.subheader("🛡️ Contexte pipeline & qualité amont")
+        show_dataframe(quality_rows)
 
     # --- Filtres ---
     st.subheader("Filtres")

@@ -10,6 +10,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from database.stock_scores import list_candidate_symbols as list_candidate_stock_score_symbols
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -305,9 +307,7 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
 
 def load_candidate_symbols(engine: Engine) -> list[str]:
     """Charge les symboles avec is_candidate=1 depuis stock_scores."""
-    with engine.connect() as conn:
-        rows = conn.execute(text("SELECT symbol FROM stock_scores WHERE is_candidate = 1")).fetchall()
-    symbols = [r[0] for r in rows]
+    symbols = list_candidate_stock_score_symbols(engine=engine)
     LOGGER.info("load_candidate_symbols count=%d", len(symbols))
     return symbols
 
