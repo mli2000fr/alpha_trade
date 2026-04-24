@@ -451,6 +451,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
                     earnings_blackout INTEGER DEFAULT 0,
                     anomaly_count INTEGER,
                     missing_days_count INTEGER,
+                    sanitizer_status TEXT DEFAULT 'success',
                     is_candidate INTEGER NOT NULL DEFAULT 0,
                     last_updated_scan DATETIME
                 )
@@ -615,6 +616,7 @@ def test_run_supports_strict_swing_preset_filters() -> None:
                     earnings_blackout INTEGER DEFAULT 0,
                     anomaly_count INTEGER,
                     missing_days_count INTEGER,
+                    sanitizer_status TEXT DEFAULT 'success',
                     is_candidate INTEGER NOT NULL DEFAULT 0,
                     last_updated_scan DATETIME
                 )

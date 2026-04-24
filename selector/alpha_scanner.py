@@ -77,6 +77,7 @@ SCORE_COLUMNS = [
     "earnings_date",
     "days_to_earnings",
     "earnings_blackout",
+    "sanitizer_status",
     "anomaly_count",
     "missing_days_count",
 ]
@@ -320,6 +321,7 @@ class AlphaScanner:
                    earnings_date,
                    days_to_earnings,
                    earnings_blackout,
+                   sanitizer_status,
                    anomaly_count,
                    missing_days_count
             FROM {self.config.score_table}
@@ -963,6 +965,12 @@ class AlphaScanner:
         if "liquidity_val" in filtered.columns:
             filtered = filtered[(filtered["liquidity_val"].isna()) | (filtered["liquidity_val"] > self.config.liquidity_threshold)]
         after_score_liquidity = len(filtered)
+        if "sanitizer_status" in filtered.columns:
+            filtered = filtered[
+                filtered["sanitizer_status"].isna()
+                | (filtered["sanitizer_status"].astype(str).str.lower() == "success")
+            ]
+        after_sanitizer = len(filtered)
         if "anomaly_count" in filtered.columns:
             filtered = filtered[(filtered["anomaly_count"].isna()) | (filtered["anomaly_count"] <= self.config.max_anomaly_count)]
         after_anomaly = len(filtered)
@@ -987,7 +995,8 @@ class AlphaScanner:
             "rejected_spread": after_beta - after_spread,
             "rejected_earnings_blackout": after_spread - after_earnings_blackout,
             "rejected_score_liquidity": after_earnings_blackout - after_score_liquidity,
-            "rejected_anomalies": after_score_liquidity - after_anomaly,
+            "rejected_sanitizer": after_score_liquidity - after_sanitizer,
+            "rejected_anomalies": after_sanitizer - after_anomaly,
             "rejected_missing_days": after_anomaly - len(filtered),
         }
         return filtered.reset_index(drop=True), stats

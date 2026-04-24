@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores (
     -- data_sanitizer_daily.py
     anomaly_count           INT            DEFAULT 0,
     missing_days_count      INT            DEFAULT 0,
+    sanitizer_status        VARCHAR(16)    NOT NULL DEFAULT 'pending',
     last_updated_audit      DATETIME       DEFAULT NULL,
 
     -- signal_aggregator.py (après sentiment_pipeline.py)

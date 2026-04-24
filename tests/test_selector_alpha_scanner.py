@@ -195,6 +195,30 @@ def test_apply_filters_removes_non_eligible_rows() -> None:
     assert [row["symbol"] for row in rows] == ["AAPL"]
 
 
+def test_apply_filters_rejects_failed_sanitizer_status() -> None:
+    scanner = _make_scanner(AlphaScannerConfig())
+    merged_df = pd.DataFrame(
+        [
+            {
+                "symbol": "PASS", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 50.0, "avg_dollar_volume_20d": 30_000_000.0,
+                "liquidity_val": 30_000_000.0, "sanitizer_status": "success",
+                "anomaly_count": 0, "missing_days_count": 0,
+            },
+            {
+                "symbol": "FAIL", "asset_class": "us_equity", "tradable": True,
+                "history_days": 300, "latest_close": 50.0, "avg_dollar_volume_20d": 30_000_000.0,
+                "liquidity_val": 30_000_000.0, "sanitizer_status": "failed",
+                "anomaly_count": 0, "missing_days_count": 0,
+            },
+        ]
+    )
+
+    filtered = scanner.apply_filters(merged_df)
+
+    assert list(filtered["symbol"]) == ["PASS"]
+
+
 def test_apply_filters_rejects_high_or_missing_volatility_ratio_when_enabled() -> None:
     scanner = _make_scanner(AlphaScannerConfig(max_volatility_ratio=0.9))
     merged_df = pd.DataFrame(

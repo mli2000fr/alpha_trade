@@ -17,6 +17,13 @@ ALPACA_LATEST_QUOTES_ENDPOINT = "https://data.alpaca.markets/v2/stocks/quotes/la
 LOGGER = logging.getLogger(__name__)
 
 
+class AlpacaBarsFetchError(RuntimeError):
+    """Erreur technique lors d'un chargement de bars Alpaca.
+
+    Distincte d'un vrai "aucune donnée disponible" provider (ex: HTTP 404).
+    """
+
+
 def get_alpaca_credentials(account_id: Optional[str] = None) -> tuple[str, str]:
     """Récupère les credentials Alpaca depuis le registre multi-comptes.
 
@@ -85,10 +92,9 @@ def fetch_bars(
     endpoint = ALPACA_BARS_ENDPOINT_TEMPLATE.format(symbol=symbol)
     params: dict[str, Any] = {
         "timeframe": timeframe,
-        # adjustment=all : Alpaca retourne des prix OHLCV entièrement ajustés
-        # (splits + dividendes). En conséquence, close_price = adj_close = prix ajusté.
-        # Si le raw close est nécessaire, utiliser adjustment=raw dans un appel séparé.
-        "adjustment": "all",
+        # adjustment=split : série canonique du projet pour le swing trading actions.
+        # Les splits sont neutralisés, mais les dividendes ne réécrivent pas le passé.
+        "adjustment": "split",
         # RTH uniquement (09:30–16:00 EST) : exclure les données pre/post-market.
         # "feed": "sip",
         # "extended_hours": "false",
@@ -138,14 +144,27 @@ def fetch_bars(
                         MAX_TIMEOUT_RETRIES,
                     )
                     if timeout_attempts >= MAX_TIMEOUT_RETRIES:
-                        LOGGER.error("Abandon apres %s timeouts pour %s.", MAX_TIMEOUT_RETRIES, symbol)
-                        return all_bars
+                        LOGGER.error(
+                            "Abandon apres %s timeouts pour %s | partial_bars=%s",
+                            MAX_TIMEOUT_RETRIES,
+                            symbol,
+                            len(all_bars),
+                        )
+                        raise AlpacaBarsFetchError(
+                            f"Timeout Alpaca epuise pour {symbol} apres {MAX_TIMEOUT_RETRIES} tentatives."
+                        )
                     time.sleep(TIMEOUT_BACKOFF_SECONDS)
                 except requests.exceptions.HTTPError as exc:
                     if getattr(exc.response, "status_code", None) == 404:
                         LOGGER.warning("Alpaca retourne 404 pour %s : aucun bar disponible.", symbol)
                         return all_bars
-                    raise
+                    raise AlpacaBarsFetchError(
+                        f"HTTP error Alpaca pour {symbol}: {exc}"
+                    ) from exc
+                except requests.exceptions.RequestException as exc:
+                    raise AlpacaBarsFetchError(
+                        f"Erreur reseau Alpaca pour {symbol}: {exc}"
+                    ) from exc
 
             if not next_token:
                 return all_bars

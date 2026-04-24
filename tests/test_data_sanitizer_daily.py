@@ -7,7 +7,7 @@ import pytz
 from sqlalchemy.engine import Connection
 
 from dataIntegrityEngine import data_sanitizer_daily
-from dataIntegrityEngine.data_sanitizer_daily import DataSanitizer
+from dataIntegrityEngine.data_sanitizer_daily import DataQualityError, DataSanitizer
 
 
 @pytest.fixture
@@ -80,6 +80,37 @@ def test_sanitize_and_align_forward_fills_missing_days(sanitizer: DataSanitizer)
     assert filled_row["volume"][0] == 0
     assert filled_row["close"][0] == 100.0
     assert "daily_return" in aligned_df.columns
+
+
+def test_sanitize_and_align_rejects_too_many_consecutive_fills(sanitizer: DataSanitizer) -> None:
+    raw_df = pl.DataFrame(
+        {
+            "date": [date(2024, 1, 2), date(2024, 1, 9)],
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.0, 101.0],
+            "volume": [1_000, 1_100],
+            "adj_close": [100.0, 101.0],
+            "vwap": [100.0, 101.0],
+            "is_filled": [False, False],
+        }
+    )
+    calendar_df = pl.DataFrame(
+        {
+            "date": [
+                date(2024, 1, 2),
+                date(2024, 1, 3),
+                date(2024, 1, 4),
+                date(2024, 1, 5),
+                date(2024, 1, 8),
+                date(2024, 1, 9),
+            ]
+        }
+    )
+
+    with pytest.raises(DataQualityError, match="fill streak"):
+        sanitizer.sanitize_and_align(raw_df, calendar_df, prev_close=99.0)
 
 
 def test_sanitize_and_align_sets_daily_return_to_null_when_prev_close_is_zero(sanitizer: DataSanitizer) -> None:
@@ -285,7 +316,7 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
     sanitizer.stock_scores = object()
 
     upsert_calls: list[tuple[str, dict]] = []
-    sync_calls: list[tuple[object, object, str, int, int]] = []
+    sync_calls: list[tuple[object, object, str, int | None, int | None, str]] = []
 
     monkeypatch.setattr(data_sanitizer_daily, "get_symbols", lambda conn, table: ["AAPL"])
     monkeypatch.setattr(sanitizer, "_ensure_spy_1d_available", lambda conn: None)
@@ -307,7 +338,7 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
     monkeypatch.setattr(
         data_sanitizer_daily,
         "sync_audit_to_stock_scores",
-        lambda conn, table, symbol, missing_days, anomaly_count: sync_calls.append((conn, table, symbol, missing_days, anomaly_count)),
+        lambda conn, table, symbol, missing_days, anomaly_count, sanitizer_status: sync_calls.append((conn, table, symbol, missing_days, anomaly_count, sanitizer_status)),
     )
     monkeypatch.setattr(sanitizer, "_log_failed_audit_summary", lambda conn: None)
 
@@ -322,7 +353,7 @@ def test_run_pipeline_syncs_audit_to_stock_scores_after_upsert(monkeypatch, sani
             "status": "success",
         },
     )]
-    assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", 2, 4)]
+    assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", 2, 4, "success")]
 
 
 def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatch, sanitizer: DataSanitizer) -> None:
@@ -333,7 +364,7 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
     sanitizer.stock_scores = object()
 
     upsert_calls: list[tuple[str, dict]] = []
-    sync_calls: list[tuple[object, object, str, int, int]] = []
+    sync_calls: list[tuple[object, object, str, int | None, int | None, str]] = []
 
     monkeypatch.setattr(data_sanitizer_daily, "get_symbols", lambda conn, table: ["AAPL"])
     monkeypatch.setattr(sanitizer, "_ensure_spy_1d_available", lambda conn: None)
@@ -351,7 +382,7 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
     monkeypatch.setattr(
         data_sanitizer_daily,
         "sync_audit_to_stock_scores",
-        lambda conn, table, symbol, missing_days, anomaly_count: sync_calls.append((conn, table, symbol, missing_days, anomaly_count)),
+        lambda conn, table, symbol, missing_days, anomaly_count, sanitizer_status: sync_calls.append((conn, table, symbol, missing_days, anomaly_count, sanitizer_status)),
     )
     monkeypatch.setattr(sanitizer, "_log_failed_audit_summary", lambda conn: None)
 
@@ -361,9 +392,48 @@ def test_run_pipeline_syncs_failed_audit_to_stock_scores_on_exception(monkeypatc
         "AAPL",
         {
             "last_sync": date(2024, 1, 3),
-            "missing_days": 0,
-            "anomaly_count": 0,
+            "missing_days": None,
+            "anomaly_count": None,
             "status": "failed",
         },
     )]
-    assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", 0, 0)]
+    assert sync_calls == [(fake_conn, sanitizer.stock_scores, "AAPL", None, None, "failed")]
+
+
+def test_process_symbol_rebuilds_with_gliding_lookback(monkeypatch, sanitizer: DataSanitizer) -> None:
+    sanitizer.cleaning_audit_log = object()
+    sanitizer.stock_bars = object()
+    sanitizer.stock_bars_daily = object()
+    sanitizer.stock_scores = object()
+    conn = cast(Connection, object())
+    fetch_calls: list[date | None] = []
+
+    monkeypatch.setattr(data_sanitizer_daily, "get_last_sync_date", lambda current_conn, table, symbol: date(2024, 6, 1))
+    monkeypatch.setattr(
+        sanitizer,
+        "fetch_symbol_bars_1d",
+        lambda current_conn, symbol, start: fetch_calls.append(start) or pl.DataFrame(
+            {
+                "date": [date(2024, 1, 2), date(2024, 6, 3)],
+                "open": [100.0, 101.0],
+                "high": [101.0, 102.0],
+                "low": [99.0, 100.0],
+                "close": [100.0, 101.0],
+                "volume": [1_000, 1_100],
+                "adj_close": [100.0, 101.0],
+                "vwap": [100.0, 101.0],
+                "is_filled": [False, False],
+            }
+        ),
+    )
+    monkeypatch.setattr(sanitizer, "load_spy_calendar", lambda current_conn, start, end: pl.DataFrame({"date": [date(2024, 1, 2), date(2024, 6, 3)]}))
+    monkeypatch.setattr(data_sanitizer_daily, "get_prev_close_before", lambda current_conn, table, symbol, d: 99.0)
+    monkeypatch.setattr(sanitizer, "sanitize_and_align", lambda df, calendar, prev_close: (df.with_columns(pl.lit(0.01).alias("daily_return")), 0))
+    monkeypatch.setattr(sanitizer, "detect_anomalies", lambda df: (df, 0))
+    monkeypatch.setattr(data_sanitizer_daily, "upsert_stock_bars_daily", lambda conn, table, symbol, df, data_adjustment=None: len(df))
+
+    was_processed, payload = sanitizer._process_symbol(conn, "AAPL")
+
+    assert was_processed is True
+    assert fetch_calls == [date(2023, 4, 28)]
+    assert payload["status"] == "success"

@@ -19,6 +19,9 @@ REQUIRED_SCORE_COLUMNS = (
 	"last_updated_score",
 	"is_candidate",
 	"sector",
+	"anomaly_count",
+	"missing_days_count",
+	"sanitizer_status",
 	"last_updated_scan",
 )
 
@@ -186,6 +189,46 @@ def _enrich_scores_with_metadata_sector(engine: Engine, scores_df: pd.DataFrame)
 	return enriched
 
 
+def _load_latest_audit_metrics(engine: Engine, symbols: list[str]) -> pd.DataFrame:
+	if not symbols:
+		return pd.DataFrame(columns=["symbol", "anomaly_count", "missing_days_count", "sanitizer_status"])
+
+	stmt = text(
+		"""
+		SELECT audit.symbol,
+		       audit.anomaly_count,
+		       audit.missing_days_count,
+		       audit.status AS sanitizer_status
+		FROM cleaning_audit_log audit
+		INNER JOIN (
+			SELECT symbol, MAX(id) AS max_id
+			FROM cleaning_audit_log
+			WHERE symbol IN :symbols
+			GROUP BY symbol
+		) latest ON latest.max_id = audit.id
+		WHERE audit.symbol IN :symbols
+		"""
+	).bindparams(bindparam("symbols", expanding=True))
+
+	return pd.read_sql_query(stmt, engine, params={"symbols": symbols})
+
+
+def _enrich_scores_with_audit(engine: Engine, scores_df: pd.DataFrame) -> pd.DataFrame:
+	if scores_df.empty:
+		return scores_df.copy()
+
+	enriched = scores_df.copy()
+	audit_df = _load_latest_audit_metrics(engine, enriched["symbol"].astype(str).tolist())
+	if audit_df.empty:
+		return enriched
+
+	audit_df = audit_df.copy()
+	audit_df["anomaly_count"] = pd.to_numeric(audit_df["anomaly_count"], errors="coerce")
+	audit_df["missing_days_count"] = pd.to_numeric(audit_df["missing_days_count"], errors="coerce")
+	audit_df["sanitizer_status"] = audit_df["sanitizer_status"].where(audit_df["sanitizer_status"].notna(), None)
+	return enriched.merge(audit_df, on="symbol", how="left", suffixes=("", "_audit"))
+
+
 def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 	if scores_df.empty:
 		return scores_df.copy()
@@ -202,6 +245,12 @@ def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 		normalized["is_candidate"] = 0
 	if "sector" not in normalized.columns:
 		normalized["sector"] = None
+	if "anomaly_count" not in normalized.columns:
+		normalized["anomaly_count"] = None
+	if "missing_days_count" not in normalized.columns:
+		normalized["missing_days_count"] = None
+	if "sanitizer_status" not in normalized.columns:
+		normalized["sanitizer_status"] = "pending"
 	if "last_updated_scan" not in normalized.columns:
 		normalized["last_updated_scan"] = normalized["last_updated_score"]
 
@@ -209,6 +258,9 @@ def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 	normalized["last_updated_scan"] = pd.to_datetime(normalized["last_updated_scan"], utc=False)
 	normalized["is_candidate"] = normalized["is_candidate"].fillna(0).astype(int)
 	normalized["sector"] = normalized["sector"].where(normalized["sector"].notna(), None)
+	normalized["anomaly_count"] = pd.to_numeric(normalized["anomaly_count"], errors="coerce")
+	normalized["missing_days_count"] = pd.to_numeric(normalized["missing_days_count"], errors="coerce")
+	normalized["sanitizer_status"] = normalized["sanitizer_status"].where(normalized["sanitizer_status"].notna(), "pending")
 
 	missing_columns = [column for column in REQUIRED_SCORE_COLUMNS if column not in normalized.columns]
 	if missing_columns:
@@ -234,13 +286,13 @@ def archive_scores_snapshot(engine: Engine, snapshot_date: Optional[date] = None
 			 liquidity_val, relative_strength_index, historical_range_score, total_score,
 			 trend_score, vcp_score, final_score, is_candidate,
 			 sentiment_net_agg, sector_impact_agg, final_score_sentiment, signal_active,
-			 anomaly_count, missing_days_count)
+			 anomaly_count, missing_days_count, sanitizer_status)
 		SELECT
 			:snapshot_date, symbol, sector,
 			liquidity_val, relative_strength_index, historical_range_score, total_score,
 			trend_score, vcp_score, final_score, is_candidate,
 			sentiment_net_agg, sector_impact_agg, final_score_sentiment, signal_active,
-			anomaly_count, missing_days_count
+			anomaly_count, missing_days_count, sanitizer_status
 		FROM stock_scores
 		ON DUPLICATE KEY UPDATE
 			sector                  = VALUES(sector),
@@ -257,7 +309,8 @@ def archive_scores_snapshot(engine: Engine, snapshot_date: Optional[date] = None
 			final_score_sentiment   = VALUES(final_score_sentiment),
 			signal_active           = VALUES(signal_active),
 			anomaly_count           = VALUES(anomaly_count),
-			missing_days_count      = VALUES(missing_days_count)
+			missing_days_count      = VALUES(missing_days_count),
+			sanitizer_status        = VALUES(sanitizer_status)
 	""")
 	with engine.begin() as conn:
 		result = conn.execute(stmt, {"snapshot_date": ref_date})
@@ -276,6 +329,7 @@ def upsert_scores_snapshot(
 		return
 
 	scores_df = _enrich_scores_with_metadata_sector(engine, scores_df)
+	scores_df = _enrich_scores_with_audit(engine, scores_df)
 	scores_df = _normalize_scores_snapshot(scores_df)
 	scores_table = _get_scores_table(engine)
 	symbols = scores_df["symbol"].astype(str).tolist()
@@ -292,6 +346,9 @@ def upsert_scores_snapshot(
 				"last_updated_score": stmt.inserted.last_updated_score,
 				"is_candidate": stmt.inserted.is_candidate,
 				"sector": stmt.inserted.sector,
+				"anomaly_count": stmt.inserted.anomaly_count,
+				"missing_days_count": stmt.inserted.missing_days_count,
+				"sanitizer_status": stmt.inserted.sanitizer_status,
 				"last_updated_scan": stmt.inserted.last_updated_scan,
 			}
 			conn.execute(stmt.on_duplicate_key_update(**update_dict))

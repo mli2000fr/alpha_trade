@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores_history (
     signal_active           TINYINT(1)     DEFAULT 0,
     anomaly_count           INT            DEFAULT 0,
     missing_days_count      INT            DEFAULT 0,
+    sanitizer_status        VARCHAR(16)    NOT NULL DEFAULT 'pending',
     created_at              TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_snapshot_symbol (snapshot_date, symbol),
     INDEX idx_history_symbol     (symbol, snapshot_date),

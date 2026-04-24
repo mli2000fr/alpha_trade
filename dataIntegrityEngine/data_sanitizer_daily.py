@@ -29,11 +29,14 @@ from database.sanitizer_db_ops import (
 LOGGER = logging.getLogger(__name__)
 SPY_SYMBOL = "SPY"
 SPY_FETCH_PADDING_DAYS = 10
+REBUILD_LOOKBACK_CALENDAR_DAYS = 400
 ROLLING_WINDOW_DAYS = 20
 ROLLING_MIN_PERIODS = 5
 ANOMALY_MAD_THRESHOLD = 5.0
 ANOMALY_RETURN_THRESHOLD = 0.02
 DEFAULT_COMMIT_EVERY = 50
+MAX_CONSECUTIVE_FILLED_DAYS = 3
+DATA_ADJUSTMENT = "split"
 EMPTY_BAR_FRAME = pl.DataFrame(
     {
         "date": [],
@@ -47,6 +50,10 @@ EMPTY_BAR_FRAME = pl.DataFrame(
         "is_filled": [],
     }
 )
+
+
+class DataQualityError(RuntimeError):
+    """Erreur de qualité bloquante sur une série daily nettoyée."""
 
 
 class DataSanitizer:
@@ -140,13 +147,13 @@ class DataSanitizer:
         if not bars:
             return self._empty_bar_frame()
 
-        # Note sur adj_close : l'API Alpaca est appelée avec adjustment="all",
-        # ce qui signifie que les champs OHLCV retournés (bar['c']) sont DÉJÀ
-        # entièrement ajustés (splits + dividendes). Par conséquent,
-        #   close     = prix ajusté (utilisé pour les calculs de rendements)
+        # Note sur adj_close : l'API Alpaca est appelée avec adjustment="split",
+        # ce qui signifie que les champs OHLCV retournés (bar['c']) sont déjà
+        # ajustés des splits. Par conséquent,
+        #   close     = prix split-adjusted (utilisé pour les calculs de rendements)
         #   adj_close = identique à close (convention maintenue pour compatibilité schema)
-        # Si un prix RAW est nécessaire ultérieurement, appeler fetch_bars avec
-        # adjustment="raw" et stocker dans une colonne raw_close distincte.
+        # Si un prix RAW ou total-return est nécessaire ultérieurement, il faudra
+        # l'ingérer explicitement dans une autre série/version, pas ici.
         return pl.DataFrame(
             {
                 'date': [self._to_ny_date(bar['t']) for bar in bars],
@@ -155,20 +162,43 @@ class DataSanitizer:
                 'low': [bar['l'] for bar in bars],
                 'close': [bar['c'] for bar in bars],
                 'volume': [bar['v'] for bar in bars],
-                'adj_close': [bar['c'] for bar in bars],  # = close car adjustment=all
+                'adj_close': [bar['c'] for bar in bars],  # = close car adjustment=split
                 'vwap': [bar.get('vw') for bar in bars],
                 'is_filled': [False] * len(bars),
             }
         ).sort('date').unique(subset=['date'], keep='last')
 
     @staticmethod
-    def _build_audit_payload(last_sync: Optional[date], missing_days: int, anomaly_count: int, status: str) -> dict:
+    def _build_audit_payload(
+        last_sync: Optional[date],
+        missing_days: Optional[int],
+        anomaly_count: Optional[int],
+        status: str,
+    ) -> dict:
         return {
             'last_sync': last_sync,
             'missing_days': missing_days,
             'anomaly_count': anomaly_count,
             'status': status,
         }
+
+    @staticmethod
+    def _compute_fill_streaks(missing_flags: list[bool]) -> list[int]:
+        streaks: list[int] = []
+        current = 0
+        for is_missing in missing_flags:
+            if is_missing:
+                current += 1
+            else:
+                current = 0
+            streaks.append(current)
+        return streaks
+
+    @staticmethod
+    def _compute_rebuild_start_date(last_sync: Optional[date]) -> Optional[date]:
+        if last_sync is None:
+            return None
+        return last_sync - timedelta(days=REBUILD_LOOKBACK_CALENDAR_DAYS)
 
     @staticmethod
     def _last_frame_date(df: pl.DataFrame) -> Optional[date]:
@@ -218,12 +248,12 @@ class DataSanitizer:
 
     def _process_symbol(self, conn: Connection, symbol: str) -> tuple[bool, dict]:
         last_sync = get_last_sync_date(conn, self.cleaning_audit_log, symbol)
-        start_date = (last_sync + timedelta(days=1)) if last_sync else None
-        df_raw = self.fetch_symbol_bars_1d(conn, symbol, start_date)
+        rebuild_start = self._compute_rebuild_start_date(last_sync)
+        df_raw = self.fetch_symbol_bars_1d(conn, symbol, rebuild_start)
 
         if df_raw.is_empty():
-            LOGGER.info("Aucune donnee pour %s apres %s", symbol, start_date)
-            return False, self._build_audit_payload(last_sync, 0, 0, 'success')
+            LOGGER.info("Aucune donnee brute pour %s a partir de %s", symbol, rebuild_start)
+            return False, self._build_audit_payload(last_sync, None, None, 'success')
 
         window_start = df_raw['date'][0]
         window_end = df_raw['date'][-1]
@@ -232,7 +262,7 @@ class DataSanitizer:
         df_aligned, missing_count = self.sanitize_and_align(df_raw, calendar, prev_close)
         df_features, anomaly_count = self.detect_anomalies(df_aligned)
 
-        upsert_stock_bars_daily(conn, self.stock_bars_daily, symbol, df_features, data_adjustment="all")
+        upsert_stock_bars_daily(conn, self.stock_bars_daily, symbol, df_features, data_adjustment=DATA_ADJUSTMENT)
         return True, self._build_audit_payload(
             self._last_frame_date(df_features) or last_sync,
             missing_count,
@@ -292,6 +322,8 @@ class DataSanitizer:
         base = base.with_columns([
             pl.col('close').is_null().alias('orig_missing')
         ])
+        missing_flags = [bool(flag) for flag in base['orig_missing'].to_list()]
+        fill_streaks = self._compute_fill_streaks(missing_flags)
 
         tmp = base.with_columns([
             pl.col('close').forward_fill().alias('close')
@@ -309,6 +341,9 @@ class DataSanitizer:
 
         tmp = tmp.with_columns([
             pl.col('orig_missing').alias('is_filled')
+        ])
+        tmp = tmp.with_columns([
+            pl.Series('fill_streak', fill_streaks, dtype=pl.Int64)
         ])
 
         prevc = pl.col('close').shift(1)
@@ -335,6 +370,14 @@ class DataSanitizer:
 
         tmp = tmp.drop(['prev_close'])
         filled_count = int(tmp['is_filled'].sum())
+        max_fill_streak = max(fill_streaks, default=0)
+        if max_fill_streak > MAX_CONSECUTIVE_FILLED_DAYS:
+            bad_index = next(index for index, streak in enumerate(fill_streaks) if streak > MAX_CONSECUTIVE_FILLED_DAYS)
+            bad_date = tmp['date'][bad_index]
+            raise DataQualityError(
+                f'Serie degradee: fill streak={max_fill_streak} > {MAX_CONSECUTIVE_FILLED_DAYS} pour la date {bad_date}.'
+            )
+        tmp = tmp.drop(['fill_streak'])
         return tmp, filled_count
 
     def detect_anomalies(self, df: pl.DataFrame) -> tuple[pl.DataFrame, int]:
@@ -390,6 +433,7 @@ class DataSanitizer:
                                 symbol,
                                 audit_payload['missing_days'],
                                 audit_payload['anomaly_count'],
+                                audit_payload['status'],
                             )
                         if was_processed:
                             processed += 1
@@ -397,7 +441,7 @@ class DataSanitizer:
                         error_message = self._format_exception_message(e)
                         LOGGER.exception("Echec traitement %s | error_detail=%s", symbol, error_message)
                         fallback_last_sync = get_last_sync_date(conn, self.cleaning_audit_log, symbol)
-                        failed_payload = self._build_audit_payload(fallback_last_sync, 0, 0, 'failed')
+                        failed_payload = self._build_audit_payload(fallback_last_sync, None, None, 'failed')
                         LOGGER.error("Persistance audit echec | symbol=%s payload=%s", symbol, failed_payload)
                         upsert_audit(
                             conn,
@@ -411,6 +455,7 @@ class DataSanitizer:
                             symbol,
                             failed_payload['missing_days'],
                             failed_payload['anomaly_count'],
+                            failed_payload['status'],
                         )
 
                     if self._should_commit(processed, commit_every):

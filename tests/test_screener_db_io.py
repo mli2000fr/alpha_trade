@@ -61,6 +61,9 @@ class _FakeInsert:
             last_updated_score="last_updated_score",
             is_candidate="is_candidate",
             sector="sector",
+            anomaly_count="anomaly_count",
+            missing_days_count="missing_days_count",
+            sanitizer_status="sanitizer_status",
             last_updated_scan="last_updated_scan",
         )
 
@@ -96,6 +99,16 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
             [
                 {"symbol": "AAA", "sector": "Technology"},
                 {"symbol": "BBB", "sector": "Industrials"},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        db_io,
+        "_load_latest_audit_metrics",
+        lambda current_engine, symbols: pd.DataFrame(
+            [
+                {"symbol": "AAA", "anomaly_count": 1, "missing_days_count": 2, "sanitizer_status": "success"},
+                {"symbol": "BBB", "anomaly_count": None, "missing_days_count": None, "sanitizer_status": "failed"},
             ]
         ),
     )
@@ -150,10 +163,17 @@ def test_upsert_scores_snapshot_bulk_upserts_then_purges_missing(monkeypatch) ->
     assert first_statement[1][0]["last_updated_score"].isoformat(sep=" ") == "2026-01-01 00:00:00"
     assert first_statement[1][0]["is_candidate"] == 1
     assert first_statement[1][0]["sector"] == "Technology"
+    assert first_statement[1][0]["anomaly_count"] == 1
+    assert first_statement[1][0]["missing_days_count"] == 2
+    assert first_statement[1][0]["sanitizer_status"] == "success"
     assert first_statement[1][1]["sector"] == "Industrials"
+    assert first_statement[1][1]["sanitizer_status"] == "failed"
     assert first_statement[2]["last_updated_score"] == "last_updated_score"
     assert first_statement[2]["is_candidate"] == "is_candidate"
     assert first_statement[2]["sector"] == "sector"
+    assert first_statement[2]["anomaly_count"] == "anomaly_count"
+    assert first_statement[2]["missing_days_count"] == "missing_days_count"
+    assert first_statement[2]["sanitizer_status"] == "sanitizer_status"
     assert first_statement[2]["last_updated_scan"] == "last_updated_scan"
 
 
@@ -168,6 +188,7 @@ def test_upsert_scores_snapshot_accepts_legacy_last_updated_and_top_swing(monkey
         "_load_metadata_sectors",
         lambda current_engine, symbols: pd.DataFrame([{"symbol": "AAA", "sector": "Healthcare"}]),
     )
+    monkeypatch.setattr(db_io, "_load_latest_audit_metrics", lambda current_engine, symbols: pd.DataFrame())
     monkeypatch.setattr(db_io, "_purge_missing_scores", lambda current_engine, symbols: purge_calls.append(symbols))
     monkeypatch.setattr(db_io, "archive_scores_snapshot", lambda engine, snapshot_date=None: 0)
 
@@ -193,6 +214,7 @@ def test_upsert_scores_snapshot_accepts_legacy_last_updated_and_top_swing(monkey
     assert record["last_updated_score"].isoformat(sep=" ") == "2026-01-01 00:00:00"
     assert record["is_candidate"] == 1
     assert record["sector"] == "Healthcare"
+    assert record["sanitizer_status"] == "pending"
     assert record["last_updated_scan"].isoformat(sep=" ") == "2026-01-01 00:00:00"
 
 
@@ -278,6 +300,33 @@ def test_enrich_scores_with_metadata_sector_keeps_existing_when_metadata_missing
     assert enriched.loc[1, "sector"] == "ExistingSector"
 
 
+
+def test_enrich_scores_with_audit_merges_latest_quality_flags(monkeypatch) -> None:
+    engine = object()
+    monkeypatch.setattr(
+        db_io,
+        "_load_latest_audit_metrics",
+        lambda current_engine, symbols: pd.DataFrame(
+            [
+                {"symbol": "AAA", "anomaly_count": 3, "missing_days_count": 1, "sanitizer_status": "success"},
+            ]
+        ),
+    )
+
+    scores_df = pd.DataFrame(
+        [
+            {"symbol": "AAA", "sector": "Tech"},
+            {"symbol": "BBB", "sector": "Finance"},
+        ]
+    )
+
+    enriched = db_io._enrich_scores_with_audit(engine, scores_df)
+
+    assert enriched.loc[enriched["symbol"] == "AAA", "sanitizer_status"].iloc[0] == "success"
+    assert enriched.loc[enriched["symbol"] == "AAA", "anomaly_count"].iloc[0] == 3
+    assert pd.isna(enriched.loc[enriched["symbol"] == "BBB", "sanitizer_status"].iloc[0])
+
+
 # ---------------------------------------------------------------------------
 # archive_scores_snapshot
 # ---------------------------------------------------------------------------
@@ -335,6 +384,7 @@ def test_upsert_scores_snapshot_calls_archive(monkeypatch) -> None:
     monkeypatch.setattr(db_io, "archive_scores_snapshot", lambda engine, snapshot_date=None: archive_calls.append(snapshot_date) or 0)
     monkeypatch.setattr(db_io, "_purge_missing_scores", lambda engine, symbols: None)
     monkeypatch.setattr(db_io, "_enrich_scores_with_metadata_sector", lambda engine, df: df)
+    monkeypatch.setattr(db_io, "_enrich_scores_with_audit", lambda engine, df: df)
 
     fake_insert = _FakeInsert()
     monkeypatch.setattr("screener.db_io.mysql_insert", lambda table: fake_insert)
@@ -367,6 +417,7 @@ def test_upsert_scores_snapshot_archive_failure_does_not_break(monkeypatch) -> N
     monkeypatch.setattr(db_io, "archive_scores_snapshot", failing_archive)
     monkeypatch.setattr(db_io, "_purge_missing_scores", lambda engine, symbols: None)
     monkeypatch.setattr(db_io, "_enrich_scores_with_metadata_sector", lambda engine, df: df)
+    monkeypatch.setattr(db_io, "_enrich_scores_with_audit", lambda engine, df: df)
 
     fake_insert = _FakeInsert()
     monkeypatch.setattr("screener.db_io.mysql_insert", lambda table: fake_insert)

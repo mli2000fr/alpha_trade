@@ -34,7 +34,7 @@ def _active_symbol_clause(stock_metadata):
 def _build_stock_bars_daily_records(
     symbol: str,
     df: pl.DataFrame,
-    data_adjustment: str = "all",
+    data_adjustment: str = "split",
 ) -> list[dict]:
     """
     Construit les enregistrements à upsert dans stock_bars_daily.
@@ -196,7 +196,7 @@ def upsert_stock_bars_daily(
     stock_bars_daily,
     symbol: str,
     df: pl.DataFrame,
-    data_adjustment: str = "all",
+    data_adjustment: str = "split",
 ) -> int:
     """
     :param data_adjustment: Valeur du paramètre adjustment Alpaca ('raw'|'split'|'dividend'|'all').
@@ -231,8 +231,8 @@ def upsert_audit(
     cleaning_audit_log,
     symbol: str,
     last_sync: Optional[date],
-    missing_days: int,
-    anomaly_count: int,
+    missing_days: Optional[int],
+    anomaly_count: Optional[int],
     status: str,
 ) -> None:
     row_id = conn.execute(_latest_audit_id_query(cleaning_audit_log, symbol)).scalar_one_or_none()
@@ -262,8 +262,9 @@ def sync_audit_to_stock_scores(
     conn: Connection,
     stock_scores,
     symbol: str,
-    missing_days: int,
-    anomaly_count: int,
+    missing_days: Optional[int],
+    anomaly_count: Optional[int],
+    sanitizer_status: str,
 ) -> int:
     """
     Met à jour stock_scores avec les compteurs d'audit du dernier run traité.
@@ -276,6 +277,7 @@ def sync_audit_to_stock_scores(
         .values(
             missing_days_count=missing_days,
             anomaly_count=anomaly_count,
+            sanitizer_status=sanitizer_status,
             last_updated_audit=func.current_timestamp(),
         )
     )

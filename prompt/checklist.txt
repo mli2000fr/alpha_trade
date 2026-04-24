@@ -11,4 +11,5 @@ backTest: fait mais à revoir
 tu es expert python et financier. tu va travailler sur le module dataIntegrityEngine.
 Tu lit les doc ainsi les codes sources, tu propose des améliorations, niveau professionel et expert. Pour context, pour chaque symbol, on peut avoir jusquau 10 ans de données (une ligne/bar par jour), je ne fais que de swing trade (cash parincipalement).
 
-à toi de jouer
+je vais réinitialiser toutes les tables pour partir sur une base saine, donc pas besoin de faire les modificaiton pour garantir la rétro compatibilité avec les données existants.
+je ne veux pas de variant de prix, rester simple, alpaca retourne déjà split_adjusted  ou all, tu décide le quel est plus adapter à mon projet. a la fin sauvegarder la synthèse dans prompt/dataIntegrityEngine/1.audit.md

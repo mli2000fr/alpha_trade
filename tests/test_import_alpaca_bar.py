@@ -1,5 +1,6 @@
 from database.bar_metadata import TimeFrame
 from dataIntegrityEngine.import_alpaca_bar import import_alpaca_bars
+from service.alpaca.clientAlpaca import AlpacaBarsFetchError
 
 
 class _FakeSession:
@@ -29,4 +30,24 @@ def test_import_alpaca_bars_accepts_targeted_symbols(monkeypatch) -> None:
     import_alpaca_bars(TimeFrame.ONE_DAY, symbols=[" spy "])
 
     assert calls == [("SPY", "1Day", None)]
+
+
+def test_import_alpaca_bars_keeps_bars_available_on_technical_error(monkeypatch) -> None:
+    calls: list[tuple[str, str, object]] = []
+
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.get_last_bar_timestamp", lambda session, symbol, time_frame: None)
+    monkeypatch.setattr(
+        "dataIntegrityEngine.import_alpaca_bar.fetch_bars",
+        lambda symbol, api_value, start: calls.append((symbol, api_value, start)) or (_ for _ in ()).throw(AlpacaBarsFetchError("timeout")),
+    )
+    monkeypatch.setattr(
+        "dataIntegrityEngine.import_alpaca_bar.update_bars_available_false",
+        lambda symbol: (_ for _ in ()).throw(AssertionError("incident technique: bars_available ne doit pas basculer a false")),
+    )
+
+    import_alpaca_bars(TimeFrame.ONE_DAY, symbols=["aapl"])
+
+    assert calls == [("AAPL", "1Day", None)]
+
 

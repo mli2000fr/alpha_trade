@@ -13,10 +13,11 @@ from common.utils import configure_root_logging, getLastDateMarche
 from database.assets import update_bars_available_false
 from database.bar_metadata import TimeFrame
 from database.connection import SessionLocal, get_sqlalchemy_engine
-from service.alpaca.clientAlpaca import fetch_bars
+from service.alpaca.clientAlpaca import AlpacaBarsFetchError, fetch_bars
 
 LOGGER = logging.getLogger(__name__)
 TZ_NEW_YORK = pytz.timezone("America/New_York")
+DATA_ADJUSTMENT = "split"
 
 
 @lru_cache(maxsize=1)
@@ -157,7 +158,7 @@ def insert_bars(session, symbol: str, bars: list[dict[str, Any]], timeframe: str
         session.rollback()
         LOGGER.error("Echec insert_bars | symbol=%s timeframe=%s bars=%s", symbol, timeframe, len(bars))
         raise
-    return len(bars)
+    return len(records)
 
 
 def _format_last_timestamp(last_timestamp: Any) -> Optional[str]:
@@ -206,37 +207,53 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
 
         for idx, symbol in enumerate(target_symbols, 1):
             LOGGER.info("Traitement du symbole (%s/%s) : %s", idx, total, symbol)
+            try:
+                last_timestamp = get_last_bar_timestamp(session, symbol, time_frame)
+                LOGGER.info(
+                    "Derniere barre connue | symbol=%s timestamp=%s adjustment=%s",
+                    symbol,
+                    last_timestamp,
+                    DATA_ADJUSTMENT,
+                )
 
-            last_timestamp = get_last_bar_timestamp(session, symbol, time_frame)
-            LOGGER.info("Derniere barre connue | symbol=%s timestamp=%s", symbol, last_timestamp)
+                if last_timestamp:
+                    last_date = last_timestamp.date() if hasattr(last_timestamp, "date") else last_timestamp
+                    market_date = getLastDateMarche()
+                    if str(last_date) == str(market_date):
+                        LOGGER.info("%s deja a jour pour la derniere date de marche (%s).", symbol, market_date)
+                        continue
+                    next_start = _format_last_timestamp(last_timestamp)
+                else:
+                    next_start = None
 
-            if last_timestamp:
-                last_date = last_timestamp.date() if hasattr(last_timestamp, "date") else last_timestamp
-                market_date = getLastDateMarche()
-                if str(last_date) == str(market_date):
-                    LOGGER.info("%s deja a jour pour la derniere date de marche (%s).", symbol, market_date)
-                    continue
-                next_start = _format_last_timestamp(last_timestamp)
-            else:
-                next_start = None
+                inserted_count = 0
+                while True:
+                    next_start_call = _increment_start_timestamp(next_start)
+                    LOGGER.info("Appel Alpaca | symbol=%s start=%s adjustment=%s", symbol, next_start_call, DATA_ADJUSTMENT)
+                    bars = fetch_bars(symbol, time_frame.api_value, next_start_call)
+                    LOGGER.info("Reponse Alpaca | symbol=%s bars=%s", symbol, len(bars))
 
-            inserted_count = 0
-            while True:
-                next_start_call = _increment_start_timestamp(next_start)
-                LOGGER.info("Appel Alpaca | symbol=%s start=%s", symbol, next_start_call)
-                bars = fetch_bars(symbol, time_frame.api_value, next_start_call)
-                LOGGER.info("Reponse Alpaca | symbol=%s bars=%s", symbol, len(bars))
+                    if not bars:
+                        if not symbol_exists_in_stock_bars(session, symbol):
+                            LOGGER.warning(
+                                "Aucun bar confirme par Alpaca pour %s, mise a jour bars_available=False.",
+                                symbol,
+                            )
+                            update_bars_available_false(symbol)
+                        break
 
-                if not bars:
-                    if not symbol_exists_in_stock_bars(session, symbol):
-                        LOGGER.warning("Aucun bar trouve pour %s, mise a jour bars_available=False.", symbol)
-                        update_bars_available_false(symbol)
-                    break
+                    inserted_count += insert_bars(session, symbol, bars, time_frame.db_value)
+                    next_start = bars[-1]["t"]
 
-                inserted_count += insert_bars(session, symbol, bars, time_frame.db_value)
-                next_start = bars[-1]["t"]
-
-            LOGGER.info("Import termine | symbol=%s inserted=%s", symbol, inserted_count)
+                LOGGER.info("Import termine | symbol=%s inserted=%s adjustment=%s", symbol, inserted_count, DATA_ADJUSTMENT)
+            except AlpacaBarsFetchError as exc:
+                LOGGER.error(
+                    "Incident technique Alpaca | symbol=%s timeframe=%s error=%s | bars_available conserve",
+                    symbol,
+                    time_frame.db_value,
+                    exc,
+                )
+                continue
     finally:
         session.close()
 
