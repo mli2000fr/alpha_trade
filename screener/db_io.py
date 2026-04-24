@@ -44,16 +44,24 @@ def _purge_missing_scores(engine: Engine, symbols: list[str]) -> None:
 
 
 def iter_symbol_chunks(engine: Engine, chunk_size: int) -> Iterator[list[str]]:
-	offset = 0
+	last_symbol: str | None = None
 	stmt = text(
 		"""
-		SELECT symbol
-		FROM (
-			SELECT DISTINCT symbol
-			FROM stock_bars_daily
-		) s
-		ORDER BY symbol
-		LIMIT :chunk_size OFFSET :offset
+		SELECT DISTINCT sbd.symbol
+		FROM stock_bars_daily sbd
+		INNER JOIN stock_metadata sm ON sm.symbol = sbd.symbol
+		WHERE sm.status = 'active'
+		  AND sm.tradable = 1
+		  AND sm.bars_available = 1
+		  AND sm.asset_class = 'us_equity'
+		  AND (
+		        sm.history_status IS NULL
+		     OR TRIM(sm.history_status) = ''
+		     OR LOWER(TRIM(sm.history_status)) IN ('pending', 'ready')
+		  )
+		  AND (:last_symbol IS NULL OR sbd.symbol > :last_symbol)
+		ORDER BY sbd.symbol
+		LIMIT :chunk_size
 		"""
 	)
 
@@ -63,7 +71,7 @@ def iter_symbol_chunks(engine: Engine, chunk_size: int) -> Iterator[list[str]]:
 				stmt,
 				{
 					"chunk_size": chunk_size,
-					"offset": offset,
+					"last_symbol": last_symbol,
 				},
 			).fetchall()
 
@@ -72,7 +80,7 @@ def iter_symbol_chunks(engine: Engine, chunk_size: int) -> Iterator[list[str]]:
 			break
 
 		yield symbols
-		offset += chunk_size
+		last_symbol = symbols[-1]
 
 
 def load_prices_for_chunk(

@@ -118,6 +118,7 @@ python -m dataIntegrityEngine.sync_earnings_calendar
 python -m dataIntegrityEngine.import_alpaca_bar
 python -m dataIntegrityEngine.data_sanitizer_daily
 python -m dataIntegrityEngine.update_sector --limit 50 --sleep-seconds 1.1 --log-every 10
+python -m screener.stock_screener --chunk-size 500 --max-workers 8
 python -m dataIntegrityEngine.sync_latest_quotes
 python -m dataIntegrityEngine.sync_earnings_calendar
 ```
@@ -125,7 +126,6 @@ python -m dataIntegrityEngine.sync_earnings_calendar
 Puis seulement ensuite :
 
 ```powershell
-python -m screener.stock_screener --chunk-size 500 --max-workers 8
 python -m selector.alpha_scanner
 ```
 

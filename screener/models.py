@@ -7,6 +7,8 @@ class ScreenerConfig:
     chunk_size: int = 500
     liquidity_threshold_usd: float = 500_000.0
     benchmark_symbol: str = "SPY"
+    min_history_days: int = 252
+    min_close_price: float = 5.0
     lookback_liquidity_bars: int = 30
     lookback_relative_days: int = 183
     lookback_history_years: int = 10
@@ -19,6 +21,10 @@ class ScreenerConfig:
             raise ValueError("chunk_size doit être supérieur ou égal à 1.")
         if self.liquidity_threshold_usd < 0:
             raise ValueError("liquidity_threshold_usd doit être positif.")
+        if self.min_history_days < 2:
+            raise ValueError("min_history_days doit être supérieur ou égal à 2.")
+        if self.min_close_price <= 0:
+            raise ValueError("min_close_price doit être strictement positif.")
         if self.lookback_liquidity_bars < 1:
             raise ValueError("lookback_liquidity_bars doit être supérieur ou égal à 1.")
         if self.lookback_relative_days < 1:

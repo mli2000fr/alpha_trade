@@ -119,32 +119,38 @@ python -m dataIntegrityEngine.data_sanitizer_daily
 # 3. Screening initial (liquidité, force relative, range historique)
 python -m screener.stock_screener
 
-# 4. Scoring avancé Minervini/VCP + neutralisation sectorielle
+# 4. Sync latest quotes pour le filtre de spread aval
+python -m dataIntegrityEngine.sync_latest_quotes
+
+# 5. Sync earnings calendar pour le blackout résultats aval
+python -m dataIntegrityEngine.sync_earnings_calendar
+
+# 6. Scoring avancé Minervini/VCP + neutralisation sectorielle
 python -m selector.alpha_scanner
 
-# 5. Pipeline news FinBERT + agrégats ticker/secteur
+# 7. Pipeline news FinBERT + agrégats ticker/secteur
 python -m event_sentiment
 
-# 6. Fusion quant + sentiment + macro → score final
+# 8. Fusion quant + sentiment + macro → score final
 python -m event_sentiment.signal_aggregator
 
-# 7. Entraînement LSTM (périodique — hebdomadaire recommandé)
+# 9. Entraînement LSTM (périodique — hebdomadaire recommandé)
 python -m modelFactory --mode train
 
-# 8. Prédiction LSTM → predicted_proba (quotidien)
+# 10. Prédiction LSTM → predicted_proba (quotidien)
 python -m modelFactory --mode predict
 
-# 9. Calcul du portefeuille cible (sizing, contraintes, circuit breaker)
+# 11. Calcul du portefeuille cible (sizing, contraintes, circuit breaker)
 python -m risk_management.run_risk --account-equity 100000
 
-# 10. Exécution des ordres (simulate | paper | live)
+# 12. Exécution des ordres (simulate | paper | live)
 python run_execution.py simulate
 
-# 11. Sync corporate actions — uniquement les symboles détenus en portefeuille
+# 13. Sync corporate actions — uniquement les symboles détenus en portefeuille
 #     (re-interroge Alpaca à chaque fois — pas de --skip-existing)
 python -m corporate_actions sync --portfolio-only
 
-# 12. Application des dividendes/splits sur les positions existantes
+# 14. Application des dividendes/splits sur les positions existantes
 python -m corporate_actions apply
 ```
 
@@ -155,15 +161,17 @@ python -m corporate_actions apply
 | 1 | `import_alpaca_bar` | Import barres OHLCV journalières Alpaca |
 | 2 | `data_sanitizer_daily` | Nettoyage, alignement calendrier, détection anomalies |
 | 3 | `stock_screener` | Scores liquidité / force relative / range |
-| 4 | `alpha_scanner` | Ranking Minervini/VCP, neutralisation sectorielle |
-| 5 | `event_sentiment` | News → FinBERT → features sentiment |
-| 6 | `signal_aggregator` | Fusion quant (75%) + sentiment (15%) + macro (10%) |
-| 7 | `modelFactory --mode train` | Entraînement LSTM+Attention *(périodique)* |
-| 8 | `modelFactory --mode predict` | Inférence → `predicted_proba` *(quotidien)* |
-| 9 | `run_risk` | Portefeuille cible, sizing ATR/Kelly, conviction ML+quant |
-| 10 | `run_execution.py` | Soumission ordres + snapshot positions broker |
-| 11 | `corporate_actions sync --portfolio-only` | Sync CA uniquement pour les positions détenues |
-| 12 | `corporate_actions apply` | Crédit dividendes + ajustement qty/cost basis splits |
+| 4 | `sync_latest_quotes` | Snapshot bid/ask pour le filtre de spread aval |
+| 5 | `sync_earnings_calendar` | Calendrier earnings pour blackout résultats |
+| 6 | `alpha_scanner` | Ranking Minervini/VCP, neutralisation sectorielle |
+| 7 | `event_sentiment` | News → FinBERT → features sentiment |
+| 8 | `signal_aggregator` | Fusion quant (75%) + sentiment (15%) + macro (10%) |
+| 9 | `modelFactory --mode train` | Entraînement LSTM+Attention *(périodique)* |
+| 10 | `modelFactory --mode predict` | Inférence → `predicted_proba` *(quotidien)* |
+| 11 | `run_risk` | Portefeuille cible, sizing ATR/Kelly, conviction ML+quant |
+| 12 | `run_execution.py` | Soumission ordres + snapshot positions broker |
+| 13 | `corporate_actions sync --portfolio-only` | Sync CA uniquement pour les positions détenues |
+| 14 | `corporate_actions apply` | Crédit dividendes + ajustement qty/cost basis splits |
 
 > **Pourquoi sync en étape 11 et non au début ?**  
 > `sync --portfolio-only` lit la liste des positions depuis `broker_positions_snapshots`, table qui n'est alimentée qu'après `run_execution` (étape 10). Le placer avant rendrait le périmètre de sync inexact (positions d'hier) ou vide (premier run).

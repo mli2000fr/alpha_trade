@@ -90,7 +90,7 @@ python -m screener.stock_screener --benchmark SPY
 
 1. résout le nombre de workers ;
 2. charge le rendement 6 mois du benchmark ;
-3. parcourt l'univers par chunks ;
+3. parcourt l'univers éligible (`stock_metadata` actif/tradable/us_equity + historique exploitable) par chunks ;
 4. exécute les calculs en `ProcessPoolExecutor` ;
 5. concatène les résultats ;
 6. écrit un snapshot dans `stock_scores`.
@@ -104,13 +104,22 @@ python -m screener.stock_screener --benchmark SPY
 - `historical_range_score`
 - `total_score`
 
+Le `total_score` est désormais un **score normalisé cross-sectionnel** (0 → 100) calculé comme combinaison pondérée de :
+
+- percentile de liquidité,
+- percentile de force relative,
+- percentile de position dans le range historique.
+
+Cela évite qu'un facteur exprimé sur une échelle différente domine artificiellement le ranking final.
+
 ### 4.3 Filtres principaux
 
 Le screener élimine notamment les symboles qui ne respectent pas :
 
 1. un seuil minimal de liquidité ;
-2. une fenêtre de données suffisante ;
-3. une référence benchmark exploitable.
+2. un historique minimal suffisant (`min_history_days`, 252 jours par défaut) ;
+3. un prix de clôture minimal (`min_close_price`, 5 USD par défaut) ;
+4. une référence benchmark exploitable.
 
 ### 4.4 Colonnes écrites
 

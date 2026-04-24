@@ -220,14 +220,18 @@ def test_upsert_scores_snapshot_accepts_legacy_last_updated_and_top_swing(monkey
 
 def test_iter_symbol_chunks_reads_from_stock_bars_daily() -> None:
     engine = _FakeEngine()
-    engine.connection.rows_queue = [[("AAA",), ("BBB",)], []]
+    engine.connection.rows_queue = [[("AAA",), ("BBB",)], [("CCC",)], []]
 
     chunks = list(db_io.iter_symbol_chunks(engine, chunk_size=2))
 
-    assert chunks == [["AAA", "BBB"]]
+    assert chunks == [["AAA", "BBB"], ["CCC"]]
     statement, params = engine.connection.executed[0]
     assert "FROM stock_bars_daily" in str(statement)
+    assert "INNER JOIN stock_metadata" in str(statement)
     assert "timeframe" not in params
+    assert params["last_symbol"] is None
+    _, next_params = engine.connection.executed[1]
+    assert next_params["last_symbol"] == "BBB"
 
 
 def test_load_prices_for_chunk_reads_daily_table_with_adjusted_close(monkeypatch) -> None:

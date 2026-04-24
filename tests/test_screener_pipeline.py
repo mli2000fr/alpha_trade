@@ -42,6 +42,7 @@ def test_compute_scores_filters_illiquid_symbols_and_sorts_descending() -> None:
     assert list(scores.columns) == RESULT_COLUMNS
     assert "BBB" not in set(scores["symbol"])
     assert list(scores["total_score"]) == sorted(scores["total_score"], reverse=True)
+    assert scores["total_score"].between(0.0, 100.0).all()
     assert scores.iloc[0]["symbol"] == "AAA"
     assert set(scores["is_candidate"]) == {0}
     assert scores["sector"].isna().all()
@@ -65,4 +66,25 @@ def test_compute_scores_returns_empty_frame_for_empty_input() -> None:
 
     assert scores.empty
     assert list(scores.columns) == RESULT_COLUMNS
+
+
+def test_compute_scores_excludes_symbols_with_insufficient_history() -> None:
+    config = ScreenerConfig(liquidity_threshold_usd=100.0, min_history_days=252)
+    prices = _make_symbol_frame("NEW", base_price=30.0, drift=0.15, volume=20_000, rows=120)
+
+    scores = compute_scores_from_prices(prices, spy_return_6m=0.03, config=config)
+
+    assert scores.empty
+    assert list(scores.columns) == RESULT_COLUMNS
+
+
+def test_compute_scores_excludes_symbols_below_min_close_price() -> None:
+    config = ScreenerConfig(liquidity_threshold_usd=100.0, min_close_price=5.0)
+    prices = _make_symbol_frame("PENNY", base_price=2.0, drift=0.05, volume=100_000, rows=400)
+
+    scores = compute_scores_from_prices(prices, spy_return_6m=0.03, config=config)
+
+    assert scores.empty
+    assert list(scores.columns) == RESULT_COLUMNS
+
 

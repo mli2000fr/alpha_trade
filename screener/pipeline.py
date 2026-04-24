@@ -24,6 +24,15 @@ def _empty_result() -> pd.DataFrame:
     return pd.DataFrame(columns=RESULT_COLUMNS)
 
 
+def _percentile_score(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.empty:
+        return pd.Series(dtype=float)
+    if numeric.notna().sum() == 0:
+        return pd.Series(np.nan, index=numeric.index, dtype=float)
+    return numeric.rank(method="average", pct=True) * 100.0
+
+
 def compute_scores_from_prices(
     prices_df: pd.DataFrame,
     spy_return_6m: float,
@@ -53,6 +62,22 @@ def compute_scores_from_prices(
         prices = prices[prices["timestamp"] <= cutoff_ts].copy()
         if prices.empty:
             return _empty_result()
+
+    history_agg = (
+        prices.groupby("symbol", as_index=False)
+        .agg(
+            history_days=("timestamp", "size"),
+            latest_close=("close_price", "last"),
+        )
+    )
+    history_eligible = history_agg[
+        (history_agg["history_days"] >= config.min_history_days)
+        & (pd.to_numeric(history_agg["latest_close"], errors="coerce") >= config.min_close_price)
+    ].copy()
+    if history_eligible.empty:
+        return _empty_result()
+
+    prices = prices[prices["symbol"].isin(history_eligible["symbol"])].copy()
 
     prices["dollar_volume"] = prices["volume"].astype(float) * prices["close_price"].astype(float)
 
@@ -125,12 +150,19 @@ def compute_scores_from_prices(
     if scored.empty:
         return _empty_result()
 
-    scored["liquidity_score"] = scored["liquidity_val"].rank(pct=True) * 100.0
+    scored["liquidity_score"] = _percentile_score(scored["liquidity_val"])
+    scored["relative_strength_score"] = _percentile_score(scored["relative_strength_index"])
+    scored["historical_range_percentile"] = _percentile_score(scored["historical_range_score"])
+    weight_sum = (
+        config.weight_liquidity
+        + config.weight_relative_strength
+        + config.weight_historical_range
+    )
     scored["total_score"] = (
         scored["liquidity_score"] * config.weight_liquidity
-        + scored["relative_strength_index"] * config.weight_relative_strength
-        + scored["historical_range_score"] * config.weight_historical_range
-    )
+        + scored["relative_strength_score"] * config.weight_relative_strength
+        + scored["historical_range_percentile"] * config.weight_historical_range
+    ) / weight_sum
     calculated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     scored["last_updated_score"] = calculated_at
     scored["is_candidate"] = 0
