@@ -272,6 +272,7 @@ def test_load_recent_prices_for_chunk_uses_first_pass_window(monkeypatch) -> Non
 
 def test_load_historical_range_stats_for_symbols_uses_aggregates(monkeypatch) -> None:
     captured: dict[str, object] = {}
+    as_of_date = date(2026, 4, 24)
 
     monkeypatch.setattr(
         pd,
@@ -279,12 +280,13 @@ def test_load_historical_range_stats_for_symbols_uses_aggregates(monkeypatch) ->
         lambda stmt, engine, params=None: captured.update({"stmt": stmt, "params": params}) or pd.DataFrame(),
     )
 
-    config = SimpleNamespace(lookback_history_years=10)
-    db_io.load_historical_range_stats_for_symbols(object(), ["AAA", "BBB"], config)
+    config = SimpleNamespace(historical_range_lookback_days=504)
+    db_io.load_historical_range_stats_for_symbols(object(), ["AAA", "BBB"], config, as_of_date=as_of_date)
 
     assert "MIN(low) AS hist_low" in str(captured["stmt"])
     assert "MAX(high) AS hist_high" in str(captured["stmt"])
     assert "GROUP BY symbol" in str(captured["stmt"])
+    assert captured["params"]["cutoff_lower"] == as_of_date - timedelta(days=504)
 
 
 def test_load_spy_return_6m_reads_daily_table(monkeypatch) -> None:

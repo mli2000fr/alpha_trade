@@ -309,6 +309,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--chunk-size", type=int, default=500, help="Taille des chunks de symboles")
     parser.add_argument("--max-workers", type=int, default=None, help="Nombre de processus")
     parser.add_argument("--benchmark", type=str, default="SPY", help="Symbole benchmark")
+    parser.add_argument("--liquidity-threshold-usd", type=float, default=10_000_000.0, help="Seuil minimal de liquidité moyenne en dollars")
+    parser.add_argument("--min-relative-strength-index", type=float, default=100.0, help="Force relative minimale vs benchmark")
+    parser.add_argument("--historical-range-lookback-days", type=int, default=504, help="Fenêtre calendaire du range historique utilisé pour scorer la proximité des highs")
+    parser.add_argument("--min-historical-range-score", type=float, default=70.0, help="Score minimal de position dans le range historique")
     parser.add_argument("--first-pass-window-days", type=int, default=400, help="Fenêtre calendaire chargée en passe 1")
     parser.add_argument("--disable-two-pass-loading", action="store_true", help="Désactive le chargement en 2 passes")
     return parser
@@ -324,6 +328,10 @@ def main() -> None:
     config = ScreenerConfig(
         chunk_size=args.chunk_size,
         benchmark_symbol=args.benchmark,
+        liquidity_threshold_usd=args.liquidity_threshold_usd,
+        min_relative_strength_index=args.min_relative_strength_index,
+        historical_range_lookback_days=args.historical_range_lookback_days,
+        min_historical_range_score=args.min_historical_range_score,
         enable_two_pass_loading=not args.disable_two_pass_loading,
         first_pass_window_days=args.first_pass_window_days,
     )

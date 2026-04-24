@@ -5,16 +5,19 @@ from typing import Any
 @dataclass(frozen=True, slots=True)
 class ScreenerConfig:
     chunk_size: int = 500
-    liquidity_threshold_usd: float = 500_000.0
+    liquidity_threshold_usd: float = 10_000_000.0
     benchmark_symbol: str = "SPY"
     min_history_days: int = 252
     min_close_price: float = 5.0
     lookback_liquidity_bars: int = 30
     lookback_relative_days: int = 183
     lookback_history_years: int = 10
-    weight_liquidity: float = 0.2
-    weight_relative_strength: float = 0.4
-    weight_historical_range: float = 0.4
+    historical_range_lookback_days: int = 504
+    min_relative_strength_index: float = 100.0
+    min_historical_range_score: float = 70.0
+    weight_liquidity: float = 0.15
+    weight_relative_strength: float = 0.55
+    weight_historical_range: float = 0.30
     enable_two_pass_loading: bool = True
     first_pass_window_days: int = 400
 
@@ -33,8 +36,14 @@ class ScreenerConfig:
             raise ValueError("lookback_relative_days doit être supérieur ou égal à 1.")
         if self.lookback_history_years < 1:
             raise ValueError("lookback_history_years doit être supérieur ou égal à 1.")
-        if self.first_pass_window_days < self.lookback_relative_days:
-            raise ValueError("first_pass_window_days doit couvrir au minimum lookback_relative_days.")
+        if self.historical_range_lookback_days < 2:
+            raise ValueError("historical_range_lookback_days doit être supérieur ou égal à 2.")
+        if self.min_relative_strength_index <= 0:
+            raise ValueError("min_relative_strength_index doit être strictement positif.")
+        if not 0.0 <= self.min_historical_range_score <= 100.0:
+            raise ValueError("min_historical_range_score doit être compris entre 0 et 100.")
+        if self.first_pass_window_days < max(self.lookback_relative_days, self.min_history_days):
+            raise ValueError("first_pass_window_days doit couvrir au minimum lookback_relative_days et min_history_days.")
 
         weights = (
             self.weight_liquidity,

@@ -139,6 +139,9 @@ def screen_recent_prices(
     )
     rel_agg = rel_agg.replace([np.inf, -np.inf], np.nan).dropna(subset=["relative_strength_index"])
     p2 = p1.merge(rel_agg[["symbol", "relative_strength_index"]], on="symbol", how="inner")
+    p2 = p2[
+        pd.to_numeric(p2["relative_strength_index"], errors="coerce") >= config.min_relative_strength_index
+    ].copy()
     metrics["symbols_pass_relative_strength"] = len(p2)
     if p2.empty:
         return _empty_candidates(), metrics
@@ -155,14 +158,21 @@ def screen_recent_prices(
 def compute_historical_range_stats_from_prices(
     prices_df: pd.DataFrame,
     symbols: list[str],
+    config: ScreenerConfig,
     as_of_date: Optional[date] = None,
 ) -> pd.DataFrame:
     prices = _prepare_prices(prices_df, as_of_date=as_of_date)
     if prices.empty or not symbols:
         return _empty_historical_range()
 
+    latest_timestamp = prices["timestamp"].max()
+    cutoff_timestamp = latest_timestamp - pd.Timedelta(days=config.historical_range_lookback_days)
+
     hist_agg = (
-        prices[prices["symbol"].isin(symbols)]
+        prices[
+            prices["symbol"].isin(symbols)
+            & (prices["timestamp"] >= cutoff_timestamp)
+        ]
         .groupby("symbol", as_index=False)
         .agg(
             hist_low=("low_price", "min"),
@@ -191,6 +201,11 @@ def finalize_scores_with_historical_range(
         50.0,
     )
     hist["historical_range_score"] = hist["historical_range_score"].clip(0.0, 100.0)
+    hist = hist[
+        pd.to_numeric(hist["historical_range_score"], errors="coerce") >= config.min_historical_range_score
+    ].copy()
+    if hist.empty:
+        return _empty_result()
 
     scored = candidate_df.merge(hist[["symbol", "historical_range_score"]], on="symbol", how="inner")
     if scored.empty:
@@ -250,6 +265,7 @@ def compute_scores_from_prices(
     historical_range_df = compute_historical_range_stats_from_prices(
         prices_df,
         symbols=candidates["symbol"].astype(str).tolist(),
+        config=config,
         as_of_date=as_of_date,
     )
     return finalize_scores_with_historical_range(candidates, historical_range_df, config)

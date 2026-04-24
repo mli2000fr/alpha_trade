@@ -27,7 +27,11 @@ def _make_symbol_frame(symbol: str, base_price: float, drift: float, volume: flo
 
 
 def test_compute_scores_filters_illiquid_symbols_and_sorts_descending() -> None:
-    config = ScreenerConfig(liquidity_threshold_usd=500_000.0)
+    config = ScreenerConfig(
+        liquidity_threshold_usd=500_000.0,
+        min_relative_strength_index=90.0,
+        min_historical_range_score=0.0,
+    )
     prices = pd.concat(
         [
             _make_symbol_frame("AAA", base_price=50.0, drift=0.30, volume=25_000),
@@ -52,7 +56,7 @@ def test_compute_scores_filters_illiquid_symbols_and_sorts_descending() -> None:
 
 
 def test_compute_scores_returns_empty_frame_when_benchmark_is_invalid() -> None:
-    config = ScreenerConfig(liquidity_threshold_usd=100.0)
+    config = ScreenerConfig(liquidity_threshold_usd=100.0, min_historical_range_score=0.0)
     prices = _make_symbol_frame("AAA", base_price=50.0, drift=0.10, volume=1_000)
 
     scores = compute_scores_from_prices(prices, spy_return_6m=-1.0, config=config)
@@ -69,7 +73,7 @@ def test_compute_scores_returns_empty_frame_for_empty_input() -> None:
 
 
 def test_compute_scores_excludes_symbols_with_insufficient_history() -> None:
-    config = ScreenerConfig(liquidity_threshold_usd=100.0, min_history_days=252)
+    config = ScreenerConfig(liquidity_threshold_usd=100.0, min_history_days=252, min_historical_range_score=0.0)
     prices = _make_symbol_frame("NEW", base_price=30.0, drift=0.15, volume=20_000, rows=120)
 
     scores = compute_scores_from_prices(prices, spy_return_6m=0.03, config=config)
@@ -79,12 +83,57 @@ def test_compute_scores_excludes_symbols_with_insufficient_history() -> None:
 
 
 def test_compute_scores_excludes_symbols_below_min_close_price() -> None:
-    config = ScreenerConfig(liquidity_threshold_usd=100.0, min_close_price=5.0)
+    config = ScreenerConfig(liquidity_threshold_usd=100.0, min_close_price=5.0, min_historical_range_score=0.0)
     prices = _make_symbol_frame("PENNY", base_price=2.0, drift=0.05, volume=100_000, rows=400)
 
     scores = compute_scores_from_prices(prices, spy_return_6m=0.03, config=config)
 
     assert scores.empty
     assert list(scores.columns) == RESULT_COLUMNS
+
+
+def test_compute_scores_excludes_symbols_below_min_relative_strength() -> None:
+    config = ScreenerConfig(
+        liquidity_threshold_usd=100.0,
+        min_relative_strength_index=105.0,
+        min_historical_range_score=0.0,
+    )
+    prices = _make_symbol_frame("LAG", base_price=50.0, drift=0.01, volume=50_000, rows=400)
+
+    scores = compute_scores_from_prices(prices, spy_return_6m=0.05, config=config)
+
+    assert scores.empty
+    assert list(scores.columns) == RESULT_COLUMNS
+
+
+def test_compute_scores_uses_recent_range_window_not_full_history() -> None:
+    recent_rows = 400
+    old_rows = 400
+    old_dates = pd.bdate_range(end=datetime.now(timezone.utc) - pd.Timedelta(days=800), periods=old_rows)
+    recent_dates = pd.bdate_range(end=datetime.now(timezone.utc), periods=recent_rows)
+    old_close = np.full(old_rows, 200.0)
+    recent_close = np.linspace(90.0, 110.0, recent_rows)
+    prices = pd.DataFrame(
+        {
+            "symbol": ["AAA"] * (old_rows + recent_rows),
+            "timestamp": old_dates.tolist() + recent_dates.tolist(),
+            "close_price": np.concatenate([old_close, recent_close]),
+            "high_price": np.concatenate([old_close * 1.01, recent_close * 1.01]),
+            "low_price": np.concatenate([old_close * 0.99, recent_close * 0.99]),
+            "volume": np.full(old_rows + recent_rows, 200_000),
+        }
+    )
+    config = ScreenerConfig(
+        liquidity_threshold_usd=100.0,
+        min_relative_strength_index=90.0,
+        historical_range_lookback_days=252,
+        min_historical_range_score=80.0,
+        first_pass_window_days=800,
+    )
+
+    scores = compute_scores_from_prices(prices, spy_return_6m=0.01, config=config)
+
+    assert not scores.empty
+    assert scores.iloc[0]["historical_range_score"] >= 80.0
 
 

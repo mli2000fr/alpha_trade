@@ -176,7 +176,7 @@ def load_historical_range_stats_for_symbols(
 		return pd.DataFrame(columns=["symbol", "hist_low", "hist_high"])
 
 	ref_date = _resolve_reference_date(as_of_date)
-	cutoff_lower = ref_date - timedelta(days=365 * config.lookback_history_years + 30)
+	cutoff_lower = ref_date - timedelta(days=config.historical_range_lookback_days)
 	query = """
 		SELECT symbol,
 		       MIN(low) AS hist_low,

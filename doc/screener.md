@@ -80,6 +80,18 @@ python -m screener.stock_screener --max-workers 8
 python -m screener.stock_screener --benchmark SPY
 ```
 
+### Force relative minimale personnalisée
+
+```powershell
+python -m screener.stock_screener --min-relative-strength-index 100
+```
+
+### Fenêtre de range historique personnalisée
+
+```powershell
+python -m screener.stock_screener --historical-range-lookback-days 504 --min-historical-range-score 70
+```
+
 ### Fenêtre passe 1 personnalisée
 
 ```powershell
@@ -126,6 +138,12 @@ Le `total_score` est désormais un **score normalisé cross-sectionnel** (0 → 
 
 Cela évite qu'un facteur exprimé sur une échelle différente domine artificiellement le ranking final.
 
+Par défaut, les poids sont désormais plus orientés swing cash :
+
+- liquidité : `15%`
+- force relative : `55%`
+- position dans le range : `30%`
+
 ### 4.2 bis Performance / volumétrie
 
 Le screener charge désormais les données en **2 passes** :
@@ -142,7 +160,9 @@ Le screener élimine notamment les symboles qui ne respectent pas :
 1. un seuil minimal de liquidité ;
 2. un historique minimal suffisant (`min_history_days`, 252 jours par défaut) ;
 3. un prix de clôture minimal (`min_close_price`, 5 USD par défaut) ;
-4. une référence benchmark exploitable.
+4. une force relative minimale vs benchmark (`min_relative_strength_index`, 100 par défaut) ;
+5. une proximité suffisante des highs récents via un range borné (`historical_range_lookback_days`, 504 jours par défaut ; `min_historical_range_score`, 70 par défaut) ;
+6. une référence benchmark exploitable.
 
 ### 4.4 Colonnes écrites
 
