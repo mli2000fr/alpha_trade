@@ -27,11 +27,18 @@ def test_build_pipeline_summary_rows_exposes_latest_workflow_and_upstream_runs()
             "status": "completed",
             "run_summary": {"targeted_symbols": 3, "successful_symbols": 3},
         },
+        {
+            "run_id": "scr-1",
+            "run_kind": "step",
+            "step_key": "stock_screener",
+            "status": "completed",
+            "run_summary": {"targeted_symbols": 3, "symbols_final": 2},
+        },
     ]
 
     rows = overview._build_pipeline_summary_rows(runs)
 
-    assert list(rows["scope"]) == ["Workflow complet", "Import Alpaca Bar", "Data Sanitizer Daily"]
+    assert list(rows["scope"]) == ["Workflow complet", "Import Alpaca Bar", "Data Sanitizer Daily", "Stock Screener"]
 
 
 def test_build_screener_objective_rows_exposes_operational_leaders() -> None:

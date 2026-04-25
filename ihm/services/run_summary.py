@@ -32,6 +32,14 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Dégradés", "degraded_symbols"),
         ("Rows upsert", "upserted_rows"),
     ],
+    "stock_screener": [
+        ("Cibles", "targeted_symbols"),
+        ("Final", "symbols_final"),
+        ("Pass hist.", "symbols_pass_history"),
+        ("Pass liq.", "symbols_pass_liquidity"),
+        ("Pass RS", "symbols_pass_relative_strength"),
+        ("Chunks KO", "chunk_failures"),
+    ],
     "sync_latest_quotes": [
         ("Symboles", "symbols"),
         ("Rows upsert", "rows_upserted"),

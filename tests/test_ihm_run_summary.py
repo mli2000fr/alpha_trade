@@ -135,6 +135,29 @@ def test_build_run_summary_caption_uses_harmonized_labels_for_execution_and_corp
     assert "ignorés=1" in apply_caption
 
 
+def test_build_run_summary_caption_uses_screener_metrics_mapping() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "stock_screener",
+            "run_summary": {
+                "targeted_symbols": 1200,
+                "symbols_final": 140,
+                "symbols_pass_history": 800,
+                "symbols_pass_liquidity": 300,
+                "symbols_pass_relative_strength": 180,
+                "chunk_failures": 0,
+                "rows_avoided_estimate": 250000,
+            },
+        }
+    )
+
+    assert "cibles=1200" in caption
+    assert "final=140" in caption
+    assert "pass hist.=800" in caption
+    assert "pass liq.=300" in caption
+    assert "pass rs=180" in caption
+
+
 def test_build_latest_run_summary_rows_preserves_scope_order_and_filters_missing_summaries() -> None:
     rows = build_latest_run_summary_rows(
         [

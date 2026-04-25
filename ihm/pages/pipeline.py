@@ -22,6 +22,14 @@ from ihm.services.pipeline_runner import (
     DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY,
     DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS,
     DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE,
+    DEFAULT_SCREENER_BENCHMARK_SYMBOL,
+    DEFAULT_SCREENER_CHUNK_SIZE,
+    DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING,
+    DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS,
+    DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS,
+    DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD,
+    DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE,
+    DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX,
     PipelineLaunchOptions,
     build_pipeline_command,
     format_command_for_display,
@@ -439,6 +447,96 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "(`min_close=10`, `ADV20>=30M`, `RS>=100`, `close>MA200`, `high52w>=75%`, `weekly=1.0`, `ATR 1.5%-6%`)."
         )
 
+        st.markdown("#### Paramètres Screener")
+        st.caption(
+            "Ces réglages reflètent les options réellement disponibles côté `screener.stock_screener`. "
+            "`0` sur `max workers` signifie : auto (`os.cpu_count()`)."
+        )
+
+        screener_col1, screener_col2, screener_col3 = st.columns(3)
+        with screener_col1:
+            screener_chunk_size = int(
+                st.number_input(
+                    "Screener — taille de chunk",
+                    min_value=1,
+                    value=int(st.session_state.get("pipeline_screener_chunk_size", DEFAULT_SCREENER_CHUNK_SIZE)),
+                    step=50,
+                    key="pipeline_screener_chunk_size",
+                )
+            )
+            screener_max_workers = int(
+                st.number_input(
+                    "Screener — max workers (0 = auto)",
+                    min_value=0,
+                    value=int(st.session_state.get("pipeline_screener_max_workers", 0)),
+                    step=1,
+                    key="pipeline_screener_max_workers",
+                )
+            )
+            screener_benchmark_symbol = str(
+                st.text_input(
+                    "Screener — benchmark",
+                    value=str(st.session_state.get("pipeline_screener_benchmark_symbol", DEFAULT_SCREENER_BENCHMARK_SYMBOL)),
+                    key="pipeline_screener_benchmark_symbol",
+                )
+            ).strip().upper()
+        with screener_col2:
+            screener_liquidity_threshold_usd = float(
+                st.number_input(
+                    "Screener — liquidité mini (USD)",
+                    min_value=0.0,
+                    value=float(st.session_state.get("pipeline_screener_liquidity_threshold_usd", DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD)),
+                    step=1_000_000.0,
+                    format="%.2f",
+                    key="pipeline_screener_liquidity_threshold_usd",
+                )
+            )
+            screener_min_relative_strength_index = float(
+                st.number_input(
+                    "Screener — RS mini vs benchmark",
+                    min_value=0.01,
+                    value=float(st.session_state.get("pipeline_screener_min_relative_strength_index", DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX)),
+                    step=1.0,
+                    format="%.2f",
+                    key="pipeline_screener_min_relative_strength_index",
+                )
+            )
+            screener_enable_two_pass_loading = st.checkbox(
+                "Screener — activer le chargement en 2 passes",
+                value=bool(st.session_state.get("pipeline_screener_enable_two_pass_loading", DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING)),
+                key="pipeline_screener_enable_two_pass_loading",
+            )
+        with screener_col3:
+            screener_historical_range_lookback_days = int(
+                st.number_input(
+                    "Screener — fenêtre range historique (jours)",
+                    min_value=2,
+                    value=int(st.session_state.get("pipeline_screener_historical_range_lookback_days", DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS)),
+                    step=21,
+                    key="pipeline_screener_historical_range_lookback_days",
+                )
+            )
+            screener_min_historical_range_score = float(
+                st.number_input(
+                    "Screener — score mini range historique",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(st.session_state.get("pipeline_screener_min_historical_range_score", DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE)),
+                    step=1.0,
+                    format="%.2f",
+                    key="pipeline_screener_min_historical_range_score",
+                )
+            )
+            screener_first_pass_window_days = int(
+                st.number_input(
+                    "Screener — fenêtre passe 1 (jours)",
+                    min_value=252,
+                    value=int(st.session_state.get("pipeline_screener_first_pass_window_days", DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS)),
+                    step=21,
+                    key="pipeline_screener_first_pass_window_days",
+                )
+            )
+
         st.markdown("#### Paramètres Data Integrity")
         st.caption(
             "Ces réglages reflètent les options réellement disponibles côté `dataIntegrityEngine` pour les étapes quotes, earnings et fondamentaux. "
@@ -584,6 +682,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_champion_selection_metric=cast(Any, ml_champion_selection_metric),
             ml_optimize_thresholds=bool(ml_optimize_thresholds),
             ml_optimize_target=bool(ml_optimize_target),
+            screener_chunk_size=int(screener_chunk_size),
+            screener_max_workers=_to_optional_positive_int(screener_max_workers),
+            screener_benchmark_symbol=screener_benchmark_symbol or DEFAULT_SCREENER_BENCHMARK_SYMBOL,
+            screener_liquidity_threshold_usd=float(screener_liquidity_threshold_usd),
+            screener_min_relative_strength_index=float(screener_min_relative_strength_index),
+            screener_historical_range_lookback_days=int(screener_historical_range_lookback_days),
+            screener_min_historical_range_score=float(screener_min_historical_range_score),
+            screener_first_pass_window_days=int(screener_first_pass_window_days),
+            screener_enable_two_pass_loading=bool(screener_enable_two_pass_loading),
             data_integrity_quotes_limit=_to_optional_positive_int(data_integrity_quotes_limit),
             data_integrity_quotes_batch_size=int(data_integrity_quotes_batch_size),
             data_integrity_earnings_from_date=effective_earnings_from_date,
