@@ -1,6 +1,8 @@
 """ihm/pages/screening.py — Consultation des scores stock_scores."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -19,13 +21,19 @@ from ihm.services.screener_preferences import (
     load_persisted_selected_screener_artifacts_dir,
     save_persisted_selected_screener_artifacts_dir,
 )
-from ihm.services.screener_recommendations import load_screener_recommendation_report
+from ihm.services.screener_recommendations import (
+    list_screener_csv_files,
+    load_screener_csv_preview,
+    load_screener_recommendation_report,
+)
 from ihm.services.db import db_available
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
 from ihm.services.run_summary import build_latest_run_summary_rows
 from ihm.services.queries import get_stock_scores
 
 SCREENER_ARTIFACT_SELECTBOX_KEY = "screening_screener_artifacts_dir_select"
+SCREENER_CSV_PREVIEW_SELECTBOX_KEY = "screening_screener_csv_preview_select"
+SCREENER_CSV_PREVIEW_ROWS_KEY = "screening_screener_csv_preview_rows"
 
 
 def _merge_pipeline_runs() -> list[dict[str, object]]:
@@ -92,7 +100,31 @@ def _build_artifact_history_dataframe(history_entries: list[dict[str, object]]) 
     return pd.DataFrame(rows)
 
 
-def _render_screener_artifact_selector() -> str:
+def _format_csv_preview_option(file_info: dict[str, object]) -> str:
+    return "{} | lignes={} | {}".format(
+        str(file_info.get("label") or file_info.get("key") or "csv"),
+        file_info.get("row_count") if file_info.get("row_count") is not None else "?",
+        str(file_info.get("size_label") or "—"),
+    )
+
+
+def _build_csv_preview_inventory_dataframe(files: list[dict[str, object]]) -> pd.DataFrame:
+    if not files:
+        return pd.DataFrame()
+    frame = pd.DataFrame(files)
+    column_labels = {
+        "label": "Fichier",
+        "row_count": "Lignes",
+        "size_label": "Taille",
+        "path": "Chemin",
+    }
+    available_columns = [column for column in column_labels if column in frame.columns]
+    if not available_columns:
+        return pd.DataFrame()
+    return frame.loc[:, available_columns].rename(columns=column_labels)
+
+
+def _render_screener_artifact_selector() -> tuple[str, dict[str, object]]:
     st.subheader("🗂️ Source d'artefacts screener")
     st.caption(
         "Sélectionne ici le dossier d'artefacts screener à explorer. La sélection est partagée avec la vue `Overview`."
@@ -126,11 +158,90 @@ def _render_screener_artifact_selector() -> str:
         f"MAJ : {selected_entry.get('updated_at_label', 'inconnue')}"
     )
 
-    history_df = _build_artifact_history_dataframe(history_entries)
+    history_df = _build_artifact_history_dataframe(list(entry_map.values()))
     if not history_df.empty:
         with st.expander("🗃️ Historique global des répertoires screener", expanded=False):
             st.dataframe(history_df, use_container_width=True, hide_index=True)
-    return selected_dir
+    return selected_dir, selected_entry
+
+
+def _render_screener_csv_preview(artifacts_dir: str, selected_entry: dict[str, object]) -> None:
+    st.subheader("🔎 Exploration détaillée des CSV screener")
+    st.caption(
+        "Prévisualisation bornée des CSV du répertoire screener sélectionné dans l'historique global."
+    )
+    summary = selected_entry.get("summary") if isinstance(selected_entry.get("summary"), dict) else None
+    available_files = list_screener_csv_files(artifacts_dir, summary=summary)
+    if not available_files:
+        st.info("Aucun CSV screener prévisualisable détecté dans le répertoire sélectionné.")
+        return
+
+    file_map = {str(file_info.get("key") or ""): file_info for file_info in available_files}
+    available_keys = [str(file_info.get("key") or "") for file_info in available_files]
+    selected_file_key = str(st.session_state.get(SCREENER_CSV_PREVIEW_SELECTBOX_KEY, "") or "")
+    if selected_file_key not in available_keys:
+        selected_file_key = available_keys[0]
+        st.session_state[SCREENER_CSV_PREVIEW_SELECTBOX_KEY] = selected_file_key
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        selected_file_key = st.selectbox(
+            "CSV à explorer",
+            options=available_keys,
+            format_func=lambda value: _format_csv_preview_option(file_map[value]),
+            index=available_keys.index(selected_file_key),
+            key=SCREENER_CSV_PREVIEW_SELECTBOX_KEY,
+        )
+    with col2:
+        preview_rows = st.number_input(
+            "Lignes à prévisualiser",
+            min_value=10,
+            max_value=500,
+            value=int(st.session_state.get(SCREENER_CSV_PREVIEW_ROWS_KEY, 100)),
+            step=10,
+            key=SCREENER_CSV_PREVIEW_ROWS_KEY,
+            help="Lecture bornée pour éviter de charger tout le CSV en mémoire dans l'IHM.",
+        )
+
+    preview = load_screener_csv_preview(
+        artifacts_dir,
+        file_key=selected_file_key,
+        max_rows=int(preview_rows),
+        summary=summary,
+    )
+    selected_file = preview.get("selected_file")
+    if isinstance(selected_file, dict):
+        st.caption(
+            f"Fichier actif : `{selected_file.get('path', '')}` · lignes totales : {selected_file.get('row_count', '—')} · taille : {selected_file.get('size_label', '—')}"
+        )
+
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    metric_col1.metric("Lignes previewées", int(preview.get("preview_rows") or 0))
+    metric_col2.metric("Lignes totales", preview.get("total_rows") if preview.get("total_rows") is not None else "—")
+    metric_col3.metric("Colonnes", int(preview.get("column_count") or 0))
+
+    inventory_df = _build_csv_preview_inventory_dataframe(preview.get("available_files") if isinstance(preview.get("available_files"), list) else [])
+    if not inventory_df.empty:
+        with st.expander("📁 Inventaire des CSV prévisualisables", expanded=False):
+            st.dataframe(inventory_df, use_container_width=True, hide_index=True)
+
+    preview_df = preview.get("preview_df")
+    if isinstance(preview_df, pd.DataFrame) and not preview_df.empty:
+        st.dataframe(preview_df, use_container_width=True, hide_index=True, height=320)
+        if bool(preview.get("truncated")):
+            st.caption(
+                f"Prévisualisation limitée aux {preview.get('max_rows')} premières ligne(s)."
+            )
+    elif isinstance(selected_file, dict):
+        path = Path(str(selected_file.get("path") or ""))
+        if path.exists() and path.is_file():
+            st.info("Le CSV sélectionné ne contient aucune ligne de données à prévisualiser.")
+
+    errors = preview.get("errors")
+    if isinstance(errors, list) and errors:
+        with st.expander("ℹ️ Détails de lecture de la preview CSV", expanded=False):
+            for error in errors:
+                st.caption(f"- {error}")
 
 
 def _render_objective_recommendations(artifacts_dir: str) -> None:
@@ -200,8 +311,9 @@ def render() -> None:
         st.subheader("🛡️ Contexte pipeline & qualité amont")
         show_dataframe(quality_rows)
 
-    selected_artifacts_dir = _render_screener_artifact_selector()
+    selected_artifacts_dir, selected_artifacts_entry = _render_screener_artifact_selector()
     _render_objective_recommendations(selected_artifacts_dir)
+    _render_screener_csv_preview(selected_artifacts_dir, selected_artifacts_entry)
 
     # --- Filtres ---
     st.subheader("Filtres")

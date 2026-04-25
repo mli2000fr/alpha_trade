@@ -97,3 +97,33 @@ def test_build_artifact_history_dataframe_exposes_global_screener_inventory() ->
     assert history_df.iloc[0]["Répertoire"] == "artifacts/screener_a"
 
 
+def test_build_csv_preview_inventory_dataframe_exposes_csv_inventory() -> None:
+    inventory_df = screening._build_csv_preview_inventory_dataframe(
+        [
+            {
+                "label": "summary_metrics.csv",
+                "row_count": 12,
+                "size_label": "1.2 Ko",
+                "path": "C:/tmp/screener/summary_metrics.csv",
+            }
+        ]
+    )
+
+    assert list(inventory_df.columns) == ["Fichier", "Lignes", "Taille", "Chemin"]
+    assert inventory_df.iloc[0]["Fichier"] == "summary_metrics.csv"
+
+
+def test_format_csv_preview_option_includes_label_lines_and_size() -> None:
+    label = screening._format_csv_preview_option(
+        {
+            "label": "daily_metrics.csv",
+            "row_count": 240,
+            "size_label": "12.3 Ko",
+        }
+    )
+
+    assert "daily_metrics.csv" in label
+    assert "240" in label
+    assert "12.3 Ko" in label
+
+

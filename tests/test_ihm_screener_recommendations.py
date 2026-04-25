@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from ihm.services.screener_recommendations import build_screener_artifact_summary, load_screener_recommendation_report
+from ihm.services.screener_recommendations import (
+    build_screener_artifact_summary,
+    list_screener_csv_files,
+    load_screener_csv_preview,
+    load_screener_recommendation_report,
+)
 def test_load_screener_recommendation_report_reads_phase7_artifacts(tmp_path: Path) -> None:
     (tmp_path / "metadata.json").write_text(
         json.dumps(
@@ -177,5 +182,33 @@ def test_build_screener_artifact_summary_exposes_file_inventory_and_best_comprom
     assert summary["objective_count"] == 1
     assert summary["best_compromise"]["scenario_name"] == "steady"
     assert any(file["label"] == "summary_metrics.csv" and file["row_count"] == 2 for file in summary["files"])
+
+
+def test_list_screener_csv_files_and_load_preview_limit_rows(tmp_path: Path) -> None:
+    pd.DataFrame(
+        [
+            {"scenario_name": "baseline", "days_evaluated": 2},
+            {"scenario_name": "steady", "days_evaluated": 2},
+            {"scenario_name": "offensive", "days_evaluated": 2},
+        ]
+    ).to_csv(tmp_path / "summary_metrics.csv", index=False)
+    pd.DataFrame(
+        [
+            {"trade_date": "2026-04-01", "scenario_name": "baseline"},
+            {"trade_date": "2026-04-02", "scenario_name": "steady"},
+        ]
+    ).to_csv(tmp_path / "daily_metrics.csv", index=False)
+
+    summary = build_screener_artifact_summary(tmp_path)
+    csv_files = list_screener_csv_files(tmp_path, summary=summary)
+    preview = load_screener_csv_preview(tmp_path, file_key="summary_metrics", max_rows=2, summary=summary)
+
+    assert [file_info["key"] for file_info in csv_files] == ["summary_metrics", "daily_metrics"]
+    assert preview["available"] is True
+    assert preview["selected_file"]["key"] == "summary_metrics"
+    assert preview["preview_rows"] == 2
+    assert preview["total_rows"] == 3
+    assert preview["truncated"] is True
+    assert list(preview["preview_df"]["scenario_name"]) == ["baseline", "steady"]
 
 

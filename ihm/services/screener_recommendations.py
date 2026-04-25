@@ -439,13 +439,111 @@ def build_screener_artifact_summary(artifacts_dir: Path | str | None = None) -> 
     }
 
 
+def list_screener_csv_files(
+    artifacts_dir: Path | str | None = None,
+    *,
+    summary: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    resolved_summary = summary if isinstance(summary, dict) else build_screener_artifact_summary(artifacts_dir)
+    files = resolved_summary.get("files")
+    if not isinstance(files, list):
+        return []
+    return [
+        file_info
+        for file_info in files
+        if isinstance(file_info, dict) and bool(file_info.get("exists")) and str(file_info.get("kind", "")).lower() == "csv"
+    ]
+
+
+def load_screener_csv_preview(
+    artifacts_dir: Path | str | None = None,
+    *,
+    file_key: str | None = None,
+    max_rows: int = 100,
+    summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    resolved_summary = summary if isinstance(summary, dict) else build_screener_artifact_summary(artifacts_dir)
+    root = get_screener_artifacts_dir(artifacts_dir or resolved_summary.get("artifacts_dir"))
+    available_files = list_screener_csv_files(root, summary=resolved_summary)
+    errors = [str(error) for error in resolved_summary.get("errors", []) if str(error).strip()]
+    bounded_rows = max(1, min(int(max_rows), 1000))
+
+    if not available_files:
+        return {
+            "artifacts_dir": str(root),
+            "available_files": [],
+            "selected_file": None,
+            "preview_df": pd.DataFrame(),
+            "preview_rows": 0,
+            "total_rows": None,
+            "column_count": 0,
+            "truncated": False,
+            "max_rows": bounded_rows,
+            "available": False,
+            "errors": errors,
+        }
+
+    selected_file = next((item for item in available_files if str(item.get("key", "")) == str(file_key or "")), available_files[0])
+    path = Path(str(selected_file.get("path") or ""))
+    if not path.exists() or not path.is_file():
+        return {
+            "artifacts_dir": str(root),
+            "available_files": available_files,
+            "selected_file": selected_file,
+            "preview_df": pd.DataFrame(),
+            "preview_rows": 0,
+            "total_rows": selected_file.get("row_count"),
+            "column_count": 0,
+            "truncated": False,
+            "max_rows": bounded_rows,
+            "available": False,
+            "errors": [*errors, f"Fichier CSV absent : `{path.name}`"],
+        }
+
+    try:
+        preview_df = pd.read_csv(path, nrows=bounded_rows)
+    except Exception as exc:  # pragma: no cover
+        return {
+            "artifacts_dir": str(root),
+            "available_files": available_files,
+            "selected_file": selected_file,
+            "preview_df": pd.DataFrame(),
+            "preview_rows": 0,
+            "total_rows": selected_file.get("row_count"),
+            "column_count": 0,
+            "truncated": False,
+            "max_rows": bounded_rows,
+            "available": False,
+            "errors": [*errors, f"Lecture impossible de `{path.name}` : {exc}"],
+        }
+
+    total_rows = selected_file.get("row_count")
+    preview_rows = len(preview_df)
+    truncated = isinstance(total_rows, int) and total_rows > preview_rows
+    return {
+        "artifacts_dir": str(root),
+        "available_files": available_files,
+        "selected_file": selected_file,
+        "preview_df": preview_df,
+        "preview_rows": preview_rows,
+        "total_rows": total_rows,
+        "column_count": len(preview_df.columns),
+        "truncated": truncated,
+        "max_rows": bounded_rows,
+        "available": True,
+        "errors": errors,
+    }
+
+
 __all__ = [
     "DEFAULT_SCREENER_ARTIFACTS_DIR",
     "OBJECTIVE_DISPLAY_ORDER",
     "SCREENER_ARTIFACT_FILE_SPECS",
     "build_screener_artifact_summary",
     "get_screener_artifacts_dir",
+    "list_screener_csv_files",
     "load_screener_recommendation_report",
+    "load_screener_csv_preview",
 ]
 
 
