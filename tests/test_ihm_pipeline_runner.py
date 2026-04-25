@@ -263,6 +263,97 @@ def test_build_pipeline_command_alpha_scanner_exposes_supported_backend_options(
     ]
 
 
+def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -> None:
+    command = build_pipeline_command("sentiment_pipeline", PipelineLaunchOptions())
+
+    assert command == [command[0], "-u", "-m", "event_sentiment"]
+
+
+def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_options() -> None:
+    command = build_pipeline_command(
+        "sentiment_pipeline",
+        PipelineLaunchOptions(
+            sentiment_start_utc="2026-04-01T00:00:00Z",
+            sentiment_end_utc="2026-04-30T23:59:59Z",
+            sentiment_symbols="msft, aapl,MSFT,nvda",
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment",
+        "--start-utc",
+        "2026-04-01T00:00:00Z",
+        "--end-utc",
+        "2026-04-30T23:59:59Z",
+        "--symbols",
+        "AAPL,MSFT,NVDA",
+    ]
+
+
+def test_build_pipeline_command_signal_aggregator_exposes_default_backend_options() -> None:
+    command = build_pipeline_command("signal_aggregator", PipelineLaunchOptions())
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment.signal_aggregator",
+        "--sentiment-weight",
+        "0.15",
+        "--macro-weight",
+        "0.1",
+        "--lookback-days",
+        "5",
+        "--min-news-count",
+        "2",
+        "--time-decay-half-life-days",
+        "2.0",
+        "--log-level",
+        "INFO",
+    ]
+
+
+def test_build_pipeline_command_signal_aggregator_exposes_supported_backend_options() -> None:
+    command = build_pipeline_command(
+        "signal_aggregator",
+        PipelineLaunchOptions(
+            trade_date="2026-04-19",
+            signal_aggregator_all_symbols=True,
+            signal_aggregator_sentiment_weight=0.2,
+            signal_aggregator_macro_weight=0.15,
+            signal_aggregator_lookback_days=7,
+            signal_aggregator_min_news_count=3,
+            signal_aggregator_time_decay_half_life_days=1.5,
+            signal_aggregator_log_level="DEBUG",
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment.signal_aggregator",
+        "--sentiment-weight",
+        "0.2",
+        "--macro-weight",
+        "0.15",
+        "--lookback-days",
+        "7",
+        "--min-news-count",
+        "3",
+        "--time-decay-half-life-days",
+        "1.5",
+        "--log-level",
+        "DEBUG",
+        "--trade-date",
+        "2026-04-19",
+        "--all-symbols",
+    ]
+
+
 def test_build_pipeline_command_selector_reference_sync_steps() -> None:
     quotes_command = build_pipeline_command(
         "sync_latest_quotes",

@@ -169,7 +169,13 @@ class EventSentimentPipeline:
             len(resolved_symbols),
         )
 
-        stats: dict[str, object] = {}
+        stats: dict[str, object] = {
+            "resolved_symbols": len(resolved_symbols),
+            "start_utc": aggregation_start.isoformat(),
+            "end_utc": end_utc.isoformat(),
+            "symbol_source": "explicit" if symbols is not None else "candidates",
+            "resume_from_checkpoints": start_utc is None,
+        }
         if resolved_symbols:
             stats["ingestion"] = self.ingestion.run(
                 start_utc=None,

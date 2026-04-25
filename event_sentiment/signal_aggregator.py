@@ -31,11 +31,13 @@ Usage typique :
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Optional, cast
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -45,6 +47,69 @@ from sqlalchemy.engine import Engine
 from common.utils import configure_root_logging
 
 LOGGER = logging.getLogger(__name__)
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _build_run_id(prefix: str) -> str:
+    return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+
+
+def _emit_run_summary(summary: dict[str, object]) -> None:
+    print(
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+        flush=True,
+    )
+
+
+def _build_cli_run_summary(
+    *,
+    config: "SentimentBoostConfig",
+    trade_date: date,
+    all_symbols: bool,
+    loaded_symbols: int,
+    updated_symbols: int,
+    enriched: pd.DataFrame,
+    started_at: datetime,
+    finished_at: datetime,
+) -> dict[str, object]:
+    signal_active_symbols = 0
+    total_news = 0
+    avg_final_score_sentiment = None
+    max_final_score_sentiment = None
+    if not enriched.empty:
+        if "signal_active" in enriched.columns:
+            signal_active_symbols = int(enriched["signal_active"].fillna(False).astype(bool).sum())
+        if "total_news" in enriched.columns:
+            total_news = int(pd.to_numeric(enriched["total_news"], errors="coerce").fillna(0).sum())
+        if "final_score_sentiment" in enriched.columns:
+            score_series = pd.to_numeric(enriched["final_score_sentiment"], errors="coerce").dropna()
+            if not score_series.empty:
+                avg_final_score_sentiment = round(float(score_series.mean()), 4)
+                max_final_score_sentiment = round(float(score_series.max()), 4)
+
+    return {
+        "run_id": _build_run_id("signal-aggregator"),
+        "trade_date": trade_date.isoformat(),
+        "all_symbols": all_symbols,
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "loaded_symbols": int(loaded_symbols),
+        "updated_symbols": int(updated_symbols),
+        "signal_active_symbols": signal_active_symbols,
+        "total_news": total_news,
+        "sentiment_weight": round(float(config.sentiment_weight), 4),
+        "macro_sector_weight": round(float(config.macro_sector_weight), 4),
+        "quant_weight": round(float(config.quant_weight), 4),
+        "lookback_days": int(config.lookback_days),
+        "min_news_count": int(config.min_news_count),
+        "avg_final_score_sentiment": avg_final_score_sentiment,
+        "max_final_score_sentiment": max_final_score_sentiment,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -789,6 +854,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from database.connection import get_sqlalchemy_engine
     engine = get_sqlalchemy_engine()
+    started_at = _utc_now_naive()
 
     # 1. Chargement des scores quantitatifs depuis stock_scores
     LOGGER.info("Chargement des scores depuis stock_scores…")
@@ -796,6 +862,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if scores_df.empty:
         LOGGER.warning("Aucun symbole trouve dans stock_scores — arret.")
+        finished_at = _utc_now_naive()
+        _emit_run_summary(
+            _build_cli_run_summary(
+                config=config,
+                trade_date=ref_date,
+                all_symbols=bool(args.all_symbols),
+                loaded_symbols=0,
+                updated_symbols=0,
+                enriched=pd.DataFrame(),
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+        )
         return 0
 
     LOGGER.info("Symboles charges : %d", len(scores_df))
@@ -806,6 +885,19 @@ def main(argv: list[str] | None = None) -> int:
 
     # 3. Persistance dans stock_scores
     saved = aggregator.save_to_db(enriched)
+    finished_at = _utc_now_naive()
+    _emit_run_summary(
+        _build_cli_run_summary(
+            config=config,
+            trade_date=ref_date,
+            all_symbols=bool(args.all_symbols),
+            loaded_symbols=len(scores_df),
+            updated_symbols=saved,
+            enriched=enriched,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+    )
     LOGGER.info(
         "=== Termine | %d symboles mis a jour dans stock_scores ===", saved
     )

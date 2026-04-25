@@ -38,6 +38,12 @@ from ihm.services.pipeline_runner import (
     DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD,
     DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE,
     DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX,
+    DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL,
+    DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS,
+    DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT,
+    DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT,
+    DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT,
+    DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS,
     DEFAULT_SELECTOR_CHUNK_SIZE,
     DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS,
     DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD,
@@ -998,6 +1004,132 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 )
             )
 
+        st.markdown("#### Paramètres Event Sentiment")
+        st.caption(
+            "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment`. "
+            "Si les symboles sont laissés vides, le backend consomme automatiquement les candidats `stock_scores.is_candidate=1`."
+        )
+
+        sentiment_col1, sentiment_col2, sentiment_col3 = st.columns(3)
+        with sentiment_col1:
+            sentiment_start_utc = str(
+                st.text_input(
+                    "Event Sentiment — start UTC",
+                    value=str(st.session_state.get("pipeline_sentiment_start_utc", "")),
+                    key="pipeline_sentiment_start_utc",
+                    help="Exemple : 2026-01-01T00:00:00Z",
+                )
+            ).strip()
+        with sentiment_col2:
+            sentiment_end_utc = str(
+                st.text_input(
+                    "Event Sentiment — end UTC",
+                    value=str(st.session_state.get("pipeline_sentiment_end_utc", "")),
+                    key="pipeline_sentiment_end_utc",
+                    help="Exemple : 2026-01-31T23:59:59Z",
+                )
+            ).strip()
+        with sentiment_col3:
+            sentiment_symbols = str(
+                st.text_input(
+                    "Event Sentiment — symboles (CSV)",
+                    value=str(st.session_state.get("pipeline_sentiment_symbols", "")),
+                    key="pipeline_sentiment_symbols",
+                    help="Exemple : AAPL,MSFT,NVDA",
+                )
+            ).strip().upper()
+
+        st.markdown("#### Paramètres Signal Aggregator")
+        st.caption(
+            "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment.signal_aggregator`. "
+            "La `trade date` réutilise le champ global situé en haut du formulaire quand il est renseigné."
+        )
+
+        signal_agg_col1, signal_agg_col2, signal_agg_col3 = st.columns(3)
+        with signal_agg_col1:
+            signal_aggregator_all_symbols = st.checkbox(
+                "Signal Aggregator — traiter tous les symboles",
+                value=bool(st.session_state.get("pipeline_signal_aggregator_all_symbols", False)),
+                key="pipeline_signal_aggregator_all_symbols",
+            )
+            signal_aggregator_log_level = cast(
+                str,
+                st.selectbox(
+                    "Signal Aggregator — niveau de log",
+                    options=["DEBUG", "INFO", "WARNING", "ERROR"],
+                    index=["DEBUG", "INFO", "WARNING", "ERROR"].index(
+                        cast(str, st.session_state.get("pipeline_signal_aggregator_log_level", DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL)).upper()
+                        if str(st.session_state.get("pipeline_signal_aggregator_log_level", DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL)).upper() in {"DEBUG", "INFO", "WARNING", "ERROR"}
+                        else DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
+                    ),
+                    key="pipeline_signal_aggregator_log_level",
+                ),
+            )
+        with signal_agg_col2:
+            signal_aggregator_sentiment_weight = float(
+                st.number_input(
+                    "Signal Aggregator — poids sentiment",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("pipeline_signal_aggregator_sentiment_weight", DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT)),
+                    step=0.01,
+                    format="%.2f",
+                    key="pipeline_signal_aggregator_sentiment_weight",
+                )
+            )
+            signal_aggregator_macro_weight = float(
+                st.number_input(
+                    "Signal Aggregator — poids macro sectoriel",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("pipeline_signal_aggregator_macro_weight", DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT)),
+                    step=0.01,
+                    format="%.2f",
+                    key="pipeline_signal_aggregator_macro_weight",
+                )
+            )
+        with signal_agg_col3:
+            signal_aggregator_lookback_days = int(
+                st.number_input(
+                    "Signal Aggregator — lookback (jours)",
+                    min_value=1,
+                    value=int(st.session_state.get("pipeline_signal_aggregator_lookback_days", DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS)),
+                    step=1,
+                    key="pipeline_signal_aggregator_lookback_days",
+                )
+            )
+            signal_aggregator_min_news_count = int(
+                st.number_input(
+                    "Signal Aggregator — news mini",
+                    min_value=1,
+                    value=int(st.session_state.get("pipeline_signal_aggregator_min_news_count", DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT)),
+                    step=1,
+                    key="pipeline_signal_aggregator_min_news_count",
+                )
+            )
+
+        signal_agg_decay_col1, signal_agg_decay_col2 = st.columns(2)
+        with signal_agg_decay_col1:
+            signal_aggregator_time_decay_half_life_days = float(
+                st.number_input(
+                    "Signal Aggregator — demi-vie décroissance (jours)",
+                    min_value=0.1,
+                    value=float(st.session_state.get("pipeline_signal_aggregator_time_decay_half_life_days", DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS)),
+                    step=0.1,
+                    format="%.2f",
+                    key="pipeline_signal_aggregator_time_decay_half_life_days",
+                )
+            )
+        with signal_agg_decay_col2:
+            derived_quant_weight = round(1.0 - signal_aggregator_sentiment_weight - signal_aggregator_macro_weight, 4)
+            if derived_quant_weight < 0:
+                st.error(
+                    "Configuration invalide côté Signal Aggregator : `poids sentiment + poids macro > 1.0`. "
+                    "Le backend rejettera ce lancement."
+                )
+            else:
+                st.info(f"Poids quantitatif implicite côté backend : `{derived_quant_weight}`")
+
         st.markdown("#### Paramètres Screener")
         st.caption(
             "Ces réglages reflètent les options réellement disponibles côté `screener.stock_screener`. "
@@ -1233,6 +1365,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_champion_selection_metric=cast(Any, ml_champion_selection_metric),
             ml_optimize_thresholds=bool(ml_optimize_thresholds),
             ml_optimize_target=bool(ml_optimize_target),
+            sentiment_start_utc=sentiment_start_utc or None,
+            sentiment_end_utc=sentiment_end_utc or None,
+            sentiment_symbols=sentiment_symbols or None,
             selector_chunk_size=int(selector_chunk_size),
             selector_selection_size=int(selector_selection_size),
             selector_max_workers=_to_optional_positive_int(selector_max_workers),
@@ -1251,6 +1386,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             selector_max_anomaly_count=int(selector_max_anomaly_count),
             selector_sector_cap_ratio=float(selector_sector_cap_ratio),
             selector_log_level=str(selector_log_level).upper(),
+            signal_aggregator_all_symbols=bool(signal_aggregator_all_symbols),
+            signal_aggregator_sentiment_weight=float(signal_aggregator_sentiment_weight),
+            signal_aggregator_macro_weight=float(signal_aggregator_macro_weight),
+            signal_aggregator_lookback_days=int(signal_aggregator_lookback_days),
+            signal_aggregator_min_news_count=int(signal_aggregator_min_news_count),
+            signal_aggregator_time_decay_half_life_days=float(signal_aggregator_time_decay_half_life_days),
+            signal_aggregator_log_level=str(signal_aggregator_log_level).upper(),
             screener_chunk_size=int(screener_chunk_size),
             screener_max_workers=_to_optional_positive_int(screener_max_workers),
             screener_benchmark_symbol=screener_benchmark_symbol or DEFAULT_SCREENER_BENCHMARK_SYMBOL,

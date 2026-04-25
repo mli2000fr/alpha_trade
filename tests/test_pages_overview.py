@@ -41,11 +41,33 @@ def test_build_pipeline_summary_rows_exposes_latest_workflow_and_upstream_runs()
             "status": "completed",
             "run_summary": {"requested_selection_size": 50, "selected_candidates": 2},
         },
+        {
+            "run_id": "sent-1",
+            "run_kind": "step",
+            "step_key": "sentiment_pipeline",
+            "status": "completed",
+            "run_summary": {"resolved_symbols": 2, "fetched_articles": 12},
+        },
+        {
+            "run_id": "agg-1",
+            "run_kind": "step",
+            "step_key": "signal_aggregator",
+            "status": "completed",
+            "run_summary": {"loaded_symbols": 2, "updated_symbols": 2},
+        },
     ]
 
     rows = overview._build_pipeline_summary_rows(runs)
 
-    assert list(rows["scope"]) == ["Workflow complet", "Import Alpaca Bar", "Data Sanitizer Daily", "Stock Screener", "Alpha Scanner"]
+    assert list(rows["scope"]) == [
+        "Workflow complet",
+        "Import Alpaca Bar",
+        "Data Sanitizer Daily",
+        "Stock Screener",
+        "Alpha Scanner",
+        "Sentiment Pipeline",
+        "Signal Aggregator",
+    ]
 
 
 def test_build_screener_objective_rows_exposes_operational_leaders() -> None:

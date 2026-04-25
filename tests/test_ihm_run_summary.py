@@ -179,6 +179,51 @@ def test_build_run_summary_caption_uses_alpha_scanner_metrics_mapping() -> None:
     assert "fill=0.36" in caption
 
 
+def test_build_run_summary_caption_uses_sentiment_pipeline_metrics_mapping() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "sentiment_pipeline",
+            "run_summary": {
+                "resolved_symbols": 25,
+                "fetched_articles": 120,
+                "landed_articles": 90,
+                "sentiment_inferred": 88,
+                "macro_rows": 12,
+                "ticker_day_rows": 40,
+                "sector_day_rows": 9,
+            },
+        }
+    )
+
+    assert "symboles=25" in caption
+    assert "fetch=120" in caption
+    assert "landed=90" in caption
+    assert "sentiments=88" in caption
+    assert "macro=12" in caption
+
+
+def test_build_run_summary_caption_uses_signal_aggregator_metrics_mapping() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "signal_aggregator",
+            "run_summary": {
+                "loaded_symbols": 18,
+                "updated_symbols": 18,
+                "signal_active_symbols": 7,
+                "total_news": 42,
+                "avg_final_score_sentiment": 0.6123,
+                "max_final_score_sentiment": 0.88,
+            },
+        }
+    )
+
+    assert "chargés=18" in caption
+    assert "maj=18" in caption
+    assert "sent. actifs=7" in caption
+    assert "news=42" in caption
+    assert "score moy.=0.6123" in caption
+
+
 def test_build_latest_run_summary_rows_preserves_scope_order_and_filters_missing_summaries() -> None:
     rows = build_latest_run_summary_rows(
         [

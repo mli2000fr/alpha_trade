@@ -242,6 +242,37 @@ Point important :
 
 L'IHM exécute donc bien `sync_latest_quotes` puis `sync_earnings_calendar` **avant** `alpha_scanner`, ce qui prépare `stock_quote_snapshots` et `stock_earnings_calendar` pour les filtres aval (`spread_bps`, `earnings_blackout`).
 
+Les étapes suivantes du workflow, `sentiment_pipeline` puis `signal_aggregator`, sont elles aussi alignées sur les points d'entrée backend :
+
+```powershell
+python -m event_sentiment ...
+python -m event_sentiment.signal_aggregator ...
+```
+
+Pour `sentiment_pipeline`, l'IHM expose désormais les options réellement supportées par `event_sentiment.cli` :
+
+- `--start-utc`
+- `--end-utc`
+- `--symbols`
+
+Pour `signal_aggregator`, l'IHM expose désormais :
+
+- `--trade-date`
+- `--all-symbols`
+- `--sentiment-weight`
+- `--macro-weight`
+- `--lookback-days`
+- `--min-news-count`
+- `--time-decay-half-life-days`
+- `--log-level`
+
+Points importants :
+
+- si `symbols` est laissé vide côté IHM, `event_sentiment` recharge automatiquement les candidats depuis `stock_scores.is_candidate = 1` ;
+- `signal_aggregator` réutilise le champ global `trade date` de la page quand il est renseigné ;
+- le poids quantitatif reste implicite et vaut `1 - sentiment_weight - macro_weight`, conformément au backend ;
+- l'IHM consomme aussi désormais les `run_summary` structurés de `sentiment_pipeline` et `signal_aggregator` pour afficher des métriques comme `resolved_symbols`, `fetched_articles`, `loaded_symbols`, `updated_symbols`, `signal_active_symbols` ou `avg_final_score_sentiment` dans `Pipeline`, `Overview` et `Screening`.
+
 La carte `Alpha Scanner` expose aussi un **diagnostic de dépendances** basé sur le contenu réel des tables SQL :
 
 - badge visuel pour `Sync Latest Quotes` et `Sync Earnings Calendar` ;

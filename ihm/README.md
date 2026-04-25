@@ -63,11 +63,15 @@ La page **🔄 Pipeline** permet désormais :
 Le bloc de paramètres expose aussi les options réellement supportées côté backend pour :
 
 - `Alpha Scanner` (`chunk-size`, `selection-size`, `max-workers`, seuils stricts de liquidité/prix/RS/ATR/spread/earnings, `sector-cap-ratio`, `log-level`) ;
+- `event_sentiment` (`start-utc`, `end-utc`, `symbols`) ;
+- `signal_aggregator` (`trade-date`, `all-symbols`, `sentiment-weight`, `macro-weight`, `lookback-days`, `min-news-count`, `time-decay-half-life-days`, `log-level`) ;
 - `sync_latest_quotes` (`limit`, `batch-size`) ;
 - `sync_earnings_calendar` (`from-date`, `to-date`, `limit`, `sleep-seconds`) ;
 - `update_sector` (`limit`, `sleep-seconds`, `log-every`).
 
 Pour `Alpha Scanner`, l'IHM transmet explicitement les valeurs affichées au launcher `python -m selector.alpha_scanner ...` afin de reproduire le profil partagé strict `STRICT_SWING_CASH_FILTERS` ou de le surcharger proprement. Dans cette UI, `0` sur `max workers` signifie **auto**.
+
+Pour `event_sentiment`, laisser les symboles vides signifie : reprendre automatiquement l'univers candidat `stock_scores.is_candidate = 1`. Pour `signal_aggregator`, la page réutilise le champ global `trade date` quand il est renseigné et calcule le poids quantitatif implicite `1 - sentiment_weight - macro_weight` comme le backend.
 
 La carte `Alpha Scanner` inclut également un diagnostic de dépendances métier pour `stock_quote_snapshots` et `stock_earnings_calendar` :
 
@@ -102,6 +106,8 @@ Quand un script écrit un résumé structuré préfixé par `::alpha_trade_run_s
 - les blocs récents de `Overview` et `Screening`.
 
 Cela couvre notamment `stock_screener` et `Alpha Scanner`, ce qui permet d'afficher côté IHM des métriques comme la taille de sélection demandée, le nombre de titres retenus, le nombre de secteurs couverts, le fill ratio ou encore le cap sectoriel utilisé.
+
+Cela couvre aussi `event_sentiment` et `signal_aggregator`, avec des métriques comme le nombre de symboles résolus, les articles fetchés/landed, les lignes de features journalières générées, le nombre de symboles mis à jour par la fusion sentiment ou encore le score sentiment moyen/max agrégé.
 
 Les logs IHM sont persistés sous `artifacts/ihm_pipeline_runs/`.
 

@@ -68,6 +68,8 @@ def _build_pipeline_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
                 {"label": "Sync Latest Quotes", "step_keys": ["sync_latest_quotes"]},
                 {"label": "Sync Earnings Calendar", "step_keys": ["sync_earnings_calendar"]},
                 {"label": "Alpha Scanner", "step_keys": ["alpha_scanner"]},
+                {"label": "Sentiment Pipeline", "step_keys": ["sentiment_pipeline"]},
+                {"label": "Signal Aggregator", "step_keys": ["signal_aggregator"]},
             ],
         )
     )

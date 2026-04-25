@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Literal
 
+from event_sentiment.config import EventSentimentConfig
+from event_sentiment.signal_aggregator import SentimentBoostConfig
 from screener.models import ScreenerConfig
 from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS
 
@@ -42,6 +44,14 @@ DEFAULT_SELECTOR_MIN_MARKET_CAP = STRICT_SWING_CASH_FILTERS.min_market_cap
 DEFAULT_SELECTOR_MIN_BETA_126 = STRICT_SWING_CASH_FILTERS.min_beta_126
 DEFAULT_SELECTOR_MAX_SPREAD_BPS = STRICT_SWING_CASH_FILTERS.max_spread_bps
 DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS = STRICT_SWING_CASH_FILTERS.earnings_blackout_days
+DEFAULT_EVENT_SENTIMENT_CONFIG = EventSentimentConfig()
+DEFAULT_SIGNAL_AGGREGATOR_CONFIG = SentimentBoostConfig()
+DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.sentiment_weight
+DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.macro_sector_weight
+DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.lookback_days
+DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.min_news_count
+DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.time_decay_half_life_days
+DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL = "INFO"
 DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE = 200
 DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS = 1.1
 DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY = 50
@@ -80,6 +90,9 @@ class PipelineLaunchOptions:
     ml_optimize_target: bool = False
     news_import_start_date: str | None = None
     news_import_end_date: str | None = None
+    sentiment_start_utc: str | None = None
+    sentiment_end_utc: str | None = None
+    sentiment_symbols: str | None = None
     screener_chunk_size: int = DEFAULT_SCREENER_CHUNK_SIZE
     screener_max_workers: int | None = None
     screener_benchmark_symbol: str = DEFAULT_SCREENER_BENCHMARK_SYMBOL
@@ -107,6 +120,13 @@ class PipelineLaunchOptions:
     selector_max_anomaly_count: int = DEFAULT_SELECTOR_MAX_ANOMALY_COUNT
     selector_sector_cap_ratio: float = DEFAULT_SELECTOR_SECTOR_CAP_RATIO
     selector_log_level: str = DEFAULT_SELECTOR_LOG_LEVEL
+    signal_aggregator_all_symbols: bool = False
+    signal_aggregator_sentiment_weight: float = DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT
+    signal_aggregator_macro_weight: float = DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT
+    signal_aggregator_lookback_days: int = DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS
+    signal_aggregator_min_news_count: int = DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT
+    signal_aggregator_time_decay_half_life_days: float = DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS
+    signal_aggregator_log_level: str = DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
     data_integrity_quotes_limit: int | None = None
     data_integrity_quotes_batch_size: int = DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE
     data_integrity_earnings_from_date: str | None = None
@@ -333,6 +353,11 @@ def _normalize_symbol(value: str | None, default: str) -> str:
     return cleaned or default
 
 
+def _normalize_symbol_list(value: str | None) -> str | None:
+    normalized = sorted({part.strip().upper() for part in (value or "").split(",") if part and part.strip()})
+    return ",".join(normalized) if normalized else None
+
+
 def is_gpu_available() -> bool:
     try:
         import torch
@@ -349,6 +374,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     account_id = (options.account_id or "").strip() or None
     news_import_start_date = _normalize_optional_date(options.news_import_start_date)
     news_import_end_date = _normalize_optional_date(options.news_import_end_date)
+    sentiment_start_utc = _normalize_optional_date(options.sentiment_start_utc)
+    sentiment_end_utc = _normalize_optional_date(options.sentiment_end_utc)
+    sentiment_symbols = _normalize_symbol_list(options.sentiment_symbols)
     earnings_from_date = _normalize_optional_date(options.data_integrity_earnings_from_date)
     earnings_to_date = _normalize_optional_date(options.data_integrity_earnings_to_date)
     screener_max_workers = options.screener_max_workers if options.screener_max_workers and options.screener_max_workers > 0 else None
@@ -493,7 +521,14 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "sentiment_pipeline":
-        return [sys.executable, "-u", "-m", "event_sentiment"]
+        command = [sys.executable, "-u", "-m", "event_sentiment"]
+        if sentiment_start_utc:
+            command.extend(["--start-utc", sentiment_start_utc])
+        if sentiment_end_utc:
+            command.extend(["--end-utc", sentiment_end_utc])
+        if sentiment_symbols:
+            command.extend(["--symbols", sentiment_symbols])
+        return command
 
     if step_key == "import_news":
         if news_import_start_date is None:
@@ -510,9 +545,28 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "signal_aggregator":
-        command = [sys.executable, "-u", "-m", "event_sentiment.signal_aggregator"]
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "event_sentiment.signal_aggregator",
+            "--sentiment-weight",
+            str(options.signal_aggregator_sentiment_weight),
+            "--macro-weight",
+            str(options.signal_aggregator_macro_weight),
+            "--lookback-days",
+            str(options.signal_aggregator_lookback_days),
+            "--min-news-count",
+            str(options.signal_aggregator_min_news_count),
+            "--time-decay-half-life-days",
+            str(options.signal_aggregator_time_decay_half_life_days),
+            "--log-level",
+            str(options.signal_aggregator_log_level or DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL).upper(),
+        ]
         if trade_date:
             command.extend(["--trade-date", trade_date])
+        if options.signal_aggregator_all_symbols:
+            command.append("--all-symbols")
         return command
 
     if step_key == "ml_train":

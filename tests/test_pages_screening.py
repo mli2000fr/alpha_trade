@@ -34,11 +34,32 @@ def test_build_quality_summary_rows_exposes_recent_pipeline_context() -> None:
             "status": "completed",
             "run_summary": {"requested_selection_size": 50, "selected_candidates": 2},
         },
+        {
+            "run_id": "sent-1",
+            "run_kind": "step",
+            "step_key": "sentiment_pipeline",
+            "status": "completed",
+            "run_summary": {"resolved_symbols": 2, "fetched_articles": 12},
+        },
+        {
+            "run_id": "agg-1",
+            "run_kind": "step",
+            "step_key": "signal_aggregator",
+            "status": "completed",
+            "run_summary": {"loaded_symbols": 2, "updated_symbols": 2},
+        },
     ]
 
     rows = screening._build_quality_summary_rows(runs)
 
-    assert list(rows["scope"]) == ["Import Alpaca Bar", "Stock Screener", "Alpha Scanner", "Workflow complet"]
+    assert list(rows["scope"]) == [
+        "Import Alpaca Bar",
+        "Stock Screener",
+        "Alpha Scanner",
+        "Sentiment Pipeline",
+        "Signal Aggregator",
+        "Workflow complet",
+    ]
 
 
 def test_build_objective_recommendation_rows_formats_phase7_snapshot() -> None:

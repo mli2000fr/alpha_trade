@@ -58,6 +58,23 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Workers", "workers"),
         ("Cap sec.", "sector_cap_ratio"),
     ],
+    "sentiment_pipeline": [
+        ("Symboles", "resolved_symbols"),
+        ("Fetch", "fetched_articles"),
+        ("Landed", "landed_articles"),
+        ("Sentiments", "sentiment_inferred"),
+        ("Macro", "macro_rows"),
+        ("Ticker jours", "ticker_day_rows"),
+        ("Secteur jours", "sector_day_rows"),
+    ],
+    "signal_aggregator": [
+        ("Chargés", "loaded_symbols"),
+        ("MAJ", "updated_symbols"),
+        ("Sent. actifs", "signal_active_symbols"),
+        ("News", "total_news"),
+        ("Score moy.", "avg_final_score_sentiment"),
+        ("Score max.", "max_final_score_sentiment"),
+    ],
     "pipeline_workflow": [
         ("Étapes résumées", "workflow_steps_with_summary"),
         ("Cibles", "targeted_symbols"),
