@@ -144,6 +144,8 @@ class SentimentBoostConfig:
     lookback_days: int = 5
     min_news_count: int = 2
     time_decay_half_life_days: float = 2.0
+    ticker_horizon_weights: tuple[tuple[int, float], ...] = ((1, 0.35), (3, 0.25), (5, 0.20), (10, 0.10), (20, 0.10))
+    sector_horizon_weights: tuple[tuple[int, float], ...] = ((1, 0.40), (3, 0.25), (5, 0.20), (10, 0.10), (20, 0.05))
 
     def __post_init__(self) -> None:
         total = self.sentiment_weight + self.macro_sector_weight + self.quant_weight
@@ -158,6 +160,26 @@ class SentimentBoostConfig:
             raise ValueError("min_news_count doit être >= 1.")
         if self.time_decay_half_life_days <= 0:
             raise ValueError("time_decay_half_life_days doit être > 0.")
+        self._validate_horizon_weights("ticker_horizon_weights", self.ticker_horizon_weights)
+        self._validate_horizon_weights("sector_horizon_weights", self.sector_horizon_weights)
+
+    @staticmethod
+    def _validate_horizon_weights(name: str, weights: tuple[tuple[int, float], ...]) -> None:
+        if not weights:
+            raise ValueError(f"{name} ne doit pas être vide.")
+        horizons = [int(horizon) for horizon, _ in weights]
+        if any(horizon < 1 for horizon in horizons):
+            raise ValueError(f"{name} doit contenir des horizons >= 1.")
+        if horizons != sorted(set(horizons)):
+            raise ValueError(f"{name} doit être trié et sans doublons.")
+        if all(float(weight) <= 0 for _, weight in weights):
+            raise ValueError(f"{name} doit contenir au moins un poids positif.")
+
+    @staticmethod
+    def _normalized_horizon_weights(weights: tuple[tuple[int, float], ...]) -> list[tuple[int, float]]:
+        positive_weights = [(int(horizon), float(weight)) for horizon, weight in weights if float(weight) > 0]
+        total = sum(weight for _, weight in positive_weights)
+        return [(horizon, weight / total) for horizon, weight in positive_weights] if total > 0 else []
 
 
 class SentimentSignalAggregator:
@@ -206,9 +228,25 @@ class SentimentSignalAggregator:
                 SELECT symbol,
                        trade_date,
                        news_count_1d,
+                       news_count_3d,
+                       news_count_5d,
+                       news_count_10d,
+                       news_count_20d,
                        sentiment_net_mean_1d,
                        sentiment_confidence_mean_1d,
-                       major_event_flag
+                       sentiment_net_mean_3d,
+                       sentiment_net_mean_5d,
+                       sentiment_net_mean_10d,
+                       sentiment_net_mean_20d,
+                       sentiment_confidence_mean_3d,
+                       sentiment_confidence_mean_5d,
+                       sentiment_confidence_mean_10d,
+                       sentiment_confidence_mean_20d,
+                       major_event_flag,
+                       major_event_day_count_3d,
+                       major_event_day_count_5d,
+                       major_event_day_count_10d,
+                       major_event_day_count_20d
                 FROM ticker_daily_sentiment_features
                 WHERE symbol IN :symbols
                   AND trade_date >= :cutoff
@@ -239,7 +277,19 @@ class SentimentSignalAggregator:
                        trade_date,
                        sector_impact_score,
                        macro_event_intensity,
-                       macro_event_flag
+                       macro_event_flag,
+                       sector_impact_score_3d,
+                       sector_impact_score_5d,
+                       sector_impact_score_10d,
+                       sector_impact_score_20d,
+                       macro_event_intensity_3d,
+                       macro_event_intensity_5d,
+                       macro_event_intensity_10d,
+                       macro_event_intensity_20d,
+                       macro_event_day_count_3d,
+                       macro_event_day_count_5d,
+                       macro_event_day_count_10d,
+                       macro_event_day_count_20d
                 FROM sector_daily_sentiment_features
                 WHERE sector IN :sectors
                   AND trade_date >= :cutoff
@@ -479,6 +529,144 @@ class SentimentSignalAggregator:
         clipped = numeric.clip(-1.0, 1.0).fillna(0.0)
         return ((clipped + 1.0) / 2.0).astype(float)
 
+    @staticmethod
+    def _numeric_value(value: object, default: float = 0.0) -> float:
+        if value is None:
+            return default
+        try:
+            if bool(pd.isna(value)):
+                return default
+        except TypeError:
+            pass
+        numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
+        if pd.isna(numeric_value):
+            return default
+        as_float = float(numeric_value)
+        return default if not np.isfinite(as_float) else as_float
+
+    @staticmethod
+    def _latest_rows_by_key(df: pd.DataFrame, key_column: str) -> pd.DataFrame:
+        if df.empty or key_column not in df.columns or "trade_date" not in df.columns:
+            return pd.DataFrame()
+        ordered = df.copy()
+        ordered["trade_date"] = pd.to_datetime(ordered["trade_date"], errors="coerce")
+        ordered = ordered.dropna(subset=[key_column, "trade_date"]).sort_values([key_column, "trade_date"])
+        if ordered.empty:
+            return pd.DataFrame()
+        return ordered.groupby(key_column, as_index=False).tail(1).reset_index(drop=True)
+
+    @classmethod
+    def _compose_horizon_signal(
+        cls,
+        row: dict[str, object],
+        *,
+        value_columns: dict[int, str],
+        horizon_weights: tuple[tuple[int, float], ...],
+        coverage_columns: dict[int, str] | None = None,
+        coverage_cap: float = 1.0,
+    ) -> float:
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for horizon, weight in SentimentBoostConfig._normalized_horizon_weights(horizon_weights):
+            column_name = value_columns.get(horizon)
+            if column_name is None or column_name not in row:
+                continue
+            signal_value = max(-1.0, min(1.0, cls._numeric_value(row.get(column_name), default=0.0)))
+            coverage = 1.0
+            if coverage_columns is not None:
+                coverage_column = coverage_columns.get(horizon)
+                coverage_raw = cls._numeric_value(row.get(coverage_column), default=0.0) if coverage_column else 0.0
+                coverage = min(max(coverage_raw, 0.0), coverage_cap)
+            effective_weight = weight * coverage
+            if effective_weight <= 0:
+                continue
+            weighted_sum += signal_value * effective_weight
+            total_weight += effective_weight
+        return weighted_sum / total_weight if total_weight > 0 else 0.0
+
+    def _aggregate_ticker_multi_horizon(self, ticker_df: pd.DataFrame) -> pd.DataFrame:
+        if ticker_df.empty:
+            return pd.DataFrame(columns=["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news", "signal_active"])
+        latest = self._latest_rows_by_key(ticker_df, "symbol")
+        if latest.empty:
+            return pd.DataFrame(columns=["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news", "signal_active"])
+
+        rows: list[dict[str, object]] = []
+        count_columns = {1: "news_count_1d", 3: "news_count_3d", 5: "news_count_5d", 10: "news_count_10d", 20: "news_count_20d"}
+        major_columns = [
+            "major_event_flag",
+            "major_event_day_count_3d",
+            "major_event_day_count_5d",
+            "major_event_day_count_10d",
+            "major_event_day_count_20d",
+        ]
+        for row in latest.to_dict(orient="records"):
+            available_count_columns = {
+                horizon: column_name
+                for horizon, column_name in count_columns.items()
+                if column_name in row
+            }
+            total_news = 0
+            if available_count_columns:
+                total_news = int(max(self._numeric_value(row.get(column_name), default=0.0) for column_name in available_count_columns.values()))
+            rows.append(
+                {
+                    "symbol": row.get("symbol"),
+                    "sentiment_net_agg": self._compose_horizon_signal(
+                        row,
+                        value_columns={
+                            1: "sentiment_net_mean_1d",
+                            3: "sentiment_net_mean_3d",
+                            5: "sentiment_net_mean_5d",
+                            10: "sentiment_net_mean_10d",
+                            20: "sentiment_net_mean_20d",
+                        },
+                        horizon_weights=self.config.ticker_horizon_weights,
+                        coverage_columns=available_count_columns,
+                        coverage_cap=float(max(self.config.min_news_count, 1)),
+                    ),
+                    "major_event_flag_agg": int(any(self._numeric_value(row.get(column_name), default=0.0) > 0 for column_name in major_columns if column_name in row)),
+                    "total_news": total_news,
+                    "signal_active": total_news >= self.config.min_news_count,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def _aggregate_sector_multi_horizon(self, sector_df: pd.DataFrame) -> pd.DataFrame:
+        if sector_df.empty:
+            return pd.DataFrame(columns=["sector", "sector_impact_agg", "macro_event_flag_agg"])
+        latest = self._latest_rows_by_key(sector_df, "sector")
+        if latest.empty:
+            return pd.DataFrame(columns=["sector", "sector_impact_agg", "macro_event_flag_agg"])
+
+        rows: list[dict[str, object]] = []
+        macro_columns = [
+            "macro_event_flag",
+            "macro_event_day_count_3d",
+            "macro_event_day_count_5d",
+            "macro_event_day_count_10d",
+            "macro_event_day_count_20d",
+        ]
+        for row in latest.to_dict(orient="records"):
+            rows.append(
+                {
+                    "sector": row.get("sector"),
+                    "sector_impact_agg": self._compose_horizon_signal(
+                        row,
+                        value_columns={
+                            1: "sector_impact_score",
+                            3: "sector_impact_score_3d",
+                            5: "sector_impact_score_5d",
+                            10: "sector_impact_score_10d",
+                            20: "sector_impact_score_20d",
+                        },
+                        horizon_weights=self.config.sector_horizon_weights,
+                    ),
+                    "macro_event_flag_agg": int(any(self._numeric_value(row.get(column_name), default=0.0) > 0 for column_name in macro_columns if column_name in row)),
+                }
+            )
+        return pd.DataFrame(rows)
+
     # ------------------------------------------------------------------
     # Point d'entrée principal
     # ------------------------------------------------------------------
@@ -535,17 +723,21 @@ class SentimentSignalAggregator:
         sector_df = self._load_sector_sentiment(sectors, ref_date) if sectors else pd.DataFrame()
 
         # --- Agrégation fenêtrée ---
-        ticker_agg = self._aggregate_ticker_window(
-            ticker_df,
-            min_news_count=self.config.min_news_count,
-            reference_date=ref_date,
-            half_life_days=self.config.time_decay_half_life_days,
-        )
-        sector_agg = self._aggregate_sector_window(
-            sector_df,
-            reference_date=ref_date,
-            half_life_days=self.config.time_decay_half_life_days,
-        )
+        ticker_agg = self._aggregate_ticker_multi_horizon(ticker_df)
+        if ticker_agg.empty:
+            ticker_agg = self._aggregate_ticker_window(
+                ticker_df,
+                min_news_count=self.config.min_news_count,
+                reference_date=ref_date,
+                half_life_days=self.config.time_decay_half_life_days,
+            )
+        sector_agg = self._aggregate_sector_multi_horizon(sector_df)
+        if sector_agg.empty:
+            sector_agg = self._aggregate_sector_window(
+                sector_df,
+                reference_date=ref_date,
+                half_life_days=self.config.time_decay_half_life_days,
+            )
 
         LOGGER.info(
             "SentimentSignalAggregator | trade_date=%s symboles=%s ticker_signaux=%s secteurs=%s",

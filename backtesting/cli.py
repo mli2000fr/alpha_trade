@@ -179,6 +179,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Horizon forward prioritaire pour l'analyse du compromis (défaut: 20)",
     )
 
+    calibrate_p = sub.add_parser(
+        "calibrate-sentiment-weights",
+        help="Calibrer les poids sentiment/macro à partir de stock_scores_history et des forward returns.",
+    )
+    calibrate_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
+    calibrate_p.add_argument("--end", required=True, help="Date de fin (YYYY-MM-DD)")
+    calibrate_p.add_argument("--top-n", type=int, default=20, help="Nombre de symboles retenus par jour pour mesurer le spread")
+    calibrate_p.add_argument("--horizons", default="5,10,20", help="Horizons forward CSV à évaluer")
+    calibrate_p.add_argument(
+        "--output-dir",
+        default="artifacts/sentiment_calibration",
+        help="Répertoire cible pour les artefacts de calibration",
+    )
+    calibrate_p.add_argument(
+        "--all-symbols",
+        action="store_true",
+        help="Utiliser tout l'univers historisé et pas seulement les candidats",
+    )
+
     return parser
 
 
@@ -886,6 +905,59 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
         _safe_print()
 
 
+def _run_calibrate_sentiment_weights(args: argparse.Namespace) -> None:
+    from datetime import datetime
+
+    from backtesting.sentiment_calibration import SentimentWeightCalibrator
+
+    start = datetime.strptime(args.start, "%Y-%m-%d").date()
+    end = datetime.strptime(args.end, "%Y-%m-%d").date()
+    horizons = tuple(int(token.strip()) for token in args.horizons.split(",") if token.strip())
+
+    _safe_print(f"\n🧪 Calibration poids sentiment : {start} → {end}")
+    _safe_print(
+        f"   horizons={','.join(str(horizon) for horizon in horizons)} top_n={args.top_n} "
+        f"all_symbols={args.all_symbols} output_dir={args.output_dir}\n"
+    )
+
+    calibrator = SentimentWeightCalibrator()
+    result, ranking_df, artifacts = calibrator.calibrate(
+        start_date=start,
+        end_date=end,
+        horizons=horizons,
+        top_n=args.top_n,
+        candidates_only=not args.all_symbols,
+        output_dir=Path(args.output_dir),
+    )
+
+    _safe_print("✅ Calibration terminée")
+    _safe_print(f"   Scénarios évalués   : {result.scenarios_evaluated}")
+    _safe_print(f"   Lignes évaluées     : {result.rows_evaluated}")
+    _safe_print(f"   Meilleur scénario   : {result.best_scenario_name}")
+    _safe_print(f"   Score global        : {result.best_overall_score:.4f}")
+    if artifacts:
+        _safe_print(f"   CSV classement      : {artifacts.get('calibration_csv')}")
+        _safe_print(f"   JSON meilleur       : {artifacts.get('best_json')}\n")
+    if not ranking_df.empty:
+        preview_columns = [
+            column
+            for column in [
+                "scenario_name",
+                "sentiment_weight",
+                "macro_weight",
+                "quant_weight",
+                "overall_score",
+                "score_5d",
+                "score_10d",
+                "score_20d",
+            ]
+            if column in ranking_df.columns
+        ]
+        _safe_print("Top scénarios calibration (aperçu):")
+        _safe_print(ranking_df.loc[:, preview_columns].head(10).to_string(index=False))
+        _safe_print()
+
+
 def main() -> None:
     configure_root_logging()
     parser = _build_parser()
@@ -899,6 +971,8 @@ def main() -> None:
         _run_screener_diagnostics(args)
     elif args.command == "recommend-screener":
         _run_screener_recommendation(args)
+    elif args.command == "calibrate-sentiment-weights":
+        _run_calibrate_sentiment_weights(args)
     else:
         parser.print_help()
         sys.exit(1)

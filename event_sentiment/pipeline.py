@@ -233,14 +233,34 @@ class EventSentimentPipeline:
 
         stats["macro_rows"] = self.repository.upsert_macro_event_audit([asdict(record) for record in macro_records])
         if impacted_trade_dates:
-            ticker_df, sector_df, macro_df = self.repository.load_feature_frames(trade_dates=impacted_trade_dates)
+            impacted_date_set = set(impacted_trade_dates)
+            feature_window_start = min(impacted_trade_dates) - timedelta(days=self.config.feature_history_buffer_days)
+            feature_window_end = max(impacted_trade_dates)
+            stats["feature_window_start"] = feature_window_start.isoformat()
+            stats["feature_window_end"] = feature_window_end.isoformat()
+            ticker_df, sector_df, macro_df = self.repository.load_feature_frames(
+                start_date=feature_window_start,
+                end_date=feature_window_end,
+            )
         else:
             ticker_df = pd.DataFrame()
             sector_df = pd.DataFrame()
             macro_df = pd.DataFrame()
 
-        ticker_features = build_ticker_daily_features(ticker_df, feature_version=self.config.feature_version)
-        sector_features = build_sector_daily_features(sector_df, macro_df, feature_version=self.config.feature_version)
+        ticker_features = build_ticker_daily_features(
+            ticker_df,
+            feature_version=self.config.feature_version,
+            rolling_windows=self.config.feature_rolling_windows,
+        )
+        sector_features = build_sector_daily_features(
+            sector_df,
+            macro_df,
+            feature_version=self.config.feature_version,
+            rolling_windows=self.config.feature_rolling_windows,
+        )
+        if impacted_trade_dates:
+            ticker_features = ticker_features[ticker_features["trade_date"].isin(impacted_date_set)].copy()
+            sector_features = sector_features[sector_features["trade_date"].isin(impacted_date_set)].copy()
         stats["ticker_day_rows"] = self.repository.upsert_ticker_daily_features(ticker_features.to_dict(orient="records"))
         stats["sector_day_rows"] = self.repository.upsert_sector_daily_features(sector_features.to_dict(orient="records"))
         LOGGER.info("Event sentiment pipeline summary | stats=%s", stats)

@@ -246,7 +246,9 @@ def test_pipeline_rerun_is_idempotent_end_to_end(monkeypatch) -> None:
     assert first_stats["impacted_trade_dates"] == ["2026-01-02"]
     assert second_stats["impacted_trade_dates"] == []
     assert len(repository.feature_frame_requests) == 1
-    assert repository.feature_frame_requests[0]["trade_dates"] == [date(2026, 1, 2)]
+    assert repository.feature_frame_requests[0]["trade_dates"] == []
+    assert repository.feature_frame_requests[0]["start_date"] == date(2025, 11, 18)
+    assert repository.feature_frame_requests[0]["end_date"] == date(2026, 1, 2)
     assert fake_ingestion.calls == 2
     assert len(fake_finbert.calls) == 2
     assert len(fake_finbert.calls[0]) == 1

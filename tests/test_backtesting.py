@@ -1129,6 +1129,27 @@ class TestCLI:
         assert args.target_horizon == 10
         assert args.baseline_name == "baseline"
 
+    def test_parse_calibrate_sentiment_weights_command(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "calibrate-sentiment-weights",
+            "--start", "2020-01-01",
+            "--end", "2025-12-31",
+            "--top-n", "15",
+            "--horizons", "5,10",
+            "--all-symbols",
+            "--output-dir", "artifacts/sentiment_calibration/run_1",
+        ])
+        assert args.command == "calibrate-sentiment-weights"
+        assert args.start == "2020-01-01"
+        assert args.end == "2025-12-31"
+        assert args.top_n == 15
+        assert args.horizons == "5,10"
+        assert args.all_symbols is True
+        assert args.output_dir == "artifacts/sentiment_calibration/run_1"
+
 
 class TestBacktestingRegistry:
     def test_start_backtesting_run_rejects_duplicate_active_kind(self, monkeypatch):

@@ -100,6 +100,31 @@ class EventSentimentRepository:
     def load_candidate_symbols(self) -> list[str]:
         return list_candidate_symbols(engine=self.engine)
 
+    def list_scored_trade_dates(
+        self,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[date]:
+        filters = ["ns.article_id = nr.article_id"]
+        params: dict[str, Any] = {}
+        if start_date is not None:
+            filters.append("nr.effective_trade_date >= :start_date")
+            params["start_date"] = start_date
+        if end_date is not None:
+            filters.append("nr.effective_trade_date <= :end_date")
+            params["end_date"] = end_date
+        stmt = text(
+            f"""
+            SELECT DISTINCT nr.effective_trade_date
+            FROM news_raw nr
+            JOIN news_sentiment ns ON {' AND '.join(filters)}
+            ORDER BY nr.effective_trade_date
+            """
+        )
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, params).scalars().all()
+        return [value for value in rows if isinstance(value, date)]
+
     def upsert_checkpoint(
         self,
         source_name: str,
