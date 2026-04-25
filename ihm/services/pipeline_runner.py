@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Callable, Literal
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE = 200
+DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS = 1.1
+DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY = 50
 
 AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
@@ -48,6 +51,15 @@ class PipelineLaunchOptions:
     ml_optimize_target: bool = False
     news_import_start_date: str | None = None
     news_import_end_date: str | None = None
+    data_integrity_quotes_limit: int | None = None
+    data_integrity_quotes_batch_size: int = DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE
+    data_integrity_earnings_from_date: str | None = None
+    data_integrity_earnings_to_date: str | None = None
+    data_integrity_earnings_limit: int | None = None
+    data_integrity_earnings_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
+    data_integrity_fundamentals_limit: int | None = None
+    data_integrity_fundamentals_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
+    data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,9 +229,32 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
 )
 
+PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
+    PipelineStepDefinition(
+        key="import_alpaca_assets",
+        num="B1",
+        name="Import univers Alpaca",
+        desc="Bootstrap / rafraîchissement de l'univers `stock_metadata` depuis Alpaca.",
+        tables="stock_metadata",
+        deps="—",
+    ),
+    PipelineStepDefinition(
+        key="update_sector",
+        num="B2",
+        name="Mise à jour fondamentaux",
+        desc="Enrichit `stock_metadata` avec `sector` et `market_cap` via Finnhub pour les symboles encore incomplets.",
+        tables="stock_metadata",
+        deps="import_alpaca_assets (recommandé) ou univers déjà chargé",
+    ),
+)
+
 
 def get_pipeline_steps() -> tuple[PipelineStepDefinition, ...]:
     return PIPELINE_STEPS
+
+
+def get_pipeline_auxiliary_steps() -> tuple[PipelineStepDefinition, ...]:
+    return PIPELINE_AUXILIARY_STEPS
 
 
 def _normalize_trade_date(value: str | None) -> str | None:
@@ -253,9 +288,32 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     account_id = (options.account_id or "").strip() or None
     news_import_start_date = _normalize_optional_date(options.news_import_start_date)
     news_import_end_date = _normalize_optional_date(options.news_import_end_date)
+    earnings_from_date = _normalize_optional_date(options.data_integrity_earnings_from_date)
+    earnings_to_date = _normalize_optional_date(options.data_integrity_earnings_to_date)
+    quotes_limit = options.data_integrity_quotes_limit if options.data_integrity_quotes_limit and options.data_integrity_quotes_limit > 0 else None
+    earnings_limit = options.data_integrity_earnings_limit if options.data_integrity_earnings_limit and options.data_integrity_earnings_limit > 0 else None
+    fundamentals_limit = options.data_integrity_fundamentals_limit if options.data_integrity_fundamentals_limit and options.data_integrity_fundamentals_limit > 0 else None
+
+    if step_key == "import_alpaca_assets":
+        return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
 
     if step_key == "import_alpaca_bar":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
+
+    if step_key == "update_sector":
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "dataIntegrityEngine.update_sector",
+            "--sleep-seconds",
+            str(options.data_integrity_fundamentals_sleep_seconds),
+            "--log-every",
+            str(options.data_integrity_fundamentals_log_every),
+        ]
+        if fundamentals_limit is not None:
+            command.extend(["--limit", str(fundamentals_limit)])
+        return command
 
     if step_key == "corporate_actions_sync":
         # --portfolio-only : sync uniquement les symboles détenus en portefeuille
@@ -272,10 +330,34 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-u", "-m", "screener.stock_screener"]
 
     if step_key == "sync_latest_quotes":
-        return [sys.executable, "-u", "-m", "dataIntegrityEngine.sync_latest_quotes"]
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "dataIntegrityEngine.sync_latest_quotes",
+            "--batch-size",
+            str(options.data_integrity_quotes_batch_size),
+        ]
+        if quotes_limit is not None:
+            command.extend(["--limit", str(quotes_limit)])
+        return command
 
     if step_key == "sync_earnings_calendar":
-        return [sys.executable, "-u", "-m", "dataIntegrityEngine.sync_earnings_calendar"]
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "dataIntegrityEngine.sync_earnings_calendar",
+            "--sleep-seconds",
+            str(options.data_integrity_earnings_sleep_seconds),
+        ]
+        if earnings_from_date:
+            command.extend(["--from-date", earnings_from_date])
+        if earnings_to_date:
+            command.extend(["--to-date", earnings_to_date])
+        if earnings_limit is not None:
+            command.extend(["--limit", str(earnings_limit)])
+        return command
 
     if step_key == "alpha_scanner":
         return [sys.executable, "-u", "-m", "selector.alpha_scanner"]

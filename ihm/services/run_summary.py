@@ -6,6 +6,10 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
+    "import_alpaca_assets": [
+        ("Assets", "assets_fetched"),
+        ("Rows upsert", "rows_upserted"),
+    ],
     "import_alpaca_bar": [
         ("Cibles", "targeted_symbols"),
         ("Succès", "successful_symbols"),
@@ -14,6 +18,12 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Err. provider", "provider_error_symbols"),
         ("Bars insérées", "inserted_bars"),
     ],
+    "update_sector": [
+        ("Cibles", "total"),
+        ("Mises à jour", "updated"),
+        ("Skip", "skipped"),
+        ("Échecs", "failed"),
+    ],
     "data_sanitizer_daily": [
         ("Cibles", "targeted_symbols"),
         ("Succès", "successful_symbols"),
@@ -21,6 +31,16 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Échecs", "failed_symbols"),
         ("Dégradés", "degraded_symbols"),
         ("Rows upsert", "upserted_rows"),
+    ],
+    "sync_latest_quotes": [
+        ("Symboles", "symbols"),
+        ("Rows upsert", "rows_upserted"),
+        ("Batch", "batch_size"),
+    ],
+    "sync_earnings_calendar": [
+        ("Symboles", "symbols"),
+        ("Rows upsert", "rows_upserted"),
+        ("Limite", "requested_limit"),
     ],
     "pipeline_workflow": [
         ("Étapes résumées", "workflow_steps_with_summary"),

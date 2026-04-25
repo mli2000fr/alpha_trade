@@ -9,6 +9,7 @@ from ihm.services.pipeline_runner import (
     build_pipeline_command,
     build_subprocess_env,
     format_command_for_display,
+    get_pipeline_auxiliary_steps,
     get_pipeline_steps,
     run_pipeline_step,
 )
@@ -32,6 +33,11 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
         "corporate_actions_sync",
         "corporate_actions_apply",
     ]
+
+
+def test_get_pipeline_auxiliary_steps_contains_expected_keys() -> None:
+    keys = [step.key for step in get_pipeline_auxiliary_steps()]
+    assert keys == ["import_alpaca_assets", "update_sector"]
 
 
 
@@ -90,11 +96,70 @@ def test_build_pipeline_command_alpha_scanner_is_always_strict_implicitly() -> N
 
 
 def test_build_pipeline_command_selector_reference_sync_steps() -> None:
-    quotes_command = build_pipeline_command("sync_latest_quotes", PipelineLaunchOptions())
-    earnings_command = build_pipeline_command("sync_earnings_calendar", PipelineLaunchOptions())
+    quotes_command = build_pipeline_command(
+        "sync_latest_quotes",
+        PipelineLaunchOptions(data_integrity_quotes_limit=120, data_integrity_quotes_batch_size=80),
+    )
+    earnings_command = build_pipeline_command(
+        "sync_earnings_calendar",
+        PipelineLaunchOptions(
+            data_integrity_earnings_from_date="2026-04-01",
+            data_integrity_earnings_to_date="2026-04-30",
+            data_integrity_earnings_limit=90,
+            data_integrity_earnings_sleep_seconds=1.5,
+        ),
+    )
 
-    assert quotes_command == [quotes_command[0], "-u", "-m", "dataIntegrityEngine.sync_latest_quotes"]
-    assert earnings_command == [earnings_command[0], "-u", "-m", "dataIntegrityEngine.sync_earnings_calendar"]
+    assert quotes_command == [
+        quotes_command[0],
+        "-u",
+        "-m",
+        "dataIntegrityEngine.sync_latest_quotes",
+        "--batch-size",
+        "80",
+        "--limit",
+        "120",
+    ]
+    assert earnings_command == [
+        earnings_command[0],
+        "-u",
+        "-m",
+        "dataIntegrityEngine.sync_earnings_calendar",
+        "--sleep-seconds",
+        "1.5",
+        "--from-date",
+        "2026-04-01",
+        "--to-date",
+        "2026-04-30",
+        "--limit",
+        "90",
+    ]
+
+
+def test_build_pipeline_command_data_integrity_auxiliary_steps() -> None:
+    assets_command = build_pipeline_command("import_alpaca_assets", PipelineLaunchOptions())
+    fundamentals_command = build_pipeline_command(
+        "update_sector",
+        PipelineLaunchOptions(
+            data_integrity_fundamentals_limit=40,
+            data_integrity_fundamentals_sleep_seconds=1.2,
+            data_integrity_fundamentals_log_every=10,
+        ),
+    )
+
+    assert assets_command == [assets_command[0], "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
+    assert fundamentals_command == [
+        fundamentals_command[0],
+        "-u",
+        "-m",
+        "dataIntegrityEngine.update_sector",
+        "--sleep-seconds",
+        "1.2",
+        "--log-every",
+        "10",
+        "--limit",
+        "40",
+    ]
 
 
 

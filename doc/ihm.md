@@ -21,7 +21,7 @@ Ce document résume le fonctionnement du module `ihm/` et les commandes utiles p
 | `ihm/app.py` | Point d'entrée Streamlit et routage des pages |
 | `ihm/README.md` | Documentation rapide de l'IHM |
 | `ihm/pages/overview.py` | Vue d'ensemble, KPI et statut global |
-| `ihm/pages/pipeline.py` | Pilotage des étapes quotidiennes |
+| `ihm/pages/pipeline.py` | Pilotage du workflow quotidien, des steps auxiliaires Data Integrity et du centre d'exécution |
 | `ihm/pages/backtesting.py` | Pilotage du backtesting et du backfill depuis l'IHM |
 | `ihm/pages/screening.py` | Consultation `stock_scores` |
 | `ihm/pages/risk.py` | Décisions de risque et portefeuille cible |
@@ -126,53 +126,151 @@ Les pages liées à l'exécution, au risque ou aux corporate actions peuvent alo
 
 ### 4.3 Pilotage de pipeline
 
-La page `Pipeline` s'appuie sur `ihm/services/pipeline_runner.py` pour construire les commandes des étapes :
+La page `Pipeline` s'appuie principalement sur :
 
-1. import bars,
-2. sanitize daily,
-3. screener,
-4. sync latest quotes,
-5. sync earnings calendar,
-6. alpha scanner,
-7. sentiment pipeline,
-8. signal aggregator,
-9. ml train,
-10. ml predict,
-11. risk management,
-12. execution,
-13. corporate actions sync,
-14. corporate actions apply.
+- `ihm/services/pipeline_runner.py` pour décrire les steps disponibles et construire les commandes ;
+- `ihm/services/process_registry.py` pour lancer les sous-processus en arrière-plan, suivre leurs logs et historiser les runs ;
+- `ihm/services/run_summary.py` pour normaliser les résumés métier affichés dans l'IHM.
 
-Pour l'étape `Execution`, l'IHM expose aussi les contraintes de compte/trading :
+La page est désormais organisée en **3 zones fonctionnelles**.
+
+#### 4.3.1 Paramètres d'exécution partagés
+
+Le bloc `⚙️ Paramètres d'exécution` regroupe les options communes à plusieurs steps :
+
+- `trade_date / as-of` ;
+- equity du module Risk ;
+- mode d'exécution `simulate|paper|live` ;
+- `risk_run_id` optionnel pour Execution ;
+- options broker/exécution (`allow_outside_rth`, `auto_rebalance`, type de compte, règle PDT, `swing_only`) ;
+- options `modelFactory` (accélérateur, challengers, modèle global, sélection du champion, optimisation seuil/target) ;
+- options `Data Integrity` pour quotes / earnings / fondamentaux.
+
+Pour `Execution`, l'IHM expose explicitement :
 
 - type de compte `margin|cash` ;
 - règle `PDT auto|off` ;
-- option `swing_only`.
+- option `swing_only` ;
+- rappel métier de l'impact de ces choix sur le buying power et le comportement des exits.
 
-Pour l'étape `Alpha Scanner` (désormais étape 6 du workflow complet), l'IHM lance directement la commande standard suivante :
+Pour la zone `Data Integrity`, l'IHM expose désormais les options backend réellement disponibles :
+
+- `sync_latest_quotes`
+  - `--limit`
+  - `--batch-size`
+- `sync_earnings_calendar`
+  - `--from-date`
+  - `--to-date`
+  - `--limit`
+  - `--sleep-seconds`
+- `update_sector`
+  - `--limit`
+  - `--sleep-seconds`
+  - `--log-every`
+
+Important :
+
+- dans l'IHM, une valeur `0` sur un champ `limit` signifie **univers complet éligible** ;
+- si la fenêtre custom earnings n'est pas activée, la commande conserve le défaut backend `J-7 -> J+30`.
+
+#### 4.3.2 Workflow quotidien 1 → 14
+
+Le workflow complet exécute automatiquement, dans cet ordre :
+
+1. `import_alpaca_bar`
+2. `data_sanitizer_daily`
+3. `stock_screener`
+4. `sync_latest_quotes`
+5. `sync_earnings_calendar`
+6. `alpha_scanner`
+7. `sentiment_pipeline`
+8. `signal_aggregator`
+9. `ml_train`
+10. `ml_predict`
+11. `risk_management`
+12. `execution`
+13. `corporate_actions_sync`
+14. `corporate_actions_apply`
+
+Le workflow 1→14 correspond au pipeline quotidien opérable depuis l'IHM.
+
+L'étape `Alpha Scanner` continue d'être lancée via :
 
 ```powershell
 python -m selector.alpha_scanner
 ```
 
-Le workflow complet 1→14 réutilise exactement cette même commande pour l'étape 6. Le profil strict partagé `STRICT_SWING_CASH_FILTERS` est donc appliqué de manière implicite et homogène entre CLI, IHM et backfill PIT.
+L'IHM exécute donc bien `sync_latest_quotes` puis `sync_earnings_calendar` **avant** `alpha_scanner`, ce qui prépare `stock_quote_snapshots` et `stock_earnings_calendar` pour les filtres aval (`spread_bps`, `earnings_blackout`).
 
-Le workflow complet 1→14 exécute désormais automatiquement, juste avant `Alpha Scanner`, les commandes suivantes afin d'alimenter les tables de référence du filtre strict :
+#### 4.3.3 Steps auxiliaires Data Integrity hors workflow
 
-```powershell
-python -m dataIntegrityEngine.sync_latest_quotes
-python -m dataIntegrityEngine.sync_earnings_calendar
+La page expose aussi une zone `Bootstrap / maintenance Data Integrity` avec deux steps additionnels, **hors workflow quotidien 1→14** :
+
+- `B1. Import univers Alpaca`
+  - commande : `python -m dataIntegrityEngine.import_alpaca_assets`
+  - usage : bootstrap ou rafraîchissement de `stock_metadata`
+- `B2. Mise à jour fondamentaux`
+  - commande : `python -m dataIntegrityEngine.update_sector ...`
+  - usage : enrichissement `sector` / `market_cap` via Finnhub
+
+Ces steps sont utiles lors :
+
+- d'une remise à zéro de la base ;
+- d'un rebootstrap de l'univers ;
+- d'un rattrapage ciblé des fondamentaux.
+
+Ils sont volontairement séparés du workflow quotidien pour ne pas les rejouer systématiquement chaque jour.
+
+#### 4.3.4 Centre d'exécution & d'investigation
+
+La page `Pipeline` embarque aussi un centre live de supervision :
+
+- liste des runs actifs ;
+- arrêt manuel d'un run ou d'un workflow ;
+- inspection des logs `stdout`, `stderr` ou combinés ;
+- comparaison de deux runs ;
+- téléchargement des logs ;
+- historique centralisé persistant des runs IHM.
+
+Les runs sont persistés sous :
+
+- `artifacts/ihm_pipeline_runs/` pour les pipelines ;
+- `artifacts/ihm_backtesting_runs/` pour le backtesting.
+
+#### 4.3.5 Résumés métier structurés
+
+Quand un script écrit sur stdout une ligne préfixée par :
+
+```text
+::alpha_trade_run_summary::
 ```
 
-L'étape `Alpha Scanner` reste lancée via :
+le registre IHM extrait ce JSON et l'associe au run.
+
+Cela permet ensuite :
+
+- l'affichage d'un résumé métier compact dans la page `Pipeline` ;
+- l'agrégation run-level sur le workflow parent ;
+- l'exposition de métriques récentes dans `Overview` et `Screening`.
+
+Les steps Data Integrity qui publient maintenant ce résumé structuré sont notamment :
+
+- `import_alpaca_assets`
+- `import_alpaca_bar`
+- `data_sanitizer_daily`
+- `update_sector`
+- `sync_latest_quotes`
+- `sync_earnings_calendar`
+
+#### 4.3.6 Import manuel de news
+
+Sous l'étape `Sentiment Pipeline`, l'IHM expose un sous-panneau `Import des news brutes` permettant de lancer :
 
 ```powershell
-python -m selector.alpha_scanner
+python event_sentiment/importe_news.py --start-date ... --end-date ...
 ```
 
-Le pipeline IHM tente donc maintenant de préparer `stock_quote_snapshots` et `stock_earnings_calendar` avant le scan, ce qui améliore la disponibilité des filtres `spread_bps` et `earnings_blackout` en mode live/opérationnel.
-
-L'interface affiche un résumé explicite de ces contraintes avant lancement afin que l'opérateur comprenne pourquoi un run `cash` peut se comporter différemment d'un run `margin`.
+Ce sous-run est utile pour réinjecter une plage de news spécifique avant de relancer le pipeline de sentiment.
 
 ### 4.4 Pilotage du backtesting
 
@@ -247,19 +345,19 @@ python run.py
 ### Vérifier que les répertoires d'artefacts IHM existent
 
 ```powershell
-Get-ChildItem "C:\Users\PC MLI\PycharmProjects\alpha_trade\artifacts"
+Get-ChildItem "C:\Users\MLI\PycharmProjects\alpha_trade\artifacts"
 ```
 
 ### Vérifier les pages disponibles dans le code
 
 ```powershell
-Get-ChildItem "C:\Users\PC MLI\PycharmProjects\alpha_trade\ihm\pages"
+Get-ChildItem "C:\Users\MLI\PycharmProjects\alpha_trade\ihm\pages"
 ```
 
 ### Vérifier les services de pilotage disponibles
 
 ```powershell
-Get-ChildItem "C:\Users\PC MLI\PycharmProjects\alpha_trade\ihm\services"
+Get-ChildItem "C:\Users\MLI\PycharmProjects\alpha_trade\ihm\services"
 ```
 
 ---
@@ -270,6 +368,8 @@ Get-ChildItem "C:\Users\PC MLI\PycharmProjects\alpha_trade\ihm\services"
 
 ```powershell
 python -m pytest tests/test_app.py tests/test_run.py tests/test_ihm_pipeline_runner.py tests/test_ihm_backtesting_runner.py tests/test_ihm_metrics.py -q -o addopts=""
+
+python -m pytest tests/test_ihm_process_registry.py tests/test_data_integrity_run_summaries.py -q -o addopts=""
 ```
 
 ### Tests des pages

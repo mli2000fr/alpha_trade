@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from uuid import uuid4
 
 import requests
 
@@ -11,6 +13,22 @@ from database.selector_reference import list_active_tradable_symbols, upsert_ear
 from service.finnhub.clientFinnhub import MIN_REQUEST_INTERVAL_SECONDS, fetch_multiple_symbols_earnings_calendar
 
 LOGGER = logging.getLogger(__name__)
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _build_run_id(prefix: str) -> str:
+    return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+
+
+def _emit_run_summary(summary: dict[str, object]) -> None:
+    print(
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+        flush=True,
+    )
 
 
 def sync_earnings_calendar(
@@ -86,11 +104,26 @@ def main() -> None:
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
     args = _build_arg_parser().parse_args()
-    sync_earnings_calendar(
+    started_at = _utc_now_naive()
+    summary = sync_earnings_calendar(
         from_date=date.fromisoformat(args.from_date) if args.from_date else None,
         to_date=date.fromisoformat(args.to_date) if args.to_date else None,
         limit=args.limit,
         sleep_seconds=args.sleep_seconds,
+    )
+    finished_at = _utc_now_naive()
+    _emit_run_summary(
+        {
+            "run_id": _build_run_id("sync-earnings"),
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "finished_at": finished_at.isoformat(timespec="seconds"),
+            "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+            "from_date": args.from_date,
+            "to_date": args.to_date,
+            "requested_limit": args.limit,
+            "sleep_seconds": args.sleep_seconds,
+            **summary,
+        }
     )
 
 

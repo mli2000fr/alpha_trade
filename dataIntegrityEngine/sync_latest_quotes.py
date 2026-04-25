@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
+from uuid import uuid4
 
 import requests
 
@@ -12,6 +14,22 @@ from service.alpaca.clientAlpaca import fetch_latest_quotes
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_BATCH_SIZE = 200
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _build_run_id(prefix: str) -> str:
+    return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+
+
+def _emit_run_summary(summary: dict[str, object]) -> None:
+    print(
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+        flush=True,
+    )
 
 
 def _compute_spread_bps(bid_price: float | None, ask_price: float | None) -> float | None:
@@ -86,7 +104,20 @@ def main() -> None:
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
     args = _build_arg_parser().parse_args()
-    sync_latest_quotes(limit=args.limit, batch_size=args.batch_size)
+    started_at = _utc_now_naive()
+    summary = sync_latest_quotes(limit=args.limit, batch_size=args.batch_size)
+    finished_at = _utc_now_naive()
+    _emit_run_summary(
+        {
+            "run_id": _build_run_id("sync-latest-quotes"),
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "finished_at": finished_at.isoformat(timespec="seconds"),
+            "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+            "requested_limit": args.limit,
+            "batch_size": args.batch_size,
+            **summary,
+        }
+    )
 
 
 if __name__ == "__main__":

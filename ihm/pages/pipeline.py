@@ -19,9 +19,13 @@ from ihm.services.account_defaults import (
 from ihm.services.db import get_runtime_db_config
 from ihm.services.ml_artifacts import list_ml_artifact_symbols
 from ihm.services.pipeline_runner import (
+    DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY,
+    DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS,
+    DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE,
     PipelineLaunchOptions,
     build_pipeline_command,
     format_command_for_display,
+    get_pipeline_auxiliary_steps,
     get_pipeline_steps,
     is_gpu_available,
 )
@@ -48,6 +52,7 @@ IMPORT_NEWS_START_DATE_KEY = "pipeline_import_news_start_date"
 IMPORT_NEWS_END_DATE_KEY = "pipeline_import_news_end_date"
 ML_SELECTED_SYMBOL_KEY = "ihm_ml_selected_symbol"
 NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
+EARNINGS_CUSTOM_WINDOW_KEY = "pipeline_data_integrity_earnings_custom_window"
 
 
 def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
@@ -55,6 +60,13 @@ def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
     if len(lines) <= max_lines:
         return value
     return "\n".join(lines[-max_lines:])
+
+
+def _to_optional_positive_int(value: int | float | None) -> int | None:
+    if value is None:
+        return None
+    normalized = int(value)
+    return normalized if normalized > 0 else None
 
 
 def _render_run_summary(record: dict[str, object] | None, *, compact: bool = False) -> None:
@@ -427,6 +439,119 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "(`min_close=10`, `ADV20>=30M`, `RS>=100`, `close>MA200`, `high52w>=75%`, `weekly=1.0`, `ATR 1.5%-6%`)."
         )
 
+        st.markdown("#### Paramètres Data Integrity")
+        st.caption(
+            "Ces réglages reflètent les options réellement disponibles côté `dataIntegrityEngine` pour les étapes quotes, earnings et fondamentaux. "
+            "`0` sur un champ `limit` signifie : univers complet éligible."
+        )
+
+        di_col1, di_col2, di_col3 = st.columns(3)
+        with di_col1:
+            data_integrity_quotes_limit = int(
+                st.number_input(
+                    "Latest Quotes — limite optionnelle",
+                    min_value=0,
+                    value=int(st.session_state.get("pipeline_data_integrity_quotes_limit", 0)),
+                    step=50,
+                    key="pipeline_data_integrity_quotes_limit",
+                )
+            )
+            data_integrity_quotes_batch_size = int(
+                st.number_input(
+                    "Latest Quotes — taille de batch",
+                    min_value=1,
+                    value=int(st.session_state.get("pipeline_data_integrity_quotes_batch_size", DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE)),
+                    step=25,
+                    key="pipeline_data_integrity_quotes_batch_size",
+                )
+            )
+            data_integrity_earnings_limit = int(
+                st.number_input(
+                    "Earnings — limite optionnelle",
+                    min_value=0,
+                    value=int(st.session_state.get("pipeline_data_integrity_earnings_limit", 0)),
+                    step=25,
+                    key="pipeline_data_integrity_earnings_limit",
+                )
+            )
+        with di_col2:
+            data_integrity_earnings_sleep_seconds = float(
+                st.number_input(
+                    "Earnings — pause Finnhub (s)",
+                    min_value=0.0,
+                    value=float(st.session_state.get("pipeline_data_integrity_earnings_sleep_seconds", DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS)),
+                    step=0.1,
+                    format="%.2f",
+                    key="pipeline_data_integrity_earnings_sleep_seconds",
+                )
+            )
+            data_integrity_fundamentals_limit = int(
+                st.number_input(
+                    "Fondamentaux — limite optionnelle",
+                    min_value=0,
+                    value=int(st.session_state.get("pipeline_data_integrity_fundamentals_limit", 0)),
+                    step=25,
+                    key="pipeline_data_integrity_fundamentals_limit",
+                )
+            )
+            data_integrity_fundamentals_sleep_seconds = float(
+                st.number_input(
+                    "Fondamentaux — pause Finnhub (s)",
+                    min_value=0.0,
+                    value=float(st.session_state.get("pipeline_data_integrity_fundamentals_sleep_seconds", DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS)),
+                    step=0.1,
+                    format="%.2f",
+                    key="pipeline_data_integrity_fundamentals_sleep_seconds",
+                )
+            )
+        with di_col3:
+            data_integrity_fundamentals_log_every = int(
+                st.number_input(
+                    "Fondamentaux — journaliser tous les N symboles",
+                    min_value=1,
+                    value=int(st.session_state.get("pipeline_data_integrity_fundamentals_log_every", DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY)),
+                    step=5,
+                    key="pipeline_data_integrity_fundamentals_log_every",
+                )
+            )
+            data_integrity_earnings_custom_window = st.checkbox(
+                "Earnings — utiliser une fenêtre de dates personnalisée",
+                value=bool(st.session_state.get(EARNINGS_CUSTOM_WINDOW_KEY, False)),
+                key=EARNINGS_CUSTOM_WINDOW_KEY,
+            )
+
+        effective_earnings_from_date: str | None = None
+        effective_earnings_to_date: str | None = None
+        if data_integrity_earnings_custom_window:
+            earnings_date_col1, earnings_date_col2 = st.columns(2)
+            with earnings_date_col1:
+                earnings_from_date_value = cast(
+                    date,
+                    st.date_input(
+                        "Earnings — date de début",
+                        value=cast(date, st.session_state.get("pipeline_data_integrity_earnings_from_date", date.today() - timedelta(days=7))),
+                        key="pipeline_data_integrity_earnings_from_date",
+                        format="YYYY-MM-DD",
+                    ),
+                )
+            with earnings_date_col2:
+                earnings_to_date_value = cast(
+                    date,
+                    st.date_input(
+                        "Earnings — date de fin",
+                        value=cast(date, st.session_state.get("pipeline_data_integrity_earnings_to_date", date.today() + timedelta(days=30))),
+                        key="pipeline_data_integrity_earnings_to_date",
+                        format="YYYY-MM-DD",
+                    ),
+                )
+            if earnings_from_date_value <= earnings_to_date_value:
+                effective_earnings_from_date = earnings_from_date_value.isoformat()
+                effective_earnings_to_date = earnings_to_date_value.isoformat()
+            else:
+                st.error("Fenêtre earnings invalide : la date de début doit être antérieure ou égale à la date de fin. La fenêtre custom sera ignorée.")
+        else:
+            st.caption("Sans fenêtre personnalisée, `sync_earnings_calendar` conserve sa plage backend par défaut : J-7 → J+30.")
+
         live_confirmed = True
         if execution_mode == "live":
             st.warning("Mode LIVE sélectionné : cette action peut envoyer de vrais ordres chez le broker.")
@@ -459,6 +584,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_champion_selection_metric=cast(Any, ml_champion_selection_metric),
             ml_optimize_thresholds=bool(ml_optimize_thresholds),
             ml_optimize_target=bool(ml_optimize_target),
+            data_integrity_quotes_limit=_to_optional_positive_int(data_integrity_quotes_limit),
+            data_integrity_quotes_batch_size=int(data_integrity_quotes_batch_size),
+            data_integrity_earnings_from_date=effective_earnings_from_date,
+            data_integrity_earnings_to_date=effective_earnings_to_date,
+            data_integrity_earnings_limit=_to_optional_positive_int(data_integrity_earnings_limit),
+            data_integrity_earnings_sleep_seconds=float(data_integrity_earnings_sleep_seconds),
+            data_integrity_fundamentals_limit=_to_optional_positive_int(data_integrity_fundamentals_limit),
+            data_integrity_fundamentals_sleep_seconds=float(data_integrity_fundamentals_sleep_seconds),
+            data_integrity_fundamentals_log_every=int(data_integrity_fundamentals_log_every),
         ),
         live_confirmed,
     )
@@ -910,6 +1044,96 @@ def _render_import_news_panel(
         _render_step_result(latest_by_step.get("import_news"))
 
 
+def _render_launchable_step_panel(
+    step: Any,
+    options: PipelineLaunchOptions,
+    live_confirmed: bool,
+    db_config: dict[str, str | None],
+    *,
+    workflow_active: bool,
+    active_by_step: dict[str, list[dict[str, object]]],
+    all_runs: list[dict[str, object]],
+    latest_by_step: dict[str, dict[str, object]],
+) -> None:
+    command_preview = format_command_for_display(build_pipeline_command(step.key, options))
+    with st.expander(f"**{step.num}. {step.name}**", expanded=False):
+        info_col, action_col = st.columns([5, 2])
+
+        with info_col:
+            st.markdown(f"**Description** : {step.desc}")
+            st.markdown(f"**Tables impactées** : `{step.tables}`")
+            st.markdown(f"**Dépendances** : {step.deps}")
+            if step.account_usage == "alpaca":
+                st.caption(f"🏦 Cette étape utilise le compte Alpaca sélectionné : `{options.account_id or 'default'}`")
+            else:
+                st.caption("🌐 Cette étape est globale et n'utilise pas le sélecteur de compte Alpaca.")
+            if step.key == "execution":
+                effective_pdt = "off" if options.execution_account_type == "cash" else options.execution_pdt_rule
+                st.caption(
+                    "⚖️ Contraintes d'exécution : "
+                    f"compte=`{options.execution_account_type}` | pdt=`{effective_pdt}` | swing_only=`{options.execution_swing_only}`"
+                )
+            st.code(command_preview, language="powershell")
+
+        with action_col:
+            execution_locked = step.key == "execution" and options.execution_mode == "live" and not live_confirmed
+            active_for_step = active_by_step.get(step.key, [])
+            if active_for_step:
+                st.info(f"{len(active_for_step)} run(s) actif(s) pour cette étape.")
+                for run in active_for_step:
+                    run_id = str(run.get("run_id", ""))
+                    st.caption(f"Actif : `{run_id}`")
+                    if st.button("⏹️ Arrêter ce run", key=f"stop_step_run_{run_id}", use_container_width=True):
+                        stop_pipeline_run(run_id)
+                        st.rerun()
+                st.caption("Le bouton de lancement est masque tant qu'un run de cette etape est en cours.")
+            else:
+                run_clicked = st.button(
+                    "▶️ Lancer en arrière-plan",
+                    key=f"run_pipeline_step_{step.key}",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=execution_locked or workflow_active,
+                )
+                if execution_locked:
+                    st.warning("Confirmez d'abord le mode LIVE dans les paramètres ci-dessus.")
+                if workflow_active:
+                    st.warning("Un workflow complet est en cours : le lancement manuel des étapes est temporairement désactivé.")
+
+                if run_clicked:
+                    record = start_pipeline_run(
+                        step.key,
+                        f"{step.num}. {step.name}",
+                        options,
+                        db_config=db_config,
+                    )
+                    st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                    compare_ids = _sanitize_compare_ids(
+                        [str(run.get("run_id", "")) for run in all_runs if run.get("run_id")],
+                        {str(run.get("run_id", "")): "" for run in all_runs if run.get("run_id")},
+                        st.session_state.get(COMPARE_RUNS_KEY, []),
+                    )
+                    if record.run_id not in compare_ids:
+                        st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *compare_ids][:2]
+                    st.success(f"Run demarre en arriere-plan : `{record.run_id}`")
+                    st.rerun()
+
+            if step.key in {"ml_train", "ml_predict"}:
+                st.divider()
+                _render_ml_inspection_link(step.key)
+
+        _render_step_result(latest_by_step.get(step.key))
+        if step.key == "sentiment_pipeline":
+            _render_import_news_panel(
+                options,
+                db_config,
+                workflow_active=workflow_active,
+                active_by_step=active_by_step,
+                all_runs=all_runs,
+                latest_by_step=latest_by_step,
+            )
+
+
 @st.fragment(run_every="2s")
 def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db_config: dict[str, str | None]) -> None:
     active_runs, all_runs = _merge_runs()
@@ -919,84 +1143,37 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
     for run in active_runs:
         active_by_step.setdefault(str(run.get("step_key", "")), []).append(run)
 
+    auxiliary_steps = get_pipeline_auxiliary_steps()
+    if auxiliary_steps:
+        st.subheader("🧱 Bootstrap / maintenance Data Integrity")
+        st.caption(
+            "Ces entrées correspondent aux scripts supplémentaires du module `dataIntegrityEngine`. "
+            "Elles ne font pas partie du workflow quotidien 1 → 14, mais elles sont pilotables depuis l'IHM avec leurs options réelles pour les remises à plat, réinitialisations ou rafraîchissements ciblés."
+        )
+        for step in auxiliary_steps:
+            _render_launchable_step_panel(
+                step,
+                options,
+                live_confirmed,
+                db_config,
+                workflow_active=workflow_active,
+                active_by_step=active_by_step,
+                all_runs=all_runs,
+                latest_by_step=latest_by_step,
+            )
+
+    st.subheader("🪜 Étapes du workflow quotidien 1 → 14")
     for step in get_pipeline_steps():
-        command_preview = format_command_for_display(build_pipeline_command(step.key, options))
-        with st.expander(f"**{step.num}. {step.name}**", expanded=False):
-            info_col, action_col = st.columns([5, 2])
-
-            with info_col:
-                st.markdown(f"**Description** : {step.desc}")
-                st.markdown(f"**Tables impactées** : `{step.tables}`")
-                st.markdown(f"**Dépendances** : {step.deps}")
-                if step.account_usage == "alpaca":
-                    st.caption(f"🏦 Cette étape utilise le compte Alpaca sélectionné : `{options.account_id or 'default'}`")
-                else:
-                    st.caption("🌐 Cette étape est globale et n'utilise pas le sélecteur de compte Alpaca.")
-                if step.key == "execution":
-                    effective_pdt = "off" if options.execution_account_type == "cash" else options.execution_pdt_rule
-                    st.caption(
-                        "⚖️ Contraintes d'exécution : "
-                        f"compte=`{options.execution_account_type}` | pdt=`{effective_pdt}` | swing_only=`{options.execution_swing_only}`"
-                    )
-                st.code(command_preview, language="powershell")
-
-            with action_col:
-                execution_locked = step.key == "execution" and options.execution_mode == "live" and not live_confirmed
-                active_for_step = active_by_step.get(step.key, [])
-                if active_for_step:
-                    st.info(f"{len(active_for_step)} run(s) actif(s) pour cette étape.")
-                    for run in active_for_step:
-                        run_id = str(run.get("run_id", ""))
-                        st.caption(f"Actif : `{run_id}`")
-                        if st.button("⏹️ Arrêter ce run", key=f"stop_step_run_{run_id}", use_container_width=True):
-                            stop_pipeline_run(run_id)
-                            st.rerun()
-                    st.caption("Le bouton de lancement est masque tant qu'un run de cette etape est en cours.")
-                else:
-                    run_clicked = st.button(
-                        "▶️ Lancer en arrière-plan",
-                        key=f"run_pipeline_step_{step.key}",
-                        type="primary",
-                        use_container_width=True,
-                        disabled=execution_locked or workflow_active,
-                    )
-                    if execution_locked:
-                        st.warning("Confirmez d'abord le mode LIVE dans les paramètres ci-dessus.")
-                    if workflow_active:
-                        st.warning("Un workflow complet est en cours : le lancement manuel des étapes est temporairement désactivé.")
-
-                    if run_clicked:
-                        record = start_pipeline_run(
-                            step.key,
-                            f"{step.num}. {step.name}",
-                            options,
-                            db_config=db_config,
-                        )
-                        st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
-                        compare_ids = _sanitize_compare_ids(
-                            [str(run.get("run_id", "")) for run in all_runs if run.get("run_id")],
-                            {str(run.get("run_id", "")): "" for run in all_runs if run.get("run_id")},
-                            st.session_state.get(COMPARE_RUNS_KEY, []),
-                        )
-                        if record.run_id not in compare_ids:
-                            st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *compare_ids][:2]
-                        st.success(f"Run demarre en arriere-plan : `{record.run_id}`")
-                        st.rerun()
-
-                if step.key in {"ml_train", "ml_predict"}:
-                    st.divider()
-                    _render_ml_inspection_link(step.key)
-
-            _render_step_result(latest_by_step.get(step.key))
-            if step.key == "sentiment_pipeline":
-                _render_import_news_panel(
-                    options,
-                    db_config,
-                    workflow_active=workflow_active,
-                    active_by_step=active_by_step,
-                    all_runs=all_runs,
-                    latest_by_step=latest_by_step,
-                )
+        _render_launchable_step_panel(
+            step,
+            options,
+            live_confirmed,
+            db_config,
+            workflow_active=workflow_active,
+            active_by_step=active_by_step,
+            all_runs=all_runs,
+            latest_by_step=latest_by_step,
+        )
 
 
 def render() -> None:

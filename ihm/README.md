@@ -38,7 +38,7 @@ Cela évite que les pages `Execution`, `Corporate Actions`, `ML`, etc. paraissen
 | Page | Description |
 |---|---|
 | 🏠 Vue d'ensemble | KPI, alertes, top candidats, santé DB |
-| 🔄 Pipeline | 12 étapes du pipeline quotidien (1→1a→2→…→6→6a→6b→7→8→8a), lancement en arrière-plan, arrêt, historique, comparaison et téléchargement des logs |
+| 🔄 Pipeline | Workflow quotidien 1→14 + steps auxiliaires Data Integrity (`import_alpaca_assets`, `update_sector`), lancement en arrière-plan, arrêt, historique, comparaison, téléchargement des logs et résumés métier |
 | 🧪 Backtesting | Formulaire complet des commandes `backtesting run`, `backfill-scores-history`, `diagnose-screener` et `recommend-screener`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis et graphique live des artefacts |
 | 📊 Screening | Table `stock_scores` avec filtres (symbole, secteur, candidat, score, sentiment) + lecture directe des recommandations screener par objectif (robuste, offensif, bear, exécutable) |
 | ⚖️ Risk | Décisions de risque, portefeuille cible, synthèse par secteur |
@@ -51,12 +51,26 @@ Cela évite que les pages `Execution`, `Corporate Actions`, `ML`, etc. paraissen
 
 La page **🔄 Pipeline** permet désormais :
 
+- de lancer le **workflow quotidien complet 1→14** dans l'ordre métier ;
+- de lancer aussi des steps **hors workflow** pour le bootstrap / la maintenance Data Integrity ;
 - de lancer une étape **en arrière-plan** sans bloquer la navigation dans l'IHM ;
 - d'**arrêter** un run actif lancé depuis l'interface ;
 - de consulter un **historique centralisé** des exécutions IHM ;
 - de comparer deux runs et leurs logs ;
 - de filtrer l'affichage des logs par **`stdout` / `stderr` / `tout`** ;
 - de **télécharger** les fichiers de logs produits par chaque run.
+
+Le bloc de paramètres expose aussi les options réellement supportées côté backend pour :
+
+- `sync_latest_quotes` (`limit`, `batch-size`) ;
+- `sync_earnings_calendar` (`from-date`, `to-date`, `limit`, `sleep-seconds`) ;
+- `update_sector` (`limit`, `sleep-seconds`, `log-every`).
+
+Quand un script écrit un résumé structuré préfixé par `::alpha_trade_run_summary::`, l'IHM l'extrait automatiquement pour alimenter :
+
+- les cartes de résumé métier du run ;
+- l'agrégation du workflow parent ;
+- les blocs récents de `Overview` et `Screening`.
 
 Les logs IHM sont persistés sous `artifacts/ihm_pipeline_runs/`.
 

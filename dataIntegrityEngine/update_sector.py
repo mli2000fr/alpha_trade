@@ -1,7 +1,10 @@
 import argparse
+import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 import requests
 
@@ -13,6 +16,22 @@ from service.finnhub.clientFinnhub import MIN_REQUEST_INTERVAL_SECONDS, fetch_co
 LOGGER = logging.getLogger(__name__)
 DEFAULT_LOG_EVERY = 50
 NOT_AVAILABLE = "N/A"
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+
+
+def _utc_now_naive() -> datetime:
+	return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _build_run_id(prefix: str) -> str:
+	return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+
+
+def _emit_run_summary(summary: dict[str, Any]) -> None:
+	print(
+		f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+		flush=True,
+	)
 
 # Compatibilité rétroactive pour les tests / appelants legacy.
 get_symbols_missing_sector = get_symbols_missing_fundamentals
@@ -167,7 +186,20 @@ def main() -> None:
 		fmt="%(asctime)s %(levelname)s %(message)s",
 	)
 	args = _build_arg_parser().parse_args()
-	update_missing_sectors(limit=args.limit, sleep_seconds=args.sleep_seconds, log_every=args.log_every)
+	started_at = _utc_now_naive()
+	summary = update_missing_sectors(limit=args.limit, sleep_seconds=args.sleep_seconds, log_every=args.log_every)
+	finished_at = _utc_now_naive()
+	cli_summary = {
+		"run_id": _build_run_id("update-fundamentals"),
+		"started_at": started_at.isoformat(timespec="seconds"),
+		"finished_at": finished_at.isoformat(timespec="seconds"),
+		"duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+		"requested_limit": args.limit,
+		"sleep_seconds": args.sleep_seconds,
+		"log_every": args.log_every,
+		**summary,
+	}
+	_emit_run_summary(cli_summary)
 
 
 if __name__ == "__main__":
