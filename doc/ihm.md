@@ -202,6 +202,32 @@ python -m selector.alpha_scanner
 
 L'IHM exécute donc bien `sync_latest_quotes` puis `sync_earnings_calendar` **avant** `alpha_scanner`, ce qui prépare `stock_quote_snapshots` et `stock_earnings_calendar` pour les filtres aval (`spread_bps`, `earnings_blackout`).
 
+La carte `Alpha Scanner` expose aussi un **diagnostic de dépendances** basé sur le contenu réel des tables SQL :
+
+- badge visuel pour `Sync Latest Quotes` et `Sync Earnings Calendar` ;
+- métriques exactes `latest_date`, `% couverture` et `N symboles` ;
+- seuils vert / orange / rouge éditables depuis la page `Settings` (et conservés aussi dans `Pipeline`) ;
+- presets applicables en un clic : `Swing Cash Pro`, `Agressif`, `Tolérant` ;
+- sélecteur de régime de marché : `normal`, `faible`, `très sélectif` ;
+- expander expliquant pourquoi l'état est `rouge` / `orange` ;
+- rappel des commandes correctives :
+  - `python -m dataIntegrityEngine.sync_latest_quotes`
+  - `python -m dataIntegrityEngine.sync_earnings_calendar`
+- actions rapides directement dans l'IHM pour lancer ces deux synchronisations.
+
+Règle d'UX opérateur : si **les deux** dépendances sont rouges en même temps, le bouton `Lancer en arrière-plan` de `Alpha Scanner` est réellement désactivé jusqu'à correction. Si une seule dépendance est dégradée, l'IHM affiche un avertissement mais ne verrouille pas le scan.
+
+Après succès d'une action rapide, l'IHM rappelle que les indicateurs peuvent rester mis en cache environ **60 secondes** (`st.cache_data(ttl=60)`) et propose un bouton `Rafraîchir maintenant` pour invalider le cache SQL côté dashboard.
+
+Ce même diagnostic est réutilisé en lecture seule dans les pages `Overview` et `Screening`, afin d'exposer les mêmes badges, métriques et commandes correctives hors de la page `Pipeline`.
+
+Les valeurs par défaut livrées dans l'IHM sont orientées **swing cash pro** :
+
+- `Sync Latest Quotes` : orange si couverture < `85%`, rouge si couverture < `60%`, orange si snapshot > `1` jour, rouge si > `3` jours ;
+- `Sync Earnings Calendar` : orange si couverture < `15%`, rouge si couverture < `5%`, orange si horizon futur < `14` jours, rouge si < `7` jours.
+
+L'IHM ne force donc pas un choix "style OU marché" : le preset effectif peut être le croisement des deux axes, par exemple `Swing Cash Pro × Marché très sélectif` ou `Tolérant × Marché faible`.
+
 #### 4.3.3 Steps auxiliaires Data Integrity hors workflow
 
 La page expose aussi une zone `Bootstrap / maintenance Data Integrity` avec deux steps additionnels, **hors workflow quotidien 1→14** :

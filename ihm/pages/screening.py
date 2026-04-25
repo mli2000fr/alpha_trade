@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from ihm.pages import run_page_if_standalone
+from ihm.components.alpha_scanner_dependency import render_alpha_scanner_dependency_panel
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
 from ihm.components.tables import show_dataframe
@@ -29,7 +30,7 @@ from ihm.services.screener_recommendations import (
 from ihm.services.db import db_available
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
 from ihm.services.run_summary import build_latest_run_summary_rows
-from ihm.services.queries import get_stock_scores
+from ihm.services.queries import get_alpha_scanner_dependency_diagnostic, get_stock_scores
 
 SCREENER_ARTIFACT_SELECTBOX_KEY = "screening_screener_artifacts_dir_select"
 SCREENER_CSV_PREVIEW_SELECTBOX_KEY = "screening_screener_csv_preview_select"
@@ -314,6 +315,14 @@ def render() -> None:
     if not quality_rows.empty:
         st.subheader("🛡️ Contexte pipeline & qualité amont")
         show_dataframe(quality_rows)
+
+    st.subheader("🩺 Diagnostic Alpha Scanner")
+    render_alpha_scanner_dependency_panel(
+        get_alpha_scanner_dependency_diagnostic(),
+        title="Voir le détail quotes / earnings utilisé par Alpha Scanner",
+        expanded=False,
+        show_commands=True,
+    )
 
     selected_artifacts_dir, selected_artifacts_entry = _render_screener_artifact_selector()
     _render_objective_recommendations(selected_artifacts_dir)

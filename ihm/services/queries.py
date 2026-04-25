@@ -1,14 +1,284 @@
 """ihm/services/queries.py — Requêtes SQL centralisées pour l'IHM."""
 from __future__ import annotations
 
+from datetime import date, datetime
 import json
 
 import pandas as pd
 import streamlit as st
 
 from database.run_business_summaries import parse_summary_json
+from ihm.services.alpha_scanner_threshold_presets import DEFAULT_ALPHA_SCANNER_DEPENDENCY_THRESHOLDS
 from ihm.services.run_summary import build_run_summary_caption
-from ihm.services.db import safe_query, safe_scalar
+from ihm.services.db import get_last_query_error, safe_query, safe_scalar
+from ihm.services.screener_preferences import load_persisted_alpha_scanner_dependency_thresholds
+
+ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL = """
+    SELECT COUNT(DISTINCT sm.symbol)
+    FROM stock_metadata sm
+    WHERE LOWER(TRIM(COALESCE(sm.status, ''))) = 'active'
+      AND COALESCE(sm.tradable, 0) = 1
+      AND COALESCE(sm.bars_available, 0) = 1
+      AND LOWER(TRIM(COALESCE(sm.asset_class, ''))) = 'us_equity'
+      AND (
+            sm.history_status IS NULL
+         OR TRIM(sm.history_status) = ''
+         OR LOWER(TRIM(sm.history_status)) IN ('pending', 'ready')
+      )
+"""
+
+ALPHA_SCANNER_DEPENDENCY_THRESHOLDS: dict[str, dict[str, float]] = DEFAULT_ALPHA_SCANNER_DEPENDENCY_THRESHOLDS
+
+
+def _coerce_date(value: object) -> date | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, date):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    try:
+        return date.fromisoformat(text_value[:10])
+    except ValueError:
+        return None
+
+
+def _coverage_pct(covered_symbols: int, eligible_symbols: int) -> float:
+    if eligible_symbols <= 0:
+        return 0.0
+    return round((covered_symbols / eligible_symbols) * 100.0, 2)
+
+
+def _coerce_int(value: object) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_scalar_with_error(query: str, params: dict[str, object] | None = None) -> tuple[object, str | None]:
+    value = safe_scalar(query, params)
+    return value, get_last_query_error()
+
+
+def get_alpha_scanner_dependency_thresholds() -> dict[str, dict[str, float]]:
+    return load_persisted_alpha_scanner_dependency_thresholds(ALPHA_SCANNER_DEPENDENCY_THRESHOLDS)
+
+
+def _build_quotes_dependency_payload(
+    *,
+    today: date,
+    eligible_symbols: int,
+    latest_date: date | None,
+    covered_symbols: int,
+    query_error: str | None,
+    thresholds: dict[str, float],
+) -> dict[str, object]:
+    coverage_pct = _coverage_pct(covered_symbols, eligible_symbols)
+    age_days = max((today - latest_date).days, 0) if latest_date is not None else None
+    reasons: list[str] = []
+    status = "green"
+
+    if query_error:
+        status = "red"
+        reasons.append(query_error)
+    elif eligible_symbols <= 0:
+        status = "red"
+        reasons.append("univers éligible Alpha Scanner vide ou indisponible")
+    elif latest_date is None or covered_symbols <= 0:
+        status = "red"
+        reasons.append("aucun snapshot quote exploitable détecté")
+    else:
+        if age_days is not None and age_days > thresholds["max_age_error_days"]:
+            status = "red"
+            reasons.append(f"snapshot trop ancien ({age_days} j)")
+        elif age_days is not None and age_days > thresholds["max_age_warn_days"]:
+            status = "orange"
+            reasons.append(f"snapshot à rafraîchir ({age_days} j)")
+
+        if coverage_pct < thresholds["coverage_error_pct"]:
+            status = "red"
+            reasons.append(f"couverture trop faible ({coverage_pct:.1f}%)")
+        elif coverage_pct < thresholds["coverage_warn_pct"] and status != "red":
+            status = "orange"
+            reasons.append(f"couverture partielle ({coverage_pct:.1f}%)")
+
+    if not reasons:
+        reasons.append("quotes disponibles pour le filtre de spread")
+
+    return {
+        "step_key": "sync_latest_quotes",
+        "label": "Sync Latest Quotes",
+        "table": "stock_quote_snapshots",
+        "command": "python -m dataIntegrityEngine.sync_latest_quotes",
+        "status": status,
+        "latest_date": latest_date.isoformat() if latest_date is not None else None,
+        "covered_symbols": int(covered_symbols),
+        "eligible_symbols": int(eligible_symbols),
+        "coverage_pct": coverage_pct,
+        "coverage_label": f"{coverage_pct:.1f}% ({int(covered_symbols)}/{int(eligible_symbols)})" if eligible_symbols > 0 else "0.0% (0/0)",
+        "age_days": age_days,
+        "reason": " · ".join(reasons),
+        "query_error": query_error,
+    }
+
+
+def _build_earnings_dependency_payload(
+    *,
+    today: date,
+    eligible_symbols: int,
+    latest_date: date | None,
+    covered_symbols: int,
+    query_error: str | None,
+    thresholds: dict[str, float],
+) -> dict[str, object]:
+    coverage_pct = _coverage_pct(covered_symbols, eligible_symbols)
+    horizon_days = max((latest_date - today).days, 0) if latest_date is not None else None
+    reasons: list[str] = []
+    status = "green"
+
+    if query_error:
+        status = "red"
+        reasons.append(query_error)
+    elif eligible_symbols <= 0:
+        status = "red"
+        reasons.append("univers éligible Alpha Scanner vide ou indisponible")
+    elif latest_date is None or covered_symbols <= 0:
+        status = "red"
+        reasons.append("aucun earnings futur exploitable détecté")
+    else:
+        if horizon_days is not None and horizon_days < thresholds["min_horizon_error_days"]:
+            status = "red"
+            reasons.append(f"horizon trop court (latest_date à J+{horizon_days})")
+        elif horizon_days is not None and horizon_days < thresholds["min_horizon_warn_days"]:
+            status = "orange"
+            reasons.append(f"horizon à compléter (latest_date à J+{horizon_days})")
+
+        if coverage_pct < thresholds["coverage_error_pct"]:
+            status = "red"
+            reasons.append(f"couverture trop faible ({coverage_pct:.1f}%)")
+        elif coverage_pct < thresholds["coverage_warn_pct"] and status != "red":
+            status = "orange"
+            reasons.append(f"couverture partielle ({coverage_pct:.1f}%)")
+
+    if not reasons:
+        reasons.append("earnings futurs disponibles pour le blackout résultats")
+
+    return {
+        "step_key": "sync_earnings_calendar",
+        "label": "Sync Earnings Calendar",
+        "table": "stock_earnings_calendar",
+        "command": "python -m dataIntegrityEngine.sync_earnings_calendar",
+        "status": status,
+        "latest_date": latest_date.isoformat() if latest_date is not None else None,
+        "covered_symbols": int(covered_symbols),
+        "eligible_symbols": int(eligible_symbols),
+        "coverage_pct": coverage_pct,
+        "coverage_label": f"{coverage_pct:.1f}% ({int(covered_symbols)}/{int(eligible_symbols)})" if eligible_symbols > 0 else "0.0% (0/0)",
+        "horizon_days": horizon_days,
+        "reason": " · ".join(reasons),
+        "query_error": query_error,
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_alpha_scanner_dependency_diagnostic(*, today: date | None = None) -> dict[str, object]:
+    reference_day = today or date.today()
+    configured_thresholds = get_alpha_scanner_dependency_thresholds()
+
+    eligible_raw, eligible_error = _safe_scalar_with_error(ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL)
+    eligible_symbols = _coerce_int(eligible_raw)
+
+    quotes_latest_raw, quotes_latest_error = _safe_scalar_with_error(
+        f"""
+        SELECT MAX(q.quote_date)
+        FROM stock_quote_snapshots q
+        INNER JOIN (
+            {ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL.replace('SELECT COUNT(DISTINCT sm.symbol)', 'SELECT DISTINCT sm.symbol')}
+        ) eligible ON eligible.symbol = q.symbol
+        """
+    )
+    quotes_latest_date = _coerce_date(quotes_latest_raw)
+    quotes_covered_symbols = 0
+    quotes_covered_error = quotes_latest_error
+    if quotes_latest_date is not None and quotes_latest_error is None:
+        quotes_covered_raw, quotes_covered_error = _safe_scalar_with_error(
+            f"""
+            SELECT COUNT(DISTINCT q.symbol)
+            FROM stock_quote_snapshots q
+            INNER JOIN (
+                {ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL.replace('SELECT COUNT(DISTINCT sm.symbol)', 'SELECT DISTINCT sm.symbol')}
+            ) eligible ON eligible.symbol = q.symbol
+            WHERE q.quote_date = :latest_date
+            """,
+            {"latest_date": quotes_latest_date.isoformat()},
+        )
+        quotes_covered_symbols = _coerce_int(quotes_covered_raw)
+
+    earnings_latest_raw, earnings_latest_error = _safe_scalar_with_error(
+        f"""
+        SELECT MAX(e.earnings_date)
+        FROM stock_earnings_calendar e
+        INNER JOIN (
+            {ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL.replace('SELECT COUNT(DISTINCT sm.symbol)', 'SELECT DISTINCT sm.symbol')}
+        ) eligible ON eligible.symbol = e.symbol
+        WHERE e.earnings_date >= :today
+        """,
+        {"today": reference_day.isoformat()},
+    )
+    earnings_latest_date = _coerce_date(earnings_latest_raw)
+    earnings_covered_symbols = 0
+    earnings_covered_error = earnings_latest_error
+    if earnings_latest_error is None:
+        earnings_covered_raw, earnings_covered_error = _safe_scalar_with_error(
+            f"""
+            SELECT COUNT(DISTINCT e.symbol)
+            FROM stock_earnings_calendar e
+            INNER JOIN (
+                {ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL.replace('SELECT COUNT(DISTINCT sm.symbol)', 'SELECT DISTINCT sm.symbol')}
+            ) eligible ON eligible.symbol = e.symbol
+            WHERE e.earnings_date >= :today
+            """,
+            {"today": reference_day.isoformat()},
+        )
+        earnings_covered_symbols = _coerce_int(earnings_covered_raw)
+
+    quotes_payload = _build_quotes_dependency_payload(
+        today=reference_day,
+        eligible_symbols=eligible_symbols,
+        latest_date=quotes_latest_date,
+        covered_symbols=quotes_covered_symbols,
+        query_error=eligible_error or quotes_covered_error,
+        thresholds=configured_thresholds["sync_latest_quotes"],
+    )
+    earnings_payload = _build_earnings_dependency_payload(
+        today=reference_day,
+        eligible_symbols=eligible_symbols,
+        latest_date=earnings_latest_date,
+        covered_symbols=earnings_covered_symbols,
+        query_error=eligible_error or earnings_covered_error,
+        thresholds=configured_thresholds["sync_earnings_calendar"],
+    )
+
+    dependencies = {
+        quotes_payload["step_key"]: quotes_payload,
+        earnings_payload["step_key"]: earnings_payload,
+    }
+    all_red = all(str(payload.get("status")) == "red" for payload in dependencies.values())
+    any_red_or_orange = any(str(payload.get("status")) in {"red", "orange"} for payload in dependencies.values())
+    return {
+        "as_of_date": reference_day.isoformat(),
+        "eligible_symbols": eligible_symbols,
+        "dependencies": dependencies,
+        "thresholds": configured_thresholds,
+        "all_red": all_red,
+        "any_red_or_orange": any_red_or_orange,
+    }
 
 
 # ---------------------------------------------------------------------------
