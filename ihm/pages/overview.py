@@ -63,6 +63,7 @@ def _build_pipeline_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
                 {"label": "Import univers Alpaca", "step_keys": ["import_alpaca_assets"]},
                 {"label": "Import Alpaca Bar", "step_keys": ["import_alpaca_bar"]},
                 {"label": "Data Sanitizer Daily", "step_keys": ["data_sanitizer_daily"]},
+                {"label": "Stock Screener", "step_keys": ["stock_screener"]},
                 {"label": "Mise à jour fondamentaux", "step_keys": ["update_sector"]},
                 {"label": "Sync Latest Quotes", "step_keys": ["sync_latest_quotes"]},
                 {"label": "Sync Earnings Calendar", "step_keys": ["sync_earnings_calendar"]},

@@ -104,6 +104,31 @@ python -m screener.stock_screener --first-pass-window-days 400
 python -m screener.stock_screener --disable-two-pass-loading
 ```
 
+### Correspondance avec l'IHM
+
+Depuis `ihm/pages/pipeline.py`, l'étape `3. stock_screener` du workflow quotidien 1→14 lance bien :
+
+```powershell
+python -m screener.stock_screener ...
+```
+
+L'IHM expose désormais les options CLI réellement supportées par ce point d'entrée :
+
+- `chunk-size`
+- `max-workers`
+- `benchmark`
+- `liquidity-threshold-usd`
+- `min-relative-strength-index`
+- `historical-range-lookback-days`
+- `min-historical-range-score`
+- `first-pass-window-days`
+- activation / désactivation du chargement en 2 passes
+
+Point important :
+
+- `0` sur `max workers` dans l'IHM signifie **auto** (`os.cpu_count()`) ;
+- le mode **point-in-time** via `as_of_date` reste un usage **code/backtesting**, pas une option du launcher Pipeline live.
+
 ---
 
 ## 4. Ce que fait le module
@@ -212,6 +237,12 @@ Champs notables :
 - `pass2_seconds`
 - `upsert_seconds`
 - `duration_seconds`
+
+Ces résumés sont consommés côté IHM pour :
+
+- la page `Pipeline` (run individuel + historique) ;
+- la page `Overview` (résumés pipeline récents) ;
+- la page `Screening` (contexte pipeline & qualité amont).
 
 ---
 

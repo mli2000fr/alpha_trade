@@ -120,7 +120,9 @@ elle **lit les artefacts existants** produits par `python -m backtesting diagnos
 
 ## Lancement screener depuis l'IHM
 
-La page **🧪 Backtesting** permet désormais aussi de lancer directement depuis Streamlit :
+La page **🔄 Pipeline** expose désormais aussi l'étape quotidienne `stock_screener` avec les options backend réellement disponibles (`chunk-size`, `max-workers`, `benchmark`, seuils de liquidité/RS/range, fenêtre de passe 1, mode 2 passes).
+
+En complément, la page **🧪 Backtesting** permet aussi de lancer directement depuis Streamlit :
 
 - `python -m backtesting diagnose-screener`
 - `python -m backtesting recommend-screener`

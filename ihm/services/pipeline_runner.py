@@ -12,7 +12,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Literal
 
+from screener.models import ScreenerConfig
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SCREENER_CONFIG = ScreenerConfig()
+DEFAULT_SCREENER_CHUNK_SIZE = DEFAULT_SCREENER_CONFIG.chunk_size
+DEFAULT_SCREENER_BENCHMARK_SYMBOL = DEFAULT_SCREENER_CONFIG.benchmark_symbol
+DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD = DEFAULT_SCREENER_CONFIG.liquidity_threshold_usd
+DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX = DEFAULT_SCREENER_CONFIG.min_relative_strength_index
+DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS = DEFAULT_SCREENER_CONFIG.historical_range_lookback_days
+DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE = DEFAULT_SCREENER_CONFIG.min_historical_range_score
+DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS = DEFAULT_SCREENER_CONFIG.first_pass_window_days
+DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING = DEFAULT_SCREENER_CONFIG.enable_two_pass_loading
 DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE = 200
 DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS = 1.1
 DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY = 50
@@ -51,6 +62,15 @@ class PipelineLaunchOptions:
     ml_optimize_target: bool = False
     news_import_start_date: str | None = None
     news_import_end_date: str | None = None
+    screener_chunk_size: int = DEFAULT_SCREENER_CHUNK_SIZE
+    screener_max_workers: int | None = None
+    screener_benchmark_symbol: str = DEFAULT_SCREENER_BENCHMARK_SYMBOL
+    screener_liquidity_threshold_usd: float = DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD
+    screener_min_relative_strength_index: float = DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX
+    screener_historical_range_lookback_days: int = DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS
+    screener_min_historical_range_score: float = DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE
+    screener_first_pass_window_days: int = DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS
+    screener_enable_two_pass_loading: bool = DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING
     data_integrity_quotes_limit: int | None = None
     data_integrity_quotes_batch_size: int = DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE
     data_integrity_earnings_from_date: str | None = None
@@ -272,6 +292,11 @@ def _normalize_optional_date(value: str | None) -> str | None:
     return cleaned or None
 
 
+def _normalize_symbol(value: str | None, default: str) -> str:
+    cleaned = (value or "").strip().upper()
+    return cleaned or default
+
+
 def is_gpu_available() -> bool:
     try:
         import torch
@@ -290,6 +315,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     news_import_end_date = _normalize_optional_date(options.news_import_end_date)
     earnings_from_date = _normalize_optional_date(options.data_integrity_earnings_from_date)
     earnings_to_date = _normalize_optional_date(options.data_integrity_earnings_to_date)
+    screener_max_workers = options.screener_max_workers if options.screener_max_workers and options.screener_max_workers > 0 else None
+    screener_benchmark_symbol = _normalize_symbol(options.screener_benchmark_symbol, DEFAULT_SCREENER_BENCHMARK_SYMBOL)
     quotes_limit = options.data_integrity_quotes_limit if options.data_integrity_quotes_limit and options.data_integrity_quotes_limit > 0 else None
     earnings_limit = options.data_integrity_earnings_limit if options.data_integrity_earnings_limit and options.data_integrity_earnings_limit > 0 else None
     fundamentals_limit = options.data_integrity_fundamentals_limit if options.data_integrity_fundamentals_limit and options.data_integrity_fundamentals_limit > 0 else None
@@ -327,7 +354,31 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.data_sanitizer_daily"]
 
     if step_key == "stock_screener":
-        return [sys.executable, "-u", "-m", "screener.stock_screener"]
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "screener.stock_screener",
+            "--chunk-size",
+            str(options.screener_chunk_size),
+            "--benchmark",
+            screener_benchmark_symbol,
+            "--liquidity-threshold-usd",
+            str(options.screener_liquidity_threshold_usd),
+            "--min-relative-strength-index",
+            str(options.screener_min_relative_strength_index),
+            "--historical-range-lookback-days",
+            str(options.screener_historical_range_lookback_days),
+            "--min-historical-range-score",
+            str(options.screener_min_historical_range_score),
+            "--first-pass-window-days",
+            str(options.screener_first_pass_window_days),
+        ]
+        if screener_max_workers is not None:
+            command.extend(["--max-workers", str(screener_max_workers)])
+        if not options.screener_enable_two_pass_loading:
+            command.append("--disable-two-pass-loading")
+        return command
 
     if step_key == "sync_latest_quotes":
         command = [

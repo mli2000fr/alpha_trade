@@ -86,7 +86,67 @@ def test_build_pipeline_command_omits_account_for_global_steps() -> None:
 
     command = build_pipeline_command("stock_screener", options)
 
-    assert command == [command[0], "-u", "-m", "screener.stock_screener"]
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "screener.stock_screener",
+        "--chunk-size",
+        "500",
+        "--benchmark",
+        "SPY",
+        "--liquidity-threshold-usd",
+        "10000000.0",
+        "--min-relative-strength-index",
+        "100.0",
+        "--historical-range-lookback-days",
+        "504",
+        "--min-historical-range-score",
+        "70.0",
+        "--first-pass-window-days",
+        "400",
+    ]
+
+
+def test_build_pipeline_command_stock_screener_exposes_all_supported_backend_options() -> None:
+    command = build_pipeline_command(
+        "stock_screener",
+        PipelineLaunchOptions(
+            screener_chunk_size=250,
+            screener_max_workers=6,
+            screener_benchmark_symbol="qqq",
+            screener_liquidity_threshold_usd=5_000_000.0,
+            screener_min_relative_strength_index=105.0,
+            screener_historical_range_lookback_days=252,
+            screener_min_historical_range_score=80.0,
+            screener_first_pass_window_days=504,
+            screener_enable_two_pass_loading=False,
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "screener.stock_screener",
+        "--chunk-size",
+        "250",
+        "--benchmark",
+        "QQQ",
+        "--liquidity-threshold-usd",
+        "5000000.0",
+        "--min-relative-strength-index",
+        "105.0",
+        "--historical-range-lookback-days",
+        "252",
+        "--min-historical-range-score",
+        "80.0",
+        "--first-pass-window-days",
+        "504",
+        "--max-workers",
+        "6",
+        "--disable-two-pass-loading",
+    ]
 
 
 def test_build_pipeline_command_alpha_scanner_is_always_strict_implicitly() -> None:
