@@ -35,16 +35,25 @@ Cela évite que les pages `Execution`, `Corporate Actions`, `ML`, etc. paraissen
 
 ## Structure des pages
 
+La sidebar est ordonnée **de haut en bas selon le flux opératoire principal** :
+
+`🏠 Vue d'ensemble` → `🔄 Pipeline` → `📊 Screening` → `🤖 ML / Prédictions` → `⚖️ Risk` → `🚀 Execution` → `📑 Corporate Actions`
+
+Les pages **hors workflow quotidien** sont volontairement regroupées en fin de navigation :
+
+`🧪 Backtesting` → `🗃️ Administration DB` → `⚙️ Paramètres / Santé`
+
 | Page | Description |
 |---|---|
 | 🏠 Vue d'ensemble | KPI, alertes, top candidats, santé DB |
 | 🔄 Pipeline | Workflow quotidien 1→14 + steps auxiliaires Data Integrity (`import_alpaca_assets`, `update_sector`), lancement en arrière-plan, arrêt, historique, comparaison, téléchargement des logs et résumés métier |
-| 🧪 Backtesting | Formulaire complet des commandes `backtesting run`, `backfill-scores-history`, `diagnose-screener` et `recommend-screener`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis et graphique live des artefacts |
 | 📊 Screening | Table `stock_scores` avec filtres (symbole, secteur, candidat, score, sentiment) + lecture directe des recommandations screener par objectif (robuste, offensif, bear, exécutable) |
+| 🤖 ML / Prédictions | Runs training, métriques, prédictions LSTM |
 | ⚖️ Risk | Décisions de risque, portefeuille cible, synthèse par secteur |
 | 🚀 Execution | Runs d'exécution, événements, fills, positions broker |
 | 📑 Corporate Actions | Événements CA, applications, dividendes cumulés |
-| 🤖 ML / Prédictions | Runs training, métriques, prédictions LSTM |
+| 🧪 Backtesting | Formulaire complet des commandes `backtesting run`, `backfill-scores-history`, `diagnose-screener` et `recommend-screener`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis et graphique live des artefacts |
+| 🗃️ Administration DB | Outils d'inspection / maintenance SQL et plan de vidage contrôlé |
 | ⚙️ Paramètres / Santé | Variables d'env, connexion DB, dépendances, version Python |
 
 ## Pilotage des pipelines

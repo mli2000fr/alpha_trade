@@ -9,6 +9,13 @@ from __future__ import annotations
 import streamlit as st
 
 from ihm.components.db_controls import render_db_connection_form
+from ihm.services.navigation import (
+    build_primary_navigation_caption,
+    build_support_navigation_caption,
+    get_navigation_page_imports,
+    get_navigation_page_labels,
+    get_navigation_page_mapping,
+)
 
 st.set_page_config(
     page_title="Alpha Trade — Cockpit Opérateur",
@@ -20,23 +27,19 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # Navigation sidebar
 # ---------------------------------------------------------------------------
-PAGES = {
-    "🏠 Vue d'ensemble": "overview",
-    "🔄 Pipeline": "pipeline",
-    "🗃️ Administration DB": "db_admin",
-    "🧪 Backtesting": "backtesting",
-    "📊 Screening": "screening",
-    "⚖️ Risk": "risk",
-    "🚀 Execution": "execution",
-    "📑 Corporate Actions": "corporate_actions",
-    "🤖 ML / Prédictions": "ml",
-    "⚙️ Paramètres / Santé": "settings",
-}
+PAGES = get_navigation_page_mapping()
+PAGE_LABELS = get_navigation_page_labels()
+PAGE_IMPORTS = get_navigation_page_imports()
 NAVIGATION_RADIO_KEY = "ihm_sidebar_navigation"
 NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
 
 st.sidebar.title("📈 Alpha Trade")
 st.sidebar.caption("Cockpit opérateur — lecture seule")
+st.sidebar.caption("Navigation ordonnée pour suivre le pipeline métier du haut vers le bas.")
+
+with st.sidebar.expander("🧭 Ordre des pages", expanded=False):
+    st.caption(build_primary_navigation_caption())
+    st.caption(build_support_navigation_caption())
 
 with st.sidebar.expander("🗄️ Connexion DB", expanded=False):
     render_db_connection_form("sidebar_db_connection_form", show_host_fields=True)
@@ -63,25 +66,13 @@ if requested_page_key in PAGES.values():
             st.session_state[NAVIGATION_RADIO_KEY] = label
             break
 
-selection = st.sidebar.radio("Navigation", list(PAGES.keys()), label_visibility="collapsed", key=NAVIGATION_RADIO_KEY)
+selection = st.sidebar.radio("Navigation", PAGE_LABELS, label_visibility="collapsed", key=NAVIGATION_RADIO_KEY)
 
 page_key = PAGES[selection]
 
 # ---------------------------------------------------------------------------
 # Routage vers la page sélectionnée
 # ---------------------------------------------------------------------------
-PAGE_IMPORTS = {
-    "overview": "ihm.pages.overview",
-    "pipeline": "ihm.pages.pipeline",
-    "db_admin": "ihm.pages.db_admin",
-    "backtesting": "ihm.pages.backtesting",
-    "screening": "ihm.pages.screening",
-    "risk": "ihm.pages.risk",
-    "execution": "ihm.pages.execution",
-    "corporate_actions": "ihm.pages.corporate_actions",
-    "ml": "ihm.pages.ml",
-    "settings": "ihm.pages.settings",
-}
 
 render = None
 module_name = PAGE_IMPORTS.get(page_key)

@@ -10,7 +10,10 @@ from ihm.pages import run_page_if_standalone
 from ihm.components.alpha_scanner_dependency import render_alpha_scanner_dependency_panel
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
-from ihm.components.screener_artifacts import render_shared_screener_artifact_selector
+from ihm.components.screener_artifacts import (
+    build_screener_artifact_history_dataframe,
+    render_shared_screener_artifact_selector,
+)
 from ihm.components.tables import show_dataframe
 from ihm.services.screener_recommendations import (
     list_screener_csv_files,
@@ -18,10 +21,10 @@ from ihm.services.screener_recommendations import (
     load_screener_recommendation_report,
 )
 from ihm.services.db import db_available
+from ihm.services.pipeline_runner import get_pipeline_steps
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
 from ihm.services.run_summary import (
     build_latest_run_summary_rows,
-    build_ordered_pipeline_step_scopes,
     build_pipeline_flow_caption,
 )
 from ihm.services.queries import get_alpha_scanner_dependency_diagnostic, get_stock_scores
@@ -43,12 +46,22 @@ def _merge_pipeline_runs() -> list[dict[str, object]]:
 
 
 def _build_quality_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
+    scopes = [
+        {"label": step.name, "step_keys": [step.key]}
+        for step in get_pipeline_steps()
+        if int(step.num) <= 8
+    ]
+    scopes.append({"label": "Workflow complet", "run_kind": "workflow", "step_keys": ["pipeline_workflow"]})
     return pd.DataFrame(
         build_latest_run_summary_rows(
             runs,
-            build_ordered_pipeline_step_scopes(max_main_step=8),
+            scopes,
         )
     )
+
+
+def _build_artifact_history_dataframe(history_entries: list[dict[str, object]]) -> pd.DataFrame:
+    return build_screener_artifact_history_dataframe(history_entries)
 
 
 def _build_objective_recommendation_rows(report: dict[str, object]) -> pd.DataFrame:
