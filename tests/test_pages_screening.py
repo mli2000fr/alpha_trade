@@ -27,3 +27,32 @@ def test_build_quality_summary_rows_exposes_recent_pipeline_context() -> None:
     assert list(rows["scope"]) == ["Import Alpaca Bar", "Workflow complet"]
 
 
+def test_build_objective_recommendation_rows_formats_phase7_snapshot() -> None:
+    rows = screening._build_objective_recommendation_rows(
+        {
+            "objective_rows_df": screening.pd.DataFrame(
+                [
+                    {
+                        "objective_label": "robuste",
+                        "scenario_name": "steady",
+                        "objective_scope": "cross_regime",
+                        "objective_score": 0.77,
+                        "overall_score": 0.75,
+                        "reason": "Stable sur tous les régimes.",
+                    }
+                ]
+            )
+        }
+    )
+
+    assert list(rows.columns) == [
+        "Objectif",
+        "Scénario recommandé",
+        "Périmètre",
+        "Score objectif",
+        "Score global",
+        "Pourquoi",
+    ]
+    assert rows.iloc[0]["Scénario recommandé"] == "steady"
+
+

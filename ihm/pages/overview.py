@@ -14,6 +14,7 @@ from ihm.components.metrics import metric_row
 from ihm.components.status_badges import env_badge, run_status_badge
 from ihm.components.tables import show_dataframe
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
+from ihm.services.screener_recommendations import load_screener_recommendation_report
 from ihm.services.run_summary import (
     build_latest_run_summary_rows,
     find_latest_run_with_summary,
@@ -49,6 +50,34 @@ def _build_pipeline_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
             ],
         )
     )
+
+
+def _build_screener_objective_rows(report: dict[str, object]) -> pd.DataFrame:
+    objective_rows = report.get("objective_rows_df")
+    if not isinstance(objective_rows, pd.DataFrame) or objective_rows.empty:
+        return pd.DataFrame()
+
+    columns = [
+        ("objective", "objectif"),
+        ("objective_label", "label"),
+        ("scenario_name", "scénario"),
+        ("objective_scope", "périmètre"),
+        ("objective_score", "score objectif"),
+        ("overall_score", "score global"),
+    ]
+    available_columns = [column for column, _ in columns if column in objective_rows.columns]
+    preview = objective_rows.loc[:, available_columns].copy()
+    return preview.rename(columns={column: label for column, label in columns if column in preview.columns})
+
+
+def _build_screener_objective_metrics(report: dict[str, object]) -> list[tuple[str, str, str | None]]:
+    rows = _build_screener_objective_rows(report)
+    if rows.empty:
+        return []
+    metrics: list[tuple[str, str, str | None]] = []
+    for _, row in rows.iterrows():
+        metrics.append((str(row.get("label") or row.get("objectif") or "Objectif"), str(row.get("scénario") or "—"), str(row.get("périmètre") or "global")))
+    return metrics
 
 
 def render() -> None:
@@ -107,6 +136,20 @@ def render() -> None:
     if not summary_rows.empty:
         st.subheader("📋 Résumés pipeline récents")
         show_dataframe(summary_rows)
+
+    screener_report = load_screener_recommendation_report()
+    screener_objective_rows = _build_screener_objective_rows(screener_report)
+    if not screener_objective_rows.empty:
+        st.subheader("🎯 Calibration screener")
+        st.caption(
+            f"Derniers objectifs exportés depuis `{screener_report.get('artifacts_dir')}` · "
+            f"Période : {screener_report.get('coverage_label', 'Période non renseignée')} · "
+            f"MAJ : {screener_report.get('updated_at_label', 'inconnue')}"
+        )
+        screener_metrics = _build_screener_objective_metrics(screener_report)
+        if screener_metrics:
+            metric_row(screener_metrics)
+        show_dataframe(screener_objective_rows, height=220)
 
     # --- Top candidats ---
     st.subheader("🏆 Top 10 candidats par score sentiment")

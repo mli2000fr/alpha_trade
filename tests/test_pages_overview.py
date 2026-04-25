@@ -34,3 +34,25 @@ def test_build_pipeline_summary_rows_exposes_latest_workflow_and_upstream_runs()
     assert list(rows["scope"]) == ["Workflow complet", "Import Alpaca Bar", "Data Sanitizer Daily"]
 
 
+def test_build_screener_objective_rows_exposes_operational_leaders() -> None:
+    rows = overview._build_screener_objective_rows(
+        {
+            "objective_rows_df": overview.pd.DataFrame(
+                [
+                    {
+                        "objective": "robust",
+                        "objective_label": "robuste",
+                        "scenario_name": "steady",
+                        "objective_scope": "cross_regime",
+                        "objective_score": 0.77,
+                        "overall_score": 0.75,
+                    }
+                ]
+            )
+        }
+    )
+
+    assert list(rows.columns) == ["objectif", "label", "scénario", "périmètre", "score objectif", "score global"]
+    assert rows.iloc[0]["scénario"] == "steady"
+
+

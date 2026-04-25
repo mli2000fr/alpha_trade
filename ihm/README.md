@@ -40,7 +40,7 @@ Cela évite que les pages `Execution`, `Corporate Actions`, `ML`, etc. paraissen
 | 🏠 Vue d'ensemble | KPI, alertes, top candidats, santé DB |
 | 🔄 Pipeline | 12 étapes du pipeline quotidien (1→1a→2→…→6→6a→6b→7→8→8a), lancement en arrière-plan, arrêt, historique, comparaison et téléchargement des logs |
 | 🧪 Backtesting | Formulaire complet des commandes `backtesting run` et `backfill-scores-history`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis et graphique live des artefacts |
-| 📊 Screening | Table `stock_scores` avec filtres (symbole, secteur, candidat, score, sentiment) |
+| 📊 Screening | Table `stock_scores` avec filtres (symbole, secteur, candidat, score, sentiment) + lecture directe des recommandations screener par objectif (robuste, offensif, bear, exécutable) |
 | ⚖️ Risk | Décisions de risque, portefeuille cible, synthèse par secteur |
 | 🚀 Execution | Runs d'exécution, événements, fills, positions broker |
 | 📑 Corporate Actions | Événements CA, applications, dividendes cumulés |
@@ -61,6 +61,22 @@ La page **🔄 Pipeline** permet désormais :
 Les logs IHM sont persistés sous `artifacts/ihm_pipeline_runs/`.
 
 Les runs de backtesting lancés depuis l'IHM sont persistés sous `artifacts/ihm_backtesting_runs/`.
+
+## Recommandations screener côté dashboard
+
+Quand les artefacts suivants existent dans `artifacts/screener_diagnostics/` :
+
+- `scenario_recommendations_by_objective.csv`
+- `recommendation_summary_by_objective.json`
+- `metadata.json`
+
+l'IHM expose automatiquement :
+
+- un **résumé compact** sur la page **🏠 Vue d'ensemble** ;
+- un **bloc détaillé** sur la page **📊 Screening** avec les leaders par objectif et le leaderboard phase 7.
+
+Cette phase 8 ne relance pas le diagnostic depuis l'interface :
+elle **lit les artefacts existants** produits par `python -m backtesting diagnose-screener` ou `python -m backtesting recommend-screener`.
 
 ## Limitations connues
 

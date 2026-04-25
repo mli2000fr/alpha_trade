@@ -330,7 +330,7 @@ L'application ouvre une interface web locale sur :
 |---|---|---|
 | Accueil | `/` | Vue d'ensemble, statut DB, sélecteur de compte |
 | Pipeline Quotidien | `/pipeline` | Lancement et supervision des étapes du pipeline |
-| Screening | `/screening` | Résultats du screener et de l'alpha scanner |
+| Screening | `/screening` | Résultats du screener et de l'alpha scanner, plus recommandations par objectif issues des artefacts de diagnostic |
 | Portefeuille | `/portfolio` | Positions, performance, exposition sectorielle |
 | Exécution | `/execution` | Ordres, fills, TCA, réconciliation |
 | ML | `/ml` | Métriques des modèles LSTM, prédictions |
@@ -339,6 +339,8 @@ L'application ouvre une interface web locale sur :
 | Paramètres | `/settings` | Configuration DB, comptes Alpaca |
 
 Pour plus de détails sur les pages disponibles, voir `ihm/README.md`.
+
+Le dashboard **Vue d'ensemble** remonte aussi un résumé compact des dernières recommandations screener par objectif quand les artefacts `artifacts/screener_diagnostics/` sont présents.
 
 ---
 

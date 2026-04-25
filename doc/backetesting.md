@@ -621,6 +621,25 @@ Quand une recommandation est calculée, le pipeline exporte aussi :
 - `scenario_recommendations_by_objective.csv`
 - `recommendation_summary_by_objective.json`
 
+### Phase 8 — exposition directe côté IHM / dashboard
+
+La phase 8 ne change pas le moteur de recommandation :
+elle réutilise les artefacts phases 5→7 pour les rendre visibles directement dans l'interface Streamlit.
+
+Concrètement, quand le répertoire `artifacts/screener_diagnostics/` contient :
+
+- `scenario_recommendations_by_objective.csv`
+- `recommendation_summary_by_objective.json`
+- `metadata.json`
+
+l'IHM affiche désormais :
+
+- sur **🏠 Vue d'ensemble** : un résumé compact des leaders `robuste / offensif / bear / exécutable` ;
+- sur **📊 Screening** : un bloc détaillé avec les leaders par objectif, la période analysée et le leaderboard phase 7.
+
+Cette intégration est volontairement **read-only** :
+elle permet de consommer les recommandations sans rajouter une nouvelle couche de calcul dans l'IHM.
+
 ### Lecture pratique
 
 Cette phase 7 répond à des questions concrètes du type :
