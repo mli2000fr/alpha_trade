@@ -581,6 +581,64 @@ La commande suivante relit toujours le `summary_metrics.csv`, mais si le `daily_
 python -m backtesting recommend-screener --input-dir artifacts/screener_diagnostics
 ```
 
+### Phase 7 — recommandation adaptative par objectif
+
+La phase 7 ajoute une lecture plus opérationnelle des scénarios selon l'objectif recherché.
+
+Au lieu de ne sortir qu'un unique “meilleur compromis”, le pipeline produit désormais aussi quatre recommandations dédiées :
+
+- `robuste`
+- `offensif`
+- `défensif bear-market`
+- `meilleur compromis exécutable`
+
+### Logique des 4 profils
+
+#### `robuste`
+- privilégie la stabilité globale ;
+- exploite en priorité la lecture `cross_regime` si elle est disponible ;
+- favorise les scénarios qui gardent un pire cas acceptable quand le contexte de marché change.
+
+#### `offensif`
+- surpondère la qualité forward ;
+- valorise davantage le potentiel d'upside que la simple largeur d'exécution ;
+- reste utile pour identifier les réglages plus agressifs quand l'objectif n'est pas la robustesse maximale.
+
+#### `défensif bear-market`
+- bascule sur le sous-ensemble `bear` dès qu'il existe ;
+- met davantage l'accent sur survie + robustesse ;
+- retombe proprement sur une lecture globale si aucun régime `bear` n'est disponible.
+
+#### `meilleur compromis exécutable`
+- priorise la conversion jusqu'au portefeuille cible ;
+- valorise `portfolio_survival_ratio_mean`, `selector_to_portfolio_survival_ratio_mean` et `portfolio_target_count_mean` ;
+- correspond au meilleur candidat quand le besoin principal est un réglage réellement déployable.
+
+### Nouveaux artefacts phase 7
+
+Quand une recommandation est calculée, le pipeline exporte aussi :
+
+- `scenario_recommendations_by_objective.csv`
+- `recommendation_summary_by_objective.json`
+
+### Lecture pratique
+
+Cette phase 7 répond à des questions concrètes du type :
+
+- si je cherche avant tout un paramétrage robuste, lequel choisir ?
+- si je veux maximiser l'offensive forward, quel scénario ressort ?
+- quel réglage tient le mieux en bear market ?
+- quel scénario garde le meilleur compromis réellement exécutable ?
+
+Les commandes existantes restent inchangées :
+
+```powershell
+python -m backtesting diagnose-screener --start 2024-01-01 --end 2024-12-31 --mode oat --limit-days 60
+python -m backtesting recommend-screener --input-dir artifacts/screener_diagnostics
+```
+
+La différence est qu'elles produisent maintenant automatiquement aussi l'analyse par objectif, en plus des sorties phases 5 et 6.
+
 ---
 
 ## 12. État validé

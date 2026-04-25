@@ -11,8 +11,10 @@ from backtesting.screener_diagnostics import (
     build_cross_regime_recommendations,
     build_screener_oat_scenarios,
     classify_market_regimes,
+    export_screener_objective_recommendations,
     export_screener_recommendations,
     export_screener_regime_recommendations,
+    recommend_screener_scenarios_by_objective,
     recommend_screener_scenarios,
     recommend_screener_scenarios_by_regime,
     summarize_screener_diagnostics_by_regime,
@@ -570,6 +572,271 @@ def test_export_screener_regime_recommendations_writes_files(tmp_path) -> None:
     assert artifacts["cross_regime_recommendations"].exists()
     payload = json.loads(artifacts["cross_regime_recommendation_summary"].read_text(encoding="utf-8"))
     assert payload["recommended_scenario"]["scenario_name"] == "balanced"
+
+
+def test_recommend_screener_scenarios_by_objective_adapts_to_operational_goal() -> None:
+    summary = pd.DataFrame(
+        [
+            {
+                "scenario_name": "robusto",
+                "is_baseline": 1,
+                "days_evaluated": 12,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.26,
+                "selector_to_portfolio_survival_ratio_mean": 0.55,
+                "portfolio_target_count_mean": 4.0,
+                "portfolio_excess_return_20d_mean": 0.050,
+                "selector_excess_return_20d_mean": 0.038,
+                "portfolio_positive_share_20d_mean": 0.61,
+                "portfolio_coverage_20d_mean": 4.0,
+                "delta_portfolio_excess_return_20d_mean": 0.00,
+            },
+            {
+                "scenario_name": "offensive",
+                "is_baseline": 0,
+                "days_evaluated": 12,
+                "days_failed": 1,
+                "portfolio_survival_ratio_mean": 0.15,
+                "selector_to_portfolio_survival_ratio_mean": 0.34,
+                "portfolio_target_count_mean": 2.0,
+                "portfolio_excess_return_20d_mean": 0.135,
+                "selector_excess_return_20d_mean": 0.110,
+                "portfolio_positive_share_20d_mean": 0.66,
+                "portfolio_coverage_20d_mean": 2.0,
+                "delta_portfolio_excess_return_20d_mean": 0.085,
+            },
+            {
+                "scenario_name": "bear_shield",
+                "is_baseline": 0,
+                "days_evaluated": 12,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.24,
+                "selector_to_portfolio_survival_ratio_mean": 0.57,
+                "portfolio_target_count_mean": 4.0,
+                "portfolio_excess_return_20d_mean": 0.030,
+                "selector_excess_return_20d_mean": 0.020,
+                "portfolio_positive_share_20d_mean": 0.58,
+                "portfolio_coverage_20d_mean": 4.0,
+                "delta_portfolio_excess_return_20d_mean": -0.020,
+            },
+            {
+                "scenario_name": "executable",
+                "is_baseline": 0,
+                "days_evaluated": 12,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.36,
+                "selector_to_portfolio_survival_ratio_mean": 0.78,
+                "portfolio_target_count_mean": 7.0,
+                "portfolio_excess_return_20d_mean": 0.060,
+                "selector_excess_return_20d_mean": 0.045,
+                "portfolio_positive_share_20d_mean": 0.64,
+                "portfolio_coverage_20d_mean": 7.0,
+                "delta_portfolio_excess_return_20d_mean": 0.010,
+            },
+        ]
+    )
+    summary_by_regime = pd.DataFrame(
+        [
+            {
+                "market_regime": "bull",
+                "scenario_name": "robusto",
+                "is_baseline": 1,
+                "days_evaluated": 6,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.27,
+                "selector_to_portfolio_survival_ratio_mean": 0.56,
+                "portfolio_target_count_mean": 4.0,
+                "portfolio_excess_return_20d_mean": 0.060,
+                "selector_excess_return_20d_mean": 0.045,
+                "portfolio_positive_share_20d_mean": 0.63,
+                "portfolio_coverage_20d_mean": 4.0,
+            },
+            {
+                "market_regime": "bull",
+                "scenario_name": "offensive",
+                "is_baseline": 0,
+                "days_evaluated": 6,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.18,
+                "selector_to_portfolio_survival_ratio_mean": 0.38,
+                "portfolio_target_count_mean": 2.0,
+                "portfolio_excess_return_20d_mean": 0.160,
+                "selector_excess_return_20d_mean": 0.130,
+                "portfolio_positive_share_20d_mean": 0.74,
+                "portfolio_coverage_20d_mean": 2.0,
+            },
+            {
+                "market_regime": "bull",
+                "scenario_name": "bear_shield",
+                "is_baseline": 0,
+                "days_evaluated": 6,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.22,
+                "selector_to_portfolio_survival_ratio_mean": 0.50,
+                "portfolio_target_count_mean": 3.0,
+                "portfolio_excess_return_20d_mean": 0.025,
+                "selector_excess_return_20d_mean": 0.015,
+                "portfolio_positive_share_20d_mean": 0.55,
+                "portfolio_coverage_20d_mean": 3.0,
+            },
+            {
+                "market_regime": "bull",
+                "scenario_name": "executable",
+                "is_baseline": 0,
+                "days_evaluated": 6,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.32,
+                "selector_to_portfolio_survival_ratio_mean": 0.72,
+                "portfolio_target_count_mean": 6.0,
+                "portfolio_excess_return_20d_mean": 0.065,
+                "selector_excess_return_20d_mean": 0.048,
+                "portfolio_positive_share_20d_mean": 0.64,
+                "portfolio_coverage_20d_mean": 6.0,
+            },
+            {
+                "market_regime": "bear",
+                "scenario_name": "robusto",
+                "is_baseline": 1,
+                "days_evaluated": 6,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.29,
+                "selector_to_portfolio_survival_ratio_mean": 0.60,
+                "portfolio_target_count_mean": 5.0,
+                "portfolio_excess_return_20d_mean": 0.045,
+                "selector_excess_return_20d_mean": 0.036,
+                "portfolio_positive_share_20d_mean": 0.64,
+                "portfolio_coverage_20d_mean": 4.0,
+            },
+            {
+                "market_regime": "bear",
+                "scenario_name": "offensive",
+                "is_baseline": 0,
+                "days_evaluated": 6,
+                "days_failed": 2,
+                "portfolio_survival_ratio_mean": 0.08,
+                "selector_to_portfolio_survival_ratio_mean": 0.14,
+                "portfolio_target_count_mean": 1.0,
+                "portfolio_excess_return_20d_mean": -0.060,
+                "selector_excess_return_20d_mean": -0.040,
+                "portfolio_positive_share_20d_mean": 0.25,
+                "portfolio_coverage_20d_mean": 1.0,
+            },
+            {
+                "market_regime": "bear",
+                "scenario_name": "bear_shield",
+                "is_baseline": 0,
+                "days_evaluated": 6,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.31,
+                "selector_to_portfolio_survival_ratio_mean": 0.63,
+                "portfolio_target_count_mean": 5.0,
+                "portfolio_excess_return_20d_mean": 0.050,
+                "selector_excess_return_20d_mean": 0.040,
+                "portfolio_positive_share_20d_mean": 0.67,
+                "portfolio_coverage_20d_mean": 5.0,
+            },
+            {
+                "market_regime": "bear",
+                "scenario_name": "executable",
+                "is_baseline": 0,
+                "days_evaluated": 6,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.16,
+                "selector_to_portfolio_survival_ratio_mean": 0.36,
+                "portfolio_target_count_mean": 2.0,
+                "portfolio_excess_return_20d_mean": -0.010,
+                "selector_excess_return_20d_mean": -0.005,
+                "portfolio_positive_share_20d_mean": 0.45,
+                "portfolio_coverage_20d_mean": 2.0,
+            },
+        ]
+    )
+
+    recommendations, objective_summary = recommend_screener_scenarios_by_objective(
+        summary,
+        summary_metrics_by_regime=summary_by_regime,
+        baseline_name="robusto",
+    )
+
+    assert not recommendations.empty
+    assert objective_summary["status"] == "ok"
+    assert objective_summary["cross_regime_analysis_available"] is True
+    assert objective_summary["bear_market_data_available"] is True
+    assert objective_summary["objectives"]["robust"]["recommended_scenario"]["scenario_name"] == "executable"
+    assert objective_summary["objectives"]["robust"]["scope"] == "cross_regime"
+    assert objective_summary["objectives"]["offensive"]["recommended_scenario"]["scenario_name"] == "offensive"
+    assert objective_summary["objectives"]["bear_defensive"]["recommended_scenario"]["scenario_name"] == "bear_shield"
+    assert objective_summary["objectives"]["executable_compromise"]["recommended_scenario"]["scenario_name"] == "executable"
+    assert set(recommendations["objective"].unique()) == {"robust", "offensive", "bear_defensive", "executable_compromise"}
+
+
+def test_recommend_screener_scenarios_by_objective_falls_back_without_bear_regime() -> None:
+    summary = pd.DataFrame(
+        [
+            {
+                "scenario_name": "baseline",
+                "is_baseline": 1,
+                "days_evaluated": 5,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.20,
+                "selector_to_portfolio_survival_ratio_mean": 0.40,
+                "portfolio_target_count_mean": 3.0,
+                "portfolio_excess_return_20d_mean": 0.03,
+                "portfolio_positive_share_20d_mean": 0.55,
+                "portfolio_coverage_20d_mean": 3.0,
+            },
+            {
+                "scenario_name": "safer",
+                "is_baseline": 0,
+                "days_evaluated": 5,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.28,
+                "selector_to_portfolio_survival_ratio_mean": 0.60,
+                "portfolio_target_count_mean": 4.0,
+                "portfolio_excess_return_20d_mean": 0.025,
+                "portfolio_positive_share_20d_mean": 0.58,
+                "portfolio_coverage_20d_mean": 4.0,
+            },
+        ]
+    )
+
+    recommendations, objective_summary = recommend_screener_scenarios_by_objective(summary, baseline_name="baseline")
+
+    assert not recommendations.empty
+    assert objective_summary["bear_market_data_available"] is False
+    assert objective_summary["objectives"]["bear_defensive"]["scope"] == "global_fallback"
+
+
+def test_export_screener_objective_recommendations_writes_files(tmp_path) -> None:
+    objective_recommendations = pd.DataFrame(
+        [
+            {
+                "objective": "robust",
+                "rank": 1,
+                "scenario_name": "robusto",
+                "objective_score": 0.81,
+                "objective_recommendation_label": "best_robust_objective",
+            }
+        ]
+    )
+    objective_summary = {
+        "status": "ok",
+        "objectives": {
+            "robust": {
+                "recommended_scenario": {
+                    "scenario_name": "robusto",
+                    "objective_score": 0.81,
+                }
+            }
+        },
+    }
+
+    artifacts = export_screener_objective_recommendations(objective_recommendations, objective_summary, tmp_path)
+
+    assert artifacts["scenario_recommendations_by_objective"].exists()
+    assert artifacts["recommendation_summary_by_objective"].exists()
+    payload = json.loads(artifacts["recommendation_summary_by_objective"].read_text(encoding="utf-8"))
+    assert payload["objectives"]["robust"]["recommended_scenario"]["scenario_name"] == "robusto"
 
 
 def test_analyze_period_merges_market_regime_and_builds_summary_by_regime(monkeypatch) -> None:

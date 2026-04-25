@@ -31,6 +31,38 @@ DEFAULT_PILLAR_WEIGHTS: dict[str, float] = {
     "survival": 0.30,
     "forward_quality": 0.30,
 }
+OBJECTIVE_PROFILE_ORDER = [
+    "robust",
+    "offensive",
+    "bear_defensive",
+    "executable_compromise",
+]
+OBJECTIVE_PROFILES: dict[str, dict[str, object]] = {
+    "robust": {
+        "label": "robuste",
+        "description": "Privilégie la tenue cross-régimes, la stabilité et la résilience globale.",
+        "pillar_weights": {"robustness": 0.55, "survival": 0.30, "forward_quality": 0.15},
+        "recommendation_label": "best_robust_objective",
+    },
+    "offensive": {
+        "label": "offensif",
+        "description": "Recherche davantage d'upside forward en acceptant un peu plus de variance.",
+        "pillar_weights": {"robustness": 0.05, "survival": 0.10, "forward_quality": 0.85},
+        "recommendation_label": "best_offensive_objective",
+    },
+    "bear_defensive": {
+        "label": "défensif bear-market",
+        "description": "Surpondère la survie et la robustesse sur le sous-ensemble bear quand il existe.",
+        "pillar_weights": {"robustness": 0.35, "survival": 0.45, "forward_quality": 0.20},
+        "recommendation_label": "best_bear_defensive_objective",
+    },
+    "executable_compromise": {
+        "label": "meilleur compromis exécutable",
+        "description": "Favorise la conversion jusqu'au portefeuille cible et la capacité d'exécution.",
+        "pillar_weights": {"robustness": 0.25, "survival": 0.55, "forward_quality": 0.20},
+        "recommendation_label": "best_executable_compromise_objective",
+    },
+}
 MARKET_REGIME_ORDER = ["bull", "bear", "range", "vol"]
 DEFAULT_REGIME_TREND_LOOKBACK_DAYS = 60
 DEFAULT_REGIME_LONG_MA_WINDOW = 200
@@ -638,6 +670,57 @@ def _build_recommendation_text(row: pd.Series, *, forward_column: str | None) ->
     return " | ".join(parts)
 
 
+def _build_objective_reason(
+    row: pd.Series,
+    *,
+    objective_name: str,
+    objective_label: str,
+) -> str:
+    parts = [f"objectif={objective_label}"]
+    if pd.notna(row.get("objective_score")):
+        parts.append(f"objective_score={float(row['objective_score']):.3f}")
+    if pd.notna(row.get("overall_score")):
+        parts.append(f"overall={float(row['overall_score']):.3f}")
+    if objective_name == "robust" and pd.notna(row.get("cross_regime_overall_score")):
+        parts.append(f"cross_regime={float(row['cross_regime_overall_score']):.3f}")
+    if objective_name == "robust" and pd.notna(row.get("worst_regime_overall_score")):
+        parts.append(f"worst_regime={float(row['worst_regime_overall_score']):.3f}")
+    if objective_name == "bear_defensive" and pd.notna(row.get("bear_overall_score")):
+        parts.append(f"bear_overall={float(row['bear_overall_score']):.3f}")
+    if objective_name == "bear_defensive" and pd.notna(row.get("bear_survival_score")):
+        parts.append(f"bear_survival={float(row['bear_survival_score']):.3f}")
+    base_reason = str(row.get("recommendation_reason") or "")
+    if base_reason:
+        parts.append(base_reason)
+    return " | ".join(parts)
+
+
+def _empty_objective_summary(
+    *,
+    baseline_name: str | None,
+    message: str,
+) -> dict[str, object]:
+    return {
+        "status": "empty",
+        "message": message,
+        "baseline_name": baseline_name,
+        "objectives": {},
+    }
+
+
+def _resolve_objective_summary_by_regime(
+    *,
+    summary_metrics_by_regime: pd.DataFrame | None,
+    daily_metrics: pd.DataFrame | None,
+    baseline_name: str | None,
+) -> pd.DataFrame:
+    if summary_metrics_by_regime is not None and not summary_metrics_by_regime.empty:
+        return summary_metrics_by_regime.copy()
+    if daily_metrics is None or daily_metrics.empty or "market_regime" not in daily_metrics.columns:
+        return pd.DataFrame()
+    return summarize_screener_diagnostics_by_regime(daily_metrics, baseline_name=baseline_name)
+
+
 def recommend_screener_scenarios(
     summary_metrics: pd.DataFrame,
     *,
@@ -1019,6 +1102,249 @@ def recommend_screener_scenarios_by_regime(
         "cross_regime": cross_regime_summary,
     }
     return combined, summary, cross_regime_recommendations, cross_regime_summary
+
+
+def recommend_screener_scenarios_by_objective(
+    summary_metrics: pd.DataFrame,
+    *,
+    daily_metrics: pd.DataFrame | None = None,
+    summary_metrics_by_regime: pd.DataFrame | None = None,
+    baseline_name: str | None = None,
+    target_horizon: int = DEFAULT_RECOMMENDATION_HORIZON,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Construit des recommandations alternatives selon plusieurs objectifs opérationnels."""
+    if summary_metrics.empty:
+        return pd.DataFrame(), _empty_objective_summary(
+            baseline_name=baseline_name,
+            message="Aucune métrique de synthèse disponible à analyser.",
+        )
+
+    resolved_summary_by_regime = _resolve_objective_summary_by_regime(
+        summary_metrics_by_regime=summary_metrics_by_regime,
+        daily_metrics=daily_metrics,
+        baseline_name=baseline_name,
+    )
+    regime_recommendations = pd.DataFrame()
+    cross_regime_recommendations = pd.DataFrame()
+    cross_regime_summary: dict[str, object] = {"status": "empty", "message": "Aucune analyse cross-régimes disponible."}
+    if not resolved_summary_by_regime.empty and "market_regime" in resolved_summary_by_regime.columns:
+        regime_recommendations, _, cross_regime_recommendations, cross_regime_summary = recommend_screener_scenarios_by_regime(
+            resolved_summary_by_regime,
+            daily_metrics=daily_metrics,
+            baseline_name=baseline_name,
+            target_horizon=target_horizon,
+        )
+
+    objective_frames: list[pd.DataFrame] = []
+    objective_summaries: dict[str, object] = {}
+    available_regimes = [
+        regime
+        for regime in MARKET_REGIME_ORDER
+        if regime in set(resolved_summary_by_regime.get("market_regime", pd.Series(dtype=str)).dropna().astype(str))
+    ]
+
+    bear_summary = pd.DataFrame()
+    bear_daily = pd.DataFrame()
+    if not resolved_summary_by_regime.empty and "market_regime" in resolved_summary_by_regime.columns:
+        bear_summary = resolved_summary_by_regime[resolved_summary_by_regime["market_regime"].astype(str) == "bear"].copy()
+    if daily_metrics is not None and not daily_metrics.empty and "market_regime" in daily_metrics.columns:
+        bear_daily = daily_metrics[daily_metrics["market_regime"].astype(str) == "bear"].copy()
+
+    for objective_priority, objective_name in enumerate(OBJECTIVE_PROFILE_ORDER, start=1):
+        profile = OBJECTIVE_PROFILES[objective_name]
+        objective_label = str(profile["label"])
+        objective_description = str(profile["description"])
+        pillar_weights = dict(profile["pillar_weights"])
+
+        objective_summary_input = summary_metrics
+        objective_daily_input = daily_metrics if daily_metrics is not None and not daily_metrics.empty else None
+        objective_scope = "global"
+        scope_regime = None
+
+        if objective_name == "bear_defensive" and not bear_summary.empty:
+            objective_summary_input = bear_summary.drop(columns=["market_regime"], errors="ignore")
+            objective_daily_input = bear_daily if not bear_daily.empty else None
+            objective_scope = "bear_regime"
+            scope_regime = "bear"
+        elif objective_name == "bear_defensive":
+            objective_scope = "global_fallback"
+
+        objective_frame, objective_phase_summary = recommend_screener_scenarios(
+            objective_summary_input,
+            daily_metrics=objective_daily_input,
+            baseline_name=baseline_name,
+            target_horizon=target_horizon,
+            pillar_weights=pillar_weights,
+        )
+        if objective_frame.empty:
+            continue
+
+        objective_frame = objective_frame.copy()
+        objective_frame.insert(0, "objective_priority", objective_priority)
+        objective_frame.insert(1, "objective", objective_name)
+        objective_frame.insert(2, "objective_label", objective_label)
+        objective_frame.insert(3, "objective_scope", objective_scope)
+        objective_frame.insert(4, "objective_scope_regime", scope_regime)
+        objective_frame["objective_score"] = pd.to_numeric(objective_frame.get("overall_score"), errors="coerce")
+
+        if objective_name == "robust" and not cross_regime_recommendations.empty:
+            cross_columns = [
+                column
+                for column in [
+                    "scenario_name",
+                    "cross_regime_rank",
+                    "cross_regime_overall_score",
+                    "mean_regime_overall_score",
+                    "worst_regime_overall_score",
+                    "regime_coverage_ratio",
+                ]
+                if column in cross_regime_recommendations.columns
+            ]
+            objective_frame = objective_frame.merge(
+                cross_regime_recommendations.loc[:, cross_columns],
+                on="scenario_name",
+                how="left",
+            )
+            base_score = pd.to_numeric(objective_frame["overall_score"], errors="coerce").fillna(0.0)
+            cross_score = pd.to_numeric(objective_frame.get("cross_regime_overall_score"), errors="coerce")
+            objective_frame["objective_score"] = (
+                cross_score.fillna(base_score) * 0.65 + base_score * 0.35
+            ).clip(lower=0.0, upper=1.0)
+            objective_frame = objective_frame.sort_values(
+                [
+                    "objective_score",
+                    "worst_regime_overall_score",
+                    "cross_regime_overall_score",
+                    "overall_score",
+                    "confidence_score",
+                    "scenario_name",
+                ],
+                ascending=[False, False, False, False, False, True],
+            ).reset_index(drop=True)
+            objective_scope = "cross_regime"
+            objective_frame["objective_scope"] = objective_scope
+
+        if objective_name == "offensive":
+            offensive_columns = [
+                ("metric_portfolio_forward_quality_score", 0.45),
+                ("metric_selector_forward_quality_score", 0.15),
+                ("metric_positive_share_score", 0.10),
+                ("metric_delta_forward_vs_baseline_score", 0.20),
+                ("forward_quality_score", 0.10),
+            ]
+            objective_frame["objective_score"] = _weighted_average_columns(
+                objective_frame,
+                [(column, weight) for column, weight in offensive_columns if column in objective_frame.columns],
+            ).clip(lower=0.0, upper=1.0)
+
+        if objective_name == "executable_compromise":
+            executable_columns = [
+                ("metric_portfolio_survival_ratio_score", 0.30),
+                ("metric_selector_to_portfolio_survival_ratio_score", 0.25),
+                ("metric_portfolio_target_count_score", 0.20),
+                ("metric_success_rate_score", 0.15),
+                ("survival_score", 0.10),
+            ]
+            objective_frame["objective_score"] = _weighted_average_columns(
+                objective_frame,
+                [(column, weight) for column, weight in executable_columns if column in objective_frame.columns],
+            ).clip(lower=0.0, upper=1.0)
+
+        if objective_name == "bear_defensive" and objective_scope == "bear_regime":
+            objective_frame = objective_frame.rename(
+                columns={
+                    "overall_score": "bear_overall_score",
+                    "robustness_score": "bear_robustness_score",
+                    "survival_score": "bear_survival_score",
+                    "forward_quality_score": "bear_forward_quality_score",
+                    "confidence_score": "bear_confidence_score",
+                    "rank": "bear_rank",
+                }
+            )
+            global_frame, _ = recommend_screener_scenarios(
+                summary_metrics,
+                daily_metrics=daily_metrics,
+                baseline_name=baseline_name,
+                target_horizon=target_horizon,
+            )
+            if not global_frame.empty:
+                objective_frame = objective_frame.merge(
+                    global_frame.loc[:, [column for column in ["scenario_name", "overall_score", "robustness_score", "survival_score", "forward_quality_score", "confidence_score"] if column in global_frame.columns]],
+                    on="scenario_name",
+                    how="left",
+                    suffixes=("", "_global"),
+                )
+            else:
+                for column in ["overall_score", "robustness_score", "survival_score", "forward_quality_score", "confidence_score"]:
+                    objective_frame[column] = np.nan
+            objective_frame["rank"] = np.arange(1, len(objective_frame) + 1)
+            objective_frame["objective_score"] = pd.to_numeric(objective_frame["bear_overall_score"], errors="coerce").fillna(
+                pd.to_numeric(objective_frame.get("overall_score"), errors="coerce").fillna(0.0)
+            )
+            objective_frame = objective_frame.sort_values(
+                ["objective_score", "bear_survival_score", "bear_robustness_score", "scenario_name"],
+                ascending=[False, False, False, True],
+            ).reset_index(drop=True)
+            objective_frame["rank"] = np.arange(1, len(objective_frame) + 1)
+
+        if objective_name != "bear_defensive":
+            objective_frame = objective_frame.sort_values(
+                ["objective_score", "forward_quality_score", "overall_score", "confidence_score", "scenario_name"],
+                ascending=[False, False, False, False, True],
+            ).reset_index(drop=True)
+            objective_frame["rank"] = np.arange(1, len(objective_frame) + 1)
+
+        objective_frame["objective_recommendation_label"] = ""
+        objective_frame.loc[objective_frame.index[0], "objective_recommendation_label"] = str(profile["recommendation_label"])
+        objective_frame["objective_reason"] = objective_frame.apply(
+            lambda row: _build_objective_reason(row, objective_name=objective_name, objective_label=objective_label),
+            axis=1,
+        )
+        objective_frames.append(objective_frame)
+
+        leader = objective_frame.iloc[0]
+        objective_summaries[objective_name] = {
+            "label": objective_label,
+            "description": objective_description,
+            "scope": objective_scope,
+            "scope_regime": scope_regime,
+            "pillar_weights": pillar_weights,
+            "analyzed_scenarios": int(len(objective_frame)),
+            "recommended_scenario": {
+                "scenario_name": str(leader["scenario_name"]),
+                "rank": int(leader["rank"]),
+                "objective_score": float(pd.to_numeric(pd.Series([leader.get("objective_score")]), errors="coerce").fillna(0.0).iloc[0]),
+                "reason": str(leader["objective_reason"]),
+                "overall_score": float(pd.to_numeric(pd.Series([leader.get("overall_score")]), errors="coerce").fillna(0.0).iloc[0]),
+                "robustness_score": float(pd.to_numeric(pd.Series([leader.get("robustness_score")]), errors="coerce").fillna(0.0).iloc[0]),
+                "survival_score": float(pd.to_numeric(pd.Series([leader.get("survival_score")]), errors="coerce").fillna(0.0).iloc[0]),
+                "forward_quality_score": float(pd.to_numeric(pd.Series([leader.get("forward_quality_score")]), errors="coerce").fillna(0.0).iloc[0]),
+                "confidence_score": float(pd.to_numeric(pd.Series([leader.get("confidence_score")]), errors="coerce").fillna(0.0).iloc[0]),
+            },
+            "metric_sources": objective_phase_summary.get("metric_sources", {}),
+            "missing_metrics": objective_phase_summary.get("missing_metrics", []),
+        }
+        if objective_name == "robust" and cross_regime_summary.get("status") == "ok":
+            objective_summaries[objective_name]["cross_regime_summary"] = cross_regime_summary
+
+    if not objective_frames:
+        return pd.DataFrame(), _empty_objective_summary(
+            baseline_name=baseline_name,
+            message="Aucune recommandation par objectif calculée.",
+        )
+
+    combined = pd.concat(objective_frames, ignore_index=True)
+    combined = combined.sort_values(["objective_priority", "rank", "scenario_name"], ascending=[True, True, True]).reset_index(drop=True)
+    return combined, {
+        "status": "ok",
+        "baseline_name": baseline_name,
+        "target_horizon_days": target_horizon,
+        "available_regimes": available_regimes,
+        "available_objectives": OBJECTIVE_PROFILE_ORDER,
+        "bear_market_data_available": not bear_summary.empty,
+        "cross_regime_analysis_available": cross_regime_summary.get("status") == "ok",
+        "objectives": objective_summaries,
+    }
 
 
 class ScreenerDiagnosticsService:
@@ -1608,6 +1934,27 @@ def export_screener_regime_recommendations(
         "recommendation_summary_by_regime": by_regime_summary_path,
         "cross_regime_recommendations": cross_regime_path,
         "cross_regime_recommendation_summary": cross_regime_summary_path,
+    }
+
+
+def export_screener_objective_recommendations(
+    objective_recommendations: pd.DataFrame,
+    objective_summary: dict[str, object],
+    output_dir: str | Path,
+) -> dict[str, Path]:
+    """Exporte les recommandations phase 7 adaptées à l'objectif opérationnel."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    recommendations_path = output_path / "scenario_recommendations_by_objective.csv"
+    summary_path = output_path / "recommendation_summary_by_objective.json"
+
+    objective_recommendations.to_csv(recommendations_path, index=False)
+    summary_path.write_text(json.dumps(objective_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "scenario_recommendations_by_objective": recommendations_path,
+        "recommendation_summary_by_objective": summary_path,
     }
 
 

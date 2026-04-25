@@ -425,9 +425,11 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         ScreenerDiagnosticsService,
         build_screener_grid_scenarios,
         build_screener_oat_scenarios,
+        export_screener_objective_recommendations,
         export_screener_regime_recommendations,
         export_screener_recommendations,
         export_screener_diagnostics,
+        recommend_screener_scenarios_by_objective,
         recommend_screener_scenarios_by_regime,
         recommend_screener_scenarios,
     )
@@ -494,6 +496,12 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         daily_metrics=result.daily_metrics,
         baseline_name=result.baseline_name,
     )
+    objective_recommendations, objective_summary = recommend_screener_scenarios_by_objective(
+        result.summary_metrics,
+        daily_metrics=result.daily_metrics,
+        summary_metrics_by_regime=result.summary_metrics_by_regime,
+        baseline_name=result.baseline_name,
+    )
     artifacts = export_screener_diagnostics(result, args.output_dir)
     artifacts.update(export_screener_recommendations(recommendation_frame, recommendation_summary, args.output_dir))
     if not regime_recommendations.empty or not cross_regime_recommendations.empty:
@@ -503,6 +511,14 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
                 regime_summary,
                 cross_regime_recommendations,
                 cross_regime_summary,
+                args.output_dir,
+            )
+        )
+    if not objective_recommendations.empty:
+        artifacts.update(
+            export_screener_objective_recommendations(
+                objective_recommendations,
+                objective_summary,
                 args.output_dir,
             )
         )
@@ -526,6 +542,10 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         _safe_print(f"   Reco cross-régimes  : {artifacts['cross_regime_recommendations']}")
     if "cross_regime_recommendation_summary" in artifacts:
         _safe_print(f"   Résumé cross-régime : {artifacts['cross_regime_recommendation_summary']}\n")
+    if "scenario_recommendations_by_objective" in artifacts:
+        _safe_print(f"   Reco par objectif   : {artifacts['scenario_recommendations_by_objective']}")
+    if "recommendation_summary_by_objective" in artifacts:
+        _safe_print(f"   Résumé objectifs    : {artifacts['recommendation_summary_by_objective']}\n")
 
     if recommendation_summary.get("status") == "ok":
         best = recommendation_summary["recommended_scenario"]
@@ -551,6 +571,23 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
                 float(best_cross["regime_coverage_ratio"]),
             )
         )
+        _safe_print()
+
+    if objective_summary.get("status") == "ok":
+        _safe_print("Recommandations adaptatives par objectif :")
+        for objective_name in objective_summary.get("available_objectives", []):
+            payload = objective_summary.get("objectives", {}).get(objective_name, {})
+            best_objective = payload.get("recommended_scenario")
+            if not isinstance(best_objective, dict) or not best_objective:
+                continue
+            _safe_print(
+                " - {} : {} (objective_score={:.3f}, overall={:.3f})".format(
+                    payload.get("label", objective_name),
+                    best_objective.get("scenario_name", "?"),
+                    float(best_objective.get("objective_score", 0.0)),
+                    float(best_objective.get("overall_score", 0.0)),
+                )
+            )
         _safe_print()
 
     if not result.summary_metrics.empty:
@@ -638,14 +675,35 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         _safe_print(cross_regime_recommendations.loc[:, cross_preview_columns].head(10).to_string(index=False))
         _safe_print()
 
+    if not objective_recommendations.empty:
+        objective_preview_columns = [
+            column
+            for column in [
+                "objective",
+                "objective_label",
+                "objective_scope",
+                "rank",
+                "scenario_name",
+                "objective_score",
+                "overall_score",
+                "objective_recommendation_label",
+            ]
+            if column in objective_recommendations.columns
+        ]
+        _safe_print("Classement phase 7 par objectif (aperçu):")
+        _safe_print(objective_recommendations.loc[:, objective_preview_columns].head(16).to_string(index=False))
+        _safe_print()
+
 
 def _run_screener_recommendation(args: argparse.Namespace) -> None:
     """Analyse un summary_metrics.csv existant et produit une recommandation phase 5."""
     import pandas as pd
 
     from backtesting.screener_diagnostics import (
+        export_screener_objective_recommendations,
         export_screener_recommendations,
         export_screener_regime_recommendations,
+        recommend_screener_scenarios_by_objective,
         recommend_screener_scenarios,
         recommend_screener_scenarios_by_regime,
         summarize_screener_diagnostics_by_regime,
@@ -673,6 +731,9 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
     regime_recommendations = pd.DataFrame()
     cross_regime_recommendations = pd.DataFrame()
     cross_regime_summary: dict[str, object] = {"status": "empty", "message": "Aucune analyse par régime disponible."}
+    objective_recommendations = pd.DataFrame()
+    objective_summary: dict[str, object] = {"status": "empty", "message": "Aucune analyse par objectif disponible."}
+    summary_by_regime = pd.DataFrame()
     if not daily_df.empty and "market_regime" in daily_df.columns:
         summary_by_regime = summarize_screener_diagnostics_by_regime(daily_df, baseline_name=args.baseline_name)
         regime_recommendations, regime_summary, cross_regime_recommendations, cross_regime_summary = recommend_screener_scenarios_by_regime(
@@ -691,6 +752,21 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
                     output_dir,
                 )
             )
+    objective_recommendations, objective_summary = recommend_screener_scenarios_by_objective(
+        summary_df,
+        daily_metrics=daily_df if not daily_df.empty else None,
+        summary_metrics_by_regime=summary_by_regime if not summary_by_regime.empty else None,
+        baseline_name=args.baseline_name,
+        target_horizon=args.target_horizon,
+    )
+    if not objective_recommendations.empty:
+        artifacts.update(
+            export_screener_objective_recommendations(
+                objective_recommendations,
+                objective_summary,
+                output_dir,
+            )
+        )
 
     _safe_print("✅ Analyse phase 5/6 terminée")
     _safe_print(f"   Summary source      : {summary_path}")
@@ -703,6 +779,10 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
         _safe_print(f"   Reco cross-régimes  : {artifacts['cross_regime_recommendations']}")
     if "cross_regime_recommendation_summary" in artifacts:
         _safe_print(f"   Résumé cross-régime : {artifacts['cross_regime_recommendation_summary']}\n")
+    if "scenario_recommendations_by_objective" in artifacts:
+        _safe_print(f"   Reco par objectif   : {artifacts['scenario_recommendations_by_objective']}")
+    if "recommendation_summary_by_objective" in artifacts:
+        _safe_print(f"   Résumé objectifs    : {artifacts['recommendation_summary_by_objective']}\n")
 
     if recommendation_summary.get("status") == "ok":
         best = recommendation_summary["recommended_scenario"]
@@ -728,6 +808,23 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
                 float(best_cross["regime_coverage_ratio"]),
             )
         )
+        _safe_print()
+
+    if objective_summary.get("status") == "ok":
+        _safe_print("Recommandations adaptatives par objectif :")
+        for objective_name in objective_summary.get("available_objectives", []):
+            payload = objective_summary.get("objectives", {}).get(objective_name, {})
+            best_objective = payload.get("recommended_scenario")
+            if not isinstance(best_objective, dict) or not best_objective:
+                continue
+            _safe_print(
+                " - {} : {} (objective_score={:.3f}, overall={:.3f})".format(
+                    payload.get("label", objective_name),
+                    best_objective.get("scenario_name", "?"),
+                    float(best_objective.get("objective_score", 0.0)),
+                    float(best_objective.get("overall_score", 0.0)),
+                )
+            )
         _safe_print()
 
     if not recommendation_frame.empty:
@@ -766,6 +863,26 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
         ]
         _safe_print("Top recommandations cross-régimes (aperçu):")
         _safe_print(cross_regime_recommendations.loc[:, cross_preview_columns].head(10).to_string(index=False))
+        _safe_print()
+
+    if not objective_recommendations.empty:
+        objective_preview_columns = [
+            column
+            for column in [
+                "objective",
+                "objective_label",
+                "objective_scope",
+                "rank",
+                "scenario_name",
+                "objective_score",
+                "overall_score",
+                "objective_recommendation_label",
+                "objective_reason",
+            ]
+            if column in objective_recommendations.columns
+        ]
+        _safe_print("Top recommandations phase 7 (aperçu):")
+        _safe_print(objective_recommendations.loc[:, objective_preview_columns].head(16).to_string(index=False))
         _safe_print()
 
 
