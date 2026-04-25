@@ -18,7 +18,9 @@ from ihm.services.backtesting_runner import (
     BackfillScoresHistoryOptions,
     BacktestRunOptions,
     BacktestingCommandKind,
+    DiagnoseScreenerOptions,
     PROJECT_ROOT,
+    RecommendScreenerOptions,
     build_backtesting_command,
     build_subprocess_env,
     format_command_for_display,
@@ -243,7 +245,7 @@ def list_active_backtesting_runs_by_kind(run_kind: BacktestingCommandKind) -> li
 def start_backtesting_run(
     run_kind: BacktestingCommandKind,
     run_label: str,
-    options: BacktestRunOptions | BackfillScoresHistoryOptions,
+    options: BacktestRunOptions | BackfillScoresHistoryOptions | DiagnoseScreenerOptions | RecommendScreenerOptions,
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,

@@ -39,7 +39,7 @@ Cela évite que les pages `Execution`, `Corporate Actions`, `ML`, etc. paraissen
 |---|---|
 | 🏠 Vue d'ensemble | KPI, alertes, top candidats, santé DB |
 | 🔄 Pipeline | 12 étapes du pipeline quotidien (1→1a→2→…→6→6a→6b→7→8→8a), lancement en arrière-plan, arrêt, historique, comparaison et téléchargement des logs |
-| 🧪 Backtesting | Formulaire complet des commandes `backtesting run` et `backfill-scores-history`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis et graphique live des artefacts |
+| 🧪 Backtesting | Formulaire complet des commandes `backtesting run`, `backfill-scores-history`, `diagnose-screener` et `recommend-screener`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis et graphique live des artefacts |
 | 📊 Screening | Table `stock_scores` avec filtres (symbole, secteur, candidat, score, sentiment) + lecture directe des recommandations screener par objectif (robuste, offensif, bear, exécutable) |
 | ⚖️ Risk | Décisions de risque, portefeuille cible, synthèse par secteur |
 | 🚀 Execution | Runs d'exécution, événements, fills, positions broker |
@@ -77,6 +77,19 @@ l'IHM expose automatiquement :
 
 Cette phase 8 ne relance pas le diagnostic depuis l'interface :
 elle **lit les artefacts existants** produits par `python -m backtesting diagnose-screener` ou `python -m backtesting recommend-screener`.
+
+## Lancement screener depuis l'IHM
+
+La page **🧪 Backtesting** permet désormais aussi de lancer directement depuis Streamlit :
+
+- `python -m backtesting diagnose-screener`
+- `python -m backtesting recommend-screener`
+
+Chaque lancement :
+
+- s'exécute en arrière-plan ;
+- alimente le même centre de logs/historique que les autres runs backtesting ;
+- peut réécrire les artefacts sous `artifacts/screener_diagnostics/` pour rafraîchir automatiquement la page **📊 Screening**.
 
 ## Limitations connues
 

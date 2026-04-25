@@ -25,6 +25,8 @@ from ihm.services.backtesting_runner import (
     PROJECT_ROOT,
     BackfillScoresHistoryOptions,
     BacktestRunOptions,
+    DiagnoseScreenerOptions,
+    RecommendScreenerOptions,
     build_backtesting_command,
     format_command_for_display,
 )
@@ -145,6 +147,32 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "ml_mode", "Explication": "auto/off/rebuild-missing pour la composante ML.", "Défaut": "auto"},
             {"Paramètre": "sentiment_mode", "Explication": "auto/off/rebuild-missing pour la composante sentiment.", "Défaut": "auto"},
             {"Paramètre": "artifacts_dir", "Explication": "Dossier des artefacts modèles utilisés pour rebuild-missing.", "Défaut": "artifacts/models"},
+        ]
+    if kind == "diagnose-screener":
+        return [
+            {"Paramètre": "start", "Explication": "Date de début de l'analyse PIT screener.", "Défaut": "—"},
+            {"Paramètre": "end", "Explication": "Date de fin de l'analyse.", "Défaut": "aujourd'hui"},
+            {"Paramètre": "limit_days", "Explication": "Limiter à N séances pour une validation incrémentale.", "Défaut": "None"},
+            {"Paramètre": "mode", "Explication": "Balayage `oat` (one-at-a-time) ou `grid`.", "Défaut": "oat"},
+            {"Paramètre": "chunk_size", "Explication": "Taille des chunks symboles pour screener/scanner.", "Défaut": "500"},
+            {"Paramètre": "selection_size", "Explication": "Nombre final de candidats selector par séance.", "Défaut": "100"},
+            {"Paramètre": "max_positions", "Explication": "Nombre maximum de positions du portefeuille cible analysé.", "Défaut": "20"},
+            {"Paramètre": "screener_workers", "Explication": "Nombre de workers ProcessPool pour le screener PIT.", "Défaut": "auto"},
+            {"Paramètre": "max_scenarios", "Explication": "Garde-fou sur le nombre total de scénarios en mode grid.", "Défaut": "64"},
+            {"Paramètre": "rs_values", "Explication": "Liste CSV des seuils de relative strength testés.", "Défaut": "100,102,105"},
+            {"Paramètre": "range_lookback_values", "Explication": "Liste CSV des lookbacks historical range testés.", "Défaut": "252,504,756"},
+            {"Paramètre": "historical_range_score_values", "Explication": "Liste CSV des seuils historical range score testés.", "Défaut": "65,70,75"},
+            {"Paramètre": "liquidity_threshold_values", "Explication": "Liste CSV des seuils de liquidité testés.", "Défaut": "5000000,10000000,20000000"},
+            {"Paramètre": "output_dir", "Explication": "Répertoire cible des artefacts diagnostics/recommandations screener.", "Défaut": "artifacts/screener_diagnostics"},
+        ]
+    if kind == "recommend-screener":
+        return [
+            {"Paramètre": "input_dir", "Explication": "Répertoire source contenant `summary_metrics.csv` et éventuellement `daily_metrics.csv`.", "Défaut": "artifacts/screener_diagnostics"},
+            {"Paramètre": "summary_csv", "Explication": "Chemin explicite vers un `summary_metrics.csv`.", "Défaut": "auto depuis input_dir"},
+            {"Paramètre": "daily_csv", "Explication": "Chemin explicite vers un `daily_metrics.csv` pour enrichir l'analyse.", "Défaut": "auto depuis input_dir"},
+            {"Paramètre": "output_dir", "Explication": "Répertoire cible des artefacts de recommandation.", "Défaut": "même dossier que summary_metrics.csv"},
+            {"Paramètre": "baseline_name", "Explication": "Nom explicite du scénario baseline si nécessaire.", "Défaut": "auto"},
+            {"Paramètre": "target_horizon", "Explication": "Horizon forward prioritaire utilisé pour le compromis.", "Défaut": "20"},
         ]
     return [
         {"Paramètre": "start", "Explication": "Date de départ du backfill PIT (obligatoire).", "Défaut": "—"},
@@ -451,6 +479,210 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
     return options
 
 
+def _build_diagnose_screener_options() -> DiagnoseScreenerOptions:
+    st.subheader("🧪 Diagnose screener PIT")
+    st.caption(
+        "Cette commande exécute `python -m backtesting diagnose-screener ...` en arrière-plan pour recalculer les artefacts diagnostics/recommandations du screener."
+    )
+    _render_reference_table("diagnose-screener")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        start = st.text_input(
+            "Date de début diagnostic",
+            value=cast(str, st.session_state.get("bt_diag_start", "2025-04-21")),
+            key="bt_diag_start",
+        )
+    with col2:
+        end = st.text_input(
+            "Date de fin diagnostic",
+            value=cast(str, st.session_state.get("bt_diag_end", "2026-04-20")),
+            key="bt_diag_end",
+        )
+    with col3:
+        mode = cast(
+            str,
+            st.selectbox(
+                "Mode de balayage",
+                options=["oat", "grid"],
+                index=["oat", "grid"].index(
+                    cast(str, st.session_state.get("bt_diag_mode", "oat"))
+                    if st.session_state.get("bt_diag_mode", "oat") in {"oat", "grid"}
+                    else "oat"
+                ),
+                key="bt_diag_mode",
+            ),
+        )
+    with col4:
+        limit_days_raw = st.text_input(
+            "Limiter à N séances (optionnel)",
+            value=cast(str, st.session_state.get("bt_diag_limit_days_raw", "")),
+            key="bt_diag_limit_days_raw",
+        )
+
+    col5, col6, col7, col8 = st.columns(4)
+    with col5:
+        chunk_size = st.number_input(
+            "Chunk size diagnostic",
+            min_value=1,
+            max_value=50_000,
+            value=int(st.session_state.get("bt_diag_chunk_size", 500)),
+            step=100,
+            key="bt_diag_chunk_size",
+        )
+    with col6:
+        selection_size = st.number_input(
+            "Selection size diagnostic",
+            min_value=1,
+            max_value=5_000,
+            value=int(st.session_state.get("bt_diag_selection_size", 100)),
+            step=10,
+            key="bt_diag_selection_size",
+        )
+    with col7:
+        max_positions = st.number_input(
+            "Max positions diagnostic",
+            min_value=1,
+            max_value=500,
+            value=int(st.session_state.get("bt_diag_max_positions", 20)),
+            step=1,
+            key="bt_diag_max_positions",
+        )
+    with col8:
+        max_scenarios = st.number_input(
+            "Max scenarios",
+            min_value=1,
+            max_value=5_000,
+            value=int(st.session_state.get("bt_diag_max_scenarios", 64)),
+            step=1,
+            key="bt_diag_max_scenarios",
+        )
+
+    col9, col10, col11, col12 = st.columns(4)
+    with col9:
+        screener_workers_raw = st.text_input(
+            "Screener workers (optionnel)",
+            value=cast(str, st.session_state.get("bt_diag_screener_workers_raw", "")),
+            key="bt_diag_screener_workers_raw",
+        )
+    with col10:
+        rs_values = st.text_input(
+            "RS values (CSV)",
+            value=cast(str, st.session_state.get("bt_diag_rs_values", "100,102,105")),
+            key="bt_diag_rs_values",
+        )
+    with col11:
+        range_lookback_values = st.text_input(
+            "Range lookback values (CSV)",
+            value=cast(str, st.session_state.get("bt_diag_range_lookback_values", "252,504,756")),
+            key="bt_diag_range_lookback_values",
+        )
+    with col12:
+        historical_range_score_values = st.text_input(
+            "Historical range score values (CSV)",
+            value=cast(str, st.session_state.get("bt_diag_historical_range_score_values", "65,70,75")),
+            key="bt_diag_historical_range_score_values",
+        )
+
+    liquidity_threshold_values = st.text_input(
+        "Liquidity threshold values (CSV)",
+        value=cast(str, st.session_state.get("bt_diag_liquidity_threshold_values", "5000000,10000000,20000000")),
+        key="bt_diag_liquidity_threshold_values",
+    )
+    output_dir = st.text_input(
+        "Répertoire des artefacts screener",
+        value=cast(str, st.session_state.get("bt_diag_output_dir", "artifacts/screener_diagnostics")),
+        key="bt_diag_output_dir",
+        help="Le dashboard Screening lira ce dossier par défaut s'il correspond à `artifacts/screener_diagnostics`.",
+    )
+
+    limit_days = _parse_optional_int(limit_days_raw, label="limit_days")
+    screener_workers = _parse_optional_int(screener_workers_raw, label="screener_workers")
+
+    options = DiagnoseScreenerOptions(
+        start=start.strip(),
+        end=end.strip() or None,
+        limit_days=limit_days,
+        mode=cast(Any, mode),
+        chunk_size=int(chunk_size),
+        selection_size=int(selection_size),
+        max_positions=int(max_positions),
+        screener_workers=screener_workers,
+        max_scenarios=int(max_scenarios),
+        rs_values=rs_values.strip() or "100,102,105",
+        range_lookback_values=range_lookback_values.strip() or "252,504,756",
+        historical_range_score_values=historical_range_score_values.strip() or "65,70,75",
+        liquidity_threshold_values=liquidity_threshold_values.strip() or "5000000,10000000,20000000",
+        output_dir=output_dir.strip() or "artifacts/screener_diagnostics",
+    )
+
+    st.code(format_command_for_display(build_backtesting_command("diagnose-screener", options)), language="powershell")
+    return options
+
+
+def _build_recommend_screener_options() -> RecommendScreenerOptions:
+    st.subheader("🎯 Recommend screener")
+    st.caption(
+        "Cette commande exécute `python -m backtesting recommend-screener ...` en arrière-plan pour recalculer les recommandations à partir d'un diagnostic existant."
+    )
+    _render_reference_table("recommend-screener")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        input_dir = st.text_input(
+            "Répertoire source",
+            value=cast(str, st.session_state.get("bt_reco_input_dir", "artifacts/screener_diagnostics")),
+            key="bt_reco_input_dir",
+        )
+    with col2:
+        output_dir = st.text_input(
+            "Répertoire de sortie (optionnel)",
+            value=cast(str, st.session_state.get("bt_reco_output_dir", "")),
+            key="bt_reco_output_dir",
+        )
+    with col3:
+        target_horizon = st.number_input(
+            "Target horizon",
+            min_value=1,
+            max_value=252,
+            value=int(st.session_state.get("bt_reco_target_horizon", 20)),
+            step=1,
+            key="bt_reco_target_horizon",
+        )
+
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        summary_csv = st.text_input(
+            "Summary CSV explicite (optionnel)",
+            value=cast(str, st.session_state.get("bt_reco_summary_csv", "")),
+            key="bt_reco_summary_csv",
+        )
+    with col5:
+        daily_csv = st.text_input(
+            "Daily CSV explicite (optionnel)",
+            value=cast(str, st.session_state.get("bt_reco_daily_csv", "")),
+            key="bt_reco_daily_csv",
+        )
+    with col6:
+        baseline_name = st.text_input(
+            "Baseline explicite (optionnel)",
+            value=cast(str, st.session_state.get("bt_reco_baseline_name", "")),
+            key="bt_reco_baseline_name",
+        )
+
+    options = RecommendScreenerOptions(
+        input_dir=input_dir.strip() or "artifacts/screener_diagnostics",
+        summary_csv=summary_csv.strip() or None,
+        daily_csv=daily_csv.strip() or None,
+        output_dir=output_dir.strip() or None,
+        baseline_name=baseline_name.strip() or None,
+        target_horizon=int(target_horizon),
+    )
+
+    st.code(format_command_for_display(build_backtesting_command("recommend-screener", options)), language="powershell")
+    return options
+
+
 def _render_latest_artifacts() -> None:
     out_dir = PROJECT_ROOT / "artifacts" / "backtesting"
     equity_curve = out_dir / "equity_curve.png"
@@ -727,7 +959,7 @@ def _render_runtime_center() -> None:
 def render() -> None:
     st.header("🧪 Backtesting intégré")
     st.caption(
-        "Page opérateur dédiée au backtesting : configuration complète, lancement direct depuis l'IHM, "
+        "Page opérateur dédiée au backtesting et aux diagnostics screener : configuration complète, lancement direct depuis l'IHM, "
         "suivi des runs et consultation des logs."
     )
 
@@ -743,8 +975,12 @@ def render() -> None:
     db_config = get_runtime_db_config()
     active_backtest_runs = list_active_backtesting_runs_by_kind("run")
     active_backfill_runs = list_active_backtesting_runs_by_kind("backfill-scores-history")
+    active_diag_runs = list_active_backtesting_runs_by_kind("diagnose-screener")
+    active_recommend_runs = list_active_backtesting_runs_by_kind("recommend-screener")
 
-    run_tab, backfill_tab = st.tabs(["▶️ Backtest", "🧱 Backfill scores history"])
+    run_tab, backfill_tab, diagnose_tab, recommend_tab = st.tabs(
+        ["▶️ Backtest", "🧱 Backfill scores history", "🧪 Diagnose screener", "🎯 Recommend screener"]
+    )
     with run_tab:
         run_options = _build_run_options()
         if active_backtest_runs:
@@ -792,6 +1028,66 @@ def render() -> None:
             else:
                 st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
                 st.success(f"Backfill lancé en arrière-plan : `{record.run_id}`")
+                st.rerun()
+
+    with diagnose_tab:
+        diagnose_options = _build_diagnose_screener_options()
+        if active_diag_runs:
+            active_run_id = str(active_diag_runs[0].get("run_id", ""))
+            st.info(f"Un diagnostic screener est déjà en cours (`{active_run_id}`). Arrête-le ou attends sa fin pour relancer.")
+        st.caption(
+            "Conseil : garde `artifacts/screener_diagnostics` comme répertoire cible si tu veux que la page Screening relise automatiquement les nouveaux artefacts."
+        )
+        launch_diagnose_clicked = st.button(
+            "🧪 Lancer diagnose-screener",
+            key="launch_diagnose_screener_run",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(active_diag_runs),
+        )
+        if launch_diagnose_clicked:
+            try:
+                record = start_backtesting_run(
+                    "diagnose-screener",
+                    "Diagnostic screener PIT",
+                    diagnose_options,
+                    db_config=db_config,
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                st.success(f"Diagnostic screener lancé en arrière-plan : `{record.run_id}`")
+                st.rerun()
+
+    with recommend_tab:
+        recommend_options = _build_recommend_screener_options()
+        if active_recommend_runs:
+            active_run_id = str(active_recommend_runs[0].get("run_id", ""))
+            st.info(f"Une recommandation screener est déjà en cours (`{active_run_id}`). Arrête-la ou attends sa fin pour relancer.")
+        st.caption(
+            "Utilise ce recalcul pour regénérer rapidement les recommandations sans rejouer tout le diagnostic PIT."
+        )
+        launch_recommend_clicked = st.button(
+            "🎯 Lancer recommend-screener",
+            key="launch_recommend_screener_run",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(active_recommend_runs),
+        )
+        if launch_recommend_clicked:
+            try:
+                record = start_backtesting_run(
+                    "recommend-screener",
+                    "Recommandation screener",
+                    recommend_options,
+                    db_config=db_config,
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                st.success(f"Recommandation screener lancée en arrière-plan : `{record.run_id}`")
                 st.rerun()
 
     _render_runtime_center()

@@ -342,6 +342,8 @@ Pour plus de détails sur les pages disponibles, voir `ihm/README.md`.
 
 Le dashboard **Vue d'ensemble** remonte aussi un résumé compact des dernières recommandations screener par objectif quand les artefacts `artifacts/screener_diagnostics/` sont présents.
 
+La page **🧪 Backtesting** de l'IHM permet désormais aussi de lancer directement `diagnose-screener` et `recommend-screener`, avec exécution en arrière-plan et logs historisés dans l'interface.
+
 ---
 
 ## 10. Tests et qualité

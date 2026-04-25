@@ -88,6 +88,9 @@ def _render_objective_recommendations() -> None:
         "Lecture directe des artefacts `recommend-screener` pour exposer les profils robuste / offensif / bear / exécutable dans l'IHM."
     )
     st.caption(
+        "Pour recalculer ces artefacts depuis l'IHM, utilise la page `🧪 Backtesting` puis les onglets `Diagnose screener` ou `Recommend screener`."
+    )
+    st.caption(
         f"Artefacts : `{report.get('artifacts_dir')}` · Période : {report.get('coverage_label', 'Période non renseignée')} · "
         f"MAJ : {report.get('updated_at_label', 'inconnue')}"
     )

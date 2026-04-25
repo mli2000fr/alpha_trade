@@ -8,7 +8,7 @@ from typing import Literal
 
 from ihm.services.pipeline_runner import PROJECT_ROOT, build_subprocess_env
 
-BacktestingCommandKind = Literal["run", "backfill-scores-history"]
+BacktestingCommandKind = Literal["run", "backfill-scores-history", "diagnose-screener", "recommend-screener"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,9 +46,41 @@ class BackfillScoresHistoryOptions:
     screener_workers: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DiagnoseScreenerOptions:
+    """Options de la commande `python -m backtesting diagnose-screener`."""
+
+    start: str
+    end: str | None = None
+    limit_days: int | None = None
+    mode: Literal["oat", "grid"] = "oat"
+    chunk_size: int = 500
+    selection_size: int = 100
+    max_positions: int = 20
+    screener_workers: int | None = None
+    max_scenarios: int = 64
+    rs_values: str = "100,102,105"
+    range_lookback_values: str = "252,504,756"
+    historical_range_score_values: str = "65,70,75"
+    liquidity_threshold_values: str = "5000000,10000000,20000000"
+    output_dir: str = "artifacts/screener_diagnostics"
+
+
+@dataclass(frozen=True, slots=True)
+class RecommendScreenerOptions:
+    """Options de la commande `python -m backtesting recommend-screener`."""
+
+    input_dir: str = "artifacts/screener_diagnostics"
+    summary_csv: str | None = None
+    daily_csv: str | None = None
+    output_dir: str | None = None
+    baseline_name: str | None = None
+    target_horizon: int = 20
+
+
 def build_backtesting_command(
     kind: BacktestingCommandKind,
-    options: BacktestRunOptions | BackfillScoresHistoryOptions,
+    options: BacktestRunOptions | BackfillScoresHistoryOptions | DiagnoseScreenerOptions | RecommendScreenerOptions,
 ) -> list[str]:
     """Construit la commande subprocess correspondant au backtesting."""
     command = [sys.executable, "-u", "-m", "backtesting", kind]
@@ -100,6 +132,49 @@ def build_backtesting_command(
             command.extend(["--screener-workers", str(options.screener_workers)])
         return command
 
+    if kind == "diagnose-screener":
+        if not isinstance(options, DiagnoseScreenerOptions):
+            raise TypeError(
+                "options doit être une instance de DiagnoseScreenerOptions pour kind='diagnose-screener'."
+            )
+        command.extend(["--start", options.start])
+        if options.end:
+            command.extend(["--end", options.end])
+        if options.limit_days is not None:
+            command.extend(["--limit-days", str(options.limit_days)])
+        command.extend([
+            "--mode", options.mode,
+            "--chunk-size", str(options.chunk_size),
+            "--selection-size", str(options.selection_size),
+            "--max-positions", str(options.max_positions),
+            "--max-scenarios", str(options.max_scenarios),
+            "--rs-values", options.rs_values,
+            "--range-lookback-values", options.range_lookback_values,
+            "--historical-range-score-values", options.historical_range_score_values,
+            "--liquidity-threshold-values", options.liquidity_threshold_values,
+            "--output-dir", options.output_dir,
+        ])
+        if options.screener_workers is not None:
+            command.extend(["--screener-workers", str(options.screener_workers)])
+        return command
+
+    if kind == "recommend-screener":
+        if not isinstance(options, RecommendScreenerOptions):
+            raise TypeError(
+                "options doit être une instance de RecommendScreenerOptions pour kind='recommend-screener'."
+            )
+        command.extend(["--input-dir", options.input_dir])
+        if options.summary_csv:
+            command.extend(["--summary-csv", options.summary_csv])
+        if options.daily_csv:
+            command.extend(["--daily-csv", options.daily_csv])
+        if options.output_dir:
+            command.extend(["--output-dir", options.output_dir])
+        if options.baseline_name:
+            command.extend(["--baseline-name", options.baseline_name])
+        command.extend(["--target-horizon", str(options.target_horizon)])
+        return command
+
     raise KeyError(f"Commande backtesting inconnue : {kind}")
 
 
@@ -113,6 +188,8 @@ __all__ = [
     "BacktestingCommandKind",
     "BacktestRunOptions",
     "BackfillScoresHistoryOptions",
+    "DiagnoseScreenerOptions",
+    "RecommendScreenerOptions",
     "build_backtesting_command",
     "format_command_for_display",
 ]

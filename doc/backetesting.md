@@ -640,6 +640,27 @@ l'IHM affiche désormais :
 Cette intégration est volontairement **read-only** :
 elle permet de consommer les recommandations sans rajouter une nouvelle couche de calcul dans l'IHM.
 
+### Phase 9 — lancement / recalcul directement depuis l'IHM
+
+La page `ihm/pages/backtesting.py` permet maintenant aussi de déclencher depuis Streamlit :
+
+- `python -m backtesting diagnose-screener`
+- `python -m backtesting recommend-screener`
+
+L'intégration réutilise le même registre de runs IHM que les autres commandes backtesting :
+
+- lancement en arrière-plan ;
+- historique centralisé ;
+- logs `stdout` / `stderr` téléchargeables ;
+- sélection du run courant dans le centre d'exécution.
+
+En pratique :
+
+- `diagnose-screener` sert à **rejouer le diagnostic PIT complet** et régénérer `summary_metrics.csv`, `daily_metrics.csv` et toutes les recommandations ;
+- `recommend-screener` sert à **recalculer rapidement la couche de recommandation** à partir d'artefacts existants.
+
+Si le répertoire cible reste `artifacts/screener_diagnostics`, la page **📊 Screening** relira automatiquement les artefacts mis à jour au prochain rafraîchissement.
+
 ### Lecture pratique
 
 Cette phase 7 répond à des questions concrètes du type :
