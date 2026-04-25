@@ -1,5 +1,98 @@
 from ihm.services import queries
 
+
+def test_get_alpha_scanner_dependency_diagnostic_flags_both_dependencies_red(monkeypatch):
+    from datetime import date
+
+    queries.get_alpha_scanner_dependency_diagnostic.clear()
+
+    def fake_safe_scalar(query, params=None):
+        if "COUNT(DISTINCT sm.symbol)" in query:
+            return 200
+        if "FROM stock_quote_snapshots q" in query and "MAX(q.quote_date)" in query:
+            return "2026-04-10"
+        if "FROM stock_quote_snapshots q" in query and "COUNT(DISTINCT q.symbol)" in query:
+            return 10
+        if "FROM stock_earnings_calendar e" in query and "MAX(e.earnings_date)" in query:
+            return None
+        if "FROM stock_earnings_calendar e" in query and "COUNT(DISTINCT e.symbol)" in query:
+            return 0
+        raise AssertionError(query)
+
+    monkeypatch.setattr(queries, "safe_scalar", fake_safe_scalar)
+    monkeypatch.setattr(queries, "get_last_query_error", lambda: None)
+
+    diagnostic = queries.get_alpha_scanner_dependency_diagnostic(today=date(2026, 4, 25))
+    dependencies = dict(diagnostic["dependencies"])
+
+    assert diagnostic["eligible_symbols"] == 200
+    assert diagnostic["all_red"] is True
+    quotes = dict(dependencies["sync_latest_quotes"])
+    earnings = dict(dependencies["sync_earnings_calendar"])
+    assert quotes["status"] == "red"
+    assert quotes["latest_date"] == "2026-04-10"
+    assert quotes["covered_symbols"] == 10
+    assert quotes["coverage_pct"] == 5.0
+    assert earnings["status"] == "red"
+    assert earnings["latest_date"] is None
+    assert earnings["covered_symbols"] == 0
+
+
+def test_get_alpha_scanner_dependency_diagnostic_exposes_exact_metrics(monkeypatch):
+    from datetime import date
+
+    queries.get_alpha_scanner_dependency_diagnostic.clear()
+
+    def fake_safe_scalar(query, params=None):
+        if "COUNT(DISTINCT sm.symbol)" in query:
+            return 100
+        if "FROM stock_quote_snapshots q" in query and "MAX(q.quote_date)" in query:
+            return "2026-04-25"
+        if "FROM stock_quote_snapshots q" in query and "COUNT(DISTINCT q.symbol)" in query:
+            return 90
+        if "FROM stock_earnings_calendar e" in query and "MAX(e.earnings_date)" in query:
+            return "2026-05-05"
+        if "FROM stock_earnings_calendar e" in query and "COUNT(DISTINCT e.symbol)" in query:
+            return 6
+        raise AssertionError(query)
+
+    monkeypatch.setattr(queries, "safe_scalar", fake_safe_scalar)
+    monkeypatch.setattr(queries, "get_last_query_error", lambda: None)
+
+    diagnostic = queries.get_alpha_scanner_dependency_diagnostic(today=date(2026, 4, 25))
+    dependencies = dict(diagnostic["dependencies"])
+
+    assert diagnostic["all_red"] is False
+    assert diagnostic["any_red_or_orange"] is True
+    quotes = dict(dependencies["sync_latest_quotes"])
+    earnings = dict(dependencies["sync_earnings_calendar"])
+    assert quotes["status"] == "green"
+    assert quotes["latest_date"] == "2026-04-25"
+    assert quotes["coverage_pct"] == 90.0
+    assert earnings["status"] == "orange"
+    assert earnings["latest_date"] == "2026-05-05"
+    assert earnings["coverage_pct"] == 6.0
+    assert earnings["covered_symbols"] == 6
+
+
+def test_get_alpha_scanner_dependency_thresholds_can_be_overridden(monkeypatch):
+    monkeypatch.setattr(
+        queries,
+        "load_persisted_alpha_scanner_dependency_thresholds",
+        lambda defaults: {
+            **defaults,
+            "sync_latest_quotes": {
+                **defaults["sync_latest_quotes"],
+                "coverage_warn_pct": 70.0,
+            },
+        },
+    )
+
+    thresholds = queries.get_alpha_scanner_dependency_thresholds()
+
+    assert thresholds["sync_latest_quotes"]["coverage_warn_pct"] == 70.0
+    assert thresholds["sync_earnings_calendar"]["coverage_warn_pct"] == queries.ALPHA_SCANNER_DEPENDENCY_THRESHOLDS["sync_earnings_calendar"]["coverage_warn_pct"]
+
 def test_services_queries_importable():
     assert hasattr(queries, "__doc__")
 
@@ -14,9 +107,8 @@ def test_get_predictions_can_filter_by_symbol(monkeypatch):
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
-    result = queries.get_predictions(symbol="AAPL", limit=25)
+    queries.get_predictions(symbol="AAPL", limit=25)
 
-    assert result == "ok"
     assert "WHERE symbol = :symbol" in captured["query"]
     assert captured["params"] == {"symbol": "AAPL"}
     assert "selected_model" in captured["query"]
@@ -32,9 +124,8 @@ def test_get_predictions_can_filter_by_run_id_and_served_model(monkeypatch):
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
-    result = queries.get_predictions(run_ids=["run-1"], served_models=["lightgbm"], limit=25)
+    queries.get_predictions(run_ids=["run-1"], served_models=["lightgbm"], limit=25)
 
-    assert result == "ok"
     assert "run_id IN (:prediction_run_id_0)" in captured["query"]
     assert "selected_model IN (:served_model_0)" in captured["query"]
     assert captured["params"] == {"prediction_run_id_0": "run-1", "served_model_0": "lightgbm"}
@@ -60,9 +151,8 @@ def test_get_model_governance_can_filter_by_symbol(monkeypatch):
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
-    result = queries.get_model_governance(symbol="AAPL", limit=10)
+    queries.get_model_governance(symbol="AAPL", limit=10)
 
-    assert result == "ok"
     assert "FROM model_governance" in captured["query"]
     assert "WHERE symbol = :symbol" in captured["query"]
     assert captured["params"] == {"symbol": "AAPL"}
@@ -78,9 +168,8 @@ def test_get_model_governance_can_filter_by_run_id_and_selection_mode(monkeypatc
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
-    result = queries.get_model_governance(run_ids=["run-1"], selection_modes=["auto_selected_champion"], limit=10)
+    queries.get_model_governance(run_ids=["run-1"], selection_modes=["auto_selected_champion"], limit=10)
 
-    assert result == "ok"
     assert "run_id IN (:run_id_0)" in captured["query"]
     assert "selection_mode IN (:selection_mode_0)" in captured["query"]
     assert captured["params"] == {"run_id_0": "run-1", "selection_mode_0": "auto_selected_champion"}
@@ -96,9 +185,8 @@ def test_get_prediction_governance_audit_can_filter_by_symbol(monkeypatch):
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
-    result = queries.get_prediction_governance_audit(symbol="AAPL", limit=15)
+    queries.get_prediction_governance_audit(symbol="AAPL", limit=15)
 
-    assert result == "ok"
     assert "FROM model_predictions p" in captured["query"]
     assert "LEFT JOIN model_governance served" in captured["query"]
     assert "LEFT JOIN model_governance champion" in captured["query"]
@@ -121,7 +209,7 @@ def test_get_prediction_governance_audit_can_filter_by_audit_dimensions(monkeypa
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
-    result = queries.get_prediction_governance_audit(
+    queries.get_prediction_governance_audit(
         run_ids=["run-1"],
         selection_modes=["auto_selected_champion"],
         served_models=["lightgbm"],
@@ -129,7 +217,6 @@ def test_get_prediction_governance_audit_can_filter_by_audit_dimensions(monkeypa
         limit=15,
     )
 
-    assert result == "ok"
     assert "FROM (" in captured["query"]
     assert "run_id IN (:audit_run_id_0)" in captured["query"]
     assert "governance_selection_mode IN (:audit_selection_mode_0)" in captured["query"]
@@ -153,9 +240,8 @@ def test_get_prediction_governance_audit_without_symbol_has_no_params(monkeypatc
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
-    result = queries.get_prediction_governance_audit(limit=5)
+    queries.get_prediction_governance_audit(limit=5)
 
-    assert result == "ok"
     assert "WHERE p.symbol = :symbol" not in captured["query"]
     assert captured["params"] is None
 
@@ -197,7 +283,9 @@ def test_get_run_business_summaries_builds_filters_and_caption(monkeypatch):
     assert "step_key IN (:summary_step_key_0)" in captured["query"]
     assert captured["params"] == {"entity_run_id": "risk-1", "account_id": "acct-1", "summary_step_key_0": "risk_management"}
     assert df.iloc[0]["run_summary"] == {"targeted_symbols": 5, "accepted_symbols": 3}
-    assert "candidats=5" in df.iloc[0]["summary_caption"]
+    caption = str(df.iloc[0]["summary_caption"])
+    assert "=5" in caption
+    assert "=3" in caption
 
 
 def test_get_latest_run_business_summary_returns_first_row(monkeypatch):

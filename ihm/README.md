@@ -66,6 +66,32 @@ Le bloc de paramètres expose aussi les options réellement supportées côté b
 - `sync_earnings_calendar` (`from-date`, `to-date`, `limit`, `sleep-seconds`) ;
 - `update_sector` (`limit`, `sleep-seconds`, `log-every`).
 
+La carte `Alpha Scanner` inclut également un diagnostic de dépendances métier pour `stock_quote_snapshots` et `stock_earnings_calendar` :
+
+- badge visuel par step de sync ;
+- métriques `latest_date`, `% couverture`, `N symboles` ;
+- seuils vert / orange / rouge éditables depuis la page `⚙️ Paramètres / Santé` (et toujours accessibles depuis `🔄 Pipeline`) ;
+- presets applicables en un clic : `Swing Cash Pro`, `Agressif`, `Tolérant` ;
+- croisement explicite `style opératoire × régime de marché` (`normal`, `faible`, `très sélectif`) ;
+- expander expliquant les états rouge/orange ;
+- commandes correctives et boutons d'action rapide pour relancer les deux syncs ;
+- bouton `Alpha Scanner` réellement désactivé quand **les deux** dépendances sont rouges ;
+- message post-succès rappelant que le cache IHM peut nécessiter ~60s, avec option `Rafraîchir maintenant`.
+
+Le même diagnostic est aussi affiché en **lecture seule** dans les pages **🏠 Vue d'ensemble** et **📊 Screening** pour rendre immédiatement visible l'état des dépendances du scan strict.
+
+Les valeurs par défaut proposées sont orientées **swing cash pro** :
+
+- `Sync Latest Quotes` : orange si couverture < `85%`, rouge si < `60%`, orange si snapshot > `1` jour, rouge si > `3` jours ;
+- `Sync Earnings Calendar` : orange si couverture < `15%`, rouge si < `5%`, orange si horizon futur < `14` jours, rouge si < `7` jours.
+
+La page `⚙️ Paramètres / Santé` permet aussi d'appliquer un preset selon **deux axes simultanés** :
+
+- **style opératoire** : `Swing Cash Pro` / `Agressif` / `Tolérant` ;
+- **régime de marché** : `Marché normal` / `Marché faible` / `Marché très sélectif`.
+
+Exemple : `Agressif × Marché faible` ou `Swing Cash Pro × Marché très sélectif`.
+
 Quand un script écrit un résumé structuré préfixé par `::alpha_trade_run_summary::`, l'IHM l'extrait automatiquement pour alimenter :
 
 - les cartes de résumé métier du run ;

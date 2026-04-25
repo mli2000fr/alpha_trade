@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from ihm.pages import run_page_if_standalone
+from ihm.components.alpha_scanner_dependency import render_alpha_scanner_dependency_panel
 from ihm.components.db_controls import render_db_unavailable
 from ihm.components.run_summary import render_run_summary_block
 from ihm.components.metrics import metric_row
@@ -32,6 +33,7 @@ from ihm.services.run_summary import (
 )
 from ihm.services.db import db_available, get_last_query_error
 from ihm.services.queries import (
+    get_alpha_scanner_dependency_diagnostic,
     get_candidates_count,
     get_latest_exec_run,
     get_latest_risk_run_id,
@@ -159,6 +161,14 @@ def render() -> None:
     if not summary_rows.empty:
         st.subheader("📋 Résumés pipeline récents")
         show_dataframe(summary_rows)
+
+    st.subheader("🩺 Diagnostic Alpha Scanner")
+    render_alpha_scanner_dependency_panel(
+        get_alpha_scanner_dependency_diagnostic(),
+        title="Voir le détail quotes / earnings",
+        expanded=False,
+        show_commands=True,
+    )
 
     screener_history = build_global_screener_artifact_history()
     session_selected_dir = str(st.session_state.get(SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY, "") or "").strip()
