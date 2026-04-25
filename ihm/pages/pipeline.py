@@ -30,6 +30,23 @@ from ihm.services.pipeline_runner import (
     DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD,
     DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE,
     DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX,
+    DEFAULT_SELECTOR_CHUNK_SIZE,
+    DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS,
+    DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD,
+    DEFAULT_SELECTOR_LOG_LEVEL,
+    DEFAULT_SELECTOR_MAX_ANOMALY_COUNT,
+    DEFAULT_SELECTOR_MAX_ATR_PCT_20,
+    DEFAULT_SELECTOR_MAX_SPREAD_BPS,
+    DEFAULT_SELECTOR_MAX_VOLATILITY_RATIO,
+    DEFAULT_SELECTOR_MIN_ATR_PCT_20,
+    DEFAULT_SELECTOR_MIN_BETA_126,
+    DEFAULT_SELECTOR_MIN_CLOSE,
+    DEFAULT_SELECTOR_MIN_HIGH_52W_PROXIMITY,
+    DEFAULT_SELECTOR_MIN_MARKET_CAP,
+    DEFAULT_SELECTOR_MIN_RELATIVE_STRENGTH_INDEX,
+    DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE,
+    DEFAULT_SELECTOR_SECTOR_CAP_RATIO,
+    DEFAULT_SELECTOR_SELECTION_SIZE,
     PipelineLaunchOptions,
     build_pipeline_command,
     format_command_for_display,
@@ -442,10 +459,206 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
 
         st.caption(
-            "Alpha Scanner est lancé systématiquement en mode strict depuis l'IHM : "
-            "`selector.alpha_scanner` "
-            "(`min_close=10`, `ADV20>=30M`, `RS>=100`, `close>MA200`, `high52w>=75%`, `weekly=1.0`, `ATR 1.5%-6%`)."
+            "Alpha Scanner part du profil partagé strict (`STRICT_SWING_CASH_FILTERS`) depuis l'IHM. "
+            "Les paramètres ci-dessous permettent de reproduire explicitement — et si besoin de surcharger — les seuils backend réellement supportés par `selector.alpha_scanner`."
         )
+
+        st.markdown("#### Paramètres Alpha Scanner")
+        st.caption(
+            "Ces réglages reflètent les options opérationnelles réellement disponibles côté `selector.alpha_scanner`. "
+            "`0` sur `max workers` signifie : auto. Le preset strict reste la base implicite côté backend."
+        )
+
+        selector_col1, selector_col2, selector_col3, selector_col4 = st.columns(4)
+        with selector_col1:
+            selector_chunk_size = int(
+                st.number_input(
+                    "Alpha Scanner — taille de chunk",
+                    min_value=1,
+                    value=int(st.session_state.get("pipeline_selector_chunk_size", DEFAULT_SELECTOR_CHUNK_SIZE)),
+                    step=50,
+                    key="pipeline_selector_chunk_size",
+                )
+            )
+            selector_selection_size = int(
+                st.number_input(
+                    "Alpha Scanner — taille de sélection finale",
+                    min_value=1,
+                    value=int(st.session_state.get("pipeline_selector_selection_size", DEFAULT_SELECTOR_SELECTION_SIZE)),
+                    step=5,
+                    key="pipeline_selector_selection_size",
+                )
+            )
+            selector_max_workers = int(
+                st.number_input(
+                    "Alpha Scanner — max workers (0 = auto)",
+                    min_value=0,
+                    value=int(st.session_state.get("pipeline_selector_max_workers", 0)),
+                    step=1,
+                    key="pipeline_selector_max_workers",
+                )
+            )
+            selector_log_level = cast(
+                str,
+                st.selectbox(
+                    "Alpha Scanner — niveau de log",
+                    options=["DEBUG", "INFO", "WARNING", "ERROR"],
+                    index=["DEBUG", "INFO", "WARNING", "ERROR"].index(
+                        cast(str, st.session_state.get("pipeline_selector_log_level", DEFAULT_SELECTOR_LOG_LEVEL)).upper()
+                        if str(st.session_state.get("pipeline_selector_log_level", DEFAULT_SELECTOR_LOG_LEVEL)).upper() in {"DEBUG", "INFO", "WARNING", "ERROR"}
+                        else DEFAULT_SELECTOR_LOG_LEVEL
+                    ),
+                    key="pipeline_selector_log_level",
+                ),
+            )
+        with selector_col2:
+            selector_liquidity_threshold = float(
+                st.number_input(
+                    "Alpha Scanner — liquidité mini",
+                    min_value=0.0,
+                    value=float(st.session_state.get("pipeline_selector_liquidity_threshold", DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD)),
+                    step=1_000_000.0,
+                    format="%.2f",
+                    key="pipeline_selector_liquidity_threshold",
+                )
+            )
+            selector_min_close = float(
+                st.number_input(
+                    "Alpha Scanner — prix mini",
+                    min_value=0.01,
+                    value=float(st.session_state.get("pipeline_selector_min_close", DEFAULT_SELECTOR_MIN_CLOSE)),
+                    step=1.0,
+                    format="%.2f",
+                    key="pipeline_selector_min_close",
+                )
+            )
+            selector_max_volatility_ratio = float(
+                st.number_input(
+                    "Alpha Scanner — volatilité relative max",
+                    min_value=0.01,
+                    value=float(st.session_state.get("pipeline_selector_max_volatility_ratio", DEFAULT_SELECTOR_MAX_VOLATILITY_RATIO)),
+                    step=0.05,
+                    format="%.2f",
+                    key="pipeline_selector_max_volatility_ratio",
+                )
+            )
+            selector_min_relative_strength_index = float(
+                st.number_input(
+                    "Alpha Scanner — RS mini",
+                    min_value=0.01,
+                    value=float(st.session_state.get("pipeline_selector_min_relative_strength_index", DEFAULT_SELECTOR_MIN_RELATIVE_STRENGTH_INDEX)),
+                    step=1.0,
+                    format="%.2f",
+                    key="pipeline_selector_min_relative_strength_index",
+                )
+            )
+        with selector_col3:
+            selector_min_high_52w_proximity = float(
+                st.number_input(
+                    "Alpha Scanner — proximité min du high 52w",
+                    min_value=0.01,
+                    max_value=1.0,
+                    value=float(st.session_state.get("pipeline_selector_min_high_52w_proximity", DEFAULT_SELECTOR_MIN_HIGH_52W_PROXIMITY)),
+                    step=0.01,
+                    format="%.2f",
+                    key="pipeline_selector_min_high_52w_proximity",
+                )
+            )
+            selector_min_weekly_trend_score = float(
+                st.number_input(
+                    "Alpha Scanner — weekly trend mini",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("pipeline_selector_min_weekly_trend_score", DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE)),
+                    step=0.05,
+                    format="%.2f",
+                    key="pipeline_selector_min_weekly_trend_score",
+                )
+            )
+            selector_min_atr_pct_20 = float(
+                st.number_input(
+                    "Alpha Scanner — ATR%20 min",
+                    min_value=0.0,
+                    value=float(st.session_state.get("pipeline_selector_min_atr_pct_20", DEFAULT_SELECTOR_MIN_ATR_PCT_20)),
+                    step=0.005,
+                    format="%.4f",
+                    key="pipeline_selector_min_atr_pct_20",
+                )
+            )
+            selector_max_atr_pct_20 = float(
+                st.number_input(
+                    "Alpha Scanner — ATR%20 max",
+                    min_value=0.0,
+                    value=float(st.session_state.get("pipeline_selector_max_atr_pct_20", DEFAULT_SELECTOR_MAX_ATR_PCT_20)),
+                    step=0.005,
+                    format="%.4f",
+                    key="pipeline_selector_max_atr_pct_20",
+                )
+            )
+        with selector_col4:
+            selector_min_market_cap = float(
+                st.number_input(
+                    "Alpha Scanner — market cap mini",
+                    min_value=0.0,
+                    value=float(st.session_state.get("pipeline_selector_min_market_cap", DEFAULT_SELECTOR_MIN_MARKET_CAP)),
+                    step=100_000_000.0,
+                    format="%.2f",
+                    key="pipeline_selector_min_market_cap",
+                )
+            )
+            selector_min_beta_126 = float(
+                st.number_input(
+                    "Alpha Scanner — beta 126 mini",
+                    min_value=0.0,
+                    value=float(st.session_state.get("pipeline_selector_min_beta_126", DEFAULT_SELECTOR_MIN_BETA_126)),
+                    step=0.1,
+                    format="%.2f",
+                    key="pipeline_selector_min_beta_126",
+                )
+            )
+            selector_max_spread_bps = float(
+                st.number_input(
+                    "Alpha Scanner — spread max (bps)",
+                    min_value=0.0,
+                    value=float(st.session_state.get("pipeline_selector_max_spread_bps", DEFAULT_SELECTOR_MAX_SPREAD_BPS)),
+                    step=1.0,
+                    format="%.2f",
+                    key="pipeline_selector_max_spread_bps",
+                )
+            )
+            selector_earnings_blackout_days = int(
+                st.number_input(
+                    "Alpha Scanner — earnings blackout (jours)",
+                    min_value=0,
+                    value=int(st.session_state.get("pipeline_selector_earnings_blackout_days", DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS)),
+                    step=1,
+                    key="pipeline_selector_earnings_blackout_days",
+                )
+            )
+
+        selector_adv_col1, selector_adv_col2 = st.columns(2)
+        with selector_adv_col1:
+            selector_max_anomaly_count = int(
+                st.number_input(
+                    "Alpha Scanner — anomalies max",
+                    min_value=0,
+                    value=int(st.session_state.get("pipeline_selector_max_anomaly_count", DEFAULT_SELECTOR_MAX_ANOMALY_COUNT)),
+                    step=1,
+                    key="pipeline_selector_max_anomaly_count",
+                )
+            )
+        with selector_adv_col2:
+            selector_sector_cap_ratio = float(
+                st.number_input(
+                    "Alpha Scanner — cap sectoriel",
+                    min_value=0.01,
+                    max_value=1.0,
+                    value=float(st.session_state.get("pipeline_selector_sector_cap_ratio", DEFAULT_SELECTOR_SECTOR_CAP_RATIO)),
+                    step=0.01,
+                    format="%.2f",
+                    key="pipeline_selector_sector_cap_ratio",
+                )
+            )
 
         st.markdown("#### Paramètres Screener")
         st.caption(
@@ -682,6 +895,24 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_champion_selection_metric=cast(Any, ml_champion_selection_metric),
             ml_optimize_thresholds=bool(ml_optimize_thresholds),
             ml_optimize_target=bool(ml_optimize_target),
+            selector_chunk_size=int(selector_chunk_size),
+            selector_selection_size=int(selector_selection_size),
+            selector_max_workers=_to_optional_positive_int(selector_max_workers),
+            selector_liquidity_threshold=float(selector_liquidity_threshold),
+            selector_min_close=float(selector_min_close),
+            selector_max_volatility_ratio=float(selector_max_volatility_ratio),
+            selector_min_relative_strength_index=float(selector_min_relative_strength_index),
+            selector_min_high_52w_proximity=float(selector_min_high_52w_proximity),
+            selector_min_weekly_trend_score=float(selector_min_weekly_trend_score),
+            selector_min_atr_pct_20=float(selector_min_atr_pct_20),
+            selector_max_atr_pct_20=float(selector_max_atr_pct_20),
+            selector_min_market_cap=float(selector_min_market_cap),
+            selector_min_beta_126=float(selector_min_beta_126),
+            selector_max_spread_bps=float(selector_max_spread_bps),
+            selector_earnings_blackout_days=int(selector_earnings_blackout_days),
+            selector_max_anomaly_count=int(selector_max_anomaly_count),
+            selector_sector_cap_ratio=float(selector_sector_cap_ratio),
+            selector_log_level=str(selector_log_level).upper(),
             screener_chunk_size=int(screener_chunk_size),
             screener_max_workers=_to_optional_positive_int(screener_max_workers),
             screener_benchmark_symbol=screener_benchmark_symbol or DEFAULT_SCREENER_BENCHMARK_SYMBOL,

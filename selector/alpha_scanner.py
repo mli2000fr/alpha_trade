@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 from collections import Counter
@@ -8,6 +9,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Iterator, Optional, Sequence, cast
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -28,6 +30,7 @@ from database.assets import (
 from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
 
 LOGGER = logging.getLogger(__name__)
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 
 PRICE_COLUMNS = ["symbol", "date", "close", "volume", "high", "low"]
 METADATA_COLUMNS = [
@@ -148,6 +151,65 @@ OUTPUT_COLUMNS = [
     "anomaly_count",
     "missing_days_count",
 ]
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _build_run_id(prefix: str) -> str:
+    return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+
+
+def _emit_run_summary(summary: dict[str, object]) -> None:
+    print(
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+        flush=True,
+    )
+
+
+def _build_cli_run_summary(
+    *,
+    config: "AlphaScannerConfig",
+    result: pd.DataFrame,
+    started_at: datetime,
+    finished_at: datetime,
+) -> dict[str, object]:
+    selected_symbols = result["symbol"].astype(str).tolist()[:5] if "symbol" in result.columns and not result.empty else []
+    sector_breakdown = (
+        result["sector"].fillna("Unknown").astype(str).str.strip().replace("", "Unknown").value_counts().to_dict()
+        if "sector" in result.columns and not result.empty
+        else {}
+    )
+    max_final_score = None
+    avg_final_score = None
+    if "final_score" in result.columns and not result.empty:
+        numeric_final_score = pd.to_numeric(result["final_score"], errors="coerce").dropna()
+        if not numeric_final_score.empty:
+            max_final_score = round(float(numeric_final_score.max()), 4)
+            avg_final_score = round(float(numeric_final_score.mean()), 4)
+
+    return {
+        "run_id": _build_run_id("alpha-scanner"),
+        "preset_profile": STRICT_SWING_CASH_FILTERS.name,
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "chunk_size": config.chunk_size,
+        "requested_selection_size": config.selection_size,
+        "selected_candidates": int(len(result)),
+        "selection_fill_ratio": round((len(result) / config.selection_size), 4) if config.selection_size > 0 else 0.0,
+        "workers": config.max_workers or min(8, os.cpu_count() or 1),
+        "sector_cap_ratio": round(float(config.sector_cap_ratio), 4),
+        "selected_sectors": int(result["sector"].nunique()) if "sector" in result.columns and not result.empty else 0,
+        "sector_breakdown": sector_breakdown,
+        "top_symbols": selected_symbols,
+        "max_final_score": max_final_score,
+        "avg_final_score": avg_final_score,
+        "max_anomaly_count": config.max_anomaly_count,
+        "max_spread_bps": config.max_spread_bps,
+        "earnings_blackout_days": config.earnings_blackout_days,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -1775,7 +1837,18 @@ def main() -> None:
 
     config = _build_config_from_args(args)
 
+    started_at = _utc_now_naive()
     result = AlphaScanner(config=config).run()
+    finished_at = _utc_now_naive()
+
+    _emit_run_summary(
+        _build_cli_run_summary(
+            config=config,
+            result=result,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+    )
 
     if result.empty:
         print("Aucun candidat retenu.")

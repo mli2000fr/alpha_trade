@@ -59,6 +59,7 @@ def _build_quality_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
                 {"label": "Mise à jour fondamentaux", "step_keys": ["update_sector"]},
                 {"label": "Sync Latest Quotes", "step_keys": ["sync_latest_quotes"]},
                 {"label": "Sync Earnings Calendar", "step_keys": ["sync_earnings_calendar"]},
+                {"label": "Alpha Scanner", "step_keys": ["alpha_scanner"]},
                 {"label": "Workflow complet", "run_kind": "workflow"},
             ],
         )

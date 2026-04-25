@@ -158,6 +158,27 @@ def test_build_run_summary_caption_uses_screener_metrics_mapping() -> None:
     assert "pass rs=180" in caption
 
 
+def test_build_run_summary_caption_uses_alpha_scanner_metrics_mapping() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "alpha_scanner",
+            "run_summary": {
+                "requested_selection_size": 50,
+                "selected_candidates": 18,
+                "selected_sectors": 7,
+                "selection_fill_ratio": 0.36,
+                "workers": 4,
+                "sector_cap_ratio": 0.3,
+            },
+        }
+    )
+
+    assert "demandé=50" in caption
+    assert "retenus=18" in caption
+    assert "secteurs=7" in caption
+    assert "fill=0.36" in caption
+
+
 def test_build_latest_run_summary_rows_preserves_scope_order_and_filters_missing_summaries() -> None:
     rows = build_latest_run_summary_rows(
         [

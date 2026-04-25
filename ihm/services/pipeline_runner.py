@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from screener.models import ScreenerConfig
+from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SCREENER_CONFIG = ScreenerConfig()
@@ -24,6 +25,23 @@ DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS = DEFAULT_SCREENER_CONFIG.histor
 DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE = DEFAULT_SCREENER_CONFIG.min_historical_range_score
 DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS = DEFAULT_SCREENER_CONFIG.first_pass_window_days
 DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING = DEFAULT_SCREENER_CONFIG.enable_two_pass_loading
+DEFAULT_SELECTOR_CHUNK_SIZE = 500
+DEFAULT_SELECTOR_SELECTION_SIZE = 50
+DEFAULT_SELECTOR_MAX_ANOMALY_COUNT = 20
+DEFAULT_SELECTOR_SECTOR_CAP_RATIO = 0.30
+DEFAULT_SELECTOR_LOG_LEVEL = "INFO"
+DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD = STRICT_SWING_CASH_FILTERS.min_avg_dollar_volume_20d
+DEFAULT_SELECTOR_MIN_CLOSE = STRICT_SWING_CASH_FILTERS.min_close
+DEFAULT_SELECTOR_MAX_VOLATILITY_RATIO = STRICT_SWING_CASH_FILTERS.max_volatility_ratio
+DEFAULT_SELECTOR_MIN_RELATIVE_STRENGTH_INDEX = STRICT_SWING_CASH_FILTERS.min_relative_strength_index
+DEFAULT_SELECTOR_MIN_HIGH_52W_PROXIMITY = STRICT_SWING_CASH_FILTERS.min_high_52w_proximity
+DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE = STRICT_SWING_CASH_FILTERS.min_weekly_trend_score
+DEFAULT_SELECTOR_MIN_ATR_PCT_20 = STRICT_SWING_CASH_FILTERS.min_atr_pct_20
+DEFAULT_SELECTOR_MAX_ATR_PCT_20 = STRICT_SWING_CASH_FILTERS.max_atr_pct_20
+DEFAULT_SELECTOR_MIN_MARKET_CAP = STRICT_SWING_CASH_FILTERS.min_market_cap
+DEFAULT_SELECTOR_MIN_BETA_126 = STRICT_SWING_CASH_FILTERS.min_beta_126
+DEFAULT_SELECTOR_MAX_SPREAD_BPS = STRICT_SWING_CASH_FILTERS.max_spread_bps
+DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS = STRICT_SWING_CASH_FILTERS.earnings_blackout_days
 DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE = 200
 DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS = 1.1
 DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY = 50
@@ -71,6 +89,24 @@ class PipelineLaunchOptions:
     screener_min_historical_range_score: float = DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE
     screener_first_pass_window_days: int = DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS
     screener_enable_two_pass_loading: bool = DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING
+    selector_chunk_size: int = DEFAULT_SELECTOR_CHUNK_SIZE
+    selector_selection_size: int = DEFAULT_SELECTOR_SELECTION_SIZE
+    selector_max_workers: int | None = None
+    selector_liquidity_threshold: float = float(DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD)
+    selector_min_close: float = float(DEFAULT_SELECTOR_MIN_CLOSE)
+    selector_max_volatility_ratio: float = float(DEFAULT_SELECTOR_MAX_VOLATILITY_RATIO)
+    selector_min_relative_strength_index: float = float(DEFAULT_SELECTOR_MIN_RELATIVE_STRENGTH_INDEX or 100.0)
+    selector_min_high_52w_proximity: float = float(DEFAULT_SELECTOR_MIN_HIGH_52W_PROXIMITY or 0.75)
+    selector_min_weekly_trend_score: float = float(DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE or 1.0)
+    selector_min_atr_pct_20: float = float(DEFAULT_SELECTOR_MIN_ATR_PCT_20 or 0.015)
+    selector_max_atr_pct_20: float = float(DEFAULT_SELECTOR_MAX_ATR_PCT_20 or 0.06)
+    selector_min_market_cap: float = float(DEFAULT_SELECTOR_MIN_MARKET_CAP or 2_000_000_000.0)
+    selector_min_beta_126: float = float(DEFAULT_SELECTOR_MIN_BETA_126 or 1.0)
+    selector_max_spread_bps: float = float(DEFAULT_SELECTOR_MAX_SPREAD_BPS or 25.0)
+    selector_earnings_blackout_days: int = int(DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS or 3)
+    selector_max_anomaly_count: int = DEFAULT_SELECTOR_MAX_ANOMALY_COUNT
+    selector_sector_cap_ratio: float = DEFAULT_SELECTOR_SECTOR_CAP_RATIO
+    selector_log_level: str = DEFAULT_SELECTOR_LOG_LEVEL
     data_integrity_quotes_limit: int | None = None
     data_integrity_quotes_batch_size: int = DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE
     data_integrity_earnings_from_date: str | None = None
@@ -317,6 +353,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     earnings_to_date = _normalize_optional_date(options.data_integrity_earnings_to_date)
     screener_max_workers = options.screener_max_workers if options.screener_max_workers and options.screener_max_workers > 0 else None
     screener_benchmark_symbol = _normalize_symbol(options.screener_benchmark_symbol, DEFAULT_SCREENER_BENCHMARK_SYMBOL)
+    selector_max_workers = options.selector_max_workers if options.selector_max_workers and options.selector_max_workers > 0 else None
     quotes_limit = options.data_integrity_quotes_limit if options.data_integrity_quotes_limit and options.data_integrity_quotes_limit > 0 else None
     earnings_limit = options.data_integrity_earnings_limit if options.data_integrity_earnings_limit and options.data_integrity_earnings_limit > 0 else None
     fundamentals_limit = options.data_integrity_fundamentals_limit if options.data_integrity_fundamentals_limit and options.data_integrity_fundamentals_limit > 0 else None
@@ -411,7 +448,49 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "alpha_scanner":
-        return [sys.executable, "-u", "-m", "selector.alpha_scanner"]
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "selector.alpha_scanner",
+            "--chunk-size",
+            str(options.selector_chunk_size),
+            "--selection-size",
+            str(options.selector_selection_size),
+            "--liquidity-threshold",
+            str(options.selector_liquidity_threshold),
+            "--min-close",
+            str(options.selector_min_close),
+            "--max-volatility-ratio",
+            str(options.selector_max_volatility_ratio),
+            "--min-relative-strength-index",
+            str(options.selector_min_relative_strength_index),
+            "--min-high-52w-proximity",
+            str(options.selector_min_high_52w_proximity),
+            "--min-weekly-trend-score",
+            str(options.selector_min_weekly_trend_score),
+            "--min-atr-pct-20",
+            str(options.selector_min_atr_pct_20),
+            "--max-atr-pct-20",
+            str(options.selector_max_atr_pct_20),
+            "--min-market-cap",
+            str(options.selector_min_market_cap),
+            "--min-beta-126",
+            str(options.selector_min_beta_126),
+            "--max-spread-bps",
+            str(options.selector_max_spread_bps),
+            "--earnings-blackout-days",
+            str(options.selector_earnings_blackout_days),
+            "--max-anomaly-count",
+            str(options.selector_max_anomaly_count),
+            "--sector-cap-ratio",
+            str(options.selector_sector_cap_ratio),
+            "--log-level",
+            str(options.selector_log_level or DEFAULT_SELECTOR_LOG_LEVEL).upper(),
+        ]
+        if selector_max_workers is not None:
+            command.extend(["--max-workers", str(selector_max_workers)])
+        return command
 
     if step_key == "sentiment_pipeline":
         return [sys.executable, "-u", "-m", "event_sentiment"]

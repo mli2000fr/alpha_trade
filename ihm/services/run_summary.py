@@ -50,6 +50,14 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Rows upsert", "rows_upserted"),
         ("Limite", "requested_limit"),
     ],
+    "alpha_scanner": [
+        ("Demandé", "requested_selection_size"),
+        ("Retenus", "selected_candidates"),
+        ("Secteurs", "selected_sectors"),
+        ("Fill", "selection_fill_ratio"),
+        ("Workers", "workers"),
+        ("Cap sec.", "sector_cap_ratio"),
+    ],
     "pipeline_workflow": [
         ("Étapes résumées", "workflow_steps_with_summary"),
         ("Cibles", "targeted_symbols"),

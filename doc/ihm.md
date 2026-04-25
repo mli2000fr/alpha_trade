@@ -213,6 +213,33 @@ L'étape `Alpha Scanner` continue d'être lancée via :
 python -m selector.alpha_scanner
 ```
 
+L'IHM expose désormais les options CLI opérationnelles réellement supportées par ce point d'entrée, notamment :
+
+- `chunk-size`
+- `selection-size`
+- `max-workers`
+- `liquidity-threshold`
+- `min-close`
+- `max-volatility-ratio`
+- `min-relative-strength-index`
+- `min-high-52w-proximity`
+- `min-weekly-trend-score`
+- `min-atr-pct-20`
+- `max-atr-pct-20`
+- `min-market-cap`
+- `min-beta-126`
+- `max-spread-bps`
+- `earnings-blackout-days`
+- `max-anomaly-count`
+- `sector-cap-ratio`
+- `log-level`
+
+Point important :
+
+- `0` sur `max workers` dans l'IHM signifie **auto** ;
+- le profil partagé `STRICT_SWING_CASH_FILTERS` reste la base implicite côté backend, et les valeurs saisies dans l'IHM sont transmises explicitement pour reproduire ou surcharger ce profil ;
+- le launcher IHM consomme aussi désormais le `run_summary` structuré de `alpha_scanner` (taille demandée, titres retenus, secteurs, fill ratio, workers, cap sectoriel).
+
 L'IHM exécute donc bien `sync_latest_quotes` puis `sync_earnings_calendar` **avant** `alpha_scanner`, ce qui prépare `stock_quote_snapshots` et `stock_earnings_calendar` pour les filtres aval (`spread_bps`, `earnings_blackout`).
 
 #### 4.3.3 Steps auxiliaires Data Integrity hors workflow
