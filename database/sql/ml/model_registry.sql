@@ -1,4 +1,4 @@
-CREATE TABLE alpha_trade.model_registry (
+CREATE TABLE IF NOT EXISTS alpha_trade.model_registry (
     registry_id     BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     symbol          VARCHAR(20)     NOT NULL,
     architecture    VARCHAR(50)     NOT NULL DEFAULT 'lstm_attention',

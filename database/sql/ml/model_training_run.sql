@@ -1,4 +1,4 @@
-CREATE TABLE alpha_trade.model_training_run (
+CREATE TABLE IF NOT EXISTS alpha_trade.model_training_run (
     run_id          VARCHAR(64)     NOT NULL  COMMENT 'UUID ou hash unique du run',
     registry_id     BIGINT UNSIGNED NOT NULL,
     symbol          VARCHAR(20)     NOT NULL,

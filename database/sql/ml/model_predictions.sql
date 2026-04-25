@@ -1,4 +1,4 @@
-CREATE TABLE alpha_trade.model_predictions (
+CREATE TABLE IF NOT EXISTS alpha_trade.model_predictions (
     prediction_id       BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     symbol              VARCHAR(20)     NOT NULL,
     prediction_date     DATE            NOT NULL  COMMENT 'Date à laquelle la prédiction est faite',

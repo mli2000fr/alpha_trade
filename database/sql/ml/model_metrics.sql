@@ -1,4 +1,4 @@
-CREATE TABLE alpha_trade.model_metrics (
+CREATE TABLE IF NOT EXISTS alpha_trade.model_metrics (
     metric_id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     run_id                  VARCHAR(64)     NOT NULL,
     symbol                  VARCHAR(20)     NOT NULL,
