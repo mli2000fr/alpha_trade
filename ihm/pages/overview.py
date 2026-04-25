@@ -19,7 +19,11 @@ from ihm.services.screener_artifact_history import (
     build_global_screener_artifact_history,
     build_screener_artifact_history_rows,
     format_screener_artifact_history_label,
-    normalize_screener_artifacts_dir,
+    resolve_selected_screener_artifacts_dir,
+)
+from ihm.services.screener_preferences import (
+    load_persisted_selected_screener_artifacts_dir,
+    save_persisted_selected_screener_artifacts_dir,
 )
 from ihm.services.screener_recommendations import load_screener_recommendation_report
 from ihm.services.run_summary import (
@@ -89,39 +93,6 @@ def _build_screener_objective_metrics(report: dict[str, object]) -> list[tuple[s
     return metrics
 
 
-def _resolve_selected_screener_artifacts_dir(history_entries: list[dict[str, object]]) -> tuple[str, dict[str, dict[str, object]]]:
-    entry_map = {str(entry.get("artifacts_dir", "")): entry for entry in history_entries if str(entry.get("artifacts_dir", "")).strip()}
-    options = list(entry_map.keys())
-    selected_dir = str(st.session_state.get(SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY, "") or "").strip()
-    if selected_dir:
-        selected_dir = normalize_screener_artifacts_dir(selected_dir)
-        if selected_dir not in entry_map:
-            entry_map[selected_dir] = {
-                "artifacts_dir": selected_dir,
-                "artifacts_dir_label": selected_dir,
-                "coverage_label": "Période non renseignée",
-                "updated_at_label": "inconnue",
-                "objective_count": 0,
-                "run_count": 0,
-            }
-            options.insert(0, selected_dir)
-    if not options:
-        selected_dir = normalize_screener_artifacts_dir()
-        entry_map[selected_dir] = {
-            "artifacts_dir": selected_dir,
-            "artifacts_dir_label": selected_dir,
-            "coverage_label": "Période non renseignée",
-            "updated_at_label": "inconnue",
-            "objective_count": 0,
-            "run_count": 0,
-        }
-        options = [selected_dir]
-    if not selected_dir or selected_dir not in options:
-        selected_dir = options[0]
-    st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_dir
-    return selected_dir, entry_map
-
-
 def _build_screener_history_dataframe(history_entries: list[dict[str, object]]) -> pd.DataFrame:
     return pd.DataFrame(build_screener_artifact_history_rows(history_entries))
 
@@ -184,9 +155,14 @@ def render() -> None:
         show_dataframe(summary_rows)
 
     screener_history = build_global_screener_artifact_history()
-    selected_screener_dir, screener_entry_map = _resolve_selected_screener_artifacts_dir(screener_history)
+    session_selected_dir = str(st.session_state.get(SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY, "") or "").strip()
+    persisted_selected_dir = load_persisted_selected_screener_artifacts_dir()
+    preferred_dir = session_selected_dir or persisted_selected_dir
+    selected_screener_dir, screener_entry_map = resolve_selected_screener_artifacts_dir(screener_history, preferred_dir)
+    restored_from_persistence = not session_selected_dir and bool(persisted_selected_dir)
     if screener_entry_map:
         st.subheader("🗂️ Source screener active")
+        st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_screener_dir
         if st.session_state.get(SCREENER_ARTIFACT_SELECTBOX_KEY) != selected_screener_dir:
             st.session_state[SCREENER_ARTIFACT_SELECTBOX_KEY] = selected_screener_dir
         selected_screener_dir = st.selectbox(
@@ -197,7 +173,11 @@ def render() -> None:
             key=SCREENER_ARTIFACT_SELECTBOX_KEY,
         )
         st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_screener_dir
+        if persisted_selected_dir != selected_screener_dir:
+            save_persisted_selected_screener_artifacts_dir(selected_screener_dir)
         selected_entry = screener_entry_map[selected_screener_dir]
+        if restored_from_persistence:
+            st.caption("Préférence restaurée depuis la dernière session IHM.")
         st.caption(
             f"Source partagée avec `Screening` · Couverture : {selected_entry.get('coverage_label', 'Période non renseignée')} · "
             f"MAJ : {selected_entry.get('updated_at_label', 'inconnue')}"

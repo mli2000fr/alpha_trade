@@ -119,3 +119,45 @@ def test_format_screener_artifact_history_label_and_rows_are_ui_ready() -> None:
     assert rows[0]["Origines"] == "défaut, runs IHM"
 
 
+def test_resolve_selected_screener_artifacts_dir_adds_persisted_entry_when_missing(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import screener_artifact_history
+
+    preferred_dir = tmp_path / "persisted"
+    history_entries = [
+        {
+            "artifacts_dir": str(tmp_path / "default"),
+            "artifacts_dir_label": "artifacts/default",
+            "available": True,
+            "coverage_label": "2026-04-01 → 2026-04-03 (3 séance(s))",
+            "updated_at_label": "2026-04-25 10:00",
+            "objective_count": 2,
+            "run_count": 1,
+        }
+    ]
+
+    monkeypatch.setattr(
+        screener_artifact_history,
+        "build_screener_history_entry",
+        lambda artifacts_dir, **kwargs: {
+            "artifacts_dir": str(artifacts_dir),
+            "artifacts_dir_label": str(artifacts_dir),
+            "available": False,
+            "coverage_label": "Période non renseignée",
+            "updated_at_label": "inconnue",
+            "objective_count": 0,
+            "run_count": 0,
+            "source_tags": ["préférence persistée"],
+        },
+    )
+
+    selected_dir, entry_map = screener_artifact_history.resolve_selected_screener_artifacts_dir(
+        history_entries,
+        preferred_dir,
+    )
+
+    assert selected_dir == str(preferred_dir)
+    assert str(preferred_dir) in entry_map
+    assert entry_map[str(preferred_dir)]["source_tags"] == ["préférence persistée"]
+
+
+

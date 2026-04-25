@@ -13,7 +13,11 @@ from ihm.services.screener_artifact_history import (
     build_global_screener_artifact_history,
     build_screener_artifact_history_rows,
     format_screener_artifact_history_label,
-    normalize_screener_artifacts_dir,
+    resolve_selected_screener_artifacts_dir,
+)
+from ihm.services.screener_preferences import (
+    load_persisted_selected_screener_artifacts_dir,
+    save_persisted_selected_screener_artifacts_dir,
 )
 from ihm.services.screener_recommendations import load_screener_recommendation_report
 from ihm.services.db import db_available
@@ -83,41 +87,6 @@ def _build_objective_metric_cards(report: dict[str, object]) -> list[tuple[str, 
     return cards
 
 
-def _resolve_selected_screener_artifacts_dir(history_entries: list[dict[str, object]]) -> tuple[str, dict[str, dict[str, object]]]:
-    entry_map = {str(entry.get("artifacts_dir", "")): entry for entry in history_entries if str(entry.get("artifacts_dir", "")).strip()}
-    options = list(entry_map.keys())
-    selected_dir = str(st.session_state.get(SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY, "") or "").strip()
-    if selected_dir:
-        selected_dir = normalize_screener_artifacts_dir(selected_dir)
-        if selected_dir not in entry_map:
-            entry_map[selected_dir] = {
-                "artifacts_dir": selected_dir,
-                "artifacts_dir_label": selected_dir,
-                "available": False,
-                "coverage_label": "Période non renseignée",
-                "updated_at_label": "inconnue",
-                "objective_count": 0,
-                "run_count": 0,
-            }
-            options.insert(0, selected_dir)
-    if not options:
-        selected_dir = normalize_screener_artifacts_dir()
-        entry_map[selected_dir] = {
-            "artifacts_dir": selected_dir,
-            "artifacts_dir_label": selected_dir,
-            "available": False,
-            "coverage_label": "Période non renseignée",
-            "updated_at_label": "inconnue",
-            "objective_count": 0,
-            "run_count": 0,
-        }
-        options = [selected_dir]
-    if not selected_dir or selected_dir not in options:
-        selected_dir = options[0]
-    st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_dir
-    return selected_dir, entry_map
-
-
 def _build_artifact_history_dataframe(history_entries: list[dict[str, object]]) -> pd.DataFrame:
     rows = build_screener_artifact_history_rows(history_entries)
     return pd.DataFrame(rows)
@@ -129,8 +98,13 @@ def _render_screener_artifact_selector() -> str:
         "Sélectionne ici le dossier d'artefacts screener à explorer. La sélection est partagée avec la vue `Overview`."
     )
     history_entries = build_global_screener_artifact_history()
-    selected_dir, entry_map = _resolve_selected_screener_artifacts_dir(history_entries)
+    session_selected_dir = str(st.session_state.get(SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY, "") or "").strip()
+    persisted_selected_dir = load_persisted_selected_screener_artifacts_dir()
+    preferred_dir = session_selected_dir or persisted_selected_dir
+    selected_dir, entry_map = resolve_selected_screener_artifacts_dir(history_entries, preferred_dir)
+    restored_from_persistence = not session_selected_dir and bool(persisted_selected_dir)
     options = list(entry_map.keys())
+    st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_dir
     if st.session_state.get(SCREENER_ARTIFACT_SELECTBOX_KEY) != selected_dir:
         st.session_state[SCREENER_ARTIFACT_SELECTBOX_KEY] = selected_dir
     selected_dir = st.selectbox(
@@ -141,8 +115,12 @@ def _render_screener_artifact_selector() -> str:
         key=SCREENER_ARTIFACT_SELECTBOX_KEY,
     )
     st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_dir
+    if persisted_selected_dir != selected_dir:
+        save_persisted_selected_screener_artifacts_dir(selected_dir)
 
     selected_entry = entry_map[selected_dir]
+    if restored_from_persistence:
+        st.caption("Préférence restaurée depuis la dernière session IHM.")
     st.caption(
         f"Sélection active : `{selected_dir}` · Couverture : {selected_entry.get('coverage_label', 'Période non renseignée')} · "
         f"MAJ : {selected_entry.get('updated_at_label', 'inconnue')}"

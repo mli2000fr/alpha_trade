@@ -40,6 +40,43 @@ def _history_sort_key(entry: dict[str, Any]) -> tuple[str, str, str]:
     return (max(updated_at_iso, last_run_at), is_default, str(entry.get("artifacts_dir", "")))
 
 
+def build_screener_history_entry(
+    artifacts_dir: Path | str,
+    *,
+    runs: list[dict[str, object]] | None = None,
+    source_tags: list[str] | set[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    normalized_dir = normalize_screener_artifacts_dir(artifacts_dir)
+    ordered_runs = sorted(runs or [], key=_last_run_timestamp, reverse=True)
+    last_run = ordered_runs[0] if ordered_runs else {}
+    summary = build_screener_artifact_summary(normalized_dir)
+    return {
+        "artifacts_dir": normalized_dir,
+        "artifacts_dir_label": _artifacts_dir_label(normalized_dir),
+        "available": bool(summary.get("available")),
+        "coverage_label": str(summary.get("coverage_label") or "Période non renseignée"),
+        "updated_at_label": str(summary.get("updated_at_label") or "inconnue"),
+        "baseline_name": summary.get("baseline_name"),
+        "objective_count": int(summary.get("objective_count") or 0),
+        "scenario_count": int(summary.get("scenario_count") or 0),
+        "file_count": int(summary.get("file_count") or 0),
+        "market_regime_count": len(summary.get("market_regimes", []))
+        if isinstance(summary.get("market_regimes"), list)
+        else 0,
+        "diagnostic_available": bool(summary.get("diagnostic_available")),
+        "recommendation_available": bool(summary.get("recommendation_available")),
+        "regime_analysis_available": bool(summary.get("regime_analysis_available")),
+        "run_count": len(ordered_runs),
+        "last_run_id": last_run.get("run_id"),
+        "last_run_label": last_run.get("run_label") or last_run.get("run_kind"),
+        "last_run_kind": last_run.get("run_kind"),
+        "last_run_status": last_run.get("status"),
+        "last_run_at": _last_run_timestamp(last_run) if last_run else "",
+        "source_tags": sorted({str(value) for value in (source_tags or []) if str(value).strip()}),
+        "summary": summary,
+    }
+
+
 def build_global_screener_artifact_history(
     additional_dirs: list[Path | str] | None = None,
 ) -> list[dict[str, Any]]:
@@ -73,39 +110,36 @@ def build_global_screener_artifact_history(
 
     entries: list[dict[str, Any]] = []
     for artifacts_dir, runs in grouped_runs.items():
-        ordered_runs = sorted(runs, key=_last_run_timestamp, reverse=True)
-        last_run = ordered_runs[0] if ordered_runs else {}
-        summary = build_screener_artifact_summary(artifacts_dir)
-        entries.append(
-            {
-                "artifacts_dir": artifacts_dir,
-                "artifacts_dir_label": _artifacts_dir_label(artifacts_dir),
-                "available": bool(summary.get("available")),
-                "coverage_label": str(summary.get("coverage_label") or "Période non renseignée"),
-                "updated_at_label": str(summary.get("updated_at_label") or "inconnue"),
-                "baseline_name": summary.get("baseline_name"),
-                "objective_count": int(summary.get("objective_count") or 0),
-                "scenario_count": int(summary.get("scenario_count") or 0),
-                "file_count": int(summary.get("file_count") or 0),
-                "market_regime_count": len(summary.get("market_regimes", []))
-                if isinstance(summary.get("market_regimes"), list)
-                else 0,
-                "diagnostic_available": bool(summary.get("diagnostic_available")),
-                "recommendation_available": bool(summary.get("recommendation_available")),
-                "regime_analysis_available": bool(summary.get("regime_analysis_available")),
-                "run_count": len(runs),
-                "last_run_id": last_run.get("run_id"),
-                "last_run_label": last_run.get("run_label") or last_run.get("run_kind"),
-                "last_run_kind": last_run.get("run_kind"),
-                "last_run_status": last_run.get("status"),
-                "last_run_at": _last_run_timestamp(last_run) if last_run else "",
-                "source_tags": sorted(source_tags.get(artifacts_dir, set())),
-                "summary": summary,
-            }
-        )
+        entries.append(build_screener_history_entry(artifacts_dir, runs=runs, source_tags=source_tags.get(artifacts_dir, set())))
 
     entries.sort(key=_history_sort_key, reverse=True)
     return entries
+
+
+def resolve_selected_screener_artifacts_dir(
+    history_entries: list[dict[str, Any]],
+    preferred_dir: Path | str | None = None,
+    *,
+    missing_source_tag: str = "préférence persistée",
+) -> tuple[str, dict[str, dict[str, Any]]]:
+    entry_map = {
+        str(entry.get("artifacts_dir", "")): entry
+        for entry in history_entries
+        if str(entry.get("artifacts_dir", "")).strip()
+    }
+    selected_dir = ""
+    if preferred_dir is not None and str(preferred_dir).strip():
+        selected_dir = normalize_screener_artifacts_dir(preferred_dir)
+        if selected_dir not in entry_map:
+            entry_map[selected_dir] = build_screener_history_entry(selected_dir, source_tags=[missing_source_tag])
+
+    if not entry_map:
+        selected_dir = normalize_screener_artifacts_dir(DEFAULT_SCREENER_ARTIFACTS_DIR)
+        entry_map[selected_dir] = build_screener_history_entry(selected_dir, source_tags=["défaut"])
+
+    if not selected_dir or selected_dir not in entry_map:
+        selected_dir = next(iter(entry_map.keys()))
+    return selected_dir, entry_map
 
 
 def format_screener_artifact_history_label(entry: dict[str, Any]) -> str:
@@ -150,8 +184,11 @@ __all__ = [
     "SCREENER_RUN_KINDS",
     "SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY",
     "build_global_screener_artifact_history",
+    "build_screener_history_entry",
     "build_screener_artifact_history_rows",
     "format_screener_artifact_history_label",
     "normalize_screener_artifacts_dir",
+    "resolve_selected_screener_artifacts_dir",
 ]
+
 
