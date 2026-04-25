@@ -62,9 +62,12 @@ La page **🔄 Pipeline** permet désormais :
 
 Le bloc de paramètres expose aussi les options réellement supportées côté backend pour :
 
+- `Alpha Scanner` (`chunk-size`, `selection-size`, `max-workers`, seuils stricts de liquidité/prix/RS/ATR/spread/earnings, `sector-cap-ratio`, `log-level`) ;
 - `sync_latest_quotes` (`limit`, `batch-size`) ;
 - `sync_earnings_calendar` (`from-date`, `to-date`, `limit`, `sleep-seconds`) ;
 - `update_sector` (`limit`, `sleep-seconds`, `log-every`).
+
+Pour `Alpha Scanner`, l'IHM transmet explicitement les valeurs affichées au launcher `python -m selector.alpha_scanner ...` afin de reproduire le profil partagé strict `STRICT_SWING_CASH_FILTERS` ou de le surcharger proprement. Dans cette UI, `0` sur `max workers` signifie **auto**.
 
 La carte `Alpha Scanner` inclut également un diagnostic de dépendances métier pour `stock_quote_snapshots` et `stock_earnings_calendar` :
 
@@ -97,6 +100,8 @@ Quand un script écrit un résumé structuré préfixé par `::alpha_trade_run_s
 - les cartes de résumé métier du run ;
 - l'agrégation du workflow parent ;
 - les blocs récents de `Overview` et `Screening`.
+
+Cela couvre notamment `stock_screener` et `Alpha Scanner`, ce qui permet d'afficher côté IHM des métriques comme la taille de sélection demandée, le nombre de titres retenus, le nombre de secteurs couverts, le fill ratio ou encore le cap sectoriel utilisé.
 
 Les logs IHM sont persistés sous `artifacts/ihm_pipeline_runs/`.
 

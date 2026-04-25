@@ -301,7 +301,7 @@ with engine.connect() as conn:
 ### Tests ciblés selector
 
 ```powershell
-python -m pytest tests/test_selector_alpha_scanner.py tests/test_alpha_scanner.py tests/test_selector_init.py -q -o addopts=""
+python -m pytest tests/test_selector_alpha_scanner.py tests/test_alpha_scanner.py tests/test_selector_init.py tests/test_selector_run_summaries.py -q -o addopts=""
 ```
 
 ---
