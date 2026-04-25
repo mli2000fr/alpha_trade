@@ -56,3 +56,44 @@ def test_build_objective_recommendation_rows_formats_phase7_snapshot() -> None:
     assert rows.iloc[0]["Scénario recommandé"] == "steady"
 
 
+def test_build_artifact_history_dataframe_exposes_global_screener_inventory() -> None:
+    history_df = screening._build_artifact_history_dataframe(
+        [
+            {
+                "artifacts_dir": "C:/tmp/screener_a",
+                "artifacts_dir_label": "artifacts/screener_a",
+                "available": True,
+                "coverage_label": "2026-04-01 → 2026-04-03 (3 séance(s))",
+                "updated_at_label": "2026-04-25 10:02",
+                "baseline_name": "baseline",
+                "objective_count": 4,
+                "scenario_count": 12,
+                "file_count": 7,
+                "market_regime_count": 2,
+                "run_count": 3,
+                "last_run_label": "Recommandation screener",
+                "last_run_status": "completed",
+                "source_tags": ["runs IHM"],
+            }
+        ]
+    )
+
+    assert list(history_df.columns) == [
+        "Répertoire",
+        "Disponible",
+        "Couverture",
+        "MAJ",
+        "Baseline",
+        "Reco objectifs",
+        "Scénarios",
+        "Fichiers",
+        "Régimes",
+        "Runs IHM",
+        "Dernier run",
+        "Statut",
+        "Origines",
+        "Chemin",
+    ]
+    assert history_df.iloc[0]["Répertoire"] == "artifacts/screener_a"
+
+

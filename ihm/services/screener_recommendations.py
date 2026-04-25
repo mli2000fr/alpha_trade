@@ -175,6 +175,13 @@ def _format_updated_at(path: Path) -> str:
         return "inconnue"
 
 
+def _updated_at_iso(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
+    except OSError:
+        return None
+
+
 def _objective_order_key(objective: object) -> tuple[int, str]:
     name = str(objective or "")
     try:
@@ -364,6 +371,7 @@ def load_screener_recommendation_report(artifacts_dir: Path | str | None = None)
         "leaderboard_df": leaderboard_df,
         "coverage_label": _coverage_label(metadata_payload),
         "updated_at": updated_at_path,
+        "updated_at_iso": _updated_at_iso(updated_at_path) if updated_at_path is not None else None,
         "updated_at_label": _format_updated_at(updated_at_path) if updated_at_path is not None else "inconnue",
         "available": available,
         "errors": errors,
@@ -413,6 +421,7 @@ def build_screener_artifact_summary(artifacts_dir: Path | str | None = None) -> 
             or file_map["cross_regime_recommendation_summary"]["exists"]
         ),
         "coverage_label": str(report.get("coverage_label") or "Période non renseignée"),
+        "updated_at_iso": report.get("updated_at_iso"),
         "updated_at_label": str(report.get("updated_at_label") or "inconnue"),
         "baseline_name": metadata.get("baseline_name"),
         "trading_days": len(trading_dates),

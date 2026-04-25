@@ -31,6 +31,10 @@ from ihm.services.backtesting_runner import (
     format_command_for_display,
 )
 from ihm.services.db import get_db_status, get_runtime_db_config
+from ihm.services.screener_artifact_history import (
+    build_global_screener_artifact_history,
+    build_screener_artifact_history_rows,
+)
 from ihm.services.screener_recommendations import build_screener_artifact_summary
 
 SELECTED_RUN_KEY = "ihm_backtesting_selected_run_id"
@@ -907,6 +911,10 @@ def _build_screener_artifact_file_rows(summary: dict[str, object]) -> pd.DataFra
     return formatted
 
 
+def _build_global_screener_history_dataframe(history_entries: list[dict[str, object]]) -> pd.DataFrame:
+    return pd.DataFrame(build_screener_artifact_history_rows(history_entries))
+
+
 def _render_screener_artifact_summary(run_record: dict[str, object]) -> bool:
     if str(run_record.get("run_kind", "")) not in {"diagnose-screener", "recommend-screener"}:
         return False
@@ -1098,6 +1106,14 @@ def _render_runtime_center() -> None:
     )
     with st.expander("🗃️ Historique des exécutions backtesting", expanded=False):
         st.dataframe(history_df, use_container_width=True, hide_index=True)
+
+    screener_history_df = _build_global_screener_history_dataframe(build_global_screener_artifact_history())
+    if not screener_history_df.empty:
+        with st.expander("🗂️ Historique global des artefacts screener", expanded=False):
+            st.caption(
+                "Vue transversale des répertoires screener connus par l'IHM, indépendamment du run actuellement sélectionné."
+            )
+            st.dataframe(screener_history_df, use_container_width=True, hide_index=True)
 
 
 def render() -> None:

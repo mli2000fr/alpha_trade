@@ -56,3 +56,29 @@ def test_build_screener_objective_rows_exposes_operational_leaders() -> None:
     assert rows.iloc[0]["scénario"] == "steady"
 
 
+def test_build_screener_history_dataframe_exposes_shared_artifact_rows() -> None:
+    history_df = overview._build_screener_history_dataframe(
+        [
+            {
+                "artifacts_dir": "C:/tmp/screener_a",
+                "artifacts_dir_label": "artifacts/screener_a",
+                "available": True,
+                "coverage_label": "2026-04-01 → 2026-04-03 (3 séance(s))",
+                "updated_at_label": "2026-04-25 10:02",
+                "baseline_name": "baseline",
+                "objective_count": 4,
+                "scenario_count": 12,
+                "file_count": 7,
+                "market_regime_count": 2,
+                "run_count": 3,
+                "last_run_label": "Recommandation screener",
+                "last_run_status": "completed",
+                "source_tags": ["défaut", "runs IHM"],
+            }
+        ]
+    )
+
+    assert history_df.iloc[0]["Origines"] == "défaut, runs IHM"
+    assert history_df.iloc[0]["Runs IHM"] == 3
+
+

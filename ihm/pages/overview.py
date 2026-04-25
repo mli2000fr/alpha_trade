@@ -14,6 +14,13 @@ from ihm.components.metrics import metric_row
 from ihm.components.status_badges import env_badge, run_status_badge
 from ihm.components.tables import show_dataframe
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
+from ihm.services.screener_artifact_history import (
+    SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY,
+    build_global_screener_artifact_history,
+    build_screener_artifact_history_rows,
+    format_screener_artifact_history_label,
+    normalize_screener_artifacts_dir,
+)
 from ihm.services.screener_recommendations import load_screener_recommendation_report
 from ihm.services.run_summary import (
     build_latest_run_summary_rows,
@@ -26,6 +33,8 @@ from ihm.services.queries import (
     get_latest_risk_run_id,
     get_top_candidates,
 )
+
+SCREENER_ARTIFACT_SELECTBOX_KEY = "overview_screener_artifacts_dir_select"
 
 
 def _merge_pipeline_runs() -> list[dict[str, object]]:
@@ -78,6 +87,43 @@ def _build_screener_objective_metrics(report: dict[str, object]) -> list[tuple[s
     for _, row in rows.iterrows():
         metrics.append((str(row.get("label") or row.get("objectif") or "Objectif"), str(row.get("scénario") or "—"), str(row.get("périmètre") or "global")))
     return metrics
+
+
+def _resolve_selected_screener_artifacts_dir(history_entries: list[dict[str, object]]) -> tuple[str, dict[str, dict[str, object]]]:
+    entry_map = {str(entry.get("artifacts_dir", "")): entry for entry in history_entries if str(entry.get("artifacts_dir", "")).strip()}
+    options = list(entry_map.keys())
+    selected_dir = str(st.session_state.get(SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY, "") or "").strip()
+    if selected_dir:
+        selected_dir = normalize_screener_artifacts_dir(selected_dir)
+        if selected_dir not in entry_map:
+            entry_map[selected_dir] = {
+                "artifacts_dir": selected_dir,
+                "artifacts_dir_label": selected_dir,
+                "coverage_label": "Période non renseignée",
+                "updated_at_label": "inconnue",
+                "objective_count": 0,
+                "run_count": 0,
+            }
+            options.insert(0, selected_dir)
+    if not options:
+        selected_dir = normalize_screener_artifacts_dir()
+        entry_map[selected_dir] = {
+            "artifacts_dir": selected_dir,
+            "artifacts_dir_label": selected_dir,
+            "coverage_label": "Période non renseignée",
+            "updated_at_label": "inconnue",
+            "objective_count": 0,
+            "run_count": 0,
+        }
+        options = [selected_dir]
+    if not selected_dir or selected_dir not in options:
+        selected_dir = options[0]
+    st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_dir
+    return selected_dir, entry_map
+
+
+def _build_screener_history_dataframe(history_entries: list[dict[str, object]]) -> pd.DataFrame:
+    return pd.DataFrame(build_screener_artifact_history_rows(history_entries))
 
 
 def render() -> None:
@@ -137,7 +183,31 @@ def render() -> None:
         st.subheader("📋 Résumés pipeline récents")
         show_dataframe(summary_rows)
 
-    screener_report = load_screener_recommendation_report()
+    screener_history = build_global_screener_artifact_history()
+    selected_screener_dir, screener_entry_map = _resolve_selected_screener_artifacts_dir(screener_history)
+    if screener_entry_map:
+        st.subheader("🗂️ Source screener active")
+        if st.session_state.get(SCREENER_ARTIFACT_SELECTBOX_KEY) != selected_screener_dir:
+            st.session_state[SCREENER_ARTIFACT_SELECTBOX_KEY] = selected_screener_dir
+        selected_screener_dir = st.selectbox(
+            "Répertoire d'artefacts screener",
+            options=list(screener_entry_map.keys()),
+            format_func=lambda value: format_screener_artifact_history_label(screener_entry_map[value]),
+            index=list(screener_entry_map.keys()).index(selected_screener_dir),
+            key=SCREENER_ARTIFACT_SELECTBOX_KEY,
+        )
+        st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_screener_dir
+        selected_entry = screener_entry_map[selected_screener_dir]
+        st.caption(
+            f"Source partagée avec `Screening` · Couverture : {selected_entry.get('coverage_label', 'Période non renseignée')} · "
+            f"MAJ : {selected_entry.get('updated_at_label', 'inconnue')}"
+        )
+        history_df = _build_screener_history_dataframe(screener_history)
+        if not history_df.empty:
+            with st.expander("🗃️ Historique global des artefacts screener", expanded=False):
+                st.dataframe(history_df, use_container_width=True, hide_index=True)
+
+    screener_report = load_screener_recommendation_report(selected_screener_dir)
     screener_objective_rows = _build_screener_objective_rows(screener_report)
     if not screener_objective_rows.empty:
         st.subheader("🎯 Calibration screener")

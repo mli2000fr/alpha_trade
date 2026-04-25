@@ -63,3 +63,29 @@ def test_build_screener_artifact_metric_rows_includes_inventory_counts() -> None
     assert metrics["Régimes"] == "2"
 
 
+def test_build_global_screener_history_dataframe_exposes_transverse_inventory() -> None:
+    history_df = backtesting._build_global_screener_history_dataframe(
+        [
+            {
+                "artifacts_dir": "C:/tmp/screener_a",
+                "artifacts_dir_label": "artifacts/screener_a",
+                "available": True,
+                "coverage_label": "2026-04-01 → 2026-04-03 (3 séance(s))",
+                "updated_at_label": "2026-04-25 10:02",
+                "baseline_name": "baseline",
+                "objective_count": 4,
+                "scenario_count": 12,
+                "file_count": 7,
+                "market_regime_count": 2,
+                "run_count": 3,
+                "last_run_label": "Recommandation screener",
+                "last_run_status": "completed",
+                "source_tags": ["runs IHM"],
+            }
+        ]
+    )
+
+    assert history_df.iloc[0]["Répertoire"] == "artifacts/screener_a"
+    assert history_df.iloc[0]["Disponible"] == "oui"
+
+
