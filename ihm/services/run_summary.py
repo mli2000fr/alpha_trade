@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections.abc import Sequence as SequenceABC
 from typing import Any, Iterable, Mapping, Sequence
 
+from ihm.services.pipeline_runner import get_pipeline_auxiliary_steps, get_pipeline_steps
+
 
 RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
     "import_alpaca_assets": [
@@ -221,6 +223,33 @@ def build_latest_run_summary_rows(
             }
         )
     return rows
+
+
+def build_ordered_pipeline_step_scopes(
+    *,
+    include_auxiliary: bool = True,
+    max_main_step: int | None = None,
+) -> list[dict[str, object]]:
+    scopes: list[dict[str, object]] = []
+    if include_auxiliary:
+        scopes.extend(
+            {"label": f"{step.num}. {step.name}", "step_keys": [step.key]}
+            for step in get_pipeline_auxiliary_steps()
+        )
+    for step in get_pipeline_steps():
+        step_number = int(step.num)
+        if max_main_step is not None and step_number > max_main_step:
+            break
+        scopes.append({"label": f"{step.num}. {step.name}", "step_keys": [step.key]})
+    return scopes
+
+
+def build_pipeline_flow_caption(*, include_auxiliary: bool = True, max_main_step: int | None = None) -> str:
+    scopes = build_ordered_pipeline_step_scopes(
+        include_auxiliary=include_auxiliary,
+        max_main_step=max_main_step,
+    )
+    return " → ".join(str(scope.get("label") or "").strip() for scope in scopes if str(scope.get("label") or "").strip())
 
 
 def _is_number(value: Any) -> bool:

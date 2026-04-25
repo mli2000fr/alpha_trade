@@ -68,3 +68,9 @@ def test_alpha_scanner_dependency_block_reason_is_none_when_not_all_red() -> Non
     assert pipeline._alpha_scanner_dependency_block_reason(diagnostic) is None
 
 
+def test_pipeline_page_exposes_clear_screener_vs_alpha_scanner_labels() -> None:
+    assert "diagnostic dépendances alpha scanner" in pipeline.ALPHA_SCANNER_DIAGNOSTIC_THRESHOLDS_TITLE.lower()
+    assert "sélection finale stricte" in pipeline.ALPHA_SCANNER_PARAMS_TITLE.lower()
+    assert "préfiltrage large" in pipeline.SCREENER_PARAMS_CAPTION.lower()
+
+

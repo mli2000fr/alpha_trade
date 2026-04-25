@@ -10,18 +10,8 @@ from ihm.pages import run_page_if_standalone
 from ihm.components.alpha_scanner_dependency import render_alpha_scanner_dependency_panel
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
+from ihm.components.screener_artifacts import render_shared_screener_artifact_selector
 from ihm.components.tables import show_dataframe
-from ihm.services.screener_artifact_history import (
-    SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY,
-    build_global_screener_artifact_history,
-    build_screener_artifact_history_rows,
-    format_screener_artifact_history_label,
-    resolve_selected_screener_artifacts_dir,
-)
-from ihm.services.screener_preferences import (
-    load_persisted_selected_screener_artifacts_dir,
-    save_persisted_selected_screener_artifacts_dir,
-)
 from ihm.services.screener_recommendations import (
     list_screener_csv_files,
     load_screener_csv_preview,
@@ -29,7 +19,11 @@ from ihm.services.screener_recommendations import (
 )
 from ihm.services.db import db_available
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
-from ihm.services.run_summary import build_latest_run_summary_rows
+from ihm.services.run_summary import (
+    build_latest_run_summary_rows,
+    build_ordered_pipeline_step_scopes,
+    build_pipeline_flow_caption,
+)
 from ihm.services.queries import get_alpha_scanner_dependency_diagnostic, get_stock_scores
 
 SCREENER_ARTIFACT_SELECTBOX_KEY = "screening_screener_artifacts_dir_select"
@@ -52,19 +46,7 @@ def _build_quality_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
     return pd.DataFrame(
         build_latest_run_summary_rows(
             runs,
-            [
-                {"label": "Import univers Alpaca", "step_keys": ["import_alpaca_assets"]},
-                {"label": "Import Alpaca Bar", "step_keys": ["import_alpaca_bar"]},
-                {"label": "Data Sanitizer Daily", "step_keys": ["data_sanitizer_daily"]},
-                {"label": "Stock Screener", "step_keys": ["stock_screener"]},
-                {"label": "Mise à jour fondamentaux", "step_keys": ["update_sector"]},
-                {"label": "Sync Latest Quotes", "step_keys": ["sync_latest_quotes"]},
-                {"label": "Sync Earnings Calendar", "step_keys": ["sync_earnings_calendar"]},
-                {"label": "Alpha Scanner", "step_keys": ["alpha_scanner"]},
-                {"label": "Sentiment Pipeline", "step_keys": ["sentiment_pipeline"]},
-                {"label": "Signal Aggregator", "step_keys": ["signal_aggregator"]},
-                {"label": "Workflow complet", "run_kind": "workflow"},
-            ],
+            build_ordered_pipeline_step_scopes(max_main_step=8),
         )
     )
 
@@ -104,11 +86,6 @@ def _build_objective_metric_cards(report: dict[str, object]) -> list[tuple[str, 
     return cards
 
 
-def _build_artifact_history_dataframe(history_entries: list[dict[str, object]]) -> pd.DataFrame:
-    rows = build_screener_artifact_history_rows(history_entries)
-    return pd.DataFrame(rows)
-
-
 def _format_csv_preview_option(file_info: dict[str, object]) -> str:
     return "{} | lignes={} | {}".format(
         str(file_info.get("label") or file_info.get("key") or "csv"),
@@ -131,47 +108,6 @@ def _build_csv_preview_inventory_dataframe(files: list[dict[str, object]]) -> pd
     if not available_columns:
         return pd.DataFrame()
     return frame.loc[:, available_columns].rename(columns=column_labels)
-
-
-def _render_screener_artifact_selector() -> tuple[str, dict[str, object]]:
-    st.subheader("🗂️ Source d'artefacts screener")
-    st.caption(
-        "Sélectionne ici le dossier d'artefacts screener à explorer. La sélection est partagée avec la vue `Overview`."
-    )
-    history_entries = build_global_screener_artifact_history()
-    session_selected_dir = str(st.session_state.get(SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY, "") or "").strip()
-    persisted_selected_dir = load_persisted_selected_screener_artifacts_dir()
-    preferred_dir = session_selected_dir or persisted_selected_dir
-    selected_dir, entry_map = resolve_selected_screener_artifacts_dir(history_entries, preferred_dir)
-    restored_from_persistence = not session_selected_dir and bool(persisted_selected_dir)
-    options = list(entry_map.keys())
-    st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_dir
-    if st.session_state.get(SCREENER_ARTIFACT_SELECTBOX_KEY) != selected_dir:
-        st.session_state[SCREENER_ARTIFACT_SELECTBOX_KEY] = selected_dir
-    selected_dir = st.selectbox(
-        "Répertoire d'artefacts",
-        options=options,
-        format_func=lambda value: format_screener_artifact_history_label(entry_map[value]),
-        index=options.index(selected_dir),
-        key=SCREENER_ARTIFACT_SELECTBOX_KEY,
-    )
-    st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_dir
-    if persisted_selected_dir != selected_dir:
-        save_persisted_selected_screener_artifacts_dir(selected_dir)
-
-    selected_entry = entry_map[selected_dir]
-    if restored_from_persistence:
-        st.caption("Préférence restaurée depuis la dernière session IHM.")
-    st.caption(
-        f"Sélection active : `{selected_dir}` · Couverture : {selected_entry.get('coverage_label', 'Période non renseignée')} · "
-        f"MAJ : {selected_entry.get('updated_at_label', 'inconnue')}"
-    )
-
-    history_df = _build_artifact_history_dataframe(list(entry_map.values()))
-    if not history_df.empty:
-        with st.expander("🗃️ Historique global des répertoires screener", expanded=False):
-            st.dataframe(history_df, use_container_width=True, hide_index=True)
-    return selected_dir, selected_entry
 
 
 def _render_screener_csv_preview(artifacts_dir: str, selected_entry: dict[str, object]) -> None:
@@ -295,6 +231,9 @@ def _render_objective_recommendations(artifacts_dir: str) -> None:
 
 def render() -> None:
     st.header("📊 Screening — Stock Scores")
+    st.caption(
+        "Lecture opérateur alignée sur le pipeline : qualité amont, artefacts screener, recommandations, filtres puis résultats."
+    )
 
     if not db_available():
         render_db_unavailable("Screening", form_key="screening_db_form")
@@ -316,38 +255,55 @@ def render() -> None:
     ])
 
     quality_rows = _build_quality_summary_rows(_merge_pipeline_runs())
-    if not quality_rows.empty:
-        st.subheader("🛡️ Contexte pipeline & qualité amont")
-        show_dataframe(quality_rows)
+    with st.container(border=True):
+        st.subheader("1. Qualité amont & contexte pipeline")
+        st.caption(
+            "Ordre métier affiché ici : "
+            f"{build_pipeline_flow_caption(max_main_step=8)}"
+        )
+        if not quality_rows.empty:
+            show_dataframe(quality_rows, "Derniers résumés par étape")
+        render_alpha_scanner_dependency_panel(
+            get_alpha_scanner_dependency_diagnostic(),
+            title="Étapes 4 → 5 · détail quotes / earnings utilisé par Alpha Scanner",
+            expanded=False,
+            show_commands=True,
+        )
 
-    st.subheader("🩺 Diagnostic Alpha Scanner")
-    render_alpha_scanner_dependency_panel(
-        get_alpha_scanner_dependency_diagnostic(),
-        title="Voir le détail quotes / earnings utilisé par Alpha Scanner",
-        expanded=False,
-        show_commands=True,
-    )
+    selected_artifacts_dir = ""
+    selected_artifacts_entry: dict[str, object] = {}
+    with st.container(border=True):
+        selected_artifacts_dir, selected_artifacts_entry = render_shared_screener_artifact_selector(
+            selectbox_key=SCREENER_ARTIFACT_SELECTBOX_KEY,
+            title="2. Source d'artefacts screener",
+            caption="Sélection partagée avec `Overview` pour garder la même base d'analyse entre synthèse et inspection détaillée.",
+            empty_message="Aucun répertoire d'artefacts screener détecté pour le moment.",
+            history_title="🗃️ Historique global des répertoires screener",
+        )
+        if selected_artifacts_dir:
+            recommendations_tab, csv_tab = st.tabs(["🎯 Recommandations", "🔎 CSV"]) 
+            with recommendations_tab:
+                _render_objective_recommendations(selected_artifacts_dir)
+            with csv_tab:
+                _render_screener_csv_preview(selected_artifacts_dir, selected_artifacts_entry)
 
-    selected_artifacts_dir, selected_artifacts_entry = _render_screener_artifact_selector()
-    _render_objective_recommendations(selected_artifacts_dir)
-    _render_screener_csv_preview(selected_artifacts_dir, selected_artifacts_entry)
+    with st.container(border=True):
+        st.subheader("3. Filtres opérateur")
+        st.caption("Appliquer les filtres après validation du contexte pipeline et de la source d'artefacts ci-dessus.")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            symbol_filter = st.text_input("Symbole", "").upper().strip()
+        with col2:
+            sector_list = ["Tous"] + sorted(df["sector"].dropna().unique().tolist()) if "sector" in df.columns else ["Tous"]
+            sector_filter = st.selectbox("Secteur", sector_list)
+        with col3:
+            candidates_only = st.checkbox("Candidats uniquement", value=False)
 
-    # --- Filtres ---
-    st.subheader("Filtres")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        symbol_filter = st.text_input("Symbole", "").upper().strip()
-    with col2:
-        sector_list = ["Tous"] + sorted(df["sector"].dropna().unique().tolist()) if "sector" in df.columns else ["Tous"]
-        sector_filter = st.selectbox("Secteur", sector_list)
-    with col3:
-        candidates_only = st.checkbox("Candidats uniquement", value=False)
-
-    col4, col5 = st.columns(2)
-    with col4:
-        min_score = st.slider("Score minimum (total_score)", 0.0, 1.0, 0.0, 0.01)
-    with col5:
-        sentiment_only = st.checkbox("Sentiment actif uniquement", value=False)
+        col4, col5 = st.columns(2)
+        with col4:
+            min_score = st.slider("Score minimum (total_score)", 0.0, 1.0, 0.0, 0.01)
+        with col5:
+            sentiment_only = st.checkbox("Sentiment actif uniquement", value=False)
 
     # --- Appliquer filtres ---
     filtered = df.copy()
@@ -362,7 +318,10 @@ def render() -> None:
     if sentiment_only and "signal_active" in filtered.columns:
         filtered = filtered[filtered["signal_active"] == 1]
 
-    show_dataframe(filtered, f"Résultats ({len(filtered)} lignes)", height=500)
+    with st.container(border=True):
+        st.subheader("4. Résultats filtrés")
+        st.caption(f"{len(filtered)} ligne(s) après filtrage sur {total} symbole(s) chargés.")
+        show_dataframe(filtered, f"Résultats ({len(filtered)} lignes)", height=500)
 
 
 run_page_if_standalone(__name__, render)

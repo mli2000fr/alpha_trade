@@ -10,24 +10,16 @@ import streamlit as st
 from ihm.pages import run_page_if_standalone
 from ihm.components.alpha_scanner_dependency import render_alpha_scanner_dependency_panel
 from ihm.components.db_controls import render_db_unavailable
+from ihm.components.screener_artifacts import render_shared_screener_artifact_selector
 from ihm.components.run_summary import render_run_summary_block
 from ihm.components.metrics import metric_row
 from ihm.components.status_badges import env_badge, run_status_badge
 from ihm.components.tables import show_dataframe
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
-from ihm.services.screener_artifact_history import (
-    SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY,
-    build_global_screener_artifact_history,
-    build_screener_artifact_history_rows,
-    format_screener_artifact_history_label,
-    resolve_selected_screener_artifacts_dir,
-)
-from ihm.services.screener_preferences import (
-    load_persisted_selected_screener_artifacts_dir,
-    save_persisted_selected_screener_artifacts_dir,
-)
 from ihm.services.screener_recommendations import load_screener_recommendation_report
 from ihm.services.run_summary import (
+    build_ordered_pipeline_step_scopes,
+    build_pipeline_flow_caption,
     build_latest_run_summary_rows,
     find_latest_run_with_summary,
 )
@@ -58,19 +50,7 @@ def _build_pipeline_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
     return pd.DataFrame(
         build_latest_run_summary_rows(
             runs,
-            [
-                {"label": "Workflow complet", "run_kind": "workflow"},
-                {"label": "Import univers Alpaca", "step_keys": ["import_alpaca_assets"]},
-                {"label": "Import Alpaca Bar", "step_keys": ["import_alpaca_bar"]},
-                {"label": "Data Sanitizer Daily", "step_keys": ["data_sanitizer_daily"]},
-                {"label": "Stock Screener", "step_keys": ["stock_screener"]},
-                {"label": "Mise à jour fondamentaux", "step_keys": ["update_sector"]},
-                {"label": "Sync Latest Quotes", "step_keys": ["sync_latest_quotes"]},
-                {"label": "Sync Earnings Calendar", "step_keys": ["sync_earnings_calendar"]},
-                {"label": "Alpha Scanner", "step_keys": ["alpha_scanner"]},
-                {"label": "Sentiment Pipeline", "step_keys": ["sentiment_pipeline"]},
-                {"label": "Signal Aggregator", "step_keys": ["signal_aggregator"]},
-            ],
+            build_ordered_pipeline_step_scopes(max_main_step=8),
         )
     )
 
@@ -103,12 +83,11 @@ def _build_screener_objective_metrics(report: dict[str, object]) -> list[tuple[s
     return metrics
 
 
-def _build_screener_history_dataframe(history_entries: list[dict[str, object]]) -> pd.DataFrame:
-    return pd.DataFrame(build_screener_artifact_history_rows(history_entries))
-
-
 def render() -> None:
     st.header("🏠 Vue d'ensemble")
+    st.caption(
+        "Lecture opérateur alignée sur le flux pipeline : santé amont, artefacts screener partagés, calibration et candidats finaux."
+    )
 
     # --- Environnement ---
     with st.expander("Variables d'environnement", expanded=False):
@@ -149,79 +128,64 @@ def render() -> None:
     )
     metric_row(metrics)
 
-    # --- Alertes ---
+    alerts: list[str] = []
     if candidates == 0:
-        st.warning("⚠️ Aucun candidat (`is_candidate=1`) dans stock_scores.")
+        alerts.append("⚠️ Aucun candidat (`is_candidate=1`) dans `stock_scores`.")
     if exec_status and exec_status.upper() not in ("COMPLETED", "SUCCESS"):
-        st.warning(f"⚠️ Dernière exécution : {run_status_badge(exec_status)}")
+        alerts.append(f"⚠️ Dernière exécution : {run_status_badge(exec_status)}")
+    for alert in alerts:
+        st.warning(alert)
 
     pipeline_runs = _merge_pipeline_runs()
     latest_workflow = find_latest_run_with_summary(pipeline_runs, run_kind="workflow")
-    render_run_summary_block(latest_workflow, title="🧭 Dernier workflow pipeline", max_metrics=4)
-
     summary_rows = _build_pipeline_summary_rows(pipeline_runs)
-    if not summary_rows.empty:
-        st.subheader("📋 Résumés pipeline récents")
-        show_dataframe(summary_rows)
-
-    st.subheader("🩺 Diagnostic Alpha Scanner")
-    render_alpha_scanner_dependency_panel(
-        get_alpha_scanner_dependency_diagnostic(),
-        title="Voir le détail quotes / earnings",
-        expanded=False,
-        show_commands=True,
-    )
-
-    screener_history = build_global_screener_artifact_history()
-    session_selected_dir = str(st.session_state.get(SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY, "") or "").strip()
-    persisted_selected_dir = load_persisted_selected_screener_artifacts_dir()
-    preferred_dir = session_selected_dir or persisted_selected_dir
-    selected_screener_dir, screener_entry_map = resolve_selected_screener_artifacts_dir(screener_history, preferred_dir)
-    restored_from_persistence = not session_selected_dir and bool(persisted_selected_dir)
-    if screener_entry_map:
-        st.subheader("🗂️ Source screener active")
-        st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_screener_dir
-        if st.session_state.get(SCREENER_ARTIFACT_SELECTBOX_KEY) != selected_screener_dir:
-            st.session_state[SCREENER_ARTIFACT_SELECTBOX_KEY] = selected_screener_dir
-        selected_screener_dir = st.selectbox(
-            "Répertoire d'artefacts screener",
-            options=list(screener_entry_map.keys()),
-            format_func=lambda value: format_screener_artifact_history_label(screener_entry_map[value]),
-            index=list(screener_entry_map.keys()).index(selected_screener_dir),
-            key=SCREENER_ARTIFACT_SELECTBOX_KEY,
-        )
-        st.session_state[SHARED_SELECTED_SCREENER_ARTIFACTS_DIR_KEY] = selected_screener_dir
-        if persisted_selected_dir != selected_screener_dir:
-            save_persisted_selected_screener_artifacts_dir(selected_screener_dir)
-        selected_entry = screener_entry_map[selected_screener_dir]
-        if restored_from_persistence:
-            st.caption("Préférence restaurée depuis la dernière session IHM.")
+    with st.container(border=True):
+        st.subheader("1. Santé pipeline amont")
         st.caption(
-            f"Source partagée avec `Screening` · Couverture : {selected_entry.get('coverage_label', 'Période non renseignée')} · "
-            f"MAJ : {selected_entry.get('updated_at_label', 'inconnue')}"
+            "Ordre métier affiché ici : "
+            f"{build_pipeline_flow_caption(max_main_step=8)}"
         )
-        history_df = _build_screener_history_dataframe(screener_history)
-        if not history_df.empty:
-            with st.expander("🗃️ Historique global des artefacts screener", expanded=False):
-                st.dataframe(history_df, use_container_width=True, hide_index=True)
+        render_run_summary_block(latest_workflow, title="🧭 Dernier workflow pipeline", max_metrics=4)
+        if not summary_rows.empty:
+            show_dataframe(summary_rows, "Derniers résumés par étape")
+        render_alpha_scanner_dependency_panel(
+            get_alpha_scanner_dependency_diagnostic(),
+            title="Étapes 4 → 5 · détail quotes / earnings",
+            expanded=False,
+            show_commands=True,
+        )
+
+    selected_screener_dir = ""
+    with st.container(border=True):
+        selected_screener_dir, _ = render_shared_screener_artifact_selector(
+            selectbox_key=SCREENER_ARTIFACT_SELECTBOX_KEY,
+            title="2. Source screener active",
+            caption="Même sélection que la page `Screening` pour éviter les écarts entre synthèse et analyse détaillée.",
+            empty_message="Aucun répertoire d'artefacts screener détecté pour le moment.",
+            history_title="🗃️ Historique global des artefacts screener",
+        )
 
     screener_report = load_screener_recommendation_report(selected_screener_dir)
     screener_objective_rows = _build_screener_objective_rows(screener_report)
-    if not screener_objective_rows.empty:
-        st.subheader("🎯 Calibration screener")
-        st.caption(
-            f"Derniers objectifs exportés depuis `{screener_report.get('artifacts_dir')}` · "
-            f"Période : {screener_report.get('coverage_label', 'Période non renseignée')} · "
-            f"MAJ : {screener_report.get('updated_at_label', 'inconnue')}"
-        )
-        screener_metrics = _build_screener_objective_metrics(screener_report)
-        if screener_metrics:
-            metric_row(screener_metrics)
-        show_dataframe(screener_objective_rows, height=220)
+    with st.container(border=True):
+        st.subheader("3. Calibration screener")
+        if screener_objective_rows.empty:
+            st.info("Aucune recommandation screener exploitable détectée pour la source actuellement sélectionnée.")
+        else:
+            st.caption(
+                f"Derniers objectifs exportés depuis `{screener_report.get('artifacts_dir')}` · "
+                f"Période : {screener_report.get('coverage_label', 'Période non renseignée')} · "
+                f"MAJ : {screener_report.get('updated_at_label', 'inconnue')}"
+            )
+            screener_metrics = _build_screener_objective_metrics(screener_report)
+            if screener_metrics:
+                metric_row(screener_metrics)
+            show_dataframe(screener_objective_rows, height=220)
 
-    # --- Top candidats ---
-    st.subheader("🏆 Top 10 candidats par score sentiment")
-    show_dataframe(get_top_candidates(10))
+    with st.container(border=True):
+        st.subheader("4. Top candidats")
+        st.caption("Vue courte des meilleurs scores sentiment déjà passés par le flux amont.")
+        show_dataframe(get_top_candidates(10), "Top 10 candidats par score sentiment")
 
 
 run_page_if_standalone(__name__, render)

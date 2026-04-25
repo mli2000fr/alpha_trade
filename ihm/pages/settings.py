@@ -98,7 +98,7 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
 
     st.subheader("🩺 Seuils diagnostic Alpha Scanner")
     st.caption(
-        "Valeurs recommandées par défaut pour un style swing cash strict : quotes fraîches et bien couvertes, horizon earnings suffisant, couverture earnings minimale mais non triviale."
+        "Ordre opératoire couvert ici : étape 4 `Sync Latest Quotes` → étape 5 `Sync Earnings Calendar` → étape 6 `Alpha Scanner`."
     )
     st.info(
         "Le bon réglage est en pratique le croisement de **2 axes** : le style opératoire (`swing cash pro`, `agressif`, `tolérant`) ET le régime de marché (`normal`, `faible`, `très sélectif`)."
@@ -119,128 +119,133 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
 
     selected_style = str(st.session_state.get(ALPHA_SCANNER_SELECTED_STYLE_KEY, DEFAULT_PRESET_STYLE) or DEFAULT_PRESET_STYLE)
     selection_mode = str(preset_metadata.get("selection_mode") or "custom")
-    st.caption(
-        f"Preset mémorisé : `{PRESET_STYLE_LABELS.get(selected_style, selected_style)}` × `{MARKET_REGIME_LABELS.get(selected_market_regime, selected_market_regime)}` | mode=`{selection_mode}`"
-    )
+    with st.container(border=True):
+        st.markdown("**Étape 6 — Gouvernance opérateur du diagnostic partagé**")
+        st.caption(
+            f"Preset mémorisé : `{PRESET_STYLE_LABELS.get(selected_style, selected_style)}` × `{MARKET_REGIME_LABELS.get(selected_market_regime, selected_market_regime)}` | mode=`{selection_mode}`"
+        )
+        preset_col1, preset_col2, preset_col3 = st.columns(3)
+        preset_buttons = (
+            (preset_col1, "swing_cash_pro", "🛡️ Appliquer preset Swing Cash Pro"),
+            (preset_col2, "aggressive", "⚡ Appliquer preset Agressif"),
+            (preset_col3, "tolerant", "🟨 Appliquer preset Tolérant"),
+        )
+        for column, style_key, label in preset_buttons:
+            with column:
+                st.caption(PRESET_STYLE_LABELS[style_key])
+                if st.button(label, key=f"apply_alpha_scanner_preset_{style_key}", use_container_width=True):
+                    st.session_state[ALPHA_SCANNER_SELECTED_STYLE_KEY] = style_key
+                    _apply_alpha_scanner_threshold_preset(style_key, selected_market_regime)
 
-    preset_col1, preset_col2, preset_col3 = st.columns(3)
-    preset_buttons = (
-        (preset_col1, "swing_cash_pro", "🛡️ Appliquer preset Swing Cash Pro"),
-        (preset_col2, "aggressive", "⚡ Appliquer preset Agressif"),
-        (preset_col3, "tolerant", "🟨 Appliquer preset Tolérant"),
-    )
-    for column, style_key, label in preset_buttons:
-        with column:
-            st.caption(PRESET_STYLE_LABELS[style_key])
-            if st.button(label, key=f"apply_alpha_scanner_preset_{style_key}", use_container_width=True):
-                st.session_state[ALPHA_SCANNER_SELECTED_STYLE_KEY] = style_key
-                _apply_alpha_scanner_threshold_preset(style_key, selected_market_regime)
-
-    quotes_col1, quotes_col2 = st.columns(2)
-    with quotes_col1:
-        st.markdown("**Sync Latest Quotes — recommandé swing cash pro**")
-        st.number_input(
-            "Quotes — couverture orange (%)",
-            min_value=0.0,
-            value=float(current_thresholds["sync_latest_quotes"]["coverage_warn_pct"]),
-            step=1.0,
-            format="%.1f",
-            key=_threshold_widget_key("sync_latest_quotes", "coverage_warn_pct"),
-        )
-        st.number_input(
-            "Quotes — couverture rouge (%)",
-            min_value=0.0,
-            value=float(current_thresholds["sync_latest_quotes"]["coverage_error_pct"]),
-            step=1.0,
-            format="%.1f",
-            key=_threshold_widget_key("sync_latest_quotes", "coverage_error_pct"),
-        )
-        st.caption("Proposition par défaut : orange < 85%, rouge < 60%.")
-    with quotes_col2:
-        st.markdown("**Fraîcheur quotes**")
-        st.number_input(
-            "Quotes — âge orange (jours)",
-            min_value=0.0,
-            value=float(current_thresholds["sync_latest_quotes"]["max_age_warn_days"]),
-            step=1.0,
-            format="%.1f",
-            key=_threshold_widget_key("sync_latest_quotes", "max_age_warn_days"),
-        )
-        st.number_input(
-            "Quotes — âge rouge (jours)",
-            min_value=0.0,
-            value=float(current_thresholds["sync_latest_quotes"]["max_age_error_days"]),
-            step=1.0,
-            format="%.1f",
-            key=_threshold_widget_key("sync_latest_quotes", "max_age_error_days"),
-        )
-        st.caption("Proposition par défaut : orange > 1 jour, rouge > 3 jours.")
-
-    earnings_col1, earnings_col2 = st.columns(2)
-    with earnings_col1:
-        st.markdown("**Sync Earnings Calendar — recommandé swing cash pro**")
-        st.number_input(
-            "Earnings — couverture orange (%)",
-            min_value=0.0,
-            value=float(current_thresholds["sync_earnings_calendar"]["coverage_warn_pct"]),
-            step=1.0,
-            format="%.1f",
-            key=_threshold_widget_key("sync_earnings_calendar", "coverage_warn_pct"),
-        )
-        st.number_input(
-            "Earnings — couverture rouge (%)",
-            min_value=0.0,
-            value=float(current_thresholds["sync_earnings_calendar"]["coverage_error_pct"]),
-            step=1.0,
-            format="%.1f",
-            key=_threshold_widget_key("sync_earnings_calendar", "coverage_error_pct"),
-        )
-        st.caption("Proposition par défaut : orange < 15%, rouge < 5%.")
-    with earnings_col2:
-        st.markdown("**Horizon earnings**")
-        st.number_input(
-            "Earnings — horizon orange (jours)",
-            min_value=0.0,
-            value=float(current_thresholds["sync_earnings_calendar"]["min_horizon_warn_days"]),
-            step=1.0,
-            format="%.1f",
-            key=_threshold_widget_key("sync_earnings_calendar", "min_horizon_warn_days"),
-        )
-        st.number_input(
-            "Earnings — horizon rouge (jours)",
-            min_value=0.0,
-            value=float(current_thresholds["sync_earnings_calendar"]["min_horizon_error_days"]),
-            step=1.0,
-            format="%.1f",
-            key=_threshold_widget_key("sync_earnings_calendar", "min_horizon_error_days"),
-        )
-        st.caption("Proposition par défaut : orange si l'horizon futur est < 14 jours, rouge si < 7 jours.")
-
-    action_col1, action_col2 = st.columns([2, 1])
-    with action_col1:
-        if st.button("💾 Enregistrer les seuils Alpha Scanner", key="settings_save_alpha_scanner_thresholds", use_container_width=True):
-            normalized = save_persisted_alpha_scanner_dependency_thresholds(
-                _collect_alpha_scanner_dependency_threshold_inputs(),
-                defaults=ALPHA_SCANNER_DEPENDENCY_THRESHOLDS,
-                selected_style=str(st.session_state.get(ALPHA_SCANNER_SELECTED_STYLE_KEY, DEFAULT_PRESET_STYLE)),
-                selected_market_regime=str(st.session_state.get(ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY, DEFAULT_MARKET_REGIME)),
-                selection_mode="custom",
+    with st.container(border=True):
+        st.markdown("**Étape 4 — Sync Latest Quotes**")
+        st.caption("Quotes fraîches et bien couvertes pour garder un filtre de spread exploitable en swing cash.")
+        quotes_col1, quotes_col2 = st.columns(2)
+        with quotes_col1:
+            st.number_input(
+                "Quotes — couverture orange (%)",
+                min_value=0.0,
+                value=float(current_thresholds["sync_latest_quotes"]["coverage_warn_pct"]),
+                step=1.0,
+                format="%.1f",
+                key=_threshold_widget_key("sync_latest_quotes", "coverage_warn_pct"),
             )
-            _set_alpha_scanner_dependency_threshold_state(normalized)
-            get_alpha_scanner_dependency_diagnostic.clear()
-            reset_db_caches()
-            st.session_state[ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY] = "Seuils Alpha Scanner enregistrés."
-            st.rerun()
-    with action_col2:
-        if st.button("↩️ Reset défauts", key="settings_reset_alpha_scanner_thresholds", use_container_width=True):
-            reset_persisted_alpha_scanner_dependency_thresholds()
-            _set_alpha_scanner_dependency_threshold_state(ALPHA_SCANNER_DEPENDENCY_THRESHOLDS)
-            st.session_state[ALPHA_SCANNER_SELECTED_STYLE_KEY] = DEFAULT_PRESET_STYLE
-            st.session_state[ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY] = DEFAULT_MARKET_REGIME
-            get_alpha_scanner_dependency_diagnostic.clear()
-            reset_db_caches()
-            st.session_state[ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY] = "Seuils Alpha Scanner réinitialisés aux valeurs recommandées."
-            st.rerun()
+            st.number_input(
+                "Quotes — couverture rouge (%)",
+                min_value=0.0,
+                value=float(current_thresholds["sync_latest_quotes"]["coverage_error_pct"]),
+                step=1.0,
+                format="%.1f",
+                key=_threshold_widget_key("sync_latest_quotes", "coverage_error_pct"),
+            )
+            st.caption("Proposition par défaut : orange < 85%, rouge < 60%.")
+        with quotes_col2:
+            st.number_input(
+                "Quotes — âge orange (jours)",
+                min_value=0.0,
+                value=float(current_thresholds["sync_latest_quotes"]["max_age_warn_days"]),
+                step=1.0,
+                format="%.1f",
+                key=_threshold_widget_key("sync_latest_quotes", "max_age_warn_days"),
+            )
+            st.number_input(
+                "Quotes — âge rouge (jours)",
+                min_value=0.0,
+                value=float(current_thresholds["sync_latest_quotes"]["max_age_error_days"]),
+                step=1.0,
+                format="%.1f",
+                key=_threshold_widget_key("sync_latest_quotes", "max_age_error_days"),
+            )
+            st.caption("Proposition par défaut : orange > 1 jour, rouge > 3 jours.")
+
+    with st.container(border=True):
+        st.markdown("**Étape 5 — Sync Earnings Calendar**")
+        st.caption("Horizon earnings futur suffisant pour que le blackout résultats reste fiable côté Alpha Scanner.")
+        earnings_col1, earnings_col2 = st.columns(2)
+        with earnings_col1:
+            st.number_input(
+                "Earnings — couverture orange (%)",
+                min_value=0.0,
+                value=float(current_thresholds["sync_earnings_calendar"]["coverage_warn_pct"]),
+                step=1.0,
+                format="%.1f",
+                key=_threshold_widget_key("sync_earnings_calendar", "coverage_warn_pct"),
+            )
+            st.number_input(
+                "Earnings — couverture rouge (%)",
+                min_value=0.0,
+                value=float(current_thresholds["sync_earnings_calendar"]["coverage_error_pct"]),
+                step=1.0,
+                format="%.1f",
+                key=_threshold_widget_key("sync_earnings_calendar", "coverage_error_pct"),
+            )
+            st.caption("Proposition par défaut : orange < 15%, rouge < 5%.")
+        with earnings_col2:
+            st.number_input(
+                "Earnings — horizon orange (jours)",
+                min_value=0.0,
+                value=float(current_thresholds["sync_earnings_calendar"]["min_horizon_warn_days"]),
+                step=1.0,
+                format="%.1f",
+                key=_threshold_widget_key("sync_earnings_calendar", "min_horizon_warn_days"),
+            )
+            st.number_input(
+                "Earnings — horizon rouge (jours)",
+                min_value=0.0,
+                value=float(current_thresholds["sync_earnings_calendar"]["min_horizon_error_days"]),
+                step=1.0,
+                format="%.1f",
+                key=_threshold_widget_key("sync_earnings_calendar", "min_horizon_error_days"),
+            )
+            st.caption("Proposition par défaut : orange si l'horizon futur est < 14 jours, rouge si < 7 jours.")
+
+    with st.container(border=True):
+        st.markdown("**Validation opérateur**")
+        action_col1, action_col2 = st.columns([2, 1])
+        with action_col1:
+            if st.button("💾 Enregistrer les seuils Alpha Scanner", key="settings_save_alpha_scanner_thresholds", use_container_width=True):
+                normalized = save_persisted_alpha_scanner_dependency_thresholds(
+                    _collect_alpha_scanner_dependency_threshold_inputs(),
+                    defaults=ALPHA_SCANNER_DEPENDENCY_THRESHOLDS,
+                    selected_style=str(st.session_state.get(ALPHA_SCANNER_SELECTED_STYLE_KEY, DEFAULT_PRESET_STYLE)),
+                    selected_market_regime=str(st.session_state.get(ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY, DEFAULT_MARKET_REGIME)),
+                    selection_mode="custom",
+                )
+                _set_alpha_scanner_dependency_threshold_state(normalized)
+                get_alpha_scanner_dependency_diagnostic.clear()
+                reset_db_caches()
+                st.session_state[ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY] = "Seuils Alpha Scanner enregistrés."
+                st.rerun()
+        with action_col2:
+            if st.button("↩️ Reset défauts", key="settings_reset_alpha_scanner_thresholds", use_container_width=True):
+                reset_persisted_alpha_scanner_dependency_thresholds()
+                _set_alpha_scanner_dependency_threshold_state(ALPHA_SCANNER_DEPENDENCY_THRESHOLDS)
+                st.session_state[ALPHA_SCANNER_SELECTED_STYLE_KEY] = DEFAULT_PRESET_STYLE
+                st.session_state[ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY] = DEFAULT_MARKET_REGIME
+                get_alpha_scanner_dependency_diagnostic.clear()
+                reset_db_caches()
+                st.session_state[ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY] = "Seuils Alpha Scanner réinitialisés aux valeurs recommandées."
+                st.rerun()
 
 
 def _check_import(name: str) -> str:
@@ -253,42 +258,44 @@ def _check_import(name: str) -> str:
 
 def render() -> None:
     st.header("⚙️ Paramètres / Santé")
-
-    # --- Variables d'environnement ---
-    st.subheader("🔑 Variables d'environnement")
-    for var in ("LOGIN_DB", "PASSWORD_DB", "ALPACA_API_KEY", "ALPACA_SECRET_KEY", "FINNHUB_API_KEY"):
-        st.markdown(env_badge(var, os.getenv(var)))
-
-    # --- DB ---
-    st.subheader("🗄️ Connexion DB")
-    render_db_connection_form("settings_db_connection_form", show_host_fields=True)
-
-    status = get_db_status()
-    if db_available():
-        st.success("🟢 Connexion MySQL OK")
-    else:
-        st.error("🔴 Connexion MySQL échouée. Vérifiez LOGIN_DB, PASSWORD_DB et que MySQL est démarré.")
     st.caption(
-        f"Source active : `{status.get('source')}` — cible : `{status.get('host')}/{status.get('name')}`"
+        "Page recentrée sur les prérequis opérateur puis sur les paramètres réellement utilisés par le flux `quotes → earnings → alpha scanner`."
     )
-    if status.get("last_query_error"):
-        st.warning(str(status.get("last_query_error")))
 
+    prereq_col1, prereq_col2 = st.columns(2)
+    with prereq_col1:
+        with st.container(border=True):
+            st.subheader("🔑 Variables d'environnement")
+            for var in ("LOGIN_DB", "PASSWORD_DB", "ALPACA_API_KEY", "ALPACA_SECRET_KEY", "FINNHUB_API_KEY"):
+                st.markdown(env_badge(var, os.getenv(var)))
+    with prereq_col2:
+        with st.container(border=True):
+            st.subheader("🗄️ Connexion DB")
+            render_db_connection_form("settings_db_connection_form", show_host_fields=True)
+            status = get_db_status()
+            if db_available():
+                st.success("🟢 Connexion MySQL OK")
+            else:
+                st.error("🔴 Connexion MySQL échouée. Vérifiez LOGIN_DB, PASSWORD_DB et que MySQL est démarré.")
+            st.caption(
+                f"Source active : `{status.get('source')}` — cible : `{status.get('host')}/{status.get('name')}`"
+            )
+            if status.get("last_query_error"):
+                st.warning(str(status.get("last_query_error")))
+
+    st.subheader("🧭 Paramétrage pipeline")
     _render_alpha_scanner_dependency_threshold_settings()
 
-    # --- Système ---
-    st.subheader("🖥️ Système")
-    st.text(f"Python : {sys.version}")
-    st.text(f"Répertoire : {os.getcwd()}")
+    with st.expander("🖥️ Diagnostic environnement Python", expanded=False):
+        st.text(f"Python : {sys.version}")
+        st.text(f"Répertoire : {os.getcwd()}")
 
-    # --- Dépendances ---
-    st.subheader("📦 Dépendances critiques")
-    for pkg in ("streamlit", "sqlalchemy", "pandas", "pymysql", "numpy", "torch", "transformers"):
-        st.markdown(_check_import(pkg))
+        st.markdown("**📦 Dépendances critiques**")
+        for pkg in ("streamlit", "sqlalchemy", "pandas", "pymysql", "numpy", "torch", "transformers"):
+            st.markdown(_check_import(pkg))
 
-    # --- Rappel ---
-    st.subheader("🚀 Commande de lancement")
-    st.code("python -m streamlit run ihm/app.py", language="powershell")
+        st.markdown("**🚀 Commande de lancement**")
+        st.code("python -m streamlit run ihm/app.py", language="powershell")
 
 
 run_page_if_standalone(__name__, render)

@@ -103,6 +103,19 @@ NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
 EARNINGS_CUSTOM_WINDOW_KEY = "pipeline_data_integrity_earnings_custom_window"
 ALPHA_SCANNER_DEPENDENCY_ACTION_RUNS_KEY = "pipeline_alpha_scanner_dependency_action_runs"
 ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY = "pipeline_alpha_scanner_dependency_thresholds_flash"
+ALPHA_SCANNER_DIAGNOSTIC_THRESHOLDS_TITLE = "🧪 Diagnostic dépendances Alpha Scanner — seuils quotes/earnings"
+ALPHA_SCANNER_DIAGNOSTIC_THRESHOLDS_CAPTION = (
+    "Bloc diagnostic uniquement : il ne change pas les filtres du scanner, "
+    "il règle seulement quand `quotes` et `earnings` sont jugés assez fiables dans l'IHM."
+)
+ALPHA_SCANNER_PARAMS_TITLE = "#### Alpha Scanner — sélection finale stricte (`selector.alpha_scanner`)"
+ALPHA_SCANNER_PARAMS_CAPTION = (
+    "Sélection finale stricte : applique les filtres swing tradables sur l'univers déjà préparé par le screener amont."
+)
+SCREENER_PARAMS_TITLE = "#### Screener amont — univers & scores de base (`screener.stock_screener`)"
+SCREENER_PARAMS_CAPTION = (
+    "Préfiltrage large : construit un univers quantitatif propre avant `quotes`, `earnings` et la sélection finale Alpha Scanner."
+)
 
 
 def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
@@ -285,7 +298,8 @@ def _render_alpha_scanner_dependency_threshold_editor() -> None:
     if isinstance(flash_message, str) and flash_message.strip():
         st.success(flash_message)
 
-    with st.expander("🧪 Seuils du diagnostic Alpha Scanner", expanded=False):
+    with st.expander(ALPHA_SCANNER_DIAGNOSTIC_THRESHOLDS_TITLE, expanded=False):
+        st.caption(ALPHA_SCANNER_DIAGNOSTIC_THRESHOLDS_CAPTION)
         st.caption(
             "Ces seuils pilotent les états vert / orange / rouge du diagnostic quotes/earnings affiché dans `Pipeline`, `Screening` et `Overview`."
         )
@@ -807,7 +821,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         )
         _render_alpha_scanner_dependency_threshold_editor()
 
-        st.markdown("#### Paramètres Alpha Scanner")
+        st.markdown(ALPHA_SCANNER_PARAMS_TITLE)
+        st.caption(ALPHA_SCANNER_PARAMS_CAPTION)
         st.caption(
             "Ces réglages reflètent les options opérationnelles réellement disponibles côté `selector.alpha_scanner`. "
             "`0` sur `max workers` signifie : auto. Le preset strict reste la base implicite côté backend."
@@ -1130,7 +1145,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             else:
                 st.info(f"Poids quantitatif implicite côté backend : `{derived_quant_weight}`")
 
-        st.markdown("#### Paramètres Screener")
+        st.markdown(SCREENER_PARAMS_TITLE)
+        st.caption(SCREENER_PARAMS_CAPTION)
         st.caption(
             "Ces réglages reflètent les options réellement disponibles côté `screener.stock_screener`. "
             "`0` sur `max workers` signifie : auto (`os.cpu_count()`)."
