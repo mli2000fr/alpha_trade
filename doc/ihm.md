@@ -144,6 +144,7 @@ Le bloc `⚙️ Paramètres d'exécution` regroupe les options communes à plusi
 - `risk_run_id` optionnel pour Execution ;
 - options broker/exécution (`allow_outside_rth`, `auto_rebalance`, type de compte, règle PDT, `swing_only`) ;
 - options `modelFactory` (accélérateur, challengers, modèle global, sélection du champion, optimisation seuil/target) ;
+- options `Screener` pour `stock_screener` ;
 - options `Data Integrity` pour quotes / earnings / fondamentaux.
 
 Pour `Execution`, l'IHM expose explicitement :
@@ -167,6 +168,18 @@ Pour la zone `Data Integrity`, l'IHM expose désormais les options backend réel
   - `--limit`
   - `--sleep-seconds`
   - `--log-every`
+
+Pour la zone `Screener`, l'IHM expose aussi les options backend réellement disponibles côté `python -m screener.stock_screener` :
+
+- `--chunk-size`
+- `--max-workers` (`0` dans l'IHM = auto)
+- `--benchmark`
+- `--liquidity-threshold-usd`
+- `--min-relative-strength-index`
+- `--historical-range-lookback-days`
+- `--min-historical-range-score`
+- `--first-pass-window-days`
+- `--disable-two-pass-loading` (piloté par une checkbox inverse "chargement en 2 passes")
 
 Important :
 
