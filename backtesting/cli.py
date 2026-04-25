@@ -425,8 +425,10 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         ScreenerDiagnosticsService,
         build_screener_grid_scenarios,
         build_screener_oat_scenarios,
+        export_screener_regime_recommendations,
         export_screener_recommendations,
         export_screener_diagnostics,
+        recommend_screener_scenarios_by_regime,
         recommend_screener_scenarios,
     )
     from event_sentiment.signal_aggregator import SentimentBoostConfig
@@ -487,8 +489,23 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         daily_metrics=result.daily_metrics,
         baseline_name=result.baseline_name,
     )
+    regime_recommendations, regime_summary, cross_regime_recommendations, cross_regime_summary = recommend_screener_scenarios_by_regime(
+        result.summary_metrics_by_regime,
+        daily_metrics=result.daily_metrics,
+        baseline_name=result.baseline_name,
+    )
     artifacts = export_screener_diagnostics(result, args.output_dir)
     artifacts.update(export_screener_recommendations(recommendation_frame, recommendation_summary, args.output_dir))
+    if not regime_recommendations.empty or not cross_regime_recommendations.empty:
+        artifacts.update(
+            export_screener_regime_recommendations(
+                regime_recommendations,
+                regime_summary,
+                cross_regime_recommendations,
+                cross_regime_summary,
+                args.output_dir,
+            )
+        )
 
     _safe_print("✅ Diagnostic terminé")
     _safe_print(f"   Séances évaluées    : {len(result.trading_dates)}")
@@ -499,6 +516,16 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
     _safe_print(f"   Métadonnées         : {artifacts['metadata']}\n")
     _safe_print(f"   Recommandations CSV : {artifacts['scenario_recommendations']}")
     _safe_print(f"   Résumé reco JSON    : {artifacts['recommendation_summary']}\n")
+    if "market_regimes" in artifacts:
+        _safe_print(f"   Régimes marché CSV  : {artifacts['market_regimes']}")
+    if "summary_metrics_by_regime" in artifacts:
+        _safe_print(f"   Résumé par régime   : {artifacts['summary_metrics_by_regime']}")
+    if "scenario_recommendations_by_regime" in artifacts:
+        _safe_print(f"   Reco par régime CSV : {artifacts['scenario_recommendations_by_regime']}")
+    if "cross_regime_recommendations" in artifacts:
+        _safe_print(f"   Reco cross-régimes  : {artifacts['cross_regime_recommendations']}")
+    if "cross_regime_recommendation_summary" in artifacts:
+        _safe_print(f"   Résumé cross-régime : {artifacts['cross_regime_recommendation_summary']}\n")
 
     if recommendation_summary.get("status") == "ok":
         best = recommendation_summary["recommended_scenario"]
@@ -512,6 +539,19 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
             )
         )
         _safe_print(f"   Raison              : {best['reason']}\n")
+
+    if cross_regime_summary.get("status") == "ok":
+        best_cross = cross_regime_summary["recommended_scenario"]
+        _safe_print(
+            "Meilleur compromis cross-régimes : {} (score={:.3f}, mean={:.3f}, worst={:.3f}, coverage={:.3f})".format(
+                best_cross["scenario_name"],
+                float(best_cross["cross_regime_overall_score"]),
+                float(best_cross["mean_regime_overall_score"]),
+                float(best_cross["worst_regime_overall_score"]),
+                float(best_cross["regime_coverage_ratio"]),
+            )
+        )
+        _safe_print()
 
     if not result.summary_metrics.empty:
         preferred_columns = [
@@ -561,12 +601,55 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         _safe_print(recommendation_preview.to_string(index=False))
         _safe_print()
 
+    if not regime_recommendations.empty:
+        regime_preview_columns = [
+            column
+            for column in [
+                "market_regime",
+                "rank",
+                "scenario_name",
+                "overall_score",
+                "robustness_score",
+                "survival_score",
+                "forward_quality_score",
+            ]
+            if column in regime_recommendations.columns
+        ]
+        regime_preview = regime_recommendations.loc[:, regime_preview_columns].head(12)
+        _safe_print("Classement phase 6 par régime (aperçu):")
+        _safe_print(regime_preview.to_string(index=False))
+        _safe_print()
+
+    if not cross_regime_recommendations.empty:
+        cross_preview_columns = [
+            column
+            for column in [
+                "cross_regime_rank",
+                "scenario_name",
+                "recommendation_label",
+                "cross_regime_overall_score",
+                "mean_regime_overall_score",
+                "worst_regime_overall_score",
+                "regime_coverage_ratio",
+            ]
+            if column in cross_regime_recommendations.columns
+        ]
+        _safe_print("Classement cross-régimes (aperçu):")
+        _safe_print(cross_regime_recommendations.loc[:, cross_preview_columns].head(10).to_string(index=False))
+        _safe_print()
+
 
 def _run_screener_recommendation(args: argparse.Namespace) -> None:
     """Analyse un summary_metrics.csv existant et produit une recommandation phase 5."""
     import pandas as pd
 
-    from backtesting.screener_diagnostics import export_screener_recommendations, recommend_screener_scenarios
+    from backtesting.screener_diagnostics import (
+        export_screener_recommendations,
+        export_screener_regime_recommendations,
+        recommend_screener_scenarios,
+        recommend_screener_scenarios_by_regime,
+        summarize_screener_diagnostics_by_regime,
+    )
 
     input_dir = Path(args.input_dir)
     summary_path = Path(args.summary_csv) if args.summary_csv else input_dir / "summary_metrics.csv"
@@ -587,12 +670,39 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
         target_horizon=args.target_horizon,
     )
     artifacts = export_screener_recommendations(recommendation_frame, recommendation_summary, output_dir)
+    regime_recommendations = pd.DataFrame()
+    cross_regime_recommendations = pd.DataFrame()
+    cross_regime_summary: dict[str, object] = {"status": "empty", "message": "Aucune analyse par régime disponible."}
+    if not daily_df.empty and "market_regime" in daily_df.columns:
+        summary_by_regime = summarize_screener_diagnostics_by_regime(daily_df, baseline_name=args.baseline_name)
+        regime_recommendations, regime_summary, cross_regime_recommendations, cross_regime_summary = recommend_screener_scenarios_by_regime(
+            summary_by_regime,
+            daily_metrics=daily_df,
+            baseline_name=args.baseline_name,
+            target_horizon=args.target_horizon,
+        )
+        if not regime_recommendations.empty or not cross_regime_recommendations.empty:
+            artifacts.update(
+                export_screener_regime_recommendations(
+                    regime_recommendations,
+                    regime_summary,
+                    cross_regime_recommendations,
+                    cross_regime_summary,
+                    output_dir,
+                )
+            )
 
-    _safe_print("✅ Analyse phase 5 terminée")
+    _safe_print("✅ Analyse phase 5/6 terminée")
     _safe_print(f"   Summary source      : {summary_path}")
     _safe_print(f"   Daily source        : {daily_path if daily_path.exists() else 'absent'}")
     _safe_print(f"   Recommandations CSV : {artifacts['scenario_recommendations']}")
     _safe_print(f"   Résumé reco JSON    : {artifacts['recommendation_summary']}\n")
+    if "scenario_recommendations_by_regime" in artifacts:
+        _safe_print(f"   Reco par régime CSV : {artifacts['scenario_recommendations_by_regime']}")
+    if "cross_regime_recommendations" in artifacts:
+        _safe_print(f"   Reco cross-régimes  : {artifacts['cross_regime_recommendations']}")
+    if "cross_regime_recommendation_summary" in artifacts:
+        _safe_print(f"   Résumé cross-régime : {artifacts['cross_regime_recommendation_summary']}\n")
 
     if recommendation_summary.get("status") == "ok":
         best = recommendation_summary["recommended_scenario"]
@@ -606,6 +716,19 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
             )
         )
         _safe_print(f"   Raison              : {best['reason']}\n")
+
+    if cross_regime_summary.get("status") == "ok":
+        best_cross = cross_regime_summary["recommended_scenario"]
+        _safe_print(
+            "Meilleur compromis cross-régimes : {} (score={:.3f}, mean={:.3f}, worst={:.3f}, coverage={:.3f})".format(
+                best_cross["scenario_name"],
+                float(best_cross["cross_regime_overall_score"]),
+                float(best_cross["mean_regime_overall_score"]),
+                float(best_cross["worst_regime_overall_score"]),
+                float(best_cross["regime_coverage_ratio"]),
+            )
+        )
+        _safe_print()
 
     if not recommendation_frame.empty:
         preview_columns = [
@@ -625,6 +748,24 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
         ]
         _safe_print("Top recommandations (aperçu):")
         _safe_print(recommendation_frame.loc[:, preview_columns].head(10).to_string(index=False))
+        _safe_print()
+
+    if not cross_regime_recommendations.empty:
+        cross_preview_columns = [
+            column
+            for column in [
+                "cross_regime_rank",
+                "scenario_name",
+                "recommendation_label",
+                "cross_regime_overall_score",
+                "mean_regime_overall_score",
+                "worst_regime_overall_score",
+                "regime_coverage_ratio",
+            ]
+            if column in cross_regime_recommendations.columns
+        ]
+        _safe_print("Top recommandations cross-régimes (aperçu):")
+        _safe_print(cross_regime_recommendations.loc[:, cross_preview_columns].head(10).to_string(index=False))
         _safe_print()
 
 

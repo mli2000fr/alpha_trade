@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from itertools import product
 from pathlib import Path
@@ -31,6 +31,13 @@ DEFAULT_PILLAR_WEIGHTS: dict[str, float] = {
     "survival": 0.30,
     "forward_quality": 0.30,
 }
+MARKET_REGIME_ORDER = ["bull", "bear", "range", "vol"]
+DEFAULT_REGIME_TREND_LOOKBACK_DAYS = 60
+DEFAULT_REGIME_LONG_MA_WINDOW = 200
+DEFAULT_REGIME_VOL_WINDOW = 20
+DEFAULT_REGIME_VOL_LOOKBACK_WINDOW = 252
+DEFAULT_REGIME_BULL_BEAR_RETURN_THRESHOLD = 0.03
+DEFAULT_REGIME_VOLATILITY_MULTIPLIER = 1.35
 SCENARIO_PARAMETER_COLUMNS = [
     "liquidity_threshold_usd",
     "historical_range_lookback_days",
@@ -84,6 +91,8 @@ class ScreenerDiagnosticsResult:
     daily_metrics: pd.DataFrame
     summary_metrics: pd.DataFrame
     baseline_name: str | None = None
+    market_regimes: pd.DataFrame = field(default_factory=pd.DataFrame)
+    summary_metrics_by_regime: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     def scenario_frame(self) -> pd.DataFrame:
         return pd.DataFrame([scenario.to_record() for scenario in self.scenarios])
@@ -93,6 +102,17 @@ class ScreenerDiagnosticsResult:
             "baseline_name": self.baseline_name,
             "trading_dates": [trading_day.isoformat() for trading_day in self.trading_dates],
             "scenarios": [scenario.to_record() for scenario in self.scenarios],
+            "market_regime_analysis_enabled": not self.market_regimes.empty,
+            "market_regimes": sorted(self.market_regimes.get("market_regime", pd.Series(dtype=str)).dropna().astype(str).unique().tolist()),
+            "market_regime_config": {
+                "trend_lookback_days": DEFAULT_REGIME_TREND_LOOKBACK_DAYS,
+                "long_ma_window": DEFAULT_REGIME_LONG_MA_WINDOW,
+                "vol_window": DEFAULT_REGIME_VOL_WINDOW,
+                "vol_lookback_window": DEFAULT_REGIME_VOL_LOOKBACK_WINDOW,
+                "bull_bear_return_threshold": DEFAULT_REGIME_BULL_BEAR_RETURN_THRESHOLD,
+                "volatility_multiplier": DEFAULT_REGIME_VOLATILITY_MULTIPLIER,
+                "priority_order": ["vol", "bull", "bear", "range"],
+            },
         }
 
 
@@ -354,6 +374,120 @@ def summarize_screener_diagnostics(
         summary.loc[:, numeric_output_columns] = summary.loc[:, numeric_output_columns].round(10)
 
     return summary.sort_values(["is_baseline", "scenario_name"], ascending=[False, True]).reset_index(drop=True)
+
+
+def classify_market_regimes(
+    benchmark_history: pd.DataFrame,
+    *,
+    benchmark_symbol: str,
+    trade_dates: Sequence[date] | None = None,
+    trend_lookback_days: int = DEFAULT_REGIME_TREND_LOOKBACK_DAYS,
+    long_ma_window: int = DEFAULT_REGIME_LONG_MA_WINDOW,
+    vol_window: int = DEFAULT_REGIME_VOL_WINDOW,
+    vol_lookback_window: int = DEFAULT_REGIME_VOL_LOOKBACK_WINDOW,
+    bull_bear_return_threshold: float = DEFAULT_REGIME_BULL_BEAR_RETURN_THRESHOLD,
+    volatility_multiplier: float = DEFAULT_REGIME_VOLATILITY_MULTIPLIER,
+) -> pd.DataFrame:
+    """Classe les séances benchmark en régimes bull / bear / range / vol."""
+    columns = [
+        "trade_date",
+        "benchmark_symbol",
+        "benchmark_close",
+        f"benchmark_return_{trend_lookback_days}d",
+        f"benchmark_sma_{long_ma_window}",
+        f"benchmark_sma_{long_ma_window}_gap",
+        f"benchmark_vol_{vol_window}d",
+        f"benchmark_vol_{vol_window}d_median_{vol_lookback_window}d",
+        "market_regime",
+    ]
+    if benchmark_history.empty:
+        return pd.DataFrame(columns=columns)
+
+    history = benchmark_history.copy()
+    if "symbol" in history.columns:
+        history = history[history["symbol"].astype(str) == str(benchmark_symbol)].copy()
+    if history.empty:
+        return pd.DataFrame(columns=columns)
+
+    date_column = "bar_date" if "bar_date" in history.columns else "trade_date" if "trade_date" in history.columns else None
+    price_column = "close_price" if "close_price" in history.columns else "close" if "close" in history.columns else None
+    if date_column is None or price_column is None:
+        return pd.DataFrame(columns=columns)
+
+    history[date_column] = pd.to_datetime(history[date_column], utc=False)
+    history = history.sort_values(date_column).drop_duplicates(subset=[date_column], keep="last").copy()
+    history["benchmark_close"] = pd.to_numeric(history[price_column], errors="coerce")
+    history = history[history["benchmark_close"].notna()].copy()
+    if history.empty:
+        return pd.DataFrame(columns=columns)
+
+    close_series = history["benchmark_close"]
+    returns_1d = close_series.pct_change(fill_method=None)
+    history[f"benchmark_return_{trend_lookback_days}d"] = close_series / close_series.shift(trend_lookback_days) - 1.0
+    history[f"benchmark_sma_{long_ma_window}"] = close_series.rolling(long_ma_window, min_periods=max(2, min(long_ma_window, 20))).mean()
+    history[f"benchmark_sma_{long_ma_window}_gap"] = close_series / history[f"benchmark_sma_{long_ma_window}"] - 1.0
+    history[f"benchmark_vol_{vol_window}d"] = returns_1d.rolling(vol_window, min_periods=max(2, min(vol_window, 5))).std(ddof=0) * np.sqrt(252)
+    history[f"benchmark_vol_{vol_window}d_median_{vol_lookback_window}d"] = history[f"benchmark_vol_{vol_window}d"].rolling(
+        vol_lookback_window,
+        min_periods=max(3, min(vol_lookback_window, 20)),
+    ).median()
+
+    vol_series = pd.to_numeric(history[f"benchmark_vol_{vol_window}d"], errors="coerce")
+    vol_median_series = pd.to_numeric(history[f"benchmark_vol_{vol_window}d_median_{vol_lookback_window}d"], errors="coerce")
+    return_series = pd.to_numeric(history[f"benchmark_return_{trend_lookback_days}d"], errors="coerce")
+    gap_series = pd.to_numeric(history[f"benchmark_sma_{long_ma_window}_gap"], errors="coerce")
+
+    vol_condition = (
+        vol_series.notna()
+        & vol_median_series.notna()
+        & (vol_median_series > 0)
+        & (vol_series > vol_median_series * float(volatility_multiplier))
+    )
+    bull_condition = gap_series.gt(0.0) & return_series.gt(float(bull_bear_return_threshold))
+    bear_condition = gap_series.lt(0.0) & return_series.lt(-float(bull_bear_return_threshold))
+
+    history["market_regime"] = np.where(
+        vol_condition,
+        "vol",
+        np.where(bull_condition, "bull", np.where(bear_condition, "bear", "range")),
+    )
+    history["benchmark_symbol"] = str(benchmark_symbol)
+    history["trade_date"] = history[date_column].dt.date
+
+    regime_frame = history.loc[:, columns].copy()
+    if trade_dates is not None:
+        trade_date_frame = pd.DataFrame({"trade_date": list(trade_dates)})
+        regime_frame = trade_date_frame.merge(regime_frame, on="trade_date", how="left")
+        regime_frame["benchmark_symbol"] = regime_frame["benchmark_symbol"].fillna(str(benchmark_symbol))
+        regime_frame["market_regime"] = regime_frame["market_regime"].fillna("range")
+
+    return regime_frame.reset_index(drop=True)
+
+
+def summarize_screener_diagnostics_by_regime(
+    daily_metrics: pd.DataFrame,
+    *,
+    baseline_name: str | None = None,
+) -> pd.DataFrame:
+    """Agrège les diagnostics par scénario et par régime de marché."""
+    if daily_metrics.empty or "market_regime" not in daily_metrics.columns:
+        return pd.DataFrame()
+
+    frames: list[pd.DataFrame] = []
+    available_regimes = [regime for regime in MARKET_REGIME_ORDER if regime in set(daily_metrics["market_regime"].dropna().astype(str))]
+    for regime in available_regimes:
+        regime_daily = daily_metrics[daily_metrics["market_regime"].astype(str) == regime].copy()
+        if regime_daily.empty:
+            continue
+        regime_summary = summarize_screener_diagnostics(regime_daily, baseline_name=baseline_name)
+        if regime_summary.empty:
+            continue
+        regime_summary.insert(0, "market_regime", regime)
+        frames.append(regime_summary)
+
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
 
 
 def _pick_first_available_column(frame: pd.DataFrame, candidates: Sequence[str]) -> str | None:
@@ -752,6 +886,141 @@ def recommend_screener_scenarios(
     return analysis, summary
 
 
+def build_cross_regime_recommendations(
+    regime_recommendations: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Construit un classement de robustesse cross-régimes à partir des recommandations par régime."""
+    if regime_recommendations.empty or "market_regime" not in regime_recommendations.columns:
+        return pd.DataFrame(), {
+            "status": "empty",
+            "message": "Aucune recommandation par régime disponible.",
+        }
+
+    total_regimes = int(regime_recommendations["market_regime"].dropna().astype(str).nunique())
+    scenario_meta_columns = [
+        column
+        for column in ["scenario_name", "is_baseline", *SCENARIO_PARAMETER_COLUMNS]
+        if column in regime_recommendations.columns
+    ]
+    scenario_meta = regime_recommendations.loc[:, scenario_meta_columns].drop_duplicates(subset=["scenario_name"])
+    grouped = (
+        regime_recommendations.groupby("scenario_name", as_index=False)
+        .agg(
+            regimes_covered=("market_regime", lambda values: int(pd.Series(values).dropna().astype(str).nunique())),
+            mean_regime_overall_score=("overall_score", "mean"),
+            worst_regime_overall_score=("overall_score", "min"),
+            regime_overall_score_std=("overall_score", lambda values: float(pd.to_numeric(pd.Series(values), errors="coerce").std(ddof=0))),
+            mean_regime_confidence_score=("confidence_score", "mean"),
+            mean_regime_robustness_score=("robustness_score", "mean"),
+            mean_regime_survival_score=("survival_score", "mean"),
+            mean_regime_forward_quality_score=("forward_quality_score", "mean"),
+        )
+        .merge(scenario_meta, on="scenario_name", how="left")
+    )
+    grouped["regime_coverage_ratio"] = pd.to_numeric(grouped["regimes_covered"], errors="coerce").fillna(0.0) / max(total_regimes, 1)
+
+    metric_specs = [
+        ("mean_regime_overall_score", True, 0.35),
+        ("worst_regime_overall_score", True, 0.35),
+        ("regime_coverage_ratio", True, 0.15),
+        ("regime_overall_score_std", False, 0.10),
+        ("mean_regime_confidence_score", True, 0.05),
+    ]
+    weighted_columns: list[tuple[str, float]] = []
+    for column, higher_is_better, weight in metric_specs:
+        score_column = f"cross_metric_{column}_score"
+        grouped[score_column] = _normalize_metric_series(
+            pd.to_numeric(grouped[column], errors="coerce"),
+            higher_is_better=higher_is_better,
+        )
+        weighted_columns.append((score_column, weight))
+
+    grouped["cross_regime_overall_score"] = _weighted_geometric_mean(grouped, weighted_columns).clip(0.0, 1.0)
+    grouped = grouped.sort_values(
+        ["cross_regime_overall_score", "mean_regime_overall_score", "scenario_name"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+    grouped.insert(0, "cross_regime_rank", np.arange(1, len(grouped) + 1))
+    grouped["recommendation_label"] = ""
+    if not grouped.empty:
+        grouped.loc[grouped.index[0], "recommendation_label"] = "best_cross_regime_compromise"
+
+    leader = grouped.iloc[0]
+    summary = {
+        "status": "ok",
+        "regimes_evaluated": total_regimes,
+        "recommended_scenario": {
+            "scenario_name": str(leader["scenario_name"]),
+            "cross_regime_rank": int(leader["cross_regime_rank"]),
+            "cross_regime_overall_score": float(leader["cross_regime_overall_score"]),
+            "mean_regime_overall_score": float(leader["mean_regime_overall_score"]),
+            "worst_regime_overall_score": float(leader["worst_regime_overall_score"]),
+            "regime_coverage_ratio": float(leader["regime_coverage_ratio"]),
+        },
+    }
+    return grouped, summary
+
+
+def recommend_screener_scenarios_by_regime(
+    summary_metrics_by_regime: pd.DataFrame,
+    *,
+    daily_metrics: pd.DataFrame | None = None,
+    baseline_name: str | None = None,
+    target_horizon: int = DEFAULT_RECOMMENDATION_HORIZON,
+    pillar_weights: dict[str, float] | None = None,
+) -> tuple[pd.DataFrame, dict[str, object], pd.DataFrame, dict[str, object]]:
+    """Produit les recommandations phase 6 par régime puis un score cross-régimes."""
+    if summary_metrics_by_regime.empty or "market_regime" not in summary_metrics_by_regime.columns:
+        empty_summary = {
+            "status": "empty",
+            "message": "Aucune synthèse par régime disponible.",
+            "baseline_name": baseline_name,
+        }
+        return pd.DataFrame(), empty_summary, pd.DataFrame(), {"status": "empty", "message": "Aucune synthèse par régime disponible."}
+
+    regime_frames: list[pd.DataFrame] = []
+    per_regime_summary: dict[str, object] = {}
+    available_regimes = [regime for regime in MARKET_REGIME_ORDER if regime in set(summary_metrics_by_regime["market_regime"].dropna().astype(str))]
+    for regime in available_regimes:
+        regime_summary_df = summary_metrics_by_regime[summary_metrics_by_regime["market_regime"].astype(str) == regime].copy()
+        if regime_summary_df.empty:
+            continue
+        regime_daily = None
+        if daily_metrics is not None and not daily_metrics.empty and "market_regime" in daily_metrics.columns:
+            regime_daily = daily_metrics[daily_metrics["market_regime"].astype(str) == regime].copy()
+        recommendations, summary = recommend_screener_scenarios(
+            regime_summary_df.drop(columns=["market_regime"], errors="ignore"),
+            daily_metrics=regime_daily,
+            baseline_name=baseline_name,
+            target_horizon=target_horizon,
+            pillar_weights=pillar_weights,
+        )
+        if recommendations.empty:
+            continue
+        recommendations.insert(0, "market_regime", regime)
+        regime_frames.append(recommendations)
+        per_regime_summary[regime] = summary
+
+    if not regime_frames:
+        empty_summary = {
+            "status": "empty",
+            "message": "Aucune recommandation calculée par régime.",
+            "baseline_name": baseline_name,
+        }
+        return pd.DataFrame(), empty_summary, pd.DataFrame(), {"status": "empty", "message": "Aucune recommandation calculée par régime."}
+
+    combined = pd.concat(regime_frames, ignore_index=True)
+    cross_regime_recommendations, cross_regime_summary = build_cross_regime_recommendations(combined)
+    summary = {
+        "status": "ok",
+        "baseline_name": baseline_name,
+        "regimes": available_regimes,
+        "per_regime": per_regime_summary,
+        "cross_regime": cross_regime_summary,
+    }
+    return combined, summary, cross_regime_recommendations, cross_regime_summary
+
+
 class ScreenerDiagnosticsService:
     """Rejoue screener → selector → portefeuille cible pour comparer des paramètres."""
 
@@ -776,6 +1045,28 @@ class ScreenerDiagnosticsService:
         if not self.forward_return_horizons:
             raise ValueError("Au moins un horizon forward positif est requis.")
         self._stock_bars_layout: tuple[str, str] | None = None
+
+    def _build_market_regime_frame(self, trading_dates: Sequence[date]) -> pd.DataFrame:
+        if not trading_dates:
+            return pd.DataFrame()
+        benchmark_symbol = self.base_screener_config.benchmark_symbol
+        warmup_days = max(
+            DEFAULT_REGIME_LONG_MA_WINDOW * 4,
+            DEFAULT_REGIME_VOL_LOOKBACK_WINDOW * 3,
+            DEFAULT_REGIME_TREND_LOOKBACK_DAYS * 4,
+            365,
+        )
+        benchmark_history = self._load_price_history(
+            [benchmark_symbol],
+            start_date=min(trading_dates) - timedelta(days=warmup_days),
+            end_date=max(trading_dates),
+            include_volume=False,
+        )
+        return classify_market_regimes(
+            benchmark_history,
+            benchmark_symbol=benchmark_symbol,
+            trade_dates=trading_dates,
+        )
 
     def _resolve_stock_bars_layout(self) -> tuple[str, str]:
         if self._stock_bars_layout is not None:
@@ -817,6 +1108,8 @@ class ScreenerDiagnosticsService:
         if not scenario_list:
             raise ValueError("Aucun scénario fourni.")
 
+        market_regimes = self._build_market_regime_frame(trading_dates)
+
         daily_rows: list[dict[str, object]] = []
         for scenario in scenario_list:
             LOGGER.info("Diagnostic screener | scénario=%s baseline=%s", scenario.name, scenario.is_baseline)
@@ -826,15 +1119,20 @@ class ScreenerDiagnosticsService:
 
         daily_df = pd.DataFrame(daily_rows)
         if not daily_df.empty:
+            if not market_regimes.empty:
+                daily_df = daily_df.merge(market_regimes, on="trade_date", how="left")
             daily_df = daily_df.sort_values(["scenario_name", "trade_date"]).reset_index(drop=True)
         baseline_name = next((scenario.name for scenario in scenario_list if scenario.is_baseline), scenario_list[0].name)
         summary_df = summarize_screener_diagnostics(daily_df, baseline_name=baseline_name)
+        summary_by_regime_df = summarize_screener_diagnostics_by_regime(daily_df, baseline_name=baseline_name)
         return ScreenerDiagnosticsResult(
             trading_dates=tuple(trading_dates),
             scenarios=tuple(scenario_list),
             daily_metrics=daily_df,
             summary_metrics=summary_df,
             baseline_name=baseline_name,
+            market_regimes=market_regimes,
+            summary_metrics_by_regime=summary_by_regime_df,
         )
 
     def _make_snapshot_service(self, screener_config: ScreenerConfig) -> BackfillScoresHistoryService:
@@ -1238,18 +1536,29 @@ def export_screener_diagnostics(result: ScreenerDiagnosticsResult, output_dir: s
     summary_path = output_path / "summary_metrics.csv"
     scenarios_path = output_path / "scenarios.csv"
     metadata_path = output_path / "metadata.json"
+    market_regimes_path = output_path / "market_regimes.csv"
+    summary_by_regime_path = output_path / "summary_metrics_by_regime.csv"
 
     result.daily_metrics.to_csv(daily_path, index=False)
     result.summary_metrics.to_csv(summary_path, index=False)
     result.scenario_frame().to_csv(scenarios_path, index=False)
+    if not result.market_regimes.empty:
+        result.market_regimes.to_csv(market_regimes_path, index=False)
+    if not result.summary_metrics_by_regime.empty:
+        result.summary_metrics_by_regime.to_csv(summary_by_regime_path, index=False)
     metadata_path.write_text(json.dumps(result.metadata(), ensure_ascii=False, indent=2), encoding="utf-8")
 
-    return {
+    artifacts = {
         "daily_metrics": daily_path,
         "summary_metrics": summary_path,
         "scenarios": scenarios_path,
         "metadata": metadata_path,
     }
+    if not result.market_regimes.empty:
+        artifacts["market_regimes"] = market_regimes_path
+    if not result.summary_metrics_by_regime.empty:
+        artifacts["summary_metrics_by_regime"] = summary_by_regime_path
+    return artifacts
 
 
 def export_screener_recommendations(
@@ -1270,6 +1579,35 @@ def export_screener_recommendations(
     return {
         "scenario_recommendations": recommendations_path,
         "recommendation_summary": summary_path,
+    }
+
+
+def export_screener_regime_recommendations(
+    regime_recommendations: pd.DataFrame,
+    regime_summary: dict[str, object],
+    cross_regime_recommendations: pd.DataFrame,
+    cross_regime_summary: dict[str, object],
+    output_dir: str | Path,
+) -> dict[str, Path]:
+    """Exporte les recommandations détaillées de phase 6 par régime et cross-régimes."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    by_regime_path = output_path / "scenario_recommendations_by_regime.csv"
+    by_regime_summary_path = output_path / "recommendation_summary_by_regime.json"
+    cross_regime_path = output_path / "cross_regime_recommendations.csv"
+    cross_regime_summary_path = output_path / "cross_regime_recommendation_summary.json"
+
+    regime_recommendations.to_csv(by_regime_path, index=False)
+    by_regime_summary_path.write_text(json.dumps(regime_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    cross_regime_recommendations.to_csv(cross_regime_path, index=False)
+    cross_regime_summary_path.write_text(json.dumps(cross_regime_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "scenario_recommendations_by_regime": by_regime_path,
+        "recommendation_summary_by_regime": by_regime_summary_path,
+        "cross_regime_recommendations": cross_regime_path,
+        "cross_regime_recommendation_summary": cross_regime_summary_path,
     }
 
 

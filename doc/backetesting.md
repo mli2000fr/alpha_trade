@@ -529,6 +529,58 @@ L'objectif est plutôt d'identifier le **meilleur équilibre exploitable** entre
 - conversion jusqu'au portefeuille cible,
 - qualité forward moyenne.
 
+### Phase 6 — robustesse par régime de marché
+
+Le diagnostic phase 6 enrichit automatiquement `daily_metrics.csv` avec un label `market_regime` dérivé du benchmark (par défaut `SPY`) :
+
+- `bull`
+- `bear`
+- `range`
+- `vol`
+
+La priorité est donnée à `vol` quand la volatilité réalisée explose, puis la tendance / momentum détermine `bull` ou `bear`, sinon le jour est classé `range`.
+
+### Artefacts supplémentaires phase 6
+
+Quand `daily_metrics.csv` contient les régimes, le diagnostic exporte aussi :
+
+- `market_regimes.csv`
+- `summary_metrics_by_regime.csv`
+- `scenario_recommendations_by_regime.csv`
+- `recommendation_summary_by_regime.json`
+- `cross_regime_recommendations.csv`
+- `cross_regime_recommendation_summary.json`
+
+### À quoi servent ces artefacts
+
+- `summary_metrics_by_regime.csv` : comparer un même scénario en marché haussier, baissier, latéral ou très volatil ;
+- `scenario_recommendations_by_regime.csv` : meilleur compromis **à l'intérieur de chaque régime** ;
+- `cross_regime_recommendations.csv` : classement de robustesse **entre régimes**, pour éviter de sur-optimiser un scénario valable seulement en bull market.
+
+### Lecture pratique du score cross-régimes
+
+Le classement cross-régimes favorise les scénarios qui combinent :
+
+- une bonne moyenne de score par régime ;
+- un bon pire cas (`worst_regime_overall_score`) ;
+- une couverture large des régimes observés ;
+- une variabilité réduite entre régimes.
+
+En pratique, le meilleur scénario cross-régimes n'est pas forcément :
+
+- celui qui gagne le plus fort en `bull` ;
+- ni celui qui résiste le mieux seulement en `bear`.
+
+L'objectif est de trouver le scénario **le plus robuste selon le contexte de marché**.
+
+### Réanalyse d'un run existant
+
+La commande suivante relit toujours le `summary_metrics.csv`, mais si le `daily_metrics.csv` associé contient `market_regime`, elle produit aussi automatiquement l'analyse phase 6 :
+
+```powershell
+python -m backtesting recommend-screener --input-dir artifacts/screener_diagnostics
+```
+
 ---
 
 ## 12. État validé

@@ -8,9 +8,14 @@ import pandas as pd
 from backtesting.screener_diagnostics import (
     ScreenerDiagnosticsScenario,
     ScreenerDiagnosticsService,
+    build_cross_regime_recommendations,
     build_screener_oat_scenarios,
+    classify_market_regimes,
     export_screener_recommendations,
+    export_screener_regime_recommendations,
     recommend_screener_scenarios,
+    recommend_screener_scenarios_by_regime,
+    summarize_screener_diagnostics_by_regime,
     summarize_screener_diagnostics,
 )
 from risk_management.models import PortfolioEntry
@@ -170,6 +175,7 @@ def test_analyze_period_computes_survival_and_forward_metrics(monkeypatch) -> No
     ]
 
     monkeypatch.setattr(service, "list_trading_dates", lambda start_date, end_date: [as_of_date])
+    monkeypatch.setattr(service, "_build_market_regime_frame", lambda trading_dates: pd.DataFrame())
     monkeypatch.setattr(service, "_make_snapshot_service", lambda screener_config: object())
     monkeypatch.setattr(service, "_build_pit_frames", lambda snapshot_service, current_date: (screener_df, selector_df, history_df))
     monkeypatch.setattr(service, "_build_portfolio_entries", lambda selector_candidates, current_date: entries)
@@ -359,5 +365,236 @@ def test_export_screener_recommendations_writes_files(tmp_path) -> None:
     assert artifacts["recommendation_summary"].exists()
     payload = json.loads(artifacts["recommendation_summary"].read_text(encoding="utf-8"))
     assert payload["recommended_scenario"]["scenario_name"] == "rs_102"
+
+
+def test_classify_market_regimes_identifies_bull_bear_range_and_vol() -> None:
+    history = pd.DataFrame(
+        {
+            "symbol": ["SPY"] * 16,
+            "bar_date": pd.date_range("2026-01-01", periods=16, freq="D"),
+            "close_price": [100, 101, 102, 103, 104, 106, 106, 107, 106, 106, 100, 96, 92, 110, 80, 120],
+        }
+    )
+
+    regimes = classify_market_regimes(
+        history,
+        benchmark_symbol="SPY",
+        trend_lookback_days=3,
+        long_ma_window=5,
+        vol_window=3,
+        vol_lookback_window=5,
+        bull_bear_return_threshold=0.02,
+        volatility_multiplier=1.1,
+    )
+
+    labels = dict(zip(regimes["trade_date"], regimes["market_regime"]))
+    assert labels[pd.Timestamp("2026-01-06").date()] == "bull"
+    assert labels[pd.Timestamp("2026-01-10").date()] == "range"
+    assert labels[pd.Timestamp("2026-01-13").date()] == "bear"
+    assert labels[pd.Timestamp("2026-01-16").date()] == "vol"
+
+
+def test_recommend_screener_scenarios_by_regime_prefers_balanced_cross_regime_scenario() -> None:
+    summary_by_regime = pd.DataFrame(
+        [
+            {
+                "market_regime": "bull",
+                "scenario_name": "baseline",
+                "is_baseline": 1,
+                "days_evaluated": 6,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.25,
+                "selector_to_portfolio_survival_ratio_mean": 0.45,
+                "portfolio_target_count_mean": 4.0,
+                "portfolio_excess_return_20d_mean": 0.03,
+                "selector_excess_return_20d_mean": 0.02,
+                "portfolio_positive_share_20d_mean": 0.58,
+                "portfolio_coverage_20d_mean": 4.0,
+            },
+            {
+                "market_regime": "bull",
+                "scenario_name": "balanced",
+                "is_baseline": 0,
+                "days_evaluated": 6,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.30,
+                "selector_to_portfolio_survival_ratio_mean": 0.55,
+                "portfolio_target_count_mean": 5.0,
+                "portfolio_excess_return_20d_mean": 0.05,
+                "selector_excess_return_20d_mean": 0.04,
+                "portfolio_positive_share_20d_mean": 0.68,
+                "portfolio_coverage_20d_mean": 5.0,
+            },
+            {
+                "market_regime": "bull",
+                "scenario_name": "opportunistic",
+                "is_baseline": 0,
+                "days_evaluated": 6,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.32,
+                "selector_to_portfolio_survival_ratio_mean": 0.57,
+                "portfolio_target_count_mean": 5.0,
+                "portfolio_excess_return_20d_mean": 0.08,
+                "selector_excess_return_20d_mean": 0.06,
+                "portfolio_positive_share_20d_mean": 0.72,
+                "portfolio_coverage_20d_mean": 5.0,
+            },
+            {
+                "market_regime": "bear",
+                "scenario_name": "baseline",
+                "is_baseline": 1,
+                "days_evaluated": 5,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.20,
+                "selector_to_portfolio_survival_ratio_mean": 0.40,
+                "portfolio_target_count_mean": 3.0,
+                "portfolio_excess_return_20d_mean": 0.01,
+                "selector_excess_return_20d_mean": 0.00,
+                "portfolio_positive_share_20d_mean": 0.52,
+                "portfolio_coverage_20d_mean": 3.0,
+            },
+            {
+                "market_regime": "bear",
+                "scenario_name": "balanced",
+                "is_baseline": 0,
+                "days_evaluated": 5,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.28,
+                "selector_to_portfolio_survival_ratio_mean": 0.50,
+                "portfolio_target_count_mean": 4.0,
+                "portfolio_excess_return_20d_mean": 0.035,
+                "selector_excess_return_20d_mean": 0.025,
+                "portfolio_positive_share_20d_mean": 0.64,
+                "portfolio_coverage_20d_mean": 4.0,
+            },
+            {
+                "market_regime": "bear",
+                "scenario_name": "opportunistic",
+                "is_baseline": 0,
+                "days_evaluated": 5,
+                "days_failed": 1,
+                "portfolio_survival_ratio_mean": 0.08,
+                "selector_to_portfolio_survival_ratio_mean": 0.18,
+                "portfolio_target_count_mean": 1.0,
+                "portfolio_excess_return_20d_mean": -0.03,
+                "selector_excess_return_20d_mean": -0.02,
+                "portfolio_positive_share_20d_mean": 0.30,
+                "portfolio_coverage_20d_mean": 1.0,
+            },
+        ]
+    )
+
+    regime_recommendations, regime_summary, cross_regime_recommendations, cross_regime_summary = recommend_screener_scenarios_by_regime(
+        summary_by_regime,
+        baseline_name="baseline",
+    )
+
+    assert not regime_recommendations.empty
+    assert regime_summary["status"] == "ok"
+    assert cross_regime_summary["recommended_scenario"]["scenario_name"] == "balanced"
+    assert cross_regime_recommendations.iloc[0]["scenario_name"] == "balanced"
+    assert cross_regime_recommendations.iloc[0]["recommendation_label"] == "best_cross_regime_compromise"
+
+
+def test_build_cross_regime_recommendations_prefers_high_worst_case() -> None:
+    regime_recommendations = pd.DataFrame(
+        [
+            {"market_regime": "bull", "scenario_name": "A", "overall_score": 0.90, "confidence_score": 0.90, "robustness_score": 0.85, "survival_score": 0.88, "forward_quality_score": 0.92},
+            {"market_regime": "bear", "scenario_name": "A", "overall_score": 0.35, "confidence_score": 0.85, "robustness_score": 0.40, "survival_score": 0.38, "forward_quality_score": 0.30},
+            {"market_regime": "bull", "scenario_name": "B", "overall_score": 0.72, "confidence_score": 0.88, "robustness_score": 0.70, "survival_score": 0.72, "forward_quality_score": 0.74},
+            {"market_regime": "bear", "scenario_name": "B", "overall_score": 0.70, "confidence_score": 0.87, "robustness_score": 0.69, "survival_score": 0.71, "forward_quality_score": 0.69},
+        ]
+    )
+
+    cross_regime_recommendations, cross_regime_summary = build_cross_regime_recommendations(regime_recommendations)
+
+    assert cross_regime_recommendations.iloc[0]["scenario_name"] == "B"
+    assert cross_regime_summary["recommended_scenario"]["scenario_name"] == "B"
+
+
+def test_summarize_screener_diagnostics_by_regime_splits_rows() -> None:
+    daily = pd.DataFrame(
+        [
+            {
+                "trade_date": date(2026, 4, 1),
+                "market_regime": "bull",
+                "scenario_name": "baseline",
+                "is_baseline": 1,
+                "liquidity_threshold_usd": 10_000_000.0,
+                "historical_range_lookback_days": 504,
+                "min_relative_strength_index": 100.0,
+                "min_historical_range_score": 70.0,
+                "status": "ok",
+                "portfolio_survival_ratio": 0.20,
+            },
+            {
+                "trade_date": date(2026, 4, 2),
+                "market_regime": "bear",
+                "scenario_name": "baseline",
+                "is_baseline": 1,
+                "liquidity_threshold_usd": 10_000_000.0,
+                "historical_range_lookback_days": 504,
+                "min_relative_strength_index": 100.0,
+                "min_historical_range_score": 70.0,
+                "status": "ok",
+                "portfolio_survival_ratio": 0.10,
+            },
+        ]
+    )
+
+    summary_by_regime = summarize_screener_diagnostics_by_regime(daily, baseline_name="baseline")
+
+    assert set(summary_by_regime["market_regime"]) == {"bull", "bear"}
+    assert len(summary_by_regime) == 2
+
+
+def test_export_screener_regime_recommendations_writes_files(tmp_path) -> None:
+    regime_recommendations = pd.DataFrame(
+        [{"market_regime": "bull", "rank": 1, "scenario_name": "balanced", "overall_score": 0.81}]
+    )
+    regime_summary = {"status": "ok", "per_regime": {"bull": {"recommended_scenario": {"scenario_name": "balanced"}}}}
+    cross_regime_recommendations = pd.DataFrame(
+        [{"cross_regime_rank": 1, "scenario_name": "balanced", "cross_regime_overall_score": 0.79}]
+    )
+    cross_regime_summary = {"status": "ok", "recommended_scenario": {"scenario_name": "balanced"}}
+
+    artifacts = export_screener_regime_recommendations(
+        regime_recommendations,
+        regime_summary,
+        cross_regime_recommendations,
+        cross_regime_summary,
+        tmp_path,
+    )
+
+    assert artifacts["scenario_recommendations_by_regime"].exists()
+    assert artifacts["cross_regime_recommendations"].exists()
+    payload = json.loads(artifacts["cross_regime_recommendation_summary"].read_text(encoding="utf-8"))
+    assert payload["recommended_scenario"]["scenario_name"] == "balanced"
+
+
+def test_analyze_period_merges_market_regime_and_builds_summary_by_regime(monkeypatch) -> None:
+    service = ScreenerDiagnosticsService(engine=object())
+    scenario = ScreenerDiagnosticsScenario("baseline", ScreenerConfig(), is_baseline=True)
+    as_of_date = date(2026, 4, 1)
+
+    screener_df = pd.DataFrame({"symbol": ["AAA"], "total_score": [90.0], "relative_strength_index": [110.0], "historical_range_score": [80.0]})
+    selector_df = pd.DataFrame({"symbol": ["AAA"]})
+    history_df = pd.DataFrame(
+        {"symbol": ["AAA"], "sector": ["Tech"], "is_candidate": [1], "final_score": [0.8], "final_score_sentiment": [0.82], "total_score": [90.0]}
+    )
+
+    monkeypatch.setattr(service, "list_trading_dates", lambda start_date, end_date: [as_of_date])
+    monkeypatch.setattr(service, "_build_market_regime_frame", lambda trading_dates: pd.DataFrame([{"trade_date": as_of_date, "market_regime": "bull", "benchmark_symbol": "SPY", "benchmark_close": 500.0}]))
+    monkeypatch.setattr(service, "_make_snapshot_service", lambda screener_config: object())
+    monkeypatch.setattr(service, "_build_pit_frames", lambda snapshot_service, current_date: (screener_df, selector_df, history_df))
+    monkeypatch.setattr(service, "_build_portfolio_entries", lambda selector_candidates, current_date: [])
+    monkeypatch.setattr(service, "_compute_benchmark_forward_returns", lambda current_date: {"benchmark_forward_return_5d": 0.0, "benchmark_forward_return_10d": 0.0, "benchmark_forward_return_20d": 0.0})
+    monkeypatch.setattr(service, "_compute_symbol_set_forward_metrics", lambda symbols, *, weights, as_of_date, benchmark_returns, prefix: {})
+
+    result = service.analyze_period(start_date=as_of_date, end_date=as_of_date, scenarios=[scenario])
+
+    assert result.daily_metrics.iloc[0]["market_regime"] == "bull"
+    assert not result.summary_metrics_by_regime.empty
+    assert result.summary_metrics_by_regime.iloc[0]["market_regime"] == "bull"
 
 
