@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pandas as pd
@@ -8,6 +9,8 @@ from backtesting.screener_diagnostics import (
     ScreenerDiagnosticsScenario,
     ScreenerDiagnosticsService,
     build_screener_oat_scenarios,
+    export_screener_recommendations,
+    recommend_screener_scenarios,
     summarize_screener_diagnostics,
 )
 from risk_management.models import PortfolioEntry
@@ -233,4 +236,128 @@ def test_analyze_period_computes_survival_and_forward_metrics(monkeypatch) -> No
     assert summary_row["portfolio_target_count_mean"] == 1.0
     assert summary_row["portfolio_survival_ratio_mean"] == 0.25
     assert summary_row["delta_portfolio_survival_ratio_mean"] == 0.0
+
+
+def test_recommend_screener_scenarios_ranks_best_compromise() -> None:
+    summary = pd.DataFrame(
+        [
+            {
+                "scenario_name": "baseline",
+                "is_baseline": 1,
+                "days_evaluated": 10,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.22,
+                "selector_to_portfolio_survival_ratio_mean": 0.45,
+                "portfolio_target_count_mean": 4.0,
+                "portfolio_excess_return_20d_mean": 0.040,
+                "selector_excess_return_20d_mean": 0.030,
+                "portfolio_positive_share_20d_mean": 0.56,
+                "portfolio_coverage_20d_mean": 4.0,
+                "delta_portfolio_excess_return_20d_mean": 0.0,
+            },
+            {
+                "scenario_name": "rs_102",
+                "is_baseline": 0,
+                "days_evaluated": 10,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.30,
+                "selector_to_portfolio_survival_ratio_mean": 0.58,
+                "portfolio_target_count_mean": 5.0,
+                "portfolio_excess_return_20d_mean": 0.055,
+                "selector_excess_return_20d_mean": 0.042,
+                "portfolio_positive_share_20d_mean": 0.65,
+                "portfolio_coverage_20d_mean": 5.0,
+                "delta_portfolio_excess_return_20d_mean": 0.015,
+            },
+            {
+                "scenario_name": "liq_20m",
+                "is_baseline": 0,
+                "days_evaluated": 10,
+                "days_failed": 1,
+                "portfolio_survival_ratio_mean": 0.16,
+                "selector_to_portfolio_survival_ratio_mean": 0.39,
+                "portfolio_target_count_mean": 2.0,
+                "portfolio_excess_return_20d_mean": 0.070,
+                "selector_excess_return_20d_mean": 0.050,
+                "portfolio_positive_share_20d_mean": 0.60,
+                "portfolio_coverage_20d_mean": 2.0,
+                "delta_portfolio_excess_return_20d_mean": 0.030,
+            },
+        ]
+    )
+    daily = pd.DataFrame(
+        [
+            {"scenario_name": "baseline", "portfolio_survival_ratio": 0.20, "portfolio_excess_return_20d": 0.03},
+            {"scenario_name": "baseline", "portfolio_survival_ratio": 0.24, "portfolio_excess_return_20d": 0.05},
+            {"scenario_name": "rs_102", "portfolio_survival_ratio": 0.29, "portfolio_excess_return_20d": 0.05},
+            {"scenario_name": "rs_102", "portfolio_survival_ratio": 0.31, "portfolio_excess_return_20d": 0.06},
+            {"scenario_name": "liq_20m", "portfolio_survival_ratio": 0.10, "portfolio_excess_return_20d": -0.01},
+            {"scenario_name": "liq_20m", "portfolio_survival_ratio": 0.22, "portfolio_excess_return_20d": 0.15},
+        ]
+    )
+
+    recommendations, recommendation_summary = recommend_screener_scenarios(
+        summary,
+        daily_metrics=daily,
+        baseline_name="baseline",
+    )
+
+    assert recommendations.iloc[0]["scenario_name"] == "rs_102"
+    assert recommendations.iloc[0]["recommendation_label"] == "best_compromise"
+    assert recommendation_summary["recommended_scenario"]["scenario_name"] == "rs_102"
+    assert recommendation_summary["category_leaders"]["best_forward_quality"] == "liq_20m"
+    assert recommendations["overall_score"].is_monotonic_decreasing
+
+
+def test_recommend_screener_scenarios_handles_missing_columns() -> None:
+    summary = pd.DataFrame(
+        [
+            {
+                "scenario_name": "baseline",
+                "is_baseline": 1,
+                "days_evaluated": 5,
+                "days_failed": 0,
+                "portfolio_survival_ratio_mean": 0.25,
+            }
+        ]
+    )
+
+    recommendations, recommendation_summary = recommend_screener_scenarios(summary, baseline_name="baseline")
+
+    assert len(recommendations) == 1
+    assert recommendations.iloc[0]["rank"] == 1
+    assert recommendations.iloc[0]["scenario_name"] == "baseline"
+    assert pd.notna(recommendations.iloc[0]["overall_score"])
+    assert "portfolio_forward_quality" in recommendation_summary["missing_metrics"]
+
+
+def test_export_screener_recommendations_writes_files(tmp_path) -> None:
+    recommendations = pd.DataFrame(
+        [
+            {
+                "rank": 1,
+                "scenario_name": "rs_102",
+                "overall_score": 0.82,
+                "robustness_score": 0.80,
+                "survival_score": 0.79,
+                "forward_quality_score": 0.86,
+                "recommendation_label": "best_compromise",
+            }
+        ]
+    )
+    recommendation_summary = {
+        "status": "ok",
+        "recommended_scenario": {
+            "scenario_name": "rs_102",
+            "overall_score": 0.82,
+        },
+    }
+
+    artifacts = export_screener_recommendations(recommendations, recommendation_summary, tmp_path)
+
+    assert artifacts["scenario_recommendations"].exists()
+    assert artifacts["recommendation_summary"].exists()
+    payload = json.loads(artifacts["recommendation_summary"].read_text(encoding="utf-8"))
+    assert payload["recommended_scenario"]["scenario_name"] == "rs_102"
+
 

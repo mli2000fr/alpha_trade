@@ -25,6 +25,12 @@ from selector.alpha_scanner import AlphaScannerConfig
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_FORWARD_HORIZONS: tuple[int, ...] = (5, 10, 20)
+DEFAULT_RECOMMENDATION_HORIZON = 20
+DEFAULT_PILLAR_WEIGHTS: dict[str, float] = {
+    "robustness": 0.40,
+    "survival": 0.30,
+    "forward_quality": 0.30,
+}
 SCENARIO_PARAMETER_COLUMNS = [
     "liquidity_threshold_usd",
     "historical_range_lookback_days",
@@ -348,6 +354,402 @@ def summarize_screener_diagnostics(
         summary.loc[:, numeric_output_columns] = summary.loc[:, numeric_output_columns].round(10)
 
     return summary.sort_values(["is_baseline", "scenario_name"], ascending=[False, True]).reset_index(drop=True)
+
+
+def _pick_first_available_column(frame: pd.DataFrame, candidates: Sequence[str]) -> str | None:
+    for column in candidates:
+        if column not in frame.columns:
+            continue
+        series = pd.to_numeric(frame[column], errors="coerce")
+        if series.notna().any():
+            return column
+    return None
+
+
+def _winsorize_series(series: pd.Series, *, quantile: float = 0.05) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    valid = numeric.dropna()
+    if len(valid) < 4:
+        return numeric
+    lower = float(valid.quantile(quantile))
+    upper = float(valid.quantile(1.0 - quantile))
+    return numeric.clip(lower=lower, upper=upper)
+
+
+def _normalize_metric_series(series: pd.Series, *, higher_is_better: bool) -> pd.Series:
+    numeric = _winsorize_series(series)
+    result = pd.Series(0.5, index=series.index, dtype=float)
+    valid = numeric.dropna()
+    if valid.empty:
+        return result
+    min_value = float(valid.min())
+    max_value = float(valid.max())
+    if np.isclose(max_value, min_value):
+        result.loc[valid.index] = 0.5
+        return result
+    scaled = (numeric - min_value) / (max_value - min_value)
+    if not higher_is_better:
+        scaled = 1.0 - scaled
+    scaled = scaled.clip(lower=0.0, upper=1.0)
+    result.loc[scaled.dropna().index] = scaled.dropna()
+    return result
+
+
+def _weighted_average_columns(frame: pd.DataFrame, columns_with_weights: Sequence[tuple[str, float]]) -> pd.Series:
+    if not columns_with_weights:
+        return pd.Series(0.5, index=frame.index, dtype=float)
+    weighted_sum = pd.Series(0.0, index=frame.index, dtype=float)
+    total_weight = 0.0
+    for column, weight in columns_with_weights:
+        weighted_sum = weighted_sum + pd.to_numeric(frame[column], errors="coerce").fillna(0.5) * float(weight)
+        total_weight += float(weight)
+    if total_weight <= 0:
+        return pd.Series(0.5, index=frame.index, dtype=float)
+    return weighted_sum / total_weight
+
+
+def _weighted_confidence(frame: pd.DataFrame, columns_with_weights: Sequence[tuple[str, float]]) -> pd.Series:
+    if not columns_with_weights:
+        return pd.Series(0.0, index=frame.index, dtype=float)
+    weighted_sum = pd.Series(0.0, index=frame.index, dtype=float)
+    total_weight = 0.0
+    for column, weight in columns_with_weights:
+        weighted_sum = weighted_sum + pd.to_numeric(frame[column], errors="coerce").fillna(0.0) * float(weight)
+        total_weight += float(weight)
+    if total_weight <= 0:
+        return pd.Series(0.0, index=frame.index, dtype=float)
+    return weighted_sum / total_weight
+
+
+def _weighted_geometric_mean(frame: pd.DataFrame, columns_with_weights: Sequence[tuple[str, float]]) -> pd.Series:
+    if not columns_with_weights:
+        return pd.Series(0.5, index=frame.index, dtype=float)
+    clipped_columns = [
+        pd.to_numeric(frame[column], errors="coerce").fillna(0.5).clip(lower=1e-6, upper=1.0)
+        for column, _ in columns_with_weights
+    ]
+    weights = np.array([float(weight) for _, weight in columns_with_weights], dtype=float)
+    total_weight = float(weights.sum())
+    if total_weight <= 0:
+        return pd.Series(0.5, index=frame.index, dtype=float)
+    log_terms = sum(np.log(series) * weight for series, weight in zip(clipped_columns, weights, strict=False))
+    return np.exp(log_terms / total_weight)
+
+
+def _candidate_mean_columns(prefix: str, metric: str, target_horizon: int) -> list[str]:
+    horizons = [target_horizon, *[h for h in DEFAULT_FORWARD_HORIZONS if h != target_horizon]]
+    return [f"{prefix}_{metric}_{horizon}d_mean" for horizon in horizons]
+
+
+def _candidate_daily_columns(prefix: str, metric: str, target_horizon: int) -> list[str]:
+    horizons = [target_horizon, *[h for h in DEFAULT_FORWARD_HORIZONS if h != target_horizon]]
+    return [f"{prefix}_{metric}_{horizon}d" for horizon in horizons]
+
+
+def _enrich_summary_with_daily_stability(
+    summary_metrics: pd.DataFrame,
+    daily_metrics: pd.DataFrame | None,
+    *,
+    target_horizon: int,
+) -> pd.DataFrame:
+    if daily_metrics is None or daily_metrics.empty or summary_metrics.empty:
+        return summary_metrics.copy()
+
+    daily = daily_metrics.copy()
+    group_column = "scenario_name"
+    if group_column not in daily.columns:
+        return summary_metrics.copy()
+
+    survival_std_column = _pick_first_available_column(daily, ["portfolio_survival_ratio", "selector_to_portfolio_survival_ratio"])
+    forward_daily_column = _pick_first_available_column(
+        daily,
+        _candidate_daily_columns("portfolio", "excess_return", target_horizon)
+        + _candidate_daily_columns("portfolio", "forward_return", target_horizon)
+        + _candidate_daily_columns("selector", "excess_return", target_horizon)
+        + _candidate_daily_columns("selector", "forward_return", target_horizon),
+    )
+
+    if not survival_std_column and not forward_daily_column:
+        return summary_metrics.copy()
+
+    records: list[dict[str, object]] = []
+    for scenario_name, group in daily.groupby(group_column, dropna=False):
+        record: dict[str, object] = {"scenario_name": scenario_name}
+        if survival_std_column:
+            survival_series = pd.to_numeric(group[survival_std_column], errors="coerce")
+            record["portfolio_survival_ratio_std"] = float(survival_series.std(ddof=0)) if survival_series.notna().any() else float("nan")
+        if forward_daily_column:
+            forward_series = pd.to_numeric(group[forward_daily_column], errors="coerce")
+            record["forward_return_consistency_std"] = float(forward_series.std(ddof=0)) if forward_series.notna().any() else float("nan")
+            positive_mask = forward_series.dropna() > 0
+            record["forward_return_positive_day_share"] = float(positive_mask.mean()) if not positive_mask.empty else float("nan")
+        records.append(record)
+
+    enriched = pd.DataFrame(records)
+    return summary_metrics.merge(enriched, on="scenario_name", how="left")
+
+
+def _build_recommendation_text(row: pd.Series, *, forward_column: str | None) -> str:
+    parts = [
+        f"robustesse={float(row['robustness_score']):.3f}",
+        f"survie={float(row['survival_score']):.3f}",
+        f"forward={float(row['forward_quality_score']):.3f}",
+    ]
+    if "portfolio_survival_ratio_mean" in row.index and pd.notna(row.get("portfolio_survival_ratio_mean")):
+        parts.append(f"portfolio_survival_ratio_mean={float(row['portfolio_survival_ratio_mean']):.3f}")
+    if forward_column and forward_column in row.index and pd.notna(row.get(forward_column)):
+        parts.append(f"{forward_column}={float(row[forward_column]):.4f}")
+    if "success_rate" in row.index and pd.notna(row.get("success_rate")):
+        parts.append(f"success_rate={float(row['success_rate']):.3f}")
+    return " | ".join(parts)
+
+
+def recommend_screener_scenarios(
+    summary_metrics: pd.DataFrame,
+    *,
+    daily_metrics: pd.DataFrame | None = None,
+    baseline_name: str | None = None,
+    target_horizon: int = DEFAULT_RECOMMENDATION_HORIZON,
+    pillar_weights: dict[str, float] | None = None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Classe les scénarios en meilleur compromis robustesse / survie / qualité forward."""
+    if summary_metrics.empty:
+        return pd.DataFrame(), {
+            "status": "empty",
+            "message": "Aucune métrique de synthèse disponible à analyser.",
+            "baseline_name": baseline_name,
+        }
+
+    weights = {**DEFAULT_PILLAR_WEIGHTS, **(pillar_weights or {})}
+    analysis = _enrich_summary_with_daily_stability(summary_metrics, daily_metrics, target_horizon=target_horizon).copy()
+
+    if baseline_name is None and "is_baseline" in analysis.columns:
+        baseline_rows = analysis[pd.to_numeric(analysis["is_baseline"], errors="coerce").fillna(0).astype(int) == 1]
+        if not baseline_rows.empty:
+            baseline_name = str(baseline_rows.iloc[0]["scenario_name"])
+
+    if {"days_evaluated", "days_failed"}.issubset(analysis.columns):
+        evaluated = pd.to_numeric(analysis["days_evaluated"], errors="coerce").replace(0, np.nan)
+        failed = pd.to_numeric(analysis["days_failed"], errors="coerce").fillna(0.0)
+        analysis["success_rate"] = (1.0 - failed / evaluated).clip(lower=0.0, upper=1.0)
+        analysis["success_rate"] = analysis["success_rate"].fillna(0.0)
+    else:
+        analysis["success_rate"] = np.nan
+
+    portfolio_forward_column = _pick_first_available_column(
+        analysis,
+        _candidate_mean_columns("portfolio", "excess_return", target_horizon)
+        + _candidate_mean_columns("portfolio", "forward_return", target_horizon),
+    )
+    selector_forward_column = _pick_first_available_column(
+        analysis,
+        _candidate_mean_columns("selector", "excess_return", target_horizon)
+        + _candidate_mean_columns("selector", "forward_return", target_horizon),
+    )
+    coverage_column = _pick_first_available_column(
+        analysis,
+        _candidate_mean_columns("portfolio", "coverage", target_horizon)
+        + _candidate_mean_columns("selector", "coverage", target_horizon),
+    )
+    positive_share_column = _pick_first_available_column(
+        analysis,
+        _candidate_mean_columns("portfolio", "positive_share", target_horizon)
+        + _candidate_mean_columns("selector", "positive_share", target_horizon),
+    )
+    stability_cost_column = _pick_first_available_column(
+        analysis,
+        ["forward_return_consistency_std", "portfolio_survival_ratio_std"],
+    )
+
+    metric_definitions: list[dict[str, object]] = [
+        {
+            "label": "success_rate",
+            "candidates": ["success_rate"],
+            "higher_is_better": True,
+            "pillar": "robustness",
+            "weight": 0.50,
+        },
+        {
+            "label": "coverage",
+            "candidates": [coverage_column] if coverage_column else [],
+            "higher_is_better": True,
+            "pillar": "robustness",
+            "weight": 0.20,
+        },
+        {
+            "label": "stability",
+            "candidates": [stability_cost_column] if stability_cost_column else [],
+            "higher_is_better": False,
+            "pillar": "robustness",
+            "weight": 0.30,
+        },
+        {
+            "label": "portfolio_survival_ratio",
+            "candidates": ["portfolio_survival_ratio_mean"],
+            "higher_is_better": True,
+            "pillar": "survival",
+            "weight": 0.45,
+        },
+        {
+            "label": "selector_to_portfolio_survival_ratio",
+            "candidates": ["selector_to_portfolio_survival_ratio_mean"],
+            "higher_is_better": True,
+            "pillar": "survival",
+            "weight": 0.35,
+        },
+        {
+            "label": "portfolio_target_count",
+            "candidates": ["portfolio_target_count_mean", "selector_candidate_count_mean"],
+            "higher_is_better": True,
+            "pillar": "survival",
+            "weight": 0.20,
+        },
+        {
+            "label": "portfolio_forward_quality",
+            "candidates": [portfolio_forward_column] if portfolio_forward_column else [],
+            "higher_is_better": True,
+            "pillar": "forward_quality",
+            "weight": 0.50,
+        },
+        {
+            "label": "selector_forward_quality",
+            "candidates": [selector_forward_column] if selector_forward_column else [],
+            "higher_is_better": True,
+            "pillar": "forward_quality",
+            "weight": 0.20,
+        },
+        {
+            "label": "positive_share",
+            "candidates": [positive_share_column] if positive_share_column else [],
+            "higher_is_better": True,
+            "pillar": "forward_quality",
+            "weight": 0.20,
+        },
+        {
+            "label": "delta_forward_vs_baseline",
+            "candidates": [
+                f"delta_{portfolio_forward_column}" if portfolio_forward_column else None,
+                f"delta_{selector_forward_column}" if selector_forward_column else None,
+            ],
+            "higher_is_better": True,
+            "pillar": "forward_quality",
+            "weight": 0.10,
+        },
+    ]
+
+    metric_sources: dict[str, str | None] = {}
+    pillar_metric_columns: dict[str, list[tuple[str, float]]] = {pillar: [] for pillar in weights}
+    pillar_confidence_columns: dict[str, list[tuple[str, float]]] = {pillar: [] for pillar in weights}
+    missing_metrics: list[str] = []
+
+    for definition in metric_definitions:
+        label = str(definition["label"])
+        candidates = [str(candidate) for candidate in definition["candidates"] if candidate]
+        pillar = str(definition["pillar"])
+        weight = float(definition["weight"])
+        source_column = _pick_first_available_column(analysis, candidates)
+        metric_sources[label] = source_column
+        score_column = f"metric_{label}_score"
+        confidence_column = f"metric_{label}_confidence"
+        if source_column is None:
+            analysis[score_column] = 0.5
+            analysis[confidence_column] = 0.0
+            missing_metrics.append(label)
+        else:
+            numeric_series = pd.to_numeric(analysis[source_column], errors="coerce")
+            analysis[score_column] = _normalize_metric_series(
+                numeric_series,
+                higher_is_better=bool(definition["higher_is_better"]),
+            )
+            analysis[confidence_column] = numeric_series.notna().astype(float)
+        pillar_metric_columns[pillar].append((score_column, weight))
+        pillar_confidence_columns[pillar].append((confidence_column, weight))
+
+    for pillar_name in weights:
+        analysis[f"{pillar_name}_score"] = _weighted_average_columns(analysis, pillar_metric_columns[pillar_name]).clip(0.0, 1.0)
+        analysis[f"{pillar_name}_confidence"] = _weighted_confidence(analysis, pillar_confidence_columns[pillar_name]).clip(0.0, 1.0)
+
+    overall_columns = [(f"{pillar}_score", float(weight)) for pillar, weight in weights.items()]
+    confidence_columns = [(f"{pillar}_confidence", float(weight)) for pillar, weight in weights.items()]
+    analysis["confidence_score"] = _weighted_confidence(analysis, confidence_columns).clip(0.0, 1.0)
+    analysis["overall_score_raw"] = _weighted_geometric_mean(analysis, overall_columns)
+    analysis["overall_score"] = (analysis["overall_score_raw"] * (0.80 + 0.20 * analysis["confidence_score"])).clip(0.0, 1.0)
+    analysis["forward_metric_source"] = portfolio_forward_column or selector_forward_column
+    analysis["recommendation_reason"] = analysis.apply(
+        lambda row: _build_recommendation_text(row, forward_column=portfolio_forward_column or selector_forward_column),
+        axis=1,
+    )
+    analysis["recommendation_warnings"] = ""
+    if "days_failed" in analysis.columns:
+        failed_mask = pd.to_numeric(analysis["days_failed"], errors="coerce").fillna(0.0) > 0
+        analysis.loc[failed_mask, "recommendation_warnings"] = "jours en échec détectés"
+    low_confidence_mask = analysis["confidence_score"] < 0.60
+    analysis.loc[low_confidence_mask, "recommendation_warnings"] = analysis.loc[low_confidence_mask, "recommendation_warnings"].replace(
+        "",
+        "couverture métrique partielle",
+    )
+    analysis.loc[
+        low_confidence_mask & analysis["recommendation_warnings"].ne("couverture métrique partielle"),
+        "recommendation_warnings",
+    ] = analysis.loc[
+        low_confidence_mask & analysis["recommendation_warnings"].ne("couverture métrique partielle"),
+        "recommendation_warnings",
+    ] + "; couverture métrique partielle"
+
+    analysis = analysis.sort_values(
+        ["overall_score", "confidence_score", "scenario_name"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+    analysis.insert(0, "rank", np.arange(1, len(analysis) + 1))
+
+    leader_overall = analysis.iloc[0]
+    leader_robustness = analysis.sort_values(["robustness_score", "overall_score"], ascending=[False, False]).iloc[0]
+    leader_survival = analysis.sort_values(["survival_score", "overall_score"], ascending=[False, False]).iloc[0]
+    leader_forward = analysis.sort_values(["forward_quality_score", "overall_score"], ascending=[False, False]).iloc[0]
+
+    viable_mask = pd.to_numeric(
+        analysis.get("portfolio_target_count_mean", pd.Series(0.0, index=analysis.index)),
+        errors="coerce",
+    ).fillna(0.0) > 0.0
+    viable_candidates = analysis[viable_mask].copy()
+    if viable_candidates.empty:
+        selective_viable = leader_overall
+    else:
+        selective_viable = viable_candidates.sort_values(
+            ["portfolio_target_count_mean", "overall_score"],
+            ascending=[True, False],
+        ).iloc[0]
+
+    analysis["recommendation_label"] = ""
+    analysis.loc[analysis["scenario_name"] == leader_overall["scenario_name"], "recommendation_label"] = "best_compromise"
+
+    summary: dict[str, object] = {
+        "status": "ok",
+        "baseline_name": baseline_name,
+        "target_horizon_days": target_horizon,
+        "analyzed_scenarios": int(len(analysis)),
+        "metric_sources": metric_sources,
+        "missing_metrics": missing_metrics,
+        "pillar_weights": weights,
+        "recommended_scenario": {
+            "scenario_name": str(leader_overall["scenario_name"]),
+            "rank": int(leader_overall["rank"]),
+            "overall_score": float(leader_overall["overall_score"]),
+            "robustness_score": float(leader_overall["robustness_score"]),
+            "survival_score": float(leader_overall["survival_score"]),
+            "forward_quality_score": float(leader_overall["forward_quality_score"]),
+            "confidence_score": float(leader_overall["confidence_score"]),
+            "reason": str(leader_overall["recommendation_reason"]),
+        },
+        "category_leaders": {
+            "best_compromise": str(leader_overall["scenario_name"]),
+            "best_robustness": str(leader_robustness["scenario_name"]),
+            "best_survival": str(leader_survival["scenario_name"]),
+            "best_forward_quality": str(leader_forward["scenario_name"]),
+            "most_selective_viable": str(selective_viable["scenario_name"]),
+        },
+    }
+    return analysis, summary
 
 
 class ScreenerDiagnosticsService:
@@ -847,6 +1249,27 @@ def export_screener_diagnostics(result: ScreenerDiagnosticsResult, output_dir: s
         "summary_metrics": summary_path,
         "scenarios": scenarios_path,
         "metadata": metadata_path,
+    }
+
+
+def export_screener_recommendations(
+    recommendations: pd.DataFrame,
+    recommendation_summary: dict[str, object],
+    output_dir: str | Path,
+) -> dict[str, Path]:
+    """Exporte le classement phase 5 et le résumé JSON associé."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    recommendations_path = output_path / "scenario_recommendations.csv"
+    summary_path = output_path / "recommendation_summary.json"
+
+    recommendations.to_csv(recommendations_path, index=False)
+    summary_path.write_text(json.dumps(recommendation_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "scenario_recommendations": recommendations_path,
+        "recommendation_summary": summary_path,
     }
 
 

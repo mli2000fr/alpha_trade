@@ -441,7 +441,97 @@ Les tests backtesting couvrent désormais aussi :
 
 ---
 
-## 11. État validé
+## 11. Diagnostic screener phase 4 + recommandation phase 5
+
+Le diagnostic screener exporte maintenant non seulement les artefacts PIT :
+
+- `daily_metrics.csv`
+- `summary_metrics.csv`
+- `scenarios.csv`
+- `metadata.json`
+
+mais aussi les artefacts d'analyse phase 5 :
+
+- `scenario_recommendations.csv`
+- `recommendation_summary.json`
+
+### Lancer un diagnostic avec recommandation automatique
+
+```powershell
+python -m backtesting diagnose-screener --start 2024-01-01 --end 2024-12-31 --mode oat --limit-days 60
+```
+
+À la fin du run, la CLI affiche désormais :
+
+- le **meilleur compromis** automatique ;
+- ses scores de **robustesse / survie / qualité forward** ;
+- un aperçu du classement `scenario_recommendations.csv`.
+
+### Réanalyser un `summary_metrics.csv` existant
+
+```powershell
+python -m backtesting recommend-screener --input-dir artifacts/screener_diagnostics
+```
+
+Variante avec chemins explicites :
+
+```powershell
+python -m backtesting recommend-screener \
+  --summary-csv artifacts/screener_diagnostics/summary_metrics.csv \
+  --daily-csv artifacts/screener_diagnostics/daily_metrics.csv \
+  --target-horizon 20
+```
+
+### Comment le classement phase 5 est calculé
+
+Le classement automatique s'appuie sur trois piliers :
+
+1. **Robustesse**
+   - taux de succès du scénario (`days_failed` vs `days_evaluated`) ;
+   - couverture forward disponible ;
+   - stabilité journalière quand `daily_metrics.csv` est présent.
+
+2. **Survie**
+   - `portfolio_survival_ratio_mean` ;
+   - `selector_to_portfolio_survival_ratio_mean` ;
+   - `portfolio_target_count_mean`.
+
+3. **Qualité forward**
+   - priorité à `portfolio_excess_return_20d_mean`, sinon fallback sur `portfolio_forward_return_20d_mean` ;
+   - support de `selector_excess_return_20d_mean` / `selector_forward_return_20d_mean` en backup ;
+   - part de cas positifs (`portfolio_positive_share_20d_mean`).
+
+Le score final est un **compromis pondéré** entre ces trois piliers, avec pénalisation légère des scénarios trop incomplets en métriques.
+
+### Colonnes clés de `scenario_recommendations.csv`
+
+- `rank`
+- `scenario_name`
+- `overall_score`
+- `robustness_score`
+- `survival_score`
+- `forward_quality_score`
+- `confidence_score`
+- `recommendation_label`
+- `recommendation_reason`
+- `recommendation_warnings`
+
+### Lecture pratique
+
+Un scénario recommandé automatiquement n'est pas forcément :
+
+- celui qui a le meilleur forward absolu ;
+- ni celui qui garde le plus gros univers.
+
+L'objectif est plutôt d'identifier le **meilleur équilibre exploitable** entre :
+
+- stabilité du run,
+- conversion jusqu'au portefeuille cible,
+- qualité forward moyenne.
+
+---
+
+## 12. État validé
 
 Validation réelle effectuée :
 
@@ -455,7 +545,7 @@ Validation réelle effectuée :
 
 ---
 
-## 12. Recommandation pratique
+## 13. Recommandation pratique
 
 Ordre conseillé :
 

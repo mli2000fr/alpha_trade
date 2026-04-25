@@ -142,6 +142,43 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Répertoire cible pour les CSV/JSON diagnostics",
     )
 
+    # --- recommend-screener ---
+    recommend_p = sub.add_parser(
+        "recommend-screener",
+        help="Analyser summary_metrics.csv et recommander automatiquement le meilleur compromis",
+    )
+    recommend_p.add_argument(
+        "--input-dir",
+        default="artifacts/screener_diagnostics",
+        help="Répertoire contenant summary_metrics.csv et éventuellement daily_metrics.csv",
+    )
+    recommend_p.add_argument(
+        "--summary-csv",
+        default=None,
+        help="Chemin explicite vers un summary_metrics.csv à analyser",
+    )
+    recommend_p.add_argument(
+        "--daily-csv",
+        default=None,
+        help="Chemin explicite vers un daily_metrics.csv pour enrichir l'analyse de robustesse",
+    )
+    recommend_p.add_argument(
+        "--output-dir",
+        default=None,
+        help="Répertoire cible pour scenario_recommendations.csv et recommendation_summary.json",
+    )
+    recommend_p.add_argument(
+        "--baseline-name",
+        default=None,
+        help="Nom explicite du scénario baseline si l'auto-détection n'est pas suffisante",
+    )
+    recommend_p.add_argument(
+        "--target-horizon",
+        type=int,
+        default=20,
+        help="Horizon forward prioritaire pour l'analyse du compromis (défaut: 20)",
+    )
+
     return parser
 
 
@@ -388,7 +425,9 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         ScreenerDiagnosticsService,
         build_screener_grid_scenarios,
         build_screener_oat_scenarios,
+        export_screener_recommendations,
         export_screener_diagnostics,
+        recommend_screener_scenarios,
     )
     from event_sentiment.signal_aggregator import SentimentBoostConfig
     from risk_management.config import RiskConfig
@@ -443,7 +482,13 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         scenarios=scenarios,
         limit_days=args.limit_days,
     )
+    recommendation_frame, recommendation_summary = recommend_screener_scenarios(
+        result.summary_metrics,
+        daily_metrics=result.daily_metrics,
+        baseline_name=result.baseline_name,
+    )
     artifacts = export_screener_diagnostics(result, args.output_dir)
+    artifacts.update(export_screener_recommendations(recommendation_frame, recommendation_summary, args.output_dir))
 
     _safe_print("✅ Diagnostic terminé")
     _safe_print(f"   Séances évaluées    : {len(result.trading_dates)}")
@@ -452,6 +497,21 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
     _safe_print(f"   Journal quotidien   : {artifacts['daily_metrics']}")
     _safe_print(f"   Scénarios           : {artifacts['scenarios']}")
     _safe_print(f"   Métadonnées         : {artifacts['metadata']}\n")
+    _safe_print(f"   Recommandations CSV : {artifacts['scenario_recommendations']}")
+    _safe_print(f"   Résumé reco JSON    : {artifacts['recommendation_summary']}\n")
+
+    if recommendation_summary.get("status") == "ok":
+        best = recommendation_summary["recommended_scenario"]
+        _safe_print(
+            "Meilleur compromis : {} (overall={:.3f}, robustesse={:.3f}, survie={:.3f}, forward={:.3f})".format(
+                best["scenario_name"],
+                float(best["overall_score"]),
+                float(best["robustness_score"]),
+                float(best["survival_score"]),
+                float(best["forward_quality_score"]),
+            )
+        )
+        _safe_print(f"   Raison              : {best['reason']}\n")
 
     if not result.summary_metrics.empty:
         preferred_columns = [
@@ -481,6 +541,92 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         _safe_print(preview.to_string(index=False))
         _safe_print()
 
+    if not recommendation_frame.empty:
+        recommendation_preview_columns = [
+            column
+            for column in [
+                "rank",
+                "scenario_name",
+                "recommendation_label",
+                "overall_score",
+                "robustness_score",
+                "survival_score",
+                "forward_quality_score",
+                "confidence_score",
+            ]
+            if column in recommendation_frame.columns
+        ]
+        recommendation_preview = recommendation_frame.loc[:, recommendation_preview_columns].head(10)
+        _safe_print("Classement phase 5 (aperçu):")
+        _safe_print(recommendation_preview.to_string(index=False))
+        _safe_print()
+
+
+def _run_screener_recommendation(args: argparse.Namespace) -> None:
+    """Analyse un summary_metrics.csv existant et produit une recommandation phase 5."""
+    import pandas as pd
+
+    from backtesting.screener_diagnostics import export_screener_recommendations, recommend_screener_scenarios
+
+    input_dir = Path(args.input_dir)
+    summary_path = Path(args.summary_csv) if args.summary_csv else input_dir / "summary_metrics.csv"
+    daily_path = Path(args.daily_csv) if args.daily_csv else input_dir / "daily_metrics.csv"
+    output_dir = Path(args.output_dir) if args.output_dir else summary_path.parent
+
+    if not summary_path.exists():
+        _safe_print(f"❌ summary_metrics.csv introuvable : {summary_path}")
+        sys.exit(1)
+
+    summary_df = pd.read_csv(summary_path)
+    daily_df = pd.read_csv(daily_path) if daily_path.exists() else pd.DataFrame()
+
+    recommendation_frame, recommendation_summary = recommend_screener_scenarios(
+        summary_df,
+        daily_metrics=daily_df if not daily_df.empty else None,
+        baseline_name=args.baseline_name,
+        target_horizon=args.target_horizon,
+    )
+    artifacts = export_screener_recommendations(recommendation_frame, recommendation_summary, output_dir)
+
+    _safe_print("✅ Analyse phase 5 terminée")
+    _safe_print(f"   Summary source      : {summary_path}")
+    _safe_print(f"   Daily source        : {daily_path if daily_path.exists() else 'absent'}")
+    _safe_print(f"   Recommandations CSV : {artifacts['scenario_recommendations']}")
+    _safe_print(f"   Résumé reco JSON    : {artifacts['recommendation_summary']}\n")
+
+    if recommendation_summary.get("status") == "ok":
+        best = recommendation_summary["recommended_scenario"]
+        _safe_print(
+            "Meilleur compromis : {} (overall={:.3f}, robustesse={:.3f}, survie={:.3f}, forward={:.3f})".format(
+                best["scenario_name"],
+                float(best["overall_score"]),
+                float(best["robustness_score"]),
+                float(best["survival_score"]),
+                float(best["forward_quality_score"]),
+            )
+        )
+        _safe_print(f"   Raison              : {best['reason']}\n")
+
+    if not recommendation_frame.empty:
+        preview_columns = [
+            column
+            for column in [
+                "rank",
+                "scenario_name",
+                "recommendation_label",
+                "overall_score",
+                "robustness_score",
+                "survival_score",
+                "forward_quality_score",
+                "confidence_score",
+                "recommendation_warnings",
+            ]
+            if column in recommendation_frame.columns
+        ]
+        _safe_print("Top recommandations (aperçu):")
+        _safe_print(recommendation_frame.loc[:, preview_columns].head(10).to_string(index=False))
+        _safe_print()
+
 
 def main() -> None:
     configure_root_logging()
@@ -493,6 +639,8 @@ def main() -> None:
         _run_backfill_scores_history(args)
     elif args.command == "diagnose-screener":
         _run_screener_diagnostics(args)
+    elif args.command == "recommend-screener":
+        _run_screener_recommendation(args)
     else:
         parser.print_help()
         sys.exit(1)

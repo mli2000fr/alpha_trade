@@ -1095,6 +1095,40 @@ class TestCLI:
         assert args.selection_size == 50
         assert args.overwrite_existing is True
 
+    def test_parse_diagnose_screener_command(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "diagnose-screener",
+            "--start", "2025-01-01",
+            "--end", "2025-03-31",
+            "--mode", "grid",
+            "--limit-days", "15",
+            "--max-scenarios", "12",
+            "--output-dir", "artifacts/screener_diagnostics/run_1",
+        ])
+        assert args.command == "diagnose-screener"
+        assert args.mode == "grid"
+        assert args.limit_days == 15
+        assert args.max_scenarios == 12
+        assert args.output_dir == "artifacts/screener_diagnostics/run_1"
+
+    def test_parse_recommend_screener_command(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "recommend-screener",
+            "--input-dir", "artifacts/screener_diagnostics/run_1",
+            "--target-horizon", "10",
+            "--baseline-name", "baseline",
+        ])
+        assert args.command == "recommend-screener"
+        assert args.input_dir == "artifacts/screener_diagnostics/run_1"
+        assert args.target_horizon == 10
+        assert args.baseline_name == "baseline"
+
 
 class TestBacktestingRegistry:
     def test_start_backtesting_run_rejects_duplicate_active_kind(self, monkeypatch):
