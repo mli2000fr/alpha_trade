@@ -25,6 +25,7 @@ from ihm.services.backtesting_runner import (
     build_subprocess_env,
     format_command_for_display,
 )
+from ihm.services.screener_recommendations import build_screener_artifact_summary, get_screener_artifacts_dir
 
 RunStatus = Literal["starting", "running", "completed", "failed", "timeout", "stopped"]
 TAIL_MAX_LINES = 400
@@ -51,6 +52,8 @@ class BacktestingRunRecord:
     stderr_lines: int = 0
     timeout_seconds: int | None = None
     stop_requested: bool = False
+    screener_artifacts_dir: str | None = None
+    screener_artifact_summary: dict[str, object] | None = None
 
     def to_state(self) -> dict[str, object]:
         return asdict(self)
@@ -225,6 +228,11 @@ def _finalize_if_needed(managed: _ManagedRun) -> BacktestingRunRecord:
         duration_seconds=round(time.perf_counter() - managed.started_perf, 2),
         finished_at=datetime.now().isoformat(timespec="seconds"),
     )
+    if managed.record.run_kind in {"diagnose-screener", "recommend-screener"} and managed.record.screener_artifacts_dir:
+        managed.record = _with_updates(
+            managed.record,
+            screener_artifact_summary=build_screener_artifact_summary(managed.record.screener_artifacts_dir),
+        )
     _persist_record(managed.record)
     return managed.record
 
@@ -235,6 +243,21 @@ def _tail_text(lines: list[str]) -> str:
 
 def _run_dir_for(run_kind: BacktestingCommandKind, run_id: str) -> Path:
     return RUNS_DIR / run_kind / run_id
+
+
+def _resolve_screener_artifacts_dir(
+    run_kind: BacktestingCommandKind,
+    options: BacktestRunOptions | BackfillScoresHistoryOptions | DiagnoseScreenerOptions | RecommendScreenerOptions,
+) -> str | None:
+    if run_kind == "diagnose-screener" and isinstance(options, DiagnoseScreenerOptions):
+        return str(get_screener_artifacts_dir(options.output_dir))
+    if run_kind == "recommend-screener" and isinstance(options, RecommendScreenerOptions):
+        if options.output_dir:
+            return str(get_screener_artifacts_dir(options.output_dir))
+        if options.summary_csv:
+            return str(get_screener_artifacts_dir(Path(options.summary_csv).parent))
+        return str(get_screener_artifacts_dir(options.input_dir))
+    return None
 
 
 def list_active_backtesting_runs_by_kind(run_kind: BacktestingCommandKind) -> list[dict[str, object]]:
@@ -276,6 +299,7 @@ def start_backtesting_run(
 
     command = build_backtesting_command(run_kind, options)
     command_display = format_command_for_display(command)
+    screener_artifacts_dir = _resolve_screener_artifacts_dir(run_kind, options)
 
     process = subprocess.Popen(
         command,
@@ -308,6 +332,7 @@ def start_backtesting_run(
         stderr_path=str(stderr_path),
         combined_path=str(combined_path),
         timeout_seconds=timeout_seconds,
+        screener_artifacts_dir=screener_artifacts_dir,
     )
     managed = _ManagedRun(
         record=record,

@@ -31,6 +31,7 @@ from ihm.services.backtesting_runner import (
     format_command_for_display,
 )
 from ihm.services.db import get_db_status, get_runtime_db_config
+from ihm.services.screener_recommendations import build_screener_artifact_summary
 
 SELECTED_RUN_KEY = "ihm_backtesting_selected_run_id"
 LOG_FILTER_KEY = "ihm_backtesting_log_filter"
@@ -831,6 +832,147 @@ def _render_live_artifacts(run_record: dict[str, object]) -> bool:
     return rendered
 
 
+def _coerce_metric_text(value: object) -> str:
+    if value is None:
+        return "—"
+    text = str(value).strip()
+    return text or "—"
+
+
+def _resolve_screener_artifact_summary(run_record: dict[str, object]) -> dict[str, object] | None:
+    summary = run_record.get("screener_artifact_summary")
+    if isinstance(summary, dict):
+        return cast(dict[str, object], summary)
+    artifacts_dir = run_record.get("screener_artifacts_dir")
+    if not artifacts_dir:
+        return None
+    return build_screener_artifact_summary(str(artifacts_dir))
+
+
+def _build_screener_artifact_metric_rows(summary: dict[str, object]) -> list[tuple[str, str]]:
+    market_regimes = summary.get("market_regimes")
+    return [
+        ("Scénarios", _coerce_metric_text(summary.get("scenario_count"))),
+        ("Séances", _coerce_metric_text(summary.get("trading_days"))),
+        ("Fichiers détectés", _coerce_metric_text(summary.get("file_count"))),
+        ("Reco objectifs", _coerce_metric_text(summary.get("objective_count"))),
+        ("Baseline", _coerce_metric_text(summary.get("baseline_name"))),
+        ("Résumé CSV", _coerce_metric_text(summary.get("summary_rows"))),
+        ("Daily CSV", _coerce_metric_text(summary.get("daily_rows"))),
+        (
+            "Régimes",
+            _coerce_metric_text(len(market_regimes) if isinstance(market_regimes, list) else None),
+        ),
+    ]
+
+
+def _build_screener_artifact_objective_rows(summary: dict[str, object]) -> pd.DataFrame:
+    objective_rows = summary.get("objective_recommendations")
+    if not isinstance(objective_rows, list) or not objective_rows:
+        return pd.DataFrame()
+    frame = pd.DataFrame(objective_rows)
+    column_labels = {
+        "objective_label": "Objectif",
+        "objective_scope": "Périmètre",
+        "scenario_name": "Scénario recommandé",
+        "objective_score": "Score objectif",
+        "overall_score": "Score global",
+        "reason": "Pourquoi",
+    }
+    available_columns = [column for column in column_labels if column in frame.columns]
+    if not available_columns:
+        return pd.DataFrame()
+    return frame.loc[:, available_columns].rename(columns=column_labels)
+
+
+def _build_screener_artifact_file_rows(summary: dict[str, object]) -> pd.DataFrame:
+    files = summary.get("files")
+    if not isinstance(files, list) or not files:
+        return pd.DataFrame()
+    frame = pd.DataFrame(files)
+    column_labels = {
+        "label": "Fichier",
+        "exists": "Présent",
+        "kind": "Type",
+        "row_count": "Lignes",
+        "size_label": "Taille",
+        "path": "Chemin",
+    }
+    available_columns = [column for column in column_labels if column in frame.columns]
+    if not available_columns:
+        return pd.DataFrame()
+    formatted = frame.loc[:, available_columns].rename(columns=column_labels)
+    if "Présent" in formatted.columns:
+        formatted["Présent"] = formatted["Présent"].map(lambda value: "oui" if bool(value) else "non")
+    return formatted
+
+
+def _render_screener_artifact_summary(run_record: dict[str, object]) -> bool:
+    if str(run_record.get("run_kind", "")) not in {"diagnose-screener", "recommend-screener"}:
+        return False
+
+    summary = _resolve_screener_artifact_summary(run_record)
+    st.markdown("**🧾 Résumé structuré des artefacts screener**")
+    screener_artifacts_dir = run_record.get("screener_artifacts_dir")
+    if screener_artifacts_dir:
+        st.caption(f"Répertoire du run : `{screener_artifacts_dir}`")
+
+    if not summary:
+        st.info("Aucun résumé screener disponible pour ce run.")
+        return True
+
+    st.caption(
+        f"Couverture : {summary.get('coverage_label', 'Période non renseignée')} · "
+        f"MAJ : {summary.get('updated_at_label', 'inconnue')}"
+    )
+
+    metric_rows = _build_screener_artifact_metric_rows(summary)
+    for offset in range(0, len(metric_rows), 4):
+        chunk = metric_rows[offset : offset + 4]
+        cols = st.columns(len(chunk))
+        for col, (label, value) in zip(cols, chunk, strict=False):
+            col.metric(label, value)
+
+    best_compromise = summary.get("best_compromise")
+    if isinstance(best_compromise, dict) and best_compromise.get("scenario_name"):
+        st.success(
+            "Meilleur compromis : `{}` · overall={} · robustesse={} · survie={} · forward={}".format(
+                best_compromise.get("scenario_name"),
+                _coerce_metric_text(best_compromise.get("overall_score")),
+                _coerce_metric_text(best_compromise.get("robustness_score")),
+                _coerce_metric_text(best_compromise.get("survival_score")),
+                _coerce_metric_text(best_compromise.get("forward_quality_score")),
+            )
+        )
+
+    best_cross_regime = summary.get("best_cross_regime")
+    if isinstance(best_cross_regime, dict) and best_cross_regime.get("scenario_name"):
+        st.info(
+            "Leader cross-régimes : `{}` · score={} · rang={}".format(
+                best_cross_regime.get("scenario_name"),
+                _coerce_metric_text(best_cross_regime.get("overall_score")),
+                _coerce_metric_text(best_cross_regime.get("rank")),
+            )
+        )
+
+    objective_rows = _build_screener_artifact_objective_rows(summary)
+    if not objective_rows.empty:
+        st.dataframe(objective_rows, use_container_width=True, hide_index=True)
+
+    file_rows = _build_screener_artifact_file_rows(summary)
+    if not file_rows.empty:
+        with st.expander("📁 Inventaire des fichiers screener du run", expanded=False):
+            st.dataframe(file_rows, use_container_width=True, hide_index=True)
+
+    errors = summary.get("errors")
+    if isinstance(errors, list) and errors:
+        with st.expander("ℹ️ Détails de lecture du snapshot", expanded=False):
+            for error in errors:
+                st.caption(f"- {error}")
+
+    return True
+
+
 @st.fragment(run_every="2s")
 def _render_runtime_center() -> None:
     active_runs, all_runs = _merge_runs()
@@ -935,6 +1077,8 @@ def _render_runtime_center() -> None:
         has_live_artifacts = _render_live_artifacts(selected_run)
         if status == "completed" and not (has_report or has_live_artifacts):
             _render_latest_artifacts()
+    else:
+        _render_screener_artifact_summary(selected_run)
 
     history_df = pd.DataFrame(
         [

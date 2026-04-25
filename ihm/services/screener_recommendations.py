@@ -17,10 +17,121 @@ OBJECTIVE_DISPLAY_ORDER = (
     "bear_defensive",
     "executable_compromise",
 )
+SCREENER_ARTIFACT_FILE_SPECS = (
+    ("metadata", "metadata.json", "json"),
+    ("summary_metrics", "summary_metrics.csv", "csv"),
+    ("daily_metrics", "daily_metrics.csv", "csv"),
+    ("scenarios", "scenarios.csv", "csv"),
+    ("market_regimes", "market_regimes.csv", "csv"),
+    ("summary_metrics_by_regime", "summary_metrics_by_regime.csv", "csv"),
+    ("scenario_recommendations", "scenario_recommendations.csv", "csv"),
+    ("recommendation_summary", "recommendation_summary.json", "json"),
+    ("scenario_recommendations_by_regime", "scenario_recommendations_by_regime.csv", "csv"),
+    ("cross_regime_recommendations", "cross_regime_recommendations.csv", "csv"),
+    ("cross_regime_recommendation_summary", "cross_regime_recommendation_summary.json", "json"),
+    ("scenario_recommendations_by_objective", "scenario_recommendations_by_objective.csv", "csv"),
+    ("recommendation_summary_by_objective", "recommendation_summary_by_objective.json", "json"),
+)
 
 
 def get_screener_artifacts_dir(artifacts_dir: Path | str | None = None) -> Path:
-    return Path(artifacts_dir) if artifacts_dir is not None else DEFAULT_SCREENER_ARTIFACTS_DIR
+    root = Path(artifacts_dir) if artifacts_dir is not None else DEFAULT_SCREENER_ARTIFACTS_DIR
+    if not root.is_absolute():
+        root = PROJECT_ROOT / root
+    return root
+
+
+def _count_data_rows(path: Path) -> int | None:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            line_count = sum(1 for _ in fh)
+    except Exception:
+        return None
+    if line_count <= 1:
+        return 0
+    return line_count - 1
+
+
+def _format_size_label(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} o"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} Ko"
+    return f"{size_bytes / (1024 * 1024):.2f} Mo"
+
+
+def _build_file_snapshot(root: Path, *, key: str, filename: str, kind: str) -> dict[str, Any]:
+    path = root / filename
+    exists = path.exists() and path.is_file()
+    size_bytes = int(path.stat().st_size) if exists else 0
+    row_count = _count_data_rows(path) if kind == "csv" and exists else None
+    return {
+        "key": key,
+        "label": filename,
+        "path": str(path),
+        "exists": exists,
+        "kind": kind,
+        "size_bytes": size_bytes,
+        "size_label": _format_size_label(size_bytes) if exists else "—",
+        "row_count": row_count,
+    }
+
+
+def _coerce_scalar(value: object) -> Any:
+    if pd.isna(value):
+        return None
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:  # pragma: no cover
+            return value
+    return value
+
+
+def _extract_recommended_scenario(payload: dict[str, Any]) -> dict[str, Any] | None:
+    candidate = payload.get("recommended_scenario") if isinstance(payload, dict) else None
+    if not isinstance(candidate, dict) or not candidate:
+        return None
+    return {
+        "scenario_name": candidate.get("scenario_name"),
+        "rank": candidate.get("rank") or candidate.get("cross_regime_rank"),
+        "overall_score": candidate.get("overall_score") or candidate.get("cross_regime_overall_score"),
+        "objective_score": candidate.get("objective_score"),
+        "robustness_score": candidate.get("robustness_score"),
+        "survival_score": candidate.get("survival_score"),
+        "forward_quality_score": candidate.get("forward_quality_score"),
+        "confidence_score": candidate.get("confidence_score"),
+        "reason": candidate.get("reason"),
+    }
+
+
+def _build_objective_leaders(report: dict[str, Any]) -> list[dict[str, Any]]:
+    objective_rows = report.get("objective_rows_df")
+    if not isinstance(objective_rows, pd.DataFrame) or objective_rows.empty:
+        return []
+
+    columns = [
+        "objective",
+        "objective_label",
+        "objective_scope",
+        "scenario_name",
+        "objective_score",
+        "overall_score",
+        "reason",
+    ]
+    available_columns = [column for column in columns if column in objective_rows.columns]
+    formatted = objective_rows.loc[:, available_columns].copy()
+    rows: list[dict[str, Any]] = []
+    for row in formatted.to_dict(orient="records"):
+        normalized = {key: _coerce_scalar(value) for key, value in row.items()}
+        for score_key in ("objective_score", "overall_score"):
+            score_value = normalized.get(score_key)
+            if isinstance(score_value, (int, float)):
+                normalized[score_key] = round(float(score_value), 4)
+        rows.append(normalized)
+    return rows
 
 
 def _read_json_file(path: Path) -> tuple[dict[str, Any], str | None]:
@@ -259,9 +370,71 @@ def load_screener_recommendation_report(artifacts_dir: Path | str | None = None)
     }
 
 
+def build_screener_artifact_summary(artifacts_dir: Path | str | None = None) -> dict[str, Any]:
+    root = get_screener_artifacts_dir(artifacts_dir)
+    report = load_screener_recommendation_report(root)
+    metadata = report.get("metadata") if isinstance(report.get("metadata"), dict) else {}
+    recommendation_summary, recommendation_summary_error = _read_json_file(root / "recommendation_summary.json")
+    cross_regime_summary, cross_regime_error = _read_json_file(root / "cross_regime_recommendation_summary.json")
+
+    files = [
+        _build_file_snapshot(root, key=key, filename=filename, kind=kind)
+        for key, filename, kind in SCREENER_ARTIFACT_FILE_SPECS
+    ]
+    file_map = {item["key"]: item for item in files}
+    existing_files = [item for item in files if bool(item.get("exists"))]
+    trading_dates = metadata.get("trading_dates") if isinstance(metadata.get("trading_dates"), list) else []
+    scenarios = metadata.get("scenarios") if isinstance(metadata.get("scenarios"), list) else []
+    market_regimes = metadata.get("market_regimes") if isinstance(metadata.get("market_regimes"), list) else []
+    objective_leaders = _build_objective_leaders(report)
+    errors = [str(error) for error in report.get("errors", []) if str(error).strip()]
+    if recommendation_summary_error:
+        errors.append(recommendation_summary_error)
+    if cross_regime_error:
+        errors.append(cross_regime_error)
+
+    return {
+        "artifacts_dir": str(root),
+        "available": bool(existing_files),
+        "diagnostic_available": bool(
+            file_map["metadata"]["exists"]
+            or file_map["summary_metrics"]["exists"]
+            or file_map["daily_metrics"]["exists"]
+        ),
+        "recommendation_available": bool(
+            file_map["scenario_recommendations"]["exists"]
+            or file_map["recommendation_summary"]["exists"]
+            or file_map["scenario_recommendations_by_objective"]["exists"]
+            or file_map["recommendation_summary_by_objective"]["exists"]
+        ),
+        "regime_analysis_available": bool(
+            file_map["summary_metrics_by_regime"]["exists"]
+            or file_map["scenario_recommendations_by_regime"]["exists"]
+            or file_map["cross_regime_recommendation_summary"]["exists"]
+        ),
+        "coverage_label": str(report.get("coverage_label") or "Période non renseignée"),
+        "updated_at_label": str(report.get("updated_at_label") or "inconnue"),
+        "baseline_name": metadata.get("baseline_name"),
+        "trading_days": len(trading_dates),
+        "scenario_count": len(scenarios),
+        "market_regimes": [str(value) for value in market_regimes if str(value).strip()],
+        "objective_recommendations": objective_leaders,
+        "objective_count": len(objective_leaders),
+        "best_compromise": _extract_recommended_scenario(recommendation_summary),
+        "best_cross_regime": _extract_recommended_scenario(cross_regime_summary),
+        "summary_rows": file_map["summary_metrics"].get("row_count"),
+        "daily_rows": file_map["daily_metrics"].get("row_count"),
+        "file_count": len(existing_files),
+        "files": files,
+        "errors": errors,
+    }
+
+
 __all__ = [
     "DEFAULT_SCREENER_ARTIFACTS_DIR",
     "OBJECTIVE_DISPLAY_ORDER",
+    "SCREENER_ARTIFACT_FILE_SPECS",
+    "build_screener_artifact_summary",
     "get_screener_artifacts_dir",
     "load_screener_recommendation_report",
 ]

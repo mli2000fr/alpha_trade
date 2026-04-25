@@ -1,8 +1,12 @@
 ﻿from __future__ import annotations
+
 import json
+from pathlib import Path
+
 import pandas as pd
-from ihm.services.screener_recommendations import load_screener_recommendation_report
-def test_load_screener_recommendation_report_reads_phase7_artifacts(tmp_path) -> None:
+
+from ihm.services.screener_recommendations import build_screener_artifact_summary, load_screener_recommendation_report
+def test_load_screener_recommendation_report_reads_phase7_artifacts(tmp_path: Path) -> None:
     (tmp_path / "metadata.json").write_text(
         json.dumps(
             {
@@ -81,7 +85,7 @@ def test_load_screener_recommendation_report_reads_phase7_artifacts(tmp_path) ->
     assert list(report["objective_rows_df"]["objective"]) == ["robust", "offensive"]
     assert report["objective_rows_df"].iloc[0]["scenario_name"] == "robusto"
     assert report["leaderboard_df"].iloc[1]["scenario_name"] == "rocket"
-def test_load_screener_recommendation_report_falls_back_to_csv_when_summary_missing(tmp_path) -> None:
+def test_load_screener_recommendation_report_falls_back_to_csv_when_summary_missing(tmp_path: Path) -> None:
     pd.DataFrame(
         [
             {
@@ -110,3 +114,68 @@ def test_load_screener_recommendation_report_falls_back_to_csv_when_summary_miss
     assert report["available"] is True
     assert set(report["objective_rows_df"]["scenario_name"]) == {"deployable", "steady"}
     assert any("recommendation_summary_by_objective.json" in error for error in report["errors"])
+
+
+def test_build_screener_artifact_summary_exposes_file_inventory_and_best_compromise(tmp_path: Path) -> None:
+    (tmp_path / "metadata.json").write_text(
+        json.dumps(
+            {
+                "baseline_name": "baseline",
+                "trading_dates": ["2026-04-01", "2026-04-02"],
+                "market_regimes": ["bull", "bear"],
+                "scenarios": [{"scenario_name": "baseline"}, {"scenario_name": "steady"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame([
+        {"scenario_name": "baseline", "days_evaluated": 2},
+        {"scenario_name": "steady", "days_evaluated": 2},
+    ]).to_csv(tmp_path / "summary_metrics.csv", index=False)
+    pd.DataFrame([
+        {"trade_date": "2026-04-01", "scenario_name": "baseline"},
+        {"trade_date": "2026-04-02", "scenario_name": "steady"},
+    ]).to_csv(tmp_path / "daily_metrics.csv", index=False)
+    pd.DataFrame([
+        {
+            "objective": "robust",
+            "objective_label": "robuste",
+            "objective_scope": "cross_regime",
+            "rank": 1,
+            "scenario_name": "steady",
+            "objective_score": 0.82,
+            "overall_score": 0.78,
+            "objective_reason": "Stable sur tous les régimes.",
+        }
+    ]).to_csv(tmp_path / "scenario_recommendations_by_objective.csv", index=False)
+    (tmp_path / "recommendation_summary.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "recommended_scenario": {
+                    "scenario_name": "steady",
+                    "rank": 1,
+                    "overall_score": 0.78,
+                    "robustness_score": 0.8,
+                    "survival_score": 0.76,
+                    "forward_quality_score": 0.74,
+                    "confidence_score": 0.91,
+                    "reason": "Compromis global.",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = build_screener_artifact_summary(tmp_path)
+
+    assert summary["available"] is True
+    assert summary["trading_days"] == 2
+    assert summary["scenario_count"] == 2
+    assert summary["objective_count"] == 1
+    assert summary["best_compromise"]["scenario_name"] == "steady"
+    assert any(file["label"] == "summary_metrics.csv" and file["row_count"] == 2 for file in summary["files"])
+
+
