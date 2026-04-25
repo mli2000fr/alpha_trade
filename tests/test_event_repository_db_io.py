@@ -92,3 +92,39 @@ def test_upsert_normalizes_pandas_nat_to_none(monkeypatch) -> None:
     inserted_record = statement[1][0]
     assert inserted_record["latest_event_timestamp_ny"] is None
 
+
+def test_upsert_macro_event_audit_uses_macro_event_type_in_unique_key(monkeypatch) -> None:
+    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    captured: dict[str, object] = {}
+
+    def _fake_upsert(table_name, records, key_columns):
+        captured["table_name"] = table_name
+        captured["records"] = records
+        captured["key_columns"] = key_columns
+        return len(records)
+
+    monkeypatch.setattr(repository, "_upsert", _fake_upsert)
+
+    rowcount = EventSentimentRepository.upsert_macro_event_audit(
+        repository,
+        [
+            {
+                "article_id": "alpaca:1",
+                "trade_date": date(2026, 4, 16),
+                "sector": "Technology",
+                "macro_event_type": "monetary_policy",
+                "impact_direction": "positive",
+                "impact_score": 0.4,
+                "macro_event_intensity": 0.4,
+                "rule_version": "macro_rules_v1",
+                "rule_hits": {"keyword_hits": ["fed"]},
+                "explanation_text": "synthetic test event",
+            }
+        ],
+    )
+
+    assert rowcount == 1
+    assert captured["table_name"] == "macro_event_audit"
+    assert captured["key_columns"] == {"article_id", "sector", "macro_event_type"}
+
+

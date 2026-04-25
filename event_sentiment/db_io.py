@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
@@ -152,7 +152,11 @@ class EventSentimentRepository:
             payload = dict(row)
             payload["rule_hits"] = json.dumps(payload["rule_hits"], ensure_ascii=False)
             serializable.append(payload)
-        return self._upsert("macro_event_audit", serializable, key_columns={"article_id", "sector"})
+        return self._upsert(
+            "macro_event_audit",
+            serializable,
+            key_columns={"article_id", "sector", "macro_event_type"},
+        )
 
     def upsert_ticker_daily_features(self, records: list[dict[str, Any]]) -> int:
         return self._upsert("ticker_daily_sentiment_features", records, key_columns={"symbol", "trade_date"})
@@ -180,65 +184,128 @@ class EventSentimentRepository:
             FROM news_raw nr
             LEFT JOIN news_sentiment ns ON ns.article_id = nr.article_id
             WHERE ns.article_id IS NULL
-            ORDER BY nr.published_at_utc ASC
+            ORDER BY nr.effective_trade_date ASC, nr.published_at_utc ASC, nr.article_id ASC
             LIMIT :limit_rows
             """
         )
-        return pd.read_sql_query(query, self.engine, params={"limit_rows": limit}).to_dict(orient="records")
+        frame = pd.read_sql_query(query, self.engine, params={"limit_rows": limit})
+        return [dict(row) for row in frame.to_dict(orient="records")]
 
-    def load_feature_frames(self, start_date, end_date) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        ticker_query = text(
-            """
-            SELECT
-                nr.article_id,
-                nr.effective_trade_date,
-                nr.event_timestamp_ny,
-                nr.market_session_tag,
-                nr.source,
-                nr.is_major_event,
-                ntm.symbol,
-                COALESCE(ntm.sector, 'UNKNOWN') AS sector,
-                ns.sentiment_label,
-                ns.positive_score,
-                ns.neutral_score,
-                ns.negative_score,
-                ns.sentiment_confidence,
-                ns.sentiment_net_score
-            FROM news_raw nr
-            JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
-            JOIN news_sentiment ns ON ns.article_id = nr.article_id
-            WHERE nr.effective_trade_date BETWEEN :start_date AND :end_date
-            """
-        )
-        sector_query = text(
-            """
-            SELECT
-                nr.article_id,
-                nr.effective_trade_date,
-                nr.event_timestamp_ny,
-                nr.market_session_tag,
-                nr.source,
-                nr.is_major_event,
-                COALESCE(ntm.sector, 'UNKNOWN') AS sector,
-                ns.sentiment_label,
-                ns.sentiment_confidence,
-                ns.sentiment_net_score
-            FROM news_raw nr
-            JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
-            JOIN news_sentiment ns ON ns.article_id = nr.article_id
-            WHERE nr.effective_trade_date BETWEEN :start_date AND :end_date
-            """
-        )
-        macro_query = text(
-            """
-            SELECT article_id, trade_date, sector, macro_event_type, impact_direction, impact_score, macro_event_intensity
-            FROM macro_event_audit
-            WHERE trade_date BETWEEN :start_date AND :end_date
-            """
-        )
-        ticker_df = pd.read_sql_query(ticker_query, self.engine, params={"start_date": start_date, "end_date": end_date})
-        sector_df = pd.read_sql_query(sector_query, self.engine, params={"start_date": start_date, "end_date": end_date})
-        macro_df = pd.read_sql_query(macro_query, self.engine, params={"start_date": start_date, "end_date": end_date})
+    def load_feature_frames(
+        self,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        trade_dates: list[date] | None = None,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        normalized_trade_dates = sorted({value for value in (trade_dates or []) if value is not None})
+        if normalized_trade_dates:
+            ticker_query = text(
+                """
+                SELECT
+                    nr.article_id,
+                    nr.effective_trade_date,
+                    nr.event_timestamp_ny,
+                    nr.market_session_tag,
+                    nr.source,
+                    nr.is_major_event,
+                    ntm.symbol,
+                    COALESCE(ntm.sector, 'UNKNOWN') AS sector,
+                    ns.sentiment_label,
+                    ns.positive_score,
+                    ns.neutral_score,
+                    ns.negative_score,
+                    ns.sentiment_confidence,
+                    ns.sentiment_net_score
+                FROM news_raw nr
+                JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
+                JOIN news_sentiment ns ON ns.article_id = nr.article_id
+                WHERE nr.effective_trade_date IN :trade_dates
+                """
+            ).bindparams(bindparam("trade_dates", expanding=True))
+            sector_query = text(
+                """
+                SELECT
+                    nr.article_id,
+                    nr.effective_trade_date,
+                    nr.event_timestamp_ny,
+                    nr.market_session_tag,
+                    nr.source,
+                    nr.is_major_event,
+                    COALESCE(ntm.sector, 'UNKNOWN') AS sector,
+                    ns.sentiment_label,
+                    ns.sentiment_confidence,
+                    ns.sentiment_net_score
+                FROM news_raw nr
+                JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
+                JOIN news_sentiment ns ON ns.article_id = nr.article_id
+                WHERE nr.effective_trade_date IN :trade_dates
+                """
+            ).bindparams(bindparam("trade_dates", expanding=True))
+            macro_query = text(
+                """
+                SELECT article_id, trade_date, sector, macro_event_type, impact_direction, impact_score, macro_event_intensity
+                FROM macro_event_audit
+                WHERE trade_date IN :trade_dates
+                """
+            ).bindparams(bindparam("trade_dates", expanding=True))
+            params: dict[str, Any] = {"trade_dates": normalized_trade_dates}
+        else:
+            if start_date is None or end_date is None:
+                raise ValueError("load_feature_frames requiert start_date/end_date ou trade_dates.")
+            ticker_query = text(
+                """
+                SELECT
+                    nr.article_id,
+                    nr.effective_trade_date,
+                    nr.event_timestamp_ny,
+                    nr.market_session_tag,
+                    nr.source,
+                    nr.is_major_event,
+                    ntm.symbol,
+                    COALESCE(ntm.sector, 'UNKNOWN') AS sector,
+                    ns.sentiment_label,
+                    ns.positive_score,
+                    ns.neutral_score,
+                    ns.negative_score,
+                    ns.sentiment_confidence,
+                    ns.sentiment_net_score
+                FROM news_raw nr
+                JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
+                JOIN news_sentiment ns ON ns.article_id = nr.article_id
+                WHERE nr.effective_trade_date BETWEEN :start_date AND :end_date
+                """
+            )
+            sector_query = text(
+                """
+                SELECT
+                    nr.article_id,
+                    nr.effective_trade_date,
+                    nr.event_timestamp_ny,
+                    nr.market_session_tag,
+                    nr.source,
+                    nr.is_major_event,
+                    COALESCE(ntm.sector, 'UNKNOWN') AS sector,
+                    ns.sentiment_label,
+                    ns.sentiment_confidence,
+                    ns.sentiment_net_score
+                FROM news_raw nr
+                JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
+                JOIN news_sentiment ns ON ns.article_id = nr.article_id
+                WHERE nr.effective_trade_date BETWEEN :start_date AND :end_date
+                """
+            )
+            macro_query = text(
+                """
+                SELECT article_id, trade_date, sector, macro_event_type, impact_direction, impact_score, macro_event_intensity
+                FROM macro_event_audit
+                WHERE trade_date BETWEEN :start_date AND :end_date
+                """
+            )
+            params = {"start_date": start_date, "end_date": end_date}
+
+        ticker_df = pd.read_sql_query(ticker_query, self.engine, params=params)
+        sector_df = pd.read_sql_query(sector_query, self.engine, params=params)
+        macro_df = pd.read_sql_query(macro_query, self.engine, params=params)
         return ticker_df, sector_df, macro_df
 
 

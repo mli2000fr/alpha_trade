@@ -2,6 +2,8 @@
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
+import pandas as pd
+
 from event_sentiment.aggregation import build_sector_daily_features, build_ticker_daily_features
 from event_sentiment.ingestion import NewsIngestionService
 from event_sentiment.macro_rules import MacroRuleEngine
@@ -213,6 +215,15 @@ class EventSentimentPipeline:
         sentiment_records = self.finbert.score_articles(articles)
         stats["sentiment_inferred"] = self.repository.upsert_news_sentiment([asdict(record) for record in sentiment_records])
         sentiment_map = {record.article_id: record for record in sentiment_records}
+        impacted_trade_dates = sorted(
+            {
+                article.effective_trade_date
+                for article in articles
+                if article.article_id in sentiment_map
+            }
+        )
+        stats["pending_articles_loaded"] = len(articles)
+        stats["impacted_trade_dates"] = [trade_date.isoformat() for trade_date in impacted_trade_dates]
         macro_records = []
         for article in articles:
             sentiment = sentiment_map.get(article.article_id)
@@ -221,10 +232,12 @@ class EventSentimentPipeline:
             macro_records.extend(self.macro_engine.classify(article, sentiment))
 
         stats["macro_rows"] = self.repository.upsert_macro_event_audit([asdict(record) for record in macro_records])
-        ticker_df, sector_df, macro_df = self.repository.load_feature_frames(
-            start_date=aggregation_start.date(),
-            end_date=end_utc.date() + timedelta(days=5),
-        )
+        if impacted_trade_dates:
+            ticker_df, sector_df, macro_df = self.repository.load_feature_frames(trade_dates=impacted_trade_dates)
+        else:
+            ticker_df = pd.DataFrame()
+            sector_df = pd.DataFrame()
+            macro_df = pd.DataFrame()
 
         ticker_features = build_ticker_daily_features(ticker_df, feature_version=self.config.feature_version)
         sector_features = build_sector_daily_features(sector_df, macro_df, feature_version=self.config.feature_version)

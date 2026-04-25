@@ -14,9 +14,10 @@ class _InMemoryRepository:
         self.news_raw: dict[str, dict] = {}
         self.news_ticker_map: dict[tuple[str, str], dict] = {}
         self.news_sentiment: dict[str, dict] = {}
-        self.macro_event_audit: dict[tuple[str, str], dict] = {}
+        self.macro_event_audit: dict[tuple[str, str, str], dict] = {}
         self.ticker_daily_features: dict[tuple[str, object], dict] = {}
         self.sector_daily_features: dict[tuple[str, object], dict] = {}
+        self.feature_frame_requests: list[dict[str, object]] = []
 
     def get_checkpoint(self, source_name: str, symbol: str):
         return self.checkpoints.get(symbol)
@@ -51,18 +52,26 @@ class _InMemoryRepository:
 
     def upsert_macro_event_audit(self, records):
         for record in records:
-            self.macro_event_audit[(record["article_id"], record["sector"])] = dict(record)
+            self.macro_event_audit[(record["article_id"], record["sector"], record["macro_event_type"])] = dict(record)
         return len(records)
 
-    def load_feature_frames(self, start_date, end_date):
+    def load_feature_frames(self, start_date=None, end_date=None, trade_dates=None):
         ticker_rows: list[dict] = []
         sector_rows: list[dict] = []
+        self.feature_frame_requests.append(
+            {"start_date": start_date, "end_date": end_date, "trade_dates": list(trade_dates or [])}
+        )
+
+        selected_trade_dates = set(trade_dates or [])
 
         for article_id, raw in self.news_raw.items():
             sentiment = self.news_sentiment.get(article_id)
             if sentiment is None:
                 continue
-            if not (start_date <= raw["effective_trade_date"] <= end_date):
+            if selected_trade_dates:
+                if raw["effective_trade_date"] not in selected_trade_dates:
+                    continue
+            elif start_date is None or end_date is None or not (start_date <= raw["effective_trade_date"] <= end_date):
                 continue
 
             for (mapped_article_id, symbol), mapping in self.news_ticker_map.items():
@@ -89,7 +98,11 @@ class _InMemoryRepository:
 
         macro_rows = [
             record for record in self.macro_event_audit.values()
-            if start_date <= record["trade_date"] <= end_date
+            if (
+                record["trade_date"] in selected_trade_dates
+                if selected_trade_dates
+                else start_date is not None and end_date is not None and start_date <= record["trade_date"] <= end_date
+            )
         ]
         return pd.DataFrame(ticker_rows), pd.DataFrame(sector_rows), pd.DataFrame(macro_rows)
 
@@ -230,9 +243,73 @@ def test_pipeline_rerun_is_idempotent_end_to_end(monkeypatch) -> None:
     assert len(repository.macro_event_audit) == 1
     assert len(repository.ticker_daily_features) == 1
     assert len(repository.sector_daily_features) == 1
+    assert first_stats["impacted_trade_dates"] == ["2026-01-02"]
+    assert second_stats["impacted_trade_dates"] == []
+    assert len(repository.feature_frame_requests) == 1
+    assert repository.feature_frame_requests[0]["trade_dates"] == [date(2026, 1, 2)]
     assert fake_ingestion.calls == 2
     assert len(fake_finbert.calls) == 2
     assert len(fake_finbert.calls[0]) == 1
     assert len(fake_finbert.calls[1]) == 0
+
+
+def test_pipeline_preserves_multiple_macro_event_types_for_same_article_and_sector(monkeypatch) -> None:
+    repository = _InMemoryRepository()
+    config = EventSentimentConfig()
+    fake_ingestion = _InMemoryIngestionService(repository, config)
+    fake_finbert = _InMemoryFinBERTSentimentService()
+
+    class _MultiMacroRuleEngine:
+        def classify(self, article, sentiment):
+            return [
+                MacroImpactRecord(
+                    article_id=article.article_id,
+                    trade_date=article.effective_trade_date,
+                    sector="Technology",
+                    macro_event_type="monetary_policy",
+                    impact_direction="positive",
+                    impact_score=0.4,
+                    macro_event_intensity=0.4,
+                    rule_version="macro_rules_v1",
+                    rule_hits={"keyword_hits": ["fed"]},
+                    explanation_text="synthetic monetary policy event",
+                ),
+                MacroImpactRecord(
+                    article_id=article.article_id,
+                    trade_date=article.effective_trade_date,
+                    sector="Technology",
+                    macro_event_type="inflation_employment",
+                    impact_direction="negative",
+                    impact_score=-0.3,
+                    macro_event_intensity=0.3,
+                    rule_version="macro_rules_v1",
+                    rule_hits={"keyword_hits": ["cpi"]},
+                    explanation_text="synthetic inflation event",
+                ),
+            ]
+
+    monkeypatch.setattr("event_sentiment.pipeline.NewsIngestionService", lambda repository, config: fake_ingestion)
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", lambda *args, **kwargs: fake_finbert)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", lambda *args, **kwargs: _MultiMacroRuleEngine())
+
+    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    stats = pipeline.run(
+        start_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        end_utc=datetime(2026, 1, 3, tzinfo=UTC),
+        symbols=None,
+    )
+
+    assert stats["macro_rows"] == 2
+    assert len(repository.macro_event_audit) == 2
+    assert (
+        "alpaca:article-1",
+        "Technology",
+        "monetary_policy",
+    ) in repository.macro_event_audit
+    assert (
+        "alpaca:article-1",
+        "Technology",
+        "inflation_employment",
+    ) in repository.macro_event_audit
 
 

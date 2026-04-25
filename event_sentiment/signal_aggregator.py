@@ -84,9 +84,13 @@ def _build_cli_run_summary(
         if "signal_active" in enriched.columns:
             signal_active_symbols = int(enriched["signal_active"].fillna(False).astype(bool).sum())
         if "total_news" in enriched.columns:
-            total_news = int(pd.to_numeric(enriched["total_news"], errors="coerce").fillna(0).sum())
+            total_news_series = pd.Series(pd.to_numeric(enriched["total_news"], errors="coerce"), index=enriched.index)
+            total_news = int(total_news_series.fillna(0).sum())
         if "final_score_sentiment" in enriched.columns:
-            score_series = pd.to_numeric(enriched["final_score_sentiment"], errors="coerce").dropna()
+            score_series = pd.Series(
+                pd.to_numeric(enriched["final_score_sentiment"], errors="coerce"),
+                index=enriched.index,
+            ).dropna()
             if not score_series.empty:
                 avg_final_score_sentiment = round(float(score_series.mean()), 4)
                 max_final_score_sentiment = round(float(score_series.max()), 4)
@@ -456,6 +460,25 @@ class SentimentSignalAggregator:
 
         return pd.Series(normalized, index=series.index, dtype=float)
 
+    @staticmethod
+    def _normalize_identifier(value: object) -> str | None:
+        if value is None:
+            return None
+        try:
+            if bool(pd.isna(value)):
+                return None
+        except TypeError:
+            pass
+        normalized = str(value).strip()
+        return normalized or None
+
+    @staticmethod
+    def _normalize_signed_signal(series: pd.Series) -> pd.Series:
+        numeric = pd.Series(pd.to_numeric(series, errors="coerce"), index=series.index, dtype=float)
+        numeric = numeric.where(np.isfinite(numeric), np.nan)
+        clipped = numeric.clip(-1.0, 1.0).fillna(0.0)
+        return ((clipped + 1.0) / 2.0).astype(float)
+
     # ------------------------------------------------------------------
     # Point d'entrée principal
     # ------------------------------------------------------------------
@@ -480,11 +503,32 @@ class SentimentSignalAggregator:
         if scores_df.empty:
             return scores_df.copy()
 
+        required = {"symbol", "final_score"}
+        missing = required - set(scores_df.columns)
+        if missing:
+            raise ValueError(f"merge : colonnes manquantes dans scores_df : {missing}.")
+
         ref_date = trade_date or date.today()
         result = scores_df.copy()
 
-        symbols = result["symbol"].dropna().astype(str).tolist()
-        sectors = result["sector"].dropna().unique().tolist() if "sector" in result.columns else []
+        result["symbol"] = [self._normalize_identifier(value) for value in result["symbol"].tolist()]
+        result = result[result["symbol"].notna()].copy()
+        if result.empty:
+            return result
+
+        if "sector" in result.columns:
+            result["sector"] = [self._normalize_identifier(value) for value in result["sector"].tolist()]
+
+        quant_scores = pd.Series(pd.to_numeric(result["final_score"], errors="coerce"), index=result.index, dtype=float)
+        quant_scores = quant_scores.where(np.isfinite(quant_scores), np.nan).fillna(0.0).clip(0.0, 1.0)
+        result["final_score"] = quant_scores
+
+        symbols = sorted(set(result["symbol"].astype(str).tolist()))
+        sectors = (
+            sorted({sector for sector in result["sector"].dropna().astype(str).tolist() if sector})
+            if "sector" in result.columns
+            else []
+        )
 
         # --- Chargement ---
         ticker_df = self._load_ticker_sentiment(symbols, ref_date)
@@ -514,24 +558,24 @@ class SentimentSignalAggregator:
         # --- Jointure scores quantitatifs ← ticker sentiment ---
         if not ticker_agg.empty and "symbol" in ticker_agg.columns:
             ticker_map = {
-                str(row.get("symbol")): row
+                self._normalize_identifier(row.get("symbol")): row
                 for row in ticker_agg.to_dict(orient="records")
-                if row.get("symbol") is not None
+                if self._normalize_identifier(row.get("symbol")) is not None
             }
             result["sentiment_net_agg"] = [
-                ticker_map.get(str(symbol), {}).get("sentiment_net_agg")
+                ticker_map.get(symbol, {}).get("sentiment_net_agg")
                 for symbol in result["symbol"].tolist()
             ]
             result["major_event_flag_agg"] = [
-                ticker_map.get(str(symbol), {}).get("major_event_flag_agg")
+                ticker_map.get(symbol, {}).get("major_event_flag_agg")
                 for symbol in result["symbol"].tolist()
             ]
             result["total_news"] = [
-                ticker_map.get(str(symbol), {}).get("total_news")
+                ticker_map.get(symbol, {}).get("total_news")
                 for symbol in result["symbol"].tolist()
             ]
             result["signal_active"] = [
-                ticker_map.get(str(symbol), {}).get("signal_active")
+                ticker_map.get(symbol, {}).get("signal_active")
                 for symbol in result["symbol"].tolist()
             ]
         else:
@@ -543,16 +587,16 @@ class SentimentSignalAggregator:
         # --- Jointure scores quantitatifs ← impact macro sectoriel ---
         if not sector_agg.empty and "sector" in result.columns:
             sector_map = {
-                str(row.get("sector")): row
+                self._normalize_identifier(row.get("sector")): row
                 for row in sector_agg.to_dict(orient="records")
-                if row.get("sector") is not None
+                if self._normalize_identifier(row.get("sector")) is not None
             }
             result["sector_impact_agg"] = [
-                sector_map.get(str(sector), {}).get("sector_impact_agg")
+                sector_map.get(sector, {}).get("sector_impact_agg")
                 for sector in result["sector"].tolist()
             ]
             result["macro_event_flag_agg"] = [
-                sector_map.get(str(sector), {}).get("macro_event_flag_agg")
+                sector_map.get(sector, {}).get("macro_event_flag_agg")
                 for sector in result["sector"].tolist()
             ]
         else:
@@ -566,7 +610,8 @@ class SentimentSignalAggregator:
                     normalized.append(default)
                 else:
                     numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
-                    normalized.append(default if pd.isna(numeric_value) else float(numeric_value))
+                    as_float = default if pd.isna(numeric_value) else float(numeric_value)
+                    normalized.append(default if not np.isfinite(as_float) else as_float)
             return normalized
 
         def _coalesce_bool(values: list[object], default: bool = False) -> list[bool]:
@@ -578,14 +623,30 @@ class SentimentSignalAggregator:
                     normalized.append(bool(value))
             return normalized
 
+        def _coalesce_int(values: list[object], default: int = 0) -> list[int]:
+            normalized: list[int] = []
+            for value in values:
+                if value is None or bool(pd.isna(value)):
+                    normalized.append(default)
+                else:
+                    numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
+                    if pd.isna(numeric_value) or not np.isfinite(float(numeric_value)):
+                        normalized.append(default)
+                    else:
+                        normalized.append(int(numeric_value))
+            return normalized
+
         result["sentiment_net_agg"] = _coalesce_float(result["sentiment_net_agg"].tolist())
         result["sector_impact_agg"] = _coalesce_float(result["sector_impact_agg"].tolist())
+        result["major_event_flag_agg"] = _coalesce_int(result["major_event_flag_agg"].tolist())
+        result["macro_event_flag_agg"] = _coalesce_int(result["macro_event_flag_agg"].tolist())
+        result["total_news"] = _coalesce_int(result["total_news"].tolist())
         result["signal_active"] = _coalesce_bool(result["signal_active"].tolist())
 
         # --- Normalisation des signaux sentiment en [0, 1] ---
-        # sentiment_net_agg ∈ [-1, 1] → normalisé → 0.5 = neutre
-        result["sentiment_signal_norm"] = self._normalize_to_01(result["sentiment_net_agg"])
-        result["macro_signal_norm"] = self._normalize_to_01(result["sector_impact_agg"])
+        # Mapping stable et déterministe : [-1, 1] -> [0, 1] ; 0.5 = neutre.
+        result["sentiment_signal_norm"] = self._normalize_signed_signal(result["sentiment_net_agg"])
+        result["macro_signal_norm"] = self._normalize_signed_signal(result["sector_impact_agg"])
 
         # --- Composition du final_score_sentiment (score fusionné) ---
         # final_score reste intact (score quantitatif AlphaScanner).
@@ -597,7 +658,7 @@ class SentimentSignalAggregator:
             self.config.sentiment_weight * 0.5,  # neutre si pas assez de news
         )
         macro_component = self.config.macro_sector_weight * result["macro_signal_norm"]
-        quant_component = self.config.quant_weight * result["final_score"].fillna(0.0)
+        quant_component = self.config.quant_weight * result["final_score"]
 
         result["final_score_sentiment"] = (quant_component + sent_component + macro_component).clip(0.0, 1.0)
 
@@ -655,6 +716,13 @@ class SentimentSignalAggregator:
         if enriched_df.empty:
             return 0
 
+        working_df = enriched_df.copy()
+        working_df["symbol"] = [self._normalize_identifier(value) for value in working_df["symbol"].tolist()]
+        working_df = working_df[working_df["symbol"].notna()].copy()
+        if working_df.empty:
+            return 0
+        working_df = working_df.drop_duplicates(subset=["symbol"], keep="last")
+
         now = pd.Timestamp.utcnow().replace(tzinfo=None).to_pydatetime()
 
         def _is_missing(value: object) -> bool:
@@ -668,21 +736,55 @@ class SentimentSignalAggregator:
             "final_score_sentiment",
         )
         bool_cols = ("signal_active", "major_event_flag_agg", "macro_event_flag_agg")
+        float_defaults = {
+            "sentiment_net_agg": 0.0,
+            "sector_impact_agg": 0.0,
+            "sentiment_signal_norm": 0.5,
+            "macro_signal_norm": 0.5,
+            "final_score_sentiment": 0.0,
+        }
+        float_bounds = {
+            "sentiment_net_agg": (-1.0, 1.0),
+            "sector_impact_agg": (-1.0, 1.0),
+            "sentiment_signal_norm": (0.0, 1.0),
+            "macro_signal_norm": (0.0, 1.0),
+            "final_score_sentiment": (0.0, 1.0),
+        }
 
         clean_records: list[dict[str, object]] = []
-        for row in enriched_df.to_dict(orient="records"):
+        for row in working_df.to_dict(orient="records"):
             clean_row: dict[str, object] = {
                 "symbol": row["symbol"],
                 "last_updated_sentiment": now,
             }
             for col in float_cols:
                 value = row.get(col)
-                clean_row[col] = None if _is_missing(value) else float(value)
+                default_value = float_defaults[col]
+                if _is_missing(value):
+                    clean_row[col] = default_value
+                    continue
+                numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
+                if pd.isna(numeric_value):
+                    clean_row[col] = default_value
+                    continue
+                bounded_value = float(numeric_value)
+                if not np.isfinite(bounded_value):
+                    clean_row[col] = default_value
+                    continue
+                lower_bound, upper_bound = float_bounds[col]
+                clean_row[col] = min(max(bounded_value, lower_bound), upper_bound)
             for col in bool_cols:
                 value = row.get(col)
                 clean_row[col] = int(bool(value)) if not _is_missing(value) else 0
             total_news = row.get("total_news")
-            clean_row["total_news"] = 0 if _is_missing(total_news) else int(total_news)
+            if _is_missing(total_news):
+                clean_row["total_news"] = 0
+            else:
+                numeric_total_news = pd.to_numeric(cast(Any, total_news), errors="coerce")
+                if pd.isna(numeric_total_news) or not np.isfinite(float(numeric_total_news)):
+                    clean_row["total_news"] = 0
+                else:
+                    clean_row["total_news"] = max(0, int(numeric_total_news))
             clean_records.append(clean_row)
 
         update_set = ", ".join(
@@ -702,7 +804,7 @@ class SentimentSignalAggregator:
             conn.execute(stmt, clean_records)
 
         LOGGER.info(
-            "save_to_db | %d lignes upsertees dans stock_scores (colonnes sentiment).",
+            "save_to_db | %d lignes mises a jour dans stock_scores (colonnes sentiment).",
             len(clean_records),
         )
         return len(clean_records)

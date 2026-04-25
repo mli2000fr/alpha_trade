@@ -88,8 +88,8 @@ CREATE TABLE IF NOT EXISTS alpha_trade.macro_event_audit (
     explanation_text TEXT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (article_id, sector),
-    KEY idx_macro_event_trade_date_sector (trade_date, sector),
+    PRIMARY KEY (article_id, sector, macro_event_type),
+    KEY idx_macro_event_trade_date_sector (trade_date, sector, macro_event_type),
     KEY idx_macro_event_type_trade_date (macro_event_type, trade_date),
     CONSTRAINT fk_macro_event_article
         FOREIGN KEY (article_id) REFERENCES alpha_trade.news_raw(article_id)

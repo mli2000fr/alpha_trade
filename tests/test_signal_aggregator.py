@@ -171,7 +171,10 @@ def test_merge_handles_missing_signal_active_without_futurewarning(monkeypatch) 
     assert bool(by_symbol["AAPL"]["signal_active"]) is True
     assert bool(by_symbol["MSFT"]["signal_active"]) is False
     assert by_symbol["MSFT"]["sentiment_net_agg"] == 0.0
-    assert by_symbol["MSFT"]["final_score_sentiment"] == pytest.approx(0.575, rel=1e-6)
+    assert by_symbol["AAPL"]["sentiment_signal_norm"] == pytest.approx(0.8, rel=1e-6)
+    assert by_symbol["AAPL"]["macro_signal_norm"] == pytest.approx(0.6, rel=1e-6)
+    assert by_symbol["MSFT"]["macro_signal_norm"] == pytest.approx(0.6, rel=1e-6)
+    assert by_symbol["MSFT"]["final_score_sentiment"] == pytest.approx(0.585, rel=1e-6)
 
 
 def test_normalize_to_01_returns_neutral_value_for_constant_series() -> None:
@@ -180,6 +183,14 @@ def test_normalize_to_01_returns_neutral_value_for_constant_series() -> None:
     normalized = SentimentSignalAggregator._normalize_to_01(series)
 
     assert normalized.tolist() == [0.5, 0.5, 0.5]
+
+
+def test_normalize_signed_signal_maps_neutral_and_clips_extremes() -> None:
+    series = pd.Series([-2.0, -1.0, 0.0, 0.25, 1.0, 4.0, None])
+
+    normalized = SentimentSignalAggregator._normalize_signed_signal(series)
+
+    assert normalized.tolist() == [0.0, 0.0, 0.5, 0.625, 1.0, 1.0, 0.5]
 
 
 def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
@@ -260,5 +271,58 @@ def test_save_to_db_rejects_missing_required_columns() -> None:
 
     with pytest.raises(ValueError, match="colonnes manquantes"):
         aggregator.save_to_db(pd.DataFrame([{"symbol": "AAPL"}]))
+
+
+def test_merge_sanitizes_symbols_scores_and_missing_sectors(monkeypatch) -> None:
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(),
+    )
+
+    scores_df = pd.DataFrame(
+        [
+            {"symbol": " AAPL ", "sector": " TECH ", "final_score": 1.4},
+            {"symbol": None, "sector": "TECH", "final_score": 0.8},
+            {"symbol": "MSFT", "sector": None, "final_score": "bad"},
+        ]
+    )
+
+    ticker_df = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "trade_date": date(2026, 4, 19),
+                "news_count_1d": 2,
+                "sentiment_net_mean_1d": 1.8,
+                "sentiment_confidence_mean_1d": 0.9,
+                "major_event_flag": 1,
+            },
+        ]
+    )
+    sector_df = pd.DataFrame(
+        [
+            {
+                "sector": "TECH",
+                "trade_date": date(2026, 4, 19),
+                "sector_impact_score": -3.0,
+                "macro_event_intensity": 1.0,
+                "macro_event_flag": 1,
+            },
+        ]
+    )
+
+    monkeypatch.setattr(aggregator, "_load_ticker_sentiment", lambda symbols, trade_date: ticker_df.copy())
+    monkeypatch.setattr(aggregator, "_load_sector_sentiment", lambda sectors, trade_date: sector_df.copy())
+
+    result = aggregator.merge(scores_df, trade_date=date(2026, 4, 19))
+
+    assert result["symbol"].tolist() == ["AAPL", "MSFT"]
+    by_symbol = {row["symbol"]: row for row in result.to_dict(orient="records")}
+    assert by_symbol["AAPL"]["final_score"] == 1.0
+    assert by_symbol["AAPL"]["sentiment_signal_norm"] == 1.0
+    assert by_symbol["AAPL"]["macro_signal_norm"] == 0.0
+    assert by_symbol["MSFT"]["final_score"] == 0.0
+    assert by_symbol["MSFT"]["sector_impact_agg"] == 0.0
+    assert by_symbol["MSFT"]["macro_signal_norm"] == 0.5
 
 
