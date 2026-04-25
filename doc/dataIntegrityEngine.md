@@ -129,6 +129,28 @@ Puis seulement ensuite :
 python -m selector.alpha_scanner
 ```
 
+### Correspondance avec l'IHM
+
+Depuis `ihm/pages/pipeline.py`, l'orchestration opérateur est volontairement séparée en deux blocs :
+
+- **steps auxiliaires Data Integrity hors workflow** :
+  - `B1. import_alpaca_assets`
+  - `B2. update_sector`
+- **workflow quotidien 1→14** :
+  - `1. import_alpaca_bar`
+  - `2. data_sanitizer_daily`
+  - `3. stock_screener`
+  - `4. sync_latest_quotes`
+  - `5. sync_earnings_calendar`
+  - `6. alpha_scanner`
+  - puis les étapes aval sentiment / ML / risk / execution / corporate actions.
+
+Autrement dit :
+
+- `import_alpaca_assets` et `update_sector` restent des opérations de **bootstrap / maintenance** côté IHM ;
+- `sync_latest_quotes` et `sync_earnings_calendar` font bien partie du **workflow quotidien** exposé à l'opérateur ;
+- la séquence CLI ci-dessus reste valable comme runbook manuel, mais elle ne doit pas être confondue avec l'ordre exact du workflow IHM 1→14.
+
 ---
 
 ## 5. Variables d’environnement et dépendances externes
@@ -449,6 +471,19 @@ python -m dataIntegrityEngine.import_alpaca_assets
 - rafraîchissement périodique de l’univers Alpaca ;
 - après reset complet de la base.
 
+### Résumé structuré
+
+Le script émet désormais un résumé structuré sur stdout avec le préfixe :
+- `::alpha_trade_run_summary::`
+
+Champs notables :
+- `run_id`
+- `started_at`
+- `finished_at`
+- `duration_seconds`
+- `assets_fetched`
+- `rows_upserted`
+
 ---
 
 ## 7.2 `import_alpaca_bar.py`
@@ -725,16 +760,26 @@ Pour chaque symbole :
 
 ### États fonctionnels du résumé
 
-Le script renvoie un dictionnaire :
+Le script renvoie un dictionnaire métier :
 - `total`
 - `updated`
 - `skipped`
 - `failed`
 
-### Important pour la reprise
+### Résumé structuré CLI
 
-Le script **ne publie pas** aujourd’hui de `run_summary` structuré standardisé comme `import_alpaca_bar.py` ou `data_sanitizer_daily.py`.
-Il loggue, mais n’alimente pas le mécanisme stdout structuré.
+L'entrée CLI publie aussi un `run_summary` structuré standardisé sur stdout avec :
+- `run_id`
+- `started_at`
+- `finished_at`
+- `duration_seconds`
+- `requested_limit`
+- `sleep_seconds`
+- `log_every`
+- `total`
+- `updated`
+- `skipped`
+- `failed`
 
 ### Commandes
 
@@ -781,10 +826,21 @@ Le script retourne :
 - `symbols`
 - `rows_upserted`
 
+### Résumé structuré CLI
+
+- préfixe stdout : `::alpha_trade_run_summary::`
+- `run_id`
+- `started_at`
+- `finished_at`
+- `duration_seconds`
+- `requested_limit`
+- `batch_size`
+- `symbols`
+- `rows_upserted`
+
 ### Limites actuelles
 
-- pas de `run_summary` stdout structuré ;
-- pas d’historique de run dédié ;
+- pas d’historique SQL dédié ;
 - pas de paramètre `account_id` exposé en CLI ;
 - snapshot par date, pas historisation intraday fine.
 
@@ -825,10 +881,23 @@ Le script retourne :
 - `symbols`
 - `rows_upserted`
 
+### Résumé structuré CLI
+
+- préfixe stdout : `::alpha_trade_run_summary::`
+- `run_id`
+- `started_at`
+- `finished_at`
+- `duration_seconds`
+- `from_date`
+- `to_date`
+- `requested_limit`
+- `sleep_seconds`
+- `symbols`
+- `rows_upserted`
+
 ### Limites actuelles
 
-- pas de `run_summary` stdout standardisé ;
-- pas d’audit dédié ;
+- pas d’audit SQL dédié ;
 - dépend fortement du throttling Finnhub.
 
 ### Commandes
@@ -1004,7 +1073,13 @@ with engine.connect() as conn:
 ### Batterie ciblée recommandée
 
 ```powershell
-python -m pytest tests/test_import_alpaca_assets.py tests/test_import_alpaca_bar.py tests/test_data_sanitizer_daily.py tests/test_update_sector.py -q -o addopts=""
+python -m pytest tests/test_import_alpaca_assets.py tests/test_import_alpaca_bar.py tests/test_data_sanitizer_daily.py tests/test_update_sector.py tests/test_data_integrity_run_summaries.py -q -o addopts=""
+```
+
+### Batterie de cohérence IHM / observabilité recommandée
+
+```powershell
+python -m pytest tests/test_ihm_pipeline_runner.py tests/test_pages_overview.py tests/test_pages_screening.py tests/test_ihm_process_registry.py -q -o addopts=""
 ```
 
 ### Ce que ces tests couvrent bien
@@ -1015,14 +1090,16 @@ python -m pytest tests/test_import_alpaca_assets.py tests/test_import_alpaca_bar
 - auto-récupération SPY ;
 - forward-fill et garde-fous du sanitizeur ;
 - sync audit vers `stock_scores` ;
-- enrichissement fondamentaux Finnhub.
+- enrichissement fondamentaux Finnhub ;
+- émission des `run_summary` structurés sur les principales entrées CLI Data Integrity ;
+- exposition IHM des commandes/options backend pour `import_alpaca_assets`, `update_sector`, `sync_latest_quotes` et `sync_earnings_calendar`.
 
 ### Ce qu’ils couvrent moins
 
 - volumétrie réelle sur de grands univers ;
 - performance MySQL en prod ;
-- cohérence full-run de `sync_latest_quotes` et `sync_earnings_calendar` en production ;
-- observabilité transverse homogène de tous les scripts.
+- cohérence full-run provider en production sur très gros univers ;
+- persistance SQL uniforme des résumés de run sur tous les flux, au-delà de la capture stdout / IHM.
 
 ---
 
@@ -1031,9 +1108,9 @@ python -m pytest tests/test_import_alpaca_assets.py tests/test_import_alpaca_bar
 ## 12.1 Hétérogénéité des points d’entrée
 
 Tous les scripts n’ont pas le même niveau de maturité :
-- `import_alpaca_bar.py` et `data_sanitizer_daily.py` ont un vrai résumé structuré ;
-- `import_alpaca_assets.py` est très minimal ;
-- `update_sector.py`, `sync_latest_quotes.py`, `sync_earnings_calendar.py` renvoient des résumés Python mais n’émettent pas tous un `run_summary` stdout standardisé.
+- tous les principaux scripts CLI émettent désormais un `run_summary` stdout standardisé ;
+- le niveau de détail reste toutefois variable selon le flux (`import_alpaca_bar.py` et `data_sanitizer_daily.py` sont les plus riches) ;
+- `import_alpaca_assets.py`, `update_sector.py`, `sync_latest_quotes.py` et `sync_earnings_calendar.py` publient volontairement des résumés plus compacts, centrés sur le volume traité, les paramètres CLI saisis et la durée.
 
 ## 12.2 Multi-compte Alpaca peu exposé côté CLI dataIntegrityEngine
 
@@ -1081,7 +1158,7 @@ Ordre de prudence recommandé :
 
 ## 13.3 Améliorations probables à moyen terme
 
-- homogénéiser tous les scripts autour d’un `run_summary` structuré commun ;
+- enrichir et homogénéiser davantage le schéma des `run_summary` structurés entre scripts ;
 - exposer proprement le multi-compte Alpaca dans les CLI ;
 - ajouter une doc spécifique de dépannage “incident provider” ;
 - enrichir les audits de quotes / earnings si ces flux deviennent critiques ;

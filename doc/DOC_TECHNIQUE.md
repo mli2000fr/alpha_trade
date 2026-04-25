@@ -415,11 +415,11 @@ Exécuter les `.sql` de `database/sql/` dans MySQL (stock/ → news/ → ml/ →
 ### Pipeline complet
 
 ```powershell
-# Init (une fois)
+# Init (une fois) — correspond dans l'IHM aux steps auxiliaires Data Integrity hors workflow quotidien :
 python -m dataIntegrityEngine.import_alpaca_assets
 python -m dataIntegrityEngine.update_sector
 
-# Quotidien — dans cet ordre strict :
+# Quotidien — workflow IHM 1 → 14, dans cet ordre strict :
 python -m dataIntegrityEngine.import_alpaca_bar           # 1.  import bars
 python -m dataIntegrityEngine.data_sanitizer_daily        # 2.  sanitize bars
 python -m screener.stock_screener                         # 3.  screener
@@ -454,7 +454,16 @@ Notes ML GPU :
 python -m streamlit run ihm/app.py
 ```
 
-Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent désormais un sous-ensemble cohérent des options `modelFactory` :
+La page `ihm/pages/pipeline.py` expose désormais :
+
+- un **workflow quotidien complet 1 → 14** ;
+- une zone **Bootstrap / maintenance Data Integrity** hors workflow avec :
+  - `B1. Import univers Alpaca` → `python -m dataIntegrityEngine.import_alpaca_assets`
+  - `B2. Mise à jour fondamentaux` → `python -m dataIntegrityEngine.update_sector ...`
+- un **centre d'exécution & d'investigation** pour suivre les runs actifs, consulter/télécharger les logs et comparer deux runs ;
+- des **résumés métier structurés** extraits automatiquement quand un script écrit un payload préfixé par `::alpha_trade_run_summary::`.
+
+Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent aussi un sous-ensemble cohérent des options `modelFactory` :
 
 - **Accélérateur ML** (`auto | cpu | gpu`) ;
 - inclusion du **sentiment** ;
@@ -466,7 +475,23 @@ Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` e
 - optimisation du **seuil de décision** ;
 - optimisation optionnelle de la **target**.
 
-`ML Predict` n'expose pas de choix de backend manuel : il réutilise le `selected_model` trouvé dans les artefacts du symbole. Le workflow complet IHM insère désormais `python -m dataIntegrityEngine.sync_latest_quotes` puis `python -m dataIntegrityEngine.sync_earnings_calendar` avant `Alpha Scanner`, afin d'alimenter automatiquement `stock_quote_snapshots` et `stock_earnings_calendar`. L'étape `Alpha Scanner` n'expose plus de toggle de preset : `python -m selector.alpha_scanner` applique déjà le profil strict partagé.
+Le bloc de paramètres Pipeline expose en plus les options `Data Integrity` réellement supportées côté backend :
+
+- `sync_latest_quotes` : `limit`, `batch-size` ;
+- `sync_earnings_calendar` : `from-date`, `to-date`, `limit`, `sleep-seconds` ;
+- `update_sector` : `limit`, `sleep-seconds`, `log-every`.
+
+`ML Predict` n'expose pas de choix de backend manuel : il réutilise le `selected_model` trouvé dans les artefacts du symbole.
+
+Le workflow complet IHM insère `python -m dataIntegrityEngine.sync_latest_quotes` puis `python -m dataIntegrityEngine.sync_earnings_calendar` avant `Alpha Scanner`, afin d'alimenter automatiquement `stock_quote_snapshots` et `stock_earnings_calendar`.
+
+L'étape `Alpha Scanner` n'expose plus de toggle de preset : `python -m selector.alpha_scanner` applique déjà le profil strict partagé.
+
+Enfin, les résumés métier capturés par l'IHM sont réexposés dans :
+
+- la page `Pipeline` (run individuel + workflow parent) ;
+- la page `Overview` (résumés récents) ;
+- la page `Screening` (contexte qualité amont).
 
 ### Backtesting
 
