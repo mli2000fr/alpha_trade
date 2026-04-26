@@ -1,5 +1,126 @@
+from __future__ import annotations
+
+import pandas as pd
+
 from ihm.pages import execution
+
+
+class _DummyExpander:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def _patch_common(monkeypatch, *, fills: pd.DataFrame, reconciliation: pd.DataFrame) -> dict[str, list[object]]:
+    calls: dict[str, list[object]] = {
+        "subheaders": [],
+        "infos": [],
+        "dataframes": [],
+        "metrics": [],
+        "captions": [],
+    }
+
+    monkeypatch.setattr(execution, "db_available", lambda: True)
+    monkeypatch.setattr(execution.st, "session_state", {}, raising=False)
+    monkeypatch.setattr(execution.st, "header", lambda value: None)
+    monkeypatch.setattr(execution.st, "subheader", lambda value: calls["subheaders"].append(value))
+    monkeypatch.setattr(execution.st, "caption", lambda value: calls["captions"].append(value))
+    monkeypatch.setattr(execution.st, "info", lambda value: calls["infos"].append(value))
+    monkeypatch.setattr(execution.st, "error", lambda value: calls["infos"].append(value))
+    monkeypatch.setattr(execution.st, "metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(execution.st, "selectbox", lambda label, options: options[0])
+    monkeypatch.setattr(execution.st, "expander", lambda *args, **kwargs: _DummyExpander())
+    monkeypatch.setattr(execution, "metric_row", lambda metrics: calls["metrics"].append(metrics))
+    monkeypatch.setattr(execution, "render_persistent_business_summary", lambda *args, **kwargs: None)
+    monkeypatch.setattr(execution, "run_status_badge", lambda status: str(status))
+    monkeypatch.setattr(execution, "heartbeat_badge", lambda *args, **kwargs: "heartbeat")
+    monkeypatch.setattr(execution, "show_dataframe", lambda df, title=None, height=400: calls["dataframes"].append((title, df.copy() if hasattr(df, "copy") else df)))
+    monkeypatch.setattr(execution, "get_run_summary", lambda record: record.get("run_summary") if record else None)
+    monkeypatch.setattr(execution, "get_latest_run_business_summary", lambda **kwargs: None)
+    monkeypatch.setattr(execution, "get_latest_execution_protection_watch_service_summary", lambda **kwargs: None)
+
+    monkeypatch.setattr(
+        execution,
+        "get_execution_runs",
+        lambda account_id=None: pd.DataFrame([
+            {
+                "exec_run_id": "exec-1",
+                "status": "COMPLETED",
+                "total_targets": 2,
+                "total_submitted": 1,
+                "total_filled": 0 if fills.empty else 1,
+                "execution_profile": "overnight_cash_swing",
+                "submission_window": "both",
+                "account_id": "acct-1",
+                "risk_run_id": "risk-1",
+                "error_message": None,
+            }
+        ]),
+    )
+    monkeypatch.setattr(execution, "get_execution_account_constraints", lambda exec_run_id: {
+        "account_type": "cash",
+        "effective_pdt_rule": "off",
+        "swing_only": True,
+        "equity": 100000.0,
+        "buying_power_available": 75000.0,
+        "settled_cash_available": 75000.0,
+        "daytrade_count": 0,
+        "remaining_day_trade_slots": 0,
+        "message": "snapshot broker preflight",
+    })
+    monkeypatch.setattr(execution, "get_execution_targets_snapshot", lambda exec_run_id: pd.DataFrame({"symbol": ["AAPL"], "target_shares": [100], "entry_price": [150.0]}))
+    monkeypatch.setattr(execution, "get_portfolio_targets", lambda run_id=None: pd.DataFrame())
+    monkeypatch.setattr(execution, "get_execution_orders", lambda exec_run_id: pd.DataFrame({"symbol": ["AAPL"], "status": ["SUBMITTED"], "parent_intent_id": [None]}))
+    monkeypatch.setattr(execution, "get_execution_fills", lambda exec_run_id: fills)
+    monkeypatch.setattr(execution, "get_broker_positions", lambda account_id=None: pd.DataFrame({"symbol": ["AAPL"], "qty": [100]}))
+    monkeypatch.setattr(execution, "get_execution_positions", lambda **kwargs: pd.DataFrame({"symbol": ["AAPL"], "net_qty": [100], "position_status": ["OPEN"]}))
+    monkeypatch.setattr(execution, "get_execution_position_lots", lambda **kwargs: pd.DataFrame({"symbol": ["AAPL"], "opened_qty": [100], "remaining_qty": [100], "lot_status": ["OPEN"]}))
+    monkeypatch.setattr(execution, "get_execution_reconciliation_results", lambda **kwargs: reconciliation)
+    monkeypatch.setattr(execution, "get_execution_events", lambda exec_run_id: pd.DataFrame({"event_type": ["RUN_COMPLETED"]}))
+    return calls
+
 
 def test_pages_execution_importable():
     assert hasattr(execution, "__doc__")
+
+
+def test_render_displays_reconciliation_actionable_block(monkeypatch) -> None:
+    reconciliation = pd.DataFrame(
+        {
+            "symbol": ["AAPL", "MSFT", "TSLA"],
+            "action": ["buy_more", "investigate", "sell_excess"],
+            "target_qty": [100.0, 0.0, 50.0],
+            "internal_position_qty": [80.0, 12.0, 60.0],
+            "broker_position_qty": [80.0, 12.0, 60.0],
+            "position_delta": [-20.0, 12.0, 10.0],
+            "has_open_protection": [True, True, False],
+            "open_request_buy_qty": [0.0, 0.0, 0.0],
+            "open_request_sell_qty": [0.0, 0.0, 0.0],
+            "open_broker_buy_qty": [0.0, 0.0, 0.0],
+            "open_broker_sell_qty": [0.0, 0.0, 0.0],
+            "reconciliation_status": ["SAFE_AUTO", "MANUAL_REVIEW", "BLOCKED"],
+            "reason_code": [None, "external_symbol", "missing_protection"],
+            "created_at": ["2026-04-26T20:00:00"] * 3,
+        }
+    )
+    calls = _patch_common(monkeypatch, fills=pd.DataFrame({"slippage_bps": [12.3]}), reconciliation=reconciliation)
+
+    execution.render()
+
+    assert "🧭 Réconciliation actionnable" in calls["subheaders"]
+    assert any(metric for metric in calls["metrics"] if any(item[0] == "SAFE_AUTO" for item in metric))
+    reconciliation_tables = [df for title, df in calls["dataframes"] if isinstance(df, pd.DataFrame) and "status_badge" in df.columns]
+    assert reconciliation_tables
+    assert list(reconciliation_tables[0]["status_badge"]) == ["🟢 SAFE_AUTO", "🟡 MANUAL_REVIEW", "🔴 BLOCKED"]
+
+
+def test_render_explains_queued_run_without_fills(monkeypatch) -> None:
+    calls = _patch_common(monkeypatch, fills=pd.DataFrame(), reconciliation=pd.DataFrame())
+
+    execution.render()
+
+    assert any("Aucun fill observé" in str(message) for message in calls["infos"])
+
 

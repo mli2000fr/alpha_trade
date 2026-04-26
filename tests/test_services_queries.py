@@ -531,3 +531,45 @@ def test_get_execution_position_lots_scopes_account(monkeypatch):
     assert captured["params"] == {"account_id": "acct-lots"}
 
 
+def test_get_execution_reconciliation_results_prefers_exec_run_scope(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_reconciliation_results.clear()
+    calls = []
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        if "FROM execution_reconciliation_results" in query and params == {"eid": "exec-1"}:
+            return pd.DataFrame({"symbol": ["AAPL"], "reconciliation_status": ["SAFE_AUTO"]})
+        return pd.DataFrame()
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_execution_reconciliation_results(exec_run_id="exec-1", account_id="acct-1")
+
+    assert not df.empty
+    assert "WHERE exec_run_id = :eid" in calls[0][0]
+    assert "CASE reconciliation_status" in calls[0][0]
+    assert calls[0][1] == {"eid": "exec-1"}
+
+
+def test_get_execution_reconciliation_results_scopes_account_when_run_empty(monkeypatch):
+    queries.get_execution_reconciliation_results.clear()
+    calls = []
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        if params == {"eid": "exec-empty"}:
+            import pandas as pd
+            return pd.DataFrame()
+        return "ok"
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    result = queries.get_execution_reconciliation_results(exec_run_id="exec-empty", account_id="acct-1")
+
+    assert result == "ok"
+    assert calls[1][1] == {"account_id": "acct-1"}
+    assert "WHERE account_id = :account_id" in calls[1][0]
+
+

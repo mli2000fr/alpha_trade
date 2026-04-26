@@ -712,6 +712,73 @@ def get_execution_position_lots(
     )
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_reconciliation_results(
+    *,
+    exec_run_id: str | None = None,
+    account_id: str | None = None,
+) -> pd.DataFrame:
+    severity_order_sql = """
+        CASE reconciliation_status
+            WHEN 'BLOCKED' THEN 0
+            WHEN 'MANUAL_REVIEW' THEN 1
+            WHEN 'SAFE_AUTO' THEN 2
+            ELSE 3
+        END,
+        CASE action
+            WHEN 'investigate' THEN 0
+            WHEN 'sell_excess' THEN 1
+            WHEN 'buy_more' THEN 2
+            WHEN 'none' THEN 3
+            ELSE 4
+        END,
+        symbol ASC
+    """
+    if exec_run_id:
+        df = safe_query(
+            f"""
+            SELECT exec_run_id, account_id, symbol, target_qty, internal_position_qty,
+                   broker_position_qty, position_delta, open_request_buy_qty,
+                   open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty,
+                   has_open_protection, protection_qty, action,
+                   reconciliation_status, reason_code, created_at
+            FROM execution_reconciliation_results
+            WHERE exec_run_id = :eid
+            ORDER BY {severity_order_sql}
+            """,
+            {"eid": exec_run_id},
+        )
+        if not df.empty:
+            return df
+    if account_id:
+        return safe_query(
+            f"""
+            SELECT exec_run_id, account_id, symbol, target_qty, internal_position_qty,
+                   broker_position_qty, position_delta, open_request_buy_qty,
+                   open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty,
+                   has_open_protection, protection_qty, action,
+                   reconciliation_status, reason_code, created_at
+            FROM execution_reconciliation_results
+            WHERE account_id = :account_id
+            ORDER BY {severity_order_sql}
+            LIMIT 500
+            """,
+            {"account_id": account_id},
+        )
+    return safe_query(
+        f"""
+        SELECT exec_run_id, account_id, symbol, target_qty, internal_position_qty,
+               broker_position_qty, position_delta, open_request_buy_qty,
+               open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty,
+               has_open_protection, protection_qty, action,
+               reconciliation_status, reason_code, created_at
+        FROM execution_reconciliation_results
+        ORDER BY created_at DESC, {severity_order_sql}
+        LIMIT 500
+        """
+    )
+
+
 # ---------------------------------------------------------------------------
 # Corporate Actions
 # ---------------------------------------------------------------------------
