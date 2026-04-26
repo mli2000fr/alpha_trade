@@ -886,18 +886,6 @@ class ProductionExecutor:
                 "initial_risk_dollars": getattr(target, "initial_risk_dollars", None),
             },
         ))
-        events.extend(
-            self._maybe_activate_dynamic_trailing(
-                parent,
-                fill_qty,
-                fill_price,
-                exec_run_id,
-                target=target,
-                initial_stop_intent=initial_stop_submitted_intent,
-                initial_stop_order=initial_stop_submitted_order,
-                metrics=metrics,
-            )
-        )
         return events
 
     def _submit_rebalance_orders(

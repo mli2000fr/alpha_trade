@@ -181,3 +181,24 @@ class TcaSummary:
     total_implementation_shortfall: float
     slippage_alerts: int
 
+
+@dataclass(frozen=True, slots=True)
+class ProtectionWatchItem:
+    """Contexte minimal relu depuis la DB pour surveiller une transition post-run."""
+    source_exec_run_id: str
+    risk_run_id: str
+    trade_date: date
+    account_id: str | None
+    broker_mode: str
+    symbol: str
+    parent_intent_id: str
+    initial_stop_intent_id: str
+    initial_stop_broker_order_id: str
+    fill_qty: float
+    fill_price: float
+    stop_price_initial: float | None = None
+    risk_per_share: float | None = None
+    initial_risk_dollars: float | None = None
+    target_notional: float | None = None
+
+

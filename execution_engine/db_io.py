@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from database.connection import get_sqlalchemy_engine
-from execution_engine.models import BrokerOrder, ExecutionTarget
+from execution_engine.models import BrokerOrder, ExecutionTarget, ProtectionWatchItem
 
 LOGGER = logging.getLogger(__name__)
 
@@ -138,6 +138,80 @@ class ExecutionRepository:
         with self.engine.connect() as conn:
             rows = conn.execute(query, {"parent_intent_id": parent_intent_id}).mappings().all()
         return [self._row_to_broker_order(r) for r in rows]
+
+    def load_pending_protection_watch_items(
+        self,
+        *,
+        exec_run_id: str | None = None,
+        account_id: str | None = None,
+        limit: int = 100,
+    ) -> list[ProtectionWatchItem]:
+        query = text(f"""
+            SELECT
+                stop.exec_run_id AS source_exec_run_id,
+                stop.risk_run_id AS risk_run_id,
+                er.trade_date AS trade_date,
+                er.account_id AS account_id,
+                er.broker_mode AS broker_mode,
+                stop.symbol AS symbol,
+                stop.parent_intent_id AS parent_intent_id,
+                stop.intent_id AS initial_stop_intent_id,
+                COALESCE(stop.broker_order_id, '') AS initial_stop_broker_order_id,
+                COALESCE(fill.filled_qty, stop.qty, 0) AS fill_qty,
+                COALESCE(fill.avg_fill_price, parent.decision_price, pt.entry_price, stop.decision_price, 0) AS fill_price,
+                pt.stop_price_initial AS stop_price_initial,
+                pt.risk_per_share AS risk_per_share,
+                pt.initial_risk_dollars AS initial_risk_dollars,
+                pt.target_notional AS target_notional
+            FROM execution_orders stop
+            INNER JOIN execution_runs er
+                    ON er.exec_run_id = stop.exec_run_id
+            INNER JOIN execution_orders parent
+                    ON parent.exec_run_id = stop.exec_run_id
+                   AND parent.intent_id = stop.parent_intent_id
+            LEFT JOIN execution_fills fill
+                   ON fill.exec_run_id = stop.exec_run_id
+                  AND fill.intent_id = stop.parent_intent_id
+            LEFT JOIN portfolio_targets pt
+                   ON pt.run_id = stop.risk_run_id
+                  AND pt.symbol = stop.symbol
+            LEFT JOIN execution_orders trailing
+                   ON trailing.exec_run_id = stop.exec_run_id
+                  AND trailing.parent_intent_id = stop.parent_intent_id
+                  AND trailing.intent_role = 'trailing_stop'
+                  AND trailing.status NOT IN ('CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+            WHERE stop.intent_role = 'initial_stop'
+              AND stop.status NOT IN ('FILLED', 'CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+              AND trailing.intent_id IS NULL
+              AND (:exec_run_id IS NULL OR stop.exec_run_id = :exec_run_id)
+              AND (:account_id IS NULL OR er.account_id = :account_id)
+            ORDER BY stop.created_at ASC
+            LIMIT {int(limit)}
+        """)
+        params = {"exec_run_id": exec_run_id, "account_id": account_id}
+        with self.engine.connect() as conn:
+            rows = conn.execute(query, params).mappings().all()
+
+        return [
+            ProtectionWatchItem(
+                source_exec_run_id=str(r["source_exec_run_id"]),
+                risk_run_id=str(r["risk_run_id"]),
+                trade_date=r["trade_date"] if isinstance(r["trade_date"], date) else date.fromisoformat(str(r["trade_date"])),
+                account_id=str(r["account_id"]) if r.get("account_id") not in (None, "") else None,
+                broker_mode=str(r.get("broker_mode") or "paper"),
+                symbol=str(r["symbol"]).strip().upper(),
+                parent_intent_id=str(r["parent_intent_id"]),
+                initial_stop_intent_id=str(r["initial_stop_intent_id"]),
+                initial_stop_broker_order_id=str(r.get("initial_stop_broker_order_id") or ""),
+                fill_qty=float(r.get("fill_qty") or 0.0),
+                fill_price=float(r.get("fill_price") or 0.0),
+                stop_price_initial=float(r["stop_price_initial"]) if r.get("stop_price_initial") is not None else None,
+                risk_per_share=float(r["risk_per_share"]) if r.get("risk_per_share") is not None else None,
+                initial_risk_dollars=float(r["initial_risk_dollars"]) if r.get("initial_risk_dollars") is not None else None,
+                target_notional=float(r["target_notional"]) if r.get("target_notional") is not None else None,
+            )
+            for r in rows
+        ]
 
     @staticmethod
     def _row_to_broker_order(r: Any) -> BrokerOrder:

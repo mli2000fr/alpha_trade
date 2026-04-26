@@ -182,6 +182,28 @@ def test_build_run_summary_caption_uses_enriched_execution_metrics_mapping() -> 
     assert "stops broker=4" in caption
 
 
+def test_build_run_summary_caption_uses_execution_protection_watch_metrics_mapping() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "execution_protection_watch",
+            "run_summary": {
+                "watched_items": 5,
+                "triggered_items": 2,
+                "transitioned_items": 2,
+                "pending_items": 3,
+                "terminal_items": 0,
+                "skipped_existing_trailing": 0,
+                "cancel_failed_items": 1,
+                "trigger_check_count": 8,
+            },
+        }
+    )
+
+    assert "surveillés=5" in caption
+    assert "transitions=2" in caption
+    assert "annulations ko=1" in caption
+
+
 def test_build_run_summary_caption_uses_screener_metrics_mapping() -> None:
     caption = build_run_summary_caption(
         {

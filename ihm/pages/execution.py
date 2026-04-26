@@ -43,6 +43,7 @@ def render() -> None:
     row = runs[runs["exec_run_id"] == selected].iloc[0]
     status = str(row.get("status", ""))
     summary_record = get_latest_run_business_summary(step_key="execution", entity_run_id=selected, account_id=account_id)
+    watcher_summary_record = get_latest_run_business_summary(step_key="execution_protection_watch", entity_run_id=selected, account_id=account_id)
 
     # --- KPI ---
     metric_row([
@@ -55,20 +56,28 @@ def render() -> None:
     render_persistent_business_summary(summary_record, max_metrics=9)
 
     summary = get_run_summary(summary_record)
+    watcher_summary = get_run_summary(watcher_summary_record)
+    if watcher_summary:
+        render_persistent_business_summary(
+            watcher_summary_record,
+            title="🛰️ Résumé watcher protections",
+            max_metrics=8,
+        )
+
     if summary:
         st.subheader("🛡️ Protections et indicateurs de risque")
         metric_row([
             ("Stops broker", int(summary.get("targets_with_broker_initial_stop", 0) or 0), None),
             ("Éligibles trail dyn.", int(summary.get("targets_eligible_for_dynamic_trailing", 0) or 0), None),
-            ("Trailing activés", int(summary.get("dynamic_trailing_activations", 0) or 0), None),
+            ("Trailing activés", int(watcher_summary.get("transitioned_items", 0) or 0), None),
             ("Fallback trailing", int(summary.get("targets_with_trailing_fallback", 0) or 0), None),
             ("Stops soumis", int(summary.get("child_initial_stop_orders_submitted", 0) or 0), None),
-            ("Trails soumis", int(summary.get("child_trailing_stop_orders_submitted", 0) or 0), None),
-            ("Checks trigger", int(summary.get("dynamic_trailing_trigger_checks", 0) or 0), None),
-            ("Timeouts trail dyn.", int(summary.get("dynamic_trailing_timeouts", 0) or 0), None),
-            ("Annulations KO", int(summary.get("dynamic_trailing_cancel_failures", 0) or 0), None),
+            ("Trails soumis", int(watcher_summary.get("transitioned_items", 0) or 0), None),
+            ("Checks trigger", int(watcher_summary.get("trigger_check_count", 0) or 0), None),
+            ("Déjà terminés", int(watcher_summary.get("terminal_items", 0) or 0), None),
+            ("Annulations KO", int(watcher_summary.get("cancel_failed_items", 0) or 0), None),
             ("Cibles stale", int(summary.get("stale_price_targets", 0) or 0), None),
-            ("Échecs protections", int(summary.get("child_order_submit_failures", 0) or 0), None),
+            ("Échecs protections", int(summary.get("child_order_submit_failures", 0) or 0) + int(watcher_summary.get("submit_failed_items", 0) or 0), None),
         ])
         st.caption(
             "Notional cible = `{}` | Risque initial = `{}` | Budget risque = `{}` | Stops prêts = `{}`".format(

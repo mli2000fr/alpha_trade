@@ -121,6 +121,32 @@ class TestExecutionDbIo:
         assert row is not None
         assert row["status"] == "RUNNING"
 
+    def test_load_pending_protection_watch_items(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO execution_runs (exec_run_id, risk_run_id, trade_date, broker_mode, dry_run, status, started_at, total_targets, total_submitted, total_filled, account_id)
+                VALUES ('e1', 'r1', '2026-04-18', 'paper', 0, 'COMPLETED', CURRENT_TIMESTAMP, 1, 1, 1, 'acct-1')
+            """))
+            conn.execute(text("""
+                INSERT INTO execution_orders (exec_run_id, risk_run_id, symbol, intent_id, parent_intent_id, intent_role, idempotency_key, broker_mode,
+                                              broker_order_id, client_order_id, side, qty, filled_qty, avg_fill_price, order_type, limit_price, stop_price,
+                                              trail_percent, decision_price, status, created_at, updated_at)
+                VALUES ('e1', 'r1', 'AAPL', 'parent-1', NULL, 'entry', 'k-parent', 'paper', 'bo-parent', 'co-parent', 'buy', 100, 100, 150.2, 'market', NULL, NULL, NULL, 150.0, 'FILLED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                       ('e1', 'r1', 'AAPL', 'stop-1', 'parent-1', 'initial_stop', 'k-stop', 'paper', 'bo-stop', 'co-stop', 'sell', 100, 0, NULL, 'stop', NULL, 140.0, NULL, 150.0, 'SUBMITTED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """))
+            conn.execute(text("""
+                INSERT INTO execution_fills (exec_run_id, fill_id, broker_order_id, intent_id, symbol, filled_qty, avg_fill_price, fill_timestamp, decision_price, slippage_bps, implementation_shortfall)
+                VALUES ('e1', 'f1', 'bo-parent', 'parent-1', 'AAPL', 100, 150.2, CURRENT_TIMESTAMP, 150.0, 0.0, 0.0)
+            """))
+
+        items = repo.load_pending_protection_watch_items(exec_run_id='e1')
+
+        assert len(items) == 1
+        assert items[0].source_exec_run_id == 'e1'
+        assert items[0].parent_intent_id == 'parent-1'
+        assert items[0].initial_stop_intent_id == 'stop-1'
+        assert items[0].fill_price == 150.2
+
     def test_upsert_order_idempotent(self, repo) -> None:
         d = {
             "exec_run_id": "e1", "risk_run_id": "r1", "symbol": "AAPL",

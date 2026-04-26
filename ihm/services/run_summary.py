@@ -106,7 +106,16 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Notional cible", "total_target_notional"),
         ("Risque init.", "total_initial_risk_dollars"),
         ("Stops broker", "targets_with_broker_initial_stop"),
-        ("Trailing activés", "dynamic_trailing_activations"),
+    ],
+    "execution_protection_watch": [
+        ("Surveillés", "watched_items"),
+        ("Triggers", "triggered_items"),
+        ("Transitions", "transitioned_items"),
+        ("En attente", "pending_items"),
+        ("Déjà terminés", "terminal_items"),
+        ("Trailing déjà là", "skipped_existing_trailing"),
+        ("Annulations KO", "cancel_failed_items"),
+        ("Checks", "trigger_check_count"),
     ],
     "corporate_actions_sync": [
         ("Cibles", "targeted_symbols"),
