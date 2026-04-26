@@ -18,3 +18,7 @@ def test_tail_text_limits_output_to_last_lines() -> None:
     assert tailed == "245\n246\n247\n248\n249"
 
 
+def test_supervision_ops_exposes_shared_watcher_doc_reference() -> None:
+    assert hasattr(supervision_ops, "render_watcher_documentation_panel")
+
+

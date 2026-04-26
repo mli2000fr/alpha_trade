@@ -11,6 +11,7 @@
 ```
 alpha_trade/
 ├── run_execution.py              ← Point d'entrée principal (CLI interactif ou arguments)
+├── run_execution_protection_watch.py ← Point d'entrée opérateur du watcher post-exécution
 ├── pyproject.toml                ← Config build, dépendances, ruff, mypy
 ├── requirements.txt / -dev.txt   ← Dépendances runtime et dev
 ├── config.yaml                   ← Configuration centralisée YAML (DB, Alpaca, risk)
@@ -33,7 +34,8 @@ alpha_trade/
 ├── event_sentiment/              ← Pipeline NLP : news → FinBERT → agrégation → fusion
 ├── modelFactory/                 ← LSTM + Temporal Attention (Lightning)
 ├── risk_management/              ← Sizing, contraintes, circuit breaker, portefeuille cible
-├── execution_engine/             ← OMS/EMS : ordres, polling, bracket, réconciliation, TCA
+├── execution_engine/             ← OMS/EMS : ordres, polling, bracket, watcher post-exécution, réconciliation, TCA
+├── scripts/windows/              ← Packaging Windows : launcher, Task Scheduler, NSSM, secret store, bridge read-only
 ├── corporate_actions/            ← Corporate actions : dividendes, splits, audit, cash ledger
 ├── ihm/                          ← IHM opérateur Streamlit (dashboard de supervision)
 ├── artifacts/models/             ← Checkpoints PyTorch
@@ -55,7 +57,7 @@ alpha_trade/
 | `event_sentiment/` | NLP FinBERT + fusion scores quant/sentiment |
 | `modelFactory/` | Gouvernance ML multi-modèles : LSTM per-symbol, challengers tabulaires locaux, modèle global optionnel, sélection du champion et serving d'inférence |
 | `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
-| `execution_engine/` | OMS/EMS complet (10 phases) |
+| `execution_engine/` | OMS/EMS complet (10 phases) + watcher post-exécution des protections |
 | `corporate_actions/` | Gestion dividendes, splits, reverse splits (audit + comptabilité portefeuille) |
 | `backtesting/` | Backtest intégré vectorbt : replay signaux conviction, bracket TP/TS, métriques, equity curve |
 | `ihm/` | IHM Streamlit : supervision pipeline, scores, risque, exécution, CA |
@@ -110,6 +112,12 @@ Points d'implémentation importants côté `modelFactory` :
 - la base MySQL reste volontairement **résumée** : la gouvernance détaillée des challengers vit surtout dans les artefacts disque.
 
 **`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes `margin/cash/PDT` côté exécution. Seul fichier à modifier pour changer de broker.
+
+**`ProtectionTransitionWatcher`** / **`ProtectionWatcherService`** (`execution_engine/protection_watcher.py`) — Watcher post-exécution chargé de surveiller les protections créées par `Execution` et de promouvoir les stops initiaux vers un trailing stop dynamique selon les conditions métier. `ProtectionWatcherService` encapsule la boucle persistante, les heartbeats, la persistance de santé dans `run_business_summaries` et les garde-fous de résilience.
+
+**`watcher_runtime`** (`ihm/services/watcher_runtime.py`) — Couche IHM de pilotage local du watcher. Elle construit les commandes `once` / `service`, lance les processus managés par `process_registry`, expose l'historique dédié et sépare explicitement le pilotage local IHM du packaging Windows machine-wide.
+
+**`windows_watcher_bridge`** (`ihm/services/windows_watcher_bridge.py`) — Bridge IHM → PowerShell strictement allowlisté. Il n'expose que des opérations read-only sur Windows : lecture du statut watcher, inventaire des sources de logs détectables et import borné de ces logs.
 
 **`CircuitBreaker`** (`risk_management/circuit_breaker.py`) — Suspend le trading si drawdown ≥ 15% ou perte daily ≥ 5%.
 
@@ -205,6 +213,12 @@ Points d'implémentation importants côté `modelFactory` :
 | `ALPACA_<ID>_MODE` | ⚠️ | Mode du compte (paper/live, défaut: paper) |
 | `FINNHUB_API_KEY` | ⚠️ | Token Finnhub (ou `CLE_FINNHUB`) — requis pour `update_sector` |
 
+Pour le watcher Windows, ces variables peuvent être injectées via :
+
+- environnement de la session ;
+- fichier `.env` ;
+- secret store DPAPI chargé par `scripts/windows/protection_watcher_launcher.ps1`.
+
 ### 4.2 Configuration multi-comptes (`config.yaml`)
 
 Le fichier `config.yaml` permet de déclarer plusieurs comptes Alpaca :
@@ -237,6 +251,34 @@ alpaca:
 
 - **SGBD** : MySQL 8.x, base `alpha_trade`, host `localhost`, charset `utf8mb4`
 - **Pool** : `pool_size=2`, `max_overflow=3`, `pool_pre_ping=True`, `pool_recycle=3600`
+
+### 4.5 Supervision Windows read-only
+
+Le packaging Windows du watcher repose sur un script de supervision dédié :
+
+- `scripts/windows/get_protection_watcher_status.ps1`
+
+Ce script :
+
+- interroge la tâche planifiée watcher ;
+- interroge le service Windows / NSSM watcher ;
+- remonte les chemins `stdout` / `stderr` détectables ;
+- retourne un JSON structuré ;
+- n'exécute aucune action `start/stop/install/remove`.
+
+Payload fonctionnel remonté :
+
+- bloc `task` : `exists`, `state`, `enabled`, `lastRunTime`, `nextRunTime`, `lastTaskResult`, `stdoutPath`, `stderrPath`, `actionArguments` ;
+- bloc `service` : `exists`, `status`, `startType`, `displayName`, `stdoutPath`, `stderrPath` ;
+- bloc `logSources` : sources importables `Task Scheduler stdout/stderr`, `NSSM stdout/stderr` quand détectables.
+
+Le bridge Python impose plusieurs garde-fous :
+
+- allowlist stricte (`status` uniquement à ce stade) ;
+- exécution limitée à Windows (`os.name == "nt"`) ;
+- timeout PowerShell ;
+- absence d'arguments libres pour des scripts non allowlistés ;
+- aucun start/stop/install/remove exposé.
 
 ### 4.4 Tables SQL (`database/sql/`)
 
@@ -326,6 +368,39 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 - `run_id`
 
 Le détail de serving (`selected_model`, `decision_threshold`, `signal_label`, `calibration_method`) est présent dans les résultats en mémoire et les artefacts, mais pas encore dans le schéma SQL.
+
+### 5.6 Flux technique du watcher post-exécution
+
+Positionnement technique :
+
+- le watcher ne s'exécute pas avant le pipeline 1→11 ;
+- il devient pertinent **après** `run_execution.py` / l'étape 12 `execution` ;
+- il peut tourner en parallèle des étapes 13 et 14 `corporate_actions_*`.
+
+Séquence type :
+
+1. `Execution` écrit `execution_runs`, `execution_orders`, `execution_events` et les instantanés broker ;
+2. le watcher lit les ordres/protections en attente depuis le repository d'exécution ;
+3. il vérifie les conditions de transition stop initial → trailing stop ;
+4. il annule / soumet les ordres broker nécessaires ;
+5. il persiste un résumé métier `execution_protection_watch` ou `execution_protection_watch_service` ;
+6. l'IHM `Supervision Ops` lit ensuite ces résumés, les logs IHM locaux et, côté Windows, le statut read-only de Task Scheduler / NSSM.
+
+Points d'entrée principaux :
+
+```powershell
+python run_execution_protection_watch.py --mode once --account default
+python run_execution_protection_watch.py --mode service --account default
+```
+
+Packaging Windows :
+
+- `scripts/windows/protection_watcher_launcher.ps1` : bootstrap `.env` / DPAPI / Python ;
+- `scripts/windows/install_protection_watcher_task.ps1` : mode `once` périodique ;
+- `scripts/windows/install_protection_watcher_service_nssm.ps1` : service persistant ;
+- `scripts/windows/get_protection_watcher_status.ps1` : supervision read-only.
+
+Référence dédiée : voir aussi `doc/watcher.md`.
 
 ---
 

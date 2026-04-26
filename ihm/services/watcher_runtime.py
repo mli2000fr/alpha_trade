@@ -34,6 +34,16 @@ DEFAULT_IDLE_INTERVAL_SECONDS = 120.0
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 300.0
 DEFAULT_WATCHER_TASK_NAME = "AlphaTrade-ProtectionWatcher"
 DEFAULT_WATCHER_SERVICE_NAME = "AlphaTradeProtectionWatcher"
+WATCHER_DOC_PATH = PROJECT_ROOT / "doc" / "watcher.md"
+
+
+def build_watcher_doc_reference() -> dict[str, str]:
+    return {
+        "label": "📘 Guide watcher complet",
+        "relative_path": "doc/watcher.md",
+        "absolute_path": str(WATCHER_DOC_PATH),
+        "uri": WATCHER_DOC_PATH.as_uri(),
+    }
 
 
 def build_watcher_command(

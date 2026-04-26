@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ihm.components.watcher_documentation import render_watcher_documentation_panel
 from ihm.components.metrics import format_duration_hhmmss
 from ihm.components.db_controls import render_db_unavailable
 from ihm.components.metrics import metric_row
@@ -354,6 +355,12 @@ def render() -> None:
     )
     st.info(
         "Cette page supervise l'exécution et la santé des services. L'installation Task Scheduler / NSSM, la gestion des secrets Windows et le packaging runtime restent pilotés par les scripts PowerShell."
+    )
+    render_watcher_documentation_panel(
+        intro=(
+            "Même guide opérateur que dans `Pipeline` : utile pour retrouver rapidement le timing de lancement, "
+            "les modes d'exploitation et la procédure d'onboarding watcher."
+        )
     )
     if not db_available():
         render_db_unavailable("Supervision Ops", form_key="ops_supervision_db_form")

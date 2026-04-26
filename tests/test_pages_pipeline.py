@@ -74,3 +74,17 @@ def test_pipeline_page_exposes_clear_screener_vs_alpha_scanner_labels() -> None:
     assert "préfiltrage large" in pipeline.SCREENER_PARAMS_CAPTION.lower()
 
 
+def test_build_watcher_doc_reference_exposes_explicit_workspace_link() -> None:
+    assert hasattr(pipeline, "render_watcher_documentation_panel")
+
+
+def test_build_watcher_handoff_rows_exposes_post_execution_launch_guidance() -> None:
+    rows = pipeline._build_watcher_handoff_rows("acct-1")
+
+    assert len(rows) >= 4
+    assert rows[0]["Mode"] == "Run once (CLI local)"
+    assert "juste après l'étape 12" in rows[0]["Quand l'utiliser"].lower()
+    assert "run_execution_protection_watch.py" in rows[0]["Comment lancer"]
+    assert any(row["Mode"] == "Task Scheduler" for row in rows)
+
+

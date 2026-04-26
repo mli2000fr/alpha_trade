@@ -112,6 +112,23 @@ python run_execution.py paper --account default --account-type cash
 python run_execution.py paper --account default --account-type margin --pdt-rule off --swing-only
 ```
 
+### Watcher post-exécution
+
+Le watcher se lance **après** `Execution`, pas avant. Il surveille la vie des protections broker-side créées par le run d'exécution.
+
+```powershell
+# contrôle ponctuel juste après l'étape 12 Execution
+python run_execution_protection_watch.py --mode once --account default
+
+# surveillance continue pendant la session
+python run_execution_protection_watch.py --mode service --account default
+```
+
+En exploitation Windows, on préfère généralement :
+
+- **Task Scheduler** pour un `once` périodique ;
+- **NSSM** pour un service persistant.
+
 ### Vérification de l'environnement
 
 ```powershell
@@ -179,6 +196,15 @@ Après soumission, le moteur peut :
 - produire des écarts de réconciliation,
 - calculer slippage et implementation shortfall,
 - écrire l'audit complet en base.
+
+### 4.5 Watcher post-exécution
+
+Le watcher n'est pas une phase du pipeline 1→14 lui-même. C'est un runtime complémentaire qui s'accroche juste après `Execution` pour :
+
+1. détecter les ordres/protections à surveiller ;
+2. vérifier les conditions de transition ;
+3. promouvoir un stop initial vers un trailing stop dynamique ;
+4. persister la santé du mécanisme pour `Supervision Ops`.
 
 ---
 

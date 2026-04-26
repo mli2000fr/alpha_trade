@@ -30,6 +30,7 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 10. **ML Predict** — inférence quotidienne sur le **champion sélectionné** par symbole (`lstm_attention`, `lightgbm`, `catboost` ou `global_model` selon les artefacts disponibles)
 11. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille, score de conviction (40% quant + 60% ML)
 12. **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
+12.bis **Watcher post-exécution** — surveillance des protections broker-side après `Execution` pour promouvoir les stops initiaux vers un trailing stop dynamique ; ce watcher n'est pas une étape métier supplémentaire du pipeline 1→14, mais un runtime post-exécution lancé juste après l'étape 12
 13. **Corporate actions sync** — récupère dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour)
 14. **Corporate actions apply** — application des dividendes/splits sur les positions existantes
 
@@ -241,6 +242,54 @@ python -m risk_management.run_risk --account live1    # risk pour le compte live
 python -m corporate_actions apply --account live1     # appliquer CA sur le compte live
 ```
 
+### 2.11 Watcher de protections post-exécution
+
+Le watcher de protections est un composant **post-exécution** qui surveille les ordres/protections créés par `Execution` afin de gérer le cycle de vie :
+
+- stop initial broker-side ;
+- déclenchement des conditions de transition ;
+- promotion vers trailing stop dynamique ;
+- suivi de la santé de ce mécanisme en base et dans l'IHM.
+
+Fonctionnellement :
+
+- il devient utile **après** l'étape 12 `Execution` ;
+- il ne remplace pas les étapes 13 et 14 ;
+- il peut tourner **en parallèle** des Corporate Actions ;
+- il ne sert pas à préparer le pipeline 1→11, mais à **sécuriser la vie post-exécution du trade**.
+
+Règle opératoire simple :
+
+- **manuel** : lancer un `run watcher once` juste après `Execution` ;
+- **exploitation Windows** : préférer Task Scheduler (`once` périodique) ou NSSM (`service` persistant).
+
+Référence dédiée : voir aussi `doc/watcher.md`.
+
+### 2.12 Supervision Windows read-only du watcher
+
+L'IHM `Supervision Ops` sait maintenant superviser le **packaging Windows réel** du watcher sans administrer la machine.
+
+Fonctions disponibles :
+
+- lire le statut réel de la tâche `Task Scheduler` du watcher ;
+- lire le statut réel du service Windows / NSSM du watcher ;
+- détecter les chemins de logs `stdout` / `stderr` quand ils sont exposés par le packaging ;
+- importer ces logs dans `Supervision Ops` ;
+- expliquer via quel bridge PowerShell la supervision passe.
+
+Fonctions volontairement absentes :
+
+- installer/désinstaller la tâche planifiée ;
+- installer/désinstaller NSSM ;
+- démarrer/arrêter un service Windows externe ;
+- exécuter un script PowerShell arbitraire ;
+- manipuler le secret store DPAPI depuis l'IHM.
+
+Le compromis fonctionnel est donc :
+
+- **supervision réelle** depuis l'IHM ;
+- **administration système exclue** depuis l'IHM.
+
 ---
 
 ## 3. Flux de Fonctionnement Global
@@ -268,6 +317,7 @@ python -m corporate_actions apply --account live1     # appliquer CA sur le comp
      │ 10. ml_predict (quotidien)   │ → model_predictions                          │
      │ 11. run_risk                 │ → portfolio_targets                          │
      │ 12. run_execution            │ → ordres Alpaca + broker_positions_snapshots │
+     │ 12.bis watcher post-exec     │ → surveillance / transition des protections  │
      │ 13. corporate_actions sync   │ → corporate_actions_events (portfolio only)  │
      │ 14. corporate_actions apply  │ → position adjustments                       │
      └─────────────────────────────────────────────────────────────────────────────┘
@@ -281,9 +331,10 @@ python -m corporate_actions apply --account live1     # appliquer CA sur le comp
 4. **Soumission** : l'executor lit les targets et soumet un ordre market/limit d'achat
 5. **Fill** : polling du broker jusqu'au fill ou timeout (120s défaut)
 6. **Bracket synthétique** : après fill, soumission d'un take-profit (limit sell +8%) et d'un trailing stop (-5%)
-7. **OCO** : si l'un des enfants est exécuté, l'autre est annulé
-8. **Réconciliation** : comparaison positions broker vs cibles, rééquilibrage automatique optionnel
-9. **TCA** : calcul du slippage et de l'implementation shortfall
+7. **Watcher post-exécution** : surveillance des protections en attente et transition du stop initial vers un trailing stop dynamique quand les conditions sont remplies
+8. **OCO** : si l'un des enfants est exécuté, l'autre est annulé
+9. **Réconciliation** : comparaison positions broker vs cibles, rééquilibrage automatique optionnel
+10. **TCA** : calcul du slippage et de l'implementation shortfall
 
 ### 3.3 Détection des signaux
 

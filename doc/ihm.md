@@ -207,6 +207,21 @@ Le workflow complet exécute automatiquement, dans cet ordre :
 
 Le workflow 1→14 correspond au pipeline quotidien opérable depuis l'IHM.
 
+Le watcher de protections n'est **pas** la 15e étape du workflow. Il apparaît désormais dans la page `Pipeline` comme un bloc pédagogique **12.bis** placé juste après `Execution` pour rappeler :
+
+- quand le lancer ;
+- dans quel ordre le positionner ;
+- et comment le lancer selon le contexte (run once, service local, Task Scheduler, NSSM).
+
+Le bloc affiche aussi un lien explicite vers `doc/watcher.md` afin qu'un nouvel opérateur puisse ouvrir immédiatement le guide dédié depuis l'IHM.
+
+Règle simple :
+
+- `1 → 11` préparent la journée ;
+- `12 execution` crée les protections à surveiller ;
+- le **watcher** se lance juste après `Execution` ;
+- `13 → 14 corporate actions` peuvent s'exécuter pendant que le watcher tourne.
+
 L'étape `Alpha Scanner` continue d'être lancée via :
 
 ```powershell
@@ -368,6 +383,32 @@ python event_sentiment/importe_news.py --start-date ... --end-date ...
 ```
 
 Ce sous-run est utile pour réinjecter une plage de news spécifique avant de relancer le pipeline de sentiment.
+
+#### 4.3.7 Bloc watcher post-exécution dans `Pipeline`
+
+Entre l'étape `12. Execution` et les étapes `13-14` de Corporate Actions, la page `Pipeline` affiche désormais un bloc `12.bis` qui sert de mémo opérateur.
+
+Il rappelle :
+
+- que le watcher se lance **après** `Execution` ;
+- qu'il peut tourner pendant les Corporate Actions ;
+- quels modes de lancement privilégier (`once`, service local, Task Scheduler, NSSM) ;
+- et quelles commandes utiliser pour un nouvel arrivant.
+
+#### 4.3.8 Supervision Ops et packaging Windows
+
+La page `Supervision Ops` ajoute maintenant une vue Windows **strictement read-only** pour le watcher :
+
+- statut réel `Task Scheduler` ;
+- statut réel du service Windows / NSSM ;
+- sources de logs Windows détectées ;
+- import lecture seule de ces logs ;
+- métadonnées du bridge PowerShell allowlisté.
+
+Important :
+
+- l'IHM peut **superviser** le packaging Windows ;
+- l'IHM ne peut pas **installer**, **désinstaller**, **start/stop** un service Windows externe ni exécuter du PowerShell arbitraire.
 
 ### 4.4 Pilotage du backtesting
 
