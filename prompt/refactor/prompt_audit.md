@@ -366,9 +366,8 @@ Tu dois produire une synthèse claire et exploitable, puis la sauvegarder dans l
 
 Utilise la consigne suivante selon le module audité :
 
-- si l’audit concerne l’exécution : sauvegarde la synthèse dans `prompt/refactor/audit_execution.md`
-- si l’audit concerne `dataIntegrityEngine` : sauvegarde la synthèse dans `prompt/refactor/audit_dataIntegrityEngine.md`
-
+- Produire un fichier d'audit par module dans prompt/refactor/audit_<module>.md.
+- Produire enfin un audit global de synthèse prompt/refactor/audit_global.md.
 
 ---
 
