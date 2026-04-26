@@ -395,6 +395,87 @@ def test_get_ops_latest_critical_summaries_filters_expected_step_keys(monkeypatc
 
 
 def test_get_execution_orders_includes_stop_and_trailing_fields(monkeypatch):
+    queries.get_execution_orders.clear()
+    captured = {}
+
+    def fake_safe_query(query, params=None):
+        captured["query"] = query
+        captured["params"] = params
+        import pandas as pd
+
+        return pd.DataFrame({"intent_id": ["req-1"]})
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    queries.get_execution_orders(exec_run_id="exec-1")
+
+    assert "FROM execution_order_requests req" in captured["query"]
+    assert "LEFT JOIN execution_broker_orders bo" in captured["query"]
+    assert "stop_price" in captured["query"]
+    assert "trail_percent" in captured["query"]
+    assert captured["params"] == {"eid": "exec-1"}
+
+
+def test_get_execution_fills_reads_v2_schema(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_fills.clear()
+    captured = {}
+
+    def fake_safe_query(query, params=None):
+        captured["query"] = query
+        captured["params"] = params
+        return pd.DataFrame({"fill_id": ["fill-1"]})
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    queries.get_execution_fills(exec_run_id="exec-1")
+
+    assert "FROM execution_broker_fills" in captured["query"]
+    assert "request_id AS intent_id" in captured["query"]
+    assert captured["params"] == {"eid": "exec-1"}
+
+
+def test_get_execution_account_constraints_falls_back_to_broker_snapshot(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_account_constraints.clear()
+    calls = []
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        if "FROM execution_events" in query:
+            return pd.DataFrame(columns=["message", "payload_json", "created_at"])
+        if "FROM broker_account_snapshots" in query:
+            return pd.DataFrame([
+                {
+                    "snapshot_kind": "preflight",
+                    "equity": 100000.0,
+                    "cash": 80000.0,
+                    "settled_cash": 75000.0,
+                    "buying_power": 75000.0,
+                    "daytrade_count": 0,
+                    "raw_payload_json": '{"account_type":"cash","effective_pdt_rule":"off","swing_only":true}',
+                    "created_at": "2026-04-26T20:00:00",
+                }
+            ])
+        raise AssertionError(query)
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    payload = queries.get_execution_account_constraints("exec-1")
+
+    assert payload["account_type"] == "cash"
+    assert payload["effective_pdt_rule"] == "off"
+    assert payload["swing_only"] is True
+    assert payload["buying_power_available"] == 75000.0
+    assert payload["settled_cash_available"] == 75000.0
+    assert "snapshot broker preflight" in str(payload["message"]).lower()
+    assert len(calls) == 2
+
+
+def test_get_execution_targets_snapshot_scopes_exec_run(monkeypatch):
+    queries.get_execution_targets_snapshot.clear()
     captured = {}
 
     def fake_safe_query(query, params=None):
@@ -404,11 +485,10 @@ def test_get_execution_orders_includes_stop_and_trailing_fields(monkeypatch):
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
-    queries.get_execution_orders(exec_run_id="exec-1")
+    queries.get_execution_targets_snapshot("exec-42")
 
-    assert "FROM execution_orders" in captured["query"]
-    assert "stop_price" in captured["query"]
-    assert "trail_percent" in captured["query"]
-    assert captured["params"] == {"eid": "exec-1"}
+    assert "FROM execution_targets_snapshot" in captured["query"]
+    assert "WHERE exec_run_id = :eid" in captured["query"]
+    assert captured["params"] == {"eid": "exec-42"}
 
 

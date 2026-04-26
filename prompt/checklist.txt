@@ -24,3 +24,5 @@ execution_targets_snapshot
 execution_locks
 execution_broker_orders
 execution_order_requests
+broker_account_snapshots
+execution_broker_fills

@@ -16,6 +16,7 @@ from ihm.services.queries import get_execution_events
 from ihm.services.queries import get_execution_fills
 from ihm.services.queries import get_execution_orders
 from ihm.services.queries import get_execution_runs
+from ihm.services.queries import get_execution_targets_snapshot
 from ihm.services.queries import get_latest_execution_protection_watch_service_summary
 from ihm.services.queries import get_latest_run_business_summary
 from ihm.services.queries import get_portfolio_targets
@@ -52,6 +53,13 @@ def render() -> None:
         ("Soumis", int(row.get("total_submitted", 0)), None),
         ("Remplis", int(row.get("total_filled", 0)), None),
     ])
+    st.caption(
+        "Profil=`{}` | Fenêtre=`{}` | Compte=`{}`".format(
+            row.get("execution_profile", "—"),
+            row.get("submission_window", "—"),
+            row.get("account_id", account_id or "default"),
+        )
+    )
 
     render_persistent_business_summary(summary_record, max_metrics=9)
 
@@ -177,7 +185,19 @@ def render() -> None:
     show_dataframe(fills, height=300)
 
     risk_run_id = str(row.get("risk_run_id", "") or "").strip()
-    if risk_run_id:
+    snapshot_targets = get_execution_targets_snapshot(selected)
+    if not snapshot_targets.empty:
+        st.subheader("🎯 Snapshot des cibles consommées")
+        target_columns = [
+            column for column in [
+                "symbol", "decision_rank", "target_shares", "entry_price", "target_weight",
+                "stop_price_initial", "risk_per_share", "risk_budget_dollars", "initial_risk_dollars",
+                "target_notional", "price_asof_date", "atr_asof_date",
+            ]
+            if column in snapshot_targets.columns
+        ]
+        show_dataframe(snapshot_targets[target_columns], height=260)
+    elif risk_run_id:
         source_targets = get_portfolio_targets(run_id=risk_run_id)
         if not source_targets.empty:
             st.subheader("🎯 Cibles source et paramètres risque")

@@ -87,6 +87,11 @@ def test_watcher_promotes_initial_stop_to_trailing_when_trigger_hit() -> None:
     event_types = [call.args[0]["event_type"] for call in repo.insert_execution_event.call_args_list]
     assert "PROTECTION_TRIGGER_HIT" in event_types
     assert "PROTECTION_TRANSITION_COMPLETED" in event_types
+    persisted_request_ids = [call.args[0].intent_id for call in repo.upsert_execution_order_request_from_intent.call_args_list]
+    assert persisted_request_ids[0] == "stop-1"
+    assert any(call.args[0].intent_role == "trailing_stop" for call in repo.upsert_execution_order_request_from_intent.call_args_list)
+    assert all(call.kwargs["account_id"] == "acct-1" for call in repo.upsert_execution_order_request_from_intent.call_args_list)
+    assert repo.upsert_execution_broker_order.called
 
 
 def test_watcher_keeps_item_pending_when_trigger_not_reached() -> None:

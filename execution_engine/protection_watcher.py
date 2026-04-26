@@ -22,7 +22,7 @@ from execution_engine.models import (
     OrderStatus,
     ProtectionWatchItem,
 )
-from execution_engine.order_intents import build_initial_stop_intent, build_trailing_stop_intent, resolve_trailing_activation_price
+from execution_engine.order_intents import build_trailing_stop_intent, intent_to_alpaca_payload, resolve_trailing_activation_price
 from service.alpaca.trading_client import AlpacaTradingClient
 
 LOGGER = logging.getLogger(__name__)
@@ -201,7 +201,7 @@ class ProtectionTransitionWatcher:
         except Exception:
             LOGGER.debug("Persistance event watcher impossible: %s", event.event_type, exc_info=True)
 
-    def _persist_order_state(self, intent: OrderIntent, order: BrokerOrder, exec_run_id: str) -> None:
+    def _persist_order_state(self, intent: OrderIntent, order: BrokerOrder, exec_run_id: str, *, account_id: str | None = None) -> None:
         db_dict = order_intent_to_db_dict(intent, exec_run_id, status=order.status)
         db_dict["broker_order_id"] = order.broker_order_id
         db_dict["filled_qty"] = order.filled_qty
@@ -210,6 +210,24 @@ class ProtectionTransitionWatcher:
             self._repo.upsert_execution_order(db_dict)
         except Exception:
             LOGGER.debug("Persistance ordre watcher impossible pour %s", intent.intent_id, exc_info=True)
+        resolved_account_id = account_id or "default"
+        try:
+            self._repo.upsert_execution_order_request_from_intent(
+                intent,
+                account_id=resolved_account_id,
+                status=order.status,
+            )
+        except Exception:
+            LOGGER.debug("Persistance request watcher impossible pour %s", intent.intent_id, exc_info=True)
+        try:
+            self._repo.upsert_execution_broker_order(
+                intent,
+                order,
+                account_id=resolved_account_id,
+                raw_payload=intent_to_alpaca_payload(intent),
+            )
+        except Exception:
+            LOGGER.debug("Persistance broker order watcher impossible pour %s", intent.intent_id, exc_info=True)
 
     @staticmethod
     def _build_parent_intent(item: ProtectionWatchItem, stop_order: BrokerOrder) -> OrderIntent:
@@ -229,6 +247,27 @@ class ProtectionTransitionWatcher:
             idempotency_key=f"watch-parent-{item.parent_intent_id}",
             decision_price=item.fill_price,
             stop_price=stop_order.stop_price,
+        )
+
+    @staticmethod
+    def _build_existing_stop_intent(item: ProtectionWatchItem, stop_order: BrokerOrder) -> OrderIntent:
+        return OrderIntent(
+            intent_id=item.initial_stop_intent_id,
+            risk_run_id=item.risk_run_id,
+            exec_run_id=item.source_exec_run_id,
+            symbol=item.symbol,
+            side="sell",
+            qty=item.fill_qty,
+            order_type="stop",
+            limit_price=None,
+            trail_percent=None,
+            broker_mode=item.broker_mode,
+            parent_intent_id=item.parent_intent_id,
+            intent_role=IntentRole.INITIAL_STOP,
+            idempotency_key=f"watch-existing-stop-{item.initial_stop_intent_id}",
+            decision_price=item.fill_price,
+            stop_price=stop_order.stop_price if stop_order.stop_price is not None else item.stop_price_initial,
+            submission_key=stop_order.client_order_id or None,
         )
 
     def _cancel_initial_stop(
@@ -260,11 +299,8 @@ class ProtectionTransitionWatcher:
         broker = self._broker_for(item.broker_mode, item.account_id)
         stop_order = broker.poll_order_status(item.initial_stop_broker_order_id, item.initial_stop_intent_id)
         parent_intent = self._build_parent_intent(item, stop_order)
-        stop_intent = build_initial_stop_intent(parent_intent, item.fill_qty, item.fill_price, config, target=item)
-        if stop_intent is None:
-            metrics["submit_failed_items"] += 1
-            return
-        self._persist_order_state(stop_intent, stop_order, item.source_exec_run_id)
+        stop_intent = self._build_existing_stop_intent(item, stop_order)
+        self._persist_order_state(stop_intent, stop_order, item.source_exec_run_id, account_id=item.account_id)
 
         if stop_order.status in OrderStatus.TERMINAL:
             metrics["terminal_items"] += 1
@@ -303,7 +339,7 @@ class ProtectionTransitionWatcher:
             return
 
         canceled, canceled_order = self._cancel_initial_stop(broker, config, item, stop_order)
-        self._persist_order_state(stop_intent, canceled_order, item.source_exec_run_id)
+        self._persist_order_state(stop_intent, canceled_order, item.source_exec_run_id, account_id=item.account_id)
         if not canceled:
             metrics["cancel_failed_items"] += 1
             self._persist_event(make_event(
@@ -324,7 +360,7 @@ class ProtectionTransitionWatcher:
         trailing_intent = build_trailing_stop_intent(parent_intent, item.fill_qty, item.fill_price, config, target=item)
         try:
             trailing_order = broker.submit_intent(trailing_intent)
-            self._persist_order_state(trailing_intent, trailing_order, item.source_exec_run_id)
+            self._persist_order_state(trailing_intent, trailing_order, item.source_exec_run_id, account_id=item.account_id)
         except Exception as exc:
             metrics["submit_failed_items"] += 1
             self._persist_event(make_event(

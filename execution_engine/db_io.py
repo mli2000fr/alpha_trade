@@ -136,7 +136,29 @@ class ExecutionRepository:
         return [self._row_to_broker_order(r) for r in rows]
 
     def load_open_child_orders(self, parent_intent_id: str) -> list[BrokerOrder]:
-        query = text("""
+        v2_query = text("""
+            SELECT COALESCE(bo.broker_order_id, '') AS broker_order_id,
+                   COALESCE(bo.client_order_id, req.submission_key, '') AS client_order_id,
+                   req.request_id AS intent_id,
+                   req.symbol AS symbol,
+                   req.side AS side,
+                   req.target_qty AS qty,
+                   COALESCE(bo.filled_qty, 0) AS filled_qty,
+                   bo.avg_fill_price AS avg_fill_price,
+                   COALESCE(bo.normalized_status, req.status) AS status,
+                   req.order_type AS order_type,
+                   req.limit_price AS limit_price,
+                   req.stop_price AS stop_price,
+                   req.trail_percent AS trail_percent,
+                   bo.submitted_at AS created_at,
+                   bo.last_seen_at AS updated_at
+            FROM execution_order_requests req
+            LEFT JOIN execution_broker_orders bo
+                   ON bo.request_id = req.request_id
+            WHERE req.parent_request_id = :parent_intent_id
+              AND COALESCE(bo.normalized_status, req.status) IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
+        """)
+        legacy_query = text("""
             SELECT broker_order_id, client_order_id, intent_id, symbol, side,
                    qty, filled_qty, avg_fill_price, status, order_type,
                    limit_price, stop_price, trail_percent, created_at, updated_at
@@ -145,15 +167,23 @@ class ExecutionRepository:
               AND status NOT IN ('FILLED', 'CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
         """)
         with self.engine.connect() as conn:
-            rows = conn.execute(query, {"parent_intent_id": parent_intent_id}).mappings().all()
-        return [self._row_to_broker_order(r) for r in rows]
+            v2_rows = conn.execute(v2_query, {"parent_intent_id": parent_intent_id}).mappings().all()
+            legacy_rows = conn.execute(legacy_query, {"parent_intent_id": parent_intent_id}).mappings().all()
 
-    def load_pending_protection_watch_items(
+        merged: dict[str, BrokerOrder] = {}
+        for row in [*v2_rows, *legacy_rows]:
+            order = self._row_to_broker_order(row)
+            dedupe_key = order.intent_id or order.broker_order_id
+            if dedupe_key and dedupe_key not in merged:
+                merged[dedupe_key] = order
+        return list(merged.values())
+
+    def _load_pending_protection_watch_items_legacy(
         self,
         *,
-        exec_run_id: str | None = None,
-        account_id: str | None = None,
-        limit: int = 100,
+        exec_run_id: str | None,
+        account_id: str | None,
+        limit: int,
     ) -> list[ProtectionWatchItem]:
         query = text(f"""
             SELECT
@@ -200,7 +230,86 @@ class ExecutionRepository:
         params = {"exec_run_id": exec_run_id, "account_id": account_id}
         with self.engine.connect() as conn:
             rows = conn.execute(query, params).mappings().all()
+        return self._rows_to_protection_watch_items(rows)
 
+    def load_pending_protection_watch_items(
+        self,
+        *,
+        exec_run_id: str | None = None,
+        account_id: str | None = None,
+        limit: int = 100,
+    ) -> list[ProtectionWatchItem]:
+        query = text(f"""
+            SELECT
+                stop_req.exec_run_id AS source_exec_run_id,
+                stop_req.risk_run_id AS risk_run_id,
+                er.trade_date AS trade_date,
+                er.account_id AS account_id,
+                er.broker_mode AS broker_mode,
+                stop_req.symbol AS symbol,
+                stop_req.parent_request_id AS parent_intent_id,
+                stop_req.request_id AS initial_stop_intent_id,
+                COALESCE(stop_obs.broker_order_id, '') AS initial_stop_broker_order_id,
+                COALESCE(parent_fill.total_filled_qty, stop_obs.filled_qty, stop_req.target_qty, 0) AS fill_qty,
+                COALESCE(parent_fill.weighted_avg_fill_price, parent_obs.avg_fill_price, parent_req.decision_price, ets.entry_price, stop_req.decision_price, 0) AS fill_price,
+                ets.stop_price_initial AS stop_price_initial,
+                ets.risk_per_share AS risk_per_share,
+                ets.initial_risk_dollars AS initial_risk_dollars,
+                ets.target_notional AS target_notional
+            FROM execution_order_requests stop_req
+            INNER JOIN execution_runs er
+                    ON er.exec_run_id = stop_req.exec_run_id
+            INNER JOIN execution_order_requests parent_req
+                    ON parent_req.exec_run_id = stop_req.exec_run_id
+                   AND parent_req.request_id = stop_req.parent_request_id
+            LEFT JOIN execution_broker_orders stop_obs
+                   ON stop_obs.request_id = stop_req.request_id
+            LEFT JOIN execution_broker_orders parent_obs
+                   ON parent_obs.request_id = parent_req.request_id
+            LEFT JOIN (
+                SELECT request_id,
+                       SUM(filled_qty) AS total_filled_qty,
+                       CASE
+                           WHEN SUM(filled_qty) > 0 THEN SUM(filled_qty * avg_fill_price) / SUM(filled_qty)
+                           ELSE AVG(avg_fill_price)
+                       END AS weighted_avg_fill_price
+                FROM execution_broker_fills
+                GROUP BY request_id
+            ) parent_fill
+                   ON parent_fill.request_id = parent_req.request_id
+            LEFT JOIN execution_targets_snapshot ets
+                   ON ets.exec_run_id = stop_req.exec_run_id
+                  AND ets.symbol = stop_req.symbol
+            LEFT JOIN execution_order_requests trailing_req
+                   ON trailing_req.exec_run_id = stop_req.exec_run_id
+                  AND trailing_req.parent_request_id = stop_req.parent_request_id
+                  AND trailing_req.intent_role = 'trailing_stop'
+            LEFT JOIN execution_broker_orders trailing_obs
+                   ON trailing_obs.request_id = trailing_req.request_id
+            WHERE stop_req.intent_role = 'initial_stop'
+              AND COALESCE(stop_obs.normalized_status, stop_req.status) IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
+              AND (
+                    trailing_req.request_id IS NULL
+                 OR COALESCE(trailing_obs.normalized_status, trailing_req.status) NOT IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
+              )
+              AND (:exec_run_id IS NULL OR stop_req.exec_run_id = :exec_run_id)
+              AND (:account_id IS NULL OR er.account_id = :account_id)
+            ORDER BY COALESCE(stop_obs.submitted_at, stop_req.created_at) ASC
+            LIMIT {int(limit)}
+        """)
+        params = {"exec_run_id": exec_run_id, "account_id": account_id}
+        with self.engine.connect() as conn:
+            rows = conn.execute(query, params).mappings().all()
+        if rows:
+            return self._rows_to_protection_watch_items(rows)
+        return self._load_pending_protection_watch_items_legacy(
+            exec_run_id=exec_run_id,
+            account_id=account_id,
+            limit=limit,
+        )
+
+    @staticmethod
+    def _rows_to_protection_watch_items(rows: list[Any]) -> list[ProtectionWatchItem]:
         return [
             ProtectionWatchItem(
                 source_exec_run_id=str(r["source_exec_run_id"]),

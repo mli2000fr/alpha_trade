@@ -358,6 +358,113 @@ class TestExecutionDbIo:
         assert items[0].initial_stop_intent_id == 'stop-1'
         assert items[0].fill_price == 150.2
 
+    def test_load_pending_protection_watch_items_reads_v2_schema(self, engine, repo) -> None:
+        now = datetime.now(timezone.utc)
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO execution_runs (exec_run_id, risk_run_id, trade_date, broker_mode, dry_run, status, started_at, total_targets, total_submitted, total_filled, account_id)
+                VALUES ('e2', 'r2', '2026-04-19', 'paper', 0, 'COMPLETED', CURRENT_TIMESTAMP, 1, 1, 1, 'acct-2')
+            """))
+            conn.execute(text("""
+                INSERT INTO execution_targets_snapshot (
+                    exec_run_id, account_id, risk_run_id, trade_date, symbol, decision_rank, side,
+                    target_shares, entry_price, target_weight, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, created_at
+                ) VALUES (
+                    'e2', 'acct-2', 'r2', '2026-04-19', 'AAPL', 1, 'long',
+                    100, 151.0, 0.05, 141.0, 10.0, 1000.0, 1000.0, 15100.0, :created_at
+                )
+            """), {"created_at": now})
+            conn.execute(text("""
+                INSERT INTO execution_order_requests (
+                    request_id, exec_run_id, account_id, risk_run_id, symbol, side, target_qty,
+                    order_type, business_key, submission_key, attempt_no, parent_request_id,
+                    intent_role, decision_price, status, created_at, updated_at
+                ) VALUES
+                    ('parent-2', 'e2', 'acct-2', 'r2', 'AAPL', 'buy', 100,
+                     'market', 'bk-parent-2', 'sub-parent-2', 1, NULL,
+                     'entry', 151.0, 'FILLED', :created_at, :created_at),
+                    ('stop-2', 'e2', 'acct-2', 'r2', 'AAPL', 'sell', 100,
+                     'stop', 'bk-stop-2', 'sub-stop-2', 1, 'parent-2',
+                     'initial_stop', 151.0, 'SUBMITTED', :created_at, :created_at)
+            """), {"created_at": now})
+            conn.execute(text("""
+                INSERT INTO execution_broker_orders (
+                    request_id, exec_run_id, account_id, broker_order_id, client_order_id,
+                    symbol, side, qty, filled_qty, avg_fill_price, raw_status, normalized_status,
+                    order_type, stop_price, submitted_at, last_seen_at
+                ) VALUES (
+                    'stop-2', 'e2', 'acct-2', 'bo-stop-2', 'sub-stop-2',
+                    'AAPL', 'sell', 100, 0, NULL, 'accepted', 'SUBMITTED',
+                    'stop', 141.0, :created_at, :created_at
+                )
+            """), {"created_at": now})
+            conn.execute(text("""
+                INSERT INTO execution_broker_fills (
+                    fill_id, exec_run_id, account_id, broker_order_id, request_id,
+                    symbol, filled_qty, avg_fill_price, fill_timestamp, decision_price,
+                    slippage_bps, implementation_shortfall, created_at
+                ) VALUES (
+                    'fill-2', 'e2', 'acct-2', 'bo-parent-2', 'parent-2',
+                    'AAPL', 100, 151.2, :created_at, 151.0,
+                    0.0, 0.0, :created_at
+                )
+            """), {"created_at": now})
+
+        items = repo.load_pending_protection_watch_items(exec_run_id='e2', account_id='acct-2')
+
+        assert len(items) == 1
+        assert items[0].source_exec_run_id == 'e2'
+        assert items[0].parent_intent_id == 'parent-2'
+        assert items[0].initial_stop_intent_id == 'stop-2'
+        assert items[0].initial_stop_broker_order_id == 'bo-stop-2'
+        assert items[0].fill_price == 151.2
+        assert items[0].stop_price_initial == 141.0
+
+    def test_load_open_child_orders_merges_v2_and_legacy_children(self, engine, repo) -> None:
+        now = datetime.now(timezone.utc)
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO execution_order_requests (
+                    request_id, exec_run_id, account_id, risk_run_id, symbol, side, target_qty,
+                    order_type, business_key, submission_key, attempt_no, parent_request_id,
+                    intent_role, decision_price, trail_percent, status, created_at, updated_at
+                ) VALUES (
+                    'trail-v2', 'e3', 'acct-3', 'r3', 'AAPL', 'sell', 100,
+                    'trailing_stop', 'bk-trail-v2', 'sub-trail-v2', 1, 'parent-3',
+                    'trailing_stop', 152.0, 5.0, 'SUBMITTED', :created_at, :created_at
+                )
+            """), {"created_at": now})
+            conn.execute(text("""
+                INSERT INTO execution_broker_orders (
+                    request_id, exec_run_id, account_id, broker_order_id, client_order_id,
+                    symbol, side, qty, filled_qty, avg_fill_price, raw_status, normalized_status,
+                    order_type, trail_percent, submitted_at, last_seen_at
+                ) VALUES (
+                    'trail-v2', 'e3', 'acct-3', 'bo-trail-v2', 'sub-trail-v2',
+                    'AAPL', 'sell', 100, 0, NULL, 'accepted', 'SUBMITTED',
+                    'trailing_stop', 5.0, :created_at, :created_at
+                )
+            """), {"created_at": now})
+            conn.execute(text("""
+                INSERT INTO execution_orders (
+                    exec_run_id, risk_run_id, symbol, intent_id, parent_intent_id, intent_role,
+                    idempotency_key, broker_mode, broker_order_id, client_order_id, side, qty,
+                    filled_qty, avg_fill_price, order_type, limit_price, stop_price, trail_percent,
+                    decision_price, status, created_at, updated_at
+                ) VALUES (
+                    'e3', 'r3', 'AAPL', 'tp-legacy', 'parent-3', 'take_profit',
+                    'k-tp-legacy', 'paper', 'bo-tp-legacy', 'co-tp-legacy', 'sell', 100,
+                    0, NULL, 'limit', 160.0, NULL, NULL,
+                    152.0, 'SUBMITTED', :created_at, :created_at
+                )
+            """), {"created_at": now})
+
+        children = repo.load_open_child_orders('parent-3')
+
+        intent_ids = {child.intent_id for child in children}
+        assert intent_ids == {'trail-v2', 'tp-legacy'}
+
     def test_upsert_order_idempotent(self, repo) -> None:
         d = {
             "exec_run_id": "e1", "risk_run_id": "r1", "symbol": "AAPL",

@@ -66,6 +66,18 @@ def _safe_scalar_with_error(query: str, params: dict[str, object] | None = None)
     return value, get_last_query_error()
 
 
+def _parse_json_object(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def get_alpha_scanner_dependency_thresholds() -> dict[str, dict[str, float]]:
     return load_persisted_alpha_scanner_dependency_thresholds(ALPHA_SCANNER_DEPENDENCY_THRESHOLDS)
 
@@ -379,13 +391,13 @@ def get_execution_runs(limit: int = 20, account_id: str | None = None) -> pd.Dat
         return safe_query(f"""
             SELECT exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
                    status, started_at, completed_at, total_targets, total_submitted,
-                   total_filled, error_message, account_id
+                   total_filled, error_message, account_id, execution_profile, submission_window
             FROM execution_runs WHERE account_id = :account_id ORDER BY started_at DESC LIMIT {limit}
         """, {"account_id": account_id})
     return safe_query(f"""
         SELECT exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
                status, started_at, completed_at, total_targets, total_submitted,
-               total_filled, error_message
+               total_filled, error_message, account_id, execution_profile, submission_window
         FROM execution_runs ORDER BY started_at DESC LIMIT {limit}
     """)
 
@@ -402,6 +414,61 @@ def get_execution_events(exec_run_id: str | None = None) -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_execution_orders(exec_run_id: str | None = None) -> pd.DataFrame:
+    params = {"eid": exec_run_id} if exec_run_id else None
+    v2_query = """
+        SELECT req.exec_run_id,
+               req.risk_run_id,
+               req.symbol,
+               req.request_id AS intent_id,
+               req.parent_request_id AS parent_intent_id,
+               req.intent_role,
+               bo.broker_order_id,
+               req.side,
+               req.target_qty AS qty,
+               COALESCE(bo.filled_qty, fill_agg.filled_qty, 0) AS filled_qty,
+               COALESCE(bo.avg_fill_price, fill_agg.avg_fill_price) AS avg_fill_price,
+               req.order_type,
+               req.limit_price,
+               req.stop_price,
+               req.trail_percent,
+               req.decision_price,
+               COALESCE(bo.normalized_status, req.status) AS status,
+               req.created_at,
+               COALESCE(bo.last_seen_at, req.updated_at) AS updated_at,
+               req.business_key AS idempotency_key,
+               req.submission_key,
+               req.attempt_no,
+               bo.client_order_id,
+               req.account_id
+        FROM execution_order_requests req
+        LEFT JOIN execution_broker_orders bo
+               ON bo.request_id = req.request_id
+        LEFT JOIN (
+            SELECT request_id,
+                   SUM(filled_qty) AS filled_qty,
+                   CASE
+                       WHEN SUM(filled_qty) > 0 THEN SUM(filled_qty * avg_fill_price) / SUM(filled_qty)
+                       ELSE AVG(avg_fill_price)
+                   END AS avg_fill_price
+            FROM execution_broker_fills
+            GROUP BY request_id
+        ) fill_agg
+               ON fill_agg.request_id = req.request_id
+    """
+    if exec_run_id:
+        v2_query += """
+        WHERE req.exec_run_id = :eid
+        ORDER BY CASE WHEN req.parent_request_id IS NULL THEN 0 ELSE 1 END,
+                 COALESCE(req.parent_request_id, req.request_id), req.created_at DESC
+        """
+    else:
+        v2_query += """
+        ORDER BY req.created_at DESC
+        LIMIT 200
+        """
+    df = safe_query(v2_query, params)
+    if not df.empty:
+        return df
     if exec_run_id:
         return safe_query(
             """
@@ -441,21 +508,38 @@ def get_execution_account_constraints(exec_run_id: str) -> dict[str, object]:
         """,
         {"eid": exec_run_id},
     )
-    if df.empty:
-        return {}
+    if not df.empty:
+        row = df.iloc[0]
+        payload = _parse_json_object(row.get("payload_json"))
+        payload.setdefault("message", row.get("message", ""))
+        payload.setdefault("created_at", row.get("created_at"))
+        return payload
 
-    row = df.iloc[0]
-    payload_raw = row.get("payload_json")
-    payload: dict[str, object] = {}
-    if isinstance(payload_raw, str) and payload_raw.strip():
-        try:
-            parsed = json.loads(payload_raw)
-            if isinstance(parsed, dict):
-                payload = parsed
-        except Exception:
-            payload = {}
-    payload.setdefault("message", row.get("message", ""))
+    snapshot_df = safe_query(
+        """
+        SELECT snapshot_kind, equity, cash, settled_cash, buying_power,
+               daytrade_count, raw_payload_json, created_at
+        FROM broker_account_snapshots
+        WHERE exec_run_id = :eid
+          AND snapshot_kind = 'preflight'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        {"eid": exec_run_id},
+    )
+    if snapshot_df.empty:
+        return {}
+    row = snapshot_df.iloc[0]
+    payload = _parse_json_object(row.get("raw_payload_json"))
+    payload.setdefault("equity", row.get("equity"))
+    payload.setdefault("cash", row.get("cash"))
+    payload.setdefault("settled_cash", row.get("settled_cash"))
+    payload.setdefault("buying_power", row.get("buying_power"))
+    payload.setdefault("buying_power_available", row.get("buying_power"))
+    payload.setdefault("settled_cash_available", row.get("settled_cash"))
+    payload.setdefault("daytrade_count", row.get("daytrade_count"))
     payload.setdefault("created_at", row.get("created_at"))
+    payload.setdefault("message", "Contraintes relues depuis le snapshot broker preflight.")
     return payload
 
 
@@ -480,10 +564,74 @@ def get_broker_positions(account_id: str | None = None) -> pd.DataFrame:
 @st.cache_data(ttl=60, show_spinner=False)
 def get_execution_fills(exec_run_id: str | None = None) -> pd.DataFrame:
     if exec_run_id:
+        df = safe_query(
+            """
+            SELECT exec_run_id,
+                   fill_id,
+                   broker_order_id,
+                   request_id AS intent_id,
+                   symbol,
+                   filled_qty,
+                   avg_fill_price,
+                   fill_timestamp,
+                   decision_price,
+                   slippage_bps,
+                   implementation_shortfall,
+                   account_id,
+                   created_at
+            FROM execution_broker_fills
+            WHERE exec_run_id = :eid
+            ORDER BY fill_timestamp DESC
+            """,
+            {"eid": exec_run_id},
+        )
+        if not df.empty:
+            return df
+    else:
+        df = safe_query(
+            """
+            SELECT exec_run_id,
+                   fill_id,
+                   broker_order_id,
+                   request_id AS intent_id,
+                   symbol,
+                   filled_qty,
+                   avg_fill_price,
+                   fill_timestamp,
+                   decision_price,
+                   slippage_bps,
+                   implementation_shortfall,
+                   account_id,
+                   created_at
+            FROM execution_broker_fills
+            ORDER BY fill_timestamp DESC
+            LIMIT 100
+            """
+        )
+        if not df.empty:
+            return df
+    if exec_run_id:
         return safe_query("""
             SELECT * FROM execution_fills WHERE exec_run_id = :eid ORDER BY fill_timestamp DESC
         """, {"eid": exec_run_id})
     return safe_query("SELECT * FROM execution_fills ORDER BY fill_timestamp DESC LIMIT 100")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_targets_snapshot(exec_run_id: str) -> pd.DataFrame:
+    return safe_query(
+        """
+        SELECT exec_run_id, account_id, risk_run_id, trade_date, symbol,
+               decision_rank, side, target_shares, entry_price, target_weight,
+               stop_price_initial, risk_per_share, risk_budget_dollars,
+               initial_risk_dollars, target_notional, price_asof_date, atr_asof_date,
+               created_at
+        FROM execution_targets_snapshot
+        WHERE exec_run_id = :eid
+        ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
+        """,
+        {"eid": exec_run_id},
+    )
 
 
 # ---------------------------------------------------------------------------
