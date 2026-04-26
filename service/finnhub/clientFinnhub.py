@@ -5,14 +5,32 @@ from typing import Any, Iterable, Optional, cast
 
 import requests
 
+from service._finnhub_cache import (
+    DEFAULT_CACHE_TTL_DAYS,
+    get_cached_profile,
+    store_profile,
+)
+from service._http_retry import RetryPolicy, request_with_retry
+from service._telemetry import bump as _telemetry_bump
+
 DEFAULT_TIMEOUT_SECONDS = 10
-MAX_TIMEOUT_RETRIES = 10
+MAX_TIMEOUT_RETRIES = 10  # conservé pour compatibilité (constante exportée)
 TIMEOUT_BACKOFF_SECONDS = 10
 MAX_RATE_LIMIT_RETRIES = 3
 RATE_LIMIT_BACKOFF_SECONDS = 60
 MIN_REQUEST_INTERVAL_SECONDS = 1.1
 FINNHUB_PROFILE_ENDPOINT = "https://finnhub.io/api/v1/stock/profile2"
 FINNHUB_EARNINGS_CALENDAR_ENDPOINT = "https://finnhub.io/api/v1/calendar/earnings"
+
+#: Politique de retry alignée avec les anciennes constantes
+#: (3 tentatives sur 429, 10 sur timeouts → max_attempts=10) avec backoff
+#: exponentiel (1s → 2s → 4s ... plafonné 60s).
+_FINNHUB_RETRY_POLICY = RetryPolicy(
+    max_attempts=10,
+    base_delay_seconds=1.0,
+    max_delay_seconds=60.0,
+    timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,71 +64,67 @@ def _request_json(
     params: dict[str, str],
     session: Optional[requests.Session] = None,
 ) -> dict[str, Any]:
+    """Appel JSON Finnhub via :func:`service._http_retry.request_with_retry`.
+
+    Phase 2.3 : remplace l'ancienne boucle ad-hoc timeout/429.
+    Le helper centralisé gère les codes 408/425/429/5xx + timeouts +
+    circuit breaker par hôte.
+    """
     owned_session = session is None
     client = session or requests.Session()
-    result: Optional[dict[str, Any]] = None
-
-    timeout_attempts = 0
-    rate_limit_attempts = 0
-
+    _telemetry_bump("finnhub", "requests_total")
     try:
-        while True:
-            try:
-                response = client.get(
-                    endpoint,
-                    params=params,
-                    timeout=DEFAULT_TIMEOUT_SECONDS,
-                )
-
-                if response.status_code == 429:
-                    rate_limit_attempts += 1
-                    LOGGER.warning(
-                        "Finnhub rate limit | endpoint=%s symbol=%s tentative=%s/%s",
-                        endpoint,
-                        params.get("symbol"),
-                        rate_limit_attempts,
-                        MAX_RATE_LIMIT_RETRIES,
-                    )
-                    if rate_limit_attempts >= MAX_RATE_LIMIT_RETRIES:
-                        raise RuntimeError(
-                            f"Finnhub rate limit atteint pour {params.get('symbol') or endpoint} après {MAX_RATE_LIMIT_RETRIES} tentatives."
-                        )
-                    time.sleep(RATE_LIMIT_BACKOFF_SECONDS)
-                    continue
-
-                response.raise_for_status()
-                data = response.json()
-                if not isinstance(data, dict):
-                    raise RuntimeError(f"Réponse Finnhub invalide pour {params.get('symbol') or endpoint}.")
-                result = cast(dict[str, Any], data)
-                break
-            except requests.exceptions.Timeout:
-                timeout_attempts += 1
-                LOGGER.warning(
-                    "Timeout Finnhub | endpoint=%s symbol=%s tentative=%s/%s",
-                    endpoint,
-                    params.get("symbol"),
-                    timeout_attempts,
-                    MAX_TIMEOUT_RETRIES,
-                )
-                if timeout_attempts >= MAX_TIMEOUT_RETRIES:
-                    raise RuntimeError(
-                        f"Abandon après {MAX_TIMEOUT_RETRIES} timeouts Finnhub pour {params.get('symbol') or endpoint}."
-                    )
-                time.sleep(TIMEOUT_BACKOFF_SECONDS)
+        response = request_with_retry(
+            client, "GET", endpoint,
+            params=params, policy=_FINNHUB_RETRY_POLICY,
+        )
+        data = response.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(
+                f"Réponse Finnhub invalide pour {params.get('symbol') or endpoint}."
+            )
+        _telemetry_bump("finnhub", "success_total")
+        return cast(dict[str, Any], data)
+    except requests.exceptions.HTTPError as exc:
+        status = getattr(exc.response, "status_code", None)
+        if status == 429:
+            _telemetry_bump("finnhub", "429_total")
+        elif status and 500 <= status < 600:
+            _telemetry_bump("finnhub", "5xx_total")
+        raise RuntimeError(
+            f"Finnhub HTTP {status} pour {params.get('symbol') or endpoint}: {exc}"
+        ) from exc
     finally:
         if owned_session:
             client.close()
 
-    if result is None:
-        raise RuntimeError(f"Réponse Finnhub indisponible pour {params.get('symbol') or endpoint}.")
-    return result
 
 
-def fetch_company_profile(symbol: str, session: Optional[requests.Session] = None) -> dict[str, Any]:
-    """Récupère le profil société Finnhub pour un symbole."""
-    params = _build_params(symbol)
+def fetch_company_profile(
+    symbol: str,
+    session: Optional[requests.Session] = None,
+    *,
+    use_cache: bool = True,
+    cache_ttl_days: int = DEFAULT_CACHE_TTL_DAYS,
+) -> dict[str, Any]:
+    """Récupère le profil société Finnhub pour un symbole.
+
+    Phase 2.3 : cache disque TTL ``cache_ttl_days`` (7j par défaut)
+    branché via :mod:`service._finnhub_cache`. Désactivable via
+    ``use_cache=False`` pour les tests ou un refresh forcé.
+    """
+    normalized = _normalize_symbol(symbol)
+    if use_cache:
+        cached = get_cached_profile(normalized, ttl_days=cache_ttl_days)
+        if cached is not None:
+            _telemetry_bump("finnhub", "cache_hit_total")
+            LOGGER.debug("Finnhub profile | cache HIT symbol=%s", normalized)
+            return cached
+        _telemetry_bump("finnhub", "cache_miss_total")
+    params = _build_params(normalized)
     result = _request_json(FINNHUB_PROFILE_ENDPOINT, params=params, session=session)
+    if use_cache and result:
+        store_profile(normalized, result)
     LOGGER.info(
         "Finnhub profile | symbol=%s country=%s exchange=%s industry=%s market_cap=%s",
         params["symbol"],

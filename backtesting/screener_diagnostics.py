@@ -1610,10 +1610,16 @@ class ScreenerDiagnosticsService:
         candidates = history_df[pd.to_numeric(history_df["is_candidate"], errors="coerce").fillna(0).astype(int) == 1].copy()
         if candidates.empty:
             return candidates
-        score_series = pd.to_numeric(candidates.get("final_score_sentiment"), errors="coerce")
-        walk_forward_series = pd.to_numeric(candidates.get("final_score_walk_forward"), errors="coerce")
-        fallback_final = pd.to_numeric(candidates.get("final_score"), errors="coerce")
-        fallback_total = pd.to_numeric(candidates.get("total_score"), errors="coerce")
+        def _as_series(col_name: str) -> pd.Series:
+            col = candidates.get(col_name)
+            if col is None:
+                return pd.Series([pd.NA] * len(candidates), index=candidates.index, dtype="Float64")
+            return pd.to_numeric(col, errors="coerce")
+
+        score_series = _as_series("final_score_sentiment")
+        walk_forward_series = _as_series("final_score_walk_forward")
+        fallback_final = _as_series("final_score")
+        fallback_total = _as_series("total_score")
         candidates["score_for_portfolio"] = walk_forward_series
         candidates["score_for_portfolio_source"] = pd.NA
         candidates.loc[walk_forward_series.notna(), "score_for_portfolio_source"] = "final_score_walk_forward"

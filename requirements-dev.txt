@@ -29,3 +29,6 @@ sqlalchemy[mypy]       # plugin mypy SQLAlchemy
 
 # --- Database ---
 alembic>=1.13.0
+
+# --- Integration tests (Phase 2.2) ---
+testcontainers[mysql]>=4.0  # tests d'intgration MySQL en CI

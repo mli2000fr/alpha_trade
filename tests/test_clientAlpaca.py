@@ -31,6 +31,11 @@ class _FakeSession:
             raise response
         return response
 
+    def request(self, method, endpoint, headers=None, params=None, timeout=None, **_kwargs):
+        # Phase 2.3 : ``service._http_retry.request_with_retry`` appelle
+        # ``session.request(method, url, ...)`` (API standard requests).
+        return self.get(endpoint, headers=headers, params=params, timeout=timeout)
+
     def close(self) -> None:
         return None
 

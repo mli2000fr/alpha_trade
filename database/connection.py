@@ -10,6 +10,16 @@ DEFAULT_DB_NAME = "alpha_trade"
 DEFAULT_DB_USER_ENV = "LOGIN_DB"
 DEFAULT_DB_PASSWORD_ENV = "PASSWORD_DB"
 
+# Phase 2.2 — pool / TLS configurables via env (audit_database §1.4 / §3).
+DB_POOL_SIZE_ENV = "DB_POOL_SIZE"
+DB_MAX_OVERFLOW_ENV = "DB_MAX_OVERFLOW"
+DB_POOL_RECYCLE_ENV = "DB_POOL_RECYCLE_SECONDS"
+DB_SSL_CA_PATH_ENV = "DB_SSL_CA_PATH"
+
+DEFAULT_POOL_SIZE = 2
+DEFAULT_MAX_OVERFLOW = 3
+DEFAULT_POOL_RECYCLE = 3600
+
 # Phase 1 sécurité : placeholders évidents refusés (audit_global.md §1.5).
 # Volontairement permissif sur "user" / "pass" pour ne pas casser les envs
 # locaux historiques ; les vrais placeholders ("changeme", "your_password",
@@ -39,6 +49,40 @@ def _read_database_credentials(
     return db_user, db_password
 
 
+def _read_int_env(name: str, default: int, *, minimum: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Variable d'environnement {name}='{raw}' invalide : entier attendu."
+        ) from exc
+    if value < minimum:
+        raise RuntimeError(
+            f"Variable d'environnement {name}={value} doit être ≥ {minimum}."
+        )
+    return value
+
+
+def _read_ssl_connect_args() -> dict[str, dict[str, str]]:
+    """Si ``DB_SSL_CA_PATH`` est défini, retourne ``{"ssl": {"ca": <path>}}``.
+
+    Conformité audit_database §3 (TLS optionnel). PyMySQL accepte
+    ``connect_args={"ssl": {"ca": "..."}}`` pour activer TLS sans casser
+    les configurations locales (LAN dev) qui n'ont pas de CA.
+    """
+    ca_path = os.getenv(DB_SSL_CA_PATH_ENV)
+    if not ca_path:
+        return {}
+    if not os.path.isfile(ca_path):
+        raise RuntimeError(
+            f"{DB_SSL_CA_PATH_ENV}='{ca_path}' : fichier introuvable."
+        )
+    return {"ssl": {"ca": ca_path}}
+
+
 @lru_cache(maxsize=1)
 def get_database_url(
     db_host: str = DEFAULT_DB_HOST,
@@ -56,22 +100,34 @@ def get_sqlalchemy_engine(
     db_name: str = DEFAULT_DB_NAME,
     db_user_env: str = DEFAULT_DB_USER_ENV,
     db_password_env: str = DEFAULT_DB_PASSWORD_ENV,
+    *,
+    url: str | None = None,
 ) -> Engine:
+    pool_size = _read_int_env(DB_POOL_SIZE_ENV, DEFAULT_POOL_SIZE, minimum=1)
+    max_overflow = _read_int_env(DB_MAX_OVERFLOW_ENV, DEFAULT_MAX_OVERFLOW, minimum=0)
+    pool_recycle = _read_int_env(DB_POOL_RECYCLE_ENV, DEFAULT_POOL_RECYCLE, minimum=60)
+    connect_args = _read_ssl_connect_args()
+    # Phase 2.2 : ``url`` permet d'injecter un DSN custom (tests, SQLite en
+    # mémoire, override d'environnement ponctuel) sans toucher aux variables
+    # d'environnement de credentials.
+    resolved_url = url or get_database_url(
+        db_host=db_host,
+        db_name=db_name,
+        db_user_env=db_user_env,
+        db_password_env=db_password_env,
+    )
     return create_engine(
-        get_database_url(
-            db_host=db_host,
-            db_name=db_name,
-            db_user_env=db_user_env,
-            db_password_env=db_password_env,
-        ),
+        resolved_url,
         echo=False,
         pool_pre_ping=True,
-        pool_recycle=3600,
-        # Sizing explicite pour le modèle multi-process (ProcessPoolExecutor).
-        # Chaque worker subprocess possède son propre engine via lru_cache isolé.
-        # Budget max = pool_size + max_overflow = 5 connexions par worker.
-        pool_size=2,
-        max_overflow=3,
+        pool_recycle=pool_recycle,
+        # Phase 2.2 : sizing configurable via env (DB_POOL_SIZE / DB_MAX_OVERFLOW)
+        # Défauts conservateurs adaptés au modèle multi-process (ProcessPoolExecutor) :
+        # chaque worker possède son propre engine via lru_cache isolé.
+        # Budget max par worker = pool_size + max_overflow.
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        connect_args=connect_args,
     )
 
 

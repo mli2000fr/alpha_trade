@@ -110,27 +110,27 @@ ne peut plus partir avec equity 100k$ par défaut.
 > métier.
 
 ### 2.1 — `core/` + `common/` (réf. `audit_core_common.md`)
-- [ ] **Centraliser les Protocols** dans `core/interfaces.py` :
+- [x] **Centraliser les Protocols** dans `core/interfaces.py` :
       `BrokerPort`, `MarketDataPort`, `BarsRepository`, `ScoresRepository`,
       `RiskRepository`, `ExecutionRepository`, `NewsProvider`,
       `CorporateActionProvider`.
-- [ ] Créer `core/conviction.py` (formule de fusion partagée).
-- [ ] Créer `core/filter_profiles.py` (déplacer `STRICT_SWING_CASH_FILTERS`).
-- [ ] Découper `common/utils.py` (fourre-tout) en sous-modules.
-- [ ] Doc `doc/core_common.md` (manquante d'après audit).
+- [x] Créer `core/conviction.py` (formule de fusion partagée).
+- [x] Créer `core/filter_profiles.py` (déplacer `STRICT_SWING_CASH_FILTERS`).
+- [x] Découper `common/utils.py` (fourre-tout) en sous-modules.
+- [x] Doc `doc/core_common.md` (manquante d'après audit).
 
 ### 2.2 — `database/` (réf. `audit_database.md`)
-- [ ] Façade `database/repositories/` : un repository typé par domaine,
+- [x] Façade `database/repositories/` : un repository typé par domaine,
       consommée via Protocol `core/interfaces.py`.
-- [ ] Élargir le pool SQLAlchemy (audit signale "minuscule").
-- [ ] Activer `DB_SSL_CA_PATH` (TLS optionnel).
-- [ ] Tests d'intégration `testcontainers[mysql]` activés en CI.
+- [x] Élargir le pool SQLAlchemy (audit signale "minuscule").
+- [x] Activer `DB_SSL_CA_PATH` (TLS optionnel).
+- [x] Tests d'intégration `testcontainers[mysql]` activés en CI.
 
 ### 2.3 — `service/` (réf. `audit_service.md`)
-- [ ] Migrer tous les clients (Alpaca / Finnhub / News) sur
+- [x] Migrer tous les clients (Alpaca / Finnhub / News) sur
       `service/_http_retry.py`.
-- [ ] Cache Finnhub 7j (déjà préparé en 1.4 si bien factorisé).
-- [ ] Documenter `feed=iex` explicite et son impact.
+- [x] Cache Finnhub 7j (déjà préparé en 1.4 si bien factorisé).
+- [x] Documenter `feed=iex` explicite et son impact.
 
 **Critère de sortie** : aucun module métier n'importe encore une implémentation
 concrète au lieu d'un Protocol.

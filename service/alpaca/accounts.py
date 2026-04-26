@@ -60,6 +60,10 @@ class AccountRegistry:
         """Réinitialise le singleton (utile pour les tests)."""
         cls._instance = None
 
+    #: Alias documenté Phase 2.3 (audit_service §accounts) pour clarifier
+    #: l'intention dans les fixtures pytest.
+    reset_for_tests = reset
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

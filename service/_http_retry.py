@@ -125,11 +125,20 @@ def request_with_retry(
     host = _extract_host(url)
 
     last_exc: Exception | None = None
+    method_lower = method.lower()
     for attempt in range(1, pol.max_attempts + 1):
         if breaker is not None:
             breaker.check(host)
         try:
-            response = session.request(method, url, **request_kwargs)
+            # API standard requests : préfère ``session.request(method, url, ...)``.
+            # Fallback sur ``session.<method>(url, ...)`` pour les fakes minimalistes
+            # qui n'implémentent que ``.get()`` / ``.post()`` (rétrocompat tests legacy).
+            session_request = getattr(session, "request", None)
+            if callable(session_request):
+                response = session_request(method, url, **request_kwargs)
+            else:
+                http_call = getattr(session, method_lower)
+                response = http_call(url, **request_kwargs)
             if response.status_code in RETRYABLE_HTTP_STATUS:
                 raise _RetryableHttpError(response)
             response.raise_for_status()

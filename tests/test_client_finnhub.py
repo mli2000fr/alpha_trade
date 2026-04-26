@@ -34,6 +34,11 @@ class _FakeSession:
             raise response
         return response
 
+    def request(self, method, url, params=None, timeout=None, **_kwargs):
+        # Phase 2.3 : ``service._http_retry.request_with_retry`` appelle
+        # ``session.request(method, url, ...)`` (API standard requests).
+        return self.get(url, params=params, timeout=timeout)
+
     def close(self) -> None:
         self.closed = True
 
@@ -85,7 +90,12 @@ def test_fetch_company_profile_retries_after_timeout(monkeypatch) -> None:
     profile = clientFinnhub.fetch_company_profile("MSFT", session=session)
 
     assert profile["ticker"] == "MSFT"
-    assert sleep_calls == [clientFinnhub.TIMEOUT_BACKOFF_SECONDS]
+    # Phase 2.3 : la politique de retry est maintenant jittered exponentielle
+    # via service/_http_retry.py (audit_service §retry helper). On vérifie
+    # juste qu'un sleep a bien été émis entre les deux tentatives, sans
+    # contrainte stricte sur la valeur (jitter 0.5x-1.5x).
+    assert len(sleep_calls) == 1
+    assert 0 < sleep_calls[0] <= clientFinnhub._FINNHUB_RETRY_POLICY.max_delay_seconds
     assert len(session.calls) == 2
 
 

@@ -12,6 +12,7 @@ from risk_management.models import EnrichedCandidate
 def _ec(symbol: str, conviction: float) -> EnrichedCandidate:
     return EnrichedCandidate(
         symbol=symbol, sector="Tech", score_used=conviction,
+        score_source="conviction_score",
         predicted_proba=None, historical_win_rate=None, conviction_score=conviction,
     )
 

@@ -36,16 +36,18 @@ def test_main_run_passthrough(monkeypatch):
     assert sys.argv[1] == 'run'
 
 def test_main_other_command(monkeypatch):
+    # 'sync' est une sous-commande supportée : main() ne doit pas injecter 'run'
+    # et conserver argv tel quel. _run_all reste l'entrée unique côté CLI actuel.
     argv = ['corporate_action_run.py', 'sync']
     monkeypatch.setattr(sys, 'argv', argv[:])
     monkeypatch.setattr(corporate_action_run, 'configure_root_logging', lambda **kw: None)
-    # _run_all ne doit pas être appelé
-    monkeypatch.setattr(corporate_action_run, '_run_all', lambda args: (_ for _ in ()).throw(AssertionError("_run_all ne doit pas être appelé")))
     called = {}
+    monkeypatch.setattr(corporate_action_run, '_run_all', lambda args: called.setdefault('run', True))
     def fake_parse_args():
         called['ok'] = True
         return types.SimpleNamespace()
     monkeypatch.setattr(corporate_action_run, '_build_parser', lambda: types.SimpleNamespace(parse_args=fake_parse_args))
-    # On attend juste que main() ne lance pas AssertionError
     corporate_action_run.main()
     assert called['ok']
+    assert called['run']
+    assert sys.argv[1] == 'sync'

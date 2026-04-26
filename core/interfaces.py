@@ -16,10 +16,12 @@ Usage:
 """
 from __future__ import annotations
 
-from datetime import date
-from typing import Optional, Protocol, Sequence, runtime_checkable
+from datetime import date, datetime
+from typing import Any, Iterator, Mapping, Optional, Protocol, Sequence, runtime_checkable
 
 import pandas as pd
+
+from core.types import AccountId, Adjustment, Feed, Symbol
 
 
 # ---------------------------------------------------------------------------
@@ -163,5 +165,137 @@ class BrokerPort(Protocol):
 
     def get_positions(self) -> list:
         """Retourne la liste des positions courantes."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — Protocols complémentaires (audit_core_common §2.1)
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class MarketDataPort(Protocol):
+    """Fournisseur de données de marché temps quasi-réel (Alpaca, Finnhub...)."""
+
+    def fetch_bars(
+        self,
+        symbol: Symbol | str,
+        timeframe: str,
+        start_date: Optional[str] = None,
+        *,
+        adjustment: Adjustment = "split",
+        feed: Feed = "iex",
+    ) -> list[dict[str, Any]]:
+        """Retourne les bars OHLCV bruts (format provider) pour ``symbol``."""
+        ...
+
+    def fetch_latest_quotes(
+        self, symbols: Sequence[Symbol | str]
+    ) -> dict[str, dict[str, Any]]:
+        """Retourne les dernières quotes (NBBO IEX) par symbole."""
+        ...
+
+
+@runtime_checkable
+class BarsRepository(Protocol):
+    """Persistance OHLCV (`stock_bars`, `stock_bars_daily`)."""
+
+    def upsert_bars(
+        self,
+        symbol: Symbol | str,
+        bars: pd.DataFrame,
+        *,
+        data_adjustment: str = "split",
+        data_source: str = "alpaca_iex",
+    ) -> int:
+        """Insère/met à jour des bars. Retourne le nb de lignes affectées."""
+        ...
+
+    def load_bars(
+        self,
+        symbol: Symbol | str,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> pd.DataFrame:
+        """Charge les bars sur ``[start, end]`` triés par date asc."""
+        ...
+
+
+@runtime_checkable
+class ScoresRepository(Protocol):
+    """Persistance et lecture de `stock_scores` (snapshot screener / selector)."""
+
+    def list_candidates(self, *, limit: int | None = None) -> list[str]:
+        """Liste de symboles candidats issus du dernier snapshot."""
+        ...
+
+    def upsert_scores(self, scores: pd.DataFrame) -> int:
+        """Persiste un snapshot de scores. Retourne le nombre de lignes affectées."""
+        ...
+
+
+@runtime_checkable
+class RiskRepository(Protocol):
+    """Persistance des décisions risk_management (`risk_runs`, `risk_decisions`)."""
+
+    def load_latest_decisions(self, account_id: AccountId | str) -> pd.DataFrame:
+        """Décisions du dernier run risk pour un compte."""
+        ...
+
+    def record_run(self, run_payload: Mapping[str, Any]) -> str:
+        """Persiste un run risk complet. Retourne le ``run_id``."""
+        ...
+
+
+@runtime_checkable
+class ExecutionRepository(Protocol):
+    """Persistance des runs et ordres execution_engine."""
+
+    def record_run(self, run_payload: Mapping[str, Any]) -> str:
+        """Persiste un run execution. Retourne le ``run_id``."""
+        ...
+
+    def load_orders(
+        self, account_id: AccountId | str, since: date | datetime
+    ) -> pd.DataFrame:
+        """Charge les ordres exécutés depuis ``since`` pour un compte."""
+        ...
+
+
+@runtime_checkable
+class NewsProvider(Protocol):
+    """Fournisseur d'articles de presse (Alpaca News, EDGAR...)."""
+
+    def iter_news_pages(
+        self,
+        start_utc: datetime,
+        end_utc: datetime,
+        symbols: Sequence[str] | None = None,
+        limit: int = 50,
+    ) -> Iterator[tuple[list[dict[str, Any]], str | None]]:
+        """Itère par pages ``(items, next_page_token)``."""
+        ...
+
+
+@runtime_checkable
+class CorporateActionProvider(Protocol):
+    """Fournisseur de corporate actions (splits, dividendes, M&A...)."""
+
+    def fetch_actions(
+        self, symbol: Symbol | str, since: date
+    ) -> list[dict[str, Any]]:
+        """Retourne les corporate actions pour ``symbol`` depuis ``since``."""
+        ...
+
+
+@runtime_checkable
+class ConvictionAggregator(Protocol):
+    """Fusion conviction (cf. ``core/conviction.py``)."""
+
+    def fuse(
+        self,
+        *,
+        quant_score: float,
+        predicted_proba: float | None,
+    ) -> float:
         ...
 
