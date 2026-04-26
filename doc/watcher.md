@@ -137,6 +137,14 @@ En résumé :
 - vous comptez sur la logique de transition dynamique du trailing ;
 - vous voulez une supervision opérationnelle claire de ce cycle de vie.
 
+### 2.5 Tableau ultra-simple — que se passe-t-il sans watcher ?
+
+| Cas | Sans watcher ? | Commentaire |
+|---|---|---|
+| Achat exécuté | **Oui** | Si `Execution` a bien soumis l'ordre d'entrée. |
+| Stop initial exécuté | **Oui** | S'il a bien été posé broker-side par `Execution`. |
+| Trailing dynamique automatique | **Non** | Cette promotion post-exécution dépend du watcher. |
+
 ---
 
 ## 3. Modes disponibles
