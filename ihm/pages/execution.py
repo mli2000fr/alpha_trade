@@ -13,11 +13,14 @@ from ihm.services.db import db_available
 from ihm.services.queries import (
     get_latest_run_business_summary,
     get_execution_account_constraints,
+    get_execution_orders,
     get_broker_positions,
     get_execution_events,
     get_execution_fills,
     get_execution_runs,
+    get_portfolio_targets,
 )
+from ihm.services.run_summary import get_run_summary
 
 
 def render() -> None:
@@ -49,7 +52,27 @@ def render() -> None:
         ("Remplis", int(row.get("total_filled", 0)), None),
     ])
 
-    render_persistent_business_summary(summary_record)
+    render_persistent_business_summary(summary_record, max_metrics=9)
+
+    summary = get_run_summary(summary_record)
+    if summary:
+        st.subheader("🛡️ Protections et indicateurs de risque")
+        metric_row([
+            ("Stops broker", int(summary.get("targets_with_broker_initial_stop", 0) or 0), None),
+            ("Fallback trailing", int(summary.get("targets_with_trailing_fallback", 0) or 0), None),
+            ("Stops soumis", int(summary.get("child_initial_stop_orders_submitted", 0) or 0), None),
+            ("Trails soumis", int(summary.get("child_trailing_stop_orders_submitted", 0) or 0), None),
+            ("Cibles stale", int(summary.get("stale_price_targets", 0) or 0), None),
+            ("Échecs protections", int(summary.get("child_order_submit_failures", 0) or 0), None),
+        ])
+        st.caption(
+            "Notional cible = `{}` | Risque initial = `{}` | Budget risque = `{}` | Stops prêts = `{}`".format(
+                summary.get("total_target_notional", 0.0),
+                summary.get("total_initial_risk_dollars", 0.0),
+                summary.get("total_risk_budget_dollars", 0.0),
+                summary.get("targets_with_risk_controls", 0),
+            )
+        )
 
     if row.get("error_message"):
         st.error(f"Erreur : {row['error_message']}")
@@ -88,6 +111,27 @@ def render() -> None:
     events = get_execution_events(selected)
     show_dataframe(events, height=300)
 
+    # --- Ordres d'exécution / protections ---
+    orders = get_execution_orders(selected)
+    if not orders.empty:
+        st.subheader("📋 Ordres soumis")
+        show_dataframe(orders, height=260)
+
+        if "parent_intent_id" in orders.columns:
+            child_orders = orders[orders["parent_intent_id"].notna()].copy()
+            if not child_orders.empty:
+                st.subheader("🧷 Ordres enfants et protections")
+                protection_counts = child_orders.groupby(["intent_role", "order_type", "status"]).size().reset_index(name="count")
+                show_dataframe(protection_counts, height=180)
+                protection_columns = [
+                    column for column in [
+                        "symbol", "intent_role", "order_type", "status", "qty",
+                        "limit_price", "stop_price", "trail_percent", "broker_order_id", "created_at",
+                    ]
+                    if column in child_orders.columns
+                ]
+                show_dataframe(child_orders[protection_columns], height=260)
+
     # --- Fills ---
     st.subheader("💰 Exécutions")
     fills = get_execution_fills(selected)
@@ -95,6 +139,21 @@ def render() -> None:
         avg_slip = fills["slippage_bps"].mean()
         st.metric("Slippage moyen (bps)", f"{avg_slip:.1f}")
     show_dataframe(fills, height=300)
+
+    risk_run_id = str(row.get("risk_run_id", "") or "").strip()
+    if risk_run_id:
+        source_targets = get_portfolio_targets(run_id=risk_run_id)
+        if not source_targets.empty:
+            st.subheader("🎯 Cibles source et paramètres risque")
+            target_columns = [
+                column for column in [
+                    "symbol", "decision_rank", "shares", "entry_price", "target_weight",
+                    "stop_price_initial", "risk_per_share", "risk_budget_dollars", "initial_risk_dollars",
+                    "target_notional", "price_asof_date", "atr_asof_date",
+                ]
+                if column in source_targets.columns
+            ]
+            show_dataframe(source_targets[target_columns], height=260)
 
     # --- Positions broker ---
     st.subheader("📦 Positions broker — dernier snapshot")

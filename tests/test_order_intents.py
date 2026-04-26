@@ -8,9 +8,11 @@ from execution_engine.config import ExecutionConfig
 from execution_engine.models import ExecutionTarget, IntentRole
 from execution_engine.order_intents import (
     build_entry_intents,
+    build_initial_stop_intent,
     build_take_profit_intent,
     build_trailing_stop_intent,
     intent_to_alpaca_payload,
+    resolve_initial_stop_price,
 )
 
 
@@ -77,6 +79,30 @@ class TestBuildChildren:
         assert ts.trail_percent == pytest.approx(5.0)
         assert ts.intent_role == IntentRole.TRAILING_STOP
 
+    def test_initial_stop_uses_explicit_stop_price_initial(self) -> None:
+        cfg = ExecutionConfig(trailing_stop_pct=0.05)
+        target = _target(price=150.0)
+        parent = build_entry_intents([target], cfg, "run1")[0]
+        stop_intent = build_initial_stop_intent(parent, 100.0, 150.0, cfg, target=target)
+        assert stop_intent is not None
+        assert stop_intent.order_type == "stop"
+        assert stop_intent.intent_role == IntentRole.INITIAL_STOP
+        assert stop_intent.stop_price == pytest.approx(140.0, abs=0.01)
+
+    def test_initial_stop_can_be_derived_from_risk_per_share(self) -> None:
+        cfg = ExecutionConfig(trailing_stop_pct=0.05)
+        target = ExecutionTarget(
+            risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="AAPL",
+            target_shares=100, entry_price=150.0, target_weight=0.05,
+            sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+            stop_price_initial=None, risk_per_share=7.5, risk_budget_dollars=750.0,
+            initial_risk_dollars=750.0, target_notional=15_000.0,
+        )
+        parent = build_entry_intents([target], cfg, "run1")[0]
+        stop_intent = build_initial_stop_intent(parent, 100.0, 152.0, cfg, target=target)
+        assert stop_intent is not None
+        assert stop_intent.stop_price == pytest.approx(144.5, abs=0.01)
+
     def test_take_profit_uses_risk_per_share_when_more_conservative(self) -> None:
         cfg = ExecutionConfig(profit_taker_pct=0.02)
         target = _target(price=150.0)
@@ -90,6 +116,9 @@ class TestBuildChildren:
         parent = build_entry_intents([target], cfg, "run1")[0]
         ts = build_trailing_stop_intent(parent, 100.0, 150.0, cfg, target=target)
         assert ts.trail_percent == pytest.approx(6.67, abs=0.01)
+
+    def test_resolve_initial_stop_price_returns_none_when_reference_invalid(self) -> None:
+        assert resolve_initial_stop_price(0.0, _target()) is None
 
 
 class TestIntentToPayload:
@@ -117,6 +146,17 @@ class TestIntentToPayload:
         p = intent_to_alpaca_payload(ts)
         assert p["type"] == "trailing_stop"
         assert p["trail_percent"] == "6.67"
+        assert p["time_in_force"] == "gtc"
+
+    def test_stop_payload(self) -> None:
+        cfg = ExecutionConfig(trailing_stop_pct=0.05)
+        target = _target()
+        parent = build_entry_intents([target], cfg, "run1")[0]
+        stop_intent = build_initial_stop_intent(parent, 100.0, 150.0, cfg, target=target)
+        assert stop_intent is not None
+        p = intent_to_alpaca_payload(stop_intent)
+        assert p["type"] == "stop"
+        assert p["stop_price"] == "140.0"
         assert p["time_in_force"] == "gtc"
 
     def test_time_in_force_day_for_entry_gtc_for_children(self) -> None:

@@ -53,6 +53,7 @@ class EventType:
 class IntentRole:
     ENTRY = "entry"
     TAKE_PROFIT = "take_profit"
+    INITIAL_STOP = "initial_stop"
     TRAILING_STOP = "trailing_stop"
     EXIT = "exit"                    # vente de liquidation / reconciliation
     REBALANCE_BUY = "rebalance_buy"  # achat de reequilibrage / reconciliation
@@ -104,6 +105,7 @@ class OrderIntent:
     intent_role: str
     idempotency_key: str
     decision_price: float
+    stop_price: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

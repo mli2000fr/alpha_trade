@@ -172,14 +172,14 @@ def test_build_run_summary_caption_uses_enriched_execution_metrics_mapping() -> 
                 "fill_rate": 0.75,
                 "total_target_notional": 24500.0,
                 "total_initial_risk_dollars": 1800.0,
-                "targets_with_risk_controls": 5,
+                "targets_with_broker_initial_stop": 4,
             },
         }
     )
 
     assert "notional cible=24500.0" in caption
     assert "risque init.=1800.0" in caption
-    assert "stops prêts=5" in caption
+    assert "stops broker=4" in caption
 
 
 def test_build_run_summary_caption_uses_screener_metrics_mapping() -> None:

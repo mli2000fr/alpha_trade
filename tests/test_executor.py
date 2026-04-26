@@ -119,6 +119,12 @@ class TestExecutor:
                 "total_risk_budget_dollars": 2_000.0,
                 "max_target_weight": 0.10,
                 "targets_with_risk_controls": 3,
+                "targets_with_broker_initial_stop": 2,
+                "targets_with_trailing_fallback": 1,
+                "child_take_profit_orders_submitted": 1,
+                "child_initial_stop_orders_submitted": 1,
+                "child_trailing_stop_orders_submitted": 0,
+                "child_order_submit_failures": 0,
                 "stale_price_targets": 1,
             },
             started_at=datetime(2026, 4, 24, 10, 0, 0),
@@ -136,6 +142,8 @@ class TestExecutor:
         assert summary["total_target_notional"] == 25_000.0
         assert summary["total_initial_risk_dollars"] == 1_500.0
         assert summary["targets_with_risk_controls"] == 3
+        assert summary["targets_with_broker_initial_stop"] == 2
+        assert summary["targets_with_trailing_fallback"] == 1
         assert summary["stale_price_targets"] == 1
 
     def test_dry_run_no_broker_calls(self) -> None:
@@ -296,7 +304,7 @@ class TestExecutor:
         event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
         assert EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT in event_types
 
-    def test_children_use_target_risk_fields_for_tp_and_trailing(self) -> None:
+    def test_children_use_target_risk_fields_for_tp_and_initial_stop(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, profit_taker_pct=0.02, trailing_stop_pct=0.05)
         executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
         parent = executor._repo.load_portfolio_targets.return_value[0]
@@ -315,7 +323,41 @@ class TestExecutor:
         submitted_intents = [call.args[0] for call in broker.submit_intent.call_args_list]
         assert len(submitted_intents) == 2
         tp_intent = submitted_intents[0]
-        ts_intent = submitted_intents[1]
+        stop_intent = submitted_intents[1]
         assert tp_intent.limit_price == 170.2
-        assert ts_intent.trail_percent == 6.79
+        assert stop_intent.order_type == "stop"
+        assert stop_intent.stop_price == 140.0
+
+    def test_children_fallback_to_trailing_if_initial_stop_submit_fails(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, profit_taker_pct=0.02, trailing_stop_pct=0.05)
+        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
+        parent = executor._repo.load_portfolio_targets.return_value[0]
+        parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
+        filled_order = _filled_order(intent_id=parent_intent.intent_id)
+        broker.submit_intent.side_effect = [_accepted_order(intent_id="tp", symbol="AAPL"), Exception("stop rejected"), _accepted_order(intent_id="trail", symbol="AAPL")]
+
+        metrics = {
+            "children_deferred": 0,
+            "child_take_profit_orders_submitted": 0,
+            "child_initial_stop_orders_submitted": 0,
+            "child_trailing_stop_orders_submitted": 0,
+            "child_order_submit_failures": 0,
+        }
+        events = executor._submit_children(
+            parent_intent,
+            filled_order,
+            "exec-1",
+            account_state=executor._build_account_constraint_state(),
+            metrics=metrics,
+            target=parent,
+        )
+
+        submitted_intents = [call.args[0] for call in broker.submit_intent.call_args_list]
+        assert len(submitted_intents) == 3
+        assert submitted_intents[-1].order_type == "trailing_stop"
+        assert metrics["child_take_profit_orders_submitted"] == 1
+        assert metrics["child_initial_stop_orders_submitted"] == 0
+        assert metrics["child_trailing_stop_orders_submitted"] == 1
+        assert metrics["child_order_submit_failures"] == 1
+        assert events[0].payload_json is not None
 

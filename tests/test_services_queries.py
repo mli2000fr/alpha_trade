@@ -306,3 +306,21 @@ def test_get_latest_run_business_summary_returns_first_row(monkeypatch):
     assert row["run_summary"] == {"submitted_orders": 4}
 
 
+def test_get_execution_orders_includes_stop_and_trailing_fields(monkeypatch):
+    captured = {}
+
+    def fake_safe_query(query, params=None):
+        captured["query"] = query
+        captured["params"] = params
+        return "ok"
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    queries.get_execution_orders(exec_run_id="exec-1")
+
+    assert "FROM execution_orders" in captured["query"]
+    assert "stop_price" in captured["query"]
+    assert "trail_percent" in captured["query"]
+    assert captured["params"] == {"eid": "exec-1"}
+
+

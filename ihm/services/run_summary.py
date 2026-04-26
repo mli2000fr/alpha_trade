@@ -105,7 +105,7 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Taux d'exécution", "fill_rate"),
         ("Notional cible", "total_target_notional"),
         ("Risque init.", "total_initial_risk_dollars"),
-        ("Stops prêts", "targets_with_risk_controls"),
+        ("Stops broker", "targets_with_broker_initial_stop"),
     ],
     "corporate_actions_sync": [
         ("Cibles", "targeted_symbols"),

@@ -32,16 +32,19 @@ from execution_engine.models import (
     EventType,
     ExecutionEvent,
     ExecutionFill,
+    IntentRole,
     OrderIntent,
     OrderStatus,
 )
 from execution_engine.oco_manager import OcoManager
 from execution_engine.order_intents import (
     build_entry_intents,
+    build_initial_stop_intent,
     build_take_profit_intent,
     build_trailing_stop_intent,
     build_rebalance_sell_intent,
     build_rebalance_buy_intent,
+    resolve_initial_stop_price,
 )
 from execution_engine.reconciliation import reconcile_targets_vs_broker
 from execution_engine.state_machine import is_terminal
@@ -103,6 +106,10 @@ class ProductionExecutor:
             "targets": 0, "submitted": 0, "filled": 0, "failed": 0, "skipped": 0,
             "rebalance_submitted": 0, "rebalance_failed": 0,
             "constraint_blocked": 0, "children_deferred": 0,
+            "child_take_profit_orders_submitted": 0,
+            "child_initial_stop_orders_submitted": 0,
+            "child_trailing_stop_orders_submitted": 0,
+            "child_order_submit_failures": 0,
         }
         events: list[ExecutionEvent] = []
         fills: list[ExecutionFill] = []
@@ -128,6 +135,14 @@ class ProductionExecutor:
             metrics["total_risk_budget_dollars"] = round(sum(float(t.risk_budget_dollars or 0.0) for t in targets), 2)
             metrics["max_target_weight"] = round(max((float(t.target_weight) for t in targets), default=0.0), 4)
             metrics["targets_with_risk_controls"] = sum(1 for t in targets if t.stop_price_initial is not None or (t.risk_per_share or 0.0) > 0)
+            metrics["targets_with_broker_initial_stop"] = sum(
+                1 for t in targets
+                if resolve_initial_stop_price(float(t.entry_price), t) is not None
+            )
+            metrics["targets_with_trailing_fallback"] = max(
+                len(targets) - int(metrics["targets_with_broker_initial_stop"]),
+                0,
+            )
             metrics["stale_price_targets"] = sum(
                 1 for t in targets
                 if t.price_asof_date is not None and actual_trade_date is not None and t.price_asof_date < actual_trade_date
@@ -629,9 +644,11 @@ class ProductionExecutor:
             return events
 
         tp_intent = build_take_profit_intent(parent, fill_qty, fill_price, self._cfg, target=target)
-        ts_intent = build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+        stop_intent = build_initial_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+        protection_intent = stop_intent or build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+        submitted_children: list[OrderIntent] = []
 
-        for child in [tp_intent, ts_intent]:
+        for child in [tp_intent, protection_intent]:
             try:
                 child_order = self._broker.submit_intent(child)
                 db_dict = order_intent_to_db_dict(child, exec_run_id, status=child_order.status)
@@ -640,16 +657,59 @@ class ProductionExecutor:
                     self._repo.upsert_execution_order(db_dict)
                 except Exception:
                     pass
+                submitted_children.append(child)
+                if child.intent_role == IntentRole.TAKE_PROFIT:
+                    metrics["child_take_profit_orders_submitted"] = metrics.get("child_take_profit_orders_submitted", 0) + 1
+                elif child.intent_role == IntentRole.INITIAL_STOP:
+                    metrics["child_initial_stop_orders_submitted"] = metrics.get("child_initial_stop_orders_submitted", 0) + 1
+                elif child.intent_role == IntentRole.TRAILING_STOP:
+                    metrics["child_trailing_stop_orders_submitted"] = metrics.get("child_trailing_stop_orders_submitted", 0) + 1
             except Exception as exc:
                 LOGGER.warning("Child submit failed for %s %s: %s", child.symbol, child.intent_role, exc)
+                metrics["child_order_submit_failures"] = metrics.get("child_order_submit_failures", 0) + 1
+                if child.intent_role == IntentRole.INITIAL_STOP:
+                    fallback_trailing = build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+                    try:
+                        fallback_order = self._broker.submit_intent(fallback_trailing)
+                        db_dict = order_intent_to_db_dict(fallback_trailing, exec_run_id, status=fallback_order.status)
+                        db_dict["broker_order_id"] = fallback_order.broker_order_id
+                        try:
+                            self._repo.upsert_execution_order(db_dict)
+                        except Exception:
+                            pass
+                        submitted_children.append(fallback_trailing)
+                        metrics["child_trailing_stop_orders_submitted"] = metrics.get("child_trailing_stop_orders_submitted", 0) + 1
+                    except Exception as fallback_exc:
+                        LOGGER.warning(
+                            "Trailing fallback submit failed for %s after initial stop failure: %s",
+                            child.symbol,
+                            fallback_exc,
+                        )
+                        metrics["child_order_submit_failures"] = metrics.get("child_order_submit_failures", 0) + 1
+
+        protection_child = next(
+            (child for child in submitted_children if child.intent_role in {IntentRole.INITIAL_STOP, IntentRole.TRAILING_STOP}),
+            None,
+        )
+        protection_mode = None
+        if protection_child is not None:
+            protection_mode = "broker_initial_stop" if protection_child.intent_role == IntentRole.INITIAL_STOP else "trailing_fallback"
+        protection_label = {
+            "broker_initial_stop": "STOP",
+            "trailing_fallback": "TRAIL",
+            None: "PROTECTION_FAILED",
+        }[protection_mode]
 
         events.append(make_event(
             exec_run_id, EventType.CHILDREN_SUBMITTED,
-            f"Bracket children for {parent.symbol}: TP + TS",
+            f"Bracket children for {parent.symbol}: TP + {protection_label}",
             symbol=parent.symbol, intent_id=parent.intent_id,
             payload={
                 "take_profit_limit_price": tp_intent.limit_price,
-                "trailing_stop_percent": ts_intent.trail_percent,
+                "initial_stop_price": stop_intent.stop_price if stop_intent is not None else None,
+                "trailing_stop_percent": protection_child.trail_percent if protection_child and protection_child.intent_role == IntentRole.TRAILING_STOP else None,
+                "protection_mode": protection_mode,
+                "child_order_roles": [child.intent_role for child in submitted_children],
                 "risk_per_share": getattr(target, "risk_per_share", None),
                 "stop_price_initial": getattr(target, "stop_price_initial", None),
                 "initial_risk_dollars": getattr(target, "initial_risk_dollars", None),

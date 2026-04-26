@@ -401,6 +401,35 @@ def get_execution_events(exec_run_id: str | None = None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def get_execution_orders(exec_run_id: str | None = None) -> pd.DataFrame:
+    if exec_run_id:
+        return safe_query(
+            """
+            SELECT exec_run_id, risk_run_id, symbol, intent_id, parent_intent_id,
+                   intent_role, broker_order_id, side, qty, filled_qty, avg_fill_price,
+                   order_type, limit_price, stop_price, trail_percent, decision_price,
+                   status, created_at, updated_at
+            FROM execution_orders
+            WHERE exec_run_id = :eid
+            ORDER BY CASE WHEN parent_intent_id IS NULL THEN 0 ELSE 1 END,
+                     COALESCE(parent_intent_id, intent_id), created_at DESC
+            """,
+            {"eid": exec_run_id},
+        )
+    return safe_query(
+        """
+        SELECT exec_run_id, risk_run_id, symbol, intent_id, parent_intent_id,
+               intent_role, broker_order_id, side, qty, filled_qty, avg_fill_price,
+               order_type, limit_price, stop_price, trail_percent, decision_price,
+               status, created_at, updated_at
+        FROM execution_orders
+        ORDER BY created_at DESC
+        LIMIT 200
+        """
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def get_execution_account_constraints(exec_run_id: str) -> dict[str, object]:
     df = safe_query(
         """

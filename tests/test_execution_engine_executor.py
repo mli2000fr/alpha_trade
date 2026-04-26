@@ -108,7 +108,7 @@ def test_poll_until_terminal_returns_none_after_timeout(monkeypatch) -> None:
     assert broker.poll_order_status.call_count == 2
 
 
-def test_submit_children_submits_take_profit_and_trailing_stop() -> None:
+def test_submit_children_submits_take_profit_and_fallback_trailing_without_target_risk() -> None:
     executor, repo, broker, _ = _make_executor()
     parent = _make_parent_intent()
     filled_order = _make_order(status=OrderStatus.FILLED, filled_qty=10.0, avg_fill_price=151.0)
@@ -120,6 +120,7 @@ def test_submit_children_submits_take_profit_and_trailing_stop() -> None:
     account_state = _AccountConstraintState(
         account_type="margin",
         effective_pdt_rule="off",
+        pdt_limited=False,
         swing_only=False,
         equity=100_000.0,
         buying_power_available=200_000.0,
@@ -131,6 +132,9 @@ def test_submit_children_submits_take_profit_and_trailing_stop() -> None:
     events = executor._submit_children(parent, filled_order, exec_run_id="exec-1", account_state=account_state, metrics={"children_deferred": 0})
 
     assert broker.submit_intent.call_count == 2
+    submitted_children = [call.args[0] for call in broker.submit_intent.call_args_list]
+    assert submitted_children[0].intent_role == "take_profit"
+    assert submitted_children[1].intent_role == "trailing_stop"
     assert repo.upsert_execution_order.call_count == 2
     assert len(events) == 1
     assert events[0].event_type == EventType.CHILDREN_SUBMITTED
@@ -143,6 +147,7 @@ def test_submit_children_skips_when_fill_quantity_is_zero() -> None:
     account_state = _AccountConstraintState(
         account_type="margin",
         effective_pdt_rule="off",
+        pdt_limited=False,
         swing_only=False,
         equity=100_000.0,
         buying_power_available=200_000.0,
@@ -180,6 +185,7 @@ def test_should_defer_children_for_swing_only() -> None:
     state = _AccountConstraintState(
         account_type="margin",
         effective_pdt_rule="off",
+        pdt_limited=False,
         swing_only=True,
         equity=2_000.0,
         buying_power_available=4_000.0,
