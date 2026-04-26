@@ -23,7 +23,6 @@ from ihm.services.queries import get_execution_runs
 from ihm.services.queries import get_execution_targets_snapshot
 from ihm.services.queries import get_latest_execution_protection_watch_service_summary
 from ihm.services.queries import get_latest_run_business_summary
-from ihm.services.queries import get_portfolio_targets
 from ihm.services.run_summary import get_run_summary
 
 
@@ -51,6 +50,19 @@ def _prepare_reconciliation_display(df: pd.DataFrame) -> pd.DataFrame:
     if "has_open_protection" in prepared.columns:
         prepared["has_open_protection"] = prepared["has_open_protection"].map(lambda value: "Oui" if bool(value) else "Non")
     return prepared
+
+
+def _show_position_lots_table(df: pd.DataFrame, *, title: str, height: int = 260) -> None:
+    if df.empty:
+        return
+    lot_columns = [
+        column for column in [
+            "symbol", "opened_qty", "remaining_qty", "entry_price", "opened_at",
+            "lot_status", "closed_at", "exit_price", "open_exec_run_id", "close_exec_run_id",
+        ]
+        if column in df.columns
+    ]
+    show_dataframe(df[lot_columns], title=title, height=height)
 
 
 def render() -> None:
@@ -98,17 +110,10 @@ def render() -> None:
     watcher_service_summary = get_run_summary(watcher_service_record)
 
     if summary:
-        st.subheader("🛡️ Contraintes, protections et indicateurs de risque")
+        st.subheader("🛡️ Contraintes, protections initiales et indicateurs de risque")
         metric_row([
             ("Stops broker", int(summary.get("targets_with_broker_initial_stop", 0) or 0), None),
-            ("Éligibles trail dyn.", int(summary.get("targets_eligible_for_dynamic_trailing", 0) or 0), None),
-            ("Trailing activés", int(watcher_summary.get("transitioned_items", 0) or 0), None),
-            ("Fallback trailing", int(summary.get("targets_with_trailing_fallback", 0) or 0), None),
             ("Stops soumis", int(summary.get("child_initial_stop_orders_submitted", 0) or 0), None),
-            ("Trails soumis", int(watcher_summary.get("transitioned_items", 0) or 0), None),
-            ("Checks trigger", int(watcher_summary.get("trigger_check_count", 0) or 0), None),
-            ("Déjà terminés", int(watcher_summary.get("terminal_items", 0) or 0), None),
-            ("Annulations KO", int(watcher_summary.get("cancel_failed_items", 0) or 0), None),
             ("Cibles stale", int(summary.get("stale_price_targets", 0) or 0), None),
             ("Échecs protections", int(summary.get("child_order_submit_failures", 0) or 0) + int(watcher_summary.get("submit_failed_items", 0) or 0), None),
         ])
@@ -162,22 +167,15 @@ def render() -> None:
             if column in snapshot_targets.columns
         ]
         show_dataframe(snapshot_targets[target_columns], height=260)
-    elif risk_run_id:
-        source_targets = get_portfolio_targets(run_id=risk_run_id)
-        if not source_targets.empty:
-            st.subheader("🎯 Cibles source et paramètres risque")
-            target_columns = [
-                column for column in [
-                    "symbol", "decision_rank", "shares", "entry_price", "target_weight",
-                    "stop_price_initial", "risk_per_share", "risk_budget_dollars", "initial_risk_dollars",
-                    "target_notional", "price_asof_date", "atr_asof_date",
-                ]
-                if column in source_targets.columns
-            ]
-            show_dataframe(source_targets[target_columns], height=260)
+    else:
+        detail = f" (risk_run_id={risk_run_id})" if risk_run_id else ""
+        st.info(
+            "Aucun snapshot de cibles figé trouvé pour ce run"
+            f"{detail}. Le fallback direct vers `portfolio_targets` n’est plus affiché ici pour éviter de mélanger la source risque et le run d’exécution."
+        )
 
     # --- Ordres d'exécution / protections ---
-    orders = get_execution_orders(selected)
+    orders = get_execution_orders(selected, allow_legacy_fallback=False)
     if not orders.empty:
         st.subheader("📋 Requests et ordres broker")
         show_dataframe(orders, height=260)
@@ -196,10 +194,12 @@ def render() -> None:
                     if column in child_orders.columns
                 ]
                 show_dataframe(child_orders[protection_columns], height=260)
+    else:
+        st.info("Aucune request / ordre broker canonique n’a été relu pour ce run.")
 
     # --- Fills ---
     st.subheader("💰 Exécutions")
-    fills = get_execution_fills(selected)
+    fills = get_execution_fills(selected, allow_legacy_fallback=False)
     if not fills.empty and "slippage_bps" in fills.columns:
         avg_slip = fills["slippage_bps"].mean()
         st.metric("Slippage moyen (bps)", f"{avg_slip:.1f}")
@@ -207,28 +207,33 @@ def render() -> None:
         st.info("Aucun fill observé pour ce run pour l’instant : les ordres peuvent être encore en file broker ou en attente d’ouverture de marché.")
     show_dataframe(fills, height=300)
 
-    # --- Positions broker ---
-    st.subheader("📦 Positions et détentions")
-    broker_positions = get_broker_positions(account_id=account_id)
-    if not broker_positions.empty:
-        show_dataframe(broker_positions, title="📦 Positions broker — dernier snapshot", height=240)
-
-    projected_positions = get_execution_positions(account_id=account_id, exec_run_id=selected)
+    # --- Positions / lots / réconciliation canoniques ---
+    st.subheader("📦 Positions et détentions du run")
+    projected_positions = get_execution_positions(
+        account_id=account_id,
+        exec_run_id=selected,
+        allow_account_fallback=False,
+    )
     if not projected_positions.empty:
-        show_dataframe(projected_positions, title="🧮 Positions projetées", height=260)
+        show_dataframe(projected_positions, title="🧮 Positions projetées — scope run", height=260)
+    else:
+        st.info("Aucune position projetée scoppée run n’a été reconstruite pour ce run.")
 
-    lots = get_execution_position_lots(account_id=account_id)
+    lots = get_execution_position_lots(
+        account_id=account_id,
+        exec_run_id=selected,
+        allow_account_fallback=False,
+    )
     if not lots.empty:
-        lot_columns = [
-            column for column in [
-                "symbol", "opened_qty", "remaining_qty", "entry_price", "opened_at",
-                "lot_status", "closed_at", "exit_price", "open_exec_run_id", "close_exec_run_id",
-            ]
-            if column in lots.columns
-        ]
-        show_dataframe(lots[lot_columns], title="🪵 Lots reconstruits", height=260)
+        _show_position_lots_table(lots, title="🪵 Lots touchés par ce run", height=260)
+    else:
+        st.info("Aucun lot ouvert ou clôturé par ce run n’a été identifié.")
 
-    reconciliation = get_execution_reconciliation_results(exec_run_id=selected, account_id=account_id)
+    reconciliation = get_execution_reconciliation_results(
+        exec_run_id=selected,
+        account_id=account_id,
+        allow_account_fallback=False,
+    )
     if not reconciliation.empty:
         st.subheader("🧭 Réconciliation actionnable")
         metric_row([
@@ -257,6 +262,21 @@ def render() -> None:
             if column in reconciliation_display.columns
         ]
         show_dataframe(reconciliation_display[reconciliation_columns], height=280)
+    else:
+        st.info("Aucun résultat de réconciliation persisté n’a été trouvé pour ce run.")
+
+    with st.expander("📚 Contexte compte — hors scope strict du run", expanded=False):
+        broker_positions = get_broker_positions(account_id=account_id)
+        if not broker_positions.empty:
+            show_dataframe(broker_positions, title="📦 Positions broker — dernier snapshot compte", height=240)
+
+        account_positions = get_execution_positions(account_id=account_id)
+        if not account_positions.empty:
+            show_dataframe(account_positions, title="🧮 Positions projetées — scope compte", height=240)
+
+        account_lots = get_execution_position_lots(account_id=account_id)
+        if not account_lots.empty:
+            _show_position_lots_table(account_lots, title="🪵 Lots reconstruits — scope compte", height=240)
 
     # --- Événements ---
     st.subheader("📝 Événements")
@@ -269,6 +289,14 @@ def render() -> None:
 
     if watcher_summary or watcher_service_summary:
         with st.expander("🛰️ Watcher protections — supervision secondaire", expanded=False):
+            metric_row([
+                ("Éligibles trail dyn.", int(summary.get("targets_eligible_for_dynamic_trailing", 0) or 0), None),
+                ("Trailing activés", int(watcher_summary.get("transitioned_items", 0) or 0), None),
+                ("Fallback trailing", int(summary.get("targets_with_trailing_fallback", 0) or 0), None),
+                ("Checks trigger", int(watcher_summary.get("trigger_check_count", 0) or 0), None),
+                ("Trails soumis", int(watcher_summary.get("transitioned_items", 0) or 0), None),
+                ("Annulations KO", int(watcher_summary.get("cancel_failed_items", 0) or 0), None),
+            ])
             if watcher_summary:
                 render_persistent_business_summary(
                     watcher_summary_record,

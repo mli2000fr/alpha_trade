@@ -416,6 +416,26 @@ def test_get_execution_orders_includes_stop_and_trailing_fields(monkeypatch):
     assert captured["params"] == {"eid": "exec-1"}
 
 
+def test_get_execution_orders_can_disable_legacy_fallback(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_orders.clear()
+    calls = []
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        return pd.DataFrame()
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_execution_orders(exec_run_id="exec-legacy", allow_legacy_fallback=False)
+
+    assert isinstance(df, pd.DataFrame)
+    assert df.empty
+    assert len(calls) == 1
+    assert "FROM execution_order_requests req" in calls[0][0]
+
+
 def test_get_execution_fills_reads_v2_schema(monkeypatch):
     import pandas as pd
 
@@ -434,6 +454,26 @@ def test_get_execution_fills_reads_v2_schema(monkeypatch):
     assert "FROM execution_broker_fills" in captured["query"]
     assert "request_id AS intent_id" in captured["query"]
     assert captured["params"] == {"eid": "exec-1"}
+
+
+def test_get_execution_fills_can_disable_legacy_fallback(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_fills.clear()
+    calls = []
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        return pd.DataFrame()
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_execution_fills(exec_run_id="exec-legacy", allow_legacy_fallback=False)
+
+    assert isinstance(df, pd.DataFrame)
+    assert df.empty
+    assert len(calls) == 1
+    assert "FROM execution_broker_fills" in calls[0][0]
 
 
 def test_get_execution_account_constraints_falls_back_to_broker_snapshot(monkeypatch):
@@ -513,6 +553,26 @@ def test_get_execution_positions_prefers_exec_run_scope(monkeypatch):
     assert calls[0][1] == {"eid": "exec-1"}
 
 
+def test_get_execution_positions_can_disable_account_fallback(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_positions.clear()
+    calls = []
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        return pd.DataFrame()
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_execution_positions(account_id="acct-1", exec_run_id="exec-empty", allow_account_fallback=False)
+
+    assert isinstance(df, pd.DataFrame)
+    assert df.empty
+    assert len(calls) == 1
+    assert calls[0][1] == {"eid": "exec-empty"}
+
+
 def test_get_execution_position_lots_scopes_account(monkeypatch):
     queries.get_execution_position_lots.clear()
     captured = {}
@@ -529,6 +589,47 @@ def test_get_execution_position_lots_scopes_account(monkeypatch):
     assert "FROM execution_position_lots" in captured["query"]
     assert "WHERE account_id = :account_id" in captured["query"]
     assert captured["params"] == {"account_id": "acct-lots"}
+
+
+def test_get_execution_position_lots_prefers_exec_run_scope(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_position_lots.clear()
+    calls = []
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        if params == {"eid": "exec-lots-1"}:
+            return pd.DataFrame({"symbol": ["AAPL"]})
+        return pd.DataFrame()
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_execution_position_lots(account_id="acct-lots", exec_run_id="exec-lots-1")
+
+    assert not df.empty
+    assert "open_exec_run_id = :eid OR close_exec_run_id = :eid" in calls[0][0]
+    assert calls[0][1] == {"eid": "exec-lots-1"}
+
+
+def test_get_execution_position_lots_can_disable_account_fallback(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_position_lots.clear()
+    calls = []
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        return pd.DataFrame()
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_execution_position_lots(account_id="acct-lots", exec_run_id="exec-empty", allow_account_fallback=False)
+
+    assert isinstance(df, pd.DataFrame)
+    assert df.empty
+    assert len(calls) == 1
+    assert calls[0][1] == {"eid": "exec-empty"}
 
 
 def test_get_execution_reconciliation_results_prefers_exec_run_scope(monkeypatch):
@@ -571,5 +672,25 @@ def test_get_execution_reconciliation_results_scopes_account_when_run_empty(monk
     assert result == "ok"
     assert calls[1][1] == {"account_id": "acct-1"}
     assert "WHERE account_id = :account_id" in calls[1][0]
+
+
+def test_get_execution_reconciliation_results_can_disable_account_fallback(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_reconciliation_results.clear()
+    calls = []
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        return pd.DataFrame()
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_execution_reconciliation_results(exec_run_id="exec-empty", account_id="acct-1", allow_account_fallback=False)
+
+    assert isinstance(df, pd.DataFrame)
+    assert df.empty
+    assert len(calls) == 1
+    assert calls[0][1] == {"eid": "exec-empty"}
 
 

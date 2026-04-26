@@ -6,8 +6,8 @@ Ce document résume le fonctionnement du module `execution_engine/` et les comma
 
 - exécuter un portefeuille cible produit par `risk_management`,
 - soumettre des ordres Alpaca en mode simulation, paper ou live,
-- gérer un bracket synthétique take-profit + trailing stop,
-- auditer les ordres, événements, fills et écarts de réconciliation.
+- gérer des protections broker-side initiales et, si explicitement activé, une transition trailing secondaire,
+- auditer les requests, ordres broker, fills, positions et écarts de réconciliation.
 
 ---
 
@@ -24,8 +24,8 @@ Ce document résume le fonctionnement du module `execution_engine/` et les comma
 | `execution_engine/broker_adapter.py` | Adaptation des intents vers le broker |
 | `execution_engine/order_intents.py` | Construction des ordres d'entrée et de rebalance |
 | `execution_engine/state_machine.py` | Mapping et états d'ordres internes |
-| `execution_engine/oco_manager.py` | Gestion logique OCO du bracket synthétique |
-| `execution_engine/reconciliation.py` | Réconciliation cibles vs positions broker |
+| `execution_engine/oco_manager.py` | Gestion logique OCO des protections broker-side |
+| `execution_engine/reconciliation.py` | Réconciliation analytique targets / requests / broker / positions / protections |
 | `execution_engine/tca.py` | Transaction Cost Analysis |
 | `execution_engine/db_io.py` | Persistance SQL du module |
 | `execution_engine/models.py` | Modèles métiers d'exécution |
@@ -42,10 +42,16 @@ Ce document résume le fonctionnement du module `execution_engine/` et les comma
 
 - `portfolio_targets`
 - `execution_runs`
-- `execution_orders`
-- `execution_fills`
+- `execution_targets_snapshot`
+- `execution_order_requests`
+- `execution_broker_orders`
+- `execution_broker_fills`
+- `execution_positions`
+- `execution_position_lots`
+- `execution_reconciliation_results`
 - `execution_events`
 - `broker_positions_snapshots`
+- `broker_account_snapshots`
 
 #### Utiles selon le contexte
 
@@ -114,7 +120,7 @@ python run_execution.py paper --account default --account-type margin --pdt-rule
 
 ### Watcher post-exécution
 
-Le watcher se lance **après** `Execution`, pas avant. Il surveille la vie des protections broker-side créées par le run d'exécution.
+Le watcher se lance **après** `Execution`, pas avant. Il ne fait plus partie du chemin nominal : il supervise en secondaire la vie des protections broker-side déjà créées par le run d'exécution.
 
 ```powershell
 # contrôle ponctuel juste après l'étape 12 Execution
@@ -174,32 +180,35 @@ En particulier :
 - en `cash`, le moteur s'appuie sur `non_marginable_buying_power` / `cash` settled ;
 - en `dry_run`, un multiplicateur de buying power simulé permet de distinguer un compte `margin` d'un compte `cash`.
 
-### 4.3 Bracket synthétique
+### 4.3 Protections broker-side
 
-Le moteur ne s'appuie pas sur un bracket natif Alpaca pour le trailing stop.
+Le moteur overnight nominal privilégie les protections simples et traçables.
 
-Le pattern utilisé est :
+Le pattern canonique est :
 
 1. soumettre l'entrée ;
-2. attendre le fill ;
-3. soumettre séparément le take-profit limit ;
-4. soumettre séparément le trailing stop ;
-5. laisser `OcoManager` annuler le sibling si un des deux est exécuté.
+2. observer l'ordre broker puis les fills ;
+3. soumettre le stop initial broker-side si le contexte le permet ;
+4. journaliser les requests, ordres broker et événements ;
+5. reconstruire positions, lots et réconciliation.
 
 Quand `--swing-only` est activé, ou quand une contrainte PDT ne laisse plus de slot de day trade, le moteur diffère l'armement des children le jour même. Le run journalise alors un événement `CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT`.
 
+Le trailing dynamique, s'il reste activé, doit être considéré comme une capacité secondaire de supervision plutôt qu'un prérequis du run nominal.
+
 ### 4.4 Réconciliation et TCA
 
-Après soumission, le moteur peut :
+Après soumission et synchronisation broker, le moteur peut :
 
-- comparer cibles et positions broker,
-- produire des écarts de réconciliation,
+- relire le snapshot figé `execution_targets_snapshot`,
+- comparer `execution_order_requests`, `execution_broker_orders`, `execution_positions`, positions broker et protections,
+- produire des résultats `execution_reconciliation_results` avec statuts `SAFE_AUTO`, `MANUAL_REVIEW`, `BLOCKED`,
 - calculer slippage et implementation shortfall,
 - écrire l'audit complet en base.
 
 ### 4.5 Watcher post-exécution
 
-Le watcher n'est pas une phase du pipeline 1→14 lui-même. C'est un runtime complémentaire qui s'accroche juste après `Execution` pour :
+Le watcher n'est pas une phase du pipeline 1→14 lui-même. C'est un runtime complémentaire et secondaire qui s'accroche juste après `Execution` pour :
 
 1. détecter les ordres/protections à surveiller ;
 2. vérifier les conditions de transition ;
@@ -293,9 +302,10 @@ Ordre conseillé :
 
 1. lancer `risk_management` ;
 2. contrôler que `portfolio_targets` contient bien des lignes ;
-3. démarrer en `simulate` ;
-4. passer ensuite en `paper` ;
-5. réserver `live` au contexte opérateur validé.
+3. exécuter `Execution` et vérifier la chaîne `target snapshot → request → broker order → fill → position → réconciliation` ;
+4. démarrer en `simulate` ;
+5. passer ensuite en `paper` ;
+6. réserver `live` au contexte opérateur validé.
 
 ### Séquence recommandée
 

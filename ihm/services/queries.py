@@ -413,7 +413,11 @@ def get_execution_events(exec_run_id: str | None = None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_execution_orders(exec_run_id: str | None = None) -> pd.DataFrame:
+def get_execution_orders(
+    exec_run_id: str | None = None,
+    *,
+    allow_legacy_fallback: bool = True,
+) -> pd.DataFrame:
     params = {"eid": exec_run_id} if exec_run_id else None
     v2_query = """
         SELECT req.exec_run_id,
@@ -467,7 +471,7 @@ def get_execution_orders(exec_run_id: str | None = None) -> pd.DataFrame:
         LIMIT 200
         """
     df = safe_query(v2_query, params)
-    if not df.empty:
+    if not df.empty or not allow_legacy_fallback:
         return df
     if exec_run_id:
         return safe_query(
@@ -562,7 +566,11 @@ def get_broker_positions(account_id: str | None = None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_execution_fills(exec_run_id: str | None = None) -> pd.DataFrame:
+def get_execution_fills(
+    exec_run_id: str | None = None,
+    *,
+    allow_legacy_fallback: bool = True,
+) -> pd.DataFrame:
     if exec_run_id:
         df = safe_query(
             """
@@ -585,7 +593,7 @@ def get_execution_fills(exec_run_id: str | None = None) -> pd.DataFrame:
             """,
             {"eid": exec_run_id},
         )
-        if not df.empty:
+        if not df.empty or not allow_legacy_fallback:
             return df
     else:
         df = safe_query(
@@ -608,7 +616,7 @@ def get_execution_fills(exec_run_id: str | None = None) -> pd.DataFrame:
             LIMIT 100
             """
         )
-        if not df.empty:
+        if not df.empty or not allow_legacy_fallback:
             return df
     if exec_run_id:
         return safe_query("""
@@ -639,6 +647,7 @@ def get_execution_positions(
     *,
     account_id: str | None = None,
     exec_run_id: str | None = None,
+    allow_account_fallback: bool = True,
 ) -> pd.DataFrame:
     if exec_run_id:
         df = safe_query(
@@ -653,7 +662,7 @@ def get_execution_positions(
             """,
             {"eid": exec_run_id},
         )
-        if not df.empty:
+        if not df.empty or not allow_account_fallback:
             return df
     if account_id:
         return safe_query(
@@ -684,7 +693,25 @@ def get_execution_positions(
 def get_execution_position_lots(
     *,
     account_id: str | None = None,
+    exec_run_id: str | None = None,
+    allow_account_fallback: bool = True,
 ) -> pd.DataFrame:
+    if exec_run_id:
+        df = safe_query(
+            """
+            SELECT lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+                   opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+                   close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+                   source_kind, updated_at
+            FROM execution_position_lots
+            WHERE open_exec_run_id = :eid OR close_exec_run_id = :eid
+            ORDER BY COALESCE(closed_at, opened_at) DESC, lot_id DESC
+            LIMIT 500
+            """,
+            {"eid": exec_run_id},
+        )
+        if not df.empty or not allow_account_fallback:
+            return df
     if account_id:
         return safe_query(
             """
@@ -717,6 +744,7 @@ def get_execution_reconciliation_results(
     *,
     exec_run_id: str | None = None,
     account_id: str | None = None,
+    allow_account_fallback: bool = True,
 ) -> pd.DataFrame:
     severity_order_sql = """
         CASE reconciliation_status
@@ -748,7 +776,7 @@ def get_execution_reconciliation_results(
             """,
             {"eid": exec_run_id},
         )
-        if not df.empty:
+        if not df.empty or not allow_account_fallback:
             return df
     if account_id:
         return safe_query(
