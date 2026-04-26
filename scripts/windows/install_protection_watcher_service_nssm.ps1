@@ -7,6 +7,8 @@ param(
     [string]$Description = 'Alpha Trade - service persistant de promotion stop initial vers trailing dynamique.',
     [string]$WorkspacePath = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
     [string]$PythonExePath,
+    [string]$EnvFilePath,
+    [string]$SecretStorePath,
     [string]$Account,
     [string]$ExecRunId,
     [int]$Limit = 100,
@@ -65,6 +67,12 @@ $launcherArgs = @(
 )
 if ($PythonExePath) {
     $launcherArgs += @('-PythonExePath', ('"{0}"' -f $PythonExePath))
+}
+if ($EnvFilePath) {
+    $launcherArgs += @('-EnvFilePath', ('"{0}"' -f $EnvFilePath))
+}
+if ($SecretStorePath) {
+    $launcherArgs += @('-SecretStorePath', ('"{0}"' -f $SecretStorePath))
 }
 if ($Account) {
     $launcherArgs += @('-Account', $Account)

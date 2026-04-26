@@ -3,6 +3,8 @@ param(
     [string]$TaskName = 'AlphaTrade-ProtectionWatcher',
     [string]$WorkspacePath = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
     [string]$PythonExePath,
+    [string]$EnvFilePath,
+    [string]$SecretStorePath,
     [string]$Account,
     [string]$ExecRunId,
     [ValidateSet('once', 'service')]
@@ -56,6 +58,12 @@ $argumentList = @(
 )
 if ($PythonExePath) {
     $argumentList += @('-PythonExePath', ('"{0}"' -f $PythonExePath))
+}
+if ($EnvFilePath) {
+    $argumentList += @('-EnvFilePath', ('"{0}"' -f $EnvFilePath))
+}
+if ($SecretStorePath) {
+    $argumentList += @('-SecretStorePath', ('"{0}"' -f $SecretStorePath))
 }
 if ($Account) {
     $argumentList += @('-Account', $Account)

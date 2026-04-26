@@ -1,15 +1,13 @@
 """ihm/pages/execution.py — Suivi des runs d'exécution."""
 from __future__ import annotations
 
-from datetime import datetime
-
 import streamlit as st
 
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
 from ihm.components.run_summary import render_persistent_business_summary
-from ihm.components.status_badges import run_status_badge
+from ihm.components.status_badges import heartbeat_badge, run_status_badge
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available
 from ihm.services.queries import get_broker_positions
@@ -73,24 +71,16 @@ def render() -> None:
             max_metrics=7,
         )
         last_heartbeat_at = str(watcher_service_summary.get("last_heartbeat_at", "") or "").strip()
-        heartbeat_age_seconds: int | None = None
-        if last_heartbeat_at:
-            try:
-                heartbeat_age_seconds = max(
-                    int((datetime.now() - datetime.fromisoformat(last_heartbeat_at)).total_seconds()),
-                    0,
-                )
-            except ValueError:
-                heartbeat_age_seconds = None
-        heartbeat_status = "Inconnu"
         heartbeat_threshold = float(watcher_service_summary.get("heartbeat_interval_seconds", 0.0) or 0.0)
-        if heartbeat_age_seconds is not None and heartbeat_threshold > 0:
-            heartbeat_status = "Frais" if heartbeat_age_seconds <= int(heartbeat_threshold * 2) else "À vérifier"
+        heartbeat_indicator = heartbeat_badge(
+            last_heartbeat_at,
+            heartbeat_threshold,
+            service_status=str((watcher_service_record or {}).get("status", "") or ""),
+        )
         metric_row([
-            ("Statut service", str((watcher_service_record or {}).get("status", "—") or "—"), None),
+            ("Statut service", run_status_badge(str((watcher_service_record or {}).get("status", "—") or "—")), None),
             ("Scope", str(watcher_service_summary.get("service_scope", "—") or "—"), None),
-            ("Heartbeat", heartbeat_status, None),
-            ("Âge heartbeat (s)", heartbeat_age_seconds if heartbeat_age_seconds is not None else "—", None),
+            ("Heartbeat", heartbeat_indicator, None),
             ("Dernier cycle", str(watcher_service_summary.get("last_cycle_at", "—") or "—"), None),
             ("Watch last cycle", int(watcher_service_summary.get("last_cycle_watched_items", 0) or 0), None),
             ("Transitions last cycle", int(watcher_service_summary.get("last_cycle_transitioned_items", 0) or 0), None),
