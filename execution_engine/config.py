@@ -132,3 +132,28 @@ class ExecutionConfig:
     def is_live(self) -> bool:
         return self.broker_mode == "live"
 
+
+@dataclass(frozen=True, slots=True)
+class ProtectionWatcherServiceConfig:
+    """Paramètres du scheduler/service persistant du watcher de protection."""
+
+    interval_seconds: float = 30.0
+    idle_interval_seconds: float = 120.0
+    heartbeat_interval_seconds: float = 300.0
+    max_iterations: int | None = None
+    stop_when_idle: bool = False
+    max_consecutive_failures: int = 3
+
+    def __post_init__(self) -> None:
+        if self.interval_seconds <= 0:
+            raise ValueError("interval_seconds doit être > 0.")
+        if self.idle_interval_seconds <= 0:
+            raise ValueError("idle_interval_seconds doit être > 0.")
+        if self.heartbeat_interval_seconds <= 0:
+            raise ValueError("heartbeat_interval_seconds doit être > 0.")
+        if self.max_iterations is not None and self.max_iterations < 1:
+            raise ValueError("max_iterations doit être >= 1 quand renseigné.")
+        if self.max_consecutive_failures < 1:
+            raise ValueError("max_consecutive_failures doit être >= 1.")
+
+

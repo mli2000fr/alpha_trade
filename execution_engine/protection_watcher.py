@@ -12,7 +12,7 @@ from common.utils import configure_root_logging
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from execution_engine.audit import build_run_id, make_event, order_intent_to_db_dict
 from execution_engine.broker_adapter import BrokerAdapter
-from execution_engine.config import ExecutionConfig
+from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import (
     BrokerOrder,
@@ -54,6 +54,42 @@ def _build_summary(
         "submit_failed_items": int(metrics.get("submit_failed_items", 0) or 0),
         "broker_mode": metrics.get("broker_mode"),
         "account_id": metrics.get("account_id"),
+    }
+
+
+def _build_service_summary(
+    metrics: dict[str, Any],
+    *,
+    service_run_id: str,
+    started_at: datetime,
+    finished_at: datetime,
+    exec_run_id: str | None,
+    account_id: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    return {
+        "run_id": service_run_id,
+        "mode": "service",
+        "exec_run_id": exec_run_id,
+        "account_id": account_id,
+        "limit": limit,
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "status": metrics.get("status", "COMPLETED"),
+        "iterations": int(metrics.get("iterations", 0) or 0),
+        "cycles_with_work": int(metrics.get("cycles_with_work", 0) or 0),
+        "idle_cycles": int(metrics.get("idle_cycles", 0) or 0),
+        "consecutive_failures": int(metrics.get("consecutive_failures", 0) or 0),
+        "max_consecutive_failures": int(metrics.get("max_consecutive_failures", 0) or 0),
+        "watched_items": int(metrics.get("watched_items", 0) or 0),
+        "triggered_items": int(metrics.get("triggered_items", 0) or 0),
+        "transitioned_items": int(metrics.get("transitioned_items", 0) or 0),
+        "pending_items": int(metrics.get("pending_items", 0) or 0),
+        "terminal_items": int(metrics.get("terminal_items", 0) or 0),
+        "skipped_existing_trailing": int(metrics.get("skipped_existing_trailing", 0) or 0),
+        "cancel_failed_items": int(metrics.get("cancel_failed_items", 0) or 0),
+        "submit_failed_items": int(metrics.get("submit_failed_items", 0) or 0),
     }
 
 
@@ -309,8 +345,173 @@ class ProtectionTransitionWatcher:
         ))
 
 
+class ProtectionWatcherService:
+    """Boucle persistante qui ordonnance le watcher de transition de protection."""
+
+    def __init__(
+        self,
+        watcher: ProtectionTransitionWatcher,
+        service_config: ProtectionWatcherServiceConfig,
+        *,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        monotonic_fn: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._watcher = watcher
+        self._cfg = service_config
+        self._sleep = sleep_fn
+        self._monotonic = monotonic_fn
+
+    def run(
+        self,
+        *,
+        exec_run_id: str | None = None,
+        account_id: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        started_at = datetime.now()
+        last_heartbeat = self._monotonic()
+        metrics: dict[str, Any] = {
+            "status": "RUNNING",
+            "iterations": 0,
+            "cycles_with_work": 0,
+            "idle_cycles": 0,
+            "consecutive_failures": 0,
+            "max_consecutive_failures": self._cfg.max_consecutive_failures,
+            "watched_items": 0,
+            "triggered_items": 0,
+            "transitioned_items": 0,
+            "pending_items": 0,
+            "terminal_items": 0,
+            "skipped_existing_trailing": 0,
+            "cancel_failed_items": 0,
+            "submit_failed_items": 0,
+        }
+
+        try:
+            while True:
+                metrics["iterations"] += 1
+                iteration = int(metrics["iterations"])
+                try:
+                    summaries = self._watcher.run(exec_run_id=exec_run_id, account_id=account_id, limit=limit)
+                    metrics["consecutive_failures"] = 0
+                except KeyboardInterrupt:
+                    metrics["status"] = "STOPPED"
+                    LOGGER.info("Arrêt demandé du service watcher protections (Ctrl+C).")
+                    break
+                except Exception:
+                    metrics["consecutive_failures"] += 1
+                    LOGGER.exception(
+                        "Iteration %s du service watcher protections en échec (%s/%s).",
+                        iteration,
+                        metrics["consecutive_failures"],
+                        self._cfg.max_consecutive_failures,
+                    )
+                    if metrics["consecutive_failures"] >= self._cfg.max_consecutive_failures:
+                        metrics["status"] = "FAILED"
+                        break
+                    self._maybe_log_heartbeat(metrics, account_id=account_id, exec_run_id=exec_run_id, last_heartbeat=last_heartbeat)
+                    last_heartbeat = self._refresh_heartbeat(last_heartbeat)
+                    self._sleep(self._cfg.idle_interval_seconds)
+                    continue
+
+                cycle_metrics = self._aggregate_cycle_summaries(summaries)
+                has_work = cycle_metrics["watched_items"] > 0
+                if has_work:
+                    metrics["cycles_with_work"] += 1
+                else:
+                    metrics["idle_cycles"] += 1
+
+                for key, value in cycle_metrics.items():
+                    metrics[key] += value
+
+                LOGGER.info(
+                    "Watcher protections iteration=%s watched=%s transitioned=%s pending=%s status=%s",
+                    iteration,
+                    cycle_metrics["watched_items"],
+                    cycle_metrics["transitioned_items"],
+                    cycle_metrics["pending_items"],
+                    "work" if has_work else "idle",
+                )
+
+                self._maybe_log_heartbeat(metrics, account_id=account_id, exec_run_id=exec_run_id, last_heartbeat=last_heartbeat)
+                last_heartbeat = self._refresh_heartbeat(last_heartbeat)
+
+                if self._cfg.stop_when_idle and not has_work:
+                    metrics["status"] = "COMPLETED"
+                    break
+                if self._cfg.max_iterations is not None and iteration >= self._cfg.max_iterations:
+                    metrics["status"] = "COMPLETED"
+                    break
+
+                self._sleep(self._cfg.interval_seconds if has_work else self._cfg.idle_interval_seconds)
+        except KeyboardInterrupt:
+            metrics["status"] = "STOPPED"
+            LOGGER.info("Service watcher protections interrompu proprement.")
+
+        if metrics["status"] == "RUNNING":
+            metrics["status"] = "COMPLETED"
+
+        finished_at = datetime.now()
+        summary = _build_service_summary(
+            metrics,
+            service_run_id=f"watch-service-{build_run_id()}",
+            started_at=started_at,
+            finished_at=finished_at,
+            exec_run_id=exec_run_id,
+            account_id=account_id,
+            limit=limit,
+        )
+        emit_run_summary(summary)
+        return summary
+
+    @staticmethod
+    def _aggregate_cycle_summaries(summaries: list[dict[str, Any]]) -> dict[str, int]:
+        aggregate = {
+            "watched_items": 0,
+            "triggered_items": 0,
+            "transitioned_items": 0,
+            "pending_items": 0,
+            "terminal_items": 0,
+            "skipped_existing_trailing": 0,
+            "cancel_failed_items": 0,
+            "submit_failed_items": 0,
+        }
+        for summary in summaries:
+            for key in aggregate:
+                aggregate[key] += int(summary.get(key, 0) or 0)
+        return aggregate
+
+    def _maybe_log_heartbeat(
+        self,
+        metrics: dict[str, Any],
+        *,
+        account_id: str | None,
+        exec_run_id: str | None,
+        last_heartbeat: float,
+    ) -> None:
+        now = self._monotonic()
+        if metrics["iterations"] == 1 or (now - last_heartbeat) >= self._cfg.heartbeat_interval_seconds:
+            LOGGER.info(
+                "Heartbeat watcher protections iterations=%s work_cycles=%s idle_cycles=%s transitioned=%s failures=%s account=%s exec_run_id=%s",
+                metrics["iterations"],
+                metrics["cycles_with_work"],
+                metrics["idle_cycles"],
+                metrics["transitioned_items"],
+                metrics["consecutive_failures"],
+                account_id or "*",
+                exec_run_id or "*",
+            )
+
+    def _refresh_heartbeat(self, last_heartbeat: float) -> float:
+        now = self._monotonic()
+        if now - last_heartbeat >= self._cfg.heartbeat_interval_seconds:
+            return now
+        return last_heartbeat
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Alpha Trade — Protection Transition Watcher")
+    parser.add_argument("--mode", type=str, default="once", choices=["once", "service"])
     parser.add_argument("--exec-run-id", type=str, default=None)
     parser.add_argument("--account", type=str, default=None)
     parser.add_argument("--limit", type=int, default=100)
@@ -319,6 +520,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--trailing-activation-trigger", type=str, default="multiple_r", choices=["multiple_r", "profit_pct"])
     parser.add_argument("--trailing-activation-r-multiple", type=float, default=1.0)
     parser.add_argument("--trailing-activation-profit-pct", type=float, default=0.03)
+    parser.add_argument("--service-interval-seconds", type=float, default=30.0)
+    parser.add_argument("--idle-interval-seconds", type=float, default=120.0)
+    parser.add_argument("--heartbeat-interval-seconds", type=float, default=300.0)
+    parser.add_argument("--max-iterations", type=int, default=None)
+    parser.add_argument("--stop-when-idle", action="store_true")
+    parser.add_argument("--max-consecutive-failures", type=int, default=3)
     parser.add_argument("--log-level", type=str, default="INFO")
     return parser.parse_args(argv)
 
@@ -348,6 +555,22 @@ def main(argv: list[str] | None = None) -> None:
 
     repo = ExecutionRepository()
     watcher = ProtectionTransitionWatcher(repo, broker_factory=broker_factory, config_factory=config_factory)
+    if args.mode == "service":
+        service = ProtectionWatcherService(
+            watcher,
+            ProtectionWatcherServiceConfig(
+                interval_seconds=args.service_interval_seconds,
+                idle_interval_seconds=args.idle_interval_seconds,
+                heartbeat_interval_seconds=args.heartbeat_interval_seconds,
+                max_iterations=args.max_iterations,
+                stop_when_idle=args.stop_when_idle,
+                max_consecutive_failures=args.max_consecutive_failures,
+            ),
+        )
+        summary = service.run(exec_run_id=args.exec_run_id, account_id=args.account, limit=args.limit)
+        logging.getLogger(__name__).info("Protection watcher service summary: %s", summary)
+        return
+
     summaries = watcher.run(exec_run_id=args.exec_run_id, account_id=args.account, limit=args.limit)
     logging.getLogger(__name__).info("Protection watcher summaries: %s", summaries)
 

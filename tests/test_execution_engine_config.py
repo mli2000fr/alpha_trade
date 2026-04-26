@@ -1,6 +1,6 @@
 import pytest
 
-from execution_engine.config import ExecutionConfig
+from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
 
 
 @pytest.mark.parametrize(
@@ -57,5 +57,20 @@ def test_execution_config_disables_effective_pdt_for_cash_account() -> None:
 
     assert cfg.effective_pdt_rule == "off"
     assert cfg.applies_pdt_limit(2_000.0) is False
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"interval_seconds": 0}, "interval_seconds"),
+        ({"idle_interval_seconds": 0}, "idle_interval_seconds"),
+        ({"heartbeat_interval_seconds": 0}, "heartbeat_interval_seconds"),
+        ({"max_iterations": 0}, "max_iterations"),
+        ({"max_consecutive_failures": 0}, "max_consecutive_failures"),
+    ],
+)
+def test_protection_watcher_service_config_validates_invalid_values(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        ProtectionWatcherServiceConfig(**kwargs)
 
 

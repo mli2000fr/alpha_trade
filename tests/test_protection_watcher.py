@@ -4,9 +4,9 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from unittest.mock import MagicMock
 
-from execution_engine.config import ExecutionConfig
+from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
 from execution_engine.models import BrokerOrder, OrderStatus, ProtectionWatchItem
-from execution_engine.protection_watcher import ProtectionTransitionWatcher
+from execution_engine.protection_watcher import ProtectionTransitionWatcher, ProtectionWatcherService, parse_args
 
 
 def _item() -> ProtectionWatchItem:
@@ -114,4 +114,79 @@ def test_watcher_keeps_item_pending_when_trigger_not_reached() -> None:
     assert summaries[0]["pending_items"] == 1
     broker.cancel_broker_order.assert_not_called()
     broker.submit_intent.assert_not_called()
+
+
+def test_service_stops_cleanly_when_idle_mode_requested() -> None:
+    watcher = MagicMock()
+    watcher.run.return_value = []
+    sleep_calls: list[float] = []
+
+    service = ProtectionWatcherService(
+        watcher,
+        ProtectionWatcherServiceConfig(
+            interval_seconds=0.1,
+            idle_interval_seconds=0.2,
+            heartbeat_interval_seconds=60.0,
+            max_iterations=10,
+            stop_when_idle=True,
+        ),
+        sleep_fn=sleep_calls.append,
+        monotonic_fn=lambda: 0.0,
+    )
+
+    summary = service.run(exec_run_id="exec-1", account_id="acct-1", limit=25)
+
+    assert summary["status"] == "COMPLETED"
+    assert summary["iterations"] == 1
+    assert summary["idle_cycles"] == 1
+    assert summary["cycles_with_work"] == 0
+    assert summary["watched_items"] == 0
+    assert sleep_calls == []
+    watcher.run.assert_called_once_with(exec_run_id="exec-1", account_id="acct-1", limit=25)
+
+
+def test_service_stops_after_max_consecutive_failures() -> None:
+    watcher = MagicMock()
+    watcher.run.side_effect = [RuntimeError("boom"), RuntimeError("boom")]
+    sleep_calls: list[float] = []
+
+    service = ProtectionWatcherService(
+        watcher,
+        ProtectionWatcherServiceConfig(
+            interval_seconds=0.1,
+            idle_interval_seconds=0.2,
+            heartbeat_interval_seconds=60.0,
+            max_consecutive_failures=2,
+        ),
+        sleep_fn=sleep_calls.append,
+        monotonic_fn=lambda: 0.0,
+    )
+
+    summary = service.run(account_id="acct-1", limit=10)
+
+    assert summary["status"] == "FAILED"
+    assert summary["iterations"] == 2
+    assert summary["consecutive_failures"] == 2
+    assert sleep_calls == [0.2]
+
+
+def test_parse_args_accepts_service_mode_options() -> None:
+    args = parse_args([
+        "--mode", "service",
+        "--service-interval-seconds", "15",
+        "--idle-interval-seconds", "45",
+        "--heartbeat-interval-seconds", "120",
+        "--max-iterations", "3",
+        "--stop-when-idle",
+        "--max-consecutive-failures", "5",
+    ])
+
+    assert args.mode == "service"
+    assert args.service_interval_seconds == 15.0
+    assert args.idle_interval_seconds == 45.0
+    assert args.heartbeat_interval_seconds == 120.0
+    assert args.max_iterations == 3
+    assert args.stop_when_idle is True
+    assert args.max_consecutive_failures == 5
+
 
