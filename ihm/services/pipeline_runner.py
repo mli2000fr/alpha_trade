@@ -56,10 +56,90 @@ DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE = 200
 DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS = 1.1
 DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY = 50
 
+# --- Défauts swing trade (cf. prompt/refactor/audit_ihm_pipeline_options.md) ---
+# Risk management — sizing prudent compte cash 100k$
+DEFAULT_RISK_PER_TRADE_PCT = 0.01            # 1 % du capital risqué par trade
+DEFAULT_RISK_MAX_POSITIONS = 15              # 15 positions max (vs 20 backend)
+DEFAULT_RISK_MAX_POSITION_WEIGHT = 0.08      # 8 % max par ligne
+DEFAULT_RISK_MAX_SECTOR_WEIGHT = 0.30        # 30 % max par secteur
+DEFAULT_RISK_SCORE_WEIGHT = 0.40             # poids final_score dans la conviction
+DEFAULT_RISK_PREDICTION_WEIGHT = 0.60        # poids ML predict dans la conviction
+DEFAULT_RISK_CORRELATION_THRESHOLD = 0.80
+DEFAULT_RISK_CORRELATION_LOOKBACK_DAYS = 60
+DEFAULT_RISK_CORRELATION_MIN_OVERLAP = 40
+DEFAULT_RISK_ENABLE_KELLY = False
+DEFAULT_RISK_PAYOFF_RATIO = 1.5
+DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER = 0.25
+DEFAULT_RISK_LOG_LEVEL = "INFO"
+# Execution — swing cash batch
+DEFAULT_EXEC_SUBMISSION_WINDOW = "both"      # post_close + pre_open (batch quotidien)
+DEFAULT_EXEC_TRAILING_TRIGGER = "multiple_r"
+DEFAULT_EXEC_TRAILING_R_MULTIPLE = 1.0
+DEFAULT_EXEC_TRAILING_PROFIT_PCT = 0.03
+# ML train — cible swing cash + walk-forward
+DEFAULT_ML_TARGET_MODE = "swing_cash"
+DEFAULT_ML_FORECAST_HORIZON = 5              # 5 jours = horizon swing typique
+DEFAULT_ML_TARGET_UP_THRESHOLD = 0.02        # +2 % cible long
+DEFAULT_ML_TARGET_DOWN_THRESHOLD = -0.01
+DEFAULT_ML_DECISION_THRESHOLD = 0.55
+DEFAULT_ML_CALIBRATION_METHOD = "platt"
+DEFAULT_ML_FEATURE_SET = "v1"
+DEFAULT_ML_MAX_WORKERS = 4
+DEFAULT_ML_MAX_EPOCHS = 50
+DEFAULT_ML_WALKFORWARD = True                # walk-forward activé par défaut en swing prod
+DEFAULT_ML_WF_MIN_TRAIN_SIZE = 504
+DEFAULT_ML_WF_VAL_SIZE = 126
+DEFAULT_ML_WF_TEST_SIZE = 126
+DEFAULT_ML_WF_STEP_SIZE = 126
+DEFAULT_ML_WF_MAX_SPLITS = 3
+DEFAULT_ML_LOG_LEVEL = "INFO"
+DEFAULT_ML_MIN_ACTION_RATE = 0.03
+DEFAULT_ML_MAX_ACTION_RATE = 0.20            # plus prudent que 0.35 backend
+DEFAULT_ML_MIN_PRECISION_LONG = 0.55         # plus exigeant que 0.52 backend
+# ML — hyperparams avancés (alignés CLI modelFactory)
+DEFAULT_ML_SEQUENCE_LENGTH = 60
+DEFAULT_ML_BATCH_SIZE = 64
+DEFAULT_ML_HIDDEN_SIZE = 128
+DEFAULT_ML_ARTIFACTS_DIR = "artifacts/models"
+DEFAULT_ML_BENCHMARK_SYMBOL = "SPY"
+DEFAULT_ML_DEFAULT_CHAMPION = "lstm_attention"
+DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE = 20
+DEFAULT_ML_CALIBRATION_MIN_SAMPLES = 64
+DEFAULT_ML_CALIBRATION_MAX_ITER = 100
+DEFAULT_ML_LGBM_MAX_DEPTH = 4
+DEFAULT_ML_LGBM_N_ESTIMATORS = 200
+DEFAULT_ML_LGBM_LEARNING_RATE = 0.05
+DEFAULT_ML_CATBOOST_DEPTH = 6
+DEFAULT_ML_CATBOOST_ITERATIONS = 300
+DEFAULT_ML_CATBOOST_LEARNING_RATE = 0.03
+# ML — grilles candidate (resserrées swing 2-10 j)
+DEFAULT_ML_CANDIDATE_HORIZONS: tuple[int, ...] = (3, 5, 7, 10)
+DEFAULT_ML_CANDIDATE_UP_THRESHOLDS: tuple[float, ...] = (0.015, 0.02, 0.03)
+DEFAULT_ML_CANDIDATE_DOWN_THRESHOLDS: tuple[float, ...] = (-0.01, -0.015)
+DEFAULT_ML_CANDIDATE_DECISION_THRESHOLDS: tuple[float, ...] = (0.55, 0.60, 0.65)
+DEFAULT_ML_MIN_TRADES_FRACTION = 0.15
+# Execution — protection transition (timeout/poll trigger trailing)
+DEFAULT_EXEC_PROTECTION_TRANSITION_TIMEOUT_SECONDS = 120
+DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS = 5.0
+DEFAULT_EXEC_DEBUG = False
+# Selector — alpha scanner stage 2
+DEFAULT_SELECTOR_REQUIRE_ABOVE_MA200 = True
+# Corporate actions sync — fenêtre custom + batching (cf. audit_ihm_pipeline_options)
+DEFAULT_CA_SKIP_EXISTING = False
+DEFAULT_CA_USE_CUSTOM_WINDOW = False
+DEFAULT_CA_WINDOW_LOOKBACK_DAYS = 7  # J-7 → trade_date par défaut quand custom-window activé
+DEFAULT_CA_BATCH_SIZE = 25
+
 AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
 MLGlobalModelName = Literal["catboost", "lightgbm"]
 MLChampionMetric = Literal["selection_score", "business_score", "auc"]
+MLTargetMode = Literal["binary", "swing_cash"]
+MLFeatureSet = Literal["v1", "expert"]
+MLCalibrationMethod = Literal["none", "platt"]
+MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
+ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
+ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
 
 
@@ -74,9 +154,19 @@ class PipelineLaunchOptions:
     execution_run_id: str | None = None
     allow_outside_rth: bool = False
     auto_rebalance: bool = False
-    execution_account_type: Literal["margin", "cash"] = "margin"
-    execution_pdt_rule: Literal["auto", "off"] = "auto"
-    execution_swing_only: bool = False
+    # Défauts swing cash : compte cash + PDT off + swing only (cf. audit_ihm_pipeline_options.md P1)
+    execution_account_type: Literal["margin", "cash"] = "cash"
+    execution_pdt_rule: Literal["auto", "off"] = "off"
+    execution_swing_only: bool = True
+    # Stratégie de protection (sortie) — P1
+    execution_submission_window: ExecutionSubmissionWindow = "both"
+    execution_trailing_trigger: ExecutionTrailingTrigger = "multiple_r"
+    execution_trailing_r_multiple: float = DEFAULT_EXEC_TRAILING_R_MULTIPLE
+    execution_trailing_profit_pct: float = DEFAULT_EXEC_TRAILING_PROFIT_PCT
+    # Execution — transition trigger trailing (avancé) + debug
+    execution_protection_transition_timeout_seconds: int = DEFAULT_EXEC_PROTECTION_TRANSITION_TIMEOUT_SECONDS
+    execution_protection_transition_poll_interval_seconds: float = DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS
+    execution_debug: bool = DEFAULT_EXEC_DEBUG
     ml_accelerator: MLAccelerator = "auto"
     ml_include_sentiment: bool = True
     ml_enable_lightgbm: bool = True
@@ -88,6 +178,62 @@ class PipelineLaunchOptions:
     ml_champion_selection_metric: MLChampionMetric = "selection_score"
     ml_optimize_thresholds: bool = True
     ml_optimize_target: bool = False
+    # ML — cible swing cash + horizon + walk-forward (P1)
+    ml_target_mode: MLTargetMode = DEFAULT_ML_TARGET_MODE  # type: ignore[assignment]
+    ml_forecast_horizon: int = DEFAULT_ML_FORECAST_HORIZON
+    ml_target_up_threshold: float = DEFAULT_ML_TARGET_UP_THRESHOLD
+    ml_target_down_threshold: float = DEFAULT_ML_TARGET_DOWN_THRESHOLD
+    ml_decision_threshold: float = DEFAULT_ML_DECISION_THRESHOLD
+    ml_calibration_method: MLCalibrationMethod = DEFAULT_ML_CALIBRATION_METHOD  # type: ignore[assignment]
+    ml_feature_set: MLFeatureSet = DEFAULT_ML_FEATURE_SET  # type: ignore[assignment]
+    ml_max_workers: int = DEFAULT_ML_MAX_WORKERS
+    ml_max_epochs: int = DEFAULT_ML_MAX_EPOCHS
+    ml_walkforward: bool = DEFAULT_ML_WALKFORWARD
+    ml_wf_min_train_size: int = DEFAULT_ML_WF_MIN_TRAIN_SIZE
+    ml_wf_val_size: int = DEFAULT_ML_WF_VAL_SIZE
+    ml_wf_test_size: int = DEFAULT_ML_WF_TEST_SIZE
+    ml_wf_step_size: int = DEFAULT_ML_WF_STEP_SIZE
+    ml_wf_max_splits: int = DEFAULT_ML_WF_MAX_SPLITS
+    ml_log_level: str = DEFAULT_ML_LOG_LEVEL
+    ml_min_action_rate: float = DEFAULT_ML_MIN_ACTION_RATE
+    ml_max_action_rate: float = DEFAULT_ML_MAX_ACTION_RATE
+    ml_min_precision_long: float = DEFAULT_ML_MIN_PRECISION_LONG
+    # ML — hyperparams avancés (architecture, boosters, grilles candidate)
+    ml_sequence_length: int = DEFAULT_ML_SEQUENCE_LENGTH
+    ml_batch_size: int = DEFAULT_ML_BATCH_SIZE
+    ml_hidden_size: int = DEFAULT_ML_HIDDEN_SIZE
+    ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
+    ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
+    ml_default_champion: MLDefaultChampion = DEFAULT_ML_DEFAULT_CHAMPION  # type: ignore[assignment]
+    ml_cross_sectional_min_universe: int = DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE
+    ml_calibration_min_samples: int = DEFAULT_ML_CALIBRATION_MIN_SAMPLES
+    ml_calibration_max_iter: int = DEFAULT_ML_CALIBRATION_MAX_ITER
+    ml_lgbm_max_depth: int = DEFAULT_ML_LGBM_MAX_DEPTH
+    ml_lgbm_n_estimators: int = DEFAULT_ML_LGBM_N_ESTIMATORS
+    ml_lgbm_learning_rate: float = DEFAULT_ML_LGBM_LEARNING_RATE
+    ml_catboost_depth: int = DEFAULT_ML_CATBOOST_DEPTH
+    ml_catboost_iterations: int = DEFAULT_ML_CATBOOST_ITERATIONS
+    ml_catboost_learning_rate: float = DEFAULT_ML_CATBOOST_LEARNING_RATE
+    ml_candidate_horizons: tuple[int, ...] = DEFAULT_ML_CANDIDATE_HORIZONS
+    ml_candidate_up_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_UP_THRESHOLDS
+    ml_candidate_down_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_DOWN_THRESHOLDS
+    ml_candidate_decision_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_DECISION_THRESHOLDS
+    ml_min_trades_fraction: float = DEFAULT_ML_MIN_TRADES_FRACTION
+    # Risk management — P1 sizing + P2 conviction/correlation/kelly
+    risk_per_trade_pct: float = DEFAULT_RISK_PER_TRADE_PCT
+    risk_max_positions: int = DEFAULT_RISK_MAX_POSITIONS
+    risk_max_position_weight: float = DEFAULT_RISK_MAX_POSITION_WEIGHT
+    risk_max_sector_weight: float = DEFAULT_RISK_MAX_SECTOR_WEIGHT
+    risk_score_weight: float = DEFAULT_RISK_SCORE_WEIGHT
+    risk_prediction_weight: float = DEFAULT_RISK_PREDICTION_WEIGHT
+    risk_correlation_threshold: float = DEFAULT_RISK_CORRELATION_THRESHOLD
+    risk_correlation_lookback_days: int = DEFAULT_RISK_CORRELATION_LOOKBACK_DAYS
+    risk_correlation_min_overlap: int = DEFAULT_RISK_CORRELATION_MIN_OVERLAP
+    risk_enable_kelly: bool = DEFAULT_RISK_ENABLE_KELLY
+    risk_payoff_ratio: float = DEFAULT_RISK_PAYOFF_RATIO
+    risk_kelly_fraction_multiplier: float = DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER
+    risk_dry_run: bool = False
+    risk_log_level: str = DEFAULT_RISK_LOG_LEVEL
     news_import_start_date: str | None = None
     news_import_end_date: str | None = None
     sentiment_start_utc: str | None = None
@@ -120,6 +266,7 @@ class PipelineLaunchOptions:
     selector_max_anomaly_count: int = DEFAULT_SELECTOR_MAX_ANOMALY_COUNT
     selector_sector_cap_ratio: float = DEFAULT_SELECTOR_SECTOR_CAP_RATIO
     selector_log_level: str = DEFAULT_SELECTOR_LOG_LEVEL
+    selector_require_above_ma200: bool = DEFAULT_SELECTOR_REQUIRE_ABOVE_MA200
     signal_aggregator_all_symbols: bool = False
     signal_aggregator_sentiment_weight: float = DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT
     signal_aggregator_macro_weight: float = DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT
@@ -136,6 +283,12 @@ class PipelineLaunchOptions:
     data_integrity_fundamentals_limit: int | None = None
     data_integrity_fundamentals_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
+    corporate_actions_skip_existing: bool = DEFAULT_CA_SKIP_EXISTING
+    # Corporate actions sync — fenêtre custom + batching
+    corporate_actions_use_custom_window: bool = DEFAULT_CA_USE_CUSTOM_WINDOW
+    corporate_actions_start_date: str | None = None
+    corporate_actions_end_date: str | None = None
+    corporate_actions_batch_size: int = DEFAULT_CA_BATCH_SIZE
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,6 +539,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     earnings_limit = options.data_integrity_earnings_limit if options.data_integrity_earnings_limit and options.data_integrity_earnings_limit > 0 else None
     fundamentals_limit = options.data_integrity_fundamentals_limit if options.data_integrity_fundamentals_limit and options.data_integrity_fundamentals_limit > 0 else None
 
+    ca_start_date = _normalize_optional_date(options.corporate_actions_start_date)
+    ca_end_date = _normalize_optional_date(options.corporate_actions_end_date)
+    ml_benchmark_symbol = _normalize_symbol(options.ml_benchmark_symbol, DEFAULT_ML_BENCHMARK_SYMBOL)
+    ml_artifacts_dir = (options.ml_artifacts_dir or "").strip() or DEFAULT_ML_ARTIFACTS_DIR
+
     if step_key == "import_alpaca_assets":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
 
@@ -411,6 +569,15 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         # --portfolio-only : sync uniquement les symboles détenus en portefeuille
         # pas de --skip-existing : on re-interroge Alpaca à chaque fois pour ne rater aucun nouvel événement
         command = [sys.executable, "-u", "-m", "corporate_actions", "sync", "--portfolio-only"]
+        if options.corporate_actions_skip_existing:
+            command.append("--skip-existing")
+        if options.corporate_actions_batch_size and options.corporate_actions_batch_size > 0:
+            command.extend(["--batch-size", str(options.corporate_actions_batch_size)])
+        if options.corporate_actions_use_custom_window:
+            if ca_start_date:
+                command.extend(["--start", ca_start_date])
+            if ca_end_date:
+                command.extend(["--end", ca_end_date])
         if account_id:
             command.extend(["--account", account_id])
         return command
@@ -518,6 +685,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         ]
         if selector_max_workers is not None:
             command.extend(["--max-workers", str(selector_max_workers)])
+        if options.selector_require_above_ma200:
+            command.append("--require-above-ma200")
         return command
 
     if step_key == "sentiment_pipeline":
@@ -579,6 +748,56 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "train",
             "--accelerator",
             options.ml_accelerator,
+            "--target-mode",
+            options.ml_target_mode,
+            "--forecast-horizon",
+            str(options.ml_forecast_horizon),
+            "--target-up-threshold",
+            str(options.ml_target_up_threshold),
+            "--target-down-threshold",
+            str(options.ml_target_down_threshold),
+            "--decision-threshold",
+            str(options.ml_decision_threshold),
+            "--calibration-method",
+            options.ml_calibration_method,
+            "--calibration-min-samples",
+            str(options.ml_calibration_min_samples),
+            "--calibration-max-iter",
+            str(options.ml_calibration_max_iter),
+            "--feature-set",
+            options.ml_feature_set,
+            "--benchmark-symbol",
+            ml_benchmark_symbol,
+            "--sequence-length",
+            str(options.ml_sequence_length),
+            "--batch-size",
+            str(options.ml_batch_size),
+            "--hidden-size",
+            str(options.ml_hidden_size),
+            "--artifacts-dir",
+            ml_artifacts_dir,
+            "--max-workers",
+            str(options.ml_max_workers),
+            "--max-epochs",
+            str(options.ml_max_epochs),
+            "--cross-sectional-min-universe",
+            str(options.ml_cross_sectional_min_universe),
+            "--lgbm-max-depth",
+            str(options.ml_lgbm_max_depth),
+            "--lgbm-n-estimators",
+            str(options.ml_lgbm_n_estimators),
+            "--lgbm-learning-rate",
+            str(options.ml_lgbm_learning_rate),
+            "--catboost-depth",
+            str(options.ml_catboost_depth),
+            "--catboost-iterations",
+            str(options.ml_catboost_iterations),
+            "--catboost-learning-rate",
+            str(options.ml_catboost_learning_rate),
+            "--default-champion",
+            options.ml_default_champion,
+            "--log-level",
+            str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
         ]
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
@@ -593,9 +812,44 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_select_champion:
             command.extend(["--select-champion", "--champion-selection-metric", options.ml_champion_selection_metric])
         if options.ml_optimize_thresholds:
-            command.append("--optimize-thresholds")
+            command.extend([
+                "--optimize-thresholds",
+                "--min-action-rate",
+                str(options.ml_min_action_rate),
+                "--max-action-rate",
+                str(options.ml_max_action_rate),
+                "--min-precision-long",
+                str(options.ml_min_precision_long),
+            ])
+            if options.ml_candidate_decision_thresholds:
+                command.append("--candidate-decision-thresholds")
+                command.extend(str(v) for v in options.ml_candidate_decision_thresholds)
         if options.ml_optimize_target:
             command.append("--optimize-target")
+            command.extend(["--min-trades-fraction", str(options.ml_min_trades_fraction)])
+            if options.ml_candidate_horizons:
+                command.append("--candidate-horizons")
+                command.extend(str(v) for v in options.ml_candidate_horizons)
+            if options.ml_candidate_up_thresholds:
+                command.append("--candidate-up-thresholds")
+                command.extend(str(v) for v in options.ml_candidate_up_thresholds)
+            if options.ml_candidate_down_thresholds:
+                command.append("--candidate-down-thresholds")
+                command.extend(str(v) for v in options.ml_candidate_down_thresholds)
+        if options.ml_walkforward:
+            command.extend([
+                "--walkforward",
+                "--wf-min-train-size",
+                str(options.ml_wf_min_train_size),
+                "--wf-val-size",
+                str(options.ml_wf_val_size),
+                "--wf-test-size",
+                str(options.ml_wf_test_size),
+                "--wf-step-size",
+                str(options.ml_wf_step_size),
+                "--wf-max-splits",
+                str(options.ml_wf_max_splits),
+            ])
         return command
 
     if step_key == "ml_predict":
@@ -608,6 +862,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "predict",
             "--accelerator",
             options.ml_accelerator,
+            "--artifacts-dir",
+            ml_artifacts_dir,
+            "--log-level",
+            str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
         ]
 
     if step_key == "risk_management":
@@ -618,7 +876,35 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "risk_management",
             "--account-equity",
             str(options.risk_account_equity),
+            "--risk-per-trade-pct",
+            str(options.risk_per_trade_pct),
+            "--max-positions",
+            str(options.risk_max_positions),
+            "--max-position-weight",
+            str(options.risk_max_position_weight),
+            "--max-sector-weight",
+            str(options.risk_max_sector_weight),
+            "--score-weight",
+            str(options.risk_score_weight),
+            "--prediction-weight",
+            str(options.risk_prediction_weight),
+            "--correlation-threshold",
+            str(options.risk_correlation_threshold),
+            "--correlation-lookback-days",
+            str(options.risk_correlation_lookback_days),
+            "--correlation-min-overlap",
+            str(options.risk_correlation_min_overlap),
+            "--assumed-payoff-ratio",
+            str(options.risk_payoff_ratio),
+            "--kelly-fraction-multiplier",
+            str(options.risk_kelly_fraction_multiplier),
+            "--log-level",
+            str(options.risk_log_level or DEFAULT_RISK_LOG_LEVEL).upper(),
         ]
+        if options.risk_enable_kelly:
+            command.append("--enable-kelly-sizing")
+        if options.risk_dry_run:
+            command.append("--dry-run")
         if trade_date:
             command.extend(["--trade-date", trade_date])
         if account_id:
@@ -631,14 +917,34 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--date", trade_date])
         if run_id:
             command.extend(["--run-id", run_id])
+        if options.execution_debug:
+            command.append("--debug")
         if options.allow_outside_rth:
             command.append("--allow-outside-rth")
         if options.auto_rebalance:
             command.append("--auto-rebalance")
         command.extend(["--account-type", options.execution_account_type])
         command.extend(["--pdt-rule", options.execution_pdt_rule])
-        if options.execution_swing_only:
-            command.append("--swing-only")
+        # --swing-only utilise BooleanOptionalAction côté backend (cf. run_execution.py)
+        command.append("--swing-only" if options.execution_swing_only else "--no-swing-only")
+        # Stratégie de protection (P1) — toujours transmise pour reproductibilité
+        command.extend(["--submission-window", options.execution_submission_window])
+        command.extend(["--trailing-activation-trigger", options.execution_trailing_trigger])
+        if options.execution_trailing_trigger == "multiple_r":
+            command.extend(["--trailing-activation-r-multiple", str(options.execution_trailing_r_multiple)])
+        else:
+            command.extend(["--trailing-activation-profit-pct", str(options.execution_trailing_profit_pct)])
+        # Transition trigger trailing (P2 avancé)
+        if options.execution_protection_transition_timeout_seconds and options.execution_protection_transition_timeout_seconds > 0:
+            command.extend([
+                "--protection-transition-timeout-seconds",
+                str(int(options.execution_protection_transition_timeout_seconds)),
+            ])
+        if options.execution_protection_transition_poll_interval_seconds and options.execution_protection_transition_poll_interval_seconds > 0:
+            command.extend([
+                "--protection-transition-poll-interval-seconds",
+                str(options.execution_protection_transition_poll_interval_seconds),
+            ])
         if account_id:
             command.extend(["--account", account_id])
         return command

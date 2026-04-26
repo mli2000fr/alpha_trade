@@ -1,4 +1,5 @@
 # Exclusion des modèles générés automatiquement
+\.idea/*
 modelFactory/artifacts/models/
 artifacts/
 checkpoints/

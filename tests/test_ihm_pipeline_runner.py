@@ -191,6 +191,8 @@ def test_build_pipeline_command_alpha_scanner_is_always_strict_implicitly() -> N
         "0.3",
         "--log-level",
         "INFO",
+        # Défaut swing strict : --require-above-ma200 actif (cf. STRICT_SWING_CASH_FILTERS)
+        "--require-above-ma200",
     ]
 
 
@@ -260,6 +262,8 @@ def test_build_pipeline_command_alpha_scanner_exposes_supported_backend_options(
         "DEBUG",
         "--max-workers",
         "6",
+        # Défaut swing strict (selector_require_above_ma200=True par défaut)
+        "--require-above-ma200",
     ]
 
 
@@ -448,24 +452,54 @@ def test_build_pipeline_command_ml_steps() -> None:
     train_cmd = build_pipeline_command("ml_train", options)
     predict_cmd = build_pipeline_command("ml_predict", options)
 
-    assert train_cmd == [
-        train_cmd[0],
-        "-u",
-        "-m",
-        "modelFactory",
-        "--mode",
-        "train",
-        "--accelerator",
-        "gpu",
+    # Structure de base
+    assert train_cmd[:6] == [train_cmd[0], "-u", "-m", "modelFactory", "--mode", "train"]
+    assert "--accelerator" in train_cmd
+    assert train_cmd[train_cmd.index("--accelerator") + 1] == "gpu"
+
+    # Drapeaux booléens activés par défaut (swing prod)
+    for flag in (
         "--include-sentiment",
         "--compare-lightgbm",
         "--enable-catboost",
         "--select-champion",
-        "--champion-selection-metric",
-        "selection_score",
         "--optimize-thresholds",
-    ]
-    assert predict_cmd == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict", "--accelerator", "gpu"]
+        "--walkforward",  # walk-forward activé par défaut en swing
+    ):
+        assert flag in train_cmd, f"Flag attendu manquant : {flag}"
+    assert "--champion-selection-metric" in train_cmd
+    assert train_cmd[train_cmd.index("--champion-selection-metric") + 1] == "selection_score"
+
+    # Cible swing cash
+    assert train_cmd[train_cmd.index("--target-mode") + 1] == "swing_cash"
+    assert train_cmd[train_cmd.index("--forecast-horizon") + 1] == "5"
+    assert train_cmd[train_cmd.index("--target-up-threshold") + 1] == "0.02"
+    assert train_cmd[train_cmd.index("--decision-threshold") + 1] == "0.55"
+    assert train_cmd[train_cmd.index("--calibration-method") + 1] == "platt"
+
+    # Hyperparams architecture & boosters désormais explicites (cf. audit)
+    for flag in (
+        "--sequence-length",
+        "--batch-size",
+        "--hidden-size",
+        "--artifacts-dir",
+        "--benchmark-symbol",
+        "--lgbm-max-depth",
+        "--catboost-depth",
+        "--default-champion",
+        "--cross-sectional-min-universe",
+        "--calibration-min-samples",
+        "--calibration-max-iter",
+    ):
+        assert flag in train_cmd, f"Flag avancé attendu manquant : {flag}"
+
+    # Grille candidate decision thresholds émise quand --optimize-thresholds est actif
+    assert "--candidate-decision-thresholds" in train_cmd
+
+    # Predict
+    assert predict_cmd[:6] == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict"]
+    assert predict_cmd[predict_cmd.index("--accelerator") + 1] == "gpu"
+    assert "--artifacts-dir" in predict_cmd
 
 
 def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options() -> None:
@@ -480,25 +514,38 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
         ml_select_champion=False,
         ml_optimize_thresholds=False,
         ml_optimize_target=True,
+        ml_walkforward=False,
     )
 
     train_cmd = build_pipeline_command("ml_train", options)
 
-    assert train_cmd == [
-        train_cmd[0],
-        "-u",
-        "-m",
-        "modelFactory",
-        "--mode",
-        "train",
-        "--accelerator",
-        "cpu",
+    assert train_cmd[train_cmd.index("--accelerator") + 1] == "cpu"
+
+    # Drapeaux désactivés
+    for flag in (
+        "--include-sentiment",
+        "--compare-lightgbm",
+        "--enable-catboost",
+        "--select-champion",
+        "--optimize-thresholds",
+        "--walkforward",
+        "--candidate-decision-thresholds",
+    ):
+        assert flag not in train_cmd, f"Flag inattendu présent : {flag}"
+
+    # Drapeaux activés explicitement
+    for flag in (
         "--enable-global-model",
-        "--global-model-name",
-        "lightgbm",
         "--enable-cross-sectional",
         "--optimize-target",
-    ]
+        "--candidate-horizons",
+        "--candidate-up-thresholds",
+        "--candidate-down-thresholds",
+        "--min-trades-fraction",
+    ):
+        assert flag in train_cmd, f"Flag attendu manquant : {flag}"
+
+    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "lightgbm"
 
 
 def test_build_pipeline_command_import_news() -> None:
