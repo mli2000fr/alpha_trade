@@ -10,6 +10,15 @@ DEFAULT_DB_NAME = "alpha_trade"
 DEFAULT_DB_USER_ENV = "LOGIN_DB"
 DEFAULT_DB_PASSWORD_ENV = "PASSWORD_DB"
 
+# Phase 1 sécurité : placeholders évidents refusés (audit_global.md §1.5).
+# Volontairement permissif sur "user" / "pass" pour ne pas casser les envs
+# locaux historiques ; les vrais placeholders ("changeme", "your_password",
+# "todo"…) restent bloqués.
+_FORBIDDEN_PLAINTEXT = frozenset({
+    "changeme", "change-me", "todo", "your_password", "your_user",
+    "replaceme", "replace-me", "xxxxx", "xxx", "secret123",
+})
+
 
 def _read_database_credentials(
     db_user_env: str = DEFAULT_DB_USER_ENV,
@@ -18,7 +27,15 @@ def _read_database_credentials(
     db_user = os.getenv(db_user_env)
     db_password = os.getenv(db_password_env)
     if not db_user or not db_password:
-        raise RuntimeError(f"{db_user_env} ou {db_password_env} non définis dans les variables d'environnement système.")
+        raise RuntimeError(
+            f"{db_user_env} ou {db_password_env} non définis dans les variables "
+            "d'environnement système."
+        )
+    if db_user.strip().lower() in _FORBIDDEN_PLAINTEXT or db_password.strip().lower() in _FORBIDDEN_PLAINTEXT:
+        raise RuntimeError(
+            f"Valeurs sentinelles refusées pour {db_user_env}/{db_password_env} : "
+            "remplace 'pass' / 'user' / 'changeme' par des credentials réels."
+        )
     return db_user, db_password
 
 

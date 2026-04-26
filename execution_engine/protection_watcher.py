@@ -607,6 +607,21 @@ class ProtectionWatcherService:
                 account_id or "*",
                 exec_run_id or "*",
             )
+            # Phase 1 refactor : persistance SQL du heartbeat
+            # (audit_watcher.md, audit_global.md §6.8).
+            try:
+                import os
+                import socket
+                self._watcher._repo.upsert_watcher_heartbeat(
+                    watcher_name="execution_protection_watcher",
+                    account_id=account_id,
+                    hostname=socket.gethostname(),
+                    pid=os.getpid(),
+                    status="RUNNING" if metrics["consecutive_failures"] == 0 else "ERROR",
+                    last_error=None,
+                )
+            except Exception:
+                LOGGER.debug("watcher_heartbeats persist failed", exc_info=True)
             return True, now
         return False, last_heartbeat
 

@@ -503,6 +503,56 @@ class ExecutionRepository:
         with self.engine.begin() as conn:
             conn.execute(stmt, {"account_id": resolved_account_id, "locked_by_run_id": exec_run_id})
 
+    # ------------------------------------------------------------------
+    # Watcher heartbeat (Phase 1 refactor — audit_watcher.md, audit_global.md §6.8)
+    # ------------------------------------------------------------------
+
+    def upsert_watcher_heartbeat(
+        self,
+        *,
+        watcher_name: str,
+        account_id: str | None = None,
+        hostname: str | None = None,
+        pid: int | None = None,
+        status: str = "RUNNING",
+        last_error: str | None = None,
+    ) -> None:
+        """UPSERT du heartbeat persistant d'un watcher.
+
+        - Idempotent : ré-écrit ``last_heartbeat_at`` à chaque appel.
+        - Tolérant si la table n'existe pas encore (log debug, pas d'erreur).
+        """
+        resolved_account_id = account_id or "default"
+        params = {
+            "watcher_name": watcher_name,
+            "account_id": resolved_account_id,
+            "hostname": hostname,
+            "pid": pid,
+            "status": status,
+            "last_error": (last_error or None),
+            "now": datetime.now(timezone.utc),
+        }
+        # MySQL : INSERT ... ON DUPLICATE KEY UPDATE
+        stmt = text("""
+            INSERT INTO watcher_heartbeats
+                (watcher_name, account_id, hostname, pid, status,
+                 last_heartbeat_at, started_at, last_error)
+            VALUES
+                (:watcher_name, :account_id, :hostname, :pid, :status,
+                 :now, :now, :last_error)
+            ON DUPLICATE KEY UPDATE
+                hostname = VALUES(hostname),
+                pid = VALUES(pid),
+                status = VALUES(status),
+                last_heartbeat_at = VALUES(last_heartbeat_at),
+                last_error = VALUES(last_error)
+        """)
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(stmt, params)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.debug("watcher_heartbeats upsert ignored (table absente ?): %s", exc)
+
     def snapshot_execution_targets(
         self,
         *,

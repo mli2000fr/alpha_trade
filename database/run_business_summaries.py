@@ -11,6 +11,10 @@ from sqlalchemy import Column, Date, DateTime, MetaData, String, Table, Text, in
 
 from database.connection import get_sqlalchemy_engine
 
+# Phase 1 refactor : tous les payloads run_summary doivent porter
+# ``schema_version`` (helper transverse).
+from core.run_summary import attach_schema_version
+
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 
@@ -44,8 +48,9 @@ def build_summary_run_id(prefix: str) -> str:
 
 
 def emit_run_summary(summary: Mapping[str, Any]) -> None:
+    payload = attach_schema_version(summary)
     print(
-        f"{RUN_SUMMARY_PREFIX}{json.dumps(dict(summary), ensure_ascii=False, sort_keys=True, default=str)}",
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)}",
         flush=True,
     )
 
@@ -94,7 +99,7 @@ def _table_exists(engine) -> bool:
 
 
 def _serialize_summary(summary: Mapping[str, Any]) -> str:
-    return json.dumps(dict(summary), ensure_ascii=False, sort_keys=True, default=str)
+    return json.dumps(attach_schema_version(summary), ensure_ascii=False, sort_keys=True, default=str)
 
 
 def persist_run_business_summary(

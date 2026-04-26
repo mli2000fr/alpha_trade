@@ -118,12 +118,36 @@ def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool, s
     mode = mode_map[choice]
 
     if mode == "live":
+        # Phase 1 sécurité : confirmation renforcée — l'opérateur doit ressaisir
+        # exactement le label du compte live qu'il s'apprête à utiliser.
+        # On charge la liste des comptes live pour proposer le label attendu.
+        expected_label: str | None = None
+        try:
+            from service.alpaca.accounts import AccountRegistry
+            for acct in AccountRegistry.get().list_accounts():
+                if getattr(acct, "mode", "") == "live":
+                    expected_label = acct.label
+                    break
+        except Exception:
+            pass
+
         confirm = input(
             f"\n{RED}{BOLD}[ATTENTION] Confirmes-tu le lancement en LIVE (argent reel) ? [oui/non] : {RESET}"
         ).strip().lower()
         if confirm != "oui":
             print("Annule.")
             sys.exit(0)
+        if expected_label:
+            typed = input(
+                f"{RED}{BOLD}Tape EXACTEMENT le label du compte live "
+                f"pour confirmer (attendu: '{expected_label}') : {RESET}"
+            ).strip()
+            if typed != expected_label:
+                print(f"{RED}Label incorrect : '{typed}' != '{expected_label}'. Abandon.{RESET}")
+                sys.exit(1)
+        else:
+            print(f"{YELLOW}[!] Aucun compte live configuré dans config.yaml.{RESET}")
+            sys.exit(1)
 
     print(f"\n{BOLD}{SEP}{RESET}")
     print(f"{BOLD}  Source des cibles{RESET}")
@@ -337,13 +361,29 @@ def run(
     client   = AlpacaTradingClient(broker_mode=config.broker_mode, account_id=account_id)
     broker   = BrokerAdapter(client, config)
     oco      = OcoManager(broker, repo)
-    # Construction du circuit breaker
+    # Construction du circuit breaker.
+    # Phase 1 sécurité : en mode paper / live, l'equity DOIT venir du broker.
+    # Tout fallback à 100 000 $ silencieux est désormais fatal pour éviter
+    # un sizing massivement faux (audit_global.md, audit_execution.md).
     equity = 100_000.0
     if not config.dry_run:
         try:
             equity = broker.get_account_equity()
-        except Exception:
-            equity = 100_000.0
+        except Exception as exc:
+            print(
+                f"{RED}{BOLD}[FATAL] Impossible de récupérer l'equity broker "
+                f"en mode {mode}: {exc}{RESET}\n"
+                f"{RED}    -> abandon du run pour éviter un sizing fallback à 100k$.{RESET}",
+                file=sys.stderr,
+            )
+            raise RuntimeError(
+                f"broker.get_account_equity() a échoué en mode {mode}: {exc}"
+            ) from exc
+        if equity is None or equity <= 0:
+            raise RuntimeError(
+                f"Equity broker invalide en mode {mode}: {equity!r}. "
+                "Abandon du run."
+            )
     pnl = PnLSnapshot(portfolio_current_value=equity, portfolio_high_watermark=equity)
     cb = CircuitBreaker(RiskConfig(account_equity=max(equity, 1.0)), pnl)
     executor = ProductionExecutor(config, repo, broker, oco, circuit_breaker=cb)

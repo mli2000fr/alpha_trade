@@ -18,9 +18,11 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_bars_daily (
     -- Permet de distinguer les re-ingestions et de tracer la source d'ajustement
     `ingested_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Horodatage UTC d insertion dans la table (pour versioning)',
     `data_adjustment` VARCHAR(20) NOT NULL DEFAULT 'split' COMMENT 'Paramètre adjustment Alpaca utilisé : raw | split | dividend | all',
+    `data_source` VARCHAR(16) NOT NULL DEFAULT 'alpaca_iex' COMMENT 'Origine des barres journalières : alpaca_iex | alpaca_sip | stooq | yahoo',
     `last_updated` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     -- 核心索引設計
     PRIMARY KEY (`symbol`, `date`),
     INDEX `idx_date` (`date`),
-    INDEX `idx_ingested_at` (`ingested_at`) COMMENT 'Permet d auditer les lots de re-ingestion par plage de temps'
+    INDEX `idx_ingested_at` (`ingested_at`) COMMENT 'Permet d auditer les lots de re-ingestion par plage de temps',
+    CONSTRAINT chk_daily_adj CHECK (data_adjustment = 'split')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=COMPRESSED COMMENT='Alpha Prime 每日行情數據表';

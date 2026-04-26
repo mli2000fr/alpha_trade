@@ -1,5 +1,29 @@
 # Data Integrity Engine — documentation détaillée de reprise
 
+> ⚠️ **Limites IEX et impact concret** (Phase 1 refactor — `audit_global.md` §4).
+>
+> Toutes les barres (`stock_bars`, `stock_bars_daily`) et quotes
+> (`stock_quote_snapshots`) ingérées par défaut viennent du feed Alpaca **gratuit
+> IEX**, qui couvre ~2-3 % du volume consolidé US. Conséquences :
+>
+> | Donnée | Impact IEX |
+> |---|---|
+> | `volume` | sous-évalué x30-50 |
+> | `vwap` | peu fiable |
+> | spreads `stock_quote_snapshots` | ~50 bps NBBO ⇒ exclusions abusives par le selector |
+> | OHLC large caps | OK |
+> | OHLC small caps | ±1-3 % |
+>
+> Les compteurs IEX (`symbols_zero_volume_30d`, `stale_quote_pct`,
+> `stale_market_cap_pct`) sont propagés dans tous les `run_summary` (helper
+> `core.run_summary.merge_iex_bias_counters`).
+>
+> La colonne `stock_bars(_daily).data_source` (Phase 1) trace explicitement
+> l'origine (`alpaca_iex` par défaut, futur `alpaca_sip` / `stooq` / `yahoo`).
+>
+> **Convention de prix** : `data_adjustment = 'split'` (canonique projet) — voir
+> `doc/database.md` §9 et `doc/corporate_actions.md`.
+
 ## 1. Objet de ce document
 
 Ce document décrit **en détail** le module `dataIntegrityEngine/` tel qu’il existe aujourd’hui dans le code.

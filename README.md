@@ -4,6 +4,34 @@ Plateforme Python de **trading algorithmique swing US** orientée production, co
 
 Le projet s'appuie principalement sur **Python 3.12**, **MySQL**, **SQLAlchemy**, **Alpaca**, **Finnhub**, **PyTorch/Lightning** et une **IHM Streamlit** pour la supervision opérateur.
 
+> ℹ️ **Conventions clés (Phase 1 refactor — `prompt/refactor/audit_global.md`)**
+>
+> - **Politique de prix : `data_adjustment = 'split'`** (canonique projet).
+>   Les splits sont neutralisés au niveau Alpaca ; les **dividendes** sont
+>   comptabilisés séparément via le ledger `portfolio_cash_ledger`. Une
+>   contrainte SQL `CHECK chk_bars_adj` / `chk_daily_adj` matérialise cette
+>   convention sur `stock_bars` / `stock_bars_daily`. Voir `doc/database.md` §9
+>   et `doc/dataIntegrityEngine.md`.
+>   - Performance totale (dividendes inclus) =
+>     `MTM(positions, stock_bars_daily.close) + cumulative(portfolio_cash_ledger)`
+>
+> - **Limites Alpaca free / IEX** : le feed gratuit IEX couvre ~2-3 % du volume
+>   consolidé US. `volume`, `vwap`, spreads `stock_quote_snapshots` sont
+>   biaisés ; les compteurs `symbols_zero_volume_30d`, `stale_quote_pct`,
+>   `stale_market_cap_pct` sont propagés dans tous les `run_summary`
+>   (helper `core.run_summary.merge_iex_bias_counters`). Voir le bandeau IEX
+>   dans `doc/dataIntegrityEngine.md`.
+>
+> - **Sécurité opérationnelle** :
+>   - `run_execution.py` en mode `paper` / `live` lève désormais une
+>     `RuntimeError` si `broker.get_account_equity()` échoue (plus de fallback
+>     silencieux à 100 000 $).
+>   - Le mode `live` exige la ressaisie exacte du label du compte broker.
+>   - Les secrets DB (`LOGIN_DB`, `PASSWORD_DB`) doivent être en variables
+>     d'environnement ; les valeurs sentinelles `pass`, `user`, `changeme`
+>     sont rejetées au démarrage. `config.yaml` n'utilise que des
+>     placeholders `${VAR}` (voir `core.secrets`).
+
 ---
 
 ## 1. Vue d'ensemble

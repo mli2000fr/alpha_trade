@@ -1,7 +1,7 @@
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import dateutil.parser
 import requests
@@ -14,6 +14,14 @@ PAUSE_CALL_BAR = 0.2
 ALPACA_ASSETS_ENDPOINT = "https://paper-api.alpaca.markets/v2/assets"
 ALPACA_BARS_ENDPOINT_TEMPLATE = "https://data.alpaca.markets/v2/stocks/{symbol}/bars"
 ALPACA_LATEST_QUOTES_ENDPOINT = "https://data.alpaca.markets/v2/stocks/quotes/latest"
+
+#: Feeds supportés par l'API Alpaca data v2.
+#: ``iex`` = feed gratuit (~2-3% du volume consolidé US — biais documenté
+#: dans ``doc/dataIntegrityEngine.md`` et ``audit_global.md``).
+#: ``sip`` = feed consolidé payant.
+AlpacaFeed = Literal["iex", "sip"]
+DEFAULT_FEED: AlpacaFeed = "iex"
+_VALID_FEEDS: frozenset[str] = frozenset({"iex", "sip"})
 
 LOGGER = logging.getLogger(__name__)
 
@@ -90,9 +98,26 @@ def fetch_bars(
     start_date: Optional[str] = None,
     session: Optional[requests.Session] = None,
     account_id: Optional[str] = None,
+    feed: AlpacaFeed = DEFAULT_FEED,
 ) -> list[dict[str, Any]]:
     time.sleep(PAUSE_CALL_BAR)
-    """Récupère les bars Alpaca pour un symbole et gère la pagination et les timeouts."""
+    """Récupère les bars Alpaca pour un symbole et gère la pagination et les timeouts.
+
+    ``feed`` est validé contre :data:`_VALID_FEEDS`. La valeur par défaut
+    (``"iex"``) reflète l'offre Alpaca gratuite consommée par le projet ;
+    tout autre choix doit être explicite et est tracé dans les logs
+    (audit_service.md, audit_dataIntegrityEngine.md).
+    """
+    if feed not in _VALID_FEEDS:
+        raise ValueError(
+            f"feed='{feed}' invalide pour Alpaca data v2. "
+            f"Valeurs acceptées : {sorted(_VALID_FEEDS)}."
+        )
+    if feed != DEFAULT_FEED:
+        LOGGER.info(
+            "Alpaca bars | feed override actif: feed=%s (défaut=%s) symbol=%s",
+            feed, DEFAULT_FEED, symbol,
+        )
     owned_session = session is None
     client = session or requests.Session()
     endpoint = ALPACA_BARS_ENDPOINT_TEMPLATE.format(symbol=symbol)
@@ -101,8 +126,9 @@ def fetch_bars(
         # adjustment=split : série canonique du projet pour le swing trading actions.
         # Les splits sont neutralisés, mais les dividendes ne réécrivent pas le passé.
         "adjustment": "split",
+        # feed explicite (Phase 1 refactor) : par défaut IEX (offre Alpaca gratuite).
+        "feed": feed,
         # RTH uniquement (09:30–16:00 EST) : exclure les données pre/post-market.
-        # "feed": "sip",
         # "extended_hours": "false",
         "limit": 5000,
         "start": _normalize_start_date(start_date),
