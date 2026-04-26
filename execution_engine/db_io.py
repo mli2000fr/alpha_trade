@@ -11,7 +11,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from database.connection import get_sqlalchemy_engine
-from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionTarget, OrderIntent, ProtectionWatchItem
+from execution_engine.models import ExecutionOrderRequest
+from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionPosition, ExecutionPositionLot, ExecutionTarget, OrderIntent, ProtectionWatchItem
 
 LOGGER = logging.getLogger(__name__)
 
@@ -134,6 +135,71 @@ class ExecutionRepository:
         with self.engine.connect() as conn:
             rows = conn.execute(query, {"exec_run_id": exec_run_id}).mappings().all()
         return [self._row_to_broker_order(r) for r in rows]
+
+    def find_order_request_by_submission_key(
+        self,
+        *,
+        account_id: str,
+        submission_key: str,
+    ) -> ExecutionOrderRequest | None:
+        stmt = text("""
+            SELECT request_id, exec_run_id, account_id, risk_run_id, symbol, side,
+                   target_qty, order_type, business_key, submission_key, attempt_no,
+                   parent_request_id, intent_role, decision_price, limit_price,
+                   stop_price, trail_percent, status, failure_reason
+            FROM execution_order_requests
+            WHERE account_id = :account_id
+              AND submission_key = :submission_key
+            LIMIT 1
+        """)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt, {"account_id": account_id, "submission_key": submission_key}).mappings().first()
+        return self._row_to_execution_order_request(row) if row is not None else None
+
+    def find_order_request_by_broker_order_id(
+        self,
+        *,
+        account_id: str,
+        broker_order_id: str,
+    ) -> ExecutionOrderRequest | None:
+        stmt = text("""
+            SELECT req.request_id, req.exec_run_id, req.account_id, req.risk_run_id, req.symbol, req.side,
+                   req.target_qty, req.order_type, req.business_key, req.submission_key, req.attempt_no,
+                   req.parent_request_id, req.intent_role, req.decision_price, req.limit_price,
+                   req.stop_price, req.trail_percent, req.status, req.failure_reason
+            FROM execution_order_requests req
+            INNER JOIN execution_broker_orders bo
+                    ON bo.request_id = req.request_id
+            WHERE req.account_id = :account_id
+              AND bo.broker_order_id = :broker_order_id
+            LIMIT 1
+        """)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt, {"account_id": account_id, "broker_order_id": broker_order_id}).mappings().first()
+        return self._row_to_execution_order_request(row) if row is not None else None
+
+    def load_cumulative_filled_qty(self, *, request_id: str) -> float:
+        stmt = text("""
+            SELECT COALESCE(SUM(filled_qty), 0)
+            FROM execution_broker_fills
+            WHERE request_id = :request_id
+        """)
+        with self.engine.connect() as conn:
+            value = conn.execute(stmt, {"request_id": request_id}).scalar()
+        return float(value or 0.0)
+
+    def load_execution_position_lot_inputs(self, *, account_id: str) -> list[dict[str, Any]]:
+        stmt = text("""
+            SELECT fill.fill_id, fill.exec_run_id, fill.request_id, fill.symbol,
+                   req.side, fill.filled_qty, fill.avg_fill_price, fill.fill_timestamp, fill.created_at
+            FROM execution_broker_fills fill
+            INNER JOIN execution_order_requests req
+                    ON req.request_id = fill.request_id
+            WHERE fill.account_id = :account_id
+            ORDER BY fill.fill_timestamp ASC, fill.created_at ASC, fill.fill_id ASC
+        """)
+        with self.engine.connect() as conn:
+            return list(conn.execute(stmt, {"account_id": account_id}).mappings().all())
 
     def load_open_child_orders(self, parent_intent_id: str) -> list[BrokerOrder]:
         v2_query = text("""
@@ -349,6 +415,30 @@ class ExecutionRepository:
             trail_percent=float(r["trail_percent"]) if r["trail_percent"] is not None else None,
             created_at=r["created_at"] if isinstance(r.get("created_at"), datetime) else None,
             updated_at=r["updated_at"] if isinstance(r.get("updated_at"), datetime) else None,
+        )
+
+    @staticmethod
+    def _row_to_execution_order_request(r: Any) -> ExecutionOrderRequest:
+        return ExecutionOrderRequest(
+            request_id=str(r["request_id"]),
+            exec_run_id=str(r["exec_run_id"]),
+            account_id=str(r["account_id"]),
+            risk_run_id=str(r["risk_run_id"]),
+            symbol=str(r["symbol"]),
+            side=str(r["side"]),
+            target_qty=float(r["target_qty"]),
+            order_type=str(r["order_type"]),
+            business_key=str(r["business_key"]),
+            submission_key=str(r["submission_key"]) if r.get("submission_key") not in (None, "") else None,
+            attempt_no=int(r["attempt_no"]),
+            intent_role=str(r["intent_role"]),
+            decision_price=float(r["decision_price"]) if r.get("decision_price") is not None else 0.0,
+            parent_request_id=str(r["parent_request_id"]) if r.get("parent_request_id") not in (None, "") else None,
+            limit_price=float(r["limit_price"]) if r.get("limit_price") is not None else None,
+            stop_price=float(r["stop_price"]) if r.get("stop_price") is not None else None,
+            trail_percent=float(r["trail_percent"]) if r.get("trail_percent") is not None else None,
+            status=str(r.get("status") or "NEW"),
+            failure_reason=str(r["failure_reason"]) if r.get("failure_reason") not in (None, "") else None,
         )
 
     # ------------------------------------------------------------------
@@ -870,4 +960,213 @@ class ExecutionRepository:
         ]
         with self.engine.begin() as conn:
             conn.execute(stmt, records)
+
+    def replace_execution_positions(
+        self,
+        *,
+        exec_run_id: str,
+        account_id: str,
+        broker_mode: str,
+        positions: list[dict[str, Any]],
+    ) -> int:
+        delete_stmt = text("DELETE FROM execution_positions WHERE account_id = :account_id")
+        insert_stmt = text("""
+            INSERT INTO execution_positions (
+                account_id, symbol, net_qty, avg_entry_price, market_price,
+                market_value, unrealized_pnl, broker_mode, source_exec_run_id,
+                position_status, last_broker_snapshot_at, updated_at
+            ) VALUES (
+                :account_id, :symbol, :net_qty, :avg_entry_price, :market_price,
+                :market_value, :unrealized_pnl, :broker_mode, :source_exec_run_id,
+                :position_status, :last_broker_snapshot_at, :updated_at
+            )
+        """)
+        now = datetime.now(timezone.utc)
+        records: list[dict[str, Any]] = []
+        for position in positions:
+            symbol = str(position.get("symbol", "") or "").strip().upper()
+            if not symbol:
+                continue
+            qty = float(position.get("qty", 0) or 0)
+            current_price = position.get("current_price")
+            if current_price in (None, ""):
+                market_value = position.get("market_value")
+                if market_value not in (None, "") and qty not in (0, 0.0):
+                    current_price = float(market_value) / qty
+            records.append({
+                "account_id": account_id,
+                "symbol": symbol,
+                "net_qty": qty,
+                "avg_entry_price": float(position.get("avg_entry_price")) if position.get("avg_entry_price") not in (None, "") else None,
+                "market_price": float(current_price) if current_price not in (None, "") else None,
+                "market_value": float(position.get("market_value")) if position.get("market_value") not in (None, "") else None,
+                "unrealized_pnl": float(position.get("unrealized_pl")) if position.get("unrealized_pl") not in (None, "") else None,
+                "broker_mode": broker_mode,
+                "source_exec_run_id": exec_run_id,
+                "position_status": "OPEN",
+                "last_broker_snapshot_at": now,
+                "updated_at": now,
+            })
+        if not records:
+            records = [{
+                "account_id": account_id,
+                "symbol": "__FLAT__",
+                "net_qty": 0.0,
+                "avg_entry_price": None,
+                "market_price": None,
+                "market_value": None,
+                "unrealized_pnl": None,
+                "broker_mode": broker_mode,
+                "source_exec_run_id": exec_run_id,
+                "position_status": "FLAT",
+                "last_broker_snapshot_at": now,
+                "updated_at": now,
+            }]
+        with self.engine.begin() as conn:
+            conn.execute(delete_stmt, {"account_id": account_id})
+            conn.execute(insert_stmt, records)
+        return len(records)
+
+    def rebuild_execution_position_lots(
+        self,
+        *,
+        account_id: str,
+    ) -> int:
+        inputs = self.load_execution_position_lot_inputs(account_id=account_id)
+        delete_stmt = text("DELETE FROM execution_position_lots WHERE account_id = :account_id")
+        insert_stmt = text("""
+            INSERT INTO execution_position_lots (
+                lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+                opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+                close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+                source_kind, updated_at
+            ) VALUES (
+                :lot_id, :account_id, :symbol, :opened_qty, :remaining_qty, :entry_price,
+                :opened_at, :open_exec_run_id, :open_request_id, :open_fill_id, :lot_status,
+                :close_exec_run_id, :close_request_id, :close_fill_id, :closed_at, :exit_price,
+                :source_kind, :updated_at
+            )
+        """)
+        open_lots_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        records: list[dict[str, Any]] = []
+        for row in inputs:
+            symbol = str(row["symbol"]).strip().upper()
+            side = str(row["side"]).strip().lower()
+            fill_qty = float(row.get("filled_qty") or 0.0)
+            fill_price = float(row.get("avg_fill_price") or 0.0)
+            fill_timestamp = row.get("fill_timestamp") if isinstance(row.get("fill_timestamp"), datetime) else datetime.now(timezone.utc)
+            if fill_qty <= 0:
+                continue
+            if side == "buy":
+                lot = {
+                    "lot_id": f"lot-{row['fill_id']}",
+                    "account_id": account_id,
+                    "symbol": symbol,
+                    "opened_qty": fill_qty,
+                    "remaining_qty": fill_qty,
+                    "entry_price": fill_price,
+                    "opened_at": fill_timestamp,
+                    "open_exec_run_id": row.get("exec_run_id"),
+                    "open_request_id": row.get("request_id"),
+                    "open_fill_id": row.get("fill_id"),
+                    "lot_status": "OPEN",
+                    "close_exec_run_id": None,
+                    "close_request_id": None,
+                    "close_fill_id": None,
+                    "closed_at": None,
+                    "exit_price": None,
+                    "source_kind": "execution_broker_fill",
+                    "updated_at": datetime.now(timezone.utc),
+                }
+                records.append(lot)
+                open_lots_by_symbol.setdefault(symbol, []).append(lot)
+                continue
+
+            remaining_to_close = fill_qty
+            candidate_lots = open_lots_by_symbol.get(symbol, [])
+            while remaining_to_close > 1e-9 and candidate_lots:
+                lot = candidate_lots[0]
+                consume_qty = min(float(lot["remaining_qty"]), remaining_to_close)
+                lot["remaining_qty"] = max(float(lot["remaining_qty"]) - consume_qty, 0.0)
+                lot["updated_at"] = datetime.now(timezone.utc)
+                remaining_to_close -= consume_qty
+                if lot["remaining_qty"] <= 1e-9:
+                    lot["remaining_qty"] = 0.0
+                    lot["lot_status"] = "CLOSED"
+                    lot["close_exec_run_id"] = row.get("exec_run_id")
+                    lot["close_request_id"] = row.get("request_id")
+                    lot["close_fill_id"] = row.get("fill_id")
+                    lot["closed_at"] = fill_timestamp
+                    lot["exit_price"] = fill_price
+                    candidate_lots.pop(0)
+
+        with self.engine.begin() as conn:
+            conn.execute(delete_stmt, {"account_id": account_id})
+            if records:
+                conn.execute(insert_stmt, records)
+        return len(records)
+
+    def load_execution_positions(self, *, account_id: str | None = None) -> list[ExecutionPosition]:
+        stmt = text("""
+            SELECT account_id, symbol, net_qty, avg_entry_price, market_price,
+                   market_value, unrealized_pnl, broker_mode, source_exec_run_id,
+                   position_status, last_broker_snapshot_at, updated_at
+            FROM execution_positions
+            WHERE (:account_id IS NULL OR account_id = :account_id)
+            ORDER BY CASE WHEN position_status = 'FLAT' THEN 1 ELSE 0 END, ABS(net_qty) DESC, symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, {"account_id": account_id}).mappings().all()
+        return [
+            ExecutionPosition(
+                account_id=str(r["account_id"]),
+                symbol=str(r["symbol"]),
+                net_qty=float(r["net_qty"]),
+                avg_entry_price=float(r["avg_entry_price"]) if r.get("avg_entry_price") is not None else None,
+                market_price=float(r["market_price"]) if r.get("market_price") is not None else None,
+                market_value=float(r["market_value"]) if r.get("market_value") is not None else None,
+                unrealized_pnl=float(r["unrealized_pnl"]) if r.get("unrealized_pnl") is not None else None,
+                broker_mode=str(r["broker_mode"]) if r.get("broker_mode") not in (None, "") else None,
+                source_exec_run_id=str(r["source_exec_run_id"]) if r.get("source_exec_run_id") not in (None, "") else None,
+                position_status=str(r.get("position_status") or "OPEN"),
+                last_broker_snapshot_at=r.get("last_broker_snapshot_at") if isinstance(r.get("last_broker_snapshot_at"), datetime) else None,
+                updated_at=r.get("updated_at") if isinstance(r.get("updated_at"), datetime) else None,
+            )
+            for r in rows
+        ]
+
+    def load_execution_position_lots(self, *, account_id: str | None = None) -> list[ExecutionPositionLot]:
+        stmt = text("""
+            SELECT lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+                   opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+                   close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+                   source_kind, updated_at
+            FROM execution_position_lots
+            WHERE (:account_id IS NULL OR account_id = :account_id)
+            ORDER BY opened_at DESC, lot_id DESC
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, {"account_id": account_id}).mappings().all()
+        return [
+            ExecutionPositionLot(
+                lot_id=str(r["lot_id"]),
+                account_id=str(r["account_id"]),
+                symbol=str(r["symbol"]),
+                opened_qty=float(r["opened_qty"]),
+                remaining_qty=float(r["remaining_qty"]),
+                entry_price=float(r["entry_price"]),
+                opened_at=r["opened_at"] if isinstance(r.get("opened_at"), datetime) else datetime.now(timezone.utc),
+                open_exec_run_id=str(r["open_exec_run_id"]) if r.get("open_exec_run_id") not in (None, "") else None,
+                open_request_id=str(r["open_request_id"]) if r.get("open_request_id") not in (None, "") else None,
+                open_fill_id=str(r["open_fill_id"]) if r.get("open_fill_id") not in (None, "") else None,
+                lot_status=str(r.get("lot_status") or "OPEN"),
+                close_exec_run_id=str(r["close_exec_run_id"]) if r.get("close_exec_run_id") not in (None, "") else None,
+                close_request_id=str(r["close_request_id"]) if r.get("close_request_id") not in (None, "") else None,
+                close_fill_id=str(r["close_fill_id"]) if r.get("close_fill_id") not in (None, "") else None,
+                closed_at=r.get("closed_at") if isinstance(r.get("closed_at"), datetime) else None,
+                exit_price=float(r["exit_price"]) if r.get("exit_price") is not None else None,
+                source_kind=str(r.get("source_kind") or "execution_broker_fill"),
+            )
+            for r in rows
+        ]
 

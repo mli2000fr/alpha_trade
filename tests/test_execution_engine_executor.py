@@ -62,6 +62,7 @@ def _make_executor(config: ExecutionConfig | None = None) -> tuple[ProductionExe
         "non_marginable_buying_power": 100_000.0,
         "daytrade_count": 0,
     }
+    broker.list_recent_orders.return_value = []
     oco = MagicMock()
     return ProductionExecutor(cfg, repo, broker, oco), repo, broker, oco
 

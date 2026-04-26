@@ -15,6 +15,8 @@ from ihm.services.queries import get_execution_account_constraints
 from ihm.services.queries import get_execution_events
 from ihm.services.queries import get_execution_fills
 from ihm.services.queries import get_execution_orders
+from ihm.services.queries import get_execution_position_lots
+from ihm.services.queries import get_execution_positions
 from ihm.services.queries import get_execution_runs
 from ihm.services.queries import get_execution_targets_snapshot
 from ihm.services.queries import get_latest_execution_protection_watch_service_summary
@@ -214,6 +216,23 @@ def render() -> None:
     # --- Positions broker ---
     st.subheader("📦 Positions broker — dernier snapshot")
     show_dataframe(get_broker_positions(account_id=account_id), height=300)
+
+    projected_positions = get_execution_positions(account_id=account_id, exec_run_id=selected)
+    if not projected_positions.empty:
+        st.subheader("🧮 Positions projetées Sprint 4")
+        show_dataframe(projected_positions, height=260)
+
+    lots = get_execution_position_lots(account_id=account_id)
+    if not lots.empty:
+        st.subheader("🪵 Lots reconstruits Sprint 4")
+        lot_columns = [
+            column for column in [
+                "symbol", "opened_qty", "remaining_qty", "entry_price", "opened_at",
+                "lot_status", "closed_at", "exit_price", "open_exec_run_id", "close_exec_run_id",
+            ]
+            if column in lots.columns
+        ]
+        show_dataframe(lots[lot_columns], height=260)
 
 
 run_page_if_standalone(__name__, render)

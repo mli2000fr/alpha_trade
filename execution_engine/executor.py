@@ -25,6 +25,7 @@ from execution_engine.audit import (
     order_intent_to_db_dict,
 )
 from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.broker_state_sync import BrokerStateSynchronizer
 from execution_engine.config import ExecutionConfig
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import (
@@ -462,6 +463,42 @@ class ProductionExecutor:
                     f"Market closed — {len(submitted_orders)} orders queued, no polling. "
                     "They will fill at next market open.",
                 ))
+
+            if not self._cfg.dry_run:
+                try:
+                    sync_metrics = BrokerStateSynchronizer(
+                        self._repo,
+                        self._broker,
+                        broker_mode=self._cfg.broker_mode,
+                    ).sync(
+                        exec_run_id=exec_run_id,
+                        account_id=resolved_account_id,
+                        order_limit=max(200, len(submitted_orders) * 10) if submitted_orders else 200,
+                    )
+                    sync_metrics = {key: int(value or 0) for key, value in sync_metrics.items()}
+                    metrics["broker_orders_synced"] = sync_metrics["orders_synced"]
+                    metrics["broker_fills_synced"] = sync_metrics["fills_synced"]
+                    metrics["broker_positions_observed"] = sync_metrics["broker_positions"]
+                    metrics["execution_positions_projected"] = sync_metrics["positions_projected"]
+                    metrics["execution_position_lots_projected"] = sync_metrics["lots_projected"]
+                    metrics["broker_sync_unmatched_orders"] = sync_metrics["unmatched_orders"]
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.BROKER_SYNC_COMPLETED,
+                        (
+                            "Broker sync completed: "
+                            f"orders={sync_metrics['orders_synced']} fills={sync_metrics['fills_synced']} "
+                            f"positions={sync_metrics['positions_projected']} lots={sync_metrics['lots_projected']}"
+                        ),
+                        payload=sync_metrics,
+                    ))
+                except Exception as exc:
+                    LOGGER.warning("Broker state sync failed: %s", exc, exc_info=True)
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.BROKER_SYNC_FAILED,
+                        f"Broker sync failed: {str(exc)[:160]}",
+                    ))
 
             # Phase 8 — Reconciliation
             if self._cfg.reconcile_after_submit and not self._cfg.dry_run:

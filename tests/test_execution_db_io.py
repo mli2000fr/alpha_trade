@@ -175,6 +175,47 @@ def engine():
             )
         """))
         conn.execute(text("""
+            CREATE TABLE execution_positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id VARCHAR(64) NOT NULL,
+                symbol VARCHAR(20) NOT NULL,
+                net_qty DOUBLE NOT NULL,
+                avg_entry_price DOUBLE,
+                market_price DOUBLE,
+                market_value DOUBLE,
+                unrealized_pnl DOUBLE,
+                broker_mode VARCHAR(10),
+                source_exec_run_id VARCHAR(32),
+                position_status VARCHAR(16) NOT NULL,
+                last_broker_snapshot_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                UNIQUE(account_id, symbol)
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE execution_position_lots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lot_id VARCHAR(40) NOT NULL UNIQUE,
+                account_id VARCHAR(64) NOT NULL,
+                symbol VARCHAR(20) NOT NULL,
+                opened_qty DOUBLE NOT NULL,
+                remaining_qty DOUBLE NOT NULL,
+                entry_price DOUBLE NOT NULL,
+                opened_at TIMESTAMP NOT NULL,
+                open_exec_run_id VARCHAR(32),
+                open_request_id VARCHAR(32),
+                open_fill_id VARCHAR(32),
+                lot_status VARCHAR(16) NOT NULL,
+                close_exec_run_id VARCHAR(32),
+                close_request_id VARCHAR(32),
+                close_fill_id VARCHAR(32),
+                closed_at TIMESTAMP,
+                exit_price DOUBLE,
+                source_kind VARCHAR(32),
+                updated_at TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
             CREATE TABLE execution_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id VARCHAR(32) UNIQUE, exec_run_id VARCHAR(32),
@@ -523,6 +564,10 @@ class TestExecutionDbIo:
         assert [row["attempt_no"] for row in rows] == [1, 2]
         assert [row["submission_key"] for row in rows] == ["submit-1", "submit-2"]
 
+        resolved = repo.find_order_request_by_submission_key(account_id="acct-1", submission_key="submit-2")
+        assert resolved is not None
+        assert resolved.request_id == "req-2"
+
     def test_upsert_execution_broker_order_and_broker_fill(self, repo) -> None:
         intent = self._intent("exec-1", "req-1", "submit-1")
         repo.upsert_execution_order_request_from_intent(intent, account_id="acct-1", status=OrderStatus.SUBMITTED)
@@ -593,6 +638,90 @@ class TestExecutionDbIo:
         assert row["snapshot_kind"] == "preflight"
         assert row["equity"] == 100_000.0
         assert row["settled_cash"] == 70_000.0
+
+    def test_replace_execution_positions_writes_open_positions(self, repo) -> None:
+        count = repo.replace_execution_positions(
+            exec_run_id="exec-10",
+            account_id="acct-10",
+            broker_mode="paper",
+            positions=[
+                {
+                    "symbol": "AAPL",
+                    "qty": 15,
+                    "avg_entry_price": 150.0,
+                    "current_price": 155.0,
+                    "market_value": 2325.0,
+                    "unrealized_pl": 75.0,
+                }
+            ],
+        )
+
+        assert count == 1
+        positions = repo.load_execution_positions(account_id="acct-10")
+        assert len(positions) == 1
+        assert positions[0].symbol == "AAPL"
+        assert positions[0].net_qty == 15
+        assert positions[0].position_status == "OPEN"
+
+    def test_replace_execution_positions_writes_explicit_flat_marker(self, repo) -> None:
+        count = repo.replace_execution_positions(
+            exec_run_id="exec-flat",
+            account_id="acct-flat",
+            broker_mode="paper",
+            positions=[],
+        )
+
+        assert count == 1
+        positions = repo.load_execution_positions(account_id="acct-flat")
+        assert len(positions) == 1
+        assert positions[0].symbol == "__FLAT__"
+        assert positions[0].position_status == "FLAT"
+
+    def test_rebuild_execution_position_lots_tracks_open_and_closed_lots_fifo(self, repo) -> None:
+        intent_buy_1 = self._intent("exec-1", "req-buy-1", "submit-buy-1")
+        intent_buy_2 = self._intent("exec-2", "req-buy-2", "submit-buy-2")
+        intent_sell = OrderIntent(
+            intent_id="req-sell-1",
+            risk_run_id="r1",
+            exec_run_id="exec-3",
+            symbol="AAPL",
+            side="sell",
+            qty=12.0,
+            order_type="market",
+            limit_price=None,
+            trail_percent=None,
+            broker_mode="paper",
+            parent_intent_id=None,
+            intent_role="exit",
+            idempotency_key="business-aapl-exit",
+            decision_price=155.0,
+            submission_key="submit-sell-1",
+        )
+        repo.upsert_execution_order_request_from_intent(intent_buy_1, account_id="acct-lots", status=OrderStatus.FILLED)
+        repo.upsert_execution_order_request_from_intent(intent_buy_2, account_id="acct-lots", status=OrderStatus.FILLED)
+        repo.upsert_execution_order_request_from_intent(intent_sell, account_id="acct-lots", status=OrderStatus.FILLED)
+
+        base_ts = datetime(2026, 4, 26, 20, 0, tzinfo=timezone.utc)
+        fills = [
+            ExecutionFill("fill-buy-1", "bo-buy-1", "req-buy-1", "AAPL", 10.0, 150.0, base_ts, 150.0, 0.0, 0.0),
+            ExecutionFill("fill-buy-2", "bo-buy-2", "req-buy-2", "AAPL", 5.0, 152.0, base_ts.replace(minute=1), 152.0, 0.0, 0.0),
+            ExecutionFill("fill-sell-1", "bo-sell-1", "req-sell-1", "AAPL", 12.0, 155.0, base_ts.replace(minute=2), 155.0, 0.0, 0.0),
+        ]
+        for fill in fills:
+            repo.insert_execution_broker_fill(fill, account_id="acct-lots")
+
+        count = repo.rebuild_execution_position_lots(account_id="acct-lots")
+
+        assert count == 2
+        lots = repo.load_execution_position_lots(account_id="acct-lots")
+        assert len(lots) == 2
+        closed_lot = next(lot for lot in lots if lot.open_fill_id == "fill-buy-1")
+        open_lot = next(lot for lot in lots if lot.open_fill_id == "fill-buy-2")
+        assert closed_lot.remaining_qty == 0.0
+        assert closed_lot.lot_status == "CLOSED"
+        assert closed_lot.close_fill_id == "fill-sell-1"
+        assert open_lot.remaining_qty == 3.0
+        assert open_lot.lot_status == "OPEN"
 
     def test_insert_event(self, repo) -> None:
         d = {

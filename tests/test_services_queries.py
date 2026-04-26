@@ -492,3 +492,42 @@ def test_get_execution_targets_snapshot_scopes_exec_run(monkeypatch):
     assert captured["params"] == {"eid": "exec-42"}
 
 
+def test_get_execution_positions_prefers_exec_run_scope(monkeypatch):
+    import pandas as pd
+
+    queries.get_execution_positions.clear()
+    calls = []
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        if "FROM execution_positions" in query and params == {"eid": "exec-1"}:
+            return pd.DataFrame({"symbol": ["AAPL"]})
+        return pd.DataFrame()
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_execution_positions(account_id="acct-1", exec_run_id="exec-1")
+
+    assert not df.empty
+    assert "source_exec_run_id = :eid" in calls[0][0]
+    assert calls[0][1] == {"eid": "exec-1"}
+
+
+def test_get_execution_position_lots_scopes_account(monkeypatch):
+    queries.get_execution_position_lots.clear()
+    captured = {}
+
+    def fake_safe_query(query, params=None):
+        captured["query"] = query
+        captured["params"] = params
+        return "ok"
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    queries.get_execution_position_lots(account_id="acct-lots")
+
+    assert "FROM execution_position_lots" in captured["query"]
+    assert "WHERE account_id = :account_id" in captured["query"]
+    assert captured["params"] == {"account_id": "acct-lots"}
+
+

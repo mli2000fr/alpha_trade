@@ -50,6 +50,8 @@ class EventType:
     KILL_SWITCH_ACTIVATED = "KILL_SWITCH_ACTIVATED"
     THROTTLE_WAIT = "THROTTLE_WAIT"
     TCA_SUMMARY = "TCA_SUMMARY"
+    BROKER_SYNC_COMPLETED = "BROKER_SYNC_COMPLETED"
+    BROKER_SYNC_FAILED = "BROKER_SYNC_FAILED"
     RUN_COMPLETED = "RUN_COMPLETED"
     RUN_FAILED = "RUN_FAILED"
     DRY_RUN_SIMULATED = "DRY_RUN_SIMULATED"
@@ -212,6 +214,45 @@ class BrokerAccountSnapshot:
     daytrade_count: int
     raw_payload_json: str | None = None
     created_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPosition:
+    """Projection courante de la position nette broker par compte / symbole."""
+    account_id: str
+    symbol: str
+    net_qty: float
+    avg_entry_price: float | None = None
+    market_price: float | None = None
+    market_value: float | None = None
+    unrealized_pnl: float | None = None
+    broker_mode: str | None = None
+    source_exec_run_id: str | None = None
+    position_status: str = "OPEN"
+    last_broker_snapshot_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPositionLot:
+    """Lot ouvert/fermé reconstruit depuis les fills observés."""
+    lot_id: str
+    account_id: str
+    symbol: str
+    opened_qty: float
+    remaining_qty: float
+    entry_price: float
+    opened_at: datetime
+    open_exec_run_id: str | None = None
+    open_request_id: str | None = None
+    open_fill_id: str | None = None
+    lot_status: str = "OPEN"
+    close_exec_run_id: str | None = None
+    close_request_id: str | None = None
+    close_fill_id: str | None = None
+    closed_at: datetime | None = None
+    exit_price: float | None = None
+    source_kind: str = "execution_broker_fill"
 
 
 @dataclass(frozen=True, slots=True)

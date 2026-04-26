@@ -1,0 +1,26 @@
+CREATE TABLE IF NOT EXISTS execution_position_lots (
+    id                          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    lot_id                      VARCHAR(40) NOT NULL,
+    account_id                  VARCHAR(32) NOT NULL,
+    symbol                      VARCHAR(20) NOT NULL,
+    opened_qty                  DOUBLE NOT NULL,
+    remaining_qty               DOUBLE NOT NULL,
+    entry_price                 DOUBLE NOT NULL,
+    opened_at                   TIMESTAMP NOT NULL,
+    open_exec_run_id            VARCHAR(32) NULL,
+    open_request_id             VARCHAR(32) NULL,
+    open_fill_id                VARCHAR(32) NULL,
+    lot_status                  VARCHAR(16) NOT NULL DEFAULT 'OPEN',
+    close_exec_run_id           VARCHAR(32) NULL,
+    close_request_id            VARCHAR(32) NULL,
+    close_fill_id               VARCHAR(32) NULL,
+    closed_at                   TIMESTAMP NULL,
+    exit_price                  DOUBLE NULL,
+    source_kind                 VARCHAR(32) NOT NULL DEFAULT 'execution_broker_fill',
+    updated_at                  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_epl_lot_id (lot_id),
+    KEY idx_epl_account_symbol (account_id, symbol),
+    KEY idx_epl_account_status (account_id, lot_status),
+    KEY idx_epl_open_fill (open_fill_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

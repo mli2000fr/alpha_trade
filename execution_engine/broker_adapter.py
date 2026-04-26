@@ -34,6 +34,15 @@ class BrokerAdapter:
     def cancel_broker_order(self, broker_order_id: str) -> bool:
         return self._client.cancel_order(broker_order_id)
 
+    def list_recent_orders(
+        self,
+        *,
+        status: str = "all",
+        limit: int = 500,
+        symbols: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._client.list_orders(status=status, limit=limit, symbols=symbols)  # type: ignore[return-value]
+
     def get_all_positions(self) -> list[dict[str, Any]]:
         return self._client.get_positions()  # type: ignore[return-value]
 
@@ -76,6 +85,9 @@ class BrokerAdapter:
         except Exception:
             LOGGER.debug("Quote Alpaca indisponible pour %s lors de l'évaluation trailing.", symbol, exc_info=True)
         return None
+
+    def broker_order_from_api(self, payload: dict[str, Any], *, intent_id: str = "") -> BrokerOrder:
+        return self._resp_to_broker_order(payload, intent_id)
 
     @staticmethod
     def _resp_to_broker_order(resp: dict[str, Any], intent_id: str) -> BrokerOrder:

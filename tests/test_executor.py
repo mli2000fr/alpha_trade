@@ -63,6 +63,7 @@ def _make_executor(config: ExecutionConfig | None = None, targets: list[Executio
         "non_marginable_buying_power": 100_000.0,
         "daytrade_count": 0,
     }
+    broker.list_recent_orders.return_value = []
     broker.get_all_positions.return_value = [{"symbol": "AAPL", "qty": 100}]
     oco = MagicMock(spec=OcoManager)
     oco.check_and_cancel_sibling.return_value = []
@@ -128,6 +129,11 @@ class TestExecutor:
                 "child_trailing_stop_orders_submitted": 0,
                 "child_order_submit_failures": 0,
                 "stale_price_targets": 1,
+                "broker_orders_synced": 2,
+                "broker_fills_synced": 1,
+                "broker_positions_observed": 1,
+                "execution_positions_projected": 1,
+                "execution_position_lots_projected": 2,
             },
             started_at=datetime(2026, 4, 24, 10, 0, 0),
             finished_at=datetime(2026, 4, 24, 10, 0, 10),
@@ -149,6 +155,8 @@ class TestExecutor:
         assert summary["targets_with_trailing_fallback"] == 1
         assert summary["dynamic_trailing_activations"] == 0
         assert summary["stale_price_targets"] == 1
+        assert summary["broker_orders_synced"] == 2
+        assert summary["execution_position_lots_projected"] == 2
 
     def test_dry_run_no_broker_calls(self) -> None:
         executor, repo, broker, _ = _make_executor()
@@ -248,6 +256,8 @@ class TestExecutor:
         assert metrics["filled"] == 1
         assert repo.upsert_execution_broker_order.called
         assert repo.insert_execution_broker_fill.called
+        assert repo.replace_execution_positions.called
+        assert repo.rebuild_execution_position_lots.called
 
     def test_slippage_alert(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, max_slippage_bps=5)

@@ -26,3 +26,5 @@ execution_broker_orders
 execution_order_requests
 broker_account_snapshots
 execution_broker_fills
+execution_positions
+execution_position_lots

@@ -634,6 +634,84 @@ def get_execution_targets_snapshot(exec_run_id: str) -> pd.DataFrame:
     )
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_positions(
+    *,
+    account_id: str | None = None,
+    exec_run_id: str | None = None,
+) -> pd.DataFrame:
+    if exec_run_id:
+        df = safe_query(
+            """
+            SELECT account_id, symbol, net_qty, avg_entry_price, market_price,
+                   market_value, unrealized_pnl, broker_mode, source_exec_run_id,
+                   position_status, last_broker_snapshot_at, updated_at
+            FROM execution_positions
+            WHERE source_exec_run_id = :eid
+            ORDER BY CASE WHEN position_status = 'FLAT' THEN 1 ELSE 0 END,
+                     ABS(net_qty) DESC, symbol ASC
+            """,
+            {"eid": exec_run_id},
+        )
+        if not df.empty:
+            return df
+    if account_id:
+        return safe_query(
+            """
+            SELECT account_id, symbol, net_qty, avg_entry_price, market_price,
+                   market_value, unrealized_pnl, broker_mode, source_exec_run_id,
+                   position_status, last_broker_snapshot_at, updated_at
+            FROM execution_positions
+            WHERE account_id = :account_id
+            ORDER BY CASE WHEN position_status = 'FLAT' THEN 1 ELSE 0 END,
+                     ABS(net_qty) DESC, symbol ASC
+            """,
+            {"account_id": account_id},
+        )
+    return safe_query(
+        """
+        SELECT account_id, symbol, net_qty, avg_entry_price, market_price,
+               market_value, unrealized_pnl, broker_mode, source_exec_run_id,
+               position_status, last_broker_snapshot_at, updated_at
+        FROM execution_positions
+        ORDER BY updated_at DESC, account_id ASC, symbol ASC
+        LIMIT 200
+        """
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_position_lots(
+    *,
+    account_id: str | None = None,
+) -> pd.DataFrame:
+    if account_id:
+        return safe_query(
+            """
+            SELECT lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+                   opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+                   close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+                   source_kind, updated_at
+            FROM execution_position_lots
+            WHERE account_id = :account_id
+            ORDER BY opened_at DESC, lot_id DESC
+            LIMIT 500
+            """,
+            {"account_id": account_id},
+        )
+    return safe_query(
+        """
+        SELECT lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+               opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+               close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+               source_kind, updated_at
+        FROM execution_position_lots
+        ORDER BY opened_at DESC, lot_id DESC
+        LIMIT 500
+        """
+    )
+
+
 # ---------------------------------------------------------------------------
 # Corporate Actions
 # ---------------------------------------------------------------------------
