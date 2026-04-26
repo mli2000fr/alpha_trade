@@ -90,6 +90,24 @@ def test_background_run_captures_structured_run_summary(monkeypatch, tmp_path: P
     assert registry.RUN_SUMMARY_PREFIX not in logs
 
 
+def test_start_managed_run_supports_non_pipeline_commands(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    record = registry.start_managed_run(
+        step_key="watcher_local_service",
+        step_label="Watcher local",
+        command=[sys.executable, "-c", "print('watcher-local-ok', flush=True)"],
+        account_id="acct-1",
+    )
+
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=40)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert snapshot["step_key"] == "watcher_local_service"
+    assert "watcher-local-ok" in registry.read_pipeline_logs(record.run_id, "stdout")
+
+
 
 def test_background_run_can_be_stopped(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)

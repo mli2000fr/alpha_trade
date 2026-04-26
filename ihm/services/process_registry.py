@@ -538,18 +538,18 @@ def _run_dir_for(step_key: str, run_id: str) -> Path:
     return RUNS_DIR / step_key / run_id
 
 
-def start_pipeline_run(
+def start_managed_run(
+    *,
     step_key: str,
     step_label: str,
-    options: PipelineLaunchOptions,
-    *,
+    command: list[str],
+    account_id: str | None = None,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
     parent_run_id: str | None = None,
 ) -> PipelineRunRecord:
-    """Démarre un pipeline en arrière-plan et retourne son enregistrement initial."""
+    """Démarre un sous-processus arbitraire piloté par le registre IHM."""
     _ensure_storage()
-    command = build_pipeline_command(step_key, options)
     command_display = format_command_for_display(command)
     env = build_subprocess_env(db_config=db_config)
 
@@ -588,7 +588,7 @@ def start_pipeline_run(
         step_label=step_label,
         command=command,
         command_display=command_display,
-        account_id=options.account_id,
+        account_id=account_id,
         status="running",
         executed_at=datetime.now().isoformat(timespec="seconds"),
         stdout_path=str(stdout_path),
@@ -610,6 +610,28 @@ def start_pipeline_run(
         _ACTIVE_RUNS[run_id] = managed
     _persist_record(record)
     return record
+
+
+def start_pipeline_run(
+    step_key: str,
+    step_label: str,
+    options: PipelineLaunchOptions,
+    *,
+    db_config: dict[str, str | None] | None = None,
+    timeout_seconds: int | None = None,
+    parent_run_id: str | None = None,
+) -> PipelineRunRecord:
+    """Démarre un pipeline en arrière-plan et retourne son enregistrement initial."""
+    command = build_pipeline_command(step_key, options)
+    return start_managed_run(
+        step_key=step_key,
+        step_label=step_label,
+        command=command,
+        account_id=options.account_id,
+        db_config=db_config,
+        timeout_seconds=timeout_seconds,
+        parent_run_id=parent_run_id,
+    )
 
 
 def start_pipeline_workflow(

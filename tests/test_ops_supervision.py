@@ -100,6 +100,89 @@ def test_build_ops_alerts_combines_services_runs_and_active_processes() -> None:
     assert any(alert["severity"] == "info" for alert in alerts)
 
 
+def test_build_watcher_control_state_detects_external_fresh_service() -> None:
+    service_df = ops_supervision.build_service_health_dataframe(
+        [_service_record(scope="acct-1", heartbeat="2026-04-26T10:02:45")],
+        now=datetime.fromisoformat("2026-04-26T10:03:00"),
+    )
+    active_runs_df = pd.DataFrame(columns=["run_id", "step_key", "status", "account_id", "executed_at", "duration_seconds", "is_active"])
+
+    state = ops_supervision.build_watcher_control_state(service_df, active_runs_df)
+
+    assert state["fresh_service_detected"] is True
+    assert state["external_fresh_service_detected"] is True
+    assert state["local_service_active"] is False
+    assert state["guardrail_messages"]
+
+
+def test_build_watcher_control_state_prefers_local_service_when_active() -> None:
+    service_df = ops_supervision.build_service_health_dataframe(
+        [_service_record(scope="acct-1", heartbeat="2026-04-26T10:02:45")],
+        now=datetime.fromisoformat("2026-04-26T10:03:00"),
+    )
+    active_runs_df = pd.DataFrame(
+        [
+            {
+                "run_id": "watch-local-1",
+                "step_key": "execution_protection_watch_service_local",
+                "status": "running",
+                "account_id": "acct-1",
+                "executed_at": "2026-04-26T10:02:00",
+                "duration_seconds": 60.0,
+                "is_active": True,
+            }
+        ]
+    )
+
+    state = ops_supervision.build_watcher_control_state(service_df, active_runs_df)
+
+    assert state["local_service_active"] is True
+    assert state["local_service_run_id"] == "watch-local-1"
+    assert state["external_fresh_service_detected"] is False
+
+
+def test_build_watcher_history_dataframe_formats_runtime_runs() -> None:
+    df = ops_supervision.build_watcher_history_dataframe(
+        [
+            {
+                "run_id": "watch-2",
+                "step_key": "execution_protection_watch_service_local",
+                "status": "running",
+                "account_id": "acct-1",
+                "executed_at": "2026-04-26T10:03:00",
+                "finished_at": None,
+                "duration_seconds": 12.0,
+                "stdout_lines": 4,
+                "stderr_lines": 1,
+                "run_summary": {},
+            },
+            {
+                "run_id": "watch-1",
+                "step_key": "execution_protection_watch_once",
+                "status": "completed",
+                "account_id": "acct-1",
+                "executed_at": "2026-04-26T10:00:00",
+                "finished_at": "2026-04-26T10:00:10",
+                "duration_seconds": 10.0,
+                "stdout_lines": 2,
+                "stderr_lines": 0,
+                "run_summary": {"watched_items": 2, "transitioned_items": 1},
+            },
+        ]
+    )
+
+    assert list(df["run_id"]) == ["watch-2", "watch-1"]
+    assert list(df["type"]) == ["service local IHM", "once"]
+    assert "Surveillés=2" in str(df.iloc[1]["summary"]) or "watched_items=2" in str(df.iloc[1]["summary"])
+
+
+def test_build_windows_integration_dataframe_exposes_three_modes() -> None:
+    df = ops_supervision.build_windows_integration_dataframe(account_id="acct-1")
+
+    assert list(df["mode"]) == ["Task Scheduler", "NSSM", "Lanceur manuel"]
+    assert all("acct-1" in command for command in df["command"])
+
+
 def test_build_ops_supervision_snapshot_aggregates_metrics(monkeypatch) -> None:
     monkeypatch.setattr(
         ops_supervision,
@@ -126,6 +209,24 @@ def test_build_ops_supervision_snapshot_aggregates_metrics(monkeypatch) -> None:
         "list_active_pipeline_runs",
         lambda: [{"run_id": "wf-1", "step_key": "pipeline_workflow", "status": "running", "account_id": "acct-1", "executed_at": "2026-04-26T10:00:00", "duration_seconds": 10, "is_active": True}],
     )
+    monkeypatch.setattr(
+        ops_supervision,
+        "list_watcher_run_history",
+        lambda account_id=None, limit=50: [
+            {
+                "run_id": "watch-1",
+                "step_key": "execution_protection_watch_once",
+                "status": "completed",
+                "account_id": "acct-1",
+                "executed_at": "2026-04-26T09:59:00",
+                "finished_at": "2026-04-26T09:59:15",
+                "duration_seconds": 15.0,
+                "stdout_lines": 2,
+                "stderr_lines": 0,
+                "run_summary": {"watched_items": 1},
+            }
+        ],
+    )
 
     snapshot = ops_supervision.build_ops_supervision_snapshot(
         account_id="acct-1",
@@ -137,5 +238,8 @@ def test_build_ops_supervision_snapshot_aggregates_metrics(monkeypatch) -> None:
     assert isinstance(snapshot["service_health"], pd.DataFrame)
     assert isinstance(snapshot["latest_runs"], pd.DataFrame)
     assert isinstance(snapshot["active_runs"], pd.DataFrame)
+    assert isinstance(snapshot["watcher_history"], pd.DataFrame)
+    assert isinstance(snapshot["watcher_windows_integration"], pd.DataFrame)
+    assert snapshot["watcher_control"]["fresh_service_detected"] is True
 
 
