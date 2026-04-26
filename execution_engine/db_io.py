@@ -117,12 +117,12 @@ class ExecutionRepository:
 
     def load_submitted_idempotency_keys(self, exec_run_id: str) -> set[str]:
         query = text("""
-            SELECT idempotency_key FROM execution_orders
+            SELECT business_key FROM execution_order_requests
             WHERE exec_run_id = :exec_run_id
         """)
         with self.engine.connect() as conn:
             rows = conn.execute(query, {"exec_run_id": exec_run_id}).mappings().all()
-        return {str(r["idempotency_key"]) for r in rows}
+        return {str(r["business_key"]) for r in rows}
 
     def load_execution_orders(self, exec_run_id: str) -> list[BrokerOrder]:
         query = text("""
@@ -327,25 +327,9 @@ class ExecutionRepository:
             WHERE req.parent_request_id = :parent_intent_id
               AND COALESCE(bo.normalized_status, req.status) IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
         """)
-        legacy_query = text("""
-            SELECT broker_order_id, client_order_id, intent_id, symbol, side,
-                   qty, filled_qty, avg_fill_price, status, order_type,
-                   limit_price, stop_price, trail_percent, created_at, updated_at
-            FROM execution_orders
-            WHERE parent_intent_id = :parent_intent_id
-              AND status NOT IN ('FILLED', 'CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
-        """)
         with self.engine.connect() as conn:
             v2_rows = conn.execute(v2_query, {"parent_intent_id": parent_intent_id}).mappings().all()
-            legacy_rows = conn.execute(legacy_query, {"parent_intent_id": parent_intent_id}).mappings().all()
-
-        merged: dict[str, BrokerOrder] = {}
-        for row in [*v2_rows, *legacy_rows]:
-            order = self._row_to_broker_order(row)
-            dedupe_key = order.intent_id or order.broker_order_id
-            if dedupe_key and dedupe_key not in merged:
-                merged[dedupe_key] = order
-        return list(merged.values())
+        return [self._row_to_broker_order(row) for row in v2_rows]
 
     def _load_pending_protection_watch_items_legacy(
         self,
@@ -469,13 +453,7 @@ class ExecutionRepository:
         params = {"exec_run_id": exec_run_id, "account_id": account_id}
         with self.engine.connect() as conn:
             rows = conn.execute(query, params).mappings().all()
-        if rows:
-            return self._rows_to_protection_watch_items(rows)
-        return self._load_pending_protection_watch_items_legacy(
-            exec_run_id=exec_run_id,
-            account_id=account_id,
-            limit=limit,
-        )
+        return self._rows_to_protection_watch_items(rows)
 
     @staticmethod
     def _rows_to_protection_watch_items(rows: list[Any]) -> list[ProtectionWatchItem]:

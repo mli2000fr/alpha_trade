@@ -20,9 +20,7 @@ from typing import Any, Optional
 from execution_engine.audit import (
     build_run_id,
     event_to_db_dict,
-    fill_to_db_dict,
     make_event,
-    order_intent_to_db_dict,
 )
 from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.broker_state_sync import BrokerStateSynchronizer
@@ -315,11 +313,6 @@ class ProductionExecutor:
 
                 # Persist intent
                 self._persist_order_request_state(intent, status=OrderStatus.NEW)
-                db_dict = order_intent_to_db_dict(intent, exec_run_id)
-                try:
-                    self._repo.upsert_execution_order(db_dict)
-                except Exception:
-                    LOGGER.debug("Could not persist intent (table may not exist in test)")
 
                 if self._cfg.dry_run:
                     self._persist_order_request_state(intent, status=OrderStatus.SIMULATED)
@@ -389,13 +382,6 @@ class ProductionExecutor:
                     ))
                     submitted_orders[intent.intent_id] = (intent, order)
                     metrics["submitted"] += 1
-                    # Update DB with broker_order_id
-                    try:
-                        db_dict["broker_order_id"] = order.broker_order_id
-                        db_dict["status"] = order.status
-                        self._repo.upsert_execution_order(db_dict)
-                    except Exception:
-                        pass
                     self._persist_order_request_state(intent, status=order.status)
                     self._persist_broker_order_state(intent, order)
 
@@ -419,10 +405,6 @@ class ProductionExecutor:
                         metrics["filled"] += 1
                         fill = self._build_fill(filled_order, intent)
                         fills.append(fill)
-                        try:
-                            self._repo.insert_execution_fill(fill_to_db_dict(fill, exec_run_id))
-                        except Exception:
-                            pass
                         try:
                             self._repo.insert_execution_broker_fill(fill, account_id=resolved_account_id)
                         except Exception:
@@ -797,16 +779,7 @@ class ProductionExecutor:
         self,
         intent: OrderIntent,
         order: BrokerOrder,
-        exec_run_id: str,
     ) -> None:
-        db_dict = order_intent_to_db_dict(intent, exec_run_id, status=order.status)
-        db_dict["broker_order_id"] = order.broker_order_id
-        db_dict["filled_qty"] = order.filled_qty
-        db_dict["avg_fill_price"] = order.avg_fill_price
-        try:
-            self._repo.upsert_execution_order(db_dict)
-        except Exception:
-            pass
         self._persist_order_request_state(intent, status=order.status)
         self._persist_broker_order_state(intent, order)
 
@@ -832,10 +805,10 @@ class ProductionExecutor:
                 time.sleep(self._cfg.poll_interval_seconds)
                 continue
             if latest_order.status == OrderStatus.CANCELED:
-                self._persist_child_order_state(intent, latest_order, exec_run_id)
+                self._persist_child_order_state(intent, latest_order)
                 return True, latest_order
             if latest_order.status in {OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.FAILED, OrderStatus.EXPIRED}:
-                self._persist_child_order_state(intent, latest_order, exec_run_id)
+                self._persist_child_order_state(intent, latest_order)
                 return False, latest_order
             time.sleep(self._cfg.poll_interval_seconds)
         return False, latest_order
@@ -907,7 +880,7 @@ class ProductionExecutor:
                 trailing_intent = build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
                 try:
                     trailing_order = self._broker.submit_intent(trailing_intent)
-                    self._persist_child_order_state(trailing_intent, trailing_order, exec_run_id)
+                    self._persist_child_order_state(trailing_intent, trailing_order)
                     metrics["child_trailing_stop_orders_submitted"] = metrics.get("child_trailing_stop_orders_submitted", 0) + 1
                     metrics["dynamic_trailing_activations"] = metrics.get("dynamic_trailing_activations", 0) + 1
                     events.append(make_event(
@@ -1008,7 +981,7 @@ class ProductionExecutor:
         for child in [tp_intent, protection_intent]:
             try:
                 child_order = self._broker.submit_intent(child)
-                self._persist_child_order_state(child, child_order, exec_run_id)
+                self._persist_child_order_state(child, child_order)
                 submitted_children.append((child, child_order))
                 if child.intent_role == IntentRole.TAKE_PROFIT:
                     metrics["child_take_profit_orders_submitted"] = metrics.get("child_take_profit_orders_submitted", 0) + 1
@@ -1025,7 +998,7 @@ class ProductionExecutor:
                     fallback_trailing = build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
                     try:
                         fallback_order = self._broker.submit_intent(fallback_trailing)
-                        self._persist_child_order_state(fallback_trailing, fallback_order, exec_run_id)
+                        self._persist_child_order_state(fallback_trailing, fallback_order)
                         submitted_children.append((fallback_trailing, fallback_order))
                         metrics["child_trailing_stop_orders_submitted"] = metrics.get("child_trailing_stop_orders_submitted", 0) + 1
                     except Exception as fallback_exc:
@@ -1129,21 +1102,10 @@ class ProductionExecutor:
 
             # Persist intent
             self._persist_order_request_state(intent, status=OrderStatus.NEW)
-            db_dict = order_intent_to_db_dict(intent, exec_run_id)
-            try:
-                self._repo.upsert_execution_order(db_dict)
-            except Exception:
-                pass
 
             # Submit
             try:
                 order = self._broker.submit_intent(intent)
-                db_dict["broker_order_id"] = order.broker_order_id
-                db_dict["status"] = order.status
-                try:
-                    self._repo.upsert_execution_order(db_dict)
-                except Exception:
-                    pass
                 self._persist_order_request_state(intent, status=order.status)
                 self._persist_broker_order_state(intent, order)
                 metrics["rebalance_submitted"] = metrics.get("rebalance_submitted", 0) + 1

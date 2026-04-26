@@ -274,6 +274,8 @@ class TestExecutor:
         assert metrics["filled"] == 1
         assert repo.upsert_execution_broker_order.called
         assert repo.insert_execution_broker_fill.called
+        repo.insert_execution_fill.assert_not_called()
+        repo.upsert_execution_order.assert_not_called()
         assert repo.replace_execution_positions.called
         assert repo.rebuild_execution_position_lots.called
 

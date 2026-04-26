@@ -92,6 +92,7 @@ def test_watcher_promotes_initial_stop_to_trailing_when_trigger_hit() -> None:
     assert any(call.args[0].intent_role == "trailing_stop" for call in repo.upsert_execution_order_request_from_intent.call_args_list)
     assert all(call.kwargs["account_id"] == "acct-1" for call in repo.upsert_execution_order_request_from_intent.call_args_list)
     assert repo.upsert_execution_broker_order.called
+    repo.upsert_execution_order.assert_not_called()
 
 
 def test_watcher_keeps_item_pending_when_trigger_not_reached() -> None:

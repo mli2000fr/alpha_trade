@@ -396,7 +396,7 @@ class TestExecutionDbIo:
         assert row["account_id"] == "default"
         assert row["symbol"] == "AAPL"
 
-    def test_load_pending_protection_watch_items(self, engine, repo) -> None:
+    def test_load_pending_protection_watch_items_does_not_fallback_to_legacy(self, engine, repo) -> None:
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO execution_runs (exec_run_id, risk_run_id, trade_date, broker_mode, dry_run, status, started_at, total_targets, total_submitted, total_filled, account_id)
@@ -416,11 +416,7 @@ class TestExecutionDbIo:
 
         items = repo.load_pending_protection_watch_items(exec_run_id='e1')
 
-        assert len(items) == 1
-        assert items[0].source_exec_run_id == 'e1'
-        assert items[0].parent_intent_id == 'parent-1'
-        assert items[0].initial_stop_intent_id == 'stop-1'
-        assert items[0].fill_price == 150.2
+        assert items == []
 
     def test_load_pending_protection_watch_items_reads_v2_schema(self, engine, repo) -> None:
         now = datetime.now(timezone.utc)
@@ -485,7 +481,7 @@ class TestExecutionDbIo:
         assert items[0].fill_price == 151.2
         assert items[0].stop_price_initial == 141.0
 
-    def test_load_open_child_orders_merges_v2_and_legacy_children(self, engine, repo) -> None:
+    def test_load_open_child_orders_reads_v2_children_only(self, engine, repo) -> None:
         now = datetime.now(timezone.utc)
         with engine.begin() as conn:
             conn.execute(text("""
@@ -527,35 +523,44 @@ class TestExecutionDbIo:
         children = repo.load_open_child_orders('parent-3')
 
         intent_ids = {child.intent_id for child in children}
-        assert intent_ids == {'trail-v2', 'tp-legacy'}
+        assert intent_ids == {'trail-v2'}
 
     def test_upsert_order_idempotent(self, repo) -> None:
         d = {
-            "exec_run_id": "e1", "risk_run_id": "r1", "symbol": "AAPL",
-            "intent_id": "i1", "parent_intent_id": None, "intent_role": "entry",
-            "idempotency_key": "k1", "broker_mode": "paper",
-            "broker_order_id": None, "client_order_id": "k1",
-            "side": "buy", "qty": 100, "filled_qty": 0, "avg_fill_price": None,
-            "order_type": "market", "limit_price": None, "stop_price": None,
-            "trail_percent": None, "decision_price": 150.0, "status": "NEW",
-            "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+            "request_id": "req-1",
+            "exec_run_id": "e1",
+            "account_id": "acct-1",
+            "risk_run_id": "r1",
+            "symbol": "AAPL",
+            "side": "buy",
+            "target_qty": 100,
+            "order_type": "market",
+            "business_key": "k1",
+            "submission_key": "sub-1",
+            "attempt_no": 1,
+            "parent_request_id": None,
+            "intent_role": "entry",
+            "decision_price": 150.0,
+            "limit_price": None,
+            "stop_price": None,
+            "trail_percent": None,
+            "status": "NEW",
+            "failure_reason": None,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
         }
-        # SQLite doesn't support ON DUPLICATE KEY UPDATE, use INSERT OR REPLACE
-        # We test the repo with a small override for SQLite
         with repo.engine.begin() as conn:
             conn.execute(text("""
-                INSERT INTO execution_orders
-                    (exec_run_id, risk_run_id, symbol, intent_id, parent_intent_id,
-                     intent_role, idempotency_key, broker_mode, broker_order_id,
-                     client_order_id, side, qty, filled_qty, avg_fill_price,
-                     order_type, limit_price, stop_price, trail_percent,
-                     decision_price, status, created_at, updated_at)
+                INSERT INTO execution_order_requests
+                    (request_id, exec_run_id, account_id, risk_run_id, symbol, side,
+                     target_qty, order_type, business_key, submission_key, attempt_no,
+                     parent_request_id, intent_role, decision_price, limit_price,
+                     stop_price, trail_percent, status, failure_reason, created_at, updated_at)
                 VALUES
-                    (:exec_run_id, :risk_run_id, :symbol, :intent_id, :parent_intent_id,
-                     :intent_role, :idempotency_key, :broker_mode, :broker_order_id,
-                     :client_order_id, :side, :qty, :filled_qty, :avg_fill_price,
-                     :order_type, :limit_price, :stop_price, :trail_percent,
-                     :decision_price, :status, :created_at, :updated_at)
+                    (:request_id, :exec_run_id, :account_id, :risk_run_id, :symbol, :side,
+                     :target_qty, :order_type, :business_key, :submission_key, :attempt_no,
+                     :parent_request_id, :intent_role, :decision_price, :limit_price,
+                     :stop_price, :trail_percent, :status, :failure_reason, :created_at, :updated_at)
             """), d)
         keys = repo.load_submitted_idempotency_keys("e1")
         assert "k1" in keys
