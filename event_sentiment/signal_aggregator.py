@@ -195,6 +195,10 @@ class SentimentSignalAggregator:
         self.engine = engine
         self.config = config or SentimentBoostConfig()
 
+    def _feature_fetch_window_days(self, horizon_weights: tuple[tuple[int, float], ...]) -> int:
+        max_horizon = max((int(horizon) for horizon, _ in horizon_weights), default=1)
+        return max(int(self.config.lookback_days), max_horizon)
+
     # ------------------------------------------------------------------
     # Chargement depuis la DB
     # ------------------------------------------------------------------
@@ -204,7 +208,7 @@ class SentimentSignalAggregator:
         if not symbols:
             return pd.DataFrame()
 
-        cutoff = pd.Timestamp(trade_date) - pd.Timedelta(days=self.config.lookback_days)
+        cutoff = pd.Timestamp(trade_date) - pd.Timedelta(days=self._feature_fetch_window_days(self.config.ticker_horizon_weights))
         stmt = text(
             """
             SELECT symbol,
@@ -268,7 +272,7 @@ class SentimentSignalAggregator:
         if not sectors:
             return pd.DataFrame()
 
-        cutoff = pd.Timestamp(trade_date) - pd.Timedelta(days=self.config.lookback_days)
+        cutoff = pd.Timestamp(trade_date) - pd.Timedelta(days=self._feature_fetch_window_days(self.config.sector_horizon_weights))
         try:
             from sqlalchemy import bindparam
             stmt = text(
@@ -544,6 +548,23 @@ class SentimentSignalAggregator:
         as_float = float(numeric_value)
         return default if not np.isfinite(as_float) else as_float
 
+    @classmethod
+    def _compute_staleness_weight(
+        cls,
+        trade_date_value: object,
+        *,
+        reference_date: date,
+        half_life_days: float,
+    ) -> float:
+        series = pd.Series([trade_date_value], dtype="object")
+        return float(
+            cls._compute_time_decay_weight(
+                series,
+                reference_date=reference_date,
+                half_life_days=half_life_days,
+            ).iloc[0]
+        )
+
     @staticmethod
     def _latest_rows_by_key(df: pd.DataFrame, key_column: str) -> pd.DataFrame:
         if df.empty or key_column not in df.columns or "trade_date" not in df.columns:
@@ -584,12 +605,12 @@ class SentimentSignalAggregator:
             total_weight += effective_weight
         return weighted_sum / total_weight if total_weight > 0 else 0.0
 
-    def _aggregate_ticker_multi_horizon(self, ticker_df: pd.DataFrame) -> pd.DataFrame:
+    def _aggregate_ticker_multi_horizon(self, ticker_df: pd.DataFrame, reference_date: date) -> pd.DataFrame:
         if ticker_df.empty:
-            return pd.DataFrame(columns=["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news", "signal_active"])
+            return pd.DataFrame(columns=["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news", "signal_active", "signal_age_days", "signal_staleness_weight"])
         latest = self._latest_rows_by_key(ticker_df, "symbol")
         if latest.empty:
-            return pd.DataFrame(columns=["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news", "signal_active"])
+            return pd.DataFrame(columns=["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news", "signal_active", "signal_age_days", "signal_staleness_weight"])
 
         rows: list[dict[str, object]] = []
         count_columns = {1: "news_count_1d", 3: "news_count_3d", 5: "news_count_5d", 10: "news_count_10d", 20: "news_count_20d"}
@@ -602,6 +623,18 @@ class SentimentSignalAggregator:
         ]
         for row in latest.to_dict(orient="records"):
             typed_row = cast(dict[str, object], row)
+            trade_date_value = typed_row.get("trade_date")
+            staleness_weight = self._compute_staleness_weight(
+                trade_date_value,
+                reference_date=reference_date,
+                half_life_days=self.config.time_decay_half_life_days,
+            )
+            parsed_trade_date = pd.to_datetime(trade_date_value, errors="coerce")
+            signal_age_days = (
+                max((pd.Timestamp(reference_date).normalize() - pd.Timestamp(parsed_trade_date).normalize()).days, 0)
+                if not pd.isna(parsed_trade_date)
+                else 0
+            )
             available_count_columns = {
                 horizon: column_name
                 for horizon, column_name in count_columns.items()
@@ -625,20 +658,22 @@ class SentimentSignalAggregator:
                         horizon_weights=self.config.ticker_horizon_weights,
                         coverage_columns=available_count_columns,
                         coverage_cap=float(max(self.config.min_news_count, 1)),
-                    ),
+                    ) * staleness_weight,
                     "major_event_flag_agg": int(any(self._numeric_value(typed_row.get(column_name), default=0.0) > 0 for column_name in major_columns if column_name in typed_row)),
                     "total_news": total_news,
                     "signal_active": total_news >= self.config.min_news_count,
+                    "signal_age_days": signal_age_days,
+                    "signal_staleness_weight": staleness_weight,
                 }
             )
         return pd.DataFrame(rows)
 
-    def _aggregate_sector_multi_horizon(self, sector_df: pd.DataFrame) -> pd.DataFrame:
+    def _aggregate_sector_multi_horizon(self, sector_df: pd.DataFrame, reference_date: date) -> pd.DataFrame:
         if sector_df.empty:
-            return pd.DataFrame(columns=["sector", "sector_impact_agg", "macro_event_flag_agg"])
+            return pd.DataFrame(columns=["sector", "sector_impact_agg", "macro_event_flag_agg", "macro_signal_age_days", "macro_signal_staleness_weight"])
         latest = self._latest_rows_by_key(sector_df, "sector")
         if latest.empty:
-            return pd.DataFrame(columns=["sector", "sector_impact_agg", "macro_event_flag_agg"])
+            return pd.DataFrame(columns=["sector", "sector_impact_agg", "macro_event_flag_agg", "macro_signal_age_days", "macro_signal_staleness_weight"])
 
         rows: list[dict[str, object]] = []
         macro_columns = [
@@ -650,6 +685,18 @@ class SentimentSignalAggregator:
         ]
         for row in latest.to_dict(orient="records"):
             typed_row = cast(dict[str, object], row)
+            trade_date_value = typed_row.get("trade_date")
+            staleness_weight = self._compute_staleness_weight(
+                trade_date_value,
+                reference_date=reference_date,
+                half_life_days=self.config.time_decay_half_life_days,
+            )
+            parsed_trade_date = pd.to_datetime(trade_date_value, errors="coerce")
+            signal_age_days = (
+                max((pd.Timestamp(reference_date).normalize() - pd.Timestamp(parsed_trade_date).normalize()).days, 0)
+                if not pd.isna(parsed_trade_date)
+                else 0
+            )
             rows.append(
                 {
                     "sector": typed_row.get("sector"),
@@ -663,8 +710,10 @@ class SentimentSignalAggregator:
                             20: "sector_impact_score_20d",
                         },
                         horizon_weights=self.config.sector_horizon_weights,
-                    ),
+                    ) * staleness_weight,
                     "macro_event_flag_agg": int(any(self._numeric_value(typed_row.get(column_name), default=0.0) > 0 for column_name in macro_columns if column_name in typed_row)),
+                    "macro_signal_age_days": signal_age_days,
+                    "macro_signal_staleness_weight": staleness_weight,
                 }
             )
         return pd.DataFrame(rows)
@@ -725,7 +774,7 @@ class SentimentSignalAggregator:
         sector_df = self._load_sector_sentiment(sectors, ref_date) if sectors else pd.DataFrame()
 
         # --- Agrégation fenêtrée ---
-        ticker_agg = self._aggregate_ticker_multi_horizon(ticker_df)
+        ticker_agg = self._aggregate_ticker_multi_horizon(ticker_df, reference_date=ref_date)
         if ticker_agg.empty:
             ticker_agg = self._aggregate_ticker_window(
                 ticker_df,
@@ -733,7 +782,7 @@ class SentimentSignalAggregator:
                 reference_date=ref_date,
                 half_life_days=self.config.time_decay_half_life_days,
             )
-        sector_agg = self._aggregate_sector_multi_horizon(sector_df)
+        sector_agg = self._aggregate_sector_multi_horizon(sector_df, reference_date=ref_date)
         if sector_agg.empty:
             sector_agg = self._aggregate_sector_window(
                 sector_df,
@@ -772,11 +821,21 @@ class SentimentSignalAggregator:
                 ticker_map.get(symbol, {}).get("signal_active")
                 for symbol in result["symbol"].tolist()
             ]
+            result["signal_age_days"] = [
+                ticker_map.get(symbol, {}).get("signal_age_days")
+                for symbol in result["symbol"].tolist()
+            ]
+            result["signal_staleness_weight"] = [
+                ticker_map.get(symbol, {}).get("signal_staleness_weight")
+                for symbol in result["symbol"].tolist()
+            ]
         else:
             result["sentiment_net_agg"] = 0.0
             result["major_event_flag_agg"] = 0
             result["total_news"] = 0
             result["signal_active"] = False
+            result["signal_age_days"] = 0
+            result["signal_staleness_weight"] = 0.0
 
         # --- Jointure scores quantitatifs ← impact macro sectoriel ---
         if not sector_agg.empty and "sector" in result.columns:
@@ -793,9 +852,19 @@ class SentimentSignalAggregator:
                 sector_map.get(sector, {}).get("macro_event_flag_agg")
                 for sector in result["sector"].tolist()
             ]
+            result["macro_signal_age_days"] = [
+                sector_map.get(sector, {}).get("macro_signal_age_days")
+                for sector in result["sector"].tolist()
+            ]
+            result["macro_signal_staleness_weight"] = [
+                sector_map.get(sector, {}).get("macro_signal_staleness_weight")
+                for sector in result["sector"].tolist()
+            ]
         else:
             result["sector_impact_agg"] = 0.0
             result["macro_event_flag_agg"] = 0
+            result["macro_signal_age_days"] = 0
+            result["macro_signal_staleness_weight"] = 0.0
 
         def _coalesce_float(values: list[object], default: float = 0.0) -> list[float]:
             normalized: list[float] = []
@@ -837,6 +906,10 @@ class SentimentSignalAggregator:
         result["major_event_flag_agg"] = _coalesce_int(result["major_event_flag_agg"].tolist())
         result["macro_event_flag_agg"] = _coalesce_int(result["macro_event_flag_agg"].tolist())
         result["total_news"] = _coalesce_int(result["total_news"].tolist())
+        result["signal_age_days"] = _coalesce_int(result["signal_age_days"].tolist())
+        result["macro_signal_age_days"] = _coalesce_int(result["macro_signal_age_days"].tolist())
+        result["signal_staleness_weight"] = _coalesce_float(result["signal_staleness_weight"].tolist())
+        result["macro_signal_staleness_weight"] = _coalesce_float(result["macro_signal_staleness_weight"].tolist())
         result["signal_active"] = _coalesce_bool(result["signal_active"].tolist())
 
         # --- Normalisation des signaux sentiment en [0, 1] ---

@@ -118,6 +118,90 @@ def test_sentiment_boost_config_rejects_unsorted_horizon_weights() -> None:
         SentimentBoostConfig(ticker_horizon_weights=((5, 0.5), (1, 0.5)))
 
 
+def test_feature_fetch_window_uses_max_horizon_for_swing_signals() -> None:
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(lookback_days=5),
+    )
+
+    assert aggregator._feature_fetch_window_days(aggregator.config.ticker_horizon_weights) == 20
+    assert aggregator._feature_fetch_window_days(((1, 1.0), (3, 0.5))) == 5
+
+
+def test_aggregate_ticker_multi_horizon_applies_staleness_decay_for_sparse_events() -> None:
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(time_decay_half_life_days=2.0),
+    )
+    ticker_df = pd.DataFrame([
+        {
+            "symbol": "AAPL",
+            "trade_date": date(2026, 4, 14),
+            "news_count_1d": 0,
+            "news_count_3d": 3,
+            "news_count_5d": 4,
+            "news_count_10d": 6,
+            "news_count_20d": 8,
+            "sentiment_net_mean_1d": 0.0,
+            "sentiment_net_mean_3d": 1.0,
+            "sentiment_net_mean_5d": 1.0,
+            "sentiment_net_mean_10d": 1.0,
+            "sentiment_net_mean_20d": 1.0,
+            "major_event_flag": 1,
+            "major_event_day_count_3d": 1,
+            "major_event_day_count_5d": 1,
+            "major_event_day_count_10d": 1,
+            "major_event_day_count_20d": 1,
+        }
+    ])
+
+    result = aggregator._aggregate_ticker_multi_horizon(ticker_df, reference_date=date(2026, 4, 19))
+
+    row = result.iloc[0]
+    expected_decay = 0.5 ** (5 / 2)
+    assert row["signal_age_days"] == 5
+    assert row["signal_staleness_weight"] == pytest.approx(expected_decay, rel=1e-6)
+    assert row["sentiment_net_agg"] == pytest.approx(expected_decay, rel=1e-6)
+    assert bool(row["signal_active"]) is True
+
+
+def test_aggregate_sector_multi_horizon_applies_staleness_decay_for_sparse_macro_regime() -> None:
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(time_decay_half_life_days=2.0),
+    )
+    sector_df = pd.DataFrame([
+        {
+            "sector": "TECH",
+            "trade_date": date(2026, 4, 16),
+            "sector_impact_score": 1.0,
+            "sector_impact_score_3d": 1.0,
+            "sector_impact_score_5d": 1.0,
+            "sector_impact_score_10d": 1.0,
+            "sector_impact_score_20d": 1.0,
+            "macro_event_intensity": 1.0,
+            "macro_event_intensity_3d": 1.0,
+            "macro_event_intensity_5d": 1.0,
+            "macro_event_intensity_10d": 1.0,
+            "macro_event_intensity_20d": 1.0,
+            "macro_event_flag": 1,
+            "macro_event_day_count_3d": 1,
+            "macro_event_day_count_5d": 1,
+            "macro_event_day_count_10d": 1,
+            "macro_event_day_count_20d": 1,
+        }
+    ])
+
+    result = aggregator._aggregate_sector_multi_horizon(sector_df, reference_date=date(2026, 4, 19))
+
+    row = result.iloc[0]
+    expected_decay = 0.5 ** (3 / 2)
+    assert row["macro_signal_age_days"] == 3
+    assert row["macro_signal_staleness_weight"] == pytest.approx(expected_decay, rel=1e-6)
+    assert row["sector_impact_agg"] == pytest.approx(expected_decay, rel=1e-6)
+    assert row["macro_event_flag_agg"] == 1
+
+
 def test_merge_handles_missing_signal_active_without_futurewarning(monkeypatch) -> None:
     aggregator = SentimentSignalAggregator(
         engine=cast(Engine, object()),
