@@ -612,6 +612,28 @@ def get_latest_run_business_summary(
     row = df.iloc[0].to_dict()
     return row if isinstance(row, dict) else None
 
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_latest_execution_protection_watch_service_summary(
+    *,
+    account_id: str | None = None,
+    exec_run_id: str | None = None,
+) -> dict[str, object] | None:
+    if exec_run_id:
+        scoped = get_latest_run_business_summary(
+            step_key="execution_protection_watch_service",
+            entity_run_id=exec_run_id,
+            account_id=account_id,
+            run_kind="service",
+        )
+        if scoped:
+            return scoped
+    return get_latest_run_business_summary(
+        step_key="execution_protection_watch_service",
+        account_id=account_id,
+        run_kind="service",
+    )
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_training_runs(limit: int = 20) -> pd.DataFrame:
     return safe_query(f"SELECT * FROM model_training_run ORDER BY started_at DESC LIMIT {limit}")

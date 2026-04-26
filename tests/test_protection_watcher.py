@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
 from execution_engine.models import BrokerOrder, OrderStatus, ProtectionWatchItem
+from execution_engine import protection_watcher as protection_watcher_module
 from execution_engine.protection_watcher import ProtectionTransitionWatcher, ProtectionWatcherService, parse_args
 
 
@@ -188,5 +189,89 @@ def test_parse_args_accepts_service_mode_options() -> None:
     assert args.max_iterations == 3
     assert args.stop_when_idle is True
     assert args.max_consecutive_failures == 5
+
+
+def test_service_persists_health_summary_updates(monkeypatch) -> None:
+    watcher = MagicMock()
+    watcher._repo = MagicMock()
+    watcher._repo.engine = MagicMock()
+    watcher.run.side_effect = [
+        [{"watched_items": 2, "transitioned_items": 1, "pending_items": 1, "triggered_items": 1, "terminal_items": 0, "skipped_existing_trailing": 0, "cancel_failed_items": 0, "submit_failed_items": 0}],
+        [],
+    ]
+    persisted: list[dict[str, object]] = []
+    emitted: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        protection_watcher_module,
+        "persist_run_business_summary",
+        lambda **kwargs: persisted.append(kwargs) or 1,
+    )
+    monkeypatch.setattr(
+        protection_watcher_module,
+        "emit_run_summary",
+        lambda summary: emitted.append(dict(summary)),
+    )
+
+    service = ProtectionWatcherService(
+        watcher,
+        ProtectionWatcherServiceConfig(
+            interval_seconds=0.1,
+            idle_interval_seconds=0.2,
+            heartbeat_interval_seconds=60.0,
+            max_iterations=2,
+        ),
+        sleep_fn=lambda seconds: None,
+        monotonic_fn=lambda: 0.0,
+    )
+
+    summary = service.run(exec_run_id="exec-1", account_id="acct-1", limit=15)
+
+    assert summary["status"] == "COMPLETED"
+    assert summary["iterations"] == 2
+    assert summary["cycles_with_work"] == 1
+    assert summary["idle_cycles"] == 1
+    assert summary["transitioned_items"] == 1
+    assert summary["heartbeat_count"] == 1
+    assert summary["service_scope"] == "exec-1"
+    assert summary["last_cycle_had_work"] is False
+    assert persisted
+    assert persisted[-1]["step_key"] == "execution_protection_watch_service"
+    assert persisted[-1]["run_kind"] == "service"
+    assert persisted[-1]["entity_run_id"] == "exec-1"
+    assert persisted[-1]["account_id"] == "acct-1"
+    assert emitted[-1]["run_id"] == summary["run_id"]
+
+
+def test_service_health_summary_uses_account_scope_when_exec_run_not_provided(monkeypatch) -> None:
+    watcher = MagicMock()
+    watcher._repo = MagicMock()
+    watcher._repo.engine = MagicMock()
+    watcher.run.return_value = []
+    persisted: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        protection_watcher_module,
+        "persist_run_business_summary",
+        lambda **kwargs: persisted.append(kwargs) or 1,
+    )
+    monkeypatch.setattr(protection_watcher_module, "emit_run_summary", lambda summary: None)
+
+    service = ProtectionWatcherService(
+        watcher,
+        ProtectionWatcherServiceConfig(
+            interval_seconds=0.1,
+            idle_interval_seconds=0.2,
+            heartbeat_interval_seconds=60.0,
+            max_iterations=1,
+        ),
+        sleep_fn=lambda seconds: None,
+        monotonic_fn=lambda: 0.0,
+    )
+
+    summary = service.run(account_id="acct-1", limit=8)
+
+    assert summary["service_scope"] == "acct-1"
+    assert persisted[-1]["entity_run_id"] == "watcher-service:acct-1"
 
 

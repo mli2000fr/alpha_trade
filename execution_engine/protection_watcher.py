@@ -62,26 +62,34 @@ def _build_service_summary(
     *,
     service_run_id: str,
     started_at: datetime,
-    finished_at: datetime,
+    finished_at: datetime | None,
     exec_run_id: str | None,
     account_id: str | None,
     limit: int,
 ) -> dict[str, Any]:
+    effective_finished_at = finished_at or datetime.now()
     return {
         "run_id": service_run_id,
         "mode": "service",
         "exec_run_id": exec_run_id,
         "account_id": account_id,
         "limit": limit,
+        "service_scope": metrics.get("service_scope"),
         "started_at": started_at.isoformat(timespec="seconds"),
-        "finished_at": finished_at.isoformat(timespec="seconds"),
-        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "finished_at": finished_at.isoformat(timespec="seconds") if finished_at is not None else None,
+        "duration_seconds": round((effective_finished_at - started_at).total_seconds(), 2),
         "status": metrics.get("status", "COMPLETED"),
         "iterations": int(metrics.get("iterations", 0) or 0),
         "cycles_with_work": int(metrics.get("cycles_with_work", 0) or 0),
         "idle_cycles": int(metrics.get("idle_cycles", 0) or 0),
+        "heartbeat_count": int(metrics.get("heartbeat_count", 0) or 0),
         "consecutive_failures": int(metrics.get("consecutive_failures", 0) or 0),
         "max_consecutive_failures": int(metrics.get("max_consecutive_failures", 0) or 0),
+        "interval_seconds": float(metrics.get("interval_seconds", 0.0) or 0.0),
+        "idle_interval_seconds": float(metrics.get("idle_interval_seconds", 0.0) or 0.0),
+        "heartbeat_interval_seconds": float(metrics.get("heartbeat_interval_seconds", 0.0) or 0.0),
+        "stop_when_idle": bool(metrics.get("stop_when_idle", False)),
+        "max_iterations": metrics.get("max_iterations"),
         "watched_items": int(metrics.get("watched_items", 0) or 0),
         "triggered_items": int(metrics.get("triggered_items", 0) or 0),
         "transitioned_items": int(metrics.get("transitioned_items", 0) or 0),
@@ -90,6 +98,11 @@ def _build_service_summary(
         "skipped_existing_trailing": int(metrics.get("skipped_existing_trailing", 0) or 0),
         "cancel_failed_items": int(metrics.get("cancel_failed_items", 0) or 0),
         "submit_failed_items": int(metrics.get("submit_failed_items", 0) or 0),
+        "last_heartbeat_at": metrics.get("last_heartbeat_at"),
+        "last_cycle_at": metrics.get("last_cycle_at"),
+        "last_cycle_had_work": bool(metrics.get("last_cycle_had_work", False)),
+        "last_cycle_watched_items": int(metrics.get("last_cycle_watched_items", 0) or 0),
+        "last_cycle_transitioned_items": int(metrics.get("last_cycle_transitioned_items", 0) or 0),
     }
 
 
@@ -369,14 +382,22 @@ class ProtectionWatcherService:
         limit: int = 100,
     ) -> dict[str, Any]:
         started_at = datetime.now()
+        service_run_id = f"watch-service-{build_run_id()}"
         last_heartbeat = self._monotonic()
         metrics: dict[str, Any] = {
             "status": "RUNNING",
+            "service_scope": exec_run_id or account_id or "all",
             "iterations": 0,
             "cycles_with_work": 0,
             "idle_cycles": 0,
+            "heartbeat_count": 0,
             "consecutive_failures": 0,
             "max_consecutive_failures": self._cfg.max_consecutive_failures,
+            "interval_seconds": self._cfg.interval_seconds,
+            "idle_interval_seconds": self._cfg.idle_interval_seconds,
+            "heartbeat_interval_seconds": self._cfg.heartbeat_interval_seconds,
+            "stop_when_idle": self._cfg.stop_when_idle,
+            "max_iterations": self._cfg.max_iterations,
             "watched_items": 0,
             "triggered_items": 0,
             "transitioned_items": 0,
@@ -385,7 +406,21 @@ class ProtectionWatcherService:
             "skipped_existing_trailing": 0,
             "cancel_failed_items": 0,
             "submit_failed_items": 0,
+            "last_heartbeat_at": started_at.isoformat(timespec="seconds"),
+            "last_cycle_at": None,
+            "last_cycle_had_work": False,
+            "last_cycle_watched_items": 0,
+            "last_cycle_transitioned_items": 0,
         }
+        self._persist_service_summary(
+            service_run_id=service_run_id,
+            metrics=metrics,
+            started_at=started_at,
+            finished_at=None,
+            exec_run_id=exec_run_id,
+            account_id=account_id,
+            limit=limit,
+        )
 
         try:
             while True:
@@ -409,13 +444,28 @@ class ProtectionWatcherService:
                     if metrics["consecutive_failures"] >= self._cfg.max_consecutive_failures:
                         metrics["status"] = "FAILED"
                         break
-                    self._maybe_log_heartbeat(metrics, account_id=account_id, exec_run_id=exec_run_id, last_heartbeat=last_heartbeat)
-                    last_heartbeat = self._refresh_heartbeat(last_heartbeat)
+                    heartbeat_logged, last_heartbeat = self._maybe_log_heartbeat(
+                        metrics,
+                        account_id=account_id,
+                        exec_run_id=exec_run_id,
+                        last_heartbeat=last_heartbeat,
+                    )
+                    if heartbeat_logged:
+                        self._persist_service_summary(
+                            service_run_id=service_run_id,
+                            metrics=metrics,
+                            started_at=started_at,
+                            finished_at=None,
+                            exec_run_id=exec_run_id,
+                            account_id=account_id,
+                            limit=limit,
+                        )
                     self._sleep(self._cfg.idle_interval_seconds)
                     continue
 
                 cycle_metrics = self._aggregate_cycle_summaries(summaries)
                 has_work = cycle_metrics["watched_items"] > 0
+                cycle_finished_at = datetime.now()
                 if has_work:
                     metrics["cycles_with_work"] += 1
                 else:
@@ -423,6 +473,10 @@ class ProtectionWatcherService:
 
                 for key, value in cycle_metrics.items():
                     metrics[key] += value
+                metrics["last_cycle_at"] = cycle_finished_at.isoformat(timespec="seconds")
+                metrics["last_cycle_had_work"] = has_work
+                metrics["last_cycle_watched_items"] = cycle_metrics["watched_items"]
+                metrics["last_cycle_transitioned_items"] = cycle_metrics["transitioned_items"]
 
                 LOGGER.info(
                     "Watcher protections iteration=%s watched=%s transitioned=%s pending=%s status=%s",
@@ -433,8 +487,21 @@ class ProtectionWatcherService:
                     "work" if has_work else "idle",
                 )
 
-                self._maybe_log_heartbeat(metrics, account_id=account_id, exec_run_id=exec_run_id, last_heartbeat=last_heartbeat)
-                last_heartbeat = self._refresh_heartbeat(last_heartbeat)
+                _, last_heartbeat = self._maybe_log_heartbeat(
+                    metrics,
+                    account_id=account_id,
+                    exec_run_id=exec_run_id,
+                    last_heartbeat=last_heartbeat,
+                )
+                self._persist_service_summary(
+                    service_run_id=service_run_id,
+                    metrics=metrics,
+                    started_at=started_at,
+                    finished_at=None,
+                    exec_run_id=exec_run_id,
+                    account_id=account_id,
+                    limit=limit,
+                )
 
                 if self._cfg.stop_when_idle and not has_work:
                     metrics["status"] = "COMPLETED"
@@ -454,7 +521,16 @@ class ProtectionWatcherService:
         finished_at = datetime.now()
         summary = _build_service_summary(
             metrics,
-            service_run_id=f"watch-service-{build_run_id()}",
+            service_run_id=service_run_id,
+            started_at=started_at,
+            finished_at=finished_at,
+            exec_run_id=exec_run_id,
+            account_id=account_id,
+            limit=limit,
+        )
+        self._persist_service_summary(
+            service_run_id=service_run_id,
+            metrics=metrics,
             started_at=started_at,
             finished_at=finished_at,
             exec_run_id=exec_run_id,
@@ -488,9 +564,11 @@ class ProtectionWatcherService:
         account_id: str | None,
         exec_run_id: str | None,
         last_heartbeat: float,
-    ) -> None:
+    ) -> tuple[bool, float]:
         now = self._monotonic()
         if metrics["iterations"] == 1 or (now - last_heartbeat) >= self._cfg.heartbeat_interval_seconds:
+            metrics["heartbeat_count"] = int(metrics.get("heartbeat_count", 0) or 0) + 1
+            metrics["last_heartbeat_at"] = datetime.now().isoformat(timespec="seconds")
             LOGGER.info(
                 "Heartbeat watcher protections iterations=%s work_cycles=%s idle_cycles=%s transitioned=%s failures=%s account=%s exec_run_id=%s",
                 metrics["iterations"],
@@ -501,12 +579,47 @@ class ProtectionWatcherService:
                 account_id or "*",
                 exec_run_id or "*",
             )
+            return True, now
+        return False, last_heartbeat
 
-    def _refresh_heartbeat(self, last_heartbeat: float) -> float:
-        now = self._monotonic()
-        if now - last_heartbeat >= self._cfg.heartbeat_interval_seconds:
-            return now
-        return last_heartbeat
+    def _persist_service_summary(
+        self,
+        *,
+        service_run_id: str,
+        metrics: dict[str, Any],
+        started_at: datetime,
+        finished_at: datetime | None,
+        exec_run_id: str | None,
+        account_id: str | None,
+        limit: int,
+    ) -> None:
+        summary = _build_service_summary(
+            metrics,
+            service_run_id=service_run_id,
+            started_at=started_at,
+            finished_at=finished_at,
+            exec_run_id=exec_run_id,
+            account_id=account_id,
+            limit=limit,
+        )
+        try:
+            persist_run_business_summary(
+                summary=summary,
+                step_key="execution_protection_watch_service",
+                run_kind="service",
+                status=str(summary.get("status", "") or "") or None,
+                summary_run_id=service_run_id,
+                source_run_id=service_run_id,
+                entity_run_id=exec_run_id or f"watcher-service:{account_id or 'all'}",
+                parent_summary_run_id=exec_run_id,
+                account_id=account_id,
+                trade_date=None,
+                started_at=summary.get("started_at"),
+                finished_at=summary.get("finished_at") if finished_at is not None else None,
+                engine=self._watcher._repo.engine,
+            )
+        except Exception:
+            LOGGER.debug("Persistance run_business_summaries indisponible pour le service watcher protections.", exc_info=True)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

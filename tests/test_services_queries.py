@@ -306,6 +306,49 @@ def test_get_latest_run_business_summary_returns_first_row(monkeypatch):
     assert row["run_summary"] == {"submitted_orders": 4}
 
 
+def test_get_latest_execution_protection_watch_service_summary_prefers_exec_run_scope(monkeypatch):
+    queries.get_latest_execution_protection_watch_service_summary.clear()
+    calls = []
+
+    def fake_get_latest_run_business_summary(**kwargs):
+        calls.append(kwargs)
+        if kwargs.get("entity_run_id") == "exec-1":
+            return {"summary_run_id": "svc-exec-1", "run_summary": {"iterations": 5}}
+        return {"summary_run_id": "svc-account-1", "run_summary": {"iterations": 2}}
+
+    monkeypatch.setattr(queries, "get_latest_run_business_summary", fake_get_latest_run_business_summary)
+
+    row = queries.get_latest_execution_protection_watch_service_summary(account_id="acct-1", exec_run_id="exec-1")
+
+    assert row is not None
+    assert row["summary_run_id"] == "svc-exec-1"
+    assert calls[0]["step_key"] == "execution_protection_watch_service"
+    assert calls[0]["entity_run_id"] == "exec-1"
+    assert calls[0]["run_kind"] == "service"
+
+
+def test_get_latest_execution_protection_watch_service_summary_falls_back_to_account_scope(monkeypatch):
+    queries.get_latest_execution_protection_watch_service_summary.clear()
+    calls = []
+
+    def fake_get_latest_run_business_summary(**kwargs):
+        calls.append(kwargs)
+        if kwargs.get("entity_run_id") == "exec-1":
+            return None
+        return {"summary_run_id": "svc-account-1", "run_summary": {"iterations": 7}}
+
+    monkeypatch.setattr(queries, "get_latest_run_business_summary", fake_get_latest_run_business_summary)
+
+    row = queries.get_latest_execution_protection_watch_service_summary(account_id="acct-1", exec_run_id="exec-1")
+
+    assert row is not None
+    assert row["summary_run_id"] == "svc-account-1"
+    assert len(calls) == 2
+    assert calls[1]["step_key"] == "execution_protection_watch_service"
+    assert calls[1]["account_id"] == "acct-1"
+    assert calls[1]["run_kind"] == "service"
+
+
 def test_get_execution_orders_includes_stop_and_trailing_fields(monkeypatch):
     captured = {}
 

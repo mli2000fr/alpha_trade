@@ -204,6 +204,27 @@ def test_build_run_summary_caption_uses_execution_protection_watch_metrics_mappi
     assert "annulations ko=1" in caption
 
 
+def test_build_run_summary_caption_uses_execution_protection_watch_service_metrics_mapping() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "execution_protection_watch_service",
+            "run_summary": {
+                "iterations": 12,
+                "cycles_with_work": 4,
+                "idle_cycles": 8,
+                "heartbeat_count": 3,
+                "transitioned_items": 2,
+                "consecutive_failures": 0,
+                "max_consecutive_failures": 3,
+            },
+        }
+    )
+
+    assert "itérations=12" in caption
+    assert "cycles actifs=4" in caption
+    assert "heartbeats=3" in caption
+
+
 def test_build_run_summary_caption_uses_screener_metrics_mapping() -> None:
     caption = build_run_summary_caption(
         {

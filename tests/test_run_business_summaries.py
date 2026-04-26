@@ -64,3 +64,34 @@ def test_parse_summary_json_handles_invalid_payload() -> None:
     assert parse_summary_json("{broken") == {}
     assert parse_summary_json(None) == {}
 
+
+def test_persist_run_business_summary_supports_service_run_kind() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_table(engine)
+
+    persisted = persist_run_business_summary(
+        summary={"run_id": "watch-service-1", "iterations": 3, "status": "RUNNING"},
+        step_key="execution_protection_watch_service",
+        run_kind="service",
+        status="RUNNING",
+        summary_run_id="watch-service-1",
+        entity_run_id="watcher-service:acct-1",
+        account_id="acct-1",
+        started_at="2026-04-26T10:00:00",
+        finished_at=None,
+        engine=engine,
+    )
+
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT run_kind, step_key, status, account_id, summary_json FROM run_business_summaries WHERE summary_run_id = 'watch-service-1'"))
+        payload = row.first()
+
+    assert persisted == 1
+    assert payload is not None
+    assert payload[0] == "service"
+    assert payload[1] == "execution_protection_watch_service"
+    assert payload[2] == "RUNNING"
+    assert payload[3] == "acct-1"
+    assert '"iterations": 3' in payload[4]
+
+

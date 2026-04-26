@@ -1,6 +1,8 @@
 """ihm/pages/execution.py — Suivi des runs d'exécution."""
 from __future__ import annotations
 
+from datetime import datetime
+
 import streamlit as st
 
 from ihm.pages import run_page_if_standalone
@@ -10,16 +12,15 @@ from ihm.components.run_summary import render_persistent_business_summary
 from ihm.components.status_badges import run_status_badge
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available
-from ihm.services.queries import (
-    get_latest_run_business_summary,
-    get_execution_account_constraints,
-    get_execution_orders,
-    get_broker_positions,
-    get_execution_events,
-    get_execution_fills,
-    get_execution_runs,
-    get_portfolio_targets,
-)
+from ihm.services.queries import get_broker_positions
+from ihm.services.queries import get_execution_account_constraints
+from ihm.services.queries import get_execution_events
+from ihm.services.queries import get_execution_fills
+from ihm.services.queries import get_execution_orders
+from ihm.services.queries import get_execution_runs
+from ihm.services.queries import get_latest_execution_protection_watch_service_summary
+from ihm.services.queries import get_latest_run_business_summary
+from ihm.services.queries import get_portfolio_targets
 from ihm.services.run_summary import get_run_summary
 
 
@@ -44,6 +45,7 @@ def render() -> None:
     status = str(row.get("status", ""))
     summary_record = get_latest_run_business_summary(step_key="execution", entity_run_id=selected, account_id=account_id)
     watcher_summary_record = get_latest_run_business_summary(step_key="execution_protection_watch", entity_run_id=selected, account_id=account_id)
+    watcher_service_record = get_latest_execution_protection_watch_service_summary(account_id=account_id, exec_run_id=selected)
 
     # --- KPI ---
     metric_row([
@@ -57,12 +59,42 @@ def render() -> None:
 
     summary = get_run_summary(summary_record)
     watcher_summary = get_run_summary(watcher_summary_record)
+    watcher_service_summary = get_run_summary(watcher_service_record)
     if watcher_summary:
         render_persistent_business_summary(
             watcher_summary_record,
             title="🛰️ Résumé watcher protections",
             max_metrics=8,
         )
+    if watcher_service_summary:
+        render_persistent_business_summary(
+            watcher_service_record,
+            title="🫀 Santé du service watcher",
+            max_metrics=7,
+        )
+        last_heartbeat_at = str(watcher_service_summary.get("last_heartbeat_at", "") or "").strip()
+        heartbeat_age_seconds: int | None = None
+        if last_heartbeat_at:
+            try:
+                heartbeat_age_seconds = max(
+                    int((datetime.now() - datetime.fromisoformat(last_heartbeat_at)).total_seconds()),
+                    0,
+                )
+            except ValueError:
+                heartbeat_age_seconds = None
+        heartbeat_status = "Inconnu"
+        heartbeat_threshold = float(watcher_service_summary.get("heartbeat_interval_seconds", 0.0) or 0.0)
+        if heartbeat_age_seconds is not None and heartbeat_threshold > 0:
+            heartbeat_status = "Frais" if heartbeat_age_seconds <= int(heartbeat_threshold * 2) else "À vérifier"
+        metric_row([
+            ("Statut service", str((watcher_service_record or {}).get("status", "—") or "—"), None),
+            ("Scope", str(watcher_service_summary.get("service_scope", "—") or "—"), None),
+            ("Heartbeat", heartbeat_status, None),
+            ("Âge heartbeat (s)", heartbeat_age_seconds if heartbeat_age_seconds is not None else "—", None),
+            ("Dernier cycle", str(watcher_service_summary.get("last_cycle_at", "—") or "—"), None),
+            ("Watch last cycle", int(watcher_service_summary.get("last_cycle_watched_items", 0) or 0), None),
+            ("Transitions last cycle", int(watcher_service_summary.get("last_cycle_transitioned_items", 0) or 0), None),
+        ])
 
     if summary:
         st.subheader("🛡️ Protections et indicateurs de risque")

@@ -117,6 +117,15 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Annulations KO", "cancel_failed_items"),
         ("Checks", "trigger_check_count"),
     ],
+    "execution_protection_watch_service": [
+        ("Itérations", "iterations"),
+        ("Cycles actifs", "cycles_with_work"),
+        ("Idle", "idle_cycles"),
+        ("Heartbeats", "heartbeat_count"),
+        ("Transitions", "transitioned_items"),
+        ("Échecs conséc.", "consecutive_failures"),
+        ("Limite échecs", "max_consecutive_failures"),
+    ],
     "corporate_actions_sync": [
         ("Cibles", "targeted_symbols"),
         ("Récupérés", "fetched_events"),
