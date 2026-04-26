@@ -80,14 +80,40 @@ def load_scores(engine: Engine, start: date, end: date) -> pd.DataFrame:
     2. `stock_scores` avec fallback sur les horodatages de mise à jour
     """
     history_exists = _table_exists(engine, "stock_scores_history")
+
+    def _optional_select(columns: set[str], column: str) -> str:
+        return column if column in columns else f"NULL AS {column}"
+
     if history_exists:
-        history_query = text("""
+        history_columns = _get_table_columns(engine, "stock_scores_history")
+        has_walk_forward = "final_score_walk_forward" in history_columns
+        history_query = text(f"""
             SELECT symbol,
                    snapshot_date AS trade_date,
                    final_score,
                    final_score_sentiment,
+                   {_optional_select(history_columns, 'final_score_walk_forward')},
                    sector,
-                   is_candidate
+                   is_candidate,
+                   {_optional_select(history_columns, 'sentiment_net_agg')},
+                   {_optional_select(history_columns, 'sector_impact_agg')},
+                   {_optional_select(history_columns, 'company_idio_score')},
+                   {_optional_select(history_columns, 'macro_regime_score')},
+                   {_optional_select(history_columns, 'company_idio_signal_norm')},
+                   {_optional_select(history_columns, 'macro_regime_signal_norm')},
+                   {_optional_select(history_columns, 'company_idio_component')},
+                   {_optional_select(history_columns, 'macro_regime_component')},
+                   {_optional_select(history_columns, 'quant_component')},
+                   {_optional_select(history_columns, 'walk_forward_sentiment_weight')},
+                   {_optional_select(history_columns, 'walk_forward_macro_weight')},
+                   {_optional_select(history_columns, 'walk_forward_quant_weight')},
+                   {_optional_select(history_columns, 'calibration_run_id')},
+                   {_optional_select(history_columns, 'calibration_source')},
+                   CASE
+                       WHEN {('final_score_walk_forward IS NOT NULL' if has_walk_forward else '0 = 1')} THEN 'final_score_walk_forward'
+                       WHEN final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'
+                       ELSE 'final_score'
+                   END AS score_source
             FROM stock_scores_history
             WHERE snapshot_date BETWEEN :start AND :end
               AND is_candidate = 1
@@ -108,13 +134,35 @@ def load_scores(engine: Engine, start: date, end: date) -> pd.DataFrame:
         "Lecture des scores depuis stock_scores (snapshot courant). "
         "Le backtest ne sera pas strictement point-in-time."
     )
-    query = text("""
+    stock_columns = _get_table_columns(engine, "stock_scores")
+    has_walk_forward = "final_score_walk_forward" in stock_columns
+    query = text(f"""
         SELECT symbol,
                DATE(COALESCE(last_updated_sentiment, last_updated_scan, last_updated_score)) AS trade_date,
                final_score,
                final_score_sentiment,
+               {_optional_select(stock_columns, 'final_score_walk_forward')},
                sector,
-               is_candidate
+               is_candidate,
+               {_optional_select(stock_columns, 'sentiment_net_agg')},
+               {_optional_select(stock_columns, 'sector_impact_agg')},
+               {_optional_select(stock_columns, 'company_idio_score')},
+               {_optional_select(stock_columns, 'macro_regime_score')},
+               {_optional_select(stock_columns, 'company_idio_signal_norm')},
+               {_optional_select(stock_columns, 'macro_regime_signal_norm')},
+               {_optional_select(stock_columns, 'company_idio_component')},
+               {_optional_select(stock_columns, 'macro_regime_component')},
+               {_optional_select(stock_columns, 'quant_component')},
+               {_optional_select(stock_columns, 'walk_forward_sentiment_weight')},
+               {_optional_select(stock_columns, 'walk_forward_macro_weight')},
+               {_optional_select(stock_columns, 'walk_forward_quant_weight')},
+               {_optional_select(stock_columns, 'calibration_run_id')},
+               {_optional_select(stock_columns, 'calibration_source')},
+               CASE
+                   WHEN {('final_score_walk_forward IS NOT NULL' if has_walk_forward else '0 = 1')} THEN 'final_score_walk_forward'
+                   WHEN final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'
+                   ELSE 'final_score'
+               END AS score_source
         FROM stock_scores
         WHERE DATE(COALESCE(last_updated_sentiment, last_updated_scan, last_updated_score)) BETWEEN :start AND :end
           AND is_candidate = 1

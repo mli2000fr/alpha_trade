@@ -48,6 +48,18 @@ def persist_decisions(
             "sizing_method": e.sizing_method,
             "correlation_blocker": e.correlation_blocker,
             "correlation_value": e.correlation_value,
+            "company_idio_score": e.company_idio_score,
+            "macro_regime_score": e.macro_regime_score,
+            "company_idio_signal_norm": e.company_idio_signal_norm,
+            "macro_regime_signal_norm": e.macro_regime_signal_norm,
+            "company_idio_component": e.company_idio_component,
+            "macro_regime_component": e.macro_regime_component,
+            "quant_component": e.quant_component,
+            "walk_forward_sentiment_weight": e.walk_forward_sentiment_weight,
+            "walk_forward_macro_weight": e.walk_forward_macro_weight,
+            "walk_forward_quant_weight": e.walk_forward_quant_weight,
+            "calibration_run_id": e.calibration_run_id,
+            "calibration_source": e.calibration_source,
         }
         for e in entries
     ]
@@ -78,6 +90,18 @@ def persist_portfolio_targets(
             "conviction_score": e.conviction_score,
             "sizing_method": e.sizing_method,
             "kelly_fraction": e.kelly_fraction,
+            "company_idio_score": e.company_idio_score,
+            "macro_regime_score": e.macro_regime_score,
+            "company_idio_signal_norm": e.company_idio_signal_norm,
+            "macro_regime_signal_norm": e.macro_regime_signal_norm,
+            "company_idio_component": e.company_idio_component,
+            "macro_regime_component": e.macro_regime_component,
+            "quant_component": e.quant_component,
+            "walk_forward_sentiment_weight": e.walk_forward_sentiment_weight,
+            "walk_forward_macro_weight": e.walk_forward_macro_weight,
+            "walk_forward_quant_weight": e.walk_forward_quant_weight,
+            "calibration_run_id": e.calibration_run_id,
+            "calibration_source": e.calibration_source,
         }
         for e in accepted
     ]

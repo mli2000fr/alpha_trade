@@ -11,6 +11,19 @@ class CandidateScore:
     symbol: str
     sector: str
     score_used: float
+    score_source: str = "final_score_sentiment"
+    company_idio_score: float | None = None
+    macro_regime_score: float | None = None
+    company_idio_signal_norm: float | None = None
+    macro_regime_signal_norm: float | None = None
+    company_idio_component: float | None = None
+    macro_regime_component: float | None = None
+    quant_component: float | None = None
+    walk_forward_sentiment_weight: float | None = None
+    walk_forward_macro_weight: float | None = None
+    walk_forward_quant_weight: float | None = None
+    calibration_run_id: str | None = None
+    calibration_source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +67,18 @@ class PortfolioEntry:
     sizing_method: str = ""
     correlation_blocker: str | None = None
     correlation_value: float | None = None
+    company_idio_score: float | None = None
+    macro_regime_score: float | None = None
+    company_idio_signal_norm: float | None = None
+    macro_regime_signal_norm: float | None = None
+    company_idio_component: float | None = None
+    macro_regime_component: float | None = None
+    quant_component: float | None = None
+    walk_forward_sentiment_weight: float | None = None
+    walk_forward_macro_weight: float | None = None
+    walk_forward_quant_weight: float | None = None
+    calibration_run_id: str | None = None
+    calibration_source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,9 +114,22 @@ class EnrichedCandidate:
     symbol: str
     sector: str
     score_used: float
+    score_source: str
     predicted_proba: float | None
     historical_win_rate: float | None
     conviction_score: float
+    company_idio_score: float | None = None
+    macro_regime_score: float | None = None
+    company_idio_signal_norm: float | None = None
+    macro_regime_signal_norm: float | None = None
+    company_idio_component: float | None = None
+    macro_regime_component: float | None = None
+    quant_component: float | None = None
+    walk_forward_sentiment_weight: float | None = None
+    walk_forward_macro_weight: float | None = None
+    walk_forward_quant_weight: float | None = None
+    calibration_run_id: str | None = None
+    calibration_source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

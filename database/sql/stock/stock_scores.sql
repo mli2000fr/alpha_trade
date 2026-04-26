@@ -34,9 +34,22 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores (
     -- signal_aggregator.py (après sentiment_pipeline.py)
     sentiment_net_agg       DOUBLE         DEFAULT NULL,
     sector_impact_agg       DOUBLE         DEFAULT NULL,
+    company_idio_score      DOUBLE         DEFAULT NULL,
+    macro_regime_score      DOUBLE         DEFAULT NULL,
     sentiment_signal_norm   DOUBLE         DEFAULT NULL,
     macro_signal_norm       DOUBLE         DEFAULT NULL,
+    company_idio_signal_norm DOUBLE        DEFAULT NULL,
+    macro_regime_signal_norm DOUBLE        DEFAULT NULL,
+    company_idio_component  DOUBLE         DEFAULT NULL,
+    macro_regime_component  DOUBLE         DEFAULT NULL,
+    quant_component         DOUBLE         DEFAULT NULL,
     final_score_sentiment   DOUBLE         DEFAULT NULL,
+    final_score_walk_forward DOUBLE        DEFAULT NULL,
+    walk_forward_sentiment_weight DOUBLE   DEFAULT NULL,
+    walk_forward_macro_weight DOUBLE       DEFAULT NULL,
+    walk_forward_quant_weight DOUBLE       DEFAULT NULL,
+    calibration_run_id      VARCHAR(64)    DEFAULT NULL,
+    calibration_source      VARCHAR(64)    DEFAULT NULL,
     signal_active           TINYINT(1)     DEFAULT 0,
     major_event_flag_agg    TINYINT(1)     DEFAULT 0,
     macro_event_flag_agg    TINYINT(1)     DEFAULT 0,
@@ -47,6 +60,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores (
     INDEX idx_total_score           (total_score),
     INDEX idx_final_score           (final_score),
     INDEX idx_final_score_sentiment (final_score_sentiment),
+    INDEX idx_final_score_walk_forward (final_score_walk_forward),
     INDEX idx_scan_candidate        (is_candidate, total_score)
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

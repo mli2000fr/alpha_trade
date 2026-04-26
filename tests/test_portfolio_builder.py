@@ -121,3 +121,30 @@ def test_v2_conviction_score_in_entry() -> None:
     assert abs(e.conviction_score - expected) < 1e-6
 
 
+def test_builder_propagates_walk_forward_metadata() -> None:
+    builder = PortfolioBuilder(_cfg())
+    entries = builder.build(
+        [
+            CandidateScore(
+                "AAPL",
+                "Tech",
+                0.91,
+                score_source="final_score_walk_forward",
+                walk_forward_sentiment_weight=0.2,
+                walk_forward_macro_weight=0.1,
+                walk_forward_quant_weight=0.7,
+                calibration_run_id="wf-001",
+                calibration_source="walk_forward",
+            )
+        ],
+        {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
+    )
+
+    entry = entries[0]
+    assert entry.score_source == "final_score_walk_forward"
+    assert entry.walk_forward_sentiment_weight == 0.2
+    assert entry.walk_forward_macro_weight == 0.1
+    assert entry.walk_forward_quant_weight == 0.7
+    assert entry.calibration_run_id == "wf-001"
+
+

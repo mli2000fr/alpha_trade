@@ -28,19 +28,61 @@ class RiskRepository:
     def load_candidates(self, config: RiskConfig) -> list[CandidateScore]:
         """Charge les candidats depuis stock_scores.
 
-        Le score utilisé est ``final_score_sentiment`` qui intègre déjà
-        ``final_score`` (fusion quant + sentiment par signal_aggregator).
+        Le score utilisé suit l'ordre de priorité :
+        ``final_score_walk_forward`` → ``final_score_sentiment`` → ``final_score``.
         Les filtres qualité (anomaly_count, missing_days_count) sont déjà
         appliqués en amont lors du calcul de ``is_candidate``.
         """
-        query = text("""
+        stock_score_columns = self._get_table_columns("stock_scores")
+        has_walk_forward = "final_score_walk_forward" in stock_score_columns
+        score_expr = (
+            "COALESCE(s.final_score_walk_forward, s.final_score_sentiment, s.final_score)"
+            if has_walk_forward
+            else "COALESCE(s.final_score_sentiment, s.final_score)"
+        )
+        score_source_expr = (
+            """
+            CASE
+                WHEN s.final_score_walk_forward IS NOT NULL THEN 'final_score_walk_forward'
+                WHEN s.final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'
+                ELSE 'final_score'
+            END
+            """
+            if has_walk_forward
+            else """
+            CASE
+                WHEN s.final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'
+                ELSE 'final_score'
+            END
+            """
+        )
+        optional_float_columns = [
+            "company_idio_score",
+            "macro_regime_score",
+            "company_idio_signal_norm",
+            "macro_regime_signal_norm",
+            "company_idio_component",
+            "macro_regime_component",
+            "quant_component",
+            "walk_forward_sentiment_weight",
+            "walk_forward_macro_weight",
+            "walk_forward_quant_weight",
+        ]
+        optional_text_columns = ["calibration_run_id", "calibration_source"]
+        optional_selects = [
+            f"s.{column}" if column in stock_score_columns else f"NULL AS {column}"
+            for column in [*optional_float_columns, *optional_text_columns]
+        ]
+        query = text(f"""
             SELECT
                 s.symbol,
                 COALESCE(s.sector, 'UNKNOWN') AS sector,
-                s.final_score_sentiment       AS score_used
+                {score_expr}                  AS score_used,
+                {score_source_expr}           AS score_source,
+                {", ".join(optional_selects)}
             FROM stock_scores s
             WHERE s.is_candidate = 1
-              AND s.final_score_sentiment IS NOT NULL
+              AND {score_expr} IS NOT NULL
             ORDER BY score_used DESC
         """)
         with self.engine.connect() as conn:
@@ -50,9 +92,35 @@ class RiskRepository:
                 symbol=str(r["symbol"]).strip().upper(),
                 sector=str(r["sector"]),
                 score_used=float(r["score_used"]),
+                score_source=str(r.get("score_source") or "final_score_sentiment"),
+                company_idio_score=float(r["company_idio_score"]) if r.get("company_idio_score") is not None else None,
+                macro_regime_score=float(r["macro_regime_score"]) if r.get("macro_regime_score") is not None else None,
+                company_idio_signal_norm=float(r["company_idio_signal_norm"]) if r.get("company_idio_signal_norm") is not None else None,
+                macro_regime_signal_norm=float(r["macro_regime_signal_norm"]) if r.get("macro_regime_signal_norm") is not None else None,
+                company_idio_component=float(r["company_idio_component"]) if r.get("company_idio_component") is not None else None,
+                macro_regime_component=float(r["macro_regime_component"]) if r.get("macro_regime_component") is not None else None,
+                quant_component=float(r["quant_component"]) if r.get("quant_component") is not None else None,
+                walk_forward_sentiment_weight=float(r["walk_forward_sentiment_weight"]) if r.get("walk_forward_sentiment_weight") is not None else None,
+                walk_forward_macro_weight=float(r["walk_forward_macro_weight"]) if r.get("walk_forward_macro_weight") is not None else None,
+                walk_forward_quant_weight=float(r["walk_forward_quant_weight"]) if r.get("walk_forward_quant_weight") is not None else None,
+                calibration_run_id=str(r["calibration_run_id"]) if r.get("calibration_run_id") is not None else None,
+                calibration_source=str(r["calibration_source"]) if r.get("calibration_source") is not None else None,
             )
             for r in rows
         ]
+
+    def _get_table_columns(self, table_name: str) -> set[str]:
+        try:
+            inspector = self.engine.dialect.inspector(self.engine)  # type: ignore[attr-defined]
+            return {str(column["name"]) for column in inspector.get_columns(table_name)}
+        except Exception:
+            try:
+                from sqlalchemy import inspect
+
+                return {str(column["name"]) for column in inspect(self.engine).get_columns(table_name)}
+            except Exception:
+                LOGGER.debug("Impossible d'inspecter les colonnes de %s.", table_name, exc_info=True)
+                return set()
 
     def load_prices(self, symbols: list[str], atr_window: int = 20) -> dict[str, PriceInfo]:
         """Charge le dernier close et l'ATR depuis stock_bars_daily."""
@@ -210,6 +278,30 @@ class RiskRepository:
         # Injecter account_id dans chaque record
         for r in records:
             r.setdefault("account_id", account_id or "default")
+        stmt_v4 = text("""
+            INSERT INTO risk_decisions
+                (run_id, trade_date, symbol, decision, reason, score_used,
+                 score_source, entry_price, proposed_shares, approved_shares,
+                 target_weight, sector, conviction_score, predicted_proba,
+                 historical_win_rate, effective_probability, kelly_fraction,
+                 sizing_method, correlation_blocker, correlation_value,
+                 company_idio_score, macro_regime_score,
+                 company_idio_signal_norm, macro_regime_signal_norm,
+                 company_idio_component, macro_regime_component, quant_component,
+                 walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
+                 calibration_run_id, calibration_source, account_id)
+            VALUES
+                (:run_id, :trade_date, :symbol, :decision, :reason, :score_used,
+                 :score_source, :entry_price, :proposed_shares, :approved_shares,
+                 :target_weight, :sector, :conviction_score, :predicted_proba,
+                 :historical_win_rate, :effective_probability, :kelly_fraction,
+                 :sizing_method, :correlation_blocker, :correlation_value,
+                 :company_idio_score, :macro_regime_score,
+                 :company_idio_signal_norm, :macro_regime_signal_norm,
+                 :company_idio_component, :macro_regime_component, :quant_component,
+                 :walk_forward_sentiment_weight, :walk_forward_macro_weight, :walk_forward_quant_weight,
+                 :calibration_run_id, :calibration_source, :account_id)
+        """)
         stmt_v3 = text("""
             INSERT INTO risk_decisions
                 (run_id, trade_date, symbol, decision, reason, score_used,
@@ -250,13 +342,16 @@ class RiskRepository:
         """)
         with self.engine.begin() as conn:
             try:
-                conn.execute(stmt_v3, records)
+                conn.execute(stmt_v4, records)
             except Exception:
                 try:
-                    conn.execute(stmt_v2, records)
+                    conn.execute(stmt_v3, records)
                 except Exception:
-                    LOGGER.info("Colonnes V2 absentes dans risk_decisions — fallback V1.")
-                    conn.execute(stmt_v1, records)
+                    try:
+                        conn.execute(stmt_v2, records)
+                    except Exception:
+                        LOGGER.info("Colonnes V2 absentes dans risk_decisions — fallback V1.")
+                        conn.execute(stmt_v1, records)
         return len(records)
 
     def write_portfolio_targets(self, records: list[dict[str, Any]], account_id: str | None = None) -> int:
@@ -265,6 +360,24 @@ class RiskRepository:
             return 0
         for r in records:
             r.setdefault("account_id", account_id or "default")
+        stmt_v4 = text("""
+            INSERT INTO portfolio_targets
+                (run_id, trade_date, symbol, shares, entry_price, target_weight,
+                 sector, score_used, score_source, conviction_score, sizing_method,
+                 kelly_fraction, company_idio_score, macro_regime_score,
+                 company_idio_signal_norm, macro_regime_signal_norm,
+                 company_idio_component, macro_regime_component, quant_component,
+                 walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
+                 calibration_run_id, calibration_source, account_id)
+            VALUES
+                (:run_id, :trade_date, :symbol, :shares, :entry_price, :target_weight,
+                 :sector, :score_used, :score_source, :conviction_score, :sizing_method,
+                 :kelly_fraction, :company_idio_score, :macro_regime_score,
+                 :company_idio_signal_norm, :macro_regime_signal_norm,
+                 :company_idio_component, :macro_regime_component, :quant_component,
+                 :walk_forward_sentiment_weight, :walk_forward_macro_weight, :walk_forward_quant_weight,
+                 :calibration_run_id, :calibration_source, :account_id)
+        """)
         stmt_v3 = text("""
             INSERT INTO portfolio_targets
                 (run_id, trade_date, symbol, shares, entry_price, target_weight,
@@ -295,11 +408,14 @@ class RiskRepository:
         """)
         with self.engine.begin() as conn:
             try:
-                conn.execute(stmt_v3, records)
+                conn.execute(stmt_v4, records)
             except Exception:
                 try:
-                    conn.execute(stmt_v2, records)
+                    conn.execute(stmt_v3, records)
                 except Exception:
-                    LOGGER.info("Colonnes V2 absentes dans portfolio_targets — fallback V1.")
-                    conn.execute(stmt_v1, records)
+                    try:
+                        conn.execute(stmt_v2, records)
+                    except Exception:
+                        LOGGER.info("Colonnes V2 absentes dans portfolio_targets — fallback V1.")
+                        conn.execute(stmt_v1, records)
         return len(records)

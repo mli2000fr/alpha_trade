@@ -601,19 +601,20 @@ class SentimentSignalAggregator:
             "major_event_day_count_20d",
         ]
         for row in latest.to_dict(orient="records"):
+            typed_row = cast(dict[str, object], row)
             available_count_columns = {
                 horizon: column_name
                 for horizon, column_name in count_columns.items()
-                if column_name in row
+                if column_name in typed_row
             }
             total_news = 0
             if available_count_columns:
-                total_news = int(max(self._numeric_value(row.get(column_name), default=0.0) for column_name in available_count_columns.values()))
+                total_news = int(max(self._numeric_value(typed_row.get(column_name), default=0.0) for column_name in available_count_columns.values()))
             rows.append(
                 {
-                    "symbol": row.get("symbol"),
+                    "symbol": typed_row.get("symbol"),
                     "sentiment_net_agg": self._compose_horizon_signal(
-                        row,
+                        typed_row,
                         value_columns={
                             1: "sentiment_net_mean_1d",
                             3: "sentiment_net_mean_3d",
@@ -625,7 +626,7 @@ class SentimentSignalAggregator:
                         coverage_columns=available_count_columns,
                         coverage_cap=float(max(self.config.min_news_count, 1)),
                     ),
-                    "major_event_flag_agg": int(any(self._numeric_value(row.get(column_name), default=0.0) > 0 for column_name in major_columns if column_name in row)),
+                    "major_event_flag_agg": int(any(self._numeric_value(typed_row.get(column_name), default=0.0) > 0 for column_name in major_columns if column_name in typed_row)),
                     "total_news": total_news,
                     "signal_active": total_news >= self.config.min_news_count,
                 }
@@ -648,11 +649,12 @@ class SentimentSignalAggregator:
             "macro_event_day_count_20d",
         ]
         for row in latest.to_dict(orient="records"):
+            typed_row = cast(dict[str, object], row)
             rows.append(
                 {
-                    "sector": row.get("sector"),
+                    "sector": typed_row.get("sector"),
                     "sector_impact_agg": self._compose_horizon_signal(
-                        row,
+                        typed_row,
                         value_columns={
                             1: "sector_impact_score",
                             3: "sector_impact_score_3d",
@@ -662,7 +664,7 @@ class SentimentSignalAggregator:
                         },
                         horizon_weights=self.config.sector_horizon_weights,
                     ),
-                    "macro_event_flag_agg": int(any(self._numeric_value(row.get(column_name), default=0.0) > 0 for column_name in macro_columns if column_name in row)),
+                    "macro_event_flag_agg": int(any(self._numeric_value(typed_row.get(column_name), default=0.0) > 0 for column_name in macro_columns if column_name in typed_row)),
                 }
             )
         return pd.DataFrame(rows)
@@ -830,6 +832,8 @@ class SentimentSignalAggregator:
 
         result["sentiment_net_agg"] = _coalesce_float(result["sentiment_net_agg"].tolist())
         result["sector_impact_agg"] = _coalesce_float(result["sector_impact_agg"].tolist())
+        result["company_idio_score"] = result["sentiment_net_agg"]
+        result["macro_regime_score"] = result["sector_impact_agg"]
         result["major_event_flag_agg"] = _coalesce_int(result["major_event_flag_agg"].tolist())
         result["macro_event_flag_agg"] = _coalesce_int(result["macro_event_flag_agg"].tolist())
         result["total_news"] = _coalesce_int(result["total_news"].tolist())
@@ -839,6 +843,8 @@ class SentimentSignalAggregator:
         # Mapping stable et déterministe : [-1, 1] -> [0, 1] ; 0.5 = neutre.
         result["sentiment_signal_norm"] = self._normalize_signed_signal(result["sentiment_net_agg"])
         result["macro_signal_norm"] = self._normalize_signed_signal(result["sector_impact_agg"])
+        result["company_idio_signal_norm"] = result["sentiment_signal_norm"]
+        result["macro_regime_signal_norm"] = result["macro_signal_norm"]
 
         # --- Composition du final_score_sentiment (score fusionné) ---
         # final_score reste intact (score quantitatif AlphaScanner).
@@ -851,6 +857,16 @@ class SentimentSignalAggregator:
         )
         macro_component = self.config.macro_sector_weight * result["macro_signal_norm"]
         quant_component = self.config.quant_weight * result["final_score"]
+
+        result["company_idio_component"] = sent_component
+        result["macro_regime_component"] = macro_component
+        result["quant_component"] = quant_component
+        result["final_score_walk_forward"] = pd.NA
+        result["walk_forward_sentiment_weight"] = pd.NA
+        result["walk_forward_macro_weight"] = pd.NA
+        result["walk_forward_quant_weight"] = pd.NA
+        result["calibration_run_id"] = pd.NA
+        result["calibration_source"] = pd.NA
 
         result["final_score_sentiment"] = (quant_component + sent_component + macro_component).clip(0.0, 1.0)
 
@@ -888,9 +904,22 @@ class SentimentSignalAggregator:
         SENTIMENT_COLS = [
             "sentiment_net_agg",
             "sector_impact_agg",
+            "company_idio_score",
+            "macro_regime_score",
             "sentiment_signal_norm",
             "macro_signal_norm",
+            "company_idio_signal_norm",
+            "macro_regime_signal_norm",
+            "company_idio_component",
+            "macro_regime_component",
+            "quant_component",
             "final_score_sentiment",
+            "final_score_walk_forward",
+            "walk_forward_sentiment_weight",
+            "walk_forward_macro_weight",
+            "walk_forward_quant_weight",
+            "calibration_run_id",
+            "calibration_source",
             "signal_active",
             "major_event_flag_agg",
             "macro_event_flag_agg",
@@ -923,24 +952,57 @@ class SentimentSignalAggregator:
         float_cols = (
             "sentiment_net_agg",
             "sector_impact_agg",
+            "company_idio_score",
+            "macro_regime_score",
             "sentiment_signal_norm",
             "macro_signal_norm",
+            "company_idio_signal_norm",
+            "macro_regime_signal_norm",
+            "company_idio_component",
+            "macro_regime_component",
+            "quant_component",
             "final_score_sentiment",
+            "final_score_walk_forward",
+            "walk_forward_sentiment_weight",
+            "walk_forward_macro_weight",
+            "walk_forward_quant_weight",
         )
         bool_cols = ("signal_active", "major_event_flag_agg", "macro_event_flag_agg")
         float_defaults = {
             "sentiment_net_agg": 0.0,
             "sector_impact_agg": 0.0,
+            "company_idio_score": 0.0,
+            "macro_regime_score": 0.0,
             "sentiment_signal_norm": 0.5,
             "macro_signal_norm": 0.5,
+            "company_idio_signal_norm": 0.5,
+            "macro_regime_signal_norm": 0.5,
+            "company_idio_component": self.config.sentiment_weight * 0.5,
+            "macro_regime_component": self.config.macro_sector_weight * 0.5,
+            "quant_component": 0.0,
             "final_score_sentiment": 0.0,
+            "final_score_walk_forward": 0.0,
+            "walk_forward_sentiment_weight": 0.0,
+            "walk_forward_macro_weight": 0.0,
+            "walk_forward_quant_weight": 0.0,
         }
         float_bounds = {
             "sentiment_net_agg": (-1.0, 1.0),
             "sector_impact_agg": (-1.0, 1.0),
+            "company_idio_score": (-1.0, 1.0),
+            "macro_regime_score": (-1.0, 1.0),
             "sentiment_signal_norm": (0.0, 1.0),
             "macro_signal_norm": (0.0, 1.0),
+            "company_idio_signal_norm": (0.0, 1.0),
+            "macro_regime_signal_norm": (0.0, 1.0),
+            "company_idio_component": (0.0, 1.0),
+            "macro_regime_component": (0.0, 1.0),
+            "quant_component": (0.0, 1.0),
             "final_score_sentiment": (0.0, 1.0),
+            "final_score_walk_forward": (0.0, 1.0),
+            "walk_forward_sentiment_weight": (0.0, 1.0),
+            "walk_forward_macro_weight": (0.0, 1.0),
+            "walk_forward_quant_weight": (0.0, 1.0),
         }
 
         clean_records: list[dict[str, object]] = []
@@ -968,6 +1030,9 @@ class SentimentSignalAggregator:
             for col in bool_cols:
                 value = row.get(col)
                 clean_row[col] = int(bool(value)) if not _is_missing(value) else 0
+            for col in ("calibration_run_id", "calibration_source"):
+                value = row.get(col)
+                clean_row[col] = None if _is_missing(value) else str(value)
             total_news = row.get("total_news")
             if _is_missing(total_news):
                 clean_row["total_news"] = 0

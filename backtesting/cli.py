@@ -198,6 +198,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Utiliser tout l'univers historisé et pas seulement les candidats",
     )
 
+    walk_forward_p = sub.add_parser(
+        "walk-forward-sentiment",
+        help="Calibration walk-forward stricte des poids sentiment/macro avec backtest portefeuille hors échantillon.",
+    )
+    walk_forward_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
+    walk_forward_p.add_argument("--end", required=True, help="Date de fin (YYYY-MM-DD)")
+    walk_forward_p.add_argument("--top-n", type=int, default=20, help="Nombre de titres retenus pour les métriques de calibration")
+    walk_forward_p.add_argument("--horizons", default="5,10,20", help="Horizons forward CSV à évaluer")
+    walk_forward_p.add_argument("--min-train-days", type=int, default=252, help="Séances minimales d'entraînement par fold")
+    walk_forward_p.add_argument("--test-days", type=int, default=63, help="Séances hors échantillon par fold")
+    walk_forward_p.add_argument("--step-days", type=int, default=None, help="Décalage entre folds (défaut = test-days)")
+    walk_forward_p.add_argument("--max-positions", type=int, default=20, help="Nombre maximal de positions simultanées")
+    walk_forward_p.add_argument("--equity", type=float, default=100_000, help="Capital initial ($)")
+    walk_forward_p.add_argument("--tp", type=float, default=0.08, help="Take-profit %%)")
+    walk_forward_p.add_argument("--ts", type=float, default=0.05, help="Trailing stop %%)")
+    walk_forward_p.add_argument("--fees", type=float, default=0.001, help="Frais par trade (défaut 0.1%%)")
+    walk_forward_p.add_argument(
+        "--output-dir",
+        default="artifacts/sentiment_walk_forward",
+        help="Répertoire cible pour les artefacts walk-forward",
+    )
+    walk_forward_p.add_argument(
+        "--all-symbols",
+        action="store_true",
+        help="Utiliser tout l'univers historisé et pas seulement les candidats",
+    )
+
     return parser
 
 
@@ -264,6 +291,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         engine,
         scores_df,
         sentiment_mode=args.sentiment_mode,
+        walk_forward_artifacts_dir=None,
     )
 
     _safe_print("🤖 Chargement prédictions ML...")
@@ -958,6 +986,80 @@ def _run_calibrate_sentiment_weights(args: argparse.Namespace) -> None:
         _safe_print()
 
 
+def _run_walk_forward_sentiment(args: argparse.Namespace) -> None:
+    from datetime import datetime
+
+    from backtesting.sentiment_calibration import SentimentWeightCalibrator
+
+    start = datetime.strptime(args.start, "%Y-%m-%d").date()
+    end = datetime.strptime(args.end, "%Y-%m-%d").date()
+    horizons = tuple(int(token.strip()) for token in args.horizons.split(",") if token.strip())
+
+    _safe_print(f"\n🧭 Walk-forward sentiment : {start} → {end}")
+    _safe_print(
+        "   horizons={} top_n={} min_train_days={} test_days={} step_days={} max_positions={} output_dir={}\n".format(
+            ",".join(str(horizon) for horizon in horizons),
+            args.top_n,
+            args.min_train_days,
+            args.test_days,
+            args.step_days,
+            args.max_positions,
+            args.output_dir,
+        )
+    )
+
+    calibrator = SentimentWeightCalibrator()
+    result, fold_df, _, _, artifacts = calibrator.walk_forward_backtest(
+        start_date=start,
+        end_date=end,
+        horizons=horizons,
+        top_n=args.top_n,
+        candidates_only=not args.all_symbols,
+        min_train_days=args.min_train_days,
+        test_days=args.test_days,
+        step_days=args.step_days,
+        max_positions=args.max_positions,
+        initial_equity=args.equity,
+        profit_taker_pct=args.tp,
+        trailing_stop_pct=args.ts,
+        fees_pct=args.fees,
+        output_dir=Path(args.output_dir),
+    )
+
+    _safe_print("✅ Walk-forward terminé")
+    _safe_print(f"   Folds évalués       : {result.folds_evaluated}")
+    _safe_print(f"   Lignes OOS          : {result.out_of_sample_rows}")
+    _safe_print(f"   Jours OOS           : {result.out_of_sample_days}")
+    _safe_print(f"   Dernier meilleur    : {result.latest_best_scenario_name}")
+    _safe_print(f"   Valeur finale       : {result.final_value:,.2f}$")
+    _safe_print(f"   Rendement total     : {result.total_return_pct:.2f}%")
+    _safe_print(f"   Sharpe              : {result.sharpe_ratio:.3f}")
+    _safe_print(f"   Max drawdown        : {result.max_drawdown_pct:.2f}%")
+    if artifacts:
+        _safe_print(f"   Rapport JSON        : {artifacts.get('report_json')}")
+        _safe_print(f"   Folds CSV           : {artifacts.get('walk_forward_folds_csv')}")
+        _safe_print(f"   Scores OOS CSV      : {artifacts.get('walk_forward_out_of_sample_scores_csv')}")
+        _safe_print(f"   Signaux CSV         : {artifacts.get('walk_forward_selected_signals_csv')}\n")
+    if not fold_df.empty:
+        preview_columns = [
+            column
+            for column in [
+                "fold_index",
+                "train_start_date",
+                "train_end_date",
+                "test_start_date",
+                "test_end_date",
+                "best_scenario_name",
+                "best_train_overall_score",
+                "out_of_sample_overall_score",
+            ]
+            if column in fold_df.columns
+        ]
+        _safe_print("Folds walk-forward (aperçu):")
+        _safe_print(fold_df.loc[:, preview_columns].to_string(index=False))
+        _safe_print()
+
+
 def main() -> None:
     configure_root_logging()
     parser = _build_parser()
@@ -973,6 +1075,8 @@ def main() -> None:
         _run_screener_recommendation(args)
     elif args.command == "calibrate-sentiment-weights":
         _run_calibrate_sentiment_weights(args)
+    elif args.command == "walk-forward-sentiment":
+        _run_walk_forward_sentiment(args)
     else:
         parser.print_help()
         sys.exit(1)

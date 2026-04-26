@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+import json
+import os
 
 import pandas as pd
 
@@ -305,6 +307,43 @@ class TestSignalReplay:
         assert result.loc[result["symbol"] == "AAPL", "score"].iloc[0] == 0.7
         assert result.loc[result["symbol"] == "MSFT", "score"].iloc[0] == 0.9
 
+    def test_replay_supports_explicit_walk_forward_score_column(self):
+        from backtesting.signal_replay import replay_signals
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL", "MSFT"],
+            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+            "final_score_walk_forward": [0.66, 0.91],
+            "final_score_sentiment": [0.80, 0.20],
+            "final_score": [0.70, 0.70],
+            "sector": ["Tech", "Tech"],
+        })
+
+        result = replay_signals(scores, None, score_column="final_score_walk_forward", max_positions=1)
+
+        selected = result[result["selected"]]
+        assert selected.iloc[0]["symbol"] == "MSFT"
+        assert selected.iloc[0]["score"] == 0.91
+
+    def test_replay_uses_walk_forward_by_default_and_exposes_score_source(self):
+        from backtesting.signal_replay import replay_signals
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL", "MSFT"],
+            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+            "final_score_walk_forward": [0.72, 0.88],
+            "final_score_sentiment": [0.95, 0.10],
+            "final_score": [0.60, 0.60],
+            "sector": ["Tech", "Tech"],
+        })
+
+        result = replay_signals(scores, None, max_positions=1)
+
+        selected = result[result["selected"]].iloc[0]
+        assert selected["symbol"] == "MSFT"
+        assert selected["score"] == 0.88
+        assert selected["score_source"] == "final_score_walk_forward"
+
 
 # ============================================================
 # test resilience policies
@@ -334,6 +373,41 @@ class TestResilience:
         })
         result = prepare_scores_for_sentiment_mode(None, scores, sentiment_mode="auto")  # type: ignore[arg-type]
         assert result.iloc[0]["final_score_sentiment"] == 0.7
+
+    def test_prepare_scores_applies_latest_walk_forward_weights_when_available(self, tmp_path):
+        from backtesting.resilience import prepare_scores_for_sentiment_mode
+
+        weights_dir = tmp_path / "sentiment_walk_forward" / "run_001"
+        weights_dir.mkdir(parents=True)
+        (weights_dir / "latest_best_weights.json").write_text(
+            json.dumps({
+                "sentiment_weight": 0.2,
+                "macro_weight": 0.1,
+                "quant_weight": 0.7,
+                "calibration_run_id": "wf-123",
+                "calibration_source": "walk_forward",
+            }),
+            encoding="utf-8",
+        )
+        scores = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "final_score": [0.7],
+            "final_score_sentiment": [0.9],
+            "sentiment_net_agg": [1.0],
+            "sector_impact_agg": [0.0],
+        })
+
+        result = prepare_scores_for_sentiment_mode(
+            None,  # type: ignore[arg-type]
+            scores,
+            sentiment_mode="auto",
+            walk_forward_artifacts_dir=tmp_path,
+        )
+
+        assert result.iloc[0]["final_score_walk_forward"] == 0.74
+        assert result.iloc[0]["score_source"] == "final_score_walk_forward"
+        assert result.iloc[0]["calibration_run_id"] == "wf-123"
 
     def test_prepare_predictions_ml_off_returns_empty(self):
         from backtesting.resilience import prepare_predictions_for_ml_mode
@@ -400,8 +474,8 @@ class TestResilience:
         assert len(result) == 2
         assert calls == [(
             "MSFT",
-            pd.Timestamp("2025-01-01 00:00:00"),
-            pd.Timestamp("2025-01-01 00:00:00"),
+            date(2025, 1, 1),
+            date(2025, 1, 1),
             True,
         )]
 
@@ -1149,6 +1223,61 @@ class TestCLI:
         assert args.horizons == "5,10"
         assert args.all_symbols is True
         assert args.output_dir == "artifacts/sentiment_calibration/run_1"
+
+    def test_parse_walk_forward_sentiment_command(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "walk-forward-sentiment",
+            "--start", "2020-01-01",
+            "--end", "2025-12-31",
+            "--top-n", "12",
+            "--horizons", "5,10",
+            "--min-train-days", "126",
+            "--test-days", "21",
+            "--step-days", "21",
+            "--max-positions", "8",
+            "--equity", "75000",
+            "--tp", "0.09",
+            "--ts", "0.04",
+            "--fees", "0.002",
+            "--all-symbols",
+            "--output-dir", "artifacts/sentiment_walk_forward/run_1",
+        ])
+        assert args.command == "walk-forward-sentiment"
+        assert args.min_train_days == 126
+        assert args.test_days == 21
+        assert args.step_days == 21
+        assert args.max_positions == 8
+        assert args.equity == 75000
+        assert args.tp == 0.09
+        assert args.ts == 0.04
+        assert args.fees == 0.002
+        assert args.all_symbols is True
+        assert args.output_dir == "artifacts/sentiment_walk_forward/run_1"
+
+
+class TestWalkForwardUtils:
+    def test_resolve_latest_walk_forward_weights_prefers_most_recent_file(self, tmp_path):
+        from backtesting.walk_forward import resolve_latest_walk_forward_weights
+
+        older = tmp_path / "run_old"
+        newer = tmp_path / "run_new"
+        older.mkdir()
+        newer.mkdir()
+        older_file = older / "latest_best_weights.json"
+        newer_file = newer / "champion_weights.json"
+        older_file.write_text(json.dumps({"sentiment_weight": 0.1, "macro_weight": 0.1, "quant_weight": 0.8}), encoding="utf-8")
+        newer_file.write_text(json.dumps({"sentiment_weight": 0.2, "macro_weight": 0.1, "quant_weight": 0.7}), encoding="utf-8")
+        os.utime(older_file, (1, 1))
+        os.utime(newer_file, (2, 2))
+
+        weights = resolve_latest_walk_forward_weights([tmp_path])
+
+        assert weights is not None
+        assert weights.sentiment_weight == 0.2
+        assert weights.quant_weight == 0.7
 
 
 class TestBacktestingRegistry:

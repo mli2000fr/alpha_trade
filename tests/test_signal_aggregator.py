@@ -179,6 +179,11 @@ def test_merge_handles_missing_signal_active_without_futurewarning(monkeypatch) 
     assert by_symbol["AAPL"]["sentiment_signal_norm"] == pytest.approx(0.8, rel=1e-6)
     assert by_symbol["AAPL"]["macro_signal_norm"] == pytest.approx(0.6, rel=1e-6)
     assert by_symbol["MSFT"]["macro_signal_norm"] == pytest.approx(0.6, rel=1e-6)
+    assert by_symbol["AAPL"]["company_idio_signal_norm"] == pytest.approx(0.8, rel=1e-6)
+    assert by_symbol["AAPL"]["macro_regime_signal_norm"] == pytest.approx(0.6, rel=1e-6)
+    assert by_symbol["AAPL"]["company_idio_component"] == pytest.approx(0.12, rel=1e-6)
+    assert by_symbol["AAPL"]["macro_regime_component"] == pytest.approx(0.06, rel=1e-6)
+    assert by_symbol["AAPL"]["quant_component"] == pytest.approx(0.525, rel=1e-6)
     assert by_symbol["MSFT"]["final_score_sentiment"] == pytest.approx(0.585, rel=1e-6)
 
 
@@ -207,9 +212,22 @@ def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
                 symbol TEXT PRIMARY KEY,
                 sentiment_net_agg REAL,
                 sector_impact_agg REAL,
+                company_idio_score REAL,
+                macro_regime_score REAL,
                 sentiment_signal_norm REAL,
                 macro_signal_norm REAL,
+                company_idio_signal_norm REAL,
+                macro_regime_signal_norm REAL,
+                company_idio_component REAL,
+                macro_regime_component REAL,
+                quant_component REAL,
                 final_score_sentiment REAL,
+                final_score_walk_forward REAL,
+                walk_forward_sentiment_weight REAL,
+                walk_forward_macro_weight REAL,
+                walk_forward_quant_weight REAL,
+                calibration_run_id TEXT,
+                calibration_source TEXT,
                 signal_active INTEGER,
                 major_event_flag_agg INTEGER,
                 macro_event_flag_agg INTEGER,
@@ -227,9 +245,22 @@ def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
                 "symbol": "AAPL",
                 "sentiment_net_agg": 0.8,
                 "sector_impact_agg": 0.3,
+                "company_idio_score": 0.8,
+                "macro_regime_score": 0.3,
                 "sentiment_signal_norm": 0.9,
                 "macro_signal_norm": 0.7,
+                "company_idio_signal_norm": 0.9,
+                "macro_regime_signal_norm": 0.7,
+                "company_idio_component": 0.18,
+                "macro_regime_component": 0.07,
+                "quant_component": 0.56,
                 "final_score_sentiment": 0.81,
+                "final_score_walk_forward": 0.83,
+                "walk_forward_sentiment_weight": 0.2,
+                "walk_forward_macro_weight": 0.1,
+                "walk_forward_quant_weight": 0.7,
+                "calibration_run_id": "wf-run-1",
+                "calibration_source": "walk_forward",
                 "signal_active": True,
                 "major_event_flag_agg": True,
                 "macro_event_flag_agg": False,
@@ -239,9 +270,22 @@ def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
                 "symbol": "MSFT",
                 "sentiment_net_agg": 0.0,
                 "sector_impact_agg": -0.1,
+                "company_idio_score": 0.0,
+                "macro_regime_score": -0.1,
                 "sentiment_signal_norm": 0.5,
                 "macro_signal_norm": 0.4,
+                "company_idio_signal_norm": 0.5,
+                "macro_regime_signal_norm": 0.4,
+                "company_idio_component": 0.075,
+                "macro_regime_component": 0.04,
+                "quant_component": 0.505,
                 "final_score_sentiment": 0.62,
+                "final_score_walk_forward": 0.61,
+                "walk_forward_sentiment_weight": 0.2,
+                "walk_forward_macro_weight": 0.1,
+                "walk_forward_quant_weight": 0.7,
+                "calibration_run_id": "wf-run-1",
+                "calibration_source": "walk_forward",
                 "signal_active": False,
                 "major_event_flag_agg": False,
                 "macro_event_flag_agg": True,
@@ -256,7 +300,9 @@ def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
     with engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT symbol, signal_active, major_event_flag_agg, macro_event_flag_agg, total_news, final_score_sentiment "
+                "SELECT symbol, signal_active, major_event_flag_agg, macro_event_flag_agg, total_news, "
+                "company_idio_score, macro_regime_score, company_idio_component, macro_regime_component, "
+                "quant_component, final_score_sentiment, final_score_walk_forward, calibration_run_id, calibration_source "
                 "FROM stock_scores ORDER BY symbol"
             )
         ).mappings().all()
@@ -268,7 +314,15 @@ def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
     assert by_symbol["MSFT"]["signal_active"] == 0
     assert by_symbol["MSFT"]["macro_event_flag_agg"] == 1
     assert by_symbol["MSFT"]["total_news"] == 0
+    assert by_symbol["AAPL"]["company_idio_score"] == pytest.approx(0.8)
+    assert by_symbol["AAPL"]["macro_regime_score"] == pytest.approx(0.3)
+    assert by_symbol["AAPL"]["company_idio_component"] == pytest.approx(0.18)
+    assert by_symbol["AAPL"]["macro_regime_component"] == pytest.approx(0.07)
+    assert by_symbol["AAPL"]["quant_component"] == pytest.approx(0.56)
     assert by_symbol["AAPL"]["final_score_sentiment"] == pytest.approx(0.81)
+    assert by_symbol["AAPL"]["final_score_walk_forward"] == pytest.approx(0.83)
+    assert by_symbol["AAPL"]["calibration_run_id"] == "wf-run-1"
+    assert by_symbol["AAPL"]["calibration_source"] == "walk_forward"
 
 
 def test_save_to_db_rejects_missing_required_columns() -> None:

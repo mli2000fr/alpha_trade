@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
-import pandas as pd
+from pandas import DataFrame
 
 from risk_management.config import RiskConfig
 from risk_management.constraints import PortfolioState
@@ -40,7 +41,7 @@ class PortfolioBuilder:
         prices: dict[str, PriceInfo],
         predictions: dict[str, PredictionInfo] | None = None,
         win_rates: dict[str, WinRateInfo] | None = None,
-        return_matrix: pd.DataFrame | None = None,
+        return_matrix: Optional[DataFrame] = None,
     ) -> list[PortfolioEntry]:
         """Construit la liste des PortfolioEntry."""
         predictions = predictions or {}
@@ -55,8 +56,20 @@ class PortfolioBuilder:
             hw = wr.directional_accuracy if wr else None
             conv = compute_conviction(c.score_used, pp, self._cfg.score_weight, self._cfg.prediction_weight)
             enriched.append(EnrichedCandidate(
-                symbol=c.symbol, sector=c.sector, score_used=c.score_used,
+                symbol=c.symbol, sector=c.sector, score_used=c.score_used, score_source=c.score_source,
                 predicted_proba=pp, historical_win_rate=hw, conviction_score=conv,
+                company_idio_score=c.company_idio_score,
+                macro_regime_score=c.macro_regime_score,
+                company_idio_signal_norm=c.company_idio_signal_norm,
+                macro_regime_signal_norm=c.macro_regime_signal_norm,
+                company_idio_component=c.company_idio_component,
+                macro_regime_component=c.macro_regime_component,
+                quant_component=c.quant_component,
+                walk_forward_sentiment_weight=c.walk_forward_sentiment_weight,
+                walk_forward_macro_weight=c.walk_forward_macro_weight,
+                walk_forward_quant_weight=c.walk_forward_quant_weight,
+                calibration_run_id=c.calibration_run_id,
+                calibration_source=c.calibration_source,
             ))
 
         # 2. Trier par conviction DESC
@@ -127,7 +140,7 @@ class PortfolioBuilder:
             # Compute Kelly-specific audit fields
             p_eff: float | None = None
             kf: float | None = None
-            if self._kelly_sizer is not None and ec.predicted_proba is not None or ec.historical_win_rate is not None:
+            if self._kelly_sizer is not None and (ec.predicted_proba is not None or ec.historical_win_rate is not None):
                 cfg = self._cfg
                 pp = ec.predicted_proba if ec.predicted_proba is not None else cfg.default_win_rate
                 wr = ec.historical_win_rate if ec.historical_win_rate is not None else cfg.default_win_rate
@@ -139,13 +152,25 @@ class PortfolioBuilder:
 
             entries.append(PortfolioEntry(
                 symbol=ec.symbol, sector=ec.sector, entry_price=pi.last_close,
-                score_used=ec.score_used, score_source="final_score_sentiment",
+                score_used=ec.score_used, score_source=ec.score_source,
                 atr_20=pi.atr_20, proposed_shares=sizing.proposed_shares,
                 approved_shares=approved, target_notional=notional, target_weight=weight,
                 decision=decision, decision_reason=reason,
                 conviction_score=ec.conviction_score, predicted_proba=ec.predicted_proba,
                 historical_win_rate=ec.historical_win_rate, effective_probability=p_eff,
                 kelly_fraction=kf, sizing_method=sizing.method,
+                company_idio_score=ec.company_idio_score,
+                macro_regime_score=ec.macro_regime_score,
+                company_idio_signal_norm=ec.company_idio_signal_norm,
+                macro_regime_signal_norm=ec.macro_regime_signal_norm,
+                company_idio_component=ec.company_idio_component,
+                macro_regime_component=ec.macro_regime_component,
+                quant_component=ec.quant_component,
+                walk_forward_sentiment_weight=ec.walk_forward_sentiment_weight,
+                walk_forward_macro_weight=ec.walk_forward_macro_weight,
+                walk_forward_quant_weight=ec.walk_forward_quant_weight,
+                calibration_run_id=ec.calibration_run_id,
+                calibration_source=ec.calibration_source,
             ))
 
         return entries
@@ -168,11 +193,23 @@ class PortfolioBuilder:
         atr = pi.atr_20 if pi else None
         return PortfolioEntry(
             symbol=ec.symbol, sector=ec.sector, entry_price=price,
-            score_used=ec.score_used, score_source="final_score_sentiment",
+            score_used=ec.score_used, score_source=ec.score_source,
             atr_20=atr, proposed_shares=proposed, approved_shares=approved,
             target_notional=approved * price, target_weight=0.0,
             decision=decision, decision_reason=reason,
             conviction_score=ec.conviction_score, predicted_proba=ec.predicted_proba,
             historical_win_rate=ec.historical_win_rate, sizing_method=sizing_method,
             correlation_blocker=correlation_blocker, correlation_value=correlation_value,
+            company_idio_score=ec.company_idio_score,
+            macro_regime_score=ec.macro_regime_score,
+            company_idio_signal_norm=ec.company_idio_signal_norm,
+            macro_regime_signal_norm=ec.macro_regime_signal_norm,
+            company_idio_component=ec.company_idio_component,
+            macro_regime_component=ec.macro_regime_component,
+            quant_component=ec.quant_component,
+            walk_forward_sentiment_weight=ec.walk_forward_sentiment_weight,
+            walk_forward_macro_weight=ec.walk_forward_macro_weight,
+            walk_forward_quant_weight=ec.walk_forward_quant_weight,
+            calibration_run_id=ec.calibration_run_id,
+            calibration_source=ec.calibration_source,
         )

@@ -1611,11 +1611,21 @@ class ScreenerDiagnosticsService:
         if candidates.empty:
             return candidates
         score_series = pd.to_numeric(candidates.get("final_score_sentiment"), errors="coerce")
+        walk_forward_series = pd.to_numeric(candidates.get("final_score_walk_forward"), errors="coerce")
         fallback_final = pd.to_numeric(candidates.get("final_score"), errors="coerce")
         fallback_total = pd.to_numeric(candidates.get("total_score"), errors="coerce")
-        candidates["score_for_portfolio"] = score_series
-        candidates.loc[candidates["score_for_portfolio"].isna(), "score_for_portfolio"] = fallback_final
-        candidates.loc[candidates["score_for_portfolio"].isna(), "score_for_portfolio"] = fallback_total
+        candidates["score_for_portfolio"] = walk_forward_series
+        candidates["score_for_portfolio_source"] = pd.NA
+        candidates.loc[walk_forward_series.notna(), "score_for_portfolio_source"] = "final_score_walk_forward"
+        missing_mask = candidates["score_for_portfolio"].isna()
+        candidates.loc[missing_mask, "score_for_portfolio"] = score_series
+        candidates.loc[missing_mask & score_series.notna(), "score_for_portfolio_source"] = "final_score_sentiment"
+        missing_mask = candidates["score_for_portfolio"].isna()
+        candidates.loc[missing_mask, "score_for_portfolio"] = fallback_final
+        candidates.loc[missing_mask & fallback_final.notna(), "score_for_portfolio_source"] = "final_score"
+        missing_mask = candidates["score_for_portfolio"].isna()
+        candidates.loc[missing_mask, "score_for_portfolio"] = fallback_total
+        candidates.loc[missing_mask & fallback_total.notna(), "score_for_portfolio_source"] = "total_score"
         candidates = candidates[candidates["score_for_portfolio"].notna()].copy()
         return candidates
 
@@ -1627,6 +1637,19 @@ class ScreenerDiagnosticsService:
                 symbol=str(row["symbol"]),
                 sector=str(row.get("sector") or "UNKNOWN"),
                 score_used=float(row["score_for_portfolio"]),
+                score_source=str(row.get("score_for_portfolio_source") or "final_score_sentiment"),
+                company_idio_score=float(row["company_idio_score"]) if row.get("company_idio_score") is not None else None,
+                macro_regime_score=float(row["macro_regime_score"]) if row.get("macro_regime_score") is not None else None,
+                company_idio_signal_norm=float(row["company_idio_signal_norm"]) if row.get("company_idio_signal_norm") is not None else None,
+                macro_regime_signal_norm=float(row["macro_regime_signal_norm"]) if row.get("macro_regime_signal_norm") is not None else None,
+                company_idio_component=float(row["company_idio_component"]) if row.get("company_idio_component") is not None else None,
+                macro_regime_component=float(row["macro_regime_component"]) if row.get("macro_regime_component") is not None else None,
+                quant_component=float(row["quant_component"]) if row.get("quant_component") is not None else None,
+                walk_forward_sentiment_weight=float(row["walk_forward_sentiment_weight"]) if row.get("walk_forward_sentiment_weight") is not None else None,
+                walk_forward_macro_weight=float(row["walk_forward_macro_weight"]) if row.get("walk_forward_macro_weight") is not None else None,
+                walk_forward_quant_weight=float(row["walk_forward_quant_weight"]) if row.get("walk_forward_quant_weight") is not None else None,
+                calibration_run_id=str(row["calibration_run_id"]) if row.get("calibration_run_id") is not None else None,
+                calibration_source=str(row["calibration_source"]) if row.get("calibration_source") is not None else None,
             )
             for row in selector_candidates.to_dict(orient="records")
         ]
