@@ -366,10 +366,9 @@ Tu dois produire une synthèse claire et exploitable, puis la sauvegarder dans l
 
 Utilise la consigne suivante selon le module audité :
 
-- si l’audit concerne l’exécution : sauvegarde la synthèse dans `prompt/execution/1.audit.md`
-- si l’audit concerne `dataIntegrityEngine` : sauvegarde la synthèse dans `prompt/dataIntegrityEngine/1.audit.md`
+- si l’audit concerne l’exécution : sauvegarde la synthèse dans `prompt/refactor/audit_execution.md`
+- si l’audit concerne `dataIntegrityEngine` : sauvegarde la synthèse dans `prompt/refactor/audit_dataIntegrityEngine.md`
 
-Si le module audité est différent, utilise un chemin cohérent dans `prompt/<module>/1.audit.md`.
 
 ---
 
@@ -381,12 +380,3 @@ Réalise d’abord un **audit complet de l’existant**, puis propose un **plan 
 
 Sois **exigeant**, **méthodique**, **professionnel** et **concret**.  
 Ton objectif est de faire émerger une infrastructure **solide, fiable, simple à maintenir et capable de supporter durablement les besoins du swing trading batch quotidien**.
-
----
-
-## Version courte d’introduction si tu veux lancer Copilot plus vite
-
-Si tu veux, tu peux aussi ajouter en tête une mini consigne comme celle-ci :
-
-> Audit ce projet comme si tu étais responsable de sa mise en production et de sa fiabilité à long terme. Ne fais pas une revue superficielle : identifie les vrais risques, les hypothèses fragiles, les erreurs silencieuses possibles, les lacunes de supervision et les améliorations prioritaires.
-
