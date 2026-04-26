@@ -415,11 +415,9 @@ def get_execution_events(exec_run_id: str | None = None) -> pd.DataFrame:
 @st.cache_data(ttl=60, show_spinner=False)
 def get_execution_orders(
     exec_run_id: str | None = None,
-    *,
-    allow_legacy_fallback: bool = True,
 ) -> pd.DataFrame:
     params = {"eid": exec_run_id} if exec_run_id else None
-    v2_query = """
+    query = """
         SELECT req.exec_run_id,
                req.risk_run_id,
                req.symbol,
@@ -460,44 +458,17 @@ def get_execution_orders(
                ON fill_agg.request_id = req.request_id
     """
     if exec_run_id:
-        v2_query += """
+        query += """
         WHERE req.exec_run_id = :eid
         ORDER BY CASE WHEN req.parent_request_id IS NULL THEN 0 ELSE 1 END,
                  COALESCE(req.parent_request_id, req.request_id), req.created_at DESC
         """
     else:
-        v2_query += """
+        query += """
         ORDER BY req.created_at DESC
         LIMIT 200
         """
-    df = safe_query(v2_query, params)
-    if not df.empty or not allow_legacy_fallback:
-        return df
-    if exec_run_id:
-        return safe_query(
-            """
-            SELECT exec_run_id, risk_run_id, symbol, intent_id, parent_intent_id,
-                   intent_role, broker_order_id, side, qty, filled_qty, avg_fill_price,
-                   order_type, limit_price, stop_price, trail_percent, decision_price,
-                   status, created_at, updated_at
-            FROM execution_orders
-            WHERE exec_run_id = :eid
-            ORDER BY CASE WHEN parent_intent_id IS NULL THEN 0 ELSE 1 END,
-                     COALESCE(parent_intent_id, intent_id), created_at DESC
-            """,
-            {"eid": exec_run_id},
-        )
-    return safe_query(
-        """
-        SELECT exec_run_id, risk_run_id, symbol, intent_id, parent_intent_id,
-               intent_role, broker_order_id, side, qty, filled_qty, avg_fill_price,
-               order_type, limit_price, stop_price, trail_percent, decision_price,
-               status, created_at, updated_at
-        FROM execution_orders
-        ORDER BY created_at DESC
-        LIMIT 200
-        """
-    )
+    return safe_query(query, params)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -568,11 +539,9 @@ def get_broker_positions(account_id: str | None = None) -> pd.DataFrame:
 @st.cache_data(ttl=60, show_spinner=False)
 def get_execution_fills(
     exec_run_id: str | None = None,
-    *,
-    allow_legacy_fallback: bool = True,
 ) -> pd.DataFrame:
     if exec_run_id:
-        df = safe_query(
+        return safe_query(
             """
             SELECT exec_run_id,
                    fill_id,
@@ -593,36 +562,26 @@ def get_execution_fills(
             """,
             {"eid": exec_run_id},
         )
-        if not df.empty or not allow_legacy_fallback:
-            return df
-    else:
-        df = safe_query(
-            """
-            SELECT exec_run_id,
-                   fill_id,
-                   broker_order_id,
-                   request_id AS intent_id,
-                   symbol,
-                   filled_qty,
-                   avg_fill_price,
-                   fill_timestamp,
-                   decision_price,
-                   slippage_bps,
-                   implementation_shortfall,
-                   account_id,
-                   created_at
-            FROM execution_broker_fills
-            ORDER BY fill_timestamp DESC
-            LIMIT 100
-            """
-        )
-        if not df.empty or not allow_legacy_fallback:
-            return df
-    if exec_run_id:
-        return safe_query("""
-            SELECT * FROM execution_fills WHERE exec_run_id = :eid ORDER BY fill_timestamp DESC
-        """, {"eid": exec_run_id})
-    return safe_query("SELECT * FROM execution_fills ORDER BY fill_timestamp DESC LIMIT 100")
+    return safe_query(
+        """
+        SELECT exec_run_id,
+               fill_id,
+               broker_order_id,
+               request_id AS intent_id,
+               symbol,
+               filled_qty,
+               avg_fill_price,
+               fill_timestamp,
+               decision_price,
+               slippage_bps,
+               implementation_shortfall,
+               account_id,
+               created_at
+        FROM execution_broker_fills
+        ORDER BY fill_timestamp DESC
+        LIMIT 100
+        """
+    )
 
 
 @st.cache_data(ttl=60, show_spinner=False)

@@ -416,7 +416,7 @@ def test_get_execution_orders_includes_stop_and_trailing_fields(monkeypatch):
     assert captured["params"] == {"eid": "exec-1"}
 
 
-def test_get_execution_orders_can_disable_legacy_fallback(monkeypatch):
+def test_get_execution_orders_does_not_query_legacy_tables(monkeypatch):
     import pandas as pd
 
     queries.get_execution_orders.clear()
@@ -428,12 +428,13 @@ def test_get_execution_orders_can_disable_legacy_fallback(monkeypatch):
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
-    df = queries.get_execution_orders(exec_run_id="exec-legacy", allow_legacy_fallback=False)
+    df = queries.get_execution_orders(exec_run_id="exec-legacy")
 
     assert isinstance(df, pd.DataFrame)
     assert df.empty
     assert len(calls) == 1
     assert "FROM execution_order_requests req" in calls[0][0]
+    assert "execution_orders" not in calls[0][0]
 
 
 def test_get_execution_fills_reads_v2_schema(monkeypatch):
@@ -456,7 +457,7 @@ def test_get_execution_fills_reads_v2_schema(monkeypatch):
     assert captured["params"] == {"eid": "exec-1"}
 
 
-def test_get_execution_fills_can_disable_legacy_fallback(monkeypatch):
+def test_get_execution_fills_does_not_query_legacy_tables(monkeypatch):
     import pandas as pd
 
     queries.get_execution_fills.clear()
@@ -468,12 +469,13 @@ def test_get_execution_fills_can_disable_legacy_fallback(monkeypatch):
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
-    df = queries.get_execution_fills(exec_run_id="exec-legacy", allow_legacy_fallback=False)
+    df = queries.get_execution_fills(exec_run_id="exec-legacy")
 
     assert isinstance(df, pd.DataFrame)
     assert df.empty
     assert len(calls) == 1
     assert "FROM execution_broker_fills" in calls[0][0]
+    assert "execution_fills" not in calls[0][0]
 
 
 def test_get_execution_account_constraints_falls_back_to_broker_snapshot(monkeypatch):

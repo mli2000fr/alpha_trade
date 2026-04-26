@@ -17,18 +17,13 @@ MYSQL_CONFIG = {
 }
 
 SQL_DIR = os.path.join(os.path.dirname(__file__))
-LEGACY_EXECUTION_SQL_BASENAMES = {
-    'execution_orders.sql',
-    'execution_fills.sql',
-}
 
 
 def get_all_sql_files():
-    """Récupère tous les fichiers .sql dans les sous-dossiers hors bundle legacy retiré."""
+    """Récupère tous les fichiers .sql canoniques dans les sous-dossiers."""
     return [
         f for f in glob.glob(os.path.join(SQL_DIR, '*', '*.sql'))
         if not os.path.basename(f).startswith('truncate_')
-        and os.path.basename(f) not in LEGACY_EXECUTION_SQL_BASENAMES
     ]
 
 

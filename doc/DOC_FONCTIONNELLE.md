@@ -167,11 +167,16 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 ### 2.7 Historique / reporting
 
 - **Table `execution_runs`** : chaque run d'exécution est tracé (statut, timestamps, métriques)
-- **Table `execution_fills`** : chaque fill reçu du broker avec slippage et implementation shortfall
+- **Table `execution_targets_snapshot`** : snapshot figé des cibles effectivement consommées par un run donné
+- **Table `execution_order_requests`** : intentions / requests canoniques soumises par le moteur, avec hiérarchie parent/enfant et traçabilité d'idempotence
+- **Table `execution_broker_orders`** : observation broker-side des ordres réellement soumis et de leur statut normalisé
+- **Table `execution_broker_fills`** : chaque fill reçu du broker avec slippage et implementation shortfall
+- **Tables `execution_positions` / `execution_position_lots`** : reconstruction des positions et des lots FIFO au niveau compte
+- **Table `execution_reconciliation_results`** : résultat actionnable de la réconciliation entre cibles, positions internes, broker et protections
 - **Table `execution_events`** : journal complet de chaque événement (type, message, payload JSON)
 - **Table `risk_decisions`** : chaque décision d'acceptation/rejet d'un candidat
 - **Table `portfolio_targets`** : portefeuille cible issu du risk management
-- **Table `broker_positions_snapshots`** : photo des positions broker après chaque run
+- **Tables `broker_account_snapshots` / `broker_positions_snapshots`** : photos du compte et des positions broker après chaque run
 - **TCA (Transaction Cost Analysis)** : slippage moyen, max, implementation shortfall agrégé
 - **Rapport de backtest** : exporte aussi des diagnostics métier sur les contraintes de compte (`day trades exécutés`, `sorties same-day bloquées`, `entrées bloquées faute de cash settled`)
 

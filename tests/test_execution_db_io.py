@@ -565,18 +565,6 @@ class TestExecutionDbIo:
         keys = repo.load_submitted_idempotency_keys("e1")
         assert "k1" in keys
 
-    def test_insert_fill(self, repo) -> None:
-        d = {
-            "exec_run_id": "e1", "fill_id": "f1", "broker_order_id": "bo1",
-            "intent_id": "i1", "symbol": "AAPL", "filled_qty": 100,
-            "avg_fill_price": 150.5, "fill_timestamp": datetime.now(timezone.utc),
-            "decision_price": 150.0, "slippage_bps": 33.3, "implementation_shortfall": 50.0,
-        }
-        repo.insert_execution_fill(d)
-        with repo.engine.connect() as conn:
-            row = conn.execute(text("SELECT * FROM execution_fills WHERE fill_id = 'f1'")).mappings().first()
-        assert row is not None
-
     def test_upsert_execution_order_request_tracks_attempts_by_business_key(self, repo) -> None:
         intent_v1 = self._intent("exec-1", "req-1", "submit-1")
         intent_v2 = self._intent("exec-2", "req-2", "submit-2")
@@ -856,7 +844,8 @@ class TestExecutionDbIo:
         }
         repo.insert_execution_event(d)
         with repo.engine.connect() as conn:
-            row = conn.execute(text("SELECT * FROM execution_events WHERE event_id = 'ev1'")).mappings().first()
+            row = conn.execute(text("SELECT * FROM execution_events WHERE event_id = 'ev1'"))\
+                .mappings().first()
         assert row is not None
 
     def test_snapshot_positions(self, repo) -> None:

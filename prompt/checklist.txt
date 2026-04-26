@@ -11,6 +11,7 @@ backTest: fait mais à revoir
 tu es expert python et financier. tu va travailler sur ce projet alpha trade, dédié au swing trade, en utilisant les données de marché fournies par Alpaca.
 l'objectif est de construire une infrastructure robuste et fiable pour le traitement des données de marché, l'exécution des stratégies de trading, et la gestion des positions.
 Tu lit les doc (du répertoire doc) ainsi les codes sources (car les doc ne sont pas forcément tous détaillés et à jour),
+tu analyse module par module, pipeline par pipeline, pour identifier les points faibles, les risques potentiels, et les opportunités d'amélioration.
 Pour le context:
 je vais réinitialiser toutes les tables pour partir sur une base saine, donc pas besoin de faire les modificaiton pour garantir la rétro compatibilité avec les données existants.
 pour chaque symbol, on peut avoir jusquau 10 ans de données (une ligne/bar par jour), je ne fais que de swing trade (cash parincipalement),

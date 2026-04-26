@@ -286,7 +286,7 @@ Le bridge Python impose plusieurs garde-fous :
 - **news/** : `news_raw`, `news_sentiment`, `news_ticker_map`, `macro_event_audit`, `ticker_daily_sentiment_features`, `sector_daily_sentiment_features`, `news_ingestion_checkpoint`
 - **ml/** : `model_registry`, `model_training_run`, `model_metrics`, `model_predictions`
 - **risk/** : `risk_decisions` ★, `portfolio_targets` ★
-- **execution/** : `execution_runs` ★, `execution_orders`, `execution_fills`, `execution_events`, `broker_positions_snapshots` ★
+- **execution/** : `execution_runs` ★, `execution_targets_snapshot` ★, `execution_order_requests` ★, `execution_broker_orders`, `execution_broker_fills`, `execution_positions` ★, `execution_position_lots` ★, `execution_reconciliation_results` ★, `execution_locks` ★, `execution_events`, `broker_account_snapshots` ★, `broker_positions_snapshots` ★
 - **corporate_actions/** : `corporate_actions_events`, `corporate_actions_applications` ★, `portfolio_cash_ledger` ★
 
 > ★ = tables avec colonne `account_id VARCHAR(32)` pour le support multi-comptes. Migration : `database/sql/migration_add_account_id.sql` ou Alembic `0002_add_account_id`.
@@ -379,7 +379,7 @@ Positionnement technique :
 
 Séquence type :
 
-1. `Execution` écrit `execution_runs`, `execution_orders`, `execution_events` et les instantanés broker ;
+1. `Execution` écrit `execution_runs`, fige `execution_targets_snapshot`, persiste `execution_order_requests`, `execution_broker_orders`, `execution_broker_fills`, `execution_events` et les instantanés broker ;
 2. le watcher lit les ordres/protections en attente depuis le repository d'exécution ;
 3. il vérifie les conditions de transition stop initial → trailing stop ;
 4. il annule / soumet les ordres broker nécessaires ;
@@ -485,7 +485,9 @@ $env:FINNHUB_API_KEY = "..."   # optionnel
 
 ### Créer les tables
 
-Exécuter les `.sql` de `database/sql/` dans MySQL (stock/ → news/ → ml/ → risk/ → execution/ → corporate_actions/).
+Utiliser le bundle SQL cible de `database/sql/` (stock/ → news/ → ml/ → risk/ → execution/ → corporate_actions/), par exemple via `database/sql/all_tables.py`.
+
+Dans le périmètre `execution/`, le cutover canonique n'installe plus les anciens fichiers `execution_orders.sql` et `execution_fills.sql` : le bootstrap cible repose désormais sur `execution_targets_snapshot`, `execution_order_requests`, `execution_broker_orders`, `execution_broker_fills`, `execution_positions`, `execution_position_lots`, `execution_reconciliation_results`, `execution_locks`, `execution_events`, `broker_account_snapshots` et `broker_positions_snapshots`.
 
 ### Pipeline complet
 

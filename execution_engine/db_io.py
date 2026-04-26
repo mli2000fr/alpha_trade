@@ -124,18 +124,6 @@ class ExecutionRepository:
             rows = conn.execute(query, {"exec_run_id": exec_run_id}).mappings().all()
         return {str(r["business_key"]) for r in rows}
 
-    def load_execution_orders(self, exec_run_id: str) -> list[BrokerOrder]:
-        query = text("""
-            SELECT broker_order_id, client_order_id, intent_id, symbol, side,
-                   qty, filled_qty, avg_fill_price, status, order_type,
-                   limit_price, stop_price, trail_percent, created_at, updated_at
-            FROM execution_orders
-            WHERE exec_run_id = :exec_run_id
-        """)
-        with self.engine.connect() as conn:
-            rows = conn.execute(query, {"exec_run_id": exec_run_id}).mappings().all()
-        return [self._row_to_broker_order(r) for r in rows]
-
     def find_order_request_by_submission_key(
         self,
         *,
@@ -330,60 +318,6 @@ class ExecutionRepository:
         with self.engine.connect() as conn:
             v2_rows = conn.execute(v2_query, {"parent_intent_id": parent_intent_id}).mappings().all()
         return [self._row_to_broker_order(row) for row in v2_rows]
-
-    def _load_pending_protection_watch_items_legacy(
-        self,
-        *,
-        exec_run_id: str | None,
-        account_id: str | None,
-        limit: int,
-    ) -> list[ProtectionWatchItem]:
-        query = text(f"""
-            SELECT
-                stop.exec_run_id AS source_exec_run_id,
-                stop.risk_run_id AS risk_run_id,
-                er.trade_date AS trade_date,
-                er.account_id AS account_id,
-                er.broker_mode AS broker_mode,
-                stop.symbol AS symbol,
-                stop.parent_intent_id AS parent_intent_id,
-                stop.intent_id AS initial_stop_intent_id,
-                COALESCE(stop.broker_order_id, '') AS initial_stop_broker_order_id,
-                COALESCE(fill.filled_qty, stop.qty, 0) AS fill_qty,
-                COALESCE(fill.avg_fill_price, parent.decision_price, pt.entry_price, stop.decision_price, 0) AS fill_price,
-                pt.stop_price_initial AS stop_price_initial,
-                pt.risk_per_share AS risk_per_share,
-                pt.initial_risk_dollars AS initial_risk_dollars,
-                pt.target_notional AS target_notional
-            FROM execution_orders stop
-            INNER JOIN execution_runs er
-                    ON er.exec_run_id = stop.exec_run_id
-            INNER JOIN execution_orders parent
-                    ON parent.exec_run_id = stop.exec_run_id
-                   AND parent.intent_id = stop.parent_intent_id
-            LEFT JOIN execution_fills fill
-                   ON fill.exec_run_id = stop.exec_run_id
-                  AND fill.intent_id = stop.parent_intent_id
-            LEFT JOIN portfolio_targets pt
-                   ON pt.run_id = stop.risk_run_id
-                  AND pt.symbol = stop.symbol
-            LEFT JOIN execution_orders trailing
-                   ON trailing.exec_run_id = stop.exec_run_id
-                  AND trailing.parent_intent_id = stop.parent_intent_id
-                  AND trailing.intent_role = 'trailing_stop'
-                  AND trailing.status NOT IN ('CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
-            WHERE stop.intent_role = 'initial_stop'
-              AND stop.status NOT IN ('FILLED', 'CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
-              AND trailing.intent_id IS NULL
-              AND (:exec_run_id IS NULL OR stop.exec_run_id = :exec_run_id)
-              AND (:account_id IS NULL OR er.account_id = :account_id)
-            ORDER BY stop.created_at ASC
-            LIMIT {int(limit)}
-        """)
-        params = {"exec_run_id": exec_run_id, "account_id": account_id}
-        with self.engine.connect() as conn:
-            rows = conn.execute(query, params).mappings().all()
-        return self._rows_to_protection_watch_items(rows)
 
     def load_pending_protection_watch_items(
         self,
@@ -690,30 +624,6 @@ class ExecutionRepository:
                 "error_message": error_message,
             })
 
-    def upsert_execution_order(self, order_dict: dict[str, Any]) -> None:
-        stmt = text("""
-            INSERT INTO execution_orders
-                (exec_run_id, risk_run_id, symbol, intent_id, parent_intent_id,
-                 intent_role, idempotency_key, broker_mode, broker_order_id,
-                 client_order_id, side, qty, filled_qty, avg_fill_price,
-                 order_type, limit_price, stop_price, trail_percent,
-                 decision_price, status, created_at, updated_at)
-            VALUES
-                (:exec_run_id, :risk_run_id, :symbol, :intent_id, :parent_intent_id,
-                 :intent_role, :idempotency_key, :broker_mode, :broker_order_id,
-                 :client_order_id, :side, :qty, :filled_qty, :avg_fill_price,
-                 :order_type, :limit_price, :stop_price, :trail_percent,
-                 :decision_price, :status, :created_at, :updated_at)
-            ON DUPLICATE KEY UPDATE
-                broker_order_id = VALUES(broker_order_id),
-                filled_qty = VALUES(filled_qty),
-                avg_fill_price = VALUES(avg_fill_price),
-                status = VALUES(status),
-                updated_at = VALUES(updated_at)
-        """)
-        with self.engine.begin() as conn:
-            conn.execute(stmt, order_dict)
-
     def _next_request_attempt_no(self, account_id: str, business_key: str) -> int:
         stmt = text("""
             SELECT COALESCE(MAX(attempt_no), 0)
@@ -981,19 +891,6 @@ class ExecutionRepository:
                 "created_at": datetime.now(timezone.utc),
             })
 
-    def insert_execution_fill(self, fill_dict: dict[str, Any]) -> None:
-        stmt = text("""
-            INSERT INTO execution_fills
-                (exec_run_id, fill_id, broker_order_id, intent_id, symbol,
-                 filled_qty, avg_fill_price, fill_timestamp,
-                 decision_price, slippage_bps, implementation_shortfall)
-            VALUES
-                (:exec_run_id, :fill_id, :broker_order_id, :intent_id, :symbol,
-                 :filled_qty, :avg_fill_price, :fill_timestamp,
-                 :decision_price, :slippage_bps, :implementation_shortfall)
-        """)
-        with self.engine.begin() as conn:
-            conn.execute(stmt, fill_dict)
 
     def insert_execution_event(self, event_dict: dict[str, Any]) -> None:
         stmt = text("""

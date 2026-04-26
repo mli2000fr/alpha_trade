@@ -175,7 +175,7 @@ def render() -> None:
         )
 
     # --- Ordres d'exécution / protections ---
-    orders = get_execution_orders(selected, allow_legacy_fallback=False)
+    orders = get_execution_orders(selected)
     if not orders.empty:
         st.subheader("📋 Requests et ordres broker")
         show_dataframe(orders, height=260)
@@ -199,7 +199,7 @@ def render() -> None:
 
     # --- Fills ---
     st.subheader("💰 Exécutions")
-    fills = get_execution_fills(selected, allow_legacy_fallback=False)
+    fills = get_execution_fills(selected)
     if not fills.empty and "slippage_bps" in fills.columns:
         avg_slip = fills["slippage_bps"].mean()
         st.metric("Slippage moyen (bps)", f"{avg_slip:.1f}")
