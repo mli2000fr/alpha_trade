@@ -136,6 +136,8 @@ def test_submit_children_submits_take_profit_and_fallback_trailing_without_targe
     assert submitted_children[0].intent_role == "take_profit"
     assert submitted_children[1].intent_role == "trailing_stop"
     assert repo.upsert_execution_order.call_count == 2
+    assert repo.upsert_execution_order_request_from_intent.call_count == 2
+    assert repo.upsert_execution_broker_order.call_count == 2
     assert len(events) == 1
     assert events[0].event_type == EventType.CHILDREN_SUBMITTED
 

@@ -155,6 +155,8 @@ class TestExecutor:
         metrics = executor.execute_run(risk_run_id="r1")
         broker.submit_intent.assert_not_called()
         assert metrics["submitted"] == 1
+        assert repo.upsert_execution_order_request_from_intent.called
+        assert repo.snapshot_broker_account.called
 
     def test_execute_run_scopes_targets_and_lock_to_resolved_account_id(self) -> None:
         cfg = ExecutionConfig(dry_run=True, allow_outside_rth=True, account_id="live1")
@@ -244,6 +246,8 @@ class TestExecutor:
         broker.poll_order_status.return_value = partial
         metrics = executor.execute_run(risk_run_id="r1")
         assert metrics["filled"] == 1
+        assert repo.upsert_execution_broker_order.called
+        assert repo.insert_execution_broker_fill.called
 
     def test_slippage_alert(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, max_slippage_bps=5)

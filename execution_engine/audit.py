@@ -53,7 +53,7 @@ def order_intent_to_db_dict(intent: OrderIntent, exec_run_id: str, status: str =
         "idempotency_key": intent.idempotency_key,
         "broker_mode": intent.broker_mode,
         "broker_order_id": None,
-        "client_order_id": intent.idempotency_key,
+        "client_order_id": intent.submission_key or intent.idempotency_key,
         "side": intent.side,
         "qty": intent.qty,
         "filled_qty": 0.0,

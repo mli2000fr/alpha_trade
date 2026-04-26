@@ -11,6 +11,7 @@ from datetime import date, datetime
 
 class OrderStatus:
     NEW = "NEW"
+    SIMULATED = "SIMULATED"
     SUBMITTED = "SUBMITTED"
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     FILLED = "FILLED"
@@ -110,6 +111,31 @@ class OrderIntent:
     idempotency_key: str
     decision_price: float
     stop_price: float | None = None
+    submission_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionOrderRequest:
+    """Décision d'ordre interne historisée côté OMS."""
+    request_id: str
+    exec_run_id: str
+    account_id: str
+    risk_run_id: str
+    symbol: str
+    side: str
+    target_qty: float
+    order_type: str
+    business_key: str
+    submission_key: str | None
+    attempt_no: int
+    intent_role: str
+    decision_price: float
+    parent_request_id: str | None = None
+    limit_price: float | None = None
+    stop_price: float | None = None
+    trail_percent: float | None = None
+    status: str = OrderStatus.NEW
+    failure_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +171,47 @@ class ExecutionFill:
     decision_price: float
     slippage_bps: float
     implementation_shortfall: float
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerOrderObservation:
+    """Observation persistée d'un ordre broker pour une request OMS."""
+    request_id: str
+    exec_run_id: str
+    account_id: str
+    broker_order_id: str | None
+    client_order_id: str | None
+    symbol: str
+    side: str
+    qty: float
+    filled_qty: float
+    avg_fill_price: float | None
+    raw_status: str
+    normalized_status: str
+    order_type: str
+    limit_price: float | None = None
+    stop_price: float | None = None
+    trail_percent: float | None = None
+    raw_payload_json: str | None = None
+    raw_response_json: str | None = None
+    submitted_at: datetime | None = None
+    last_seen_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerAccountSnapshot:
+    """Snapshot broker de compte pour audit capacité et cash."""
+    exec_run_id: str
+    account_id: str
+    broker_mode: str
+    snapshot_kind: str
+    equity: float
+    cash: float
+    settled_cash: float
+    buying_power: float
+    daytrade_count: int
+    raw_payload_json: str | None = None
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -59,6 +59,13 @@ class TestBuildEntryIntents:
         intents = build_entry_intents([_target("AAPL"), _target("MSFT")], cfg, "run1")
         assert intents[0].idempotency_key != intents[1].idempotency_key
 
+    def test_submission_key_unique_per_exec_run_while_business_key_stays_stable(self) -> None:
+        cfg = ExecutionConfig()
+        i1 = build_entry_intents([_target()], cfg, "run1")[0]
+        i2 = build_entry_intents([_target()], cfg, "run2")[0]
+        assert i1.idempotency_key == i2.idempotency_key
+        assert i1.submission_key != i2.submission_key
+
 
 class TestBuildChildren:
     def test_take_profit(self) -> None:
@@ -150,6 +157,7 @@ class TestIntentToPayload:
         assert p["time_in_force"] == "day"
         assert p["qty"] == "100"
         assert "limit_price" not in p
+        assert p["client_order_id"] == intent.submission_key
 
     def test_limit(self) -> None:
         cfg = ExecutionConfig(entry_order_type="limit")

@@ -18,7 +18,7 @@ def _idempotency_key(run_id: str, symbol: str, role: str, side: str, qty: float,
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _alpaca_client_order_id(exec_run_id: str, symbol: str, role: str, side: str, qty: float) -> str:
+def _submission_key(exec_run_id: str, symbol: str, role: str, side: str, qty: float) -> str:
     """
     client_order_id unique par execution run envoye a Alpaca.
     Inclut exec_run_id pour eviter le 403 'client_order_id already in use'
@@ -28,6 +28,10 @@ def _alpaca_client_order_id(exec_run_id: str, symbol: str, role: str, side: str,
     """
     raw = f"{exec_run_id}|{symbol}|{role}|{side}|{qty}"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def _alpaca_client_order_id(exec_run_id: str, symbol: str, role: str, side: str, qty: float) -> str:
+    return _submission_key(exec_run_id, symbol, role, side, qty)
 
 
 def resolve_initial_stop_price(reference_price: float, target: ExecutionTarget | None = None) -> float | None:
@@ -94,6 +98,7 @@ def build_entry_intents(
             ),
             decision_price=t.entry_price,
             stop_price=None,
+            submission_key=_submission_key(exec_run_id, t.symbol, IntentRole.ENTRY, "buy", qty),
         ))
     return intents
 
@@ -129,6 +134,7 @@ def build_take_profit_intent(
         ),
         decision_price=parent.decision_price,
         stop_price=None,
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TAKE_PROFIT, "sell", fill_qty),
     )
 
 
@@ -163,6 +169,7 @@ def build_initial_stop_intent(
         ),
         decision_price=parent.decision_price,
         stop_price=stop_price,
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, "sell", fill_qty),
     )
 
 
@@ -200,6 +207,7 @@ def build_trailing_stop_intent(
         ),
         decision_price=parent.decision_price,
         stop_price=None,
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TRAILING_STOP, "sell", fill_qty),
     )
 
 
@@ -229,6 +237,7 @@ def build_rebalance_sell_intent(
         idempotency_key=_idempotency_key(exec_run_id, symbol, IntentRole.EXIT, "sell", qty, broker_mode),
         decision_price=current_price,
         stop_price=None,
+        submission_key=_submission_key(exec_run_id, symbol, IntentRole.EXIT, "sell", qty),
     )
 
 
@@ -258,6 +267,7 @@ def build_rebalance_buy_intent(
         idempotency_key=_idempotency_key(exec_run_id, symbol, IntentRole.REBALANCE_BUY, "buy", qty, broker_mode),
         decision_price=current_price,
         stop_price=None,
+        submission_key=_submission_key(exec_run_id, symbol, IntentRole.REBALANCE_BUY, "buy", qty),
     )
 
 
@@ -267,7 +277,7 @@ def intent_to_alpaca_payload(intent: OrderIntent) -> dict[str, str]:
     pour garantir l'unicite cote Alpaca meme en cas de relance.
     """
     tif = "day" if intent.intent_role in (IntentRole.ENTRY, IntentRole.EXIT, IntentRole.REBALANCE_BUY) else "gtc"
-    alpaca_client_id = _alpaca_client_order_id(
+    alpaca_client_id = intent.submission_key or _alpaca_client_order_id(
         intent.exec_run_id, intent.symbol, intent.intent_role, intent.side, intent.qty
     )
     payload: dict[str, str] = {

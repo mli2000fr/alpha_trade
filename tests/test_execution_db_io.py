@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from execution_engine.db_io import ExecutionRepository
+from execution_engine.models import BrokerOrder, ExecutionFill, OrderIntent, OrderStatus
 @pytest.fixture()
 def engine():
     e = create_engine("sqlite:///:memory:")
@@ -76,6 +77,77 @@ def engine():
             )
         """))
         conn.execute(text("""
+            CREATE TABLE execution_order_requests (
+                request_id VARCHAR(32) PRIMARY KEY,
+                exec_run_id VARCHAR(32) NOT NULL,
+                account_id VARCHAR(64) NOT NULL,
+                risk_run_id VARCHAR(32) NOT NULL,
+                symbol VARCHAR(20) NOT NULL,
+                side VARCHAR(10) NOT NULL,
+                target_qty DOUBLE NOT NULL,
+                order_type VARCHAR(20) NOT NULL,
+                business_key VARCHAR(64) NOT NULL,
+                submission_key VARCHAR(64),
+                attempt_no INT NOT NULL,
+                parent_request_id VARCHAR(32),
+                intent_role VARCHAR(20) NOT NULL,
+                decision_price DOUBLE,
+                limit_price DOUBLE,
+                stop_price DOUBLE,
+                trail_percent DOUBLE,
+                status VARCHAR(20) NOT NULL,
+                failure_reason VARCHAR(255),
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                UNIQUE(account_id, business_key, attempt_no),
+                UNIQUE(submission_key)
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE execution_broker_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id VARCHAR(32) NOT NULL,
+                exec_run_id VARCHAR(32) NOT NULL,
+                account_id VARCHAR(64) NOT NULL,
+                broker_order_id VARCHAR(64) NOT NULL UNIQUE,
+                client_order_id VARCHAR(64),
+                symbol VARCHAR(20) NOT NULL,
+                side VARCHAR(10) NOT NULL,
+                qty DOUBLE NOT NULL,
+                filled_qty DOUBLE NOT NULL,
+                avg_fill_price DOUBLE,
+                raw_status VARCHAR(32) NOT NULL,
+                normalized_status VARCHAR(32) NOT NULL,
+                order_type VARCHAR(20) NOT NULL,
+                limit_price DOUBLE,
+                stop_price DOUBLE,
+                trail_percent DOUBLE,
+                raw_payload_json TEXT,
+                raw_response_json TEXT,
+                submitted_at TIMESTAMP,
+                last_seen_at TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE execution_broker_fills (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fill_id VARCHAR(32) NOT NULL UNIQUE,
+                exec_run_id VARCHAR(32) NOT NULL,
+                account_id VARCHAR(64) NOT NULL,
+                broker_order_id VARCHAR(64) NOT NULL,
+                request_id VARCHAR(32) NOT NULL,
+                symbol VARCHAR(20) NOT NULL,
+                filled_qty DOUBLE NOT NULL,
+                avg_fill_price DOUBLE NOT NULL,
+                fill_timestamp TIMESTAMP NOT NULL,
+                decision_price DOUBLE,
+                slippage_bps DOUBLE,
+                implementation_shortfall DOUBLE,
+                raw_fill_json TEXT,
+                created_at TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
             CREATE TABLE execution_fills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 exec_run_id VARCHAR(32), fill_id VARCHAR(32) UNIQUE,
@@ -83,6 +155,22 @@ def engine():
                 symbol VARCHAR(20), filled_qty DOUBLE, avg_fill_price DOUBLE,
                 fill_timestamp TIMESTAMP, decision_price DOUBLE,
                 slippage_bps DOUBLE, implementation_shortfall DOUBLE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE broker_account_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                exec_run_id VARCHAR(32) NOT NULL,
+                account_id VARCHAR(64) NOT NULL,
+                broker_mode VARCHAR(10) NOT NULL,
+                snapshot_kind VARCHAR(20) NOT NULL,
+                equity DOUBLE NOT NULL,
+                cash DOUBLE NOT NULL,
+                settled_cash DOUBLE NOT NULL,
+                buying_power DOUBLE NOT NULL,
+                daytrade_count INT NOT NULL,
+                raw_payload_json TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
@@ -115,6 +203,26 @@ def repo(engine):
 
 
 class TestExecutionDbIo:
+    @staticmethod
+    def _intent(exec_run_id: str, request_id: str, submission_key: str) -> OrderIntent:
+        return OrderIntent(
+            intent_id=request_id,
+            risk_run_id="r1",
+            exec_run_id=exec_run_id,
+            symbol="AAPL",
+            side="buy",
+            qty=100.0,
+            order_type="market",
+            limit_price=None,
+            trail_percent=None,
+            broker_mode="paper",
+            parent_intent_id=None,
+            intent_role="entry",
+            idempotency_key="business-aapl-entry",
+            decision_price=150.0,
+            submission_key=submission_key,
+        )
+
     def test_load_portfolio_targets(self, engine, repo) -> None:
         with engine.begin() as conn:
             conn.execute(text("""
@@ -292,6 +400,92 @@ class TestExecutionDbIo:
         with repo.engine.connect() as conn:
             row = conn.execute(text("SELECT * FROM execution_fills WHERE fill_id = 'f1'")).mappings().first()
         assert row is not None
+
+    def test_upsert_execution_order_request_tracks_attempts_by_business_key(self, repo) -> None:
+        intent_v1 = self._intent("exec-1", "req-1", "submit-1")
+        intent_v2 = self._intent("exec-2", "req-2", "submit-2")
+
+        attempt_1 = repo.upsert_execution_order_request_from_intent(intent_v1, account_id="acct-1", status=OrderStatus.SUBMITTED)
+        attempt_2 = repo.upsert_execution_order_request_from_intent(intent_v2, account_id="acct-1", status=OrderStatus.SUBMITTED)
+
+        assert attempt_1 == 1
+        assert attempt_2 == 2
+        with repo.engine.connect() as conn:
+            rows = conn.execute(text("SELECT request_id, attempt_no, submission_key FROM execution_order_requests ORDER BY attempt_no")).mappings().all()
+        assert [row["request_id"] for row in rows] == ["req-1", "req-2"]
+        assert [row["attempt_no"] for row in rows] == [1, 2]
+        assert [row["submission_key"] for row in rows] == ["submit-1", "submit-2"]
+
+    def test_upsert_execution_broker_order_and_broker_fill(self, repo) -> None:
+        intent = self._intent("exec-1", "req-1", "submit-1")
+        repo.upsert_execution_order_request_from_intent(intent, account_id="acct-1", status=OrderStatus.SUBMITTED)
+        now = datetime.now(timezone.utc)
+        order = BrokerOrder(
+            broker_order_id="bo-1",
+            client_order_id="submit-1",
+            intent_id="req-1",
+            symbol="AAPL",
+            side="buy",
+            qty=100.0,
+            filled_qty=100.0,
+            avg_fill_price=150.25,
+            status=OrderStatus.FILLED,
+            order_type="market",
+            limit_price=None,
+            stop_price=None,
+            trail_percent=None,
+            created_at=now,
+            updated_at=now,
+        )
+        fill = ExecutionFill(
+            fill_id="fill-1",
+            broker_order_id="bo-1",
+            intent_id="req-1",
+            symbol="AAPL",
+            filled_qty=100.0,
+            avg_fill_price=150.25,
+            fill_timestamp=now,
+            decision_price=150.0,
+            slippage_bps=16.7,
+            implementation_shortfall=25.0,
+        )
+
+        repo.upsert_execution_broker_order(intent, order, account_id="acct-1", raw_payload={"client_order_id": "submit-1"})
+        repo.insert_execution_broker_fill(fill, account_id="acct-1", raw_fill={"fill_id": "fill-1"})
+
+        with repo.engine.connect() as conn:
+            broker_order_row = conn.execute(text("SELECT broker_order_id, normalized_status FROM execution_broker_orders WHERE broker_order_id = 'bo-1'"))\
+                .mappings().first()
+            broker_fill_row = conn.execute(text("SELECT fill_id, request_id, exec_run_id FROM execution_broker_fills WHERE fill_id = 'fill-1'"))\
+                .mappings().first()
+        assert broker_order_row is not None
+        assert broker_order_row["normalized_status"] == OrderStatus.FILLED
+        assert broker_fill_row is not None
+        assert broker_fill_row["request_id"] == "req-1"
+        assert broker_fill_row["exec_run_id"] == "exec-1"
+
+    def test_snapshot_broker_account(self, repo) -> None:
+        repo.snapshot_broker_account(
+            "exec-1",
+            account_id="acct-1",
+            broker_mode="paper",
+            snapshot={
+                "equity": 100_000.0,
+                "cash": 75_000.0,
+                "settled_cash": 70_000.0,
+                "buying_power": 150_000.0,
+                "daytrade_count": 1,
+            },
+        )
+
+        with repo.engine.connect() as conn:
+            row = conn.execute(text("SELECT account_id, snapshot_kind, equity, settled_cash FROM broker_account_snapshots"))\
+                .mappings().first()
+        assert row is not None
+        assert row["account_id"] == "acct-1"
+        assert row["snapshot_kind"] == "preflight"
+        assert row["equity"] == 100_000.0
+        assert row["settled_cash"] == 70_000.0
 
     def test_insert_event(self, repo) -> None:
         d = {

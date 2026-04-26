@@ -44,6 +44,7 @@ from execution_engine.order_intents import (
     build_trailing_stop_intent,
     build_rebalance_sell_intent,
     build_rebalance_buy_intent,
+    intent_to_alpaca_payload,
     resolve_initial_stop_price,
     resolve_trailing_activation_price,
 )
@@ -241,6 +242,7 @@ class ProductionExecutor:
                     "remaining_day_trade_slots": account_state.remaining_day_trade_slots,
                 },
             ))
+            self._snapshot_account_constraints(exec_run_id, account_state)
 
             # Phase 2b — Corporate actions : alerter sur splits/dividendes pending
             try:
@@ -309,6 +311,7 @@ class ProductionExecutor:
                     time.sleep(self._cfg.inter_order_delay_ms / 1000.0)
 
                 # Persist intent
+                self._persist_order_request_state(intent, status=OrderStatus.NEW)
                 db_dict = order_intent_to_db_dict(intent, exec_run_id)
                 try:
                     self._repo.upsert_execution_order(db_dict)
@@ -316,6 +319,7 @@ class ProductionExecutor:
                     LOGGER.debug("Could not persist intent (table may not exist in test)")
 
                 if self._cfg.dry_run:
+                    self._persist_order_request_state(intent, status=OrderStatus.SIMULATED)
                     events.append(make_event(
                         exec_run_id, EventType.DRY_RUN_SIMULATED,
                         f"DRY RUN: {intent.symbol} {intent.side} {intent.qty}",
@@ -348,6 +352,11 @@ class ProductionExecutor:
                             f"[{exc.status_code}] {intent.symbol}: {str(exc)[:200]}",
                             symbol=intent.symbol, intent_id=intent.intent_id,
                         ))
+                        self._persist_order_request_state(
+                            intent,
+                            status=OrderStatus.REJECTED,
+                            failure_reason=f"[{exc.status_code}] {str(exc)[:200]}",
+                        )
                         break  # pas de retry sur 4xx
                     except Exception as exc:
                         # Erreur reseau / timeout : on retente avec backoff
@@ -362,6 +371,11 @@ class ProductionExecutor:
                                 f"Submit failed after retries: {intent.symbol}",
                                 symbol=intent.symbol, intent_id=intent.intent_id,
                             ))
+                            self._persist_order_request_state(
+                                intent,
+                                status=OrderStatus.FAILED,
+                                failure_reason=str(exc)[:200],
+                            )
 
                 if order is not None:
                     events.append(make_event(
@@ -379,6 +393,8 @@ class ProductionExecutor:
                         self._repo.upsert_execution_order(db_dict)
                     except Exception:
                         pass
+                    self._persist_order_request_state(intent, status=order.status)
+                    self._persist_broker_order_state(intent, order)
 
                 batch_count += 1
 
@@ -404,6 +420,10 @@ class ProductionExecutor:
                             self._repo.insert_execution_fill(fill_to_db_dict(fill, exec_run_id))
                         except Exception:
                             pass
+                        try:
+                            self._repo.insert_execution_broker_fill(fill, account_id=resolved_account_id)
+                        except Exception:
+                            LOGGER.debug("Could not persist Sprint 2 fill", exc_info=True)
 
                         # Slippage alert
                         if abs(fill.slippage_bps) > self._cfg.max_slippage_bps:
@@ -643,6 +663,54 @@ class ProductionExecutor:
             implementation_shortfall=ishort,
         )
 
+    def _snapshot_account_constraints(self, exec_run_id: str, account_state: _AccountConstraintState) -> None:
+        try:
+            self._repo.snapshot_broker_account(
+                exec_run_id,
+                account_id=self._cfg.resolved_account_id,
+                broker_mode=self._cfg.broker_mode,
+                snapshot={
+                    "equity": account_state.equity,
+                    "cash": account_state.settled_cash_available,
+                    "settled_cash": account_state.settled_cash_available,
+                    "buying_power": account_state.buying_power_available,
+                    "daytrade_count": account_state.daytrade_count,
+                    "account_type": account_state.account_type,
+                    "effective_pdt_rule": account_state.effective_pdt_rule,
+                },
+                snapshot_kind="preflight",
+            )
+        except Exception:
+            LOGGER.debug("Could not persist broker account snapshot", exc_info=True)
+
+    def _persist_order_request_state(
+        self,
+        intent: OrderIntent,
+        *,
+        status: str,
+        failure_reason: str | None = None,
+    ) -> None:
+        try:
+            self._repo.upsert_execution_order_request_from_intent(
+                intent,
+                account_id=self._cfg.resolved_account_id,
+                status=status,
+                failure_reason=failure_reason,
+            )
+        except Exception:
+            LOGGER.debug("Could not persist Sprint 2 request for %s", intent.intent_id, exc_info=True)
+
+    def _persist_broker_order_state(self, intent: OrderIntent, order: BrokerOrder) -> None:
+        try:
+            self._repo.upsert_execution_broker_order(
+                intent,
+                order,
+                account_id=self._cfg.resolved_account_id,
+                raw_payload=intent_to_alpaca_payload(intent),
+            )
+        except Exception:
+            LOGGER.debug("Could not persist Sprint 2 broker order for %s", intent.intent_id, exc_info=True)
+
     def _persist_child_order_state(
         self,
         intent: OrderIntent,
@@ -657,6 +725,8 @@ class ProductionExecutor:
             self._repo.upsert_execution_order(db_dict)
         except Exception:
             pass
+        self._persist_order_request_state(intent, status=order.status)
+        self._persist_broker_order_state(intent, order)
 
     def _cancel_child_for_transition(
         self,
@@ -976,6 +1046,7 @@ class ProductionExecutor:
             LOGGER.info("Rebalance: %s", action_label)
 
             # Persist intent
+            self._persist_order_request_state(intent, status=OrderStatus.NEW)
             db_dict = order_intent_to_db_dict(intent, exec_run_id)
             try:
                 self._repo.upsert_execution_order(db_dict)
@@ -991,6 +1062,8 @@ class ProductionExecutor:
                     self._repo.upsert_execution_order(db_dict)
                 except Exception:
                     pass
+                self._persist_order_request_state(intent, status=order.status)
+                self._persist_broker_order_state(intent, order)
                 metrics["rebalance_submitted"] = metrics.get("rebalance_submitted", 0) + 1
                 events.append(make_event(
                     exec_run_id, EventType.ORDER_SUBMITTED,
@@ -1002,6 +1075,11 @@ class ProductionExecutor:
             except BrokerApiError as exc:
                 LOGGER.error("Rebalance ordre refuse [%s] %s: %s", exc.status_code, diff.symbol, exc)
                 metrics["rebalance_failed"] = metrics.get("rebalance_failed", 0) + 1
+                self._persist_order_request_state(
+                    intent,
+                    status=OrderStatus.REJECTED,
+                    failure_reason=f"[{exc.status_code}] {str(exc)[:200]}",
+                )
                 events.append(make_event(
                     exec_run_id, EventType.ORDER_REJECTED,
                     f"Rebalance rejected [{exc.status_code}] {diff.symbol}: {str(exc)[:200]}",
@@ -1010,6 +1088,11 @@ class ProductionExecutor:
             except Exception as exc:
                 LOGGER.error("Rebalance submit failed %s: %s", diff.symbol, exc)
                 metrics["rebalance_failed"] = metrics.get("rebalance_failed", 0) + 1
+                self._persist_order_request_state(
+                    intent,
+                    status=OrderStatus.FAILED,
+                    failure_reason=str(exc)[:200],
+                )
                 events.append(make_event(
                     exec_run_id, EventType.ORDER_REJECTED,
                     f"Rebalance failed {diff.symbol}: {str(exc)[:200]}",

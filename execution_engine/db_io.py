@@ -1,6 +1,7 @@
 """Accès base de données pour le module execution_engine."""
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -10,7 +11,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from database.connection import get_sqlalchemy_engine
-from execution_engine.models import BrokerOrder, ExecutionTarget, ProtectionWatchItem
+from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionTarget, OrderIntent, ProtectionWatchItem
 
 LOGGER = logging.getLogger(__name__)
 
@@ -432,6 +433,273 @@ class ExecutionRepository:
         """)
         with self.engine.begin() as conn:
             conn.execute(stmt, order_dict)
+
+    def _next_request_attempt_no(self, account_id: str, business_key: str) -> int:
+        stmt = text("""
+            SELECT COALESCE(MAX(attempt_no), 0)
+            FROM execution_order_requests
+            WHERE account_id = :account_id
+              AND business_key = :business_key
+        """)
+        with self.engine.connect() as conn:
+            value = conn.execute(stmt, {"account_id": account_id, "business_key": business_key}).scalar()
+        return int(value or 0) + 1
+
+    def _load_request_attempt_no(self, request_id: str) -> int | None:
+        stmt = text("SELECT attempt_no FROM execution_order_requests WHERE request_id = :request_id")
+        with self.engine.connect() as conn:
+            value = conn.execute(stmt, {"request_id": request_id}).scalar()
+        return int(value) if value is not None else None
+
+    def upsert_execution_order_request_from_intent(
+        self,
+        intent: OrderIntent,
+        *,
+        account_id: str,
+        status: str,
+        failure_reason: str | None = None,
+    ) -> int:
+        attempt_no = self._load_request_attempt_no(intent.intent_id)
+        if attempt_no is None:
+            attempt_no = self._next_request_attempt_no(account_id, intent.idempotency_key)
+
+        row = {
+            "request_id": intent.intent_id,
+            "exec_run_id": intent.exec_run_id,
+            "account_id": account_id,
+            "risk_run_id": intent.risk_run_id,
+            "symbol": intent.symbol,
+            "side": intent.side,
+            "target_qty": intent.qty,
+            "order_type": intent.order_type,
+            "business_key": intent.idempotency_key,
+            "submission_key": intent.submission_key,
+            "attempt_no": attempt_no,
+            "parent_request_id": intent.parent_intent_id,
+            "intent_role": intent.intent_role,
+            "decision_price": intent.decision_price,
+            "limit_price": intent.limit_price,
+            "stop_price": intent.stop_price,
+            "trail_percent": intent.trail_percent,
+            "status": status,
+            "failure_reason": failure_reason,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+        if self.engine.dialect.name == "sqlite":
+            stmt = text("""
+                INSERT INTO execution_order_requests (
+                    request_id, exec_run_id, account_id, risk_run_id, symbol, side,
+                    target_qty, order_type, business_key, submission_key, attempt_no,
+                    parent_request_id, intent_role, decision_price, limit_price,
+                    stop_price, trail_percent, status, failure_reason, created_at, updated_at
+                ) VALUES (
+                    :request_id, :exec_run_id, :account_id, :risk_run_id, :symbol, :side,
+                    :target_qty, :order_type, :business_key, :submission_key, :attempt_no,
+                    :parent_request_id, :intent_role, :decision_price, :limit_price,
+                    :stop_price, :trail_percent, :status, :failure_reason, :created_at, :updated_at
+                )
+                ON CONFLICT(request_id) DO UPDATE SET
+                    submission_key = excluded.submission_key,
+                    limit_price = excluded.limit_price,
+                    stop_price = excluded.stop_price,
+                    trail_percent = excluded.trail_percent,
+                    status = excluded.status,
+                    failure_reason = excluded.failure_reason,
+                    updated_at = excluded.updated_at
+            """)
+        else:
+            stmt = text("""
+                INSERT INTO execution_order_requests (
+                    request_id, exec_run_id, account_id, risk_run_id, symbol, side,
+                    target_qty, order_type, business_key, submission_key, attempt_no,
+                    parent_request_id, intent_role, decision_price, limit_price,
+                    stop_price, trail_percent, status, failure_reason, created_at, updated_at
+                ) VALUES (
+                    :request_id, :exec_run_id, :account_id, :risk_run_id, :symbol, :side,
+                    :target_qty, :order_type, :business_key, :submission_key, :attempt_no,
+                    :parent_request_id, :intent_role, :decision_price, :limit_price,
+                    :stop_price, :trail_percent, :status, :failure_reason, :created_at, :updated_at
+                )
+                ON DUPLICATE KEY UPDATE
+                    submission_key = VALUES(submission_key),
+                    limit_price = VALUES(limit_price),
+                    stop_price = VALUES(stop_price),
+                    trail_percent = VALUES(trail_percent),
+                    status = VALUES(status),
+                    failure_reason = VALUES(failure_reason),
+                    updated_at = VALUES(updated_at)
+            """)
+        with self.engine.begin() as conn:
+            conn.execute(stmt, row)
+        return attempt_no
+
+    def upsert_execution_broker_order(
+        self,
+        intent: OrderIntent,
+        order: BrokerOrder,
+        *,
+        account_id: str,
+        raw_payload: dict[str, Any] | None = None,
+        raw_response: dict[str, Any] | None = None,
+    ) -> None:
+        row = {
+            "request_id": intent.intent_id,
+            "exec_run_id": intent.exec_run_id,
+            "account_id": account_id,
+            "broker_order_id": order.broker_order_id,
+            "client_order_id": order.client_order_id,
+            "symbol": order.symbol,
+            "side": order.side,
+            "qty": order.qty,
+            "filled_qty": order.filled_qty,
+            "avg_fill_price": order.avg_fill_price,
+            "raw_status": order.status,
+            "normalized_status": order.status,
+            "order_type": order.order_type,
+            "limit_price": order.limit_price,
+            "stop_price": order.stop_price,
+            "trail_percent": order.trail_percent,
+            "raw_payload_json": json.dumps(raw_payload) if raw_payload is not None else None,
+            "raw_response_json": json.dumps(raw_response) if raw_response is not None else None,
+            "submitted_at": order.created_at or datetime.now(timezone.utc),
+            "last_seen_at": order.updated_at or datetime.now(timezone.utc),
+        }
+        if self.engine.dialect.name == "sqlite":
+            stmt = text("""
+                INSERT INTO execution_broker_orders (
+                    request_id, exec_run_id, account_id, broker_order_id, client_order_id,
+                    symbol, side, qty, filled_qty, avg_fill_price, raw_status,
+                    normalized_status, order_type, limit_price, stop_price, trail_percent,
+                    raw_payload_json, raw_response_json, submitted_at, last_seen_at
+                ) VALUES (
+                    :request_id, :exec_run_id, :account_id, :broker_order_id, :client_order_id,
+                    :symbol, :side, :qty, :filled_qty, :avg_fill_price, :raw_status,
+                    :normalized_status, :order_type, :limit_price, :stop_price, :trail_percent,
+                    :raw_payload_json, :raw_response_json, :submitted_at, :last_seen_at
+                )
+                ON CONFLICT(broker_order_id) DO UPDATE SET
+                    client_order_id = excluded.client_order_id,
+                    filled_qty = excluded.filled_qty,
+                    avg_fill_price = excluded.avg_fill_price,
+                    raw_status = excluded.raw_status,
+                    normalized_status = excluded.normalized_status,
+                    raw_response_json = excluded.raw_response_json,
+                    last_seen_at = excluded.last_seen_at
+            """)
+        else:
+            stmt = text("""
+                INSERT INTO execution_broker_orders (
+                    request_id, exec_run_id, account_id, broker_order_id, client_order_id,
+                    symbol, side, qty, filled_qty, avg_fill_price, raw_status,
+                    normalized_status, order_type, limit_price, stop_price, trail_percent,
+                    raw_payload_json, raw_response_json, submitted_at, last_seen_at
+                ) VALUES (
+                    :request_id, :exec_run_id, :account_id, :broker_order_id, :client_order_id,
+                    :symbol, :side, :qty, :filled_qty, :avg_fill_price, :raw_status,
+                    :normalized_status, :order_type, :limit_price, :stop_price, :trail_percent,
+                    :raw_payload_json, :raw_response_json, :submitted_at, :last_seen_at
+                )
+                ON DUPLICATE KEY UPDATE
+                    client_order_id = VALUES(client_order_id),
+                    filled_qty = VALUES(filled_qty),
+                    avg_fill_price = VALUES(avg_fill_price),
+                    raw_status = VALUES(raw_status),
+                    normalized_status = VALUES(normalized_status),
+                    raw_response_json = VALUES(raw_response_json),
+                    last_seen_at = VALUES(last_seen_at)
+            """)
+        with self.engine.begin() as conn:
+            conn.execute(stmt, row)
+
+    def insert_execution_broker_fill(
+        self,
+        fill: ExecutionFill,
+        *,
+        account_id: str,
+        raw_fill: dict[str, Any] | None = None,
+    ) -> None:
+        lookup_stmt = text("SELECT exec_run_id FROM execution_order_requests WHERE request_id = :request_id")
+        sqlite_insert_stmt = text("""
+            INSERT OR IGNORE INTO execution_broker_fills (
+                fill_id, exec_run_id, account_id, broker_order_id, request_id,
+                symbol, filled_qty, avg_fill_price, fill_timestamp, decision_price,
+                slippage_bps, implementation_shortfall, raw_fill_json, created_at
+            ) VALUES (
+                :fill_id, :exec_run_id, :account_id, :broker_order_id, :request_id,
+                :symbol, :filled_qty, :avg_fill_price, :fill_timestamp, :decision_price,
+                :slippage_bps, :implementation_shortfall, :raw_fill_json, :created_at
+            )
+        """)
+        ignore_duplicate_stmt = text("""
+            INSERT INTO execution_broker_fills (
+                fill_id, exec_run_id, account_id, broker_order_id, request_id,
+                symbol, filled_qty, avg_fill_price, fill_timestamp, decision_price,
+                slippage_bps, implementation_shortfall, raw_fill_json, created_at
+            ) VALUES (
+                :fill_id, :exec_run_id, :account_id, :broker_order_id, :request_id,
+                :symbol, :filled_qty, :avg_fill_price, :fill_timestamp, :decision_price,
+                :slippage_bps, :implementation_shortfall, :raw_fill_json, :created_at
+            )
+            ON DUPLICATE KEY UPDATE fill_id = fill_id
+        """)
+        row = {
+            "fill_id": fill.fill_id,
+            "exec_run_id": None,
+            "account_id": account_id,
+            "broker_order_id": fill.broker_order_id,
+            "request_id": fill.intent_id,
+            "symbol": fill.symbol,
+            "filled_qty": fill.filled_qty,
+            "avg_fill_price": fill.avg_fill_price,
+            "fill_timestamp": fill.fill_timestamp,
+            "decision_price": fill.decision_price,
+            "slippage_bps": fill.slippage_bps,
+            "implementation_shortfall": fill.implementation_shortfall,
+            "raw_fill_json": json.dumps(raw_fill) if raw_fill is not None else None,
+            "created_at": datetime.now(timezone.utc),
+        }
+        with self.engine.begin() as conn:
+            row["exec_run_id"] = conn.execute(lookup_stmt, {"request_id": fill.intent_id}).scalar()
+            if self.engine.dialect.name == "sqlite":
+                conn.execute(sqlite_insert_stmt, row)
+            else:
+                conn.execute(ignore_duplicate_stmt, row)
+
+    def snapshot_broker_account(
+        self,
+        exec_run_id: str,
+        *,
+        account_id: str,
+        broker_mode: str,
+        snapshot: dict[str, Any],
+        snapshot_kind: str = "preflight",
+    ) -> None:
+        stmt = text("""
+            INSERT INTO broker_account_snapshots (
+                exec_run_id, account_id, broker_mode, snapshot_kind,
+                equity, cash, settled_cash, buying_power, daytrade_count,
+                raw_payload_json, created_at
+            ) VALUES (
+                :exec_run_id, :account_id, :broker_mode, :snapshot_kind,
+                :equity, :cash, :settled_cash, :buying_power, :daytrade_count,
+                :raw_payload_json, :created_at
+            )
+        """)
+        with self.engine.begin() as conn:
+            conn.execute(stmt, {
+                "exec_run_id": exec_run_id,
+                "account_id": account_id,
+                "broker_mode": broker_mode,
+                "snapshot_kind": snapshot_kind,
+                "equity": float(snapshot.get("equity", 0.0) or 0.0),
+                "cash": float(snapshot.get("cash", 0.0) or 0.0),
+                "settled_cash": float(snapshot.get("settled_cash", snapshot.get("cash", 0.0)) or 0.0),
+                "buying_power": float(snapshot.get("buying_power", 0.0) or 0.0),
+                "daytrade_count": int(snapshot.get("daytrade_count", 0) or 0),
+                "raw_payload_json": json.dumps(snapshot),
+                "created_at": datetime.now(timezone.utc),
+            })
 
     def insert_execution_fill(self, fill_dict: dict[str, Any]) -> None:
         stmt = text("""
