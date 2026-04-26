@@ -8,6 +8,7 @@ from datetime import date, datetime
 from common.utils import configure_root_logging
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from risk_management.audit import build_run_id, persist_decisions, persist_portfolio_targets
+from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.db_io import RiskRepository
 from risk_management.models import PortfolioEntry
@@ -73,20 +74,45 @@ def main(args: list[str] | None = None) -> None:
 
     trade_date = datetime.strptime(args.trade_date, "%Y-%m-%d").date() if args.trade_date else date.today()
 
-    # --- Intégration corporate_actions : enrichir equity avec dividendes cumulés ---
-    effective_equity = args.account_equity
-    try:
-        from corporate_actions.db_io import CorporateActionRepository
-        ca_repo = CorporateActionRepository()
-        total_dividends = ca_repo.get_total_dividends()
-        if total_dividends > 0:
-            effective_equity += total_dividends
-            LOGGER.info(
-                "Dividendes cumules ajoutes a l'equity | dividendes=%.2f equity_base=%.2f equity_effective=%.2f",
-                total_dividends, args.account_equity, effective_equity,
+    repo = RiskRepository()
+    account_snapshot = repo.load_account_risk_snapshot(args.account, trade_date)
+    if account_snapshot is None:
+        if args.dry_run:
+            effective_equity = float(args.account_equity)
+            pnl_snapshot = PnLSnapshot(
+                portfolio_high_watermark=effective_equity,
+                portfolio_current_value=effective_equity,
+                daily_pnl=0.0,
             )
-    except Exception as exc:
-        LOGGER.warning("Impossible de charger les dividendes cumules (corporate_actions) : %s", exc)
+            LOGGER.warning(
+                "Aucun account_risk_snapshot pour account=%s date=%s ; fallback dry-run sur --account-equity=%.2f.",
+                args.account or "default",
+                trade_date,
+                effective_equity,
+            )
+        else:
+            raise RuntimeError(
+                f"Aucun account_risk_snapshot disponible pour account={args.account or 'default'} au {trade_date}."
+            )
+    else:
+        effective_equity = float(account_snapshot.equity)
+        daily_pnl = account_snapshot.daily_total_pnl
+        if daily_pnl is None:
+            realized = account_snapshot.daily_realized_pnl or 0.0
+            unrealized = account_snapshot.daily_unrealized_pnl or 0.0
+            daily_pnl = realized + unrealized
+        pnl_snapshot = PnLSnapshot(
+            portfolio_high_watermark=account_snapshot.high_watermark,
+            portfolio_current_value=account_snapshot.equity,
+            daily_pnl=daily_pnl,
+        )
+        LOGGER.info(
+            "Account snapshot charge | account=%s snapshot_trade_date=%s equity=%.2f buying_power=%.2f",
+            account_snapshot.account_id,
+            account_snapshot.trade_date,
+            account_snapshot.equity,
+            account_snapshot.buying_power,
+        )
 
     config = RiskConfig(
         account_equity=effective_equity,
@@ -105,30 +131,29 @@ def main(args: list[str] | None = None) -> None:
         prediction_weight=args.prediction_weight,
     )
 
-    repo = RiskRepository()
     LOGGER.info("Chargement des candidats…")
-    candidates = repo.load_candidates(config)
+    candidates = repo.load_candidates_asof(trade_date)
     LOGGER.info("Candidats charges : %d", len(candidates))
 
     symbols = [c.symbol for c in candidates]
     LOGGER.info("Chargement des prix et ATR…")
-    prices = repo.load_prices(symbols, atr_window=config.atr_window)
+    prices = repo.load_prices_asof(symbols, trade_date, atr_window=config.atr_window)
     LOGGER.info("Prix charges pour %d symboles.", len(prices))
 
     # --- V2 data loading ---
     LOGGER.info("Chargement des predictions ML…")
-    predictions = repo.load_predictions(symbols, trade_date)
+    predictions = repo.load_predictions_asof(symbols, trade_date)
     LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
 
     LOGGER.info("Chargement des win rates…")
-    win_rates = repo.load_win_rates(symbols)
+    win_rates = repo.load_win_rates_asof(symbols, trade_date)
     LOGGER.info("Win rates charges pour %d symboles.", len(win_rates))
 
     LOGGER.info("Chargement de la matrice de rendements…")
-    return_matrix = repo.load_return_matrix(symbols, config.correlation_lookback_days)
+    return_matrix = repo.load_return_matrix_asof(symbols, trade_date, config.correlation_lookback_days)
     LOGGER.info("Matrice de rendements : %s", return_matrix.shape if not return_matrix.empty else "vide")
 
-    builder = PortfolioBuilder(config)
+    builder = PortfolioBuilder(config, pnl=pnl_snapshot)
     entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
 
     run_id = build_run_id()
@@ -161,6 +186,8 @@ def main(args: list[str] | None = None) -> None:
         "dry_run": bool(config.dry_run),
         "effective_equity": round(float(effective_equity), 2),
         "account_equity": round(float(args.account_equity), 2),
+        "account_snapshot_trade_date": account_snapshot.trade_date.isoformat() if account_snapshot is not None else None,
+        "circuit_breaker_active": CircuitBreaker(config, pnl_snapshot).is_active(),
     }
     persist_run_business_summary(
         summary=summary,

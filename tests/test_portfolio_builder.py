@@ -56,6 +56,16 @@ def test_missing_price_rejected() -> None:
     assert "prix" in entries[0].decision_reason
 
 
+def test_missing_atr_rejected() -> None:
+    builder = PortfolioBuilder(_cfg())
+    entries = builder.build(
+        [CandidateScore("AAPL", "Tech", 0.95)],
+        {"AAPL": PriceInfo("AAPL", 150.0, None)},
+    )
+    assert entries[0].decision == "REJECTED"
+    assert "sizing" in entries[0].decision_reason
+
+
 def test_accepted_entries_have_positive_weight() -> None:
     builder = PortfolioBuilder(_cfg())
     entries = builder.build(_candidates(), _prices())

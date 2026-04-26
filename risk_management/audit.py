@@ -35,6 +35,7 @@ def persist_decisions(
             "score_used": e.score_used,
             "score_source": e.score_source,
             "entry_price": e.entry_price,
+            "atr_20": e.atr_20,
             "proposed_shares": e.proposed_shares,
             "approved_shares": e.approved_shares,
             "target_weight": e.target_weight,
@@ -60,6 +61,18 @@ def persist_decisions(
             "walk_forward_quant_weight": e.walk_forward_quant_weight,
             "calibration_run_id": e.calibration_run_id,
             "calibration_source": e.calibration_source,
+            "candidate_rank": e.candidate_rank,
+            "decision_rank": e.decision_rank,
+            "target_notional": e.target_notional,
+            "stop_price_initial": e.stop_price_initial,
+            "risk_per_share": e.risk_per_share,
+            "risk_budget_dollars": e.risk_budget_dollars,
+            "initial_risk_dollars": e.initial_risk_dollars,
+            "score_snapshot_date": e.score_snapshot_date,
+            "price_asof_date": e.price_asof_date,
+            "atr_asof_date": e.atr_asof_date,
+            "prediction_asof_date": e.prediction_asof_date,
+            "ml_metrics_asof_date": e.ml_metrics_asof_date,
         }
         for e in entries
     ]
@@ -82,6 +95,7 @@ def persist_portfolio_targets(
             "symbol": e.symbol,
             "shares": e.approved_shares,
             "entry_price": e.entry_price,
+            "atr_20": e.atr_20,
             "target_weight": e.target_weight,
             "sector": e.sector,
             "score_used": e.score_used,
@@ -102,6 +116,14 @@ def persist_portfolio_targets(
             "walk_forward_quant_weight": e.walk_forward_quant_weight,
             "calibration_run_id": e.calibration_run_id,
             "calibration_source": e.calibration_source,
+            "decision_rank": e.decision_rank,
+            "target_notional": e.target_notional,
+            "stop_price_initial": e.stop_price_initial,
+            "risk_per_share": e.risk_per_share,
+            "risk_budget_dollars": e.risk_budget_dollars,
+            "initial_risk_dollars": e.initial_risk_dollars,
+            "price_asof_date": e.price_asof_date,
+            "atr_asof_date": e.atr_asof_date,
         }
         for e in accepted
     ]

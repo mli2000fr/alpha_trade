@@ -26,12 +26,11 @@ def test_atr_based_sizing(sizer: PositionSizer) -> None:
     assert result.method == "atr"
 
 
-def test_equal_weight_fallback(sizer: PositionSizer) -> None:
+def test_missing_atr_is_rejected(sizer: PositionSizer) -> None:
     pi = PriceInfo(symbol="XYZ", last_close=50.0, atr_20=None)
     result = sizer.compute(pi)
-    # weight = 1/10 = 0.10 ; notional = 10000 ; shares = 200
-    assert result.proposed_shares == 200
-    assert result.method == "equal_weight"
+    assert result.proposed_shares == 0
+    assert result.method == "rejected"
 
 
 def test_zero_price_rejected(sizer: PositionSizer) -> None:

@@ -70,10 +70,41 @@ class PortfolioBuilder:
                 walk_forward_quant_weight=c.walk_forward_quant_weight,
                 calibration_run_id=c.calibration_run_id,
                 calibration_source=c.calibration_source,
+                snapshot_date=c.snapshot_date,
+                prediction_asof_date=pred.prediction_date if pred else None,
+                ml_metrics_asof_date=wr.asof_date if wr else None,
             ))
 
         # 2. Trier par conviction DESC
         enriched.sort(key=lambda e: e.conviction_score, reverse=True)
+        enriched = [
+            EnrichedCandidate(
+                symbol=e.symbol,
+                sector=e.sector,
+                score_used=e.score_used,
+                score_source=e.score_source,
+                predicted_proba=e.predicted_proba,
+                historical_win_rate=e.historical_win_rate,
+                conviction_score=e.conviction_score,
+                company_idio_score=e.company_idio_score,
+                macro_regime_score=e.macro_regime_score,
+                company_idio_signal_norm=e.company_idio_signal_norm,
+                macro_regime_signal_norm=e.macro_regime_signal_norm,
+                company_idio_component=e.company_idio_component,
+                macro_regime_component=e.macro_regime_component,
+                quant_component=e.quant_component,
+                walk_forward_sentiment_weight=e.walk_forward_sentiment_weight,
+                walk_forward_macro_weight=e.walk_forward_macro_weight,
+                walk_forward_quant_weight=e.walk_forward_quant_weight,
+                calibration_run_id=e.calibration_run_id,
+                calibration_source=e.calibration_source,
+                snapshot_date=e.snapshot_date,
+                prediction_asof_date=e.prediction_asof_date,
+                ml_metrics_asof_date=e.ml_metrics_asof_date,
+                candidate_rank=i,
+            )
+            for i, e in enumerate(enriched, start=1)
+        ]
 
         # 3. Filtre corrélation
         entries: list[PortfolioEntry] = []
@@ -99,6 +130,7 @@ class PortfolioBuilder:
         state = PortfolioState()
         checker = RiskCheckerImpl(self._cfg, state=state, pnl=self._pnl, sector_map=sector_map)
         equity = self._cfg.account_equity
+        accepted_rank = 0
 
         for ec in retained:
             pi = prices.get(ec.symbol)
@@ -133,9 +165,14 @@ class PortfolioBuilder:
             decision = "ACCEPTED" if approved == sizing.proposed_shares else "REDUCED"
             reason = "OK" if decision == "ACCEPTED" else "réduit par contraintes"
             checker.accept(ec.symbol, ec.sector, approved, pi.last_close)
+            accepted_rank += 1
 
             notional = approved * pi.last_close
             weight = notional / equity if equity > 0 else 0.0
+            risk_per_share = pi.atr_20 * self._cfg.atr_stop_multiple if pi.atr_20 is not None and pi.atr_20 > 0 else None
+            risk_budget_dollars = equity * self._cfg.risk_per_trade_pct if equity > 0 else None
+            initial_risk_dollars = approved * risk_per_share if risk_per_share is not None else None
+            stop_price_initial = max(0.0, pi.last_close - risk_per_share) if risk_per_share is not None else None
 
             # Compute Kelly-specific audit fields
             p_eff: float | None = None
@@ -171,6 +208,17 @@ class PortfolioBuilder:
                 walk_forward_quant_weight=ec.walk_forward_quant_weight,
                 calibration_run_id=ec.calibration_run_id,
                 calibration_source=ec.calibration_source,
+                candidate_rank=ec.candidate_rank,
+                decision_rank=accepted_rank,
+                stop_price_initial=stop_price_initial,
+                risk_per_share=risk_per_share,
+                risk_budget_dollars=risk_budget_dollars,
+                initial_risk_dollars=initial_risk_dollars,
+                score_snapshot_date=ec.snapshot_date,
+                price_asof_date=pi.price_asof_date,
+                atr_asof_date=pi.atr_asof_date,
+                prediction_asof_date=ec.prediction_asof_date,
+                ml_metrics_asof_date=ec.ml_metrics_asof_date,
             ))
 
         return entries
@@ -212,4 +260,10 @@ class PortfolioBuilder:
             walk_forward_quant_weight=ec.walk_forward_quant_weight,
             calibration_run_id=ec.calibration_run_id,
             calibration_source=ec.calibration_source,
+            candidate_rank=ec.candidate_rank,
+            score_snapshot_date=ec.snapshot_date,
+            price_asof_date=pi.price_asof_date if pi else None,
+            atr_asof_date=pi.atr_asof_date if pi else None,
+            prediction_asof_date=ec.prediction_asof_date,
+            ml_metrics_asof_date=ec.ml_metrics_asof_date,
         )

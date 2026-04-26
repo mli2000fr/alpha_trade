@@ -1,4 +1,4 @@
-"""Calcul de la taille de position (ATR-based ou equal-weight fallback)."""
+"""Calcul de la taille de position (ATR-based strict)."""
 from __future__ import annotations
 
 import logging
@@ -25,19 +25,15 @@ class PositionSizer:
             LOGGER.warning("Prix <= 0 pour %s — rejet.", symbol)
             return SizingResult(symbol=symbol, proposed_shares=0, method="rejected")
 
-        # --- ATR-based sizing ---
-        if price_info.atr_20 is not None and price_info.atr_20 > 0:
-            risk_budget = self._cfg.account_equity * self._cfg.risk_per_trade_pct
-            risk_per_share = price_info.atr_20 * self._cfg.atr_stop_multiple
-            shares = math.floor(risk_budget / risk_per_share)
-            method = "atr"
-        else:
-            # equal-weight fallback
-            weight = 1.0 / max(self._cfg.max_positions, 1)
-            notional = self._cfg.account_equity * weight
-            shares = math.floor(notional / price)
-            method = "equal_weight"
-            LOGGER.info("ATR indisponible pour %s — fallback equal-weight.", symbol)
+        # --- ATR-based sizing strict ---
+        if price_info.atr_20 is None or price_info.atr_20 <= 0:
+            LOGGER.info("ATR indisponible pour %s — rejet explicite.", symbol)
+            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected")
+
+        risk_budget = self._cfg.account_equity * self._cfg.risk_per_trade_pct
+        risk_per_share = price_info.atr_20 * self._cfg.atr_stop_multiple
+        shares = math.floor(risk_budget / risk_per_share)
+        method = "atr"
 
         shares = max(shares, 0)
 
