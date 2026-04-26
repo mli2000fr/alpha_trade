@@ -231,7 +231,7 @@ def prepare_predictions_for_ml_mode(
         return existing
 
     if ml_mode == "auto":
-        LOGGER.warning(
+        LOGGER.warning(  # type: ignore[arg-type]
             "ML mode=auto — %s prédiction(s) manquante(s), continuation sans ML pour ces lignes.",
             len(missing_keys),
         )

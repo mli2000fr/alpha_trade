@@ -5,8 +5,11 @@ from datetime import date
 from pathlib import Path
 import json
 import os
+from typing import cast
 
 import pandas as pd
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 
 
 # ============================================================
@@ -91,7 +94,7 @@ class TestDataLoader:
         monkeypatch.setattr(data_loader, "inspect", fake_inspect)
         monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
 
-        df = data_loader.load_ohlcv(self._FakeEngine(), date(2025, 1, 1), date(2025, 1, 31))
+        df = data_loader.load_ohlcv(cast(Engine, self._FakeEngine()), date(2025, 1, 1), date(2025, 1, 31))
         assert not df.empty
         assert "`date` AS trade_date" in captured["sql"]
         assert "COALESCE(adj_close, `close`) AS `close`" in captured["sql"]
@@ -125,7 +128,7 @@ class TestDataLoader:
         monkeypatch.setattr(data_loader, "inspect", fake_inspect)
         monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
 
-        df = data_loader.load_scores(self._FakeEngine(), date(2025, 1, 1), date(2025, 1, 31))
+        df = data_loader.load_scores(cast(Engine, self._FakeEngine()), date(2025, 1, 1), date(2025, 1, 31))
         assert not df.empty
         assert "FROM stock_scores_history" in captured["sql"]
         assert "snapshot_date AS trade_date" in captured["sql"]
@@ -161,7 +164,7 @@ class TestDataLoader:
         monkeypatch.setattr(data_loader, "inspect", fake_inspect)
         monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
 
-        df = data_loader.load_scores(self._FakeEngine(), date(2025, 1, 1), date(2025, 1, 31))
+        df = data_loader.load_scores(cast(Engine, self._FakeEngine()), date(2025, 1, 1), date(2025, 1, 31))
         assert not df.empty
         assert len(calls) == 2
         assert "FROM stock_scores_history" in calls[0]
@@ -199,7 +202,7 @@ class TestDataLoader:
         monkeypatch.setattr(data_loader, "inspect", fake_inspect)
         monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
 
-        df = data_loader.load_predictions(self._FakeEngine(), date(2025, 1, 1), date(2025, 1, 31))
+        df = data_loader.load_predictions(cast(Engine, self._FakeEngine()), date(2025, 1, 1), date(2025, 1, 31))
         assert not df.empty
         assert "prediction_date AS trade_date" in captured["sql"]
 
@@ -235,7 +238,7 @@ class TestDataLoader:
         monkeypatch.setattr(data_loader, "inspect", fake_inspect)
         monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
 
-        df = data_loader.load_sentiment(self._FakeEngine(), date(2025, 1, 1), date(2025, 1, 31))
+        df = data_loader.load_sentiment(cast(Engine, self._FakeEngine()), date(2025, 1, 1), date(2025, 1, 31))
         assert not df.empty
         assert "sentiment_net_mean_1d AS sentiment_net_mean" in captured["sql"]
         assert "news_count_1d AS news_count" in captured["sql"]
@@ -399,7 +402,7 @@ class TestResilience:
         })
 
         result = prepare_scores_for_sentiment_mode(
-            None,  # type: ignore[arg-type]
+            create_engine("sqlite:///:memory:"),
             scores,
             sentiment_mode="auto",
             walk_forward_artifacts_dir=tmp_path,
@@ -848,8 +851,8 @@ class TestBacktestConfig:
             )
         ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
-        assert standard.closed_trades_df.iloc[0]["entry_price"] == 105.0
-        assert swing.closed_trades_df.iloc[0]["entry_price"] == 105.0
+        assert float(standard.closed_trades_df.iloc[0]["entry_price"]) == 105.0
+        assert float(swing.closed_trades_df.iloc[0]["entry_price"]) == 105.0
         assert standard.closed_trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
         assert swing.closed_trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
         assert standard.closed_trades_df.iloc[0]["exit_date"] == pd.Timestamp("2025-01-02")
@@ -1104,6 +1107,8 @@ class TestCLI:
         assert args.sentiment_lookback == 365
         assert args.ml_mode == "auto"
         assert args.sentiment_mode == "auto"
+        assert args.score_column == "auto"
+        assert args.walk_forward_artifacts_dir is None
         assert args.no_save is False
 
     def test_parse_custom_params(self):
@@ -1149,6 +1154,122 @@ class TestCLI:
             "--output-dir", "artifacts/ihm_backtesting_runs/run_123/artifacts",
         ])
         assert args.output_dir == "artifacts/ihm_backtesting_runs/run_123/artifacts"
+
+    def test_parse_run_walk_forward_options(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "run", "--start", "2020-01-01",
+            "--score-column", "final_score_walk_forward",
+            "--walk-forward-artifacts-dir", "artifacts/sentiment_walk_forward/run_1",
+        ])
+        assert args.score_column == "final_score_walk_forward"
+        assert args.walk_forward_artifacts_dir == "artifacts/sentiment_walk_forward/run_1"
+
+    def test_run_backtest_propagates_walk_forward_options(self, monkeypatch, tmp_path):
+        import argparse
+        import backtesting.cli as cli
+        from backtesting import data_loader, resilience, signal_replay, report, simulator
+        from database import connection
+
+        calls: dict[str, object] = {}
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        ohlcv_df = pd.DataFrame({
+            "symbol": ["AAPL", "AAPL"],
+            "trade_date": idx,
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1000, 1100],
+        })
+        scores_df = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "final_score": [0.7],
+            "final_score_sentiment": [0.75],
+            "sector": ["Tech"],
+            "is_candidate": [1],
+        })
+
+        class FakePF:
+            pass
+
+        class FakeReport:
+            def print_summary(self) -> None:
+                return None
+
+        class FakeBacktestEngine:
+            def __init__(self, cfg):
+                self.cfg = cfg
+
+            def run(self, **kwargs):
+                calls["signals_df"] = kwargs["signals_df"]
+                return FakePF()
+
+        monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
+        monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
+        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end: scores_df.copy())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
+            "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
+            "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
+            "high": df.pivot_table(index="trade_date", columns="symbol", values="high"),
+            "low": df.pivot_table(index="trade_date", columns="symbol", values="low"),
+        })
+
+        def fake_prepare_scores(engine, scores_df_in, *, sentiment_mode, walk_forward_artifacts_dir):
+            calls["walk_forward_artifacts_dir"] = walk_forward_artifacts_dir
+            calls["sentiment_mode"] = sentiment_mode
+            return scores_df_in.copy()
+
+        def fake_replay(scores_df_in, predictions_df, *, score_column=None, **kwargs):
+            calls["score_column"] = score_column
+            return pd.DataFrame({
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+            })
+
+        monkeypatch.setattr(resilience, "prepare_scores_for_sentiment_mode", fake_prepare_scores)
+        monkeypatch.setattr(resilience, "prepare_predictions_for_ml_mode", lambda *args, **kwargs: pd.DataFrame())
+        monkeypatch.setattr(signal_replay, "replay_signals", fake_replay)
+        monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
+        monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {})
+        monkeypatch.setattr(report, "generate_report", lambda pf, equity: FakeReport())
+        monkeypatch.setattr(report, "save_equity_curve", lambda *args, **kwargs: tmp_path / "eq.png")
+        monkeypatch.setattr(report, "save_equity_curve_csv", lambda *args, **kwargs: tmp_path / "eq.csv")
+        monkeypatch.setattr(report, "save_report_json", lambda *args, **kwargs: tmp_path / "report.json")
+        monkeypatch.setattr(report, "save_trades_csv", lambda *args, **kwargs: tmp_path / "trades.csv")
+
+        args = argparse.Namespace(
+            start="2025-01-01",
+            end="2025-01-02",
+            equity=100_000.0,
+            tp=0.08,
+            ts=0.05,
+            max_positions=5,
+            fees=0.001,
+            account_type="margin",
+            pdt_rule="auto",
+            swing_only=False,
+            sentiment_lookback=365,
+            no_save=True,
+            ml_mode="auto",
+            sentiment_mode="auto",
+            artifacts_dir="artifacts/models",
+            output_dir=None,
+            score_column="final_score_walk_forward",
+            walk_forward_artifacts_dir=str(tmp_path),
+        )
+
+        cli._run_backtest(args)
+
+        assert calls["score_column"] == "final_score_walk_forward"
+        assert calls["walk_forward_artifacts_dir"] == Path(tmp_path)
 
     def test_parse_backfill_scores_history_command(self):
         from backtesting.cli import _build_parser

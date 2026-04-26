@@ -88,6 +88,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Répertoire cible pour sauvegarder les artefacts et le rapport structurés du run",
     )
+    run_p.add_argument(
+        "--score-column",
+        choices=["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"],
+        default="auto",
+        help="Colonne de score à privilégier pour le replay (défaut: auto).",
+    )
+    run_p.add_argument(
+        "--walk-forward-artifacts-dir",
+        default=None,
+        help="Répertoire racine où chercher explicitement les meilleurs poids walk-forward à appliquer au backtest standard.",
+    )
 
     # --- backfill-scores-history ---
     backfill_p = sub.add_parser(
@@ -260,6 +271,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _safe_print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
     _safe_print(f"   ml_mode={args.ml_mode}, sentiment_mode={args.sentiment_mode}\n")
     _safe_print(
+        "   score_column={} walk_forward_artifacts_dir={}\n".format(
+            args.score_column,
+            args.walk_forward_artifacts_dir or "auto-disabled",
+        )
+    )
+    _safe_print(
         "   account_type={} pdt_rule={} swing_only={}\n".format(
             trading_constraints.account_type,
             trading_constraints.effective_pdt_rule,
@@ -291,7 +308,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         engine,
         scores_df,
         sentiment_mode=args.sentiment_mode,
-        walk_forward_artifacts_dir=None,
+        walk_forward_artifacts_dir=Path(args.walk_forward_artifacts_dir) if args.walk_forward_artifacts_dir else None,
     )
 
     _safe_print("🤖 Chargement prédictions ML...")
@@ -311,6 +328,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _safe_print("🔄 Reconstruction des signaux de conviction...")
     signals_df = replay_signals(
         scores_df, preds_df if not preds_df.empty else None,
+        score_column=None if args.score_column == "auto" else args.score_column,
         max_positions=args.max_positions,
     )
 
@@ -363,6 +381,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 "ml_mode": args.ml_mode,
                 "sentiment_mode": args.sentiment_mode,
                 "artifacts_dir": args.artifacts_dir,
+                "score_column": args.score_column,
+                "walk_forward_artifacts_dir": args.walk_forward_artifacts_dir,
                 "execution_timing": bt_config.execution_timing,
                 "entry_price_source": "next_session_open",
                 "no_save": args.no_save,
@@ -404,6 +424,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     "ml_mode": args.ml_mode,
                     "sentiment_mode": args.sentiment_mode,
                     "artifacts_dir": args.artifacts_dir,
+                    "score_column": args.score_column,
+                    "walk_forward_artifacts_dir": args.walk_forward_artifacts_dir,
                     "execution_timing": bt_config.execution_timing,
                     "entry_price_source": "next_session_open",
                     "no_save": args.no_save,
