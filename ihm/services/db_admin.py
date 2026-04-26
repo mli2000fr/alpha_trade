@@ -64,9 +64,16 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
     ),
     "Exécution broker": (
         "execution_runs",
-        "execution_orders",
-        "execution_fills",
+        "execution_targets_snapshot",
+        "execution_order_requests",
+        "execution_broker_orders",
+        "execution_broker_fills",
+        "execution_positions",
+        "execution_position_lots",
+        "execution_reconciliation_results",
+        "execution_locks",
         "execution_events",
+        "broker_account_snapshots",
         "broker_positions_snapshots",
     ),
     "Corporate Actions": (
