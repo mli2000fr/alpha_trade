@@ -11,6 +11,7 @@ from uuid import uuid4
 import pandas as pd
 
 from common.utils import configure_root_logging
+from core.run_summary import attach_schema_version
 from screener.db_io import (
     get_engine,
     iter_symbol_chunks,
@@ -27,6 +28,7 @@ from screener.pipeline import finalize_scores_with_historical_range, screen_rece
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 APPROX_TRADING_DAYS_PER_YEAR = 252
+CHUNK_FAILURE_RATIO_WARNING_THRESHOLD = 0.05
 
 
 def _utc_now_naive() -> datetime:
@@ -347,7 +349,18 @@ def main() -> None:
         first_pass_window_days=args.first_pass_window_days,
     )
     _, report = run_screener_with_report(config=config, max_workers=args.max_workers)
-    _emit_run_summary(report.to_summary_dict())
+    payload = attach_schema_version(report.to_summary_dict())
+    # Phase 3.2.b — alerte si trop de chunks ont échoué.
+    ratio = float(payload.get("chunk_failure_ratio") or 0.0)
+    if ratio > CHUNK_FAILURE_RATIO_WARNING_THRESHOLD:
+        LOGGER.warning(
+            "Taux d'echec chunks screener eleve | chunk_failures=%s chunks_total=%s ratio=%.2f%% (seuil=%.2f%%)",
+            payload.get("chunk_failures"),
+            payload.get("chunks_total"),
+            ratio * 100.0,
+            CHUNK_FAILURE_RATIO_WARNING_THRESHOLD * 100.0,
+        )
+    _emit_run_summary(payload)
 
 
 if __name__ == "__main__":

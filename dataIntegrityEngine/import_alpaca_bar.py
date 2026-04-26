@@ -1,6 +1,8 @@
+import argparse
 import json
 import logging
 import math
+import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -13,6 +15,7 @@ from sqlalchemy import MetaData, Table, and_, func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from common.utils import configure_root_logging, getLastDateMarche, is_trading_day
+from core.run_summary import attach_schema_version
 from database.assets import (
     build_eligible_stock_metadata_filters,
     HISTORY_STATUS_NO_HISTORY,
@@ -34,6 +37,7 @@ DATA_ADJUSTMENT = "split"
 MAX_STALENESS_CALENDAR_DAYS = 7
 MAX_STALENESS_TRADING_DAYS = 5
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+MIN_SUCCESS_RATIO_DEFAULT = 0.80
 
 
 def _utc_now_naive() -> datetime:
@@ -503,6 +507,15 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
         finished_at = _utc_now_naive()
         summary["finished_at"] = finished_at.isoformat(timespec="seconds")
         summary["duration_seconds"] = round((finished_at - started_at).total_seconds(), 2)
+        # Ratios qualité ingestion (dénominateur = symboles candidats à un fetch effectif).
+        attempted = max(int(summary["targeted_symbols"]) - int(summary["up_to_date_symbols"]), 0)
+        if attempted > 0:
+            summary["success_ratio"] = round(int(summary["successful_symbols"]) / attempted, 4)
+            summary["provider_error_ratio"] = round(int(summary["provider_error_symbols"]) / attempted, 4)
+        else:
+            summary["success_ratio"] = None
+            summary["provider_error_ratio"] = None
+        summary["attempted_symbols"] = attempted
         LOGGER.info(
             "Resume import Alpaca | run_id=%s timeframe=%s market_date=%s targeted=%s first_import=%s existing_history=%s up_to_date=%s success=%s failed=%s provider_error=%s skipped=%s no_data=%s stale=%s inserted_bars=%s max_calendar_gap=%s max_trading_gap=%s status_breakdown=%s duration_s=%s",
             summary["run_id"],
@@ -528,16 +541,56 @@ def import_alpaca_bars(time_frame: TimeFrame, symbols: Optional[list[str]] = Non
     return summary
 
 
-def main() -> None:
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser_cli = argparse.ArgumentParser(
+        description="Importe les barres Alpaca dans stock_bars.",
+    )
+    parser_cli.add_argument(
+        "--symbols",
+        nargs="+",
+        default=None,
+        help="Liste optionnelle de symboles à importer (sinon univers complet).",
+    )
+    parser_cli.add_argument(
+        "--min-success-ratio",
+        type=float,
+        default=MIN_SUCCESS_RATIO_DEFAULT,
+        help=(
+            "Ratio minimal de symboles importés avec succès (parmi les symboles "
+            f"effectivement tentés). Sortie code 1 si non atteint. Défaut: {MIN_SUCCESS_RATIO_DEFAULT}."
+        ),
+    )
+    return parser_cli
+
+
+def main(argv: Optional[list[str]] = None) -> int:
     configure_root_logging(
         level=logging.INFO,
         log_path="./log/import_alpaca_bar.log",
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
-    summary = import_alpaca_bars(TimeFrame.ONE_DAY)
-    _emit_run_summary(summary)
-    # import_alpaca_bars(TimeFrame.THIRTY_MINS)
+    args = _build_arg_parser().parse_args(argv)
+    summary = import_alpaca_bars(TimeFrame.ONE_DAY, symbols=args.symbols)
+    summary["success_ratio_threshold"] = float(args.min_success_ratio)
+    targeted_universe = args.symbols is None
+    summary["target_mode"] = "universe" if targeted_universe else "explicit"
+    payload = attach_schema_version(summary)
+    _emit_run_summary(payload)
+    # Exit code != 0 si on a tenté l'univers complet et que le ratio est insuffisant.
+    success_ratio = summary.get("success_ratio")
+    if (
+        targeted_universe
+        and success_ratio is not None
+        and float(success_ratio) < float(args.min_success_ratio)
+    ):
+        LOGGER.error(
+            "Ratio succès ingestion insuffisant | success_ratio=%s threshold=%s",
+            success_ratio,
+            args.min_success_ratio,
+        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

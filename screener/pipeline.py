@@ -168,11 +168,18 @@ def compute_historical_range_stats_from_prices(
     latest_timestamp = prices["timestamp"].max()
     cutoff_timestamp = latest_timestamp - pd.Timedelta(days=config.historical_range_lookback_days)
 
+    window = prices[
+        prices["symbol"].isin(symbols)
+        & (prices["timestamp"] >= cutoff_timestamp)
+    ]
+    # Phase 3.2.a : exclure les barres forward-filled (sanitizer) pour
+    # cohérence stricte avec le path SQL (`load_historical_range_stats_for_symbols`).
+    if "is_filled" in window.columns:
+        mask = window["is_filled"].fillna(0).astype(int) == 0
+        window = window[mask]
+
     hist_agg = (
-        prices[
-            prices["symbol"].isin(symbols)
-            & (prices["timestamp"] >= cutoff_timestamp)
-        ]
+        window
         .groupby("symbol", as_index=False)
         .agg(
             hist_low=("low_price", "min"),

@@ -92,7 +92,7 @@ def test_update_sector_main_emits_structured_summary(monkeypatch, capsys) -> Non
         lambda: type(
             "_Parser",
             (),
-            {"parse_args": lambda self: argparse.Namespace(limit=30, sleep_seconds=1.2, log_every=9)},
+            {"parse_args": lambda self: argparse.Namespace(limit=30, sleep_seconds=1.2, log_every=9, refresh_stale_days=0)},
         )(),
     )
     monkeypatch.setattr(

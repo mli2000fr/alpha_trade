@@ -26,6 +26,16 @@ class AssetsRepository(Repository):
     def get_symbols_missing_fundamentals(self, *, limit: int | None = None) -> list[str]:
         return _legacy.get_symbols_missing_fundamentals(limit=limit)
 
+    def list_stale_market_cap(self, *, max_age_days: int, limit: int | None = None) -> list[str]:
+        """Phase 3.1.e — symboles dont ``market_cap_refreshed_at`` est périmé."""
+        return _legacy.get_symbols_with_stale_market_cap(
+            max_age_days=max_age_days, limit=limit
+        )
+
+    def count_stale_market_cap(self, *, max_age_days: int) -> tuple[int, int]:
+        """Phase 3.1.e — ``(stale_count, eligible_total)`` pour ``stale_market_cap_pct``."""
+        return _legacy.count_eligible_symbols_with_stale_market_cap(max_age_days=max_age_days)
+
     def update_fundamentals(
         self,
         symbol: str,

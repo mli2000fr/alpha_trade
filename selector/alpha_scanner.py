@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import threading
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from common.utils import configure_root_logging
+from core.run_summary import attach_schema_version, merge_iex_bias_counters
 from database.connection import get_sqlalchemy_engine
 from database.assets import (
     HISTORY_STATUS_EXCLUDED_BY_POLICY,
@@ -27,7 +29,10 @@ from database.assets import (
     HISTORY_STATUS_READY,
     HISTORY_STATUS_SUSPENDED_OR_STALE,
 )
-from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
+# Phase 3.2.c — la source de vérité est ``core.filter_profiles`` ;
+# l'import historique ``selector.strict_filter_profiles`` est conservé
+# comme alias rétrocompatible pour les appelants legacy.
+from core.filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
@@ -43,6 +48,8 @@ METADATA_COLUMNS = [
     "history_status",
     "sector",
     "market_cap",
+    # Phase 3.3.d — TTL filtre market_cap (selector consomme la fraîcheur).
+    "market_cap_refreshed_at",
 ]
 ELIGIBLE_HISTORY_STATUSES = {HISTORY_STATUS_PENDING, HISTORY_STATUS_READY}
 ETF_NAME_PATTERNS = (
@@ -174,6 +181,7 @@ def _build_cli_run_summary(
     result: pd.DataFrame,
     started_at: datetime,
     finished_at: datetime,
+    rejected_by_filter: dict[str, int] | None = None,
 ) -> dict[str, object]:
     selected_symbols = result["symbol"].astype(str).tolist()[:5] if "symbol" in result.columns and not result.empty else []
     sector_breakdown = (
@@ -208,7 +216,12 @@ def _build_cli_run_summary(
         "avg_final_score": avg_final_score,
         "max_anomaly_count": config.max_anomaly_count,
         "max_spread_bps": config.max_spread_bps,
+        "max_spread_bps_iex": config.max_spread_bps_iex,
+        "min_quote_size": config.min_quote_size,
+        "market_cap_max_age_days": config.market_cap_max_age_days,
         "earnings_blackout_days": config.earnings_blackout_days,
+        # Phase 3.3.b — agrégat des rejets par filtre (cross-chunks).
+        "rejected_by_filter": dict(sorted((rejected_by_filter or {}).items())),
     }
 
 
@@ -230,6 +243,15 @@ class AlphaScannerConfig:
     min_market_cap: float | None = None
     min_beta_126: float | None = None
     max_spread_bps: float | None = None
+    # Phase 3.3.c — extensions IEX : relâchement contrôlé du filtre spread quand
+    # le carnet IEX est mince. Un titre dont ``spread_bps`` dépasse
+    # ``max_spread_bps`` reste retenu si ``spread_bps <= max_spread_bps_iex``
+    # ET ``bid_size``/``ask_size`` >= ``min_quote_size``.
+    max_spread_bps_iex: float | None = None
+    min_quote_size: float | None = None
+    # Phase 3.3.d — TTL appliqué au filtre ``min_market_cap`` à partir de
+    # ``stock_metadata.market_cap_refreshed_at``. ``None`` = TTL désactivé.
+    market_cap_max_age_days: int | None = None
     earnings_blackout_days: int | None = None
     require_above_ma200: bool = False
     max_anomaly_count: int = 20
@@ -274,6 +296,12 @@ class AlphaScannerConfig:
         **overrides: object,
     ) -> "AlphaScannerConfig":
         merged_kwargs: dict[str, object] = dict(profile.to_scanner_config_kwargs())
+        # Phase 3.3.c/d — merger les extensions IEX/TTL (non incluses dans
+        # ``to_scanner_config_kwargs`` pour rester rétro-compatible avec les
+        # consommateurs legacy).
+        for key, value in profile.iex_extensions().items():
+            if value is not None:
+                merged_kwargs[key] = value
         for key, value in overrides.items():
             merged_kwargs[key] = value
         return cls(**merged_kwargs)
@@ -311,6 +339,20 @@ class AlphaScannerConfig:
             raise ValueError("min_beta_126 doit être strictement positif lorsqu'il est renseigné.")
         if self.max_spread_bps is not None and self.max_spread_bps <= 0:
             raise ValueError("max_spread_bps doit être strictement positif lorsqu'il est renseigné.")
+        if self.max_spread_bps_iex is not None and self.max_spread_bps_iex <= 0:
+            raise ValueError("max_spread_bps_iex doit être strictement positif lorsqu'il est renseigné.")
+        if (
+            self.max_spread_bps is not None
+            and self.max_spread_bps_iex is not None
+            and self.max_spread_bps_iex < self.max_spread_bps
+        ):
+            raise ValueError(
+                "max_spread_bps_iex doit être >= max_spread_bps (relâchement IEX, pas durcissement)."
+            )
+        if self.min_quote_size is not None and self.min_quote_size < 0:
+            raise ValueError("min_quote_size doit être positif ou nul lorsqu'il est renseigné.")
+        if self.market_cap_max_age_days is not None and self.market_cap_max_age_days < 0:
+            raise ValueError("market_cap_max_age_days doit être positif ou nul lorsqu'il est renseigné.")
         if self.earnings_blackout_days is not None and self.earnings_blackout_days < 0:
             raise ValueError("earnings_blackout_days doit être positif ou nul lorsqu'il est renseigné.")
         if (
@@ -350,6 +392,16 @@ class AlphaScanner:
         self.engine = engine or get_sqlalchemy_engine()
         self.config = config or AlphaScannerConfig.strict_swing_cash()
         self._stock_metadata_columns_cache: set[str] | None = None
+        self._stock_quote_snapshots_columns_cache: set[str] | None = None
+        # Phase 3.3.b — agrégation des stats `_apply_filters_with_stats` pour
+        # exposer ``rejected_by_filter`` dans le ``run_summary`` final.
+        self._aggregated_filter_stats: Counter[str] = Counter()
+        self._filter_stats_lock = threading.Lock()
+
+    def get_aggregated_filter_stats(self) -> dict[str, int]:
+        """Phase 3.3.b — snapshot agrégé (cross-chunks) des stats de filtrage."""
+        with self._filter_stats_lock:
+            return dict(self._aggregated_filter_stats)
 
     def _get_stock_metadata_columns(self) -> set[str]:
         if self._stock_metadata_columns_cache is not None:
@@ -363,6 +415,21 @@ class AlphaScanner:
             LOGGER.warning("Inspection stock_metadata indisponible; fallback sans history_status explicite.")
             self._stock_metadata_columns_cache = set()
         return self._stock_metadata_columns_cache
+
+    def _get_stock_quote_snapshots_columns(self) -> set[str]:
+        # Phase 3.3.c — introspection défensive pour ne pas casser les
+        # environnements (tests SQLite, schémas legacy) où les colonnes
+        # bid_size/ask_size sont absentes.
+        if self._stock_quote_snapshots_columns_cache is not None:
+            return self._stock_quote_snapshots_columns_cache
+        try:
+            self._stock_quote_snapshots_columns_cache = {
+                str(column.get("name"))
+                for column in inspect(self.engine).get_columns("stock_quote_snapshots")
+            }
+        except Exception:
+            self._stock_quote_snapshots_columns_cache = set()
+        return self._stock_quote_snapshots_columns_cache
 
     def fetch_market_data(self, symbols: Sequence[str]) -> pd.DataFrame:
         """Charge un chunk d'historique marché depuis la table daily."""
@@ -459,6 +526,9 @@ class AlphaScanner:
             select_columns.append("sector")
         if "market_cap" in available_columns:
             select_columns.append("market_cap")
+        # Phase 3.3.d — TTL filtre market_cap basé sur la fraîcheur SQL.
+        if "market_cap_refreshed_at" in available_columns:
+            select_columns.append("market_cap_refreshed_at")
 
         stmt = text(
             f"""
@@ -515,14 +585,29 @@ class AlphaScanner:
         return benchmark_df[["date", "spy_return"]].dropna().reset_index(drop=True)
 
     def fetch_quote_snapshots(self, symbols: Sequence[str], *, reference_date: date | None = None) -> pd.DataFrame:
+        # Phase 3.3.c — bid_size/ask_size requis pour le relâchement IEX du
+        # filtre spread (cf. ``_apply_filters_with_stats``). Introspection
+        # défensive : tests SQLite et schémas legacy peuvent ne pas exposer
+        # ces colonnes.
+        available_columns = self._get_stock_quote_snapshots_columns()
+        select_extra: list[str] = []
+        if "bid_size" in available_columns:
+            select_extra.append("q.bid_size")
+        if "ask_size" in available_columns:
+            select_extra.append("q.ask_size")
+        empty_columns = ["symbol", "quote_date", "spread_bps", "bid_size", "ask_size"]
         if not symbols:
-            return pd.DataFrame(columns=["symbol", "quote_date", "spread_bps"])
+            return pd.DataFrame(columns=empty_columns)
 
         effective_reference_date = reference_date or date.today()
 
+        select_clause = "q.symbol, q.quote_date, q.spread_bps"
+        if select_extra:
+            select_clause = select_clause + ", " + ", ".join(select_extra)
+
         stmt = text(
-            """
-            SELECT q.symbol, q.quote_date, q.spread_bps
+            f"""
+            SELECT {select_clause}
             FROM stock_quote_snapshots q
             INNER JOIN (
                 SELECT symbol, MAX(quote_date) AS max_quote_date
@@ -543,8 +628,13 @@ class AlphaScanner:
             )
         except SQLAlchemyError:
             LOGGER.warning("Lecture stock_quote_snapshots indisponible; filtre de spread desactive.")
-            return pd.DataFrame(columns=["symbol", "quote_date", "spread_bps"])
-        return quotes_df if not quotes_df.empty else pd.DataFrame(columns=["symbol", "quote_date", "spread_bps"])
+            return pd.DataFrame(columns=empty_columns)
+        # Garantit la présence des colonnes attendues même si le schéma legacy
+        # ne les exposait pas (le filtre spread strict reste opérationnel).
+        for column in ("bid_size", "ask_size"):
+            if column not in quotes_df.columns:
+                quotes_df[column] = pd.NA
+        return quotes_df if not quotes_df.empty else pd.DataFrame(columns=empty_columns)
 
     def fetch_next_earnings(self, symbols: Sequence[str], *, reference_date: date | None = None) -> pd.DataFrame:
         if not symbols:
@@ -908,8 +998,10 @@ class AlphaScanner:
                 "rejected_high_52w": 0,
                 "rejected_weekly": 0,
                 "rejected_market_cap": 0,
+                "rejected_market_cap_stale": 0,
                 "rejected_beta": 0,
                 "rejected_spread": 0,
+                "rescued_spread_iex": 0,
                 "rejected_earnings_blackout": 0,
                 "rejected_score_liquidity": 0,
                 "rejected_anomalies": 0,
@@ -1034,6 +1126,34 @@ class AlphaScanner:
                 ]
         after_market_cap = len(filtered)
 
+        # Phase 3.3.d — TTL sur la fraîcheur de market_cap_refreshed_at.
+        # Appliqué après le filtre quantitatif sur ``market_cap`` afin d'isoler
+        # le rejet "données obsolètes" du rejet "trop petit".
+        rejected_market_cap_stale = 0
+        if (
+            self.config.market_cap_max_age_days is not None
+            and self.config.min_market_cap is not None
+            and "market_cap_refreshed_at" in filtered.columns
+            and not filtered.empty
+        ):
+            refreshed_at = pd.to_datetime(
+                filtered["market_cap_refreshed_at"], errors="coerce", utc=True
+            )
+            now_utc = pd.Timestamp.now(tz="UTC")
+            age_days = (now_utc - refreshed_at).dt.total_seconds() / 86400.0
+            stale_mask = refreshed_at.isna() | (
+                age_days > float(self.config.market_cap_max_age_days)
+            )
+            rejected_market_cap_stale = int(stale_mask.sum())
+            if rejected_market_cap_stale:
+                LOGGER.info(
+                    "Filtre market_cap TTL | seuil_jours=%s rejets=%s",
+                    self.config.market_cap_max_age_days,
+                    rejected_market_cap_stale,
+                )
+            filtered = filtered[~stale_mask]
+        after_market_cap_ttl = len(filtered)
+
         if self.config.min_beta_126 is not None:
             if "beta_126" not in filtered.columns:
                 LOGGER.warning(
@@ -1047,6 +1167,12 @@ class AlphaScanner:
                 ]
         after_beta = len(filtered)
 
+        # Phase 3.3.c — filtre spread avec relâchement IEX contrôlé.
+        # Comportement strict : on rejette si spread_bps > max_spread_bps.
+        # Relâchement IEX : si max_spread_bps_iex défini ET min_quote_size défini,
+        # on autorise un dépassement jusqu'à max_spread_bps_iex à condition
+        # que bid_size ET ask_size >= min_quote_size (carnet "épais" suffisant).
+        rejected_spread_iex_relaxed = 0
         if self.config.max_spread_bps is not None:
             if "spread_bps" not in filtered.columns:
                 LOGGER.warning(
@@ -1054,10 +1180,38 @@ class AlphaScanner:
                 )
                 filtered = filtered.iloc[0:0].copy()
             else:
-                filtered = filtered[
-                    filtered["spread_bps"].notna()
-                    & (pd.to_numeric(filtered["spread_bps"], errors="coerce") <= self.config.max_spread_bps)
-                ]
+                spread_numeric = pd.to_numeric(filtered["spread_bps"], errors="coerce")
+                strict_mask = spread_numeric.notna() & (spread_numeric <= self.config.max_spread_bps)
+
+                if (
+                    self.config.max_spread_bps_iex is not None
+                    and self.config.min_quote_size is not None
+                    and "bid_size" in filtered.columns
+                    and "ask_size" in filtered.columns
+                ):
+                    bid_size = pd.to_numeric(filtered["bid_size"], errors="coerce")
+                    ask_size = pd.to_numeric(filtered["ask_size"], errors="coerce")
+                    iex_mask = (
+                        spread_numeric.notna()
+                        & (spread_numeric > self.config.max_spread_bps)
+                        & (spread_numeric <= self.config.max_spread_bps_iex)
+                        & bid_size.notna()
+                        & ask_size.notna()
+                        & (bid_size >= self.config.min_quote_size)
+                        & (ask_size >= self.config.min_quote_size)
+                    )
+                    rejected_spread_iex_relaxed = int(iex_mask.sum())
+                    if rejected_spread_iex_relaxed:
+                        LOGGER.info(
+                            "Relâchement IEX spread | strict=%s bps relâché<=%s bps min_size=%s rescues=%s",
+                            self.config.max_spread_bps,
+                            self.config.max_spread_bps_iex,
+                            self.config.min_quote_size,
+                            rejected_spread_iex_relaxed,
+                        )
+                    filtered = filtered[strict_mask | iex_mask]
+                else:
+                    filtered = filtered[strict_mask]
         after_spread = len(filtered)
 
         if self.config.earnings_blackout_days is not None:
@@ -1101,8 +1255,12 @@ class AlphaScanner:
             "rejected_high_52w": after_ma200 - after_high_52w,
             "rejected_weekly": after_high_52w - after_weekly,
             "rejected_market_cap": after_weekly - after_market_cap,
-            "rejected_beta": after_market_cap - after_beta,
+            # Phase 3.3.d — rejets liés à la fraîcheur de market_cap_refreshed_at.
+            "rejected_market_cap_stale": rejected_market_cap_stale,
+            "rejected_beta": after_market_cap_ttl - after_beta,
             "rejected_spread": after_beta - after_spread,
+            # Phase 3.3.c — titres "sauvés" par le relâchement IEX (informatif).
+            "rescued_spread_iex": rejected_spread_iex_relaxed,
             "rejected_earnings_blackout": after_spread - after_earnings_blackout,
             "rejected_score_liquidity": after_earnings_blackout - after_score_liquidity,
             "rejected_sanitizer": after_score_liquidity - after_sanitizer,
@@ -1113,31 +1271,34 @@ class AlphaScanner:
 
     def apply_filters(self, merged_df: pd.DataFrame) -> pd.DataFrame:
         filtered, stats = self._apply_filters_with_stats(merged_df)
-
-        LOGGER.info(
-            "Filtres appliques | entree=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_volatilite_relative=%s rejet_atr_pct=%s rejet_force_relative=%s rejet_ma200=%s rejet_high_52w=%s rejet_weekly=%s rejet_market_cap=%s rejet_beta=%s rejet_spread=%s rejet_earnings_blackout=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
-            stats["input"],
-            stats["output"],
-            stats["rejected_etf"],
-            stats["rejected_history"],
-            stats["rejected_price"],
-            stats["rejected_market_liquidity"],
-            stats["rejected_volatility"],
-            stats["rejected_atr"],
-            stats["rejected_relative_strength"],
-            stats["rejected_ma200"],
-            stats["rejected_high_52w"],
-            stats["rejected_weekly"],
-            stats["rejected_market_cap"],
-            stats["rejected_beta"],
-            stats["rejected_spread"],
-            stats["rejected_earnings_blackout"],
-            stats["rejected_score_liquidity"],
-            stats["rejected_anomalies"],
-            stats["rejected_missing_days"],
-        )
-
+        self._log_filter_stats(stats)
         return filtered
+
+    def _log_filter_stats(self, stats: dict[str, int]) -> None:
+        LOGGER.info(
+            "Filtres appliques | entree=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_volatilite_relative=%s rejet_atr_pct=%s rejet_force_relative=%s rejet_ma200=%s rejet_high_52w=%s rejet_weekly=%s rejet_market_cap=%s rejet_market_cap_stale=%s rejet_beta=%s rejet_spread=%s rescues_spread_iex=%s rejet_earnings_blackout=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
+            stats.get("input", 0),
+            stats.get("output", 0),
+            stats.get("rejected_etf", 0),
+            stats.get("rejected_history", 0),
+            stats.get("rejected_price", 0),
+            stats.get("rejected_market_liquidity", 0),
+            stats.get("rejected_volatility", 0),
+            stats.get("rejected_atr", 0),
+            stats.get("rejected_relative_strength", 0),
+            stats.get("rejected_ma200", 0),
+            stats.get("rejected_high_52w", 0),
+            stats.get("rejected_weekly", 0),
+            stats.get("rejected_market_cap", 0),
+            stats.get("rejected_market_cap_stale", 0),
+            stats.get("rejected_beta", 0),
+            stats.get("rejected_spread", 0),
+            stats.get("rescued_spread_iex", 0),
+            stats.get("rejected_earnings_blackout", 0),
+            stats.get("rejected_score_liquidity", 0),
+            stats.get("rejected_anomalies", 0),
+            stats.get("rejected_missing_days", 0),
+        )
 
     def apply_sector_neutrality(self, ranked_df: pd.DataFrame) -> pd.DataFrame:
         """Sélection round-robin avec plafond sectoriel."""
@@ -1398,7 +1559,12 @@ class AlphaScanner:
             merged = self.merge_scores(computed, scores)
             merged = self._enrich_and_filter_equities(merged, metadata_df)
             merged = self._merge_optional_symbol_overlays(merged, quotes_df, earnings_df)
-            filtered = self.apply_filters(merged)
+            # Phase 3.3.b — collecte stats par filtre en un seul passage.
+            filtered, chunk_stats = self._apply_filters_with_stats(merged)
+            self._log_filter_stats(chunk_stats)
+            with self._filter_stats_lock:
+                for key, value in chunk_stats.items():
+                    self._aggregated_filter_stats[key] += int(value)
             LOGGER.debug(
                 "Fin chunk | symboles=%s lignes_market=%s facteurs=%s scores=%s metadata=%s quotes=%s earnings=%s fusion=%s filtre=%s",
                 len(symbols),
@@ -1431,6 +1597,9 @@ class AlphaScanner:
         return min(8, os.cpu_count() or 1)
 
     def _reset_selector_outputs(self) -> None:
+        # Phase 3.3.b — réinitialiser l'agrégat de stats à chaque run.
+        with self._filter_stats_lock:
+            self._aggregated_filter_stats.clear()
         reset_stmt = text(
             f"""
             UPDATE {self.config.score_table}
@@ -1593,13 +1762,27 @@ class AlphaScanner:
         enriched = merged_df.copy()
 
         if not quotes_df.empty:
-            latest_quotes = quotes_df[["symbol", "spread_bps"]].drop_duplicates(subset=["symbol"], keep="last")
+            # Phase 3.3.c — propager bid_size/ask_size pour le filtre spread IEX.
+            quote_columns = ["symbol", "spread_bps"]
+            for optional_col in ("bid_size", "ask_size"):
+                if optional_col in quotes_df.columns:
+                    quote_columns.append(optional_col)
+            latest_quotes = quotes_df[quote_columns].drop_duplicates(subset=["symbol"], keep="last")
             enriched = enriched.merge(latest_quotes, on="symbol", how="left", suffixes=("", "_quote"))
             if "spread_bps_quote" in enriched.columns:
                 enriched["spread_bps"] = pd.to_numeric(enriched["spread_bps_quote"], errors="coerce").combine_first(
                     pd.to_numeric(enriched.get("spread_bps"), errors="coerce")
                 )
                 enriched = enriched.drop(columns=["spread_bps_quote"])
+            for size_col in ("bid_size", "ask_size"):
+                quote_col = f"{size_col}_quote"
+                if quote_col in enriched.columns:
+                    enriched[size_col] = pd.to_numeric(enriched[quote_col], errors="coerce").combine_first(
+                        pd.to_numeric(enriched.get(size_col), errors="coerce")
+                        if size_col in enriched.columns
+                        else pd.Series(index=enriched.index, dtype=float)
+                    )
+                    enriched = enriched.drop(columns=[quote_col])
 
         if not earnings_df.empty:
             latest_earnings = earnings_df[
@@ -1838,8 +2021,19 @@ def main() -> None:
     config = _build_config_from_args(args)
 
     started_at = _utc_now_naive()
-    result = AlphaScanner(config=config).run()
+    scanner = AlphaScanner(config=config)
+    result = scanner.run()
     finished_at = _utc_now_naive()
+
+    rejected_by_filter: dict[str, int] = {}
+    # Phase 3.3.b — récupération défensive (fakes de tests peuvent ne pas
+    # exposer cette méthode).
+    getter = getattr(scanner, "get_aggregated_filter_stats", None)
+    if callable(getter):
+        try:
+            rejected_by_filter = {str(k): int(v) for k, v in dict(getter()).items()}
+        except Exception:
+            rejected_by_filter = {}
 
     _emit_run_summary(
         _build_cli_run_summary(
@@ -1847,6 +2041,7 @@ def main() -> None:
             result=result,
             started_at=started_at,
             finished_at=finished_at,
+            rejected_by_filter=rejected_by_filter,
         )
     )
 

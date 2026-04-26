@@ -161,3 +161,14 @@ Cela rend le choix `split_adjusted` explicite et typed.
   - `doc/core.md` listant les Protocols et leur usage.
   - `doc/common.md` documentant `configure_root_logging` et autres utils.
 
+
+
+---
+
+## Statut Phase 2.1 (refactor) — termine
+
+- core/interfaces.py : Protocols centralises (BrokerPort, MarketDataPort, BarsRepository, ScoresRepository, RiskRepository, ExecutionRepository, NewsProvider, CorporateActionProvider, ConvictionAggregator) corrige en Phase 2.1.
+- core/conviction.py : formule de fusion partagee corrige en Phase 2.1.
+- core/filter_profiles.py : profil partage (re-export STRICT_SWING_CASH_FILTERS) corrige en Phase 2.1.
+- common/utils.py decoupe en common/logging_setup.py + common/market_calendar.py + common/config_loader.py (facade retrocompatible) corrige en Phase 2.1.
+- doc/core_common.md cree (Phase 2.1).

@@ -26,6 +26,18 @@ class _FakeScanner:
             ]
         )
 
+    # Phase 3.3.b — exposer un agrégat factice pour vérifier la propagation
+    # vers ``rejected_by_filter`` du run_summary CLI.
+    def get_aggregated_filter_stats(self) -> dict[str, int]:
+        return {
+            "input": 5,
+            "output": 3,
+            "rejected_price": 1,
+            "rejected_spread": 1,
+            "rescued_spread_iex": 0,
+            "rejected_market_cap_stale": 0,
+        }
+
 
 def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> None:
     monkeypatch.setattr(alpha_scanner, "configure_root_logging", lambda **kwargs: None)
@@ -84,4 +96,17 @@ def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> Non
     assert payload["workers"] == 6
     assert payload["sector_cap_ratio"] == 0.25
     assert payload["top_symbols"] == ["AAPL", "NVDA", "JPM"]
+    # Phase 3.3.b — ``rejected_by_filter`` doit être agrégé dans le payload.
+    assert payload["rejected_by_filter"] == {
+        "input": 5,
+        "output": 3,
+        "rejected_price": 1,
+        "rejected_spread": 1,
+        "rescued_spread_iex": 0,
+        "rejected_market_cap_stale": 0,
+    }
+    # Phase 3.3.c/d — visibilité IEX/TTL au run_summary.
+    assert "max_spread_bps_iex" in payload
+    assert "min_quote_size" in payload
+    assert "market_cap_max_age_days" in payload
 

@@ -9,6 +9,7 @@ from uuid import uuid4
 import requests
 
 from common.utils import configure_root_logging
+from database.cleaning_audits import record_quotes_audit_run
 from database.selector_reference import list_active_tradable_symbols, upsert_quote_snapshots
 from service.alpaca.clientAlpaca import fetch_latest_quotes
 
@@ -105,16 +106,48 @@ def main() -> None:
     )
     args = _build_arg_parser().parse_args()
     started_at = _utc_now_naive()
-    summary = sync_latest_quotes(limit=args.limit, batch_size=args.batch_size)
+    run_id = _build_run_id("sync-latest-quotes")
+    status: str = "success"
+    error_message: str | None = None
+    summary: dict[str, int]
+    try:
+        summary = sync_latest_quotes(limit=args.limit, batch_size=args.batch_size)
+    except Exception as exc:  # noqa: BLE001 — audit + propagation contrôlée.
+        status = "failed"
+        error_message = repr(exc)
+        summary = {"symbols": 0, "rows_upserted": 0}
+        finished_at = _utc_now_naive()
+        # Phase 3.1.c — audit dédié quotes.
+        record_quotes_audit_run(
+            run_id=run_id,
+            started_at=started_at,
+            finished_at=finished_at,
+            symbols_requested=int(summary.get("symbols", 0)),
+            rows_upserted=int(summary.get("rows_upserted", 0)),
+            status="failed",
+            error_message=error_message,
+        )
+        raise
     finished_at = _utc_now_naive()
+    # Phase 3.1.c — audit dédié quotes (best-effort).
+    record_quotes_audit_run(
+        run_id=run_id,
+        started_at=started_at,
+        finished_at=finished_at,
+        symbols_requested=int(summary.get("symbols", 0)),
+        rows_upserted=int(summary.get("rows_upserted", 0)),
+        status="success",
+        error_message=None,
+    )
     _emit_run_summary(
         {
-            "run_id": _build_run_id("sync-latest-quotes"),
+            "run_id": run_id,
             "started_at": started_at.isoformat(timespec="seconds"),
             "finished_at": finished_at.isoformat(timespec="seconds"),
             "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
             "requested_limit": args.limit,
             "batch_size": args.batch_size,
+            "audit_status": status,
             **summary,
         }
     )

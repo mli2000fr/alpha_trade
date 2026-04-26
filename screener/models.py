@@ -1,6 +1,13 @@
 from dataclasses import asdict, dataclass
 from typing import Any
 
+# Phase 3.2.c — la source de vérité des seuils communs (close, ADV20,
+# RSI relatif) est ``core.filter_profiles.StrictFilterProfile``.
+# ``ScreenerConfig`` reste libre d'avoir des champs spécifiques au screener
+# (poids, fenêtres, two-pass loading) mais peut désormais être instancié
+# directement à partir du profil partagé via :meth:`from_filter_profile`.
+from core.filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
+
 
 @dataclass(frozen=True, slots=True)
 class ScreenerConfig:
@@ -64,6 +71,40 @@ class ScreenerConfig:
         normalized_payload.pop("timeframe", None)
         return ScreenerConfig(**normalized_payload)
 
+    # -- Phase 3.2.c — alignement sur core.filter_profiles ------------------
+    @classmethod
+    def from_filter_profile(
+        cls,
+        profile: StrictFilterProfile,
+        **overrides: Any,
+    ) -> "ScreenerConfig":
+        """Construit une ``ScreenerConfig`` à partir d'un profil partagé.
+
+        Mapping des champs communs (cf. ``StrictFilterProfile``) :
+
+        - ``min_close``               → ``min_close_price``
+        - ``min_avg_dollar_volume_20d`` → ``liquidity_threshold_usd``
+        - ``min_relative_strength_index`` → ``min_relative_strength_index``
+          (conserve le défaut screener si ``None`` côté profil).
+
+        Les champs spécifiques au screener (poids, two-pass, fenêtres)
+        gardent leurs défauts sauf override explicite. Cela évite la
+        divergence des seuils communs entre screener et selector.
+        """
+        merged: dict[str, Any] = {
+            "min_close_price": profile.min_close,
+            "liquidity_threshold_usd": profile.min_avg_dollar_volume_20d,
+        }
+        if profile.min_relative_strength_index is not None:
+            merged["min_relative_strength_index"] = profile.min_relative_strength_index
+        merged.update(overrides)
+        return cls(**merged)
+
+    @classmethod
+    def strict_swing_cash(cls, **overrides: Any) -> "ScreenerConfig":
+        """Phase 3.2.c — raccourci aligné sur ``STRICT_SWING_CASH_FILTERS``."""
+        return cls.from_filter_profile(STRICT_SWING_CASH_FILTERS, **overrides)
+
 
 @dataclass(frozen=True, slots=True)
 class ScreenerChunkMetrics:
@@ -108,5 +149,14 @@ class ScreenerRunReport:
     pass2_seconds: float = 0.0
     upsert_seconds: float = 0.0
 
+    @property
+    def chunk_failure_ratio(self) -> float:
+        """Phase 3.2.b — ratio chunks en échec sur chunks totaux (0 si aucun chunk)."""
+        if self.chunks_total <= 0:
+            return 0.0
+        return round(self.chunk_failures / self.chunks_total, 4)
+
     def to_summary_dict(self) -> dict[str, object]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["chunk_failure_ratio"] = self.chunk_failure_ratio
+        return payload

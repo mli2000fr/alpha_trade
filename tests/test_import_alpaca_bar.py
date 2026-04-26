@@ -1,9 +1,17 @@
 from datetime import date, datetime
 
+import json
 import pytest
 
 from database.bar_metadata import TimeFrame
-from dataIntegrityEngine.import_alpaca_bar import _assess_staleness, _build_bar_records, import_alpaca_bars
+from dataIntegrityEngine import import_alpaca_bar
+from dataIntegrityEngine.import_alpaca_bar import (
+    RUN_SUMMARY_PREFIX,
+    _assess_staleness,
+    _build_bar_records,
+    import_alpaca_bars,
+    main,
+)
 from service.alpaca.clientAlpaca import AlpacaBarsFetchError
 
 
@@ -225,5 +233,143 @@ def test_build_bar_records_rejects_negative_volume_and_preserves_nullable_vwap()
     assert rejected == []
     assert len(accepted) == 1
     assert accepted[0]["vwa_price"] is None
+
+
+
+def test_import_alpaca_bars_computes_success_ratio_for_attempted_symbols(monkeypatch) -> None:
+    """Le ratio succès doit ignorer les symboles up_to_date du dénominateur."""
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.getLastDateMarche", lambda: date(2026, 1, 15))
+
+    # AAPL : up_to_date (ne doit pas compter dans attempted)
+    # MSFT : succès (1 barre insérée)
+    # GOOG : provider error
+    def _last_ts(session, symbol, time_frame):
+        if symbol == "AAPL":
+            return datetime(2026, 1, 15, 0, 0, 0)
+        return None
+
+    def _fetch(symbol, api_value, start):
+        if symbol == "GOOG":
+            raise AlpacaBarsFetchError("boom")
+        if symbol == "MSFT" and start is None:
+            return [
+                {"t": "2026-01-15T21:00:00Z", "o": 100.0, "h": 101.0, "l": 99.0, "c": 100.5, "v": 1_000, "n": 10, "vw": 100.1}
+            ]
+        return []
+
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.get_last_bar_timestamp", _last_ts)
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.fetch_bars", _fetch)
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.insert_bars", lambda session, symbol, bars, timeframe: len(bars))
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.symbol_exists_in_stock_bars", lambda session, symbol: True)
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.mark_symbol_history_ready", lambda symbol: None)
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.update_symbol_history_status", lambda symbol, status: None)
+
+    summary = import_alpaca_bars(TimeFrame.ONE_DAY, symbols=["aapl", "msft", "goog"])
+
+    assert summary["targeted_symbols"] == 3
+    assert summary["up_to_date_symbols"] == 1
+    assert summary["attempted_symbols"] == 2
+    assert summary["successful_symbols"] == 1
+    assert summary["provider_error_symbols"] == 1
+    assert summary["success_ratio"] == pytest.approx(0.5)
+    assert summary["provider_error_ratio"] == pytest.approx(0.5)
+
+
+def test_import_alpaca_bars_success_ratio_none_when_all_up_to_date(monkeypatch) -> None:
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr("dataIntegrityEngine.import_alpaca_bar.getLastDateMarche", lambda: date(2026, 1, 15))
+    monkeypatch.setattr(
+        "dataIntegrityEngine.import_alpaca_bar.get_last_bar_timestamp",
+        lambda session, symbol, time_frame: datetime(2026, 1, 15, 0, 0, 0),
+    )
+    monkeypatch.setattr(
+        "dataIntegrityEngine.import_alpaca_bar.fetch_bars",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ne doit pas être appelé")),
+    )
+
+    summary = import_alpaca_bars(TimeFrame.ONE_DAY, symbols=["aapl"])
+
+    assert summary["attempted_symbols"] == 0
+    assert summary["success_ratio"] is None
+    assert summary["provider_error_ratio"] is None
+
+
+def _payload_from_capsys(capsys) -> dict:
+    output = capsys.readouterr().out.strip()
+    assert output.startswith(RUN_SUMMARY_PREFIX)
+    return json.loads(output[len(RUN_SUMMARY_PREFIX):])
+
+
+def test_main_returns_zero_when_universe_meets_threshold(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(import_alpaca_bar, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(
+        import_alpaca_bar,
+        "import_alpaca_bars",
+        lambda time_frame, symbols=None: {
+            "targeted_symbols": 100,
+            "up_to_date_symbols": 0,
+            "successful_symbols": 95,
+            "provider_error_symbols": 5,
+            "success_ratio": 0.95,
+            "provider_error_ratio": 0.05,
+            "attempted_symbols": 100,
+        },
+    )
+
+    exit_code = main([])
+
+    assert exit_code == 0
+    payload = _payload_from_capsys(capsys)
+    assert payload["schema_version"] == 1
+    assert payload["success_ratio_threshold"] == pytest.approx(0.80)
+    assert payload["target_mode"] == "universe"
+
+
+def test_main_returns_one_when_universe_below_threshold(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(import_alpaca_bar, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(
+        import_alpaca_bar,
+        "import_alpaca_bars",
+        lambda time_frame, symbols=None: {
+            "targeted_symbols": 100,
+            "up_to_date_symbols": 0,
+            "successful_symbols": 50,
+            "provider_error_symbols": 50,
+            "success_ratio": 0.50,
+            "provider_error_ratio": 0.50,
+            "attempted_symbols": 100,
+        },
+    )
+
+    exit_code = main(["--min-success-ratio", "0.80"])
+
+    assert exit_code == 1
+    payload = _payload_from_capsys(capsys)
+    assert payload["success_ratio"] == pytest.approx(0.50)
+
+
+def test_main_returns_zero_when_explicit_symbols_even_if_below_threshold(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(import_alpaca_bar, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(
+        import_alpaca_bar,
+        "import_alpaca_bars",
+        lambda time_frame, symbols=None: {
+            "targeted_symbols": 1,
+            "up_to_date_symbols": 0,
+            "successful_symbols": 0,
+            "provider_error_symbols": 1,
+            "success_ratio": 0.0,
+            "provider_error_ratio": 1.0,
+            "attempted_symbols": 1,
+        },
+    )
+
+    exit_code = main(["--symbols", "AAPL"])
+
+    assert exit_code == 0
+    payload = _payload_from_capsys(capsys)
+    assert payload["target_mode"] == "explicit"
+
 
 

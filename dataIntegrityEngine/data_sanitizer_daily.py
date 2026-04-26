@@ -13,6 +13,7 @@ from sqlalchemy import MetaData, Table
 from sqlalchemy.engine import Engine, Connection
 
 from common.utils import configure_root_logging
+from common.market_calendar import nyse_session_dates
 from database.connection import get_sqlalchemy_engine
 from database.bar_metadata import TimeFrame
 from database.sanitizer_db_ops import (
@@ -137,30 +138,28 @@ class DataSanitizer:
             return False
         return (calendar['date'].min() <= start) and (calendar['date'].max() >= end)
 
-    def _fetch_calendar_dates(self, conn: Connection, start: Optional[date]) -> list[date]:
+    def _ensure_spy_1d_available(self, conn: Connection) -> None:
+        """Conservé pour compatibilité ascendante.
+
+        Depuis le découplage du calendrier (Phase 3.1.b), le calendrier de
+        sessions NYSE est fourni par ``common.market_calendar.nyse_session_dates``
+        (``pandas_market_calendars``). SPY n'est plus consulté pour la
+        construction du calendrier ; cette méthode devient un no-op explicite.
+        Elle reste appelée par ``run_pipeline`` pour préserver les hooks de tests
+        existants et permettre une éventuelle ré-activation locale.
+        """
+        return None
+
+    def _fetch_calendar_dates_from_spy(self, conn: Connection, start: Optional[date]) -> list[date]:
+        """Fallback historique : reconstruit le calendrier depuis SPY (stock_bars 1D).
+
+        Utilisé uniquement si ``nyse_session_dates`` ne retourne rien (cas
+        extrême : dépendance pmc absente *et* fenêtre d'historique antérieure à
+        l'energie weekday-only). Préserve la robustesse du pipeline.
+        """
         bars = get_stock_bars(conn, self.stock_bars, SPY_SYMBOL, TimeFrame.ONE_DAY.db_value, start)
         return [self._to_ny_date(bar['t']) for bar in bars]
 
-    def _ensure_spy_1d_available(self, conn: Connection) -> None:
-        if self._fetch_calendar_dates(conn, None):
-            return
-
-        LOGGER.warning(
-            'SPY absent de stock_bars en 1D | import cible declenche automatiquement.'
-        )
-        from dataIntegrityEngine.import_alpaca_bar import import_alpaca_bars
-
-        import_alpaca_bars(TimeFrame.ONE_DAY, symbols=[SPY_SYMBOL])
-        self._spy_calendar_cache = None
-
-        with self.engine.connect() as verification_conn:
-            if self._fetch_calendar_dates(verification_conn, None):
-                return
-
-        if not self._fetch_calendar_dates(conn, None):
-            raise RuntimeError(
-                'Import automatique de SPY échoué : aucune barre SPY 1D disponible dans stock_bars.'
-            )
 
     def _build_symbol_frame(self, bars: list[dict]) -> pl.DataFrame:
         if not bars:
@@ -305,19 +304,36 @@ class DataSanitizer:
         return dt_ny.date()
 
     def load_spy_calendar(self, conn: Connection, start: date, end: date) -> pl.DataFrame:
-        """Construit le calendrier RTH via SPY pour [start, end]. Mis en cache au sein de l'instance."""
+        """Construit le calendrier de sessions NYSE pour ``[start, end]``.
+
+        - Source primaire : ``common.market_calendar.nyse_session_dates``
+          (``pandas_market_calendars``), totalement indépendant de SPY.
+        - Fallback : reconstruction depuis SPY/stock_bars (legacy) si pmc et le
+          fallback weekday-only ne donnent rien.
+        - Cache à l'instance pour éviter les recomputes inter-symboles.
+
+        Le nom historique ``load_spy_calendar`` est conservé pour ne pas casser
+        les appelants ; le contenu n'a plus de dépendance directe à SPY.
+        """
         if self._spy_calendar_cache is not None:
             if self._covers_date_range(self._spy_calendar_cache, start, end):
                 return self._slice_cached_calendar(self._spy_calendar_cache, start, end)
 
-        fetch_start = start - timedelta(days=SPY_FETCH_PADDING_DAYS)
-        dates = self._fetch_calendar_dates(conn, fetch_start)
-        if not dates or max(dates) < end or min(dates) > start:
-            dates = self._fetch_calendar_dates(conn, None)
+        dates = nyse_session_dates(start, end)
+        if not dates:
+            # Fallback ultime : la table SPY locale.
+            LOGGER.warning(
+                "Calendrier NYSE vide via pandas_market_calendars sur [%s, %s] | bascule sur SPY/stock_bars.",
+                start, end,
+            )
+            fetch_start = start - timedelta(days=SPY_FETCH_PADDING_DAYS)
+            spy_dates = self._fetch_calendar_dates_from_spy(conn, fetch_start)
+            if not spy_dates or max(spy_dates) < end or min(spy_dates) > start:
+                spy_dates = self._fetch_calendar_dates_from_spy(conn, None)
+            dates = sorted([d for d in spy_dates if start <= d <= end])
 
-        calendar_dates = sorted([d for d in dates if start <= d <= end])
         cal_df = pl.DataFrame({
-            'date': pl.Series('date', calendar_dates, dtype=pl.Date),
+            'date': pl.Series('date', dates, dtype=pl.Date),
         })
         self._spy_calendar_cache = cal_df
         return cal_df
@@ -336,8 +352,9 @@ class DataSanitizer:
             start = df['date'][0]
             end = df['date'][-1]
             raise RuntimeError(
-                f'Calendrier SPY introuvable pour la plage {start} -> {end}. '
-                'Vérifier que SPY est bien importé dans stock_bars en 1D.'
+                f'Calendrier NYSE introuvable pour la plage {start} -> {end}. '
+                'Verifier l\'installation de pandas_market_calendars (et, en dernier recours, '
+                'que SPY est bien importe dans stock_bars en 1D).'
             )
 
         base = calendar.join(df, on='date', how='left')

@@ -314,7 +314,8 @@ def test_apply_filters_supports_explicit_swing_criteria() -> None:
                 "history_days": 300, "latest_close": 105.0, "avg_dollar_volume_20d": 40_000_000.0,
                 "volatility_ratio": 0.6, "liquidity_val": 40_000_000.0,
                 "relative_strength_index": 110.0, "ma200": 95.0, "high_52w_proximity": 0.84,
-                "weekly_trend_score": 0.5, "atr_pct_20": 0.03,
+                "weekly_trend_score": 0.5,
+                "atr_pct_20": 0.03,
                 "market_cap": 5_000_000_000.0, "beta_126": 1.25, "spread_bps": 12.0,
                 "earnings_blackout": 0,
             },
@@ -381,4 +382,155 @@ def test_apply_sector_neutrality_respects_sector_cap() -> None:
     assert len(rows) == 4
     assert sectors.count("Tech") == 1
     assert set(sectors) == {"Tech", "Finance", "Energy", "Health"}
+
+
+# --- Phase 3.3.b/c/d -------------------------------------------------------
+
+def test_strict_swing_cash_propagates_iex_and_ttl_extensions() -> None:
+    """Phase 3.3.c/d — extensions IEX/TTL doivent transiter du profil → config."""
+    config = AlphaScannerConfig.strict_swing_cash()
+    assert config.max_spread_bps_iex == pytest.approx(50.0)
+    assert config.min_quote_size == pytest.approx(100.0)
+    assert config.market_cap_max_age_days == 45
+
+
+def test_alpha_scanner_config_rejects_iex_relaxation_below_strict() -> None:
+    with pytest.raises(ValueError, match="max_spread_bps_iex"):
+        AlphaScannerConfig(max_spread_bps=30.0, max_spread_bps_iex=10.0)
+
+
+def test_alpha_scanner_config_rejects_negative_min_quote_size() -> None:
+    with pytest.raises(ValueError, match="min_quote_size"):
+        AlphaScannerConfig(min_quote_size=-1.0)
+
+
+def test_alpha_scanner_config_rejects_negative_market_cap_ttl() -> None:
+    with pytest.raises(ValueError, match="market_cap_max_age_days"):
+        AlphaScannerConfig(market_cap_max_age_days=-5)
+
+
+def test_apply_filters_iex_relaxation_rescues_thick_book() -> None:
+    """Phase 3.3.c — un titre dépassant max_spread_bps mais sous max_spread_bps_iex
+    et avec bid_size/ask_size >= min_quote_size doit être conservé."""
+    scanner = _make_scanner(
+        AlphaScannerConfig(
+            max_spread_bps=25.0,
+            max_spread_bps_iex=50.0,
+            min_quote_size=100.0,
+        )
+    )
+    base_row = {
+        "history_days": 300,
+        "latest_close": 50.0,
+        "avg_dollar_volume_20d": 100_000_000.0,
+        "asset_class": "us_equity",
+        "tradable": True,
+    }
+    merged_df = pd.DataFrame(
+        [
+            {**base_row, "symbol": "STRICT", "spread_bps": 12.0, "bid_size": 200.0, "ask_size": 200.0},
+            {**base_row, "symbol": "RESCUE", "spread_bps": 35.0, "bid_size": 150.0, "ask_size": 150.0},
+            {**base_row, "symbol": "THIN", "spread_bps": 35.0, "bid_size": 50.0, "ask_size": 50.0},
+            {**base_row, "symbol": "WIDE", "spread_bps": 80.0, "bid_size": 500.0, "ask_size": 500.0},
+        ]
+    )
+
+    filtered, stats = scanner._apply_filters_with_stats(merged_df)
+
+    assert sorted(filtered["symbol"].tolist()) == ["RESCUE", "STRICT"]
+    assert stats["rescued_spread_iex"] == 1
+    assert stats["rejected_spread"] == 2
+
+
+def test_apply_filters_market_cap_ttl_rejects_stale_rows() -> None:
+    """Phase 3.3.d — stale market_cap_refreshed_at doit être rejeté quand TTL actif."""
+    scanner = _make_scanner(
+        AlphaScannerConfig(
+            min_market_cap=1_000_000_000.0,
+            market_cap_max_age_days=30,
+        )
+    )
+    now = pd.Timestamp.now(tz="UTC")
+    fresh = (now - pd.Timedelta(days=10)).to_pydatetime()
+    stale = (now - pd.Timedelta(days=120)).to_pydatetime()
+    merged_df = pd.DataFrame(
+        [
+            {
+                "symbol": "FRESH",
+                "history_days": 300,
+                "latest_close": 50.0,
+                "avg_dollar_volume_20d": 100_000_000.0,
+                "asset_class": "us_equity",
+                "tradable": True,
+                "market_cap": 5_000_000_000.0,
+                "market_cap_refreshed_at": fresh,
+            },
+            {
+                "symbol": "STALE",
+                "history_days": 300,
+                "latest_close": 50.0,
+                "avg_dollar_volume_20d": 100_000_000.0,
+                "asset_class": "us_equity",
+                "tradable": True,
+                "market_cap": 5_000_000_000.0,
+                "market_cap_refreshed_at": stale,
+            },
+        ]
+    )
+
+    filtered, stats = scanner._apply_filters_with_stats(merged_df)
+
+    assert filtered["symbol"].tolist() == ["FRESH"]
+    assert stats["rejected_market_cap_stale"] == 1
+    assert stats["rejected_market_cap"] == 0
+
+
+def test_get_aggregated_filter_stats_accumulates_across_chunks() -> None:
+    """Phase 3.3.b — l'agrégat doit cumuler tous les chunks d'un run."""
+    scanner = _make_scanner(AlphaScannerConfig(min_close=10.0))
+    chunk_a = pd.DataFrame(
+        [
+            {
+                "symbol": "OK",
+                "history_days": 300,
+                "latest_close": 50.0,
+                "avg_dollar_volume_20d": 100_000_000.0,
+                "asset_class": "us_equity",
+                "tradable": True,
+            },
+            {
+                "symbol": "CHEAP",
+                "history_days": 300,
+                "latest_close": 2.0,
+                "avg_dollar_volume_20d": 100_000_000.0,
+                "asset_class": "us_equity",
+                "tradable": True,
+            },
+        ]
+    )
+    _, stats_a = scanner._apply_filters_with_stats(chunk_a)
+    with scanner._filter_stats_lock:
+        for key, value in stats_a.items():
+            scanner._aggregated_filter_stats[key] += int(value)
+
+    chunk_b = pd.DataFrame(
+        [
+            {
+                "symbol": "ALSOCHEAP",
+                "history_days": 300,
+                "latest_close": 1.0,
+                "avg_dollar_volume_20d": 100_000_000.0,
+                "asset_class": "us_equity",
+                "tradable": True,
+            },
+        ]
+    )
+    _, stats_b = scanner._apply_filters_with_stats(chunk_b)
+    with scanner._filter_stats_lock:
+        for key, value in stats_b.items():
+            scanner._aggregated_filter_stats[key] += int(value)
+
+    aggregated = scanner.get_aggregated_filter_stats()
+    assert aggregated["rejected_price"] == 2
+    assert aggregated["input"] == 3
 

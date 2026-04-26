@@ -177,6 +177,8 @@ def load_historical_range_stats_for_symbols(
 
 	ref_date = _resolve_reference_date(as_of_date)
 	cutoff_lower = ref_date - timedelta(days=config.historical_range_lookback_days)
+	# Phase 3.2.a : exclure les barres forward-filled du sanitizer pour ne pas
+	# polluer min/max historiques (pic figé par un fill long > seuil bas etc.).
 	query = """
 		SELECT symbol,
 		       MIN(low) AS hist_low,
@@ -184,6 +186,7 @@ def load_historical_range_stats_for_symbols(
 		FROM stock_bars_daily
 		WHERE symbol IN :symbols
 		  AND `date` >= :cutoff_lower
+		  AND (is_filled IS NULL OR is_filled = 0)
 	"""
 	params: dict = {
 		"symbols": symbols,

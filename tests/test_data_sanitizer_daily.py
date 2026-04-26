@@ -174,54 +174,51 @@ def test_sanitize_and_align_raises_clear_error_when_spy_calendar_is_empty(saniti
     )
     empty_calendar = pl.DataFrame({"date": pl.Series("date", [], dtype=pl.Date)})
 
-    with pytest.raises(RuntimeError, match="Calendrier SPY introuvable"):
+    with pytest.raises(RuntimeError, match="Calendrier NYSE introuvable"):
         sanitizer.sanitize_and_align(raw_df, empty_calendar, prev_close=None)
 
 
-def test_ensure_spy_1d_available_imports_spy_when_missing(monkeypatch, sanitizer: DataSanitizer) -> None:
-    sanitizer.stock_bars = object()
-    fake_conn = _ContextConnection("stale")
-    verification_conn = _ContextConnection("fresh")
-    sanitizer.engine = _FakeEngine(verification_conn)
-    calls: list[str] = []
+def test_ensure_spy_1d_available_is_a_noop_after_calendar_decoupling(sanitizer: DataSanitizer) -> None:
+    """Phase 3.1.b : le calendrier ne dépend plus de SPY ; la méthode reste un hook no-op."""
+    sanitizer.engine = _FakeEngine(_ContextConnection("noop"))
+    # Aucune exception, aucun effet de bord attendu.
+    assert sanitizer._ensure_spy_1d_available(cast(Connection, _ContextConnection("noop"))) is None
 
+
+def test_load_spy_calendar_uses_pandas_market_calendars(monkeypatch, sanitizer: DataSanitizer) -> None:
+    sanitizer.stock_bars = object()
+
+    def _fake_nyse(start, end):
+        return [date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)]
+
+    monkeypatch.setattr(data_sanitizer_daily, "nyse_session_dates", _fake_nyse)
+    # Doit ne PAS toucher à SPY.
     monkeypatch.setattr(
         data_sanitizer_daily,
         "get_stock_bars",
-        lambda conn, stock_bars, symbol, timeframe, start: calls.append(
-            f"read:{getattr(conn, 'label', 'unknown')}:{symbol}:{timeframe}"
-        ) or (
-            [] if getattr(conn, 'label', None) == "stale" else
-            [{"t": datetime(2024, 1, 2, 0, 0, 0), "o": 0.0, "h": 0.0, "l": 0.0, "c": 0.0, "v": 0}]
-        ),
-    )
-    monkeypatch.setattr(
-        "dataIntegrityEngine.import_alpaca_bar.import_alpaca_bars",
-        lambda time_frame, symbols=None: calls.append(f"import:{time_frame.db_value}:{','.join(symbols or [])}"),
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ne doit pas lire stock_bars")),
     )
 
-    sanitizer._ensure_spy_1d_available(cast(Connection, fake_conn))
+    cal_df = sanitizer.load_spy_calendar(cast(Connection, object()), date(2024, 1, 2), date(2024, 1, 4))
 
-    assert calls == [
-        "read:stale:SPY:1D",
-        "import:1D:SPY",
-        "read:fresh:SPY:1D",
-    ]
+    assert cal_df["date"].to_list() == [date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)]
 
 
-def test_ensure_spy_1d_available_raises_when_import_does_not_fill_spy(monkeypatch, sanitizer: DataSanitizer) -> None:
+def test_load_spy_calendar_falls_back_to_spy_when_nyse_returns_empty(monkeypatch, sanitizer: DataSanitizer) -> None:
     sanitizer.stock_bars = object()
-    fake_conn = _ContextConnection("stale")
-    sanitizer.engine = _FakeEngine(_ContextConnection("fresh"))
-
-    monkeypatch.setattr(data_sanitizer_daily, "get_stock_bars", lambda conn, stock_bars, symbol, timeframe, start: [])
+    monkeypatch.setattr(data_sanitizer_daily, "nyse_session_dates", lambda start, end: [])
     monkeypatch.setattr(
-        "dataIntegrityEngine.import_alpaca_bar.import_alpaca_bars",
-        lambda time_frame, symbols=None: None,
+        data_sanitizer_daily,
+        "get_stock_bars",
+        lambda conn, table, symbol, timeframe, start: [
+            {"t": datetime(2024, 1, 2, 0, 0, 0), "o": 0.0, "h": 0.0, "l": 0.0, "c": 0.0, "v": 0},
+            {"t": datetime(2024, 1, 3, 0, 0, 0), "o": 0.0, "h": 0.0, "l": 0.0, "c": 0.0, "v": 0},
+        ],
     )
 
-    with pytest.raises(RuntimeError, match="Import automatique de SPY échoué"):
-        sanitizer._ensure_spy_1d_available(cast(Connection, fake_conn))
+    cal_df = sanitizer.load_spy_calendar(cast(Connection, object()), date(2024, 1, 2), date(2024, 1, 3))
+
+    assert cal_df["date"].to_list() == [date(2024, 1, 2), date(2024, 1, 3)]
 
 
 def test_detect_anomalies_returns_boolean_flags_without_nulls(sanitizer: DataSanitizer) -> None:

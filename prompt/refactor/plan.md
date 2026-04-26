@@ -140,24 +140,24 @@ concrète au lieu d'un Protocol.
 ## Phase 3 — Pipeline data (≤ 1 semaine)
 
 ### 3.1 — `dataIntegrityEngine/` (réf. `audit_dataIntegrityEngine.md`)
-- [ ] Exit ≠ 0 si ratio succès `import_alpaca_bar` < seuil.
-- [ ] Découpler le calendrier de SPY → `pandas_market_calendars`.
-- [ ] Audit dédié quotes (`cleaning_audit_quotes_runs`).
-- [ ] Audit dédié earnings (`cleaning_audit_earnings_runs`).
-- [ ] `market_cap_refreshed_at` consommé par filtre TTL.
+- [x] Exit ≠ 0 si ratio succès `import_alpaca_bar` < seuil.
+- [x] Découpler le calendrier de SPY → `pandas_market_calendars`.
+- [x] Audit dédié quotes (`cleaning_audit_quotes_runs`).
+- [x] Audit dédié earnings (`cleaning_audit_earnings_runs`).
+- [x] `market_cap_refreshed_at` consommé par filtre TTL.
 
 ### 3.2 — `screener/` (réf. `audit_screener.md`)
-- [ ] Filtrer `WHERE is_filled = 0` dans `historical_range_score` /
+- [x] Filtrer `WHERE is_filled = 0` dans `historical_range_score` /
       `high_52w_proximity`.
-- [ ] `chunk_failures` dans `run_summary`.
-- [ ] Migrer vers `core/filter_profiles.py`.
+- [x] `chunk_failures` dans `run_summary`.
+- [x] Migrer vers `core/filter_profiles.py`.
 
 ### 3.3 — `selector/` (réf. `audit_selector.md`)
 - [ ] Découper `alpha_scanner.py` (`factors.py` + `filters.py` + `ranking.py`).
-- [ ] `rejected_by_filter` (par filtre) dans `run_summary`.
-- [ ] Adapter `spread_bps` au biais IEX (relâchement contrôlé documenté).
-- [ ] Filtre `market_cap` consomme `market_cap_refreshed_at` (TTL).
-- [ ] Migrer vers `core/filter_profiles.py`.
+- [x] `rejected_by_filter` (par filtre) dans `run_summary`.
+- [x] Adapter `spread_bps` au biais IEX (relâchement contrôlé documenté).
+- [x] Filtre `market_cap` consomme `market_cap_refreshed_at` (TTL).
+- [x] Migrer vers `core/filter_profiles.py`.
 
 **Critère de sortie** : pipeline 1→6 reproductible, biais IEX visible dans les
 `run_summary`, schéma `core/filter_profiles.py` partagé.

@@ -226,3 +226,13 @@ Le client doit refléter le choix global du projet :
   - section "circuit breaker HTTP" quand implémenté.
   - troubleshooting "Alpaca renvoie des 429 en boucle".
 
+
+
+---
+
+## Statut Phase 2.3 (refactor) � termine
+
+- service/_http_retry.py : helper unifie (RetryPolicy + circuit breaker) consomme par clientAlpaca, clientFinnhub, clientNewsAlpaca corrige en Phase 2.3.
+- service/_finnhub_cache.py : cache 7j profils Finnhub corrige en Phase 2.3.
+- feed=iex valide (Literal[iex, sip]) + impact documente dans doc/service.md 9.3 corrige en Phase 2.3.
+- service/__init__.py expose RetryPolicy, CircuitBreaker, request_with_retry, telemetry.

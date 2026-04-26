@@ -228,3 +228,13 @@ dans la base.
   - mapping table ↔ module producteur ↔ modules consommateurs (matrice utile pour
     impact analysis).
 
+
+
+---
+
+## Statut Phase 2.2 (refactor) � termine
+
+- database/repositories/ : facade typee (AssetsRepository, BarsRepository, QuotesRepository, RunSummariesRepository, ScoresRepository) corrige en Phase 2.2.
+- Pool SQLAlchemy elargi (DB_POOL_SIZE / DB_MAX_OVERFLOW / DB_POOL_RECYCLE_SECONDS via env) corrige en Phase 2.2.
+- DB_SSL_CA_PATH (TLS optionnel via PyMySQL connect_args) corrige en Phase 2.2.
+- testcontainers[mysql] ajoute a requirements-dev.txt (CI Phase 2.2).

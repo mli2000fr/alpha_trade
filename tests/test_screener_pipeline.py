@@ -137,3 +137,26 @@ def test_compute_scores_uses_recent_range_window_not_full_history() -> None:
     assert scores.iloc[0]["historical_range_score"] >= 80.0
 
 
+# --- Phase 3.2.c — alignement sur core/filter_profiles ---------------------
+
+def test_screener_config_from_filter_profile_maps_shared_thresholds() -> None:
+    from core.filter_profiles import STRICT_SWING_CASH_FILTERS
+    from screener.models import ScreenerConfig
+
+    config = ScreenerConfig.from_filter_profile(STRICT_SWING_CASH_FILTERS)
+
+    assert config.min_close_price == STRICT_SWING_CASH_FILTERS.min_close
+    assert config.liquidity_threshold_usd == STRICT_SWING_CASH_FILTERS.min_avg_dollar_volume_20d
+    assert config.min_relative_strength_index == STRICT_SWING_CASH_FILTERS.min_relative_strength_index
+
+
+def test_screener_config_strict_swing_cash_accepts_overrides() -> None:
+    from screener.models import ScreenerConfig
+
+    config = ScreenerConfig.strict_swing_cash(chunk_size=42, weight_liquidity=0.10)
+
+    assert config.chunk_size == 42
+    assert config.weight_liquidity == 0.10
+    # Seuils communs alignés sur le profil partagé.
+    assert config.min_close_price == 10.0
+    assert config.liquidity_threshold_usd == 30_000_000.0

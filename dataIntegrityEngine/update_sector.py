@@ -10,11 +10,18 @@ import requests
 
 
 from common.utils import configure_root_logging
-from database.assets import get_symbols_missing_fundamentals, update_stock_metadata_fundamentals
+from core.run_summary import attach_schema_version, merge_iex_bias_counters
+from database.assets import (
+	count_eligible_symbols_with_stale_market_cap,
+	get_symbols_missing_fundamentals,
+	get_symbols_with_stale_market_cap,
+	update_stock_metadata_fundamentals,
+)
 from service.finnhub.clientFinnhub import MIN_REQUEST_INTERVAL_SECONDS, fetch_company_profile
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_LOG_EVERY = 50
+DEFAULT_REFRESH_STALE_DAYS = 30
 NOT_AVAILABLE = "N/A"
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 
@@ -45,19 +52,44 @@ def update_missing_sectors(
 	limit: int | None = None,
 	sleep_seconds: float = MIN_REQUEST_INTERVAL_SECONDS,
 	log_every: int = DEFAULT_LOG_EVERY,
+	*,
+	refresh_stale_days: int | None = None,
 ) -> dict[str, Any]:
 	if sleep_seconds < 0:
 		raise ValueError("sleep_seconds doit être supérieur ou égal à 0.")
 	if log_every < 1:
 		raise ValueError("log_every doit être supérieur ou égal à 1.")
+	if refresh_stale_days is not None and refresh_stale_days < 0:
+		raise ValueError("refresh_stale_days doit être >= 0.")
 
-	symbols = get_symbols_missing_sector(limit=limit)
+	missing_symbols = get_symbols_missing_sector(limit=limit)
+	# Phase 3.1.e : ajouter aussi les symboles dont market_cap_refreshed_at est périmé.
+	stale_symbols: list[str] = []
+	if refresh_stale_days is not None:
+		stale_symbols = get_symbols_with_stale_market_cap(
+			max_age_days=refresh_stale_days,
+			limit=limit,
+		)
+	# Fusion en préservant l'ordre, puis recoupe au limit s'il est défini.
+	seen: set[str] = set()
+	combined: list[str] = []
+	for source in (missing_symbols, stale_symbols):
+		for sym in source:
+			if sym not in seen:
+				seen.add(sym)
+				combined.append(sym)
+	if limit is not None:
+		combined = combined[:limit]
+	symbols = combined
 	total = len(symbols)
-	summary = {
+	summary: dict[str, Any] = {
 		"total": total,
 		"updated": 0,
 		"skipped": 0,
 		"failed": 0,
+		"missing_fundamentals_targets": len(missing_symbols),
+		"stale_market_cap_targets": len(stale_symbols),
+		"refresh_stale_days": refresh_stale_days,
 	}
 
 	LOGGER.info(
@@ -176,6 +208,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 		default=DEFAULT_LOG_EVERY,
 		help="Fréquence d'affichage du compteur de progression",
 	)
+	parser.add_argument(
+		"--refresh-stale-days",
+		type=int,
+		default=DEFAULT_REFRESH_STALE_DAYS,
+		help=(
+			"Rafraîchir aussi les symboles dont market_cap_refreshed_at "
+			"est antérieur à N jours (Phase 3.1.e). 0 pour désactiver."
+		),
+	)
 	return parser
 
 
@@ -187,9 +228,15 @@ def main() -> None:
 	)
 	args = _build_arg_parser().parse_args()
 	started_at = _utc_now_naive()
-	summary = update_missing_sectors(limit=args.limit, sleep_seconds=args.sleep_seconds, log_every=args.log_every)
+	refresh_stale_days = args.refresh_stale_days if args.refresh_stale_days and args.refresh_stale_days > 0 else None
+	summary = update_missing_sectors(
+		limit=args.limit,
+		sleep_seconds=args.sleep_seconds,
+		log_every=args.log_every,
+		refresh_stale_days=refresh_stale_days,
+	)
 	finished_at = _utc_now_naive()
-	cli_summary = {
+	cli_summary: dict[str, Any] = {
 		"run_id": _build_run_id("update-fundamentals"),
 		"started_at": started_at.isoformat(timespec="seconds"),
 		"finished_at": finished_at.isoformat(timespec="seconds"),
@@ -199,7 +246,20 @@ def main() -> None:
 		"log_every": args.log_every,
 		**summary,
 	}
-	_emit_run_summary(cli_summary)
+	# Phase 3.1.e : compteur biais IEX `stale_market_cap_pct` propagé via
+	# le helper transverse pour cohérence inter-modules.
+	if refresh_stale_days is not None:
+		try:
+			stale_count, eligible_total = count_eligible_symbols_with_stale_market_cap(
+				max_age_days=refresh_stale_days,
+			)
+			pct = round(stale_count / eligible_total, 4) if eligible_total > 0 else 0.0
+			merge_iex_bias_counters(cli_summary, {"stale_market_cap_pct": pct})
+			cli_summary["stale_market_cap_eligible_total"] = eligible_total
+			cli_summary["stale_market_cap_stale_count"] = stale_count
+		except Exception:
+			LOGGER.exception("Echec calcul stale_market_cap_pct (non bloquant).")
+	_emit_run_summary(attach_schema_version(cli_summary))
 
 
 if __name__ == "__main__":

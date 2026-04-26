@@ -99,6 +99,10 @@ def list_eligible_stock_symbols(
     return [str(symbol).strip().upper() for symbol in rows if str(symbol).strip()]
 
 
+def _has_market_cap_refreshed_at_column(stock_metadata: Table) -> bool:
+    return "market_cap_refreshed_at" in stock_metadata.c
+
+
 def get_symbols_missing_sector(limit: int | None = None) -> list[str]:
     if limit is not None and limit < 1:
         raise ValueError("limit doit être supérieur ou égal à 1.")
@@ -153,6 +157,84 @@ def get_symbols_missing_fundamentals(limit: int | None = None) -> list[str]:
         return [str(symbol) for symbol in conn.execute(stmt).scalars().all()]
 
 
+def get_symbols_with_stale_market_cap(
+    *,
+    max_age_days: int,
+    limit: int | None = None,
+) -> list[str]:
+    """Symboles éligibles dont ``market_cap_refreshed_at`` est antérieur à
+    ``now - max_age_days`` (ou ``NULL``).
+
+    Phase 3.1.e : alimente le mode ``--refresh-stale-days`` de
+    ``update_sector.py`` afin de rafraîchir les market caps périmées et de
+    publier ``stale_market_cap_pct`` dans les ``run_summary``.
+    """
+    if max_age_days < 0:
+        raise ValueError("max_age_days doit être >= 0.")
+    if limit is not None and limit < 1:
+        raise ValueError("limit doit être supérieur ou égal à 1.")
+
+    stock_metadata = get_stock_metadata_table()
+    _require_market_cap_column(stock_metadata)
+    if not _has_market_cap_refreshed_at_column(stock_metadata):
+        # Schéma legacy sans la colonne : aucun symbole ne peut être déclaré
+        # stale (TTL non opérationnel) — on retourne une liste vide pour
+        # rester rétro-compatible.
+        return []
+
+    threshold_clause = text("market_cap_refreshed_at < (NOW() - INTERVAL :age DAY)")
+    stmt = (
+        select(stock_metadata.c.symbol)
+        .where(
+            and_(
+                *build_eligible_stock_metadata_filters(stock_metadata),
+                or_(
+                    stock_metadata.c.market_cap_refreshed_at.is_(None),
+                    threshold_clause,
+                ),
+            )
+        )
+        .order_by(stock_metadata.c.symbol)
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
+    with get_sqlalchemy_engine().connect() as conn:
+        return [
+            str(symbol)
+            for symbol in conn.execute(stmt, {"age": int(max_age_days)}).scalars().all()
+        ]
+
+
+def count_eligible_symbols_with_stale_market_cap(max_age_days: int) -> tuple[int, int]:
+    """Retourne ``(stale_count, eligible_total)`` — utilisé pour
+    ``stale_market_cap_pct`` dans les ``run_summary`` Phase 3.1.e."""
+    if max_age_days < 0:
+        raise ValueError("max_age_days doit être >= 0.")
+    stock_metadata = get_stock_metadata_table()
+    if not _has_market_cap_refreshed_at_column(stock_metadata):
+        return 0, 0
+    base_filters = build_eligible_stock_metadata_filters(stock_metadata)
+    eligible_total_stmt = select(func.count()).select_from(stock_metadata).where(and_(*base_filters))
+    stale_stmt = (
+        select(func.count())
+        .select_from(stock_metadata)
+        .where(
+            and_(
+                *base_filters,
+                or_(
+                    stock_metadata.c.market_cap_refreshed_at.is_(None),
+                    text("market_cap_refreshed_at < (NOW() - INTERVAL :age DAY)"),
+                ),
+            )
+        )
+    )
+    with get_sqlalchemy_engine().connect() as conn:
+        eligible_total = int(conn.execute(eligible_total_stmt).scalar_one() or 0)
+        stale_count = int(conn.execute(stale_stmt, {"age": int(max_age_days)}).scalar_one() or 0)
+    return stale_count, eligible_total
+
+
 def update_stock_metadata_sector(symbol: str, sector: str) -> int:
     return update_stock_metadata_fundamentals(symbol, sector=sector)
 
@@ -182,6 +264,10 @@ def update_stock_metadata_fundamentals(
         _require_market_cap_column(stock_metadata)
         assignments.append("market_cap = :market_cap")
         params["market_cap"] = normalized_market_cap
+        # Phase 3.1.e : tag le refresh pour que le selector puisse appliquer
+        # un filtre TTL (`market_cap_refreshed_at`).
+        if _has_market_cap_refreshed_at_column(stock_metadata):
+            assignments.append("market_cap_refreshed_at = NOW()")
 
     with get_sqlalchemy_engine().begin() as conn:
         result = conn.execute(
