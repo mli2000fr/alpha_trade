@@ -18,8 +18,9 @@ alpha_trade/
 ├── alembic.ini + alembic/        ← Migrations de schéma DB (Alembic)
 ├── mypy.ini / pytest.ini         ← Config mypy et pytest (cov ≥ 60%)
 ├── README.md                     ← Documentation rapide + ordre d'exécution
-├── DOC_FONCTIONNELLE.md          ← Documentation fonctionnelle complète
-├── DOC_TECHNIQUE.md              ← Ce document
+├── doc/
+│   ├── DOC_FONCTIONNELLE.md      ← Documentation fonctionnelle complète
+│   └── DOC_TECHNIQUE.md          ← Ce document
 ├── core/interfaces.py            ← Contrats (Protocol) : PriceRepository, RiskChecker, etc.
 ├── common/utils.py               ← Calendrier NYSE, RotatingFileHandler, load_config()
 ├── database/                     ← Persistance MySQL (SQLAlchemy + pymysql)
@@ -34,7 +35,7 @@ alpha_trade/
 ├── event_sentiment/              ← Pipeline NLP : news → FinBERT → agrégation → fusion
 ├── modelFactory/                 ← LSTM + Temporal Attention (Lightning)
 ├── risk_management/              ← Sizing, contraintes, circuit breaker, portefeuille cible
-├── execution_engine/             ← OMS/EMS : ordres, polling, bracket, watcher post-exécution, réconciliation, TCA
+├── execution_engine/             ← Exécution canonique : targets snapshot, requests, ordres broker, fills observés, positions/lots, réconciliation, TCA, watcher post-exécution secondaire
 ├── scripts/windows/              ← Packaging Windows : launcher, Task Scheduler, NSSM, secret store, bridge read-only
 ├── corporate_actions/            ← Corporate actions : dividendes, splits, audit, cash ledger
 ├── ihm/                          ← IHM opérateur Streamlit (dashboard de supervision)
@@ -57,7 +58,7 @@ alpha_trade/
 | `event_sentiment/` | NLP FinBERT + fusion scores quant/sentiment |
 | `modelFactory/` | Gouvernance ML multi-modèles : LSTM per-symbol, challengers tabulaires locaux, modèle global optionnel, sélection du champion et serving d'inférence |
 | `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
-| `execution_engine/` | OMS/EMS complet (10 phases) + watcher post-exécution des protections |
+| `execution_engine/` | Chaîne canonique d'exécution (requests, ordres broker, fills, positions/lots, réconciliation) + watcher post-exécution secondaire |
 | `corporate_actions/` | Gestion dividendes, splits, reverse splits (audit + comptabilité portefeuille) |
 | `backtesting/` | Backtest intégré vectorbt : replay signaux conviction, bracket TP/TS, métriques, equity curve |
 | `ihm/` | IHM Streamlit : supervision pipeline, scores, risque, exécution, CA |
@@ -74,7 +75,7 @@ alpha_trade/
 3. Build intents + déduplication par idempotency_key + filtrage capital/PDT/cash/swing
 4. Submit entries (avec retry réseau, kill switch, throttle batch)
 5. Poll fills (polling broker jusqu'à terminal state)
-6. Submit children (synthetic bracket : TP limit + TS trailing), avec report possible en cas de `swing_only` / `PDT`
+6. Submit children / protections broker-side (stop initial + take-profit ; promotion trailing éventuelle via watcher secondaire), avec report possible en cas de `swing_only` / `PDT`
 7. *(phase réservée)*
 8. Réconciliation (positions broker vs cibles, rebalance optionnel)
 9. TCA (slippage, implementation shortfall)
@@ -113,7 +114,7 @@ Points d'implémentation importants côté `modelFactory` :
 
 **`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes `margin/cash/PDT` côté exécution. Seul fichier à modifier pour changer de broker.
 
-**`ProtectionTransitionWatcher`** / **`ProtectionWatcherService`** (`execution_engine/protection_watcher.py`) — Watcher post-exécution chargé de surveiller les protections créées par `Execution` et de promouvoir les stops initiaux vers un trailing stop dynamique selon les conditions métier. `ProtectionWatcherService` encapsule la boucle persistante, les heartbeats, la persistance de santé dans `run_business_summaries` et les garde-fous de résilience.
+**`ProtectionTransitionWatcher`** / **`ProtectionWatcherService`** (`execution_engine/protection_watcher.py`) — Watcher post-exécution secondaire chargé de surveiller les protections créées par `Execution` et, si ce mode est activé, de promouvoir les stops initiaux vers un trailing stop dynamique selon les conditions métier. `ProtectionWatcherService` encapsule la boucle persistante, les heartbeats, la persistance de santé dans `run_business_summaries` et les garde-fous de résilience.
 
 **`watcher_runtime`** (`ihm/services/watcher_runtime.py`) — Couche IHM de pilotage local du watcher. Elle construit les commandes `once` / `service`, lance les processus managés par `process_registry`, expose l'historique dédié et sépare explicitement le pilotage local IHM du packaging Windows machine-wide.
 
@@ -121,7 +122,7 @@ Points d'implémentation importants côté `modelFactory` :
 
 **`CircuitBreaker`** (`risk_management/circuit_breaker.py`) — Suspend le trading si drawdown ≥ 15% ou perte daily ≥ 5%.
 
-**`OcoManager`** (`execution_engine/oco_manager.py`) — Gestion OCO synthétique : quand un enfant bracket est FILLED, annule le sibling.
+**`OcoManager`** (`execution_engine/oco_manager.py`) — Gestion OCO logique : quand une protection enfant est `FILLED`, annule le sibling.
 
 **`CorporateActionEngine`** (`corporate_actions/engine.py`) — Orchestrateur corporate actions en 2 phases : `sync()` (ingestion provider → DB) et `apply()` (application idempotente sur positions). Stratégie : les OHLCV restent gérés par Alpaca avec la convention projet `adjustment="split"`, ce module gère uniquement la comptabilité portefeuille (qty, cost basis, cash). La sync résout par défaut l'univers depuis `stock_metadata` (`status='active'`, `tradable=1`, `bars_available=1`), puis interroge Alpaca par lots configurables (`batch_size`, défaut 25) avec persistance immédiate en base après chaque lot.
 
@@ -437,7 +438,7 @@ Référence dédiée : voir aussi `doc/watcher.md`.
 | ~~Pas de handler fichier pour les logs (stdout seul)~~ → ✅ RotatingFileHandler ajouté | ~~P1~~ |
 | ~~Import dynamique `risk_management` dans `executor.py` (couplage runtime)~~ → ✅ Circuit breaker injecté via constructeur | ~~P2~~ |
 | ~~Méthode `_make_entry` V1 inutilisée dans `portfolio_builder.py`~~ → ✅ Supprimée (seul `_make_entry_v2` reste) | ~~P2~~ |
-| Dossier `prompt/` (fichiers non structurés, hors code) | P3 |
+| `prompt/execution/` : historique audit → plan → sprints → cutover désormais structuré ; homogénéisation du reste de `prompt/` encore perfectible | P3 |
 | ~~`configure_optimizers()` sans type hint dans `model.py`~~ → ✅ Type hint `-> torch.optim.Optimizer` ajouté | ~~P3~~ |
 | ~~`corporate_actions*` absent de `pyproject.toml` packages.find.include~~ → ✅ Ajouté (`corporate_actions*`, `ihm*`) | ~~P1~~ |
 

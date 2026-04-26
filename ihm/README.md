@@ -50,7 +50,7 @@ Les pages **hors workflow quotidien** sont volontairement regroupées en fin de 
 | 📊 Screening | Table `stock_scores` avec filtres (symbole, secteur, candidat, score, sentiment) + lecture directe des recommandations screener par objectif (robuste, offensif, bear, exécutable) |
 | 🤖 ML / Prédictions | Runs training, métriques, prédictions LSTM |
 | ⚖️ Risk | Décisions de risque, portefeuille cible, synthèse par secteur |
-| 🚀 Execution | Runs d'exécution, événements, fills, positions broker |
+| 🚀 Execution | Vue canonique run-scopée : targets snapshot, requests, ordres broker, fills, positions/lots, TCA, réconciliation ; contexte compte en lecture secondaire |
 | 📑 Corporate Actions | Événements CA, applications, dividendes cumulés |
 | 🧪 Backtesting | Formulaire complet des commandes `backtesting run`, `backfill-scores-history`, `diagnose-screener` et `recommend-screener`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis et graphique live des artefacts |
 | 🗃️ Administration DB | Outils d'inspection / maintenance SQL et plan de vidage contrôlé |
@@ -121,6 +121,20 @@ Cela couvre aussi `event_sentiment` et `signal_aggregator`, avec des métriques 
 Les logs IHM sont persistés sous `artifacts/ihm_pipeline_runs/`.
 
 Les runs de backtesting lancés depuis l'IHM sont persistés sous `artifacts/ihm_backtesting_runs/`.
+
+## Focus page Exécution
+
+La page **🚀 Execution** privilégie désormais la lecture des tables canoniques de la chaîne d'exécution pour le `exec_run_id` sélectionné :
+
+- `execution_targets_snapshot`
+- `execution_order_requests`
+- `execution_broker_orders`
+- `execution_broker_fills`
+- `execution_positions`
+- `execution_position_lots`
+- `execution_reconciliation_results`
+
+Le contexte plus large du compte (positions broker les plus récentes, positions/lots reconstruits au scope compte) reste affiché dans des zones secondaires explicites afin d'éviter de mélanger la vérité du run avec un état de compte plus global.
 
 ## Recommandations screener côté dashboard
 

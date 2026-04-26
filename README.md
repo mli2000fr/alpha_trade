@@ -30,7 +30,7 @@ Le pipeline couvre les besoins suivants :
 | `selector/` | `AlphaScanner` multi-facteurs et sélection finale |
 | `event_sentiment/` | Pipeline news, FinBERT, agrégations ticker / secteur |
 | `risk_management/` | Sizing, contraintes, circuit breaker, portefeuille cible |
-| `execution_engine/` | Exécution des ordres, fills, réconciliation, TCA |
+| `execution_engine/` | Exécution canonique : snapshot des targets, requests, ordres broker, fills observés, positions/lots, réconciliation, TCA ; watcher post-run secondaire |
 | `corporate_actions/` | Sync des événements et application sur les positions |
 | `modelFactory/` | Entraînement et prédiction LSTM par symbole |
 | `ihm/` | IHM Streamlit de supervision et de consultation |
@@ -143,8 +143,11 @@ python -m modelFactory --mode predict
 # 11. Calcul du portefeuille cible (sizing, contraintes, circuit breaker)
 python -m risk_management.run_risk --account-equity 100000
 
-# 12. Exécution des ordres (simulate | paper | live)
+# 12. Exécution canonique des ordres (simulate | paper | live)
 python run_execution.py simulate
+
+# 12.bis. Watcher post-run de protections (optionnel, supervision secondaire)
+python run_execution_protection_watch.py --mode once --account default
 
 # 13. Sync corporate actions — uniquement les symboles détenus en portefeuille
 #     (re-interroge Alpaca à chaque fois — pas de --skip-existing)
@@ -169,12 +172,12 @@ python -m corporate_actions apply
 | 9 | `modelFactory --mode train` | Entraînement LSTM+Attention *(périodique)* |
 | 10 | `modelFactory --mode predict` | Inférence → `predicted_proba` *(quotidien)* |
 | 11 | `run_risk` | Portefeuille cible, sizing ATR/Kelly, conviction ML+quant |
-| 12 | `run_execution.py` | Soumission ordres + snapshot positions broker |
+| 12 | `run_execution.py` | Snapshot des targets, requests, ordres broker, fills observés, reconstruction positions/lots, réconciliation |
 | 13 | `corporate_actions sync --portfolio-only` | Sync CA uniquement pour les positions détenues |
 | 14 | `corporate_actions apply` | Crédit dividendes + ajustement qty/cost basis splits |
 
-> **Pourquoi sync en étape 11 et non au début ?**  
-> `sync --portfolio-only` lit la liste des positions depuis `broker_positions_snapshots`, table qui n'est alimentée qu'après `run_execution` (étape 10). Le placer avant rendrait le périmètre de sync inexact (positions d'hier) ou vide (premier run).
+> **Pourquoi le sync CA vient-il après l’exécution et non au début ?**  
+> `sync --portfolio-only` lit la liste des positions depuis `broker_positions_snapshots`, table qui n'est alimentée qu'après `run_execution` (étape 12). Le placer avant rendrait le périmètre de sync inexact (positions d'hier) ou vide (premier run).
 
 ### Multi-comptes
 
@@ -188,6 +191,20 @@ python -m corporate_actions apply --account live1
 ```
 
 Le menu interactif de `run_execution.py` propose aussi un sélecteur de compte si plusieurs sont configurés.
+
+### Exécution canonique et watcher post-run
+
+Après cutover, la chaîne nominale d'exécution à superviser est :
+
+- `execution_targets_snapshot`
+- `execution_order_requests`
+- `execution_broker_orders`
+- `execution_broker_fills`
+- `execution_positions`
+- `execution_position_lots`
+- `execution_reconciliation_results`
+
+La page `Exécution` de l'IHM privilégie cette lecture **scopée par run**. Le watcher de protections reste un composant **secondaire** de supervision post-run : utile si l'on souhaite promouvoir un stop initial vers un trailing stop dynamique, mais distinct du pipeline quotidien `1 → 14`.
 
 ---
 
@@ -332,7 +349,7 @@ L'application ouvre une interface web locale sur :
 | Pipeline Quotidien | `/pipeline` | Lancement et supervision des étapes du pipeline |
 | Screening | `/screening` | Résultats du screener et de l'alpha scanner, plus recommandations par objectif issues des artefacts de diagnostic |
 | Portefeuille | `/portfolio` | Positions, performance, exposition sectorielle |
-| Exécution | `/execution` | Ordres, fills, TCA, réconciliation |
+| Exécution | `/execution` | Vue run-scopée : targets snapshot, requests, ordres broker, fills, positions/lots, TCA, réconciliation |
 | ML | `/ml` | Métriques des modèles LSTM, prédictions |
 | Corporate Actions | `/corporate_actions` | Événements CA, dividendes, splits |
 | Reporting | `/reporting` | Rapports agrégés |
@@ -386,8 +403,9 @@ alpha_trade/
 ├── config.yaml
 ├── pyproject.toml
 ├── README.md
-├── DOC_FONCTIONNELLE.md
-├── DOC_TECHNIQUE.md
+├── doc/
+│   ├── DOC_FONCTIONNELLE.md
+│   └── DOC_TECHNIQUE.md
 ├── dataIntegrityEngine/
 ├── screener/
 ├── selector/
@@ -446,9 +464,17 @@ Quand plusieurs comptes sont configurés, un **sélecteur de compte** apparaît 
 
 ### Tables DB impactées
 
-Les tables suivantes possèdent une colonne `account_id VARCHAR(32)` :
+Les tables suivantes portent désormais `account_id VARCHAR(32)` sur les périmètres métier critiques :
 
 - `execution_runs`
+- `execution_targets_snapshot`
+- `execution_order_requests`
+- `execution_broker_orders`
+- `execution_broker_fills`
+- `execution_positions`
+- `execution_position_lots`
+- `execution_reconciliation_results`
+- `execution_locks`
 - `broker_positions_snapshots`
 - `risk_decisions`
 - `portfolio_targets`
@@ -471,6 +497,7 @@ Migration : `database/sql/migration_add_account_id.sql` ou Alembic `alembic upgr
 
 ## 14. Documentation complémentaire
 
-- `DOC_FONCTIONNELLE.md` : vision métier et flux fonctionnels
-- `DOC_TECHNIQUE.md` : architecture, composants, dette technique, recommandations
+- `doc/DOC_FONCTIONNELLE.md` : vision métier et flux fonctionnels
+- `doc/DOC_TECHNIQUE.md` : architecture, composants, dette technique, recommandations
 - `ihm/README.md` : documentation dédiée à l'interface opérateur
+- `prompt/execution/` : historique d'audit, de sprints et de cutover du module `execution` (archive projet, pas guide opérateur)

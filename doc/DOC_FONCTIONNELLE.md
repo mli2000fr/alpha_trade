@@ -29,8 +29,8 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 9. **ML Train** — entraînement `modelFactory` par symbole candidat : LSTM+Attention, challengers locaux `LightGBM` / `CatBoost`, modèle global optionnel et sélection éventuelle du champion servi (périodique)
 10. **ML Predict** — inférence quotidienne sur le **champion sélectionné** par symbole (`lstm_attention`, `lightgbm`, `catboost` ou `global_model` selon les artefacts disponibles)
 11. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille, score de conviction (40% quant + 60% ML)
-12. **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
-12.bis **Watcher post-exécution** — surveillance des protections broker-side après `Execution` pour promouvoir les stops initiaux vers un trailing stop dynamique ; ce watcher n'est pas une étape métier supplémentaire du pipeline 1→14, mais un runtime post-exécution lancé juste après l'étape 12
+12. **Exécution** automatisée des ordres sur Alpaca via une chaîne canonique `targets snapshot → order requests → broker orders → broker fills → positions/lots → réconciliation`, avec protections broker-side initiales
+12.bis **Watcher post-exécution** — supervision secondaire des protections broker-side après `Execution`, utile pour promouvoir certains stops initiaux vers un trailing stop dynamique si ce mode est activé ; ce watcher n'est pas une étape métier supplémentaire du pipeline 1→14, mais un runtime post-exécution lancé juste après l'étape 12
 13. **Corporate actions sync** — récupère dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour)
 14. **Corporate actions apply** — application des dividendes/splits sur les positions existantes
 
@@ -54,7 +54,7 @@ L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 | **Ordres d'entrée** | Market ou limit (buffer configurable en bps) |
 | **Take-profit** | Ordre limit sell à +X% du prix de fill (défaut : +8%) |
 | **Trailing stop** | Ordre trailing_stop sell à -X% (défaut : -5%) |
-| **Synthetic bracket** | TP + TS soumis séparément après fill, car Alpaca ne supporte pas le trailing stop natif en bracket |
+| **Protections broker-side** | Stop initial + take-profit soumis via des requests distinctes après fill ; si activé, le watcher peut ensuite promouvoir le stop initial vers un trailing stop dynamique |
 | **OCO logique** | Si le TP ou le TS est exécuté, l'autre est automatiquement annulé |
 | **Ordres de rééquilibrage** | Vente d'excédent ou achat complémentaire lors de la réconciliation |
 | **Idempotence** | Clé SHA-256 basée sur risk_run_id + symbole + rôle pour éviter les doublons |
@@ -180,6 +180,8 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 - **TCA (Transaction Cost Analysis)** : slippage moyen, max, implementation shortfall agrégé
 - **Rapport de backtest** : exporte aussi des diagnostics métier sur les contraintes de compte (`day trades exécutés`, `sorties same-day bloquées`, `entrées bloquées faute de cash settled`)
 
+La page `Exécution` de l'IHM privilégie désormais la lecture de ces tables canoniques **scopée par `exec_run_id`**, avec le contexte plus large du compte relégué dans des zones secondaires explicites.
+
 ### 2.8 Logs métier
 
 - Logs structurés avec niveaux INFO/DEBUG/WARNING/ERROR/CRITICAL
@@ -218,7 +220,7 @@ Le système supporte **plusieurs comptes broker Alpaca en parallèle** (paper et
 |---|---|
 | **Registre centralisé** | `AccountRegistry` charge les comptes depuis `config.yaml`, env vars préfixées, ou fallback classique |
 | **Isolation par compte** | Chaque exécution, chaque run de risk et chaque apply CA peut cibler un compte spécifique via `--account <ID>` |
-| **Traçabilité DB** | Colonne `account_id` sur 6 tables : `execution_runs`, `broker_positions_snapshots`, `risk_decisions`, `portfolio_targets`, `corporate_actions_applications`, `portfolio_cash_ledger` |
+| **Traçabilité DB** | Colonne `account_id` sur la chaîne canonique `execution` (`execution_runs`, `execution_targets_snapshot`, `execution_order_requests`, `execution_broker_orders`, `execution_broker_fills`, `execution_positions`, `execution_position_lots`, `execution_reconciliation_results`, `execution_locks`) ainsi que `broker_positions_snapshots`, `risk_decisions`, `portfolio_targets`, `corporate_actions_applications`, `portfolio_cash_ledger` |
 | **IHM** | Sélecteur de compte dans la sidebar Streamlit — filtre automatiquement les données affichées |
 | **Rétrocompatibilité** | Les données existantes (sans `account_id`) sont considérées comme `default` |
 | **Données de marché** | Les barres OHLCV, news et assets sont partagés (non liés à un compte) |
@@ -249,11 +251,11 @@ python -m corporate_actions apply --account live1     # appliquer CA sur le comp
 
 ### 2.11 Watcher de protections post-exécution
 
-Le watcher de protections est un composant **post-exécution** qui surveille les ordres/protections créés par `Execution` afin de gérer le cycle de vie :
+Le watcher de protections est un composant **post-exécution** de supervision secondaire qui surveille les protections broker-side créées par `Execution` afin de gérer le cycle de vie :
 
 - stop initial broker-side ;
 - déclenchement des conditions de transition ;
-- promotion vers trailing stop dynamique ;
+- promotion vers trailing stop dynamique, si ce mode est activé ;
 - suivi de la santé de ce mécanisme en base et dans l'IHM.
 
 Fonctionnellement :
@@ -261,7 +263,8 @@ Fonctionnellement :
 - il devient utile **après** l'étape 12 `Execution` ;
 - il ne remplace pas les étapes 13 et 14 ;
 - il peut tourner **en parallèle** des Corporate Actions ;
-- il ne sert pas à préparer le pipeline 1→11, mais à **sécuriser la vie post-exécution du trade**.
+- il ne sert pas à préparer le pipeline 1→11, mais à **sécuriser la vie post-exécution du trade** ;
+- il n'est pas requis pour comprendre le run nominal, qui doit déjà rester lisible via la chaîne canonique persistée en base.
 
 Règle opératoire simple :
 
@@ -321,7 +324,7 @@ Le compromis fonctionnel est donc :
      │ 9.  ml_train (périodique)    │ → artefacts Model Factory + champion servi   │
      │ 10. ml_predict (quotidien)   │ → model_predictions                          │
      │ 11. run_risk                 │ → portfolio_targets                          │
-     │ 12. run_execution            │ → ordres Alpaca + broker_positions_snapshots │
+     │ 12. run_execution            │ → targets snapshot / requests / ordres / fills / positions / réconciliation │
      │ 12.bis watcher post-exec     │ → surveillance / transition des protections  │
      │ 13. corporate_actions sync   │ → corporate_actions_events (portfolio only)  │
      │ 14. corporate_actions apply  │ → position adjustments                       │
@@ -335,8 +338,8 @@ Le compromis fonctionnel est donc :
 3. **Portfolio target** : si accepté, le symbole est ajouté à `portfolio_targets` avec nombre de parts et prix d'entrée
 4. **Soumission** : l'executor lit les targets et soumet un ordre market/limit d'achat
 5. **Fill** : polling du broker jusqu'au fill ou timeout (120s défaut)
-6. **Bracket synthétique** : après fill, soumission d'un take-profit (limit sell +8%) et d'un trailing stop (-5%)
-7. **Watcher post-exécution** : surveillance des protections en attente et transition du stop initial vers un trailing stop dynamique quand les conditions sont remplies
+6. **Protections broker-side initiales** : après fill, soumission d'un stop initial et d'un take-profit via des requests distinctes, avec traçabilité canonique en base
+7. **Watcher post-exécution** : supervision secondaire des protections en attente et promotion éventuelle du stop initial vers un trailing stop dynamique quand les conditions sont remplies
 8. **OCO** : si l'un des enfants est exécuté, l'autre est annulé
 9. **Réconciliation** : comparaison positions broker vs cibles, rééquilibrage automatique optionnel
 10. **TCA** : calcul du slippage et de l'implementation shortfall
