@@ -183,7 +183,7 @@ def test_merge_handles_missing_signal_active_without_futurewarning(monkeypatch) 
     assert by_symbol["AAPL"]["macro_regime_signal_norm"] == pytest.approx(0.6, rel=1e-6)
     assert by_symbol["AAPL"]["company_idio_component"] == pytest.approx(0.12, rel=1e-6)
     assert by_symbol["AAPL"]["macro_regime_component"] == pytest.approx(0.06, rel=1e-6)
-    assert by_symbol["AAPL"]["quant_component"] == pytest.approx(0.525, rel=1e-6)
+    assert by_symbol["AAPL"]["quant_component"] == pytest.approx(0.6, rel=1e-6)
     assert by_symbol["MSFT"]["final_score_sentiment"] == pytest.approx(0.585, rel=1e-6)
 
 

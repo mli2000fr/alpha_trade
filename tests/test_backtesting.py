@@ -13,6 +13,33 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 
+def _make_single_row_walk_forward_scores_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "symbol": ["AAPL"],
+            "trade_date": [pd.Timestamp("2025-01-01")],
+            "final_score": [0.7],
+            "final_score_sentiment": [0.9],
+            "sentiment_net_agg": [1.0],
+            "sector_impact_agg": [0.0],
+        }
+    )
+
+
+def _make_swing_backtest_config():  # type: ignore[no-untyped-def]
+    from backtesting.simulator import BacktestConfig
+    from backtesting.trading_constraints import TradingConstraintConfig
+
+    swing_constraints = TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=True)
+    return BacktestConfig(  # type: ignore[arg-type]
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 1, 3),
+        initial_equity=10_000,
+        max_positions=1,
+        trading_constraints=swing_constraints,
+    )
+
+
 # ============================================================
 # test data_loader
 # ============================================================
@@ -357,25 +384,27 @@ class TestResilience:
     def test_prepare_scores_sentiment_off_uses_final_score(self):
         from backtesting.resilience import prepare_scores_for_sentiment_mode
 
+        memory_engine: Engine = create_engine("sqlite:///:memory:")
         scores = pd.DataFrame({
             "symbol": ["AAPL"],
             "trade_date": pd.to_datetime(["2025-01-01"]),
             "final_score": [0.7],
             "final_score_sentiment": [0.9],
         })
-        result = prepare_scores_for_sentiment_mode(None, scores, sentiment_mode="off")  # type: ignore[arg-type]
+        result = prepare_scores_for_sentiment_mode(memory_engine, scores, sentiment_mode="off")
         assert result.iloc[0]["final_score_sentiment"] == 0.7
 
     def test_prepare_scores_sentiment_auto_fills_missing(self):
         from backtesting.resilience import prepare_scores_for_sentiment_mode
 
+        memory_engine: Engine = create_engine("sqlite:///:memory:")
         scores = pd.DataFrame({
             "symbol": ["AAPL"],
             "trade_date": pd.to_datetime(["2025-01-01"]),
             "final_score": [0.7],
             "final_score_sentiment": [None],
         })
-        result = prepare_scores_for_sentiment_mode(None, scores, sentiment_mode="auto")  # type: ignore[arg-type]
+        result = prepare_scores_for_sentiment_mode(memory_engine, scores, sentiment_mode="auto")
         assert result.iloc[0]["final_score_sentiment"] == 0.7
 
     def test_prepare_scores_applies_latest_walk_forward_weights_when_available(self, tmp_path):
@@ -394,16 +423,7 @@ class TestResilience:
             }),
             encoding="utf-8",
         )
-        score_row: dict[str, Any] = {}
-        score_row["symbol"] = "AAPL"
-        # noinspection PyTypeChecker
-        score_row["trade_date"] = pd.Timestamp("2025-01-01")
-        score_row["final_score"] = 0.7
-        score_row["final_score_sentiment"] = 0.9
-        score_row["sentiment_net_agg"] = 1.0
-        score_row["sector_impact_agg"] = 0.0
-        score_records: Any = [score_row]
-        scores = pd.DataFrame.from_records(score_records)
+        scores = _make_single_row_walk_forward_scores_df()
 
         result = prepare_scores_for_sentiment_mode(
             memory_engine,
@@ -845,15 +865,7 @@ class TestBacktestConfig:
             )
         ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
-        swing_constraints = TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=True)
-        # noinspection PyTypeChecker
-        swing_cfg_kwargs: dict[str, Any] = {}
-        swing_cfg_kwargs["start_date"] = date(2025, 1, 1)
-        swing_cfg_kwargs["end_date"] = date(2025, 1, 3)
-        swing_cfg_kwargs["initial_equity"] = 10_000
-        swing_cfg_kwargs["max_positions"] = 1
-        swing_cfg_kwargs["trading_constraints"] = swing_constraints
-        swing_cfg = BacktestConfig(**swing_cfg_kwargs)
+        swing_cfg = _make_swing_backtest_config()
         swing_engine = BacktestEngine(
             swing_cfg
         )
