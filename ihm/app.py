@@ -34,7 +34,7 @@ NAVIGATION_RADIO_KEY = "ihm_sidebar_navigation"
 NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
 
 st.sidebar.title("📈 Alpha Trade")
-st.sidebar.caption("Cockpit opérateur — lecture seule")
+st.sidebar.caption("Cockpit opérateur — supervision et suivi")
 st.sidebar.caption("Navigation ordonnée pour suivre le pipeline métier du haut vers le bas.")
 
 with st.sidebar.expander("🧭 Ordre des pages", expanded=False):

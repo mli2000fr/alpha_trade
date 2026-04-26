@@ -349,6 +349,51 @@ def test_get_latest_execution_protection_watch_service_summary_falls_back_to_acc
     assert calls[1]["run_kind"] == "service"
 
 
+def test_get_ops_service_summaries_filters_on_service_step(monkeypatch):
+    queries.get_ops_service_summaries.clear()
+    captured = {}
+
+    def fake_get_run_business_summaries(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(queries, "get_run_business_summaries", fake_get_run_business_summaries)
+
+    result = queries.get_ops_service_summaries(account_id="acct-1", limit=12)
+
+    assert result == "ok"
+    assert captured == {
+        "limit": 12,
+        "step_keys": ["execution_protection_watch_service"],
+        "account_id": "acct-1",
+        "run_kind": "service",
+    }
+
+
+def test_get_ops_latest_critical_summaries_filters_expected_step_keys(monkeypatch):
+    queries.get_ops_latest_critical_summaries.clear()
+    captured = {}
+
+    def fake_get_run_business_summaries(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(queries, "get_run_business_summaries", fake_get_run_business_summaries)
+
+    result = queries.get_ops_latest_critical_summaries(account_id="acct-1", limit=33)
+
+    assert result == "ok"
+    assert captured["limit"] == 33
+    assert captured["account_id"] == "acct-1"
+    assert captured["step_keys"] == [
+        "pipeline_workflow",
+        "risk_management",
+        "execution",
+        "execution_protection_watch",
+        "corporate_actions_run",
+    ]
+
+
 def test_get_execution_orders_includes_stop_and_trailing_fields(monkeypatch):
     captured = {}
 

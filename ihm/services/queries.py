@@ -634,6 +634,39 @@ def get_latest_execution_protection_watch_service_summary(
         run_kind="service",
     )
 
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_ops_service_summaries(
+    *,
+    account_id: str | None = None,
+    limit: int = 20,
+) -> pd.DataFrame:
+    return get_run_business_summaries(
+        limit=limit,
+        step_keys=["execution_protection_watch_service"],
+        account_id=account_id,
+        run_kind="service",
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_ops_latest_critical_summaries(
+    *,
+    account_id: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    return get_run_business_summaries(
+        limit=limit,
+        step_keys=[
+            "pipeline_workflow",
+            "risk_management",
+            "execution",
+            "execution_protection_watch",
+            "corporate_actions_run",
+        ],
+        account_id=account_id,
+    )
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_training_runs(limit: int = 20) -> pd.DataFrame:
     return safe_query(f"SELECT * FROM model_training_run ORDER BY started_at DESC LIMIT {limit}")
