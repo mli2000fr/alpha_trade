@@ -201,10 +201,18 @@ def test_build_ml_run_export_zip_bytes_contains_csv_and_artifact_manifests(tmp_p
         ),
         selected_navigation={"governance_link_status": "aligned", "served_model": "lightgbm", "selection_mode": "auto_selected_champion"},
         exported_at="2026-04-23T22:55:00+00:00",
+        run_id="run-1",
+        symbol="AAPL",
+    )
+
+    with ZipFile(BytesIO(zip_bytes)) as archive:
+        assert "ml_run_audit_AAPL_run-1.csv" in archive.namelist()
         assert '"selection_mode": "auto_selected_champion"' in archive.read("config.json").decode("utf-8")
         assert '"model_name": "lightgbm"' in archive.read("metrics.json").decode("utf-8")
         readme = archive.read("README.txt").decode("utf-8")
         assert "Alpha Trade — Export ML du run sélectionné" in readme
+        assert "Horodatage d'export (UTC) : 2026-04-23T22:55:00+00:00" in readme
+        assert "Statut d'alignement de la ligne sélectionnée : aligned" in readme
         assert "config.json" in readme
         assert "metrics.json" in readme
         assert "run_predictions" in readme
@@ -218,8 +226,6 @@ def test_build_ml_run_export_zip_bytes_falls_back_to_loaded_json_when_files_miss
         "config_path": "missing_config.json",
         "metrics_path": "missing_metrics.json",
         "config": {"run_id": "run-1", "selection_mode": "default_champion"},
-        assert "Horodatage d'export (UTC) : 2026-04-23T22:55:00+00:00" in readme
-        assert "Statut d'alignement de la ligne sélectionnée : aligned" in readme
         "metrics": {"champion": {"model_name": "lstm_attention"}},
         "errors": ["Fichier absent : `config.json`"],
     }
@@ -227,12 +233,28 @@ def test_build_ml_run_export_zip_bytes_falls_back_to_loaded_json_when_files_miss
     zip_bytes = ml._build_ml_run_export_zip_bytes(
         export_df=export_df,
         artifact_report=artifact_report,
+        focused_audit_row=pd.DataFrame(
+            [{"governance_link_status": "aligned", "served_model": "lstm_attention", "governance_selection_mode": "default_champion"}]
+        ),
+        selected_navigation={
+            "governance_link_status": "aligned",
+            "served_model": "lstm_attention",
+            "selection_mode": "default_champion",
+        },
+        exported_at="2026-04-23T22:55:00+00:00",
+        run_id="run-1",
+        symbol="AAPL",
+    )
+
+    with ZipFile(BytesIO(zip_bytes)) as archive:
         config_payload = archive.read("config.json").decode("utf-8")
         metrics_payload = archive.read("metrics.json").decode("utf-8")
         readme = archive.read("README.txt").decode("utf-8")
         assert '"selection_mode": "default_champion"' in config_payload
         assert '"model_name": "lstm_attention"' in metrics_payload
         assert "warning" in config_payload
+        assert "Horodatage d'export (UTC) : 2026-04-23T22:55:00+00:00" in readme
+        assert "Statut d'alignement de la ligne sélectionnée : aligned" in readme
         assert "reconstruits à partir des données déjà chargées en mémoire" in readme
 
 
