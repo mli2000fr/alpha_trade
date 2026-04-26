@@ -64,6 +64,79 @@ Règle opérateur simple :
 
 > Pas obligatoire pour faire avancer le pipeline, mais indispensable pour exploiter correctement la surveillance post-exécution quand des protections sont en jeu.
 
+### 2.2 Qu'est-ce qui protège le watcher — et que protège-t-il réellement ?
+
+Il faut distinguer deux choses :
+
+1. **la protection des ordres / positions** ;
+2. **la surveillance post-exécution** assurée par le watcher.
+
+#### Ce qui protège d'abord les ordres
+
+L'étape `12 Execution` soumet déjà les ordres d'entrée puis leurs enfants broker-side :
+
+- un **take-profit** ;
+- un **stop initial broker-side** dans le cas nominal ;
+- et, en cas d'échec sur ce stop initial, un **trailing fallback** peut être soumis directement par `Execution`.
+
+Autrement dit : la première couche de protection ne dépend pas du watcher, elle dépend du moteur `Execution` et des ordres enfants envoyés au broker.
+
+#### Ce que fait ensuite le watcher
+
+Le watcher prend le relais **après** `Execution` pour :
+
+- relire les protections encore ouvertes ;
+- vérifier si le trigger métier de transition est atteint ;
+- annuler le stop initial ;
+- promouvoir ce stop vers un **trailing stop dynamique** ;
+- journaliser et superviser cet état dans l'IHM / Windows.
+
+Le watcher ne sert donc pas à "faire partir" l'ordre d'entrée. Il sert à **gérer intelligemment la vie de la protection après exécution**.
+
+### 2.3 Si je ne lance pas le watcher, les ordres seront-ils exécutés ?
+
+**Oui.**
+
+Les ordres d'entrée et leurs protections initiales sont soumis par `Execution`, pas par le watcher.
+
+Donc, si `Execution` réussit :
+
+- l'ordre principal peut être exécuté ;
+- le take-profit peut être armé ;
+- le stop initial broker-side peut être armé ;
+- un trailing fallback peut parfois exister dès `Execution` si le stop initial n'a pas pu être soumis.
+
+Le watcher n'est donc **pas requis pour que les ordres d'entrée soient exécutés**.
+
+### 2.4 Quelle conséquence si je ne lance pas le watcher ?
+
+La conséquence principale n'est **pas** "aucun ordre ne part".
+
+La vraie conséquence est :
+
+- vous perdez la **surveillance post-exécution** ;
+- le **stop initial** risque de rester en place plus longtemps que prévu ;
+- la **transition vers trailing stop dynamique** ne se fera pas automatiquement ;
+- vous perdez une partie de la **visibilité opérateur** (logs live, historique watcher, heartbeat, supervision de santé).
+
+En résumé :
+
+- **sans watcher**, l'exécution peut très bien avoir lieu ;
+- **sans watcher**, la stratégie de gestion dynamique des protections après exécution est incomplète ou absente.
+
+#### Cas où l'absence de watcher est peu gênante
+
+- aucun ordre n'a été exécuté ;
+- aucune protection n'a été créée ;
+- ou un watcher Windows tourne déjà correctement ailleurs.
+
+#### Cas où l'absence de watcher est réellement problématique
+
+- des positions ont été ouvertes ;
+- un stop initial est bien posé et doit potentiellement être promu ;
+- vous comptez sur la logique de transition dynamique du trailing ;
+- vous voulez une supervision opérationnelle claire de ce cycle de vie.
+
 ---
 
 ## 3. Modes disponibles

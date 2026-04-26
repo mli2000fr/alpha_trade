@@ -10,6 +10,11 @@ def build_watcher_documentation_panel_payload() -> dict[str, str]:
     doc_reference = build_watcher_doc_reference()
     return {
         "title": "📘 Documentation opérateur watcher",
+        "quick_summary_markdown": (
+            "- **Quand le lancer ?** Juste après `Execution` si des ordres / fills / protections broker-side ont été créés.\n"
+            "- **Quand n'est-il pas nécessaire ?** S'il n'y a rien à surveiller après `Execution`, ou si un watcher Windows sain tourne déjà.\n"
+            "- **Où regarder les logs ?** Dans `Supervision Ops` pour les runs IHM, et dans les sources Windows importées pour `Task Scheduler` / `NSSM`."
+        ),
         "link_markdown": f"**{doc_reference['label']}** : [{doc_reference['relative_path']}]({doc_reference['uri']})",
         "fallback_caption": (
             "Si le navigateur bloque l'ouverture directe du fichier local, ouvrez ce chemin depuis le workspace : "
@@ -25,6 +30,7 @@ def render_watcher_documentation_panel(*, intro: str | None = None) -> None:
         st.markdown(f"**{payload['title']}**")
         if intro:
             st.caption(intro)
+        st.markdown(payload["quick_summary_markdown"])
         st.markdown(payload["link_markdown"])
         st.caption(payload["fallback_caption"])
 
