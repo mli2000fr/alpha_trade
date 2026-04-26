@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections import Counter
 from datetime import date, datetime
 
 from common.utils import configure_root_logging
@@ -169,6 +170,21 @@ def main(args: list[str] | None = None) -> None:
     accepted_entries = [entry for entry in entries if entry.approved_shares > 0 and str(entry.decision).upper() == "ACCEPTED"]
     reduced_entries = [entry for entry in entries if entry.approved_shares > 0 and str(entry.decision).upper() == "REDUCED"]
     rejected_entries = [entry for entry in entries if entry.approved_shares == 0]
+    retained_entries = [entry for entry in entries if entry.approved_shares > 0]
+    total_target_notional = sum(entry.target_notional for entry in retained_entries)
+    gross_exposure_pct = (total_target_notional / effective_equity) if effective_equity > 0 else 0.0
+    max_target_weight = max((entry.target_weight for entry in retained_entries), default=0.0)
+    sector_weights: dict[str, float] = {}
+    for entry in retained_entries:
+        sector_weights[entry.sector] = sector_weights.get(entry.sector, 0.0) + entry.target_weight
+    max_sector_weight_realized = max(sector_weights.values(), default=0.0)
+    total_initial_risk_dollars = sum(float(entry.initial_risk_dollars or 0.0) for entry in retained_entries)
+    total_risk_budget_dollars = sum(float(entry.risk_budget_dollars or 0.0) for entry in retained_entries)
+    atr_available_symbols = sum(1 for entry in entries if entry.atr_20 is not None and entry.atr_20 > 0)
+    prediction_available_symbols = sum(1 for entry in entries if entry.predicted_proba is not None)
+    atr_coverage_pct = (atr_available_symbols / len(entries)) if entries else 0.0
+    prediction_coverage_pct = (prediction_available_symbols / len(entries)) if entries else 0.0
+    rejection_reason_counts = dict(Counter(str(entry.decision_reason or "").strip() or "UNKNOWN" for entry in rejected_entries))
     finished_at = datetime.now()
     summary = {
         "run_id": run_id,
@@ -180,9 +196,19 @@ def main(args: list[str] | None = None) -> None:
         "accepted_symbols": len(accepted_entries),
         "reduced_symbols": len(reduced_entries),
         "rejected_symbols": len(rejected_entries),
-        "target_positions": len([entry for entry in entries if entry.approved_shares > 0]),
-        "total_target_shares": int(sum(entry.approved_shares for entry in entries if entry.approved_shares > 0)),
-        "total_target_notional": round(sum(entry.target_notional for entry in entries if entry.approved_shares > 0), 2),
+        "target_positions": len(retained_entries),
+        "total_target_shares": int(sum(entry.approved_shares for entry in retained_entries)),
+        "total_target_notional": round(total_target_notional, 2),
+        "gross_exposure_pct": round(gross_exposure_pct, 4),
+        "max_target_weight": round(max_target_weight, 4),
+        "max_sector_weight_realized": round(max_sector_weight_realized, 4),
+        "total_initial_risk_dollars": round(total_initial_risk_dollars, 2),
+        "total_risk_budget_dollars": round(total_risk_budget_dollars, 2),
+        "atr_available_symbols": atr_available_symbols,
+        "prediction_available_symbols": prediction_available_symbols,
+        "atr_coverage_pct": round(atr_coverage_pct, 4),
+        "prediction_coverage_pct": round(prediction_coverage_pct, 4),
+        "rejection_reason_counts": rejection_reason_counts,
         "dry_run": bool(config.dry_run),
         "effective_equity": round(float(effective_equity), 2),
         "account_equity": round(float(args.account_equity), 2),

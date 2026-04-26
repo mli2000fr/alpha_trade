@@ -11,6 +11,7 @@ from execution_engine.db_io import ExecutionRepository
 from execution_engine.executor import ProductionExecutor
 from execution_engine.models import BrokerOrder, EventType, ExecutionTarget, OrderStatus
 from execution_engine.oco_manager import OcoManager
+from execution_engine.order_intents import build_entry_intents
 
 
 def _target(sym: str = "AAPL") -> ExecutionTarget:
@@ -18,6 +19,9 @@ def _target(sym: str = "AAPL") -> ExecutionTarget:
         risk_run_id="r1", trade_date=date(2026, 4, 18), symbol=sym,
         target_shares=100, entry_price=150.0, target_weight=0.05,
         sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+        decision_rank=1, stop_price_initial=140.0, risk_per_share=10.0,
+        risk_budget_dollars=1_000.0, initial_risk_dollars=1_000.0, target_notional=15_000.0,
+        price_asof_date=date(2026, 4, 18), atr_asof_date=date(2026, 4, 18), atr_20=5.0,
     )
 
 
@@ -99,6 +103,40 @@ class TestExecutor:
         assert summary["submitted_orders"] == 2
         assert summary["filled_orders"] == 1
         assert summary["fill_rate"] == 0.5
+
+    def test_build_execution_run_summary_includes_risk_metrics(self) -> None:
+        summary = build_execution_run_summary(
+            {
+                "exec_run_id": "exec-1",
+                "risk_run_id": "risk-1",
+                "trade_date": "2026-04-24",
+                "status": "COMPLETED",
+                "targets": 3,
+                "submitted": 2,
+                "filled": 1,
+                "total_target_notional": 25_000.0,
+                "total_initial_risk_dollars": 1_500.0,
+                "total_risk_budget_dollars": 2_000.0,
+                "max_target_weight": 0.10,
+                "targets_with_risk_controls": 3,
+                "stale_price_targets": 1,
+            },
+            started_at=datetime(2026, 4, 24, 10, 0, 0),
+            finished_at=datetime(2026, 4, 24, 10, 0, 10),
+            execution_mode="paper",
+            broker_mode="paper",
+            account_id="acct-1",
+            account_type="margin",
+            effective_pdt_rule="auto",
+            swing_only=False,
+            dry_run=False,
+            allow_outside_rth=False,
+        )
+
+        assert summary["total_target_notional"] == 25_000.0
+        assert summary["total_initial_risk_dollars"] == 1_500.0
+        assert summary["targets_with_risk_controls"] == 3
+        assert summary["stale_price_targets"] == 1
 
     def test_dry_run_no_broker_calls(self) -> None:
         executor, repo, broker, _ = _make_executor()
@@ -257,4 +295,27 @@ class TestExecutor:
         assert metrics["children_deferred"] == 1
         event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
         assert EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT in event_types
+
+    def test_children_use_target_risk_fields_for_tp_and_trailing(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, profit_taker_pct=0.02, trailing_stop_pct=0.05)
+        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
+        parent = executor._repo.load_portfolio_targets.return_value[0]
+        parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
+        filled_order = _filled_order(intent_id=parent_intent.intent_id)
+
+        executor._submit_children(
+            parent_intent,
+            filled_order,
+            "exec-1",
+            account_state=executor._build_account_constraint_state(),
+            metrics={"children_deferred": 0},
+            target=parent,
+        )
+
+        submitted_intents = [call.args[0] for call in broker.submit_intent.call_args_list]
+        assert len(submitted_intents) == 2
+        tp_intent = submitted_intents[0]
+        ts_intent = submitted_intents[1]
+        assert tp_intent.limit_price == 170.2
+        assert ts_intent.trail_percent == 6.79
 

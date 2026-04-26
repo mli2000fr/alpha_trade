@@ -75,6 +75,16 @@ class ExecutionTarget:
     conviction_score: float | None
     sizing_method: str | None
     kelly_fraction: float | None
+    decision_rank: int | None = None
+    side: str | None = None
+    atr_20: float | None = None
+    price_asof_date: date | None = None
+    atr_asof_date: date | None = None
+    stop_price_initial: float | None = None
+    risk_per_share: float | None = None
+    risk_budget_dollars: float | None = None
+    initial_risk_dollars: float | None = None
+    target_notional: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

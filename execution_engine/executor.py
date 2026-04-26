@@ -55,6 +55,7 @@ LOGGER = logging.getLogger(__name__)
 class _AccountConstraintState:
     account_type: str
     effective_pdt_rule: str
+    pdt_limited: bool
     swing_only: bool
     equity: float
     buying_power_available: float
@@ -64,7 +65,7 @@ class _AccountConstraintState:
 
     @property
     def pdt_active(self) -> bool:
-        return self.effective_pdt_rule == "auto"
+        return self.pdt_limited
 
 
 class ProductionExecutor:
@@ -122,6 +123,16 @@ class ProductionExecutor:
             actual_risk_run_id = targets[0].risk_run_id
             actual_trade_date = trade_date or targets[0].trade_date
             metrics["targets"] = len(targets)
+            metrics["total_target_notional"] = round(sum(float(t.target_notional or (t.target_shares * t.entry_price)) for t in targets), 2)
+            metrics["total_initial_risk_dollars"] = round(sum(float(t.initial_risk_dollars or 0.0) for t in targets), 2)
+            metrics["total_risk_budget_dollars"] = round(sum(float(t.risk_budget_dollars or 0.0) for t in targets), 2)
+            metrics["max_target_weight"] = round(max((float(t.target_weight) for t in targets), default=0.0), 4)
+            metrics["targets_with_risk_controls"] = sum(1 for t in targets if t.stop_price_initial is not None or (t.risk_per_share or 0.0) > 0)
+            metrics["stale_price_targets"] = sum(
+                1 for t in targets
+                if t.price_asof_date is not None and actual_trade_date is not None and t.price_asof_date < actual_trade_date
+            )
+            target_by_symbol = {t.symbol: t for t in targets}
 
             self._repo.insert_execution_run(
                 exec_run_id=exec_run_id,
@@ -158,6 +169,13 @@ class ProductionExecutor:
                     LOGGER.warning("Cannot check market clock — proceeding")
 
             events.append(make_event(exec_run_id, EventType.PRECHECK_OK, f"{len(targets)} targets loaded"))
+            if metrics["stale_price_targets"] > 0:
+                events.append(make_event(
+                    exec_run_id,
+                    EventType.PRECHECK_OK,
+                    f"WARNING: {metrics['stale_price_targets']} targets utilisent un price_asof_date antérieur au trade_date",
+                    payload={"stale_price_targets": metrics["stale_price_targets"]},
+                ))
 
             account_state = self._build_account_constraint_state()
             events.append(make_event(
@@ -351,7 +369,14 @@ class ProductionExecutor:
                             ))
 
                         # Phase 6 — Submit children (synthetic bracket)
-                        child_events = self._submit_children(intent, filled_order, exec_run_id, account_state=account_state, metrics=metrics)
+                        child_events = self._submit_children(
+                            intent,
+                            filled_order,
+                            exec_run_id,
+                            account_state=account_state,
+                            metrics=metrics,
+                            target=target_by_symbol.get(intent.symbol),
+                        )
                         events.extend(child_events)
 
                         submitted_orders[intent_id] = (intent, filled_order)
@@ -456,10 +481,12 @@ class ProductionExecutor:
                 buying_power = settled_cash
             daytrade_count = int(self._safe_float(snapshot.get("daytrade_count"), default=0.0))
 
-        remaining_slots = max(self._cfg.max_day_trades - daytrade_count, 0) if self._cfg.applies_pdt_limit(equity) else 0
+        pdt_limited = self._cfg.applies_pdt_limit(equity)
+        remaining_slots = max(self._cfg.max_day_trades - daytrade_count, 0) if pdt_limited else 0
         return _AccountConstraintState(
             account_type=self._cfg.account_type,
             effective_pdt_rule=self._cfg.effective_pdt_rule,
+            pdt_limited=pdt_limited,
             swing_only=self._cfg.swing_only,
             equity=equity,
             buying_power_available=max(buying_power, 0.0),
@@ -574,6 +601,7 @@ class ProductionExecutor:
         *,
         account_state: _AccountConstraintState,
         metrics: dict[str, int],
+        target: Any | None = None,
     ) -> list[ExecutionEvent]:
         events: list[ExecutionEvent] = []
         fill_qty = filled_order.filled_qty
@@ -600,8 +628,8 @@ class ProductionExecutor:
             ))
             return events
 
-        tp_intent = build_take_profit_intent(parent, fill_qty, fill_price, self._cfg)
-        ts_intent = build_trailing_stop_intent(parent, fill_qty, self._cfg)
+        tp_intent = build_take_profit_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+        ts_intent = build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
 
         for child in [tp_intent, ts_intent]:
             try:
@@ -619,6 +647,13 @@ class ProductionExecutor:
             exec_run_id, EventType.CHILDREN_SUBMITTED,
             f"Bracket children for {parent.symbol}: TP + TS",
             symbol=parent.symbol, intent_id=parent.intent_id,
+            payload={
+                "take_profit_limit_price": tp_intent.limit_price,
+                "trailing_stop_percent": ts_intent.trail_percent,
+                "risk_per_share": getattr(target, "risk_per_share", None),
+                "stop_price_initial": getattr(target, "stop_price_initial", None),
+                "initial_risk_dollars": getattr(target, "initial_risk_dollars", None),
+            },
         ))
         return events
 

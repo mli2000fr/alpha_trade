@@ -90,8 +90,11 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Acceptés", "accepted_symbols"),
         ("Réduits", "reduced_symbols"),
         ("Rejetés", "rejected_symbols"),
-        ("Positions cibles", "target_positions"),
-        ("Notional cible", "total_target_notional"),
+        ("Expo brute", "gross_exposure_pct"),
+        ("Poids max", "max_target_weight"),
+        ("Risque init.", "total_initial_risk_dollars"),
+        ("Couverture ATR", "atr_coverage_pct"),
+        ("Couverture ML", "prediction_coverage_pct"),
     ],
     "execution": [
         ("Cibles", "targeted_symbols"),
@@ -100,6 +103,9 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Échecs", "failed_orders"),
         ("Ignorés", "skipped_orders"),
         ("Taux d'exécution", "fill_rate"),
+        ("Notional cible", "total_target_notional"),
+        ("Risque init.", "total_initial_risk_dollars"),
+        ("Stops prêts", "targets_with_risk_controls"),
     ],
     "corporate_actions_sync": [
         ("Cibles", "targeted_symbols"),

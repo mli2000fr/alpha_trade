@@ -32,38 +32,47 @@ class ExecutionRepository:
         """Charge les cibles depuis portfolio_targets."""
         if risk_run_id:
             query = text("""
-                SELECT run_id, trade_date, symbol, shares, entry_price, target_weight,
-                       sector, conviction_score, sizing_method, kelly_fraction
+                SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                       atr_20, price_asof_date, atr_asof_date, stop_price_initial,
+                       risk_per_share, risk_budget_dollars, initial_risk_dollars,
+                       target_notional, target_weight, sector, conviction_score,
+                       sizing_method, kelly_fraction
                 FROM portfolio_targets
                 WHERE run_id = :run_id
-                ORDER BY target_weight DESC, symbol ASC
+                ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
             """)
             params: dict[str, Any] = {"run_id": risk_run_id}
         else:
             # Dernier run_id par MAX(created_at)
             if trade_date:
                 query = text("""
-                    SELECT run_id, trade_date, symbol, shares, entry_price, target_weight,
-                           sector, conviction_score, sizing_method, kelly_fraction
+                    SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                           atr_20, price_asof_date, atr_asof_date, stop_price_initial,
+                           risk_per_share, risk_budget_dollars, initial_risk_dollars,
+                           target_notional, target_weight, sector, conviction_score,
+                           sizing_method, kelly_fraction
                     FROM portfolio_targets
                     WHERE run_id = (
                         SELECT run_id FROM portfolio_targets
                         WHERE trade_date = :trade_date
                         ORDER BY created_at DESC LIMIT 1
                     )
-                    ORDER BY target_weight DESC, symbol ASC
+                    ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
                 """)
                 params = {"trade_date": trade_date}
             else:
                 query = text("""
-                    SELECT run_id, trade_date, symbol, shares, entry_price, target_weight,
-                           sector, conviction_score, sizing_method, kelly_fraction
+                    SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                           atr_20, price_asof_date, atr_asof_date, stop_price_initial,
+                           risk_per_share, risk_budget_dollars, initial_risk_dollars,
+                           target_notional, target_weight, sector, conviction_score,
+                           sizing_method, kelly_fraction
                     FROM portfolio_targets
                     WHERE run_id = (
                         SELECT run_id FROM portfolio_targets
                         ORDER BY created_at DESC LIMIT 1
                     )
-                    ORDER BY target_weight DESC, symbol ASC
+                    ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
                 """)
                 params = {}
 
@@ -82,6 +91,16 @@ class ExecutionRepository:
                 conviction_score=float(r["conviction_score"]) if r.get("conviction_score") is not None else None,
                 sizing_method=str(r["sizing_method"]) if r.get("sizing_method") else None,
                 kelly_fraction=float(r["kelly_fraction"]) if r.get("kelly_fraction") is not None else None,
+                decision_rank=int(r["decision_rank"]) if r.get("decision_rank") is not None else None,
+                side=str(r["side"]) if r.get("side") else None,
+                atr_20=float(r["atr_20"]) if r.get("atr_20") is not None else None,
+                price_asof_date=r["price_asof_date"] if isinstance(r.get("price_asof_date"), date) else (date.fromisoformat(str(r["price_asof_date"])) if r.get("price_asof_date") else None),
+                atr_asof_date=r["atr_asof_date"] if isinstance(r.get("atr_asof_date"), date) else (date.fromisoformat(str(r["atr_asof_date"])) if r.get("atr_asof_date") else None),
+                stop_price_initial=float(r["stop_price_initial"]) if r.get("stop_price_initial") is not None else None,
+                risk_per_share=float(r["risk_per_share"]) if r.get("risk_per_share") is not None else None,
+                risk_budget_dollars=float(r["risk_budget_dollars"]) if r.get("risk_budget_dollars") is not None else None,
+                initial_risk_dollars=float(r["initial_risk_dollars"]) if r.get("initial_risk_dollars") is not None else None,
+                target_notional=float(r["target_notional"]) if r.get("target_notional") is not None else None,
             )
             for r in rows
         ]

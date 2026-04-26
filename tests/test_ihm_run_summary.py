@@ -135,6 +135,53 @@ def test_build_run_summary_caption_uses_harmonized_labels_for_execution_and_corp
     assert "ignorés=1" in apply_caption
 
 
+def test_build_run_summary_caption_uses_enriched_risk_management_metrics_mapping() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "risk_management",
+            "run_summary": {
+                "targeted_symbols": 12,
+                "accepted_symbols": 6,
+                "reduced_symbols": 2,
+                "rejected_symbols": 4,
+                "gross_exposure_pct": 0.62,
+                "max_target_weight": 0.10,
+                "total_initial_risk_dollars": 3200.0,
+                "atr_coverage_pct": 0.92,
+                "prediction_coverage_pct": 0.75,
+            },
+        }
+    )
+
+    assert "cibles=12" in caption
+    assert "acceptés=6" in caption
+    assert "expo brute=0.62" in caption
+    assert "couverture atr=0.92" in caption
+
+
+def test_build_run_summary_caption_uses_enriched_execution_metrics_mapping() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "execution",
+            "run_summary": {
+                "targeted_symbols": 5,
+                "submitted_orders": 4,
+                "filled_orders": 3,
+                "failed_orders": 1,
+                "skipped_orders": 0,
+                "fill_rate": 0.75,
+                "total_target_notional": 24500.0,
+                "total_initial_risk_dollars": 1800.0,
+                "targets_with_risk_controls": 5,
+            },
+        }
+    )
+
+    assert "notional cible=24500.0" in caption
+    assert "risque init.=1800.0" in caption
+    assert "stops prêts=5" in caption
+
+
 def test_build_run_summary_caption_uses_screener_metrics_mapping() -> None:
     caption = build_run_summary_caption(
         {

@@ -7,9 +7,6 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from execution_engine.db_io import ExecutionRepository
-from execution_engine.models import ExecutionTarget
-
-
 @pytest.fixture()
 def engine():
     e = create_engine("sqlite:///:memory:")
@@ -18,8 +15,13 @@ def engine():
         conn.execute(text("""
             CREATE TABLE portfolio_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id VARCHAR(32), trade_date DATE, symbol VARCHAR(20),
-                shares INT, entry_price DOUBLE, target_weight DOUBLE,
+                    run_id VARCHAR(32), trade_date DATE, symbol VARCHAR(20),
+                    decision_rank INT, side VARCHAR(10),
+                    shares INT, entry_price DOUBLE, atr_20 DOUBLE,
+                    price_asof_date DATE, atr_asof_date DATE,
+                    stop_price_initial DOUBLE, risk_per_share DOUBLE,
+                    risk_budget_dollars DOUBLE, initial_risk_dollars DOUBLE,
+                    target_notional DOUBLE, target_weight DOUBLE,
                 sector VARCHAR(60), score_used DOUBLE, score_source VARCHAR(40),
                 conviction_score DOUBLE, sizing_method VARCHAR(20), kelly_fraction DOUBLE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -94,14 +96,23 @@ class TestExecutionDbIo:
     def test_load_portfolio_targets(self, engine, repo) -> None:
         with engine.begin() as conn:
             conn.execute(text("""
-                INSERT INTO portfolio_targets (run_id, trade_date, symbol, shares, entry_price,
-                    target_weight, sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction)
-                VALUES ('r1', '2026-04-18', 'AAPL', 100, 150.0, 0.05, 'Tech', 0.9, 'quant', 0.8, 'atr', 0.1)
+                INSERT INTO portfolio_targets (run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
+                    sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction)
+                VALUES ('r1', '2026-04-18', 'AAPL', 1, 'long', 100, 150.0,
+                    5.0, '2026-04-18', '2026-04-18', 140.0, 10.0,
+                    1000.0, 1000.0, 15000.0, 0.05,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1)
             """))
         targets = repo.load_portfolio_targets(risk_run_id="r1")
         assert len(targets) == 1
         assert targets[0].symbol == "AAPL"
         assert targets[0].target_shares == 100
+        assert targets[0].decision_rank == 1
+        assert targets[0].stop_price_initial == 140.0
+        assert targets[0].risk_per_share == 10.0
+        assert targets[0].target_notional == 15000.0
 
     def test_insert_execution_run(self, repo) -> None:
         repo.insert_execution_run("e1", "r1", date(2026, 4, 18), "paper", False, 5)

@@ -19,6 +19,8 @@ def _target(symbol: str = "AAPL", shares: int = 100, price: float = 150.0) -> Ex
         risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol=symbol,
         target_shares=shares, entry_price=price, target_weight=0.05,
         sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+        stop_price_initial=140.0, risk_per_share=10.0, risk_budget_dollars=1_000.0,
+        initial_risk_dollars=1_000.0, target_notional=15_000.0,
     )
 
 
@@ -69,11 +71,25 @@ class TestBuildChildren:
     def test_trailing_stop(self) -> None:
         cfg = ExecutionConfig(trailing_stop_pct=0.05)
         parent = build_entry_intents([_target()], cfg, "run1")[0]
-        ts = build_trailing_stop_intent(parent, 100.0, cfg)
+        ts = build_trailing_stop_intent(parent, 100.0, 150.0, cfg)
         assert ts.side == "sell"
         assert ts.order_type == "trailing_stop"
         assert ts.trail_percent == pytest.approx(5.0)
         assert ts.intent_role == IntentRole.TRAILING_STOP
+
+    def test_take_profit_uses_risk_per_share_when_more_conservative(self) -> None:
+        cfg = ExecutionConfig(profit_taker_pct=0.02)
+        target = _target(price=150.0)
+        parent = build_entry_intents([target], cfg, "run1")[0]
+        tp = build_take_profit_intent(parent, 100.0, 150.0, cfg, target=target)
+        assert tp.limit_price == pytest.approx(170.0, abs=0.01)
+
+    def test_trailing_stop_uses_stop_price_initial_when_available(self) -> None:
+        cfg = ExecutionConfig(trailing_stop_pct=0.05)
+        target = _target(price=150.0)
+        parent = build_entry_intents([target], cfg, "run1")[0]
+        ts = build_trailing_stop_intent(parent, 100.0, 150.0, cfg, target=target)
+        assert ts.trail_percent == pytest.approx(6.67, abs=0.01)
 
 
 class TestIntentToPayload:
@@ -95,11 +111,12 @@ class TestIntentToPayload:
 
     def test_trailing_stop_payload(self) -> None:
         cfg = ExecutionConfig(trailing_stop_pct=0.05)
-        parent = build_entry_intents([_target()], cfg, "run1")[0]
-        ts = build_trailing_stop_intent(parent, 100.0, cfg)
+        target = _target()
+        parent = build_entry_intents([target], cfg, "run1")[0]
+        ts = build_trailing_stop_intent(parent, 100.0, 150.0, cfg, target=target)
         p = intent_to_alpaca_payload(ts)
         assert p["type"] == "trailing_stop"
-        assert p["trail_percent"] == "5.0"
+        assert p["trail_percent"] == "6.67"
         assert p["time_in_force"] == "gtc"
 
     def test_time_in_force_day_for_entry_gtc_for_children(self) -> None:

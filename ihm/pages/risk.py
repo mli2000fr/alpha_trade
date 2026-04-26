@@ -33,7 +33,8 @@ def render() -> None:
         return
 
     render_persistent_business_summary(
-        get_latest_run_business_summary(step_key="risk_management", entity_run_id=selected_run)
+        get_latest_run_business_summary(step_key="risk_management", entity_run_id=selected_run),
+        max_metrics=9,
     )
 
     # --- Décisions ---
@@ -56,7 +57,21 @@ def render() -> None:
                 pivot = decisions.groupby(["sector", "decision"]).size().unstack(fill_value=0)
                 st.dataframe(pivot, use_container_width=True)
 
-        show_dataframe(decisions, height=400)
+        if "decision_reason" in decisions.columns:
+            with st.expander("Motifs de rejet / réduction"):
+                reason_counts = decisions.groupby(["decision", "decision_reason"]).size().reset_index(name="count")
+                st.dataframe(reason_counts.sort_values(["decision", "count"], ascending=[True, False]), use_container_width=True)
+
+        cols_show = [c for c in [
+            "candidate_rank", "decision_rank", "symbol", "decision", "decision_reason", "sector",
+            "entry_price", "atr_20", "approved_shares", "target_notional", "target_weight",
+            "risk_per_share", "risk_budget_dollars", "initial_risk_dollars",
+            "correlation_blocker", "correlation_value",
+            "score_snapshot_date", "price_asof_date", "atr_asof_date",
+            "prediction_asof_date", "ml_metrics_asof_date",
+            "conviction_score", "predicted_proba", "historical_win_rate", "sizing_method",
+        ] if c in decisions.columns]
+        show_dataframe(decisions[cols_show] if cols_show else decisions, height=400)
     else:
         render_query_diagnostic("Aucune décision pour ce run.")
 
@@ -65,7 +80,9 @@ def render() -> None:
     targets = get_portfolio_targets(selected_run)
     if not targets.empty:
         cols_show = [c for c in [
-            "symbol", "shares", "entry_price", "target_weight", "sector",
+            "decision_rank", "symbol", "shares", "entry_price", "stop_price_initial", "atr_20",
+            "risk_per_share", "initial_risk_dollars", "risk_budget_dollars", "target_notional",
+            "target_weight", "sector", "price_asof_date", "atr_asof_date",
             "conviction_score", "sizing_method", "kelly_fraction", "score_used", "score_source",
         ] if c in targets.columns]
         show_dataframe(targets[cols_show] if cols_show else targets, height=400)

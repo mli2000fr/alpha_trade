@@ -70,8 +70,13 @@ def build_take_profit_intent(
     fill_qty: float,
     avg_fill_price: float,
     config: ExecutionConfig,
+    target: ExecutionTarget | None = None,
 ) -> OrderIntent:
-    limit_price = round(avg_fill_price * (1 + config.profit_taker_pct), 2)
+    percent_target = avg_fill_price * (1 + config.profit_taker_pct)
+    risk_based_target = None
+    if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
+        risk_based_target = avg_fill_price + (2.0 * target.risk_per_share)
+    limit_price = round(max(percent_target, risk_based_target or percent_target), 2)
     return OrderIntent(
         intent_id=_make_id(),
         risk_run_id=parent.risk_run_id,
@@ -96,9 +101,18 @@ def build_take_profit_intent(
 def build_trailing_stop_intent(
     parent: OrderIntent,
     fill_qty: float,
+    avg_fill_price: float,
     config: ExecutionConfig,
+    target: ExecutionTarget | None = None,
 ) -> OrderIntent:
-    trail_pct = round(config.trailing_stop_pct * 100, 2)
+    reference_price = avg_fill_price or parent.decision_price
+    risk_based_trail_pct = None
+    if target is not None:
+        if target.stop_price_initial is not None and reference_price > 0 and target.stop_price_initial < reference_price:
+            risk_based_trail_pct = (reference_price - target.stop_price_initial) / reference_price
+        elif target.risk_per_share is not None and target.risk_per_share > 0 and reference_price > 0:
+            risk_based_trail_pct = target.risk_per_share / reference_price
+    trail_pct = round((risk_based_trail_pct if risk_based_trail_pct is not None else config.trailing_stop_pct) * 100, 2)
     return OrderIntent(
         intent_id=_make_id(),
         risk_run_id=parent.risk_run_id,

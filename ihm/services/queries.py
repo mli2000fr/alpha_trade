@@ -347,21 +347,25 @@ def get_risk_run_ids() -> list[str]:
 def get_risk_decisions(run_id: str | None = None) -> pd.DataFrame:
     if run_id:
         return safe_query("""
-            SELECT * FROM risk_decisions WHERE run_id = :run_id ORDER BY created_at DESC
+            SELECT * FROM risk_decisions
+            WHERE run_id = :run_id
+            ORDER BY COALESCE(candidate_rank, 999999), created_at DESC
         """, {"run_id": run_id})
-    return safe_query("SELECT * FROM risk_decisions ORDER BY created_at DESC LIMIT 200")
+    return safe_query("SELECT * FROM risk_decisions ORDER BY COALESCE(candidate_rank, 999999), created_at DESC LIMIT 200")
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_portfolio_targets(run_id: str | None = None) -> pd.DataFrame:
     if run_id:
         return safe_query("""
-            SELECT * FROM portfolio_targets WHERE run_id = :run_id ORDER BY target_weight DESC
+            SELECT * FROM portfolio_targets
+            WHERE run_id = :run_id
+            ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
         """, {"run_id": run_id})
     return safe_query("""
         SELECT * FROM portfolio_targets
         WHERE run_id = (SELECT run_id FROM portfolio_targets ORDER BY created_at DESC LIMIT 1)
-        ORDER BY target_weight DESC
+        ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
     """)
 
 
