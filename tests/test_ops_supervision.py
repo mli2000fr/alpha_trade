@@ -183,6 +183,53 @@ def test_build_windows_integration_dataframe_exposes_three_modes() -> None:
     assert all("acct-1" in command for command in df["command"])
 
 
+def test_build_windows_runtime_dataframe_formats_task_and_service() -> None:
+    df = ops_supervision.build_windows_runtime_dataframe(
+        {
+            "bridge_available": True,
+            "bridge_mode": "read_only",
+            "task": {
+                "name": "AlphaTrade-ProtectionWatcher",
+                "exists": True,
+                "state": "Ready",
+                "enabled": True,
+                "lastRunTime": "2026-04-26T10:00:00",
+                "nextRunTime": "2026-04-26T10:05:00",
+                "lastTaskResult": "0",
+                "stdoutPath": "C:/logs/task_stdout.log",
+                "stderrPath": "C:/logs/task_stderr.log",
+            },
+            "service": {
+                "name": "AlphaTradeProtectionWatcher",
+                "exists": True,
+                "status": "Running",
+                "startType": "Auto",
+                "displayName": "Alpha Trade Protection Watcher",
+                "stdoutPath": "C:/logs/service_stdout.log",
+                "stderrPath": "C:/logs/service_stderr.log",
+            },
+        }
+    )
+
+    assert list(df["runtime"]) == ["Task Scheduler", "NSSM / Service Windows"]
+    assert list(df["bridge_mode"]) == ["read_only", "read_only"]
+    assert list(df["exists"]) == [True, True]
+
+
+def test_build_windows_log_sources_dataframe_uses_bridge_payload() -> None:
+    df = ops_supervision.build_windows_log_sources_dataframe(
+        {
+            "logSources": [
+                {"source": "Task Scheduler stdout", "runtime": "task", "kind": "stdout", "path": "C:/logs/task_stdout.log", "exists": True},
+                {"source": "NSSM stderr", "runtime": "service", "kind": "stderr", "path": "C:/logs/service_stderr.log", "exists": False},
+            ]
+        }
+    )
+
+    assert list(df["source"]) == ["Task Scheduler stdout", "NSSM stderr"]
+    assert list(df["exists"]) == [True, False]
+
+
 def test_build_ops_supervision_snapshot_aggregates_metrics(monkeypatch) -> None:
     monkeypatch.setattr(
         ops_supervision,
@@ -227,6 +274,20 @@ def test_build_ops_supervision_snapshot_aggregates_metrics(monkeypatch) -> None:
             }
         ],
     )
+    monkeypatch.setattr(
+        ops_supervision,
+        "get_windows_watcher_status",
+        lambda: {
+            "bridge_available": True,
+            "bridge_mode": "read_only",
+            "task": {"name": "AlphaTrade-ProtectionWatcher", "exists": True, "state": "Ready", "stdoutPath": "C:/logs/task_stdout.log", "stderrPath": "C:/logs/task_stderr.log"},
+            "service": {"name": "AlphaTradeProtectionWatcher", "exists": True, "status": "Running", "startType": "Auto", "displayName": "Alpha Trade Protection Watcher", "stdoutPath": "C:/logs/service_stdout.log", "stderrPath": "C:/logs/service_stderr.log"},
+            "logSources": [
+                {"source": "Task Scheduler stdout", "runtime": "task", "kind": "stdout", "path": "C:/logs/task_stdout.log", "exists": True},
+            ],
+            "bridge": {"script": "get_protection_watcher_status.ps1", "mode": "read_only", "allowlist": ["status", "log_import"]},
+        },
+    )
 
     snapshot = ops_supervision.build_ops_supervision_snapshot(
         account_id="acct-1",
@@ -240,6 +301,9 @@ def test_build_ops_supervision_snapshot_aggregates_metrics(monkeypatch) -> None:
     assert isinstance(snapshot["active_runs"], pd.DataFrame)
     assert isinstance(snapshot["watcher_history"], pd.DataFrame)
     assert isinstance(snapshot["watcher_windows_integration"], pd.DataFrame)
+    assert isinstance(snapshot["watcher_windows_runtime"], pd.DataFrame)
+    assert isinstance(snapshot["watcher_windows_log_sources"], pd.DataFrame)
+    assert isinstance(snapshot["watcher_windows_bridge"], pd.DataFrame)
     assert snapshot["watcher_control"]["fresh_service_detected"] is True
 
 

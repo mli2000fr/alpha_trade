@@ -10,6 +10,7 @@ from ihm.components.status_badges import classify_heartbeat_freshness, heartbeat
 from ihm.services.process_registry import list_active_pipeline_runs
 from ihm.services.queries import get_ops_latest_critical_summaries, get_ops_service_summaries
 from ihm.services.run_summary import build_run_summary_caption, get_run_summary
+from ihm.services.windows_watcher_bridge import get_windows_watcher_status, list_windows_watcher_log_sources
 from ihm.services.watcher_runtime import WATCHER_ONCE_STEP_KEY, WATCHER_SERVICE_STEP_KEY, build_windows_integration_rows, list_watcher_run_history
 
 SERVICE_LABELS: dict[str, str] = {
@@ -193,6 +194,85 @@ def build_windows_integration_dataframe(*, account_id: str | None = None) -> pd.
     return pd.DataFrame(build_windows_integration_rows(account_id=account_id))
 
 
+def build_windows_runtime_dataframe(payload: Mapping[str, object] | None) -> pd.DataFrame:
+    if not payload:
+        return pd.DataFrame()
+
+    bridge_available = bool(payload.get("bridge_available", False))
+    bridge_mode = str(payload.get("bridge_mode", "read_only") or "read_only")
+    rows: list[dict[str, object]] = []
+
+    task = payload.get("task")
+    if isinstance(task, Mapping):
+        rows.append(
+            {
+                "runtime": "Task Scheduler",
+                "name": str(task.get("name", "") or ""),
+                "exists": bool(task.get("exists", False)),
+                "status": str(task.get("state", "unknown") or "unknown"),
+                "enabled": task.get("enabled"),
+                "last_run": str(task.get("lastRunTime", "") or "—"),
+                "next_run": str(task.get("nextRunTime", "") or "—"),
+                "detail": str(task.get("lastTaskResult", "") or "—"),
+                "stdout_path": str(task.get("stdoutPath", "") or "—"),
+                "stderr_path": str(task.get("stderrPath", "") or "—"),
+                "bridge_available": bridge_available,
+                "bridge_mode": bridge_mode,
+            }
+        )
+
+    service = payload.get("service")
+    if isinstance(service, Mapping):
+        rows.append(
+            {
+                "runtime": "NSSM / Service Windows",
+                "name": str(service.get("name", "") or ""),
+                "exists": bool(service.get("exists", False)),
+                "status": str(service.get("status", "unknown") or "unknown"),
+                "enabled": str(service.get("startType", "") or "—"),
+                "last_run": "—",
+                "next_run": "—",
+                "detail": str(service.get("displayName", "") or service.get("error", "") or "—"),
+                "stdout_path": str(service.get("stdoutPath", "") or "—"),
+                "stderr_path": str(service.get("stderrPath", "") or "—"),
+                "bridge_available": bridge_available,
+                "bridge_mode": bridge_mode,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def build_windows_log_sources_dataframe(payload: Mapping[str, object] | None) -> pd.DataFrame:
+    rows = list_windows_watcher_log_sources(dict(payload or {}))
+    return pd.DataFrame(rows)
+
+
+def build_windows_bridge_dataframe(payload: Mapping[str, object] | None) -> pd.DataFrame:
+    if not payload:
+        return pd.DataFrame()
+
+    bridge = payload.get("bridge")
+    bridge_payload = dict(bridge) if isinstance(bridge, Mapping) else {}
+    allowlist_value = bridge_payload.get("allowlist", [])
+    if isinstance(allowlist_value, list):
+        allowlist_text = ", ".join(str(item) for item in allowlist_value if item)
+    else:
+        allowlist_text = str(allowlist_value or "")
+    return pd.DataFrame(
+        [
+            {
+                "bridge_available": bool(payload.get("bridge_available", False)),
+                "bridge_mode": str(payload.get("bridge_mode", bridge_payload.get("mode", "read_only")) or "read_only"),
+                "script_key": str(payload.get("script_key", "status") or "status"),
+                "script": str(bridge_payload.get("script", "—") or "—"),
+                "allowlist": allowlist_text or "—",
+                "reason": str(payload.get("reason", "") or "—"),
+            }
+        ]
+    )
+
+
 def build_ops_alerts(
     service_health_df: pd.DataFrame,
     latest_runs_df: pd.DataFrame,
@@ -293,12 +373,16 @@ def build_ops_supervision_snapshot(
     latest_run_records = get_ops_latest_critical_summaries(account_id=account_id, limit=50)
     active_runs = list_active_pipeline_runs()
     watcher_history = list_watcher_run_history(account_id=account_id, limit=50)
+    windows_status = get_windows_watcher_status()
 
     service_health_df = build_service_health_dataframe(service_records, now=now)
     latest_runs_df = build_latest_runs_dataframe(latest_run_records)
     active_runs_df = build_active_runs_dataframe(active_runs, account_id=account_id)
     watcher_history_df = build_watcher_history_dataframe(watcher_history)
     watcher_windows_integration_df = build_windows_integration_dataframe(account_id=account_id)
+    watcher_windows_runtime_df = build_windows_runtime_dataframe(windows_status)
+    watcher_windows_log_sources_df = build_windows_log_sources_dataframe(windows_status)
+    watcher_windows_bridge_df = build_windows_bridge_dataframe(windows_status)
     alerts = build_ops_alerts(service_health_df, latest_runs_df, active_runs_df)
     watcher_control_state = build_watcher_control_state(service_health_df, active_runs_df)
 
@@ -309,6 +393,7 @@ def build_ops_supervision_snapshot(
         "critical_alerts": sum(1 for alert in alerts if alert["severity"] == "error"),
         "active_runs": int(len(active_runs_df.index)),
         "watcher_history_runs": int(len(watcher_history_df.index)),
+        "windows_log_sources": int(len(watcher_windows_log_sources_df.index)),
     }
 
     return {
@@ -320,5 +405,9 @@ def build_ops_supervision_snapshot(
         "watcher_control": watcher_control_state,
         "watcher_history": watcher_history_df,
         "watcher_windows_integration": watcher_windows_integration_df,
+        "watcher_windows_status": dict(windows_status),
+        "watcher_windows_runtime": watcher_windows_runtime_df,
+        "watcher_windows_log_sources": watcher_windows_log_sources_df,
+        "watcher_windows_bridge": watcher_windows_bridge_df,
     }
 

@@ -10,6 +10,7 @@ Ce dossier contient les scripts d’exploitation Windows pour le watcher post-ru
 - `uninstall_protection_watcher_task.ps1` : supprime la tâche planifiée.
 - `install_protection_watcher_service_nssm.ps1` : installe un service Windows via NSSM.
 - `uninstall_protection_watcher_service_nssm.ps1` : supprime le service NSSM.
+- `get_protection_watcher_status.ps1` : lit en **read-only** le statut réel Task Scheduler / service Windows et les chemins de logs associés.
 - `protection_watcher.env.example` : exemple de fichier `.env` à copier/adapter.
 
 ## Quand utiliser quel script ?
@@ -45,6 +46,21 @@ Ce dossier contient les scripts d’exploitation Windows pour le watcher post-ru
 - si vous voulez un vrai process persistant ;
 - si vous voulez redémarrage / supervision via NSSM ;
 - si le watcher doit rester vivant avec heartbeat continu.
+
+### `get_protection_watcher_status.ps1`
+
+À utiliser :
+
+- pour vérifier en lecture seule si la tâche Windows existe et son dernier résultat ;
+- pour vérifier si le service NSSM existe et son statut réel ;
+- pour retrouver les chemins de logs `stdout` / `stderr` pilotés par le packaging Windows ;
+- comme backend de supervision read-only depuis l'IHM.
+
+Exemple :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\get_protection_watcher_status.ps1
+```
 
 ## Secrets : `.env` ou secret store Windows ?
 

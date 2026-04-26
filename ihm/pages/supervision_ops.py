@@ -11,6 +11,7 @@ from ihm.pages import run_page_if_standalone
 from ihm.services.db import db_available
 from ihm.services.db import get_runtime_db_config
 from ihm.services.ops_supervision import build_ops_supervision_snapshot
+from ihm.services.windows_watcher_bridge import read_windows_log_source
 from ihm.services.watcher_runtime import build_watcher_log_download_name
 from ihm.services.watcher_runtime import get_watcher_run_record
 from ihm.services.watcher_runtime import launch_watcher_once
@@ -27,6 +28,7 @@ WATCHER_HEARTBEAT_INTERVAL_KEY = "ops_watcher_heartbeat_interval"
 WATCHER_HISTORY_SELECTED_RUN_KEY = "ops_watcher_history_selected_run"
 WATCHER_LOG_FILTER_KEY = "ops_watcher_log_filter"
 WATCHER_LOG_TAIL_LINES = 200
+WINDOWS_LOG_SOURCE_SELECTED_KEY = "ops_windows_watcher_log_source"
 
 
 def _tail_text(content: str, max_lines: int = WATCHER_LOG_TAIL_LINES) -> str:
@@ -87,6 +89,36 @@ def _render_selected_watcher_run(record: dict[str, object] | None, *, run_id: st
     )
 
 
+def _render_selected_windows_log_source(log_sources_df, *, source_name: str) -> None:
+    if log_sources_df is None or log_sources_df.empty:
+        st.info("Aucune source de log Windows détectée.")
+        return
+
+    matches = log_sources_df[log_sources_df["source"] == source_name]
+    if matches.empty:
+        st.warning("La source de log Windows sélectionnée n'est plus disponible.")
+        return
+    row = matches.iloc[0].to_dict()
+    path_value = str(row.get("path", "") or "")
+    logs = read_windows_log_source(path_value)
+    st.caption(
+        f"Source : `{row.get('source', '—')}` | Runtime : `{row.get('runtime', '—')}` | Path : `{path_value or '—'}` | Existe : `{row.get('exists', False)}`"
+    )
+    st.download_button(
+        label="⬇️ Télécharger le log Windows importé",
+        data=logs,
+        file_name=(path_value.split("\\")[-1] if path_value else f"watcher_windows_{source_name}.log"),
+        mime="text/plain",
+        key=f"watcher_windows_download_{source_name}",
+    )
+    _render_log_block(
+        "Logs Windows importés",
+        logs,
+        key=f"watcher_windows_logs_{source_name}",
+        expanded=True,
+    )
+
+
 @st.fragment(run_every="2s")
 def _render_watcher_runtime_observability(*, account_id: str | None) -> None:
     snapshot = build_ops_supervision_snapshot(account_id=account_id)
@@ -143,6 +175,40 @@ def _render_watcher_runtime_observability(*, account_id: str | None) -> None:
         run_id=selected_run_id,
         log_filter=stream_map[filter_value],
     )
+
+
+@st.fragment(run_every="5s")
+def _render_windows_runtime_observability(*, account_id: str | None) -> None:
+    snapshot = build_ops_supervision_snapshot(account_id=account_id)
+    windows_runtime_df = snapshot.get("watcher_windows_runtime")
+    windows_log_sources_df = snapshot.get("watcher_windows_log_sources")
+    windows_bridge_df = snapshot.get("watcher_windows_bridge")
+
+    st.caption(
+        "Lecture read-only du vrai statut Windows via un bridge PowerShell allowlisté. Aucun start/stop/install n'est exécuté depuis cette page."
+    )
+    show_dataframe(windows_runtime_df, height=180)
+    show_dataframe(windows_bridge_df, height=120)
+
+    if windows_log_sources_df is None or windows_log_sources_df.empty:
+        st.info("Aucune source de log Task Scheduler / NSSM détectée ou accessible pour le moment.")
+        return
+
+    st.markdown("**Sources de logs Windows importables**")
+    show_dataframe(windows_log_sources_df, height=160)
+    source_names = [str(row.get("source", "") or "") for row in windows_log_sources_df.to_dict(orient="records") if row.get("source")]
+    if not source_names:
+        return
+    if st.session_state.get(WINDOWS_LOG_SOURCE_SELECTED_KEY) not in source_names:
+        st.session_state[WINDOWS_LOG_SOURCE_SELECTED_KEY] = source_names[0]
+    selected_source = str(
+        st.selectbox(
+            "Source Windows à inspecter",
+            options=source_names,
+            key=WINDOWS_LOG_SOURCE_SELECTED_KEY,
+        )
+    )
+    _render_selected_windows_log_source(windows_log_sources_df, source_name=selected_source)
 
 
 def _render_windows_integration_panel(*, snapshot: dict[str, object]) -> None:
@@ -308,6 +374,9 @@ def render() -> None:
     with st.container(border=True):
         st.subheader("🖥️ Logs live & historique watcher IHM")
         _render_watcher_runtime_observability(account_id=account_id)
+    with st.container(border=True):
+        st.subheader("🪟 Statut Windows réel & logs importés")
+        _render_windows_runtime_observability(account_id=account_id)
     alerts = list(snapshot.get("alerts", []))
     with st.container(border=True):
         st.subheader("🚨 Alertes synthétiques")
