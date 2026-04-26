@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from execution_engine.db_io import ExecutionRepository
-from execution_engine.models import BrokerOrder, ExecutionFill, OrderIntent, OrderStatus
+from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionReconciliationResult, OrderIntent, OrderStatus, ReconciliationStatus
 @pytest.fixture()
 def engine():
     e = create_engine("sqlite:///:memory:")
@@ -213,6 +213,29 @@ def engine():
                 exit_price DOUBLE,
                 source_kind VARCHAR(32),
                 updated_at TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE execution_reconciliation_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                exec_run_id VARCHAR(32) NOT NULL,
+                account_id VARCHAR(64) NOT NULL,
+                symbol VARCHAR(20) NOT NULL,
+                target_qty DOUBLE NOT NULL,
+                internal_position_qty DOUBLE NOT NULL,
+                broker_position_qty DOUBLE NOT NULL,
+                position_delta DOUBLE NOT NULL,
+                open_request_buy_qty DOUBLE NOT NULL DEFAULT 0,
+                open_request_sell_qty DOUBLE NOT NULL DEFAULT 0,
+                open_broker_buy_qty DOUBLE NOT NULL DEFAULT 0,
+                open_broker_sell_qty DOUBLE NOT NULL DEFAULT 0,
+                has_open_protection BOOLEAN NOT NULL DEFAULT 0,
+                protection_qty DOUBLE NOT NULL DEFAULT 0,
+                action VARCHAR(20) NOT NULL,
+                reconciliation_status VARCHAR(20) NOT NULL,
+                reason_code VARCHAR(255),
+                created_at TIMESTAMP,
+                UNIQUE(exec_run_id, account_id, symbol)
             )
         """))
         conn.execute(text("""
@@ -638,6 +661,102 @@ class TestExecutionDbIo:
         assert row["snapshot_kind"] == "preflight"
         assert row["equity"] == 100_000.0
         assert row["settled_cash"] == 70_000.0
+
+    def test_load_execution_targets_snapshot_reads_persisted_snapshot(self, repo) -> None:
+        with repo.engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO execution_targets_snapshot (
+                    exec_run_id, account_id, risk_run_id, trade_date, symbol, decision_rank, side,
+                    target_shares, entry_price, target_weight, sector, conviction_score, sizing_method,
+                    kelly_fraction, atr_20, price_asof_date, atr_asof_date, stop_price_initial,
+                    risk_per_share, risk_budget_dollars, initial_risk_dollars, target_notional, created_at
+                ) VALUES (
+                    'exec-snap-1', 'acct-1', 'risk-1', '2026-04-26', 'AAPL', 1, 'long',
+                    100, 150.0, 0.05, 'Tech', 0.8, 'atr',
+                    0.1, 5.0, '2026-04-26', '2026-04-26', 140.0,
+                    10.0, 1000.0, 1000.0, 15000.0, CURRENT_TIMESTAMP
+                )
+            """))
+
+        targets = repo.load_execution_targets_snapshot(exec_run_id="exec-snap-1")
+
+        assert len(targets) == 1
+        assert targets[0].symbol == "AAPL"
+        assert targets[0].target_shares == 100
+        assert targets[0].stop_price_initial == 140.0
+
+    def test_load_open_reconciliation_order_state_and_protection_state(self, repo) -> None:
+        now = datetime.now(timezone.utc)
+        parent_intent = self._intent("exec-1", "req-parent", "submit-parent")
+        stop_intent = OrderIntent(
+            intent_id="req-stop",
+            risk_run_id="r1",
+            exec_run_id="exec-1",
+            symbol="AAPL",
+            side="sell",
+            qty=100.0,
+            order_type="stop",
+            limit_price=None,
+            trail_percent=None,
+            broker_mode="paper",
+            parent_intent_id="req-parent",
+            intent_role="initial_stop",
+            idempotency_key="business-aapl-stop",
+            decision_price=150.0,
+            stop_price=140.0,
+            submission_key="submit-stop",
+        )
+        repo.upsert_execution_order_request_from_intent(parent_intent, account_id="acct-1", status=OrderStatus.SUBMITTED)
+        repo.upsert_execution_order_request_from_intent(stop_intent, account_id="acct-1", status=OrderStatus.SUBMITTED)
+        repo.upsert_execution_broker_order(
+            parent_intent,
+            BrokerOrder("bo-parent", "submit-parent", "req-parent", "AAPL", "buy", 100.0, 100.0, 150.0, OrderStatus.FILLED, "market", None, None, None, now, now),
+            account_id="acct-1",
+        )
+        repo.upsert_execution_broker_order(
+            stop_intent,
+            BrokerOrder("bo-stop", "submit-stop", "req-stop", "AAPL", "sell", 100.0, 0.0, None, OrderStatus.SUBMITTED, "stop", None, 140.0, None, now, now),
+            account_id="acct-1",
+        )
+        repo.insert_execution_broker_fill(
+            ExecutionFill("fill-parent", "bo-parent", "req-parent", "AAPL", 100.0, 150.0, now, 150.0, 0.0, 0.0),
+            account_id="acct-1",
+        )
+
+        open_order_state = repo.load_open_reconciliation_order_state(account_id="acct-1")
+        protection_state = repo.load_reconciliation_protection_state(account_id="acct-1")
+
+        assert open_order_state[0]["symbol"] == "AAPL"
+        assert float(open_order_state[0]["open_request_sell_qty"]) == 100.0
+        assert protection_state[0]["symbol"] == "AAPL"
+        assert float(protection_state[0]["protection_qty"]) == 100.0
+
+    def test_replace_execution_reconciliation_results_persists_results(self, repo) -> None:
+        results = [
+            ExecutionReconciliationResult(
+                exec_run_id="exec-rec-1",
+                account_id="acct-1",
+                symbol="AAPL",
+                target_qty=100.0,
+                internal_position_qty=100.0,
+                broker_position_qty=80.0,
+                position_delta=-20.0,
+                has_open_protection=True,
+                protection_qty=80.0,
+                action="buy_more",
+                reconciliation_status=ReconciliationStatus.SAFE_AUTO,
+                reason_code=None,
+            )
+        ]
+
+        count = repo.replace_execution_reconciliation_results(exec_run_id="exec-rec-1", account_id="acct-1", results=results)
+
+        assert count == 1
+        stored = repo.load_execution_reconciliation_results(exec_run_id="exec-rec-1", account_id="acct-1")
+        assert len(stored) == 1
+        assert stored[0].symbol == "AAPL"
+        assert stored[0].action == "buy_more"
+        assert stored[0].reconciliation_status == ReconciliationStatus.SAFE_AUTO
 
     def test_replace_execution_positions_writes_open_positions(self, repo) -> None:
         count = repo.replace_execution_positions(

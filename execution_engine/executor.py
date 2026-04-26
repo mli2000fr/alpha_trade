@@ -36,6 +36,8 @@ from execution_engine.models import (
     IntentRole,
     OrderIntent,
     OrderStatus,
+    ReconcileDiff,
+    ReconciliationStatus,
 )
 from execution_engine.oco_manager import OcoManager
 from execution_engine.order_intents import (
@@ -49,7 +51,7 @@ from execution_engine.order_intents import (
     resolve_initial_stop_price,
     resolve_trailing_activation_price,
 )
-from execution_engine.reconciliation import reconcile_targets_vs_broker
+from execution_engine.reconciliation import reconcile_execution_state
 from execution_engine.state_machine import is_terminal
 from execution_engine.tca import build_tca_summary, compute_implementation_shortfall, compute_slippage_bps
 from service.alpaca.trading_client import BrokerApiError
@@ -505,15 +507,58 @@ class ProductionExecutor:
                 try:
                     positions = self._broker.get_all_positions()
                     self._repo.snapshot_broker_positions(exec_run_id, self._cfg.broker_mode, positions, account_id=resolved_account_id)
-                    diffs = reconcile_targets_vs_broker(targets, positions, self._cfg.reconcile_tolerance_shares)
-                    action_diffs = [d for d in diffs if d.action != "none"]
-                    if action_diffs:
+                    reconciliation_results = reconcile_execution_state(
+                        exec_run_id=exec_run_id,
+                        account_id=resolved_account_id,
+                        targets=targets,
+                        broker_positions=positions,
+                        internal_positions=self._repo.load_execution_positions(account_id=resolved_account_id),
+                        open_order_state=self._repo.load_open_reconciliation_order_state(account_id=resolved_account_id),
+                        protection_state=self._repo.load_reconciliation_protection_state(account_id=resolved_account_id),
+                        tolerance=self._cfg.reconcile_tolerance_shares,
+                        buying_power_available=account_state.buying_power_available,
+                    )
+                    self._repo.replace_execution_reconciliation_results(
+                        exec_run_id=exec_run_id,
+                        account_id=resolved_account_id,
+                        results=reconciliation_results,
+                    )
+                    action_results = [result for result in reconciliation_results if result.action != "none"]
+                    safe_auto_results = [result for result in action_results if result.reconciliation_status == ReconciliationStatus.SAFE_AUTO]
+                    manual_review_results = [result for result in reconciliation_results if result.reconciliation_status == ReconciliationStatus.MANUAL_REVIEW]
+                    blocked_results = [result for result in reconciliation_results if result.reconciliation_status == ReconciliationStatus.BLOCKED]
+                    metrics["reconciliation_results"] = len(reconciliation_results)
+                    metrics["reconciliation_safe_auto"] = len([result for result in reconciliation_results if result.reconciliation_status == ReconciliationStatus.SAFE_AUTO])
+                    metrics["reconciliation_manual_review"] = len(manual_review_results)
+                    metrics["reconciliation_blocked"] = len(blocked_results)
+                    if action_results or manual_review_results or blocked_results:
                         events.append(make_event(exec_run_id, EventType.RECONCILE_DIFF,
-                                                 f"Reconciliation diffs found: {len(action_diffs)}"))
-                        # Vente / achat automatique si auto_rebalance_on_reconcile
-                        if self._cfg.auto_rebalance_on_reconcile:
+                                                 (
+                                                     "Reconciliation analyzed: "
+                                                     f"actionable={len(action_results)} "
+                                                     f"safe_auto={len(safe_auto_results)} "
+                                                     f"manual_review={len(manual_review_results)} "
+                                                     f"blocked={len(blocked_results)}"
+                                                 ),
+                                                 payload={
+                                                     "actionable": len(action_results),
+                                                     "safe_auto": len(safe_auto_results),
+                                                     "manual_review": len(manual_review_results),
+                                                     "blocked": len(blocked_results),
+                                                 }))
+                        if self._cfg.auto_rebalance_on_reconcile and safe_auto_results:
+                            safe_auto_diffs = [
+                                ReconcileDiff(
+                                    symbol=result.symbol,
+                                    target_qty=int(result.target_qty),
+                                    broker_qty=result.broker_position_qty,
+                                    delta=result.position_delta,
+                                    action=result.action,
+                                )
+                                for result in safe_auto_results
+                            ]
                             rebalance_events = self._submit_rebalance_orders(
-                                action_diffs, exec_run_id, targets, metrics, account_state,
+                                safe_auto_diffs, exec_run_id, targets, metrics, account_state,
                             )
                             events.extend(rebalance_events)
                     else:

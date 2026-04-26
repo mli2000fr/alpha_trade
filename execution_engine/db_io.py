@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from database.connection import get_sqlalchemy_engine
 from execution_engine.models import ExecutionOrderRequest
-from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionPosition, ExecutionPositionLot, ExecutionTarget, OrderIntent, ProtectionWatchItem
+from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionPosition, ExecutionPositionLot, ExecutionReconciliationResult, ExecutionTarget, OrderIntent, ProtectionWatchItem
 
 LOGGER = logging.getLogger(__name__)
 
@@ -200,6 +200,109 @@ class ExecutionRepository:
         """)
         with self.engine.connect() as conn:
             return list(conn.execute(stmt, {"account_id": account_id}).mappings().all())
+
+    def load_execution_targets_snapshot(self, *, exec_run_id: str) -> list[ExecutionTarget]:
+        stmt = text("""
+            SELECT risk_run_id, trade_date, symbol, decision_rank, side, target_shares,
+                   entry_price, target_weight, sector, conviction_score, sizing_method,
+                   kelly_fraction, atr_20, price_asof_date, atr_asof_date,
+                   stop_price_initial, risk_per_share, risk_budget_dollars,
+                   initial_risk_dollars, target_notional
+            FROM execution_targets_snapshot
+            WHERE exec_run_id = :exec_run_id
+            ORDER BY COALESCE(decision_rank, 999999), symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, {"exec_run_id": exec_run_id}).mappings().all()
+        return [
+            ExecutionTarget(
+                risk_run_id=str(r["risk_run_id"]),
+                trade_date=r["trade_date"] if isinstance(r["trade_date"], date) else date.fromisoformat(str(r["trade_date"])),
+                symbol=str(r["symbol"]).strip().upper(),
+                target_shares=int(r["target_shares"]),
+                entry_price=float(r["entry_price"]),
+                target_weight=float(r["target_weight"]),
+                sector=str(r["sector"]) if r.get("sector") else None,
+                conviction_score=float(r["conviction_score"]) if r.get("conviction_score") is not None else None,
+                sizing_method=str(r["sizing_method"]) if r.get("sizing_method") else None,
+                kelly_fraction=float(r["kelly_fraction"]) if r.get("kelly_fraction") is not None else None,
+                decision_rank=int(r["decision_rank"]) if r.get("decision_rank") is not None else None,
+                side=str(r["side"]) if r.get("side") else None,
+                atr_20=float(r["atr_20"]) if r.get("atr_20") is not None else None,
+                price_asof_date=r["price_asof_date"] if isinstance(r.get("price_asof_date"), date) else (date.fromisoformat(str(r["price_asof_date"])) if r.get("price_asof_date") else None),
+                atr_asof_date=r["atr_asof_date"] if isinstance(r.get("atr_asof_date"), date) else (date.fromisoformat(str(r["atr_asof_date"])) if r.get("atr_asof_date") else None),
+                stop_price_initial=float(r["stop_price_initial"]) if r.get("stop_price_initial") is not None else None,
+                risk_per_share=float(r["risk_per_share"]) if r.get("risk_per_share") is not None else None,
+                risk_budget_dollars=float(r["risk_budget_dollars"]) if r.get("risk_budget_dollars") is not None else None,
+                initial_risk_dollars=float(r["initial_risk_dollars"]) if r.get("initial_risk_dollars") is not None else None,
+                target_notional=float(r["target_notional"]) if r.get("target_notional") is not None else None,
+            )
+            for r in rows
+        ]
+
+    def load_open_reconciliation_order_state(self, *, account_id: str) -> list[dict[str, Any]]:
+        stmt = text("""
+            SELECT req.symbol AS symbol,
+                   SUM(CASE WHEN req.side = 'buy' THEN req.target_qty ELSE 0 END) AS open_request_buy_qty,
+                   SUM(CASE WHEN req.side = 'sell' THEN req.target_qty ELSE 0 END) AS open_request_sell_qty,
+                   SUM(CASE WHEN COALESCE(bo.side, req.side) = 'buy' THEN COALESCE(bo.qty, req.target_qty, 0) ELSE 0 END) AS open_broker_buy_qty,
+                   SUM(CASE WHEN COALESCE(bo.side, req.side) = 'sell' THEN COALESCE(bo.qty, req.target_qty, 0) ELSE 0 END) AS open_broker_sell_qty
+            FROM execution_order_requests req
+            LEFT JOIN execution_broker_orders bo
+                   ON bo.request_id = req.request_id
+            WHERE req.account_id = :account_id
+              AND COALESCE(bo.normalized_status, req.status) IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
+            GROUP BY req.symbol
+            ORDER BY req.symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            return list(conn.execute(stmt, {"account_id": account_id}).mappings().all())
+
+    def load_reconciliation_protection_state(self, *, account_id: str) -> list[dict[str, Any]]:
+        stmt = text("""
+            SELECT parent_req.symbol AS symbol,
+                   SUM(COALESCE(parent_fill.total_filled_qty, parent_obs.filled_qty, parent_req.target_qty, 0)) AS protection_qty
+            FROM execution_order_requests child_req
+            INNER JOIN execution_order_requests parent_req
+                    ON parent_req.request_id = child_req.parent_request_id
+            LEFT JOIN execution_broker_orders child_obs
+                   ON child_obs.request_id = child_req.request_id
+            LEFT JOIN execution_broker_orders parent_obs
+                   ON parent_obs.request_id = parent_req.request_id
+            LEFT JOIN (
+                SELECT request_id,
+                       SUM(filled_qty) AS total_filled_qty
+                FROM execution_broker_fills
+                GROUP BY request_id
+            ) parent_fill
+                   ON parent_fill.request_id = parent_req.request_id
+            WHERE parent_req.account_id = :account_id
+              AND child_req.intent_role IN ('initial_stop', 'trailing_stop')
+              AND COALESCE(child_obs.normalized_status, child_req.status) IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
+            GROUP BY parent_req.symbol
+            ORDER BY parent_req.symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            return list(conn.execute(stmt, {"account_id": account_id}).mappings().all())
+
+    def load_latest_broker_account_snapshot(
+        self,
+        *,
+        account_id: str,
+        snapshot_kind: str = "preflight",
+    ) -> dict[str, Any] | None:
+        stmt = text("""
+            SELECT snapshot_kind, equity, cash, settled_cash, buying_power,
+                   daytrade_count, raw_payload_json, created_at
+            FROM broker_account_snapshots
+            WHERE account_id = :account_id
+              AND snapshot_kind = :snapshot_kind
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        """)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt, {"account_id": account_id, "snapshot_kind": snapshot_kind}).mappings().first()
+        return dict(row) if row is not None else None
 
     def load_open_child_orders(self, parent_intent_id: str) -> list[BrokerOrder]:
         v2_query = text("""
@@ -1106,6 +1209,61 @@ class ExecutionRepository:
                 conn.execute(insert_stmt, records)
         return len(records)
 
+    def replace_execution_reconciliation_results(
+        self,
+        *,
+        exec_run_id: str,
+        account_id: str,
+        results: list[ExecutionReconciliationResult],
+    ) -> int:
+        delete_stmt = text("""
+            DELETE FROM execution_reconciliation_results
+            WHERE exec_run_id = :exec_run_id
+              AND account_id = :account_id
+        """)
+        insert_stmt = text("""
+            INSERT INTO execution_reconciliation_results (
+                exec_run_id, account_id, symbol, target_qty, internal_position_qty,
+                broker_position_qty, position_delta, open_request_buy_qty,
+                open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty,
+                has_open_protection, protection_qty, action,
+                reconciliation_status, reason_code, created_at
+            ) VALUES (
+                :exec_run_id, :account_id, :symbol, :target_qty, :internal_position_qty,
+                :broker_position_qty, :position_delta, :open_request_buy_qty,
+                :open_request_sell_qty, :open_broker_buy_qty, :open_broker_sell_qty,
+                :has_open_protection, :protection_qty, :action,
+                :reconciliation_status, :reason_code, :created_at
+            )
+        """)
+        records = [
+            {
+                "exec_run_id": result.exec_run_id,
+                "account_id": result.account_id,
+                "symbol": result.symbol,
+                "target_qty": result.target_qty,
+                "internal_position_qty": result.internal_position_qty,
+                "broker_position_qty": result.broker_position_qty,
+                "position_delta": result.position_delta,
+                "open_request_buy_qty": result.open_request_buy_qty,
+                "open_request_sell_qty": result.open_request_sell_qty,
+                "open_broker_buy_qty": result.open_broker_buy_qty,
+                "open_broker_sell_qty": result.open_broker_sell_qty,
+                "has_open_protection": int(bool(result.has_open_protection)),
+                "protection_qty": result.protection_qty,
+                "action": result.action,
+                "reconciliation_status": result.reconciliation_status,
+                "reason_code": result.reason_code,
+                "created_at": result.created_at or datetime.now(timezone.utc),
+            }
+            for result in results
+        ]
+        with self.engine.begin() as conn:
+            conn.execute(delete_stmt, {"exec_run_id": exec_run_id, "account_id": account_id})
+            if records:
+                conn.execute(insert_stmt, records)
+        return len(records)
+
     def load_execution_positions(self, *, account_id: str | None = None) -> list[ExecutionPosition]:
         stmt = text("""
             SELECT account_id, symbol, net_qty, avg_entry_price, market_price,
@@ -1166,6 +1324,48 @@ class ExecutionRepository:
                 closed_at=r.get("closed_at") if isinstance(r.get("closed_at"), datetime) else None,
                 exit_price=float(r["exit_price"]) if r.get("exit_price") is not None else None,
                 source_kind=str(r.get("source_kind") or "execution_broker_fill"),
+            )
+            for r in rows
+        ]
+
+    def load_execution_reconciliation_results(
+        self,
+        *,
+        exec_run_id: str | None = None,
+        account_id: str | None = None,
+    ) -> list[ExecutionReconciliationResult]:
+        stmt = text("""
+            SELECT exec_run_id, account_id, symbol, target_qty, internal_position_qty,
+                   broker_position_qty, position_delta, open_request_buy_qty,
+                   open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty,
+                   has_open_protection, protection_qty, action,
+                   reconciliation_status, reason_code, created_at
+            FROM execution_reconciliation_results
+            WHERE (:exec_run_id IS NULL OR exec_run_id = :exec_run_id)
+              AND (:account_id IS NULL OR account_id = :account_id)
+            ORDER BY created_at DESC, symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, {"exec_run_id": exec_run_id, "account_id": account_id}).mappings().all()
+        return [
+            ExecutionReconciliationResult(
+                exec_run_id=str(r["exec_run_id"]),
+                account_id=str(r["account_id"]),
+                symbol=str(r["symbol"]),
+                target_qty=float(r.get("target_qty") or 0.0),
+                internal_position_qty=float(r.get("internal_position_qty") or 0.0),
+                broker_position_qty=float(r.get("broker_position_qty") or 0.0),
+                position_delta=float(r.get("position_delta") or 0.0),
+                open_request_buy_qty=float(r.get("open_request_buy_qty") or 0.0),
+                open_request_sell_qty=float(r.get("open_request_sell_qty") or 0.0),
+                open_broker_buy_qty=float(r.get("open_broker_buy_qty") or 0.0),
+                open_broker_sell_qty=float(r.get("open_broker_sell_qty") or 0.0),
+                has_open_protection=bool(r.get("has_open_protection")),
+                protection_qty=float(r.get("protection_qty") or 0.0),
+                action=str(r.get("action") or "none"),
+                reconciliation_status=str(r.get("reconciliation_status") or "MANUAL_REVIEW"),
+                reason_code=str(r["reason_code"]) if r.get("reason_code") not in (None, "") else None,
+                created_at=r.get("created_at") if isinstance(r.get("created_at"), datetime) else None,
             )
             for r in rows
         ]

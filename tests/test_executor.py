@@ -9,7 +9,7 @@ from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.config import ExecutionConfig
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.executor import ProductionExecutor
-from execution_engine.models import BrokerOrder, EventType, ExecutionTarget, OrderStatus
+from execution_engine.models import BrokerOrder, EventType, ExecutionPosition, ExecutionTarget, OrderStatus
 from execution_engine.oco_manager import OcoManager
 from execution_engine.order_intents import build_entry_intents
 
@@ -65,6 +65,19 @@ def _make_executor(config: ExecutionConfig | None = None, targets: list[Executio
     }
     broker.list_recent_orders.return_value = []
     broker.get_all_positions.return_value = [{"symbol": "AAPL", "qty": 100}]
+    repo.load_execution_positions.return_value = [ExecutionPosition(account_id=cfg.resolved_account_id, symbol="AAPL", net_qty=100)]
+    repo.load_open_reconciliation_order_state.return_value = []
+    repo.load_reconciliation_protection_state.return_value = [{"symbol": "AAPL", "protection_qty": 100.0}]
+    repo.load_latest_broker_account_snapshot.return_value = {
+        "snapshot_kind": "preflight",
+        "equity": 100_000.0,
+        "cash": 100_000.0,
+        "settled_cash": 100_000.0,
+        "buying_power": 200_000.0,
+        "daytrade_count": 0,
+        "raw_payload_json": None,
+    }
+    repo.replace_execution_reconciliation_results.return_value = 1
     oco = MagicMock(spec=OcoManager)
     oco.check_and_cancel_sibling.return_value = []
     executor = ProductionExecutor(cfg, repo, broker, oco)
@@ -134,6 +147,9 @@ class TestExecutor:
                 "broker_positions_observed": 1,
                 "execution_positions_projected": 1,
                 "execution_position_lots_projected": 2,
+                "reconciliation_results": 2,
+                "reconciliation_safe_auto": 1,
+                "reconciliation_manual_review": 1,
             },
             started_at=datetime(2026, 4, 24, 10, 0, 0),
             finished_at=datetime(2026, 4, 24, 10, 0, 10),
@@ -157,6 +173,8 @@ class TestExecutor:
         assert summary["stale_price_targets"] == 1
         assert summary["broker_orders_synced"] == 2
         assert summary["execution_position_lots_projected"] == 2
+        assert summary["reconciliation_results"] == 2
+        assert summary["reconciliation_manual_review"] == 1
 
     def test_dry_run_no_broker_calls(self) -> None:
         executor, repo, broker, _ = _make_executor()
@@ -439,4 +457,43 @@ class TestExecutor:
         assert metrics["child_trailing_stop_orders_submitted"] == 0
         event_types = [event.event_type for event in events]
         assert EventType.CHILDREN_SUBMITTED in event_types
+
+    def test_reconcile_auto_rebalance_only_submits_safe_auto_diffs(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, auto_rebalance_on_reconcile=True)
+        executor, repo, broker, _ = _make_executor(cfg)
+        broker.get_all_positions.return_value = [{"symbol": "AAPL", "qty": 80}]
+        repo.load_execution_positions.return_value = [ExecutionPosition(account_id="default", symbol="AAPL", net_qty=80)]
+        repo.load_open_reconciliation_order_state.return_value = []
+        repo.load_reconciliation_protection_state.return_value = [{"symbol": "AAPL", "protection_qty": 80.0}]
+        executor._submit_rebalance_orders = MagicMock(return_value=[])
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        assert metrics["reconciliation_safe_auto"] >= 1
+        executor._submit_rebalance_orders.assert_called_once()
+        safe_auto_diffs = executor._submit_rebalance_orders.call_args.args[0]
+        assert len(safe_auto_diffs) == 1
+        assert safe_auto_diffs[0].symbol == "AAPL"
+        assert safe_auto_diffs[0].action == "buy_more"
+
+    def test_reconcile_manual_review_does_not_auto_rebalance_even_when_enabled(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, auto_rebalance_on_reconcile=True)
+        executor, repo, broker, _ = _make_executor(cfg)
+        broker.get_all_positions.return_value = [{"symbol": "AAPL", "qty": 80}]
+        repo.load_execution_positions.return_value = [ExecutionPosition(account_id="default", symbol="AAPL", net_qty=80)]
+        repo.load_open_reconciliation_order_state.return_value = [{
+            "symbol": "AAPL",
+            "open_request_buy_qty": 20.0,
+            "open_request_sell_qty": 0.0,
+            "open_broker_buy_qty": 20.0,
+            "open_broker_sell_qty": 0.0,
+        }]
+        repo.load_reconciliation_protection_state.return_value = [{"symbol": "AAPL", "protection_qty": 80.0}]
+        executor._submit_rebalance_orders = MagicMock(return_value=[])
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        assert metrics["reconciliation_manual_review"] >= 1
+        executor._submit_rebalance_orders.assert_not_called()
+        assert repo.replace_execution_reconciliation_results.called
 

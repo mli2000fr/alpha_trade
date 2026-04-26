@@ -57,6 +57,12 @@ class EventType:
     DRY_RUN_SIMULATED = "DRY_RUN_SIMULATED"
 
 
+class ReconciliationStatus:
+    SAFE_AUTO = "SAFE_AUTO"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+    BLOCKED = "BLOCKED"
+
+
 class IntentRole:
     ENTRY = "entry"
     TAKE_PROFIT = "take_profit"
@@ -253,6 +259,28 @@ class ExecutionPositionLot:
     closed_at: datetime | None = None
     exit_price: float | None = None
     source_kind: str = "execution_broker_fill"
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionReconciliationResult:
+    """Résultat analytique et actionnable de réconciliation par symbole."""
+    exec_run_id: str
+    account_id: str
+    symbol: str
+    target_qty: float
+    internal_position_qty: float
+    broker_position_qty: float
+    position_delta: float
+    open_request_buy_qty: float = 0.0
+    open_request_sell_qty: float = 0.0
+    open_broker_buy_qty: float = 0.0
+    open_broker_sell_qty: float = 0.0
+    has_open_protection: bool = False
+    protection_qty: float = 0.0
+    action: str = "none"
+    reconciliation_status: str = ReconciliationStatus.SAFE_AUTO
+    reason_code: str | None = None
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
