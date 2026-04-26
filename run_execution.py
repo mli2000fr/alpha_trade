@@ -188,6 +188,11 @@ PRESETS: dict[str, dict] = {
         "entry_order_type": "market",
         "profit_taker_pct": 0.08,
         "trailing_stop_pct": 0.05,
+        "trailing_activation_trigger": "multiple_r",
+        "trailing_activation_r_multiple": 1.0,
+        "trailing_activation_profit_pct": 0.03,
+        "protection_transition_timeout_seconds": 0,
+        "protection_transition_poll_interval_seconds": 2.0,
         "max_slippage_bps": 30,
         "max_order_retries": 3,
         "poll_interval_seconds": 2.0,
@@ -204,6 +209,11 @@ PRESETS: dict[str, dict] = {
         "entry_order_type": "market",
         "profit_taker_pct": 0.08,
         "trailing_stop_pct": 0.05,
+        "trailing_activation_trigger": "multiple_r",
+        "trailing_activation_r_multiple": 1.0,
+        "trailing_activation_profit_pct": 0.03,
+        "protection_transition_timeout_seconds": 30,
+        "protection_transition_poll_interval_seconds": 2.0,
         "max_slippage_bps": 30,
         "max_order_retries": 3,
         "poll_interval_seconds": 2.0,
@@ -220,6 +230,11 @@ PRESETS: dict[str, dict] = {
         "entry_order_type": "market",
         "profit_taker_pct": 0.08,
         "trailing_stop_pct": 0.05,
+        "trailing_activation_trigger": "multiple_r",
+        "trailing_activation_r_multiple": 1.0,
+        "trailing_activation_profit_pct": 0.03,
+        "protection_transition_timeout_seconds": 30,
+        "protection_transition_poll_interval_seconds": 2.0,
         "max_slippage_bps": 20,      # plus strict en live
         "max_order_retries": 3,
         "poll_interval_seconds": 1.5,
@@ -280,6 +295,7 @@ def run(
     print(f"  Run ID      : {run_id or '(dernier run disponible)'}")
     print(f"  Date        : {trade_date or '(auto)'}")
     print(f"  Bracket     : TP +{preset['profit_taker_pct']*100:.0f}%  /  TS -{preset['trailing_stop_pct']*100:.0f}%")
+    print(f"  Activation trailing : {preset['trailing_activation_trigger']}  |  timeout={preset['protection_transition_timeout_seconds']}s")
     print(f"  Max slippage: {preset['max_slippage_bps']} bps")
     print(f"  Compte      : {preset['account_type']}  |  PDT={preset['pdt_rule']}  |  swing_only={preset['swing_only']}")
     if allow_outside_rth and not preset.get("dry_run"):
@@ -435,6 +451,11 @@ Exemples :
     p.add_argument("--account-type",            dest="account_type",       choices=["margin", "cash"], default="margin", help="Type de compte simule ou utilise pour appliquer les contraintes de capital")
     p.add_argument("--pdt-rule",                dest="pdt_rule",           choices=["auto", "off"], default="auto", help="Application de la regle PDT sur compte margin")
     p.add_argument("--swing-only",              dest="swing_only",         action="store_true", help="Interdit les sorties le jour meme en execution")
+    p.add_argument("--trailing-activation-trigger", dest="trailing_activation_trigger", choices=["multiple_r", "profit_pct"], default=None, help="Trigger métier pour passer du stop initial au trailing dynamique")
+    p.add_argument("--trailing-activation-r-multiple", dest="trailing_activation_r_multiple", type=float, default=None, help="Multiple de R pour activer le trailing dynamique")
+    p.add_argument("--trailing-activation-profit-pct", dest="trailing_activation_profit_pct", type=float, default=None, help="Profit pct pour activer le trailing dynamique")
+    p.add_argument("--protection-transition-timeout-seconds", dest="protection_transition_timeout_seconds", type=int, default=None, help="Fenêtre de surveillance du trigger de trailing dynamique")
+    p.add_argument("--protection-transition-poll-interval-seconds", dest="protection_transition_poll_interval_seconds", type=float, default=None, help="Intervalle de polling du trigger de trailing dynamique")
     return p
 
 
@@ -460,6 +481,16 @@ def main() -> None:
         account_type      = args.account_type
         pdt_rule          = args.pdt_rule
         swing_only        = args.swing_only
+        if args.trailing_activation_trigger is not None:
+            PRESETS[mode]["trailing_activation_trigger"] = args.trailing_activation_trigger
+        if args.trailing_activation_r_multiple is not None:
+            PRESETS[mode]["trailing_activation_r_multiple"] = args.trailing_activation_r_multiple
+        if args.trailing_activation_profit_pct is not None:
+            PRESETS[mode]["trailing_activation_profit_pct"] = args.trailing_activation_profit_pct
+        if args.protection_transition_timeout_seconds is not None:
+            PRESETS[mode]["protection_transition_timeout_seconds"] = args.protection_transition_timeout_seconds
+        if args.protection_transition_poll_interval_seconds is not None:
+            PRESETS[mode]["protection_transition_poll_interval_seconds"] = args.protection_transition_poll_interval_seconds
 
     abort_missing_env()
     run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only)

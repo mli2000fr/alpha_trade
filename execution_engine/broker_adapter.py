@@ -9,6 +9,7 @@ from execution_engine.config import ExecutionConfig
 from execution_engine.models import BrokerOrder, OrderIntent
 from execution_engine.order_intents import intent_to_alpaca_payload
 from execution_engine.state_machine import map_alpaca_status
+from service.alpaca.clientAlpaca import fetch_latest_quotes
 from service.alpaca.trading_client import AlpacaTradingClient
 
 LOGGER = logging.getLogger(__name__)
@@ -45,6 +46,36 @@ class BrokerAdapter:
     def get_account_equity(self) -> float:
         acc = self.get_account_snapshot()
         return float(acc.get("equity", 0))
+
+    def get_latest_market_price(self, symbol: str) -> float | None:
+        try:
+            position = self._client.get_position(symbol)
+            if isinstance(position, dict):
+                current_price = position.get("current_price")
+                if current_price not in (None, ""):
+                    return float(current_price)
+                qty = float(position.get("qty", 0) or 0)
+                market_value = position.get("market_value")
+                if qty > 0 and market_value not in (None, ""):
+                    return float(market_value) / qty
+        except Exception:
+            LOGGER.debug("Position broker indisponible pour %s lors de l'évaluation trailing.", symbol, exc_info=True)
+
+        try:
+            quotes = fetch_latest_quotes([symbol], account_id=self._config.account_id)
+            quote = quotes.get(symbol) or quotes.get(symbol.upper())
+            if isinstance(quote, dict):
+                bid = quote.get("bp")
+                ask = quote.get("ap")
+                if bid not in (None, "") and ask not in (None, ""):
+                    return (float(bid) + float(ask)) / 2.0
+                if ask not in (None, ""):
+                    return float(ask)
+                if bid not in (None, ""):
+                    return float(bid)
+        except Exception:
+            LOGGER.debug("Quote Alpaca indisponible pour %s lors de l'évaluation trailing.", symbol, exc_info=True)
+        return None
 
     @staticmethod
     def _resp_to_broker_order(resp: dict[str, Any], intent_id: str) -> BrokerOrder:

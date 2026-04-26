@@ -13,6 +13,8 @@ class TestExecutionConfig:
         assert cfg.entry_order_type == "market"
         assert cfg.profit_taker_pct == 0.08
         assert cfg.trailing_stop_pct == 0.05
+        assert cfg.trailing_activation_trigger == "multiple_r"
+        assert cfg.protection_transition_timeout_seconds == 0
 
     def test_valid_paper_mode(self) -> None:
         cfg = ExecutionConfig(broker_mode="paper")

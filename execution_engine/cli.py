@@ -26,6 +26,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--limit-price-buffer-bps", type=int, default=10)
     p.add_argument("--profit-taker-pct", type=float, default=0.08)
     p.add_argument("--trailing-stop-pct", type=float, default=0.05)
+    p.add_argument("--trailing-activation-trigger", type=str, default="multiple_r", choices=["multiple_r", "profit_pct"])
+    p.add_argument("--trailing-activation-r-multiple", type=float, default=1.0)
+    p.add_argument("--trailing-activation-profit-pct", type=float, default=0.03)
+    p.add_argument("--protection-transition-timeout-seconds", type=int, default=30)
+    p.add_argument("--protection-transition-poll-interval-seconds", type=float, default=2.0)
     p.add_argument("--max-order-retries", type=int, default=3)
     p.add_argument("--poll-interval-seconds", type=float, default=2.0)
     p.add_argument("--fill-timeout-seconds", type=int, default=120)
@@ -61,6 +66,11 @@ def main(argv: list[str] | None = None) -> None:
         limit_price_buffer_bps=args.limit_price_buffer_bps,
         profit_taker_pct=args.profit_taker_pct,
         trailing_stop_pct=args.trailing_stop_pct,
+        trailing_activation_trigger=args.trailing_activation_trigger,
+        trailing_activation_r_multiple=args.trailing_activation_r_multiple,
+        trailing_activation_profit_pct=args.trailing_activation_profit_pct,
+        protection_transition_timeout_seconds=args.protection_transition_timeout_seconds,
+        protection_transition_poll_interval_seconds=args.protection_transition_poll_interval_seconds,
         max_order_retries=args.max_order_retries,
         poll_interval_seconds=args.poll_interval_seconds,
         fill_timeout_seconds=args.fill_timeout_seconds,

@@ -30,6 +30,12 @@ class ExecutionConfig:
     profit_taker_pct: float = 0.08
     trailing_stop_pct: float = 0.05
     trailing_stop_type: str = "percent"
+    enable_dynamic_trailing_transition: bool = True
+    trailing_activation_trigger: Literal["multiple_r", "profit_pct"] = "multiple_r"
+    trailing_activation_r_multiple: float = 1.0
+    trailing_activation_profit_pct: float = 0.03
+    protection_transition_timeout_seconds: int = 0
+    protection_transition_poll_interval_seconds: float = 2.0
 
     # --- Execution ---
     allow_fractional_shares: bool = False
@@ -72,6 +78,12 @@ class ExecutionConfig:
             raise ValueError("profit_taker_pct doit être dans ]0, 1[.")
         if not (0 < self.trailing_stop_pct < 1):
             raise ValueError("trailing_stop_pct doit être dans ]0, 1[.")
+        if self.trailing_activation_trigger not in ("multiple_r", "profit_pct"):
+            raise ValueError("trailing_activation_trigger doit être 'multiple_r' ou 'profit_pct'.")
+        if self.trailing_activation_r_multiple <= 0:
+            raise ValueError("trailing_activation_r_multiple doit être > 0.")
+        if not (0 < self.trailing_activation_profit_pct < 1):
+            raise ValueError("trailing_activation_profit_pct doit être dans ]0, 1[.")
         if not (0 <= self.max_slippage_bps <= 500):
             raise ValueError("max_slippage_bps doit être dans [0, 500].")
         if self.max_order_retries < 0:
@@ -86,6 +98,10 @@ class ExecutionConfig:
             raise ValueError("fill_timeout_seconds doit être > 0.")
         if self.cancel_timeout_seconds <= 0:
             raise ValueError("cancel_timeout_seconds doit être > 0.")
+        if self.protection_transition_timeout_seconds < 0:
+            raise ValueError("protection_transition_timeout_seconds doit être >= 0.")
+        if self.protection_transition_poll_interval_seconds <= 0:
+            raise ValueError("protection_transition_poll_interval_seconds doit être > 0.")
         if self.execution_batch_size < 1:
             raise ValueError("execution_batch_size doit être >= 1.")
         if self.max_consecutive_failures < 1:

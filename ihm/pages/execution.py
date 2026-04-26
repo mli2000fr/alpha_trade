@@ -59,9 +59,14 @@ def render() -> None:
         st.subheader("🛡️ Protections et indicateurs de risque")
         metric_row([
             ("Stops broker", int(summary.get("targets_with_broker_initial_stop", 0) or 0), None),
+            ("Éligibles trail dyn.", int(summary.get("targets_eligible_for_dynamic_trailing", 0) or 0), None),
+            ("Trailing activés", int(summary.get("dynamic_trailing_activations", 0) or 0), None),
             ("Fallback trailing", int(summary.get("targets_with_trailing_fallback", 0) or 0), None),
             ("Stops soumis", int(summary.get("child_initial_stop_orders_submitted", 0) or 0), None),
             ("Trails soumis", int(summary.get("child_trailing_stop_orders_submitted", 0) or 0), None),
+            ("Checks trigger", int(summary.get("dynamic_trailing_trigger_checks", 0) or 0), None),
+            ("Timeouts trail dyn.", int(summary.get("dynamic_trailing_timeouts", 0) or 0), None),
+            ("Annulations KO", int(summary.get("dynamic_trailing_cancel_failures", 0) or 0), None),
             ("Cibles stale", int(summary.get("stale_price_targets", 0) or 0), None),
             ("Échecs protections", int(summary.get("child_order_submit_failures", 0) or 0), None),
         ])

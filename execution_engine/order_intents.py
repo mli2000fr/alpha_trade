@@ -45,6 +45,23 @@ def resolve_initial_stop_price(reference_price: float, target: ExecutionTarget |
     return None
 
 
+def resolve_trailing_activation_price(
+    fill_price: float,
+    config: ExecutionConfig,
+    target: ExecutionTarget | None = None,
+) -> tuple[float | None, str | None]:
+    """Détermine le prix auquel le stop initial doit être promu en trailing dynamique."""
+    if fill_price <= 0:
+        return None, None
+
+    if config.trailing_activation_trigger == "multiple_r":
+        if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
+            return round(fill_price + (float(target.risk_per_share) * config.trailing_activation_r_multiple), 2), "multiple_r"
+        return round(fill_price * (1 + config.trailing_activation_profit_pct), 2), "profit_pct_fallback"
+
+    return round(fill_price * (1 + config.trailing_activation_profit_pct), 2), "profit_pct"
+
+
 def build_entry_intents(
     targets: list[ExecutionTarget],
     config: ExecutionConfig,

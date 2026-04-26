@@ -120,7 +120,12 @@ class TestExecutor:
                 "max_target_weight": 0.10,
                 "targets_with_risk_controls": 3,
                 "targets_with_broker_initial_stop": 2,
+                "targets_eligible_for_dynamic_trailing": 2,
                 "targets_with_trailing_fallback": 1,
+                "dynamic_trailing_trigger_checks": 5,
+                "dynamic_trailing_activations": 1,
+                "dynamic_trailing_timeouts": 1,
+                "dynamic_trailing_cancel_failures": 0,
                 "child_take_profit_orders_submitted": 1,
                 "child_initial_stop_orders_submitted": 1,
                 "child_trailing_stop_orders_submitted": 0,
@@ -143,7 +148,9 @@ class TestExecutor:
         assert summary["total_initial_risk_dollars"] == 1_500.0
         assert summary["targets_with_risk_controls"] == 3
         assert summary["targets_with_broker_initial_stop"] == 2
+        assert summary["targets_eligible_for_dynamic_trailing"] == 2
         assert summary["targets_with_trailing_fallback"] == 1
+        assert summary["dynamic_trailing_activations"] == 1
         assert summary["stale_price_targets"] == 1
 
     def test_dry_run_no_broker_calls(self) -> None:
@@ -360,4 +367,64 @@ class TestExecutor:
         assert metrics["child_trailing_stop_orders_submitted"] == 1
         assert metrics["child_order_submit_failures"] == 1
         assert events[0].payload_json is not None
+
+    def test_children_promote_initial_stop_to_dynamic_trailing_when_trigger_hit(self) -> None:
+        cfg = ExecutionConfig(
+            dry_run=False,
+            allow_outside_rth=True,
+            profit_taker_pct=0.02,
+            trailing_stop_pct=0.05,
+            protection_transition_timeout_seconds=1,
+            protection_transition_poll_interval_seconds=0.01,
+            trailing_activation_trigger="multiple_r",
+            trailing_activation_r_multiple=1.0,
+        )
+        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
+        parent = executor._repo.load_portfolio_targets.return_value[0]
+        parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
+        filled_order = _filled_order(intent_id=parent_intent.intent_id)
+
+        broker.submit_intent.side_effect = [
+            BrokerOrder("tp1", "ctp1", "tp", "AAPL", "sell", 100, 0, None, OrderStatus.SUBMITTED, "limit", 170.2, None, None, datetime.now(timezone.utc), datetime.now(timezone.utc)),
+            BrokerOrder("stop1", "cstop1", "stop", "AAPL", "sell", 100, 0, None, OrderStatus.SUBMITTED, "stop", None, 140.0, None, datetime.now(timezone.utc), datetime.now(timezone.utc)),
+            BrokerOrder("trail1", "ctrail1", "trail", "AAPL", "sell", 100, 0, None, OrderStatus.SUBMITTED, "trailing_stop", None, None, 6.79, datetime.now(timezone.utc), datetime.now(timezone.utc)),
+        ]
+        broker.get_latest_market_price.return_value = 161.0
+        broker.cancel_broker_order.return_value = True
+        broker.poll_order_status.return_value = BrokerOrder(
+            "stop1", "cstop1", parent_intent.intent_id, "AAPL", "sell", 100, 0, None,
+            OrderStatus.CANCELED, "stop", None, 140.0, None, datetime.now(timezone.utc), datetime.now(timezone.utc),
+        )
+
+        metrics = {
+            "children_deferred": 0,
+            "child_take_profit_orders_submitted": 0,
+            "child_initial_stop_orders_submitted": 0,
+            "child_trailing_stop_orders_submitted": 0,
+            "child_order_submit_failures": 0,
+            "dynamic_trailing_trigger_checks": 0,
+            "dynamic_trailing_activations": 0,
+            "dynamic_trailing_timeouts": 0,
+            "dynamic_trailing_cancel_failures": 0,
+        }
+        events = executor._submit_children(
+            parent_intent,
+            filled_order,
+            "exec-1",
+            account_state=executor._build_account_constraint_state(),
+            metrics=metrics,
+            target=parent,
+        )
+
+        submitted_intents = [call.args[0] for call in broker.submit_intent.call_args_list]
+        assert len(submitted_intents) == 3
+        assert submitted_intents[1].order_type == "stop"
+        assert submitted_intents[2].order_type == "trailing_stop"
+        assert broker.cancel_broker_order.called
+        assert metrics["dynamic_trailing_activations"] == 1
+        assert metrics["child_initial_stop_orders_submitted"] == 1
+        assert metrics["child_trailing_stop_orders_submitted"] == 1
+        event_types = [event.event_type for event in events]
+        assert EventType.PROTECTION_TRIGGER_HIT in event_types
+        assert EventType.PROTECTION_TRANSITION_COMPLETED in event_types
 

@@ -13,6 +13,7 @@ from execution_engine.order_intents import (
     build_trailing_stop_intent,
     intent_to_alpaca_payload,
     resolve_initial_stop_price,
+    resolve_trailing_activation_price,
 )
 
 
@@ -119,6 +120,25 @@ class TestBuildChildren:
 
     def test_resolve_initial_stop_price_returns_none_when_reference_invalid(self) -> None:
         assert resolve_initial_stop_price(0.0, _target()) is None
+
+    def test_resolve_trailing_activation_price_uses_multiple_r(self) -> None:
+        cfg = ExecutionConfig(trailing_activation_trigger="multiple_r", trailing_activation_r_multiple=1.5)
+        trigger_price, trigger_mode = resolve_trailing_activation_price(150.0, cfg, _target())
+        assert trigger_price == pytest.approx(165.0, abs=0.01)
+        assert trigger_mode == "multiple_r"
+
+    def test_resolve_trailing_activation_price_falls_back_to_profit_pct(self) -> None:
+        cfg = ExecutionConfig(trailing_activation_trigger="multiple_r", trailing_activation_profit_pct=0.04)
+        target = ExecutionTarget(
+            risk_run_id="abc123", trade_date=date(2026, 4, 18), symbol="AAPL",
+            target_shares=100, entry_price=150.0, target_weight=0.05,
+            sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+            stop_price_initial=140.0, risk_per_share=None, risk_budget_dollars=1_000.0,
+            initial_risk_dollars=1_000.0, target_notional=15_000.0,
+        )
+        trigger_price, trigger_mode = resolve_trailing_activation_price(150.0, cfg, target)
+        assert trigger_price == pytest.approx(156.0, abs=0.01)
+        assert trigger_mode == "profit_pct_fallback"
 
 
 class TestIntentToPayload:

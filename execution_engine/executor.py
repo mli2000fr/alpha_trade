@@ -45,6 +45,7 @@ from execution_engine.order_intents import (
     build_rebalance_sell_intent,
     build_rebalance_buy_intent,
     resolve_initial_stop_price,
+    resolve_trailing_activation_price,
 )
 from execution_engine.reconciliation import reconcile_targets_vs_broker
 from execution_engine.state_machine import is_terminal
@@ -110,6 +111,11 @@ class ProductionExecutor:
             "child_initial_stop_orders_submitted": 0,
             "child_trailing_stop_orders_submitted": 0,
             "child_order_submit_failures": 0,
+            "targets_eligible_for_dynamic_trailing": 0,
+            "dynamic_trailing_trigger_checks": 0,
+            "dynamic_trailing_activations": 0,
+            "dynamic_trailing_timeouts": 0,
+            "dynamic_trailing_cancel_failures": 0,
         }
         events: list[ExecutionEvent] = []
         fills: list[ExecutionFill] = []
@@ -139,6 +145,7 @@ class ProductionExecutor:
                 1 for t in targets
                 if resolve_initial_stop_price(float(t.entry_price), t) is not None
             )
+            metrics["targets_eligible_for_dynamic_trailing"] = int(metrics["targets_with_broker_initial_stop"]) if self._cfg.enable_dynamic_trailing_transition else 0
             metrics["targets_with_trailing_fallback"] = max(
                 len(targets) - int(metrics["targets_with_broker_initial_stop"]),
                 0,
@@ -608,6 +615,173 @@ class ProductionExecutor:
             implementation_shortfall=ishort,
         )
 
+    def _persist_child_order_state(
+        self,
+        intent: OrderIntent,
+        order: BrokerOrder,
+        exec_run_id: str,
+    ) -> None:
+        db_dict = order_intent_to_db_dict(intent, exec_run_id, status=order.status)
+        db_dict["broker_order_id"] = order.broker_order_id
+        db_dict["filled_qty"] = order.filled_qty
+        db_dict["avg_fill_price"] = order.avg_fill_price
+        try:
+            self._repo.upsert_execution_order(db_dict)
+        except Exception:
+            pass
+
+    def _cancel_child_for_transition(
+        self,
+        intent: OrderIntent,
+        order: BrokerOrder,
+        exec_run_id: str,
+    ) -> tuple[bool, BrokerOrder]:
+        try:
+            cancel_requested = self._broker.cancel_broker_order(order.broker_order_id)
+        except Exception:
+            return False, order
+        if not cancel_requested:
+            return False, order
+
+        latest_order = order
+        deadline = time.monotonic() + self._cfg.cancel_timeout_seconds
+        while time.monotonic() < deadline:
+            try:
+                latest_order = self._broker.poll_order_status(order.broker_order_id, intent.intent_id)
+            except Exception:
+                time.sleep(self._cfg.poll_interval_seconds)
+                continue
+            if latest_order.status == OrderStatus.CANCELED:
+                self._persist_child_order_state(intent, latest_order, exec_run_id)
+                return True, latest_order
+            if latest_order.status in {OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.FAILED, OrderStatus.EXPIRED}:
+                self._persist_child_order_state(intent, latest_order, exec_run_id)
+                return False, latest_order
+            time.sleep(self._cfg.poll_interval_seconds)
+        return False, latest_order
+
+    def _maybe_activate_dynamic_trailing(
+        self,
+        parent: OrderIntent,
+        fill_qty: float,
+        fill_price: float,
+        exec_run_id: str,
+        *,
+        target: Any | None,
+        initial_stop_intent: OrderIntent | None,
+        initial_stop_order: BrokerOrder | None,
+        metrics: dict[str, int],
+    ) -> list[ExecutionEvent]:
+        events: list[ExecutionEvent] = []
+        if (
+            not self._cfg.enable_dynamic_trailing_transition
+            or self._cfg.protection_transition_timeout_seconds <= 0
+            or target is None
+            or initial_stop_intent is None
+            or initial_stop_order is None
+        ):
+            return events
+
+        trigger_price, trigger_mode = resolve_trailing_activation_price(fill_price, self._cfg, target)
+        if trigger_price is None:
+            return events
+
+        deadline = time.monotonic() + self._cfg.protection_transition_timeout_seconds
+        while time.monotonic() <= deadline:
+            market_price = self._broker.get_latest_market_price(parent.symbol)
+            metrics["dynamic_trailing_trigger_checks"] = metrics.get("dynamic_trailing_trigger_checks", 0) + 1
+            if market_price is not None and market_price >= trigger_price:
+                events.append(make_event(
+                    exec_run_id,
+                    EventType.PROTECTION_TRIGGER_HIT,
+                    f"Trigger trailing atteint pour {parent.symbol} à {market_price:.2f}",
+                    symbol=parent.symbol,
+                    intent_id=parent.intent_id,
+                    broker_order_id=initial_stop_order.broker_order_id,
+                    payload={
+                        "market_price": round(float(market_price), 4),
+                        "trigger_price": trigger_price,
+                        "trigger_mode": trigger_mode,
+                        "initial_stop_order_id": initial_stop_order.broker_order_id,
+                    },
+                ))
+                canceled, canceled_order = self._cancel_child_for_transition(initial_stop_intent, initial_stop_order, exec_run_id)
+                if not canceled:
+                    metrics["dynamic_trailing_cancel_failures"] = metrics.get("dynamic_trailing_cancel_failures", 0) + 1
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.PROTECTION_TRANSITION_FAILED,
+                        f"Impossible d'annuler le stop initial pour {parent.symbol}",
+                        symbol=parent.symbol,
+                        intent_id=initial_stop_intent.intent_id,
+                        broker_order_id=canceled_order.broker_order_id,
+                        payload={
+                            "trigger_price": trigger_price,
+                            "market_price": round(float(market_price), 4),
+                            "trigger_mode": trigger_mode,
+                            "stop_status": canceled_order.status,
+                        },
+                    ))
+                    return events
+
+                trailing_intent = build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+                try:
+                    trailing_order = self._broker.submit_intent(trailing_intent)
+                    self._persist_child_order_state(trailing_intent, trailing_order, exec_run_id)
+                    metrics["child_trailing_stop_orders_submitted"] = metrics.get("child_trailing_stop_orders_submitted", 0) + 1
+                    metrics["dynamic_trailing_activations"] = metrics.get("dynamic_trailing_activations", 0) + 1
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.PROTECTION_TRANSITION_COMPLETED,
+                        f"Stop initial promu en trailing pour {parent.symbol}",
+                        symbol=parent.symbol,
+                        intent_id=trailing_intent.intent_id,
+                        broker_order_id=trailing_order.broker_order_id,
+                        payload={
+                            "trigger_price": trigger_price,
+                            "market_price": round(float(market_price), 4),
+                            "trigger_mode": trigger_mode,
+                            "initial_stop_order_id": initial_stop_order.broker_order_id,
+                            "trailing_stop_order_id": trailing_order.broker_order_id,
+                            "trailing_stop_percent": trailing_intent.trail_percent,
+                        },
+                    ))
+                except Exception as exc:
+                    metrics["child_order_submit_failures"] = metrics.get("child_order_submit_failures", 0) + 1
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.PROTECTION_TRANSITION_FAILED,
+                        f"Echec soumission trailing dynamique pour {parent.symbol}: {str(exc)[:120]}",
+                        symbol=parent.symbol,
+                        intent_id=initial_stop_intent.intent_id,
+                        payload={
+                            "trigger_price": trigger_price,
+                            "market_price": round(float(market_price), 4),
+                            "trigger_mode": trigger_mode,
+                        },
+                    ))
+                return events
+
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(self._cfg.protection_transition_poll_interval_seconds)
+
+        metrics["dynamic_trailing_timeouts"] = metrics.get("dynamic_trailing_timeouts", 0) + 1
+        events.append(make_event(
+            exec_run_id,
+            EventType.PROTECTION_TRANSITION_FAILED,
+            f"Trigger trailing non atteint dans la fenêtre pour {parent.symbol}",
+            symbol=parent.symbol,
+            intent_id=initial_stop_intent.intent_id,
+            broker_order_id=initial_stop_order.broker_order_id,
+            payload={
+                "trigger_price": trigger_price,
+                "trigger_mode": trigger_mode,
+                "timeout_seconds": self._cfg.protection_transition_timeout_seconds,
+            },
+        ))
+        return events
+
     def _submit_children(
         self,
         parent: OrderIntent,
@@ -646,22 +820,22 @@ class ProductionExecutor:
         tp_intent = build_take_profit_intent(parent, fill_qty, fill_price, self._cfg, target=target)
         stop_intent = build_initial_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
         protection_intent = stop_intent or build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
-        submitted_children: list[OrderIntent] = []
+        submitted_children: list[tuple[OrderIntent, BrokerOrder]] = []
+        initial_stop_submitted_intent: OrderIntent | None = None
+        initial_stop_submitted_order: BrokerOrder | None = None
+        trigger_price, trigger_mode = resolve_trailing_activation_price(fill_price, self._cfg, target) if stop_intent is not None else (None, None)
 
         for child in [tp_intent, protection_intent]:
             try:
                 child_order = self._broker.submit_intent(child)
-                db_dict = order_intent_to_db_dict(child, exec_run_id, status=child_order.status)
-                db_dict["broker_order_id"] = child_order.broker_order_id
-                try:
-                    self._repo.upsert_execution_order(db_dict)
-                except Exception:
-                    pass
-                submitted_children.append(child)
+                self._persist_child_order_state(child, child_order, exec_run_id)
+                submitted_children.append((child, child_order))
                 if child.intent_role == IntentRole.TAKE_PROFIT:
                     metrics["child_take_profit_orders_submitted"] = metrics.get("child_take_profit_orders_submitted", 0) + 1
                 elif child.intent_role == IntentRole.INITIAL_STOP:
                     metrics["child_initial_stop_orders_submitted"] = metrics.get("child_initial_stop_orders_submitted", 0) + 1
+                    initial_stop_submitted_intent = child
+                    initial_stop_submitted_order = child_order
                 elif child.intent_role == IntentRole.TRAILING_STOP:
                     metrics["child_trailing_stop_orders_submitted"] = metrics.get("child_trailing_stop_orders_submitted", 0) + 1
             except Exception as exc:
@@ -671,13 +845,8 @@ class ProductionExecutor:
                     fallback_trailing = build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
                     try:
                         fallback_order = self._broker.submit_intent(fallback_trailing)
-                        db_dict = order_intent_to_db_dict(fallback_trailing, exec_run_id, status=fallback_order.status)
-                        db_dict["broker_order_id"] = fallback_order.broker_order_id
-                        try:
-                            self._repo.upsert_execution_order(db_dict)
-                        except Exception:
-                            pass
-                        submitted_children.append(fallback_trailing)
+                        self._persist_child_order_state(fallback_trailing, fallback_order, exec_run_id)
+                        submitted_children.append((fallback_trailing, fallback_order))
                         metrics["child_trailing_stop_orders_submitted"] = metrics.get("child_trailing_stop_orders_submitted", 0) + 1
                     except Exception as fallback_exc:
                         LOGGER.warning(
@@ -688,7 +857,7 @@ class ProductionExecutor:
                         metrics["child_order_submit_failures"] = metrics.get("child_order_submit_failures", 0) + 1
 
         protection_child = next(
-            (child for child in submitted_children if child.intent_role in {IntentRole.INITIAL_STOP, IntentRole.TRAILING_STOP}),
+            (child for child, _ in submitted_children if child.intent_role in {IntentRole.INITIAL_STOP, IntentRole.TRAILING_STOP}),
             None,
         )
         protection_mode = None
@@ -709,12 +878,26 @@ class ProductionExecutor:
                 "initial_stop_price": stop_intent.stop_price if stop_intent is not None else None,
                 "trailing_stop_percent": protection_child.trail_percent if protection_child and protection_child.intent_role == IntentRole.TRAILING_STOP else None,
                 "protection_mode": protection_mode,
-                "child_order_roles": [child.intent_role for child in submitted_children],
+                "child_order_roles": [child.intent_role for child, _ in submitted_children],
+                "dynamic_trailing_trigger_price": trigger_price,
+                "dynamic_trailing_trigger_mode": trigger_mode,
                 "risk_per_share": getattr(target, "risk_per_share", None),
                 "stop_price_initial": getattr(target, "stop_price_initial", None),
                 "initial_risk_dollars": getattr(target, "initial_risk_dollars", None),
             },
         ))
+        events.extend(
+            self._maybe_activate_dynamic_trailing(
+                parent,
+                fill_qty,
+                fill_price,
+                exec_run_id,
+                target=target,
+                initial_stop_intent=initial_stop_submitted_intent,
+                initial_stop_order=initial_stop_submitted_order,
+                metrics=metrics,
+            )
+        )
         return events
 
     def _submit_rebalance_orders(
