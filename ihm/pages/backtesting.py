@@ -152,6 +152,8 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "ml_mode", "Explication": "auto/off/rebuild-missing pour la composante ML.", "Défaut": "auto"},
             {"Paramètre": "sentiment_mode", "Explication": "auto/off/rebuild-missing pour la composante sentiment.", "Défaut": "auto"},
             {"Paramètre": "artifacts_dir", "Explication": "Dossier des artefacts modèles utilisés pour rebuild-missing.", "Défaut": "artifacts/models"},
+            {"Paramètre": "score_column", "Explication": "Colonne de score privilégiée pour le replay : auto / walk-forward / sentiment / final.", "Défaut": "auto"},
+            {"Paramètre": "walk_forward_artifacts_dir", "Explication": "Répertoire racine optionnel des artefacts de calibration walk-forward à appliquer au run standard.", "Défaut": "None"},
         ]
     if kind == "diagnose-screener":
         return [
@@ -378,6 +380,30 @@ def _build_run_options() -> BacktestRunOptions:
         help="Dossier contenant les checkpoints/scalers/configs de modèles pour `--ml-mode rebuild-missing`.",
     )
 
+    extra_col1, extra_col2 = st.columns(2)
+    with extra_col1:
+        score_column = cast(
+            str,
+            st.selectbox(
+                "Colonne de score",
+                options=["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"],
+                index=["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"].index(
+                    cast(str, st.session_state.get("bt_run_score_column", "auto"))
+                    if st.session_state.get("bt_run_score_column", "auto") in {"auto", "final_score_walk_forward", "final_score_sentiment", "final_score"}
+                    else "auto"
+                ),
+                key="bt_run_score_column",
+                help="Permet de forcer explicitement la source de score utilisée lors du replay des signaux.",
+            ),
+        )
+    with extra_col2:
+        walk_forward_artifacts_dir = st.text_input(
+            "Répertoire artefacts walk-forward (optionnel)",
+            value=cast(str, st.session_state.get("bt_run_walk_forward_artifacts_dir", "")),
+            key="bt_run_walk_forward_artifacts_dir",
+            help="Si renseigné, le backtest standard cherchera explicitement les meilleurs poids walk-forward dans ce répertoire.",
+        )
+
     options = BacktestRunOptions(
         start=start.strip(),
         end=end.strip() or None,
@@ -394,6 +420,8 @@ def _build_run_options() -> BacktestRunOptions:
         ml_mode=cast(Any, ml_mode),
         sentiment_mode=cast(Any, sentiment_mode),
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
+        score_column=cast(Any, score_column),
+        walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
     )
 
     st.code(format_command_for_display(build_backtesting_command("run", options)), language="powershell")

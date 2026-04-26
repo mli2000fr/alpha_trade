@@ -15,6 +15,13 @@ def test_parameter_reference_rows_include_screener_commands() -> None:
     assert any(row["Paramètre"] == "target_horizon" for row in recommend_rows)
 
 
+def test_parameter_reference_rows_include_walk_forward_run_options() -> None:
+    run_rows = backtesting._parameter_reference_rows("run")
+
+    assert any(row["Paramètre"] == "score_column" for row in run_rows)
+    assert any(row["Paramètre"] == "walk_forward_artifacts_dir" for row in run_rows)
+
+
 def test_build_screener_artifact_objective_rows_formats_expected_columns() -> None:
     rows = backtesting._build_screener_artifact_objective_rows(
         {

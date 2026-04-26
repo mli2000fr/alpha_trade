@@ -5,9 +5,10 @@ from datetime import date
 from pathlib import Path
 import json
 import os
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
@@ -380,6 +381,7 @@ class TestResilience:
     def test_prepare_scores_applies_latest_walk_forward_weights_when_available(self, tmp_path):
         from backtesting.resilience import prepare_scores_for_sentiment_mode
 
+        memory_engine: Engine = create_engine("sqlite:///:memory:")
         weights_dir = tmp_path / "sentiment_walk_forward" / "run_001"
         weights_dir.mkdir(parents=True)
         (weights_dir / "latest_best_weights.json").write_text(
@@ -392,17 +394,19 @@ class TestResilience:
             }),
             encoding="utf-8",
         )
-        scores = pd.DataFrame({
-            "symbol": ["AAPL"],
-            "trade_date": pd.to_datetime(["2025-01-01"]),
-            "final_score": [0.7],
-            "final_score_sentiment": [0.9],
-            "sentiment_net_agg": [1.0],
-            "sector_impact_agg": [0.0],
-        })
+        score_row: dict[str, Any] = {}
+        score_row["symbol"] = "AAPL"
+        # noinspection PyTypeChecker
+        score_row["trade_date"] = pd.Timestamp("2025-01-01")
+        score_row["final_score"] = 0.7
+        score_row["final_score_sentiment"] = 0.9
+        score_row["sentiment_net_agg"] = 1.0
+        score_row["sector_impact_agg"] = 0.0
+        score_records: Any = [score_row]
+        scores = pd.DataFrame.from_records(score_records)
 
         result = prepare_scores_for_sentiment_mode(
-            create_engine("sqlite:///:memory:"),
+            memory_engine,
             scores,
             sentiment_mode="auto",
             walk_forward_artifacts_dir=tmp_path,
@@ -832,7 +836,7 @@ class TestBacktestConfig:
         )
 
         standard = BacktestEngine(
-            BacktestConfig(
+            BacktestConfig(  # type: ignore[arg-type]
                 start_date=date(2025, 1, 1),
                 end_date=date(2025, 1, 3),
                 initial_equity=10_000,
@@ -841,15 +845,19 @@ class TestBacktestConfig:
             )
         ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
-        swing = BacktestEngine(
-            BacktestConfig(
-                start_date=date(2025, 1, 1),
-                end_date=date(2025, 1, 3),
-                initial_equity=10_000,
-                max_positions=1,
-                trading_constraints=TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=True),
-            )
-        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+        swing_constraints = TradingConstraintConfig(account_type="margin", pdt_rule="off", swing_only=True)
+        # noinspection PyTypeChecker
+        swing_cfg_kwargs: dict[str, Any] = {}
+        swing_cfg_kwargs["start_date"] = date(2025, 1, 1)
+        swing_cfg_kwargs["end_date"] = date(2025, 1, 3)
+        swing_cfg_kwargs["initial_equity"] = 10_000
+        swing_cfg_kwargs["max_positions"] = 1
+        swing_cfg_kwargs["trading_constraints"] = swing_constraints
+        swing_cfg = BacktestConfig(**swing_cfg_kwargs)
+        swing_engine = BacktestEngine(
+            swing_cfg
+        )
+        swing = swing_engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
         assert float(standard.closed_trades_df.iloc[0]["entry_price"]) == 105.0
         assert float(swing.closed_trades_df.iloc[0]["entry_price"]) == 105.0
@@ -1270,6 +1278,143 @@ class TestCLI:
 
         assert calls["score_column"] == "final_score_walk_forward"
         assert calls["walk_forward_artifacts_dir"] == Path(tmp_path)
+
+    def test_run_backtest_with_real_walk_forward_artifact_writes_structured_artifacts(self, monkeypatch, tmp_path):
+        import argparse
+        import backtesting.cli as cli
+        from backtesting import data_loader, report, simulator
+        from database import connection
+
+        output_dir = tmp_path / "out"
+        weights_dir = tmp_path / "sentiment_walk_forward" / "run_001"
+        weights_dir.mkdir(parents=True)
+        (weights_dir / "latest_best_weights.json").write_text(
+            json.dumps(
+                {
+                    "sentiment_weight": 0.9,
+                    "macro_weight": 0.0,
+                    "quant_weight": 0.1,
+                    "calibration_run_id": "wf-real-001",
+                    "calibration_source": "walk_forward",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        ohlcv_df = pd.DataFrame(
+            {
+                "symbol": ["AAA", "BBB", "AAA", "BBB"],
+                "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01", "2025-01-02", "2025-01-02"]),
+                "open": [100.0, 100.0, 101.0, 101.0],
+                "high": [101.0, 101.0, 102.0, 102.0],
+                "low": [99.0, 99.0, 100.0, 100.0],
+                "close": [100.5, 100.5, 101.5, 101.5],
+                "volume": [1000, 1000, 1100, 1100],
+            }
+        )
+        scores_df = pd.DataFrame(
+            {
+                "symbol": ["AAA", "BBB"],
+                "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+                "final_score": [0.5, 0.5],
+                "final_score_sentiment": [0.5, 0.5],
+                "sentiment_net_agg": [-1.0, 1.0],
+                "sector_impact_agg": [0.0, 0.0],
+                "sector": ["Tech", "Tech"],
+                "is_candidate": [1, 1],
+            }
+        )
+        captured: dict[str, object] = {}
+
+        class FakePF:
+            pass
+
+        class FakeReport:
+            def print_summary(self) -> None:
+                return None
+
+        class FakeBacktestEngine:
+            def __init__(self, cfg):
+                self.cfg = cfg
+
+            def run(self, **kwargs):
+                captured["signals_df"] = kwargs["signals_df"].copy()
+                return FakePF()
+
+        def fake_save_equity_curve_csv(pf, *, output_dir):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            path = output_dir / "equity_curve.csv"
+            path.write_text("trade_date,portfolio_value\n2025-01-02,100000\n", encoding="utf-8")
+            return path
+
+        def fake_save_trades_csv(pf, *, output_dir):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            path = output_dir / "trades.csv"
+            path.write_text("symbol,entry_date\nBBB,2025-01-02\n", encoding="utf-8")
+            return path
+
+        def fake_save_equity_curve(pf, *, output_dir):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            path = output_dir / "equity_curve.png"
+            path.write_text("png", encoding="utf-8")
+            return path
+
+        def fake_save_report_json(report_obj, *, output_dir, artifacts, params, diagnostics):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            path = output_dir / "report.json"
+            payload = {"artifacts": artifacts, "params": params, "diagnostics": diagnostics}
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            captured["report_payload"] = payload
+            return path
+
+        monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
+        monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
+        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end: scores_df.copy())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
+        monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {"selected_count": 1})
+        monkeypatch.setattr(report, "generate_report", lambda pf, equity: FakeReport())
+        monkeypatch.setattr(report, "save_equity_curve_csv", fake_save_equity_curve_csv)
+        monkeypatch.setattr(report, "save_trades_csv", fake_save_trades_csv)
+        monkeypatch.setattr(report, "save_equity_curve", fake_save_equity_curve)
+        monkeypatch.setattr(report, "save_report_json", fake_save_report_json)
+
+        args = argparse.Namespace(
+            start="2025-01-01",
+            end="2025-01-02",
+            equity=100_000.0,
+            tp=0.08,
+            ts=0.05,
+            max_positions=1,
+            fees=0.001,
+            account_type="margin",
+            pdt_rule="auto",
+            swing_only=False,
+            sentiment_lookback=365,
+            no_save=False,
+            ml_mode="auto",
+            sentiment_mode="auto",
+            artifacts_dir="artifacts/models",
+            output_dir=str(output_dir),
+            score_column="auto",
+            walk_forward_artifacts_dir=str(tmp_path),
+        )
+
+        cli._run_backtest(args)
+
+        signals_df = cast(pd.DataFrame, captured["signals_df"])
+        selected = signals_df[signals_df["selected"]].iloc[0]
+        assert selected["symbol"] == "BBB"
+        assert selected["score_source"] == "final_score_walk_forward"
+        assert float(selected["score"]) == pytest.approx(0.95)
+        report_payload = cast(dict[str, object], captured["report_payload"])
+        assert report_payload["params"]["walk_forward_artifacts_dir"] == str(tmp_path)
+        assert report_payload["params"]["score_column"] == "auto"
+        artifacts = cast(dict[str, str], report_payload["artifacts"])
+        assert artifacts["equity_curve_csv"].endswith("equity_curve.csv")
+        assert artifacts["trades_csv"].endswith("trades.csv")
+        assert (output_dir / "report.json").exists()
 
     def test_parse_backfill_scores_history_command(self):
         from backtesting.cli import _build_parser

@@ -36,7 +36,28 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 	assert command[account_type_index + 1] == "margin"
 	pdt_rule_index = command.index("--pdt-rule")
 	assert command[pdt_rule_index + 1] == "auto"
+	score_column_index = command.index("--score-column")
+	assert command[score_column_index + 1] == "auto"
 	assert "--swing-only" not in command
+	assert "--walk-forward-artifacts-dir" not in command
+
+
+def test_build_backtesting_run_command_includes_walk_forward_options():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			score_column="final_score_walk_forward",
+			walk_forward_artifacts_dir="artifacts/sentiment_walk_forward/run_001",
+		),
+	)
+
+	assert "--score-column" in command
+	assert command[command.index("--score-column") + 1] == "final_score_walk_forward"
+	assert "--walk-forward-artifacts-dir" in command
+	assert command[command.index("--walk-forward-artifacts-dir") + 1] == "artifacts/sentiment_walk_forward/run_001"
 
 
 def test_build_backtesting_diagnose_screener_command_includes_grid_parameters():

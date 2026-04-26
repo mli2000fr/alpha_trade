@@ -30,6 +30,8 @@ class BacktestRunOptions:
     ml_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
     sentiment_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
     artifacts_dir: str = "artifacts/models"
+    score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
+    walk_forward_artifacts_dir: str | None = None
     output_dir: str | None = None
 
 
@@ -103,7 +105,10 @@ def build_backtesting_command(
             "--ml-mode", options.ml_mode,
             "--sentiment-mode", options.sentiment_mode,
             "--artifacts-dir", options.artifacts_dir,
+            "--score-column", options.score_column,
         ])
+        if options.walk_forward_artifacts_dir:
+            command.extend(["--walk-forward-artifacts-dir", options.walk_forward_artifacts_dir])
         if options.swing_only:
             command.append("--swing-only")
         if options.output_dir:
