@@ -7,6 +7,8 @@ from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceCon
     ("kwargs", "message"),
     [
         ({"broker_mode": "sandbox"}, "broker_mode"),
+        ({"execution_profile": "overnight"}, "execution_profile"),
+        ({"submission_window": "intraday"}, "submission_window"),
         ({"account_type": "leveraged"}, "account_type"),
         ({"pdt_rule": "strict"}, "pdt_rule"),
         ({"entry_order_type": "stop"}, "entry_order_type"),
@@ -57,6 +59,22 @@ def test_execution_config_disables_effective_pdt_for_cash_account() -> None:
 
     assert cfg.effective_pdt_rule == "off"
     assert cfg.applies_pdt_limit(2_000.0) is False
+
+
+def test_execution_config_defaults_to_overnight_profile() -> None:
+    cfg = ExecutionConfig()
+
+    assert cfg.execution_profile == "overnight_cash_swing"
+    assert cfg.submission_window == "both"
+    assert cfg.is_overnight_profile is True
+    assert cfg.resolved_account_id == "default"
+
+
+def test_execution_config_resolves_explicit_account_id() -> None:
+    cfg = ExecutionConfig(account_id="live1", submission_window="pre_open")
+
+    assert cfg.resolved_account_id == "live1"
+    assert cfg.submission_window == "pre_open"
 
 
 @pytest.mark.parametrize(

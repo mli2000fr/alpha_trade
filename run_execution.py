@@ -98,7 +98,7 @@ def abort_missing_env() -> None:
 # Menu interactif
 # ---------------------------------------------------------------------------
 
-def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool, str | None, str, str, bool]:
+def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool, str | None, str, str, bool, str]:
     print(BANNER)
     print_env_status()
 
@@ -147,11 +147,13 @@ def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool, s
     outside_rth = input("Forcer execution hors horaires marche ? [o/N] : ").strip().lower() == "o"
     rebalance = input("Activer reequilibrage auto sur reconciliation ? [o/N] : ").strip().lower() == "o"
 
-    raw_account_type = input("Type de compte [margin/cash, defaut margin] : ").strip().lower()
-    account_type = raw_account_type if raw_account_type in {"margin", "cash"} else "margin"
-    raw_pdt_rule = input("Regle PDT [auto/off, defaut auto] : ").strip().lower()
-    pdt_rule = raw_pdt_rule if raw_pdt_rule in {"auto", "off"} else "auto"
-    swing_only = input("Interdire les sorties le jour meme (swing_only) ? [o/N] : ").strip().lower() == "o"
+    raw_account_type = input("Type de compte [margin/cash, defaut cash] : ").strip().lower()
+    account_type = raw_account_type if raw_account_type in {"margin", "cash"} else "cash"
+    raw_pdt_rule = input("Regle PDT [auto/off, defaut off] : ").strip().lower()
+    pdt_rule = raw_pdt_rule if raw_pdt_rule in {"auto", "off"} else "off"
+    swing_only = input("Interdire les sorties le jour meme (swing_only) ? [O/n] : ").strip().lower() != "n"
+    raw_submission_window = input("Fenetre de soumission [post_close/pre_open/both, defaut both] : ").strip().lower()
+    submission_window = raw_submission_window if raw_submission_window in {"post_close", "pre_open", "both"} else "both"
 
     # Sélection du compte multi-comptes
     account_id: str | None = None
@@ -174,7 +176,7 @@ def interactive_menu() -> tuple[str, str | None, str | None, bool, bool, bool, s
     except Exception:
         pass
 
-    return mode, run_id, trade_date, debug, outside_rth, rebalance, account_id, account_type, pdt_rule, swing_only
+    return mode, run_id, trade_date, debug, outside_rth, rebalance, account_id, account_type, pdt_rule, swing_only, submission_window
 
 
 # ---------------------------------------------------------------------------
@@ -197,11 +199,13 @@ PRESETS: dict[str, dict] = {
         "max_order_retries": 3,
         "poll_interval_seconds": 2.0,
         "fill_timeout_seconds": 120,
-        "allow_outside_rth": True,   # dry-run : ignore les horaires
+        "allow_outside_rth": True,   # overnight-only : soumission nominale hors seance
         "inter_order_delay_ms": 0,   # dry-run : pas de throttle
-        "account_type": "margin",
-        "pdt_rule": "auto",
-        "swing_only": False,
+        "account_type": "cash",
+        "pdt_rule": "off",
+        "swing_only": True,
+        "execution_profile": "overnight_cash_swing",
+        "submission_window": "both",
     },
     "paper": {
         "broker_mode": "paper",
@@ -218,11 +222,13 @@ PRESETS: dict[str, dict] = {
         "max_order_retries": 3,
         "poll_interval_seconds": 2.0,
         "fill_timeout_seconds": 120,
-        "allow_outside_rth": False,
+        "allow_outside_rth": True,
         "inter_order_delay_ms": 350,
-        "account_type": "margin",
-        "pdt_rule": "auto",
-        "swing_only": False,
+        "account_type": "cash",
+        "pdt_rule": "off",
+        "swing_only": True,
+        "execution_profile": "overnight_cash_swing",
+        "submission_window": "both",
     },
     "live": {
         "broker_mode": "live",
@@ -239,11 +245,13 @@ PRESETS: dict[str, dict] = {
         "max_order_retries": 3,
         "poll_interval_seconds": 1.5,
         "fill_timeout_seconds": 180,
-        "allow_outside_rth": False,
+        "allow_outside_rth": True,
         "inter_order_delay_ms": 350,
-        "account_type": "margin",
-        "pdt_rule": "auto",
-        "swing_only": False,
+        "account_type": "cash",
+        "pdt_rule": "off",
+        "swing_only": True,
+        "execution_profile": "overnight_cash_swing",
+        "submission_window": "both",
     },
 }
 
@@ -263,6 +271,7 @@ def run(
     account_type: str = "margin",
     pdt_rule: str = "auto",
     swing_only: bool = False,
+    submission_window: str = "both",
 ) -> None:
     level = logging.DEBUG if debug else logging.INFO
     configure_root_logging(
@@ -281,6 +290,7 @@ def run(
     preset["account_type"] = account_type
     preset["pdt_rule"] = pdt_rule
     preset["swing_only"] = swing_only
+    preset["submission_window"] = submission_window
 
     mode_label = {
         "simulate": f"{CYAN}SIMULATION (dry-run){RESET}",
@@ -295,9 +305,11 @@ def run(
     print(f"  Run ID      : {run_id or '(dernier run disponible)'}")
     print(f"  Date        : {trade_date or '(auto)'}")
     print(f"  Bracket     : TP +{preset['profit_taker_pct']*100:.0f}%  /  TS -{preset['trailing_stop_pct']*100:.0f}%")
+    print(f"  Profil      : {preset.get('execution_profile', 'custom')}  |  Fenetre={preset.get('submission_window', 'both')}")
     print(f"  Activation trailing : {preset['trailing_activation_trigger']}  |  timeout={preset['protection_transition_timeout_seconds']}s")
     print(f"  Max slippage: {preset['max_slippage_bps']} bps")
     print(f"  Compte      : {preset['account_type']}  |  PDT={preset['pdt_rule']}  |  swing_only={preset['swing_only']}")
+    print(f"  Account ID  : {account_id or 'default'}")
     if allow_outside_rth and not preset.get("dry_run"):
         print(f"  {YELLOW}[!] Execution hors horaires marche activee{RESET}")
     if auto_rebalance:
@@ -356,7 +368,7 @@ def run(
         finished_at=finished_at,
         execution_mode=mode,
         broker_mode=config.broker_mode,
-        account_id=account_id,
+        account_id=config.resolved_account_id,
         account_type=config.account_type,
         effective_pdt_rule=config.effective_pdt_rule,
         swing_only=config.swing_only,
@@ -372,7 +384,7 @@ def run(
             summary_run_id=str(summary.get("run_id", "") or "") or None,
             entity_run_id=str(summary.get("run_id", "") or "") or None,
             parent_summary_run_id=run_id,
-            account_id=account_id,
+            account_id=config.resolved_account_id,
             trade_date=summary.get("trade_date"),
             started_at=summary.get("started_at"),
             finished_at=summary.get("finished_at"),
@@ -448,9 +460,10 @@ Exemples :
     p.add_argument("--allow-outside-rth",      dest="allow_outside_rth",  action="store_true", help="Execute meme si marche ferme (week-end / hors RTH)")
     p.add_argument("--auto-rebalance",          dest="auto_rebalance",     action="store_true", help="Vend/achete automatiquement les ecarts detectes en reconciliation")
     p.add_argument("--account",                 dest="account_id",         metavar="ACCOUNT_ID", help="ID du compte Alpaca multi-comptes (defaut: premier compte)")
-    p.add_argument("--account-type",            dest="account_type",       choices=["margin", "cash"], default="margin", help="Type de compte simule ou utilise pour appliquer les contraintes de capital")
-    p.add_argument("--pdt-rule",                dest="pdt_rule",           choices=["auto", "off"], default="auto", help="Application de la regle PDT sur compte margin")
-    p.add_argument("--swing-only",              dest="swing_only",         action="store_true", help="Interdit les sorties le jour meme en execution")
+    p.add_argument("--account-type",            dest="account_type",       choices=["margin", "cash"], default="cash", help="Type de compte simule ou utilise pour appliquer les contraintes de capital")
+    p.add_argument("--pdt-rule",                dest="pdt_rule",           choices=["auto", "off"], default="off", help="Application de la regle PDT sur compte margin")
+    p.add_argument("--swing-only",              dest="swing_only",         action=argparse.BooleanOptionalAction, default=True, help="Interdit les sorties le jour meme en execution")
+    p.add_argument("--submission-window",       dest="submission_window",  choices=["post_close", "pre_open", "both"], default=None, help="Fenetre nominale de soumission hors seance")
     p.add_argument("--trailing-activation-trigger", dest="trailing_activation_trigger", choices=["multiple_r", "profit_pct"], default=None, help="Trigger métier pour passer du stop initial au trailing dynamique")
     p.add_argument("--trailing-activation-r-multiple", dest="trailing_activation_r_multiple", type=float, default=None, help="Multiple de R pour activer le trailing dynamique")
     p.add_argument("--trailing-activation-profit-pct", dest="trailing_activation_profit_pct", type=float, default=None, help="Profit pct pour activer le trailing dynamique")
@@ -469,7 +482,7 @@ def main() -> None:
         sys.exit(0 if ok else 1)
 
     if args.mode is None:
-        mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only = interactive_menu()
+        mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window = interactive_menu()
     else:
         mode              = args.mode
         run_id            = args.run_id
@@ -481,6 +494,7 @@ def main() -> None:
         account_type      = args.account_type
         pdt_rule          = args.pdt_rule
         swing_only        = args.swing_only
+        submission_window = args.submission_window or PRESETS[mode].get("submission_window", "both")
         if args.trailing_activation_trigger is not None:
             PRESETS[mode]["trailing_activation_trigger"] = args.trailing_activation_trigger
         if args.trailing_activation_r_multiple is not None:
@@ -493,7 +507,7 @@ def main() -> None:
             PRESETS[mode]["protection_transition_poll_interval_seconds"] = args.protection_transition_poll_interval_seconds
 
     abort_missing_env()
-    run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only)
+    run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window)
 
 
 if __name__ == "__main__":

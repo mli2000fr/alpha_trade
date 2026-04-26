@@ -50,6 +50,7 @@ def _make_executor(config: ExecutionConfig | None = None, targets: list[Executio
     repo = MagicMock(spec=ExecutionRepository)
     repo.load_portfolio_targets.return_value = targets or [_target()]
     repo.load_submitted_idempotency_keys.return_value = set()
+    repo.acquire_execution_lock.return_value = True
     broker = MagicMock(spec=BrokerAdapter)
     broker.submit_intent.return_value = _filled_order()
     broker.poll_order_status.return_value = _filled_order()
@@ -154,6 +155,21 @@ class TestExecutor:
         metrics = executor.execute_run(risk_run_id="r1")
         broker.submit_intent.assert_not_called()
         assert metrics["submitted"] == 1
+
+    def test_execute_run_scopes_targets_and_lock_to_resolved_account_id(self) -> None:
+        cfg = ExecutionConfig(dry_run=True, allow_outside_rth=True, account_id="live1")
+        executor, repo, broker, _ = _make_executor(cfg)
+
+        executor.execute_run(risk_run_id="r1")
+
+        locked_run_id = repo.acquire_execution_lock.call_args.kwargs["exec_run_id"]
+        released_run_id = repo.release_execution_lock.call_args.kwargs["exec_run_id"]
+
+        repo.acquire_execution_lock.assert_called_once()
+        repo.load_portfolio_targets.assert_called_once_with(risk_run_id="r1", trade_date=None, account_id="live1")
+        repo.snapshot_execution_targets.assert_called_once()
+        repo.release_execution_lock.assert_called_once_with(account_id="live1", exec_run_id=locked_run_id)
+        assert locked_run_id == released_run_id
 
     def test_dry_run_persists_events(self) -> None:
         executor, repo, broker, _ = _make_executor()

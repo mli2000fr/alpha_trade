@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from database.connection import get_sqlalchemy_engine
 from execution_engine.models import BrokerOrder, ExecutionTarget, ProtectionWatchItem
@@ -28,8 +29,10 @@ class ExecutionRepository:
         self,
         risk_run_id: str | None = None,
         trade_date: date | None = None,
+        account_id: str | None = None,
     ) -> list[ExecutionTarget]:
         """Charge les cibles depuis portfolio_targets."""
+        resolved_account_id = account_id or "default"
         if risk_run_id:
             query = text("""
                 SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
@@ -39,9 +42,10 @@ class ExecutionRepository:
                        sizing_method, kelly_fraction
                 FROM portfolio_targets
                 WHERE run_id = :run_id
+                  AND account_id = :account_id
                 ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
             """)
-            params: dict[str, Any] = {"run_id": risk_run_id}
+            params: dict[str, Any] = {"run_id": risk_run_id, "account_id": resolved_account_id}
         else:
             # Dernier run_id par MAX(created_at)
             if trade_date:
@@ -55,11 +59,13 @@ class ExecutionRepository:
                     WHERE run_id = (
                         SELECT run_id FROM portfolio_targets
                         WHERE trade_date = :trade_date
+                          AND account_id = :account_id
                         ORDER BY created_at DESC LIMIT 1
                     )
+                      AND account_id = :account_id
                     ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
                 """)
-                params = {"trade_date": trade_date}
+                params = {"trade_date": trade_date, "account_id": resolved_account_id}
             else:
                 query = text("""
                     SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
@@ -70,11 +76,13 @@ class ExecutionRepository:
                     FROM portfolio_targets
                     WHERE run_id = (
                         SELECT run_id FROM portfolio_targets
+                        WHERE account_id = :account_id
                         ORDER BY created_at DESC LIMIT 1
                     )
+                      AND account_id = :account_id
                     ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
                 """)
-                params = {}
+                params = {"account_id": resolved_account_id}
 
         with self.engine.connect() as conn:
             rows = conn.execute(query, params).mappings().all()
@@ -237,6 +245,106 @@ class ExecutionRepository:
     # Écriture
     # ------------------------------------------------------------------
 
+    def acquire_execution_lock(
+        self,
+        *,
+        account_id: str | None,
+        exec_run_id: str,
+        ttl_seconds: int = 3600,
+    ) -> bool:
+        resolved_account_id = account_id or "default"
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=max(ttl_seconds, 1))
+        purge_stmt = text("""
+            DELETE FROM execution_locks
+            WHERE account_id = :account_id
+              AND expires_at < :now
+        """)
+        insert_stmt = text("""
+            INSERT INTO execution_locks (account_id, locked_by_run_id, acquired_at, expires_at)
+            VALUES (:account_id, :locked_by_run_id, :acquired_at, :expires_at)
+        """)
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(purge_stmt, {"account_id": resolved_account_id, "now": now})
+                conn.execute(insert_stmt, {
+                    "account_id": resolved_account_id,
+                    "locked_by_run_id": exec_run_id,
+                    "acquired_at": now,
+                    "expires_at": expires_at,
+                })
+            return True
+        except IntegrityError:
+            LOGGER.info("Execution lock already held for account_id=%s", resolved_account_id)
+            return False
+
+    def release_execution_lock(self, *, account_id: str | None, exec_run_id: str) -> None:
+        resolved_account_id = account_id or "default"
+        stmt = text("""
+            DELETE FROM execution_locks
+            WHERE account_id = :account_id
+              AND locked_by_run_id = :locked_by_run_id
+        """)
+        with self.engine.begin() as conn:
+            conn.execute(stmt, {"account_id": resolved_account_id, "locked_by_run_id": exec_run_id})
+
+    def snapshot_execution_targets(
+        self,
+        *,
+        exec_run_id: str,
+        account_id: str | None,
+        targets: list[ExecutionTarget],
+    ) -> int:
+        if not targets:
+            return 0
+        resolved_account_id = account_id or "default"
+        stmt = text("""
+            INSERT INTO execution_targets_snapshot
+                (exec_run_id, account_id, risk_run_id, trade_date, symbol, decision_rank,
+                 side, target_shares, entry_price, target_weight, sector,
+                 conviction_score, sizing_method, kelly_fraction, atr_20,
+                 price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                 risk_budget_dollars, initial_risk_dollars, target_notional, created_at)
+            VALUES
+                (:exec_run_id, :account_id, :risk_run_id, :trade_date, :symbol, :decision_rank,
+                 :side, :target_shares, :entry_price, :target_weight, :sector,
+                 :conviction_score, :sizing_method, :kelly_fraction, :atr_20,
+                 :price_asof_date, :atr_asof_date, :stop_price_initial, :risk_per_share,
+                 :risk_budget_dollars, :initial_risk_dollars, :target_notional, :created_at)
+        """)
+        now = datetime.now(timezone.utc)
+        records = [
+            {
+                "exec_run_id": exec_run_id,
+                "account_id": resolved_account_id,
+                "risk_run_id": target.risk_run_id,
+                "trade_date": target.trade_date,
+                "symbol": target.symbol,
+                "decision_rank": target.decision_rank,
+                "side": target.side,
+                "target_shares": target.target_shares,
+                "entry_price": target.entry_price,
+                "target_weight": target.target_weight,
+                "sector": target.sector,
+                "conviction_score": target.conviction_score,
+                "sizing_method": target.sizing_method,
+                "kelly_fraction": target.kelly_fraction,
+                "atr_20": target.atr_20,
+                "price_asof_date": target.price_asof_date,
+                "atr_asof_date": target.atr_asof_date,
+                "stop_price_initial": target.stop_price_initial,
+                "risk_per_share": target.risk_per_share,
+                "risk_budget_dollars": target.risk_budget_dollars,
+                "initial_risk_dollars": target.initial_risk_dollars,
+                "target_notional": target.target_notional,
+                "created_at": now,
+            }
+            for target in targets
+        ]
+        with self.engine.begin() as conn:
+            conn.execute(stmt, records)
+        return len(records)
+
     def insert_execution_run(
         self,
         exec_run_id: str,
@@ -246,15 +354,20 @@ class ExecutionRepository:
         dry_run: bool,
         total_targets: int,
         account_id: str | None = None,
+        execution_profile: str | None = None,
+        submission_window: str | None = None,
     ) -> None:
         stmt = text("""
             INSERT INTO execution_runs
                 (exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
-                 status, started_at, total_targets, total_submitted, total_filled, account_id)
+                 status, started_at, total_targets, total_submitted, total_filled, account_id,
+                 execution_profile, submission_window)
             VALUES
                 (:exec_run_id, :risk_run_id, :trade_date, :broker_mode, :dry_run,
-                 'RUNNING', :started_at, :total_targets, 0, 0, :account_id)
+                 'RUNNING', :started_at, :total_targets, 0, 0, :account_id,
+                 :execution_profile, :submission_window)
         """)
+        resolved_account_id = account_id or "default"
         with self.engine.begin() as conn:
             conn.execute(stmt, {
                 "exec_run_id": exec_run_id,
@@ -264,7 +377,9 @@ class ExecutionRepository:
                 "dry_run": dry_run,
                 "started_at": datetime.now(timezone.utc),
                 "total_targets": total_targets,
-                "account_id": account_id,
+                "account_id": resolved_account_id,
+                "execution_profile": execution_profile,
+                "submission_window": submission_window,
             })
 
     def update_execution_run_status(

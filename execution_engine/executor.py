@@ -99,6 +99,7 @@ class ProductionExecutor:
         trade_date: date | None = None,
     ) -> dict[str, Any]:
         exec_run_id = build_run_id()
+        resolved_account_id = self._cfg.resolved_account_id
         metrics: dict[str, Any] = {
             "exec_run_id": exec_run_id,
             "risk_run_id": risk_run_id,
@@ -120,16 +121,30 @@ class ProductionExecutor:
         events: list[ExecutionEvent] = []
         fills: list[ExecutionFill] = []
         consecutive_failures = 0
+        lock_acquired = False
 
         try:
             # Phase 1 — Init
             events.append(make_event(exec_run_id, EventType.RUN_STARTED, f"Exec run {exec_run_id} started"))
+            lock_acquired = self._repo.acquire_execution_lock(account_id=resolved_account_id, exec_run_id=exec_run_id)
+            if not lock_acquired:
+                events.append(make_event(
+                    exec_run_id,
+                    EventType.RUN_LOCKED,
+                    f"Execution already active for account_id={resolved_account_id}",
+                    payload={"account_id": resolved_account_id},
+                ))
+                metrics["status"] = "ABORTED"
+                return metrics
 
             # Phase 2 — Pre-flight
-            targets = self._repo.load_portfolio_targets(risk_run_id=risk_run_id, trade_date=trade_date)
+            targets = self._repo.load_portfolio_targets(
+                risk_run_id=risk_run_id,
+                trade_date=trade_date,
+                account_id=resolved_account_id,
+            )
             if not targets:
                 events.append(make_event(exec_run_id, EventType.PRECHECK_FAILED, "No portfolio targets found"))
-                self._persist_events(events)
                 metrics["status"] = "ABORTED"
                 return metrics
 
@@ -163,15 +178,24 @@ class ProductionExecutor:
                 broker_mode=self._cfg.broker_mode,
                 dry_run=self._cfg.dry_run,
                 total_targets=len(targets),
-                account_id=self._cfg.account_id,
+                account_id=resolved_account_id,
+                execution_profile=self._cfg.execution_profile,
+                submission_window=self._cfg.submission_window,
             )
+            try:
+                self._repo.snapshot_execution_targets(
+                    exec_run_id=exec_run_id,
+                    account_id=resolved_account_id,
+                    targets=targets,
+                )
+            except Exception as exc:
+                LOGGER.debug("Target snapshot skipped: %s", exc)
 
             # Circuit breaker check (injection)
             if self._circuit_breaker is not None:
                 try:
                     if self._circuit_breaker.is_active():
                         events.append(make_event(exec_run_id, EventType.CIRCUIT_BREAKER_ACTIVE, "CB active — aborting"))
-                        self._persist_events(events)
                         self._repo.update_execution_run_status(exec_run_id, "ABORTED")
                         metrics["status"] = "ABORTED"
                         return metrics
@@ -183,7 +207,6 @@ class ProductionExecutor:
                 try:
                     if not self._broker.is_market_open():
                         events.append(make_event(exec_run_id, EventType.PRECHECK_FAILED, "Market closed"))
-                        self._persist_events(events)
                         self._repo.update_execution_run_status(exec_run_id, "ABORTED")
                         metrics["status"] = "ABORTED"
                         return metrics
@@ -424,7 +447,7 @@ class ProductionExecutor:
             if self._cfg.reconcile_after_submit and not self._cfg.dry_run:
                 try:
                     positions = self._broker.get_all_positions()
-                    self._repo.snapshot_broker_positions(exec_run_id, self._cfg.broker_mode, positions, account_id=self._cfg.account_id)
+                    self._repo.snapshot_broker_positions(exec_run_id, self._cfg.broker_mode, positions, account_id=resolved_account_id)
                     diffs = reconcile_targets_vs_broker(targets, positions, self._cfg.reconcile_tolerance_shares)
                     action_diffs = [d for d in diffs if d.action != "none"]
                     if action_diffs:
@@ -472,8 +495,13 @@ class ProductionExecutor:
             except Exception:
                 pass
             metrics["status"] = "FAILED"
-
-        self._persist_events(events)
+        finally:
+            self._persist_events(events)
+            if lock_acquired:
+                try:
+                    self._repo.release_execution_lock(account_id=resolved_account_id, exec_run_id=exec_run_id)
+                except Exception:
+                    LOGGER.warning("Unable to release execution lock for account_id=%s", resolved_account_id, exc_info=True)
         return metrics
 
     # ------------------------------------------------------------------

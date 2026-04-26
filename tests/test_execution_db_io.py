@@ -15,7 +15,7 @@ def engine():
         conn.execute(text("""
             CREATE TABLE portfolio_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id VARCHAR(32), trade_date DATE, symbol VARCHAR(20),
+                    run_id VARCHAR(32), account_id VARCHAR(64) DEFAULT 'default', trade_date DATE, symbol VARCHAR(20),
                     decision_rank INT, side VARCHAR(10),
                     shares INT, entry_price DOUBLE, atr_20 DOUBLE,
                     price_asof_date DATE, atr_asof_date DATE,
@@ -32,10 +32,32 @@ def engine():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 exec_run_id VARCHAR(32) UNIQUE, risk_run_id VARCHAR(32),
                 trade_date DATE, broker_mode VARCHAR(10), dry_run BOOLEAN,
+                execution_profile VARCHAR(32), submission_window VARCHAR(16),
                 status VARCHAR(20), started_at TIMESTAMP, completed_at TIMESTAMP,
                 error_message TEXT, total_targets INT, total_submitted INT, total_filled INT,
                 account_id VARCHAR(64),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE execution_targets_snapshot (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                exec_run_id VARCHAR(32), account_id VARCHAR(64), risk_run_id VARCHAR(32),
+                trade_date DATE, symbol VARCHAR(20), decision_rank INT, side VARCHAR(10),
+                target_shares INT, entry_price DOUBLE, target_weight DOUBLE, sector VARCHAR(60),
+                conviction_score DOUBLE, sizing_method VARCHAR(20), kelly_fraction DOUBLE,
+                atr_20 DOUBLE, price_asof_date DATE, atr_asof_date DATE,
+                stop_price_initial DOUBLE, risk_per_share DOUBLE, risk_budget_dollars DOUBLE,
+                initial_risk_dollars DOUBLE, target_notional DOUBLE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE execution_locks (
+                account_id VARCHAR(64) PRIMARY KEY,
+                locked_by_run_id VARCHAR(32) NOT NULL,
+                acquired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL
             )
         """))
         conn.execute(text("""
@@ -97,10 +119,11 @@ class TestExecutionDbIo:
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO portfolio_targets (run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
-                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    account_id, atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
                     risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
                     sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction)
                 VALUES ('r1', '2026-04-18', 'AAPL', 1, 'long', 100, 150.0,
+                    'default',
                     5.0, '2026-04-18', '2026-04-18', 140.0, 10.0,
                     1000.0, 1000.0, 15000.0, 0.05,
                     'Tech', 0.9, 'quant', 0.8, 'atr', 0.1)
@@ -115,11 +138,91 @@ class TestExecutionDbIo:
         assert targets[0].target_notional == 15000.0
 
     def test_insert_execution_run(self, repo) -> None:
-        repo.insert_execution_run("e1", "r1", date(2026, 4, 18), "paper", False, 5)
+        repo.insert_execution_run("e1", "r1", date(2026, 4, 18), "paper", False, 5, execution_profile="overnight_cash_swing", submission_window="both")
         with repo.engine.connect() as conn:
             row = conn.execute(text("SELECT * FROM execution_runs WHERE exec_run_id = 'e1'")).mappings().first()
         assert row is not None
         assert row["status"] == "RUNNING"
+        assert row["execution_profile"] == "overnight_cash_swing"
+        assert row["submission_window"] == "both"
+
+    def test_load_portfolio_targets_scopes_account_id(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
+                    sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction)
+                VALUES ('r-scope', 'default', '2026-04-18', 'AAPL', 1, 'long', 100, 150.0,
+                    5.0, '2026-04-18', '2026-04-18', 140.0, 10.0,
+                    1000.0, 1000.0, 15000.0, 0.05,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1),
+                       ('r-scope', 'live1', '2026-04-18', 'MSFT', 1, 'long', 50, 300.0,
+                    7.0, '2026-04-18', '2026-04-18', 280.0, 20.0,
+                    1000.0, 1000.0, 15000.0, 0.05,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1)
+            """))
+
+        default_targets = repo.load_portfolio_targets(risk_run_id="r-scope", account_id="default")
+        live_targets = repo.load_portfolio_targets(risk_run_id="r-scope", account_id="live1")
+
+        assert [target.symbol for target in default_targets] == ["AAPL"]
+        assert [target.symbol for target in live_targets] == ["MSFT"]
+
+    def test_load_latest_portfolio_targets_scopes_account_id(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
+                    sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction, created_at)
+                VALUES ('r-default', 'default', '2026-04-18', 'AAPL', 1, 'long', 100, 150.0,
+                    5.0, '2026-04-18', '2026-04-18', 140.0, 10.0,
+                    1000.0, 1000.0, 15000.0, 0.05,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1, '2026-04-18 10:00:00'),
+                       ('r-live', 'live1', '2026-04-18', 'MSFT', 1, 'long', 50, 300.0,
+                    7.0, '2026-04-18', '2026-04-18', 280.0, 20.0,
+                    1000.0, 1000.0, 15000.0, 0.05,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1, '2026-04-18 11:00:00')
+            """))
+
+        default_targets = repo.load_portfolio_targets(account_id="default")
+        live_targets = repo.load_portfolio_targets(account_id="live1")
+
+        assert [target.symbol for target in default_targets] == ["AAPL"]
+        assert [target.symbol for target in live_targets] == ["MSFT"]
+
+    def test_execution_lock_acquire_release_cycle(self, repo) -> None:
+        assert repo.acquire_execution_lock(account_id="default", exec_run_id="exec-1") is True
+        assert repo.acquire_execution_lock(account_id="default", exec_run_id="exec-2") is False
+
+        repo.release_execution_lock(account_id="default", exec_run_id="exec-1")
+
+        assert repo.acquire_execution_lock(account_id="default", exec_run_id="exec-3") is True
+
+    def test_snapshot_execution_targets(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
+                    sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction)
+                VALUES ('r1', 'default', '2026-04-18', 'AAPL', 1, 'long', 100, 150.0,
+                    5.0, '2026-04-18', '2026-04-18', 140.0, 10.0,
+                    1000.0, 1000.0, 15000.0, 0.05,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1)
+            """))
+        targets = repo.load_portfolio_targets(risk_run_id="r1", account_id="default")
+
+        inserted = repo.snapshot_execution_targets(exec_run_id="e-snap", account_id="default", targets=targets)
+
+        assert inserted == 1
+        with repo.engine.connect() as conn:
+            row = conn.execute(text("SELECT exec_run_id, account_id, symbol FROM execution_targets_snapshot WHERE exec_run_id = 'e-snap'"))\
+                .mappings().first()
+        assert row is not None
+        assert row["account_id"] == "default"
+        assert row["symbol"] == "AAPL"
 
     def test_load_pending_protection_watch_items(self, engine, repo) -> None:
         with engine.begin() as conn:

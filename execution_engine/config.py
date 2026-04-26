@@ -13,6 +13,8 @@ class ExecutionConfig:
     broker_mode: str = "paper"
     dry_run: bool = False
     account_id: str | None = None  # None = compte par défaut
+    execution_profile: Literal["overnight_cash_swing", "custom", "legacy_intraday"] = "overnight_cash_swing"
+    submission_window: Literal["post_close", "pre_open", "both"] = "both"
     account_type: Literal["margin", "cash"] = "margin"
     pdt_rule: Literal["auto", "off"] = "auto"
     swing_only: bool = False
@@ -68,6 +70,10 @@ class ExecutionConfig:
     def __post_init__(self) -> None:
         if self.broker_mode not in ("paper", "live"):
             raise ValueError("broker_mode doit être 'paper' ou 'live'.")
+        if self.execution_profile not in ("overnight_cash_swing", "custom", "legacy_intraday"):
+            raise ValueError("execution_profile doit être 'overnight_cash_swing', 'custom' ou 'legacy_intraday'.")
+        if self.submission_window not in ("post_close", "pre_open", "both"):
+            raise ValueError("submission_window doit être 'post_close', 'pre_open' ou 'both'.")
         if self.account_type not in ("margin", "cash"):
             raise ValueError("account_type doit être 'margin' ou 'cash'.")
         if self.pdt_rule not in ("auto", "off"):
@@ -122,6 +128,14 @@ class ExecutionConfig:
         if self.account_type == "cash":
             return "off"
         return self.pdt_rule
+
+    @property
+    def resolved_account_id(self) -> str:
+        return self.account_id or "default"
+
+    @property
+    def is_overnight_profile(self) -> bool:
+        return self.execution_profile == "overnight_cash_swing"
 
     def applies_pdt_limit(self, equity: float) -> bool:
         return self.effective_pdt_rule == "auto" and equity < self.pdt_equity_threshold
