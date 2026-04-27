@@ -37,7 +37,25 @@ Ce document résume le fonctionnement du module `event_sentiment/` et les comman
 
 ### 2.1 Pour exécuter le pipeline news + FinBERT
 
+#### Versionnement FinBERT (Phase 4.1.c)
+
+Chaque ligne `news_sentiment` est tracée par la colonne `model_fingerprint`
+(`SHA256[:16]` de `model_name + revision + max_length + model_version`).
+Pour épingler le checkpoint Hugging Face :
+
+```powershell
+python -m event_sentiment --finbert-revision <commit_sha_ou_tag>
+```
+
+Le `run_summary` du pipeline expose `finbert_model_fingerprint`. Le
+`run_summary` de `signal_aggregator` expose `finbert_model_fingerprints`
+(liste agrégée sur la fenêtre de 30 jours précédant la `trade_date`).
+
+> **Source unique Alpaca News** : aujourd'hui le seul fournisseur ingéré.
+> Backlog : SEC EDGAR 8-K (cf. `audit_global.md` Long terme).
+
 #### Obligatoires
+
 
 - `stock_scores` avec des candidats (`is_candidate = 1`) si aucun symbole n'est passé explicitement
 - `news_raw`
@@ -118,6 +136,28 @@ python -m event_sentiment.signal_aggregator --all-symbols --trade-date 2026-04-1
 ```powershell
 python -m event_sentiment.signal_aggregator --sentiment-weight 0.20 --macro-weight 0.10 --lookback-days 5 --min-news-count 2
 ```
+
+### Formule de fusion ternaire (Phase 4.1.b)
+
+Depuis Phase 4.1.b, la formule de fusion `final_score_sentiment` est
+**centralisée** dans `core.conviction.fuse_sentiment` ; `signal_aggregator`
+ne fait que déléguer :
+
+```python
+from core.conviction import fuse_sentiment
+final = fuse_sentiment(
+    quant_score=...,
+    sentiment_signal_norm=...,
+    macro_signal_norm=...,
+    weights=config.to_fusion_weights(),
+    signal_active=...,
+)
+```
+
+Les colonnes intermédiaires (`quant_component`, `company_idio_component`,
+`macro_regime_component`) restent reconstruites localement par `merge`
+pour préserver le contrat consommé par `save_to_db` et l'IHM. Pour les
+détails de la formule, voir `doc/core_common.md` § "Fusion sentiment ternaire".
 
 ### Correspondance avec l'IHM
 

@@ -201,12 +201,22 @@ class ChampionSelectionConfig:
     allow_auto_selection: bool = False
     default_champion: str = "lstm_attention"
     selection_metric: str = "selection_score"  # selection_score | business_score | auc
+    # Phase 4.2.e — Quarantaine d'un nouveau champion :
+    # tant qu'il n'a pas atteint `min_runs` runs walk-forward complétés OU
+    # `min_days` jours d'observation depuis sa première complétion, il est
+    # exclu de la sélection (fallback sur ``default_champion``).
+    min_runs: int = 0
+    min_days: int = 0
 
     def __post_init__(self) -> None:
         if self.default_champion not in {"lstm_attention", "lightgbm", "catboost", "global_model"}:
             raise ValueError("champion_selection.default_champion invalide.")
         if self.selection_metric not in {"selection_score", "business_score", "auc"}:
             raise ValueError("champion_selection.selection_metric doit être 'selection_score', 'business_score' ou 'auc'.")
+        if self.min_runs < 0:
+            raise ValueError("champion_selection.min_runs doit être >= 0.")
+        if self.min_days < 0:
+            raise ValueError("champion_selection.min_days doit être >= 0.")
 
 
 @dataclass(frozen=True, slots=True)

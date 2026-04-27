@@ -46,5 +46,8 @@ def run_lightgbm_baseline(
             random_state=cfg.baseline.random_state,
         ),
         artifact_dir=artifact_dir,
+        # Phase 4.2.c — format natif LightGBM (.txt). Plus de pickle.
+        save_callback=lambda model, path: model.booster_.save_model(str(path)),
+        model_extension=".txt",
     )
 

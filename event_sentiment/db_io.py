@@ -171,6 +171,35 @@ class EventSentimentRepository:
     def upsert_news_sentiment(self, records: list[dict[str, Any]]) -> int:
         return self._upsert("news_sentiment", records, key_columns={"article_id"})
 
+    def get_active_finbert_fingerprints(self, trade_date: date) -> list[str]:
+        """Phase 4.1.c — fingerprints FinBERT actifs pour `trade_date`.
+
+        Retourne les ``model_fingerprint`` distincts présents sur les
+        sentiments rattachés à des articles dont ``effective_trade_date``
+        ≤ `trade_date` ET strictement > `trade_date - 30 jours`.
+        Trié par fréquence décroissante. Renvoie ``[]`` si la colonne
+        n'existe pas encore (rétrocompat pré-migration 0015).
+        """
+        try:
+            query = text(
+                """
+                SELECT ns.model_fingerprint AS fp, COUNT(*) AS occurrences
+                FROM news_sentiment ns
+                JOIN news_raw nr ON nr.article_id = ns.article_id
+                WHERE ns.model_fingerprint IS NOT NULL
+                  AND nr.effective_trade_date <= :trade_date
+                  AND nr.effective_trade_date > DATE_SUB(:trade_date, INTERVAL 30 DAY)
+                GROUP BY ns.model_fingerprint
+                ORDER BY occurrences DESC
+                LIMIT 8
+                """
+            )
+            with self.engine.connect() as conn:
+                rows = conn.execute(query, {"trade_date": trade_date}).mappings().all()
+        except Exception:  # noqa: BLE001 — col absente / dialecte non MySQL
+            return []
+        return [str(row["fp"]) for row in rows if row.get("fp")]
+
     def upsert_macro_event_audit(self, records: list[dict[str, Any]]) -> int:
         serializable: list[dict[str, Any]] = []
         for row in records:

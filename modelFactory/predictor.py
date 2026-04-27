@@ -5,8 +5,9 @@ import json
 import logging
 import pickle
 from datetime import date
+from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -19,6 +20,7 @@ from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load
 from modelFactory.dataset import FeatureScaler
 from modelFactory.db_registry import insert_predictions, load_candidate_symbols, load_training_run
 from modelFactory.features import compute_features, get_feature_columns
+from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.model import LSTMAttentionModule
 
 LOGGER = logging.getLogger(__name__)
@@ -63,6 +65,140 @@ def _resolve_artifact_paths(
 
     sym_dir = artifacts_dir / symbol
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
+
+
+def _check_feature_fingerprint(cfg_data: dict, *, symbol: str) -> None:
+    """Phase 4.2.b — WARNING (pas raise) si le fingerprint a dérivé.
+
+    Recalcule le fingerprint à partir du contrat de features actif et le
+    compare à celui persisté dans ``config.json`` à l'entraînement. Une
+    dérive = changement silencieux de ``features.py`` ; bloquer l'inférence
+    serait trop strict, mais le WARNING permet de détecter en CI/log.
+    """
+    persisted = cfg_data.get("feature_fingerprint")
+    if not persisted:
+        return  # Modèle entraîné avant Phase 4.2.b — silencieux.
+    try:
+        data_cfg = cfg_data.get("data") or {}
+        current = compute_feature_fingerprint(
+            include_sentiment=bool(data_cfg.get("include_sentiment_features", False)),
+            feature_set=str(data_cfg.get("feature_set", "v1")),
+            include_cross_sectional=bool(data_cfg.get("enable_cross_sectional_features", False)),
+        )
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("feature_fingerprint_check_failed symbol=%s error=%s", symbol, exc)
+        return
+    if current != persisted:
+        LOGGER.warning(
+            "feature_fingerprint_drift symbol=%s persisted=%s current=%s "
+            "(features.py a évolué depuis l'entraînement — ré-entraîner conseillé)",
+            symbol, persisted, current,
+        )
+
+
+# Phase 4.2.c — chargement format natif (.txt/.cbm) avec rétrocompat .pkl.
+class _LightGBMBoosterAdapter:
+    """Adapter exposant ``predict_proba`` pour un Booster LightGBM natif."""
+
+    def __init__(self, booster: Any) -> None:
+        self._booster = booster
+
+    def predict_proba(self, X: Any) -> np.ndarray:  # type: ignore[name-defined]
+        import numpy as _np
+        proba_pos = self._booster.predict(X)
+        proba_pos = _np.asarray(proba_pos, dtype=float).ravel()
+        return _np.column_stack([1.0 - proba_pos, proba_pos])
+
+
+def _load_tabular_model(model_path: Path, *, selected_model: str) -> Any:
+    """Charge un modèle tabulaire en routant selon l'extension.
+
+    - ``.txt`` → LightGBM Booster natif (``lgb.Booster(model_file=)``).
+    - ``.cbm`` → CatBoostClassifier natif (``load_model``).
+    - ``.pkl`` → rétrocompat pickle + WARNING déprécié (Phase 4.2.c).
+    """
+    suffix = model_path.suffix.lower()
+    if suffix == ".txt":
+        import lightgbm as lgb  # type: ignore[import-not-found]
+        booster = lgb.Booster(model_file=str(model_path))
+        return _LightGBMBoosterAdapter(booster)
+    if suffix == ".cbm":
+        from catboost import CatBoostClassifier  # type: ignore[import-not-found]
+        model = CatBoostClassifier()
+        model.load_model(str(model_path))
+        return model
+    if suffix == ".pkl":
+        LOGGER.warning(
+            "tabular_model_pkl_deprecated symbol_model=%s path=%s "
+            "(Phase 4.2.c : ré-entraîner pour migrer vers format natif)",
+            selected_model, model_path,
+        )
+        with open(model_path, "rb") as fh:
+            return pickle.load(fh)
+    raise ValueError(f"Extension non supportée pour modèle tabulaire : {model_path.suffix}")
+
+
+# ---------------------------------------------------------------------------
+# Phase 4.2.d — Cache LRU des modèles / scalers / calibrators.
+# ---------------------------------------------------------------------------
+
+@lru_cache(maxsize=128)
+def _cached_tabular_model(model_path_str: str, mtime_ns: int, selected_model: str) -> Any:
+    return _load_tabular_model(Path(model_path_str), selected_model=selected_model)
+
+
+@lru_cache(maxsize=128)
+def _cached_scaler(scaler_path_str: str, mtime_ns: int) -> Any:
+    with open(scaler_path_str, "rb") as fh:
+        return FeatureScaler.from_state_dict(pickle.load(fh))
+
+
+@lru_cache(maxsize=128)
+def _cached_calibrator(calibrator_path_str: str, mtime_ns: int) -> Any:
+    with open(calibrator_path_str, "rb") as fh:
+        return calibrator_from_state_dict(pickle.load(fh))
+
+
+@lru_cache(maxsize=64)
+def _cached_lstm_module(ckpt_path_str: str, mtime_ns: int, device_str: str) -> Any:
+    import torch as _torch
+    device_obj = _torch.device(device_str)
+    module = LSTMAttentionModule.load_from_checkpoint(ckpt_path_str, map_location=device_obj)
+    module.to(device_obj)
+    module.eval()
+    return module
+
+
+def _safe_mtime_ns(path: Path) -> int:
+    try:
+        return int(path.stat().st_mtime_ns)
+    except OSError:
+        return 0
+
+
+def load_tabular_model_cached(model_path: Path, *, selected_model: str) -> Any:
+    """API publique du cache (Phase 4.2.d)."""
+    return _cached_tabular_model(str(model_path.resolve()), _safe_mtime_ns(model_path), selected_model)
+
+
+def load_scaler_cached(scaler_path: Path) -> Any:
+    return _cached_scaler(str(scaler_path.resolve()), _safe_mtime_ns(scaler_path))
+
+
+def load_calibrator_cached(calibrator_path: Path) -> Any:
+    return _cached_calibrator(str(calibrator_path.resolve()), _safe_mtime_ns(calibrator_path))
+
+
+def load_lstm_module_cached(ckpt_path: Path, device: Any) -> Any:
+    return _cached_lstm_module(str(ckpt_path.resolve()), _safe_mtime_ns(ckpt_path), str(device))
+
+
+def clear_model_cache() -> None:
+    """Vide tous les caches LRU de modèles/scalers/calibrators (Phase 4.2.d)."""
+    _cached_tabular_model.cache_clear()
+    _cached_scaler.cache_clear()
+    _cached_calibrator.cache_clear()
+    _cached_lstm_module.cache_clear()
 
 
 def _resolve_selected_model_route(
@@ -238,13 +374,11 @@ def _predict_with_tabular_model(
             missing_columns,
         )
         return None
-    with open(model_path, "rb") as fh:
-        model = pickle.load(fh)
+    model = load_tabular_model_cached(model_path, selected_model=selected_model)
     raw_proba = float(model.predict_proba(last_row[resolved_feature_columns])[:, 1][0])
     calibrator = None
     if calibrator_path is not None and calibrator_path.exists():
-        with open(calibrator_path, "rb") as fh:
-            calibrator = calibrator_from_state_dict(pickle.load(fh))
+        calibrator = load_calibrator_cached(calibrator_path)
     proba = raw_proba
     if calibrator is not None and calibrator.fitted:
         eps = 1e-6
@@ -303,6 +437,9 @@ def predict_symbol(
     with open(config_path) as f:
         cfg_data = json.load(f)
 
+    # Phase 4.2.b — vérification fingerprint features (WARNING, pas raise).
+    _check_feature_fingerprint(cfg_data, symbol=symbol)
+
     route = _resolve_selected_model_route(cfg_data, ckpt_path, scaler_path, config_path)
     selected_architecture = str(route["selected_model"])
     if route.get("inference_backend") == "global_tabular":
@@ -355,16 +492,14 @@ def predict_symbol(
     data_cfg = _load_data_cfg_from_payload(cfg_data)
     run_id = selected_run_id or cfg_data.get("run_id", "unknown")
 
-    # Load scaler
-    with open(scaler_path, "rb") as f:
-        scaler = FeatureScaler.from_state_dict(pickle.load(f))
+    # Load scaler (Phase 4.2.d : cache LRU)
+    scaler = load_scaler_cached(scaler_path)
 
     calibrator = None
     calibrator_path_raw = cfg_data.get("calibrator_path")
     calibrator_path = Path(calibrator_path_raw) if calibrator_path_raw else config_path.with_name("calibrator.pkl")
     if calibrator_path.exists():
-        with open(calibrator_path, "rb") as f:
-            calibrator = calibrator_from_state_dict(pickle.load(f))
+        calibrator = load_calibrator_cached(calibrator_path)
 
     cutoff_date = as_of_date or prediction_date
     df = _prepare_prediction_frame(symbol, data_cfg=data_cfg, engine=engine, cutoff_date=cutoff_date)
@@ -376,12 +511,10 @@ def predict_symbol(
     features = scaler.transform(last_rows)
     x = torch.from_numpy(features.astype(np.float32)).unsqueeze(0).to(device=device, non_blocking=device.type == "cuda")  # [1, seq, feat]
 
-    # Load model
+    # Load model (Phase 4.2.d : cache LRU)
     if device.type == "cuda":
         torch.set_float32_matmul_precision("medium")
-    model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location=device)
-    model.to(device)
-    model.eval()
+    model = load_lstm_module_cached(ckpt_path, device)
 
     device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
     LOGGER.info(

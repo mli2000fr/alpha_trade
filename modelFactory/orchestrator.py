@@ -13,6 +13,7 @@ from sqlalchemy.engine import Engine
 from modelFactory.champion_selection import build_challenger_ranking, select_champion
 from modelFactory.config import TrainingConfig
 from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment, load_universe_bars
+from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.db_registry import load_candidate_symbols, replace_model_governance
 from modelFactory.global_model import train_global_model
 from modelFactory.trainer import TrainResult, train_symbol
@@ -119,6 +120,52 @@ def _gpu_requested_or_available(cfg: TrainingConfig) -> bool:
     return cfg.accelerator == "gpu" or (cfg.accelerator == "auto" and torch.cuda.is_available())
 
 
+def _filter_symbols_by_mode(
+    engine: Engine,
+    symbols: list[str],
+    *,
+    mode: str,
+    cfg: TrainingConfig,
+) -> list[str]:
+    """Phase 4.2.g — filtre la liste de symboles selon le mode ML.
+
+    - ``rebuild-missing`` : skippe les symboles dont le dernier
+      ``config.json`` champion (sur disque) a déjà le ``feature_fingerprint``
+      courant (= contrat de features inchangé depuis le dernier train).
+    - ``refresh-stale`` : équivalent ``rebuild-missing`` aujourd'hui (plage
+      future pour ajouter un critère d'âge en jours).
+    Tolérant aux fichiers manquants : on retient le symbole.
+    """
+    current_fp = compute_feature_fingerprint(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
+    artifacts_dir = Path(cfg.artifacts_dir)
+    kept: list[str] = []
+    skipped: list[str] = []
+    for symbol in symbols:
+        config_path = artifacts_dir / symbol / "config.json"
+        if not config_path.exists():
+            kept.append(symbol)
+            continue
+        try:
+            with open(config_path, encoding="utf-8") as fh:
+                cfg_data = json.load(fh)
+            persisted = cfg_data.get("feature_fingerprint")
+        except Exception:  # noqa: BLE001
+            persisted = None
+        if persisted == current_fp:
+            skipped.append(symbol)
+        else:
+            kept.append(symbol)
+    LOGGER.info(
+        "ml_mode=%s current_fp=%s symbols_kept=%d symbols_skipped=%d",
+        mode, current_fp, len(kept), len(skipped),
+    )
+    return kept
+
+
 def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] | None = None) -> TrainResult:
     """Worker function exécutée dans un sous-process. Crée son propre engine."""
     from database.connection import get_sqlalchemy_engine
@@ -141,6 +188,8 @@ def run_training_batch(
     cfg: TrainingConfig,
     engine: Engine,
     symbols: Optional[list[str]] = None,
+    *,
+    mode: str = "rebuild-all",
 ) -> list[TrainResult]:
     """Entraîne tous les symboles candidats en parallèle.
 
@@ -148,6 +197,9 @@ def run_training_batch(
         cfg: Configuration d'entraînement.
         engine: Engine SQLAlchemy pour charger l'univers.
         symbols: Liste explicite de symboles (sinon charge is_candidate=1).
+        mode: Phase 4.2.g — ``rebuild-all`` (défaut), ``rebuild-missing``
+            (skippe les symboles déjà entraînés au feature_fingerprint
+            courant), ou ``refresh-stale``.
 
     Returns:
         Liste de TrainResult.
@@ -158,6 +210,12 @@ def run_training_batch(
     if not symbols:
         LOGGER.warning("run_training_batch no_candidates")
         return []
+
+    if mode != "rebuild-all":
+        symbols = _filter_symbols_by_mode(engine, symbols, mode=mode, cfg=cfg)
+        if not symbols:
+            LOGGER.info("run_training_batch all_symbols_skipped mode=%s", mode)
+            return []
 
     use_gpu = _gpu_requested_or_available(cfg)
     effective_workers = 1 if use_gpu else cfg.max_workers

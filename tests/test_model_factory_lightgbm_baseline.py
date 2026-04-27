@@ -11,6 +11,8 @@ from modelFactory.lightgbm_baseline import run_lightgbm_baseline
 class FakePickleableLGBMClassifier:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        # Phase 4.2.c — un Booster natif (fake) accessible via .booster_
+        self.booster_ = _FakeBooster()
 
     def fit(self, X, y):
         return self
@@ -18,6 +20,12 @@ class FakePickleableLGBMClassifier:
     def predict_proba(self, X):
         p = np.clip(np.asarray(X["daily_return"], dtype=float), 0.05, 0.95)
         return np.column_stack([1.0 - p, p])
+
+
+class _FakeBooster:
+    def save_model(self, path: str) -> None:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("# fake LightGBM model (test fixture)\n")
 
 
 def _prepared_df(n: int = 120) -> pd.DataFrame:
@@ -101,7 +109,10 @@ def test_run_lightgbm_baseline_can_persist_local_artifacts(monkeypatch, tmp_path
     result = run_lightgbm_baseline(_prepared_df(), cfg, artifact_dir=tmp_path)
 
     assert result["inference_backend"] == "lightgbm_tabular"
-    assert result["artifact_paths"]["model_path"].endswith("lightgbm_model.pkl")
-    assert (tmp_path / "lightgbm_model.pkl").exists()
+    # Phase 4.2.c — format natif (.txt) au lieu de pickle.
+    assert result["artifact_paths"]["model_path"].endswith("lightgbm_model.txt")
+    assert result["artifact_paths"]["model_format"] == "txt"
+    assert (tmp_path / "lightgbm_model.txt").exists()
+    assert not (tmp_path / "lightgbm_model.pkl").exists()
 
 

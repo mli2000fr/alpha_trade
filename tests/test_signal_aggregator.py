@@ -539,3 +539,62 @@ def test_merge_prefers_multi_horizon_features_when_available(monkeypatch) -> Non
     assert row["sentiment_signal_norm"] == pytest.approx((0.4545454545 + 1.0) / 2.0, rel=1e-6)
 
 
+def test_merge_uses_core_conviction_fusion(monkeypatch) -> None:
+    """Phase 4.1.b — `merge` doit déléguer la fusion ternaire à
+    `core.conviction.fuse_sentiment` (zéro duplication de formule).
+    """
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(
+            sentiment_weight=0.15,
+            macro_sector_weight=0.10,
+            quant_weight=0.75,
+            lookback_days=5,
+            min_news_count=2,
+            time_decay_half_life_days=2.0,
+        ),
+    )
+
+    scores_df = pd.DataFrame(
+        [{"symbol": "AAPL", "sector": "TECH", "final_score": 0.80}]
+    )
+    ticker_df = pd.DataFrame(
+        [{
+            "symbol": "AAPL",
+            "trade_date": date(2026, 4, 19),
+            "news_count_1d": 3,
+            "sentiment_net_mean_1d": 0.6,
+            "sentiment_confidence_mean_1d": 0.9,
+            "major_event_flag": 1,
+        }]
+    )
+    sector_df = pd.DataFrame(
+        [{
+            "sector": "TECH",
+            "trade_date": date(2026, 4, 19),
+            "sector_impact_score": 0.2,
+            "macro_event_intensity": 0.4,
+            "macro_event_flag": 1,
+        }]
+    )
+    monkeypatch.setattr(aggregator, "_load_ticker_sentiment", lambda symbols, trade_date: ticker_df.copy())
+    monkeypatch.setattr(aggregator, "_load_sector_sentiment", lambda sectors, trade_date: sector_df.copy())
+
+    calls: list[dict] = []
+    real_fuse = signal_aggregator.fuse_sentiment
+
+    def spy_fuse(**kwargs):
+        calls.append(kwargs)
+        return real_fuse(**kwargs)
+
+    monkeypatch.setattr(signal_aggregator, "fuse_sentiment", spy_fuse)
+
+    result = aggregator.merge(scores_df, trade_date=date(2026, 4, 19))
+    assert len(calls) == 1
+    kw = calls[0]
+    assert "quant_score" in kw and "sentiment_signal_norm" in kw
+    assert "macro_signal_norm" in kw and "signal_active" in kw
+    assert isinstance(kw["weights"], signal_aggregator.SentimentFusionWeights)
+    row = result.iloc[0]
+    expected = 0.75 * 0.80 + 0.15 * 0.8 + 0.10 * 0.6
+    assert row["final_score_sentiment"] == pytest.approx(expected, rel=1e-6)

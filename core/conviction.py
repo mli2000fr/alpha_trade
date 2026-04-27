@@ -16,8 +16,18 @@ permet aux modules amont d'importer une seule API stable :
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Union
+
+import numpy as np
 
 from risk_management.conviction import compute_conviction as _compute_conviction
+
+if TYPE_CHECKING:
+    from numpy.typing import ArrayLike
+
+    Number = Union[float, ArrayLike]
+else:  # pragma: no cover - runtime alias
+    Number = object
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,5 +76,75 @@ def fuse(
     return compute_conviction(quant_score, predicted_proba, w.score_weight, w.prediction_weight)
 
 
-__all__ = ["ConvictionWeights", "compute_conviction", "fuse"]
+__all__ = [
+    "ConvictionWeights",
+    "SentimentFusionWeights",
+    "compute_conviction",
+    "fuse",
+    "fuse_sentiment",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class SentimentFusionWeights:
+    """Pondérations pour la fusion ternaire **quant + sentiment + macro**.
+
+    Convention historique projet (`event_sentiment.signal_aggregator
+    .SentimentBoostConfig`, défauts : 0.75 / 0.15 / 0.10). La somme doit être
+    proche de 1.0 (tolérance ``1e-4``). Tous les poids doivent être ≥ 0.
+    """
+
+    quant_weight: float = 0.75
+    sentiment_weight: float = 0.15
+    macro_weight: float = 0.10
+
+    def __post_init__(self) -> None:
+        if self.quant_weight < 0 or self.sentiment_weight < 0 or self.macro_weight < 0:
+            raise ValueError("SentimentFusionWeights : poids négatifs interdits.")
+        total = self.quant_weight + self.sentiment_weight + self.macro_weight
+        if not np.isclose(total, 1.0, atol=1e-4):
+            raise ValueError(
+                "SentimentFusionWeights : somme des poids doit être ≈ 1.0 "
+                f"(actuel : {total:.4f})."
+            )
+
+
+def fuse_sentiment(
+    *,
+    quant_score: "Number",
+    sentiment_signal_norm: "Number",
+    macro_signal_norm: "Number",
+    weights: SentimentFusionWeights | None = None,
+    signal_active: "Number" = True,
+) -> "np.ndarray | float":
+    """Fusion ternaire ``final_score_sentiment`` clipée dans ``[0, 1]``.
+
+    Réplique strictement la formule historique de
+    ``event_sentiment.signal_aggregator.SentimentSignalAggregator.merge``
+    (lignes 926-944) afin d'offrir une API centralisée :
+
+        sent  = sentiment_weight * (sentiment_signal_norm if active else 0.5)
+        macro = macro_weight     * macro_signal_norm
+        quant = quant_weight     * quant_score
+        final = clip(quant + sent + macro, 0.0, 1.0)
+
+    Accepte des scalaires ou des array-like (broadcast NumPy).
+    """
+    w = weights or SentimentFusionWeights()
+    quant_arr = np.asarray(quant_score, dtype=float)
+    sentiment_arr = np.asarray(sentiment_signal_norm, dtype=float)
+    macro_arr = np.asarray(macro_signal_norm, dtype=float)
+    active_arr = np.asarray(signal_active, dtype=bool)
+
+    sent_component = np.where(
+        active_arr,
+        w.sentiment_weight * sentiment_arr,
+        w.sentiment_weight * 0.5,
+    )
+    macro_component = w.macro_weight * macro_arr
+    quant_component = w.quant_weight * quant_arr
+    fused = np.clip(quant_component + sent_component + macro_component, 0.0, 1.0)
+    if fused.ndim == 0:
+        return float(fused)
+    return fused
 

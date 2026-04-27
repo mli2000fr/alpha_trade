@@ -17,6 +17,7 @@ class EventSentimentConfig:
 
     finbert_model_name: str = "ProsusAI/finbert"
     finbert_model_version: str = "finbert_v1"
+    finbert_model_revision: str | None = None
     finbert_batch_size: int = 16
     finbert_max_length: int = 256
 

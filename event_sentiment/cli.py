@@ -52,6 +52,7 @@ def _build_cli_run_summary(
         "macro_rows": int(stats.get("macro_rows") or 0),
         "ticker_day_rows": int(stats.get("ticker_day_rows") or 0),
         "sector_day_rows": int(stats.get("sector_day_rows") or 0),
+        "finbert_model_fingerprint": stats.get("finbert_model_fingerprint"),
     }
 
 
@@ -60,6 +61,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-utc", type=str, default=None, help="Fenêtre UTC de début, ex: 2026-01-01T00:00:00Z")
     parser.add_argument("--end-utc", type=str, default=None, help="Fenêtre UTC de fin, ex: 2026-01-31T23:59:59Z")
     parser.add_argument("--symbols", type=str, default=None, help="Liste optionnelle de symboles, séparés par des virgules")
+    parser.add_argument(
+        "--finbert-revision",
+        type=str,
+        default=None,
+        help="Revision Hugging Face épinglée (commit SHA / tag) pour FinBERT (Phase 4.1.c)",
+    )
     return parser
 
 
@@ -76,7 +83,10 @@ def main() -> None:
     symbols = [symbol.strip().upper() for symbol in args.symbols.split(",")] if args.symbols else None
 
     repository = EventSentimentRepository()
-    config = EventSentimentConfig()
+    config_kwargs: dict[str, object] = {}
+    if args.finbert_revision:
+        config_kwargs["finbert_model_revision"] = args.finbert_revision
+    config = EventSentimentConfig(**config_kwargs)
     pipeline = EventSentimentPipeline(repository=repository, config=config)
     started_at = _utc_now_naive()
     stats = pipeline.run(start_utc=start_utc, end_utc=end_utc, symbols=symbols)

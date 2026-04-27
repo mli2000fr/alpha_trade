@@ -40,9 +40,11 @@ from modelFactory.db_registry import (
     insert_training_run,
     replace_model_governance,
     update_training_run,
+    upsert_metrics_full,
 )
 from modelFactory.evaluation import align_sequence_rows, compute_threshold_metrics, optimize_decision_threshold
 from modelFactory.features import get_feature_columns
+from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.catboost_baseline import run_catboost_baseline
 from modelFactory.lightgbm_baseline import run_lightgbm_baseline
 from modelFactory.model import LSTMAttentionModule
@@ -760,6 +762,11 @@ def train_symbol(
                 "selected_model": selected_architecture,
                 "models": artifact_routes_models,
             },
+            "feature_fingerprint": compute_feature_fingerprint(
+                include_sentiment=effective_cfg.data.include_sentiment_features,
+                feature_set=effective_cfg.data.feature_set,
+                include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
+            ),
         }
         with open(config_path, "w") as f:
             json.dump(config_data, f, indent=2, default=str)
@@ -813,6 +820,9 @@ def train_symbol(
             wf_mean = walk_forward_metrics.get("mean") if walk_forward_metrics else None
             if wf_mean:
                 insert_metrics(engine, run_id, symbol, "wf", wf_mean)
+            # Phase 4.2.f — persiste metrics.json complet en BLOB DB pour
+            # ne plus dépendre uniquement du fichier disque.
+            upsert_metrics_full(engine, run_id=run_id, symbol=symbol, metrics=all_metrics)
             replace_model_governance(
                 engine,
                 run_id=run_id,

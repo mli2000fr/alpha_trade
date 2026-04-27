@@ -202,6 +202,70 @@ def insert_metrics(engine: Engine, run_id: str, symbol: str, split_name: str, me
         )
 
 
+def count_completed_runs(
+    engine: Engine,
+    symbol: str,
+    model_name: str,
+) -> tuple[int, "datetime | None"]:
+    """Phase 4.2.e — quarantaine champion.
+
+    Retourne ``(nb_runs_completed, first_completed_at)`` pour un couple
+    (symbol, model_name) en consultant ``model_governance`` (vue qui suit
+    les modèles servis). Tolérant à l'absence de table : ``(0, None)``.
+    """
+    sql = text(
+        """
+        SELECT COUNT(*) AS cnt, MIN(COALESCE(finished_at, started_at)) AS first_at
+        FROM model_training_run mtr
+        JOIN model_governance mg
+          ON mg.run_id = mtr.run_id AND mg.symbol = mtr.symbol
+        WHERE mtr.symbol = :sym
+          AND mg.model_name = :mn
+          AND mtr.status = 'completed'
+        """
+    )
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sql, {"sym": symbol, "mn": model_name}).mappings().first()
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("count_completed_runs failed sym=%s mn=%s err=%s", symbol, model_name, exc)
+        return 0, None
+    if not row:
+        return 0, None
+    return int(row.get("cnt") or 0), row.get("first_at")
+
+
+def upsert_metrics_full(
+    engine: Engine,
+    *,
+    run_id: str,
+    symbol: str,
+    metrics: dict[str, Any],
+) -> None:
+    """Phase 4.2.f — persiste ``metrics.json`` complet en BLOB.
+
+    Idempotent (REPLACE-like via ON DUPLICATE KEY). Tolérant à l'absence
+    de table : log un WARNING et n'arrête pas le run.
+    """
+    import json as _json
+    payload = _json.dumps(metrics, ensure_ascii=False, default=str, sort_keys=True).encode("utf-8")
+    sql = text(
+        """
+        INSERT INTO model_metrics_full (run_id, symbol, metrics_json, created_at)
+        VALUES (:rid, :sym, :payload, CURRENT_TIMESTAMP)
+        ON DUPLICATE KEY UPDATE
+            symbol = VALUES(symbol),
+            metrics_json = VALUES(metrics_json),
+            created_at = CURRENT_TIMESTAMP
+        """
+    )
+    try:
+        with engine.begin() as conn:
+            conn.execute(sql, {"rid": run_id, "sym": symbol, "payload": payload})
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("upsert_metrics_full failed run_id=%s sym=%s err=%s", run_id, symbol, exc)
+
+
 def replace_model_governance(
     engine: Engine,
     *,

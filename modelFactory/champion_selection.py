@@ -1,9 +1,54 @@
 """modelFactory/champion_selection.py — Gouvernance et sélection automatique du champion."""
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Optional
 
 from modelFactory.config import ChampionSelectionConfig
+
+
+# Phase 4.2.e — quarantaine champion.
+# Type d'un callback retournant (count_runs, first_completed_at | None) pour
+# le couple (symbol, model_name). Découplé du db_registry pour faciliter
+# les tests.
+QuarantineLookup = Callable[[str, str], tuple[int, Optional[datetime]]]
+
+
+def is_under_quarantine(
+    model_name: str,
+    symbol: str,
+    *,
+    min_runs: int,
+    min_days: int,
+    lookup: QuarantineLookup,
+    now: Optional[datetime] = None,
+) -> tuple[bool, str]:
+    """Retourne ``(quarantined, reason)`` pour un (symbole, modèle).
+
+    - ``min_runs == 0 and min_days == 0`` → jamais en quarantaine.
+    - Sinon : sous quarantaine si **moins** de `min_runs` runs OU si la
+      première complétion remonte à moins de `min_days` jours.
+    """
+    if min_runs <= 0 and min_days <= 0:
+        return False, ""
+    try:
+        runs_count, first_completed_at = lookup(symbol, model_name)
+    except Exception as exc:  # noqa: BLE001 - best-effort, registry indisponible
+        return False, f"quarantine_lookup_failed:{exc}"
+    if min_runs > 0 and runs_count < min_runs:
+        return True, f"runs<{min_runs} (current={runs_count})"
+    if min_days > 0:
+        if first_completed_at is None:
+            return True, f"days<{min_days} (no first_completed_at)"
+        ref = now or datetime.now(timezone.utc)
+        # Normaliser tz pour comparer
+        if first_completed_at.tzinfo is None:
+            first_completed_at = first_completed_at.replace(tzinfo=timezone.utc)
+        elapsed = ref - first_completed_at
+        if elapsed < timedelta(days=min_days):
+            elapsed_days = elapsed.total_seconds() / 86400.0
+            return True, f"days<{min_days} (elapsed={elapsed_days:.1f}d)"
+    return False, ""
 
 
 def selection_score_from_result(result: dict[str, Any], metric: str = "selection_score") -> float:
@@ -90,10 +135,38 @@ def select_champion(
     challengers: dict[str, dict[str, Any]],
     artifact_routes_models: dict[str, dict[str, Any]],
     champion_cfg: ChampionSelectionConfig,
+    *,
+    quarantine_lookup: QuarantineLookup | None = None,
+    symbol: str | None = None,
 ) -> dict[str, Any]:
     annotated = annotate_challengers(challengers, artifact_routes_models)
     default_model = champion_cfg.default_champion
     default_exists = default_model in annotated
+
+    # Phase 4.2.e — annoter quarantaine sur tous les challengers complétés.
+    quarantine_active = (
+        (champion_cfg.min_runs > 0 or champion_cfg.min_days > 0)
+        and quarantine_lookup is not None
+        and symbol is not None
+    )
+    if quarantine_active:
+        for model_name, result in annotated.items():
+            if result.get("status") != "completed":
+                continue
+            quarantined, reason = is_under_quarantine(
+                model_name,
+                symbol,  # type: ignore[arg-type]
+                min_runs=champion_cfg.min_runs,
+                min_days=champion_cfg.min_days,
+                lookup=quarantine_lookup,  # type: ignore[arg-type]
+            )
+            result["quarantined"] = bool(quarantined)
+            if quarantined:
+                result["quarantine_reason"] = reason
+                # désactive l'éligibilité pour la sélection auto
+                result["selection_eligible"] = False
+                if not result.get("eligibility_reason"):
+                    result["eligibility_reason"] = f"quarantine:{reason}"
 
     if not champion_cfg.enabled or not champion_cfg.allow_auto_selection:
         return {

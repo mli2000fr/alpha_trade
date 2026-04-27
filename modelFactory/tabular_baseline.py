@@ -127,6 +127,8 @@ def run_tabular_baseline(
 	model_name: str,
 	model_builder: Callable[[], Any],
 	artifact_dir: Path | None = None,
+	save_callback: Callable[[Any, Path], None] | None = None,
+	model_extension: str = ".pkl",
 ) -> dict[str, Any]:
 	feature_columns = get_feature_columns(
 		include_sentiment=cfg.data.include_sentiment_features,
@@ -204,9 +206,13 @@ def run_tabular_baseline(
 	}
 	if artifact_dir is not None:
 		artifact_dir.mkdir(parents=True, exist_ok=True)
-		model_path = artifact_dir / f"{model_name}_model.pkl"
-		with open(model_path, "wb") as fh:
-			pickle.dump(model, fh)
+		# Phase 4.2.c — format natif si callback fourni, sinon pickle (rétrocompat).
+		model_path = artifact_dir / f"{model_name}_model{model_extension}"
+		if save_callback is not None:
+			save_callback(model, model_path)
+		else:
+			with open(model_path, "wb") as fh:
+				pickle.dump(model, fh)
 		calibrator_path: str | None = None
 		if calibrator is not None and calibrator.fitted:
 			cal_path = artifact_dir / f"{model_name}_calibrator.pkl"
@@ -216,6 +222,7 @@ def run_tabular_baseline(
 		result["artifact_paths"] = {
 			"model_path": str(model_path),
 			"calibrator_path": calibrator_path,
+			"model_format": model_extension.lstrip("."),
 		}
 	return result
 

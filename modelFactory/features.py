@@ -1,6 +1,8 @@
 """modelFactory/features.py — Feature engineering à partir de stock_bars_daily."""
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Optional
 
 import numpy as np
@@ -71,6 +73,34 @@ def get_feature_columns(
     if include_sentiment:
         cols.extend(SENTIMENT_FEATURE_COLUMNS)
     return cols
+
+
+def fingerprint(
+    *,
+    include_sentiment: bool = False,
+    feature_set: str = "v1",
+    include_cross_sectional: bool = False,
+) -> str:
+    """SHA256[:16] du contrat de features actif (Phase 4.2.b).
+
+    Persisté dans ``config.json`` du modèle ; recalculé à l'inférence
+    pour détecter toute dérive silencieuse du contrat de features
+    (la valeur **doit** rester stable tant que la liste de colonnes ne
+    change pas — un test gold bloque les modifications accidentelles).
+    """
+    columns = get_feature_columns(
+        include_sentiment=include_sentiment,
+        feature_set=feature_set,
+        include_cross_sectional=include_cross_sectional,
+    )
+    payload = {
+        "columns": columns,
+        "feature_set": feature_set,
+        "include_sentiment": bool(include_sentiment),
+        "include_cross_sectional": bool(include_cross_sectional),
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
 
 
 def compute_features(

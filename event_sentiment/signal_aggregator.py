@@ -45,6 +45,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from common.utils import configure_root_logging
+from core.conviction import SentimentFusionWeights, fuse_sentiment
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
@@ -75,6 +76,7 @@ def _build_cli_run_summary(
     enriched: pd.DataFrame,
     started_at: datetime,
     finished_at: datetime,
+    finbert_fingerprints: list[str] | None = None,
 ) -> dict[str, object]:
     signal_active_symbols = 0
     total_news = 0
@@ -113,6 +115,7 @@ def _build_cli_run_summary(
         "min_news_count": int(config.min_news_count),
         "avg_final_score_sentiment": avg_final_score_sentiment,
         "max_final_score_sentiment": max_final_score_sentiment,
+        "finbert_model_fingerprints": list(finbert_fingerprints or []),
     }
 
 
@@ -174,6 +177,14 @@ class SentimentBoostConfig:
             raise ValueError(f"{name} doit être trié et sans doublons.")
         if all(float(weight) <= 0 for _, weight in weights):
             raise ValueError(f"{name} doit contenir au moins un poids positif.")
+
+    def to_fusion_weights(self) -> SentimentFusionWeights:
+        """Convertit en :class:`core.conviction.SentimentFusionWeights`."""
+        return SentimentFusionWeights(
+            quant_weight=float(self.quant_weight),
+            sentiment_weight=float(self.sentiment_weight),
+            macro_weight=float(self.macro_sector_weight),
+        )
 
     @staticmethod
     def _normalized_horizon_weights(weights: tuple[tuple[int, float], ...]) -> list[tuple[int, float]]:
@@ -921,15 +932,24 @@ class SentimentSignalAggregator:
 
         # --- Composition du final_score_sentiment (score fusionné) ---
         # final_score reste intact (score quantitatif AlphaScanner).
-        # final_score_sentiment = quant_weight * final_score + sentiment_weight * sent + macro_weight * macro
-        # Le signal sentiment n'est activé que si signal_active=True (min_news_count atteint)
+        # Délégation à core.conviction.fuse_sentiment (Phase 4.1.b) : la
+        # formule reste strictement identique (cf. tests gold). Les colonnes
+        # intermédiaires `quant_component`, `company_idio_component`,
+        # `macro_regime_component` sont reconstruites pour préserver le
+        # contrat consommé par `save_to_db` et l'IHM.
+        fusion_weights = self.config.to_fusion_weights()
+        sentiment_arr = np.asarray(result["sentiment_signal_norm"], dtype=float)
+        macro_arr = np.asarray(result["macro_signal_norm"], dtype=float)
+        quant_arr = np.asarray(result["final_score"], dtype=float)
+        active_arr = np.asarray(result["signal_active"], dtype=bool)
+
         sent_component = np.where(
-            result["signal_active"],
-            self.config.sentiment_weight * result["sentiment_signal_norm"],
-            self.config.sentiment_weight * 0.5,  # neutre si pas assez de news
+            active_arr,
+            fusion_weights.sentiment_weight * sentiment_arr,
+            fusion_weights.sentiment_weight * 0.5,  # neutre si pas assez de news
         )
-        macro_component = self.config.macro_sector_weight * result["macro_signal_norm"]
-        quant_component = self.config.quant_weight * result["final_score"]
+        macro_component = fusion_weights.macro_weight * macro_arr
+        quant_component = fusion_weights.quant_weight * quant_arr
 
         result["company_idio_component"] = sent_component
         result["macro_regime_component"] = macro_component
@@ -941,7 +961,13 @@ class SentimentSignalAggregator:
         result["calibration_run_id"] = pd.NA
         result["calibration_source"] = pd.NA
 
-        result["final_score_sentiment"] = (quant_component + sent_component + macro_component).clip(0.0, 1.0)
+        result["final_score_sentiment"] = fuse_sentiment(
+            quant_score=quant_arr,
+            sentiment_signal_norm=sentiment_arr,
+            macro_signal_norm=macro_arr,
+            weights=fusion_weights,
+            signal_active=active_arr,
+        )
 
         score_deltas = [
             float(final_score_sentiment) - float(final_score)
@@ -1318,6 +1344,16 @@ def main(argv: list[str] | None = None) -> int:
     # 3. Persistance dans stock_scores
     saved = aggregator.save_to_db(enriched)
     finished_at = _utc_now_naive()
+
+    # Phase 4.1.c — fingerprints FinBERT actifs sur la fenêtre courante.
+    finbert_fingerprints: list[str] = []
+    try:
+        from event_sentiment.db_io import EventSentimentRepository
+
+        finbert_fingerprints = EventSentimentRepository().get_active_finbert_fingerprints(ref_date)
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        LOGGER.warning("Lecture fingerprints FinBERT impossible (%s)", exc)
+
     _emit_run_summary(
         _build_cli_run_summary(
             config=config,
@@ -1328,6 +1364,7 @@ def main(argv: list[str] | None = None) -> int:
             enriched=enriched,
             started_at=started_at,
             finished_at=finished_at,
+            finbert_fingerprints=finbert_fingerprints,
         )
     )
     LOGGER.info(

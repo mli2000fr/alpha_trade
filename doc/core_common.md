@@ -75,6 +75,40 @@ Migration prévue :
 - `event_sentiment.signal_aggregator` : Phase 4.1.
 - `backtesting.signal_replay` : Phase 6.1.
 
+### Fusion sentiment ternaire (Phase 4.1.a)
+
+`core.conviction` expose désormais aussi la **fusion ternaire** consommée
+par `event_sentiment.signal_aggregator` :
+
+```python
+from core.conviction import SentimentFusionWeights, fuse_sentiment
+
+weights = SentimentFusionWeights(quant_weight=0.75, sentiment_weight=0.15, macro_weight=0.10)
+final = fuse_sentiment(
+    quant_score=0.72,
+    sentiment_signal_norm=0.65,    # signal idiosyncratique normalisé [0,1]
+    macro_signal_norm=0.55,        # signal macro sectoriel normalisé [0,1]
+    weights=weights,
+    signal_active=True,            # False ⇒ composante sentiment neutralisée à 0.5
+)
+```
+
+Formule (réplique stricte historique `signal_aggregator.merge` l. 926-944) :
+
+```
+sent  = sentiment_weight * (sentiment_signal_norm if signal_active else 0.5)
+macro = macro_weight     * macro_signal_norm
+quant = quant_weight     * quant_score
+final = clip(quant + sent + macro, 0.0, 1.0)
+```
+
+Accepte scalaires ou arrays (broadcast NumPy). Validations
+`SentimentFusionWeights` :
+- somme ≈ 1.0 (tolérance `1e-4`) ;
+- aucun poids négatif.
+
+Migration `signal_aggregator` → cet API : Phase 4.1.b.
+
 ## `core/filter_profiles.py` — Profils partagés
 
 Centralise `STRICT_SWING_CASH_FILTERS` et autres profils partagés entre

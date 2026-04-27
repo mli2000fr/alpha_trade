@@ -18,6 +18,11 @@ class FakePickleableCatBoostModel:
 		p = np.clip(np.asarray(X["daily_return"], dtype=float), 0.05, 0.95)
 		return np.column_stack([1.0 - p, p])
 
+	def save_model(self, path: str) -> None:
+		# Phase 4.2.c — format natif CatBoost (.cbm)
+		with open(path, "w", encoding="utf-8") as fh:
+			fh.write("# fake CatBoost model (.cbm test fixture)\n")
+
 
 def _prepared_df(n: int = 120) -> pd.DataFrame:
 	x = np.linspace(0.0, 1.0, n)
@@ -106,7 +111,10 @@ def test_run_catboost_baseline_can_persist_local_artifacts(monkeypatch, tmp_path
 	result = run_catboost_baseline(_prepared_df(), cfg, artifact_dir=tmp_path)
 
 	assert result["inference_backend"] == "catboost_tabular"
-	assert result["artifact_paths"]["model_path"].endswith("catboost_model.pkl")
-	assert (tmp_path / "catboost_model.pkl").exists()
+	# Phase 4.2.c — format natif (.cbm)
+	assert result["artifact_paths"]["model_path"].endswith("catboost_model.cbm")
+	assert result["artifact_paths"]["model_format"] == "cbm"
+	assert (tmp_path / "catboost_model.cbm").exists()
+	assert not (tmp_path / "catboost_model.pkl").exists()
 
 

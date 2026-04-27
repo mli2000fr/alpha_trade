@@ -23,6 +23,7 @@ class EventSentimentPipeline:
             model_version=config.finbert_model_version,
             batch_size=config.finbert_batch_size,
             max_length=config.finbert_max_length,
+            model_revision=getattr(config, "finbert_model_revision", None),
         )
         self.macro_engine = MacroRuleEngine(rule_version=config.macro_rule_version)
 
@@ -214,6 +215,7 @@ class EventSentimentPipeline:
 
         sentiment_records = self.finbert.score_articles(articles)
         stats["sentiment_inferred"] = self.repository.upsert_news_sentiment([asdict(record) for record in sentiment_records])
+        stats["finbert_model_fingerprint"] = getattr(self.finbert, "model_fingerprint", None)
         sentiment_map = {record.article_id: record for record in sentiment_records}
         impacted_trade_dates = sorted(
             {

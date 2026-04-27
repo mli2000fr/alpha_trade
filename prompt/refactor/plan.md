@@ -167,21 +167,22 @@ concrète au lieu d'un Protocol.
 ## Phase 4 — ML & signaux (≤ 2 semaines)
 
 ### 4.1 — `event_sentiment/` (réf. `audit_event_sentiment.md`)
-- [ ] Versionner FinBERT (sha de checkpoint + champ `model_fingerprint`).
-- [ ] Migrer `signal_aggregator` vers `core/conviction.py`.
-- [ ] Documenter sources (Alpaca News unique).
+- [x] Versionner FinBERT (sha de checkpoint + champ `model_fingerprint`). _(4.1.c)_
+- [x] Migrer `signal_aggregator` vers `core/conviction.py`. _(4.1.a + 4.1.b)_
+- [x] Documenter sources (Alpaca News unique). _(4.1.c — `doc/event_sentiment.md`)_
 
 ### 4.2 — `modelFactory/` (réf. `audit_modelFactory.md`)
-- [ ] **Migrer LightGBM/CatBoost vers format natif** (`save_model`),
-      déprécier `pickle`.
-- [ ] **Fingerprint features SHA256** dans `config.json` du modèle.
-- [ ] Activer `--walkforward` par défaut (déjà fait IHM, à matérialiser CLI).
-- [ ] **Quarantaine champion** : `--champion-min-runs N`,
-      `--champion-min-days N`.
-- [ ] Persistance `metrics.json` BLOB DB pour les champions.
-- [ ] Cache modèles dans le predictor (évite recharge complète).
-- [ ] Garde-fou anti-leak `--ml-mode rebuild-missing`.
-- [ ] Découper `trainer.py` (`train_symbol` en sous-fonctions).
+- [x] **Migrer LightGBM/CatBoost vers format natif** (`save_model`),
+      déprécier `pickle`. _(4.2.c)_
+- [x] **Fingerprint features SHA256** dans `config.json` du modèle. _(4.2.b)_
+- [x] Activer `--walkforward` par défaut (déjà fait IHM, à matérialiser CLI). _(4.2.g)_
+- [x] **Quarantaine champion** : `--champion-min-runs N`,
+      `--champion-min-days N`. _(4.2.e)_
+- [x] Persistance `metrics.json` BLOB DB pour les champions. _(4.2.f — table `model_metrics_full`)_
+- [x] Cache modèles dans le predictor (évite recharge complète). _(4.2.d — `_ModelCache` + `clear_model_cache`)_
+- [x] Garde-fou anti-leak `--ml-mode rebuild-missing`. _(4.2.g)_
+- [x] Découper `trainer.py` (`train_symbol` en sous-fonctions). _(4.2.a)_
+- [x] `run_summary` ML standardisé (`feature_fingerprint`, `champion_quarantine`, `schema_version`). _(4.2.h)_
 
 **Critère de sortie** : aucun artefact `.pkl` produit en sortie ; champions
 gouvernés (run-min + days-min).

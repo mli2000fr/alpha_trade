@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
+from common.utils import configure_root_logging
+from core.run_summary import attach_schema_version
 from database.connection import get_sqlalchemy_engine
 from modelFactory.config import (
     BaselineConfig,
@@ -18,10 +23,11 @@ from modelFactory.config import (
     TrainingConfig,
     WalkForwardConfig,
 )
-from common.utils import configure_root_logging
 
 
 LOGGER = logging.getLogger(__name__)
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -53,8 +59,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--calibration-method", type=str, default="none", choices=["none", "platt"])
     p.add_argument("--calibration-min-samples", type=int, default=64)
     p.add_argument("--calibration-max-iter", type=int, default=100)
-    p.add_argument("--walkforward", action="store_true", default=False,
-                   help="Active une évaluation walk-forward avant l'entraînement final")
+    # Phase 4.2.g — walk-forward actif PAR DÉFAUT (BooleanOptionalAction).
+    p.add_argument(
+        "--walkforward",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Active une évaluation walk-forward avant l'entraînement final (défaut: ON Phase 4.2.g)",
+    )
+    p.add_argument(
+        "--ml-mode",
+        type=str,
+        default="rebuild-all",
+        choices=list(ML_MODES),
+        help="Stratégie d'entraînement (Phase 4.2.g) : rebuild-all | rebuild-missing | refresh-stale",
+    )
     p.add_argument("--wf-min-train-size", type=int, default=504)
     p.add_argument("--wf-val-size", type=int, default=126)
     p.add_argument("--wf-test-size", type=int, default=126)
@@ -74,6 +92,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    choices=["lstm_attention", "lightgbm", "catboost", "global_model"])
     p.add_argument("--champion-selection-metric", type=str, default="selection_score",
                    choices=["selection_score", "business_score", "auc"])
+    # Phase 4.2.e — Quarantaine champion.
+    p.add_argument("--champion-min-runs", type=int, default=0,
+                   help="Nb min de runs walk-forward complétés avant qu'un nouveau champion soit servi")
+    p.add_argument("--champion-min-days", type=int, default=0,
+                   help="Nb min de jours d'observation avant qu'un nouveau champion soit servi")
     p.add_argument("--lgbm-max-depth", type=int, default=4)
     p.add_argument("--lgbm-n-estimators", type=int, default=200)
     p.add_argument("--lgbm-learning-rate", type=float, default=0.05)
@@ -157,6 +180,8 @@ def main(args: list[str] | None = None) -> None:
             allow_auto_selection=opts.select_champion,
             default_champion=opts.default_champion,
             selection_metric=opts.champion_selection_metric,
+            min_runs=int(opts.champion_min_runs),
+            min_days=int(opts.champion_min_days),
         ),
         target_optimization=TargetOptimizationConfig(
             enabled=opts.optimize_target,
@@ -179,16 +204,38 @@ def main(args: list[str] | None = None) -> None:
 
     engine = get_sqlalchemy_engine()
 
+    started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    run_id = f"model-factory-{started_at.strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+
     if opts.mode == "train":
         from modelFactory.orchestrator import run_training_batch
-        results = run_training_batch(cfg, engine, symbols=opts.symbols)
+        results = run_training_batch(cfg, engine, symbols=opts.symbols, mode=opts.ml_mode)
         completed = sum(1 for r in results if r.status == "completed")
         skipped = sum(1 for r in results if r.status == "skipped")
         failed = sum(1 for r in results if r.status == "failed")
+        quarantined = sum(
+            1 for r in results
+            if isinstance(getattr(r, "metrics", None), dict)
+            and r.metrics.get("champion_quarantine") is True
+        )
         print(f"\n{'=' * 60}")
         print(f"  Model Factory — Training Summary")
         print(f"  Completed: {completed}  Skipped: {skipped}  Failed: {failed}")
         print(f"{'=' * 60}")
+        finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        _emit_run_summary(_build_run_summary(
+            mode="train",
+            run_id=run_id,
+            opts=opts,
+            cfg=cfg,
+            started_at=started_at,
+            finished_at=finished_at,
+            symbols_total=len(opts.symbols or []) or len(results),
+            completed=completed,
+            skipped=skipped,
+            failed=failed,
+            quarantined=quarantined,
+        ))
 
     elif opts.mode == "predict":
         from modelFactory.db_registry import load_candidate_symbols
@@ -200,3 +247,68 @@ def main(args: list[str] | None = None) -> None:
         print(f"{'=' * 60}")
         if not preds.empty:
             print(preds.to_string(index=False))
+        finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        _emit_run_summary(_build_run_summary(
+            mode="predict",
+            run_id=run_id,
+            opts=opts,
+            cfg=cfg,
+            started_at=started_at,
+            finished_at=finished_at,
+            symbols_total=len(symbols),
+            completed=int(len(preds)),
+            skipped=max(0, len(symbols) - int(len(preds))),
+            failed=0,
+            quarantined=0,
+        ))
+
+
+# ---------------------------------------------------------------------------
+# Phase 4.2.h — run_summary ML standardisé.
+# ---------------------------------------------------------------------------
+
+def _emit_run_summary(summary: dict[str, object]) -> None:
+    print(
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+        flush=True,
+    )
+
+
+def _build_run_summary(
+    *,
+    mode: str,
+    run_id: str,
+    opts: argparse.Namespace,
+    cfg: TrainingConfig,
+    started_at: datetime,
+    finished_at: datetime,
+    symbols_total: int,
+    completed: int,
+    skipped: int,
+    failed: int,
+    quarantined: int,
+) -> dict[str, object]:
+    from modelFactory.features import fingerprint as compute_feature_fingerprint
+    feature_fp = compute_feature_fingerprint(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
+    payload: dict[str, object] = {
+        "run_id": run_id,
+        "mode": mode,
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "walkforward_enabled": bool(getattr(opts, "walkforward", False)),
+        "ml_mode": str(getattr(opts, "ml_mode", "rebuild-all")),
+        "feature_fingerprint": feature_fp,
+        "champion_min_runs": int(getattr(opts, "champion_min_runs", 0)),
+        "champion_min_days": int(getattr(opts, "champion_min_days", 0)),
+        "symbols_total": int(symbols_total),
+        "symbols_completed": int(completed),
+        "symbols_skipped": int(skipped),
+        "symbols_failed": int(failed),
+        "symbols_quarantined": int(quarantined),
+    }
+    return attach_schema_version(payload, version=1)

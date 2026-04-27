@@ -47,6 +47,9 @@ def run_catboost_baseline(
 			verbose=False,
 		),
 		artifact_dir=artifact_dir,
+		# Phase 4.2.c — format natif CatBoost (.cbm). Plus de pickle.
+		save_callback=lambda model, path: model.save_model(str(path)),
+		model_extension=".cbm",
 	)
 
 
