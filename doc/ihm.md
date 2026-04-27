@@ -533,3 +533,77 @@ Ordre conseillé pour un usage opérateur :
 python run.py
 ```
 
+
+
+---
+
+## Phase 6.2 (refactor) — sécurité & cycle de vie IHM
+
+### Cache obligatoire des requêtes DB
+
+Toutes les fonctions publiques de `ihm/services/queries.py` qui touchent la
+DB sont décorées `@st.cache_data(ttl=60, show_spinner=False)`. Les pages ne
+doivent **jamais** appeler `safe_query` / `safe_scalar` directement pour de
+la lecture répétitive : passer par `queries.py` ou ajouter un nouveau helper
+caché.
+
+### Hook `atexit` + rotation des artefacts (`process_registry`)
+
+`ihm.services.process_registry` enregistre automatiquement deux comportements
+au premier import :
+
+1. `atexit.register(_atexit_kill_all_children)` : lorsque Streamlit s'arrête
+   (Ctrl-C, fermeture de la fenêtre PowerShell), les sous-processus enfants
+   et workflows actifs sont **tués** (`taskkill /T /F` sur Windows). Plus
+   d'orphelins.
+2. `rotate_pipeline_artifacts()` : purge les runs et dossiers
+   `artifacts/ihm_pipeline_runs/<step>/<run_id>/` plus vieux que
+   `IHM_RUNS_RETENTION_DAYS` (défaut **30 jours**). Configurable via env.
+
+Audit shell quoting : `subprocess.Popen(command, ...)` est appelé sur une
+`list[str]` **sans** `shell=True`. Aucune interpolation shell n'a lieu, donc
+pas d'injection possible via les options IHM (les valeurs passent en
+arguments distincts).
+
+### Sécurité réseau (`ihm.services.security`)
+
+Trois variables d'environnement opt-in :
+
+| Variable | Effet |
+|---|---|
+| `IHM_AUTH_TOKEN` | Active une *gate* d'authentification basique (token partagé saisi à la connexion). Tant que le token n'est pas validé, l'IHM affiche uniquement le formulaire (`render_auth_gate`). |
+| `IHM_REQUIRE_LOCALHOST` | Si `1/true/yes/on`, affiche une erreur sidebar quand `STREAMLIT_SERVER_ADDRESS` n'est pas `localhost`/`127.0.0.1`/`::1`. |
+| `IHM_RUNS_RETENTION_DAYS` | Rétention rotation artefacts (défaut 30). |
+
+Sans `IHM_AUTH_TOKEN` et sans bind localhost, une bannière d'avertissement
+apparaît automatiquement (`render_security_banner`).
+
+### Démarrer l'IHM en mode "production locale"
+
+```powershell
+$env:IHM_AUTH_TOKEN = "<token-fort>"
+$env:IHM_REQUIRE_LOCALHOST = "1"
+$env:IHM_RUNS_RETENTION_DAYS = "30"
+python -m streamlit run ihm/app.py --server.address=localhost --server.port=8501
+```
+
+### Test contractuel IHM ↔ CLI
+
+`tests/test_ihm_cli_contract.py` introspecte chaque
+`PipelineStepDefinition`, construit la commande via
+`build_pipeline_command(...)` et vérifie que **chaque flag `--xxx` est
+reconnu par l'`argparse` du CLI cible**. Si quelqu'un supprime un flag CLI
+ou ajoute un flag IHM sans backend correspondant, la suite casse :
+
+```powershell
+python -m pytest tests/test_ihm_cli_contract.py --no-cov -q
+```
+
+### Tests Phase 6.2
+
+```powershell
+python -m pytest `
+  tests/test_ihm_cli_contract.py `
+  tests/test_ihm_security.py `
+  tests/test_ihm_process_registry_rotation.py --no-cov -q
+```

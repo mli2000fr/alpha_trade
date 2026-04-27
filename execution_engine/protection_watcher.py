@@ -411,6 +411,33 @@ class ProtectionWatcherService:
     ) -> dict[str, Any]:
         started_at = datetime.now()
         service_run_id = f"watch-service-{build_run_id()}"
+
+        # Phase 6.3 — leader election best-effort via execution_locks.
+        # Préfixe `watcher:` pour distinguer du lock executor (Phase 1.2).
+        # ttl = 4× heartbeat_interval pour absorber GC pauses sans relâcher le lock.
+        leader_lock_account = f"watcher:{account_id or 'default'}"
+        leader_ttl_seconds = max(int(self._cfg.heartbeat_interval_seconds * 4), 60)
+        leader_acquired = False
+        try:
+            leader_acquired = self._watcher._repo.acquire_execution_lock(
+                account_id=leader_lock_account,
+                exec_run_id=service_run_id,
+                ttl_seconds=leader_ttl_seconds,
+            )
+        except Exception:
+            LOGGER.debug("Leader election watcher: échec acquisition lock (table absente ?), continue.", exc_info=True)
+            leader_acquired = True  # best-effort : pas de lock → on n'empêche pas le run.
+        if not leader_acquired:
+            LOGGER.warning(
+                "Watcher protections : un autre leader est déjà actif pour account_id=%s (lock=%s).",
+                account_id, leader_lock_account,
+            )
+            return {
+                "status": "LEADER_LOCK_HELD",
+                "service_scope": exec_run_id or account_id or "all",
+                "leader_lock_account": leader_lock_account,
+            }
+
         last_heartbeat = self._monotonic()
         metrics: dict[str, Any] = {
             "status": "RUNNING",
@@ -566,6 +593,15 @@ class ProtectionWatcherService:
             limit=limit,
         )
         emit_run_summary(summary)
+        # Phase 6.3 — release leader lock (best-effort).
+        try:
+            self._watcher._repo.release_execution_lock(
+                account_id=leader_lock_account,
+                exec_run_id=service_run_id,
+            )
+        except Exception:
+            LOGGER.debug("release_execution_lock watcher: erreur ignorée", exc_info=True)
+        summary["leader_lock_account"] = leader_lock_account
         return summary
 
     @staticmethod

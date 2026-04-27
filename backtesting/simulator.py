@@ -37,8 +37,13 @@ class BacktestConfig:
     trailing_stop_pct: float = 0.05
     max_positions: int = 20
 
-    # Frais de transaction (slippage simulé)
+    # Frais de transaction (Phase 6.1.b)
+    # ``fees_pct`` reste le scalaire effectif appliqué par l'engine
+    # (= commission + slippage / 10_000). ``commission_bps`` et
+    # ``slippage_bps`` sont conservés pour la traçabilité et le run_summary.
     fees_pct: float = 0.001  # 10 bps
+    commission_bps: float = 5.0
+    slippage_bps: float = 5.0
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
     execution_timing: str = "next_open"
 

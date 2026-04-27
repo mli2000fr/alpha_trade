@@ -13,7 +13,9 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from risk_management.conviction import compute_conviction
+# Phase 6.1.a — fusion conviction unifiée via core.conviction
+# (auparavant : risk_management.conviction, désormais déprécié).
+from core.conviction import ConvictionWeights, fuse
 
 LOGGER = logging.getLogger(__name__)
 
@@ -103,13 +105,18 @@ def replay_signals(
     else:
         df["predicted_proba"] = np.nan
 
-    # Calculer la conviction
+    # Calculer la conviction (Phase 6.1.a — via core.conviction.fuse)
+    conviction_weights = ConvictionWeights(
+        score_weight=score_weight,
+        prediction_weight=prediction_weight,
+    )
     df["conviction"] = df.apply(
-        lambda r: compute_conviction(
-            r["score"],
-            r["predicted_proba"] if pd.notna(r["predicted_proba"]) else None,
-            score_weight,
-            prediction_weight,
+        lambda r: fuse(
+            quant_score=float(r["score"]) if pd.notna(r["score"]) else 0.0,
+            predicted_proba=(
+                float(r["predicted_proba"]) if pd.notna(r["predicted_proba"]) else None
+            ),
+            weights=conviction_weights,
         ),
         axis=1,
     )

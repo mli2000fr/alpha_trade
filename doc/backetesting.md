@@ -713,3 +713,100 @@ python -m backtesting backfill-scores-history --start 2025-01-01 --screener-work
 python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode auto --sentiment-mode auto
 ```
 
+
+---
+
+## 11. Phase 6.1 (refactor) — coûts explicites, dividendes, hold-out, profils
+
+### 11.1 Commission & slippage en bps (Phase 6.1.b)
+
+Les frais sont désormais paramétrés en **basis points** (bps) au lieu d'un
+unique taux `--fees`. Défauts : `5 bps` de commission + `5 bps` de slippage
+(soit `10 bps` aller-retour, ≈ `0.10%` par trade).
+
+```powershell
+python -m backtesting run --start 2024-01-01 --end 2025-01-01 `
+  --commission-bps 5 --slippage-bps 5
+```
+
+`--fees` reste accepté pour la rétro-compatibilité mais émet un
+`DeprecationWarning` et écrase `commission_bps`/`slippage_bps`.
+
+Le `report.json` et l'IHM exposent `commission_bps`, `slippage_bps`, `fees_pct`
+(somme convertie) ainsi que `fees` (legacy) dans `params`.
+
+### 11.2 Dividendes encaissés (Phase 6.1.c)
+
+`generate_report` accepte un argument `dividends_received` (somme des
+dividendes touchés sur la période backtestée, lus best-effort depuis
+`corporate_actions_events`). Deux nouveaux champs dans le rapport :
+
+- `dividends_received` (USD)
+- `total_return_with_dividends_pct` = `(equity_final + dividends) / equity_initial − 1`
+
+Si la table `corporate_actions_events` est indisponible (env de test, DB non
+provisionnée), on retombe à `0.0` sans bloquer le run.
+
+### 11.3 Validation hold-out du diagnostic screener (Phase 6.1.d)
+
+Les commandes `screener-diagnostics` et `recommend-screener` acceptent les
+deux nouveaux flags :
+
+```powershell
+python -m backtesting screener-diagnostics `
+  --start 2023-01-01 --end 2025-06-30 `
+  --holdout-train-end 2024-12-31 --holdout-test-end 2025-06-30
+```
+
+Cela calcule, pour chaque scénario screener, le **rang train vs rang test**
+sur le `metric_column` choisi (par défaut
+`portfolio_forward_return_20d`) et émet :
+
+- `holdout_validation_recommendations.csv`
+  (`scenario_name, score_train, score_test, rank_train, rank_test, rank_delta, score_delta`)
+- `holdout_summary.json` (`scenarios_evaluated, stable_top_k_ratio, avg_rank_delta`)
+
+`stable_top_k_ratio = 1.0` ⇒ le top-K est identique entre train et test
+(robuste). `avg_rank_delta` proche de 0 ⇒ classement cohérent. Voir
+`backtesting/screener_diagnostics.py::validate_recommendations_holdout`.
+
+### 11.4 Profils CLI consolidés (Phase 6.1.e)
+
+Trois profils stables exposés via `--profile` :
+
+| Profil | tp | ts | max_positions | commission_bps | slippage_bps | account_type | swing_only |
+|---|---|---|---|---|---|---|---|
+| `strict_swing_cash` | 0.08 | 0.05 | 20 | 5 | 5 | cash | ✅ |
+| `swing_cash_aggressive` | 0.12 | 0.06 | 25 | 5 | 8 | cash | ✅ |
+| `custom` (défaut) | — | — | — | — | — | — | — |
+
+Les flags CLI explicites **prioritent toujours** sur le profil :
+
+```powershell
+python -m backtesting run --start 2024-01-01 --end 2025-01-01 `
+  --profile strict_swing_cash --tp 0.10
+# → tp=0.10 (explicite), ts=0.05 (profil), account_type=cash (profil)
+```
+
+Définition unique : `backtesting/profiles.py::BACKTEST_PROFILES`. Aligne
+`risk/execution` pour ne pas dériver entre live et backtest.
+
+### 11.5 `signal_replay` ↔ `core.conviction` (Phase 6.1.a)
+
+`backtesting/signal_replay.py` consomme désormais
+`core.conviction.fuse(...)` au lieu d'une formule locale. Le payload
+`report.json["params"]["conviction_weights"]` documente la provenance
+(`source = "core.conviction"`, `score_weight = 0.40`,
+`prediction_weight = 0.60`). Cohérent avec `risk_management` (Phase 5.1.b)
+et `event_sentiment.signal_aggregator` (Phase 4.1.a/b).
+
+### 11.6 Tests Phase 6.1
+
+```powershell
+python -m pytest `
+  tests/test_backtesting.py `
+  tests/test_backtesting_profiles.py `
+  tests/test_screener_diagnostics_holdout.py `
+  tests/test_screener_diagnostics.py `
+  tests/test_backfill_scores_history.py --no-cov -q
+```

@@ -1,17 +1,35 @@
-"""Registre global des pipelines lancés en arrière-plan depuis l'IHM."""
+"""Registre global des pipelines lancés en arrière-plan depuis l'IHM.
+
+Phase 6.2 (refactor) :
+- ``atexit`` hook : tue les processus enfants encore actifs si Streamlit est
+  arrêté brutalement (Ctrl-C, fermeture du terminal).
+- Rotation des artefacts : les runs plus vieux que
+  ``IHM_RUNS_RETENTION_DAYS`` (défaut 30 jours) sont purgés au démarrage.
+- Audit shell quoting : ``subprocess.Popen`` est invoqué sur ``list[str]``
+  sans ``shell=True`` ; aucune interpolation shell n'a lieu.
+"""
 from __future__ import annotations
 
+import atexit
 import json
+import logging
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
+
+LOGGER = logging.getLogger(__name__)
+
+# Phase 6.2 — rétention configurable via env (défaut 30 jours).
+RUNS_RETENTION_ENV = "IHM_RUNS_RETENTION_DAYS"
+DEFAULT_RUNS_RETENTION_DAYS = 30
 
 from ihm.services.pipeline_runner import (
     PROJECT_ROOT,
@@ -797,4 +815,118 @@ def build_log_download_name(run_id: str, stream: Literal["stdout", "stderr", "al
     record = get_pipeline_run_record(run_id)
     step_key = str(record.get("step_key", "pipeline")) if record else "pipeline"
     return f"{step_key}_{run_id}_{stream}.log"
+
+
+# ---------------------------------------------------------------------------
+# Phase 6.2 — atexit hook + rotation artefacts.
+# ---------------------------------------------------------------------------
+
+def _retention_days() -> int:
+    raw = os.getenv(RUNS_RETENTION_ENV)
+    if not raw:
+        return DEFAULT_RUNS_RETENTION_DAYS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        LOGGER.warning("%s='%s' invalide, fallback %d", RUNS_RETENTION_ENV, raw, DEFAULT_RUNS_RETENTION_DAYS)
+        return DEFAULT_RUNS_RETENTION_DAYS
+    return max(value, 1)
+
+
+def rotate_pipeline_artifacts(retention_days: int | None = None) -> dict[str, int]:
+    """Purge les runs plus vieux que ``retention_days`` jours.
+
+    Retourne ``{"removed_runs": N, "removed_dirs": M, "retention_days": D}``.
+    Idempotent : peut être appelé plusieurs fois sans effet de bord.
+    """
+    days = retention_days if retention_days is not None else _retention_days()
+    cutoff = datetime.now() - timedelta(days=days)
+    removed_runs = 0
+    removed_dirs = 0
+
+    # 1) Purge l'index : on conserve uniquement les runs plus récents.
+    with _REGISTRY_LOCK:
+        index = _read_history_index()
+        keep: dict[str, dict[str, object]] = {}
+        for run_id, payload in index.items():
+            ts_str = str(payload.get("finished_at") or payload.get("executed_at") or "")
+            try:
+                ts = datetime.fromisoformat(ts_str) if ts_str else None
+            except ValueError:
+                ts = None
+            if ts is None or ts >= cutoff:
+                keep[run_id] = payload
+            else:
+                removed_runs += 1
+        if removed_runs:
+            _write_history_index(keep)
+
+    # 2) Purge les répertoires orphelins/anciens dans artifacts/ihm_pipeline_runs/<step>/<run_id>/.
+    if RUNS_DIR.exists():
+        for step_dir in RUNS_DIR.iterdir():
+            if not step_dir.is_dir():
+                continue
+            for run_dir in step_dir.iterdir():
+                if not run_dir.is_dir():
+                    continue
+                try:
+                    mtime = datetime.fromtimestamp(run_dir.stat().st_mtime)
+                except OSError:
+                    continue
+                if mtime < cutoff:
+                    try:
+                        shutil.rmtree(run_dir, ignore_errors=True)
+                        removed_dirs += 1
+                    except OSError:
+                        LOGGER.exception("rotate_pipeline_artifacts: échec suppression %s", run_dir)
+
+    if removed_runs or removed_dirs:
+        LOGGER.info(
+            "rotate_pipeline_artifacts | retention_days=%d removed_runs=%d removed_dirs=%d",
+            days, removed_runs, removed_dirs,
+        )
+    return {"removed_runs": removed_runs, "removed_dirs": removed_dirs, "retention_days": days}
+
+
+def _atexit_kill_all_children() -> None:
+    """Hook ``atexit`` : tue les sous-processus encore actifs (Phase 6.2)."""
+    try:
+        with _REGISTRY_LOCK:
+            active = list(_ACTIVE_RUNS.values())
+            workflows = list(_ACTIVE_WORKFLOWS.values())
+        for managed in active:
+            try:
+                _kill_process_tree(managed.process)
+            except Exception:
+                LOGGER.debug("atexit: échec kill run %s", managed.record.run_id, exc_info=True)
+        for wf in workflows:
+            try:
+                wf.stop_event.set()
+            except Exception:
+                pass
+    except Exception:
+        # ne JAMAIS lever depuis atexit
+        LOGGER.debug("atexit_kill_all_children: erreur ignorée", exc_info=True)
+
+
+# Activation du hook atexit + rotation au premier import (idempotent grâce aux flags).
+_ATEXIT_REGISTERED = False
+_ROTATION_RAN = False
+
+
+def _ensure_lifecycle_hooks() -> None:
+    global _ATEXIT_REGISTERED, _ROTATION_RAN
+    if not _ATEXIT_REGISTERED:
+        atexit.register(_atexit_kill_all_children)
+        _ATEXIT_REGISTERED = True
+    if not _ROTATION_RAN:
+        try:
+            rotate_pipeline_artifacts()
+        except Exception:
+            LOGGER.debug("rotate_pipeline_artifacts initial: erreur ignorée", exc_info=True)
+        _ROTATION_RAN = True
+
+
+_ensure_lifecycle_hooks()
+
 

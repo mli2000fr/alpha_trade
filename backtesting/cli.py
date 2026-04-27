@@ -46,7 +46,31 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--tp", type=float, default=0.08, help="Take-profit %% (défaut 0.08)")
     run_p.add_argument("--ts", type=float, default=0.05, help="Trailing stop %% (défaut 0.05)")
     run_p.add_argument("--max-positions", type=int, default=20, help="Positions max simultanées")
-    run_p.add_argument("--fees", type=float, default=0.001, help="Frais par trade (défaut 0.1%%)")
+    run_p.add_argument(
+        "--fees",
+        type=float,
+        default=None,
+        help="DÉPRÉCIÉ — utiliser --commission-bps + --slippage-bps. "
+        "Conservé pour rétro-compat : si fourni, écrase commission/slippage.",
+    )
+    run_p.add_argument(
+        "--commission-bps",
+        type=float,
+        default=5.0,
+        help="Commission par trade en bps (défaut: 5.0 = 5bps).",
+    )
+    run_p.add_argument(
+        "--slippage-bps",
+        type=float,
+        default=5.0,
+        help="Slippage simulé par trade en bps (défaut: 5.0 = 5bps).",
+    )
+    run_p.add_argument(
+        "--profile",
+        choices=["strict_swing_cash", "swing_cash_aggressive", "custom"],
+        default="custom",
+        help="Profil consolidé (Phase 6.1.e). Les flags CLI explicites overridrent toujours.",
+    )
     run_p.add_argument(
         "--account-type",
         choices=["margin", "cash"],
@@ -152,6 +176,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default="artifacts/screener_diagnostics",
         help="Répertoire cible pour les CSV/JSON diagnostics",
     )
+    diag_p.add_argument(
+        "--holdout-train-end",
+        default=None,
+        help="Phase 6.1.d — fin de la fenêtre d'entraînement (YYYY-MM-DD). Active la validation hold-out.",
+    )
+    diag_p.add_argument(
+        "--holdout-test-end",
+        default=None,
+        help="Phase 6.1.d — fin de la fenêtre de test (YYYY-MM-DD).",
+    )
 
     # --- recommend-screener ---
     recommend_p = sub.add_parser(
@@ -188,6 +222,16 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=20,
         help="Horizon forward prioritaire pour l'analyse du compromis (défaut: 20)",
+    )
+    recommend_p.add_argument(
+        "--holdout-train-end",
+        default=None,
+        help="Phase 6.1.d — fin de la fenêtre d'entraînement (YYYY-MM-DD). Active la validation hold-out.",
+    )
+    recommend_p.add_argument(
+        "--holdout-test-end",
+        default=None,
+        help="Phase 6.1.d — fin de la fenêtre de test (YYYY-MM-DD).",
     )
 
     calibrate_p = sub.add_parser(
@@ -239,6 +283,27 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _explicit_flags(argv: list[str]) -> set[str]:
+    """Retourne les noms d'attributs argparse explicitement passés sur la ligne de commande."""
+    explicit: set[str] = set()
+    mapping = {
+        "--tp": "tp",
+        "--ts": "ts",
+        "--max-positions": "max_positions",
+        "--commission-bps": "commission_bps",
+        "--slippage-bps": "slippage_bps",
+        "--account-type": "account_type",
+        "--pdt-rule": "pdt_rule",
+        "--swing-only": "swing_only",
+        "--fees": "fees",
+    }
+    for token in argv:
+        key = token.split("=", 1)[0]
+        if key in mapping:
+            explicit.add(mapping[key])
+    return explicit
+
+
 def _run_backtest(args: argparse.Namespace) -> None:
     """Exécute le backtest complet."""
     from datetime import datetime
@@ -249,14 +314,34 @@ def _run_backtest(args: argparse.Namespace) -> None:
     from backtesting.signal_replay import replay_signals
     from backtesting.trading_constraints import TradingConstraintConfig
     from backtesting.simulator import BacktestConfig, BacktestEngine
+    from backtesting.profiles import apply_profile
     from backtesting.report import (
         extract_diagnostics,
         generate_report,
+        load_dividends_received,
         save_equity_curve,
         save_equity_curve_csv,
         save_report_json,
         save_trades_csv,
     )
+
+    # Phase 6.1.e — appliquer le profil avant tout (sans écraser les flags explicites).
+    explicit_flags = _explicit_flags(sys.argv[1:])
+    apply_profile(args, getattr(args, "profile", None), explicit_flags=explicit_flags)
+
+    # Phase 6.1.b — gestion --fees (déprécié) vs commission/slippage_bps.
+    if args.fees is not None:
+        import warnings as _warnings
+        _warnings.warn(
+            "--fees est déprécié (Phase 6.1.b). Utiliser --commission-bps + --slippage-bps.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # Convertit fees pct (ex 0.001 = 10bps) en bps total côté commission.
+        total_bps = float(args.fees) * 10_000.0
+        args.commission_bps = total_bps
+        args.slippage_bps = 0.0
+    fees_pct = (float(args.commission_bps) + float(args.slippage_bps)) / 10_000.0
 
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
     end = datetime.strptime(args.end, "%Y-%m-%d").date()
@@ -340,7 +425,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
         profit_taker_pct=args.tp,
         trailing_stop_pct=args.ts,
         max_positions=args.max_positions,
-        fees_pct=args.fees,
+        fees_pct=fees_pct,
+        commission_bps=float(args.commission_bps),
+        slippage_bps=float(args.slippage_bps),
         trading_constraints=trading_constraints,
     )
     bt_engine = BacktestEngine(bt_config)
@@ -350,12 +437,52 @@ def _run_backtest(args: argparse.Namespace) -> None:
     )
     diagnostics = extract_diagnostics(pf)
 
+    # Phase 6.1.c — dividendes encaissés (best-effort, fallback 0.0 si DB indispo).
+    dividends_received = load_dividends_received(start, end, engine=engine)
+
     # 5. Rapport
-    report = generate_report(pf, args.equity)
+    report = generate_report(pf, args.equity, dividends_received=dividends_received)
     report.print_summary()
 
     output_dir = Path(args.output_dir) if args.output_dir else None
     artifact_paths: dict[str, str] = {}
+
+    common_params: dict[str, object] = {
+        "start": args.start,
+        "end": args.end,
+        "equity": args.equity,
+        "tp": args.tp,
+        "ts": args.ts,
+        "max_positions": args.max_positions,
+        # Phase 6.1.b — costs/slippage explicites + rétro-compat fees.
+        "commission_bps": float(args.commission_bps),
+        "slippage_bps": float(args.slippage_bps),
+        "fees_pct": fees_pct,
+        "fees": args.fees,  # legacy : conserve la valeur fournie (None si absent).
+        # Phase 6.1.e — profil utilisé.
+        "profile": getattr(args, "profile", "custom"),
+        # Phase 6.1.a — fusion conviction unifiée via core.conviction.
+        "conviction_weights": {
+            "source": "core.conviction",
+            "score_weight": 0.40,
+            "prediction_weight": 0.60,
+        },
+        # Phase 6.1.c — dividendes encaissés.
+        "dividends_received": float(dividends_received),
+        "account_type": trading_constraints.account_type,
+        "pdt_rule": trading_constraints.pdt_rule,
+        "effective_pdt_rule": trading_constraints.effective_pdt_rule,
+        "swing_only": trading_constraints.swing_only,
+        "sentiment_lookback": args.sentiment_lookback,
+        "ml_mode": args.ml_mode,
+        "sentiment_mode": args.sentiment_mode,
+        "artifacts_dir": args.artifacts_dir,
+        "score_column": args.score_column,
+        "walk_forward_artifacts_dir": args.walk_forward_artifacts_dir,
+        "execution_timing": bt_config.execution_timing,
+        "entry_price_source": "next_session_open",
+        "no_save": args.no_save,
+    }
 
     if output_dir is not None:
         _safe_print("📝 Sauvegarde du rapport structuré...")
@@ -365,28 +492,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             report,
             output_dir=output_dir,
             artifacts=artifact_paths,
-            params={
-                "start": args.start,
-                "end": args.end,
-                "equity": args.equity,
-                "tp": args.tp,
-                "ts": args.ts,
-                "max_positions": args.max_positions,
-                "fees": args.fees,
-                "account_type": trading_constraints.account_type,
-                "pdt_rule": trading_constraints.pdt_rule,
-                "effective_pdt_rule": trading_constraints.effective_pdt_rule,
-                "swing_only": trading_constraints.swing_only,
-                "sentiment_lookback": args.sentiment_lookback,
-                "ml_mode": args.ml_mode,
-                "sentiment_mode": args.sentiment_mode,
-                "artifacts_dir": args.artifacts_dir,
-                "score_column": args.score_column,
-                "walk_forward_artifacts_dir": args.walk_forward_artifacts_dir,
-                "execution_timing": bt_config.execution_timing,
-                "entry_price_source": "next_session_open",
-                "no_save": args.no_save,
-            },
+            params=common_params,
             diagnostics=diagnostics,
         )
         artifact_paths["report_json"] = str(report_json_path)
@@ -408,28 +514,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 report,
                 output_dir=output_dir,
                 artifacts=artifact_paths,
-                params={
-                    "start": args.start,
-                    "end": args.end,
-                    "equity": args.equity,
-                    "tp": args.tp,
-                    "ts": args.ts,
-                    "max_positions": args.max_positions,
-                    "fees": args.fees,
-                    "account_type": trading_constraints.account_type,
-                    "pdt_rule": trading_constraints.pdt_rule,
-                    "effective_pdt_rule": trading_constraints.effective_pdt_rule,
-                    "swing_only": trading_constraints.swing_only,
-                    "sentiment_lookback": args.sentiment_lookback,
-                    "ml_mode": args.ml_mode,
-                    "sentiment_mode": args.sentiment_mode,
-                    "artifacts_dir": args.artifacts_dir,
-                    "score_column": args.score_column,
-                    "walk_forward_artifacts_dir": args.walk_forward_artifacts_dir,
-                    "execution_timing": bt_config.execution_timing,
-                    "entry_price_source": "next_session_open",
-                    "no_save": args.no_save,
-                },
+                params=common_params,
                 diagnostics=diagnostics,
             )
 
@@ -494,6 +579,7 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         ScreenerDiagnosticsService,
         build_screener_grid_scenarios,
         build_screener_oat_scenarios,
+        export_holdout_validation,
         export_screener_objective_recommendations,
         export_screener_regime_recommendations,
         export_screener_recommendations,
@@ -501,6 +587,7 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
         recommend_screener_scenarios_by_objective,
         recommend_screener_scenarios_by_regime,
         recommend_screener_scenarios,
+        validate_recommendations_holdout,
     )
     from event_sentiment.signal_aggregator import SentimentBoostConfig
     from risk_management.config import RiskConfig
@@ -591,6 +678,23 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
                 args.output_dir,
             )
         )
+
+    # Phase 6.1.d — validation hold-out optionnelle.
+    if getattr(args, "holdout_train_end", None) and getattr(args, "holdout_test_end", None):
+        holdout_df, holdout_summary = validate_recommendations_holdout(
+            result.daily_metrics,
+            train_end=args.holdout_train_end,
+            test_end=args.holdout_test_end,
+        )
+        if not holdout_df.empty:
+            artifacts.update(export_holdout_validation(holdout_df, holdout_summary, args.output_dir))
+            _safe_print(
+                "Hold-out (Phase 6.1.d) : {} scénarios, top_k_stable_ratio={:.2f}, avg_rank_delta={:+.2f}".format(
+                    holdout_summary.get("scenarios_evaluated"),
+                    float(holdout_summary.get("stable_top_k_ratio", 0.0)),
+                    float(holdout_summary.get("avg_rank_delta", 0.0)),
+                )
+            )
 
     _safe_print("✅ Diagnostic terminé")
     _safe_print(f"   Séances évaluées    : {len(result.trading_dates)}")
@@ -769,6 +873,7 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
     import pandas as pd
 
     from backtesting.screener_diagnostics import (
+        export_holdout_validation,
         export_screener_objective_recommendations,
         export_screener_recommendations,
         export_screener_regime_recommendations,
@@ -776,6 +881,7 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
         recommend_screener_scenarios,
         recommend_screener_scenarios_by_regime,
         summarize_screener_diagnostics_by_regime,
+        validate_recommendations_holdout,
     )
 
     input_dir = Path(args.input_dir)
@@ -836,6 +942,23 @@ def _run_screener_recommendation(args: argparse.Namespace) -> None:
                 output_dir,
             )
         )
+
+    # Phase 6.1.d — validation hold-out optionnelle.
+    if getattr(args, "holdout_train_end", None) and getattr(args, "holdout_test_end", None) and not daily_df.empty:
+        holdout_df, holdout_summary = validate_recommendations_holdout(
+            daily_df,
+            train_end=args.holdout_train_end,
+            test_end=args.holdout_test_end,
+        )
+        if not holdout_df.empty:
+            artifacts.update(export_holdout_validation(holdout_df, holdout_summary, output_dir))
+            _safe_print(
+                "Hold-out (Phase 6.1.d) : {} scénarios, top_k_stable_ratio={:.2f}, avg_rank_delta={:+.2f}".format(
+                    holdout_summary.get("scenarios_evaluated"),
+                    float(holdout_summary.get("stable_top_k_ratio", 0.0)),
+                    float(holdout_summary.get("avg_rank_delta", 0.0)),
+                )
+            )
 
     _safe_print("✅ Analyse phase 5/6 terminée")
     _safe_print(f"   Summary source      : {summary_path}")

@@ -84,12 +84,18 @@ class BacktestReport:
     win_rate_pct: float
     avg_trade_duration_days: float
     profit_factor: float
+    # Phase 6.1.c — rendement total dividendes inclus.
+    dividends_received: float = 0.0
+    total_return_with_dividends_pct: float = 0.0
 
     def to_serializable_dict(self) -> dict[str, float | int]:
         return {
             "initial_equity": float(self.initial_equity),
             "final_value": float(self.final_value),
             "total_return_pct": float(self.total_return_pct),
+            "total_return_price_only_pct": float(self.total_return_pct),
+            "total_return_with_dividends_pct": float(self.total_return_with_dividends_pct),
+            "dividends_received": float(self.dividends_received),
             "cagr_pct": float(self.cagr_pct),
             "sharpe_ratio": float(self.sharpe_ratio),
             "sortino_ratio": float(self.sortino_ratio),
@@ -104,7 +110,9 @@ class BacktestReport:
         return {
             "Capital initial": f"${self.initial_equity:,.0f}",
             "Valeur finale": f"${self.final_value:,.2f}",
-            "Rendement total": f"{self.total_return_pct:.2f}%",
+            "Rendement total (prix)": f"{self.total_return_pct:.2f}%",
+            "Rendement total (avec div.)": f"{self.total_return_with_dividends_pct:.2f}%",
+            "Dividendes encaissés": f"${self.dividends_received:,.2f}",
             "CAGR": f"{self.cagr_pct:.2f}%",
             "Sharpe Ratio": f"{self.sharpe_ratio:.3f}",
             "Sortino Ratio": f"{self.sortino_ratio:.3f}",
@@ -124,7 +132,47 @@ class BacktestReport:
         print("=" * 60 + "\n")
 
 
-def generate_report(pf, initial_equity: float) -> BacktestReport:
+def load_dividends_received(
+    start_date,
+    end_date,
+    *,
+    account_id: str | None = None,
+    engine=None,
+) -> float:
+    """Phase 6.1.c — somme des dividendes crédités sur la période.
+
+    Lit ``portfolio_cash_ledger`` (entry_type = 'dividend_credit') si
+    disponible. Tolérant : retourne ``0.0`` si la table ou la connexion
+    n'est pas accessible (ex: tests sans DB).
+    """
+    try:
+        from sqlalchemy import text  # type: ignore
+
+        if engine is None:
+            from database.connection import get_sqlalchemy_engine  # type: ignore
+
+            engine = get_sqlalchemy_engine()
+        clauses = [
+            "entry_type = 'dividend_credit'",
+            "DATE(occurred_at) BETWEEN :start_date AND :end_date",
+        ]
+        params: dict[str, object] = {"start_date": start_date, "end_date": end_date}
+        if account_id:
+            clauses.append("account_id = :account_id")
+            params["account_id"] = account_id
+        where_clause = " AND ".join(clauses)
+        stmt = text(
+            f"SELECT COALESCE(SUM(amount), 0) FROM portfolio_cash_ledger WHERE {where_clause}"
+        )
+        with engine.connect() as conn:  # type: ignore[attr-defined]
+            result = conn.execute(stmt, params).scalar()
+        return float(result or 0.0)
+    except Exception as exc:
+        LOGGER.debug("load_dividends_received fallback 0.0 : %s", exc)
+        return 0.0
+
+
+def generate_report(pf, initial_equity: float, *, dividends_received: float = 0.0) -> BacktestReport:
     """Extrait les métriques depuis un portefeuille compatible vectorbt/BacktestResult."""
     closed_trades_df = _extract_closed_trades_df(pf)
     if closed_trades_df is not None:
@@ -181,6 +229,12 @@ def generate_report(pf, initial_equity: float) -> BacktestReport:
             win_rate_pct=win_rate,
             avg_trade_duration_days=avg_dur,
             profit_factor=pf_factor,
+            dividends_received=float(dividends_received),
+            total_return_with_dividends_pct=(
+                ((final_val + float(dividends_received)) / initial_equity - 1) * 100
+                if initial_equity
+                else 0.0
+            ),
         )
 
     final_val = _as_float(pf.final_value())
@@ -209,6 +263,12 @@ def generate_report(pf, initial_equity: float) -> BacktestReport:
         max_drawdown_pct=max_dd, total_trades=n_trades,
         win_rate_pct=win_rate, avg_trade_duration_days=avg_dur,
         profit_factor=pf_factor,
+        dividends_received=float(dividends_received),
+        total_return_with_dividends_pct=(
+            ((final_val + float(dividends_received)) / initial_equity - 1) * 100
+            if initial_equity
+            else 0.0
+        ),
     )
 
 

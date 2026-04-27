@@ -380,3 +380,72 @@ watcher post-exécution
 - exploitation simple : Task Scheduler ;
 - exploitation continue : NSSM.
 
+
+
+---
+
+## Phase 6.3 (refactor) — leader election, allowlist scripts, sécurité secrets
+
+### Leader election via `execution_locks`
+
+`ProtectionWatcherService.run(...)` acquiert un lock SQL avant de démarrer
+sa boucle :
+
+```sql
+INSERT INTO execution_locks (account_id, locked_by_run_id, acquired_at, expires_at)
+VALUES ('watcher:<account_id>', '<service_run_id>', NOW(), NOW() + ttl)
+```
+
+- **Préfixe `watcher:`** : distingue ce lock de celui de `executor.execute_run`
+  (Phase 1.2). Deux instances de watcher pour le même compte ne peuvent pas
+  coexister, mais un watcher peut tourner pendant qu'un executor utilise son
+  propre lock.
+- **TTL = 4 × `heartbeat_interval_seconds`** (min 60s) : absorbe les pauses
+  GC sans relâcher le lock par accident.
+- **Best-effort** : si la table `execution_locks` est absente (env de test
+  isolé), l'erreur est loguée en `DEBUG` et le service continue (pas de
+  régression de la chaîne historique).
+- À la sortie (clean ou exception), le lock est libéré via
+  `release_execution_lock(...)`. Le `summary` final expose
+  `leader_lock_account` pour observabilité.
+
+Si le lock est déjà détenu, `run()` retourne immédiatement :
+
+```json
+{"status": "LEADER_LOCK_HELD", "leader_lock_account": "watcher:paper_main"}
+```
+
+### Heartbeat persistant SQL
+
+Inchangé depuis Phase 1.3 : `repo.upsert_watcher_heartbeat(...)` écrit dans
+`watcher_heartbeats` à chaque tick `heartbeat_interval_seconds`. Combiné au
+lock leader, il permet de détecter une instance "bloquée" (lock détenu mais
+heartbeat ancien → alerter, expirer manuellement).
+
+### Allowlist scripts PowerShell
+
+`tests/test_watcher_powershell_allowlist.py` valide statiquement chaque
+script de `scripts/windows/` :
+
+- **interdit** : `Invoke-Expression`, `iex`, `Add-Type -TypeDefinition`,
+  `DownloadString`, chargement d'assembly via `Reflection.Assembly.Load(`.
+- **requis** : `Set-StrictMode` + `$ErrorActionPreference` dans chaque
+  script.
+- **DPAPI scope** dans `protection_watcher_secrets.ps1` est contraint par
+  `ValidateSet('CurrentUser', 'LocalMachine')` ; un avertissement explicite
+  apparaît quand `LocalMachine` est utilisé (déchiffrable par tout compte
+  ayant accès au fichier → ACL à restreindre).
+- **Launcher** : `protection_watcher_launcher.ps1` doit valider l'existence
+  du Python fourni et préférer `.venv\Scripts\python.exe` ; aucune
+  invocation `cmd.exe /c` (interdit l'injection par interpolation).
+
+### Tests Phase 6.3
+
+```powershell
+python -m pytest `
+  tests/test_watcher_powershell_allowlist.py `
+  tests/test_watcher_leader_election.py `
+  tests/test_protection_watcher.py `
+  tests/test_watcher_runtime.py `
+  tests/test_windows_watcher_bridge.py --no-cov -q
+```

@@ -215,30 +215,31 @@ gouvernés (run-min + days-min).
 ## Phase 6 — Périphérie (≤ 1 semaine)
 
 ### 6.1 — `backtesting/` (réf. `audit_backtesting.md`)
-- [ ] `--commission-bps`, `--slippage-bps` (défauts > 0).
-- [ ] `total_return_with_dividends` au rapport.
-- [ ] Validation hold-out diagnostic screener phase 5-7.
-- [ ] Profiles CLI consolidés.
-- [ ] Migrer `signal_replay` vers `core/conviction.py`.
+- [x] `--commission-bps`, `--slippage-bps` (défauts > 0). _(6.1.b — `backtesting/cli.py`, `backtesting/simulator.py`)_
+- [x] `total_return_with_dividends` au rapport. _(6.1.c — `backtesting/report.py::BacktestReport`, `load_dividends_received`)_
+- [x] Validation hold-out diagnostic screener phase 5-7. _(6.1.d — `backtesting/screener_diagnostics.py::validate_recommendations_holdout`, flags `--holdout-train-end/--holdout-test-end`)_
+- [x] Profiles CLI consolidés. _(6.1.e — `backtesting/profiles.py::BACKTEST_PROFILES`, `--profile {strict_swing_cash,swing_cash_aggressive,custom}`)_
+- [x] Migrer `signal_replay` vers `core/conviction.py`. _(6.1.a — `backtesting/signal_replay.py` consomme `core.conviction.fuse`, payload `params.conviction_weights`)_
 
 ### 6.2 — `ihm/` (réf. `audit_ihm.md`)
 - [ ] **Découper `pages/pipeline.py`** en sous-modules
       (`_workflow.py`, `_data_integrity.py`, `_execution_center.py`,
       `_alpha_scanner_diagnostics.py`, `_watcher_block.py`).
-- [ ] Hook `atexit` dans `process_registry` (kill enfants).
-- [ ] Rotation artefacts `IHM_RUNS_RETENTION_DAYS=30`.
-- [ ] Audit shell quoting `process_registry`.
-- [ ] Cache obligatoire (`@st.cache_data`) sur toutes les requêtes DB des pages.
-- [ ] Test contractuel **IHM ↔ CLI** (introspection argparse).
-- [ ] Auth basique optionnelle (token) si exposé hors localhost.
-- [ ] Check démarrage `--server.address=localhost`.
-- [ ] Documenter sécurité IHM dans `doc/ihm.md`.
+      _(reporté Phase 7 — fichier 2872 lignes, refactor non destructif différé pour minimiser le risque sur l'IHM en production.)_
+- [x] Hook `atexit` dans `process_registry` (kill enfants). _(6.2 — `ihm/services/process_registry.py::_atexit_kill_all_children`)_
+- [x] Rotation artefacts `IHM_RUNS_RETENTION_DAYS=30`. _(6.2 — `rotate_pipeline_artifacts`, env `IHM_RUNS_RETENTION_DAYS`)_
+- [x] Audit shell quoting `process_registry`. _(6.2 — `subprocess.Popen(list[str], shell=False)` confirmé, documenté dans `doc/ihm.md`)_
+- [x] Cache obligatoire (`@st.cache_data`) sur toutes les requêtes DB des pages. _(6.2 — toutes les fonctions publiques de `ihm/services/queries.py` sont cachées avec TTL=60s)_
+- [x] Test contractuel **IHM ↔ CLI** (introspection argparse). _(6.2 — `tests/test_ihm_cli_contract.py` : pour chaque step, vérifie que les flags `--xxx` sont reconnus par l'argparse cible)_
+- [x] Auth basique optionnelle (token) si exposé hors localhost. _(6.2 — `ihm/services/security.py::render_auth_gate`, env `IHM_AUTH_TOKEN`)_
+- [x] Check démarrage `--server.address=localhost`. _(6.2 — `render_security_banner` + env `IHM_REQUIRE_LOCALHOST`)_
+- [x] Documenter sécurité IHM dans `doc/ihm.md`. _(6.2 — section « Sécurité réseau » + démarrage prod locale)_
 
 ### 6.3 — `watcher/` (réf. `audit_watcher.md`)
-- [ ] Leader election via `execution_locks` (déjà partiellement Phase 1.2).
-- [ ] Heartbeat persistant SQL (idem).
-- [ ] Tests rigoureux allowlist PowerShell.
-- [ ] Revue `protection_watcher_secrets.ps1`.
+- [x] Leader election via `execution_locks` (déjà partiellement Phase 1.2). _(6.3 — `ProtectionWatcherService.run` acquiert `watcher:<account_id>` via `acquire_execution_lock`, status `LEADER_LOCK_HELD` si déjà détenu)_
+- [x] Heartbeat persistant SQL (idem). _(déjà fait Phase 1.3 — `repo.upsert_watcher_heartbeat`, table `watcher_heartbeats`)_
+- [x] Tests rigoureux allowlist PowerShell. _(6.3 — `tests/test_watcher_powershell_allowlist.py` : 23 tests (deny `Invoke-Expression`/`iex`/`Add-Type`/`DownloadString`, exige `Set-StrictMode` + `$ErrorActionPreference`))_
+- [x] Revue `protection_watcher_secrets.ps1`. _(6.3 — DPAPI scope contraint via ValidateSet, avertissement LocalMachine, `ZeroFreeBSTR` après usage, store JSON via `Set-Content -LiteralPath`)_
 
 **Critère de sortie** : IHM modulaire, watcher mono-instance garanti, backtest
 réaliste.

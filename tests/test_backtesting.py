@@ -1120,7 +1120,12 @@ class TestCLI:
         assert args.tp == 0.08
         assert args.ts == 0.05
         assert args.max_positions == 20
-        assert args.fees == 0.001
+        # Phase 6.1.b — `--fees` est déprécié (None par défaut), coûts via bps.
+        assert args.fees is None
+        assert args.commission_bps == 5.0
+        assert args.slippage_bps == 5.0
+        # Phase 6.1.e — profil custom par défaut.
+        assert args.profile == "custom"
         assert args.account_type == "margin"
         assert args.pdt_rule == "auto"
         assert args.swing_only is False
@@ -1259,7 +1264,7 @@ class TestCLI:
         monkeypatch.setattr(signal_replay, "replay_signals", fake_replay)
         monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
         monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {})
-        monkeypatch.setattr(report, "generate_report", lambda pf, equity: FakeReport())
+        monkeypatch.setattr(report, "generate_report", lambda pf, equity, **kwargs: FakeReport())
         monkeypatch.setattr(report, "save_equity_curve", lambda *args, **kwargs: tmp_path / "eq.png")
         monkeypatch.setattr(report, "save_equity_curve_csv", lambda *args, **kwargs: tmp_path / "eq.csv")
         monkeypatch.setattr(report, "save_report_json", lambda *args, **kwargs: tmp_path / "report.json")
@@ -1386,7 +1391,7 @@ class TestCLI:
         monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
         monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
         monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {"selected_count": 1})
-        monkeypatch.setattr(report, "generate_report", lambda pf, equity: FakeReport())
+        monkeypatch.setattr(report, "generate_report", lambda pf, equity, **kwargs: FakeReport())
         monkeypatch.setattr(report, "save_equity_curve_csv", fake_save_equity_curve_csv)
         monkeypatch.setattr(report, "save_trades_csv", fake_save_trades_csv)
         monkeypatch.setattr(report, "save_equity_curve", fake_save_equity_curve)

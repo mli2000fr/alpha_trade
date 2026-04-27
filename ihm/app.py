@@ -16,6 +16,7 @@ from ihm.services.navigation import (
     get_navigation_page_labels,
     get_navigation_page_mapping,
 )
+from ihm.services.security import render_auth_gate, render_security_banner
 
 st.set_page_config(
     page_title="Alpha Trade — Cockpit Opérateur",
@@ -23,6 +24,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Phase 6.2 — gate d'authentification optionnelle (IHM_AUTH_TOKEN).
+if not render_auth_gate():
+    st.stop()
 
 # ---------------------------------------------------------------------------
 # Navigation sidebar
@@ -36,6 +41,9 @@ NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
 st.sidebar.title("📈 Alpha Trade")
 st.sidebar.caption("Cockpit opérateur — supervision et suivi")
 st.sidebar.caption("Navigation ordonnée pour suivre le pipeline métier du haut vers le bas.")
+
+# Phase 6.2 — bannière sécurité (auth/exposition réseau).
+render_security_banner()
 
 with st.sidebar.expander("🧭 Ordre des pages", expanded=False):
     st.caption(build_primary_navigation_caption())

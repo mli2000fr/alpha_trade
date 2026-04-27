@@ -1987,3 +1987,105 @@ def export_screener_objective_recommendations(
     }
 
 
+def validate_recommendations_holdout(
+    daily_metrics: pd.DataFrame,
+    *,
+    train_end,
+    test_end,
+    train_start=None,
+    test_start=None,
+    metric_column: str = "portfolio_forward_return_20d",
+    scenario_column: str = "scenario_name",
+    date_column: str = "trade_date",
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Phase 6.1.d — validation hold-out du diagnostic screener (phase 5-7).
+
+    Compare le rang des scénarios sur la fenêtre **train** (≤ ``train_end``)
+    et sur la fenêtre **test** (``test_start`` exclus de train, ≤ ``test_end``).
+    Retourne un DataFrame trié par ``rank_train`` avec :
+
+    - ``rank_train``, ``rank_test`` (1 = meilleur)
+    - ``score_train``, ``score_test`` (moyenne du metric sur la fenêtre)
+    - ``rank_delta`` = rank_test - rank_train (positif = dégrade)
+    - ``score_delta``
+
+    et un dict de résumé (``stable_top_k_ratio``, ``avg_rank_delta``, 
+    ``status``).
+    """
+    summary: dict[str, object] = {"status": "empty", "message": "No data."}
+    if daily_metrics is None or daily_metrics.empty:
+        return pd.DataFrame(), summary
+    if metric_column not in daily_metrics.columns:
+        summary = {"status": "missing_metric", "message": f"colonne {metric_column} absente"}
+        return pd.DataFrame(), summary
+    if scenario_column not in daily_metrics.columns or date_column not in daily_metrics.columns:
+        summary = {"status": "missing_columns", "message": "scenario_name/trade_date manquants"}
+        return pd.DataFrame(), summary
+
+    df = daily_metrics.copy()
+    df[date_column] = pd.to_datetime(df[date_column])
+    train_end_ts = pd.to_datetime(train_end)
+    test_end_ts = pd.to_datetime(test_end)
+    train_start_ts = pd.to_datetime(train_start) if train_start else df[date_column].min()
+    test_start_ts = pd.to_datetime(test_start) if test_start else (train_end_ts + pd.Timedelta(days=1))
+
+    train_mask = (df[date_column] >= train_start_ts) & (df[date_column] <= train_end_ts)
+    test_mask = (df[date_column] >= test_start_ts) & (df[date_column] <= test_end_ts)
+    if not train_mask.any() or not test_mask.any():
+        summary = {"status": "empty_window", "message": "fenêtre train ou test vide"}
+        return pd.DataFrame(), summary
+
+    train_scores = (
+        df.loc[train_mask].groupby(scenario_column)[metric_column].mean().rename("score_train")
+    )
+    test_scores = (
+        df.loc[test_mask].groupby(scenario_column)[metric_column].mean().rename("score_test")
+    )
+    merged = pd.concat([train_scores, test_scores], axis=1).dropna()
+    if merged.empty:
+        summary = {"status": "empty_intersection", "message": "Aucun scénario commun train/test"}
+        return pd.DataFrame(), summary
+
+    merged["rank_train"] = merged["score_train"].rank(ascending=False, method="min").astype(int)
+    merged["rank_test"] = merged["score_test"].rank(ascending=False, method="min").astype(int)
+    merged["rank_delta"] = merged["rank_test"] - merged["rank_train"]
+    merged["score_delta"] = merged["score_test"] - merged["score_train"]
+    merged = merged.sort_values("rank_train").reset_index()
+
+    top_k = max(min(5, len(merged) // 2), 1)
+    train_top = set(merged.nsmallest(top_k, "rank_train")[scenario_column])
+    test_top = set(merged.nsmallest(top_k, "rank_test")[scenario_column])
+    stable_ratio = len(train_top & test_top) / float(top_k) if top_k else 0.0
+
+    summary = {
+        "status": "ok",
+        "metric_column": metric_column,
+        "train_start": str(train_start_ts.date()),
+        "train_end": str(train_end_ts.date()),
+        "test_start": str(test_start_ts.date()),
+        "test_end": str(test_end_ts.date()),
+        "scenarios_evaluated": int(len(merged)),
+        "stable_top_k": int(top_k),
+        "stable_top_k_ratio": float(stable_ratio),
+        "avg_rank_delta": float(merged["rank_delta"].mean()),
+        "avg_score_delta": float(merged["score_delta"].mean()),
+    }
+    return merged, summary
+
+
+def export_holdout_validation(
+    holdout_df: pd.DataFrame,
+    holdout_summary: dict[str, object],
+    output_dir: str | Path,
+) -> dict[str, Path]:
+    """Exporte les artefacts de la validation hold-out (Phase 6.1.d)."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    csv_path = output_path / "holdout_validation_recommendations.csv"
+    json_path = output_path / "holdout_summary.json"
+    holdout_df.to_csv(csv_path, index=False)
+    json_path.write_text(json.dumps(holdout_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "holdout_validation_recommendations": csv_path,
+        "holdout_summary": json_path,
+    }
