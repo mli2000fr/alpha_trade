@@ -251,24 +251,47 @@ réaliste.
 > Items d'`audit_global.md` qui restent vraiment cross-modules après les
 > Phases 2→6.
 
-- [ ] **`import-linter`** enforced (interdit aux modules métier d'importer les
-      implémentations directement).
-- [ ] **Mode "shadow"** simulate parallèle d'un live (mesure dérive).
-- [ ] **Calibration empirique** des poids conviction / signal_aggregator sur
-      backtest glissant 6 mois (table `weights_calibration_runs`).
-- [ ] **Stooq cross-check** OHLC daily / volume (best-effort).
-- [ ] **SEC EDGAR 8-K** comme second canal news (long terme — peut sortir du
-      scope).
-- [ ] Dashboard observabilité minimal (Prometheus / Grafana ou équivalent).
-- [ ] Drift ML monitoring auto.
-- [ ] **Mapping table ↔ producteur ↔ consommateurs** (matrice impact).
-- [ ] Doc cible : runbook incident provider, runbook réconciliation, guide
-      "ajouter une nouvelle table" (template Alembic).
-- [ ] Cocher tous les `✅` restants dans `audit_global.md` ; ce qui reste devient
-      le **backlog "Long terme" suivant**.
+- [x] **`import-linter`** enforced (interdit aux modules métier d'importer les
+      implémentations directement). _(7.1 — `.importlinter` (warn-only) +
+      `tests/test_import_linter_contracts.py` + extra `[dev]` `import-linter>=2.0`.
+      Passage strict reporté backlog L11.)_
+- [x] **Mode "shadow"** simulate parallèle d'un live (mesure dérive). _(7.7 —
+      shadow compare **offline** livré : `risk_management/shadow_compare.py` +
+      table `shadow_drift_runs` (migration `0022`) + `tests/test_risk_shadow_compare.py`.
+      Daemon shadow live continu reporté backlog L2.)_
+- [x] **Calibration empirique** des poids conviction / signal_aggregator sur
+      backtest glissant 6 mois (table `weights_calibration_runs`). _(7.2 —
+      `backtesting/weights_calibration.py` + table (migration `0020`) +
+      `tests/test_weights_calibration.py`.)_
+- [x] **Stooq cross-check** OHLC daily / volume (best-effort). _(7.3 —
+      `service/stooq/clientStooq.py` (zéro dépendance externe) +
+      `dataIntegrityEngine/cross_check_stooq.py` + `tests/test_stooq_cross_check.py`.)_
+- [x] **SEC EDGAR 8-K** comme second canal news (long terme — peut sortir du
+      scope). _(7.8 — reporté backlog L1 explicitement, justifié dans
+      `prompt/refactor/backlog_long_terme.md`.)_
+- [x] Dashboard observabilité minimal (Prometheus / Grafana ou équivalent).
+      _(7.5 — `core/metrics.py` (Counter/Gauge/Histogram, lazy
+      `prometheus_client`, fallback no-op) + `start_metrics_server` opt-in
+      via `ALPHA_TRADE_METRICS_PORT` + extra `[observability]` +
+      `doc/observability.md` + `tests/test_core_metrics.py`. Grafana /
+      Alertmanager déploiement reporté backlog L3.)_
+- [x] Drift ML monitoring auto. _(7.4 — `modelFactory/drift_monitor.py`
+      (KS + PSI, scipy optionnel) + table `ml_drift_runs` (migration `0021`) +
+      `tests/test_modelfactory_drift_monitor.py`.)_
+- [x] **Mapping table ↔ producteur ↔ consommateurs** (matrice impact). _(7.6
+      — `doc/data_lineage_matrix.md` couvrant 6 domaines (market data,
+      scoring, ML, risk/exec, corporate actions, backtest).)_
+- [x] Doc cible : runbook incident provider, runbook réconciliation, guide
+      "ajouter une nouvelle table" (template Alembic). _(7.6 —
+      `doc/runbook_provider_incident.md`, `doc/runbook_reconciliation.md`,
+      `doc/guide_add_new_table.md`.)_
+- [x] Cocher tous les `✅` restants dans `audit_global.md` ; ce qui reste devient
+      le **backlog "Long terme" suivant**. _(7.10 — section §11 "Clôture
+      refactor" ajoutée à `audit_global.md` + `prompt/refactor/backlog_long_terme.md`
+      créé avec entrées L1 → L11 (justification + esquisse cible + estimation).)_
 
 **Critère de sortie** : `audit_global.md` à jour, items "Long terme"
-explicitement reportés au backlog avec justification.
+explicitement reportés au backlog avec justification. **✅ Atteint.**
 
 ---
 

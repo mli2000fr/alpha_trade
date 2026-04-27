@@ -544,3 +544,84 @@ La réinitialisation prévue de la base est une **opportunité unique** d'introd
 plusieurs des recommandations structurelles (schéma SQL durci, audit dédié,
 nouvelles colonnes de provenance) sans coût de migration de données.
 
+---
+
+## 11. Clôture refactor (Phases 1 → 7)
+
+> Synthèse de l'état après exécution complète de `prompt/refactor/plan.md`.
+
+### Items traités (✅ corrigés)
+
+- **Phase 1** : Alembic baseline + migrations 0002 → 0019, equity fallback fatal,
+  confirmation live renforcée, secrets DB hors `config.yaml`, lock SQL watcher,
+  heartbeat persistant, `schema_version` partout, compteurs IEX, `feed=iex`
+  validé, helper `service/_http_retry.py`, cache Finnhub 7j, doc transverse.
+- **Phase 2** : Protocols `core/interfaces.py`, `core/conviction.py`,
+  `core/filter_profiles.py`, découpage `common/utils.py`, doc `core_common.md`,
+  façade `database/repositories/`, pool DB élargi, TLS optionnel,
+  testcontainers MySQL, migration clients service vers `_http_retry`.
+- **Phase 3** : exit ≠ 0 sur ratio import, `pandas_market_calendars`, audits
+  dédiés quotes/earnings, `market_cap_refreshed_at` consommé,
+  `chunk_failures`, `rejected_by_filter`, `core/filter_profiles.py` partagé,
+  `spread_bps` adapté IEX, ranking selector découpé.
+- **Phase 4** : FinBERT fingerprinté, `signal_aggregator` migré
+  `core.conviction`, formats natifs LightGBM/CatBoost, fingerprint features
+  SHA256, walk-forward par défaut, quarantaine champion, `metrics.json` BLOB
+  DB, cache modèles predictor, garde-fou anti-leak, découpage `trainer.py`,
+  `run_summary` ML standardisé.
+- **Phase 5** : `account_equity_breakdown`, fusion conviction unifiée,
+  pondérations 40/60 documentées, découpage `executor.py`, runbook
+  `MANUAL_REVIEW`/`BLOCKED`, kill switch global (`execution_kill_switch_runs`),
+  `idempotency_key` documenté + scopé account, audit
+  `corporate_actions_audit_runs`, cross-check Yahoo dividendes.
+- **Phase 6** : `--commission-bps`/`--slippage-bps`, `total_return_with_dividends`,
+  validation hold-out, profils CLI consolidés, `signal_replay` migré
+  `core.conviction`, atexit IHM, rotation artefacts, audit shell quoting,
+  cache `@st.cache_data`, test contractuel IHM↔CLI, auth IHM optionnelle,
+  doc sécurité IHM, leader election watcher, allowlist PowerShell durcie.
+- **Phase 7** : `import-linter` (warn-only), calibration empirique poids
+  (table `weights_calibration_runs`), Stooq cross-check
+  (`dataIntegrityEngine.cross_check_stooq` + `service/stooq/`), drift ML
+  monitoring (`modelFactory.drift_monitor` + table `ml_drift_runs`), endpoint
+  `/metrics` Prometheus minimal (`core/metrics.py`), 4 docs cibles
+  (runbook provider, runbook réconciliation, guide ajout table, matrice
+  data lineage, observability), shadow compare offline
+  (`risk_management.shadow_compare` + table `shadow_drift_runs`),
+  documentation `doc/observability.md`.
+
+### Items reportés au backlog Long terme
+
+Voir [`backlog_long_terme.md`](backlog_long_terme.md) — entrées L1 → L11 :
+
+| ID | Item | Justification report |
+|---|---|---|
+| L1 | SEC EDGAR 8-K | Volumétrie + IC à mesurer |
+| L2 | Shadow live continu | Daemon + double broker |
+| L3 | Grafana / Alertmanager complet | Déploiement infra |
+| L4 | Fine-tune LoRA FinBERT | Dataset + GPU |
+| L5 | XGBoost 3e challenger | ROI marginal |
+| L6 | `ProcessRegistry` IHM DB-backed | Single-user actuel |
+| L7 | Hors `vectorbt` | Pas de besoin immédiat |
+| L8 | Vault complet | Single-host Windows |
+| L9 | Polygon / Tiingo NBBO | Quotas free trop stricts |
+| L10 | Découpage `pages/pipeline.py` | Risque IHM prod |
+| L11 | `import-linter` strict (vs warn) | Triage requis |
+
+### Métrique de clôture
+
+- Audits modulaires (14) : **100 % traités** ou item explicitement reporté.
+- Migrations Alembic : `0001` → `0022` (Phase 7 inclus).
+- Nouvelles tables transverses : `weights_calibration_runs` *(7.2)*,
+  `ml_drift_runs` *(7.4)*, `shadow_drift_runs` *(7.7)*.
+- Nouveaux modules transverses : `core/metrics.py` *(7.5)*,
+  `service/stooq/` *(7.3)*, `dataIntegrityEngine/cross_check_stooq.py`
+  *(7.3)*, `backtesting/weights_calibration.py` *(7.2)*,
+  `modelFactory/drift_monitor.py` *(7.4)*,
+  `risk_management/shadow_compare.py` *(7.7)*.
+- Nouveaux docs : `doc/observability.md`, `doc/runbook_provider_incident.md`,
+  `doc/runbook_reconciliation.md`, `doc/guide_add_new_table.md`,
+  `doc/data_lineage_matrix.md`.
+
+> Le refactor "Audit-driven" est **clos**. La poursuite passe par
+> `backlog_long_terme.md` (promotion item-par-item selon trigger métier).
+

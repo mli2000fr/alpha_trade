@@ -44,6 +44,12 @@ dev = [
     "types-pytz",
     "types-python-dateutil",
     "sqlalchemy[mypy]",
+    # Phase 7.1 — discipline d'imports (audit_global §7.1).
+    "import-linter>=2.0",
+]
+observability = [
+    # Phase 7.5 — endpoint /metrics minimal (audit_global §7.5).
+    "prometheus-client>=0.20",
 ]
 ml-challengers = [
     "catboost",
