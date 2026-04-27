@@ -38,8 +38,13 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
         "stock_bars_daily",
         "stock_metadata",
         "stock_scores",
+        "stock_scores_history",
+        "stock_quote_snapshots",
+        "stock_earnings_calendar",
         "cleaning_audit_latest",
         "cleaning_audit_runs",
+        "cleaning_audit_quotes_runs",
+        "cleaning_audit_earnings_runs",
     ),
     "News / Sentiment": (
         "news_raw",
@@ -61,6 +66,7 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
         "risk_decisions",
         "portfolio_targets",
         "portfolio_cash_ledger",
+        "account_risk_snapshots",
     ),
     "Exécution broker": (
         "execution_runs",
@@ -79,9 +85,11 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
     "Corporate Actions": (
         "corporate_actions_events",
         "corporate_actions_applications",
+        "corporate_actions_audit_runs",
     ),
     "Observabilité / Runs": (
         "run_business_summaries",
+        "watcher_heartbeats",
     ),
 }
 
@@ -93,10 +101,9 @@ ADDITIONAL_KNOWN_TABLES = frozenset(
     }
 )
 
-_TABLE_TOKEN_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bTRUNCATE\s+TABLE\s+([`\w.]+)", re.IGNORECASE),
-    re.compile(r"\bDELETE\s+FROM\s+([`\w.]+)", re.IGNORECASE),
-    re.compile(r"\bALTER\s+TABLE\s+([`\w.]+)", re.IGNORECASE),
+_CREATE_TABLE_PATTERN = re.compile(
+    r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:`?(?:\w+)`?\.)?`?(?P<table>\w+)`?",
+    re.IGNORECASE,
 )
 
 
@@ -153,13 +160,12 @@ def discover_tables_from_sql_directory(sql_directory: Path = SQL_DIRECTORY) -> s
     if not sql_directory.exists():
         return tables
 
-    for path in sorted(sql_directory.glob("*.sql")):
+    for path in sorted(sql_directory.rglob("*.sql")):
         content = path.read_text(encoding="utf-8", errors="replace")
-        for pattern in _TABLE_TOKEN_PATTERNS:
-            for match in pattern.finditer(content):
-                normalized = _normalize_table_name(match.group(1))
-                if normalized:
-                    tables.add(normalized)
+        for match in _CREATE_TABLE_PATTERN.finditer(content):
+            normalized = _normalize_table_name(match.group("table"))
+            if normalized:
+                tables.add(normalized)
     return tables
 
 
@@ -178,6 +184,8 @@ def _classify_table(table_name: str) -> str:
         return "Corporate Actions"
     if table_name.startswith("portfolio_") or table_name.startswith("risk_"):
         return "Risk / Portefeuille"
+    if table_name.startswith("watcher_"):
+        return "Observabilité / Runs"
     if table_name.startswith("stock_") or table_name.startswith("cleaning_"):
         return "Marché / Référentiel titres"
     return "Autres / non classées"

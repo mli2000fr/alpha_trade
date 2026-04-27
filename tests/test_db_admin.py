@@ -11,19 +11,34 @@ from ihm.services.db_admin import (
 
 def test_discover_tables_from_sql_directory_extracts_expected_names(tmp_path: Path) -> None:
     sql_dir = tmp_path / "sql"
-    sql_dir.mkdir()
-    (sql_dir / "purge.sql").write_text(
+    (sql_dir / "stock").mkdir(parents=True)
+    (sql_dir / "news").mkdir(parents=True)
+    (sql_dir / "stock" / "stock_scores.sql").write_text(
         """
-        TRUNCATE TABLE stock_scores;
-        DELETE FROM alpha_trade.news_raw;
-        ALTER TABLE execution_runs ADD COLUMN account_id VARCHAR(32);
+        CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores (
+            symbol VARCHAR(20) NOT NULL PRIMARY KEY
+        );
+        """,
+        encoding="utf-8",
+    )
+    (sql_dir / "news" / "init_event_sentiment.sql").write_text(
+        """
+        CREATE TABLE IF NOT EXISTS alpha_trade.news_raw (
+            article_id VARCHAR(128) NOT NULL PRIMARY KEY
+        );
+
+        CREATE TABLE IF NOT EXISTS alpha_trade.news_sentiment (
+            article_id VARCHAR(128) NOT NULL,
+            CONSTRAINT fk_news_sentiment_article
+                FOREIGN KEY (article_id) REFERENCES alpha_trade.news_raw(article_id)
+        );
         """,
         encoding="utf-8",
     )
 
     tables = discover_tables_from_sql_directory(sql_dir)
 
-    assert {"stock_scores", "news_raw", "execution_runs"}.issubset(tables)
+    assert tables == {"stock_scores", "news_raw", "news_sentiment"}
 
 
 
@@ -82,8 +97,26 @@ def test_build_table_purge_plan_ignores_protected_tables() -> None:
 
 def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() -> None:
     snapshot = DatabaseTableSnapshot(
-        existing_tables=("news_raw", "portfolio_targets", "execution_broker_orders", "custom_table"),
-        row_estimates={"news_raw": 12, "portfolio_targets": 3, "execution_broker_orders": 4, "custom_table": 0},
+        existing_tables=(
+            "news_raw",
+            "portfolio_targets",
+            "execution_broker_orders",
+            "custom_table",
+            "watcher_heartbeats",
+            "account_risk_snapshots",
+            "stock_quote_snapshots",
+            "corporate_actions_audit_runs",
+        ),
+        row_estimates={
+            "news_raw": 12,
+            "portfolio_targets": 3,
+            "execution_broker_orders": 4,
+            "custom_table": 0,
+            "watcher_heartbeats": 1,
+            "account_risk_snapshots": 2,
+            "stock_quote_snapshots": 5,
+            "corporate_actions_audit_runs": 1,
+        },
         foreign_key_pairs=(),
     )
 
@@ -91,7 +124,11 @@ def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() 
 
     assert any(entry.table_name == "news_raw" for entry in grouped["News / Sentiment"])
     assert any(entry.table_name == "portfolio_targets" for entry in grouped["Risk / Portefeuille"])
+    assert any(entry.table_name == "account_risk_snapshots" for entry in grouped["Risk / Portefeuille"])
     assert any(entry.table_name == "execution_broker_orders" for entry in grouped["Exécution broker"])
+    assert any(entry.table_name == "stock_quote_snapshots" for entry in grouped["Marché / Référentiel titres"])
+    assert any(entry.table_name == "corporate_actions_audit_runs" for entry in grouped["Corporate Actions"])
+    assert any(entry.table_name == "watcher_heartbeats" for entry in grouped["Observabilité / Runs"])
     assert any(entry.table_name == "execution_order_requests" for entry in grouped["Exécution broker"])
     assert not any(entry.table_name == "execution_orders" for entry in grouped["Exécution broker"])
     assert not any(entry.table_name == "execution_fills" for entry in grouped["Exécution broker"])
