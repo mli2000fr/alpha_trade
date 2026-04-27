@@ -48,6 +48,10 @@ dev = [
 ml-challengers = [
     "catboost",
 ]
+cross-check = [
+    # Phase 5.3.c — provider Yahoo Finance opt-in pour cross-check dividendes.
+    "yfinance>=0.2",
+]
 
 # ---------------------------------------------------------------------------
 # setuptools : déclare tous les packages pour que pip install -e . fonctionne

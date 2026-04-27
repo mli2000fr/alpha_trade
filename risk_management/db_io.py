@@ -373,6 +373,128 @@ class RiskRepository:
             daily_total_pnl=float(row["daily_total_pnl"]) if row.get("daily_total_pnl") is not None else None,
         )
 
+    def load_account_equity_breakdown(
+        self,
+        account_id: str | None,
+        trade_date: date,
+    ) -> dict[str, Any]:
+        """Phase 5.1.a — Décompose l'equity du compte (cash / positions / dividendes).
+
+        Sources :
+          - ``broker_account_snapshots`` (snapshot le plus récent ≤ trade_date) → ``cash``,
+
+            ``settled_cash``, ``equity``.
+          - ``broker_positions_snapshots`` (snapshot le plus récent ≤ trade_date) →
+            agrégat ``market_value`` long/short.
+          - ``portfolio_cash_ledger`` → cumul ``dividend_credit`` filtré par ``account_id``.
+
+        Retour : dict toujours peuplé. ``source="missing"`` si aucune table dispo.
+        Best-effort : aucune exception ne remonte au CLI.
+        """
+        resolved_account_id = account_id or "default"
+        breakdown: dict[str, Any] = {
+            "account_id": resolved_account_id,
+            "trade_date": trade_date.isoformat(),
+            "cash": None,
+            "settled_cash": None,
+            "long_positions_value": None,
+            "short_positions_value": None,
+            "dividends_ledger": None,
+            "total": None,
+            "source": "missing",
+            "snapshot_at": None,
+        }
+
+        # 1) account snapshot
+        try:
+            if self._get_table_columns("broker_account_snapshots"):
+                stmt = text(
+                    """
+                    SELECT equity, cash, settled_cash, created_at
+                    FROM broker_account_snapshots
+                    WHERE account_id = :account_id
+                      AND DATE(created_at) <= :trade_date
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """
+                )
+                with self.engine.connect() as conn:
+                    row = conn.execute(
+                        stmt,
+                        {"account_id": resolved_account_id, "trade_date": trade_date},
+                    ).mappings().first()
+                if row is not None:
+                    breakdown["cash"] = float(row["cash"]) if row.get("cash") is not None else None
+                    breakdown["settled_cash"] = (
+                        float(row["settled_cash"]) if row.get("settled_cash") is not None else None
+                    )
+                    if row.get("created_at") is not None:
+                        breakdown["snapshot_at"] = str(row["created_at"])
+                    breakdown["source"] = "broker_account_snapshots"
+        except Exception:
+            LOGGER.warning("load_account_equity_breakdown: account snapshot fail", exc_info=True)
+
+        # 2) positions snapshot (split long/short)
+        try:
+            pos_columns = self._get_table_columns("broker_positions_snapshots")
+            if pos_columns:
+                has_account_id = "account_id" in pos_columns
+                where_clause = "DATE(created_at) <= :trade_date"
+                params: dict[str, Any] = {"trade_date": trade_date}
+                if has_account_id:
+                    where_clause += " AND account_id = :account_id"
+                    params["account_id"] = resolved_account_id
+                stmt = text(
+                    f"""
+                    SELECT
+                        SUM(CASE WHEN qty >= 0 THEN COALESCE(market_value, 0) ELSE 0 END) AS long_value,
+                        SUM(CASE WHEN qty <  0 THEN COALESCE(market_value, 0) ELSE 0 END) AS short_value
+                    FROM broker_positions_snapshots
+                    WHERE {where_clause}
+                      AND created_at = (
+                          SELECT MAX(created_at) FROM broker_positions_snapshots
+                          WHERE {where_clause}
+                      )
+                    """
+                )
+                with self.engine.connect() as conn:
+                    row = conn.execute(stmt, params).mappings().first()
+                if row is not None:
+                    breakdown["long_positions_value"] = (
+                        float(row["long_value"]) if row.get("long_value") is not None else 0.0
+                    )
+                    breakdown["short_positions_value"] = (
+                        float(row["short_value"]) if row.get("short_value") is not None else 0.0
+                    )
+        except Exception:
+            LOGGER.warning("load_account_equity_breakdown: positions fail", exc_info=True)
+
+        # 3) dividends ledger
+        try:
+            ledger_columns = self._get_table_columns("portfolio_cash_ledger")
+            if ledger_columns:
+                has_account_id = "account_id" in ledger_columns
+                where_clause = "entry_type = 'dividend_credit'"
+                params = {}
+                if has_account_id:
+                    where_clause += " AND (account_id = :account_id OR account_id IS NULL)"
+                    params["account_id"] = resolved_account_id
+                stmt = text(f"SELECT COALESCE(SUM(amount), 0) AS total FROM portfolio_cash_ledger WHERE {where_clause}")
+                with self.engine.connect() as conn:
+                    row = conn.execute(stmt, params).mappings().first()
+                if row is not None:
+                    breakdown["dividends_ledger"] = float(row["total"])
+        except Exception:
+            LOGGER.warning("load_account_equity_breakdown: ledger fail", exc_info=True)
+
+        # 4) total = cash + long - |short| (dividends already credited to cash)
+        cash = breakdown["cash"] or 0.0
+        long_v = breakdown["long_positions_value"] or 0.0
+        short_v = breakdown["short_positions_value"] or 0.0
+        if breakdown["cash"] is not None or breakdown["long_positions_value"] is not None:
+            breakdown["total"] = round(cash + long_v + short_v, 2)
+        return breakdown
+
     # ------------------------------------------------------------------
     # Écriture
     # ------------------------------------------------------------------

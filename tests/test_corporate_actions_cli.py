@@ -89,7 +89,8 @@ def test_run_apply_invokes_engine(monkeypatch):
             called['as_of'] = as_of
             return {'ok': True}
     monkeypatch.setattr(cli, 'AlpacaCorporateActionProvider', lambda **kw: None)
-    monkeypatch.setattr(cli, 'CorporateActionEngine', lambda provider, account_id=None: DummyEngine())
+    monkeypatch.setattr(cli, 'CorporateActionRepository', lambda: DummyRepo())
+    monkeypatch.setattr(cli, 'CorporateActionEngine', lambda provider, repo=None, account_id=None: DummyEngine())
     f = io.StringIO()
     with contextlib.redirect_stdout(f):
         cli._run_apply(args)

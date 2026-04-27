@@ -8,7 +8,7 @@ from pandas import DataFrame
 
 from risk_management.config import RiskConfig
 from risk_management.constraints import PortfolioState
-from risk_management.conviction import compute_conviction
+from core.conviction import ConvictionWeights, fuse as _fuse_conviction
 from risk_management.correlation_filter import filter_correlated
 from risk_management.kelly import KellySizer
 from risk_management.models import (
@@ -54,7 +54,14 @@ class PortfolioBuilder:
             wr = win_rates.get(c.symbol)
             pp = pred.predicted_proba if pred else None
             hw = wr.directional_accuracy if wr else None
-            conv = compute_conviction(c.score_used, pp, self._cfg.score_weight, self._cfg.prediction_weight)
+            conv = _fuse_conviction(
+                quant_score=c.score_used,
+                predicted_proba=pp,
+                weights=ConvictionWeights(
+                    score_weight=self._cfg.score_weight,
+                    prediction_weight=self._cfg.prediction_weight,
+                ),
+            )
             enriched.append(EnrichedCandidate(
                 symbol=c.symbol, sector=c.sector, score_used=c.score_used, score_source=c.score_source,
                 predicted_proba=pp, historical_win_rate=hw, conviction_score=conv,

@@ -7,6 +7,7 @@ from collections import Counter
 from datetime import date, datetime
 
 from common.utils import configure_root_logging
+from core.run_summary import attach_schema_version
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from risk_management.audit import build_run_id, persist_decisions, persist_portfolio_targets
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
@@ -77,6 +78,7 @@ def main(args: list[str] | None = None) -> None:
 
     repo = RiskRepository()
     account_snapshot = repo.load_account_risk_snapshot(args.account, trade_date)
+    equity_breakdown = repo.load_account_equity_breakdown(args.account, trade_date)
     if account_snapshot is None:
         if args.dry_run:
             effective_equity = float(args.account_equity)
@@ -214,7 +216,21 @@ def main(args: list[str] | None = None) -> None:
         "account_equity": round(float(args.account_equity), 2),
         "account_snapshot_trade_date": account_snapshot.trade_date.isoformat() if account_snapshot is not None else None,
         "circuit_breaker_active": CircuitBreaker(config, pnl_snapshot).is_active(),
+        # Phase 5.1.a — décomposition equity (cash + positions + dividendes ledger)
+        "account_equity_breakdown": equity_breakdown,
+        # Phase 5.1.b — pondérations conviction unifiées via core.conviction
+        "conviction_weights": {
+            "score_weight": float(config.score_weight),
+            "prediction_weight": float(config.prediction_weight),
+            "source": "core.conviction",
+        },
+        # Phase 5.1.c — placeholder calibration (cf. backlog Phase 7)
+        "conviction_weights_calibration": {
+            "source": "default",
+            "calibration_run_id": None,
+        },
     }
+    summary = attach_schema_version(summary, version=1)
     persist_run_business_summary(
         summary=summary,
         step_key="risk_management",

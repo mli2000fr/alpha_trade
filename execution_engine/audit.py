@@ -186,6 +186,11 @@ def build_execution_run_summary(
         "reconciliation_safe_auto": int(metrics.get("reconciliation_safe_auto", 0) or 0),
         "reconciliation_manual_review": int(metrics.get("reconciliation_manual_review", 0) or 0),
         "reconciliation_blocked": int(metrics.get("reconciliation_blocked", 0) or 0),
+        # Phase 5.2.d — symboles précis pour faciliter le pointage opérateur (runbook).
+        "reconciliation_manual_review_symbols": list(metrics.get("reconciliation_manual_review_symbols") or []),
+        "reconciliation_blocked_symbols": list(metrics.get("reconciliation_blocked_symbols") or []),
+        # Phase 5.2.b — dernière phase du run (informatif si tracker actif).
+        "last_phase": str(metrics.get("last_phase", "") or "") or None,
         "account_type": account_type,
         "effective_pdt_rule": effective_pdt_rule,
         "swing_only": bool(swing_only),

@@ -192,21 +192,21 @@ gouvernés (run-min + days-min).
 ## Phase 5 — Décision & exécution (≤ 1 semaine)
 
 ### 5.1 — `risk_management/` (réf. `audit_risk_management.md`)
-- [ ] `account_equity_breakdown` dans `run_summary`.
-- [ ] Migrer fusion conviction vers `core/conviction.py`.
-- [ ] Documenter pondérations 40/60 (et plan de calibration empirique).
+- [x] `account_equity_breakdown` dans `run_summary`. _(5.1.a)_
+- [x] Migrer fusion conviction vers `core/conviction.py`. _(5.1.b)_
+- [x] Documenter pondérations 40/60 (et plan de calibration empirique). _(5.1.c)_
 
 ### 5.2 — `execution_engine/` (réf. `audit_execution.md`)
-- [ ] Découper `executor.py` (`execute_run` en sous-méthodes + state machine
-      explicite).
-- [ ] Runbook `MANUAL_REVIEW` / `BLOCKED` dans `doc/execution_engine.md`.
-- [ ] **Kill switch global** : `python -m execution_engine cancel-all
-      --account live1`.
+- [x] Découper `executor.py` (`execute_run` en sous-méthodes + state machine
+      explicite). _(5.2.a + 5.2.b — `ExecutionPhase` enum, `_phase_*` extraits)_
+- [x] Runbook `MANUAL_REVIEW` / `BLOCKED` dans `doc/execution_engine.md`. _(5.2.d)_
+- [x] **Kill switch global** : `python -m execution_engine cancel-all
+      --account live1`. _(5.2.c — table `execution_kill_switch_runs`, migration 0017)_
 
 ### 5.3 — `corporate_actions/` (réf. `audit_corporate_actions.md`)
-- [ ] Documenter construction `idempotency_key`.
-- [ ] Audit dédié `corporate_actions_audit_runs`.
-- [ ] Évaluer Yahoo dividends comme cross-check.
+- [x] Documenter construction `idempotency_key`. _(5.3.a — `compute_idempotency_key(account_id)`, migration 0019, doc §9.1)_
+- [x] Audit dédié `corporate_actions_audit_runs`. _(5.3.b — migration 0018, `persist_audit_run`, doc §9.2)_
+- [x] Évaluer Yahoo dividends comme cross-check. _(5.3.c — `cross_check_yahoo.py`, extra `[cross-check]`, CLI `--cross-check yahoo`, doc §9.3)_
 
 **Critère de sortie** : execution reproductible et auditable, kill switch testé.
 

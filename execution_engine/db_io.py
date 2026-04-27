@@ -24,6 +24,63 @@ class ExecutionRepository:
         self.engine = engine or get_sqlalchemy_engine()
 
     # ------------------------------------------------------------------
+    # Phase 5.2.c — Kill switch runs
+    # ------------------------------------------------------------------
+    def persist_kill_switch_run(
+        self,
+        *,
+        run_id: str,
+        account_id: str,
+        broker_mode: str,
+        reason: str,
+        results: list[dict[str, Any]],
+        dry_run: bool,
+        started_at: datetime,
+        finished_at: datetime,
+    ) -> None:
+        """Phase 5.2.c — Persiste une exécution de la commande ``cancel-all``.
+
+        ``results`` est une liste de dicts ``{broker_order_id, symbol, canceled, error}``.
+        Best-effort : log un warning si la table est absente (pas de migration appliquée).
+        """
+        total_open = len(results)
+        canceled = sum(1 for r in results if r.get("canceled"))
+        failed = total_open - canceled
+        try:
+            stmt = text(
+                """
+                INSERT INTO execution_kill_switch_runs
+                    (run_id, account_id, broker_mode, reason, total_open,
+                     canceled, failed, dry_run, started_at, finished_at, results_json)
+                VALUES
+                    (:run_id, :account_id, :broker_mode, :reason, :total_open,
+                     :canceled, :failed, :dry_run, :started_at, :finished_at, :results_json)
+                """
+            )
+            with self.engine.begin() as conn:
+                conn.execute(
+                    stmt,
+                    {
+                        "run_id": run_id,
+                        "account_id": account_id,
+                        "broker_mode": broker_mode,
+                        "reason": reason[:255],
+                        "total_open": total_open,
+                        "canceled": canceled,
+                        "failed": failed,
+                        "dry_run": 1 if dry_run else 0,
+                        "started_at": started_at,
+                        "finished_at": finished_at,
+                        "results_json": json.dumps(results, default=str),
+                    },
+                )
+        except Exception:
+            LOGGER.warning(
+                "persist_kill_switch_run failed (table missing?) run_id=%s account=%s",
+                run_id, account_id, exc_info=True,
+            )
+
+    # ------------------------------------------------------------------
     # Lecture
     # ------------------------------------------------------------------
 
@@ -212,7 +269,7 @@ class ExecutionRepository:
                 target_weight=float(r["target_weight"]),
                 sector=str(r["sector"]) if r.get("sector") else None,
                 conviction_score=float(r["conviction_score"]) if r.get("conviction_score") is not None else None,
-                sizing_method=str(r["sizing_method"]) if r.get("sizing_method") else None,
+                sizing_method=str(r["sizing_method"]) if r.get("sizing_method") is not None else None,
                 kelly_fraction=float(r["kelly_fraction"]) if r.get("kelly_fraction") is not None else None,
                 decision_rank=int(r["decision_rank"]) if r.get("decision_rank") is not None else None,
                 side=str(r["side"]) if r.get("side") else None,

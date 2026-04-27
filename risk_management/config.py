@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.conviction import ConvictionWeights
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,3 +76,16 @@ class RiskConfig:
             raise ValueError("score_weight + prediction_weight doit == 1.0.")
         if abs((self.prediction_confidence_weight + self.historical_win_rate_weight) - 1.0) > 1e-6:
             raise ValueError("prediction_confidence_weight + historical_win_rate_weight doit == 1.0.")
+
+    def to_conviction_weights(self) -> "ConvictionWeights":
+        """Phase 5.1.b — Adapte les pondérations risk vers ``core.conviction.ConvictionWeights``.
+
+        Centralise la fusion conviction (cf. `prompt/refactor/plan_phase5.md` §5.1.b).
+        """
+        from core.conviction import ConvictionWeights
+
+        return ConvictionWeights(
+            score_weight=self.score_weight,
+            prediction_weight=self.prediction_weight,
+        )
+

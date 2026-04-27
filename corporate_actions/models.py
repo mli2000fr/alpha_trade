@@ -59,11 +59,42 @@ class CorporateActionEvent:
 
     @property
     def idempotency_key(self) -> str:
-        """Clé d'idempotence déterministe SHA-256 tronquée à 32 chars."""
+        """Clé d'idempotence déterministe SHA-256 tronquée à 32 chars.
+
+        Formule legacy (sans scope) : ``sha256(provider|symbol|ca_type|ex_date|amount_or_split)[:32]``.
+
+        .. deprecated:: Phase 5.3.a
+            Préférer :meth:`compute_idempotency_key` qui scope par ``account_id``.
+            Cette propriété est conservée pour la rétrocompat lecture des events
+            historiques.
+        """
         if self.ca_type in (CaType.SPLIT, CaType.REVERSE_SPLIT):
             payload = f"{self.provider}|{self.symbol}|{self.ca_type}|{self.ex_date}|{self.split_from}:{self.split_to}"
         else:
             payload = f"{self.provider}|{self.symbol}|{self.ca_type}|{self.ex_date}|{self.amount_per_share}"
+        return hashlib.sha256(payload.encode()).hexdigest()[:32]
+
+    def compute_idempotency_key(self, account_id: str | None) -> str:
+        """Phase 5.3.a — Clé d'idempotence scopée par compte.
+
+        Formule (Phase 5.3.a) :
+        ``sha256( account_id_or_GLOBAL | provider | symbol | ca_type | ex_date | amount_or_split )[:32]``
+
+        Le scope ``account_id`` évite les double-crédits cross-comptes
+        (audit_corporate_actions §2.7 + §6 QW#1) : deux comptes recevant le
+        même événement broker produisent deux clés distinctes.
+
+        **Rétrocompat lecture** : si ``account_id`` est ``None``, on retourne la
+        clé legacy (sans scope) afin de ne pas invalider les events historiques
+        en base. L'``account_id`` est obligatoire en écriture côté ``engine``.
+        """
+        if account_id is None:
+            return self.idempotency_key
+        scope = account_id
+        if self.ca_type in (CaType.SPLIT, CaType.REVERSE_SPLIT):
+            payload = f"{scope}|{self.provider}|{self.symbol}|{self.ca_type}|{self.ex_date}|{self.split_from}:{self.split_to}"
+        else:
+            payload = f"{scope}|{self.provider}|{self.symbol}|{self.ca_type}|{self.ex_date}|{self.amount_per_share}"
         return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
     @property

@@ -144,6 +144,31 @@ Le score de conviction combine :
 
 Par défaut, le builder marque `score_source = final_score_sentiment`, ce qui fait du module risk un consommateur direct de la fusion quant + sentiment si elle a déjà été calculée.
 
+> **Phase 5.1.b — Centralisation `core/conviction.py`** :
+> la formule est désormais hébergée nativement par `core.conviction.fuse(...)`
+> (objet typé `ConvictionWeights`). `risk_management.portfolio_builder.PortfolioBuilder`
+> et `event_sentiment.signal_aggregator` consomment la même API.
+> Le module `risk_management.conviction` reste exposé en wrapper rétrocompat,
+> mais émet désormais un `DeprecationWarning` ; à ne plus utiliser dans le code neuf.
+
+### 4.3.bis Pondérations conviction (40 / 60)
+
+Convention historique du projet : `score_weight = 0.40`, `prediction_weight = 0.60`
+(voir `RiskConfig` et `core.conviction.ConvictionWeights`).
+
+Hypothèses :
+
+- la prédiction ML (probabilité calibrée) est *plus* informative que le score
+  quant pur sur l'horizon swing typique 5–15 jours ;
+- les poids somment exactement à 1.0 (validation `__post_init__`).
+
+**Plan de calibration empirique (backlog Phase 7)** : reposer sur un backtest
+glissant 6 mois (table `weights_calibration_runs`) pour optimiser le couple
+`(score_weight, prediction_weight)` par horizon / régime de volatilité. En
+attendant, le `run_summary` expose `conviction_weights_calibration =
+{"source": "default", "calibration_run_id": null}` afin de tracer qu'aucune
+calibration personnalisée n'est encore active.
+
 ### 4.4 Dividendes cumulés
 
 Le CLI tente d'ajouter au capital de base le total des dividendes cumulés issus de `corporate_actions`, quand cette information est disponible.
@@ -154,6 +179,22 @@ Si `--dry-run` n'est pas activé, le module écrit :
 
 - les décisions dans `risk_decisions` ;
 - les cibles dans `portfolio_targets`.
+
+### 4.6 `run_summary` risk (Phase 5.1.a → 5.1.c)
+
+Chaque exécution émet une ligne `::alpha_trade_run_summary::{...}` (parsée par
+l'IHM). Champs Phase 5 :
+
+| Clé | Description |
+|---|---|
+| `schema_version` | Version du payload (1, ajoutée Phase 5.1.a). |
+| `account_equity_breakdown` | Décomposition de l'equity (cash, settled_cash, long_positions_value, short_positions_value, dividends_ledger, total, source). Source ∈ {`broker_account_snapshots`, `missing`}. |
+| `conviction_weights` | `{score_weight, prediction_weight, source: "core.conviction"}`. Trace l'utilisation de l'API centralisée. |
+| `conviction_weights_calibration` | `{source: "default", calibration_run_id: null}`. Placeholder pour la calibration empirique Phase 7. |
+
+L'`account_equity_breakdown` est best-effort : aucune exception ne remonte au
+CLI. Si les tables `broker_account_snapshots` / `broker_positions_snapshots` /
+`portfolio_cash_ledger` sont absentes, le payload conserve `source="missing"`.
 
 ---
 

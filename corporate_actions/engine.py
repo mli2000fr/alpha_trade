@@ -229,9 +229,16 @@ class CorporateActionEngine:
         stats: dict[str, int],
     ) -> None:
         """Applique un seul événement corporate action."""
-        # Vérification idempotence
-        if self.repo.is_event_applied(event.idempotency_key):
-            LOGGER.debug("Evenement deja applique (idempotence) | key=%s", event.idempotency_key)
+        # Phase 5.3.a — Vérification idempotence scopée par account_id.
+        # ``is_event_applied`` essaie d'abord la clé scopée (account_id) puis
+        # tombe sur la clé legacy pour les events ingérés avant la migration.
+        scoped_key = event.compute_idempotency_key(self.account_id)
+        legacy_key = event.idempotency_key
+        if self.repo.is_event_applied(scoped_key, legacy_key=legacy_key):
+            LOGGER.debug(
+                "Evenement deja applique (idempotence) | scoped_key=%s legacy_key=%s",
+                scoped_key, legacy_key,
+            )
             stats["skipped"] += 1
             return
 

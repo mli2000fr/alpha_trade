@@ -7,12 +7,62 @@ import sys
 from datetime import date, datetime, timedelta
 
 from common.utils import configure_root_logging
+from core.run_summary import attach_schema_version
 from corporate_actions.db_io import CorporateActionRepository
 from corporate_actions.engine import CorporateActionEngine
 from corporate_actions.provider import AlpacaCorporateActionProvider
 from database.run_business_summaries import build_summary_run_id, emit_run_summary, persist_run_business_summary
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _run_cross_check_yahoo(
+    repo: CorporateActionRepository,
+    *,
+    start_date: date,
+    end_date: date,
+    symbols: list[str] | None,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """Phase 5.3.c — exécute un cross-check Yahoo (best-effort, jamais bloquant).
+
+    Retourne ``(anomalies, stats)`` où ``stats`` contient
+    ``{"yahoo_events": N, "ingested_events": M, "anomalies": K}``.
+    """
+    try:
+        from corporate_actions.cross_check_yahoo import (
+            YahooDividendCrossCheckProvider,
+            diff_dividends,
+        )
+    except Exception:
+        LOGGER.warning("Cross-check Yahoo indisponible (import échoue).", exc_info=True)
+        return [], {"yahoo_events": 0, "ingested_events": 0, "anomalies": 0}
+
+    try:
+        ingested = repo.load_dividend_events_in_range(
+            start_date=start_date, end_date=end_date, symbols=symbols
+        )
+    except Exception:
+        LOGGER.warning("Cross-check Yahoo : echec chargement events ingérés.", exc_info=True)
+        return [], {"yahoo_events": 0, "ingested_events": 0, "anomalies": 0}
+
+    if not symbols:
+        # Sans liste explicite, on cross-check au moins les symboles ingérés.
+        symbols = sorted({ev.symbol for ev in ingested})
+
+    yahoo_provider = YahooDividendCrossCheckProvider()
+    yahoo_events = yahoo_provider.fetch_events(
+        symbols=symbols, start_date=start_date, end_date=end_date
+    )
+    anomalies = diff_dividends(ingested=ingested, yahoo=yahoo_events)
+    LOGGER.info(
+        "Cross-check Yahoo termine | ingested=%d yahoo=%d anomalies=%d",
+        len(ingested), len(yahoo_events), len(anomalies),
+    )
+    return anomalies, {
+        "yahoo_events": len(yahoo_events),
+        "ingested_events": len(ingested),
+        "anomalies": len(anomalies),
+    }
 
 
 def _emit_and_persist_summary(
@@ -23,7 +73,15 @@ def _emit_and_persist_summary(
     account_id: str | None,
     trade_date: object = None,
     parent_summary_run_id: str | None = None,
+    audit_run_kind: str | None = None,
+    audit_repo: CorporateActionRepository | None = None,
+    audit_started_at: datetime | None = None,
+    audit_finished_at: datetime | None = None,
+    audit_stats: dict[str, object] | None = None,
+    audit_anomalies: list[dict[str, object]] | None = None,
 ) -> None:
+    # Phase 5.3.b — attach_schema_version garantit ``schema_version`` partout.
+    summary = attach_schema_version(summary)
     try:
         persist_run_business_summary(
             summary=summary,
@@ -40,6 +98,24 @@ def _emit_and_persist_summary(
         )
     except Exception:
         LOGGER.debug("Persistance run_business_summaries indisponible pour corporate_actions.", exc_info=True)
+    # Phase 5.3.b — persistance audit dédiée (best-effort).
+    if audit_run_kind and audit_repo and audit_started_at and audit_finished_at:
+        persist_fn = getattr(audit_repo, "persist_audit_run", None)
+        if callable(persist_fn):
+            try:
+                persist_fn(
+                    run_id=str(summary.get("run_id", "") or "") or f"{audit_run_kind}-noid",
+                    run_kind=audit_run_kind,
+                    account_id=account_id,
+                    started_at=audit_started_at,
+                    finished_at=audit_finished_at,
+                    stats=audit_stats or {},
+                    anomalies=audit_anomalies,
+                    status=status,
+                    summary=summary,
+                )
+            except Exception:
+                LOGGER.debug("persist_audit_run a echoue (best-effort, ignore).", exc_info=True)
     emit_run_summary(summary)
 
 
@@ -100,6 +176,12 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
     run_p.add_argument("--as-of", type=str, default=None, help="Date limite pour apply (YYYY-MM-DD). Défaut : aujourd'hui.")
     run_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
+    run_p.add_argument(
+        "--cross-check",
+        choices=("none", "yahoo"),
+        default="none",
+        help="Phase 5.3.c — cross-check optionnel des dividendes ingérés contre Yahoo Finance (yfinance requis).",
+    )
 
     return parser
 
@@ -246,6 +328,12 @@ def _run_sync(args: argparse.Namespace) -> None:
         skip_existing=getattr(args, "skip_existing", False),
     )
     finished_at = datetime.now()
+    cross_check_anomalies: list[dict[str, object]] | None = None
+    cross_check_stats: dict[str, int] = {}
+    if getattr(args, "cross_check", "none") == "yahoo":
+        cross_check_anomalies, cross_check_stats = _run_cross_check_yahoo(
+            repo, start_date=start_date, end_date=end_date, symbols=symbols
+        )
     summary = {
         "run_id": build_summary_run_id("ca-sync"),
         "started_at": started_at.isoformat(timespec="seconds"),
@@ -260,6 +348,8 @@ def _run_sync(args: argparse.Namespace) -> None:
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "batch_size": int(args.batch_size),
+        "cross_check": getattr(args, "cross_check", "none"),
+        "cross_check_stats": cross_check_stats,
     }
     _emit_and_persist_summary(
         summary=summary,
@@ -267,6 +357,12 @@ def _run_sync(args: argparse.Namespace) -> None:
         status="completed",
         account_id=account_id,
         trade_date=end_date,
+        audit_run_kind="sync",
+        audit_repo=repo,
+        audit_started_at=started_at,
+        audit_finished_at=finished_at,
+        audit_stats=stats,
+        audit_anomalies=cross_check_anomalies,
     )
     print(f"Sync termine : {stats}")
 
@@ -274,7 +370,8 @@ def _run_sync(args: argparse.Namespace) -> None:
 def _run_apply(args: argparse.Namespace) -> None:
     account_id = getattr(args, "account", None)
     provider = AlpacaCorporateActionProvider(account_id=account_id)
-    engine = CorporateActionEngine(provider=provider, account_id=account_id)
+    repo = CorporateActionRepository()
+    engine = CorporateActionEngine(provider=provider, repo=repo, account_id=account_id)
     started_at = datetime.now()
 
     as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
@@ -304,6 +401,11 @@ def _run_apply(args: argparse.Namespace) -> None:
         status="completed",
         account_id=account_id,
         trade_date=as_of,
+        audit_run_kind="apply",
+        audit_repo=repo,
+        audit_started_at=started_at,
+        audit_finished_at=finished_at,
+        audit_stats={**stats, "pending": len(pending_events)},
     )
     print(f"Apply termine : {stats}")
 
@@ -366,21 +468,36 @@ def _run_all(args: argparse.Namespace) -> None:
         "duplicate_events": int(stats_sync.get("duplicates", 0)),
         "invalid_events": int(stats_sync.get("invalid", 0)),
     }
+    sync_finished_at = datetime.now()
+    cross_check_anomalies: list[dict[str, object]] | None = None
+    cross_check_stats: dict[str, int] = {}
+    if getattr(args, "cross_check", "none") == "yahoo":
+        cross_check_anomalies, cross_check_stats = _run_cross_check_yahoo(
+            repo, start_date=start_date, end_date=end_date, symbols=symbols
+        )
     _emit_and_persist_summary(
         summary={
             **sync_summary,
             "started_at": started_at.isoformat(timespec="seconds"),
-            "finished_at": datetime.now().isoformat(timespec="seconds"),
-            "duration_seconds": round((datetime.now() - started_at).total_seconds(), 2),
+            "finished_at": sync_finished_at.isoformat(timespec="seconds"),
+            "duration_seconds": round((sync_finished_at - started_at).total_seconds(), 2),
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "batch_size": int(args.batch_size),
+            "cross_check": getattr(args, "cross_check", "none"),
+            "cross_check_stats": cross_check_stats,
         },
         step_key="corporate_actions_sync",
         status="completed",
         account_id=account_id,
         trade_date=end_date,
         parent_summary_run_id=parent_summary_run_id,
+        audit_run_kind="sync",
+        audit_repo=repo,
+        audit_started_at=started_at,
+        audit_finished_at=sync_finished_at,
+        audit_stats=stats_sync,
+        audit_anomalies=cross_check_anomalies,
     )
     print(f"Sync termine : {stats_sync}")
     print("[RUN] Application des corporate actions sur les positions...")
@@ -413,6 +530,11 @@ def _run_all(args: argparse.Namespace) -> None:
         account_id=account_id,
         trade_date=as_of,
         parent_summary_run_id=parent_summary_run_id,
+        audit_run_kind="apply",
+        audit_repo=repo,
+        audit_started_at=sync_finished_at,
+        audit_finished_at=apply_finished_at,
+        audit_stats={**stats_apply, "pending": len(pending_events)},
     )
     parent_summary = {
         "run_id": parent_summary_run_id,
@@ -438,6 +560,12 @@ def _run_all(args: argparse.Namespace) -> None:
         status="completed",
         account_id=account_id,
         trade_date=as_of,
+        audit_run_kind="run",
+        audit_repo=repo,
+        audit_started_at=started_at,
+        audit_finished_at=apply_finished_at,
+        audit_stats={**stats_sync, **stats_apply, "pending": len(pending_events)},
+        audit_anomalies=cross_check_anomalies,
     )
     print(f"Apply termine : {stats_apply}")
 

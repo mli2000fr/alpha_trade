@@ -206,6 +206,68 @@ Après soumission et synchronisation broker, le moteur peut :
 - calculer slippage et implementation shortfall,
 - écrire l'audit complet en base.
 
+### 4.4.bis Runbook réconciliation `MANUAL_REVIEW` / `BLOCKED` (Phase 5.2.d)
+
+À la fin d'un run d'exécution, chaque cible est classée par
+`execution_reconciliation_results.reconciliation_status`. Le `run_summary`
+expose désormais (Phase 5.2.d) la liste des symboles concernés via
+`reconciliation_manual_review_symbols` et `reconciliation_blocked_symbols`
+pour faciliter le pointage opérateur.
+
+| Statut | Cause typique | Action opérateur | SQL d'inspection |
+|---|---|---|---|
+| `SAFE_AUTO` | Tout aligné (positions, protections, ordres open). | Aucune action. | `SELECT * FROM execution_reconciliation_results WHERE reconciliation_status='SAFE_AUTO' AND exec_run_id=:run` |
+| `MANUAL_REVIEW` | Delta qty > tolérance, prix décalé > N %, ordre open inattendu, protection manquante. | 1) Inspecter `execution_reconciliation_results.reason_code`. 2) Vérifier `execution_broker_orders` (statut, broker_order_id). 3) Décider : compléter manuellement via UI broker ou attendre le prochain run. | `SELECT symbol, target_qty, broker_position_qty, position_delta, action, reason_code FROM execution_reconciliation_results WHERE reconciliation_status='MANUAL_REVIEW' AND exec_run_id=:run` |
+| `BLOCKED` | Symbole en trading halt, position broker non identifiée, mismatch lot critique. | 1) **STOP** : ne pas relancer le run. 2) Vérifier `service.alpaca` halt status. 3) Si nécessaire, déclencher kill switch (cf. §4.4.ter). 4) Reconcilier manuellement avant le prochain run. | `SELECT symbol, reason_code, position_delta, has_open_protection FROM execution_reconciliation_results WHERE reconciliation_status='BLOCKED' AND exec_run_id=:run` |
+
+> **Astuce** : `SELECT reconciliation_blocked_symbols FROM run_business_summaries
+> WHERE step_key='execution' ORDER BY started_at DESC LIMIT 5` permet d'obtenir
+> directement la liste des symboles bloqués des 5 derniers runs.
+
+### 4.4.ter Kill switch global (Phase 5.2.c)
+
+Pour annuler **tous** les ordres open d'un compte broker en une seule
+commande (sans passer par l'IHM ou un script ad-hoc) :
+
+```bash
+# Mode paper — exécution réelle des cancels
+python -m execution_engine cancel-all --account paper1 --reason "incident X"
+
+# Mode paper — dry-run (liste les ordres sans les annuler)
+python -m execution_engine cancel-all --account paper1 --dry-run
+
+# Mode live — exige --confirm-account == --account (garde-fou audit_execution.md §6 QW#5)
+python -m execution_engine cancel-all --account live1 --broker-mode live --confirm-account live1 --reason "halt-trading"
+```
+
+**Comportement** :
+
+1. Charge tous les ordres `status=open` via `BrokerAdapter.cancel_all_open_orders`.
+2. En mode normal : appelle `cancel_order(broker_order_id)` séquentiellement ;
+   un échec d'un ordre n'interrompt pas la boucle (chaque erreur est
+   capturée par-ordre dans la colonne `results_json`).
+3. En mode `--dry-run` : ne modifie rien côté broker, mais persiste
+   quand même un audit `execution_kill_switch_runs(dry_run=1)`.
+4. Persiste un row dans `execution_kill_switch_runs(run_id, account_id,
+   broker_mode, reason, total_open, canceled, failed, dry_run, started_at,
+   finished_at, results_json)`.
+5. Émet une ligne `::alpha_trade_run_summary::{...}` parsable par l'IHM,
+   avec `event_type=KILL_SWITCH_TRIGGERED` (à ne pas confondre avec
+   `KILL_SWITCH_ACTIVATED` interne sur N échecs consécutifs).
+
+**Pré-conditions** :
+
+- `--broker-mode live` exige `--confirm-account` strictement identique à
+  `--account` (sinon `SystemExit`).
+- Si un run d'exécution est en cours sur ce compte (`execution_locks` actif),
+  utiliser `--force` pour outrepasser le verrou (dangereux).
+
+**Post-conditions** :
+
+- `SELECT * FROM execution_kill_switch_runs ORDER BY created_at DESC LIMIT 5`
+  retourne les derniers kill switches.
+- L'IHM peut afficher l'historique via la table `execution_kill_switch_runs`.
+
 ### 4.5 Watcher post-exécution
 
 Le watcher n'est pas une phase du pipeline 1→14 lui-même. C'est un runtime complémentaire et secondaire qui s'accroche juste après `Execution` pour :

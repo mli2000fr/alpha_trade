@@ -276,3 +276,84 @@ python run_execution.py paper --account live1
 python -m corporate_actions sync --portfolio-only --account live1
 python -m corporate_actions apply --account live1
 ```
+
+---
+
+## 9. Phase 5.3 — Idempotence, audit, cross-check
+
+> Réf. `prompt/refactor/plan_phase5.md` § 5.3, `prompt/refactor/audit_corporate_actions.md`.
+
+### 9.1 Construction de l'`idempotency_key`
+
+Chaque `CorporateActionEvent` produit deux clés déterministes (SHA-256 tronqué
+à 32 caractères) :
+
+| Méthode | Formule | Usage |
+|---|---|---|
+| `event.idempotency_key` (legacy) | `sha256(provider \| symbol \| ca_type \| ex_date \| amount_or_split)[:32]` | Rétrocompat lecture des events ingérés avant Phase 5.3.a. |
+| `event.compute_idempotency_key(account_id)` | `sha256(account_id_or_GLOBAL \| provider \| symbol \| ca_type \| ex_date \| amount_or_split)[:32]` | Clé à utiliser à l'écriture (sync) et à la vérification d'application (apply). Évite les doubles-crédits cross-comptes. |
+
+Si `account_id is None`, `compute_idempotency_key` renvoie la clé legacy
+(pratique pour les outils qui n'ont pas de notion de compte).
+
+`is_event_applied(scoped_key, legacy_key=...)` du repository essaie d'abord la
+clé scopée puis tombe sur la legacy : un event ingéré pré-migration ne peut
+donc pas être rejoué par erreur.
+
+**Schéma DB** : la colonne `corporate_actions_events.account_idempotency_key`
+(migration `0019_corporate_actions_account_idempotency`) porte la nouvelle clé.
+Index `UNIQUE` (NULL multiples autorisés sous MySQL/MariaDB).
+
+### 9.2 Audit & monitoring (`corporate_actions_audit_runs`)
+
+Migration `0018_corporate_actions_audit_runs` — table créée pour tracer chaque
+exécution de `python -m corporate_actions {sync,apply,run}`. Chaque CLI appelle
+`CorporateActionRepository.persist_audit_run(...)` automatiquement, en
+best-effort (échec → log debug, jamais bloquant).
+
+| Colonne | Description |
+|---|---|
+| `run_id` (PK) | `build_summary_run_id("ca-…")` |
+| `run_kind` | `sync` \| `apply` \| `reconcile` \| `run` |
+| `account_id` | NULL si run global |
+| `started_at`, `finished_at`, `duration_seconds` | Timing |
+| `fetched / inserted / duplicates / invalid` | Stats sync |
+| `applied / skipped / failed` | Stats apply |
+| `reconcile_diffs` | Stats réconciliation |
+| `anomalies_json` | TEXT — anomalies cross-check Yahoo (Phase 5.3.c) |
+| `summary_json` | LONGBLOB — payload `run_summary` complet |
+
+Recommandation rétention : purger > 90 jours (cron mensuel).
+
+Tous les `run_summary` du module portent désormais
+`schema_version` (cf. `core.run_summary.attach_schema_version`).
+
+### 9.3 Cross-check Yahoo (opt-in, Phase 5.3.c)
+
+Pour comparer les dividendes ingérés (Alpaca) à un second canal (Yahoo Finance),
+installer l'extra optionnel :
+
+```powershell
+pip install -e ".[cross-check]"
+```
+
+Puis ajouter `--cross-check yahoo` au CLI `sync` ou `run` :
+
+```powershell
+python -m corporate_actions sync --portfolio-only --account live1 --cross-check yahoo
+python -m corporate_actions run  --portfolio-only --account live1 --cross-check yahoo
+```
+
+Comportement :
+
+- Lazy import de `yfinance` (jamais bloquant : si la lib est absente, anomalies = []).
+- Pour chaque dividende Yahoo dans la fen�tre `[start_date, end_date]` et la liste de symboles, on compare avec `corporate_actions_events` (provider Alpaca).
+- Trois types d'anomalies remont�es dans `summary_json["anomalies_json"]` :
+  - `missing_in_ingested` : Yahoo a un dividende, Alpaca non.
+  - `missing_in_yahoo` : Alpaca a un dividende, Yahoo non.
+  - `amount_mismatch` : montant divergent au-del� de la tol�rance (1e-4 par d�faut).
+- Le cross-check **ne bloque jamais** la sync principale (try/except global).
+### 9.4 Tests Phase 5.3
+```powershell
+python -m pytest tests/test_corporate_actions_models.py tests/test_corporate_actions_audit_runs.py tests/test_corporate_actions_cross_check_yahoo.py --no-cov -q
+```

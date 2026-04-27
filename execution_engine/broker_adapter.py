@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -10,9 +11,19 @@ from execution_engine.models import BrokerOrder, OrderIntent
 from execution_engine.order_intents import intent_to_alpaca_payload
 from execution_engine.state_machine import map_alpaca_status
 from service.alpaca.clientAlpaca import fetch_latest_quotes
-from service.alpaca.trading_client import AlpacaTradingClient
+from service.alpaca.trading_client import AlpacaTradingClient, BrokerApiError
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class CancelResult:
+    """Phase 5.2.c — Résultat d'une annulation unitaire (kill switch)."""
+
+    broker_order_id: str
+    symbol: str
+    canceled: bool
+    error: str | None = None
 
 
 class BrokerAdapter:
@@ -33,6 +44,46 @@ class BrokerAdapter:
 
     def cancel_broker_order(self, broker_order_id: str) -> bool:
         return self._client.cancel_order(broker_order_id)
+
+    def cancel_all_open_orders(self, *, dry_run: bool = False) -> list[CancelResult]:
+        """Phase 5.2.c — Kill switch global : annule tous les ordres open du compte.
+
+        En mode ``dry_run=True``, retourne les résultats sans appeler ``cancel_order``.
+        Chaque erreur ``BrokerApiError`` est capturée par ordre, n'interrompt pas la
+        boucle, et laisse une ligne avec ``canceled=False, error=...``.
+        """
+        try:
+            open_orders = self._client.list_orders(status="open", limit=500)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("cancel_all_open_orders: list_orders failed: %s", exc)
+            raise
+
+        results: list[CancelResult] = []
+        for order in open_orders or []:
+            broker_id = str(order.get("id") or "")
+            symbol = str(order.get("symbol") or "")
+            if not broker_id:
+                results.append(CancelResult("", symbol, canceled=False, error="missing broker_order_id"))
+                continue
+            if dry_run:
+                results.append(CancelResult(broker_id, symbol, canceled=True, error="dry_run"))
+                continue
+            try:
+                ok = self._client.cancel_order(broker_id)
+                results.append(CancelResult(broker_id, symbol, canceled=bool(ok)))
+            except BrokerApiError as exc:
+                LOGGER.warning(
+                    "cancel_all_open_orders: cancel failed broker_order_id=%s symbol=%s err=%s",
+                    broker_id, symbol, exc,
+                )
+                results.append(CancelResult(broker_id, symbol, canceled=False, error=str(exc)))
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "cancel_all_open_orders: unexpected error broker_order_id=%s symbol=%s err=%s",
+                    broker_id, symbol, exc,
+                )
+                results.append(CancelResult(broker_id, symbol, canceled=False, error=str(exc)))
+        return results
 
     def list_recent_orders(
         self,

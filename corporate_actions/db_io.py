@@ -35,22 +35,25 @@ class CorporateActionRepository:
     # Insertion événements
     # ------------------------------------------------------------------
 
-    def insert_event(self, event: CorporateActionEvent) -> int:
+    def insert_event(self, event: CorporateActionEvent, account_id: str | None = None) -> int:
         """
         Insère un événement dans corporate_actions_events.
+
+        Phase 5.3.a — la clé scopée ``account_idempotency_key`` est calculée à
+        partir de ``account_id`` (``None`` → clé legacy = ``GLOBAL`` implicite).
 
         Retourne l'id de la ligne insérée, ou -1 si doublon (idempotency_key).
         """
         if self._is_sqlite:
-            return self.insert_event_sqlite(event)
+            return self.insert_event_sqlite(event, account_id=account_id)
         stmt = text("""
             INSERT INTO corporate_actions_events
-                (idempotency_key, provider, provider_event_id, symbol, ca_type,
+                (idempotency_key, account_idempotency_key, provider, provider_event_id, symbol, ca_type,
                  amount_per_share, split_from, split_to, currency,
                  announcement_date, ex_date, record_date, payable_date,
                  raw_payload, status, ingested_at)
             VALUES
-                (:idempotency_key, :provider, :provider_event_id, :symbol, :ca_type,
+                (:idempotency_key, :account_idempotency_key, :provider, :provider_event_id, :symbol, :ca_type,
                  :amount_per_share, :split_from, :split_to, :currency,
                  :announcement_date, :ex_date, :record_date, :payable_date,
                  :raw_payload, :status, :ingested_at)
@@ -59,6 +62,7 @@ class CorporateActionRepository:
         now = datetime.now(timezone.utc)
         params: dict[str, Any] = {
             "idempotency_key": event.idempotency_key,
+            "account_idempotency_key": event.compute_idempotency_key(account_id),
             "provider": event.provider,
             "provider_event_id": event.provider_event_id,
             "symbol": event.symbol,
@@ -87,20 +91,40 @@ class CorporateActionRepository:
             )
             return row_id or -1
 
-    def insert_event_sqlite(self, event: CorporateActionEvent) -> int:
+    def insert_event_sqlite(self, event: CorporateActionEvent, account_id: str | None = None) -> int:
         """Insert compatible SQLite (tests). Utilise INSERT OR IGNORE."""
-        stmt = text("""
-            INSERT OR IGNORE INTO corporate_actions_events
-                (idempotency_key, provider, provider_event_id, symbol, ca_type,
-                 amount_per_share, split_from, split_to, currency,
-                 announcement_date, ex_date, record_date, payable_date,
-                 raw_payload, status, ingested_at)
-            VALUES
-                (:idempotency_key, :provider, :provider_event_id, :symbol, :ca_type,
-                 :amount_per_share, :split_from, :split_to, :currency,
-                 :announcement_date, :ex_date, :record_date, :payable_date,
-                 :raw_payload, :status, :ingested_at)
-        """)
+        # Phase 5.3.a — colonne ``account_idempotency_key`` optionnelle : on
+        # vérifie sa présence dans le schéma SQLite pour rester compatible avec
+        # les fixtures de test legacy qui ne la déclarent pas encore.
+        has_account_col = self._sqlite_has_column(
+            "corporate_actions_events", "account_idempotency_key"
+        )
+        if has_account_col:
+            stmt = text("""
+                INSERT OR IGNORE INTO corporate_actions_events
+                    (idempotency_key, account_idempotency_key, provider, provider_event_id, symbol, ca_type,
+                     amount_per_share, split_from, split_to, currency,
+                     announcement_date, ex_date, record_date, payable_date,
+                     raw_payload, status, ingested_at)
+                VALUES
+                    (:idempotency_key, :account_idempotency_key, :provider, :provider_event_id, :symbol, :ca_type,
+                     :amount_per_share, :split_from, :split_to, :currency,
+                     :announcement_date, :ex_date, :record_date, :payable_date,
+                     :raw_payload, :status, :ingested_at)
+            """)
+        else:
+            stmt = text("""
+                INSERT OR IGNORE INTO corporate_actions_events
+                    (idempotency_key, provider, provider_event_id, symbol, ca_type,
+                     amount_per_share, split_from, split_to, currency,
+                     announcement_date, ex_date, record_date, payable_date,
+                     raw_payload, status, ingested_at)
+                VALUES
+                    (:idempotency_key, :provider, :provider_event_id, :symbol, :ca_type,
+                     :amount_per_share, :split_from, :split_to, :currency,
+                     :announcement_date, :ex_date, :record_date, :payable_date,
+                     :raw_payload, :status, :ingested_at)
+            """)
         now = datetime.now(timezone.utc)
         params: dict[str, Any] = {
             "idempotency_key": event.idempotency_key,
@@ -120,15 +144,22 @@ class CorporateActionRepository:
             "status": CaStatus.PENDING,
             "ingested_at": now,
         }
+        if has_account_col:
+            params["account_idempotency_key"] = event.compute_idempotency_key(account_id)
         with self.engine.begin() as conn:
             result = conn.execute(stmt, params)
             if result.rowcount == 0:
                 return -1
             return result.lastrowid or -1
 
-    # ------------------------------------------------------------------
-    # Lecture événements pending
-    # ------------------------------------------------------------------
+    def _sqlite_has_column(self, table: str, column: str) -> bool:
+        """Phase 5.3.a — utilitaire pour rester compatible avec les fixtures
+        SQLite des tests qui n'ont pas encore appliqué la migration 0019."""
+        if not self._is_sqlite:
+            return True
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(f"PRAGMA table_info({table})")).mappings().all()
+        return any(str(r.get("name", "")).lower() == column.lower() for r in rows)
 
     def load_pending_events(self, as_of: Any = None) -> list[CorporateActionEvent]:
         """Charge les événements pending dont l'ex_date <= as_of (ou tous si None)."""
@@ -158,14 +189,38 @@ class CorporateActionRepository:
             rows = conn.execute(stmt, params).mappings().all()
         return [self._row_to_event(r) for r in rows]
 
-    def is_event_applied(self, idempotency_key: str) -> bool:
-        """Vérifie si un événement a déjà été appliqué."""
-        stmt = text("""
-            SELECT status FROM corporate_actions_events
-            WHERE idempotency_key = :key
-        """)
+    def is_event_applied(self, idempotency_key: str, legacy_key: str | None = None) -> bool:
+        """Vérifie si un événement a déjà été appliqué.
+
+        Phase 5.3.a — la clé est désormais scopée par ``account_id`` via
+        :meth:`CorporateActionEvent.compute_idempotency_key`. Pour les events
+        ingérés avant la migration ``0019``, la colonne
+        ``account_idempotency_key`` est NULL et la clé scopée n'est pas
+        retrouvée : on retombe alors sur ``legacy_key`` (sans scope) pour
+        éviter de rejouer un dividende déjà appliqué.
+        """
+        # 1. Recherche par clé scopée (post-migration 0019).
+        has_account_col = self._sqlite_has_column(
+            "corporate_actions_events", "account_idempotency_key"
+        )
+        if has_account_col:
+            stmt = text(
+                "SELECT status FROM corporate_actions_events "
+                "WHERE account_idempotency_key = :key"
+            )
+            with self.engine.connect() as conn:
+                status = conn.execute(stmt, {"key": idempotency_key}).scalar_one_or_none()
+            if status == CaStatus.APPLIED:
+                return True
+        # 2. Fallback legacy (events historiques OU clé scopée fournie =
+        #    legacy_key parce que account_id était None).
+        legacy = legacy_key or idempotency_key
+        stmt = text(
+            "SELECT status FROM corporate_actions_events "
+            "WHERE idempotency_key = :key"
+        )
         with self.engine.connect() as conn:
-            status = conn.execute(stmt, {"key": idempotency_key}).scalar_one_or_none()
+            status = conn.execute(stmt, {"key": legacy}).scalar_one_or_none()
         return status == CaStatus.APPLIED
 
     # ------------------------------------------------------------------
@@ -414,5 +469,105 @@ class CorporateActionRepository:
             ingested_at=r.get("ingested_at"),
         )
 
+    # ------------------------------------------------------------------
+    # Phase 5.3.b — Audit run trail (corporate_actions_audit_runs)
+    # ------------------------------------------------------------------
 
+    def persist_audit_run(
+        self,
+        *,
+        run_id: str,
+        run_kind: str,
+        account_id: str | None,
+        started_at: datetime,
+        finished_at: datetime,
+        stats: dict[str, Any] | None = None,
+        anomalies: list[dict[str, Any]] | None = None,
+        status: str = "completed",
+        summary: dict[str, Any] | None = None,
+    ) -> None:
+        """Persiste une ligne dans ``corporate_actions_audit_runs``.
 
+        Best-effort : si la table n'existe pas (fixtures SQLite legacy), on log
+        en debug et on retourne sans lever — l'audit ne doit jamais bloquer le
+        run métier.
+        """
+        stats = stats or {}
+        duration = max(0.0, (finished_at - started_at).total_seconds())
+        params = {
+            "run_id": run_id,
+            "run_kind": run_kind,
+            "account_id": account_id,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "duration_seconds": round(duration, 3),
+            "fetched": int(stats.get("fetched", 0)),
+            "inserted": int(stats.get("inserted", 0)),
+            "duplicates": int(stats.get("duplicates", 0)),
+            "invalid": int(stats.get("invalid", 0)),
+            "applied": int(stats.get("applied", 0)),
+            "skipped": int(stats.get("skipped", 0)),
+            "failed": int(stats.get("failed", 0)),
+            "reconcile_diffs": int(stats.get("reconcile_diffs", 0)),
+            "anomalies_json": json.dumps(anomalies) if anomalies else None,
+            "status": status,
+            "summary_json": (
+                json.dumps(summary, default=str).encode("utf-8") if summary else None
+            ),
+        }
+        stmt = text(
+            "INSERT INTO corporate_actions_audit_runs ("
+            "run_id, run_kind, account_id, started_at, finished_at, duration_seconds, "
+            "fetched, inserted, duplicates, invalid, applied, skipped, failed, "
+            "reconcile_diffs, anomalies_json, status, summary_json"
+            ") VALUES ("
+            ":run_id, :run_kind, :account_id, :started_at, :finished_at, :duration_seconds, "
+            ":fetched, :inserted, :duplicates, :invalid, :applied, :skipped, :failed, "
+            ":reconcile_diffs, :anomalies_json, :status, :summary_json"
+            ")"
+        )
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(stmt, params)
+        except Exception:
+            LOGGER.debug(
+                "Persistance corporate_actions_audit_runs indisponible (run_id=%s).",
+                run_id,
+                exc_info=True,
+            )
+
+    # ------------------------------------------------------------------
+    # Phase 5.3.c — Cross-check Yahoo : chargement events dividendes
+    # ------------------------------------------------------------------
+
+    def load_dividend_events_in_range(
+        self,
+        *,
+        start_date: Any,
+        end_date: Any,
+        symbols: list[str] | None = None,
+    ) -> list[CorporateActionEvent]:
+        """Charge les events ``cash_dividend`` / ``special_dividend`` ingérés
+        dont ``ex_date`` ∈ [start_date, end_date], pour cross-check provider
+        externe (Phase 5.3.c)."""
+        base_sql = (
+            "SELECT id, idempotency_key, provider, provider_event_id, symbol, ca_type, "
+            "amount_per_share, split_from, split_to, currency, "
+            "announcement_date, ex_date, record_date, payable_date, "
+            "raw_payload, status, ingested_at "
+            "FROM corporate_actions_events "
+            "WHERE ca_type IN ('cash_dividend', 'special_dividend') "
+            "AND ex_date BETWEEN :start_date AND :end_date "
+        )
+        params: dict[str, Any] = {"start_date": start_date, "end_date": end_date}
+        if symbols:
+            normalized = sorted({s.strip().upper() for s in symbols if s and s.strip()})
+            if normalized:
+                placeholders = ", ".join(f":sym_{i}" for i in range(len(normalized)))
+                base_sql += f"AND UPPER(symbol) IN ({placeholders}) "
+                for i, sym in enumerate(normalized):
+                    params[f"sym_{i}"] = sym
+        base_sql += "ORDER BY ex_date ASC, symbol ASC, id ASC"
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(base_sql), params).mappings().all()
+        return [self._row_to_event(r) for r in rows]

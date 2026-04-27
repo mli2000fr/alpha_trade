@@ -48,6 +48,10 @@ class EventType:
     RECONCILE_OK = "RECONCILE_OK"
     RECONCILE_DIFF = "RECONCILE_DIFF"
     KILL_SWITCH_ACTIVATED = "KILL_SWITCH_ACTIVATED"
+    # Phase 5.2.c — kill switch global déclenché par opérateur (sous-commande
+    # ``python -m execution_engine cancel-all``). Distinct du kill switch
+    # interne ``KILL_SWITCH_ACTIVATED`` qui se déclenche sur échecs consécutifs.
+    KILL_SWITCH_TRIGGERED = "KILL_SWITCH_TRIGGERED"
     THROTTLE_WAIT = "THROTTLE_WAIT"
     TCA_SUMMARY = "TCA_SUMMARY"
     BROKER_SYNC_COMPLETED = "BROKER_SYNC_COMPLETED"

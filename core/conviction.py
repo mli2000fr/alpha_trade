@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Union
 
 import numpy as np
 
-from risk_management.conviction import compute_conviction as _compute_conviction
 
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike
@@ -57,12 +56,14 @@ def compute_conviction(
 ) -> float:
     """Retourne le conviction score combinant score quant et prédiction ML.
 
-    Délègue à :func:`risk_management.conviction.compute_conviction` pour
-    préserver le comportement existant. Les nouveaux consommateurs sont
-    encouragés à passer par :func:`fuse` qui prend un objet
-    :class:`ConvictionWeights` typé.
+    Phase 5.1.b — formule désormais hébergée nativement par ``core.conviction``
+    (auparavant déléguée à ``risk_management.conviction``, désormais déprécié).
+    Les nouveaux consommateurs sont encouragés à passer par :func:`fuse` qui
+    prend un objet :class:`ConvictionWeights` typé.
     """
-    return _compute_conviction(score_used, predicted_proba, score_weight, prediction_weight)
+    if predicted_proba is not None:
+        return score_weight * score_used + prediction_weight * predicted_proba
+    return score_used
 
 
 def fuse(
