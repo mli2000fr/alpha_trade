@@ -129,15 +129,36 @@
 
 ---
 
-## L10 — Découpage `ihm/pages/pipeline.py` en sous-modules *(reporté Phase 6.2)*
+## L10 — Découpage `ihm/pages/pipeline.py` en sous-modules *(✅ livré post-Phase 7)*
 
 - **Source** : `audit_ihm.md`, `prompt/refactor/plan.md` Phase 6.2.
-- **Justification report** : fichier 2872 lignes, refactor non destructif
-  différé pour minimiser le risque sur l'IHM en production.
-- **Esquisse cible** : `_workflow.py`, `_data_integrity.py`,
-  `_execution_center.py`, `_alpha_scanner_diagnostics.py`, `_watcher_block.py`
-  (cf. plan).
-- **Estimation** : 5-7 jours + tests visuels Streamlit.
+- **Statut** : **livré.** `ihm/pages/pipeline.py` passe de 3049 lignes à
+  **271 lignes** via `scripts/split_pipeline.py` (idempotent, ré-exécutable).
+- **Sous-modules créés** dans `ihm/pages/` :
+  - `_shared.py` (279 l.) — constantes `*_KEY`, `TAIL_LINES`, helpers
+    transverses (`_tail_text`, `_render_run_summary`, `_render_log_block`,
+    `_render_step_result`, `_status_badge`, `_workflow_progress`,
+    `_launch_pipeline_step`, `_sanitize_compare_ids`, …).
+  - `_workflow.py` (319 l.) — `_render_workflow_launcher`,
+    `_render_runtime_center` (`@st.fragment`), `_merge_runs`,
+    `_build_history_rows`.
+  - `_data_integrity.py` (129 l.) — panneau `_render_import_news_panel`.
+  - `_execution_center.py` (1953 l.) — `_apply_execution_prefills`,
+    `_build_execution_prefill_caption`, `_build_launch_options` (~1760 l.,
+    découpage plus fin par sous-bloc laissé en TODO 2e passe).
+  - `_alpha_scanner_diagnostics.py` (321 l.) — éditeur de seuils, badges,
+    `_render_alpha_scanner_dependency_diagnostic`.
+  - `_watcher_block.py` (69 l.) — handoff watcher post-exécution.
+- **Rétro-compatibilité** : `pipeline.py` ré-exporte tous les symboles
+  publics et privés via `from ihm.pages._<sub> import …` ; les imports
+  historiques `from ihm.pages.pipeline import X` continuent de fonctionner.
+- **Validation** : 94 tests IHM verts (`pytest tests/test_ihm*.py`),
+  imports vérifiés pour les 7 modules en standalone.
+- **Note 2e passe** : `_build_launch_options` reste massif (~1760 lignes,
+  agrège tous les panneaux de paramètres : execution, risk, ML, screener,
+  selector, signal_aggregator, corporate_actions). Un futur découpage par
+  sous-bloc d'options pourrait réduire ce module à <500 lignes ;
+  non bloquant pour la livraison L10.
 
 ---
 

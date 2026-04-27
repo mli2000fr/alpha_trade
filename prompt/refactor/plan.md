@@ -59,43 +59,43 @@
 > rebrassage.
 
 ### 1.1 — Schéma SQL Alembic (profite de la réinit DB prévue)
-- [ ] Baseline `alembic/versions/0001_initial_schema.py` reflétant l'état actuel
-      (réinitialiser `alembic_version`).
-- [ ] Migration `0002_data_adjustment_check` : ajouter
+- [x] Baseline `alembic/versions/0001_initial.py` reflétant l'état actuel
+      (réinitialiser `alembic_version`). _(Phase 1.1 — `alembic/versions/0001_initial.py`)_
+- [x] Migration `0012_market_data_provenance_and_check` : ajouter
       `data_adjustment VARCHAR(16) NOT NULL DEFAULT 'split'` + `CHECK` sur
-      `stock_bars` et `stock_bars_daily`.
-- [ ] Migration `0003_provenance_columns` : `data_source VARCHAR(16)`,
-      `market_cap_refreshed_at`, `metadata_synced_at` sur `stock_metadata`.
-- [ ] CI : job `alembic upgrade head` obligatoire.
-- [ ] Doc : section "ajouter une migration" dans `doc/database.md`.
+      `stock_bars` et `stock_bars_daily`. _(Phase 1.1 — fusionnée avec colonnes provenance dans `0012_market_data_provenance_and_check.py`)_
+- [x] Colonnes provenance : `data_source VARCHAR(16)`,
+      `market_cap_refreshed_at`, `metadata_synced_at` sur `stock_metadata`. _(Phase 1.1 — `0012_market_data_provenance_and_check.py`)_
+- [x] CI : job `alembic upgrade head` obligatoire.
+- [x] Doc : section "ajouter une migration" dans `doc/database.md` + `doc/guide_add_new_table.md`.
 
 ### 1.2 — Sécurité opérationnelle
-- [ ] **Equity fallback fatal** dans `run_execution.py` (mode `live` / `paper` :
-      `raise RuntimeError` si `broker.get_account_equity()` échoue).
-- [ ] **Confirmation live renforcée** : saisie du nom de compte par l'opérateur
+- [x] **Equity fallback fatal** dans `run_execution.py` (mode `live` / `paper` :
+      `raise RuntimeError` si `broker.get_account_equity()` échoue). _(`run_execution.py:371-380`)_
+- [x] **Confirmation live renforcée** : saisie du nom de compte par l'opérateur
       (chaîne libre comparée stricte).
-- [ ] **Secrets DB hors `config.yaml`** : placeholders `${DB_PASSWORD}` partout +
-      check au démarrage.
-- [ ] **Lock SQL watcher** via table `execution_locks` (insert-or-fail, expiry).
-- [ ] **Heartbeat watcher SQL persistant** (`watcher_heartbeats`).
+- [x] **Secrets DB hors `config.yaml`** : placeholders `${DB_PASSWORD}` partout +
+      check au démarrage. _(via `core/secrets.py`)_
+- [x] **Lock SQL watcher** via table `execution_locks` (insert-or-fail, expiry). _(migration `0008` + `execution_engine/db_io.py`)_
+- [x] **Heartbeat watcher SQL persistant** (`watcher_heartbeats`). _(migration `0013_watcher_heartbeats.py`)_
 
 ### 1.3 — Observabilité minimale
-- [ ] Ajouter `schema_version: int = 1` dans **tous** les payloads
-      `run_summary` (helper `core/run_summary.py`).
-- [ ] Compteurs IEX : `symbols_zero_volume_30d`, `stale_quote_pct`,
+- [x] Ajouter `schema_version: int = 1` dans **tous** les payloads
+      `run_summary` (helper `core/run_summary.py::attach_schema_version`).
+- [x] Compteurs IEX : `symbols_zero_volume_30d`, `stale_quote_pct`,
       `stale_market_cap_pct` propagés depuis `dataIntegrityEngine`.
 
 ### 1.4 — Service / clients data
-- [ ] `feed=iex` paramètre **validé** dans `service/alpaca/clientAlpaca.fetch_bars`
-      (`Literal["iex","sip"]` + log explicite si fallback).
-- [ ] Helper unique `service/_http_retry.py` (politique exponentielle + circuit
+- [x] `feed=iex` paramètre **validé** dans `service/alpaca/clientAlpaca.fetch_bars`
+      (`Literal["iex","sip"]` + log explicite si fallback). _(`service/alpaca/clientAlpaca.py:120-149`, `_VALID_FEEDS`)_
+- [x] Helper unique `service/_http_retry.py` (politique exponentielle + circuit
       breaker simple) — TOUS les clients y migrent.
-- [ ] Cache TTL 7j pour profils Finnhub.
+- [x] Cache TTL 7j pour profils Finnhub. _(`service/_finnhub_cache.py`, `DEFAULT_CACHE_TTL_DAYS=7`)_
 
 ### 1.5 — Documentation transverse
-- [ ] Section "Limites IEX et impact concret" dans `doc/dataIntegrityEngine.md`
+- [x] Section "Limites IEX et impact concret" dans `doc/dataIntegrityEngine.md`
       et `README.md`.
-- [ ] Affirmer la convention `split_adjusted` dans `README.md`,
+- [x] Affirmer la convention `split_adjusted` dans `README.md`,
       `doc/dataIntegrityEngine.md`, `doc/corporate_actions.md`,
       `doc/backetesting.md`.
 
@@ -153,7 +153,7 @@ concrète au lieu d'un Protocol.
 - [x] Migrer vers `core/filter_profiles.py`.
 
 ### 3.3 — `selector/` (réf. `audit_selector.md`)
-- [ ] Découper `alpha_scanner.py` (`factors.py` + `filters.py` + `ranking.py`).
+- [x] Découper `alpha_scanner.py` (`factors.py` + `filters.py` + `ranking.py`). _(Phase 3.3.a — `selector/factors.py`, `selector/filters.py`, `selector/ranking.py`)_
 - [x] `rejected_by_filter` (par filtre) dans `run_summary`.
 - [x] Adapter `spread_bps` au biais IEX (relâchement contrôlé documenté).
 - [x] Filtre `market_cap` consomme `market_cap_refreshed_at` (TTL).
@@ -222,10 +222,13 @@ gouvernés (run-min + days-min).
 - [x] Migrer `signal_replay` vers `core/conviction.py`. _(6.1.a — `backtesting/signal_replay.py` consomme `core.conviction.fuse`, payload `params.conviction_weights`)_
 
 ### 6.2 — `ihm/` (réf. `audit_ihm.md`)
-- [ ] **Découper `pages/pipeline.py`** en sous-modules
+- [x] **Découper `pages/pipeline.py`** en sous-modules
       (`_workflow.py`, `_data_integrity.py`, `_execution_center.py`,
-      `_alpha_scanner_diagnostics.py`, `_watcher_block.py`).
-      _(reporté Phase 7 — fichier 2872 lignes, refactor non destructif différé pour minimiser le risque sur l'IHM en production.)_
+      `_alpha_scanner_diagnostics.py`, `_watcher_block.py` + `_shared.py`).
+      _(6.2 — `pipeline.py` passe de **3049 → 271 lignes** (orchestrateur + ré-exports rétro-compat).
+      Découpage non destructif via `scripts/split_pipeline.py` (idempotent).
+      Tous les imports historiques `from ihm.pages.pipeline import X` continuent de fonctionner.
+      94 tests IHM verts. Backlog L10 résolu.)_
 - [x] Hook `atexit` dans `process_registry` (kill enfants). _(6.2 — `ihm/services/process_registry.py::_atexit_kill_all_children`)_
 - [x] Rotation artefacts `IHM_RUNS_RETENTION_DAYS=30`. _(6.2 — `rotate_pipeline_artifacts`, env `IHM_RUNS_RETENTION_DAYS`)_
 - [x] Audit shell quoting `process_registry`. _(6.2 — `subprocess.Popen(list[str], shell=False)` confirmé, documenté dans `doc/ihm.md`)_
