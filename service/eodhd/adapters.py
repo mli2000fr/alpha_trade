@@ -19,8 +19,8 @@ Option B). La fonction :func:`infer_splits_from_adjusted_close` couvre ce cas.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time as _time, timezone
-from typing import Any, Iterable, Optional
+from datetime import datetime, timezone
+from typing import Any, Iterable
 
 LOGGER = logging.getLogger(__name__)
 
@@ -223,6 +223,11 @@ def _date_to_close_timestamp(date_iso: str) -> datetime:
     )
 
 
+def _typical_price_proxy(high: float, low: float, close: float) -> float:
+    """Proxy VWAP daily de repli : ``(high + low + close) / 3``."""
+    return (high + low + close) / 3.0
+
+
 def to_stock_bars_daily_row(bar: dict, symbol: str) -> dict:
     """Mappe une barre split-only vers le schéma ``stock_bars_daily``.
 
@@ -241,7 +246,7 @@ def to_stock_bars_daily_row(bar: dict, symbol: str) -> dict:
     high = float(bar["high"])
     low = float(bar["low"])
     close = float(bar["close"])
-    typical_price = (high + low + close) / 3.0
+    typical_price = _typical_price_proxy(high, low, close)
     return {
         "symbol": symbol.strip().upper(),
         "date": str(bar["date"]),
@@ -266,20 +271,24 @@ def to_stock_bars_row(bar: dict, symbol: str, timeframe: str = "1D") -> dict:
     alignée avec ``import_alpaca_bar`` pour timeframe='1D'. Évite tout doublon
     sur la clé unique ``(symbol, timeframe, timestamp)`` quand on coexiste
     avec des barres Alpaca historiques.
-    ``trade_count`` et ``vwa_price`` non disponibles sur EODHD -> ``None`` /
-    0 (la colonne ``trade_count`` est NOT NULL DEFAULT 0).
+    ``trade_count`` n'est pas disponible sur EODHD -> ``0``.
+    ``vwa_price`` reçoit le même proxy ``typical price`` que
+    ``stock_bars_daily.vwap`` pour garder la cohérence entre les deux tables.
     """
+    high = float(bar["high"])
+    low = float(bar["low"])
+    close = float(bar["close"])
     return {
         "symbol": symbol.strip().upper(),
         "timestamp": _date_to_rth_open_string(bar["date"]),
         "timeframe": timeframe,
         "open_price": float(bar["open"]),
-        "high_price": float(bar["high"]),
-        "low_price": float(bar["low"]),
-        "close_price": float(bar["close"]),
+        "high_price": high,
+        "low_price": low,
+        "close_price": close,
         "volume": int(bar.get("volume") or 0),
         "trade_count": 0,
-        "vwa_price": None,
+        "vwa_price": _typical_price_proxy(high, low, close),
         "data_adjustment": DATA_ADJUSTMENT_SPLIT,
         "data_source": DATA_SOURCE_EODHD,
     }

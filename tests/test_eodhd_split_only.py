@@ -139,7 +139,7 @@ def test_to_stock_bars_row_uses_close_timestamp():
     assert row["close_price"] == 120.5
     assert row["volume"] == 300_000_000
     assert row["trade_count"] == 0
-    assert row["vwa_price"] is None
+    assert row["vwa_price"] == pytest.approx((121.0 + 119.0 + 120.5) / 3.0)
     assert row["data_source"] == "eodhd_eod"
     assert row["data_adjustment"] == "split"
 

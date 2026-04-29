@@ -228,6 +228,37 @@ def test_write_mode_upserts_both_tables(monkeypatch, patched_env, fake_bulk_payl
     assert session.committed >= 1
 
 
+def test_write_mode_sets_stock_bars_vwa_price_proxy(monkeypatch, patched_env, fake_bulk_payload):
+    monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk", lambda **kwargs: fake_bulk_payload)
+    monkeypatch.setattr(import_eodhd_bar, "fetch_splits", lambda symbol, **kwargs: [])
+
+    captured_bars_rows: list[dict] = []
+
+    monkeypatch.setattr(import_eodhd_bar, "_upsert_stock_bars_daily", lambda session, rows: len(rows))
+
+    def _capture_bars(session, rows):
+        captured_bars_rows.extend(rows)
+        return len(rows)
+
+    monkeypatch.setattr(import_eodhd_bar, "_upsert_stock_bars", _capture_bars)
+
+    summary = import_eodhd_bar.run_eodhd_ingestion(
+        dry_run=False,
+        target_date="2026-04-28",
+        symbols=None,
+        enable_stooq_cross_check=False,
+        config={},
+        session=_FakeSession(),
+        tracker=patched_env["tracker"],
+    )
+
+    assert summary["rows_upserted_stock_bars"] == 3
+    assert len(captured_bars_rows) == 3
+    aapl_row = next(row for row in captured_bars_rows if row["symbol"] == "AAPL")
+    assert aapl_row["trade_count"] == 0
+    assert aapl_row["vwa_price"] == pytest.approx((193.5 + 191.0 + 192.5) / 3.0)
+
+
 def test_missing_from_bulk_recovered_via_per_symbol(monkeypatch, patched_env):
     # Bulk vide -> tous les symboles univers manquants
     monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk", lambda **kwargs: [])
