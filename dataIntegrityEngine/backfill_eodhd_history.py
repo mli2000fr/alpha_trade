@@ -73,7 +73,7 @@ from service.eodhd.quota import (
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
-DEFAULT_YEARS = 5
+DEFAULT_YEARS = 20
 DEFAULT_BATCH_COMMIT = 50
 DEFAULT_BOOKMARK_PATH = Path("artifacts") / "eodhd_cache" / "backfill_state.json"
 

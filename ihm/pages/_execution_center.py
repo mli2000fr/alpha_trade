@@ -1818,10 +1818,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "B3 — profondeur historique (années)",
                     min_value=1,
                     max_value=30,
-                    value=int(st.session_state.get("pipeline_eodhd_backfill_years", 5)),
+                    value=int(st.session_state.get("pipeline_eodhd_backfill_years", 20)),
                     step=1,
                     key="pipeline_eodhd_backfill_years",
-                    help="5 ans par défaut pour l'univers actif ; jusqu'à 30 ans pour les besoins ML/backtests longs.",
+                    help="20 ans par défaut (couvre 2008 + 2020 pour la robustesse ML/backtest). Jusqu'à 30 ans possible. Coût quota EODHD identique quelle que soit la profondeur (1 appel par symbole).",
                 )
             )
             eodhd_backfill_resume = st.checkbox(
