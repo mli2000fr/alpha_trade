@@ -304,7 +304,7 @@ class PipelineLaunchOptions:
     corporate_actions_end_date: str | None = None
     corporate_actions_batch_size: int = DEFAULT_CA_BATCH_SIZE
     # EODHD backfill historique (Phase 5 plan_eodhd.md §6) — étape auxiliaire B3
-    eodhd_backfill_years: int = 20
+    eodhd_backfill_years: int = 30
     eodhd_backfill_symbols: str | None = None
     eodhd_backfill_resume: bool = True
     eodhd_backfill_write: bool = True
@@ -611,7 +611,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         command = [
             sys.executable, "-u", "-m",
             "dataIntegrityEngine.backfill_eodhd_history",
-            "--years", str(int(options.eodhd_backfill_years or 20)),
+            "--years", str(int(options.eodhd_backfill_years or 30)),
         ]
         if options.eodhd_backfill_write:
             command.append("--write")

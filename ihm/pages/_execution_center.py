@@ -195,7 +195,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
     selected_account_id = cast(str | None, st.session_state.get("selected_account_id"))
     execution_defaults = _apply_execution_prefills(selected_account_id)
 
-    with st.expander("⚙️ Paramètres d'exécution", expanded=True):
+    with st.expander("⚙️ Paramètres d'exécution", expanded=False):
         st.caption(
             "Les pipelines sont lancés en arrière-plan depuis l'IHM. Ils héritent de la configuration DB active et, "
             "pour les étapes concernées, du compte Alpaca sélectionné dans la sidebar."
@@ -1821,10 +1821,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "B3 — profondeur historique (années)",
                     min_value=1,
                     max_value=30,
-                    value=int(st.session_state.get("pipeline_eodhd_backfill_years", 20)),
+                    value=int(st.session_state.get("pipeline_eodhd_backfill_years", 30)),
                     step=1,
                     key="pipeline_eodhd_backfill_years",
-                    help="20 ans par défaut (couvre 2008 + 2020 pour la robustesse ML/backtest). Jusqu'à 30 ans possible. Coût quota EODHD identique quelle que soit la profondeur (1 appel par symbole).",
+                    help="30 ans par défaut (profondeur historique maximale EODHD pour robustesse ML/backtest). Coût quota EODHD identique quelle que soit la profondeur (1 appel par symbole).",
                 )
             )
             eodhd_backfill_resume = st.checkbox(

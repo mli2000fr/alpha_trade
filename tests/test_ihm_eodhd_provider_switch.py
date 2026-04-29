@@ -66,7 +66,7 @@ def test_eodhd_backfill_history_default_command_is_write():
     cmd = build_pipeline_command("eodhd_backfill_history", PipelineLaunchOptions())
     assert "dataIntegrityEngine.backfill_eodhd_history" in cmd
     assert "--years" in cmd
-    assert "20" in cmd  # default years
+    assert "30" in cmd  # default years
     assert "--write" in cmd
     assert "--resume" in cmd
 
