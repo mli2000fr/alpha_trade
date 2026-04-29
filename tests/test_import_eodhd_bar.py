@@ -300,6 +300,35 @@ def test_bulk_unavailable_records_error_does_not_crash(monkeypatch, patched_env)
     assert summary["rows_upserted_stock_bars"] == 0
 
 
+def test_circuit_open_during_splits_stops_run_cleanly(monkeypatch, patched_env, fake_bulk_payload):
+    tracker = patched_env["tracker"]
+    tracker.failure_threshold = 1
+    monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk", lambda **kwargs: fake_bulk_payload)
+
+    calls: list[str] = []
+
+    def _fake_cached_splits(symbol, **kwargs):
+        calls.append(symbol)
+        tracker.record_failure("splits", count_call=True, count_towards_circuit=True)
+        return []
+
+    monkeypatch.setattr(import_eodhd_bar, "_cached_fetch_splits", _fake_cached_splits)
+
+    summary = import_eodhd_bar.run_eodhd_ingestion(
+        dry_run=True,
+        target_date="2026-04-28",
+        enable_stooq_cross_check=False,
+        config={},
+        session=_FakeSession(),
+        tracker=tracker,
+    )
+
+    assert calls == ["AAPL"]
+    assert summary["stopped_reason"] in {"circuit_open_after_fetch", "circuit_open"}
+    assert summary["eodhd"]["circuit_open"] is True
+    assert summary["errors"] == 0
+
+
 def test_explicit_symbols_skip_universe_query(monkeypatch, patched_env, fake_bulk_payload):
     monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk",
                         lambda **kwargs: fake_bulk_payload)

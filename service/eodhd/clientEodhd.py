@@ -23,6 +23,7 @@ from service._http_retry import RetryPolicy, request_with_retry
 from service._telemetry import bump as _telemetry_bump
 from service.eodhd.accounts import EodhdAccountRegistry, EodhdAuthError
 from service.eodhd.quota import (
+    EodhdCircuitOpen,
     EodhdQuotaExceeded,
     EodhdQuotaTracker,
     get_default_tracker,
@@ -41,6 +42,10 @@ PeriodLiteral = Literal["d", "w", "m"]
 
 class EodhdBarsFetchError(RuntimeError):
     """Erreur technique lors d'un fetch EODHD."""
+
+
+class EodhdSymbolNotFound(EodhdBarsFetchError):
+    """Le symbole demandé n'existe pas côté EODHD pour l'endpoint visé."""
 
 
 def _retry_policy() -> RetryPolicy:
@@ -92,11 +97,19 @@ def _do_request(
         status = getattr(getattr(exc, "response", None), "status_code", None)
         if status == 401 or status == 403:
             _telemetry_bump(TELEMETRY_CLIENT, "auth_error_total")
+        elif status == 404:
+            _telemetry_bump(TELEMETRY_CLIENT, "404_total")
         elif status == 429:
             _telemetry_bump(TELEMETRY_CLIENT, "429_total")
         elif status and status >= 500:
             _telemetry_bump(TELEMETRY_CLIENT, "5xx_total")
-        tracker.record_failure(endpoint, count_call=True)
+        tracker.record_failure(
+            endpoint,
+            count_call=True,
+            count_towards_circuit=(status != 404),
+        )
+        if status == 404:
+            raise EodhdSymbolNotFound(f"HTTP 404 sur {endpoint}: {exc}") from exc
         raise EodhdBarsFetchError(f"HTTP {status} sur {endpoint}: {exc}") from exc
     except requests.exceptions.RequestException as exc:
         tracker.record_failure(endpoint, count_call=False)
@@ -263,6 +276,8 @@ __all__ = [
     "DEFAULT_MAX_ATTEMPTS",
     "DEFAULT_TIMEOUT_SECONDS",
     "EodhdBarsFetchError",
+    "EodhdCircuitOpen",
+    "EodhdSymbolNotFound",
     "PeriodLiteral",
     "TELEMETRY_CLIENT",
     "fetch_dividends",

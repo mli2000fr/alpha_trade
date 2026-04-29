@@ -40,6 +40,10 @@ class EodhdQuotaExceeded(RuntimeError):
     """Quota journalier EODHD atteint."""
 
 
+class EodhdCircuitOpen(RuntimeError):
+    """Circuit-breaker EODHD actuellement ouvert."""
+
+
 @dataclass
 class QuotaState:
     date_utc: str = ""
@@ -128,13 +132,13 @@ class EodhdQuotaTracker:
 
         Lève :
         - :class:`EodhdQuotaExceeded` si quota dur dépassé.
-        - :class:`RuntimeError` si circuit-breaker ouvert.
+        - :class:`EodhdCircuitOpen` si circuit-breaker ouvert.
         Retourne le coût qui sera décompté.
         """
         with self._lock:
             self._reset_if_new_day()
             if self.is_circuit_open():
-                raise RuntimeError(
+                raise EodhdCircuitOpen(
                     f"[eodhd] circuit-breaker ouvert jusqu'à "
                     f"{self.state.circuit_open_until_epoch:.0f}s"
                 )
@@ -165,19 +169,30 @@ class EodhdQuotaTracker:
                 self._warned_soft = True
             self._save()
 
-    def record_failure(self, endpoint: str, *, count_call: bool = True) -> None:
+    def record_failure(
+        self,
+        endpoint: str,
+        *,
+        count_call: bool = True,
+        count_towards_circuit: bool = True,
+    ) -> None:
         """Enregistre un échec.
 
         Par défaut, l'échec compte aussi dans ``calls_used`` (EODHD facture
         souvent les 4xx). Mettre ``count_call=False`` pour les erreurs
-        purement réseau (timeout local).
+        purement réseau (timeout local). ``count_towards_circuit=False`` permet
+        d'exclure certains cas attendus (ex. 404 symbole introuvable) du seuil
+        d'ouverture du circuit-breaker.
         """
         with self._lock:
             self._reset_if_new_day()
             if count_call:
                 self.state.calls_used += self.cost_for(endpoint)
             self.state.calls_failed += 1
-            self.state.consecutive_failures += 1
+            if count_towards_circuit:
+                self.state.consecutive_failures += 1
+            else:
+                self.state.consecutive_failures = 0
             if self.state.consecutive_failures >= self.failure_threshold:
                 self.state.circuit_open_until_epoch = time.time() + self.cooldown_seconds
                 LOGGER.warning(
@@ -234,6 +249,7 @@ __all__ = [
     "DEFAULT_FAILURE_THRESHOLD",
     "DEFAULT_SOFT_QUOTA_WARN",
     "ENDPOINT_COSTS",
+    "EodhdCircuitOpen",
     "EodhdQuotaExceeded",
     "EodhdQuotaTracker",
     "QuotaState",

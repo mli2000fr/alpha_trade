@@ -141,8 +141,18 @@ def test_fetch_eod_circuit_breaker_open(tmp_path: Path):
 
     # Circuit ouvert -> reserve() doit lever
     assert tracker.is_circuit_open()
-    with pytest.raises(RuntimeError):
+    with pytest.raises(clientEodhd.EodhdCircuitOpen):
         clientEodhd.fetch_eod("AAPL", session=session, tracker=tracker)
+
+
+def test_fetch_eod_404_does_not_open_circuit_breaker(tmp_path: Path):
+    tracker = eodhd_quota.EodhdQuotaTracker(cache_dir=tmp_path, failure_threshold=1)
+    session = _FakeSession([_FakeResponse(payload=[], status_code=404)])
+
+    with pytest.raises(clientEodhd.EodhdSymbolNotFound):
+        clientEodhd.fetch_eod("ABR.PRD", session=session, tracker=tracker)
+
+    assert tracker.is_circuit_open() is False
 
 
 def test_fetch_dividends_uses_div_endpoint():

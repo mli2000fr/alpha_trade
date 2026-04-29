@@ -56,6 +56,8 @@ from service.eodhd.cache import (
 )
 from service.eodhd.clientEodhd import (
     EodhdBarsFetchError,
+    EodhdCircuitOpen,
+    EodhdSymbolNotFound,
     fetch_eod,
     fetch_eod_bulk,
     fetch_splits,
@@ -183,7 +185,7 @@ def _cached_fetch_splits(
 
     try:
         payload = fetch_fn(symbol, tracker=tracker)
-    except (EodhdBarsFetchError, EodhdQuotaExceeded) as exc:
+    except (EodhdBarsFetchError, EodhdQuotaExceeded, EodhdCircuitOpen) as exc:
         LOGGER.warning("[eodhd] splits indisponibles pour %s: %s -> []", symbol, exc)
         # cache l'absence pour ne pas re-tenter à chaque symbole
         cache.set(namespace, key, [])
@@ -400,6 +402,7 @@ def run_eodhd_ingestion(
         "rows_upserted_stock_bars": 0,
         "rows_upserted_stock_bars_daily": 0,
         "errors": 0,
+        "stopped_reason": None,
         # clés normalisées pour run_summary global (cf. plan §8.1)
         "eodhd": {},
         "cross_check_stooq": {"anomalies_count": 0, "failed": False, "skipped": True},
@@ -429,11 +432,14 @@ def run_eodhd_ingestion(
         # 2) Bulk (1 appel)
         try:
             bulk_payload = fetch_eod_bulk(date=target_date, tracker=tracker)
-        except (EodhdBarsFetchError, EodhdQuotaExceeded) as exc:
+        except (EodhdBarsFetchError, EodhdQuotaExceeded, EodhdCircuitOpen) as exc:
             LOGGER.error("[eodhd] bulk indisponible : %s", exc)
             summary["errors"] += 1
             summary["bulk_size"] = 0
             bulk_payload = []
+            if isinstance(exc, EodhdCircuitOpen):
+                summary["stopped_reason"] = "circuit_open_on_bulk"
+                return _finalize(summary, started_at, tracker)
 
         summary["bulk_size"] = len(bulk_payload)
         indexed = _index_bulk_by_project_symbol(bulk_payload, set(universe))
@@ -447,6 +453,11 @@ def run_eodhd_ingestion(
         recovered_missing_without_history = 0
 
         for symbol in universe:
+            if tracker.is_circuit_open():
+                summary["stopped_reason"] = "circuit_open"
+                LOGGER.warning("[eodhd] circuit-breaker ouvert -> arrêt propre de l'ingestion")
+                break
+
             entry = indexed.get(symbol)
             last_known_date = latest_bar_dates.get(symbol)
             raw_bars: list[dict] = []
@@ -477,7 +488,16 @@ def run_eodhd_ingestion(
             if range_start and range_end:
                 try:
                     range_rows = fetch_eod(symbol, start=range_start, end=range_end, tracker=tracker)
-                except (EodhdBarsFetchError, EodhdQuotaExceeded) as exc:
+                except EodhdSymbolNotFound as exc:
+                    LOGGER.warning(
+                        "[eodhd] catch-up introuvable %s [%s..%s]: %s",
+                        symbol,
+                        range_start,
+                        range_end,
+                        exc,
+                    )
+                    summary["per_symbol_failed"] += 1
+                except (EodhdBarsFetchError, EodhdQuotaExceeded, EodhdCircuitOpen) as exc:
                     LOGGER.warning(
                         "[eodhd] catch-up fetch failed %s [%s..%s]: %s",
                         symbol,
@@ -486,6 +506,9 @@ def run_eodhd_ingestion(
                         exc,
                     )
                     summary["per_symbol_failed"] += 1
+                    if isinstance(exc, EodhdCircuitOpen):
+                        summary["stopped_reason"] = "circuit_open_during_catchup"
+                        break
                 else:
                     normalized_rows = _rows_to_raw_bars(range_rows)
                     if normalized_rows:
@@ -497,9 +520,15 @@ def run_eodhd_ingestion(
             elif entry is None and last_known_date is None and recovered_missing_without_history < recovered_budget:
                 try:
                     range_rows = fetch_eod(symbol, start=target_date, end=target_date, tracker=tracker)
-                except (EodhdBarsFetchError, EodhdQuotaExceeded) as exc:
+                except EodhdSymbolNotFound as exc:
+                    LOGGER.warning("[eodhd] per-symbol introuvable %s: %s", symbol, exc)
+                    summary["per_symbol_failed"] += 1
+                except (EodhdBarsFetchError, EodhdQuotaExceeded, EodhdCircuitOpen) as exc:
                     LOGGER.warning("[eodhd] per-symbol fetch failed %s: %s", symbol, exc)
                     summary["per_symbol_failed"] += 1
+                    if isinstance(exc, EodhdCircuitOpen):
+                        summary["stopped_reason"] = "circuit_open_during_recovery"
+                        break
                 else:
                     normalized_rows = _rows_to_raw_bars(range_rows)
                     if normalized_rows:
@@ -507,6 +536,11 @@ def run_eodhd_ingestion(
                         summary["per_symbol_recovered"] += 1
                 finally:
                     recovered_missing_without_history += 1
+
+            if tracker.is_circuit_open():
+                summary["stopped_reason"] = summary.get("stopped_reason") or "circuit_open_after_fetch"
+                LOGGER.warning("[eodhd] circuit-breaker ouvert après fetch -> arrêt propre de l'ingestion")
+                break
 
             raw_bars = _dedupe_raw_bars_by_date(raw_bars)
             if not raw_bars:
