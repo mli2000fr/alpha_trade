@@ -39,3 +39,28 @@ risk:
   max_drawdown: 0.15
   max_daily_loss: 0.05
 
+# ---------------------------------------------------------------------------
+# Source primaire des barres OHLCV (`stock_bars` + `stock_bars_daily`).
+# Voir prompt/iex/plan_eodhd.md.
+# - alpaca : comportement historique (Alpaca/IEX, biais volume IEX).
+# - eodhd  : EODHD bulk EOD (volume consolidé proxy, recommandé).
+# La metadata (stock_metadata), les quotes live et l'exécution restent
+# toujours sur Alpaca quel que soit ce flag.
+# ---------------------------------------------------------------------------
+market_data:
+  bars_provider: alpaca   # alpaca | eodhd
+  fallback_on_failure: true
+
+eodhd:
+  enabled: false                          # Phase 1 : désactivé par défaut.
+  api_token_env: EODHD_API_TOKEN          # Variable d'env contenant le token.
+  exchange: US                            # NYSE + NASDAQ + AMEX consolidés.
+  cache_dir: artifacts/eodhd_cache
+  daily_quota: 100000                     # Plan All-In-One 19,99 $/mois.
+  soft_quota_warn: 80000
+  bulk_publish_offset_hours: 2            # Délai post-clôture avant que le bulk soit fiable.
+  splits_cache_ttl_days: 7
+  circuit_breaker:
+    consecutive_failures: 5
+    cooldown_minutes: 30
+
