@@ -527,3 +527,9 @@ NULL                          vwa_price     (non fourni par EODHD bulk)
 'eodhd_eod'                   data_source
 ```
 
+
+Reste opérationnel (hors scope code)
+Lancer le backfill réel : python -m dataIntegrityEngine.backfill_eodhd_history --write --years 5
+Lancer 5 jours de shadow write : python -m dataIntegrityEngine.import_eodhd_bar --write quotidien
+Audit go/no-go : python scripts/eodhd_phase4_volume_audit.py --lookback-days 60
+Cutover : bars_provider: eodhd dans config.yaml (procédure complète dans prompt/iex/phase4_runbook.md)

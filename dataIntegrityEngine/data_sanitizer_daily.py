@@ -18,6 +18,7 @@ from database.connection import get_sqlalchemy_engine
 from database.bar_metadata import TimeFrame
 from database.sanitizer_db_ops import (
     get_failed_audits,
+    get_last_actual_daily_date,
     get_stock_bars,
     get_last_sync_date,
     get_prev_close_before,
@@ -221,6 +222,13 @@ class DataSanitizer:
         return last_sync - timedelta(days=REBUILD_LOOKBACK_CALENDAR_DAYS)
 
     @staticmethod
+    def _compute_resume_anchor(*dates: Optional[date]) -> Optional[date]:
+        candidates = [value for value in dates if value is not None]
+        if not candidates:
+            return None
+        return max(candidates)
+
+    @staticmethod
     def _last_frame_date(df: pl.DataFrame) -> Optional[date]:
         if df.is_empty():
             return None
@@ -269,7 +277,9 @@ class DataSanitizer:
 
     def _process_symbol(self, conn: Connection, symbol: str) -> tuple[bool, dict, int]:
         last_sync = get_last_sync_date(conn, self.cleaning_audit_latest, symbol)
-        rebuild_start = self._compute_rebuild_start_date(last_sync)
+        last_daily_date = get_last_actual_daily_date(conn, self.stock_bars_daily, symbol)
+        resume_anchor = self._compute_resume_anchor(last_sync, last_daily_date)
+        rebuild_start = self._compute_rebuild_start_date(resume_anchor)
         df_raw = self.fetch_symbol_bars_1d(conn, symbol, rebuild_start)
 
         if df_raw.is_empty():
@@ -285,7 +295,7 @@ class DataSanitizer:
 
         rows_upserted = upsert_stock_bars_daily(conn, self.stock_bars_daily, symbol, df_features, data_adjustment=DATA_ADJUSTMENT)
         return True, self._build_audit_payload(
-            self._last_frame_date(df_features) or last_sync,
+            self._last_frame_date(df_features) or resume_anchor,
             missing_count,
             anomaly_count,
             'success',

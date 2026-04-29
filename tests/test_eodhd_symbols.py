@@ -70,7 +70,9 @@ def test_to_eodhd_then_from_eodhd_roundtrip() -> None:
 
 
 def test_is_supported_known_unsupported_basic_plan() -> None:
-    # Phase 1 a démontré que TQQQ retourne 402 sur le plan basique
+    # Post-upgrade All-In-One (2026-04-29) : TQQQ est désormais supporté.
+    # Le mécanisme `known_unsupported_basic_plan` reste fonctionnel pour
+    # les futurs cas (vérifié avec un symbole bidon ajouté à la volée).
     assert sym.is_supported("AAPL") is True
-    assert sym.is_supported("TQQQ") is False
+    assert sym.is_supported("TQQQ") is True
 

@@ -17,6 +17,12 @@ from ihm.services.alpha_scanner_threshold_presets import (
     get_alpha_scanner_threshold_preset,
 )
 from ihm.services.db import db_available, get_db_status, reset_db_caches
+from ihm.services.market_data_provider import (
+    CONFIG_PATH as MARKET_DATA_CONFIG_PATH,
+    DEFAULT_BARS_PROVIDER,
+    get_bars_provider,
+    set_bars_provider,
+)
 from ihm.services.queries import (
     ALPHA_SCANNER_DEPENDENCY_THRESHOLDS,
     get_alpha_scanner_dependency_diagnostic,
@@ -31,6 +37,99 @@ from ihm.services.screener_preferences import (
 ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY = "settings_alpha_scanner_dependency_thresholds_flash"
 ALPHA_SCANNER_SELECTED_STYLE_KEY = "settings_alpha_scanner_selected_style"
 ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY = "settings_alpha_scanner_selected_market_regime"
+BARS_PROVIDER_FLASH_KEY = "settings_bars_provider_flash"
+BARS_PROVIDER_WIDGET_KEY = "settings_bars_provider_radio"
+
+BARS_PROVIDER_LABELS: dict[str, str] = {
+    "eodhd": "🟢 EODHD (recommandé — bulk EOD, volume consolidé)",
+    "alpaca": "🟡 Alpaca / IEX (historique, biais volume IEX)",
+}
+BARS_PROVIDER_HELP: dict[str, str] = {
+    "eodhd": (
+        "Source primaire = EODHD `/eod-bulk-last-day/US`. Backfill historique disponible via "
+        "l'étape auxiliaire B3 de la page Pipeline. Cross-check Stooq actif. Quotes RT et exécution restent sur Alpaca."
+    ),
+    "alpaca": (
+        "Source primaire = Alpaca/IEX (comportement historique). EODHD inutilisé. "
+        "Aucun cross-check Stooq. À réserver aux tests de non-régression."
+    ),
+}
+
+
+def _render_bars_provider_settings() -> None:
+    flash = st.session_state.pop(BARS_PROVIDER_FLASH_KEY, None)
+    if isinstance(flash, tuple) and len(flash) == 2:
+        kind, message = flash
+        getattr(st, kind, st.info)(message)
+
+    current = get_bars_provider()
+    st.subheader("📡 Source primaire des barres OHLCV")
+    st.caption(
+        "Définit `market_data.bars_provider` dans `config.yaml`. Toutes les étapes pipeline IHM "
+        "(`Import Bars`, `corporate_actions_sync`, backfill historique) routent automatiquement "
+        "vers le provider choisi. La metadata, les quotes temps réel et l'exécution restent sur Alpaca."
+    )
+
+    options = list(BARS_PROVIDER_LABELS.keys())  # eodhd d'abord (défaut recommandé)
+    initial = current if current in options else DEFAULT_BARS_PROVIDER
+    if BARS_PROVIDER_WIDGET_KEY not in st.session_state:
+        st.session_state[BARS_PROVIDER_WIDGET_KEY] = initial
+
+    with st.container(border=True):
+        selected = st.radio(
+            "Provider actif",
+            options=options,
+            format_func=lambda value: BARS_PROVIDER_LABELS.get(value, value),
+            key=BARS_PROVIDER_WIDGET_KEY,
+            horizontal=False,
+        )
+        st.caption(BARS_PROVIDER_HELP.get(selected, ""))
+        st.caption(
+            f"Valeur persistée actuelle : `{current}` — défaut recommandé : `{DEFAULT_BARS_PROVIDER}`"
+            f" — fichier : `{MARKET_DATA_CONFIG_PATH.name}`"
+        )
+
+        action_col1, action_col2 = st.columns([2, 1])
+        with action_col1:
+            disabled = (selected == current)
+            if st.button(
+                "💾 Enregistrer le provider",
+                key="settings_save_bars_provider",
+                use_container_width=True,
+                disabled=disabled,
+                help="Inactif tant que la sélection est identique à la valeur persistée." if disabled else None,
+            ):
+                try:
+                    applied = set_bars_provider(selected)
+                except (OSError, ValueError) as exc:
+                    st.session_state[BARS_PROVIDER_FLASH_KEY] = (
+                        "error",
+                        f"Échec écriture `config.yaml` : {exc}",
+                    )
+                else:
+                    st.session_state[BARS_PROVIDER_FLASH_KEY] = (
+                        "success",
+                        f"Provider mis à jour : `{applied}`. Relance des pipelines IHM nécessaire pour prise en compte.",
+                    )
+                st.rerun()
+        with action_col2:
+            if st.button(
+                "↩️ Reset défaut (EODHD)",
+                key="settings_reset_bars_provider",
+                use_container_width=True,
+                disabled=(current == DEFAULT_BARS_PROVIDER),
+            ):
+                try:
+                    set_bars_provider(DEFAULT_BARS_PROVIDER)
+                except (OSError, ValueError) as exc:
+                    st.session_state[BARS_PROVIDER_FLASH_KEY] = ("error", f"Échec reset : {exc}")
+                else:
+                    st.session_state[BARS_PROVIDER_WIDGET_KEY] = DEFAULT_BARS_PROVIDER
+                    st.session_state[BARS_PROVIDER_FLASH_KEY] = (
+                        "success",
+                        f"Provider réinitialisé sur `{DEFAULT_BARS_PROVIDER}` (défaut recommandé).",
+                    )
+                st.rerun()
 
 
 def _threshold_widget_key(step_key: str, metric_key: str) -> str:
@@ -284,6 +383,7 @@ def render() -> None:
                 st.warning(str(status.get("last_query_error")))
 
     st.subheader("🧭 Paramétrage pipeline")
+    _render_bars_provider_settings()
     _render_alpha_scanner_dependency_threshold_settings()
 
     with st.expander("🖥️ Diagnostic environnement Python", expanded=False):

@@ -1,4 +1,4 @@
-"""CLI pour le module corporate_actions."""
+﻿"""CLI pour le module corporate_actions."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +10,10 @@ from common.utils import configure_root_logging
 from core.run_summary import attach_schema_version
 from corporate_actions.db_io import CorporateActionRepository
 from corporate_actions.engine import CorporateActionEngine
-from corporate_actions.provider import AlpacaCorporateActionProvider
+from corporate_actions.provider import (
+    AlpacaCorporateActionProvider,
+    build_corporate_action_provider,
+)
 from database.run_business_summaries import build_summary_run_id, emit_run_summary, persist_run_business_summary
 
 LOGGER = logging.getLogger(__name__)
@@ -23,9 +26,9 @@ def _run_cross_check_yahoo(
     end_date: date,
     symbols: list[str] | None,
 ) -> tuple[list[dict[str, object]], dict[str, int]]:
-    """Phase 5.3.c — exécute un cross-check Yahoo (best-effort, jamais bloquant).
+    """Phase 5.3.c â€” exÃ©cute un cross-check Yahoo (best-effort, jamais bloquant).
 
-    Retourne ``(anomalies, stats)`` où ``stats`` contient
+    Retourne ``(anomalies, stats)`` oÃ¹ ``stats`` contient
     ``{"yahoo_events": N, "ingested_events": M, "anomalies": K}``.
     """
     try:
@@ -34,7 +37,7 @@ def _run_cross_check_yahoo(
             diff_dividends,
         )
     except Exception:
-        LOGGER.warning("Cross-check Yahoo indisponible (import échoue).", exc_info=True)
+        LOGGER.warning("Cross-check Yahoo indisponible (import Ã©choue).", exc_info=True)
         return [], {"yahoo_events": 0, "ingested_events": 0, "anomalies": 0}
 
     try:
@@ -42,11 +45,11 @@ def _run_cross_check_yahoo(
             start_date=start_date, end_date=end_date, symbols=symbols
         )
     except Exception:
-        LOGGER.warning("Cross-check Yahoo : echec chargement events ingérés.", exc_info=True)
+        LOGGER.warning("Cross-check Yahoo : echec chargement events ingÃ©rÃ©s.", exc_info=True)
         return [], {"yahoo_events": 0, "ingested_events": 0, "anomalies": 0}
 
     if not symbols:
-        # Sans liste explicite, on cross-check au moins les symboles ingérés.
+        # Sans liste explicite, on cross-check au moins les symboles ingÃ©rÃ©s.
         symbols = sorted({ev.symbol for ev in ingested})
 
     yahoo_provider = YahooDividendCrossCheckProvider()
@@ -80,7 +83,7 @@ def _emit_and_persist_summary(
     audit_stats: dict[str, object] | None = None,
     audit_anomalies: list[dict[str, object]] | None = None,
 ) -> None:
-    # Phase 5.3.b — attach_schema_version garantit ``schema_version`` partout.
+    # Phase 5.3.b â€” attach_schema_version garantit ``schema_version`` partout.
     summary = attach_schema_version(summary)
     try:
         persist_run_business_summary(
@@ -98,7 +101,7 @@ def _emit_and_persist_summary(
         )
     except Exception:
         LOGGER.debug("Persistance run_business_summaries indisponible pour corporate_actions.", exc_info=True)
-    # Phase 5.3.b — persistance audit dédiée (best-effort).
+    # Phase 5.3.b â€” persistance audit dÃ©diÃ©e (best-effort).
     if audit_run_kind and audit_repo and audit_started_at and audit_finished_at:
         persist_fn = getattr(audit_repo, "persist_audit_run", None)
         if callable(persist_fn):
@@ -127,82 +130,82 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     # --- sync ---
-    sync_p = sub.add_parser("sync", help="Ingérer les corporate actions depuis le provider.")
-    sync_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
-    sync_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramètre symbols.")
+    sync_p = sub.add_parser("sync", help="IngÃ©rer les corporate actions depuis le provider.")
+    sync_p.add_argument("--symbols", nargs="*", help="Symboles Ã  synchroniser (tous si omis).")
+    sync_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramÃ¨tre symbols.")
     sync_p.add_argument(
         "--portfolio-only",
         dest="portfolio_only",
         action="store_true",
-        help="Restreindre la sync aux symboles actuellement détenus en portefeuille (broker_positions_snapshots). Recommandé en usage quotidien.",
+        help="Restreindre la sync aux symboles actuellement dÃ©tenus en portefeuille (broker_positions_snapshots). RecommandÃ© en usage quotidien.",
     )
     sync_p.add_argument(
         "--skip-existing",
         dest="skip_existing",
         action="store_true",
-        help="Ignorer les symboles déjà présents dans corporate_actions_events avant l'appel provider.",
+        help="Ignorer les symboles dÃ©jÃ  prÃ©sents dans corporate_actions_events avant l'appel provider.",
     )
-    sync_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. Défaut : 25.")
-    sync_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -10 ans.")
-    sync_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
+    sync_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. DÃ©faut : 25.")
+    sync_p.add_argument("--start", type=str, default=None, help="Date dÃ©but (YYYY-MM-DD). DÃ©faut : -10 ans.")
+    sync_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). DÃ©faut : aujourd'hui.")
     sync_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
 
     # --- apply ---
-    apply_p = sub.add_parser("apply", help="Appliquer les événements pending sur les positions.")
-    apply_p.add_argument("--as-of", type=str, default=None, help="Date limite (YYYY-MM-DD). Défaut : aujourd'hui.")
+    apply_p = sub.add_parser("apply", help="Appliquer les Ã©vÃ©nements pending sur les positions.")
+    apply_p.add_argument("--as-of", type=str, default=None, help="Date limite (YYYY-MM-DD). DÃ©faut : aujourd'hui.")
     apply_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
 
     # --- status ---
-    sub.add_parser("status", help="Afficher un résumé des événements corporate actions.")
+    sub.add_parser("status", help="Afficher un rÃ©sumÃ© des Ã©vÃ©nements corporate actions.")
 
     # --- run ---
-    run_p = sub.add_parser("run", help="Enchaîner sync puis apply dans un seul appel.")
-    run_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
-    run_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramètre symbols.")
+    run_p = sub.add_parser("run", help="EnchaÃ®ner sync puis apply dans un seul appel.")
+    run_p.add_argument("--symbols", nargs="*", help="Symboles Ã  synchroniser (tous si omis).")
+    run_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramÃ¨tre symbols.")
     run_p.add_argument(
         "--portfolio-only",
         dest="portfolio_only",
         action="store_true",
-        help="Restreindre la sync aux symboles actuellement détenus en portefeuille (broker_positions_snapshots). Recommandé en usage quotidien.",
+        help="Restreindre la sync aux symboles actuellement dÃ©tenus en portefeuille (broker_positions_snapshots). RecommandÃ© en usage quotidien.",
     )
     run_p.add_argument(
         "--skip-existing",
         dest="skip_existing",
         action="store_true",
-        help="Ignorer les symboles déjà présents dans corporate_actions_events avant l'appel provider.",
+        help="Ignorer les symboles dÃ©jÃ  prÃ©sents dans corporate_actions_events avant l'appel provider.",
     )
-    run_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. Défaut : 25.")
-    run_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -10 ans.")
-    run_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
-    run_p.add_argument("--as-of", type=str, default=None, help="Date limite pour apply (YYYY-MM-DD). Défaut : aujourd'hui.")
+    run_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. DÃ©faut : 25.")
+    run_p.add_argument("--start", type=str, default=None, help="Date dÃ©but (YYYY-MM-DD). DÃ©faut : -10 ans.")
+    run_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). DÃ©faut : aujourd'hui.")
+    run_p.add_argument("--as-of", type=str, default=None, help="Date limite pour apply (YYYY-MM-DD). DÃ©faut : aujourd'hui.")
     run_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
     run_p.add_argument(
         "--cross-check",
         choices=("none", "yahoo"),
         default="none",
-        help="Phase 5.3.c — cross-check optionnel des dividendes ingérés contre Yahoo Finance (yfinance requis).",
+        help="Phase 5.3.c â€” cross-check optionnel des dividendes ingÃ©rÃ©s contre Yahoo Finance (yfinance requis).",
     )
 
     return parser
 
 
 def _resolve_sync_symbols_portfolio(repo: CorporateActionRepository, account_id: str | None = None) -> list[str]:
-    """Résout le périmètre de sync : positions live Alpaca + ordres BUY pending + snapshot DB (fallback)."""
+    """RÃ©sout le pÃ©rimÃ¨tre de sync : positions live Alpaca + ordres BUY pending + snapshot DB (fallback)."""
     all_symbols: set[str] = set()
 
-    # 1. Positions live sur le compte Alpaca (source de vérité)
+    # 1. Positions live sur le compte Alpaca (source de vÃ©ritÃ©)
     live_symbols = repo.load_broker_live_position_symbols(account_id=account_id)
     if live_symbols:
         LOGGER.info("Portfolio-only : positions live Alpaca | count=%d", len(live_symbols))
         all_symbols.update(live_symbols)
 
-    # 2. Ordres BUY en attente (accepted/new → deviendront des positions à l'ouverture)
+    # 2. Ordres BUY en attente (accepted/new â†’ deviendront des positions Ã  l'ouverture)
     buy_symbols = repo.load_pending_buy_order_symbols(account_id=account_id)
     if buy_symbols:
         LOGGER.info("Portfolio-only : ordres BUY pending Alpaca | count=%d", len(buy_symbols))
         all_symbols.update(buy_symbols)
 
-    # 3. Fallback : snapshot DB (broker_positions_snapshots) si aucune donnée live
+    # 3. Fallback : snapshot DB (broker_positions_snapshots) si aucune donnÃ©e live
     if not all_symbols:
         broker_symbols = repo.load_latest_position_symbols()
         if broker_symbols:
@@ -225,7 +228,7 @@ def _resolve_sync_symbols_portfolio(repo: CorporateActionRepository, account_id:
 
 
 def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionRepository, account_id: str | None = None) -> list[str] | None:
-    """Résout le périmètre de sync: symboles explicites, positions broker, ou all-symbols."""
+    """RÃ©sout le pÃ©rimÃ¨tre de sync: symboles explicites, positions broker, ou all-symbols."""
     if getattr(args, "all_symbols", False):
         LOGGER.info("Corporate actions sync scope = all symbols (pas de filtre symbols).")
         return None
@@ -245,7 +248,7 @@ def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionReposit
     buy_symbols = repo.load_pending_buy_order_symbols(account_id=account_id)
     all_symbols.update(buy_symbols)
 
-    # Snapshot DB (fallback / complément)
+    # Snapshot DB (fallback / complÃ©ment)
     broker_symbols = repo.load_latest_position_symbols()
     all_symbols.update(broker_symbols)
 
@@ -265,7 +268,7 @@ def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionReposit
 
 
 def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRepository, account_id: str | None = None) -> list[str] | None:
-    """Résout le périmètre de sync depuis stock_metadata (univers actif/tradable/bars dispo)."""
+    """RÃ©sout le pÃ©rimÃ¨tre de sync depuis stock_metadata (univers actif/tradable/bars dispo)."""
     if getattr(args, "all_symbols", False):
         LOGGER.info("Corporate actions sync scope = all symbols (pas de filtre symbols).")
         return None
@@ -307,7 +310,7 @@ def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRep
 
 def _run_sync(args: argparse.Namespace) -> None:
     account_id = getattr(args, "account", None)
-    provider = AlpacaCorporateActionProvider(account_id=account_id)
+    provider = build_corporate_action_provider(account_id=account_id)
     repo = CorporateActionRepository()
     engine = CorporateActionEngine(provider=provider, repo=repo, account_id=account_id)
     started_at = datetime.now()
@@ -369,7 +372,7 @@ def _run_sync(args: argparse.Namespace) -> None:
 
 def _run_apply(args: argparse.Namespace) -> None:
     account_id = getattr(args, "account", None)
-    provider = AlpacaCorporateActionProvider(account_id=account_id)
+    provider = build_corporate_action_provider(account_id=account_id)
     repo = CorporateActionRepository()
     engine = CorporateActionEngine(provider=provider, repo=repo, account_id=account_id)
     started_at = datetime.now()
@@ -436,12 +439,12 @@ def _run_status(_args: argparse.Namespace) -> None:
 
 
 def _run_all(args: argparse.Namespace) -> None:
-    """Enchaîne sync puis apply dans un seul appel CLI."""
+    """EnchaÃ®ne sync puis apply dans un seul appel CLI."""
     print("[RUN] Demarrage de l'ingestion des corporate actions...")
     account_id = getattr(args, "account", None)
     started_at = datetime.now()
     parent_summary_run_id = build_summary_run_id("ca-run")
-    provider = AlpacaCorporateActionProvider(account_id=account_id)
+    provider = build_corporate_action_provider(account_id=account_id)
     repo = CorporateActionRepository()
     engine = CorporateActionEngine(provider=provider, repo=repo, account_id=account_id)
     start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)

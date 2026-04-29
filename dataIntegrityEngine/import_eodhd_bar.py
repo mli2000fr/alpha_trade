@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 from uuid import uuid4
 
-from sqlalchemy import MetaData, Table, and_, select
+from sqlalchemy import MetaData, Table, and_, func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from common.config_loader import load_config
@@ -65,7 +65,6 @@ from service.eodhd.quota import (
     EodhdQuotaTracker,
     get_default_tracker,
 )
-from service.eodhd.symbols import to_eodhd
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
@@ -115,7 +114,12 @@ def _resolve_target_date(config: dict, today: Optional[date] = None) -> str:
     offset_hours = float(eodhd_cfg.get("bulk_publish_offset_hours", DEFAULT_BULK_PUBLISH_OFFSET_HOURS))
     market_day = getLastDateMarche()
     if hasattr(market_day, "isoformat"):
-        d = market_day if isinstance(market_day, date) else market_day.date()
+        if isinstance(market_day, datetime):
+            d = market_day.date()
+        elif isinstance(market_day, date):
+            d = market_day
+        else:
+            d = today or date.today()
     else:
         d = today or date.today()
     # heuristique simple : on cible J-1 si publication < offset_hours après cloture US.
@@ -229,6 +233,88 @@ def _bulk_entry_to_raw_bar(entry: dict, target_date: str) -> dict:
     }
 
 
+def _normalize_date(value: date | str | datetime | None) -> Optional[date]:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _rows_to_raw_bars(rows: Iterable[dict]) -> list[dict]:
+    raw_bars: list[dict] = []
+    for raw in rows or []:
+        try:
+            raw_bars.append(
+                {
+                    "date": str(raw.get("date") or ""),
+                    "open": float(raw["open"]),
+                    "high": float(raw["high"]),
+                    "low": float(raw["low"]),
+                    "close": float(raw["close"]),
+                    "adjusted_close": float(raw.get("adjusted_close", raw["close"])),
+                    "volume": int(raw.get("volume") or 0),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return raw_bars
+
+
+def _dedupe_raw_bars_by_date(raw_bars: Iterable[dict]) -> list[dict]:
+    deduped: dict[str, dict] = {}
+    for raw_bar in raw_bars or []:
+        raw_date = str(raw_bar.get("date") or "").strip()
+        if not raw_date:
+            continue
+        deduped[raw_date] = raw_bar
+    return [deduped[key] for key in sorted(deduped)]
+
+
+def _get_latest_bar_dates(session, symbols: Iterable[str]) -> dict[str, date]:
+    universe = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
+    if not universe:
+        return {}
+    _, bars, _ = _get_tables()
+    q = (
+        select(bars.c.symbol, func.max(bars.c.timestamp).label("last_timestamp"))
+        .where(and_(bars.c.timeframe == "1D", bars.c.symbol.in_(universe)))
+        .group_by(bars.c.symbol)
+    )
+    try:
+        rows = session.execute(q).all()
+    except AttributeError:
+        # Fakes de tests minimaux : on retombe sur "aucun historique".
+        return {}
+
+    latest_dates: dict[str, date] = {}
+    for symbol, last_timestamp in rows:
+        normalized = _normalize_date(last_timestamp)
+        if normalized is not None:
+            latest_dates[str(symbol).strip().upper()] = normalized
+    return latest_dates
+
+
+def _resolve_missing_fetch_window(
+    last_known_date: Optional[date],
+    target_date_value: date,
+    *,
+    target_date_covered_by_bulk: bool,
+) -> tuple[Optional[str], Optional[str]]:
+    if last_known_date is None or last_known_date >= target_date_value:
+        return None, None
+    start = last_known_date + timedelta(days=1)
+    end = target_date_value - timedelta(days=1) if target_date_covered_by_bulk else target_date_value
+    if start > end:
+        return None, None
+    return start.isoformat(), end.isoformat()
+
+
 # ---------------------------------------------------------------------------
 # Upserts
 # ---------------------------------------------------------------------------
@@ -287,6 +373,7 @@ def run_eodhd_ingestion(
     cfg = config if config is not None else _load_config_safe()
     started_at = _utc_now_naive()
     target_date = target_date or _resolve_target_date(cfg)
+    target_date_value = date.fromisoformat(target_date)
     cache = cache or EodhdDiskCache(
         Path((cfg.get("eodhd") or {}).get("cache_dir", "artifacts/eodhd_cache"))
     )
@@ -301,9 +388,13 @@ def run_eodhd_ingestion(
         "finished_at": None,
         "duration_seconds": 0.0,
         "targeted_symbols": 0,
+        "symbols_with_existing_history": 0,
+        "up_to_date_symbols": 0,
         "bulk_size": 0,
         "matched_in_bulk": 0,
         "missing_from_bulk": 0,
+        "catchup_symbols": 0,
+        "catchup_days_requested": 0,
         "per_symbol_recovered": 0,
         "per_symbol_failed": 0,
         "rows_upserted_stock_bars": 0,
@@ -332,6 +423,9 @@ def run_eodhd_ingestion(
             LOGGER.warning("[eodhd] univers vide -> sortie")
             return _finalize(summary, started_at, tracker)
 
+        latest_bar_dates = _get_latest_bar_dates(session, universe)
+        summary["symbols_with_existing_history"] = len(latest_bar_dates)
+
         # 2) Bulk (1 appel)
         try:
             bulk_payload = fetch_eod_bulk(date=target_date, tracker=tracker)
@@ -349,70 +443,91 @@ def run_eodhd_ingestion(
         ingested_for_audit: dict[str, list[dict]] = {}
         rows_daily: list[dict] = []
         rows_bars: list[dict] = []
+        recovered_budget = max(0, int(per_symbol_limit))
+        recovered_missing_without_history = 0
 
         for symbol in universe:
             entry = indexed.get(symbol)
-            if entry is None:
-                continue
-            try:
-                raw_bar = _bulk_entry_to_raw_bar(entry, target_date)
-            except (KeyError, TypeError, ValueError) as exc:
-                LOGGER.warning("[eodhd] entry invalide %s: %s", symbol, exc)
-                summary["errors"] += 1
+            last_known_date = latest_bar_dates.get(symbol)
+            raw_bars: list[dict] = []
+            target_date_covered_by_bulk = False
+
+            if entry is not None:
+                try:
+                    raw_bar = _bulk_entry_to_raw_bar(entry, target_date)
+                except (KeyError, TypeError, ValueError) as exc:
+                    LOGGER.warning("[eodhd] entry invalide %s: %s", symbol, exc)
+                    summary["errors"] += 1
+                    continue
+                raw_bar_date = _normalize_date(raw_bar.get("date"))
+                if last_known_date is None or (raw_bar_date is not None and raw_bar_date > last_known_date):
+                    raw_bars.append(raw_bar)
+                    target_date_covered_by_bulk = raw_bar_date == target_date_value
+                else:
+                    summary["up_to_date_symbols"] += 1
+            elif last_known_date is not None and last_known_date >= target_date_value:
+                summary["up_to_date_symbols"] += 1
+
+            range_start, range_end = _resolve_missing_fetch_window(
+                last_known_date,
+                target_date_value,
+                target_date_covered_by_bulk=target_date_covered_by_bulk,
+            )
+
+            if range_start and range_end:
+                try:
+                    range_rows = fetch_eod(symbol, start=range_start, end=range_end, tracker=tracker)
+                except (EodhdBarsFetchError, EodhdQuotaExceeded) as exc:
+                    LOGGER.warning(
+                        "[eodhd] catch-up fetch failed %s [%s..%s]: %s",
+                        symbol,
+                        range_start,
+                        range_end,
+                        exc,
+                    )
+                    summary["per_symbol_failed"] += 1
+                else:
+                    normalized_rows = _rows_to_raw_bars(range_rows)
+                    if normalized_rows:
+                        raw_bars = normalized_rows + raw_bars
+                        summary["catchup_symbols"] += 1
+                        summary["catchup_days_requested"] += (date.fromisoformat(range_end) - date.fromisoformat(range_start)).days + 1
+                        if entry is None:
+                            summary["per_symbol_recovered"] += 1
+            elif entry is None and last_known_date is None and recovered_missing_without_history < recovered_budget:
+                try:
+                    range_rows = fetch_eod(symbol, start=target_date, end=target_date, tracker=tracker)
+                except (EodhdBarsFetchError, EodhdQuotaExceeded) as exc:
+                    LOGGER.warning("[eodhd] per-symbol fetch failed %s: %s", symbol, exc)
+                    summary["per_symbol_failed"] += 1
+                else:
+                    normalized_rows = _rows_to_raw_bars(range_rows)
+                    if normalized_rows:
+                        raw_bars.extend(normalized_rows)
+                        summary["per_symbol_recovered"] += 1
+                finally:
+                    recovered_missing_without_history += 1
+
+            raw_bars = _dedupe_raw_bars_by_date(raw_bars)
+            if not raw_bars:
                 continue
 
             splits = _cached_fetch_splits(symbol, cache=cache, tracker=tracker)
-            split_only = eodhd_to_split_only([raw_bar], splits)
+            split_only = eodhd_to_split_only(raw_bars, splits)
             if not split_only:
                 summary["errors"] += 1
                 continue
 
-            bar = split_only[0]
-            rows_daily.append(to_stock_bars_daily_row(bar, symbol))
-            rows_bars.append(to_stock_bars_row(bar, symbol))
-            ingested_for_audit.setdefault(symbol, []).append(
-                {"date": bar["date"], "close": bar["close"], "volume": bar["volume"]}
-            )
+            for bar in split_only:
+                rows_daily.append(to_stock_bars_daily_row(bar, symbol))
+                rows_bars.append(to_stock_bars_row(bar, symbol))
+                ingested_for_audit.setdefault(symbol, []).append(
+                    {"date": bar["date"], "close": bar["close"], "volume": bar["volume"]}
+                )
 
-        # 4) Recovery per-symbol pour ceux absents du bulk (limité)
+        # 4) Synthèse des absents du bulk
         missing = [s for s in universe if s not in indexed]
         summary["missing_from_bulk"] = len(missing)
-        recovered_budget = max(0, int(per_symbol_limit))
-        for symbol in missing[:recovered_budget]:
-            try:
-                rows = fetch_eod(symbol, start=target_date, end=target_date, tracker=tracker)
-            except (EodhdBarsFetchError, EodhdQuotaExceeded) as exc:
-                LOGGER.warning("[eodhd] per-symbol fetch failed %s: %s", symbol, exc)
-                summary["per_symbol_failed"] += 1
-                continue
-            if not rows:
-                continue
-            raw = rows[0]
-            try:
-                raw_bar = {
-                    "date": raw.get("date", target_date),
-                    "open": float(raw["open"]),
-                    "high": float(raw["high"]),
-                    "low": float(raw["low"]),
-                    "close": float(raw["close"]),
-                    "adjusted_close": float(raw.get("adjusted_close", raw["close"])),
-                    "volume": int(raw.get("volume") or 0),
-                }
-            except (KeyError, TypeError, ValueError):
-                summary["per_symbol_failed"] += 1
-                continue
-            splits = _cached_fetch_splits(symbol, cache=cache, tracker=tracker)
-            split_only = eodhd_to_split_only([raw_bar], splits)
-            if not split_only:
-                summary["per_symbol_failed"] += 1
-                continue
-            bar = split_only[0]
-            rows_daily.append(to_stock_bars_daily_row(bar, symbol))
-            rows_bars.append(to_stock_bars_row(bar, symbol))
-            ingested_for_audit.setdefault(symbol, []).append(
-                {"date": bar["date"], "close": bar["close"], "volume": bar["volume"]}
-            )
-            summary["per_symbol_recovered"] += 1
 
         # 5) Upserts (sauf dry-run)
         if dry_run:
@@ -478,14 +593,16 @@ def _finalize(
         "symbols_missing": int(summary.get("missing_from_bulk", 0)),
     }
     LOGGER.info(
-        "[eodhd] résumé | run_id=%s mode=%s target=%s targeted=%d bulk=%d matched=%d "
-        "recovered=%d rows_daily=%d rows_bars=%d errors=%d duration_s=%.2f",
+        "[eodhd] résumé | run_id=%s mode=%s target=%s targeted=%d existing=%d up_to_date=%d bulk=%d matched=%d catchup_symbols=%d recovered=%d rows_daily=%d rows_bars=%d errors=%d duration_s=%.2f",
         summary["run_id"],
         summary["mode"],
         summary["target_date"],
         summary["targeted_symbols"],
+        summary["symbols_with_existing_history"],
+        summary["up_to_date_symbols"],
         summary["bulk_size"],
         summary["matched_in_bulk"],
+        summary["catchup_symbols"],
         summary["per_symbol_recovered"],
         summary["rows_upserted_stock_bars_daily"],
         summary["rows_upserted_stock_bars"],

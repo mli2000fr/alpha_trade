@@ -25,7 +25,9 @@
 |---|---|---|---|---|---|
 | `stock_assets` | `dataIntegrityEngine.import_alpaca_assets` | screener, selector, ihm | Alpaca | daily | P1 |
 | `stock_bars_daily` | `dataIntegrityEngine.import_alpaca_bar` | screener, selector, modelFactory, backtesting | Alpaca IEX | daily | P1 |
+| `stock_bars_daily` *(provider=eodhd)* | `dataIntegrityEngine.import_eodhd_bar` (Phase 6) | idem | EODHD bulk EOD | daily | P1 |
 | `stock_bars` | `dataIntegrityEngine.import_alpaca_bar` (intraday) | execution_engine.tca | Alpaca IEX | intraday | P2 |
+| `stock_bars` (1D, provider=eodhd) | `import_eodhd_bar` + `backfill_eodhd_history` | selector, modelFactory | EODHD `/eod` | daily / one-shot | P1 |
 | `stock_quote_snapshots` | `dataIntegrityEngine.sync_latest_quotes` | selector (`spread_bps`) | Alpaca IEX | daily | P1 |
 | `stock_metadata` | `dataIntegrityEngine.update_sector` | screener, selector (filtres market_cap, sector) | Finnhub | weekly | P2 |
 | `earnings_calendar` | `dataIntegrityEngine.sync_earnings_calendar` | selector, risk_management (blackout) | Finnhub | daily | P2 |
@@ -95,8 +97,20 @@
   Phase 1.1 sur `stock_bars` et `stock_bars_daily`.
 - **Cross-check Stooq** *(Phase 7.3)* : best-effort, anomalies persistées
   dans `cleaning_audit_runs.cross_check_anomalies` (JSON).
+- **EODHD provider switch** *(Phase 6)* : `market_data.bars_provider`
+  (`alpaca` | `eodhd`) contrôle quel module daily est actif. L'autre devient
+  no-op au niveau de `main()` pour interdire toute double-écriture. Voir
+  `prompt/iex/plan_eodhd.md` et `prompt/iex/phase4_runbook.md`.
+- **EODHD source primaire dividendes** *(Phase 6)* : la factory
+  `corporate_actions.provider.build_corporate_action_provider` sélectionne
+  `EodhdCorporateActionProvider` quand `bars_provider=eodhd`. Override CLI
+  via `CORPORATE_ACTIONS_PROVIDER=eodhd|alpaca`.
+- **Cohabitation `data_source` mixte** : `stock_bars_daily` peut contenir
+  simultanément `alpaca_iex` ET `eodhd_eod` sur la même `(symbol, date)`.
+  Cette redondance est **utilisée par** `scripts/eodhd_phase4_volume_audit.py`
+  (critère go/no-go ratio volume).
 
 ---
 
-**Réf.** : audit_global §7.6, §7.9 ; `doc/database.md` ; `doc/guide_add_new_table.md`.
+**Réf.** : audit_global §7.6, §7.9 ; `doc/database.md` ; `doc/guide_add_new_table.md` ; `prompt/iex/plan_eodhd.md` (Phases 1-6).
 

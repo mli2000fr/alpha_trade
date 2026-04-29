@@ -13,7 +13,6 @@ But des tests :
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -161,8 +160,8 @@ def test_dry_run_no_db_writes(monkeypatch, patched_env, fake_bulk_payload):
     assert summary["matched_in_bulk"] == 3  # AAPL, NVDA, BRK.B (MSFT ignoré)
     assert summary["rows_upserted_stock_bars"] == 0
     assert summary["rows_upserted_stock_bars_daily"] == 0
-    # Aucune execution SQL en dry-run
-    assert session.executed == []
+    # Une lecture d'ancre d'historique, mais aucune écriture SQL en dry-run.
+    assert len(session.executed) == 1
     assert session.committed == 0
     # Clés run_summary plan §8.1
     assert "eodhd" in summary
@@ -190,8 +189,8 @@ def test_write_mode_upserts_both_tables(monkeypatch, patched_env, fake_bulk_payl
     assert summary["mode"] == "write"
     assert summary["rows_upserted_stock_bars_daily"] == 3
     assert summary["rows_upserted_stock_bars"] == 3
-    # 2 statements (1 par table) + commit
-    assert len(session.executed) == 2
+    # 1 select ancre + 2 statements d'upsert.
+    assert len(session.executed) == 3
     assert session.committed >= 1
 
 
@@ -221,6 +220,60 @@ def test_missing_from_bulk_recovered_via_per_symbol(monkeypatch, patched_env):
 
     assert summary["missing_from_bulk"] == 3
     assert summary["per_symbol_recovered"] == 3
+
+
+def test_existing_history_is_caught_up_until_target_date(monkeypatch, patched_env, fake_bulk_payload):
+    monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk", lambda **kwargs: fake_bulk_payload)
+    monkeypatch.setattr(import_eodhd_bar, "fetch_splits", lambda symbol, **kwargs: [])
+    monkeypatch.setattr(
+        import_eodhd_bar,
+        "_get_latest_bar_dates",
+        lambda session, symbols: {"AAPL": import_eodhd_bar.date(2026, 4, 24)},
+    )
+
+    fetch_calls: list[tuple[str, str, str]] = []
+
+    def _fake_eod(symbol, **kwargs):
+        fetch_calls.append((symbol, kwargs["start"], kwargs["end"]))
+        return [
+            {
+                "date": "2026-04-25",
+                "open": 190.0,
+                "high": 191.0,
+                "low": 189.0,
+                "close": 190.5,
+                "adjusted_close": 190.5,
+                "volume": 10,
+            },
+            {
+                "date": "2026-04-27",
+                "open": 191.0,
+                "high": 192.0,
+                "low": 190.0,
+                "close": 191.5,
+                "adjusted_close": 191.5,
+                "volume": 11,
+            },
+        ]
+
+    monkeypatch.setattr(import_eodhd_bar, "fetch_eod", _fake_eod)
+
+    summary = import_eodhd_bar.run_eodhd_ingestion(
+        dry_run=False,
+        target_date="2026-04-28",
+        enable_stooq_cross_check=False,
+        config={},
+        session=_FakeSession(),
+        tracker=patched_env["tracker"],
+    )
+
+    assert fetch_calls == [("AAPL", "2026-04-25", "2026-04-27")]
+    assert summary["symbols_with_existing_history"] == 1
+    assert summary["catchup_symbols"] == 1
+    assert summary["catchup_days_requested"] == 3
+    # AAPL = 2 jours catch-up + 1 jour bulk cible ; NVDA et BRK.B = bulk cible.
+    assert summary["rows_upserted_stock_bars_daily"] == 5
+    assert summary["rows_upserted_stock_bars"] == 5
 
 
 def test_bulk_unavailable_records_error_does_not_crash(monkeypatch, patched_env):

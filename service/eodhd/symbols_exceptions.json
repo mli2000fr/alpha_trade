@@ -6,6 +6,6 @@
     "alphabet": "<TICKER>.<EXCHANGE> (point conserve : GOOG.US, GOOGL.US)"
   },
   "exceptions": {},
-  "known_unsupported_basic_plan": ["TQQQ", "SQQQ", "UPRO", "SPXU"]
+  "known_unsupported_basic_plan": []
 }
 

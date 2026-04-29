@@ -563,6 +563,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser_cli
 
 
+def _resolve_bars_provider() -> str:
+    """Lit ``market_data.bars_provider`` (défaut ``alpaca`` — rétrocompat).
+
+    Phase 4 plan_eodhd.md §5.6 : symétrique de
+    ``import_eodhd_bar.resolve_bars_provider``. Si l'opérateur bascule
+    ``bars_provider=eodhd``, le pipeline Alpaca devient no-op pour éviter
+    les double-écritures et les conflits de ``data_source``.
+    """
+    try:
+        from common.config_loader import load_config
+        cfg = load_config() or {}
+    except Exception:
+        return "alpaca"
+    return str(((cfg.get("market_data") or {}).get("bars_provider", "alpaca"))).lower()
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     configure_root_logging(
         level=logging.INFO,
@@ -570,6 +586,30 @@ def main(argv: Optional[list[str]] = None) -> int:
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
     args = _build_arg_parser().parse_args(argv)
+
+    # Phase 4 EODHD : provider switch symétrique.
+    provider = _resolve_bars_provider()
+    if provider == "eodhd":
+        LOGGER.info(
+            "import_alpaca_bar no-op | bars_provider=%s (Phase 4 plan_eodhd.md §5.6)",
+            provider,
+        )
+        noop_summary = {
+            "run_id": _build_run_id("import-bars-noop"),
+            "timeframe": TimeFrame.ONE_DAY.db_value,
+            "provider": "alpaca",
+            "mode": "noop",
+            "skipped_reason": f"bars_provider={provider}",
+            "started_at": _utc_now_naive().isoformat(timespec="seconds"),
+            "finished_at": _utc_now_naive().isoformat(timespec="seconds"),
+            "duration_seconds": 0.0,
+            "targeted_symbols": 0,
+            "successful_symbols": 0,
+            "inserted_bars": 0,
+        }
+        _emit_run_summary(attach_schema_version(noop_summary))
+        return 0
+
     summary = import_alpaca_bars(TimeFrame.ONE_DAY, symbols=args.symbols)
     summary["success_ratio_threshold"] = float(args.min_success_ratio)
     targeted_universe = args.symbols is None

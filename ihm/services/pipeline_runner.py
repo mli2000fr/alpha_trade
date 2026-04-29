@@ -1,4 +1,4 @@
-"""Services d'orchestration légère des pipelines depuis l'IHM Streamlit."""
+﻿"""Services d'orchestration légère des pipelines depuis l'IHM Streamlit."""
 from __future__ import annotations
 
 import os
@@ -19,6 +19,20 @@ from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SCREENER_CONFIG = ScreenerConfig()
+
+
+def _resolve_bars_provider_for_ihm() -> str:
+    """Lit ``market_data.bars_provider`` (Phase 6 plan_eodhd.md §5.6).
+
+    Retourne ``'alpaca'`` (défaut) ou ``'eodhd'``. Échec config -> ``'alpaca'``
+    pour préserver le comportement historique de l'IHM.
+    """
+    try:
+        from common.config_loader import load_config
+        cfg = load_config() or {}
+    except Exception:
+        return "alpaca"
+    return str(((cfg.get("market_data") or {}).get("bars_provider", "alpaca"))).lower()
 DEFAULT_SCREENER_CHUNK_SIZE = DEFAULT_SCREENER_CONFIG.chunk_size
 DEFAULT_SCREENER_BENCHMARK_SYMBOL = DEFAULT_SCREENER_CONFIG.benchmark_symbol
 DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD = DEFAULT_SCREENER_CONFIG.liquidity_threshold_usd
@@ -289,6 +303,11 @@ class PipelineLaunchOptions:
     corporate_actions_start_date: str | None = None
     corporate_actions_end_date: str | None = None
     corporate_actions_batch_size: int = DEFAULT_CA_BATCH_SIZE
+    # EODHD backfill historique (Phase 5 plan_eodhd.md §6) — étape auxiliaire B3
+    eodhd_backfill_years: int = 5
+    eodhd_backfill_symbols: str | None = None
+    eodhd_backfill_resume: bool = True
+    eodhd_backfill_write: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,9 +362,11 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     PipelineStepDefinition(
         key="import_alpaca_bar",
         num="1",
-        name="Import Alpaca Bar",
-        desc="Ingestion des barres OHLCV journalières depuis Alpaca Market Data.",
-        tables="stock_bars",
+        name="Import Bars (Alpaca / EODHD)",
+        desc="Ingestion OHLCV daily. Provider sélectionné automatiquement via "
+             "`market_data.bars_provider` (alpaca | eodhd). Phase 6 EODHD : route vers "
+             "`dataIntegrityEngine.import_eodhd_bar --write` quand provider=eodhd.",
+        tables="stock_bars, stock_bars_daily",
         deps="—",
     ),
     PipelineStepDefinition(
@@ -442,7 +463,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="corporate_actions_sync",
         num="13",
         name="Corporate Actions Sync",
-        desc="Récupère les dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour).",
+        desc="Recupere dividendes/splits pour les symboles detenus en portefeuille. Provider selectionne automatiquement via market_data.bars_provider (alpaca ou eodhd) ; Yahoo cross-check toujours appele. (Phase 6 EODHD)",
         tables="corporate_actions_events",
         deps="execution (broker_positions_snapshots requis)",
         account_usage="alpaca",
@@ -474,6 +495,17 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
         desc="Enrichit `stock_metadata` avec `sector` et `market_cap` via Finnhub pour les symboles encore incomplets.",
         tables="stock_metadata",
         deps="import_alpaca_assets (recommandé) ou univers déjà chargé",
+    ),
+    PipelineStepDefinition(
+        key="eodhd_backfill_history",
+        num="B3",
+        name="Backfill historique EODHD",
+        desc="One-shot : remplit `stock_bars` + `stock_bars_daily` avec l'historique long "
+             "EODHD (5 ans par défaut, jusqu'à 30 ans pour ML). Bookmark idempotent dans "
+             "`artifacts/eodhd_cache/backfill_state.json`. Coût ~1 call/symbole. "
+             "Utile au démarrage initial post-cutover `bars_provider=eodhd`.",
+        tables="stock_bars, stock_bars_daily",
+        deps="import_alpaca_assets (univers requis)",
     ),
 )
 
@@ -548,6 +580,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
 
     if step_key == "import_alpaca_bar":
+        # Phase 6 EODHD : route dynamiquement vers le bon module selon
+        # ``market_data.bars_provider`` (alpaca | eodhd). Garde la même clé
+        # ``import_alpaca_bar`` pour ne pas casser l'historique IHM.
+        provider = _resolve_bars_provider_for_ihm()
+        if provider == "eodhd":
+            return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_eodhd_bar", "--write"]
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
 
     if step_key == "update_sector":
@@ -563,6 +601,27 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         ]
         if fundamentals_limit is not None:
             command.extend(["--limit", str(fundamentals_limit)])
+        return command
+
+    if step_key == "eodhd_backfill_history":
+        # Phase 5 plan_eodhd.md §6 : backfill historique long via EODHD /eod
+        command = [
+            sys.executable, "-u", "-m",
+            "dataIntegrityEngine.backfill_eodhd_history",
+            "--years", str(int(options.eodhd_backfill_years or 5)),
+        ]
+        if options.eodhd_backfill_write:
+            command.append("--write")
+        # Reprise sur bookmark par défaut ; --no-resume pour forcer
+        if options.eodhd_backfill_resume:
+            command.append("--resume")
+        else:
+            command.append("--no-resume")
+        if options.eodhd_backfill_symbols:
+            symbols = [s.strip().upper() for s in options.eodhd_backfill_symbols.split(",") if s.strip()]
+            if symbols:
+                command.append("--symbols")
+                command.extend(symbols)
         return command
 
     if step_key == "corporate_actions_sync":

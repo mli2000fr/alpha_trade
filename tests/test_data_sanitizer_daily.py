@@ -448,6 +448,7 @@ def test_process_symbol_rebuilds_with_gliding_lookback(monkeypatch, sanitizer: D
     fetch_calls: list[date | None] = []
 
     monkeypatch.setattr(data_sanitizer_daily, "get_last_sync_date", lambda current_conn, table, symbol: date(2024, 6, 1))
+    monkeypatch.setattr(data_sanitizer_daily, "get_last_actual_daily_date", lambda current_conn, table, symbol: None)
     monkeypatch.setattr(
         sanitizer,
         "fetch_symbol_bars_1d",
@@ -476,6 +477,47 @@ def test_process_symbol_rebuilds_with_gliding_lookback(monkeypatch, sanitizer: D
     assert was_processed is True
     assert fetch_calls == [date(2023, 4, 28)]
     assert payload["status"] == "success"
+    assert upserted_rows == 2
+
+
+def test_process_symbol_uses_latest_daily_date_as_resume_anchor(monkeypatch, sanitizer: DataSanitizer) -> None:
+    sanitizer.cleaning_audit_latest = object()
+    sanitizer.stock_bars = object()
+    sanitizer.stock_bars_daily = object()
+    sanitizer.stock_scores = object()
+    conn = cast(Connection, object())
+    fetch_calls: list[date | None] = []
+
+    monkeypatch.setattr(data_sanitizer_daily, "get_last_sync_date", lambda current_conn, table, symbol: date(2024, 1, 3))
+    monkeypatch.setattr(data_sanitizer_daily, "get_last_actual_daily_date", lambda current_conn, table, symbol: date(2024, 6, 1))
+    monkeypatch.setattr(
+        sanitizer,
+        "fetch_symbol_bars_1d",
+        lambda current_conn, symbol, start: fetch_calls.append(start) or pl.DataFrame(
+            {
+                "date": [date(2024, 6, 3), date(2024, 6, 4)],
+                "open": [100.0, 101.0],
+                "high": [101.0, 102.0],
+                "low": [99.0, 100.0],
+                "close": [100.0, 101.0],
+                "volume": [1_000, 1_100],
+                "adj_close": [100.0, 101.0],
+                "vwap": [100.0, 101.0],
+                "is_filled": [False, False],
+            }
+        ),
+    )
+    monkeypatch.setattr(sanitizer, "load_spy_calendar", lambda current_conn, start, end: pl.DataFrame({"date": [date(2024, 6, 3), date(2024, 6, 4)]}))
+    monkeypatch.setattr(data_sanitizer_daily, "get_prev_close_before", lambda current_conn, table, symbol, d: 99.0)
+    monkeypatch.setattr(sanitizer, "sanitize_and_align", lambda df, calendar, prev_close: (df.with_columns(pl.lit(0.01).alias("daily_return")), 0))
+    monkeypatch.setattr(sanitizer, "detect_anomalies", lambda df: (df, 0))
+    monkeypatch.setattr(data_sanitizer_daily, "upsert_stock_bars_daily", lambda conn, table, symbol, df, data_adjustment=None: len(df))
+
+    was_processed, payload, upserted_rows = sanitizer._process_symbol(conn, "AAPL")
+
+    assert was_processed is True
+    assert fetch_calls == [date(2023, 4, 28)]
+    assert payload["last_sync"] == date(2024, 6, 4)
     assert upserted_rows == 2
 
 

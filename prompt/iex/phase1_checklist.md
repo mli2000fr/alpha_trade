@@ -1,6 +1,12 @@
 ﻿# Phase 1 EODHD - Checklist de cadrage
 
-> **Statut 2026-04-29** : 🟡 **GO conditionnel Phase 2** — smoke test exécuté SANS abonnement EODHD souscrit (compte d évaluation gratuit). Les KO observés (bulk 423, splits 403, TQQQ 402) sont **attendus et imputables au plan non souscrit**, pas à la conception. L endpoint `/eod/{ticker}.US` étant pleinement fonctionnel (200, OHLCV + adjusted_close), le **mapping symboles** et la **structure des payloads** sont validés. La Phase 2 démarre en mode "implémentation à blanc" : le code sera prêt, **les tests d intégration live seront re-exécutés après souscription** (relance `python scripts/eodhd_phase1_smoke.py --bulk-days 3`). Voir `phase1_findings.md` §5 pour les options A/B/C de remediation à arbitrer en sortie de Phase 2.
+> **Statut 2026-04-29 (re-run post-souscription, 10:37 UTC)** : 🟢 **GO complet Phase 5** — tous les critères go/no-go du §6 sont satisfaits :
+> - Bulk HTTP 200 sur 3 jours, payload_size 50 102 / 50 596 / 50 646 (×7 le seuil), latence 4.5–6.8 s
+> - Splits NVDA 200 OK avec 10:1 (2024-06-10) et 4:1 (2021-07-20) au format `N.000000/1.000000`
+> - Mapping 20/20 (TQQQ désormais accessible avec All-In-One)
+> - Aucun 401/403/429
+>
+> Voir `artifacts/eodhd_cache/phase1_smoke_20260429T103746.json` et `phase1_findings.md`.
 
 > **Objectif** : valider empiriquement la viabilite EODHD avant d investir dans le module `service/eodhd/` (Phase 2). Tous les artefacts ici sont jetables - ils ne participent pas au pipeline.
 >

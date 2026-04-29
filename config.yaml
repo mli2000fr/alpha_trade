@@ -48,7 +48,7 @@ risk:
 # toujours sur Alpaca quel que soit ce flag.
 # ---------------------------------------------------------------------------
 market_data:
-  bars_provider: alpaca   # alpaca | eodhd
+  bars_provider: eodhd   # alpaca | eodhd  (défaut recommandé : eodhd — pilotable depuis IHM › Paramètres)
   fallback_on_failure: true
 
 eodhd:

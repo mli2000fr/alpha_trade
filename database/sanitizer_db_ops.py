@@ -168,6 +168,11 @@ def get_first_last_actual_dates(conn: Connection, stock_bars_daily, symbol: str)
     return mn, mx
 
 
+def get_last_actual_daily_date(conn: Connection, stock_bars_daily, symbol: str) -> Optional[date]:
+    q = select(func.max(stock_bars_daily.c.date)).where(stock_bars_daily.c.symbol == symbol)
+    return conn.execute(q).scalar_one_or_none()
+
+
 def get_prev_close_before(conn: Connection, stock_bars_daily, symbol: str, d: date) -> Optional[float]:
     q = (
         select(stock_bars_daily.c.close)
