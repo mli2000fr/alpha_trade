@@ -141,3 +141,32 @@ def test_circuit_breaker_resets_on_success() -> None:
     breaker.record_failure("api.example.com")
     breaker.check("api.example.com")  # toujours ok
 
+
+def test_request_with_retry_redacts_api_token_in_logs(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    monkeypatch.setattr("service._http_retry.time.sleep", lambda *_: None)
+
+    class _ResponseWithToken(MagicMock):
+        status_code = 500
+
+        def raise_for_status(self):
+            raise requests.exceptions.HTTPError(
+                "500 Server Error: boom for url: https://api.example.com/x?api_token=SECRET_TOKEN&fmt=json"
+            )
+
+    session = _mock_session_with_responses([_ResponseWithToken(), _ok_response(200)])
+
+    with caplog.at_level("WARNING", logger="service._http_retry"):
+        request_with_retry(
+            session,
+            "GET",
+            "https://api.example.com/x",
+            policy=RetryPolicy(max_attempts=2, base_delay_seconds=0.0, jitter=False),
+            breaker=None,
+            params={"api_token": "SECRET_TOKEN", "fmt": "json"},
+        )
+
+    joined = "\n".join(caplog.messages)
+    assert "SECRET_TOKEN" not in joined
+    assert "api_token" in joined
+
+

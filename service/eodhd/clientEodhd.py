@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Literal, Optional, Sequence
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
@@ -24,13 +25,13 @@ from service._telemetry import bump as _telemetry_bump
 from service.eodhd.accounts import EodhdAccountRegistry, EodhdAuthError
 from service.eodhd.quota import (
     EodhdCircuitOpen,
-    EodhdQuotaExceeded,
     EodhdQuotaTracker,
     get_default_tracker,
 )
 from service.eodhd.symbols import to_eodhd
 
 LOGGER = logging.getLogger(__name__)
+SENSITIVE_QUERY_KEYS = frozenset({"api_token", "token", "api_key", "apikey", "key", "secret"})
 
 DEFAULT_TIMEOUT_SECONDS = 15
 DEFAULT_MAX_ATTEMPTS = 5
@@ -46,6 +47,28 @@ class EodhdBarsFetchError(RuntimeError):
 
 class EodhdSymbolNotFound(EodhdBarsFetchError):
     """Le symbole demandé n'existe pas côté EODHD pour l'endpoint visé."""
+
+
+def _redact_sensitive_text(text: str) -> str:
+    raw = str(text)
+    try:
+        start = raw.find("http://")
+        if start < 0:
+            start = raw.find("https://")
+        if start < 0:
+            return raw
+        end = raw.find(" ", start)
+        url = raw[start:] if end < 0 else raw[start:end]
+        parts = urlsplit(url)
+        query_pairs = parse_qsl(parts.query, keep_blank_values=True)
+        redacted_pairs = [
+            (k, "***" if k.lower() in SENSITIVE_QUERY_KEYS else v)
+            for k, v in query_pairs
+        ]
+        redacted_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(redacted_pairs), parts.fragment))
+        return raw.replace(url, redacted_url)
+    except Exception:  # pragma: no cover
+        return raw
 
 
 def _retry_policy() -> RetryPolicy:
@@ -92,7 +115,7 @@ def _do_request(
     except requests.exceptions.Timeout as exc:
         _telemetry_bump(TELEMETRY_CLIENT, "timeout_total")
         tracker.record_failure(endpoint, count_call=False)
-        raise EodhdBarsFetchError(f"timeout EODHD ({endpoint}): {exc}") from exc
+        raise EodhdBarsFetchError(f"timeout EODHD ({endpoint}): {_redact_sensitive_text(exc)}") from exc
     except requests.exceptions.HTTPError as exc:
         status = getattr(getattr(exc, "response", None), "status_code", None)
         if status == 401 or status == 403:
@@ -109,11 +132,11 @@ def _do_request(
             count_towards_circuit=(status != 404),
         )
         if status == 404:
-            raise EodhdSymbolNotFound(f"HTTP 404 sur {endpoint}: {exc}") from exc
-        raise EodhdBarsFetchError(f"HTTP {status} sur {endpoint}: {exc}") from exc
+            raise EodhdSymbolNotFound(f"HTTP 404 sur {endpoint}: {_redact_sensitive_text(exc)}") from exc
+        raise EodhdBarsFetchError(f"HTTP {status} sur {endpoint}: {_redact_sensitive_text(exc)}") from exc
     except requests.exceptions.RequestException as exc:
         tracker.record_failure(endpoint, count_call=False)
-        raise EodhdBarsFetchError(f"erreur réseau EODHD ({endpoint}): {exc}") from exc
+        raise EodhdBarsFetchError(f"erreur réseau EODHD ({endpoint}): {_redact_sensitive_text(exc)}") from exc
 
     tracker.record_success(endpoint)
     _telemetry_bump(TELEMETRY_CLIENT, "success_total")

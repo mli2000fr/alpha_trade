@@ -127,6 +127,28 @@ class EodhdQuotaTracker:
     def cost_for(self, endpoint: str) -> int:
         return ENDPOINT_COSTS.get(endpoint, 1)
 
+    @staticmethod
+    def _format_remaining_duration(seconds: float) -> str:
+        total_seconds = max(0, int(round(seconds)))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        parts: list[str] = []
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes or hours:
+            parts.append(f"{minutes}m")
+        parts.append(f"{secs}s")
+        return " ".join(parts)
+
+    @classmethod
+    def _format_circuit_open_until(cls, epoch: float, *, now_epoch: float | None = None) -> str:
+        if epoch <= 0:
+            return "échéance inconnue"
+        now_ts = time.time() if now_epoch is None else now_epoch
+        remaining = max(0.0, epoch - now_ts)
+        open_until_utc = datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        return f"{open_until_utc} (reste ~{cls._format_remaining_duration(remaining)})"
+
     def reserve(self, endpoint: str) -> int:
         """Vérifie qu'il reste assez de quota et que le circuit est fermé.
 
@@ -140,7 +162,7 @@ class EodhdQuotaTracker:
             if self.is_circuit_open():
                 raise EodhdCircuitOpen(
                     f"[eodhd] circuit-breaker ouvert jusqu'à "
-                    f"{self.state.circuit_open_until_epoch:.0f}s"
+                    f"{self._format_circuit_open_until(self.state.circuit_open_until_epoch)}"
                 )
             cost = self.cost_for(endpoint)
             if self.state.calls_used + cost > self.daily_quota:
@@ -196,9 +218,10 @@ class EodhdQuotaTracker:
             if self.state.consecutive_failures >= self.failure_threshold:
                 self.state.circuit_open_until_epoch = time.time() + self.cooldown_seconds
                 LOGGER.warning(
-                    "[eodhd] circuit-breaker OPEN après %d échecs consécutifs (%.0fs)",
+                    "[eodhd] circuit-breaker OPEN après %d échecs consécutifs (cooldown=%.0fs, reprise après %s)",
                     self.state.consecutive_failures,
                     self.cooldown_seconds,
+                    self._format_circuit_open_until(self.state.circuit_open_until_epoch),
                 )
             self._save()
 

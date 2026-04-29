@@ -283,6 +283,50 @@ def test_run_backfill_circuit_breaker_stops_processing(env, monkeypatch, tmp_pat
         session=_FakeSession(), tracker=tracker,
     )
     assert summary["symbols_processed"] == 0
+    assert summary["stopped_reason"] == "circuit_open"
+
+
+def test_run_backfill_skips_preferred_series_before_fetch(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(bf, "fetch_eod", lambda symbol, **kwargs: pytest.fail("fetch_eod ne doit pas être appelé"))
+
+    summary = bf.run_backfill(
+        years=2,
+        symbols=["ABR.PRD"],
+        dry_run=True,
+        resume=False,
+        bookmark_path=tmp_path / "bm.json",
+        config={},
+        session=_FakeSession(),
+        tracker=env["tracker"],
+    )
+
+    assert summary["targeted_symbols"] == 1
+    assert summary["unsupported_fallback_symbols"] == 1
+    assert summary["metadata_marked_unavailable"] == 0
+    assert summary["symbols_processed"] == 0
+    bm = json.loads((tmp_path / "bm.json").read_text(encoding="utf-8"))
+    assert bm["completed_symbols"] == ["ABR.PRD"]
+
+
+def test_run_backfill_marks_preferred_series_unavailable_in_write_mode(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(bf, "fetch_eod", lambda symbol, **kwargs: pytest.fail("fetch_eod ne doit pas être appelé"))
+    update_calls: list[str] = []
+    monkeypatch.setattr(bf, "update_bars_available_false", lambda symbol: update_calls.append(symbol))
+
+    summary = bf.run_backfill(
+        years=2,
+        symbols=["ABR.PRD"],
+        dry_run=False,
+        resume=False,
+        bookmark_path=tmp_path / "bm.json",
+        config={},
+        session=_FakeSession(),
+        tracker=env["tracker"],
+    )
+
+    assert update_calls == ["ABR.PRD"]
+    assert summary["unsupported_fallback_symbols"] == 1
+    assert summary["metadata_marked_unavailable"] == 1
 
 
 def test_run_backfill_window_is_years_long(env, monkeypatch, tmp_path):

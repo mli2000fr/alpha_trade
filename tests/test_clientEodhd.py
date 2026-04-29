@@ -141,8 +141,11 @@ def test_fetch_eod_circuit_breaker_open(tmp_path: Path):
 
     # Circuit ouvert -> reserve() doit lever
     assert tracker.is_circuit_open()
-    with pytest.raises(clientEodhd.EodhdCircuitOpen):
+    with pytest.raises(clientEodhd.EodhdCircuitOpen) as exc_info:
         clientEodhd.fetch_eod("AAPL", session=session, tracker=tracker)
+    message = str(exc_info.value)
+    assert "UTC" in message
+    assert "reste ~" in message
 
 
 def test_fetch_eod_404_does_not_open_circuit_breaker(tmp_path: Path):
@@ -153,6 +156,29 @@ def test_fetch_eod_404_does_not_open_circuit_breaker(tmp_path: Path):
         clientEodhd.fetch_eod("ABR.PRD", session=session, tracker=tracker)
 
     assert tracker.is_circuit_open() is False
+
+
+def test_fetch_eod_redacts_api_token_in_error_message(monkeypatch, tmp_path: Path):
+    tracker = eodhd_quota.EodhdQuotaTracker(cache_dir=tmp_path, failure_threshold=99)
+
+    class _RaisingSession(_FakeSession):
+        def request(self, method: str, url: str, **kwargs: Any) -> _FakeResponse:
+            response = _FakeResponse(payload=[], status_code=404)
+            err = requests.exceptions.HTTPError(
+                f"404 Client Error: Not Found for url: {url}?api_token=SECRET_TOKEN&fmt=json",
+                response=response,
+            )
+            raise err
+
+    session = _RaisingSession([])
+    monkeypatch.setattr(clientEodhd, "_get_base_url", lambda: "https://eodhd.com/api")
+
+    with pytest.raises(clientEodhd.EodhdSymbolNotFound) as exc_info:
+        clientEodhd.fetch_eod("ABR.PRD", session=session, tracker=tracker)
+
+    message = str(exc_info.value)
+    assert "SECRET_TOKEN" not in message
+    assert "api_token=%2A%2A%2A" in message or "api_token=***" in message
 
 
 def test_fetch_dividends_uses_div_endpoint():

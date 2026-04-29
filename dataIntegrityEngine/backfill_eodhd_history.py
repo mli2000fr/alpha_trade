@@ -45,10 +45,12 @@ from uuid import uuid4
 from common.config_loader import load_config
 from common.utils import configure_root_logging
 from core.run_summary import attach_schema_version
+from database.assets import update_bars_available_false
 from database.connection import SessionLocal
 from dataIntegrityEngine.import_eodhd_bar import (
     _cached_fetch_splits,
     _get_active_tradable_symbols,
+    _is_known_unsupported_fallback_symbol,
     _get_tables,
     _upsert_stock_bars,
     _upsert_stock_bars_daily,
@@ -260,6 +262,9 @@ def run_backfill(
         "rows_upserted_stock_bars_daily": 0,
         "raw_rows_total": 0,
         "errors": 0,
+        "unsupported_fallback_symbols": 0,
+        "metadata_marked_unavailable": 0,
+        "stopped_reason": None,
         "bookmark_path": str(bookmark_path),
         "resume": resume,
     }
@@ -292,11 +297,24 @@ def run_backfill(
 
         for idx, symbol in enumerate(remaining, 1):
             if tracker.is_circuit_open():
+                summary["stopped_reason"] = "circuit_open"
                 LOGGER.warning(
                     "[backfill] circuit-breaker EODHD ouvert -> stop (idx=%d/%d)",
                     idx, len(remaining),
                 )
                 break
+
+            if _is_known_unsupported_fallback_symbol(symbol):
+                LOGGER.info(
+                    "[backfill] symbole preferred/series non supporté ignoré avant fetch_eod: %s",
+                    symbol,
+                )
+                summary["unsupported_fallback_symbols"] += 1
+                if not dry_run:
+                    update_bars_available_false(symbol)
+                    summary["metadata_marked_unavailable"] += 1
+                bookmark.setdefault("completed_symbols", []).append(symbol)
+                continue
 
             result = backfill_one_symbol(
                 symbol=symbol,

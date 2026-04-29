@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -42,7 +43,7 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 from common.config_loader import load_config
 from common.utils import configure_root_logging, getLastDateMarche
 from core.run_summary import attach_schema_version
-from database.assets import build_eligible_stock_metadata_filters
+from database.assets import build_eligible_stock_metadata_filters, update_bars_available_false
 from database.connection import SessionLocal, get_sqlalchemy_engine
 from service.eodhd.adapters import (
     DATA_SOURCE_EODHD,
@@ -72,6 +73,7 @@ LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 DEFAULT_PER_SYMBOL_LIMIT = 100
 DEFAULT_BULK_PUBLISH_OFFSET_HOURS = 2
+_PREFERRED_SERIES_SYMBOL_RE = re.compile(r"^[A-Z]+\.PR[A-Z0-9]+$")
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +319,11 @@ def _resolve_missing_fetch_window(
     return start.isoformat(), end.isoformat()
 
 
+def _is_known_unsupported_fallback_symbol(symbol: str) -> bool:
+    normalized = str(symbol or "").strip().upper()
+    return bool(_PREFERRED_SERIES_SYMBOL_RE.match(normalized))
+
+
 # ---------------------------------------------------------------------------
 # Upserts
 # ---------------------------------------------------------------------------
@@ -397,6 +404,8 @@ def run_eodhd_ingestion(
         "missing_from_bulk": 0,
         "catchup_symbols": 0,
         "catchup_days_requested": 0,
+        "unsupported_fallback_symbols": 0,
+        "metadata_marked_unavailable": 0,
         "per_symbol_recovered": 0,
         "per_symbol_failed": 0,
         "rows_upserted_stock_bars": 0,
@@ -462,6 +471,17 @@ def run_eodhd_ingestion(
             last_known_date = latest_bar_dates.get(symbol)
             raw_bars: list[dict] = []
             target_date_covered_by_bulk = False
+
+            if entry is None and _is_known_unsupported_fallback_symbol(symbol):
+                LOGGER.info(
+                    "[eodhd] fallback per-symbol ignoré pour symbole preferred/series non supporté: %s",
+                    symbol,
+                )
+                summary["unsupported_fallback_symbols"] += 1
+                if not dry_run:
+                    update_bars_available_false(symbol)
+                    summary["metadata_marked_unavailable"] += 1
+                continue
 
             if entry is not None:
                 try:

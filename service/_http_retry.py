@@ -17,11 +17,13 @@ import random
 import time
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any, Callable
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
 LOGGER = logging.getLogger(__name__)
+SENSITIVE_QUERY_KEYS = frozenset({"api_token", "token", "api_key", "apikey", "key", "secret"})
 
 #: Codes HTTP transients qui méritent un retry.
 RETRYABLE_HTTP_STATUS: frozenset[int] = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -162,7 +164,7 @@ def request_with_retry(
         delay = _backoff_delay(pol, attempt)
         LOGGER.warning(
             "HTTP retry | host=%s attempt=%d/%d sleep=%.2fs cause=%s",
-            host, attempt, pol.max_attempts, delay, last_exc,
+            host, attempt, pol.max_attempts, delay, _redact_sensitive_text(str(last_exc)),
         )
         time.sleep(delay)
 
@@ -176,6 +178,30 @@ def _extract_host(url: str) -> str:
         return urlparse(url).netloc or url
     except Exception:  # pragma: no cover
         return url
+
+
+def _redact_sensitive_text(text: str) -> str:
+    cleaned = str(text)
+    try:
+        start = cleaned.find("http://")
+        if start < 0:
+            start = cleaned.find("https://")
+        if start < 0:
+            return cleaned
+        end = cleaned.find(" ", start)
+        url = cleaned[start:] if end < 0 else cleaned[start:end]
+        parts = urlsplit(url)
+        query_pairs = parse_qsl(parts.query, keep_blank_values=True)
+        if not query_pairs:
+            return cleaned
+        redacted_pairs = [
+            (k, "***" if k.lower() in SENSITIVE_QUERY_KEYS else v)
+            for k, v in query_pairs
+        ]
+        redacted_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(redacted_pairs), parts.fragment))
+        return cleaned.replace(url, redacted_url)
+    except Exception:  # pragma: no cover
+        return cleaned
 
 
 class _RetryableHttpError(Exception):

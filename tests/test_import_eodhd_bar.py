@@ -329,6 +329,39 @@ def test_circuit_open_during_splits_stops_run_cleanly(monkeypatch, patched_env, 
     assert summary["errors"] == 0
 
 
+def test_preferred_series_symbol_is_skipped_before_per_symbol_fallback_and_marked_unavailable(monkeypatch, patched_env):
+    monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk", lambda **kwargs: [])
+    monkeypatch.setattr(import_eodhd_bar, "_get_active_tradable_symbols", lambda session: ["ABR.PRD"])
+
+    fetch_calls: list[str] = []
+    bars_unavailable_calls: list[str] = []
+
+    monkeypatch.setattr(
+        import_eodhd_bar,
+        "fetch_eod",
+        lambda symbol, **kwargs: fetch_calls.append(symbol) or [],
+    )
+    monkeypatch.setattr(
+        import_eodhd_bar,
+        "update_bars_available_false",
+        lambda symbol: bars_unavailable_calls.append(symbol),
+    )
+
+    summary = import_eodhd_bar.run_eodhd_ingestion(
+        dry_run=False,
+        target_date="2026-04-28",
+        enable_stooq_cross_check=False,
+        config={},
+        session=_FakeSession(),
+        tracker=patched_env["tracker"],
+    )
+
+    assert fetch_calls == []
+    assert bars_unavailable_calls == ["ABR.PRD"]
+    assert summary["unsupported_fallback_symbols"] == 1
+    assert summary["metadata_marked_unavailable"] == 1
+
+
 def test_explicit_symbols_skip_universe_query(monkeypatch, patched_env, fake_bulk_payload):
     monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk",
                         lambda **kwargs: fake_bulk_payload)
