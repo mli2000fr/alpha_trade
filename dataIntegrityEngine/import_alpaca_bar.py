@@ -546,6 +546,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         description="Importe les barres Alpaca dans stock_bars.",
     )
     parser_cli.add_argument(
+        "--write",
+        action="store_true",
+        help="Compatibilité IHM/provider switch : flag accepté mais ignoré côté pipeline Alpaca.",
+    )
+    parser_cli.add_argument(
         "--symbols",
         nargs="+",
         default=None,
@@ -586,6 +591,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
     args = _build_arg_parser().parse_args(argv)
+    targeted_universe = args.symbols is None
 
     # Phase 4 EODHD : provider switch symétrique.
     provider = _resolve_bars_provider()
@@ -606,13 +612,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             "targeted_symbols": 0,
             "successful_symbols": 0,
             "inserted_bars": 0,
+            "success_ratio_threshold": float(args.min_success_ratio),
+            "target_mode": "universe" if targeted_universe else "explicit",
         }
         _emit_run_summary(attach_schema_version(noop_summary))
         return 0
 
     summary = import_alpaca_bars(TimeFrame.ONE_DAY, symbols=args.symbols)
     summary["success_ratio_threshold"] = float(args.min_success_ratio)
-    targeted_universe = args.symbols is None
     summary["target_mode"] = "universe" if targeted_universe else "explicit"
     payload = attach_schema_version(summary)
     _emit_run_summary(payload)

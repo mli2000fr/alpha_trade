@@ -6,9 +6,14 @@ import pytest
 from execution_engine.state_machine import (
     ExecutionPhase,
     PhaseTracker,
+    can_transition,
     can_transition_phase,
+    is_terminal,
+    map_alpaca_status,
+    require_transition,
     require_transition_phase,
 )
+from execution_engine.models import OrderStatus
 
 
 def test_execution_phase_enum_values_stable() -> None:
@@ -29,10 +34,35 @@ def test_init_to_submit_forbidden() -> None:
     assert not can_transition_phase(ExecutionPhase.INIT, ExecutionPhase.SUBMIT)
 
 
+def test_order_state_machine_helpers_cover_valid_invalid_and_terminal_cases() -> None:
+    assert is_terminal(OrderStatus.FILLED)
+    assert not is_terminal(OrderStatus.SUBMITTED)
+    assert can_transition(OrderStatus.NEW, OrderStatus.SUBMITTED)
+    assert can_transition(OrderStatus.SUBMITTED, OrderStatus.EXPIRED)
+    assert not can_transition(OrderStatus.FILLED, OrderStatus.CANCELED)
+    assert not can_transition("UNKNOWN", OrderStatus.SUBMITTED)
+
+    require_transition(OrderStatus.SUBMITTED, OrderStatus.FILLED)
+    with pytest.raises(ValueError):
+        require_transition(OrderStatus.NEW, OrderStatus.FILLED)
+
+
+def test_map_alpaca_status_handles_aliases_case_and_unknown_values() -> None:
+    assert map_alpaca_status("accepted") == OrderStatus.SUBMITTED
+    assert map_alpaca_status("PENDING_REPLACE") == OrderStatus.SUBMITTED
+    assert map_alpaca_status("FiLlEd") == OrderStatus.FILLED
+    assert map_alpaca_status("unsupported-status") == OrderStatus.FAILED
+
+
 def test_terminal_phase_blocks_further_transitions() -> None:
     assert not can_transition_phase(ExecutionPhase.COMPLETED, ExecutionPhase.PRECHECK)
     assert not can_transition_phase(ExecutionPhase.ABORTED, ExecutionPhase.PRECHECK)
     assert not can_transition_phase(ExecutionPhase.FAILED, ExecutionPhase.PRECHECK)
+
+
+def test_can_transition_phase_rejects_unknown_phase_names() -> None:
+    assert not can_transition_phase("UNKNOWN", ExecutionPhase.PRECHECK)
+    assert not can_transition_phase(ExecutionPhase.INIT, "UNKNOWN")
 
 
 def test_require_transition_phase_non_strict_does_not_raise() -> None:

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+﻿from datetime import date, datetime
 
 import json
 import pytest
@@ -303,6 +303,7 @@ def _payload_from_capsys(capsys) -> dict:
 
 def test_main_returns_zero_when_universe_meets_threshold(monkeypatch, capsys) -> None:
     monkeypatch.setattr(import_alpaca_bar, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(import_alpaca_bar, "_resolve_bars_provider", lambda: "alpaca")
     monkeypatch.setattr(
         import_alpaca_bar,
         "import_alpaca_bars",
@@ -328,6 +329,7 @@ def test_main_returns_zero_when_universe_meets_threshold(monkeypatch, capsys) ->
 
 def test_main_returns_one_when_universe_below_threshold(monkeypatch, capsys) -> None:
     monkeypatch.setattr(import_alpaca_bar, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(import_alpaca_bar, "_resolve_bars_provider", lambda: "alpaca")
     monkeypatch.setattr(
         import_alpaca_bar,
         "import_alpaca_bars",
@@ -351,6 +353,7 @@ def test_main_returns_one_when_universe_below_threshold(monkeypatch, capsys) -> 
 
 def test_main_returns_zero_when_explicit_symbols_even_if_below_threshold(monkeypatch, capsys) -> None:
     monkeypatch.setattr(import_alpaca_bar, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(import_alpaca_bar, "_resolve_bars_provider", lambda: "alpaca")
     monkeypatch.setattr(
         import_alpaca_bar,
         "import_alpaca_bars",

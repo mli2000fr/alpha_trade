@@ -3,6 +3,19 @@ from testcontainers.mysql import MySqlContainer
 from sqlalchemy import Column, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base, Session
 
+
+def _docker_available() -> bool:
+    try:
+        import docker
+        client = docker.from_env()
+        client.ping()
+    except Exception:
+        return False
+    return True
+
+
+pytestmark = pytest.mark.skipif(not _docker_available(), reason="Docker indisponible sur cette machine")
+
 Base = declarative_base()
 
 class User(Base):

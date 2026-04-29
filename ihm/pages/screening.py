@@ -33,6 +33,14 @@ SCREENER_ARTIFACT_SELECTBOX_KEY = "screening_screener_artifacts_dir_select"
 SCREENER_CSV_PREVIEW_SELECTBOX_KEY = "screening_screener_csv_preview_select"
 SCREENER_CSV_PREVIEW_ROWS_KEY = "screening_screener_csv_preview_rows"
 
+_QUALITY_SUMMARY_LABEL_OVERRIDES = {
+    "import_alpaca_bar": "Import Alpaca Bar",
+}
+
+
+def _quality_summary_label(step) -> str:
+    return _QUALITY_SUMMARY_LABEL_OVERRIDES.get(step.key, step.name)
+
 
 def _merge_pipeline_runs() -> list[dict[str, object]]:
     merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in load_pipeline_history()}
@@ -47,7 +55,7 @@ def _merge_pipeline_runs() -> list[dict[str, object]]:
 
 def _build_quality_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
     scopes = [
-        {"label": step.name, "step_keys": [step.key]}
+        {"label": _quality_summary_label(step), "step_keys": [step.key]}
         for step in get_pipeline_steps()
         if int(step.num) <= 8
     ]

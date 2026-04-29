@@ -5,12 +5,17 @@ from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import StaticPool
 
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionReconciliationResult, OrderIntent, OrderStatus, ReconciliationStatus
 @pytest.fixture()
 def engine():
-    e = create_engine("sqlite:///:memory:")
+    e = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     with e.begin() as conn:
         # Create tables with SQLite-compatible syntax
         conn.execute(text("""
@@ -258,7 +263,10 @@ def engine():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
-    return e
+    try:
+        yield e
+    finally:
+        e.dispose()
 
 
 @pytest.fixture()

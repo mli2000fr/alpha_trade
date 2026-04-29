@@ -113,3 +113,37 @@ def test_reconcile_execution_state_marks_clear_shortfall_as_safe_auto() -> None:
     assert results[0].reason_code is None
 
 
+def test_reconcile_execution_state_marks_sell_excess_with_internal_mismatch() -> None:
+    results = reconciliation.reconcile_execution_state(
+        exec_run_id="exec-2",
+        account_id="acct-1",
+        targets=[_target(entry_price=150.0)],
+        broker_positions=[{"symbol": " aapl ", "qty": 120}],
+        internal_positions=[ExecutionPosition(account_id="acct-1", symbol="AAPL", net_qty=80)],
+        open_order_state=[],
+        protection_state=[{"symbol": "AAPL", "protection_qty": 120.0}],
+        tolerance=0,
+        buying_power_available=100_000.0,
+    )
+
+    assert results[0].symbol == "AAPL"
+    assert results[0].action == "sell_excess"
+    assert results[0].reconciliation_status == ReconciliationStatus.MANUAL_REVIEW
+    assert results[0].reason_code == "internal_position_mismatch"
+
+
+def test_reconcile_targets_vs_broker_returns_legacy_diff_projection() -> None:
+    diffs = reconciliation.reconcile_targets_vs_broker(
+        targets=[_target(symbol="AAPL", shares=10, entry_price=100.0)],
+        broker_positions=[{"symbol": "AAPL", "qty": 8}],
+        tolerance=0,
+    )
+
+    assert len(diffs) == 1
+    assert diffs[0].symbol == "AAPL"
+    assert diffs[0].target_qty == 10
+    assert diffs[0].broker_qty == 8.0
+    assert diffs[0].delta == -2.0
+    assert diffs[0].action == "buy_more"
+
+

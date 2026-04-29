@@ -12,6 +12,7 @@ from typing import Any
 
 import streamlit as st
 
+from ihm.components.watcher_documentation import render_watcher_documentation_panel
 from ihm.pages import run_page_if_standalone
 from ihm.pages._alpha_scanner_diagnostics import (
     _alpha_scanner_dependency_block_reason,
