@@ -50,10 +50,17 @@ class CreateJob(TypedDict):
 
 
 def get_all_sql_files():
-    """Récupère tous les fichiers .sql canoniques dans les sous-dossiers."""
+    """Récupère tous les fichiers .sql canoniques (récursif).
+
+    Filtres:
+    - exclut ``truncate_*.sql`` (scripts de purge, non utilisables à la création) ;
+    - exclut ``migration_*.sql`` (scripts d'ALTER TABLE one-shot, non idempotents
+      lors d'une recréation à neuf).
+    """
     return sorted([
-        f for f in glob.glob(os.path.join(SQL_DIR, '*', '*.sql'))
+        f for f in glob.glob(os.path.join(SQL_DIR, '**', '*.sql'), recursive=True)
         if not os.path.basename(f).startswith('truncate_')
+        and not os.path.basename(f).startswith('migration_')
     ])
 
 

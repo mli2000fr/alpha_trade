@@ -40,10 +40,14 @@ CREATE TABLE IF NOT EXISTS alpha_trade.corporate_actions_events (
     -- Timestamps
     ingested_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     applied_at          TIMESTAMP     NULL,
+    -- Phase 5.3.a — clé d'idempotence scopée par account_id (mig 0019)
+    account_idempotency_key VARCHAR(64) NULL
+        COMMENT 'sha256(account_or_GLOBAL|provider|symbol|ca_type|ex_date|amount_or_split)[:32] — NULL = events historiques pré-migration',
     INDEX idx_cae_symbol    (symbol),
     INDEX idx_cae_type      (ca_type),
     INDEX idx_cae_ex_date   (ex_date),
-    INDEX idx_cae_status    (status)
+    INDEX idx_cae_status    (status),
+    UNIQUE KEY uq_corporate_actions_events_account_idem (account_idempotency_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     COMMENT='Journal immuable des corporate actions ingérées';
 
