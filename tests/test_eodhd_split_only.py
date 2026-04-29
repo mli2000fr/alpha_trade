@@ -132,9 +132,11 @@ def test_to_stock_bars_row_uses_close_timestamp():
 
     assert row["symbol"] == "NVDA"
     assert row["timeframe"] == "1D"
-    assert row["timestamp"].year == 2024
-    assert row["timestamp"].hour == adapters.US_CLOSE_UTC_HOUR
+    # Timestamp string naïf NY 09:30 (alignement avec import_alpaca_bar)
+    assert row["timestamp"] == "2024-06-07 09:30:00"
     assert row["close_price"] == 120.5
+    assert row["volume"] == 300_000_000
+    assert row["trade_count"] == 0
     assert row["data_source"] == "eodhd_eod"
     assert row["data_adjustment"] == "split"
 

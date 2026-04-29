@@ -24,11 +24,16 @@ from typing import Any, Iterable, Optional
 
 LOGGER = logging.getLogger(__name__)
 
-#: Heure conventionnelle de cloture US -> UTC (NYSE close 16:00 ET ~ 20:00 UTC en EDT,
-#: 21:00 UTC en EST). On utilise 21:00 UTC comme convention stable, alignée avec
-#: l'observation Alpaca quand le marché clôture en heure d'hiver.
-US_CLOSE_UTC_HOUR = 21
-US_CLOSE_UTC_MINUTE = 0
+#: Convention de timestamp pour ``stock_bars.timestamp`` (DATETIME naïf NY).
+#: Alpaca normalise les barres 1D à l'open RTH (09:30 America/New_York) -- cf.
+#: ``import_alpaca_bar._normalize_bar_timestamp``. EODHD écrit avec la **même**
+#: convention pour éviter les doublons sur la clé unique
+#: ``(symbol, timeframe, timestamp)`` lorsqu'on coexiste avec des barres Alpaca.
+US_RTH_OPEN_HOUR_NY = 9
+US_RTH_OPEN_MINUTE_NY = 30
+# Conservés pour rétrocompat tests éventuels.
+US_CLOSE_UTC_HOUR = US_RTH_OPEN_HOUR_NY
+US_CLOSE_UTC_MINUTE = US_RTH_OPEN_MINUTE_NY
 
 #: data_source / data_adjustment écrits par l'adapter (cf. plan §4.2).
 DATA_SOURCE_EODHD = "eodhd_eod"
@@ -194,14 +199,27 @@ def eodhd_to_split_only(raw_bars: list[dict], splits: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _date_to_rth_open_string(date_iso: str) -> str:
+    """``YYYY-MM-DD`` -> ``"YYYY-MM-DD 09:30:00"`` (chaîne naïve NY).
+
+    Aligné avec ``import_alpaca_bar._normalize_bar_timestamp`` qui stringifie
+    les barres 1D Alpaca à l'open RTH NY pour la colonne ``stock_bars.timestamp``.
+    """
+    parts = str(date_iso).split("-")
+    if len(parts) != 3:
+        raise ValueError(f"date invalide: {date_iso!r}")
+    year, month, day = (int(p) for p in parts)
+    return f"{year:04d}-{month:02d}-{day:02d} {US_RTH_OPEN_HOUR_NY:02d}:{US_RTH_OPEN_MINUTE_NY:02d}:00"
+
+
 def _date_to_close_timestamp(date_iso: str) -> datetime:
-    """``YYYY-MM-DD`` -> datetime UTC à l'heure conventionnelle de cloture."""
+    """Variante UTC tz-aware (rarement utilisée en DB — rétrocompat tests)."""
     parts = str(date_iso).split("-")
     if len(parts) != 3:
         raise ValueError(f"date invalide: {date_iso!r}")
     year, month, day = (int(p) for p in parts)
     return datetime(
-        year, month, day, US_CLOSE_UTC_HOUR, US_CLOSE_UTC_MINUTE, tzinfo=timezone.utc
+        year, month, day, US_RTH_OPEN_HOUR_NY, US_RTH_OPEN_MINUTE_NY, tzinfo=timezone.utc
     )
 
 
@@ -233,21 +251,23 @@ def to_stock_bars_daily_row(bar: dict, symbol: str) -> dict:
 def to_stock_bars_row(bar: dict, symbol: str, timeframe: str = "1D") -> dict:
     """Mappe une barre split-only vers le schéma ``stock_bars``.
 
-    Convention : ``timestamp`` = date à 21:00 UTC (clôture US). Aligne avec
-    l'observation Alpaca pour ``timeframe='1D'``. ``trade_count`` et
-    ``vwa_price`` non disponibles sur EODHD -> ``None``.
+    Convention : ``timestamp`` = chaîne naïve ``YYYY-MM-DD 09:30:00`` (open RTH NY),
+    alignée avec ``import_alpaca_bar`` pour timeframe='1D'. Évite tout doublon
+    sur la clé unique ``(symbol, timeframe, timestamp)`` quand on coexiste
+    avec des barres Alpaca historiques.
+    ``trade_count`` et ``vwa_price`` non disponibles sur EODHD -> ``None`` /
+    0 (la colonne ``trade_count`` est NOT NULL DEFAULT 0).
     """
-    ts = _date_to_close_timestamp(bar["date"])
     return {
         "symbol": symbol.strip().upper(),
-        "timestamp": ts,
+        "timestamp": _date_to_rth_open_string(bar["date"]),
         "timeframe": timeframe,
         "open_price": float(bar["open"]),
         "high_price": float(bar["high"]),
         "low_price": float(bar["low"]),
         "close_price": float(bar["close"]),
         "volume": int(bar.get("volume") or 0),
-        "trade_count": None,
+        "trade_count": 0,
         "vwa_price": None,
         "data_adjustment": DATA_ADJUSTMENT_SPLIT,
         "data_source": DATA_SOURCE_EODHD,
@@ -259,6 +279,8 @@ __all__ = [
     "DATA_SOURCE_EODHD",
     "US_CLOSE_UTC_HOUR",
     "US_CLOSE_UTC_MINUTE",
+    "US_RTH_OPEN_HOUR_NY",
+    "US_RTH_OPEN_MINUTE_NY",
     "cumulative_split_factor",
     "eodhd_to_split_only",
     "infer_splits_from_adjusted_close",
