@@ -236,6 +236,27 @@ def test_run_backfill_resume_skips_completed_symbols(env, monkeypatch, tmp_path)
     assert summary["symbols_processed"] == 1
 
 
+def test_run_backfill_write_mode_ignores_stale_bookmark_when_db_empty(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(bf, "fetch_eod", lambda symbol, **kwargs: _make_eod_history(symbol, 2))
+    monkeypatch.setattr(bf, "_cached_fetch_splits", lambda symbol, **kwargs: [])
+    monkeypatch.setattr(bf, "_get_latest_bar_dates", lambda session, symbols: {})
+
+    bookmark_path = tmp_path / "bm.json"
+    bf.save_bookmark(bookmark_path, {
+        "completed_symbols": ["AAPL", "NVDA"],
+        "started_at": "2025-01-01T00:00:00",
+        "last_run_id": "previous",
+    })
+    summary = bf.run_backfill(
+        years=2, dry_run=False, resume=True,
+        bookmark_path=bookmark_path, config={},
+        session=_FakeSession(), tracker=env["tracker"],
+    )
+    assert summary["targeted_symbols"] == 3
+    assert summary["symbols_skipped_resumed"] == 0
+    assert summary["symbols_processed"] == 3
+
+
 def test_run_backfill_no_resume_reprocesses_all(env, monkeypatch, tmp_path):
     monkeypatch.setattr(bf, "fetch_eod", lambda symbol, **kwargs: _make_eod_history(symbol, 1))
     monkeypatch.setattr(bf, "_cached_fetch_splits", lambda symbol, **kwargs: [])
@@ -254,9 +275,31 @@ def test_run_backfill_no_resume_reprocesses_all(env, monkeypatch, tmp_path):
     assert summary["symbols_skipped_resumed"] == 0
 
 
+def test_run_backfill_write_mode_skips_symbols_already_fresh_in_db(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(bf, "fetch_eod", lambda symbol, **kwargs: _make_eod_history(symbol, 1))
+    monkeypatch.setattr(bf, "_cached_fetch_splits", lambda symbol, **kwargs: [])
+    monkeypatch.setattr(
+        bf,
+        "_get_latest_bar_dates",
+        lambda session, symbols: {"AAPL": date(2026, 4, 28)},
+    )
+
+    summary = bf.run_backfill(
+        years=2, dry_run=False, resume=False,
+        bookmark_path=tmp_path / "bm.json", config={},
+        session=_FakeSession(), tracker=env["tracker"],
+        today=date(2026, 4, 29),
+    )
+    assert summary["targeted_symbols"] == 3
+    assert summary["symbols_skipped_db_fresh"] == 1
+    assert summary["db_fresh_cutoff"] == "2026-04-22"
+    assert summary["symbols_processed"] == 2
+
+
 def test_run_backfill_explicit_symbols_bypass_universe(env, monkeypatch, tmp_path):
     monkeypatch.setattr(bf, "fetch_eod", lambda symbol, **kwargs: _make_eod_history(symbol, 2))
     monkeypatch.setattr(bf, "_cached_fetch_splits", lambda symbol, **kwargs: [])
+    monkeypatch.setattr(bf, "_get_latest_bar_dates", lambda session, symbols: {})
 
     def _should_not_be_called(session):
         raise AssertionError("ne doit pas etre appele quand symbols=[...]")

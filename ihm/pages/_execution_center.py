@@ -1811,6 +1811,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "Si tu décoches le mode écriture, le script reste en `dry-run` : il interroge EODHD pour estimer le volume attendu, "
             "mais n'insère aucune ligne en base."
         )
+        st.caption(
+            "Mode write : la DB prime sur le bookmark ; symboles déjà frais (J-7) sautés automatiquement."
+        )
         bf_col1, bf_col2, bf_col3 = st.columns([1, 2, 2])
         with bf_col1:
             eodhd_backfill_years = int(

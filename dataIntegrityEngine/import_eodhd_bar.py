@@ -153,8 +153,10 @@ def _reset_tables_cache() -> None:
 
 def _get_active_tradable_symbols(session) -> list[str]:
     stock_metadata, _, _ = _get_tables()
-    q = select(stock_metadata.c.symbol).where(
-        and_(*build_eligible_stock_metadata_filters(stock_metadata))
+    q = (
+        select(stock_metadata.c.symbol)
+        .where(and_(*build_eligible_stock_metadata_filters(stock_metadata)))
+        .order_by(stock_metadata.c.symbol)
     )
     return [row[0] for row in session.execute(q).all()]
 

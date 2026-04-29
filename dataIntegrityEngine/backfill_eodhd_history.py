@@ -50,6 +50,7 @@ from database.connection import SessionLocal
 from dataIntegrityEngine.import_eodhd_bar import (
     _cached_fetch_splits,
     _get_active_tradable_symbols,
+    _get_latest_bar_dates,
     _is_known_unsupported_fallback_symbol,
     _get_tables,
     _upsert_stock_bars,
@@ -76,6 +77,7 @@ RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 DEFAULT_YEARS = 20
 DEFAULT_BATCH_COMMIT = 50
 DEFAULT_BOOKMARK_PATH = Path("artifacts") / "eodhd_cache" / "backfill_state.json"
+DEFAULT_DB_FRESHNESS_DAYS = 7
 
 
 def _utc_now_naive() -> datetime:
@@ -116,6 +118,24 @@ def save_bookmark(path: Path, state: dict[str, Any]) -> None:
 def _filter_remaining(symbols: list[str], bookmark: dict[str, Any]) -> list[str]:
     done: set[str] = set(bookmark.get("completed_symbols") or [])
     return [s for s in symbols if s not in done]
+
+
+def _filter_symbols_missing_or_stale_in_db(
+    session,
+    symbols: list[str],
+    *,
+    today: date,
+    freshness_days: int = DEFAULT_DB_FRESHNESS_DAYS,
+) -> tuple[list[str], set[str], date]:
+    cutoff = today - timedelta(days=max(int(freshness_days), 0))
+    latest_dates = _get_latest_bar_dates(session, symbols)
+    fresh_symbols = {
+        symbol
+        for symbol, last_date in latest_dates.items()
+        if last_date >= cutoff
+    }
+    remaining = [symbol for symbol in symbols if symbol not in fresh_symbols]
+    return remaining, fresh_symbols, cutoff
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +286,8 @@ def run_backfill(
         "errors": 0,
         "unsupported_fallback_symbols": 0,
         "metadata_marked_unavailable": 0,
+        "symbols_skipped_db_fresh": 0,
+        "db_fresh_cutoff": None,
         "stopped_reason": None,
         "bookmark_path": str(bookmark_path),
         "resume": resume,
@@ -279,12 +301,22 @@ def run_backfill(
             universe = _get_active_tradable_symbols(session)
         summary["targeted_symbols"] = len(universe)
 
-        remaining = _filter_remaining(universe, bookmark)
+        db_remaining = universe
+        if not dry_run:
+            db_remaining, fresh_symbols, freshness_cutoff = _filter_symbols_missing_or_stale_in_db(
+                session,
+                universe,
+                today=today,
+            )
+            summary["symbols_skipped_db_fresh"] = len(fresh_symbols)
+            summary["db_fresh_cutoff"] = freshness_cutoff.isoformat()
+
+        remaining = _filter_remaining(db_remaining, bookmark) if (resume and dry_run) else db_remaining
         summary["remaining_after_bookmark"] = len(remaining)
-        summary["symbols_skipped_resumed"] = len(universe) - len(remaining)
+        summary["symbols_skipped_resumed"] = len(db_remaining) - len(remaining) if (resume and dry_run) else 0
 
         if not remaining:
-            LOGGER.info("[backfill] aucun symbole restant (bookmark complet) - exit 0")
+            LOGGER.info("[backfill] aucun symbole restant (DB/bookmark complets) - exit 0")
             return _finalize(summary, started_at, tracker, bookmark, bookmark_path)
 
         LOGGER.info(
@@ -292,6 +324,12 @@ def run_backfill(
             summary["run_id"], years, start_date, end_date,
             len(universe), len(remaining), summary["mode"],
         )
+        if not dry_run and summary["symbols_skipped_db_fresh"]:
+            LOGGER.info(
+                "[backfill] DB source de vérité active : %d symboles sautés car déjà présents et à jour (cutoff=%s)",
+                summary["symbols_skipped_db_fresh"],
+                summary["db_fresh_cutoff"],
+            )
 
         if bookmark.get("started_at") is None:
             bookmark["started_at"] = summary["started_at"]

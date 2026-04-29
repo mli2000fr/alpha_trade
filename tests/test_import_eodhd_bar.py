@@ -137,6 +137,40 @@ def test_resolve_bars_provider_default_alpaca():
     assert import_eodhd_bar.resolve_bars_provider({"market_data": {"bars_provider": "EODHD"}}) == "eodhd"
 
 
+def test_get_active_tradable_symbols_orders_by_symbol(monkeypatch):
+    from sqlalchemy import Boolean, Column, MetaData, String, Table
+
+    md = MetaData()
+    sm = Table(
+        "stock_metadata",
+        md,
+        Column("symbol", String(20), primary_key=True),
+        Column("status", String(20)),
+        Column("tradable", Boolean),
+        Column("bars_available", Boolean),
+        Column("asset_class", String(20)),
+        Column("history_status", String(32)),
+    )
+    monkeypatch.setattr(import_eodhd_bar, "_get_tables", lambda: (sm, None, None))
+
+    captured = {}
+
+    class _Session:
+        def execute(self, stmt):
+            captured["sql"] = str(stmt)
+
+            class _R:
+                def all(self_inner):
+                    return [("A",), ("AAPL",), ("AGHG",)]
+
+            return _R()
+
+    symbols = import_eodhd_bar._get_active_tradable_symbols(_Session())
+
+    assert symbols == ["A", "AAPL", "AGHG"]
+    assert "ORDER BY" in captured["sql"]
+
+
 def test_dry_run_no_db_writes(monkeypatch, patched_env, fake_bulk_payload):
     monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk",
                         lambda **kwargs: fake_bulk_payload)
