@@ -1804,6 +1804,53 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "À activer après le 1er sync pour éviter de re-balayer un long historique chaque jour."
             )
 
+        st.markdown("#### Paramètres Backfill historique EODHD (B3)")
+        st.caption(
+            "Ces réglages pilotent `python -m dataIntegrityEngine.backfill_eodhd_history`. "
+            "Par défaut, l'IHM lance B3 en `write` pour persister dans `stock_bars` / `stock_bars_daily`. "
+            "Si tu décoches le mode écriture, le script reste en `dry-run` : il interroge EODHD pour estimer le volume attendu, "
+            "mais n'insère aucune ligne en base."
+        )
+        bf_col1, bf_col2, bf_col3 = st.columns([1, 2, 2])
+        with bf_col1:
+            eodhd_backfill_years = int(
+                st.number_input(
+                    "B3 — profondeur historique (années)",
+                    min_value=1,
+                    max_value=30,
+                    value=int(st.session_state.get("pipeline_eodhd_backfill_years", 5)),
+                    step=1,
+                    key="pipeline_eodhd_backfill_years",
+                    help="5 ans par défaut pour l'univers actif ; jusqu'à 30 ans pour les besoins ML/backtests longs.",
+                )
+            )
+            eodhd_backfill_resume = st.checkbox(
+                "B3 — reprendre via bookmark",
+                value=bool(st.session_state.get("pipeline_eodhd_backfill_resume", True)),
+                key="pipeline_eodhd_backfill_resume",
+                help="Si coché, relit `artifacts/eodhd_cache/backfill_state.json` et saute les symboles déjà terminés.",
+            )
+        with bf_col2:
+            eodhd_backfill_symbols = str(
+                st.text_input(
+                    "B3 — symboles (CSV, optionnel)",
+                    value=str(st.session_state.get("pipeline_eodhd_backfill_symbols", "")),
+                    key="pipeline_eodhd_backfill_symbols",
+                    help="Laisser vide = univers complet éligible depuis `stock_metadata`. Exemple : AAPL,MSFT,NVDA",
+                )
+            ).strip().upper()
+        with bf_col3:
+            eodhd_backfill_write = st.checkbox(
+                "B3 — mode écriture (insère en base)",
+                value=bool(st.session_state.get("pipeline_eodhd_backfill_write", True)),
+                key="pipeline_eodhd_backfill_write",
+                help="Coché par défaut = ajoute `--write` et persiste dans `stock_bars` / `stock_bars_daily`. Décoché = dry-run sans insert DB.",
+            )
+            if eodhd_backfill_write:
+                st.success("B3 sera lancé en mode `write` et insérera dans les tables.")
+            else:
+                st.warning("B3 sera lancé en mode `dry-run` : appels API réels, mais 0 insert DB.")
+
         live_confirmed = True
         if execution_mode == "live":
             st.warning("Mode LIVE sélectionné : cette action peut envoyer de vrais ordres chez le broker.")
@@ -1948,6 +1995,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             corporate_actions_start_date=ca_start_date_value,
             corporate_actions_end_date=ca_end_date_value,
             corporate_actions_batch_size=int(corporate_actions_batch_size),
+            eodhd_backfill_years=int(eodhd_backfill_years),
+            eodhd_backfill_symbols=eodhd_backfill_symbols or None,
+            eodhd_backfill_resume=bool(eodhd_backfill_resume),
+            eodhd_backfill_write=bool(eodhd_backfill_write),
         ),
         live_confirmed,
     )

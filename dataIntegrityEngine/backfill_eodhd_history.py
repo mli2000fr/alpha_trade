@@ -260,6 +260,8 @@ def run_backfill(
         "symbols_skipped_resumed": 0,
         "rows_upserted_stock_bars": 0,
         "rows_upserted_stock_bars_daily": 0,
+        "would_upsert_stock_bars": 0,
+        "would_upsert_stock_bars_daily": 0,
         "raw_rows_total": 0,
         "errors": 0,
         "unsupported_fallback_symbols": 0,
@@ -329,6 +331,8 @@ def run_backfill(
             summary["raw_rows_total"] += int(result.get("raw_rows", 0))
             summary["rows_upserted_stock_bars_daily"] += int(result.get("rows_daily", 0))
             summary["rows_upserted_stock_bars"] += int(result.get("rows_bars", 0))
+            summary["would_upsert_stock_bars_daily"] += int(result.get("would_upsert_daily", 0))
+            summary["would_upsert_stock_bars"] += int(result.get("would_upsert_bars", 0))
             summary["errors"] += int(result.get("errors", 0))
 
             # Marque comme complété (même si 0 row : symbole sans historique)
@@ -346,15 +350,27 @@ def run_backfill(
                 save_bookmark(bookmark_path, bookmark)
 
             if idx % 10 == 0:
-                LOGGER.info(
-                    "[backfill] progress %d/%d | rows_daily=%d rows_bars=%d errors=%d "
-                    "calls_used=%d",
-                    idx, len(remaining),
-                    summary["rows_upserted_stock_bars_daily"],
-                    summary["rows_upserted_stock_bars"],
-                    summary["errors"],
-                    tracker.snapshot()["calls_used"],
-                )
+                if dry_run:
+                    LOGGER.info(
+                        "[backfill] progress %d/%d | would_daily=%d would_bars=%d raw_rows=%d errors=%d "
+                        "calls_used=%d",
+                        idx, len(remaining),
+                        summary["would_upsert_stock_bars_daily"],
+                        summary["would_upsert_stock_bars"],
+                        summary["raw_rows_total"],
+                        summary["errors"],
+                        tracker.snapshot()["calls_used"],
+                    )
+                else:
+                    LOGGER.info(
+                        "[backfill] progress %d/%d | rows_daily=%d rows_bars=%d errors=%d "
+                        "calls_used=%d",
+                        idx, len(remaining),
+                        summary["rows_upserted_stock_bars_daily"],
+                        summary["rows_upserted_stock_bars"],
+                        summary["errors"],
+                        tracker.snapshot()["calls_used"],
+                    )
 
         # Commit final
         if not dry_run:
@@ -384,9 +400,10 @@ def _finalize(summary, started_at, tracker, bookmark, bookmark_path):
     }
     LOGGER.info(
         "[backfill] resume | run_id=%s mode=%s processed=%d rows_daily=%d rows_bars=%d "
-        "raw_rows=%d errors=%d duration_s=%.2f calls_used=%d",
+        "would_daily=%d would_bars=%d raw_rows=%d errors=%d duration_s=%.2f calls_used=%d",
         summary["run_id"], summary["mode"], summary["symbols_processed"],
         summary["rows_upserted_stock_bars_daily"], summary["rows_upserted_stock_bars"],
+        summary["would_upsert_stock_bars_daily"], summary["would_upsert_stock_bars"],
         summary["raw_rows_total"], summary["errors"], summary["duration_seconds"],
         summary["eodhd"]["calls_used"],
     )

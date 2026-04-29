@@ -307,7 +307,7 @@ class PipelineLaunchOptions:
     eodhd_backfill_years: int = 5
     eodhd_backfill_symbols: str | None = None
     eodhd_backfill_resume: bool = True
-    eodhd_backfill_write: bool = False
+    eodhd_backfill_write: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -504,6 +504,8 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
         desc="One-shot : remplit `stock_bars` + `stock_bars_daily` avec l'historique long "
              "EODHD (5 ans par défaut, jusqu'à 30 ans pour ML). Bookmark idempotent dans "
              "`artifacts/eodhd_cache/backfill_state.json`. Coût ~1 call/symbole. "
+             "Depuis l'IHM, le mode par défaut est `write` pour persister directement dans la base ; "
+             "il reste possible de repasser en dry-run en décochant `B3 — mode écriture`. "
              "Utile au démarrage initial post-cutover `bars_provider=eodhd`.",
         tables="stock_bars, stock_bars_daily",
         deps="import_alpaca_assets (univers requis)",

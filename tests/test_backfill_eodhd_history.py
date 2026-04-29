@@ -208,6 +208,8 @@ def test_run_backfill_processes_universe_and_writes_bookmark(env, monkeypatch, t
     assert summary["raw_rows_total"] == 15
     assert summary["errors"] == 0
     assert summary["rows_upserted_stock_bars_daily"] == 0
+    assert summary["would_upsert_stock_bars_daily"] == 15
+    assert summary["would_upsert_stock_bars"] == 15
 
     bm = json.loads(bookmark_path.read_text(encoding="utf-8"))
     assert set(bm["completed_symbols"]) == {"AAPL", "NVDA", "MSFT"}

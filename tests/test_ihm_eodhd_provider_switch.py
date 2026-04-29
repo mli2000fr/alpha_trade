@@ -6,6 +6,7 @@ Vérifie que l'étape pipeline ``import_alpaca_bar`` route dynamiquement vers
 from __future__ import annotations
 
 from ihm.services import pipeline_runner
+from ihm.services import process_registry
 
 
 def test_resolve_bars_provider_default_alpaca(monkeypatch):
@@ -57,7 +58,7 @@ def test_eodhd_backfill_history_step_is_registered():
     assert "eodhd_backfill_history" in aux_keys
 
 
-def test_eodhd_backfill_history_default_command_is_dry_run():
+def test_eodhd_backfill_history_default_command_is_write():
     from ihm.services.pipeline_runner import (
         PipelineLaunchOptions,
         build_pipeline_command,
@@ -66,7 +67,7 @@ def test_eodhd_backfill_history_default_command_is_dry_run():
     assert "dataIntegrityEngine.backfill_eodhd_history" in cmd
     assert "--years" in cmd
     assert "5" in cmd  # default years
-    assert "--write" not in cmd  # safe-default
+    assert "--write" in cmd
     assert "--resume" in cmd
 
 
@@ -87,6 +88,39 @@ def test_eodhd_backfill_history_write_mode_with_explicit_symbols():
     assert "10" in cmd
     assert "--symbols" in cmd
     assert "AAPL" in cmd and "NVDA" in cmd and "MSFT" in cmd
+
+
+def test_start_pipeline_run_for_b3_propagates_write_flag(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_start_managed_run(**kwargs):
+        captured.update(kwargs)
+
+        class _Record:
+            run_id = "test-run"
+
+        return _Record()
+
+    monkeypatch.setattr(process_registry, "start_managed_run", _fake_start_managed_run)
+
+    from ihm.services.pipeline_runner import PipelineLaunchOptions
+
+    options = PipelineLaunchOptions(
+        eodhd_backfill_write=True,
+        eodhd_backfill_resume=True,
+        eodhd_backfill_years=5,
+    )
+    process_registry.start_pipeline_run(
+        "eodhd_backfill_history",
+        "B3. Backfill historique EODHD",
+        options,
+    )
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert "dataIntegrityEngine.backfill_eodhd_history" in command
+    assert "--write" in command
+    assert "--resume" in command
 
 
 def test_corporate_actions_step_description_mentions_provider_routing():
