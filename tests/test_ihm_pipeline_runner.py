@@ -37,7 +37,7 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
 
 def test_get_pipeline_auxiliary_steps_contains_expected_keys() -> None:
     keys = [step.key for step in get_pipeline_auxiliary_steps()]
-    assert keys == ["import_alpaca_assets", "update_sector"]
+    assert keys == ["import_alpaca_assets", "update_sector", "eodhd_backfill_history"]
 
 
 

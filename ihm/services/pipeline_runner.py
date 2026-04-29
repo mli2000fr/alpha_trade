@@ -362,10 +362,11 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     PipelineStepDefinition(
         key="import_alpaca_bar",
         num="1",
-        name="Import Bars (Alpaca / EODHD)",
-        desc="Ingestion OHLCV daily. Provider sélectionné automatiquement via "
-             "`market_data.bars_provider` (alpaca | eodhd). Phase 6 EODHD : route vers "
-             "`dataIntegrityEngine.import_eodhd_bar --write` quand provider=eodhd.",
+        name="Import Bars + rattrapage auto (Alpaca / EODHD)",
+        desc="Ingestion OHLCV daily incrémentale avec rattrapage automatique des jours manquants "
+             "depuis la dernière barre connue par symbole jusqu'à la date de marché courante. "
+             "Provider sélectionné automatiquement via `market_data.bars_provider` (alpaca | eodhd). "
+             "En mode EODHD, route vers `dataIntegrityEngine.import_eodhd_bar --write`.",
         tables="stock_bars, stock_bars_daily",
         deps="—",
     ),
