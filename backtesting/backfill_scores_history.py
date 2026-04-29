@@ -12,6 +12,7 @@ import pandas as pd
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
+from backtesting.data_loader import get_required_bars_source_filter
 from database.connection import get_sqlalchemy_engine
 from event_sentiment.signal_aggregator import SentimentBoostConfig, SentimentSignalAggregator
 from screener.db_io import iter_symbol_chunks, load_spy_return_6m
@@ -113,8 +114,15 @@ class BackfillScoresHistoryService:
         dans `stock_scores_history`, ou à la dernière séance disponible s'il n'y a
         pas encore d'historique.
         """
+        source_filter_sql, source_filter_params = get_required_bars_source_filter(
+            self.engine,
+            table_name="stock_bars_daily",
+        )
         with self.engine.connect() as conn:
-            last_bar_date = conn.execute(text("SELECT MAX(`date`) FROM stock_bars_daily")).scalar_one_or_none()
+            last_bar_date = conn.execute(
+                text(f"SELECT MAX(`date`) FROM stock_bars_daily WHERE 1=1 {source_filter_sql}"),
+                source_filter_params,
+            ).scalar_one_or_none()
             last_bar_date = self._coerce_date(last_bar_date)
             if last_bar_date is None:
                 raise RuntimeError("Aucune donnée dans stock_bars_daily — impossible de backfiller.")
@@ -139,13 +147,14 @@ class BackfillScoresHistoryService:
 
             previous_bar_date = conn.execute(
                 text(
-                    """
+                    f"""
                     SELECT MAX(`date`)
                     FROM stock_bars_daily
                     WHERE `date` < :first_existing_snapshot
+                      {source_filter_sql}
                     """
                 ),
-                {"first_existing_snapshot": first_existing_snapshot},
+                {"first_existing_snapshot": first_existing_snapshot, **source_filter_params},
             ).scalar_one_or_none()
 
         previous_bar_date = self._coerce_date(previous_bar_date)
@@ -158,17 +167,22 @@ class BackfillScoresHistoryService:
 
     def list_trading_dates(self, start_date: date, end_date: date, overwrite_existing: bool = False) -> list[date]:
         """Liste les séances à traiter entre deux bornes."""
+        source_filter_sql, source_filter_params = get_required_bars_source_filter(
+            self.engine,
+            table_name="stock_bars_daily",
+        )
         with self.engine.connect() as conn:
             trading_days = conn.execute(
                 text(
-                    """
+                    f"""
                     SELECT DISTINCT `date`
                     FROM stock_bars_daily
                     WHERE `date` BETWEEN :start_date AND :end_date
+                      {source_filter_sql}
                     ORDER BY `date`
                     """
                 ),
-                {"start_date": start_date, "end_date": end_date},
+                {"start_date": start_date, "end_date": end_date, **source_filter_params},
             ).scalars().all()
 
             if overwrite_existing:
@@ -423,17 +437,27 @@ class BackfillScoresHistoryService:
         if not symbols:
             return pd.DataFrame(columns=["symbol", "date", "close", "volume", "high", "low"])
 
+        source_filter_sql, source_filter_params = get_required_bars_source_filter(
+            self.engine,
+            table_name=self.scanner_config.price_table,
+        )
+
         stmt = text(
             f"""
             SELECT symbol, `date`, `close`, volume, high, low
             FROM {self.scanner_config.price_table}
             WHERE symbol IN :symbols
               AND `date` <= :as_of_date
+              {source_filter_sql}
             ORDER BY symbol, `date`
             """
         ).bindparams(bindparam("symbols", expanding=True))
         with self.engine.connect() as conn:
-            df = pd.read_sql_query(stmt, conn, params={"symbols": symbols, "as_of_date": as_of_date})
+            df = pd.read_sql_query(
+                stmt,
+                conn,
+                params={"symbols": symbols, "as_of_date": as_of_date, **source_filter_params},
+            )
         if not df.empty:
             df["date"] = pd.to_datetime(df["date"], utc=False)
         return df
@@ -491,7 +515,11 @@ class BackfillScoresHistoryService:
         history_df["anomaly_count"] = history_df["anomaly_count"].fillna(0).astype(int)
         history_df["missing_days_count"] = history_df["missing_days_count"].fillna(0).astype(int)
         earnings_dates = pd.to_datetime(history_df["earnings_date"], errors="coerce", utc=False)
-        history_df["earnings_date"] = earnings_dates.dt.date
+        history_df["earnings_date"] = pd.Series(
+            [value.date() if not pd.isna(value) else None for value in earnings_dates],
+            index=history_df.index,
+            dtype="object",
+        )
         history_df["symbol"] = history_df["symbol"].astype(str)
         history_df = history_df.loc[:, HISTORY_COLUMNS].copy()
         history_df = history_df.drop_duplicates(subset=["snapshot_date", "symbol"], keep="last")
@@ -595,16 +623,21 @@ class BackfillScoresHistoryService:
         )
 
         if not overwrite_existing:
+            source_filter_sql, source_filter_params = get_required_bars_source_filter(
+                self.engine,
+                table_name="stock_bars_daily",
+            )
             with self.engine.connect() as conn:
                 total_trading_days = conn.execute(
                     text(
-                        """
+                        f"""
                         SELECT COUNT(DISTINCT `date`)
                         FROM stock_bars_daily
                         WHERE `date` BETWEEN :start_date AND :end_date
+                          {source_filter_sql}
                         """
                     ),
-                    {"start_date": start_date, "end_date": resolved_end},
+                    {"start_date": start_date, "end_date": resolved_end, **source_filter_params},
                 ).scalar_one()
             skipped_existing = int(total_trading_days) - len(trading_days)
 

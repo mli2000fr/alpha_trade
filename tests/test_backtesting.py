@@ -98,6 +98,7 @@ class TestDataLoader:
                     {"name": "close"},
                     {"name": "adj_close"},
                     {"name": "volume"},
+                    {"name": "data_source"},
                 ]
 
         def fake_inspect(_engine):
@@ -126,7 +127,32 @@ class TestDataLoader:
         assert not df.empty
         assert "`date` AS trade_date" in captured["sql"]
         assert "COALESCE(adj_close, `close`) AS `close`" in captured["sql"]
+        assert "data_source" in captured["sql"]
+        assert "required_data_source" in captured["sql"]
+        assert captured["params"]["required_data_source"] == "eodhd_eod"
         assert captured["parse_dates"] == ["trade_date"]
+
+    def test_load_ohlcv_requires_data_source_column_for_eodhd_only_backtests(self, monkeypatch):
+        from backtesting import data_loader
+
+        class FakeInspector:
+            def get_columns(self, table_name):
+                assert table_name == "stock_bars_daily"
+                return [
+                    {"name": "symbol"},
+                    {"name": "date"},
+                    {"name": "open"},
+                    {"name": "high"},
+                    {"name": "low"},
+                    {"name": "close"},
+                    {"name": "adj_close"},
+                    {"name": "volume"},
+                ]
+
+        monkeypatch.setattr(data_loader, "inspect", lambda _engine: FakeInspector())
+
+        with pytest.raises(RuntimeError, match="data_source"):
+            data_loader.load_ohlcv(cast(Engine, self._FakeEngine()), date(2025, 1, 1), date(2025, 1, 31))
 
     def test_load_scores_prefers_history_table(self, monkeypatch):
         from backtesting import data_loader

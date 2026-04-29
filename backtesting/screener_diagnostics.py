@@ -15,6 +15,7 @@ from sqlalchemy import bindparam, inspect, text
 from sqlalchemy.engine import Engine
 
 from backtesting.backfill_scores_history import BackfillScoresHistoryService
+from backtesting.data_loader import get_required_bars_source_filter
 from database.connection import get_sqlalchemy_engine
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from risk_management.config import RiskConfig
@@ -1407,16 +1408,24 @@ class ScreenerDiagnosticsService:
 
     def list_trading_dates(self, start_date: date, end_date: date) -> list[date]:
         date_column, _ = self._resolve_stock_bars_layout()
+        source_filter_sql, source_filter_params = get_required_bars_source_filter(
+            self.engine,
+            table_name="stock_bars_daily",
+        )
         stmt = text(
             f"""
             SELECT DISTINCT `{date_column}` AS trade_date
             FROM stock_bars_daily
             WHERE `{date_column}` BETWEEN :start_date AND :end_date
+              {source_filter_sql}
             ORDER BY `{date_column}`
             """
         )
         with self.engine.connect() as conn:
-            rows = conn.execute(stmt, {"start_date": start_date, "end_date": end_date}).scalars().all()
+            rows = conn.execute(
+                stmt,
+                {"start_date": start_date, "end_date": end_date, **source_filter_params},
+            ).scalars().all()
         return [pd.Timestamp(value).date() for value in rows]
 
     def analyze_period(
@@ -1680,6 +1689,10 @@ class ScreenerDiagnosticsService:
         if not symbols:
             return pd.DataFrame()
         date_column, close_expression = self._resolve_stock_bars_layout()
+        source_filter_sql, source_filter_params = get_required_bars_source_filter(
+            self.engine,
+            table_name="stock_bars_daily",
+        )
         select_columns = [
             "symbol",
             f"`{date_column}` AS bar_date",
@@ -1694,8 +1707,10 @@ class ScreenerDiagnosticsService:
             f"SELECT {', '.join(select_columns)}",
             "FROM stock_bars_daily",
             "WHERE symbol IN :symbols",
+            source_filter_sql,
         ]
         params: dict[str, Any] = {"symbols": list(symbols)}
+        params.update(source_filter_params)
         if start_date is not None:
             query.append(f"AND `{date_column}` >= :start_date")
             params["start_date"] = start_date

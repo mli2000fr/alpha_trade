@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any, cast
 
 import pandas as pd
 import pytest
@@ -94,6 +95,49 @@ def test_calibrate_uses_custom_dataset_and_exports(tmp_path, monkeypatch) -> Non
     assert not ranking_df.empty
     assert (tmp_path / "sentiment_weight_calibration.csv").exists()
     assert artifacts["best_json"].endswith("sentiment_weight_calibration_best.json")
+
+
+def test_load_dataset_filters_stock_bars_daily_on_eodhd_source(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _FakeEngine:
+        def connect(self):
+            return _FakeConn()
+
+    calibrator = SentimentWeightCalibrator.__new__(SentimentWeightCalibrator)
+    calibrator.engine = _FakeEngine()
+
+    def _fake_read_sql_query(query, conn, params=None):
+        captured["sql"] = str(query)
+        captured["params"] = params
+        return pd.DataFrame(columns=[
+            "snapshot_date", "symbol", "sector", "final_score",
+            "sentiment_net_agg", "sector_impact_agg", "final_score_sentiment",
+            "is_candidate", "bar_date", "close_price",
+        ])
+
+    monkeypatch.setattr(
+        "backtesting.sentiment_calibration.get_required_bars_source_filter",
+        lambda engine, table_name="stock_bars_daily", table_alias=None: (
+            f"AND {table_alias}.data_source = :required_data_source",
+            {"required_data_source": "eodhd_eod"},
+        ),
+    )
+    monkeypatch.setattr(pd, "read_sql_query", _fake_read_sql_query)
+
+    result = calibrator.load_dataset(date(2026, 1, 1), date(2026, 1, 31))
+
+    assert result.empty
+    assert "b.data_source = :required_data_source" in captured["sql"]
+    params = cast(dict[str, Any], captured["params"])
+    assert params["required_data_source"] == "eodhd_eod"
 
 
 

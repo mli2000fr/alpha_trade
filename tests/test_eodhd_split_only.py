@@ -120,6 +120,8 @@ def test_to_stock_bars_daily_row_shape():
     assert row["date"] == "2024-06-07"
     assert row["close"] == 120.5
     assert row["adj_close"] == 120.5
+    # vwap = typical price (high + low + close) / 3 — proxy car EODHD ne fournit pas de VWAP
+    assert row["vwap"] == pytest.approx((121.0 + 119.0 + 120.5) / 3.0)
     assert row["data_adjustment"] == "split"
     assert row["data_source"] == "eodhd_eod"
     assert row["is_filled"] == 0
@@ -137,6 +139,7 @@ def test_to_stock_bars_row_uses_close_timestamp():
     assert row["close_price"] == 120.5
     assert row["volume"] == 300_000_000
     assert row["trade_count"] == 0
+    assert row["vwa_price"] is None
     assert row["data_source"] == "eodhd_eod"
     assert row["data_adjustment"] == "split"
 

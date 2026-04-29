@@ -230,17 +230,28 @@ def to_stock_bars_daily_row(bar: dict, symbol: str) -> dict:
     vwap, daily_return, is_filled, data_adjustment, data_source``.
     ``adj_close`` = ``close`` (split-only) ; ``adjusted_close`` EODHD
     (split+div) est ignoré ici car le projet ne stocke que du split-only.
+
+    ``vwap`` : EODHD ne fournit pas de VWAP volume-pondéré sur l'endpoint
+    ``/eod`` (ni sur ``/eod-bulk-last-day``). On stocke à la place le
+    *typical price* daily ``(high + low + close) / 3``, proxy standard en
+    equity research, afin de garder la feature ``close_to_vwap`` exploitable
+    dans ``modelFactory`` côté EODHD. La colonne ``data_source='eodhd_eod'``
+    permet de distinguer ce proxy d'un VWAP intraday réel.
     """
+    high = float(bar["high"])
+    low = float(bar["low"])
+    close = float(bar["close"])
+    typical_price = (high + low + close) / 3.0
     return {
         "symbol": symbol.strip().upper(),
         "date": str(bar["date"]),
         "open": float(bar["open"]),
-        "high": float(bar["high"]),
-        "low": float(bar["low"]),
-        "close": float(bar["close"]),
+        "high": high,
+        "low": low,
+        "close": close,
         "volume": int(bar.get("volume") or 0),
-        "adj_close": float(bar["close"]),
-        "vwap": None,
+        "adj_close": close,
+        "vwap": typical_price,
         "daily_return": None,
         "is_filled": 0,
         "data_adjustment": DATA_ADJUSTMENT_SPLIT,

@@ -13,7 +13,7 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from backtesting.data_loader import load_ohlcv, pivot_ohlcv
+from backtesting.data_loader import get_required_bars_source_filter, load_ohlcv, pivot_ohlcv
 from backtesting.report import (
     BacktestReport,
     extract_diagnostics,
@@ -120,8 +120,13 @@ class SentimentWeightCalibrator:
         horizons: tuple[int, ...] = (5, 10, 20),
         candidates_only: bool = True,
     ) -> pd.DataFrame:
+        source_filter_sql, source_filter_params = get_required_bars_source_filter(
+            self.engine,
+            table_name="stock_bars_daily",
+            table_alias="b",
+        )
         query = text(
-            """
+            f"""
             SELECT
                 h.snapshot_date,
                 h.symbol,
@@ -138,6 +143,7 @@ class SentimentWeightCalibrator:
               ON b.symbol = h.symbol
              AND b.date >= h.snapshot_date
              AND b.date <= :end_date_plus_buffer
+             {source_filter_sql}
             WHERE h.snapshot_date BETWEEN :start_date AND :end_date
               AND (:candidates_only = 0 OR h.is_candidate = 1)
             ORDER BY h.snapshot_date, h.symbol, b.date
@@ -152,6 +158,7 @@ class SentimentWeightCalibrator:
                     "end_date": end_date,
                     "end_date_plus_buffer": end_date + pd.Timedelta(days=max(horizons) * 3),
                     "candidates_only": 1 if candidates_only else 0,
+                    **source_filter_params,
                 },
             )
         if raw.empty:

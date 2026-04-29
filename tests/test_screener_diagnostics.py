@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from typing import Any, cast
 
 import pandas as pd
 
@@ -863,5 +864,46 @@ def test_analyze_period_merges_market_regime_and_builds_summary_by_regime(monkey
     assert result.daily_metrics.iloc[0]["market_regime"] == "bull"
     assert not result.summary_metrics_by_regime.empty
     assert result.summary_metrics_by_regime.iloc[0]["market_regime"] == "bull"
+
+
+def test_load_price_history_filters_stock_bars_daily_on_eodhd_source(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _FakeEngine:
+        def connect(self):
+            return _FakeConn()
+
+    service = ScreenerDiagnosticsService.__new__(ScreenerDiagnosticsService)
+    service.engine = _FakeEngine()
+    service._stock_bars_layout = ("date", "COALESCE(adj_close, `close`)")
+
+    monkeypatch.setattr(
+        "backtesting.screener_diagnostics.get_required_bars_source_filter",
+        lambda engine, table_name="stock_bars_daily", table_alias=None: (
+            "AND `data_source` = :required_data_source",
+            {"required_data_source": "eodhd_eod"},
+        ),
+    )
+
+    def _fake_read_sql_query(stmt, conn, params=None):
+        captured["sql"] = str(stmt)
+        captured["params"] = params
+        return pd.DataFrame(columns=["symbol", "bar_date", "close_price", "high_price", "low_price", "volume"])
+
+    monkeypatch.setattr(pd, "read_sql_query", _fake_read_sql_query)
+
+    result = service._load_price_history(["AAPL"], start_date=date(2026, 1, 1), end_date=date(2026, 1, 31))
+
+    assert result.empty
+    assert "required_data_source" in captured["sql"]
+    params = cast(dict[str, Any], captured["params"])
+    assert params["required_data_source"] == "eodhd_eod"
 
 

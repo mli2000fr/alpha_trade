@@ -17,6 +17,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 LOGGER = logging.getLogger(__name__)
+BACKTEST_REQUIRED_BARS_DATA_SOURCE = "eodhd_eod"
 
 
 def _table_exists(engine: Engine, table_name: str) -> bool:
@@ -37,6 +38,29 @@ def _get_table_columns(engine: Engine, table_name: str) -> set[str]:
         return set()
 
 
+def get_required_bars_source_filter(
+    engine: Engine,
+    *,
+    table_name: str = "stock_bars_daily",
+    table_alias: str | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Retourne un fragment SQL imposant la source canonique EODHD.
+
+    Le backtesting doit désormais s'exécuter uniquement sur les barres issues
+    d'EODHD, même si la table contient un mélange de providers historiques.
+    """
+    columns = _get_table_columns(engine, table_name)
+    if not columns:
+        raise RuntimeError(f"La table {table_name} est introuvable ou inaccessible.")
+    if "data_source" not in columns:
+        raise RuntimeError(
+            f"La colonne {table_name}.data_source est requise pour forcer le backtest sur "
+            f"{BACKTEST_REQUIRED_BARS_DATA_SOURCE}."
+        )
+    qualified = f"{table_alias}.data_source" if table_alias else "`data_source`"
+    return f"AND {qualified} = :required_data_source", {"required_data_source": BACKTEST_REQUIRED_BARS_DATA_SOURCE}
+
+
 def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
     """Charge les barres OHLCV journalières.
 
@@ -53,6 +77,7 @@ def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
         raise RuntimeError("Aucune colonne date compatible dans stock_bars_daily (attendu: trade_date ou date).")
 
     close_expr = "COALESCE(adj_close, `close`)" if "adj_close" in columns else "`close`"
+    source_filter_sql, source_filter_params = get_required_bars_source_filter(engine, table_name="stock_bars_daily")
     query = text(f"""
         SELECT symbol,
                `{date_col}` AS trade_date,
@@ -63,10 +88,16 @@ def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
                volume
         FROM stock_bars_daily
         WHERE `{date_col}` BETWEEN :start AND :end
+          {source_filter_sql}
         ORDER BY `{date_col}`, symbol
     """)
     with engine.connect() as conn:
-        df = pd.read_sql(query, conn, params={"start": start, "end": end}, parse_dates=["trade_date"])
+        df = pd.read_sql(
+            query,
+            conn,
+            params={"start": start, "end": end, **source_filter_params},
+            parse_dates=["trade_date"],
+        )
     LOGGER.info("OHLCV chargé : %d lignes, %d symboles, [%s → %s]",
                 len(df), df["symbol"].nunique() if len(df) else 0, start, end)
     return df
