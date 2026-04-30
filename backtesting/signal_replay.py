@@ -3,21 +3,88 @@ backtesting/signal_replay.py
 ==============================
 Reconstruit les signaux de trading jour par jour à partir des scores,
 du sentiment et des prédictions ML, en réutilisant la logique de conviction
-du module risk_management.
+du module ``core.conviction``.
+
+Refactor Phase A (refactor/backtesting/audit_plan.md) :
+- A2 : ``fuse()`` vectorisé (suppression du ``df.apply`` ligne par ligne).
+- A3 : cascade de fallback factorisée via ``_pick_score_column`` +
+       ``SCORE_FALLBACK_PRIORITY`` (au lieu de 4 branches dupliquées).
 """
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
 
-# Phase 6.1.a — fusion conviction unifiée via core.conviction
-# (auparavant : risk_management.conviction, désormais déprécié).
-from core.conviction import ConvictionWeights, fuse
+from core.conviction import ConvictionWeights
 
 LOGGER = logging.getLogger(__name__)
+
+# Ordre de priorité des colonnes de score (du plus riche au plus brut).
+SCORE_FALLBACK_PRIORITY: tuple[str, ...] = (
+    "final_score_walk_forward",
+    "final_score_sentiment",
+    "final_score",
+)
+
+
+def _pick_score_column(
+    df: pd.DataFrame,
+    preferred: str | None,
+    fallback_priority: Iterable[str] = SCORE_FALLBACK_PRIORITY,
+) -> tuple[pd.Series, pd.Series]:
+    """Construit ``(score, score_source)`` à partir d'une cascade de colonnes.
+
+    Prend d'abord ``preferred`` si fourni et présent, puis comble les NaN
+    restants avec les colonnes du ``fallback_priority`` dans l'ordre.
+    """
+    columns_in_order: list[str] = []
+    if preferred and preferred in df.columns:
+        columns_in_order.append(preferred)
+    for col in fallback_priority:
+        if col in df.columns and col not in columns_in_order:
+            columns_in_order.append(col)
+
+    if not columns_in_order:
+        raise ValueError(
+            "scores_df doit contenir au moins une colonne parmi "
+            f"{list(fallback_priority)} (ou ``preferred`` valide)."
+        )
+
+    score = pd.Series(np.nan, index=df.index, dtype=float)
+    source = pd.Series(pd.NA, index=df.index, dtype="object")
+    for col in columns_in_order:
+        col_series = pd.to_numeric(df[col], errors="coerce")
+        missing_mask = score.isna() & col_series.notna()
+        if not missing_mask.any():
+            continue
+        score = score.where(~missing_mask, col_series)
+        source = source.where(~missing_mask, col)
+    return score, source
+
+
+def _vectorized_fuse(
+    scores: pd.Series,
+    predicted_proba: pd.Series,
+    weights: ConvictionWeights,
+) -> pd.Series:
+    """Variante vectorisée de ``core.conviction.fuse``.
+
+    - ``predicted_proba`` NaN sur une ligne → conviction = score brut.
+    - sinon → ``score_weight * score + prediction_weight * proba``.
+    NaN dans ``score`` → 0.0 (cohérent avec l'ancien call-site).
+    """
+    score_arr = scores.fillna(0.0).to_numpy(dtype=float)
+    proba_arr = predicted_proba.to_numpy(dtype=float)
+    has_proba = ~np.isnan(proba_arr)
+    fused = np.where(
+        has_proba,
+        weights.score_weight * score_arr + weights.prediction_weight * np.nan_to_num(proba_arr),
+        score_arr,
+    )
+    return pd.Series(fused, index=scores.index, name="conviction")
 
 
 def replay_signals(
@@ -31,104 +98,58 @@ def replay_signals(
 ) -> pd.DataFrame:
     """Reconstruit les signaux de conviction quotidiens.
 
-    Parameters
-    ----------
-    scores_df : DataFrame
-        Colonnes : symbol, trade_date, final_score_sentiment (ou final_score), sector
-    predictions_df : DataFrame | None
-        Colonnes : symbol, trade_date, predicted_proba
-    score_weight, prediction_weight : poids de la conviction
-    max_positions : nombre max de candidats retenus par jour
-
     Returns
     -------
-    DataFrame avec colonnes : trade_date, symbol, score, predicted_proba, conviction, rank, selected
+    DataFrame : trade_date, symbol, score, score_source, sector,
+                predicted_proba, conviction, rank, selected.
     """
-    preferred_score_column = score_column if score_column in scores_df.columns else None
-    # Utiliser la colonne demandée si fournie, sinon final_score_sentiment puis final_score.
-    # Si la colonne primaire contient des trous, fallback ligne par ligne sur final_score.
-    candidate_columns = [
-        "symbol", "trade_date", preferred_score_column,
-        "final_score_walk_forward", "final_score_sentiment", "final_score", "sector", "score_source",
+    base_columns = ["symbol", "trade_date"]
+    optional_columns = [
+        score_column,
+        *SCORE_FALLBACK_PRIORITY,
+        "sector",
+        "score_source",
     ]
-    base_columns: list[str] = []
-    for col in candidate_columns:
-        if col is None or col not in scores_df.columns or col in base_columns:
+    keep_columns = list(base_columns)
+    for col in optional_columns:
+        if col is None:
             continue
-        base_columns.append(col)
-    df = scores_df[base_columns].copy()
-    df["score_source"] = df["score_source"] if "score_source" in df.columns else pd.NA
-    if preferred_score_column is not None:
-        df["score"] = df[preferred_score_column]
-        df.loc[df[preferred_score_column].notna(), "score_source"] = preferred_score_column
-        if "final_score_sentiment" in df.columns and preferred_score_column != "final_score_sentiment":
-            missing_mask = df["score"].isna()
-            df.loc[missing_mask, "score"] = df.loc[missing_mask, "final_score_sentiment"]
-            df.loc[missing_mask & df["final_score_sentiment"].notna(), "score_source"] = "final_score_sentiment"
-        if "final_score" in df.columns:
-            missing_mask = df["score"].isna()
-            df.loc[missing_mask, "score"] = df.loc[missing_mask, "final_score"]
-            df.loc[missing_mask & df["final_score"].notna(), "score_source"] = "final_score"
-    elif "final_score_walk_forward" in df.columns:
-        df["score"] = df["final_score_walk_forward"]
-        df.loc[df["final_score_walk_forward"].notna(), "score_source"] = "final_score_walk_forward"
-        if "final_score_sentiment" in df.columns:
-            missing_mask = df["score"].isna()
-            df.loc[missing_mask, "score"] = df.loc[missing_mask, "final_score_sentiment"]
-            df.loc[missing_mask & df["final_score_sentiment"].notna(), "score_source"] = "final_score_sentiment"
-        if "final_score" in df.columns:
-            missing_mask = df["score"].isna()
-            df.loc[missing_mask, "score"] = df.loc[missing_mask, "final_score"]
-            df.loc[missing_mask & df["final_score"].notna(), "score_source"] = "final_score"
-    elif "final_score_sentiment" in df.columns:
-        df["score"] = df["final_score_sentiment"]
-        df.loc[df["final_score_sentiment"].notna(), "score_source"] = "final_score_sentiment"
-        if "final_score" in df.columns:
-            missing_mask = df["score"].isna()
-            df.loc[missing_mask, "score"] = df.loc[missing_mask, "final_score"]
-            df.loc[missing_mask & df["final_score"].notna(), "score_source"] = "final_score"
-    elif "final_score" in df.columns:
-        df["score"] = df["final_score"]
-        df.loc[df["final_score"].notna(), "score_source"] = "final_score"
+        if col in scores_df.columns and col not in keep_columns:
+            keep_columns.append(col)
+
+    df = scores_df[keep_columns].copy()
+    score, source = _pick_score_column(df, preferred=score_column)
+    df["score"] = score.values
+    if "score_source" in df.columns:
+        existing_source = df["score_source"]
+        df["score_source"] = existing_source.where(existing_source.notna(), source.values)
     else:
-        raise ValueError("scores_df doit contenir final_score_sentiment ou final_score.")
+        df["score_source"] = source.values
 
     if "sector" not in df.columns:
         df["sector"] = None
 
     df = df[["symbol", "trade_date", "score", "score_source", "sector"]].copy()
 
-    # Merger les prédictions ML si disponibles
     if predictions_df is not None and len(predictions_df) > 0:
         preds = predictions_df[["symbol", "trade_date", "predicted_proba"]].copy()
         df = df.merge(preds, on=["symbol", "trade_date"], how="left")
     else:
         df["predicted_proba"] = np.nan
 
-    # Calculer la conviction (Phase 6.1.a — via core.conviction.fuse)
-    conviction_weights = ConvictionWeights(
+    weights = ConvictionWeights(
         score_weight=score_weight,
         prediction_weight=prediction_weight,
     )
-    df["conviction"] = df.apply(
-        lambda r: fuse(
-            quant_score=float(r["score"]) if pd.notna(r["score"]) else 0.0,
-            predicted_proba=(
-                float(r["predicted_proba"]) if pd.notna(r["predicted_proba"]) else None
-            ),
-            weights=conviction_weights,
-        ),
-        axis=1,
-    )
+    df["conviction"] = _vectorized_fuse(df["score"], df["predicted_proba"], weights)
 
-    # Rank par jour, sélectionner top-N
     df["rank"] = df.groupby("trade_date")["conviction"].rank(ascending=False, method="first")
     df["selected"] = df["rank"] <= max_positions
 
     LOGGER.info(
         "Signaux reconstruits : %d jours, %d entrées sélectionnées",
         df["trade_date"].nunique(),
-        df["selected"].sum(),
+        int(df["selected"].sum()),
     )
     return df
 

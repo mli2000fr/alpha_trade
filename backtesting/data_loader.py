@@ -238,8 +238,19 @@ def load_sentiment(engine: Engine, start: date, end: date, lookback_days: int = 
     return df
 
 
-def load_predictions(engine: Engine, start: date, end: date) -> pd.DataFrame:
-    """Charge les prédictions ML."""
+def load_predictions(
+    engine: Engine,
+    start: date,
+    end: date,
+    *,
+    symbols: list[str] | None = None,
+) -> pd.DataFrame:
+    """Charge les prédictions ML.
+
+    Phase E.2 (refactor) : ``symbols`` permet de restreindre l'I/O à un
+    sous-ensemble (typiquement les candidats déjà chargés) — gain x10 à x100
+    sur des univers larges.
+    """
     columns = _get_table_columns(engine, "model_predictions")
     if not columns:
         LOGGER.warning("model_predictions introuvable — prédictions ML ignorées.")
@@ -250,18 +261,27 @@ def load_predictions(engine: Engine, start: date, end: date) -> pd.DataFrame:
         LOGGER.warning("Aucune colonne date compatible dans model_predictions — prédictions ML ignorées.")
         return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
 
+    params: dict[str, object] = {"start": start, "end": end}
+    where_symbols = ""
+    if symbols:
+        unique_symbols = sorted({s for s in symbols if isinstance(s, str) and s})
+        if unique_symbols:
+            placeholders = ",".join(f":sym_{i}" for i in range(len(unique_symbols)))
+            where_symbols = f" AND symbol IN ({placeholders})"
+            params.update({f"sym_{i}": sym for i, sym in enumerate(unique_symbols)})
+
     query = text(f"""
         SELECT symbol,
                {date_col} AS trade_date,
                predicted_proba,
                predicted_class
         FROM model_predictions
-        WHERE {date_col} BETWEEN :start AND :end
+        WHERE {date_col} BETWEEN :start AND :end{where_symbols}
         ORDER BY {date_col}, symbol
     """)
     with engine.connect() as conn:
-        df = pd.read_sql(query, conn, params={"start": start, "end": end}, parse_dates=["trade_date"])
-    LOGGER.info("Prédictions ML chargées : %d lignes", len(df))
+        df = pd.read_sql(query, conn, params=params, parse_dates=["trade_date"])
+    LOGGER.info("Prédictions ML chargées : %d lignes (filter symbols=%s)", len(df), bool(symbols))
     return df
 
 

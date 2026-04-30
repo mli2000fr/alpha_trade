@@ -123,6 +123,20 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Répertoire racine où chercher explicitement les meilleurs poids walk-forward à appliquer au backtest standard.",
     )
+    # Phase A.6 (refactor) — risk-free rate annualisé pour Sharpe/Sortino.
+    run_p.add_argument(
+        "--risk-free-rate",
+        type=float,
+        default=0.0,
+        help="Taux sans risque annualisé (ex 0.04 = 4%%) déduit des returns avant Sharpe/Sortino.",
+    )
+    # Phase A.4 — seed pour reproductibilité (consigné dans run_metadata).
+    run_p.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed reproductibilité (consignée dans report.json[run_metadata]).",
+    )
 
     # --- backfill-scores-history ---
     backfill_p = sub.add_parser(
@@ -308,6 +322,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
     """Exécute le backtest complet."""
     from datetime import datetime
 
+    import pandas as pd
+
     from database.connection import get_sqlalchemy_engine
     from backtesting.data_loader import load_ohlcv, load_scores, load_predictions, pivot_ohlcv
     from backtesting.resilience import prepare_predictions_for_ml_mode, prepare_scores_for_sentiment_mode
@@ -315,6 +331,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     from backtesting.trading_constraints import TradingConstraintConfig
     from backtesting.simulator import BacktestConfig, BacktestEngine
     from backtesting.profiles import apply_profile
+    from backtesting.run_metadata import build_run_metadata
     from backtesting.report import (
         extract_diagnostics,
         generate_report,
@@ -441,7 +458,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
     dividends_received = load_dividends_received(start, end, engine=engine)
 
     # 5. Rapport
-    report = generate_report(pf, args.equity, dividends_received=dividends_received)
+    report = generate_report(
+        pf,
+        args.equity,
+        dividends_received=dividends_received,
+        risk_free_rate=float(getattr(args, "risk_free_rate", 0.0) or 0.0),
+    )
     report.print_summary()
 
     output_dir = Path(args.output_dir) if args.output_dir else None
@@ -482,7 +504,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
         "execution_timing": bt_config.execution_timing,
         "entry_price_source": "next_session_open",
         "no_save": args.no_save,
+        # Phase A.6 — risk-free rate utilisé pour Sharpe/Sortino.
+        "risk_free_rate": float(getattr(args, "risk_free_rate", 0.0) or 0.0),
     }
+
+    # Phase A.4 — métadonnées de reproductibilité.
+    run_metadata = build_run_metadata(
+        seed=getattr(args, "seed", None),
+        dataset_frames={
+            "ohlcv": ohlcv_df,
+            "scores": scores_df,
+            "predictions": preds_df if isinstance(preds_df, pd.DataFrame) else None,
+        },
+    )
 
     if output_dir is not None:
         _safe_print("📝 Sauvegarde du rapport structuré...")
@@ -494,6 +528,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             artifacts=artifact_paths,
             params=common_params,
             diagnostics=diagnostics,
+            run_metadata=run_metadata,
         )
         artifact_paths["report_json"] = str(report_json_path)
         _safe_print(f"   → {report_json_path}")
@@ -516,6 +551,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 artifacts=artifact_paths,
                 params=common_params,
                 diagnostics=diagnostics,
+                run_metadata=run_metadata,
             )
 
     _safe_print("✅ Backtest terminé.\n")

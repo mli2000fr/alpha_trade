@@ -1402,7 +1402,7 @@ class TestCLI:
             path.write_text("png", encoding="utf-8")
             return path
 
-        def fake_save_report_json(report_obj, *, output_dir, artifacts, params, diagnostics):
+        def fake_save_report_json(report_obj, *, output_dir, artifacts, params, diagnostics, **_kwargs):
             output_dir.mkdir(parents=True, exist_ok=True)
             path = output_dir / "report.json"
             payload = {"artifacts": artifacts, "params": params, "diagnostics": diagnostics}

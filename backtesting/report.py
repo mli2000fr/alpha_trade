@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
@@ -87,8 +88,21 @@ class BacktestReport:
     # Phase 6.1.c — rendement total dividendes inclus.
     dividends_received: float = 0.0
     total_return_with_dividends_pct: float = 0.0
+    # Phase A.5 (refactor) — métriques de risque additionnelles.
+    calmar_ratio: float = 0.0
+    ulcer_index: float = 0.0
+    # Phase A.6 — risk-free rate annualisé utilisé pour Sharpe/Sortino.
+    risk_free_rate: float = 0.0
 
     def to_serializable_dict(self) -> dict[str, float | int]:
+        # Phase A.7 — conserver +inf comme sentinel JSON-friendly ("inf").
+        def _serialize_float(value: float) -> float | str:
+            if math.isinf(value):
+                return "inf" if value > 0 else "-inf"
+            if math.isnan(value):
+                return 0.0
+            return float(value)
+
         return {
             "initial_equity": float(self.initial_equity),
             "final_value": float(self.final_value),
@@ -100,13 +114,19 @@ class BacktestReport:
             "sharpe_ratio": float(self.sharpe_ratio),
             "sortino_ratio": float(self.sortino_ratio),
             "max_drawdown_pct": float(self.max_drawdown_pct),
+            "calmar_ratio": _serialize_float(self.calmar_ratio),
+            "ulcer_index": float(self.ulcer_index),
+            "risk_free_rate": float(self.risk_free_rate),
             "total_trades": int(self.total_trades),
             "win_rate_pct": float(self.win_rate_pct),
             "avg_trade_duration_days": float(self.avg_trade_duration_days),
-            "profit_factor": float(self.profit_factor),
+            "profit_factor": _serialize_float(self.profit_factor),
         }
 
     def to_dict(self) -> dict:
+        # Affichage humain : profit_factor inf devient "∞".
+        pf_display = "∞" if math.isinf(self.profit_factor) and self.profit_factor > 0 else f"{self.profit_factor:.2f}"
+        calmar_display = "∞" if math.isinf(self.calmar_ratio) and self.calmar_ratio > 0 else f"{self.calmar_ratio:.3f}"
         return {
             "Capital initial": f"${self.initial_equity:,.0f}",
             "Valeur finale": f"${self.final_value:,.2f}",
@@ -116,11 +136,13 @@ class BacktestReport:
             "CAGR": f"{self.cagr_pct:.2f}%",
             "Sharpe Ratio": f"{self.sharpe_ratio:.3f}",
             "Sortino Ratio": f"{self.sortino_ratio:.3f}",
+            "Calmar Ratio": calmar_display,
+            "Ulcer Index": f"{self.ulcer_index:.3f}",
             "Max Drawdown": f"{self.max_drawdown_pct:.2f}%",
             "Nombre de trades": self.total_trades,
             "Win Rate": f"{self.win_rate_pct:.1f}%",
             "Durée moy. trade (j)": f"{self.avg_trade_duration_days:.1f}",
-            "Profit Factor": f"{self.profit_factor:.2f}",
+            "Profit Factor": pf_display,
         }
 
     def print_summary(self) -> None:
@@ -172,35 +194,78 @@ def load_dividends_received(
         return 0.0
 
 
-def generate_report(pf, initial_equity: float, *, dividends_received: float = 0.0) -> BacktestReport:
-    """Extrait les métriques depuis un portefeuille compatible vectorbt/BacktestResult."""
+def _compute_ulcer_index(equity: pd.Series) -> float:
+    """Ulcer Index = sqrt(mean(drawdown_i^2)) en pourcentage.
+
+    Mesure la "douleur" cumulée des drawdowns (Martin & McCann, 1989).
+    """
+    if equity.empty:
+        return 0.0
+    running_peak = equity.cummax()
+    dd_pct = ((equity / running_peak) - 1.0) * 100.0
+    return float(np.sqrt(np.mean(np.square(dd_pct))))
+
+
+def _compute_calmar(cagr_pct: float, max_dd_pct: float) -> float:
+    """Calmar Ratio = CAGR / |Max Drawdown|.
+
+    +inf si MDD ≈ 0 et CAGR > 0 (sentinel A.7).
+    """
+    if max_dd_pct <= 1e-9:
+        if cagr_pct > 0:
+            return float("inf")
+        return 0.0
+    return float(cagr_pct / max_dd_pct)
+
+
+def generate_report(
+    pf,
+    initial_equity: float,
+    *,
+    dividends_received: float = 0.0,
+    risk_free_rate: float = 0.0,
+    trading_days_per_year: int = 252,
+) -> BacktestReport:
+    """Extrait les métriques depuis un portefeuille compatible vectorbt/BacktestResult.
+
+    Phase A.5/A.6/A.7 :
+    - ajout Calmar + Ulcer Index ;
+    - paramétrage ``risk_free_rate`` (annualisé, déduit des returns avant Sharpe/Sortino) ;
+    - profit_factor = +inf conservé comme sentinel (au lieu de 0).
+    """
+    rf_daily = float(risk_free_rate) / float(trading_days_per_year) if trading_days_per_year else 0.0
     closed_trades_df = _extract_closed_trades_df(pf)
     if closed_trades_df is not None:
         equity = _extract_equity_curve(pf)
         final_val = float(equity.iloc[-1]) if not equity.empty else float(initial_equity)
         total_ret = (final_val / initial_equity - 1) * 100 if initial_equity else 0.0
         n_days = len(equity)
-        n_years = max(n_days / 252, 0.01)
+        n_years = max(n_days / trading_days_per_year, 0.01)
         cagr = ((final_val / initial_equity) ** (1 / n_years) - 1) * 100 if initial_equity > 0 else 0.0
 
         daily_returns = equity.pct_change().dropna()
+        excess_returns = daily_returns - rf_daily
         sharpe = 0.0
         sortino = 0.0
-        if not daily_returns.empty:
-            returns_std = float(daily_returns.std(ddof=0))
+        if not excess_returns.empty:
+            returns_std = float(excess_returns.std(ddof=0))
             if returns_std > 0:
-                sharpe = _clean_metric(float(daily_returns.mean() / returns_std) * math.sqrt(252))
-            downside = daily_returns[daily_returns < 0]
+                sharpe = _clean_metric(float(excess_returns.mean() / returns_std) * math.sqrt(trading_days_per_year))
+            downside = excess_returns[excess_returns < 0]
             downside_std = float(downside.std(ddof=0)) if not downside.empty else 0.0
             if downside_std > 0:
-                sortino = _clean_metric(float(daily_returns.mean() / downside_std) * math.sqrt(252))
+                sortino = _clean_metric(float(excess_returns.mean() / downside_std) * math.sqrt(trading_days_per_year))
 
         if equity.empty:
             max_dd = 0.0
+            ulcer = 0.0
         else:
             running_peak = equity.cummax()
             drawdown = (equity / running_peak) - 1.0
             max_dd = _clean_metric(abs(float(drawdown.min())) * 100)
+            ulcer = _compute_ulcer_index(equity)
+
+        calmar = _compute_calmar(cagr, max_dd)
 
         trades_df = closed_trades_df.copy()
         n_trades = int(len(trades_df))
@@ -210,8 +275,13 @@ def generate_report(pf, initial_equity: float, *, dividends_received: float = 0.
             avg_dur = float(trades_df["holding_days"].astype(float).mean())
             gains = float(pnl[pnl > 0].sum())
             losses = float(pnl[pnl < 0].sum())
-            pf_factor = gains / abs(losses) if losses < 0 else (float("inf") if gains > 0 else 0.0)
-            pf_factor = _clean_metric(pf_factor, default=0.0)
+            # Phase A.7 — conserver +inf comme sentinel au lieu de mapper à 0.
+            if losses < 0:
+                pf_factor = gains / abs(losses)
+            elif gains > 0:
+                pf_factor = float("inf")
+            else:
+                pf_factor = 0.0
         else:
             win_rate = 0.0
             avg_dur = 0.0
@@ -235,12 +305,15 @@ def generate_report(pf, initial_equity: float, *, dividends_received: float = 0.
                 if initial_equity
                 else 0.0
             ),
+            calmar_ratio=calmar,
+            ulcer_index=ulcer,
+            risk_free_rate=float(risk_free_rate),
         )
 
     final_val = _as_float(pf.final_value())
     total_ret = (final_val / initial_equity - 1) * 100
     n_days = len(pf.wrapper.index)
-    n_years = max(n_days / 252, 0.01)
+    n_years = max(n_days / trading_days_per_year, 0.01)
     cagr = ((final_val / initial_equity) ** (1 / n_years) - 1) * 100
     sharpe = _clean_metric(_as_float(pf.sharpe_ratio())) if hasattr(pf, "sharpe_ratio") else 0.0
     sortino = _clean_metric(_as_float(pf.sortino_ratio())) if hasattr(pf, "sortino_ratio") else 0.0
@@ -253,9 +326,19 @@ def generate_report(pf, initial_equity: float, *, dividends_received: float = 0.
     except Exception:
         avg_dur = 0.0
     try:
-        pf_factor = _clean_metric(_as_float(trades.profit_factor())) if n_trades > 0 else 0.0
+        # Phase A.7 — vbt expose +inf si pas de pertes : on ne mappe plus à 0.
+        raw_pf = _as_float(trades.profit_factor()) if n_trades > 0 else 0.0
+        pf_factor = raw_pf if not math.isnan(raw_pf) else 0.0
     except Exception:
         pf_factor = 0.0
+    # Calmar/Ulcer best-effort sur l'equity vbt si disponible.
+    ulcer = 0.0
+    try:
+        equity_for_metrics = _extract_equity_curve(pf)
+        ulcer = _compute_ulcer_index(equity_for_metrics)
+    except Exception:
+        ulcer = 0.0
+    calmar = _compute_calmar(cagr, max_dd)
     return BacktestReport(
         initial_equity=initial_equity, final_value=final_val,
         total_return_pct=total_ret, cagr_pct=cagr,
@@ -269,6 +352,9 @@ def generate_report(pf, initial_equity: float, *, dividends_received: float = 0.
             if initial_equity
             else 0.0
         ),
+        calmar_ratio=calmar,
+        ulcer_index=ulcer,
+        risk_free_rate=float(risk_free_rate),
     )
 
 
@@ -345,8 +431,13 @@ def save_report_json(
     artifacts: dict[str, str] | None = None,
     params: dict[str, object] | None = None,
     diagnostics: dict[str, object] | None = None,
+    run_metadata: dict[str, object] | None = None,
 ) -> Path:
-    """Sauvegarde un manifeste JSON des métriques et artefacts du backtest."""
+    """Sauvegarde un manifeste JSON des métriques et artefacts du backtest.
+
+    Phase A.4 : ajout du bloc ``run_metadata`` (git sha, python version,
+    dataset hash, seed, etc.) pour la reproductibilité.
+    """
     out = output_dir or ARTIFACTS_DIR
     out.mkdir(parents=True, exist_ok=True)
     filepath = out / "report.json"
@@ -355,8 +446,9 @@ def save_report_json(
         "artifacts": artifacts or {},
         "params": params or {},
         "diagnostics": diagnostics or {},
+        "run_metadata": run_metadata or {},
     }
-    filepath.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    filepath.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     LOGGER.info("Rapport JSON sauvegardé : %s", filepath)
     return filepath
 
