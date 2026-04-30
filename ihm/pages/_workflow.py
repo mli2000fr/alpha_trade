@@ -46,6 +46,15 @@ __all__ = [
     "_render_workflow_launcher",
 ]
 
+WORKFLOW_INCLUDE_ML_TRAIN_KEY = "pipeline_workflow_include_ml_train"
+
+
+def _workflow_mode_label(run: dict[str, object]) -> str:
+    command = run.get("command")
+    if isinstance(command, list) and any(str(token) == "ml_train" for token in command):
+        return "1 → 14 avec ML Train"
+    return "1 → 14 sans ML Train"
+
 
 def _merge_runs() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     active_runs = list_active_pipeline_runs()
@@ -123,8 +132,17 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
 
     with st.container(border=True):
         st.subheader("🚀 Workflow complet 1 → 14")
+        include_ml_train = st.checkbox(
+            "Inclure l'étape 9 — ML Train (Model Factory)",
+            value=bool(st.session_state.get(WORKFLOW_INCLUDE_ML_TRAIN_KEY, False)),
+            key=WORKFLOW_INCLUDE_ML_TRAIN_KEY,
+            disabled=bool(active_runs),
+            help="Par défaut, le workflow quotidien complet saute l'étape 9 pour éviter un retrain ML inutile chaque jour.",
+        )
+        effective_steps = 14 if include_ml_train else 13
         st.caption(
-            "Lance automatiquement les 14 étapes du pipeline dans l'ordre. "
+            f"Lance automatiquement le workflow quotidien 1 → 14 dans l'ordre, avec {effective_steps} étape(s) réellement exécutée(s) "
+            f"({'ML Train inclus' if include_ml_train else 'ML Train exclu'}). "
             "Les sous-runs restent historisés individuellement, et ce workflow fournit une vue globale avec logs consolidés."
         )
 
@@ -134,6 +152,7 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
             st.info(f"Workflow déjà actif : `{workflow_run.get('run_id', '')}`")
             st.progress(progress_fraction)
             st.caption(progress_label)
+            st.caption(f"Mode actif : {_workflow_mode_label(workflow_run)}")
         elif has_other_active_runs:
             st.warning("Un run pipeline unitaire est déjà en cours. Attendez sa fin avant de lancer le workflow complet.")
 
@@ -149,7 +168,7 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
         )
         if launch_clicked:
             try:
-                record = start_pipeline_workflow(options, db_config=db_config)
+                record = start_pipeline_workflow(options, db_config=db_config, include_ml_train=include_ml_train)
             except RuntimeError as exc:
                 st.warning(str(exc))
             else:
@@ -260,7 +279,7 @@ def _render_runtime_center() -> None:
             workflow_cols = st.columns(3)
             child_run_ids = selected_run.get("workflow_child_run_ids", [])
             child_runs_count = len(child_run_ids) if isinstance(child_run_ids, list) else 0
-            workflow_cols[0].metric("Type", "Workflow 1 → 14")
+            workflow_cols[0].metric("Mode", _workflow_mode_label(selected_run))
             workflow_cols[1].metric("Progression", f"{completed}/{total}")
             workflow_cols[2].metric("Sous-runs", child_runs_count)
             current_step_label = str(selected_run.get("workflow_current_step_label") or "").strip()

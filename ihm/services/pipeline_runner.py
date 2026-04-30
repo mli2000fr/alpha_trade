@@ -523,6 +523,12 @@ def get_pipeline_steps() -> tuple[PipelineStepDefinition, ...]:
     return PIPELINE_STEPS
 
 
+def get_pipeline_workflow_steps(*, include_ml_train: bool = True) -> tuple[PipelineStepDefinition, ...]:
+    if include_ml_train:
+        return PIPELINE_STEPS
+    return tuple(step for step in PIPELINE_STEPS if step.key != "ml_train")
+
+
 def get_pipeline_auxiliary_steps() -> tuple[PipelineStepDefinition, ...]:
     return PIPELINE_AUXILIARY_STEPS
 

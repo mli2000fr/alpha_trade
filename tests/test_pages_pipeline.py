@@ -1,4 +1,12 @@
-from ihm.pages import pipeline
+from ihm.pages import _workflow as workflow_page, pipeline
+
+
+class _DummyContainer:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 def test_pages_pipeline_importable():
@@ -86,5 +94,57 @@ def test_build_watcher_handoff_rows_exposes_post_execution_launch_guidance() -> 
     assert "juste après l'étape 12" in rows[0]["Quand l'utiliser"].lower()
     assert "run_execution_protection_watch.py" in rows[0]["Comment lancer"]
     assert any(row["Mode"] == "Task Scheduler" for row in rows)
+
+
+def test_workflow_launcher_starts_without_ml_train_by_default(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
+    monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
+    monkeypatch.setattr(workflow_page.st, "container", lambda **kwargs: _DummyContainer())
+    monkeypatch.setattr(workflow_page.st, "subheader", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "caption", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "info", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "warning", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "checkbox", lambda *args, **kwargs: False)
+    monkeypatch.setattr(workflow_page.st, "button", lambda *args, **kwargs: True)
+
+    def _fake_start_pipeline_workflow(options, **kwargs):
+        captured.update(kwargs)
+        return type("_Record", (), {"run_id": "wf-1"})()
+
+    monkeypatch.setattr(workflow_page, "start_pipeline_workflow", _fake_start_pipeline_workflow)
+
+    workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
+
+    assert captured["include_ml_train"] is False
+
+
+def test_workflow_launcher_can_include_ml_train(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
+    monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
+    monkeypatch.setattr(workflow_page.st, "container", lambda **kwargs: _DummyContainer())
+    monkeypatch.setattr(workflow_page.st, "subheader", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "caption", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "info", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "warning", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "checkbox", lambda *args, **kwargs: True)
+    monkeypatch.setattr(workflow_page.st, "button", lambda *args, **kwargs: True)
+
+    def _fake_start_pipeline_workflow(options, **kwargs):
+        captured.update(kwargs)
+        return type("_Record", (), {"run_id": "wf-2"})()
+
+    monkeypatch.setattr(workflow_page, "start_pipeline_workflow", _fake_start_pipeline_workflow)
+
+    workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
+
+    assert captured["include_ml_train"] is True
 
 

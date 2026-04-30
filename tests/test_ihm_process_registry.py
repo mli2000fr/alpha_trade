@@ -278,3 +278,59 @@ def test_pipeline_workflow_can_be_stopped(monkeypatch, tmp_path: Path) -> None:
     assert snapshot["workflow_completed_steps"] == 0
 
 
+def test_pipeline_workflow_skips_ml_train_when_not_requested(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("step_1", "1", "Step 1", "", "", "—"),
+        PipelineStepDefinition("ml_train", "9", "ML Train", "", "", "step_1"),
+        PipelineStepDefinition("step_10", "10", "Step 10", "", "", "ml_train"),
+    )
+    monkeypatch.setattr(registry, "get_pipeline_steps", lambda: steps)
+    monkeypatch.setattr(
+        registry,
+        "build_pipeline_command",
+        lambda step_key, options: [sys.executable, "-c", f"print('{step_key}', flush=True)"],
+    )
+
+    record = registry.start_pipeline_workflow(PipelineLaunchOptions(), include_ml_train=False)
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=120)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert snapshot["workflow_total_steps"] == 2
+    assert snapshot["command"] == ["step_1", "step_10"]
+    assert "sans étape 9" in str(snapshot["step_label"])
+    logs = registry.read_pipeline_logs(record.run_id, "all")
+    assert "step_1" in logs
+    assert "step_10" in logs
+    assert "ml_train" not in logs
+
+
+def test_pipeline_workflow_includes_ml_train_when_requested(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("step_1", "1", "Step 1", "", "", "—"),
+        PipelineStepDefinition("ml_train", "9", "ML Train", "", "", "step_1"),
+        PipelineStepDefinition("step_10", "10", "Step 10", "", "", "ml_train"),
+    )
+    monkeypatch.setattr(registry, "get_pipeline_steps", lambda: steps)
+    monkeypatch.setattr(
+        registry,
+        "build_pipeline_command",
+        lambda step_key, options: [sys.executable, "-c", f"print('{step_key}', flush=True)"],
+    )
+
+    record = registry.start_pipeline_workflow(PipelineLaunchOptions(), include_ml_train=True)
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=120)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert snapshot["workflow_total_steps"] == 3
+    assert snapshot["command"] == ["step_1", "ml_train", "step_10"]
+    assert "avec étape 9" in str(snapshot["step_label"])
+    logs = registry.read_pipeline_logs(record.run_id, "all")
+    assert "ml_train" in logs
+
+

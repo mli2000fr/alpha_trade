@@ -23,7 +23,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ DEFAULT_RUNS_RETENTION_DAYS = 30
 from ihm.services.pipeline_runner import (
     PROJECT_ROOT,
     PipelineLaunchOptions,
+    PipelineStepDefinition,
     build_pipeline_command,
     build_subprocess_env,
     format_command_for_display,
@@ -118,6 +119,24 @@ class _ManagedWorkflow:
 _REGISTRY_LOCK = threading.Lock()
 _ACTIVE_RUNS: dict[str, _ManagedRun] = {}
 _ACTIVE_WORKFLOWS: dict[str, _ManagedWorkflow] = {}
+
+
+def _resolve_workflow_steps(*, include_ml_train: bool) -> tuple[PipelineStepDefinition, ...]:
+    steps = cast(tuple[PipelineStepDefinition, ...], get_pipeline_steps())
+    if include_ml_train:
+        return steps
+    return tuple(step for step in steps if step.key != "ml_train")
+
+
+def _workflow_step_label(*, include_ml_train: bool) -> str:
+    if include_ml_train:
+        return "Workflow complet 1 → 14 (avec étape 9 — ML Train)"
+    return "Workflow complet 1 → 14 (sans étape 9 — ML Train)"
+
+
+def _workflow_command_display(*, include_ml_train: bool, total_steps: int) -> str:
+    ml_mode = "avec ML Train" if include_ml_train else "sans ML Train"
+    return f"Workflow séquentiel Pipeline 1 → 14 | {ml_mode} | {total_steps} étape(s) exécutée(s)"
 
 
 def _ensure_storage() -> None:
@@ -428,12 +447,14 @@ def _run_pipeline_workflow(
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
+    include_ml_train: bool = True,
 ) -> None:
-    steps = get_pipeline_steps()
+    steps = cast(tuple[PipelineStepDefinition, ...], _resolve_workflow_steps(include_ml_train=include_ml_train))
     total_steps = len(steps)
 
     try:
-        _append_workflow_event(managed, f"Démarrage du workflow complet ({total_steps} étapes).")
+        workflow_mode = "avec étape 9 — ML Train" if include_ml_train else "sans étape 9 — ML Train"
+        _append_workflow_event(managed, f"Démarrage du workflow complet ({total_steps} étapes exécutées, {workflow_mode}).")
         _update_workflow_record(managed, status="running", workflow_total_steps=total_steps, workflow_completed_steps=0)
 
         completed_steps = 0
@@ -657,6 +678,7 @@ def start_pipeline_workflow(
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
+    include_ml_train: bool = True,
 ) -> PipelineRunRecord:
     """Démarre un workflow séquentiel complet en arrière-plan."""
     if list_active_pipeline_runs():
@@ -673,13 +695,14 @@ def start_pipeline_workflow(
     stderr_path.write_text("", encoding="utf-8")
     combined_path.write_text("", encoding="utf-8")
 
-    steps = get_pipeline_steps()
+    steps = cast(tuple[PipelineStepDefinition, ...], _resolve_workflow_steps(include_ml_train=include_ml_train))
+    workflow_label = _workflow_step_label(include_ml_train=include_ml_train)
     record = PipelineRunRecord(
         run_id=run_id,
         step_key="pipeline_workflow",
-        step_label=f"Workflow complet 1 → {len(steps)}",
+        step_label=workflow_label,
         command=[step.key for step in steps],
-        command_display=f"Workflow séquentiel Pipeline 1 → {len(steps)}",
+        command_display=_workflow_command_display(include_ml_train=include_ml_train, total_steps=len(steps)),
         account_id=options.account_id,
         status="running",
         executed_at=datetime.now().isoformat(timespec="seconds"),
@@ -695,7 +718,13 @@ def start_pipeline_workflow(
     managed: _ManagedWorkflow
 
     def _workflow_target() -> None:
-        _run_pipeline_workflow(managed, options, db_config=db_config, timeout_seconds=timeout_seconds)
+        _run_pipeline_workflow(
+            managed,
+            options,
+            db_config=db_config,
+            timeout_seconds=timeout_seconds,
+            include_ml_train=include_ml_train,
+        )
 
     thread = threading.Thread(target=_workflow_target, daemon=True, name=f"pipeline-workflow-{run_id}")
     managed = _ManagedWorkflow(
