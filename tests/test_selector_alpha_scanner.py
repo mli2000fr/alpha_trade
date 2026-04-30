@@ -516,6 +516,27 @@ def test_apply_filters_ignores_stale_quotes_for_spread_filter() -> None:
     assert stats["rejected_spread"] == 1
 
 
+def test_merge_optional_symbol_overlays_tolerates_quotes_without_quote_timestamp() -> None:
+    scanner = _make_scanner()
+    merged_df = pd.DataFrame(
+        [
+            {"symbol": "AAPL", "spread_bps": pd.NA},
+        ]
+    )
+    quotes_df = pd.DataFrame(
+        [
+            {"symbol": "AAPL", "quote_date": pd.Timestamp("2026-04-30"), "spread_bps": 12.0},
+        ]
+    )
+    earnings_df = pd.DataFrame()
+
+    enriched = scanner._merge_optional_symbol_overlays(merged_df, quotes_df, earnings_df)
+
+    assert enriched["symbol"].tolist() == ["AAPL"]
+    assert float(enriched.loc[0, "spread_bps"]) == pytest.approx(12.0)
+    assert "quote_timestamp" not in enriched.columns or pd.isna(enriched.loc[0, "quote_timestamp"])
+
+
 def test_apply_filters_market_cap_ttl_rejects_stale_rows() -> None:
     """Phase 3.3.d — stale market_cap_refreshed_at doit être rejeté quand TTL actif."""
     scanner = _make_scanner(

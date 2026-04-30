@@ -512,7 +512,10 @@ def merge_optional_symbol_overlays(
 
     if not quotes_df.empty:
         # Phase 3.3.c — propager bid_size/ask_size pour le filtre spread IEX.
-        quote_columns = ["symbol", "quote_date", "quote_timestamp", "spread_bps"]
+        quote_columns = ["symbol", "spread_bps"]
+        for metadata_col in ("quote_date", "quote_timestamp"):
+            if metadata_col in quotes_df.columns:
+                quote_columns.append(metadata_col)
         for optional_col in ("bid_size", "ask_size"):
             if optional_col in quotes_df.columns:
                 quote_columns.append(optional_col)

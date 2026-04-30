@@ -579,11 +579,13 @@ class AlphaScanner:
         # Phase 3.3.c — bid_size/ask_size requis pour le relâchement IEX.
         available_columns = self._get_stock_quote_snapshots_columns()
         select_extra: list[str] = []
+        if "quote_timestamp" in available_columns:
+            select_extra.append("q.quote_timestamp")
         if "bid_size" in available_columns:
             select_extra.append("q.bid_size")
         if "ask_size" in available_columns:
             select_extra.append("q.ask_size")
-        empty_columns = ["symbol", "quote_date", "spread_bps", "bid_size", "ask_size"]
+        empty_columns = ["symbol", "quote_date", "quote_timestamp", "spread_bps", "bid_size", "ask_size"]
         if not symbols:
             return pd.DataFrame(columns=empty_columns)
 
@@ -617,7 +619,7 @@ class AlphaScanner:
         except SQLAlchemyError:
             LOGGER.warning("Lecture stock_quote_snapshots indisponible; filtre de spread desactive.")
             return pd.DataFrame(columns=empty_columns)
-        for column in ("bid_size", "ask_size"):
+        for column in ("quote_timestamp", "bid_size", "ask_size"):
             if column not in quotes_df.columns:
                 quotes_df[column] = pd.NA
         return quotes_df if not quotes_df.empty else pd.DataFrame(columns=empty_columns)
