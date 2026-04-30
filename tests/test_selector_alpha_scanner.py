@@ -470,6 +470,52 @@ def test_apply_filters_iex_relaxation_rescues_thick_book() -> None:
     assert stats["rejected_spread"] == 2
 
 
+def test_apply_filters_ignores_stale_quotes_for_spread_filter() -> None:
+    """Des snapshots quotes manifestement stales ne doivent pas vider l'univers."""
+    scanner = _make_scanner(
+        AlphaScannerConfig(
+            max_spread_bps=40.0,
+            max_spread_bps_iex=65.0,
+            min_quote_size=100.0,
+        )
+    )
+    merged_df = pd.DataFrame(
+        [
+            {
+                "symbol": "STALE_OK",
+                "history_days": 300,
+                "latest_close": 50.0,
+                "avg_dollar_volume_20d": 100_000_000.0,
+                "asset_class": "us_equity",
+                "tradable": True,
+                "spread_bps": 1500.0,
+                "bid_size": 100.0,
+                "ask_size": 100.0,
+                "quote_date": pd.Timestamp("2026-04-30"),
+                "quote_timestamp": pd.Timestamp("2026-04-29 20:00:00"),
+            },
+            {
+                "symbol": "FRESH_BAD",
+                "history_days": 300,
+                "latest_close": 50.0,
+                "avg_dollar_volume_20d": 100_000_000.0,
+                "asset_class": "us_equity",
+                "tradable": True,
+                "spread_bps": 1500.0,
+                "bid_size": 100.0,
+                "ask_size": 100.0,
+                "quote_date": pd.Timestamp("2026-04-30"),
+                "quote_timestamp": pd.Timestamp("2026-04-30 20:00:00"),
+            },
+        ]
+    )
+
+    filtered, stats = scanner._apply_filters_with_stats(merged_df)
+
+    assert filtered["symbol"].tolist() == ["STALE_OK"]
+    assert stats["rejected_spread"] == 1
+
+
 def test_apply_filters_market_cap_ttl_rejects_stale_rows() -> None:
     """Phase 3.3.d — stale market_cap_refreshed_at doit être rejeté quand TTL actif."""
     scanner = _make_scanner(

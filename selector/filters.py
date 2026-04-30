@@ -268,6 +268,21 @@ def apply_filters_with_stats(
         else:
             spread_numeric = pd.to_numeric(filtered["spread_bps"], errors="coerce")
             strict_mask = spread_numeric.notna() & (spread_numeric <= config.max_spread_bps)
+            stale_quote_mask = pd.Series(False, index=filtered.index)
+            if "quote_timestamp" in filtered.columns and "quote_date" in filtered.columns:
+                quote_timestamps = pd.to_datetime(filtered["quote_timestamp"], errors="coerce", utc=False)
+                quote_dates = pd.to_datetime(filtered["quote_date"], errors="coerce", utc=False)
+                stale_quote_mask = (
+                    quote_timestamps.notna()
+                    & quote_dates.notna()
+                    & (quote_timestamps.dt.normalize() < quote_dates.dt.normalize())
+                )
+                stale_quote_count = int(stale_quote_mask.sum())
+                if stale_quote_count:
+                    LOGGER.info(
+                        "Filtre spread | quotes stale ignorees=%s (quote_timestamp < quote_date)",
+                        stale_quote_count,
+                    )
 
             if (
                 config.max_spread_bps_iex is not None
@@ -295,9 +310,9 @@ def apply_filters_with_stats(
                         config.min_quote_size,
                         rejected_spread_iex_relaxed,
                     )
-                filtered = filtered[strict_mask | iex_mask]
+                filtered = filtered[strict_mask | iex_mask | stale_quote_mask]
             else:
-                filtered = filtered[strict_mask]
+                filtered = filtered[strict_mask | stale_quote_mask]
     after_spread = len(filtered)
 
     if config.earnings_blackout_days is not None:
@@ -497,12 +512,17 @@ def merge_optional_symbol_overlays(
 
     if not quotes_df.empty:
         # Phase 3.3.c — propager bid_size/ask_size pour le filtre spread IEX.
-        quote_columns = ["symbol", "spread_bps"]
+        quote_columns = ["symbol", "quote_date", "quote_timestamp", "spread_bps"]
         for optional_col in ("bid_size", "ask_size"):
             if optional_col in quotes_df.columns:
                 quote_columns.append(optional_col)
         latest_quotes = quotes_df[quote_columns].drop_duplicates(subset=["symbol"], keep="last")
         enriched = enriched.merge(latest_quotes, on="symbol", how="left", suffixes=("", "_quote"))
+        for metadata_col in ("quote_date", "quote_timestamp"):
+            quote_col = f"{metadata_col}_quote"
+            if quote_col in enriched.columns:
+                enriched[metadata_col] = enriched[quote_col].combine_first(enriched.get(metadata_col))
+                enriched = enriched.drop(columns=[quote_col])
         if "spread_bps_quote" in enriched.columns:
             enriched["spread_bps"] = pd.to_numeric(enriched["spread_bps_quote"], errors="coerce").combine_first(
                 pd.to_numeric(enriched.get("spread_bps"), errors="coerce")

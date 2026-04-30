@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from dataIntegrityEngine.sync_latest_quotes import _parse_alpaca_timestamp
+from dataIntegrityEngine import sync_latest_quotes
+from dataIntegrityEngine.sync_latest_quotes import _market_date_from_timestamp, _parse_alpaca_timestamp
 
 
 class TestParseAlpacaTimestamp:
@@ -53,4 +54,42 @@ class TestParseAlpacaTimestamp:
         with caplog.at_level(logging.WARNING):
             assert _parse_alpaca_timestamp("not-a-date") is None
         assert any("quote_timestamp invalide" in rec.message for rec in caplog.records)
+
+
+class TestMarketDateFromTimestamp:
+    def test_uses_market_date_new_york_from_utc_timestamp(self):
+        quote_timestamp = datetime(2026, 4, 29, 20, 0, 0)
+        assert _market_date_from_timestamp(quote_timestamp) == datetime(2026, 4, 29, 16, 0, 0).date()
+
+    def test_midnight_utc_can_still_belong_to_previous_market_day(self):
+        quote_timestamp = datetime(2026, 4, 30, 0, 30, 0)
+        assert _market_date_from_timestamp(quote_timestamp) == datetime(2026, 4, 29, 20, 30, 0).date()
+
+
+def test_sync_latest_quotes_derives_quote_date_from_alpaca_timestamp(monkeypatch):
+    captured_rows: list[dict[str, object]] = []
+
+    monkeypatch.setattr(sync_latest_quotes, "list_active_tradable_symbols", lambda limit=None: ["AAPL"])
+    monkeypatch.setattr(
+        sync_latest_quotes,
+        "fetch_latest_quotes",
+        lambda symbols, session=None: {
+            "AAPL": {
+                "bp": 100.0,
+                "ap": 100.5,
+                "bs": 10,
+                "as": 12,
+                "t": "2026-04-29T20:00:00Z",
+            }
+        },
+    )
+    monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: captured_rows.extend(rows) or len(rows))
+
+    summary = sync_latest_quotes.sync_latest_quotes(limit=1, batch_size=1)
+
+    assert summary == {"symbols": 1, "rows_upserted": 1}
+    assert len(captured_rows) == 1
+    assert captured_rows[0]["quote_timestamp"] == datetime(2026, 4, 29, 20, 0, 0)
+    assert captured_rows[0]["quote_date"] == datetime(2026, 4, 29, 16, 0, 0).date()
+
 

@@ -6,6 +6,7 @@ import logging
 import re
 from datetime import date, datetime, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -17,6 +18,7 @@ from service.alpaca.clientAlpaca import fetch_latest_quotes
 LOGGER = logging.getLogger(__name__)
 DEFAULT_BATCH_SIZE = 200
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+MARKET_TZ = ZoneInfo("America/New_York")
 
 # Format Alpaca latest quote : RFC 3339 / ISO 8601 avec suffixe `Z` (UTC) et
 # fraction de seconde jusqu'à 9 chiffres (nanosecondes). MySQL DATETIME(6) ne
@@ -75,6 +77,27 @@ def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _market_date_from_timestamp(
+    quote_timestamp: datetime | None,
+    *,
+    fallback_utc_now: datetime | None = None,
+) -> date:
+    """Retourne la date de marché NY associée à une quote Alpaca.
+
+    ``quote_timestamp`` est stocké en UTC naïf pour compatibilité MySQL. On le
+    ré-interprète donc comme UTC puis on le convertit en ``America/New_York``
+    avant d'en extraire la date de session. Si le timestamp est absent, on
+    replie sur ``fallback_utc_now`` (ou maintenant UTC) afin d'éviter un
+    ``quote_date`` dépendant du fuseau local de la machine.
+    """
+    effective_utc = quote_timestamp or fallback_utc_now or _utc_now_naive()
+    if effective_utc.tzinfo is None:
+        effective_utc = effective_utc.replace(tzinfo=timezone.utc)
+    else:
+        effective_utc = effective_utc.astimezone(timezone.utc)
+    return effective_utc.astimezone(MARKET_TZ).date()
+
+
 
 def _build_run_id(prefix: str) -> str:
     return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
@@ -109,6 +132,7 @@ def sync_latest_quotes(limit: int | None = None, batch_size: int = DEFAULT_BATCH
 
     session = requests.Session()
     try:
+        run_utc_now = _utc_now_naive()
         for start in range(0, len(symbols), batch_size):
             batch = symbols[start:start + batch_size]
             payload = fetch_latest_quotes(batch, session=session)
@@ -119,11 +143,12 @@ def sync_latest_quotes(limit: int | None = None, batch_size: int = DEFAULT_BATCH
                     continue
                 bid_price = float(quote["bp"]) if quote.get("bp") is not None else None
                 ask_price = float(quote["ap"]) if quote.get("ap") is not None else None
+                quote_timestamp = _parse_alpaca_timestamp(quote.get("t"))
                 rows.append(
                     {
                         "symbol": symbol,
-                        "quote_date": date.today(),
-                        "quote_timestamp": _parse_alpaca_timestamp(quote.get("t")),
+                        "quote_date": _market_date_from_timestamp(quote_timestamp, fallback_utc_now=run_utc_now),
+                        "quote_timestamp": quote_timestamp,
                         "bid_price": bid_price,
                         "ask_price": ask_price,
                         "bid_size": float(quote["bs"]) if quote.get("bs") is not None else None,
