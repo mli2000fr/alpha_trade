@@ -210,8 +210,14 @@ class SymbolDataModule(L.LightningDataModule):
         self.n_features: int = len(self._feature_cols)
         self.cross_sectional_feature_columns: list[str] = list(CROSS_SECTIONAL_FEATURE_COLUMNS) if data_cfg.enable_cross_sectional_features else []
         self.cross_sectional_diagnostics: dict[str, object] = {}
-        self._num_workers = min(os.cpu_count() or 0, 4)
         self._pin_memory = torch.cuda.is_available()
+        default_num_workers = min(os.cpu_count() or 0, 4)
+        self._force_single_process_dataloader = os.name == "nt" and self._pin_memory
+        self._num_workers = 0 if self._force_single_process_dataloader else default_num_workers
+        if self._force_single_process_dataloader:
+            LOGGER.info(
+                "windows+cuda detected -> forcing dataloader num_workers=0 persistent_workers=False to avoid teardown crashes"
+            )
 
     def setup(self, stage: Optional[str] = None) -> None:
         df = prepare_symbol_frame(

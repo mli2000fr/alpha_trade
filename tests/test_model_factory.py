@@ -362,6 +362,19 @@ class TestGpuExecutionBehavior:
 
         assert dm.train_dataloader().pin_memory is True
 
+    def test_datamodule_forces_num_workers_zero_on_windows_with_cuda(self, monkeypatch):
+        monkeypatch.setattr("modelFactory.dataset.torch.cuda.is_available", lambda: True)
+        monkeypatch.setattr("modelFactory.dataset.os.name", "nt")
+        from modelFactory.dataset import SymbolDataModule
+
+        bars = _make_bars(600)
+        dm = SymbolDataModule(bars, DataConfig(sequence_length=20, forecast_horizon=5, min_history_days=100), ModelConfig(batch_size=16))
+        dm.setup()
+
+        train_loader = dm.train_dataloader()
+        assert train_loader.num_workers == 0
+        assert train_loader.pin_memory is True
+
     def test_orchestrator_runs_sequentially_when_gpu_available_in_auto_mode(self, monkeypatch):
         from modelFactory.orchestrator import run_training_batch
 
