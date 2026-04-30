@@ -500,17 +500,16 @@ class BacktestEngine:
         cand_df = pd.DataFrame(candidate_rows)
         sizing_weights = risk.sizing.compute_weights(cand_df, cfg.max_positions)
 
-        # Snapshot des expositions sectorielles courantes (Phase C.4).
+        # Phase E.3.b — snapshot des expositions sectorielles courantes via
+        # la primitive testable `snapshot_sector_exposure` (Phase C.4).
         sector_exposure_pct: dict[str, float] = defaultdict(float)
         if risk.sectoral_cap.enabled and current_equity > 0:
-            for pos in state.positions.values():
-                px = (
-                    float(close.at[trade_day, pos.symbol])
-                    if pos.symbol in close.columns
-                    else pos.entry_price
+            from backtesting.risk_overlay import snapshot_sector_exposure
+            sector_exposure_pct.update(
+                snapshot_sector_exposure(
+                    state.positions, close, trade_day, sector_map, current_equity
                 )
-                sec = pos.sector or sector_map.get(pos.symbol, "Unknown")
-                sector_exposure_pct[sec] += (pos.quantity * px) / current_equity
+            )
 
         for candidate_pos, row in enumerate(candidate_rows):
             symbol = str(row["symbol"])

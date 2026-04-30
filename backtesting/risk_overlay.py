@@ -129,6 +129,54 @@ def compute_portfolio_vol_scaler(
     return float(np.clip(scaler, floor, cap))
 
 
+def snapshot_sector_exposure(
+    positions: dict,
+    close: pd.DataFrame,
+    trade_day: pd.Timestamp,
+    sector_map: dict,
+    current_equity: float,
+) -> dict:
+    """Phase E.3.b — calcule l'exposition courante par secteur (en % equity).
+
+    Extrait de ``simulator._try_open_entries`` pour rendre la logique
+    testable sans construire un ``BacktestEngine`` complet. Tolérant aux
+    symboles absents de ``close.columns`` : retombe sur ``entry_price``.
+
+    Parameters
+    ----------
+    positions : dict[str, position-like]
+        Doit exposer ``symbol``, ``quantity``, ``entry_price``, ``sector``.
+    close : pd.DataFrame
+        Pivot OHLCV ``close`` indexé par date, colonnes = symboles.
+    trade_day : pd.Timestamp
+        Jour de référence pour le mark-to-market.
+    sector_map : dict[str, str]
+        Fallback secteur si la position n'en porte pas.
+    current_equity : float
+        Equity courante (cash + positions). 0 → snapshot vide.
+
+    Returns
+    -------
+    dict[str, float] : exposition par secteur (fraction equity).
+    """
+    from collections import defaultdict
+
+    exposure: dict[str, float] = defaultdict(float)
+    if current_equity <= 0:
+        return exposure
+    for pos in positions.values():
+        symbol = getattr(pos, "symbol", None)
+        if symbol is None:
+            continue
+        try:
+            px = float(close.at[trade_day, symbol]) if symbol in close.columns else float(pos.entry_price)
+        except (KeyError, ValueError):
+            px = float(getattr(pos, "entry_price", 0.0))
+        sector = getattr(pos, "sector", None) or sector_map.get(symbol, "Unknown")
+        exposure[sector] += (float(pos.quantity) * px) / current_equity
+    return exposure
+
+
 @dataclass(slots=True)
 class RiskOverlayConfig:
     """Bundle des surcouches risk Phase C."""
@@ -157,5 +205,6 @@ __all__ = [
     "SizingConfig",
     "SizingMode",
     "compute_portfolio_vol_scaler",
+    "snapshot_sector_exposure",
 ]
 
