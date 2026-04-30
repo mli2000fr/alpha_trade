@@ -1,4 +1,12 @@
-from ihm.pages import pipeline
+from ihm.pages import _workflow as workflow_page, pipeline
+
+
+class _DummyContainer:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 def test_pages_pipeline_importable():
@@ -12,68 +20,131 @@ def test_pipeline_page_no_longer_exposes_legacy_strict_preset_preferences() -> N
     assert not hasattr(pipeline, "ALPHA_SCANNER_PRESET_PREFS_KEY")
 
 
-def test_format_selector_dependency_indicator_reports_quotes_health() -> None:
-    health = {
-        "active_symbols": 100,
-        "quotes": {"latest_date": "2026-04-22", "symbols_covered": 80, "coverage_ratio": 0.8, "coverage_pct": 80.0},
-        "earnings": {"latest_date": "2026-05-15", "max_date": "2026-05-15", "symbols_covered": 40, "coverage_ratio": 0.4, "coverage_pct": 40.0},
-    }
-
-    label = pipeline._format_selector_dependency_indicator("sync_latest_quotes", health)
-
-    assert label is not None
-    assert "stock_quote_snapshots" in label
-    assert "🟢" in label
-    assert "latest_date=2026-04-22" in label
-    assert "couverture=80.0%" in label
-    assert "N symboles=80/100" in label
-
-
-def test_build_alpha_scanner_dependency_warning_when_dependencies_are_incomplete() -> None:
-    health = {
-        "active_symbols": 100,
-        "quotes": {"latest_date": None, "symbols_covered": 0, "coverage_ratio": 0.0, "coverage_pct": 0.0},
-        "earnings": {"latest_date": None, "max_date": None, "symbols_covered": 0, "coverage_ratio": 0.0, "coverage_pct": 0.0},
-    }
-
-    warning = pipeline._build_alpha_scanner_dependency_warning(health)
-
-    assert warning is not None
-    severity, message = warning
-    assert severity == "error"
-    assert "Alpha Scanner" in message
-    assert "spread_bps" in message
-    assert "earnings_blackout" in message
-    assert "critiques" in message
-
-
-def test_build_selector_dependency_diagnostic_exposes_reason_and_fix_command() -> None:
-    diagnostic = pipeline._build_selector_dependency_diagnostic(
-        "quotes",
-        {"latest_date": None, "symbols_covered": 0, "coverage_ratio": 0.0, "coverage_pct": 0.0},
-        100,
+def test_build_history_rows_uses_public_run_summary_caption_helper() -> None:
+    history_df = pipeline._build_history_rows(
+        [
+            {
+                "run_id": "wf-1",
+                "run_kind": "workflow",
+                "step_key": "pipeline_workflow",
+                "step_label": "Workflow complet",
+                "status": "completed",
+                "workflow_completed_steps": 2,
+                "workflow_total_steps": 3,
+                "duration_seconds": 12,
+                "stdout_lines": 4,
+                "stderr_lines": 0,
+                "run_summary": {
+                    "workflow_steps_with_summary": 2,
+                    "targeted_symbols": 6,
+                    "successful_symbols": 5,
+                },
+            }
+        ]
     )
 
-    assert diagnostic is not None
-    assert diagnostic["status"] == "error"
-    assert "stock_quote_snapshots" in str(diagnostic["reason"])
-    assert str(diagnostic["command"]) == "python -m dataIntegrityEngine.sync_latest_quotes"
-    assert str(diagnostic["step_key"]) == "sync_latest_quotes"
-    assert "Lancer Sync Latest Quotes" in str(diagnostic["action_label"])
+    row = history_df.iloc[0].to_dict()
+    assert row["type"] == "workflow"
+    assert row["progression"] == "2/3"
+    assert "étapes résumées=2" in str(row["résumé métier"])
 
 
-def test_build_alpha_scanner_dependency_diagnostics_lists_fix_commands() -> None:
-    health = {
-        "active_symbols": 100,
-        "quotes": {"latest_date": None, "symbols_covered": 0, "coverage_ratio": 0.0, "coverage_pct": 0.0},
-        "earnings": {"latest_date": None, "max_date": None, "symbols_covered": 0, "coverage_ratio": 0.0, "coverage_pct": 0.0},
+def test_alpha_scanner_dependency_block_reason_requires_both_dependencies_red() -> None:
+    diagnostic = {
+        "all_red": True,
+        "dependencies": {
+            "sync_latest_quotes": {"status": "red"},
+            "sync_earnings_calendar": {"status": "red"},
+        },
     }
 
-    diagnostics = pipeline._build_alpha_scanner_dependency_diagnostics(health)
+    reason = pipeline._alpha_scanner_dependency_block_reason(diagnostic)
 
-    assert len(diagnostics) == 2
-    commands = {str(item["command"]) for item in diagnostics}
-    assert "python -m dataIntegrityEngine.sync_latest_quotes" in commands
-    assert "python -m dataIntegrityEngine.sync_earnings_calendar" in commands
+    assert reason is not None
+    assert "Alpha Scanner" in reason
+
+
+def test_alpha_scanner_dependency_block_reason_is_none_when_not_all_red() -> None:
+    diagnostic = {
+        "all_red": False,
+        "dependencies": {
+            "sync_latest_quotes": {"status": "green"},
+            "sync_earnings_calendar": {"status": "red"},
+        },
+    }
+
+    assert pipeline._alpha_scanner_dependency_block_reason(diagnostic) is None
+
+
+def test_pipeline_page_exposes_clear_screener_vs_alpha_scanner_labels() -> None:
+    assert "diagnostic dépendances alpha scanner" in pipeline.ALPHA_SCANNER_DIAGNOSTIC_THRESHOLDS_TITLE.lower()
+    assert "sélection finale stricte" in pipeline.ALPHA_SCANNER_PARAMS_TITLE.lower()
+    assert "préfiltrage large" in pipeline.SCREENER_PARAMS_CAPTION.lower()
+
+
+def test_build_watcher_doc_reference_exposes_explicit_workspace_link() -> None:
+    assert hasattr(pipeline, "render_watcher_documentation_panel")
+
+
+def test_build_watcher_handoff_rows_exposes_post_execution_launch_guidance() -> None:
+    rows = pipeline._build_watcher_handoff_rows("acct-1")
+
+    assert len(rows) >= 4
+    assert rows[0]["Mode"] == "Run once (CLI local)"
+    assert "juste après l'étape 12" in rows[0]["Quand l'utiliser"].lower()
+    assert "run_execution_protection_watch.py" in rows[0]["Comment lancer"]
+    assert any(row["Mode"] == "Task Scheduler" for row in rows)
+
+
+def test_workflow_launcher_starts_without_ml_train_by_default(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
+    monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
+    monkeypatch.setattr(workflow_page.st, "container", lambda **kwargs: _DummyContainer())
+    monkeypatch.setattr(workflow_page.st, "subheader", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "caption", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "info", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "warning", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "checkbox", lambda *args, **kwargs: False)
+    monkeypatch.setattr(workflow_page.st, "button", lambda *args, **kwargs: True)
+
+    def _fake_start_pipeline_workflow(options, **kwargs):
+        captured.update(kwargs)
+        return type("_Record", (), {"run_id": "wf-1"})()
+
+    monkeypatch.setattr(workflow_page, "start_pipeline_workflow", _fake_start_pipeline_workflow)
+
+    workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
+
+    assert captured["include_ml_train"] is False
+
+
+def test_workflow_launcher_can_include_ml_train(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
+    monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
+    monkeypatch.setattr(workflow_page.st, "container", lambda **kwargs: _DummyContainer())
+    monkeypatch.setattr(workflow_page.st, "subheader", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "caption", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "info", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "warning", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "checkbox", lambda *args, **kwargs: True)
+    monkeypatch.setattr(workflow_page.st, "button", lambda *args, **kwargs: True)
+
+    def _fake_start_pipeline_workflow(options, **kwargs):
+        captured.update(kwargs)
+        return type("_Record", (), {"run_id": "wf-2"})()
+
+    monkeypatch.setattr(workflow_page, "start_pipeline_workflow", _fake_start_pipeline_workflow)
+
+    workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
+
+    assert captured["include_ml_train"] is True
 
 

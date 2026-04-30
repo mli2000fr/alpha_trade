@@ -128,7 +128,8 @@ Ce fichier encapsule la plomberie SQL du sanitizeur :
 - chargement des audits,
 - récupération des bornes de dates,
 - upsert dans `stock_bars_daily`,
-- écriture dans `cleaning_audit_log`.
+- écriture dans `cleaning_audit_latest` (snapshot courant),
+- écriture append-only dans `cleaning_audit_runs` (historique des runs).
 
 ---
 
@@ -206,3 +207,54 @@ Ordre conseillé :
 python -c 'from database.connection import get_sqlalchemy_engine; print(get_sqlalchemy_engine())'
 Get-ChildItem "C:\Users\PC MLI\PycharmProjects\alpha_trade\database\sql"
 ```
+
+---
+
+## 9. Migrations Alembic
+
+> Phase 1 du refactor (`prompt/refactor/plan.md`) — Alembic devient progressivement
+> la **source de vérité** du schéma SQL ; les fichiers `database/sql/*.sql` restent
+> utiles pour les installations *from scratch* mais doivent être maintenus en
+> miroir des migrations.
+
+### Lancer une migration
+
+```powershell
+$env:LOGIN_DB = "..."; $env:PASSWORD_DB = "..."
+alembic upgrade head
+```
+
+### Ajouter une nouvelle migration
+
+1. Choisir un identifiant `NNNN_short_description` cohérent avec la dernière
+   révision listée dans `alembic/versions/`.
+2. Créer le fichier `alembic/versions/NNNN_<slug>.py` avec :
+
+   ```python
+   from alembic import op
+   import sqlalchemy as sa
+
+   revision = "NNNN_short_description"
+   down_revision = "<previous_revision_id>"
+   branch_labels = None
+   depends_on = None
+
+   def upgrade() -> None:
+       # idempotent : utiliser inspect() pour vérifier l'existence
+       ...
+
+   def downgrade() -> None:
+       ...
+   ```
+
+3. Mettre à jour le fichier `database/sql/<domain>/<table>.sql` correspondant
+   pour qu'une installation *from scratch* obtienne le même schéma.
+4. Ajouter / mettre à jour les tests d'intégration (`tests/test_database_*.py`).
+5. Lancer `alembic upgrade head` puis `pytest -q --no-cov`.
+
+### Politique de prix (Phase 1)
+
+La convention canonique du projet est `data_adjustment = 'split'`
+(les splits sont neutralisés, les dividendes sont comptabilisés via le ledger
+`portfolio_cash_ledger`). La contrainte SQL `chk_bars_adj` /  `chk_daily_adj`
+matérialise cette règle sur `stock_bars` / `stock_bars_daily`.

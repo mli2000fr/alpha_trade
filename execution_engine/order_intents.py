@@ -18,7 +18,7 @@ def _idempotency_key(run_id: str, symbol: str, role: str, side: str, qty: float,
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _alpaca_client_order_id(exec_run_id: str, symbol: str, role: str, side: str, qty: float) -> str:
+def _submission_key(exec_run_id: str, symbol: str, role: str, side: str, qty: float) -> str:
     """
     client_order_id unique par execution run envoye a Alpaca.
     Inclut exec_run_id pour eviter le 403 'client_order_id already in use'
@@ -28,6 +28,42 @@ def _alpaca_client_order_id(exec_run_id: str, symbol: str, role: str, side: str,
     """
     raw = f"{exec_run_id}|{symbol}|{role}|{side}|{qty}"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def _alpaca_client_order_id(exec_run_id: str, symbol: str, role: str, side: str, qty: float) -> str:
+    return _submission_key(exec_run_id, symbol, role, side, qty)
+
+
+def resolve_initial_stop_price(reference_price: float, target: ExecutionTarget | None = None) -> float | None:
+    """Détermine un stop initial broker-side exploitable à partir des champs risque."""
+    if target is None or reference_price <= 0:
+        return None
+
+    if target.stop_price_initial is not None and 0 < target.stop_price_initial < reference_price:
+        return round(float(target.stop_price_initial), 2)
+
+    if target.risk_per_share is not None and target.risk_per_share > 0:
+        derived_stop = reference_price - float(target.risk_per_share)
+        if 0 < derived_stop < reference_price:
+            return round(derived_stop, 2)
+    return None
+
+
+def resolve_trailing_activation_price(
+    fill_price: float,
+    config: ExecutionConfig,
+    target: ExecutionTarget | None = None,
+) -> tuple[float | None, str | None]:
+    """Détermine le prix auquel le stop initial doit être promu en trailing dynamique."""
+    if fill_price <= 0:
+        return None, None
+
+    if config.trailing_activation_trigger == "multiple_r":
+        if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
+            return round(fill_price + (float(target.risk_per_share) * config.trailing_activation_r_multiple), 2), "multiple_r"
+        return round(fill_price * (1 + config.trailing_activation_profit_pct), 2), "profit_pct_fallback"
+
+    return round(fill_price * (1 + config.trailing_activation_profit_pct), 2), "profit_pct"
 
 
 def build_entry_intents(
@@ -61,6 +97,8 @@ def build_entry_intents(
                 t.risk_run_id, t.symbol, IntentRole.ENTRY, "buy", qty, config.broker_mode,
             ),
             decision_price=t.entry_price,
+            stop_price=None,
+            submission_key=_submission_key(exec_run_id, t.symbol, IntentRole.ENTRY, "buy", qty),
         ))
     return intents
 
@@ -70,8 +108,13 @@ def build_take_profit_intent(
     fill_qty: float,
     avg_fill_price: float,
     config: ExecutionConfig,
+    target: ExecutionTarget | None = None,
 ) -> OrderIntent:
-    limit_price = round(avg_fill_price * (1 + config.profit_taker_pct), 2)
+    percent_target = avg_fill_price * (1 + config.profit_taker_pct)
+    risk_based_target = None
+    if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
+        risk_based_target = avg_fill_price + (2.0 * target.risk_per_share)
+    limit_price = round(max(percent_target, risk_based_target or percent_target), 2)
     return OrderIntent(
         intent_id=_make_id(),
         risk_run_id=parent.risk_run_id,
@@ -90,15 +133,61 @@ def build_take_profit_intent(
             "sell", fill_qty, parent.broker_mode,
         ),
         decision_price=parent.decision_price,
+        stop_price=None,
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TAKE_PROFIT, "sell", fill_qty),
+    )
+
+
+def build_initial_stop_intent(
+    parent: OrderIntent,
+    fill_qty: float,
+    avg_fill_price: float,
+    config: ExecutionConfig,
+    target: ExecutionTarget | None = None,
+) -> OrderIntent | None:
+    reference_price = avg_fill_price or parent.decision_price
+    stop_price = resolve_initial_stop_price(reference_price, target)
+    if stop_price is None:
+        return None
+
+    return OrderIntent(
+        intent_id=_make_id(),
+        risk_run_id=parent.risk_run_id,
+        exec_run_id=parent.exec_run_id,
+        symbol=parent.symbol,
+        side="sell",
+        qty=fill_qty,
+        order_type="stop",
+        limit_price=None,
+        trail_percent=None,
+        broker_mode=parent.broker_mode,
+        parent_intent_id=parent.intent_id,
+        intent_role=IntentRole.INITIAL_STOP,
+        idempotency_key=_idempotency_key(
+            parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP,
+            "sell", fill_qty, parent.broker_mode,
+        ),
+        decision_price=parent.decision_price,
+        stop_price=stop_price,
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, "sell", fill_qty),
     )
 
 
 def build_trailing_stop_intent(
     parent: OrderIntent,
     fill_qty: float,
+    avg_fill_price: float,
     config: ExecutionConfig,
+    target: ExecutionTarget | None = None,
 ) -> OrderIntent:
-    trail_pct = round(config.trailing_stop_pct * 100, 2)
+    reference_price = avg_fill_price or parent.decision_price
+    risk_based_trail_pct = None
+    if target is not None:
+        if target.stop_price_initial is not None and reference_price > 0 and target.stop_price_initial < reference_price:
+            risk_based_trail_pct = (reference_price - target.stop_price_initial) / reference_price
+        elif target.risk_per_share is not None and target.risk_per_share > 0 and reference_price > 0:
+            risk_based_trail_pct = target.risk_per_share / reference_price
+    trail_pct = round((risk_based_trail_pct if risk_based_trail_pct is not None else config.trailing_stop_pct) * 100, 2)
     return OrderIntent(
         intent_id=_make_id(),
         risk_run_id=parent.risk_run_id,
@@ -117,6 +206,8 @@ def build_trailing_stop_intent(
             "sell", fill_qty, parent.broker_mode,
         ),
         decision_price=parent.decision_price,
+        stop_price=None,
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TRAILING_STOP, "sell", fill_qty),
     )
 
 
@@ -145,6 +236,8 @@ def build_rebalance_sell_intent(
         intent_role=IntentRole.EXIT,
         idempotency_key=_idempotency_key(exec_run_id, symbol, IntentRole.EXIT, "sell", qty, broker_mode),
         decision_price=current_price,
+        stop_price=None,
+        submission_key=_submission_key(exec_run_id, symbol, IntentRole.EXIT, "sell", qty),
     )
 
 
@@ -173,6 +266,8 @@ def build_rebalance_buy_intent(
         intent_role=IntentRole.REBALANCE_BUY,
         idempotency_key=_idempotency_key(exec_run_id, symbol, IntentRole.REBALANCE_BUY, "buy", qty, broker_mode),
         decision_price=current_price,
+        stop_price=None,
+        submission_key=_submission_key(exec_run_id, symbol, IntentRole.REBALANCE_BUY, "buy", qty),
     )
 
 
@@ -182,7 +277,7 @@ def intent_to_alpaca_payload(intent: OrderIntent) -> dict[str, str]:
     pour garantir l'unicite cote Alpaca meme en cas de relance.
     """
     tif = "day" if intent.intent_role in (IntentRole.ENTRY, IntentRole.EXIT, IntentRole.REBALANCE_BUY) else "gtc"
-    alpaca_client_id = _alpaca_client_order_id(
+    alpaca_client_id = intent.submission_key or _alpaca_client_order_id(
         intent.exec_run_id, intent.symbol, intent.intent_role, intent.side, intent.qty
     )
     payload: dict[str, str] = {
@@ -195,6 +290,8 @@ def intent_to_alpaca_payload(intent: OrderIntent) -> dict[str, str]:
     }
     if intent.order_type == "limit" and intent.limit_price is not None:
         payload["limit_price"] = str(intent.limit_price)
+    if intent.order_type == "stop" and intent.stop_price is not None:
+        payload["stop_price"] = str(intent.stop_price)
     if intent.order_type == "trailing_stop" and intent.trail_percent is not None:
         payload["trail_percent"] = str(intent.trail_percent)
     return payload

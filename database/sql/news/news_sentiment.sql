@@ -14,11 +14,15 @@ CREATE TABLE IF NOT EXISTS alpha_trade.news_sentiment (
     sentiment_net_score DOUBLE NOT NULL,
     inference_status ENUM('success', 'failed') NOT NULL DEFAULT 'success',
     error_message TEXT NULL,
+    -- Phase 4.1.c — versionnement FinBERT (mig 0015)
+    model_fingerprint VARCHAR(32) NULL
+        COMMENT 'SHA256[:16] de model_name + revision + config FinBERT',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (article_id),
     KEY idx_news_sentiment_label (sentiment_label),
     KEY idx_news_sentiment_net (sentiment_net_score),
+    KEY idx_news_sentiment_model_fingerprint (model_fingerprint),
     CONSTRAINT fk_news_sentiment_article
         FOREIGN KEY (article_id) REFERENCES alpha_trade.news_raw(article_id)
         ON DELETE CASCADE

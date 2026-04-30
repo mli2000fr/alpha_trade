@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from modelFactory.config import DataConfig, GlobalModelConfig, ModelConfig, TrainingConfig
+from modelFactory.global_model import train_global_model
+
+
+class PickleableFakeGlobalEstimator:
+	def fit(self, X, y):
+		return self
+
+	def predict_proba(self, X):
+		p = np.clip(np.asarray(X["daily_return"], dtype=float) + 0.55, 0.05, 0.95)
+		return np.column_stack([1.0 - p, p])
+
+
+def _bars(symbol: str, base: float, n: int = 260) -> pd.DataFrame:
+	close = pd.Series(np.linspace(base, base + 40.0, n), dtype=float)
+	return pd.DataFrame(
+		{
+			"symbol": [symbol] * n,
+			"date": pd.date_range("2020-01-01", periods=n, freq="D"),
+			"open": close * 0.99,
+			"high": close * 1.01,
+			"low": close * 0.98,
+			"close": close,
+			"volume": np.linspace(1_000_000, 1_200_000, n),
+			"adj_close": close,
+			"vwap": close,
+			"daily_return": 0.0,
+			"is_filled": 0,
+		}
+	)
+
+
+def test_train_global_model_returns_metrics_and_artifacts(monkeypatch, tmp_path: Path) -> None:
+	universe = pd.concat([_bars("AAPL", 100.0), _bars("MSFT", 120.0), _bars("NVDA", 150.0)], ignore_index=True)
+	benchmark = _bars("SPY", 90.0)
+
+	monkeypatch.setattr("modelFactory.global_model.load_universe_bars", lambda engine, symbols: universe.copy())
+	monkeypatch.setattr("modelFactory.global_model.load_benchmark_bars", lambda engine, benchmark_symbol: benchmark.copy())
+	monkeypatch.setattr(
+		"modelFactory.global_model._import_lightgbm",
+		lambda: type("FakeLGB", (), {"LGBMClassifier": staticmethod(lambda **kwargs: PickleableFakeGlobalEstimator())})(),
+	)
+
+	cfg = TrainingConfig(
+		data=DataConfig(feature_set="expert", benchmark_symbol="SPY", min_history_days=80),
+		model=ModelConfig(max_epochs=1),
+		global_model=GlobalModelConfig(enabled=True, model_name="lightgbm", artifact_symbol="__GLOBAL__"),
+		artifacts_dir=tmp_path,
+		accelerator="cpu",
+	)
+
+	result = train_global_model(["AAPL", "MSFT", "NVDA"], cfg, artifacts_dir=tmp_path, engine=object())
+
+	assert result["status"] == "completed"
+	assert result["backend_model_name"] == "lightgbm"
+	assert "AAPL" in result["by_symbol"]
+	assert (tmp_path / "__GLOBAL__" / "global_model.pkl").exists()
+	with open(tmp_path / "__GLOBAL__" / "config.json", encoding="utf-8") as fh:
+		config_data = json.load(fh)
+	assert config_data["architecture_selected"] == "global_model"
+
+
+
+
+

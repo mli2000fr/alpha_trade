@@ -1,31 +1,53 @@
-"""Registre global des pipelines lancés en arrière-plan depuis l'IHM."""
+"""Registre global des pipelines lancés en arrière-plan depuis l'IHM.
+
+Phase 6.2 (refactor) :
+- ``atexit`` hook : tue les processus enfants encore actifs si Streamlit est
+  arrêté brutalement (Ctrl-C, fermeture du terminal).
+- Rotation des artefacts : les runs plus vieux que
+  ``IHM_RUNS_RETENTION_DAYS`` (défaut 30 jours) sont purgés au démarrage.
+- Audit shell quoting : ``subprocess.Popen`` est invoqué sur ``list[str]``
+  sans ``shell=True`` ; aucune interpolation shell n'a lieu.
+"""
 from __future__ import annotations
 
+import atexit
 import json
+import logging
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
+
+LOGGER = logging.getLogger(__name__)
+
+# Phase 6.2 — rétention configurable via env (défaut 30 jours).
+RUNS_RETENTION_ENV = "IHM_RUNS_RETENTION_DAYS"
+DEFAULT_RUNS_RETENTION_DAYS = 30
 
 from ihm.services.pipeline_runner import (
     PROJECT_ROOT,
     PipelineLaunchOptions,
+    PipelineStepDefinition,
     build_pipeline_command,
     build_subprocess_env,
     format_command_for_display,
     get_pipeline_steps,
 )
+from ihm.services.run_summary import aggregate_workflow_run_summary
+from database.run_business_summaries import persist_pipeline_run_record_summary
 
 RunStatus = Literal["starting", "running", "completed", "failed", "timeout", "stopped"]
 TAIL_MAX_LINES = 400
 RUNS_DIR = PROJECT_ROOT / "artifacts" / "ihm_pipeline_runs"
 HISTORY_INDEX_PATH = RUNS_DIR / "history_index.json"
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +79,7 @@ class PipelineRunRecord:
     workflow_current_step_key: str | None = None
     workflow_current_step_label: str | None = None
     workflow_child_run_ids: list[str] = field(default_factory=list)
+    run_summary: dict[str, object] = field(default_factory=dict)
 
     def to_state(self) -> dict[str, object]:
         return asdict(self)
@@ -96,6 +119,24 @@ class _ManagedWorkflow:
 _REGISTRY_LOCK = threading.Lock()
 _ACTIVE_RUNS: dict[str, _ManagedRun] = {}
 _ACTIVE_WORKFLOWS: dict[str, _ManagedWorkflow] = {}
+
+
+def _resolve_workflow_steps(*, include_ml_train: bool) -> tuple[PipelineStepDefinition, ...]:
+    steps = cast(tuple[PipelineStepDefinition, ...], get_pipeline_steps())
+    if include_ml_train:
+        return steps
+    return tuple(step for step in steps if step.key != "ml_train")
+
+
+def _workflow_step_label(*, include_ml_train: bool) -> str:
+    if include_ml_train:
+        return "Workflow complet 1 → 14 (avec étape 9 — ML Train)"
+    return "Workflow complet 1 → 14 (sans étape 9 — ML Train)"
+
+
+def _workflow_command_display(*, include_ml_train: bool, total_steps: int) -> str:
+    ml_mode = "avec ML Train" if include_ml_train else "sans ML Train"
+    return f"Workflow séquentiel Pipeline 1 → 14 | {ml_mode} | {total_steps} étape(s) exécutée(s)"
 
 
 def _ensure_storage() -> None:
@@ -166,9 +207,24 @@ def _with_updates(record: PipelineRunRecord, **updates: object) -> PipelineRunRe
     return PipelineRunRecord(**data)
 
 
+def _extract_run_summary(line: str) -> dict[str, object] | None:
+    cleaned = line.strip()
+    if not cleaned.startswith(RUN_SUMMARY_PREFIX):
+        return None
+    payload = cleaned[len(RUN_SUMMARY_PREFIX):].strip()
+    if not payload:
+        return None
+    try:
+        parsed = json.loads(payload)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
+
+
 def _drain_events(managed: _ManagedRun) -> bool:
     stdout_chunk: list[str] = []
     stderr_chunk: list[str] = []
+    latest_summary: dict[str, object] | None = None
     drained = False
     while True:
         try:
@@ -176,6 +232,10 @@ def _drain_events(managed: _ManagedRun) -> bool:
         except queue.Empty:
             break
         drained = True
+        summary = _extract_run_summary(line)
+        if summary is not None:
+            latest_summary = summary
+            continue
         if stream_name == "stdout":
             stdout_chunk.append(line)
             _append_tail(managed.stdout_tail or [], line)
@@ -204,6 +264,9 @@ def _drain_events(managed: _ManagedRun) -> bool:
             managed.record,
             stderr_lines=managed.record.stderr_lines + len(stderr_chunk),
         )
+
+    if latest_summary is not None:
+        managed.record = _with_updates(managed.record, run_summary=latest_summary)
 
     return drained
 
@@ -256,6 +319,10 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
         duration_seconds=round(time.perf_counter() - managed.started_perf, 2),
         finished_at=datetime.now().isoformat(timespec="seconds"),
     )
+    try:
+        persist_pipeline_run_record_summary(managed.record)
+    except Exception:
+        pass
     _persist_record(managed.record)
     return managed.record
 
@@ -339,7 +406,7 @@ def _finalize_workflow_record(
     returncode: int | None,
     workflow_completed_steps: int,
 ) -> PipelineRunRecord:
-    return _update_workflow_record(
+    record = _update_workflow_record(
         managed,
         status=status,
         returncode=returncode,
@@ -349,6 +416,11 @@ def _finalize_workflow_record(
         workflow_current_step_key=None,
         workflow_current_step_label=None,
     )
+    try:
+        persist_pipeline_run_record_summary(record)
+    except Exception:
+        pass
+    return record
 
 
 def _sync_child_logs_to_workflow(
@@ -375,16 +447,19 @@ def _run_pipeline_workflow(
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
+    include_ml_train: bool = True,
 ) -> None:
-    steps = get_pipeline_steps()
+    steps = cast(tuple[PipelineStepDefinition, ...], _resolve_workflow_steps(include_ml_train=include_ml_train))
     total_steps = len(steps)
 
     try:
-        _append_workflow_event(managed, f"Démarrage du workflow complet ({total_steps} étapes).")
+        workflow_mode = "avec étape 9 — ML Train" if include_ml_train else "sans étape 9 — ML Train"
+        _append_workflow_event(managed, f"Démarrage du workflow complet ({total_steps} étapes exécutées, {workflow_mode}).")
         _update_workflow_record(managed, status="running", workflow_total_steps=total_steps, workflow_completed_steps=0)
 
         completed_steps = 0
         child_run_ids: list[str] = []
+        child_runs_with_summary: dict[str, dict[str, object]] = {}
 
         for index, step in enumerate(steps, start=1):
             if managed.stop_event.is_set():
@@ -422,6 +497,9 @@ def _run_pipeline_workflow(
 
                 child_snapshot = poll_pipeline_run(child_record.run_id)
                 _sync_child_logs_to_workflow(managed, child_snapshot, step_label=step_label, offsets=offsets)
+                if child_snapshot is not None and isinstance(child_snapshot.get("run_summary"), dict) and child_snapshot.get("run_summary"):
+                    child_runs_with_summary[child_record.run_id] = dict(child_snapshot)
+                aggregated_summary = aggregate_workflow_run_summary(child_runs_with_summary.values())
 
                 child_status = str(child_snapshot.get("status", "")) if child_snapshot is not None else "failed"
                 _update_workflow_record(
@@ -432,6 +510,7 @@ def _run_pipeline_workflow(
                     workflow_current_step_label=step_label,
                     workflow_child_run_ids=list(child_run_ids),
                     workflow_completed_steps=completed_steps,
+                    run_summary=aggregated_summary,
                 )
                 if child_status not in {"starting", "running"}:
                     break
@@ -498,18 +577,18 @@ def _run_dir_for(step_key: str, run_id: str) -> Path:
     return RUNS_DIR / step_key / run_id
 
 
-def start_pipeline_run(
+def start_managed_run(
+    *,
     step_key: str,
     step_label: str,
-    options: PipelineLaunchOptions,
-    *,
+    command: list[str],
+    account_id: str | None = None,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
     parent_run_id: str | None = None,
 ) -> PipelineRunRecord:
-    """Démarre un pipeline en arrière-plan et retourne son enregistrement initial."""
+    """Démarre un sous-processus arbitraire piloté par le registre IHM."""
     _ensure_storage()
-    command = build_pipeline_command(step_key, options)
     command_display = format_command_for_display(command)
     env = build_subprocess_env(db_config=db_config)
 
@@ -548,7 +627,7 @@ def start_pipeline_run(
         step_label=step_label,
         command=command,
         command_display=command_display,
-        account_id=options.account_id,
+        account_id=account_id,
         status="running",
         executed_at=datetime.now().isoformat(timespec="seconds"),
         stdout_path=str(stdout_path),
@@ -572,13 +651,36 @@ def start_pipeline_run(
     return record
 
 
+def start_pipeline_run(
+    step_key: str,
+    step_label: str,
+    options: PipelineLaunchOptions,
+    *,
+    db_config: dict[str, str | None] | None = None,
+    timeout_seconds: int | None = None,
+    parent_run_id: str | None = None,
+) -> PipelineRunRecord:
+    """Démarre un pipeline en arrière-plan et retourne son enregistrement initial."""
+    command = build_pipeline_command(step_key, options)
+    return start_managed_run(
+        step_key=step_key,
+        step_label=step_label,
+        command=command,
+        account_id=options.account_id,
+        db_config=db_config,
+        timeout_seconds=timeout_seconds,
+        parent_run_id=parent_run_id,
+    )
+
+
 def start_pipeline_workflow(
     options: PipelineLaunchOptions,
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
+    include_ml_train: bool = True,
 ) -> PipelineRunRecord:
-    """Démarre un workflow séquentiel 1→12 en arrière-plan."""
+    """Démarre un workflow séquentiel complet en arrière-plan."""
     if list_active_pipeline_runs():
         raise RuntimeError("Un run pipeline est déjà actif. Attendez sa fin ou arrêtez-le avant de lancer le workflow complet.")
 
@@ -593,13 +695,14 @@ def start_pipeline_workflow(
     stderr_path.write_text("", encoding="utf-8")
     combined_path.write_text("", encoding="utf-8")
 
-    steps = get_pipeline_steps()
+    steps = cast(tuple[PipelineStepDefinition, ...], _resolve_workflow_steps(include_ml_train=include_ml_train))
+    workflow_label = _workflow_step_label(include_ml_train=include_ml_train)
     record = PipelineRunRecord(
         run_id=run_id,
         step_key="pipeline_workflow",
-        step_label="Workflow complet 1 → 12",
+        step_label=workflow_label,
         command=[step.key for step in steps],
-        command_display="Workflow séquentiel Pipeline 1 → 12",
+        command_display=_workflow_command_display(include_ml_train=include_ml_train, total_steps=len(steps)),
         account_id=options.account_id,
         status="running",
         executed_at=datetime.now().isoformat(timespec="seconds"),
@@ -615,7 +718,13 @@ def start_pipeline_workflow(
     managed: _ManagedWorkflow
 
     def _workflow_target() -> None:
-        _run_pipeline_workflow(managed, options, db_config=db_config, timeout_seconds=timeout_seconds)
+        _run_pipeline_workflow(
+            managed,
+            options,
+            db_config=db_config,
+            timeout_seconds=timeout_seconds,
+            include_ml_train=include_ml_train,
+        )
 
     thread = threading.Thread(target=_workflow_target, daemon=True, name=f"pipeline-workflow-{run_id}")
     managed = _ManagedWorkflow(
@@ -735,4 +844,118 @@ def build_log_download_name(run_id: str, stream: Literal["stdout", "stderr", "al
     record = get_pipeline_run_record(run_id)
     step_key = str(record.get("step_key", "pipeline")) if record else "pipeline"
     return f"{step_key}_{run_id}_{stream}.log"
+
+
+# ---------------------------------------------------------------------------
+# Phase 6.2 — atexit hook + rotation artefacts.
+# ---------------------------------------------------------------------------
+
+def _retention_days() -> int:
+    raw = os.getenv(RUNS_RETENTION_ENV)
+    if not raw:
+        return DEFAULT_RUNS_RETENTION_DAYS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        LOGGER.warning("%s='%s' invalide, fallback %d", RUNS_RETENTION_ENV, raw, DEFAULT_RUNS_RETENTION_DAYS)
+        return DEFAULT_RUNS_RETENTION_DAYS
+    return max(value, 1)
+
+
+def rotate_pipeline_artifacts(retention_days: int | None = None) -> dict[str, int]:
+    """Purge les runs plus vieux que ``retention_days`` jours.
+
+    Retourne ``{"removed_runs": N, "removed_dirs": M, "retention_days": D}``.
+    Idempotent : peut être appelé plusieurs fois sans effet de bord.
+    """
+    days = retention_days if retention_days is not None else _retention_days()
+    cutoff = datetime.now() - timedelta(days=days)
+    removed_runs = 0
+    removed_dirs = 0
+
+    # 1) Purge l'index : on conserve uniquement les runs plus récents.
+    with _REGISTRY_LOCK:
+        index = _read_history_index()
+        keep: dict[str, dict[str, object]] = {}
+        for run_id, payload in index.items():
+            ts_str = str(payload.get("finished_at") or payload.get("executed_at") or "")
+            try:
+                ts = datetime.fromisoformat(ts_str) if ts_str else None
+            except ValueError:
+                ts = None
+            if ts is None or ts >= cutoff:
+                keep[run_id] = payload
+            else:
+                removed_runs += 1
+        if removed_runs:
+            _write_history_index(keep)
+
+    # 2) Purge les répertoires orphelins/anciens dans artifacts/ihm_pipeline_runs/<step>/<run_id>/.
+    if RUNS_DIR.exists():
+        for step_dir in RUNS_DIR.iterdir():
+            if not step_dir.is_dir():
+                continue
+            for run_dir in step_dir.iterdir():
+                if not run_dir.is_dir():
+                    continue
+                try:
+                    mtime = datetime.fromtimestamp(run_dir.stat().st_mtime)
+                except OSError:
+                    continue
+                if mtime < cutoff:
+                    try:
+                        shutil.rmtree(run_dir, ignore_errors=True)
+                        removed_dirs += 1
+                    except OSError:
+                        LOGGER.exception("rotate_pipeline_artifacts: échec suppression %s", run_dir)
+
+    if removed_runs or removed_dirs:
+        LOGGER.info(
+            "rotate_pipeline_artifacts | retention_days=%d removed_runs=%d removed_dirs=%d",
+            days, removed_runs, removed_dirs,
+        )
+    return {"removed_runs": removed_runs, "removed_dirs": removed_dirs, "retention_days": days}
+
+
+def _atexit_kill_all_children() -> None:
+    """Hook ``atexit`` : tue les sous-processus encore actifs (Phase 6.2)."""
+    try:
+        with _REGISTRY_LOCK:
+            active = list(_ACTIVE_RUNS.values())
+            workflows = list(_ACTIVE_WORKFLOWS.values())
+        for managed in active:
+            try:
+                _kill_process_tree(managed.process)
+            except Exception:
+                LOGGER.debug("atexit: échec kill run %s", managed.record.run_id, exc_info=True)
+        for wf in workflows:
+            try:
+                wf.stop_event.set()
+            except Exception:
+                pass
+    except Exception:
+        # ne JAMAIS lever depuis atexit
+        LOGGER.debug("atexit_kill_all_children: erreur ignorée", exc_info=True)
+
+
+# Activation du hook atexit + rotation au premier import (idempotent grâce aux flags).
+_ATEXIT_REGISTERED = False
+_ROTATION_RAN = False
+
+
+def _ensure_lifecycle_hooks() -> None:
+    global _ATEXIT_REGISTERED, _ROTATION_RAN
+    if not _ATEXIT_REGISTERED:
+        atexit.register(_atexit_kill_all_children)
+        _ATEXIT_REGISTERED = True
+    if not _ROTATION_RAN:
+        try:
+            rotate_pipeline_artifacts()
+        except Exception:
+            LOGGER.debug("rotate_pipeline_artifacts initial: erreur ignorée", exc_info=True)
+        _ROTATION_RAN = True
+
+
+_ensure_lifecycle_hooks()
+
 

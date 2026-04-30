@@ -110,6 +110,41 @@ Ici, le profil strict est chargé, puis `min_close`, `max_volatility_ratio` et `
 python -m selector.alpha_scanner --log-level DEBUG
 ```
 
+### Correspondance avec l'IHM
+
+Depuis `ihm/pages/pipeline.py`, l'étape `6. alpha_scanner` du workflow quotidien 1→14 lance bien :
+
+```powershell
+python -m selector.alpha_scanner ...
+```
+
+L'IHM expose désormais les options CLI réellement supportées par ce point d'entrée :
+
+- `chunk-size`
+- `selection-size`
+- `max-workers`
+- `liquidity-threshold`
+- `min-close`
+- `max-volatility-ratio`
+- `min-relative-strength-index`
+- `min-high-52w-proximity`
+- `min-weekly-trend-score`
+- `min-atr-pct-20`
+- `max-atr-pct-20`
+- `min-market-cap`
+- `min-beta-126`
+- `max-spread-bps`
+- `earnings-blackout-days`
+- `max-anomaly-count`
+- `sector-cap-ratio`
+- `log-level`
+
+Points importants :
+
+- `0` sur `max workers` dans l'IHM signifie **auto** ;
+- le profil partagé `STRICT_SWING_CASH_FILTERS` reste appliqué implicitement côté backend ;
+- les valeurs affichées dans l'IHM sont transmises explicitement à la commande pour reproductibilité et audit des runs.
+
 ---
 
 ## 4. Ce que fait le module
@@ -218,6 +253,25 @@ Les facteurs `atr_pct_20`, `weekly_trend_score` et `high_52w_proximity` sont auj
 4. liquidité réelle inférieure au seuil ;
 5. cap sectoriel trop strict.
 
+Le point d'entrée CLI émet aussi un `run_summary` structuré sur stdout avec le préfixe :
+
+- `::alpha_trade_run_summary::`
+
+Champs notables :
+
+- `requested_selection_size`
+- `selected_candidates`
+- `selected_sectors`
+- `selection_fill_ratio`
+- `workers`
+- `sector_cap_ratio`
+- `sector_breakdown`
+- `top_symbols`
+- `max_final_score`
+- `avg_final_score`
+
+Ces résumés sont consommés côté IHM pour enrichir le centre d'exécution, `Overview` et `Screening`.
+
 ---
 
 ## 6. Vérifications utiles
@@ -247,7 +301,7 @@ with engine.connect() as conn:
 ### Tests ciblés selector
 
 ```powershell
-python -m pytest tests/test_selector_alpha_scanner.py tests/test_alpha_scanner.py tests/test_selector_init.py -q -o addopts=""
+python -m pytest tests/test_selector_alpha_scanner.py tests/test_alpha_scanner.py tests/test_selector_init.py tests/test_selector_run_summaries.py -q -o addopts=""
 ```
 
 ---

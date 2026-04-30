@@ -17,6 +17,7 @@ Requires-Dist: transformers
 Requires-Dist: torch
 Requires-Dist: lightning
 Requires-Dist: torchmetrics
+Requires-Dist: lightgbm
 Requires-Dist: streamlit
 Requires-Dist: pyyaml
 Requires-Dist: vectorbt>=0.26
@@ -35,3 +36,10 @@ Requires-Dist: types-requests; extra == "dev"
 Requires-Dist: types-pytz; extra == "dev"
 Requires-Dist: types-python-dateutil; extra == "dev"
 Requires-Dist: sqlalchemy[mypy]; extra == "dev"
+Requires-Dist: import-linter>=2.0; extra == "dev"
+Provides-Extra: observability
+Requires-Dist: prometheus-client>=0.20; extra == "observability"
+Provides-Extra: ml-challengers
+Requires-Dist: catboost; extra == "ml-challengers"
+Provides-Extra: cross-check
+Requires-Dist: yfinance>=0.2; extra == "cross-check"

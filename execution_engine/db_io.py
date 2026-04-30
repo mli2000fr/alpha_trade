@@ -1,15 +1,18 @@
 """Accès base de données pour le module execution_engine."""
 from __future__ import annotations
 
+import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from database.connection import get_sqlalchemy_engine
-from execution_engine.models import BrokerOrder, ExecutionTarget
+from execution_engine.models import ExecutionOrderRequest
+from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionPosition, ExecutionPositionLot, ExecutionReconciliationResult, ExecutionTarget, OrderIntent, ProtectionWatchItem
 
 LOGGER = logging.getLogger(__name__)
 
@@ -21,6 +24,63 @@ class ExecutionRepository:
         self.engine = engine or get_sqlalchemy_engine()
 
     # ------------------------------------------------------------------
+    # Phase 5.2.c — Kill switch runs
+    # ------------------------------------------------------------------
+    def persist_kill_switch_run(
+        self,
+        *,
+        run_id: str,
+        account_id: str,
+        broker_mode: str,
+        reason: str,
+        results: list[dict[str, Any]],
+        dry_run: bool,
+        started_at: datetime,
+        finished_at: datetime,
+    ) -> None:
+        """Phase 5.2.c — Persiste une exécution de la commande ``cancel-all``.
+
+        ``results`` est une liste de dicts ``{broker_order_id, symbol, canceled, error}``.
+        Best-effort : log un warning si la table est absente (pas de migration appliquée).
+        """
+        total_open = len(results)
+        canceled = sum(1 for r in results if r.get("canceled"))
+        failed = total_open - canceled
+        try:
+            stmt = text(
+                """
+                INSERT INTO execution_kill_switch_runs
+                    (run_id, account_id, broker_mode, reason, total_open,
+                     canceled, failed, dry_run, started_at, finished_at, results_json)
+                VALUES
+                    (:run_id, :account_id, :broker_mode, :reason, :total_open,
+                     :canceled, :failed, :dry_run, :started_at, :finished_at, :results_json)
+                """
+            )
+            with self.engine.begin() as conn:
+                conn.execute(
+                    stmt,
+                    {
+                        "run_id": run_id,
+                        "account_id": account_id,
+                        "broker_mode": broker_mode,
+                        "reason": reason[:255],
+                        "total_open": total_open,
+                        "canceled": canceled,
+                        "failed": failed,
+                        "dry_run": 1 if dry_run else 0,
+                        "started_at": started_at,
+                        "finished_at": finished_at,
+                        "results_json": json.dumps(results, default=str),
+                    },
+                )
+        except Exception:
+            LOGGER.warning(
+                "persist_kill_switch_run failed (table missing?) run_id=%s account=%s",
+                run_id, account_id, exc_info=True,
+            )
+
+    # ------------------------------------------------------------------
     # Lecture
     # ------------------------------------------------------------------
 
@@ -28,44 +88,60 @@ class ExecutionRepository:
         self,
         risk_run_id: str | None = None,
         trade_date: date | None = None,
+        account_id: str | None = None,
     ) -> list[ExecutionTarget]:
         """Charge les cibles depuis portfolio_targets."""
+        resolved_account_id = account_id or "default"
         if risk_run_id:
             query = text("""
-                SELECT run_id, trade_date, symbol, shares, entry_price, target_weight,
-                       sector, conviction_score, sizing_method, kelly_fraction
+                SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                       atr_20, price_asof_date, atr_asof_date, stop_price_initial,
+                       risk_per_share, risk_budget_dollars, initial_risk_dollars,
+                       target_notional, target_weight, sector, conviction_score,
+                       sizing_method, kelly_fraction
                 FROM portfolio_targets
                 WHERE run_id = :run_id
-                ORDER BY target_weight DESC, symbol ASC
+                  AND account_id = :account_id
+                ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
             """)
-            params: dict[str, Any] = {"run_id": risk_run_id}
+            params: dict[str, Any] = {"run_id": risk_run_id, "account_id": resolved_account_id}
         else:
             # Dernier run_id par MAX(created_at)
             if trade_date:
                 query = text("""
-                    SELECT run_id, trade_date, symbol, shares, entry_price, target_weight,
-                           sector, conviction_score, sizing_method, kelly_fraction
+                    SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                           atr_20, price_asof_date, atr_asof_date, stop_price_initial,
+                           risk_per_share, risk_budget_dollars, initial_risk_dollars,
+                           target_notional, target_weight, sector, conviction_score,
+                           sizing_method, kelly_fraction
                     FROM portfolio_targets
                     WHERE run_id = (
                         SELECT run_id FROM portfolio_targets
                         WHERE trade_date = :trade_date
+                          AND account_id = :account_id
                         ORDER BY created_at DESC LIMIT 1
                     )
-                    ORDER BY target_weight DESC, symbol ASC
+                      AND account_id = :account_id
+                    ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
                 """)
-                params = {"trade_date": trade_date}
+                params = {"trade_date": trade_date, "account_id": resolved_account_id}
             else:
                 query = text("""
-                    SELECT run_id, trade_date, symbol, shares, entry_price, target_weight,
-                           sector, conviction_score, sizing_method, kelly_fraction
+                    SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                           atr_20, price_asof_date, atr_asof_date, stop_price_initial,
+                           risk_per_share, risk_budget_dollars, initial_risk_dollars,
+                           target_notional, target_weight, sector, conviction_score,
+                           sizing_method, kelly_fraction
                     FROM portfolio_targets
                     WHERE run_id = (
                         SELECT run_id FROM portfolio_targets
+                        WHERE account_id = :account_id
                         ORDER BY created_at DESC LIMIT 1
                     )
-                    ORDER BY target_weight DESC, symbol ASC
+                      AND account_id = :account_id
+                    ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
                 """)
-                params = {}
+                params = {"account_id": resolved_account_id}
 
         with self.engine.connect() as conn:
             rows = conn.execute(query, params).mappings().all()
@@ -82,43 +158,316 @@ class ExecutionRepository:
                 conviction_score=float(r["conviction_score"]) if r.get("conviction_score") is not None else None,
                 sizing_method=str(r["sizing_method"]) if r.get("sizing_method") else None,
                 kelly_fraction=float(r["kelly_fraction"]) if r.get("kelly_fraction") is not None else None,
+                decision_rank=int(r["decision_rank"]) if r.get("decision_rank") is not None else None,
+                side=str(r["side"]) if r.get("side") else None,
+                atr_20=float(r["atr_20"]) if r.get("atr_20") is not None else None,
+                price_asof_date=r["price_asof_date"] if isinstance(r.get("price_asof_date"), date) else (date.fromisoformat(str(r["price_asof_date"])) if r.get("price_asof_date") else None),
+                atr_asof_date=r["atr_asof_date"] if isinstance(r.get("atr_asof_date"), date) else (date.fromisoformat(str(r["atr_asof_date"])) if r.get("atr_asof_date") else None),
+                stop_price_initial=float(r["stop_price_initial"]) if r.get("stop_price_initial") is not None else None,
+                risk_per_share=float(r["risk_per_share"]) if r.get("risk_per_share") is not None else None,
+                risk_budget_dollars=float(r["risk_budget_dollars"]) if r.get("risk_budget_dollars") is not None else None,
+                initial_risk_dollars=float(r["initial_risk_dollars"]) if r.get("initial_risk_dollars") is not None else None,
+                target_notional=float(r["target_notional"]) if r.get("target_notional") is not None else None,
             )
             for r in rows
         ]
 
     def load_submitted_idempotency_keys(self, exec_run_id: str) -> set[str]:
         query = text("""
-            SELECT idempotency_key FROM execution_orders
+            SELECT business_key FROM execution_order_requests
             WHERE exec_run_id = :exec_run_id
         """)
         with self.engine.connect() as conn:
             rows = conn.execute(query, {"exec_run_id": exec_run_id}).mappings().all()
-        return {str(r["idempotency_key"]) for r in rows}
+        return {str(r["business_key"]) for r in rows}
 
-    def load_execution_orders(self, exec_run_id: str) -> list[BrokerOrder]:
-        query = text("""
-            SELECT broker_order_id, client_order_id, intent_id, symbol, side,
-                   qty, filled_qty, avg_fill_price, status, order_type,
-                   limit_price, stop_price, trail_percent, created_at, updated_at
-            FROM execution_orders
-            WHERE exec_run_id = :exec_run_id
+    def find_order_request_by_submission_key(
+        self,
+        *,
+        account_id: str,
+        submission_key: str,
+    ) -> ExecutionOrderRequest | None:
+        stmt = text("""
+            SELECT request_id, exec_run_id, account_id, risk_run_id, symbol, side,
+                   target_qty, order_type, business_key, submission_key, attempt_no,
+                   parent_request_id, intent_role, decision_price, limit_price,
+                   stop_price, trail_percent, status, failure_reason
+            FROM execution_order_requests
+            WHERE account_id = :account_id
+              AND submission_key = :submission_key
+            LIMIT 1
         """)
         with self.engine.connect() as conn:
-            rows = conn.execute(query, {"exec_run_id": exec_run_id}).mappings().all()
-        return [self._row_to_broker_order(r) for r in rows]
+            row = conn.execute(stmt, {"account_id": account_id, "submission_key": submission_key}).mappings().first()
+        return self._row_to_execution_order_request(row) if row is not None else None
+
+    def find_order_request_by_broker_order_id(
+        self,
+        *,
+        account_id: str,
+        broker_order_id: str,
+    ) -> ExecutionOrderRequest | None:
+        stmt = text("""
+            SELECT req.request_id, req.exec_run_id, req.account_id, req.risk_run_id, req.symbol, req.side,
+                   req.target_qty, req.order_type, req.business_key, req.submission_key, req.attempt_no,
+                   req.parent_request_id, req.intent_role, req.decision_price, req.limit_price,
+                   req.stop_price, req.trail_percent, req.status, req.failure_reason
+            FROM execution_order_requests req
+            INNER JOIN execution_broker_orders bo
+                    ON bo.request_id = req.request_id
+            WHERE req.account_id = :account_id
+              AND bo.broker_order_id = :broker_order_id
+            LIMIT 1
+        """)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt, {"account_id": account_id, "broker_order_id": broker_order_id}).mappings().first()
+        return self._row_to_execution_order_request(row) if row is not None else None
+
+    def load_cumulative_filled_qty(self, *, request_id: str) -> float:
+        stmt = text("""
+            SELECT COALESCE(SUM(filled_qty), 0)
+            FROM execution_broker_fills
+            WHERE request_id = :request_id
+        """)
+        with self.engine.connect() as conn:
+            value = conn.execute(stmt, {"request_id": request_id}).scalar()
+        return float(value or 0.0)
+
+    def load_execution_position_lot_inputs(self, *, account_id: str) -> list[dict[str, Any]]:
+        stmt = text("""
+            SELECT fill.fill_id, fill.exec_run_id, fill.request_id, fill.symbol,
+                   req.side, fill.filled_qty, fill.avg_fill_price, fill.fill_timestamp, fill.created_at
+            FROM execution_broker_fills fill
+            INNER JOIN execution_order_requests req
+                    ON req.request_id = fill.request_id
+            WHERE fill.account_id = :account_id
+            ORDER BY fill.fill_timestamp ASC, fill.created_at ASC, fill.fill_id ASC
+        """)
+        with self.engine.connect() as conn:
+            return list(conn.execute(stmt, {"account_id": account_id}).mappings().all())
+
+    def load_execution_targets_snapshot(self, *, exec_run_id: str) -> list[ExecutionTarget]:
+        stmt = text("""
+            SELECT risk_run_id, trade_date, symbol, decision_rank, side, target_shares,
+                   entry_price, target_weight, sector, conviction_score, sizing_method,
+                   kelly_fraction, atr_20, price_asof_date, atr_asof_date,
+                   stop_price_initial, risk_per_share, risk_budget_dollars,
+                   initial_risk_dollars, target_notional
+            FROM execution_targets_snapshot
+            WHERE exec_run_id = :exec_run_id
+            ORDER BY COALESCE(decision_rank, 999999), symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, {"exec_run_id": exec_run_id}).mappings().all()
+        return [
+            ExecutionTarget(
+                risk_run_id=str(r["risk_run_id"]),
+                trade_date=r["trade_date"] if isinstance(r["trade_date"], date) else date.fromisoformat(str(r["trade_date"])),
+                symbol=str(r["symbol"]).strip().upper(),
+                target_shares=int(r["target_shares"]),
+                entry_price=float(r["entry_price"]),
+                target_weight=float(r["target_weight"]),
+                sector=str(r["sector"]) if r.get("sector") else None,
+                conviction_score=float(r["conviction_score"]) if r.get("conviction_score") is not None else None,
+                sizing_method=str(r["sizing_method"]) if r.get("sizing_method") is not None else None,
+                kelly_fraction=float(r["kelly_fraction"]) if r.get("kelly_fraction") is not None else None,
+                decision_rank=int(r["decision_rank"]) if r.get("decision_rank") is not None else None,
+                side=str(r["side"]) if r.get("side") else None,
+                atr_20=float(r["atr_20"]) if r.get("atr_20") is not None else None,
+                price_asof_date=r["price_asof_date"] if isinstance(r.get("price_asof_date"), date) else (date.fromisoformat(str(r["price_asof_date"])) if r.get("price_asof_date") else None),
+                atr_asof_date=r["atr_asof_date"] if isinstance(r.get("atr_asof_date"), date) else (date.fromisoformat(str(r["atr_asof_date"])) if r.get("atr_asof_date") else None),
+                stop_price_initial=float(r["stop_price_initial"]) if r.get("stop_price_initial") is not None else None,
+                risk_per_share=float(r["risk_per_share"]) if r.get("risk_per_share") is not None else None,
+                risk_budget_dollars=float(r["risk_budget_dollars"]) if r.get("risk_budget_dollars") is not None else None,
+                initial_risk_dollars=float(r["initial_risk_dollars"]) if r.get("initial_risk_dollars") is not None else None,
+                target_notional=float(r["target_notional"]) if r.get("target_notional") is not None else None,
+            )
+            for r in rows
+        ]
+
+    def load_open_reconciliation_order_state(self, *, account_id: str) -> list[dict[str, Any]]:
+        stmt = text("""
+            SELECT req.symbol AS symbol,
+                   SUM(CASE WHEN req.side = 'buy' THEN req.target_qty ELSE 0 END) AS open_request_buy_qty,
+                   SUM(CASE WHEN req.side = 'sell' THEN req.target_qty ELSE 0 END) AS open_request_sell_qty,
+                   SUM(CASE WHEN COALESCE(bo.side, req.side) = 'buy' THEN COALESCE(bo.qty, req.target_qty, 0) ELSE 0 END) AS open_broker_buy_qty,
+                   SUM(CASE WHEN COALESCE(bo.side, req.side) = 'sell' THEN COALESCE(bo.qty, req.target_qty, 0) ELSE 0 END) AS open_broker_sell_qty
+            FROM execution_order_requests req
+            LEFT JOIN execution_broker_orders bo
+                   ON bo.request_id = req.request_id
+            WHERE req.account_id = :account_id
+              AND COALESCE(bo.normalized_status, req.status) IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
+            GROUP BY req.symbol
+            ORDER BY req.symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            return list(conn.execute(stmt, {"account_id": account_id}).mappings().all())
+
+    def load_reconciliation_protection_state(self, *, account_id: str) -> list[dict[str, Any]]:
+        stmt = text("""
+            SELECT parent_req.symbol AS symbol,
+                   SUM(COALESCE(parent_fill.total_filled_qty, parent_obs.filled_qty, parent_req.target_qty, 0)) AS protection_qty
+            FROM execution_order_requests child_req
+            INNER JOIN execution_order_requests parent_req
+                    ON parent_req.request_id = child_req.parent_request_id
+            LEFT JOIN execution_broker_orders child_obs
+                   ON child_obs.request_id = child_req.request_id
+            LEFT JOIN execution_broker_orders parent_obs
+                   ON parent_obs.request_id = parent_req.request_id
+            LEFT JOIN (
+                SELECT request_id,
+                       SUM(filled_qty) AS total_filled_qty
+                FROM execution_broker_fills
+                GROUP BY request_id
+            ) parent_fill
+                   ON parent_fill.request_id = parent_req.request_id
+            WHERE parent_req.account_id = :account_id
+              AND child_req.intent_role IN ('initial_stop', 'trailing_stop')
+              AND COALESCE(child_obs.normalized_status, child_req.status) IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
+            GROUP BY parent_req.symbol
+            ORDER BY parent_req.symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            return list(conn.execute(stmt, {"account_id": account_id}).mappings().all())
+
+    def load_latest_broker_account_snapshot(
+        self,
+        *,
+        account_id: str,
+        snapshot_kind: str = "preflight",
+    ) -> dict[str, Any] | None:
+        stmt = text("""
+            SELECT snapshot_kind, equity, cash, settled_cash, buying_power,
+                   daytrade_count, raw_payload_json, created_at
+            FROM broker_account_snapshots
+            WHERE account_id = :account_id
+              AND snapshot_kind = :snapshot_kind
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        """)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt, {"account_id": account_id, "snapshot_kind": snapshot_kind}).mappings().first()
+        return dict(row) if row is not None else None
 
     def load_open_child_orders(self, parent_intent_id: str) -> list[BrokerOrder]:
-        query = text("""
-            SELECT broker_order_id, client_order_id, intent_id, symbol, side,
-                   qty, filled_qty, avg_fill_price, status, order_type,
-                   limit_price, stop_price, trail_percent, created_at, updated_at
-            FROM execution_orders
-            WHERE parent_intent_id = :parent_intent_id
-              AND status NOT IN ('FILLED', 'CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+        v2_query = text("""
+            SELECT COALESCE(bo.broker_order_id, '') AS broker_order_id,
+                   COALESCE(bo.client_order_id, req.submission_key, '') AS client_order_id,
+                   req.request_id AS intent_id,
+                   req.symbol AS symbol,
+                   req.side AS side,
+                   req.target_qty AS qty,
+                   COALESCE(bo.filled_qty, 0) AS filled_qty,
+                   bo.avg_fill_price AS avg_fill_price,
+                   COALESCE(bo.normalized_status, req.status) AS status,
+                   req.order_type AS order_type,
+                   req.limit_price AS limit_price,
+                   req.stop_price AS stop_price,
+                   req.trail_percent AS trail_percent,
+                   bo.submitted_at AS created_at,
+                   bo.last_seen_at AS updated_at
+            FROM execution_order_requests req
+            LEFT JOIN execution_broker_orders bo
+                   ON bo.request_id = req.request_id
+            WHERE req.parent_request_id = :parent_intent_id
+              AND COALESCE(bo.normalized_status, req.status) IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
         """)
         with self.engine.connect() as conn:
-            rows = conn.execute(query, {"parent_intent_id": parent_intent_id}).mappings().all()
-        return [self._row_to_broker_order(r) for r in rows]
+            v2_rows = conn.execute(v2_query, {"parent_intent_id": parent_intent_id}).mappings().all()
+        return [self._row_to_broker_order(row) for row in v2_rows]
+
+    def load_pending_protection_watch_items(
+        self,
+        *,
+        exec_run_id: str | None = None,
+        account_id: str | None = None,
+        limit: int = 100,
+    ) -> list[ProtectionWatchItem]:
+        query = text(f"""
+            SELECT
+                stop_req.exec_run_id AS source_exec_run_id,
+                stop_req.risk_run_id AS risk_run_id,
+                er.trade_date AS trade_date,
+                er.account_id AS account_id,
+                er.broker_mode AS broker_mode,
+                stop_req.symbol AS symbol,
+                stop_req.parent_request_id AS parent_intent_id,
+                stop_req.request_id AS initial_stop_intent_id,
+                COALESCE(stop_obs.broker_order_id, '') AS initial_stop_broker_order_id,
+                COALESCE(parent_fill.total_filled_qty, stop_obs.filled_qty, stop_req.target_qty, 0) AS fill_qty,
+                COALESCE(parent_fill.weighted_avg_fill_price, parent_obs.avg_fill_price, parent_req.decision_price, ets.entry_price, stop_req.decision_price, 0) AS fill_price,
+                ets.stop_price_initial AS stop_price_initial,
+                ets.risk_per_share AS risk_per_share,
+                ets.initial_risk_dollars AS initial_risk_dollars,
+                ets.target_notional AS target_notional
+            FROM execution_order_requests stop_req
+            INNER JOIN execution_runs er
+                    ON er.exec_run_id = stop_req.exec_run_id
+            INNER JOIN execution_order_requests parent_req
+                    ON parent_req.exec_run_id = stop_req.exec_run_id
+                   AND parent_req.request_id = stop_req.parent_request_id
+            LEFT JOIN execution_broker_orders stop_obs
+                   ON stop_obs.request_id = stop_req.request_id
+            LEFT JOIN execution_broker_orders parent_obs
+                   ON parent_obs.request_id = parent_req.request_id
+            LEFT JOIN (
+                SELECT request_id,
+                       SUM(filled_qty) AS total_filled_qty,
+                       CASE
+                           WHEN SUM(filled_qty) > 0 THEN SUM(filled_qty * avg_fill_price) / SUM(filled_qty)
+                           ELSE AVG(avg_fill_price)
+                       END AS weighted_avg_fill_price
+                FROM execution_broker_fills
+                GROUP BY request_id
+            ) parent_fill
+                   ON parent_fill.request_id = parent_req.request_id
+            LEFT JOIN execution_targets_snapshot ets
+                   ON ets.exec_run_id = stop_req.exec_run_id
+                  AND ets.symbol = stop_req.symbol
+            LEFT JOIN execution_order_requests trailing_req
+                   ON trailing_req.exec_run_id = stop_req.exec_run_id
+                  AND trailing_req.parent_request_id = stop_req.parent_request_id
+                  AND trailing_req.intent_role = 'trailing_stop'
+            LEFT JOIN execution_broker_orders trailing_obs
+                   ON trailing_obs.request_id = trailing_req.request_id
+            WHERE stop_req.intent_role = 'initial_stop'
+              AND COALESCE(stop_obs.normalized_status, stop_req.status) IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
+              AND (
+                    trailing_req.request_id IS NULL
+                 OR COALESCE(trailing_obs.normalized_status, trailing_req.status) NOT IN ('NEW', 'PARTIALLY_FILLED', 'SIMULATED', 'SUBMITTED')
+              )
+              AND (:exec_run_id IS NULL OR stop_req.exec_run_id = :exec_run_id)
+              AND (:account_id IS NULL OR er.account_id = :account_id)
+            ORDER BY COALESCE(stop_obs.submitted_at, stop_req.created_at) ASC
+            LIMIT {int(limit)}
+        """)
+        params = {"exec_run_id": exec_run_id, "account_id": account_id}
+        with self.engine.connect() as conn:
+            rows = conn.execute(query, params).mappings().all()
+        return self._rows_to_protection_watch_items(rows)
+
+    @staticmethod
+    def _rows_to_protection_watch_items(rows: list[Any]) -> list[ProtectionWatchItem]:
+        return [
+            ProtectionWatchItem(
+                source_exec_run_id=str(r["source_exec_run_id"]),
+                risk_run_id=str(r["risk_run_id"]),
+                trade_date=r["trade_date"] if isinstance(r["trade_date"], date) else date.fromisoformat(str(r["trade_date"])),
+                account_id=str(r["account_id"]) if r.get("account_id") not in (None, "") else None,
+                broker_mode=str(r.get("broker_mode") or "paper"),
+                symbol=str(r["symbol"]).strip().upper(),
+                parent_intent_id=str(r["parent_intent_id"]),
+                initial_stop_intent_id=str(r["initial_stop_intent_id"]),
+                initial_stop_broker_order_id=str(r.get("initial_stop_broker_order_id") or ""),
+                fill_qty=float(r.get("fill_qty") or 0.0),
+                fill_price=float(r.get("fill_price") or 0.0),
+                stop_price_initial=float(r["stop_price_initial"]) if r.get("stop_price_initial") is not None else None,
+                risk_per_share=float(r["risk_per_share"]) if r.get("risk_per_share") is not None else None,
+                initial_risk_dollars=float(r["initial_risk_dollars"]) if r.get("initial_risk_dollars") is not None else None,
+                target_notional=float(r["target_notional"]) if r.get("target_notional") is not None else None,
+            )
+            for r in rows
+        ]
 
     @staticmethod
     def _row_to_broker_order(r: Any) -> BrokerOrder:
@@ -140,9 +489,183 @@ class ExecutionRepository:
             updated_at=r["updated_at"] if isinstance(r.get("updated_at"), datetime) else None,
         )
 
+    @staticmethod
+    def _row_to_execution_order_request(r: Any) -> ExecutionOrderRequest:
+        return ExecutionOrderRequest(
+            request_id=str(r["request_id"]),
+            exec_run_id=str(r["exec_run_id"]),
+            account_id=str(r["account_id"]),
+            risk_run_id=str(r["risk_run_id"]),
+            symbol=str(r["symbol"]),
+            side=str(r["side"]),
+            target_qty=float(r["target_qty"]),
+            order_type=str(r["order_type"]),
+            business_key=str(r["business_key"]),
+            submission_key=str(r["submission_key"]) if r.get("submission_key") not in (None, "") else None,
+            attempt_no=int(r["attempt_no"]),
+            intent_role=str(r["intent_role"]),
+            decision_price=float(r["decision_price"]) if r.get("decision_price") is not None else 0.0,
+            parent_request_id=str(r["parent_request_id"]) if r.get("parent_request_id") not in (None, "") else None,
+            limit_price=float(r["limit_price"]) if r.get("limit_price") is not None else None,
+            stop_price=float(r["stop_price"]) if r.get("stop_price") is not None else None,
+            trail_percent=float(r["trail_percent"]) if r.get("trail_percent") is not None else None,
+            status=str(r.get("status") or "NEW"),
+            failure_reason=str(r["failure_reason"]) if r.get("failure_reason") not in (None, "") else None,
+        )
+
     # ------------------------------------------------------------------
     # Écriture
     # ------------------------------------------------------------------
+
+    def acquire_execution_lock(
+        self,
+        *,
+        account_id: str | None,
+        exec_run_id: str,
+        ttl_seconds: int = 3600,
+    ) -> bool:
+        resolved_account_id = account_id or "default"
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=max(ttl_seconds, 1))
+        purge_stmt = text("""
+            DELETE FROM execution_locks
+            WHERE account_id = :account_id
+              AND expires_at < :now
+        """)
+        insert_stmt = text("""
+            INSERT INTO execution_locks (account_id, locked_by_run_id, acquired_at, expires_at)
+            VALUES (:account_id, :locked_by_run_id, :acquired_at, :expires_at)
+        """)
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(purge_stmt, {"account_id": resolved_account_id, "now": now})
+                conn.execute(insert_stmt, {
+                    "account_id": resolved_account_id,
+                    "locked_by_run_id": exec_run_id,
+                    "acquired_at": now,
+                    "expires_at": expires_at,
+                })
+            return True
+        except IntegrityError:
+            LOGGER.info("Execution lock already held for account_id=%s", resolved_account_id)
+            return False
+
+    def release_execution_lock(self, *, account_id: str | None, exec_run_id: str) -> None:
+        resolved_account_id = account_id or "default"
+        stmt = text("""
+            DELETE FROM execution_locks
+            WHERE account_id = :account_id
+              AND locked_by_run_id = :locked_by_run_id
+        """)
+        with self.engine.begin() as conn:
+            conn.execute(stmt, {"account_id": resolved_account_id, "locked_by_run_id": exec_run_id})
+
+    # ------------------------------------------------------------------
+    # Watcher heartbeat (Phase 1 refactor — audit_watcher.md, audit_global.md §6.8)
+    # ------------------------------------------------------------------
+
+    def upsert_watcher_heartbeat(
+        self,
+        *,
+        watcher_name: str,
+        account_id: str | None = None,
+        hostname: str | None = None,
+        pid: int | None = None,
+        status: str = "RUNNING",
+        last_error: str | None = None,
+    ) -> None:
+        """UPSERT du heartbeat persistant d'un watcher.
+
+        - Idempotent : ré-écrit ``last_heartbeat_at`` à chaque appel.
+        - Tolérant si la table n'existe pas encore (log debug, pas d'erreur).
+        """
+        resolved_account_id = account_id or "default"
+        params = {
+            "watcher_name": watcher_name,
+            "account_id": resolved_account_id,
+            "hostname": hostname,
+            "pid": pid,
+            "status": status,
+            "last_error": (last_error or None),
+            "now": datetime.now(timezone.utc),
+        }
+        # MySQL : INSERT ... ON DUPLICATE KEY UPDATE
+        stmt = text("""
+            INSERT INTO watcher_heartbeats
+                (watcher_name, account_id, hostname, pid, status,
+                 last_heartbeat_at, started_at, last_error)
+            VALUES
+                (:watcher_name, :account_id, :hostname, :pid, :status,
+                 :now, :now, :last_error)
+            ON DUPLICATE KEY UPDATE
+                hostname = VALUES(hostname),
+                pid = VALUES(pid),
+                status = VALUES(status),
+                last_heartbeat_at = VALUES(last_heartbeat_at),
+                last_error = VALUES(last_error)
+        """)
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(stmt, params)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.debug("watcher_heartbeats upsert ignored (table absente ?): %s", exc)
+
+    def snapshot_execution_targets(
+        self,
+        *,
+        exec_run_id: str,
+        account_id: str | None,
+        targets: list[ExecutionTarget],
+    ) -> int:
+        if not targets:
+            return 0
+        resolved_account_id = account_id or "default"
+        stmt = text("""
+            INSERT INTO execution_targets_snapshot
+                (exec_run_id, account_id, risk_run_id, trade_date, symbol, decision_rank,
+                 side, target_shares, entry_price, target_weight, sector,
+                 conviction_score, sizing_method, kelly_fraction, atr_20,
+                 price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                 risk_budget_dollars, initial_risk_dollars, target_notional, created_at)
+            VALUES
+                (:exec_run_id, :account_id, :risk_run_id, :trade_date, :symbol, :decision_rank,
+                 :side, :target_shares, :entry_price, :target_weight, :sector,
+                 :conviction_score, :sizing_method, :kelly_fraction, :atr_20,
+                 :price_asof_date, :atr_asof_date, :stop_price_initial, :risk_per_share,
+                 :risk_budget_dollars, :initial_risk_dollars, :target_notional, :created_at)
+        """)
+        now = datetime.now(timezone.utc)
+        records = [
+            {
+                "exec_run_id": exec_run_id,
+                "account_id": resolved_account_id,
+                "risk_run_id": target.risk_run_id,
+                "trade_date": target.trade_date,
+                "symbol": target.symbol,
+                "decision_rank": target.decision_rank,
+                "side": target.side,
+                "target_shares": target.target_shares,
+                "entry_price": target.entry_price,
+                "target_weight": target.target_weight,
+                "sector": target.sector,
+                "conviction_score": target.conviction_score,
+                "sizing_method": target.sizing_method,
+                "kelly_fraction": target.kelly_fraction,
+                "atr_20": target.atr_20,
+                "price_asof_date": target.price_asof_date,
+                "atr_asof_date": target.atr_asof_date,
+                "stop_price_initial": target.stop_price_initial,
+                "risk_per_share": target.risk_per_share,
+                "risk_budget_dollars": target.risk_budget_dollars,
+                "initial_risk_dollars": target.initial_risk_dollars,
+                "target_notional": target.target_notional,
+                "created_at": now,
+            }
+            for target in targets
+        ]
+        with self.engine.begin() as conn:
+            conn.execute(stmt, records)
+        return len(records)
 
     def insert_execution_run(
         self,
@@ -153,15 +676,20 @@ class ExecutionRepository:
         dry_run: bool,
         total_targets: int,
         account_id: str | None = None,
+        execution_profile: str | None = None,
+        submission_window: str | None = None,
     ) -> None:
         stmt = text("""
             INSERT INTO execution_runs
                 (exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
-                 status, started_at, total_targets, total_submitted, total_filled, account_id)
+                 status, started_at, total_targets, total_submitted, total_filled, account_id,
+                 execution_profile, submission_window)
             VALUES
                 (:exec_run_id, :risk_run_id, :trade_date, :broker_mode, :dry_run,
-                 'RUNNING', :started_at, :total_targets, 0, 0, :account_id)
+                 'RUNNING', :started_at, :total_targets, 0, 0, :account_id,
+                 :execution_profile, :submission_window)
         """)
+        resolved_account_id = account_id or "default"
         with self.engine.begin() as conn:
             conn.execute(stmt, {
                 "exec_run_id": exec_run_id,
@@ -171,7 +699,9 @@ class ExecutionRepository:
                 "dry_run": dry_run,
                 "started_at": datetime.now(timezone.utc),
                 "total_targets": total_targets,
-                "account_id": account_id,
+                "account_id": resolved_account_id,
+                "execution_profile": execution_profile,
+                "submission_window": submission_window,
             })
 
     def update_execution_run_status(
@@ -201,43 +731,273 @@ class ExecutionRepository:
                 "error_message": error_message,
             })
 
-    def upsert_execution_order(self, order_dict: dict[str, Any]) -> None:
+    def _next_request_attempt_no(self, account_id: str, business_key: str) -> int:
         stmt = text("""
-            INSERT INTO execution_orders
-                (exec_run_id, risk_run_id, symbol, intent_id, parent_intent_id,
-                 intent_role, idempotency_key, broker_mode, broker_order_id,
-                 client_order_id, side, qty, filled_qty, avg_fill_price,
-                 order_type, limit_price, stop_price, trail_percent,
-                 decision_price, status, created_at, updated_at)
-            VALUES
-                (:exec_run_id, :risk_run_id, :symbol, :intent_id, :parent_intent_id,
-                 :intent_role, :idempotency_key, :broker_mode, :broker_order_id,
-                 :client_order_id, :side, :qty, :filled_qty, :avg_fill_price,
-                 :order_type, :limit_price, :stop_price, :trail_percent,
-                 :decision_price, :status, :created_at, :updated_at)
-            ON DUPLICATE KEY UPDATE
-                broker_order_id = VALUES(broker_order_id),
-                filled_qty = VALUES(filled_qty),
-                avg_fill_price = VALUES(avg_fill_price),
-                status = VALUES(status),
-                updated_at = VALUES(updated_at)
+            SELECT COALESCE(MAX(attempt_no), 0)
+            FROM execution_order_requests
+            WHERE account_id = :account_id
+              AND business_key = :business_key
         """)
-        with self.engine.begin() as conn:
-            conn.execute(stmt, order_dict)
+        with self.engine.connect() as conn:
+            value = conn.execute(stmt, {"account_id": account_id, "business_key": business_key}).scalar()
+        return int(value or 0) + 1
 
-    def insert_execution_fill(self, fill_dict: dict[str, Any]) -> None:
+    def _load_request_attempt_no(self, request_id: str) -> int | None:
+        stmt = text("SELECT attempt_no FROM execution_order_requests WHERE request_id = :request_id")
+        with self.engine.connect() as conn:
+            value = conn.execute(stmt, {"request_id": request_id}).scalar()
+        return int(value) if value is not None else None
+
+    def upsert_execution_order_request_from_intent(
+        self,
+        intent: OrderIntent,
+        *,
+        account_id: str,
+        status: str,
+        failure_reason: str | None = None,
+    ) -> int:
+        attempt_no = self._load_request_attempt_no(intent.intent_id)
+        if attempt_no is None:
+            attempt_no = self._next_request_attempt_no(account_id, intent.idempotency_key)
+
+        row = {
+            "request_id": intent.intent_id,
+            "exec_run_id": intent.exec_run_id,
+            "account_id": account_id,
+            "risk_run_id": intent.risk_run_id,
+            "symbol": intent.symbol,
+            "side": intent.side,
+            "target_qty": intent.qty,
+            "order_type": intent.order_type,
+            "business_key": intent.idempotency_key,
+            "submission_key": intent.submission_key,
+            "attempt_no": attempt_no,
+            "parent_request_id": intent.parent_intent_id,
+            "intent_role": intent.intent_role,
+            "decision_price": intent.decision_price,
+            "limit_price": intent.limit_price,
+            "stop_price": intent.stop_price,
+            "trail_percent": intent.trail_percent,
+            "status": status,
+            "failure_reason": failure_reason,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+        if self.engine.dialect.name == "sqlite":
+            stmt = text("""
+                INSERT INTO execution_order_requests (
+                    request_id, exec_run_id, account_id, risk_run_id, symbol, side,
+                    target_qty, order_type, business_key, submission_key, attempt_no,
+                    parent_request_id, intent_role, decision_price, limit_price,
+                    stop_price, trail_percent, status, failure_reason, created_at, updated_at
+                ) VALUES (
+                    :request_id, :exec_run_id, :account_id, :risk_run_id, :symbol, :side,
+                    :target_qty, :order_type, :business_key, :submission_key, :attempt_no,
+                    :parent_request_id, :intent_role, :decision_price, :limit_price,
+                    :stop_price, :trail_percent, :status, :failure_reason, :created_at, :updated_at
+                )
+                ON CONFLICT(request_id) DO UPDATE SET
+                    submission_key = excluded.submission_key,
+                    limit_price = excluded.limit_price,
+                    stop_price = excluded.stop_price,
+                    trail_percent = excluded.trail_percent,
+                    status = excluded.status,
+                    failure_reason = excluded.failure_reason,
+                    updated_at = excluded.updated_at
+            """)
+        else:
+            stmt = text("""
+                INSERT INTO execution_order_requests (
+                    request_id, exec_run_id, account_id, risk_run_id, symbol, side,
+                    target_qty, order_type, business_key, submission_key, attempt_no,
+                    parent_request_id, intent_role, decision_price, limit_price,
+                    stop_price, trail_percent, status, failure_reason, created_at, updated_at
+                ) VALUES (
+                    :request_id, :exec_run_id, :account_id, :risk_run_id, :symbol, :side,
+                    :target_qty, :order_type, :business_key, :submission_key, :attempt_no,
+                    :parent_request_id, :intent_role, :decision_price, :limit_price,
+                    :stop_price, :trail_percent, :status, :failure_reason, :created_at, :updated_at
+                )
+                ON DUPLICATE KEY UPDATE
+                    submission_key = VALUES(submission_key),
+                    limit_price = VALUES(limit_price),
+                    stop_price = VALUES(stop_price),
+                    trail_percent = VALUES(trail_percent),
+                    status = VALUES(status),
+                    failure_reason = VALUES(failure_reason),
+                    updated_at = VALUES(updated_at)
+            """)
+        with self.engine.begin() as conn:
+            conn.execute(stmt, row)
+        return attempt_no
+
+    def upsert_execution_broker_order(
+        self,
+        intent: OrderIntent,
+        order: BrokerOrder,
+        *,
+        account_id: str,
+        raw_payload: dict[str, Any] | None = None,
+        raw_response: dict[str, Any] | None = None,
+    ) -> None:
+        row = {
+            "request_id": intent.intent_id,
+            "exec_run_id": intent.exec_run_id,
+            "account_id": account_id,
+            "broker_order_id": order.broker_order_id,
+            "client_order_id": order.client_order_id,
+            "symbol": order.symbol,
+            "side": order.side,
+            "qty": order.qty,
+            "filled_qty": order.filled_qty,
+            "avg_fill_price": order.avg_fill_price,
+            "raw_status": order.status,
+            "normalized_status": order.status,
+            "order_type": order.order_type,
+            "limit_price": order.limit_price,
+            "stop_price": order.stop_price,
+            "trail_percent": order.trail_percent,
+            "raw_payload_json": json.dumps(raw_payload) if raw_payload is not None else None,
+            "raw_response_json": json.dumps(raw_response) if raw_response is not None else None,
+            "submitted_at": order.created_at or datetime.now(timezone.utc),
+            "last_seen_at": order.updated_at or datetime.now(timezone.utc),
+        }
+        if self.engine.dialect.name == "sqlite":
+            stmt = text("""
+                INSERT INTO execution_broker_orders (
+                    request_id, exec_run_id, account_id, broker_order_id, client_order_id,
+                    symbol, side, qty, filled_qty, avg_fill_price, raw_status,
+                    normalized_status, order_type, limit_price, stop_price, trail_percent,
+                    raw_payload_json, raw_response_json, submitted_at, last_seen_at
+                ) VALUES (
+                    :request_id, :exec_run_id, :account_id, :broker_order_id, :client_order_id,
+                    :symbol, :side, :qty, :filled_qty, :avg_fill_price, :raw_status,
+                    :normalized_status, :order_type, :limit_price, :stop_price, :trail_percent,
+                    :raw_payload_json, :raw_response_json, :submitted_at, :last_seen_at
+                )
+                ON CONFLICT(broker_order_id) DO UPDATE SET
+                    client_order_id = excluded.client_order_id,
+                    filled_qty = excluded.filled_qty,
+                    avg_fill_price = excluded.avg_fill_price,
+                    raw_status = excluded.raw_status,
+                    normalized_status = excluded.normalized_status,
+                    raw_response_json = excluded.raw_response_json,
+                    last_seen_at = excluded.last_seen_at
+            """)
+        else:
+            stmt = text("""
+                INSERT INTO execution_broker_orders (
+                    request_id, exec_run_id, account_id, broker_order_id, client_order_id,
+                    symbol, side, qty, filled_qty, avg_fill_price, raw_status,
+                    normalized_status, order_type, limit_price, stop_price, trail_percent,
+                    raw_payload_json, raw_response_json, submitted_at, last_seen_at
+                ) VALUES (
+                    :request_id, :exec_run_id, :account_id, :broker_order_id, :client_order_id,
+                    :symbol, :side, :qty, :filled_qty, :avg_fill_price, :raw_status,
+                    :normalized_status, :order_type, :limit_price, :stop_price, :trail_percent,
+                    :raw_payload_json, :raw_response_json, :submitted_at, :last_seen_at
+                )
+                ON DUPLICATE KEY UPDATE
+                    client_order_id = VALUES(client_order_id),
+                    filled_qty = VALUES(filled_qty),
+                    avg_fill_price = VALUES(avg_fill_price),
+                    raw_status = VALUES(raw_status),
+                    normalized_status = VALUES(normalized_status),
+                    raw_response_json = VALUES(raw_response_json),
+                    last_seen_at = VALUES(last_seen_at)
+            """)
+        with self.engine.begin() as conn:
+            conn.execute(stmt, row)
+
+    def insert_execution_broker_fill(
+        self,
+        fill: ExecutionFill,
+        *,
+        account_id: str,
+        raw_fill: dict[str, Any] | None = None,
+    ) -> None:
+        lookup_stmt = text("SELECT exec_run_id FROM execution_order_requests WHERE request_id = :request_id")
+        sqlite_insert_stmt = text("""
+            INSERT OR IGNORE INTO execution_broker_fills (
+                fill_id, exec_run_id, account_id, broker_order_id, request_id,
+                symbol, filled_qty, avg_fill_price, fill_timestamp, decision_price,
+                slippage_bps, implementation_shortfall, raw_fill_json, created_at
+            ) VALUES (
+                :fill_id, :exec_run_id, :account_id, :broker_order_id, :request_id,
+                :symbol, :filled_qty, :avg_fill_price, :fill_timestamp, :decision_price,
+                :slippage_bps, :implementation_shortfall, :raw_fill_json, :created_at
+            )
+        """)
+        ignore_duplicate_stmt = text("""
+            INSERT INTO execution_broker_fills (
+                fill_id, exec_run_id, account_id, broker_order_id, request_id,
+                symbol, filled_qty, avg_fill_price, fill_timestamp, decision_price,
+                slippage_bps, implementation_shortfall, raw_fill_json, created_at
+            ) VALUES (
+                :fill_id, :exec_run_id, :account_id, :broker_order_id, :request_id,
+                :symbol, :filled_qty, :avg_fill_price, :fill_timestamp, :decision_price,
+                :slippage_bps, :implementation_shortfall, :raw_fill_json, :created_at
+            )
+            ON DUPLICATE KEY UPDATE fill_id = fill_id
+        """)
+        row = {
+            "fill_id": fill.fill_id,
+            "exec_run_id": None,
+            "account_id": account_id,
+            "broker_order_id": fill.broker_order_id,
+            "request_id": fill.intent_id,
+            "symbol": fill.symbol,
+            "filled_qty": fill.filled_qty,
+            "avg_fill_price": fill.avg_fill_price,
+            "fill_timestamp": fill.fill_timestamp,
+            "decision_price": fill.decision_price,
+            "slippage_bps": fill.slippage_bps,
+            "implementation_shortfall": fill.implementation_shortfall,
+            "raw_fill_json": json.dumps(raw_fill) if raw_fill is not None else None,
+            "created_at": datetime.now(timezone.utc),
+        }
+        with self.engine.begin() as conn:
+            row["exec_run_id"] = conn.execute(lookup_stmt, {"request_id": fill.intent_id}).scalar()
+            if self.engine.dialect.name == "sqlite":
+                conn.execute(sqlite_insert_stmt, row)
+            else:
+                conn.execute(ignore_duplicate_stmt, row)
+
+    def snapshot_broker_account(
+        self,
+        exec_run_id: str,
+        *,
+        account_id: str,
+        broker_mode: str,
+        snapshot: dict[str, Any],
+        snapshot_kind: str = "preflight",
+    ) -> None:
         stmt = text("""
-            INSERT INTO execution_fills
-                (exec_run_id, fill_id, broker_order_id, intent_id, symbol,
-                 filled_qty, avg_fill_price, fill_timestamp,
-                 decision_price, slippage_bps, implementation_shortfall)
-            VALUES
-                (:exec_run_id, :fill_id, :broker_order_id, :intent_id, :symbol,
-                 :filled_qty, :avg_fill_price, :fill_timestamp,
-                 :decision_price, :slippage_bps, :implementation_shortfall)
+            INSERT INTO broker_account_snapshots (
+                exec_run_id, account_id, broker_mode, snapshot_kind,
+                equity, cash, settled_cash, buying_power, daytrade_count,
+                raw_payload_json, created_at
+            ) VALUES (
+                :exec_run_id, :account_id, :broker_mode, :snapshot_kind,
+                :equity, :cash, :settled_cash, :buying_power, :daytrade_count,
+                :raw_payload_json, :created_at
+            )
         """)
         with self.engine.begin() as conn:
-            conn.execute(stmt, fill_dict)
+            conn.execute(stmt, {
+                "exec_run_id": exec_run_id,
+                "account_id": account_id,
+                "broker_mode": broker_mode,
+                "snapshot_kind": snapshot_kind,
+                "equity": float(snapshot.get("equity", 0.0) or 0.0),
+                "cash": float(snapshot.get("cash", 0.0) or 0.0),
+                "settled_cash": float(snapshot.get("settled_cash", snapshot.get("cash", 0.0)) or 0.0),
+                "buying_power": float(snapshot.get("buying_power", 0.0) or 0.0),
+                "daytrade_count": int(snapshot.get("daytrade_count", 0) or 0),
+                "raw_payload_json": json.dumps(snapshot),
+                "created_at": datetime.now(timezone.utc),
+            })
+
 
     def insert_execution_event(self, event_dict: dict[str, Any]) -> None:
         stmt = text("""
@@ -285,4 +1045,310 @@ class ExecutionRepository:
         ]
         with self.engine.begin() as conn:
             conn.execute(stmt, records)
+
+    def replace_execution_positions(
+        self,
+        *,
+        exec_run_id: str,
+        account_id: str,
+        broker_mode: str,
+        positions: list[dict[str, Any]],
+    ) -> int:
+        delete_stmt = text("DELETE FROM execution_positions WHERE account_id = :account_id")
+        insert_stmt = text("""
+            INSERT INTO execution_positions (
+                account_id, symbol, net_qty, avg_entry_price, market_price,
+                market_value, unrealized_pnl, broker_mode, source_exec_run_id,
+                position_status, last_broker_snapshot_at, updated_at
+            ) VALUES (
+                :account_id, :symbol, :net_qty, :avg_entry_price, :market_price,
+                :market_value, :unrealized_pnl, :broker_mode, :source_exec_run_id,
+                :position_status, :last_broker_snapshot_at, :updated_at
+            )
+        """)
+        now = datetime.now(timezone.utc)
+        records: list[dict[str, Any]] = []
+        for position in positions:
+            symbol = str(position.get("symbol", "") or "").strip().upper()
+            if not symbol:
+                continue
+            qty = float(position.get("qty", 0) or 0)
+            current_price = position.get("current_price")
+            if current_price in (None, ""):
+                market_value = position.get("market_value")
+                if market_value not in (None, "") and qty not in (0, 0.0):
+                    current_price = float(market_value) / qty
+            records.append({
+                "account_id": account_id,
+                "symbol": symbol,
+                "net_qty": qty,
+                "avg_entry_price": float(position.get("avg_entry_price")) if position.get("avg_entry_price") not in (None, "") else None,
+                "market_price": float(current_price) if current_price not in (None, "") else None,
+                "market_value": float(position.get("market_value")) if position.get("market_value") not in (None, "") else None,
+                "unrealized_pnl": float(position.get("unrealized_pl")) if position.get("unrealized_pl") not in (None, "") else None,
+                "broker_mode": broker_mode,
+                "source_exec_run_id": exec_run_id,
+                "position_status": "OPEN",
+                "last_broker_snapshot_at": now,
+                "updated_at": now,
+            })
+        if not records:
+            records = [{
+                "account_id": account_id,
+                "symbol": "__FLAT__",
+                "net_qty": 0.0,
+                "avg_entry_price": None,
+                "market_price": None,
+                "market_value": None,
+                "unrealized_pnl": None,
+                "broker_mode": broker_mode,
+                "source_exec_run_id": exec_run_id,
+                "position_status": "FLAT",
+                "last_broker_snapshot_at": now,
+                "updated_at": now,
+            }]
+        with self.engine.begin() as conn:
+            conn.execute(delete_stmt, {"account_id": account_id})
+            conn.execute(insert_stmt, records)
+        return len(records)
+
+    def rebuild_execution_position_lots(
+        self,
+        *,
+        account_id: str,
+    ) -> int:
+        inputs = self.load_execution_position_lot_inputs(account_id=account_id)
+        delete_stmt = text("DELETE FROM execution_position_lots WHERE account_id = :account_id")
+        insert_stmt = text("""
+            INSERT INTO execution_position_lots (
+                lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+                opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+                close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+                source_kind, updated_at
+            ) VALUES (
+                :lot_id, :account_id, :symbol, :opened_qty, :remaining_qty, :entry_price,
+                :opened_at, :open_exec_run_id, :open_request_id, :open_fill_id, :lot_status,
+                :close_exec_run_id, :close_request_id, :close_fill_id, :closed_at, :exit_price,
+                :source_kind, :updated_at
+            )
+        """)
+        open_lots_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        records: list[dict[str, Any]] = []
+        for row in inputs:
+            symbol = str(row["symbol"]).strip().upper()
+            side = str(row["side"]).strip().lower()
+            fill_qty = float(row.get("filled_qty") or 0.0)
+            fill_price = float(row.get("avg_fill_price") or 0.0)
+            fill_timestamp = row.get("fill_timestamp") if isinstance(row.get("fill_timestamp"), datetime) else datetime.now(timezone.utc)
+            if fill_qty <= 0:
+                continue
+            if side == "buy":
+                lot = {
+                    "lot_id": f"lot-{row['fill_id']}",
+                    "account_id": account_id,
+                    "symbol": symbol,
+                    "opened_qty": fill_qty,
+                    "remaining_qty": fill_qty,
+                    "entry_price": fill_price,
+                    "opened_at": fill_timestamp,
+                    "open_exec_run_id": row.get("exec_run_id"),
+                    "open_request_id": row.get("request_id"),
+                    "open_fill_id": row.get("fill_id"),
+                    "lot_status": "OPEN",
+                    "close_exec_run_id": None,
+                    "close_request_id": None,
+                    "close_fill_id": None,
+                    "closed_at": None,
+                    "exit_price": None,
+                    "source_kind": "execution_broker_fill",
+                    "updated_at": datetime.now(timezone.utc),
+                }
+                records.append(lot)
+                open_lots_by_symbol.setdefault(symbol, []).append(lot)
+                continue
+
+            remaining_to_close = fill_qty
+            candidate_lots = open_lots_by_symbol.get(symbol, [])
+            while remaining_to_close > 1e-9 and candidate_lots:
+                lot = candidate_lots[0]
+                consume_qty = min(float(lot["remaining_qty"]), remaining_to_close)
+                lot["remaining_qty"] = max(float(lot["remaining_qty"]) - consume_qty, 0.0)
+                lot["updated_at"] = datetime.now(timezone.utc)
+                remaining_to_close -= consume_qty
+                if lot["remaining_qty"] <= 1e-9:
+                    lot["remaining_qty"] = 0.0
+                    lot["lot_status"] = "CLOSED"
+                    lot["close_exec_run_id"] = row.get("exec_run_id")
+                    lot["close_request_id"] = row.get("request_id")
+                    lot["close_fill_id"] = row.get("fill_id")
+                    lot["closed_at"] = fill_timestamp
+                    lot["exit_price"] = fill_price
+                    candidate_lots.pop(0)
+
+        with self.engine.begin() as conn:
+            conn.execute(delete_stmt, {"account_id": account_id})
+            if records:
+                conn.execute(insert_stmt, records)
+        return len(records)
+
+    def replace_execution_reconciliation_results(
+        self,
+        *,
+        exec_run_id: str,
+        account_id: str,
+        results: list[ExecutionReconciliationResult],
+    ) -> int:
+        delete_stmt = text("""
+            DELETE FROM execution_reconciliation_results
+            WHERE exec_run_id = :exec_run_id
+              AND account_id = :account_id
+        """)
+        insert_stmt = text("""
+            INSERT INTO execution_reconciliation_results (
+                exec_run_id, account_id, symbol, target_qty, internal_position_qty,
+                broker_position_qty, position_delta, open_request_buy_qty,
+                open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty,
+                has_open_protection, protection_qty, action,
+                reconciliation_status, reason_code, created_at
+            ) VALUES (
+                :exec_run_id, :account_id, :symbol, :target_qty, :internal_position_qty,
+                :broker_position_qty, :position_delta, :open_request_buy_qty,
+                :open_request_sell_qty, :open_broker_buy_qty, :open_broker_sell_qty,
+                :has_open_protection, :protection_qty, :action,
+                :reconciliation_status, :reason_code, :created_at
+            )
+        """)
+        records = [
+            {
+                "exec_run_id": result.exec_run_id,
+                "account_id": result.account_id,
+                "symbol": result.symbol,
+                "target_qty": result.target_qty,
+                "internal_position_qty": result.internal_position_qty,
+                "broker_position_qty": result.broker_position_qty,
+                "position_delta": result.position_delta,
+                "open_request_buy_qty": result.open_request_buy_qty,
+                "open_request_sell_qty": result.open_request_sell_qty,
+                "open_broker_buy_qty": result.open_broker_buy_qty,
+                "open_broker_sell_qty": result.open_broker_sell_qty,
+                "has_open_protection": int(bool(result.has_open_protection)),
+                "protection_qty": result.protection_qty,
+                "action": result.action,
+                "reconciliation_status": result.reconciliation_status,
+                "reason_code": result.reason_code,
+                "created_at": result.created_at or datetime.now(timezone.utc),
+            }
+            for result in results
+        ]
+        with self.engine.begin() as conn:
+            conn.execute(delete_stmt, {"exec_run_id": exec_run_id, "account_id": account_id})
+            if records:
+                conn.execute(insert_stmt, records)
+        return len(records)
+
+    def load_execution_positions(self, *, account_id: str | None = None) -> list[ExecutionPosition]:
+        stmt = text("""
+            SELECT account_id, symbol, net_qty, avg_entry_price, market_price,
+                   market_value, unrealized_pnl, broker_mode, source_exec_run_id,
+                   position_status, last_broker_snapshot_at, updated_at
+            FROM execution_positions
+            WHERE (:account_id IS NULL OR account_id = :account_id)
+            ORDER BY CASE WHEN position_status = 'FLAT' THEN 1 ELSE 0 END, ABS(net_qty) DESC, symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, {"account_id": account_id}).mappings().all()
+        return [
+            ExecutionPosition(
+                account_id=str(r["account_id"]),
+                symbol=str(r["symbol"]),
+                net_qty=float(r["net_qty"]),
+                avg_entry_price=float(r["avg_entry_price"]) if r.get("avg_entry_price") is not None else None,
+                market_price=float(r["market_price"]) if r.get("market_price") is not None else None,
+                market_value=float(r["market_value"]) if r.get("market_value") is not None else None,
+                unrealized_pnl=float(r["unrealized_pnl"]) if r.get("unrealized_pnl") is not None else None,
+                broker_mode=str(r["broker_mode"]) if r.get("broker_mode") not in (None, "") else None,
+                source_exec_run_id=str(r["source_exec_run_id"]) if r.get("source_exec_run_id") not in (None, "") else None,
+                position_status=str(r.get("position_status") or "OPEN"),
+                last_broker_snapshot_at=r.get("last_broker_snapshot_at") if isinstance(r.get("last_broker_snapshot_at"), datetime) else None,
+                updated_at=r.get("updated_at") if isinstance(r.get("updated_at"), datetime) else None,
+            )
+            for r in rows
+        ]
+
+    def load_execution_position_lots(self, *, account_id: str | None = None) -> list[ExecutionPositionLot]:
+        stmt = text("""
+            SELECT lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+                   opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+                   close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+                   source_kind, updated_at
+            FROM execution_position_lots
+            WHERE (:account_id IS NULL OR account_id = :account_id)
+            ORDER BY opened_at DESC, lot_id DESC
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, {"account_id": account_id}).mappings().all()
+        return [
+            ExecutionPositionLot(
+                lot_id=str(r["lot_id"]),
+                account_id=str(r["account_id"]),
+                symbol=str(r["symbol"]),
+                opened_qty=float(r["opened_qty"]),
+                remaining_qty=float(r["remaining_qty"]),
+                entry_price=float(r["entry_price"]),
+                opened_at=r["opened_at"] if isinstance(r.get("opened_at"), datetime) else datetime.now(timezone.utc),
+                open_exec_run_id=str(r["open_exec_run_id"]) if r.get("open_exec_run_id") not in (None, "") else None,
+                open_request_id=str(r["open_request_id"]) if r.get("open_request_id") not in (None, "") else None,
+                open_fill_id=str(r["open_fill_id"]) if r.get("open_fill_id") not in (None, "") else None,
+                lot_status=str(r.get("lot_status") or "OPEN"),
+                close_exec_run_id=str(r["close_exec_run_id"]) if r.get("close_exec_run_id") not in (None, "") else None,
+                close_request_id=str(r["close_request_id"]) if r.get("close_request_id") not in (None, "") else None,
+                close_fill_id=str(r["close_fill_id"]) if r.get("close_fill_id") not in (None, "") else None,
+                closed_at=r.get("closed_at") if isinstance(r.get("closed_at"), datetime) else None,
+                exit_price=float(r["exit_price"]) if r.get("exit_price") is not None else None,
+                source_kind=str(r.get("source_kind") or "execution_broker_fill"),
+            )
+            for r in rows
+        ]
+
+    def load_execution_reconciliation_results(
+        self,
+        *,
+        exec_run_id: str | None = None,
+        account_id: str | None = None,
+    ) -> list[ExecutionReconciliationResult]:
+        stmt = text("""
+            SELECT exec_run_id, account_id, symbol, target_qty, internal_position_qty,
+                   broker_position_qty, position_delta, open_request_buy_qty,
+                   open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty,
+                   has_open_protection, protection_qty, action,
+                   reconciliation_status, reason_code, created_at
+            FROM execution_reconciliation_results
+            WHERE (:exec_run_id IS NULL OR exec_run_id = :exec_run_id)
+              AND (:account_id IS NULL OR account_id = :account_id)
+            ORDER BY created_at DESC, symbol ASC
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt, {"exec_run_id": exec_run_id, "account_id": account_id}).mappings().all()
+        return [
+            ExecutionReconciliationResult(
+                exec_run_id=str(r["exec_run_id"]),
+                account_id=str(r["account_id"]),
+                symbol=str(r["symbol"]),
+                target_qty=float(r.get("target_qty") or 0.0),
+                internal_position_qty=float(r.get("internal_position_qty") or 0.0),
+                broker_position_qty=float(r.get("broker_position_qty") or 0.0),
+                position_delta=float(r.get("position_delta") or 0.0),
+                open_request_buy_qty=float(r.get("open_request_buy_qty") or 0.0),
+                open_request_sell_qty=float(r.get("open_request_sell_qty") or 0.0),
+                open_broker_buy_qty=float(r.get("open_broker_buy_qty") or 0.0),
+                open_broker_sell_qty=float(r.get("open_broker_sell_qty") or 0.0),
+                has_open_protection=bool(r.get("has_open_protection")),
+                protection_qty=float(r.get("protection_qty") or 0.0),
+                action=str(r.get("action") or "none"),
+                reconciliation_status=str(r.get("reconciliation_status") or "MANUAL_REVIEW"),
+                reason_code=str(r["reason_code"]) if r.get("reason_code") not in (None, "") else None,
+                created_at=r.get("created_at") if isinstance(r.get("created_at"), datetime) else None,
+            )
+            for r in rows
+        ]
 

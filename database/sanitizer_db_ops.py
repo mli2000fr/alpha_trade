@@ -8,33 +8,20 @@ from sqlalchemy import and_, func, insert, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import Connection
 
-# Les tables doivent être passées en argument (stock_bars_daily, cleaning_audit_log, stock_metadata)
+from database.assets import build_eligible_stock_metadata_filters
+
+# Les tables doivent être passées en argument (stock_bars_daily, cleaning_audit_latest, cleaning_audit_runs, stock_metadata)
 
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _latest_audit_id_query(cleaning_audit_log, symbol: str):
-    return (
-        select(cleaning_audit_log.c.id)
-        .where(cleaning_audit_log.c.symbol == symbol)
-        .order_by(cleaning_audit_log.c.updated_at.desc(), cleaning_audit_log.c.id.desc())
-        .limit(1)
-    )
-
-
 def _active_symbol_clause(stock_metadata):
-    return and_(
-        stock_metadata.c.status == 'active',
-        stock_metadata.c.tradable.is_(True),
-        stock_metadata.c.bars_available.is_(True),
-    )
+    return and_(*build_eligible_stock_metadata_filters(stock_metadata))
 
 
 def _build_stock_bars_daily_records(
     symbol: str,
     df: pl.DataFrame,
-    data_adjustment: str = "all",
+    data_adjustment: str = "split",
 ) -> list[dict]:
     """
     Construit les enregistrements à upsert dans stock_bars_daily.
@@ -148,26 +135,26 @@ def get_stock_bars(
     ]
 
 
-def get_last_sync_date(conn: Connection, cleaning_audit_log, symbol: str) -> Optional[date]:
+def get_last_sync_date(conn: Connection, cleaning_audit_latest, symbol: str) -> Optional[date]:
     q = (
-        select(cleaning_audit_log.c.last_sync_date)
-        .where(cleaning_audit_log.c.symbol == symbol)
-        .order_by(cleaning_audit_log.c.updated_at.desc())
+        select(cleaning_audit_latest.c.last_sync_date)
+        .where(cleaning_audit_latest.c.symbol == symbol)
         .limit(1)
     )
     return conn.execute(q).scalar_one_or_none()
 
 
-def get_failed_audits(conn: Connection, cleaning_audit_log, limit: Optional[int] = 20) -> list[dict]:
+def get_failed_audits(conn: Connection, cleaning_audit_latest, limit: Optional[int] = 20) -> list[dict]:
     q = (
         select(
-            cleaning_audit_log.c.symbol,
-            cleaning_audit_log.c.last_sync_date,
-            cleaning_audit_log.c.status,
-            cleaning_audit_log.c.updated_at,
+            cleaning_audit_latest.c.symbol,
+            cleaning_audit_latest.c.last_sync_date,
+            cleaning_audit_latest.c.status,
+            cleaning_audit_latest.c.error_message,
+            cleaning_audit_latest.c.latest_run_at,
         )
-        .where(cleaning_audit_log.c.status == 'failed')
-        .order_by(cleaning_audit_log.c.updated_at.desc(), cleaning_audit_log.c.id.desc())
+        .where(cleaning_audit_latest.c.status == 'failed')
+        .order_by(cleaning_audit_latest.c.latest_run_at.desc(), cleaning_audit_latest.c.symbol.asc())
     )
     if limit is not None:
         q = q.limit(limit)
@@ -179,6 +166,11 @@ def get_first_last_actual_dates(conn: Connection, stock_bars_daily, symbol: str)
     q = select(func.min(stock_bars_daily.c.date), func.max(stock_bars_daily.c.date)).where(stock_bars_daily.c.symbol == symbol)
     mn, mx = conn.execute(q).one_or_none() or (None, None)
     return mn, mx
+
+
+def get_last_actual_daily_date(conn: Connection, stock_bars_daily, symbol: str) -> Optional[date]:
+    q = select(func.max(stock_bars_daily.c.date)).where(stock_bars_daily.c.symbol == symbol)
+    return conn.execute(q).scalar_one_or_none()
 
 
 def get_prev_close_before(conn: Connection, stock_bars_daily, symbol: str, d: date) -> Optional[float]:
@@ -196,7 +188,7 @@ def upsert_stock_bars_daily(
     stock_bars_daily,
     symbol: str,
     df: pl.DataFrame,
-    data_adjustment: str = "all",
+    data_adjustment: str = "split",
 ) -> int:
     """
     :param data_adjustment: Valeur du paramètre adjustment Alpaca ('raw'|'split'|'dividend'|'all').
@@ -228,42 +220,56 @@ def upsert_stock_bars_daily(
 
 def upsert_audit(
     conn: Connection,
-    cleaning_audit_log,
+    cleaning_audit_latest,
+    cleaning_audit_runs,
     symbol: str,
     last_sync: Optional[date],
-    missing_days: int,
-    anomaly_count: int,
+    missing_days: Optional[int],
+    anomaly_count: Optional[int],
     status: str,
+    error_message: Optional[str] = None,
 ) -> None:
-    row_id = conn.execute(_latest_audit_id_query(cleaning_audit_log, symbol)).scalar_one_or_none()
     payload = {
         'symbol': symbol,
         'last_sync_date': last_sync,
         'missing_days_count': missing_days,
         'anomaly_count': anomaly_count,
         'status': status,
+        'error_message': error_message,
     }
     if status == 'failed':
         LOGGER.error(
-            "Audit en echec | symbol=%s row_id=%s last_sync=%s missing_days=%s anomaly_count=%s",
+            "Audit en echec | symbol=%s last_sync=%s missing_days=%s anomaly_count=%s error=%s",
             symbol,
-            row_id,
             last_sync,
             missing_days,
             anomaly_count,
+            error_message,
         )
-    if row_id is None:
-        conn.execute(insert(cleaning_audit_log).values(payload))
+    conn.execute(insert(cleaning_audit_runs).values(payload))
+
+    symbol_exists = conn.execute(
+        select(cleaning_audit_latest.c.symbol)
+        .where(cleaning_audit_latest.c.symbol == symbol)
+        .limit(1)
+    ).scalar_one_or_none()
+    if symbol_exists is None:
+        conn.execute(insert(cleaning_audit_latest).values(payload))
     else:
-        conn.execute(update(cleaning_audit_log).where(cleaning_audit_log.c.id == row_id).values(payload))
+        conn.execute(
+            update(cleaning_audit_latest)
+            .where(cleaning_audit_latest.c.symbol == symbol)
+            .values(payload)
+        )
 
 
 def sync_audit_to_stock_scores(
     conn: Connection,
     stock_scores,
     symbol: str,
-    missing_days: int,
-    anomaly_count: int,
+    missing_days: Optional[int],
+    anomaly_count: Optional[int],
+    sanitizer_status: str,
 ) -> int:
     """
     Met à jour stock_scores avec les compteurs d'audit du dernier run traité.
@@ -276,6 +282,7 @@ def sync_audit_to_stock_scores(
         .values(
             missing_days_count=missing_days,
             anomaly_count=anomaly_count,
+            sanitizer_status=sanitizer_status,
             last_updated_audit=func.current_timestamp(),
         )
     )

@@ -19,8 +19,8 @@ Ce document résume le fonctionnement du module `screener/` et les commandes uti
 |---|---|
 | `screener/__init__.py` | Exporte les primitives du module |
 | `screener/stock_screener.py` | Point d'entrée principal et orchestration parallèle |
-| `screener/pipeline.py` | Calcul des scores à partir des prix |
-| `screener/db_io.py` | Chargement chunks, benchmark, upsert `stock_scores` |
+| `screener/pipeline.py` | Calcul des scores à partir des prix, séparation passe récente / passe historique |
+| `screener/db_io.py` | Chargement chunks, benchmark, loaders optimisés récents / historiques, upsert `stock_scores` |
 | `screener/models.py` | `ScreenerConfig` |
 
 ---
@@ -80,6 +80,55 @@ python -m screener.stock_screener --max-workers 8
 python -m screener.stock_screener --benchmark SPY
 ```
 
+### Force relative minimale personnalisée
+
+```powershell
+python -m screener.stock_screener --min-relative-strength-index 100
+```
+
+### Fenêtre de range historique personnalisée
+
+```powershell
+python -m screener.stock_screener --historical-range-lookback-days 504 --min-historical-range-score 70
+```
+
+### Fenêtre passe 1 personnalisée
+
+```powershell
+python -m screener.stock_screener --first-pass-window-days 400
+```
+
+### Désactiver le mode 2 passes
+
+```powershell
+python -m screener.stock_screener --disable-two-pass-loading
+```
+
+### Correspondance avec l'IHM
+
+Depuis `ihm/pages/pipeline.py`, l'étape `3. stock_screener` du workflow quotidien 1→14 lance bien :
+
+```powershell
+python -m screener.stock_screener ...
+```
+
+L'IHM expose désormais les options CLI réellement supportées par ce point d'entrée :
+
+- `chunk-size`
+- `max-workers`
+- `benchmark`
+- `liquidity-threshold-usd`
+- `min-relative-strength-index`
+- `historical-range-lookback-days`
+- `min-historical-range-score`
+- `first-pass-window-days`
+- activation / désactivation du chargement en 2 passes
+
+Point important :
+
+- `0` sur `max workers` dans l'IHM signifie **auto** (`os.cpu_count()`) ;
+- le mode **point-in-time** via `as_of_date` reste un usage **code/backtesting**, pas une option du launcher Pipeline live.
+
 ---
 
 ## 4. Ce que fait le module
@@ -90,10 +139,12 @@ python -m screener.stock_screener --benchmark SPY
 
 1. résout le nombre de workers ;
 2. charge le rendement 6 mois du benchmark ;
-3. parcourt l'univers par chunks ;
+3. parcourt l'univers éligible (`stock_metadata` actif/tradable/us_equity + historique exploitable) par chunks ;
 4. exécute les calculs en `ProcessPoolExecutor` ;
-5. concatène les résultats ;
-6. écrit un snapshot dans `stock_scores`.
+5. applique une **passe 1 récente** (historique minimum, prix minimum, liquidité, force relative) ;
+6. applique une **passe 2 historique agrégée** (lecture `MIN(low)` / `MAX(high)` seulement pour les survivants) ;
+7. concatène les résultats ;
+8. écrit un snapshot dans `stock_scores`.
 
 ### 4.2 Scores calculés
 
@@ -104,13 +155,39 @@ python -m screener.stock_screener --benchmark SPY
 - `historical_range_score`
 - `total_score`
 
+Le `total_score` est désormais un **score normalisé cross-sectionnel** (0 → 100) calculé comme combinaison pondérée de :
+
+- percentile de liquidité,
+- percentile de force relative,
+- percentile de position dans le range historique.
+
+Cela évite qu'un facteur exprimé sur une échelle différente domine artificiellement le ranking final.
+
+Par défaut, les poids sont désormais plus orientés swing cash :
+
+- liquidité : `15%`
+- force relative : `55%`
+- position dans le range : `30%`
+
+### 4.2 bis Performance / volumétrie
+
+Le screener charge désormais les données en **2 passes** :
+
+1. une fenêtre récente bornée (`first_pass_window_days`) pour filtrer rapidement l'univers ;
+2. un chargement historique réduit à des **agrégats** par symbole pour calculer le range.
+
+Ce design réduit fortement le coût lorsque l'univers contient plusieurs années de barres journalières par symbole.
+
 ### 4.3 Filtres principaux
 
 Le screener élimine notamment les symboles qui ne respectent pas :
 
 1. un seuil minimal de liquidité ;
-2. une fenêtre de données suffisante ;
-3. une référence benchmark exploitable.
+2. un historique minimal suffisant (`min_history_days`, 252 jours par défaut) ;
+3. un prix de clôture minimal (`min_close_price`, 5 USD par défaut) ;
+4. une force relative minimale vs benchmark (`min_relative_strength_index`, 100 par défaut) ;
+5. une proximité suffisante des highs récents via un range borné (`historical_range_lookback_days`, 504 jours par défaut ; `min_historical_range_score`, 70 par défaut) ;
+6. une référence benchmark exploitable.
 
 ### 4.4 Colonnes écrites
 
@@ -139,6 +216,33 @@ Le flag `is_candidate` est initialisé à 0 à ce stade ; la sélection finale e
 5. données post-sanitizer non encore disponibles.
 
 Le code loggue explicitement un message critique si aucun score n'est produit.
+
+Le point d'entrée CLI émet aussi un `run_summary` structuré sur stdout avec le préfixe :
+
+- `::alpha_trade_run_summary::`
+
+Champs notables :
+
+- `targeted_symbols`
+- `chunks_total`
+- `recent_rows_loaded`
+- `range_rows_loaded`
+- `symbols_pass_history`
+- `symbols_pass_liquidity`
+- `symbols_pass_relative_strength`
+- `symbols_final`
+- `rows_avoided_estimate`
+- `benchmark_load_seconds`
+- `pass1_seconds`
+- `pass2_seconds`
+- `upsert_seconds`
+- `duration_seconds`
+
+Ces résumés sont consommés côté IHM pour :
+
+- la page `Pipeline` (run individuel + historique) ;
+- la page `Overview` (résumés pipeline récents) ;
+- la page `Screening` (contexte pipeline & qualité amont).
 
 ---
 

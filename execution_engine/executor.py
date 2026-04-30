@@ -20,11 +20,10 @@ from typing import Any, Optional
 from execution_engine.audit import (
     build_run_id,
     event_to_db_dict,
-    fill_to_db_dict,
     make_event,
-    order_intent_to_db_dict,
 )
 from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.broker_state_sync import BrokerStateSynchronizer
 from execution_engine.config import ExecutionConfig
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import (
@@ -32,18 +31,25 @@ from execution_engine.models import (
     EventType,
     ExecutionEvent,
     ExecutionFill,
+    IntentRole,
     OrderIntent,
     OrderStatus,
+    ReconcileDiff,
+    ReconciliationStatus,
 )
 from execution_engine.oco_manager import OcoManager
 from execution_engine.order_intents import (
     build_entry_intents,
+    build_initial_stop_intent,
     build_take_profit_intent,
     build_trailing_stop_intent,
     build_rebalance_sell_intent,
     build_rebalance_buy_intent,
+    intent_to_alpaca_payload,
+    resolve_initial_stop_price,
+    resolve_trailing_activation_price,
 )
-from execution_engine.reconciliation import reconcile_targets_vs_broker
+from execution_engine.reconciliation import reconcile_execution_state
 from execution_engine.state_machine import is_terminal
 from execution_engine.tca import build_tca_summary, compute_implementation_shortfall, compute_slippage_bps
 from service.alpaca.trading_client import BrokerApiError
@@ -55,6 +61,7 @@ LOGGER = logging.getLogger(__name__)
 class _AccountConstraintState:
     account_type: str
     effective_pdt_rule: str
+    pdt_limited: bool
     swing_only: bool
     equity: float
     buying_power_available: float
@@ -64,7 +71,7 @@ class _AccountConstraintState:
 
     @property
     def pdt_active(self) -> bool:
-        return self.effective_pdt_rule == "auto"
+        return self.pdt_limited
 
 
 class ProductionExecutor:
@@ -92,31 +99,79 @@ class ProductionExecutor:
         self,
         risk_run_id: str | None = None,
         trade_date: date | None = None,
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         exec_run_id = build_run_id()
-        metrics: dict[str, int] = {
+        resolved_account_id = self._cfg.resolved_account_id
+        metrics: dict[str, Any] = {
+            "exec_run_id": exec_run_id,
+            "risk_run_id": risk_run_id,
+            "trade_date": trade_date.isoformat() if hasattr(trade_date, "isoformat") else trade_date,
+            "status": "RUNNING",
             "targets": 0, "submitted": 0, "filled": 0, "failed": 0, "skipped": 0,
             "rebalance_submitted": 0, "rebalance_failed": 0,
             "constraint_blocked": 0, "children_deferred": 0,
+            "child_take_profit_orders_submitted": 0,
+            "child_initial_stop_orders_submitted": 0,
+            "child_trailing_stop_orders_submitted": 0,
+            "child_order_submit_failures": 0,
+            "targets_eligible_for_dynamic_trailing": 0,
+            "dynamic_trailing_trigger_checks": 0,
+            "dynamic_trailing_activations": 0,
+            "dynamic_trailing_timeouts": 0,
+            "dynamic_trailing_cancel_failures": 0,
         }
         events: list[ExecutionEvent] = []
         fills: list[ExecutionFill] = []
         consecutive_failures = 0
+        lock_acquired = False
 
         try:
             # Phase 1 — Init
             events.append(make_event(exec_run_id, EventType.RUN_STARTED, f"Exec run {exec_run_id} started"))
+            lock_acquired = self._repo.acquire_execution_lock(account_id=resolved_account_id, exec_run_id=exec_run_id)
+            if not lock_acquired:
+                events.append(make_event(
+                    exec_run_id,
+                    EventType.RUN_LOCKED,
+                    f"Execution already active for account_id={resolved_account_id}",
+                    payload={"account_id": resolved_account_id},
+                ))
+                metrics["status"] = "ABORTED"
+                return metrics
 
             # Phase 2 — Pre-flight
-            targets = self._repo.load_portfolio_targets(risk_run_id=risk_run_id, trade_date=trade_date)
+            targets = self._repo.load_portfolio_targets(
+                risk_run_id=risk_run_id,
+                trade_date=trade_date,
+                account_id=resolved_account_id,
+            )
             if not targets:
                 events.append(make_event(exec_run_id, EventType.PRECHECK_FAILED, "No portfolio targets found"))
-                self._persist_events(events)
+                metrics["status"] = "ABORTED"
                 return metrics
 
             actual_risk_run_id = targets[0].risk_run_id
             actual_trade_date = trade_date or targets[0].trade_date
             metrics["targets"] = len(targets)
+            metrics["total_target_notional"] = round(sum(float(t.target_notional or (t.target_shares * t.entry_price)) for t in targets), 2)
+            metrics["total_initial_risk_dollars"] = round(sum(float(t.initial_risk_dollars or 0.0) for t in targets), 2)
+            metrics["total_risk_budget_dollars"] = round(sum(float(t.risk_budget_dollars or 0.0) for t in targets), 2)
+            metrics["max_target_weight"] = round(max((float(t.target_weight) for t in targets), default=0.0), 4)
+            metrics["targets_with_risk_controls"] = sum(1 for t in targets if t.stop_price_initial is not None or (t.risk_per_share or 0.0) > 0)
+            metrics["targets_with_broker_initial_stop"] = sum(
+                1 for t in targets
+                if resolve_initial_stop_price(float(t.entry_price), t) is not None
+            )
+            metrics["targets_eligible_for_dynamic_trailing"] = int(metrics["targets_with_broker_initial_stop"]) if self._cfg.enable_dynamic_trailing_transition else 0
+            metrics["targets_with_trailing_fallback"] = max(
+                len(targets) - int(metrics["targets_with_broker_initial_stop"]),
+                0,
+            )
+            metrics["stale_price_targets"] = sum(
+                1 for t in targets
+                if t.price_asof_date is not None and actual_trade_date is not None and t.price_asof_date < actual_trade_date
+            )
+            target_by_symbol = {t.symbol: t for t in targets}
 
             self._repo.insert_execution_run(
                 exec_run_id=exec_run_id,
@@ -125,16 +180,26 @@ class ProductionExecutor:
                 broker_mode=self._cfg.broker_mode,
                 dry_run=self._cfg.dry_run,
                 total_targets=len(targets),
-                account_id=self._cfg.account_id,
+                account_id=resolved_account_id,
+                execution_profile=self._cfg.execution_profile,
+                submission_window=self._cfg.submission_window,
             )
+            try:
+                self._repo.snapshot_execution_targets(
+                    exec_run_id=exec_run_id,
+                    account_id=resolved_account_id,
+                    targets=targets,
+                )
+            except Exception as exc:
+                LOGGER.debug("Target snapshot skipped: %s", exc)
 
             # Circuit breaker check (injection)
             if self._circuit_breaker is not None:
                 try:
                     if self._circuit_breaker.is_active():
                         events.append(make_event(exec_run_id, EventType.CIRCUIT_BREAKER_ACTIVE, "CB active — aborting"))
-                        self._persist_events(events)
                         self._repo.update_execution_run_status(exec_run_id, "ABORTED")
+                        metrics["status"] = "ABORTED"
                         return metrics
                 except Exception as exc:
                     LOGGER.warning("Circuit breaker check failed: %s", exc)
@@ -144,13 +209,20 @@ class ProductionExecutor:
                 try:
                     if not self._broker.is_market_open():
                         events.append(make_event(exec_run_id, EventType.PRECHECK_FAILED, "Market closed"))
-                        self._persist_events(events)
                         self._repo.update_execution_run_status(exec_run_id, "ABORTED")
+                        metrics["status"] = "ABORTED"
                         return metrics
                 except Exception:
                     LOGGER.warning("Cannot check market clock — proceeding")
 
             events.append(make_event(exec_run_id, EventType.PRECHECK_OK, f"{len(targets)} targets loaded"))
+            if metrics["stale_price_targets"] > 0:
+                events.append(make_event(
+                    exec_run_id,
+                    EventType.PRECHECK_OK,
+                    f"WARNING: {metrics['stale_price_targets']} targets utilisent un price_asof_date antérieur au trade_date",
+                    payload={"stale_price_targets": metrics["stale_price_targets"]},
+                ))
 
             account_state = self._build_account_constraint_state()
             events.append(make_event(
@@ -171,6 +243,7 @@ class ProductionExecutor:
                     "remaining_day_trade_slots": account_state.remaining_day_trade_slots,
                 },
             ))
+            self._snapshot_account_constraints(exec_run_id, account_state)
 
             # Phase 2b — Corporate actions : alerter sur splits/dividendes pending
             try:
@@ -239,13 +312,10 @@ class ProductionExecutor:
                     time.sleep(self._cfg.inter_order_delay_ms / 1000.0)
 
                 # Persist intent
-                db_dict = order_intent_to_db_dict(intent, exec_run_id)
-                try:
-                    self._repo.upsert_execution_order(db_dict)
-                except Exception:
-                    LOGGER.debug("Could not persist intent (table may not exist in test)")
+                self._persist_order_request_state(intent, status=OrderStatus.NEW)
 
                 if self._cfg.dry_run:
+                    self._persist_order_request_state(intent, status=OrderStatus.SIMULATED)
                     events.append(make_event(
                         exec_run_id, EventType.DRY_RUN_SIMULATED,
                         f"DRY RUN: {intent.symbol} {intent.side} {intent.qty}",
@@ -278,6 +348,11 @@ class ProductionExecutor:
                             f"[{exc.status_code}] {intent.symbol}: {str(exc)[:200]}",
                             symbol=intent.symbol, intent_id=intent.intent_id,
                         ))
+                        self._persist_order_request_state(
+                            intent,
+                            status=OrderStatus.REJECTED,
+                            failure_reason=f"[{exc.status_code}] {str(exc)[:200]}",
+                        )
                         break  # pas de retry sur 4xx
                     except Exception as exc:
                         # Erreur reseau / timeout : on retente avec backoff
@@ -292,6 +367,11 @@ class ProductionExecutor:
                                 f"Submit failed after retries: {intent.symbol}",
                                 symbol=intent.symbol, intent_id=intent.intent_id,
                             ))
+                            self._persist_order_request_state(
+                                intent,
+                                status=OrderStatus.FAILED,
+                                failure_reason=str(exc)[:200],
+                            )
 
                 if order is not None:
                     events.append(make_event(
@@ -302,13 +382,8 @@ class ProductionExecutor:
                     ))
                     submitted_orders[intent.intent_id] = (intent, order)
                     metrics["submitted"] += 1
-                    # Update DB with broker_order_id
-                    try:
-                        db_dict["broker_order_id"] = order.broker_order_id
-                        db_dict["status"] = order.status
-                        self._repo.upsert_execution_order(db_dict)
-                    except Exception:
-                        pass
+                    self._persist_order_request_state(intent, status=order.status)
+                    self._persist_broker_order_state(intent, order)
 
                 batch_count += 1
 
@@ -331,9 +406,9 @@ class ProductionExecutor:
                         fill = self._build_fill(filled_order, intent)
                         fills.append(fill)
                         try:
-                            self._repo.insert_execution_fill(fill_to_db_dict(fill, exec_run_id))
+                            self._repo.insert_execution_broker_fill(fill, account_id=resolved_account_id)
                         except Exception:
-                            pass
+                            LOGGER.debug("Could not persist Sprint 2 fill", exc_info=True)
 
                         # Slippage alert
                         if abs(fill.slippage_bps) > self._cfg.max_slippage_bps:
@@ -344,7 +419,14 @@ class ProductionExecutor:
                             ))
 
                         # Phase 6 — Submit children (synthetic bracket)
-                        child_events = self._submit_children(intent, filled_order, exec_run_id, account_state=account_state, metrics=metrics)
+                        child_events = self._submit_children(
+                            intent,
+                            filled_order,
+                            exec_run_id,
+                            account_state=account_state,
+                            metrics=metrics,
+                            target=target_by_symbol.get(intent.symbol),
+                        )
                         events.extend(child_events)
 
                         submitted_orders[intent_id] = (intent, filled_order)
@@ -366,20 +448,99 @@ class ProductionExecutor:
                     "They will fill at next market open.",
                 ))
 
+            if not self._cfg.dry_run:
+                try:
+                    sync_metrics = BrokerStateSynchronizer(
+                        self._repo,
+                        self._broker,
+                        broker_mode=self._cfg.broker_mode,
+                    ).sync(
+                        exec_run_id=exec_run_id,
+                        account_id=resolved_account_id,
+                        order_limit=max(200, len(submitted_orders) * 10) if submitted_orders else 200,
+                    )
+                    sync_metrics = {key: int(value or 0) for key, value in sync_metrics.items()}
+                    metrics["broker_orders_synced"] = sync_metrics["orders_synced"]
+                    metrics["broker_fills_synced"] = sync_metrics["fills_synced"]
+                    metrics["broker_positions_observed"] = sync_metrics["broker_positions"]
+                    metrics["execution_positions_projected"] = sync_metrics["positions_projected"]
+                    metrics["execution_position_lots_projected"] = sync_metrics["lots_projected"]
+                    metrics["broker_sync_unmatched_orders"] = sync_metrics["unmatched_orders"]
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.BROKER_SYNC_COMPLETED,
+                        (
+                            "Broker sync completed: "
+                            f"orders={sync_metrics['orders_synced']} fills={sync_metrics['fills_synced']} "
+                            f"positions={sync_metrics['positions_projected']} lots={sync_metrics['lots_projected']}"
+                        ),
+                        payload=sync_metrics,
+                    ))
+                except Exception as exc:
+                    LOGGER.warning("Broker state sync failed: %s", exc, exc_info=True)
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.BROKER_SYNC_FAILED,
+                        f"Broker sync failed: {str(exc)[:160]}",
+                    ))
+
             # Phase 8 — Reconciliation
             if self._cfg.reconcile_after_submit and not self._cfg.dry_run:
                 try:
                     positions = self._broker.get_all_positions()
-                    self._repo.snapshot_broker_positions(exec_run_id, self._cfg.broker_mode, positions, account_id=self._cfg.account_id)
-                    diffs = reconcile_targets_vs_broker(targets, positions, self._cfg.reconcile_tolerance_shares)
-                    action_diffs = [d for d in diffs if d.action != "none"]
-                    if action_diffs:
+                    self._repo.snapshot_broker_positions(exec_run_id, self._cfg.broker_mode, positions, account_id=resolved_account_id)
+                    reconciliation_results = reconcile_execution_state(
+                        exec_run_id=exec_run_id,
+                        account_id=resolved_account_id,
+                        targets=targets,
+                        broker_positions=positions,
+                        internal_positions=self._repo.load_execution_positions(account_id=resolved_account_id),
+                        open_order_state=self._repo.load_open_reconciliation_order_state(account_id=resolved_account_id),
+                        protection_state=self._repo.load_reconciliation_protection_state(account_id=resolved_account_id),
+                        tolerance=self._cfg.reconcile_tolerance_shares,
+                        buying_power_available=account_state.buying_power_available,
+                    )
+                    self._repo.replace_execution_reconciliation_results(
+                        exec_run_id=exec_run_id,
+                        account_id=resolved_account_id,
+                        results=reconciliation_results,
+                    )
+                    action_results = [result for result in reconciliation_results if result.action != "none"]
+                    safe_auto_results = [result for result in action_results if result.reconciliation_status == ReconciliationStatus.SAFE_AUTO]
+                    manual_review_results = [result for result in reconciliation_results if result.reconciliation_status == ReconciliationStatus.MANUAL_REVIEW]
+                    blocked_results = [result for result in reconciliation_results if result.reconciliation_status == ReconciliationStatus.BLOCKED]
+                    metrics["reconciliation_results"] = len(reconciliation_results)
+                    metrics["reconciliation_safe_auto"] = len([result for result in reconciliation_results if result.reconciliation_status == ReconciliationStatus.SAFE_AUTO])
+                    metrics["reconciliation_manual_review"] = len(manual_review_results)
+                    metrics["reconciliation_blocked"] = len(blocked_results)
+                    if action_results or manual_review_results or blocked_results:
                         events.append(make_event(exec_run_id, EventType.RECONCILE_DIFF,
-                                                 f"Reconciliation diffs found: {len(action_diffs)}"))
-                        # Vente / achat automatique si auto_rebalance_on_reconcile
-                        if self._cfg.auto_rebalance_on_reconcile:
+                                                 (
+                                                     "Reconciliation analyzed: "
+                                                     f"actionable={len(action_results)} "
+                                                     f"safe_auto={len(safe_auto_results)} "
+                                                     f"manual_review={len(manual_review_results)} "
+                                                     f"blocked={len(blocked_results)}"
+                                                 ),
+                                                 payload={
+                                                     "actionable": len(action_results),
+                                                     "safe_auto": len(safe_auto_results),
+                                                     "manual_review": len(manual_review_results),
+                                                     "blocked": len(blocked_results),
+                                                 }))
+                        if self._cfg.auto_rebalance_on_reconcile and safe_auto_results:
+                            safe_auto_diffs = [
+                                ReconcileDiff(
+                                    symbol=result.symbol,
+                                    target_qty=int(result.target_qty),
+                                    broker_qty=result.broker_position_qty,
+                                    delta=result.position_delta,
+                                    action=result.action,
+                                )
+                                for result in safe_auto_results
+                            ]
                             rebalance_events = self._submit_rebalance_orders(
-                                action_diffs, exec_run_id, targets, metrics, account_state,
+                                safe_auto_diffs, exec_run_id, targets, metrics, account_state,
                             )
                             events.extend(rebalance_events)
                     else:
@@ -408,6 +569,7 @@ class ProductionExecutor:
                 exec_run_id, "COMPLETED",
                 total_submitted=metrics["submitted"], total_filled=metrics["filled"],
             )
+            metrics["status"] = "COMPLETED"
 
         except Exception as exc:
             LOGGER.exception("Execution run failed: %s", exc)
@@ -416,8 +578,14 @@ class ProductionExecutor:
                 self._repo.update_execution_run_status(exec_run_id, "FAILED", error_message=str(exc)[:255])
             except Exception:
                 pass
-
-        self._persist_events(events)
+            metrics["status"] = "FAILED"
+        finally:
+            self._persist_events(events)
+            if lock_acquired:
+                try:
+                    self._repo.release_execution_lock(account_id=resolved_account_id, exec_run_id=exec_run_id)
+                except Exception:
+                    LOGGER.warning("Unable to release execution lock for account_id=%s", resolved_account_id, exc_info=True)
         return metrics
 
     # ------------------------------------------------------------------
@@ -447,10 +615,12 @@ class ProductionExecutor:
                 buying_power = settled_cash
             daytrade_count = int(self._safe_float(snapshot.get("daytrade_count"), default=0.0))
 
-        remaining_slots = max(self._cfg.max_day_trades - daytrade_count, 0) if self._cfg.applies_pdt_limit(equity) else 0
+        pdt_limited = self._cfg.applies_pdt_limit(equity)
+        remaining_slots = max(self._cfg.max_day_trades - daytrade_count, 0) if pdt_limited else 0
         return _AccountConstraintState(
             account_type=self._cfg.account_type,
             effective_pdt_rule=self._cfg.effective_pdt_rule,
+            pdt_limited=pdt_limited,
             swing_only=self._cfg.swing_only,
             equity=equity,
             buying_power_available=max(buying_power, 0.0),
@@ -557,6 +727,214 @@ class ProductionExecutor:
             implementation_shortfall=ishort,
         )
 
+    def _snapshot_account_constraints(self, exec_run_id: str, account_state: _AccountConstraintState) -> None:
+        try:
+            self._repo.snapshot_broker_account(
+                exec_run_id,
+                account_id=self._cfg.resolved_account_id,
+                broker_mode=self._cfg.broker_mode,
+                snapshot={
+                    "equity": account_state.equity,
+                    "cash": account_state.settled_cash_available,
+                    "settled_cash": account_state.settled_cash_available,
+                    "buying_power": account_state.buying_power_available,
+                    "daytrade_count": account_state.daytrade_count,
+                    "account_type": account_state.account_type,
+                    "effective_pdt_rule": account_state.effective_pdt_rule,
+                },
+                snapshot_kind="preflight",
+            )
+        except Exception:
+            LOGGER.debug("Could not persist broker account snapshot", exc_info=True)
+
+    def _persist_order_request_state(
+        self,
+        intent: OrderIntent,
+        *,
+        status: str,
+        failure_reason: str | None = None,
+    ) -> None:
+        try:
+            self._repo.upsert_execution_order_request_from_intent(
+                intent,
+                account_id=self._cfg.resolved_account_id,
+                status=status,
+                failure_reason=failure_reason,
+            )
+        except Exception:
+            LOGGER.debug("Could not persist Sprint 2 request for %s", intent.intent_id, exc_info=True)
+
+    def _persist_broker_order_state(self, intent: OrderIntent, order: BrokerOrder) -> None:
+        try:
+            self._repo.upsert_execution_broker_order(
+                intent,
+                order,
+                account_id=self._cfg.resolved_account_id,
+                raw_payload=intent_to_alpaca_payload(intent),
+            )
+        except Exception:
+            LOGGER.debug("Could not persist Sprint 2 broker order for %s", intent.intent_id, exc_info=True)
+
+    def _persist_child_order_state(
+        self,
+        intent: OrderIntent,
+        order: BrokerOrder,
+    ) -> None:
+        self._persist_order_request_state(intent, status=order.status)
+        self._persist_broker_order_state(intent, order)
+
+    def _cancel_child_for_transition(
+        self,
+        intent: OrderIntent,
+        order: BrokerOrder,
+        exec_run_id: str,
+    ) -> tuple[bool, BrokerOrder]:
+        try:
+            cancel_requested = self._broker.cancel_broker_order(order.broker_order_id)
+        except Exception:
+            return False, order
+        if not cancel_requested:
+            return False, order
+
+        latest_order = order
+        deadline = time.monotonic() + self._cfg.cancel_timeout_seconds
+        while time.monotonic() < deadline:
+            try:
+                latest_order = self._broker.poll_order_status(order.broker_order_id, intent.intent_id)
+            except Exception:
+                time.sleep(self._cfg.poll_interval_seconds)
+                continue
+            if latest_order.status == OrderStatus.CANCELED:
+                self._persist_child_order_state(intent, latest_order)
+                return True, latest_order
+            if latest_order.status in {OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.FAILED, OrderStatus.EXPIRED}:
+                self._persist_child_order_state(intent, latest_order)
+                return False, latest_order
+            time.sleep(self._cfg.poll_interval_seconds)
+        return False, latest_order
+
+    def _maybe_activate_dynamic_trailing(
+        self,
+        parent: OrderIntent,
+        fill_qty: float,
+        fill_price: float,
+        exec_run_id: str,
+        *,
+        target: Any | None,
+        initial_stop_intent: OrderIntent | None,
+        initial_stop_order: BrokerOrder | None,
+        metrics: dict[str, int],
+    ) -> list[ExecutionEvent]:
+        events: list[ExecutionEvent] = []
+        if (
+            not self._cfg.enable_dynamic_trailing_transition
+            or self._cfg.protection_transition_timeout_seconds <= 0
+            or target is None
+            or initial_stop_intent is None
+            or initial_stop_order is None
+        ):
+            return events
+
+        trigger_price, trigger_mode = resolve_trailing_activation_price(fill_price, self._cfg, target)
+        if trigger_price is None:
+            return events
+
+        deadline = time.monotonic() + self._cfg.protection_transition_timeout_seconds
+        while time.monotonic() <= deadline:
+            market_price = self._broker.get_latest_market_price(parent.symbol)
+            metrics["dynamic_trailing_trigger_checks"] = metrics.get("dynamic_trailing_trigger_checks", 0) + 1
+            if market_price is not None and market_price >= trigger_price:
+                events.append(make_event(
+                    exec_run_id,
+                    EventType.PROTECTION_TRIGGER_HIT,
+                    f"Trigger trailing atteint pour {parent.symbol} à {market_price:.2f}",
+                    symbol=parent.symbol,
+                    intent_id=parent.intent_id,
+                    broker_order_id=initial_stop_order.broker_order_id,
+                    payload={
+                        "market_price": round(float(market_price), 4),
+                        "trigger_price": trigger_price,
+                        "trigger_mode": trigger_mode,
+                        "initial_stop_order_id": initial_stop_order.broker_order_id,
+                    },
+                ))
+                canceled, canceled_order = self._cancel_child_for_transition(initial_stop_intent, initial_stop_order, exec_run_id)
+                if not canceled:
+                    metrics["dynamic_trailing_cancel_failures"] = metrics.get("dynamic_trailing_cancel_failures", 0) + 1
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.PROTECTION_TRANSITION_FAILED,
+                        f"Impossible d'annuler le stop initial pour {parent.symbol}",
+                        symbol=parent.symbol,
+                        intent_id=initial_stop_intent.intent_id,
+                        broker_order_id=canceled_order.broker_order_id,
+                        payload={
+                            "trigger_price": trigger_price,
+                            "market_price": round(float(market_price), 4),
+                            "trigger_mode": trigger_mode,
+                            "stop_status": canceled_order.status,
+                        },
+                    ))
+                    return events
+
+                trailing_intent = build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+                try:
+                    trailing_order = self._broker.submit_intent(trailing_intent)
+                    self._persist_child_order_state(trailing_intent, trailing_order)
+                    metrics["child_trailing_stop_orders_submitted"] = metrics.get("child_trailing_stop_orders_submitted", 0) + 1
+                    metrics["dynamic_trailing_activations"] = metrics.get("dynamic_trailing_activations", 0) + 1
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.PROTECTION_TRANSITION_COMPLETED,
+                        f"Stop initial promu en trailing pour {parent.symbol}",
+                        symbol=parent.symbol,
+                        intent_id=trailing_intent.intent_id,
+                        broker_order_id=trailing_order.broker_order_id,
+                        payload={
+                            "trigger_price": trigger_price,
+                            "market_price": round(float(market_price), 4),
+                            "trigger_mode": trigger_mode,
+                            "initial_stop_order_id": initial_stop_order.broker_order_id,
+                            "trailing_stop_order_id": trailing_order.broker_order_id,
+                            "trailing_stop_percent": trailing_intent.trail_percent,
+                        },
+                    ))
+                except Exception as exc:
+                    metrics["child_order_submit_failures"] = metrics.get("child_order_submit_failures", 0) + 1
+                    events.append(make_event(
+                        exec_run_id,
+                        EventType.PROTECTION_TRANSITION_FAILED,
+                        f"Echec soumission trailing dynamique pour {parent.symbol}: {str(exc)[:120]}",
+                        symbol=parent.symbol,
+                        intent_id=initial_stop_intent.intent_id,
+                        payload={
+                            "trigger_price": trigger_price,
+                            "market_price": round(float(market_price), 4),
+                            "trigger_mode": trigger_mode,
+                        },
+                    ))
+                return events
+
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(self._cfg.protection_transition_poll_interval_seconds)
+
+        metrics["dynamic_trailing_timeouts"] = metrics.get("dynamic_trailing_timeouts", 0) + 1
+        events.append(make_event(
+            exec_run_id,
+            EventType.PROTECTION_TRANSITION_FAILED,
+            f"Trigger trailing non atteint dans la fenêtre pour {parent.symbol}",
+            symbol=parent.symbol,
+            intent_id=initial_stop_intent.intent_id,
+            broker_order_id=initial_stop_order.broker_order_id,
+            payload={
+                "trigger_price": trigger_price,
+                "trigger_mode": trigger_mode,
+                "timeout_seconds": self._cfg.protection_transition_timeout_seconds,
+            },
+        ))
+        return events
+
     def _submit_children(
         self,
         parent: OrderIntent,
@@ -565,6 +943,7 @@ class ProductionExecutor:
         *,
         account_state: _AccountConstraintState,
         metrics: dict[str, int],
+        target: Any | None = None,
     ) -> list[ExecutionEvent]:
         events: list[ExecutionEvent] = []
         fill_qty = filled_order.filled_qty
@@ -591,25 +970,74 @@ class ProductionExecutor:
             ))
             return events
 
-        tp_intent = build_take_profit_intent(parent, fill_qty, fill_price, self._cfg)
-        ts_intent = build_trailing_stop_intent(parent, fill_qty, self._cfg)
+        tp_intent = build_take_profit_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+        stop_intent = build_initial_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+        protection_intent = stop_intent or build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+        submitted_children: list[tuple[OrderIntent, BrokerOrder]] = []
+        initial_stop_submitted_intent: OrderIntent | None = None
+        initial_stop_submitted_order: BrokerOrder | None = None
+        trigger_price, trigger_mode = resolve_trailing_activation_price(fill_price, self._cfg, target) if stop_intent is not None else (None, None)
 
-        for child in [tp_intent, ts_intent]:
+        for child in [tp_intent, protection_intent]:
             try:
                 child_order = self._broker.submit_intent(child)
-                db_dict = order_intent_to_db_dict(child, exec_run_id, status=child_order.status)
-                db_dict["broker_order_id"] = child_order.broker_order_id
-                try:
-                    self._repo.upsert_execution_order(db_dict)
-                except Exception:
-                    pass
+                self._persist_child_order_state(child, child_order)
+                submitted_children.append((child, child_order))
+                if child.intent_role == IntentRole.TAKE_PROFIT:
+                    metrics["child_take_profit_orders_submitted"] = metrics.get("child_take_profit_orders_submitted", 0) + 1
+                elif child.intent_role == IntentRole.INITIAL_STOP:
+                    metrics["child_initial_stop_orders_submitted"] = metrics.get("child_initial_stop_orders_submitted", 0) + 1
+                    initial_stop_submitted_intent = child
+                    initial_stop_submitted_order = child_order
+                elif child.intent_role == IntentRole.TRAILING_STOP:
+                    metrics["child_trailing_stop_orders_submitted"] = metrics.get("child_trailing_stop_orders_submitted", 0) + 1
             except Exception as exc:
                 LOGGER.warning("Child submit failed for %s %s: %s", child.symbol, child.intent_role, exc)
+                metrics["child_order_submit_failures"] = metrics.get("child_order_submit_failures", 0) + 1
+                if child.intent_role == IntentRole.INITIAL_STOP:
+                    fallback_trailing = build_trailing_stop_intent(parent, fill_qty, fill_price, self._cfg, target=target)
+                    try:
+                        fallback_order = self._broker.submit_intent(fallback_trailing)
+                        self._persist_child_order_state(fallback_trailing, fallback_order)
+                        submitted_children.append((fallback_trailing, fallback_order))
+                        metrics["child_trailing_stop_orders_submitted"] = metrics.get("child_trailing_stop_orders_submitted", 0) + 1
+                    except Exception as fallback_exc:
+                        LOGGER.warning(
+                            "Trailing fallback submit failed for %s after initial stop failure: %s",
+                            child.symbol,
+                            fallback_exc,
+                        )
+                        metrics["child_order_submit_failures"] = metrics.get("child_order_submit_failures", 0) + 1
+
+        protection_child = next(
+            (child for child, _ in submitted_children if child.intent_role in {IntentRole.INITIAL_STOP, IntentRole.TRAILING_STOP}),
+            None,
+        )
+        protection_mode = None
+        if protection_child is not None:
+            protection_mode = "broker_initial_stop" if protection_child.intent_role == IntentRole.INITIAL_STOP else "trailing_fallback"
+        protection_label = {
+            "broker_initial_stop": "STOP",
+            "trailing_fallback": "TRAIL",
+            None: "PROTECTION_FAILED",
+        }[protection_mode]
 
         events.append(make_event(
             exec_run_id, EventType.CHILDREN_SUBMITTED,
-            f"Bracket children for {parent.symbol}: TP + TS",
+            f"Bracket children for {parent.symbol}: TP + {protection_label}",
             symbol=parent.symbol, intent_id=parent.intent_id,
+            payload={
+                "take_profit_limit_price": tp_intent.limit_price,
+                "initial_stop_price": stop_intent.stop_price if stop_intent is not None else None,
+                "trailing_stop_percent": protection_child.trail_percent if protection_child and protection_child.intent_role == IntentRole.TRAILING_STOP else None,
+                "protection_mode": protection_mode,
+                "child_order_roles": [child.intent_role for child, _ in submitted_children],
+                "dynamic_trailing_trigger_price": trigger_price,
+                "dynamic_trailing_trigger_mode": trigger_mode,
+                "risk_per_share": getattr(target, "risk_per_share", None),
+                "stop_price_initial": getattr(target, "stop_price_initial", None),
+                "initial_risk_dollars": getattr(target, "initial_risk_dollars", None),
+            },
         ))
         return events
 
@@ -673,21 +1101,13 @@ class ProductionExecutor:
             LOGGER.info("Rebalance: %s", action_label)
 
             # Persist intent
-            db_dict = order_intent_to_db_dict(intent, exec_run_id)
-            try:
-                self._repo.upsert_execution_order(db_dict)
-            except Exception:
-                pass
+            self._persist_order_request_state(intent, status=OrderStatus.NEW)
 
             # Submit
             try:
                 order = self._broker.submit_intent(intent)
-                db_dict["broker_order_id"] = order.broker_order_id
-                db_dict["status"] = order.status
-                try:
-                    self._repo.upsert_execution_order(db_dict)
-                except Exception:
-                    pass
+                self._persist_order_request_state(intent, status=order.status)
+                self._persist_broker_order_state(intent, order)
                 metrics["rebalance_submitted"] = metrics.get("rebalance_submitted", 0) + 1
                 events.append(make_event(
                     exec_run_id, EventType.ORDER_SUBMITTED,
@@ -699,6 +1119,11 @@ class ProductionExecutor:
             except BrokerApiError as exc:
                 LOGGER.error("Rebalance ordre refuse [%s] %s: %s", exc.status_code, diff.symbol, exc)
                 metrics["rebalance_failed"] = metrics.get("rebalance_failed", 0) + 1
+                self._persist_order_request_state(
+                    intent,
+                    status=OrderStatus.REJECTED,
+                    failure_reason=f"[{exc.status_code}] {str(exc)[:200]}",
+                )
                 events.append(make_event(
                     exec_run_id, EventType.ORDER_REJECTED,
                     f"Rebalance rejected [{exc.status_code}] {diff.symbol}: {str(exc)[:200]}",
@@ -707,6 +1132,11 @@ class ProductionExecutor:
             except Exception as exc:
                 LOGGER.error("Rebalance submit failed %s: %s", diff.symbol, exc)
                 metrics["rebalance_failed"] = metrics.get("rebalance_failed", 0) + 1
+                self._persist_order_request_state(
+                    intent,
+                    status=OrderStatus.FAILED,
+                    failure_reason=str(exc)[:200],
+                )
                 events.append(make_event(
                     exec_run_id, EventType.ORDER_REJECTED,
                     f"Rebalance failed {diff.symbol}: {str(exc)[:200]}",

@@ -31,11 +31,13 @@ Usage typique :
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Optional, cast
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -43,8 +45,78 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from common.utils import configure_root_logging
+from core.conviction import SentimentFusionWeights, fuse_sentiment
 
 LOGGER = logging.getLogger(__name__)
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _build_run_id(prefix: str) -> str:
+    return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+
+
+def _emit_run_summary(summary: dict[str, object]) -> None:
+    print(
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+        flush=True,
+    )
+
+
+def _build_cli_run_summary(
+    *,
+    config: "SentimentBoostConfig",
+    trade_date: date,
+    all_symbols: bool,
+    loaded_symbols: int,
+    updated_symbols: int,
+    enriched: pd.DataFrame,
+    started_at: datetime,
+    finished_at: datetime,
+    finbert_fingerprints: list[str] | None = None,
+) -> dict[str, object]:
+    signal_active_symbols = 0
+    total_news = 0
+    avg_final_score_sentiment = None
+    max_final_score_sentiment = None
+    if not enriched.empty:
+        if "signal_active" in enriched.columns:
+            signal_active_symbols = int(enriched["signal_active"].fillna(False).astype(bool).sum())
+        if "total_news" in enriched.columns:
+            total_news_series = pd.Series(pd.to_numeric(enriched["total_news"], errors="coerce"), index=enriched.index)
+            total_news = int(total_news_series.fillna(0).sum())
+        if "final_score_sentiment" in enriched.columns:
+            score_series = pd.Series(
+                pd.to_numeric(enriched["final_score_sentiment"], errors="coerce"),
+                index=enriched.index,
+            ).dropna()
+            if not score_series.empty:
+                avg_final_score_sentiment = round(float(score_series.mean()), 4)
+                max_final_score_sentiment = round(float(score_series.max()), 4)
+
+    return {
+        "run_id": _build_run_id("signal-aggregator"),
+        "trade_date": trade_date.isoformat(),
+        "all_symbols": all_symbols,
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "loaded_symbols": int(loaded_symbols),
+        "updated_symbols": int(updated_symbols),
+        "signal_active_symbols": signal_active_symbols,
+        "total_news": total_news,
+        "sentiment_weight": round(float(config.sentiment_weight), 4),
+        "macro_sector_weight": round(float(config.macro_sector_weight), 4),
+        "quant_weight": round(float(config.quant_weight), 4),
+        "lookback_days": int(config.lookback_days),
+        "min_news_count": int(config.min_news_count),
+        "avg_final_score_sentiment": avg_final_score_sentiment,
+        "max_final_score_sentiment": max_final_score_sentiment,
+        "finbert_model_fingerprints": list(finbert_fingerprints or []),
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +147,8 @@ class SentimentBoostConfig:
     lookback_days: int = 5
     min_news_count: int = 2
     time_decay_half_life_days: float = 2.0
+    ticker_horizon_weights: tuple[tuple[int, float], ...] = ((1, 0.35), (3, 0.25), (5, 0.20), (10, 0.10), (20, 0.10))
+    sector_horizon_weights: tuple[tuple[int, float], ...] = ((1, 0.40), (3, 0.25), (5, 0.20), (10, 0.10), (20, 0.05))
 
     def __post_init__(self) -> None:
         total = self.sentiment_weight + self.macro_sector_weight + self.quant_weight
@@ -89,6 +163,34 @@ class SentimentBoostConfig:
             raise ValueError("min_news_count doit être >= 1.")
         if self.time_decay_half_life_days <= 0:
             raise ValueError("time_decay_half_life_days doit être > 0.")
+        self._validate_horizon_weights("ticker_horizon_weights", self.ticker_horizon_weights)
+        self._validate_horizon_weights("sector_horizon_weights", self.sector_horizon_weights)
+
+    @staticmethod
+    def _validate_horizon_weights(name: str, weights: tuple[tuple[int, float], ...]) -> None:
+        if not weights:
+            raise ValueError(f"{name} ne doit pas être vide.")
+        horizons = [int(horizon) for horizon, _ in weights]
+        if any(horizon < 1 for horizon in horizons):
+            raise ValueError(f"{name} doit contenir des horizons >= 1.")
+        if horizons != sorted(set(horizons)):
+            raise ValueError(f"{name} doit être trié et sans doublons.")
+        if all(float(weight) <= 0 for _, weight in weights):
+            raise ValueError(f"{name} doit contenir au moins un poids positif.")
+
+    def to_fusion_weights(self) -> SentimentFusionWeights:
+        """Convertit en :class:`core.conviction.SentimentFusionWeights`."""
+        return SentimentFusionWeights(
+            quant_weight=float(self.quant_weight),
+            sentiment_weight=float(self.sentiment_weight),
+            macro_weight=float(self.macro_sector_weight),
+        )
+
+    @staticmethod
+    def _normalized_horizon_weights(weights: tuple[tuple[int, float], ...]) -> list[tuple[int, float]]:
+        positive_weights = [(int(horizon), float(weight)) for horizon, weight in weights if float(weight) > 0]
+        total = sum(weight for _, weight in positive_weights)
+        return [(horizon, weight / total) for horizon, weight in positive_weights] if total > 0 else []
 
 
 class SentimentSignalAggregator:
@@ -104,6 +206,10 @@ class SentimentSignalAggregator:
         self.engine = engine
         self.config = config or SentimentBoostConfig()
 
+    def _feature_fetch_window_days(self, horizon_weights: tuple[tuple[int, float], ...]) -> int:
+        max_horizon = max((int(horizon) for horizon, _ in horizon_weights), default=1)
+        return max(int(self.config.lookback_days), max_horizon)
+
     # ------------------------------------------------------------------
     # Chargement depuis la DB
     # ------------------------------------------------------------------
@@ -113,7 +219,7 @@ class SentimentSignalAggregator:
         if not symbols:
             return pd.DataFrame()
 
-        cutoff = pd.Timestamp(trade_date) - pd.Timedelta(days=self.config.lookback_days)
+        cutoff = pd.Timestamp(trade_date) - pd.Timedelta(days=self._feature_fetch_window_days(self.config.ticker_horizon_weights))
         stmt = text(
             """
             SELECT symbol,
@@ -137,9 +243,25 @@ class SentimentSignalAggregator:
                 SELECT symbol,
                        trade_date,
                        news_count_1d,
+                       news_count_3d,
+                       news_count_5d,
+                       news_count_10d,
+                       news_count_20d,
                        sentiment_net_mean_1d,
                        sentiment_confidence_mean_1d,
-                       major_event_flag
+                       sentiment_net_mean_3d,
+                       sentiment_net_mean_5d,
+                       sentiment_net_mean_10d,
+                       sentiment_net_mean_20d,
+                       sentiment_confidence_mean_3d,
+                       sentiment_confidence_mean_5d,
+                       sentiment_confidence_mean_10d,
+                       sentiment_confidence_mean_20d,
+                       major_event_flag,
+                       major_event_day_count_3d,
+                       major_event_day_count_5d,
+                       major_event_day_count_10d,
+                       major_event_day_count_20d
                 FROM ticker_daily_sentiment_features
                 WHERE symbol IN :symbols
                   AND trade_date >= :cutoff
@@ -161,7 +283,7 @@ class SentimentSignalAggregator:
         if not sectors:
             return pd.DataFrame()
 
-        cutoff = pd.Timestamp(trade_date) - pd.Timedelta(days=self.config.lookback_days)
+        cutoff = pd.Timestamp(trade_date) - pd.Timedelta(days=self._feature_fetch_window_days(self.config.sector_horizon_weights))
         try:
             from sqlalchemy import bindparam
             stmt = text(
@@ -170,7 +292,19 @@ class SentimentSignalAggregator:
                        trade_date,
                        sector_impact_score,
                        macro_event_intensity,
-                       macro_event_flag
+                       macro_event_flag,
+                       sector_impact_score_3d,
+                       sector_impact_score_5d,
+                       sector_impact_score_10d,
+                       sector_impact_score_20d,
+                       macro_event_intensity_3d,
+                       macro_event_intensity_5d,
+                       macro_event_intensity_10d,
+                       macro_event_intensity_20d,
+                       macro_event_day_count_3d,
+                       macro_event_day_count_5d,
+                       macro_event_day_count_10d,
+                       macro_event_day_count_20d
                 FROM sector_daily_sentiment_features
                 WHERE sector IN :sectors
                   AND trade_date >= :cutoff
@@ -391,6 +525,210 @@ class SentimentSignalAggregator:
 
         return pd.Series(normalized, index=series.index, dtype=float)
 
+    @staticmethod
+    def _normalize_identifier(value: object) -> str | None:
+        if value is None:
+            return None
+        try:
+            if bool(pd.isna(value)):
+                return None
+        except TypeError:
+            pass
+        normalized = str(value).strip()
+        return normalized or None
+
+    @staticmethod
+    def _normalize_signed_signal(series: pd.Series) -> pd.Series:
+        numeric = pd.Series(pd.to_numeric(series, errors="coerce"), index=series.index, dtype=float)
+        numeric = numeric.where(np.isfinite(numeric), np.nan)
+        clipped = numeric.clip(-1.0, 1.0).fillna(0.0)
+        return ((clipped + 1.0) / 2.0).astype(float)
+
+    @staticmethod
+    def _numeric_value(value: object, default: float = 0.0) -> float:
+        if value is None:
+            return default
+        try:
+            if bool(pd.isna(value)):
+                return default
+        except TypeError:
+            pass
+        numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
+        if pd.isna(numeric_value):
+            return default
+        as_float = float(numeric_value)
+        return default if not np.isfinite(as_float) else as_float
+
+    @classmethod
+    def _compute_staleness_weight(
+        cls,
+        trade_date_value: object,
+        *,
+        reference_date: date,
+        half_life_days: float,
+    ) -> float:
+        series = pd.Series([trade_date_value], dtype="object")
+        return float(
+            cls._compute_time_decay_weight(
+                series,
+                reference_date=reference_date,
+                half_life_days=half_life_days,
+            ).iloc[0]
+        )
+
+    @staticmethod
+    def _latest_rows_by_key(df: pd.DataFrame, key_column: str) -> pd.DataFrame:
+        if df.empty or key_column not in df.columns or "trade_date" not in df.columns:
+            return pd.DataFrame()
+        ordered = df.copy()
+        ordered["trade_date"] = pd.to_datetime(ordered["trade_date"], errors="coerce")
+        ordered = ordered.dropna(subset=[key_column, "trade_date"]).sort_values([key_column, "trade_date"])
+        if ordered.empty:
+            return pd.DataFrame()
+        return ordered.groupby(key_column, as_index=False).tail(1).reset_index(drop=True)
+
+    @classmethod
+    def _compose_horizon_signal(
+        cls,
+        row: dict[str, object],
+        *,
+        value_columns: dict[int, str],
+        horizon_weights: tuple[tuple[int, float], ...],
+        coverage_columns: dict[int, str] | None = None,
+        coverage_cap: float = 1.0,
+    ) -> float:
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for horizon, weight in SentimentBoostConfig._normalized_horizon_weights(horizon_weights):
+            column_name = value_columns.get(horizon)
+            if column_name is None or column_name not in row:
+                continue
+            signal_value = max(-1.0, min(1.0, cls._numeric_value(row.get(column_name), default=0.0)))
+            coverage = 1.0
+            if coverage_columns is not None:
+                coverage_column = coverage_columns.get(horizon)
+                coverage_raw = cls._numeric_value(row.get(coverage_column), default=0.0) if coverage_column else 0.0
+                coverage = min(max(coverage_raw, 0.0), coverage_cap)
+            effective_weight = weight * coverage
+            if effective_weight <= 0:
+                continue
+            weighted_sum += signal_value * effective_weight
+            total_weight += effective_weight
+        return weighted_sum / total_weight if total_weight > 0 else 0.0
+
+    def _aggregate_ticker_multi_horizon(self, ticker_df: pd.DataFrame, reference_date: date) -> pd.DataFrame:
+        if ticker_df.empty:
+            return pd.DataFrame(columns=["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news", "signal_active", "signal_age_days", "signal_staleness_weight"])
+        latest = self._latest_rows_by_key(ticker_df, "symbol")
+        if latest.empty:
+            return pd.DataFrame(columns=["symbol", "sentiment_net_agg", "major_event_flag_agg", "total_news", "signal_active", "signal_age_days", "signal_staleness_weight"])
+
+        rows: list[dict[str, object]] = []
+        count_columns = {1: "news_count_1d", 3: "news_count_3d", 5: "news_count_5d", 10: "news_count_10d", 20: "news_count_20d"}
+        major_columns = [
+            "major_event_flag",
+            "major_event_day_count_3d",
+            "major_event_day_count_5d",
+            "major_event_day_count_10d",
+            "major_event_day_count_20d",
+        ]
+        for row in latest.to_dict(orient="records"):
+            typed_row = cast(dict[str, object], row)
+            trade_date_value = typed_row.get("trade_date")
+            staleness_weight = self._compute_staleness_weight(
+                trade_date_value,
+                reference_date=reference_date,
+                half_life_days=self.config.time_decay_half_life_days,
+            )
+            parsed_trade_date = pd.to_datetime(trade_date_value, errors="coerce")
+            signal_age_days = (
+                max((pd.Timestamp(reference_date).normalize() - pd.Timestamp(parsed_trade_date).normalize()).days, 0)
+                if not pd.isna(parsed_trade_date)
+                else 0
+            )
+            available_count_columns = {
+                horizon: column_name
+                for horizon, column_name in count_columns.items()
+                if column_name in typed_row
+            }
+            total_news = 0
+            if available_count_columns:
+                total_news = int(max(self._numeric_value(typed_row.get(column_name), default=0.0) for column_name in available_count_columns.values()))
+            rows.append(
+                {
+                    "symbol": typed_row.get("symbol"),
+                    "sentiment_net_agg": self._compose_horizon_signal(
+                        typed_row,
+                        value_columns={
+                            1: "sentiment_net_mean_1d",
+                            3: "sentiment_net_mean_3d",
+                            5: "sentiment_net_mean_5d",
+                            10: "sentiment_net_mean_10d",
+                            20: "sentiment_net_mean_20d",
+                        },
+                        horizon_weights=self.config.ticker_horizon_weights,
+                        coverage_columns=available_count_columns,
+                        coverage_cap=float(max(self.config.min_news_count, 1)),
+                    ) * staleness_weight,
+                    "major_event_flag_agg": int(any(self._numeric_value(typed_row.get(column_name), default=0.0) > 0 for column_name in major_columns if column_name in typed_row)),
+                    "total_news": total_news,
+                    "signal_active": total_news >= self.config.min_news_count,
+                    "signal_age_days": signal_age_days,
+                    "signal_staleness_weight": staleness_weight,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def _aggregate_sector_multi_horizon(self, sector_df: pd.DataFrame, reference_date: date) -> pd.DataFrame:
+        if sector_df.empty:
+            return pd.DataFrame(columns=["sector", "sector_impact_agg", "macro_event_flag_agg", "macro_signal_age_days", "macro_signal_staleness_weight"])
+        latest = self._latest_rows_by_key(sector_df, "sector")
+        if latest.empty:
+            return pd.DataFrame(columns=["sector", "sector_impact_agg", "macro_event_flag_agg", "macro_signal_age_days", "macro_signal_staleness_weight"])
+
+        rows: list[dict[str, object]] = []
+        macro_columns = [
+            "macro_event_flag",
+            "macro_event_day_count_3d",
+            "macro_event_day_count_5d",
+            "macro_event_day_count_10d",
+            "macro_event_day_count_20d",
+        ]
+        for row in latest.to_dict(orient="records"):
+            typed_row = cast(dict[str, object], row)
+            trade_date_value = typed_row.get("trade_date")
+            staleness_weight = self._compute_staleness_weight(
+                trade_date_value,
+                reference_date=reference_date,
+                half_life_days=self.config.time_decay_half_life_days,
+            )
+            parsed_trade_date = pd.to_datetime(trade_date_value, errors="coerce")
+            signal_age_days = (
+                max((pd.Timestamp(reference_date).normalize() - pd.Timestamp(parsed_trade_date).normalize()).days, 0)
+                if not pd.isna(parsed_trade_date)
+                else 0
+            )
+            rows.append(
+                {
+                    "sector": typed_row.get("sector"),
+                    "sector_impact_agg": self._compose_horizon_signal(
+                        typed_row,
+                        value_columns={
+                            1: "sector_impact_score",
+                            3: "sector_impact_score_3d",
+                            5: "sector_impact_score_5d",
+                            10: "sector_impact_score_10d",
+                            20: "sector_impact_score_20d",
+                        },
+                        horizon_weights=self.config.sector_horizon_weights,
+                    ) * staleness_weight,
+                    "macro_event_flag_agg": int(any(self._numeric_value(typed_row.get(column_name), default=0.0) > 0 for column_name in macro_columns if column_name in typed_row)),
+                    "macro_signal_age_days": signal_age_days,
+                    "macro_signal_staleness_weight": staleness_weight,
+                }
+            )
+        return pd.DataFrame(rows)
+
     # ------------------------------------------------------------------
     # Point d'entrée principal
     # ------------------------------------------------------------------
@@ -415,28 +753,53 @@ class SentimentSignalAggregator:
         if scores_df.empty:
             return scores_df.copy()
 
+        required = {"symbol", "final_score"}
+        missing = required - set(scores_df.columns)
+        if missing:
+            raise ValueError(f"merge : colonnes manquantes dans scores_df : {missing}.")
+
         ref_date = trade_date or date.today()
         result = scores_df.copy()
 
-        symbols = result["symbol"].dropna().astype(str).tolist()
-        sectors = result["sector"].dropna().unique().tolist() if "sector" in result.columns else []
+        result["symbol"] = [self._normalize_identifier(value) for value in result["symbol"].tolist()]
+        result = result[result["symbol"].notna()].copy()
+        if result.empty:
+            return result
+
+        if "sector" in result.columns:
+            result["sector"] = [self._normalize_identifier(value) for value in result["sector"].tolist()]
+
+        quant_scores = pd.Series(pd.to_numeric(result["final_score"], errors="coerce"), index=result.index, dtype=float)
+        quant_scores = quant_scores.where(np.isfinite(quant_scores), np.nan).fillna(0.0).clip(0.0, 1.0)
+        result["final_score"] = quant_scores
+
+        symbols = sorted(set(result["symbol"].astype(str).tolist()))
+        sectors = (
+            sorted({sector for sector in result["sector"].dropna().astype(str).tolist() if sector})
+            if "sector" in result.columns
+            else []
+        )
 
         # --- Chargement ---
         ticker_df = self._load_ticker_sentiment(symbols, ref_date)
         sector_df = self._load_sector_sentiment(sectors, ref_date) if sectors else pd.DataFrame()
 
         # --- Agrégation fenêtrée ---
-        ticker_agg = self._aggregate_ticker_window(
-            ticker_df,
-            min_news_count=self.config.min_news_count,
-            reference_date=ref_date,
-            half_life_days=self.config.time_decay_half_life_days,
-        )
-        sector_agg = self._aggregate_sector_window(
-            sector_df,
-            reference_date=ref_date,
-            half_life_days=self.config.time_decay_half_life_days,
-        )
+        ticker_agg = self._aggregate_ticker_multi_horizon(ticker_df, reference_date=ref_date)
+        if ticker_agg.empty:
+            ticker_agg = self._aggregate_ticker_window(
+                ticker_df,
+                min_news_count=self.config.min_news_count,
+                reference_date=ref_date,
+                half_life_days=self.config.time_decay_half_life_days,
+            )
+        sector_agg = self._aggregate_sector_multi_horizon(sector_df, reference_date=ref_date)
+        if sector_agg.empty:
+            sector_agg = self._aggregate_sector_window(
+                sector_df,
+                reference_date=ref_date,
+                half_life_days=self.config.time_decay_half_life_days,
+            )
 
         LOGGER.info(
             "SentimentSignalAggregator | trade_date=%s symboles=%s ticker_signaux=%s secteurs=%s",
@@ -449,24 +812,32 @@ class SentimentSignalAggregator:
         # --- Jointure scores quantitatifs ← ticker sentiment ---
         if not ticker_agg.empty and "symbol" in ticker_agg.columns:
             ticker_map = {
-                str(row.get("symbol")): row
+                self._normalize_identifier(row.get("symbol")): row
                 for row in ticker_agg.to_dict(orient="records")
-                if row.get("symbol") is not None
+                if self._normalize_identifier(row.get("symbol")) is not None
             }
             result["sentiment_net_agg"] = [
-                ticker_map.get(str(symbol), {}).get("sentiment_net_agg")
+                ticker_map.get(symbol, {}).get("sentiment_net_agg")
                 for symbol in result["symbol"].tolist()
             ]
             result["major_event_flag_agg"] = [
-                ticker_map.get(str(symbol), {}).get("major_event_flag_agg")
+                ticker_map.get(symbol, {}).get("major_event_flag_agg")
                 for symbol in result["symbol"].tolist()
             ]
             result["total_news"] = [
-                ticker_map.get(str(symbol), {}).get("total_news")
+                ticker_map.get(symbol, {}).get("total_news")
                 for symbol in result["symbol"].tolist()
             ]
             result["signal_active"] = [
-                ticker_map.get(str(symbol), {}).get("signal_active")
+                ticker_map.get(symbol, {}).get("signal_active")
+                for symbol in result["symbol"].tolist()
+            ]
+            result["signal_age_days"] = [
+                ticker_map.get(symbol, {}).get("signal_age_days")
+                for symbol in result["symbol"].tolist()
+            ]
+            result["signal_staleness_weight"] = [
+                ticker_map.get(symbol, {}).get("signal_staleness_weight")
                 for symbol in result["symbol"].tolist()
             ]
         else:
@@ -474,25 +845,37 @@ class SentimentSignalAggregator:
             result["major_event_flag_agg"] = 0
             result["total_news"] = 0
             result["signal_active"] = False
+            result["signal_age_days"] = 0
+            result["signal_staleness_weight"] = 0.0
 
         # --- Jointure scores quantitatifs ← impact macro sectoriel ---
         if not sector_agg.empty and "sector" in result.columns:
             sector_map = {
-                str(row.get("sector")): row
+                self._normalize_identifier(row.get("sector")): row
                 for row in sector_agg.to_dict(orient="records")
-                if row.get("sector") is not None
+                if self._normalize_identifier(row.get("sector")) is not None
             }
             result["sector_impact_agg"] = [
-                sector_map.get(str(sector), {}).get("sector_impact_agg")
+                sector_map.get(sector, {}).get("sector_impact_agg")
                 for sector in result["sector"].tolist()
             ]
             result["macro_event_flag_agg"] = [
-                sector_map.get(str(sector), {}).get("macro_event_flag_agg")
+                sector_map.get(sector, {}).get("macro_event_flag_agg")
+                for sector in result["sector"].tolist()
+            ]
+            result["macro_signal_age_days"] = [
+                sector_map.get(sector, {}).get("macro_signal_age_days")
+                for sector in result["sector"].tolist()
+            ]
+            result["macro_signal_staleness_weight"] = [
+                sector_map.get(sector, {}).get("macro_signal_staleness_weight")
                 for sector in result["sector"].tolist()
             ]
         else:
             result["sector_impact_agg"] = 0.0
             result["macro_event_flag_agg"] = 0
+            result["macro_signal_age_days"] = 0
+            result["macro_signal_staleness_weight"] = 0.0
 
         def _coalesce_float(values: list[object], default: float = 0.0) -> list[float]:
             normalized: list[float] = []
@@ -501,7 +884,8 @@ class SentimentSignalAggregator:
                     normalized.append(default)
                 else:
                     numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
-                    normalized.append(default if pd.isna(numeric_value) else float(numeric_value))
+                    as_float = default if pd.isna(numeric_value) else float(numeric_value)
+                    normalized.append(default if not np.isfinite(as_float) else as_float)
             return normalized
 
         def _coalesce_bool(values: list[object], default: bool = False) -> list[bool]:
@@ -513,28 +897,77 @@ class SentimentSignalAggregator:
                     normalized.append(bool(value))
             return normalized
 
+        def _coalesce_int(values: list[object], default: int = 0) -> list[int]:
+            normalized: list[int] = []
+            for value in values:
+                if value is None or bool(pd.isna(value)):
+                    normalized.append(default)
+                else:
+                    numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
+                    if pd.isna(numeric_value) or not np.isfinite(float(numeric_value)):
+                        normalized.append(default)
+                    else:
+                        normalized.append(int(numeric_value))
+            return normalized
+
         result["sentiment_net_agg"] = _coalesce_float(result["sentiment_net_agg"].tolist())
         result["sector_impact_agg"] = _coalesce_float(result["sector_impact_agg"].tolist())
+        result["company_idio_score"] = result["sentiment_net_agg"]
+        result["macro_regime_score"] = result["sector_impact_agg"]
+        result["major_event_flag_agg"] = _coalesce_int(result["major_event_flag_agg"].tolist())
+        result["macro_event_flag_agg"] = _coalesce_int(result["macro_event_flag_agg"].tolist())
+        result["total_news"] = _coalesce_int(result["total_news"].tolist())
+        result["signal_age_days"] = _coalesce_int(result["signal_age_days"].tolist())
+        result["macro_signal_age_days"] = _coalesce_int(result["macro_signal_age_days"].tolist())
+        result["signal_staleness_weight"] = _coalesce_float(result["signal_staleness_weight"].tolist())
+        result["macro_signal_staleness_weight"] = _coalesce_float(result["macro_signal_staleness_weight"].tolist())
         result["signal_active"] = _coalesce_bool(result["signal_active"].tolist())
 
         # --- Normalisation des signaux sentiment en [0, 1] ---
-        # sentiment_net_agg ∈ [-1, 1] → normalisé → 0.5 = neutre
-        result["sentiment_signal_norm"] = self._normalize_to_01(result["sentiment_net_agg"])
-        result["macro_signal_norm"] = self._normalize_to_01(result["sector_impact_agg"])
+        # Mapping stable et déterministe : [-1, 1] -> [0, 1] ; 0.5 = neutre.
+        result["sentiment_signal_norm"] = self._normalize_signed_signal(result["sentiment_net_agg"])
+        result["macro_signal_norm"] = self._normalize_signed_signal(result["sector_impact_agg"])
+        result["company_idio_signal_norm"] = result["sentiment_signal_norm"]
+        result["macro_regime_signal_norm"] = result["macro_signal_norm"]
 
         # --- Composition du final_score_sentiment (score fusionné) ---
         # final_score reste intact (score quantitatif AlphaScanner).
-        # final_score_sentiment = quant_weight * final_score + sentiment_weight * sent + macro_weight * macro
-        # Le signal sentiment n'est activé que si signal_active=True (min_news_count atteint)
-        sent_component = np.where(
-            result["signal_active"],
-            self.config.sentiment_weight * result["sentiment_signal_norm"],
-            self.config.sentiment_weight * 0.5,  # neutre si pas assez de news
-        )
-        macro_component = self.config.macro_sector_weight * result["macro_signal_norm"]
-        quant_component = self.config.quant_weight * result["final_score"].fillna(0.0)
+        # Délégation à core.conviction.fuse_sentiment (Phase 4.1.b) : la
+        # formule reste strictement identique (cf. tests gold). Les colonnes
+        # intermédiaires `quant_component`, `company_idio_component`,
+        # `macro_regime_component` sont reconstruites pour préserver le
+        # contrat consommé par `save_to_db` et l'IHM.
+        fusion_weights = self.config.to_fusion_weights()
+        sentiment_arr = np.asarray(result["sentiment_signal_norm"], dtype=float)
+        macro_arr = np.asarray(result["macro_signal_norm"], dtype=float)
+        quant_arr = np.asarray(result["final_score"], dtype=float)
+        active_arr = np.asarray(result["signal_active"], dtype=bool)
 
-        result["final_score_sentiment"] = (quant_component + sent_component + macro_component).clip(0.0, 1.0)
+        sent_component = np.where(
+            active_arr,
+            fusion_weights.sentiment_weight * sentiment_arr,
+            fusion_weights.sentiment_weight * 0.5,  # neutre si pas assez de news
+        )
+        macro_component = fusion_weights.macro_weight * macro_arr
+        quant_component = fusion_weights.quant_weight * quant_arr
+
+        result["company_idio_component"] = sent_component
+        result["macro_regime_component"] = macro_component
+        result["quant_component"] = quant_component
+        result["final_score_walk_forward"] = pd.NA
+        result["walk_forward_sentiment_weight"] = pd.NA
+        result["walk_forward_macro_weight"] = pd.NA
+        result["walk_forward_quant_weight"] = pd.NA
+        result["calibration_run_id"] = pd.NA
+        result["calibration_source"] = pd.NA
+
+        result["final_score_sentiment"] = fuse_sentiment(
+            quant_score=quant_arr,
+            sentiment_signal_norm=sentiment_arr,
+            macro_signal_norm=macro_arr,
+            weights=fusion_weights,
+            signal_active=active_arr,
+        )
 
         score_deltas = [
             float(final_score_sentiment) - float(final_score)
@@ -570,9 +1003,22 @@ class SentimentSignalAggregator:
         SENTIMENT_COLS = [
             "sentiment_net_agg",
             "sector_impact_agg",
+            "company_idio_score",
+            "macro_regime_score",
             "sentiment_signal_norm",
             "macro_signal_norm",
+            "company_idio_signal_norm",
+            "macro_regime_signal_norm",
+            "company_idio_component",
+            "macro_regime_component",
+            "quant_component",
             "final_score_sentiment",
+            "final_score_walk_forward",
+            "walk_forward_sentiment_weight",
+            "walk_forward_macro_weight",
+            "walk_forward_quant_weight",
+            "calibration_run_id",
+            "calibration_source",
             "signal_active",
             "major_event_flag_agg",
             "macro_event_flag_agg",
@@ -590,6 +1036,13 @@ class SentimentSignalAggregator:
         if enriched_df.empty:
             return 0
 
+        working_df = enriched_df.copy()
+        working_df["symbol"] = [self._normalize_identifier(value) for value in working_df["symbol"].tolist()]
+        working_df = working_df[working_df["symbol"].notna()].copy()
+        if working_df.empty:
+            return 0
+        working_df = working_df.drop_duplicates(subset=["symbol"], keep="last")
+
         now = pd.Timestamp.utcnow().replace(tzinfo=None).to_pydatetime()
 
         def _is_missing(value: object) -> bool:
@@ -598,26 +1051,96 @@ class SentimentSignalAggregator:
         float_cols = (
             "sentiment_net_agg",
             "sector_impact_agg",
+            "company_idio_score",
+            "macro_regime_score",
             "sentiment_signal_norm",
             "macro_signal_norm",
+            "company_idio_signal_norm",
+            "macro_regime_signal_norm",
+            "company_idio_component",
+            "macro_regime_component",
+            "quant_component",
             "final_score_sentiment",
+            "final_score_walk_forward",
+            "walk_forward_sentiment_weight",
+            "walk_forward_macro_weight",
+            "walk_forward_quant_weight",
         )
         bool_cols = ("signal_active", "major_event_flag_agg", "macro_event_flag_agg")
+        float_defaults = {
+            "sentiment_net_agg": 0.0,
+            "sector_impact_agg": 0.0,
+            "company_idio_score": 0.0,
+            "macro_regime_score": 0.0,
+            "sentiment_signal_norm": 0.5,
+            "macro_signal_norm": 0.5,
+            "company_idio_signal_norm": 0.5,
+            "macro_regime_signal_norm": 0.5,
+            "company_idio_component": self.config.sentiment_weight * 0.5,
+            "macro_regime_component": self.config.macro_sector_weight * 0.5,
+            "quant_component": 0.0,
+            "final_score_sentiment": 0.0,
+            "final_score_walk_forward": 0.0,
+            "walk_forward_sentiment_weight": 0.0,
+            "walk_forward_macro_weight": 0.0,
+            "walk_forward_quant_weight": 0.0,
+        }
+        float_bounds = {
+            "sentiment_net_agg": (-1.0, 1.0),
+            "sector_impact_agg": (-1.0, 1.0),
+            "company_idio_score": (-1.0, 1.0),
+            "macro_regime_score": (-1.0, 1.0),
+            "sentiment_signal_norm": (0.0, 1.0),
+            "macro_signal_norm": (0.0, 1.0),
+            "company_idio_signal_norm": (0.0, 1.0),
+            "macro_regime_signal_norm": (0.0, 1.0),
+            "company_idio_component": (0.0, 1.0),
+            "macro_regime_component": (0.0, 1.0),
+            "quant_component": (0.0, 1.0),
+            "final_score_sentiment": (0.0, 1.0),
+            "final_score_walk_forward": (0.0, 1.0),
+            "walk_forward_sentiment_weight": (0.0, 1.0),
+            "walk_forward_macro_weight": (0.0, 1.0),
+            "walk_forward_quant_weight": (0.0, 1.0),
+        }
 
         clean_records: list[dict[str, object]] = []
-        for row in enriched_df.to_dict(orient="records"):
+        for row in working_df.to_dict(orient="records"):
             clean_row: dict[str, object] = {
                 "symbol": row["symbol"],
                 "last_updated_sentiment": now,
             }
             for col in float_cols:
                 value = row.get(col)
-                clean_row[col] = None if _is_missing(value) else float(value)
+                default_value = float_defaults[col]
+                if _is_missing(value):
+                    clean_row[col] = default_value
+                    continue
+                numeric_value = pd.to_numeric(cast(Any, value), errors="coerce")
+                if pd.isna(numeric_value):
+                    clean_row[col] = default_value
+                    continue
+                bounded_value = float(numeric_value)
+                if not np.isfinite(bounded_value):
+                    clean_row[col] = default_value
+                    continue
+                lower_bound, upper_bound = float_bounds[col]
+                clean_row[col] = min(max(bounded_value, lower_bound), upper_bound)
             for col in bool_cols:
                 value = row.get(col)
                 clean_row[col] = int(bool(value)) if not _is_missing(value) else 0
+            for col in ("calibration_run_id", "calibration_source"):
+                value = row.get(col)
+                clean_row[col] = None if _is_missing(value) else str(value)
             total_news = row.get("total_news")
-            clean_row["total_news"] = 0 if _is_missing(total_news) else int(total_news)
+            if _is_missing(total_news):
+                clean_row["total_news"] = 0
+            else:
+                numeric_total_news = pd.to_numeric(cast(Any, total_news), errors="coerce")
+                if pd.isna(numeric_total_news) or not np.isfinite(float(numeric_total_news)):
+                    clean_row["total_news"] = 0
+                else:
+                    clean_row["total_news"] = max(0, int(numeric_total_news))
             clean_records.append(clean_row)
 
         update_set = ", ".join(
@@ -637,7 +1160,7 @@ class SentimentSignalAggregator:
             conn.execute(stmt, clean_records)
 
         LOGGER.info(
-            "save_to_db | %d lignes upsertees dans stock_scores (colonnes sentiment).",
+            "save_to_db | %d lignes mises a jour dans stock_scores (colonnes sentiment).",
             len(clean_records),
         )
         return len(clean_records)
@@ -789,6 +1312,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from database.connection import get_sqlalchemy_engine
     engine = get_sqlalchemy_engine()
+    started_at = _utc_now_naive()
 
     # 1. Chargement des scores quantitatifs depuis stock_scores
     LOGGER.info("Chargement des scores depuis stock_scores…")
@@ -796,6 +1320,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if scores_df.empty:
         LOGGER.warning("Aucun symbole trouve dans stock_scores — arret.")
+        finished_at = _utc_now_naive()
+        _emit_run_summary(
+            _build_cli_run_summary(
+                config=config,
+                trade_date=ref_date,
+                all_symbols=bool(args.all_symbols),
+                loaded_symbols=0,
+                updated_symbols=0,
+                enriched=pd.DataFrame(),
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+        )
         return 0
 
     LOGGER.info("Symboles charges : %d", len(scores_df))
@@ -806,6 +1343,30 @@ def main(argv: list[str] | None = None) -> int:
 
     # 3. Persistance dans stock_scores
     saved = aggregator.save_to_db(enriched)
+    finished_at = _utc_now_naive()
+
+    # Phase 4.1.c — fingerprints FinBERT actifs sur la fenêtre courante.
+    finbert_fingerprints: list[str] = []
+    try:
+        from event_sentiment.db_io import EventSentimentRepository
+
+        finbert_fingerprints = EventSentimentRepository().get_active_finbert_fingerprints(ref_date)
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        LOGGER.warning("Lecture fingerprints FinBERT impossible (%s)", exc)
+
+    _emit_run_summary(
+        _build_cli_run_summary(
+            config=config,
+            trade_date=ref_date,
+            all_symbols=bool(args.all_symbols),
+            loaded_symbols=len(scores_df),
+            updated_symbols=saved,
+            enriched=enriched,
+            started_at=started_at,
+            finished_at=finished_at,
+            finbert_fingerprints=finbert_fingerprints,
+        )
+    )
     LOGGER.info(
         "=== Termine | %d symboles mis a jour dans stock_scores ===", saved
     )

@@ -1,17 +1,125 @@
-"""CLI pour le module corporate_actions."""
+﻿"""CLI pour le module corporate_actions."""
 from __future__ import annotations
 
 import argparse
 import logging
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from common.utils import configure_root_logging
+from core.run_summary import attach_schema_version
 from corporate_actions.db_io import CorporateActionRepository
 from corporate_actions.engine import CorporateActionEngine
-from corporate_actions.provider import AlpacaCorporateActionProvider
+from corporate_actions.provider import (
+    AlpacaCorporateActionProvider,
+    build_corporate_action_provider,
+)
+from database.run_business_summaries import build_summary_run_id, emit_run_summary, persist_run_business_summary
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _run_cross_check_yahoo(
+    repo: CorporateActionRepository,
+    *,
+    start_date: date,
+    end_date: date,
+    symbols: list[str] | None,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """Phase 5.3.c â€” exÃ©cute un cross-check Yahoo (best-effort, jamais bloquant).
+
+    Retourne ``(anomalies, stats)`` oÃ¹ ``stats`` contient
+    ``{"yahoo_events": N, "ingested_events": M, "anomalies": K}``.
+    """
+    try:
+        from corporate_actions.cross_check_yahoo import (
+            YahooDividendCrossCheckProvider,
+            diff_dividends,
+        )
+    except Exception:
+        LOGGER.warning("Cross-check Yahoo indisponible (import Ã©choue).", exc_info=True)
+        return [], {"yahoo_events": 0, "ingested_events": 0, "anomalies": 0}
+
+    try:
+        ingested = repo.load_dividend_events_in_range(
+            start_date=start_date, end_date=end_date, symbols=symbols
+        )
+    except Exception:
+        LOGGER.warning("Cross-check Yahoo : echec chargement events ingÃ©rÃ©s.", exc_info=True)
+        return [], {"yahoo_events": 0, "ingested_events": 0, "anomalies": 0}
+
+    if not symbols:
+        # Sans liste explicite, on cross-check au moins les symboles ingÃ©rÃ©s.
+        symbols = sorted({ev.symbol for ev in ingested})
+
+    yahoo_provider = YahooDividendCrossCheckProvider()
+    yahoo_events = yahoo_provider.fetch_events(
+        symbols=symbols, start_date=start_date, end_date=end_date
+    )
+    anomalies = diff_dividends(ingested=ingested, yahoo=yahoo_events)
+    LOGGER.info(
+        "Cross-check Yahoo termine | ingested=%d yahoo=%d anomalies=%d",
+        len(ingested), len(yahoo_events), len(anomalies),
+    )
+    return anomalies, {
+        "yahoo_events": len(yahoo_events),
+        "ingested_events": len(ingested),
+        "anomalies": len(anomalies),
+    }
+
+
+def _emit_and_persist_summary(
+    *,
+    summary: dict[str, object],
+    step_key: str,
+    status: str,
+    account_id: str | None,
+    trade_date: object = None,
+    parent_summary_run_id: str | None = None,
+    audit_run_kind: str | None = None,
+    audit_repo: CorporateActionRepository | None = None,
+    audit_started_at: datetime | None = None,
+    audit_finished_at: datetime | None = None,
+    audit_stats: dict[str, object] | None = None,
+    audit_anomalies: list[dict[str, object]] | None = None,
+) -> None:
+    # Phase 5.3.b â€” attach_schema_version garantit ``schema_version`` partout.
+    summary = attach_schema_version(summary)
+    try:
+        persist_run_business_summary(
+            summary=summary,
+            step_key=step_key,
+            run_kind="step",
+            status=status,
+            summary_run_id=str(summary.get("run_id", "") or "") or None,
+            entity_run_id=str(summary.get("run_id", "") or "") or None,
+            parent_summary_run_id=parent_summary_run_id,
+            account_id=account_id,
+            trade_date=trade_date,
+            started_at=summary.get("started_at"),
+            finished_at=summary.get("finished_at"),
+        )
+    except Exception:
+        LOGGER.debug("Persistance run_business_summaries indisponible pour corporate_actions.", exc_info=True)
+    # Phase 5.3.b â€” persistance audit dÃ©diÃ©e (best-effort).
+    if audit_run_kind and audit_repo and audit_started_at and audit_finished_at:
+        persist_fn = getattr(audit_repo, "persist_audit_run", None)
+        if callable(persist_fn):
+            try:
+                persist_fn(
+                    run_id=str(summary.get("run_id", "") or "") or f"{audit_run_kind}-noid",
+                    run_kind=audit_run_kind,
+                    account_id=account_id,
+                    started_at=audit_started_at,
+                    finished_at=audit_finished_at,
+                    stats=audit_stats or {},
+                    anomalies=audit_anomalies,
+                    status=status,
+                    summary=summary,
+                )
+            except Exception:
+                LOGGER.debug("persist_audit_run a echoue (best-effort, ignore).", exc_info=True)
+    emit_run_summary(summary)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -22,76 +130,82 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     # --- sync ---
-    sync_p = sub.add_parser("sync", help="Ingérer les corporate actions depuis le provider.")
-    sync_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
-    sync_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramètre symbols.")
+    sync_p = sub.add_parser("sync", help="IngÃ©rer les corporate actions depuis le provider.")
+    sync_p.add_argument("--symbols", nargs="*", help="Symboles Ã  synchroniser (tous si omis).")
+    sync_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramÃ¨tre symbols.")
     sync_p.add_argument(
         "--portfolio-only",
         dest="portfolio_only",
         action="store_true",
-        help="Restreindre la sync aux symboles actuellement détenus en portefeuille (broker_positions_snapshots). Recommandé en usage quotidien.",
+        help="Restreindre la sync aux symboles actuellement dÃ©tenus en portefeuille (broker_positions_snapshots). RecommandÃ© en usage quotidien.",
     )
     sync_p.add_argument(
         "--skip-existing",
         dest="skip_existing",
         action="store_true",
-        help="Ignorer les symboles déjà présents dans corporate_actions_events avant l'appel provider.",
+        help="Ignorer les symboles dÃ©jÃ  prÃ©sents dans corporate_actions_events avant l'appel provider.",
     )
-    sync_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. Défaut : 25.")
-    sync_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -10 ans.")
-    sync_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
+    sync_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. DÃ©faut : 25.")
+    sync_p.add_argument("--start", type=str, default=None, help="Date dÃ©but (YYYY-MM-DD). DÃ©faut : -10 ans.")
+    sync_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). DÃ©faut : aujourd'hui.")
     sync_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
 
     # --- apply ---
-    apply_p = sub.add_parser("apply", help="Appliquer les événements pending sur les positions.")
-    apply_p.add_argument("--as-of", type=str, default=None, help="Date limite (YYYY-MM-DD). Défaut : aujourd'hui.")
+    apply_p = sub.add_parser("apply", help="Appliquer les Ã©vÃ©nements pending sur les positions.")
+    apply_p.add_argument("--as-of", type=str, default=None, help="Date limite (YYYY-MM-DD). DÃ©faut : aujourd'hui.")
     apply_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
 
     # --- status ---
-    sub.add_parser("status", help="Afficher un résumé des événements corporate actions.")
+    sub.add_parser("status", help="Afficher un rÃ©sumÃ© des Ã©vÃ©nements corporate actions.")
 
     # --- run ---
-    run_p = sub.add_parser("run", help="Enchaîner sync puis apply dans un seul appel.")
-    run_p.add_argument("--symbols", nargs="*", help="Symboles à synchroniser (tous si omis).")
-    run_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramètre symbols.")
+    run_p = sub.add_parser("run", help="EnchaÃ®ner sync puis apply dans un seul appel.")
+    run_p.add_argument("--symbols", nargs="*", help="Symboles Ã  synchroniser (tous si omis).")
+    run_p.add_argument("--all-symbols", action="store_true", help="Ne pas filtrer par positions broker et interroger Alpaca sans paramÃ¨tre symbols.")
     run_p.add_argument(
         "--portfolio-only",
         dest="portfolio_only",
         action="store_true",
-        help="Restreindre la sync aux symboles actuellement détenus en portefeuille (broker_positions_snapshots). Recommandé en usage quotidien.",
+        help="Restreindre la sync aux symboles actuellement dÃ©tenus en portefeuille (broker_positions_snapshots). RecommandÃ© en usage quotidien.",
     )
     run_p.add_argument(
         "--skip-existing",
         dest="skip_existing",
         action="store_true",
-        help="Ignorer les symboles déjà présents dans corporate_actions_events avant l'appel provider.",
+        help="Ignorer les symboles dÃ©jÃ  prÃ©sents dans corporate_actions_events avant l'appel provider.",
     )
-    run_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. Défaut : 25.")
-    run_p.add_argument("--start", type=str, default=None, help="Date début (YYYY-MM-DD). Défaut : -10 ans.")
-    run_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). Défaut : aujourd'hui.")
-    run_p.add_argument("--as-of", type=str, default=None, help="Date limite pour apply (YYYY-MM-DD). Défaut : aujourd'hui.")
+    run_p.add_argument("--batch-size", type=int, default=25, help="Taille des lots de symboles par appel provider. DÃ©faut : 25.")
+    run_p.add_argument("--start", type=str, default=None, help="Date dÃ©but (YYYY-MM-DD). DÃ©faut : -10 ans.")
+    run_p.add_argument("--end", type=str, default=None, help="Date fin (YYYY-MM-DD). DÃ©faut : aujourd'hui.")
+    run_p.add_argument("--as-of", type=str, default=None, help="Date limite pour apply (YYYY-MM-DD). DÃ©faut : aujourd'hui.")
     run_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
+    run_p.add_argument(
+        "--cross-check",
+        choices=("none", "yahoo"),
+        default="none",
+        help="Phase 5.3.c â€” cross-check optionnel des dividendes ingÃ©rÃ©s contre Yahoo Finance (yfinance requis).",
+    )
 
     return parser
 
 
 def _resolve_sync_symbols_portfolio(repo: CorporateActionRepository, account_id: str | None = None) -> list[str]:
-    """Résout le périmètre de sync : positions live Alpaca + ordres BUY pending + snapshot DB (fallback)."""
+    """RÃ©sout le pÃ©rimÃ¨tre de sync : positions live Alpaca + ordres BUY pending + snapshot DB (fallback)."""
     all_symbols: set[str] = set()
 
-    # 1. Positions live sur le compte Alpaca (source de vérité)
+    # 1. Positions live sur le compte Alpaca (source de vÃ©ritÃ©)
     live_symbols = repo.load_broker_live_position_symbols(account_id=account_id)
     if live_symbols:
         LOGGER.info("Portfolio-only : positions live Alpaca | count=%d", len(live_symbols))
         all_symbols.update(live_symbols)
 
-    # 2. Ordres BUY en attente (accepted/new → deviendront des positions à l'ouverture)
+    # 2. Ordres BUY en attente (accepted/new â†’ deviendront des positions Ã  l'ouverture)
     buy_symbols = repo.load_pending_buy_order_symbols(account_id=account_id)
     if buy_symbols:
         LOGGER.info("Portfolio-only : ordres BUY pending Alpaca | count=%d", len(buy_symbols))
         all_symbols.update(buy_symbols)
 
-    # 3. Fallback : snapshot DB (broker_positions_snapshots) si aucune donnée live
+    # 3. Fallback : snapshot DB (broker_positions_snapshots) si aucune donnÃ©e live
     if not all_symbols:
         broker_symbols = repo.load_latest_position_symbols()
         if broker_symbols:
@@ -114,7 +228,7 @@ def _resolve_sync_symbols_portfolio(repo: CorporateActionRepository, account_id:
 
 
 def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionRepository, account_id: str | None = None) -> list[str] | None:
-    """Résout le périmètre de sync: symboles explicites, positions broker, ou all-symbols."""
+    """RÃ©sout le pÃ©rimÃ¨tre de sync: symboles explicites, positions broker, ou all-symbols."""
     if getattr(args, "all_symbols", False):
         LOGGER.info("Corporate actions sync scope = all symbols (pas de filtre symbols).")
         return None
@@ -134,7 +248,7 @@ def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionReposit
     buy_symbols = repo.load_pending_buy_order_symbols(account_id=account_id)
     all_symbols.update(buy_symbols)
 
-    # Snapshot DB (fallback / complément)
+    # Snapshot DB (fallback / complÃ©ment)
     broker_symbols = repo.load_latest_position_symbols()
     all_symbols.update(broker_symbols)
 
@@ -154,7 +268,7 @@ def _resolve_sync_symbols(args: argparse.Namespace, repo: CorporateActionReposit
 
 
 def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRepository, account_id: str | None = None) -> list[str] | None:
-    """Résout le périmètre de sync depuis stock_metadata (univers actif/tradable/bars dispo)."""
+    """RÃ©sout le pÃ©rimÃ¨tre de sync depuis stock_metadata (univers actif/tradable/bars dispo)."""
     if getattr(args, "all_symbols", False):
         LOGGER.info("Corporate actions sync scope = all symbols (pas de filtre symbols).")
         return None
@@ -196,9 +310,10 @@ def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRep
 
 def _run_sync(args: argparse.Namespace) -> None:
     account_id = getattr(args, "account", None)
-    provider = AlpacaCorporateActionProvider(account_id=account_id)
+    provider = build_corporate_action_provider(account_id=account_id)
     repo = CorporateActionRepository()
     engine = CorporateActionEngine(provider=provider, repo=repo, account_id=account_id)
+    started_at = datetime.now()
 
     start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
     end_date = date.fromisoformat(args.end) if args.end else date.today()
@@ -215,17 +330,86 @@ def _run_sync(args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         skip_existing=getattr(args, "skip_existing", False),
     )
+    finished_at = datetime.now()
+    cross_check_anomalies: list[dict[str, object]] | None = None
+    cross_check_stats: dict[str, int] = {}
+    if getattr(args, "cross_check", "none") == "yahoo":
+        cross_check_anomalies, cross_check_stats = _run_cross_check_yahoo(
+            repo, start_date=start_date, end_date=end_date, symbols=symbols
+        )
+    summary = {
+        "run_id": build_summary_run_id("ca-sync"),
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "targeted_symbols": len(symbols or []),
+        "all_symbols_scope": symbols is None,
+        "fetched_events": int(stats.get("fetched", 0)),
+        "inserted_events": int(stats.get("inserted", 0)),
+        "duplicate_events": int(stats.get("duplicates", 0)),
+        "invalid_events": int(stats.get("invalid", 0)),
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "batch_size": int(args.batch_size),
+        "cross_check": getattr(args, "cross_check", "none"),
+        "cross_check_stats": cross_check_stats,
+    }
+    _emit_and_persist_summary(
+        summary=summary,
+        step_key="corporate_actions_sync",
+        status="completed",
+        account_id=account_id,
+        trade_date=end_date,
+        audit_run_kind="sync",
+        audit_repo=repo,
+        audit_started_at=started_at,
+        audit_finished_at=finished_at,
+        audit_stats=stats,
+        audit_anomalies=cross_check_anomalies,
+    )
     print(f"Sync termine : {stats}")
 
 
 def _run_apply(args: argparse.Namespace) -> None:
     account_id = getattr(args, "account", None)
-    provider = AlpacaCorporateActionProvider(account_id=account_id)
-    engine = CorporateActionEngine(provider=provider, account_id=account_id)
+    provider = build_corporate_action_provider(account_id=account_id)
+    repo = CorporateActionRepository()
+    engine = CorporateActionEngine(provider=provider, repo=repo, account_id=account_id)
+    started_at = datetime.now()
 
     as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
+    pending_loader = getattr(getattr(engine, "repo", None), "load_pending_events", None)
+    pending_events = pending_loader(as_of=as_of) if callable(pending_loader) else []
+    dividend_events = sum(1 for event in pending_events if "dividend" in str(getattr(event, "ca_type", "")).lower())
+    split_events = sum(1 for event in pending_events if "split" in str(getattr(event, "ca_type", "")).lower())
 
     stats = engine.apply(as_of=as_of)
+    finished_at = datetime.now()
+    summary = {
+        "run_id": build_summary_run_id("ca-apply"),
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "pending_events": len(pending_events),
+        "applied_events": int(stats.get("applied", 0)),
+        "skipped_events": int(stats.get("skipped", 0)),
+        "failed_events": int(stats.get("failed", 0)),
+        "dividend_credits": dividend_events,
+        "split_applications": split_events,
+        "trade_date": as_of.isoformat(),
+    }
+    _emit_and_persist_summary(
+        summary=summary,
+        step_key="corporate_actions_apply",
+        status="completed",
+        account_id=account_id,
+        trade_date=as_of,
+        audit_run_kind="apply",
+        audit_repo=repo,
+        audit_started_at=started_at,
+        audit_finished_at=finished_at,
+        audit_stats={**stats, "pending": len(pending_events)},
+    )
     print(f"Apply termine : {stats}")
 
 
@@ -255,10 +439,12 @@ def _run_status(_args: argparse.Namespace) -> None:
 
 
 def _run_all(args: argparse.Namespace) -> None:
-    """Enchaîne sync puis apply dans un seul appel CLI."""
+    """EnchaÃ®ne sync puis apply dans un seul appel CLI."""
     print("[RUN] Demarrage de l'ingestion des corporate actions...")
     account_id = getattr(args, "account", None)
-    provider = AlpacaCorporateActionProvider(account_id=account_id)
+    started_at = datetime.now()
+    parent_summary_run_id = build_summary_run_id("ca-run")
+    provider = build_corporate_action_provider(account_id=account_id)
     repo = CorporateActionRepository()
     engine = CorporateActionEngine(provider=provider, repo=repo, account_id=account_id)
     start_date = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=3650)
@@ -276,10 +462,114 @@ def _run_all(args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         skip_existing=getattr(args, "skip_existing", False),
     )
+    sync_summary = {
+        "run_id": f"{parent_summary_run_id}-sync",
+        "targeted_symbols": len(symbols or []),
+        "all_symbols_scope": symbols is None,
+        "fetched_events": int(stats_sync.get("fetched", 0)),
+        "inserted_events": int(stats_sync.get("inserted", 0)),
+        "duplicate_events": int(stats_sync.get("duplicates", 0)),
+        "invalid_events": int(stats_sync.get("invalid", 0)),
+    }
+    sync_finished_at = datetime.now()
+    cross_check_anomalies: list[dict[str, object]] | None = None
+    cross_check_stats: dict[str, int] = {}
+    if getattr(args, "cross_check", "none") == "yahoo":
+        cross_check_anomalies, cross_check_stats = _run_cross_check_yahoo(
+            repo, start_date=start_date, end_date=end_date, symbols=symbols
+        )
+    _emit_and_persist_summary(
+        summary={
+            **sync_summary,
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "finished_at": sync_finished_at.isoformat(timespec="seconds"),
+            "duration_seconds": round((sync_finished_at - started_at).total_seconds(), 2),
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "batch_size": int(args.batch_size),
+            "cross_check": getattr(args, "cross_check", "none"),
+            "cross_check_stats": cross_check_stats,
+        },
+        step_key="corporate_actions_sync",
+        status="completed",
+        account_id=account_id,
+        trade_date=end_date,
+        parent_summary_run_id=parent_summary_run_id,
+        audit_run_kind="sync",
+        audit_repo=repo,
+        audit_started_at=started_at,
+        audit_finished_at=sync_finished_at,
+        audit_stats=stats_sync,
+        audit_anomalies=cross_check_anomalies,
+    )
     print(f"Sync termine : {stats_sync}")
     print("[RUN] Application des corporate actions sur les positions...")
     as_of = date.fromisoformat(args.as_of) if getattr(args, "as_of", None) else date.today()
+    pending_loader = getattr(getattr(engine, "repo", None), "load_pending_events", None)
+    pending_events = pending_loader(as_of=as_of) if callable(pending_loader) else []
+    dividend_events = sum(1 for event in pending_events if "dividend" in str(getattr(event, "ca_type", "")).lower())
+    split_events = sum(1 for event in pending_events if "split" in str(getattr(event, "ca_type", "")).lower())
     stats_apply = engine.apply(as_of=as_of)
+    apply_finished_at = datetime.now()
+    apply_summary = {
+        "run_id": f"{parent_summary_run_id}-apply",
+        "pending_events": len(pending_events),
+        "applied_events": int(stats_apply.get("applied", 0)),
+        "skipped_events": int(stats_apply.get("skipped", 0)),
+        "failed_events": int(stats_apply.get("failed", 0)),
+        "dividend_credits": dividend_events,
+        "split_applications": split_events,
+        "trade_date": as_of.isoformat(),
+    }
+    _emit_and_persist_summary(
+        summary={
+            **apply_summary,
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "finished_at": apply_finished_at.isoformat(timespec="seconds"),
+            "duration_seconds": round((apply_finished_at - started_at).total_seconds(), 2),
+        },
+        step_key="corporate_actions_apply",
+        status="completed",
+        account_id=account_id,
+        trade_date=as_of,
+        parent_summary_run_id=parent_summary_run_id,
+        audit_run_kind="apply",
+        audit_repo=repo,
+        audit_started_at=sync_finished_at,
+        audit_finished_at=apply_finished_at,
+        audit_stats={**stats_apply, "pending": len(pending_events)},
+    )
+    parent_summary = {
+        "run_id": parent_summary_run_id,
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": apply_finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((apply_finished_at - started_at).total_seconds(), 2),
+        "workflow_steps_with_summary": 2,
+        "targeted_symbols": int(sync_summary.get("targeted_symbols", 0)),
+        "fetched_events": int(sync_summary.get("fetched_events", 0)),
+        "inserted_events": int(sync_summary.get("inserted_events", 0)),
+        "duplicate_events": int(sync_summary.get("duplicate_events", 0)),
+        "invalid_events": int(sync_summary.get("invalid_events", 0)),
+        "pending_events": int(apply_summary.get("pending_events", 0)),
+        "applied_events": int(apply_summary.get("applied_events", 0)),
+        "skipped_events": int(apply_summary.get("skipped_events", 0)),
+        "failed_events": int(apply_summary.get("failed_events", 0)),
+        "dividend_credits": int(apply_summary.get("dividend_credits", 0)),
+        "split_applications": int(apply_summary.get("split_applications", 0)),
+    }
+    _emit_and_persist_summary(
+        summary=parent_summary,
+        step_key="corporate_actions_run",
+        status="completed",
+        account_id=account_id,
+        trade_date=as_of,
+        audit_run_kind="run",
+        audit_repo=repo,
+        audit_started_at=started_at,
+        audit_finished_at=apply_finished_at,
+        audit_stats={**stats_sync, **stats_apply, "pending": len(pending_events)},
+        audit_anomalies=cross_check_anomalies,
+    )
     print(f"Apply termine : {stats_apply}")
 
 

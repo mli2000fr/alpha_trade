@@ -59,6 +59,55 @@ def test_background_run_completes_and_persists_logs(monkeypatch, tmp_path: Path)
     assert any(item["run_id"] == record.run_id for item in history)
 
 
+def test_background_run_captures_structured_run_summary(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import json; "
+            "print('before', flush=True); "
+            "print('::alpha_trade_run_summary::' + json.dumps({'targeted_symbols': 3, 'successful_symbols': 2, 'history_status_counts': {'ready': 2, 'provider_error': 1}}), flush=True); "
+            "print('after', flush=True)"
+        ),
+    ]
+    monkeypatch.setattr(registry, "build_pipeline_command", lambda step_key, options: command)
+
+    record = registry.start_pipeline_run("fake_summary_step", "Fake Summary Step", PipelineLaunchOptions())
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=40)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert snapshot["run_summary"] == {
+        "targeted_symbols": 3,
+        "successful_symbols": 2,
+        "history_status_counts": {"ready": 2, "provider_error": 1},
+    }
+    logs = registry.read_pipeline_logs(record.run_id, "stdout")
+    assert "before" in logs
+    assert "after" in logs
+    assert registry.RUN_SUMMARY_PREFIX not in logs
+
+
+def test_start_managed_run_supports_non_pipeline_commands(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    record = registry.start_managed_run(
+        step_key="watcher_local_service",
+        step_label="Watcher local",
+        command=[sys.executable, "-c", "print('watcher-local-ok', flush=True)"],
+        account_id="acct-1",
+    )
+
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=40)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert snapshot["step_key"] == "watcher_local_service"
+    assert "watcher-local-ok" in registry.read_pipeline_logs(record.run_id, "stdout")
+
+
 
 def test_background_run_can_be_stopped(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
@@ -126,6 +175,44 @@ def test_pipeline_workflow_runs_steps_in_order_and_aggregates_logs(monkeypatch, 
     assert "step_3" in logs
 
 
+def test_pipeline_workflow_aggregates_child_run_summaries(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("step_import", "1", "Import", "", "", "—"),
+        PipelineStepDefinition("step_sanitize", "2", "Sanitize", "", "", "step_import"),
+    )
+    monkeypatch.setattr(registry, "get_pipeline_steps", lambda: steps)
+
+    def _command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
+        if step_key == "step_import":
+            payload = (
+                "import json; "
+                "print('::alpha_trade_run_summary::' + json.dumps({'targeted_symbols': 3, 'successful_symbols': 2, 'history_status_counts': {'ready': 2, 'provider_error': 1}}), flush=True)"
+            )
+        else:
+            payload = (
+                "import json; "
+                "print('::alpha_trade_run_summary::' + json.dumps({'targeted_symbols': 3, 'successful_symbols': 3, 'status_breakdown': {'success': 3, 'failed': 0}}), flush=True)"
+            )
+        return [sys.executable, "-c", payload]
+
+    monkeypatch.setattr(registry, "build_pipeline_command", _command)
+
+    record = registry.start_pipeline_workflow(PipelineLaunchOptions())
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=120)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    run_summary = snapshot["run_summary"]
+    assert run_summary["workflow_steps_with_summary"] == 2
+    assert run_summary["targeted_symbols"] == 6
+    assert run_summary["successful_symbols"] == 5
+    assert run_summary["history_status_counts"] == {"ready": 2, "provider_error": 1}
+    assert run_summary["status_breakdown"] == {"success": 3, "failed": 0}
+    assert len(run_summary["workflow_step_summaries"]) == 2
+
+
 def test_pipeline_workflow_stops_on_failed_step(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
 
@@ -189,5 +276,61 @@ def test_pipeline_workflow_can_be_stopped(monkeypatch, tmp_path: Path) -> None:
     assert snapshot is not None
     assert snapshot["status"] == "stopped"
     assert snapshot["workflow_completed_steps"] == 0
+
+
+def test_pipeline_workflow_skips_ml_train_when_not_requested(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("step_1", "1", "Step 1", "", "", "—"),
+        PipelineStepDefinition("ml_train", "9", "ML Train", "", "", "step_1"),
+        PipelineStepDefinition("step_10", "10", "Step 10", "", "", "ml_train"),
+    )
+    monkeypatch.setattr(registry, "get_pipeline_steps", lambda: steps)
+    monkeypatch.setattr(
+        registry,
+        "build_pipeline_command",
+        lambda step_key, options: [sys.executable, "-c", f"print('{step_key}', flush=True)"],
+    )
+
+    record = registry.start_pipeline_workflow(PipelineLaunchOptions(), include_ml_train=False)
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=120)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert snapshot["workflow_total_steps"] == 2
+    assert snapshot["command"] == ["step_1", "step_10"]
+    assert "sans étape 9" in str(snapshot["step_label"])
+    logs = registry.read_pipeline_logs(record.run_id, "all")
+    assert "step_1" in logs
+    assert "step_10" in logs
+    assert "ml_train" not in logs
+
+
+def test_pipeline_workflow_includes_ml_train_when_requested(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("step_1", "1", "Step 1", "", "", "—"),
+        PipelineStepDefinition("ml_train", "9", "ML Train", "", "", "step_1"),
+        PipelineStepDefinition("step_10", "10", "Step 10", "", "", "ml_train"),
+    )
+    monkeypatch.setattr(registry, "get_pipeline_steps", lambda: steps)
+    monkeypatch.setattr(
+        registry,
+        "build_pipeline_command",
+        lambda step_key, options: [sys.executable, "-c", f"print('{step_key}', flush=True)"],
+    )
+
+    record = registry.start_pipeline_workflow(PipelineLaunchOptions(), include_ml_train=True)
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=120)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert snapshot["workflow_total_steps"] == 3
+    assert snapshot["command"] == ["step_1", "ml_train", "step_10"]
+    assert "avec étape 9" in str(snapshot["step_label"])
+    logs = registry.read_pipeline_logs(record.run_id, "all")
+    assert "ml_train" in logs
 
 

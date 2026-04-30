@@ -27,7 +27,11 @@ def _make_symbol_frame(symbol: str, base_price: float, drift: float, volume: flo
 
 
 def test_compute_scores_filters_illiquid_symbols_and_sorts_descending() -> None:
-    config = ScreenerConfig(liquidity_threshold_usd=500_000.0)
+    config = ScreenerConfig(
+        liquidity_threshold_usd=500_000.0,
+        min_relative_strength_index=90.0,
+        min_historical_range_score=0.0,
+    )
     prices = pd.concat(
         [
             _make_symbol_frame("AAA", base_price=50.0, drift=0.30, volume=25_000),
@@ -42,6 +46,7 @@ def test_compute_scores_filters_illiquid_symbols_and_sorts_descending() -> None:
     assert list(scores.columns) == RESULT_COLUMNS
     assert "BBB" not in set(scores["symbol"])
     assert list(scores["total_score"]) == sorted(scores["total_score"], reverse=True)
+    assert scores["total_score"].between(0.0, 100.0).all()
     assert scores.iloc[0]["symbol"] == "AAA"
     assert set(scores["is_candidate"]) == {0}
     assert scores["sector"].isna().all()
@@ -51,7 +56,7 @@ def test_compute_scores_filters_illiquid_symbols_and_sorts_descending() -> None:
 
 
 def test_compute_scores_returns_empty_frame_when_benchmark_is_invalid() -> None:
-    config = ScreenerConfig(liquidity_threshold_usd=100.0)
+    config = ScreenerConfig(liquidity_threshold_usd=100.0, min_historical_range_score=0.0)
     prices = _make_symbol_frame("AAA", base_price=50.0, drift=0.10, volume=1_000)
 
     scores = compute_scores_from_prices(prices, spy_return_6m=-1.0, config=config)
@@ -66,3 +71,92 @@ def test_compute_scores_returns_empty_frame_for_empty_input() -> None:
     assert scores.empty
     assert list(scores.columns) == RESULT_COLUMNS
 
+
+def test_compute_scores_excludes_symbols_with_insufficient_history() -> None:
+    config = ScreenerConfig(liquidity_threshold_usd=100.0, min_history_days=252, min_historical_range_score=0.0)
+    prices = _make_symbol_frame("NEW", base_price=30.0, drift=0.15, volume=20_000, rows=120)
+
+    scores = compute_scores_from_prices(prices, spy_return_6m=0.03, config=config)
+
+    assert scores.empty
+    assert list(scores.columns) == RESULT_COLUMNS
+
+
+def test_compute_scores_excludes_symbols_below_min_close_price() -> None:
+    config = ScreenerConfig(liquidity_threshold_usd=100.0, min_close_price=5.0, min_historical_range_score=0.0)
+    prices = _make_symbol_frame("PENNY", base_price=2.0, drift=0.05, volume=100_000, rows=400)
+
+    scores = compute_scores_from_prices(prices, spy_return_6m=0.03, config=config)
+
+    assert scores.empty
+    assert list(scores.columns) == RESULT_COLUMNS
+
+
+def test_compute_scores_excludes_symbols_below_min_relative_strength() -> None:
+    config = ScreenerConfig(
+        liquidity_threshold_usd=100.0,
+        min_relative_strength_index=105.0,
+        min_historical_range_score=0.0,
+    )
+    prices = _make_symbol_frame("LAG", base_price=50.0, drift=0.01, volume=50_000, rows=400)
+
+    scores = compute_scores_from_prices(prices, spy_return_6m=0.05, config=config)
+
+    assert scores.empty
+    assert list(scores.columns) == RESULT_COLUMNS
+
+
+def test_compute_scores_uses_recent_range_window_not_full_history() -> None:
+    recent_rows = 400
+    old_rows = 400
+    old_dates = pd.bdate_range(end=datetime.now(timezone.utc) - pd.Timedelta(days=800), periods=old_rows)
+    recent_dates = pd.bdate_range(end=datetime.now(timezone.utc), periods=recent_rows)
+    old_close = np.full(old_rows, 200.0)
+    recent_close = np.linspace(90.0, 110.0, recent_rows)
+    prices = pd.DataFrame(
+        {
+            "symbol": ["AAA"] * (old_rows + recent_rows),
+            "timestamp": old_dates.tolist() + recent_dates.tolist(),
+            "close_price": np.concatenate([old_close, recent_close]),
+            "high_price": np.concatenate([old_close * 1.01, recent_close * 1.01]),
+            "low_price": np.concatenate([old_close * 0.99, recent_close * 0.99]),
+            "volume": np.full(old_rows + recent_rows, 200_000),
+        }
+    )
+    config = ScreenerConfig(
+        liquidity_threshold_usd=100.0,
+        min_relative_strength_index=90.0,
+        historical_range_lookback_days=252,
+        min_historical_range_score=80.0,
+        first_pass_window_days=800,
+    )
+
+    scores = compute_scores_from_prices(prices, spy_return_6m=0.01, config=config)
+
+    assert not scores.empty
+    assert scores.iloc[0]["historical_range_score"] >= 80.0
+
+
+# --- Phase 3.2.c — alignement sur core/filter_profiles ---------------------
+
+def test_screener_config_from_filter_profile_maps_shared_thresholds() -> None:
+    from core.filter_profiles import STRICT_SWING_CASH_FILTERS
+    from screener.models import ScreenerConfig
+
+    config = ScreenerConfig.from_filter_profile(STRICT_SWING_CASH_FILTERS)
+
+    assert config.min_close_price == STRICT_SWING_CASH_FILTERS.min_close
+    assert config.liquidity_threshold_usd == STRICT_SWING_CASH_FILTERS.min_avg_dollar_volume_20d
+    assert config.min_relative_strength_index == STRICT_SWING_CASH_FILTERS.min_relative_strength_index
+
+
+def test_screener_config_strict_swing_cash_accepts_overrides() -> None:
+    from screener.models import ScreenerConfig
+
+    config = ScreenerConfig.strict_swing_cash(chunk_size=42, weight_liquidity=0.10)
+
+    assert config.chunk_size == 42
+    assert config.weight_liquidity == 0.10
+    # Seuils communs alignés sur le profil partagé.
+    assert config.min_close_price == 10.0
+    assert config.liquidity_threshold_usd == 30_000_000.0

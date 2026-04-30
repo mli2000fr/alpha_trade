@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import cast
 
 import polars as pl
-from sqlalchemy import Column, DateTime, Integer, MetaData, Numeric, String, Table, create_engine
+from sqlalchemy import Boolean, Column, Date, DateTime, Integer, MetaData, Numeric, String, Table, create_engine
 from sqlalchemy.engine import Connection
 
 from database import sanitizer_db_ops
@@ -24,18 +24,6 @@ class _FakeScalarResult:
 
     def scalar_one_or_none(self):
         return self._value
-
-
-class _FakeAuditConnection:
-    def __init__(self, row_id=None) -> None:
-        self.row_id = row_id
-        self.executed: list[object] = []
-
-    def execute(self, statement):
-        self.executed.append(statement)
-        if len(self.executed) == 1:
-            return _FakeScalarResult(self.row_id)
-        return None
 
 
 class _FakeInsert:
@@ -75,6 +63,35 @@ def _build_stock_bars_table(metadata: MetaData) -> Table:
         Column("trade_count", Numeric(20, 8), nullable=True),
         Column("volume", Integer, nullable=False),
         Column("vwa_price", Numeric(20, 8), nullable=True),
+    )
+
+
+def _build_cleaning_audit_latest_table(metadata: MetaData) -> Table:
+    return Table(
+        "cleaning_audit_latest",
+        metadata,
+        Column("symbol", String(10), primary_key=True),
+        Column("last_sync_date", Date, nullable=True),
+        Column("missing_days_count", Integer, nullable=True),
+        Column("anomaly_count", Integer, nullable=True),
+        Column("status", String(20), nullable=False),
+        Column("error_message", String(255), nullable=True),
+        Column("latest_run_at", DateTime, nullable=True),
+    )
+
+
+def _build_cleaning_audit_runs_table(metadata: MetaData) -> Table:
+    return Table(
+        "cleaning_audit_runs",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("symbol", String(10), nullable=False),
+        Column("last_sync_date", Date, nullable=True),
+        Column("missing_days_count", Integer, nullable=True),
+        Column("anomaly_count", Integer, nullable=True),
+        Column("status", String(20), nullable=False),
+        Column("error_message", String(255), nullable=True),
+        Column("created_at", DateTime, nullable=True),
     )
 
 
@@ -317,33 +334,37 @@ def test_upsert_stock_bars_daily_converts_inf_to_none_and_logs_warning(monkeypat
     )
 
 
-def test_upsert_audit_logs_failed_payload(caplog) -> None:
+def test_upsert_audit_logs_failed_payload_and_persists_latest_plus_run(caplog) -> None:
+    engine = create_engine("sqlite:///:memory:")
     metadata = MetaData()
-    cleaning_audit_log = Table(
-        "cleaning_audit_log",
-        metadata,
-        Column("id", Integer, primary_key=True),
-        Column("symbol", String(10), nullable=False),
-        Column("last_sync_date", DateTime, nullable=True),
-        Column("missing_days_count", Integer, nullable=False),
-        Column("anomaly_count", Integer, nullable=False),
-        Column("status", String(20), nullable=False),
-        Column("updated_at", DateTime, nullable=True),
-    )
-    conn = _FakeAuditConnection(row_id=None)
+    cleaning_audit_latest = _build_cleaning_audit_latest_table(metadata)
+    cleaning_audit_runs = _build_cleaning_audit_runs_table(metadata)
+    metadata.create_all(engine)
 
-    with caplog.at_level("ERROR", logger="database.sanitizer_db_ops"):
-        sanitizer_db_ops.upsert_audit(
-            cast(Connection, conn),
-            cleaning_audit_log,
-            "AAPL",
-            None,
-            0,
-            0,
-            "failed",
-        )
+    with engine.begin() as conn:
+        with caplog.at_level("ERROR", logger="database.sanitizer_db_ops"):
+            sanitizer_db_ops.upsert_audit(
+                conn,
+                cleaning_audit_latest,
+                cleaning_audit_runs,
+                "AAPL",
+                date(2024, 1, 5),
+                None,
+                None,
+                "failed",
+                "RuntimeError: boom",
+            )
 
-    assert any("Audit en échec | symbol=AAPL" in message for message in caplog.messages)
+        latest_row = conn.execute(cleaning_audit_latest.select()).mappings().one()
+        run_row = conn.execute(cleaning_audit_runs.select()).mappings().one()
+
+    assert any("Audit en echec | symbol=AAPL" in message for message in caplog.messages)
+    assert latest_row["symbol"] == "AAPL"
+    assert latest_row["status"] == "failed"
+    assert latest_row["error_message"] == "RuntimeError: boom"
+    assert run_row["symbol"] == "AAPL"
+    assert run_row["status"] == "failed"
+    assert run_row["error_message"] == "RuntimeError: boom"
 
 
 def test_sync_audit_to_stock_scores_updates_existing_symbol() -> None:
@@ -353,8 +374,9 @@ def test_sync_audit_to_stock_scores_updates_existing_symbol() -> None:
         "stock_scores",
         metadata,
         Column("symbol", String(10), primary_key=True),
-        Column("missing_days_count", Integer, nullable=False, default=0),
-        Column("anomaly_count", Integer, nullable=False, default=0),
+        Column("missing_days_count", Integer, nullable=True, default=0),
+        Column("anomaly_count", Integer, nullable=True, default=0),
+        Column("sanitizer_status", String(16), nullable=False, default="pending"),
         Column("last_updated_audit", DateTime, nullable=False),
     )
     metadata.create_all(engine)
@@ -366,16 +388,18 @@ def test_sync_audit_to_stock_scores_updates_existing_symbol() -> None:
                 symbol="AAPL",
                 missing_days_count=1,
                 anomaly_count=1,
+                sanitizer_status="pending",
                 last_updated_audit=initial_ts,
             )
         )
 
-        updated = sanitizer_db_ops.sync_audit_to_stock_scores(conn, stock_scores, "AAPL", 3, 7)
+        updated = sanitizer_db_ops.sync_audit_to_stock_scores(conn, stock_scores, "AAPL", 3, 7, "success")
         row = conn.execute(stock_scores.select().where(stock_scores.c.symbol == "AAPL")).mappings().one()
 
     assert updated == 1
     assert row["missing_days_count"] == 3
     assert row["anomaly_count"] == 7
+    assert row["sanitizer_status"] == "success"
     assert row["last_updated_audit"] >= initial_ts
 
 
@@ -386,14 +410,15 @@ def test_sync_audit_to_stock_scores_ignores_missing_symbol() -> None:
         "stock_scores",
         metadata,
         Column("symbol", String(10), primary_key=True),
-        Column("missing_days_count", Integer, nullable=False, default=0),
-        Column("anomaly_count", Integer, nullable=False, default=0),
+        Column("missing_days_count", Integer, nullable=True, default=0),
+        Column("anomaly_count", Integer, nullable=True, default=0),
+        Column("sanitizer_status", String(16), nullable=False, default="pending"),
         Column("last_updated_audit", DateTime, nullable=False),
     )
     metadata.create_all(engine)
 
     with engine.begin() as conn:
-        updated = sanitizer_db_ops.sync_audit_to_stock_scores(conn, stock_scores, "MISSING", 2, 5)
+        updated = sanitizer_db_ops.sync_audit_to_stock_scores(conn, stock_scores, "MISSING", 2, 5, "failed")
         rows = conn.execute(stock_scores.select()).all()
 
     assert updated == 0
@@ -403,55 +428,97 @@ def test_sync_audit_to_stock_scores_ignores_missing_symbol() -> None:
 def test_get_failed_audits_returns_recent_failed_rows() -> None:
     engine = create_engine("sqlite:///:memory:")
     metadata = MetaData()
-    cleaning_audit_log = Table(
-        "cleaning_audit_log",
+    cleaning_audit_latest = _build_cleaning_audit_latest_table(metadata)
+    metadata.create_all(engine)
+
+    with engine.begin() as conn:
+        conn.execute(
+            cleaning_audit_latest.insert(),
+            [
+                {
+                    "symbol": "AAA",
+                    "last_sync_date": date(2024, 1, 1),
+                    "missing_days_count": 0,
+                    "anomaly_count": 0,
+                    "status": "failed",
+                    "error_message": "first",
+                    "latest_run_at": datetime(2024, 1, 1, 10, 0, 0),
+                },
+                {
+                    "symbol": "BBB",
+                    "last_sync_date": date(2024, 1, 2),
+                    "missing_days_count": 0,
+                    "anomaly_count": 0,
+                    "status": "success",
+                    "error_message": None,
+                    "latest_run_at": datetime(2024, 1, 2, 10, 0, 0),
+                },
+                {
+                    "symbol": "CCC",
+                    "last_sync_date": date(2024, 1, 3),
+                    "missing_days_count": 0,
+                    "anomaly_count": 0,
+                    "status": "failed",
+                    "error_message": "latest",
+                    "latest_run_at": datetime(2024, 1, 3, 10, 0, 0),
+                },
+            ],
+        )
+
+        failed_audits = get_failed_audits(conn, cleaning_audit_latest, limit=10)
+
+    assert [audit["symbol"] for audit in failed_audits] == ["CCC", "AAA"]
+
+
+def test_get_last_sync_date_reads_from_cleaning_audit_latest() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    cleaning_audit_latest = _build_cleaning_audit_latest_table(metadata)
+    metadata.create_all(engine)
+
+    with engine.begin() as conn:
+        conn.execute(
+            cleaning_audit_latest.insert().values(
+                symbol="AAPL",
+                last_sync_date=date(2024, 1, 9),
+                missing_days_count=1,
+                anomaly_count=0,
+                status="success",
+            )
+        )
+
+        last_sync = sanitizer_db_ops.get_last_sync_date(conn, cleaning_audit_latest, "AAPL")
+
+    assert last_sync == date(2024, 1, 9)
+
+
+def test_get_symbols_excludes_blocked_history_statuses_when_available() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    stock_metadata = Table(
+        "stock_metadata",
         metadata,
-        Column("id", Integer, primary_key=True),
-        Column("symbol", String(10), nullable=False),
-        Column("last_sync_date", DateTime, nullable=True),
-        Column("missing_days_count", Integer, nullable=False),
-        Column("anomaly_count", Integer, nullable=False),
-        Column("status", String(20), nullable=False),
-        Column("updated_at", DateTime, nullable=True),
+        Column("symbol", String(20), primary_key=True),
+        Column("status", String(20)),
+        Column("tradable", Boolean),
+        Column("bars_available", Boolean),
+        Column("history_status", String(32)),
+        Column("asset_class", String(20)),
     )
     metadata.create_all(engine)
 
     with engine.begin() as conn:
         conn.execute(
-            cleaning_audit_log.insert(),
+            stock_metadata.insert(),
             [
-                {
-                    "id": 1,
-                    "symbol": "AAA",
-                    "last_sync_date": datetime(2024, 1, 1, 0, 0, 0),
-                    "missing_days_count": 0,
-                    "anomaly_count": 0,
-                    "status": "failed",
-                    "updated_at": datetime(2024, 1, 1, 10, 0, 0),
-                },
-                {
-                    "id": 2,
-                    "symbol": "BBB",
-                    "last_sync_date": datetime(2024, 1, 2, 0, 0, 0),
-                    "missing_days_count": 0,
-                    "anomaly_count": 0,
-                    "status": "success",
-                    "updated_at": datetime(2024, 1, 2, 10, 0, 0),
-                },
-                {
-                    "id": 3,
-                    "symbol": "CCC",
-                    "last_sync_date": datetime(2024, 1, 3, 0, 0, 0),
-                    "missing_days_count": 0,
-                    "anomaly_count": 0,
-                    "status": "failed",
-                    "updated_at": datetime(2024, 1, 3, 10, 0, 0),
-                },
+                {"symbol": "AAPL", "status": "active", "tradable": True, "bars_available": True, "history_status": "ready", "asset_class": "us_equity"},
+                {"symbol": "MSFT", "status": "active", "tradable": True, "bars_available": True, "history_status": "pending", "asset_class": "us_equity"},
+                {"symbol": "NVDA", "status": "active", "tradable": True, "bars_available": True, "history_status": "provider_error", "asset_class": "us_equity"},
             ],
         )
 
-        failed_audits = get_failed_audits(conn, cleaning_audit_log, limit=10)
+        symbols = sanitizer_db_ops.get_symbols(conn, stock_metadata)
 
-    assert [audit["symbol"] for audit in failed_audits] == ["CCC", "AAA"]
+    assert symbols == ["AAPL", "MSFT"]
 
 

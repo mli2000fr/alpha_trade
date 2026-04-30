@@ -1,0 +1,25 @@
+CREATE TABLE IF NOT EXISTS execution_reconciliation_results (
+    id                          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    exec_run_id                 VARCHAR(32) NOT NULL,
+    account_id                  VARCHAR(32) NOT NULL,
+    symbol                      VARCHAR(20) NOT NULL,
+    target_qty                  DOUBLE NOT NULL,
+    internal_position_qty       DOUBLE NOT NULL,
+    broker_position_qty         DOUBLE NOT NULL,
+    position_delta              DOUBLE NOT NULL,
+    open_request_buy_qty        DOUBLE NOT NULL DEFAULT 0,
+    open_request_sell_qty       DOUBLE NOT NULL DEFAULT 0,
+    open_broker_buy_qty         DOUBLE NOT NULL DEFAULT 0,
+    open_broker_sell_qty        DOUBLE NOT NULL DEFAULT 0,
+    has_open_protection         BOOLEAN NOT NULL DEFAULT 0,
+    protection_qty              DOUBLE NOT NULL DEFAULT 0,
+    action                      VARCHAR(20) NOT NULL,
+    reconciliation_status       VARCHAR(20) NOT NULL,
+    reason_code                 VARCHAR(255) NULL,
+    created_at                  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_err_exec_account_symbol (exec_run_id, account_id, symbol),
+    KEY idx_err_account_status (account_id, reconciliation_status),
+    KEY idx_err_exec_run (exec_run_id),
+    KEY idx_err_action (action)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

@@ -15,7 +15,8 @@ TRUNCATE TABLE stock_bars;
 TRUNCATE TABLE stock_bars_daily;
 TRUNCATE TABLE stock_metadata;
 TRUNCATE TABLE stock_scores;
-TRUNCATE TABLE cleaning_audit_log;
+TRUNCATE TABLE cleaning_audit_latest;
+TRUNCATE TABLE cleaning_audit_runs;
 
 -- ── News / Sentiment ───────────────────────────────────────────────────────
 DELETE FROM news_sentiment;
@@ -43,7 +44,9 @@ SELECT 'stock_metadata',                                 COUNT(*) FROM stock_met
 UNION ALL
 SELECT 'stock_scores',                                   COUNT(*) FROM stock_scores
 UNION ALL
-SELECT 'cleaning_audit_log',                             COUNT(*) FROM cleaning_audit_log
+SELECT 'cleaning_audit_latest',                          COUNT(*) FROM cleaning_audit_latest
+UNION ALL
+SELECT 'cleaning_audit_runs',                            COUNT(*) FROM cleaning_audit_runs
 UNION ALL
 SELECT 'news_raw',                                       COUNT(*) FROM news_raw
 UNION ALL
@@ -59,7 +62,8 @@ SELECT 'ticker_daily_sentiment_features',                COUNT(*) FROM ticker_da
 UNION ALL
 SELECT 'sector_daily_sentiment_features',                COUNT(*) FROM sector_daily_sentiment_features;
 
-TRUNCATE table alpha_trade.cleaning_audit_log;
+TRUNCATE table alpha_trade.cleaning_audit_latest;
+TRUNCATE table alpha_trade.cleaning_audit_runs;
 TRUNCATE table alpha_trade.stock_scores;
 TRUNCATE table alpha_trade.news_ingestion_checkpoint;
 TRUNCATE table alpha_trade.news_sentiment;

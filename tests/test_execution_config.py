@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from execution_engine.config import ExecutionConfig
+from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
 
 
 class TestExecutionConfig:
@@ -13,6 +13,8 @@ class TestExecutionConfig:
         assert cfg.entry_order_type == "market"
         assert cfg.profit_taker_pct == 0.08
         assert cfg.trailing_stop_pct == 0.05
+        assert cfg.trailing_activation_trigger == "multiple_r"
+        assert cfg.protection_transition_timeout_seconds == 0
 
     def test_valid_paper_mode(self) -> None:
         cfg = ExecutionConfig(broker_mode="paper")
@@ -39,3 +41,14 @@ class TestExecutionConfig:
 
     def test_is_live(self) -> None:
         assert ExecutionConfig(broker_mode="live").is_live()
+
+    def test_protection_watcher_service_config_default_values(self) -> None:
+        cfg = ProtectionWatcherServiceConfig()
+
+        assert cfg.interval_seconds == 30.0
+        assert cfg.idle_interval_seconds == 120.0
+        assert cfg.heartbeat_interval_seconds == 300.0
+        assert cfg.max_iterations is None
+        assert cfg.stop_when_idle is False
+        assert cfg.max_consecutive_failures == 3
+

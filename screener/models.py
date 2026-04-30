@@ -1,30 +1,56 @@
 from dataclasses import asdict, dataclass
 from typing import Any
 
+# Phase 3.2.c — la source de vérité des seuils communs (close, ADV20,
+# RSI relatif) est ``core.filter_profiles.StrictFilterProfile``.
+# ``ScreenerConfig`` reste libre d'avoir des champs spécifiques au screener
+# (poids, fenêtres, two-pass loading) mais peut désormais être instancié
+# directement à partir du profil partagé via :meth:`from_filter_profile`.
+from core.filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
+
 
 @dataclass(frozen=True, slots=True)
 class ScreenerConfig:
     chunk_size: int = 500
-    liquidity_threshold_usd: float = 500_000.0
+    liquidity_threshold_usd: float = 10_000_000.0
     benchmark_symbol: str = "SPY"
+    min_history_days: int = 252
+    min_close_price: float = 5.0
     lookback_liquidity_bars: int = 30
     lookback_relative_days: int = 183
     lookback_history_years: int = 10
-    weight_liquidity: float = 0.2
-    weight_relative_strength: float = 0.4
-    weight_historical_range: float = 0.4
+    historical_range_lookback_days: int = 504
+    min_relative_strength_index: float = 100.0
+    min_historical_range_score: float = 70.0
+    weight_liquidity: float = 0.15
+    weight_relative_strength: float = 0.55
+    weight_historical_range: float = 0.30
+    enable_two_pass_loading: bool = True
+    first_pass_window_days: int = 400
 
     def __post_init__(self) -> None:
         if self.chunk_size < 1:
             raise ValueError("chunk_size doit être supérieur ou égal à 1.")
         if self.liquidity_threshold_usd < 0:
             raise ValueError("liquidity_threshold_usd doit être positif.")
+        if self.min_history_days < 2:
+            raise ValueError("min_history_days doit être supérieur ou égal à 2.")
+        if self.min_close_price <= 0:
+            raise ValueError("min_close_price doit être strictement positif.")
         if self.lookback_liquidity_bars < 1:
             raise ValueError("lookback_liquidity_bars doit être supérieur ou égal à 1.")
         if self.lookback_relative_days < 1:
             raise ValueError("lookback_relative_days doit être supérieur ou égal à 1.")
         if self.lookback_history_years < 1:
             raise ValueError("lookback_history_years doit être supérieur ou égal à 1.")
+        if self.historical_range_lookback_days < 2:
+            raise ValueError("historical_range_lookback_days doit être supérieur ou égal à 2.")
+        if self.min_relative_strength_index <= 0:
+            raise ValueError("min_relative_strength_index doit être strictement positif.")
+        if not 0.0 <= self.min_historical_range_score <= 100.0:
+            raise ValueError("min_historical_range_score doit être compris entre 0 et 100.")
+        if self.first_pass_window_days < max(self.lookback_relative_days, self.min_history_days):
+            raise ValueError("first_pass_window_days doit couvrir au minimum lookback_relative_days et min_history_days.")
 
         weights = (
             self.weight_liquidity,
@@ -45,3 +71,92 @@ class ScreenerConfig:
         normalized_payload.pop("timeframe", None)
         return ScreenerConfig(**normalized_payload)
 
+    # -- Phase 3.2.c — alignement sur core.filter_profiles ------------------
+    @classmethod
+    def from_filter_profile(
+        cls,
+        profile: StrictFilterProfile,
+        **overrides: Any,
+    ) -> "ScreenerConfig":
+        """Construit une ``ScreenerConfig`` à partir d'un profil partagé.
+
+        Mapping des champs communs (cf. ``StrictFilterProfile``) :
+
+        - ``min_close``               → ``min_close_price``
+        - ``min_avg_dollar_volume_20d`` → ``liquidity_threshold_usd``
+        - ``min_relative_strength_index`` → ``min_relative_strength_index``
+          (conserve le défaut screener si ``None`` côté profil).
+
+        Les champs spécifiques au screener (poids, two-pass, fenêtres)
+        gardent leurs défauts sauf override explicite. Cela évite la
+        divergence des seuils communs entre screener et selector.
+        """
+        merged: dict[str, Any] = {
+            "min_close_price": profile.min_close,
+            "liquidity_threshold_usd": profile.min_avg_dollar_volume_20d,
+        }
+        if profile.min_relative_strength_index is not None:
+            merged["min_relative_strength_index"] = profile.min_relative_strength_index
+        merged.update(overrides)
+        return cls(**merged)
+
+    @classmethod
+    def strict_swing_cash(cls, **overrides: Any) -> "ScreenerConfig":
+        """Phase 3.2.c — raccourci aligné sur ``STRICT_SWING_CASH_FILTERS``."""
+        return cls.from_filter_profile(STRICT_SWING_CASH_FILTERS, **overrides)
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenerChunkMetrics:
+    input_symbols: int = 0
+    recent_rows_loaded: int = 0
+    range_rows_loaded: int = 0
+    symbols_pass_history: int = 0
+    symbols_pass_liquidity: int = 0
+    symbols_pass_relative_strength: int = 0
+    symbols_final: int = 0
+    rows_avoided_estimate: int = 0
+    pass1_seconds: float = 0.0
+    pass2_seconds: float = 0.0
+    duration_seconds: float = 0.0
+    failed: bool = False
+    error_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenerRunReport:
+    run_id: str
+    benchmark_symbol: str
+    chunk_size: int
+    workers: int
+    as_of_date: str | None
+    started_at: str
+    finished_at: str | None = None
+    duration_seconds: float = 0.0
+    targeted_symbols: int = 0
+    chunks_total: int = 0
+    chunks_completed: int = 0
+    chunk_failures: int = 0
+    recent_rows_loaded: int = 0
+    range_rows_loaded: int = 0
+    symbols_pass_history: int = 0
+    symbols_pass_liquidity: int = 0
+    symbols_pass_relative_strength: int = 0
+    symbols_final: int = 0
+    rows_avoided_estimate: int = 0
+    benchmark_load_seconds: float = 0.0
+    pass1_seconds: float = 0.0
+    pass2_seconds: float = 0.0
+    upsert_seconds: float = 0.0
+
+    @property
+    def chunk_failure_ratio(self) -> float:
+        """Phase 3.2.b — ratio chunks en échec sur chunks totaux (0 si aucun chunk)."""
+        if self.chunks_total <= 0:
+            return 0.0
+        return round(self.chunk_failures / self.chunks_total, 4)
+
+    def to_summary_dict(self) -> dict[str, object]:
+        payload = asdict(self)
+        payload["chunk_failure_ratio"] = self.chunk_failure_ratio
+        return payload

@@ -1,0 +1,74 @@
+; Phase 7.1 — Discipline d'imports (audit_global §7.1, prompt/refactor/plan.md).
+;
+; Empêche les modules métier d'importer **directement** les implémentations
+; concrètes des providers : ils doivent passer par les Protocols définis dans
+; ``core/interfaces.py`` (BrokerPort, MarketDataPort, NewsProvider,
+; CorporateActionProvider, …) et les repositories de ``database/repositories``.
+;
+; Politique initiale : warn-only en CI (cf. tests/test_import_linter_contracts.py
+; qui marque ``xfail`` sur les violations résiduelles connues). Passage en
+; bloquant après triage du backlog.
+
+[importlinter]
+root_packages =
+    core
+    common
+    database
+    service
+    dataIntegrityEngine
+    screener
+    selector
+    event_sentiment
+    modelFactory
+    risk_management
+    execution_engine
+    corporate_actions
+    backtesting
+    ihm
+
+; ---------------------------------------------------------------------------
+; Contrat 1 — Couches : ``core`` ne dépend que de ``common``.
+; ---------------------------------------------------------------------------
+[importlinter:contract:core-layer]
+name = core ne dépend pas des modules métier
+type = forbidden
+source_modules =
+    core
+forbidden_modules =
+    database
+    service
+    dataIntegrityEngine
+    screener
+    selector
+    event_sentiment
+    modelFactory
+    risk_management
+    execution_engine
+    corporate_actions
+    backtesting
+    ihm
+
+; ---------------------------------------------------------------------------
+; Contrat 2 — Modules métier : pas d'import direct des clients providers.
+; Doivent passer par les Protocols (core/interfaces.py) et les repositories.
+; ---------------------------------------------------------------------------
+[importlinter:contract:business-vs-providers]
+name = Modules métier n'importent pas les clients providers concrets
+type = forbidden
+source_modules =
+    risk_management
+    execution_engine
+    selector
+    screener
+    backtesting
+    event_sentiment
+forbidden_modules =
+    service.alpaca.clientAlpaca
+    service.finnhub.clientFinnhub
+    corporate_actions.cross_check_yahoo
+ignore_imports =
+    ; Le risque manager peut instancier un BrokerPort concret au point d'entrée
+    ; (composition root). Les call-sites profonds doivent rester découplés.
+    risk_management.cli -> service.alpaca.clientAlpaca
+    execution_engine.cli -> service.alpaca.clientAlpaca
+

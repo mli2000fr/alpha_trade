@@ -18,3 +18,12 @@ def test_normalize_mysql_records():
     norm = repo._normalize_mysql_records(records)
     assert norm[0]["a"] is None and norm[0]["b"] == 1
     assert norm[1]["a"] == 2 and norm[1]["b"] is None
+
+
+def test_load_candidate_symbols_delegates_to_shared_helper(monkeypatch):
+    repo = db_io.EventSentimentRepository.__new__(db_io.EventSentimentRepository)
+    repo.engine = object()
+    monkeypatch.setattr(db_io, "list_candidate_symbols", lambda engine: ["AAPL", "MSFT"])
+
+    assert repo.load_candidate_symbols() == ["AAPL", "MSFT"]
+

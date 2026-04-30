@@ -21,7 +21,7 @@ Ce document résume le fonctionnement du module `ihm/` et les commandes utiles p
 | `ihm/app.py` | Point d'entrée Streamlit et routage des pages |
 | `ihm/README.md` | Documentation rapide de l'IHM |
 | `ihm/pages/overview.py` | Vue d'ensemble, KPI et statut global |
-| `ihm/pages/pipeline.py` | Pilotage des étapes quotidiennes |
+| `ihm/pages/pipeline.py` | Pilotage du workflow quotidien, des steps auxiliaires Data Integrity et du centre d'exécution |
 | `ihm/pages/backtesting.py` | Pilotage du backtesting et du backfill depuis l'IHM |
 | `ihm/pages/screening.py` | Consultation `stock_scores` |
 | `ihm/pages/risk.py` | Décisions de risque et portefeuille cible |
@@ -126,53 +126,289 @@ Les pages liées à l'exécution, au risque ou aux corporate actions peuvent alo
 
 ### 4.3 Pilotage de pipeline
 
-La page `Pipeline` s'appuie sur `ihm/services/pipeline_runner.py` pour construire les commandes des étapes :
+La page `Pipeline` s'appuie principalement sur :
 
-1. import bars,
-2. sanitize daily,
-3. screener,
-4. sync latest quotes,
-5. sync earnings calendar,
-6. alpha scanner,
-7. sentiment pipeline,
-8. signal aggregator,
-9. ml train,
-10. ml predict,
-11. risk management,
-12. execution,
-13. corporate actions sync,
-14. corporate actions apply.
+- `ihm/services/pipeline_runner.py` pour décrire les steps disponibles et construire les commandes ;
+- `ihm/services/process_registry.py` pour lancer les sous-processus en arrière-plan, suivre leurs logs et historiser les runs ;
+- `ihm/services/run_summary.py` pour normaliser les résumés métier affichés dans l'IHM.
 
-Pour l'étape `Execution`, l'IHM expose aussi les contraintes de compte/trading :
+La page est désormais organisée en **3 zones fonctionnelles**.
+
+#### 4.3.1 Paramètres d'exécution partagés
+
+Le bloc `⚙️ Paramètres d'exécution` regroupe les options communes à plusieurs steps :
+
+- `trade_date / as-of` ;
+- equity du module Risk ;
+- mode d'exécution `simulate|paper|live` ;
+- `risk_run_id` optionnel pour Execution ;
+- options broker/exécution (`allow_outside_rth`, `auto_rebalance`, type de compte, règle PDT, `swing_only`) ;
+- options `modelFactory` (accélérateur, challengers, modèle global, sélection du champion, optimisation seuil/target) ;
+- options `Screener` pour `stock_screener` ;
+- options `Data Integrity` pour quotes / earnings / fondamentaux.
+
+Pour `Execution`, l'IHM expose explicitement :
 
 - type de compte `margin|cash` ;
 - règle `PDT auto|off` ;
-- option `swing_only`.
+- option `swing_only` ;
+- rappel métier de l'impact de ces choix sur le buying power et le comportement des exits.
 
-Pour l'étape `Alpha Scanner` (désormais étape 6 du workflow complet), l'IHM lance directement la commande standard suivante :
+Pour la zone `Data Integrity`, l'IHM expose désormais les options backend réellement disponibles :
+
+- `sync_latest_quotes`
+  - `--limit`
+  - `--batch-size`
+- `sync_earnings_calendar`
+  - `--from-date`
+  - `--to-date`
+  - `--limit`
+  - `--sleep-seconds`
+- `update_sector`
+  - `--limit`
+  - `--sleep-seconds`
+  - `--log-every`
+
+Pour la zone `Screener`, l'IHM expose aussi les options backend réellement disponibles côté `python -m screener.stock_screener` :
+
+- `--chunk-size`
+- `--max-workers` (`0` dans l'IHM = auto)
+- `--benchmark`
+- `--liquidity-threshold-usd`
+- `--min-relative-strength-index`
+- `--historical-range-lookback-days`
+- `--min-historical-range-score`
+- `--first-pass-window-days`
+- `--disable-two-pass-loading` (piloté par une checkbox inverse "chargement en 2 passes")
+
+Important :
+
+- dans l'IHM, une valeur `0` sur un champ `limit` signifie **univers complet éligible** ;
+- si la fenêtre custom earnings n'est pas activée, la commande conserve le défaut backend `J-7 -> J+30`.
+
+#### 4.3.2 Workflow quotidien 1 → 14
+
+Le workflow complet exécute automatiquement, dans cet ordre :
+
+1. `import_alpaca_bar`
+2. `data_sanitizer_daily`
+3. `stock_screener`
+4. `sync_latest_quotes`
+5. `sync_earnings_calendar`
+6. `alpha_scanner`
+7. `sentiment_pipeline`
+8. `signal_aggregator`
+9. `ml_train`
+10. `ml_predict`
+11. `risk_management`
+12. `execution`
+13. `corporate_actions_sync`
+14. `corporate_actions_apply`
+
+Le workflow 1→14 correspond au pipeline quotidien opérable depuis l'IHM.
+
+Le watcher de protections n'est **pas** la 15e étape du workflow. Il apparaît désormais dans la page `Pipeline` comme un bloc pédagogique **12.bis** placé juste après `Execution` pour rappeler :
+
+- quand le lancer ;
+- dans quel ordre le positionner ;
+- et comment le lancer selon le contexte (run once, service local, Task Scheduler, NSSM).
+
+Le bloc affiche aussi un lien explicite vers `doc/watcher.md` afin qu'un nouvel opérateur puisse ouvrir immédiatement le guide dédié depuis l'IHM.
+
+Règle simple :
+
+- `1 → 11` préparent la journée ;
+- `12 execution` crée les protections à surveiller ;
+- le **watcher** se lance juste après `Execution` ;
+- `13 → 14 corporate actions` peuvent s'exécuter pendant que le watcher tourne.
+
+L'étape `Alpha Scanner` continue d'être lancée via :
 
 ```powershell
 python -m selector.alpha_scanner
 ```
 
-Le workflow complet 1→14 réutilise exactement cette même commande pour l'étape 6. Le profil strict partagé `STRICT_SWING_CASH_FILTERS` est donc appliqué de manière implicite et homogène entre CLI, IHM et backfill PIT.
+L'IHM expose désormais les options CLI opérationnelles réellement supportées par ce point d'entrée, notamment :
 
-Le workflow complet 1→14 exécute désormais automatiquement, juste avant `Alpha Scanner`, les commandes suivantes afin d'alimenter les tables de référence du filtre strict :
+- `chunk-size`
+- `selection-size`
+- `max-workers`
+- `liquidity-threshold`
+- `min-close`
+- `max-volatility-ratio`
+- `min-relative-strength-index`
+- `min-high-52w-proximity`
+- `min-weekly-trend-score`
+- `min-atr-pct-20`
+- `max-atr-pct-20`
+- `min-market-cap`
+- `min-beta-126`
+- `max-spread-bps`
+- `earnings-blackout-days`
+- `max-anomaly-count`
+- `sector-cap-ratio`
+- `log-level`
+
+Point important :
+
+- `0` sur `max workers` dans l'IHM signifie **auto** ;
+- le profil partagé `STRICT_SWING_CASH_FILTERS` reste la base implicite côté backend, et les valeurs saisies dans l'IHM sont transmises explicitement pour reproduire ou surcharger ce profil ;
+- le launcher IHM consomme aussi désormais le `run_summary` structuré de `alpha_scanner` (taille demandée, titres retenus, secteurs, fill ratio, workers, cap sectoriel).
+
+L'IHM exécute donc bien `sync_latest_quotes` puis `sync_earnings_calendar` **avant** `alpha_scanner`, ce qui prépare `stock_quote_snapshots` et `stock_earnings_calendar` pour les filtres aval (`spread_bps`, `earnings_blackout`).
+
+Les étapes suivantes du workflow, `sentiment_pipeline` puis `signal_aggregator`, sont elles aussi alignées sur les points d'entrée backend :
 
 ```powershell
-python -m dataIntegrityEngine.sync_latest_quotes
-python -m dataIntegrityEngine.sync_earnings_calendar
+python -m event_sentiment ...
+python -m event_sentiment.signal_aggregator ...
 ```
 
-L'étape `Alpha Scanner` reste lancée via :
+Pour `sentiment_pipeline`, l'IHM expose désormais les options réellement supportées par `event_sentiment.cli` :
+
+- `--start-utc`
+- `--end-utc`
+- `--symbols`
+
+Pour `signal_aggregator`, l'IHM expose désormais :
+
+- `--trade-date`
+- `--all-symbols`
+- `--sentiment-weight`
+- `--macro-weight`
+- `--lookback-days`
+- `--min-news-count`
+- `--time-decay-half-life-days`
+- `--log-level`
+
+Points importants :
+
+- si `symbols` est laissé vide côté IHM, `event_sentiment` recharge automatiquement les candidats depuis `stock_scores.is_candidate = 1` ;
+- `signal_aggregator` réutilise le champ global `trade date` de la page quand il est renseigné ;
+- le poids quantitatif reste implicite et vaut `1 - sentiment_weight - macro_weight`, conformément au backend ;
+- l'IHM consomme aussi désormais les `run_summary` structurés de `sentiment_pipeline` et `signal_aggregator` pour afficher des métriques comme `resolved_symbols`, `fetched_articles`, `loaded_symbols`, `updated_symbols`, `signal_active_symbols` ou `avg_final_score_sentiment` dans `Pipeline`, `Overview` et `Screening`.
+
+La carte `Alpha Scanner` expose aussi un **diagnostic de dépendances** basé sur le contenu réel des tables SQL :
+
+- badge visuel pour `Sync Latest Quotes` et `Sync Earnings Calendar` ;
+- métriques exactes `latest_date`, `% couverture` et `N symboles` ;
+- seuils vert / orange / rouge éditables depuis la page `Settings` (et conservés aussi dans `Pipeline`) ;
+- presets applicables en un clic : `Swing Cash Pro`, `Agressif`, `Tolérant` ;
+- sélecteur de régime de marché : `normal`, `faible`, `très sélectif` ;
+- expander expliquant pourquoi l'état est `rouge` / `orange` ;
+- rappel des commandes correctives :
+  - `python -m dataIntegrityEngine.sync_latest_quotes`
+  - `python -m dataIntegrityEngine.sync_earnings_calendar`
+- actions rapides directement dans l'IHM pour lancer ces deux synchronisations.
+
+Règle d'UX opérateur : si **les deux** dépendances sont rouges en même temps, le bouton `Lancer en arrière-plan` de `Alpha Scanner` est réellement désactivé jusqu'à correction. Si une seule dépendance est dégradée, l'IHM affiche un avertissement mais ne verrouille pas le scan.
+
+Après succès d'une action rapide, l'IHM rappelle que les indicateurs peuvent rester mis en cache environ **60 secondes** (`st.cache_data(ttl=60)`) et propose un bouton `Rafraîchir maintenant` pour invalider le cache SQL côté dashboard.
+
+Ce même diagnostic est réutilisé en lecture seule dans les pages `Overview` et `Screening`, afin d'exposer les mêmes badges, métriques et commandes correctives hors de la page `Pipeline`.
+
+Les valeurs par défaut livrées dans l'IHM sont orientées **swing cash pro** :
+
+- `Sync Latest Quotes` : orange si couverture < `85%`, rouge si couverture < `60%`, orange si snapshot > `1` jour, rouge si > `3` jours ;
+- `Sync Earnings Calendar` : orange si couverture < `15%`, rouge si couverture < `5%`, orange si horizon futur < `14` jours, rouge si < `7` jours.
+
+L'IHM ne force donc pas un choix "style OU marché" : le preset effectif peut être le croisement des deux axes, par exemple `Swing Cash Pro × Marché très sélectif` ou `Tolérant × Marché faible`.
+
+#### 4.3.3 Steps auxiliaires Data Integrity hors workflow
+
+La page expose aussi une zone `Bootstrap / maintenance Data Integrity` avec deux steps additionnels, **hors workflow quotidien 1→14** :
+
+- `B1. Import univers Alpaca`
+  - commande : `python -m dataIntegrityEngine.import_alpaca_assets`
+  - usage : bootstrap ou rafraîchissement de `stock_metadata`
+- `B2. Mise à jour fondamentaux`
+  - commande : `python -m dataIntegrityEngine.update_sector ...`
+  - usage : enrichissement `sector` / `market_cap` via Finnhub
+
+Ces steps sont utiles lors :
+
+- d'une remise à zéro de la base ;
+- d'un rebootstrap de l'univers ;
+- d'un rattrapage ciblé des fondamentaux.
+
+Ils sont volontairement séparés du workflow quotidien pour ne pas les rejouer systématiquement chaque jour.
+
+#### 4.3.4 Centre d'exécution & d'investigation
+
+La page `Pipeline` embarque aussi un centre live de supervision :
+
+- liste des runs actifs ;
+- arrêt manuel d'un run ou d'un workflow ;
+- inspection des logs `stdout`, `stderr` ou combinés ;
+- comparaison de deux runs ;
+- téléchargement des logs ;
+- historique centralisé persistant des runs IHM.
+
+Les runs sont persistés sous :
+
+- `artifacts/ihm_pipeline_runs/` pour les pipelines ;
+- `artifacts/ihm_backtesting_runs/` pour le backtesting.
+
+#### 4.3.5 Résumés métier structurés
+
+Quand un script écrit sur stdout une ligne préfixée par :
+
+```text
+::alpha_trade_run_summary::
+```
+
+le registre IHM extrait ce JSON et l'associe au run.
+
+Cela permet ensuite :
+
+- l'affichage d'un résumé métier compact dans la page `Pipeline` ;
+- l'agrégation run-level sur le workflow parent ;
+- l'exposition de métriques récentes dans `Overview` et `Screening`.
+
+Les steps Data Integrity qui publient maintenant ce résumé structuré sont notamment :
+
+- `import_alpaca_assets`
+- `import_alpaca_bar`
+- `data_sanitizer_daily`
+- `update_sector`
+- `sync_latest_quotes`
+- `sync_earnings_calendar`
+
+#### 4.3.6 Import manuel de news
+
+Sous l'étape `Sentiment Pipeline`, l'IHM expose un sous-panneau `Import des news brutes` permettant de lancer :
 
 ```powershell
-python -m selector.alpha_scanner
+python event_sentiment/importe_news.py --start-date ... --end-date ...
 ```
 
-Le pipeline IHM tente donc maintenant de préparer `stock_quote_snapshots` et `stock_earnings_calendar` avant le scan, ce qui améliore la disponibilité des filtres `spread_bps` et `earnings_blackout` en mode live/opérationnel.
+Ce sous-run est utile pour réinjecter une plage de news spécifique avant de relancer le pipeline de sentiment.
 
-L'interface affiche un résumé explicite de ces contraintes avant lancement afin que l'opérateur comprenne pourquoi un run `cash` peut se comporter différemment d'un run `margin`.
+#### 4.3.7 Bloc watcher post-exécution dans `Pipeline`
+
+Entre l'étape `12. Execution` et les étapes `13-14` de Corporate Actions, la page `Pipeline` affiche désormais un bloc `12.bis` qui sert de mémo opérateur.
+
+Il rappelle :
+
+- que le watcher se lance **après** `Execution` ;
+- qu'il peut tourner pendant les Corporate Actions ;
+- quels modes de lancement privilégier (`once`, service local, Task Scheduler, NSSM) ;
+- et quelles commandes utiliser pour un nouvel arrivant.
+
+#### 4.3.8 Supervision Ops et packaging Windows
+
+La page `Supervision Ops` ajoute maintenant une vue Windows **strictement read-only** pour le watcher :
+
+- statut réel `Task Scheduler` ;
+- statut réel du service Windows / NSSM ;
+- sources de logs Windows détectées ;
+- import lecture seule de ces logs ;
+- métadonnées du bridge PowerShell allowlisté.
+
+Important :
+
+- l'IHM peut **superviser** le packaging Windows ;
+- l'IHM ne peut pas **installer**, **désinstaller**, **start/stop** un service Windows externe ni exécuter du PowerShell arbitraire.
 
 ### 4.4 Pilotage du backtesting
 
@@ -247,19 +483,19 @@ python run.py
 ### Vérifier que les répertoires d'artefacts IHM existent
 
 ```powershell
-Get-ChildItem "C:\Users\PC MLI\PycharmProjects\alpha_trade\artifacts"
+Get-ChildItem "C:\Users\MLI\PycharmProjects\alpha_trade\artifacts"
 ```
 
 ### Vérifier les pages disponibles dans le code
 
 ```powershell
-Get-ChildItem "C:\Users\PC MLI\PycharmProjects\alpha_trade\ihm\pages"
+Get-ChildItem "C:\Users\MLI\PycharmProjects\alpha_trade\ihm\pages"
 ```
 
 ### Vérifier les services de pilotage disponibles
 
 ```powershell
-Get-ChildItem "C:\Users\PC MLI\PycharmProjects\alpha_trade\ihm\services"
+Get-ChildItem "C:\Users\MLI\PycharmProjects\alpha_trade\ihm\services"
 ```
 
 ---
@@ -270,6 +506,8 @@ Get-ChildItem "C:\Users\PC MLI\PycharmProjects\alpha_trade\ihm\services"
 
 ```powershell
 python -m pytest tests/test_app.py tests/test_run.py tests/test_ihm_pipeline_runner.py tests/test_ihm_backtesting_runner.py tests/test_ihm_metrics.py -q -o addopts=""
+
+python -m pytest tests/test_ihm_process_registry.py tests/test_data_integrity_run_summaries.py -q -o addopts=""
 ```
 
 ### Tests des pages
@@ -295,3 +533,77 @@ Ordre conseillé pour un usage opérateur :
 python run.py
 ```
 
+
+
+---
+
+## Phase 6.2 (refactor) — sécurité & cycle de vie IHM
+
+### Cache obligatoire des requêtes DB
+
+Toutes les fonctions publiques de `ihm/services/queries.py` qui touchent la
+DB sont décorées `@st.cache_data(ttl=60, show_spinner=False)`. Les pages ne
+doivent **jamais** appeler `safe_query` / `safe_scalar` directement pour de
+la lecture répétitive : passer par `queries.py` ou ajouter un nouveau helper
+caché.
+
+### Hook `atexit` + rotation des artefacts (`process_registry`)
+
+`ihm.services.process_registry` enregistre automatiquement deux comportements
+au premier import :
+
+1. `atexit.register(_atexit_kill_all_children)` : lorsque Streamlit s'arrête
+   (Ctrl-C, fermeture de la fenêtre PowerShell), les sous-processus enfants
+   et workflows actifs sont **tués** (`taskkill /T /F` sur Windows). Plus
+   d'orphelins.
+2. `rotate_pipeline_artifacts()` : purge les runs et dossiers
+   `artifacts/ihm_pipeline_runs/<step>/<run_id>/` plus vieux que
+   `IHM_RUNS_RETENTION_DAYS` (défaut **30 jours**). Configurable via env.
+
+Audit shell quoting : `subprocess.Popen(command, ...)` est appelé sur une
+`list[str]` **sans** `shell=True`. Aucune interpolation shell n'a lieu, donc
+pas d'injection possible via les options IHM (les valeurs passent en
+arguments distincts).
+
+### Sécurité réseau (`ihm.services.security`)
+
+Trois variables d'environnement opt-in :
+
+| Variable | Effet |
+|---|---|
+| `IHM_AUTH_TOKEN` | Active une *gate* d'authentification basique (token partagé saisi à la connexion). Tant que le token n'est pas validé, l'IHM affiche uniquement le formulaire (`render_auth_gate`). |
+| `IHM_REQUIRE_LOCALHOST` | Si `1/true/yes/on`, affiche une erreur sidebar quand `STREAMLIT_SERVER_ADDRESS` n'est pas `localhost`/`127.0.0.1`/`::1`. |
+| `IHM_RUNS_RETENTION_DAYS` | Rétention rotation artefacts (défaut 30). |
+
+Sans `IHM_AUTH_TOKEN` et sans bind localhost, une bannière d'avertissement
+apparaît automatiquement (`render_security_banner`).
+
+### Démarrer l'IHM en mode "production locale"
+
+```powershell
+$env:IHM_AUTH_TOKEN = "<token-fort>"
+$env:IHM_REQUIRE_LOCALHOST = "1"
+$env:IHM_RUNS_RETENTION_DAYS = "30"
+python -m streamlit run ihm/app.py --server.address=localhost --server.port=8501
+```
+
+### Test contractuel IHM ↔ CLI
+
+`tests/test_ihm_cli_contract.py` introspecte chaque
+`PipelineStepDefinition`, construit la commande via
+`build_pipeline_command(...)` et vérifie que **chaque flag `--xxx` est
+reconnu par l'`argparse` du CLI cible**. Si quelqu'un supprime un flag CLI
+ou ajoute un flag IHM sans backend correspondant, la suite casse :
+
+```powershell
+python -m pytest tests/test_ihm_cli_contract.py --no-cov -q
+```
+
+### Tests Phase 6.2
+
+```powershell
+python -m pytest `
+  tests/test_ihm_cli_contract.py `
+  tests/test_ihm_security.py `
+  tests/test_ihm_process_registry_rotation.py --no-cov -q
+```

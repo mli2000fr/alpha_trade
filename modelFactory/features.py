@@ -1,6 +1,8 @@
 """modelFactory/features.py — Feature engineering à partir de stock_bars_daily."""
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Optional
 
 import numpy as np
@@ -25,6 +27,27 @@ FEATURE_COLUMNS: list[str] = [
     "is_filled",
 ]
 
+EXPERT_FEATURE_COLUMNS: list[str] = [
+    "sma20_distance",
+    "sma50_distance",
+    "sma100_distance",
+    "sma200_distance",
+    "ema20_distance",
+    "ema50_distance",
+    "momentum_10",
+    "momentum_20",
+    "momentum_60",
+    "vol_ratio_20_60",
+    "range_position_20",
+    "market_return_20",
+    "market_volatility_20",
+    "market_trend_strength_50",
+    "relative_strength_20",
+    "relative_strength_60",
+    "regime_bull_market",
+    "regime_risk_off",
+]
+
 # Features sentiment auxiliaires (depuis ticker_daily_sentiment_features)
 SENTIMENT_FEATURE_COLUMNS: list[str] = [
     "sentiment_net_mean_1d",
@@ -34,18 +57,58 @@ SENTIMENT_FEATURE_COLUMNS: list[str] = [
 ]
 
 
-def get_feature_columns(include_sentiment: bool = False) -> list[str]:
+def get_feature_columns(
+    include_sentiment: bool = False,
+    feature_set: str = "v1",
+    include_cross_sectional: bool = False,
+) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnel sentiment)."""
     cols = list(FEATURE_COLUMNS)
+    if feature_set == "expert":
+        cols.extend(EXPERT_FEATURE_COLUMNS)
+    if include_cross_sectional:
+        from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS
+
+        cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)
     if include_sentiment:
         cols.extend(SENTIMENT_FEATURE_COLUMNS)
     return cols
+
+
+def fingerprint(
+    *,
+    include_sentiment: bool = False,
+    feature_set: str = "v1",
+    include_cross_sectional: bool = False,
+) -> str:
+    """SHA256[:16] du contrat de features actif (Phase 4.2.b).
+
+    Persisté dans ``config.json`` du modèle ; recalculé à l'inférence
+    pour détecter toute dérive silencieuse du contrat de features
+    (la valeur **doit** rester stable tant que la liste de colonnes ne
+    change pas — un test gold bloque les modifications accidentelles).
+    """
+    columns = get_feature_columns(
+        include_sentiment=include_sentiment,
+        feature_set=feature_set,
+        include_cross_sectional=include_cross_sectional,
+    )
+    payload = {
+        "columns": columns,
+        "feature_set": feature_set,
+        "include_sentiment": bool(include_sentiment),
+        "include_cross_sectional": bool(include_cross_sectional),
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
 
 
 def compute_features(
     df: pd.DataFrame,
     sentiment_df: Optional[pd.DataFrame] = None,
     include_sentiment: bool = False,
+    benchmark_df: Optional[pd.DataFrame] = None,
+    feature_set: str = "v1",
 ) -> pd.DataFrame:
     """Ajoute les features dérivées à un DataFrame de bars trié par date.
 
@@ -56,15 +119,16 @@ def compute_features(
     """
     df = df.copy().sort_values("date").reset_index(drop=True)
 
-    close = df["close"].astype(float)
-    high = df["high"].astype(float)
-    low = df["low"].astype(float)
-    opn = df["open"].astype(float)
+    adj_prices = _build_adjusted_price_frame(df)
+    close = adj_prices["close"]
+    high = adj_prices["high"]
+    low = adj_prices["low"]
+    opn = adj_prices["open"]
     volume = df["volume"].astype(float)
-    vwap = df["vwap"].astype(float)
+    vwap = adj_prices["vwap"]
 
-    # --- daily_return : utilise la colonne existante, forward-fill NaN ---
-    df["daily_return"] = df["daily_return"].astype(float).fillna(0.0)
+    # --- daily_return : recalculé depuis la série ajustée pour absorber splits/dividendes ---
+    df["daily_return"] = close.pct_change(fill_method=None).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     # --- log return ---
     df["log_return"] = np.log(close / close.shift(1))
@@ -100,6 +164,75 @@ def compute_features(
     # --- is_filled as float ---
     df["is_filled"] = df["is_filled"].astype(float)
 
+    # --- Expert feature set: trend / relative strength / regime ---
+    if feature_set == "expert":
+        sma20 = close.rolling(20).mean()
+        sma50 = close.rolling(50).mean()
+        sma100 = close.rolling(100).mean()
+        sma200 = close.rolling(200).mean()
+        ema20 = close.ewm(span=20, adjust=False).mean()
+        ema50 = close.ewm(span=50, adjust=False).mean()
+
+        df["sma20_distance"] = (close - sma20) / sma20.clip(lower=1e-8)
+        df["sma50_distance"] = (close - sma50) / sma50.clip(lower=1e-8)
+        df["sma100_distance"] = (close - sma100) / sma100.clip(lower=1e-8)
+        df["sma200_distance"] = (close - sma200) / sma200.clip(lower=1e-8)
+        df["ema20_distance"] = (close - ema20) / ema20.clip(lower=1e-8)
+        df["ema50_distance"] = (close - ema50) / ema50.clip(lower=1e-8)
+        df["momentum_10"] = close / close.shift(10) - 1.0
+        df["momentum_20"] = close / close.shift(20) - 1.0
+        df["momentum_60"] = close / close.shift(60) - 1.0
+        df["vol_ratio_20_60"] = df["rolling_volatility_20"] / df["rolling_volatility_60"].clip(lower=1e-8)
+        df["range_position_20"] = _range_position(close, 20)
+
+        if benchmark_df is not None and not benchmark_df.empty:
+            bench_prices = _build_adjusted_price_frame(benchmark_df.copy().sort_values("date").reset_index(drop=True))
+            bench = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(benchmark_df["date"]),
+                    "benchmark_close": bench_prices["close"],
+                }
+            )
+            bench["benchmark_return_20"] = bench["benchmark_close"] / bench["benchmark_close"].shift(20) - 1.0
+            bench["benchmark_return_60"] = bench["benchmark_close"] / bench["benchmark_close"].shift(60) - 1.0
+            bench_daily_return = bench["benchmark_close"].pct_change(fill_method=None)
+            bench["market_return_20"] = bench_daily_return.rolling(20).mean()
+            bench["market_volatility_20"] = bench_daily_return.rolling(20).std()
+            bench_sma50 = bench["benchmark_close"].rolling(50).mean()
+            bench_sma200 = bench["benchmark_close"].rolling(200).mean()
+            bench["market_trend_strength_50"] = (bench["benchmark_close"] - bench_sma50) / bench_sma50.clip(lower=1e-8)
+            bench["regime_bull_market"] = (bench["benchmark_close"] > bench_sma200).astype(float)
+            bench["regime_risk_off"] = (bench["market_volatility_20"] > bench_daily_return.rolling(60).std()).astype(float)
+            df = df.merge(
+                bench[
+                    [
+                        "date",
+                        "benchmark_return_20",
+                        "benchmark_return_60",
+                        "market_return_20",
+                        "market_volatility_20",
+                        "market_trend_strength_50",
+                        "regime_bull_market",
+                        "regime_risk_off",
+                    ]
+                ],
+                on="date",
+                how="left",
+            )
+            df["relative_strength_20"] = df["momentum_20"] - df["benchmark_return_20"]
+            df["relative_strength_60"] = df["momentum_60"] - df["benchmark_return_60"]
+        else:
+            for col in [
+                "market_return_20",
+                "market_volatility_20",
+                "market_trend_strength_50",
+                "relative_strength_20",
+                "relative_strength_60",
+                "regime_bull_market",
+                "regime_risk_off",
+            ]:
+                df[col] = 0.0
+
     # --- Sentiment features (optional) ---
     if include_sentiment:
         if sentiment_df is not None and not sentiment_df.empty:
@@ -122,27 +255,85 @@ def compute_features(
                 df[col] = df[col].fillna(0.0).astype(float)
 
     # Determine active feature columns
-    active_features = get_feature_columns(include_sentiment)
+    active_features = get_feature_columns(include_sentiment, feature_set=feature_set)
 
     # Drop warm-up NaN rows (rolling windows need ~60 rows)
     df = df.dropna(subset=active_features).reset_index(drop=True)
     return df
 
 
-def build_target(df: pd.DataFrame, horizon: int = 5) -> pd.Series:
-    """Construit la target binaire : 1 si future_Xd_return > 0.
+def build_target(
+    df: pd.DataFrame,
+    horizon: int = 5,
+    mode: str = "binary",
+    positive_threshold: float = 0.0,
+    negative_threshold: float = 0.0,
+) -> pd.Series:
+    """Construit la target pour l'horizon futur.
 
     Retourne une Series alignée sur l'index de df.
     Les dernières `horizon` lignes seront NaN.
+
+    Modes
+    -----
+    - `binary`     : 1 si future_return > positive_threshold, sinon 0.
+    - `swing_cash` : 1 si future_return >= positive_threshold,
+                     0 si future_return <= negative_threshold,
+                     NaN entre les deux (zone no-trade ignorée à l'entraînement).
     """
-    close = df["close"].astype(float)
+    close = _build_adjusted_price_frame(df)["close"]
     future_return = close.shift(-horizon) / close - 1.0
-    return (future_return > 0).astype(float).where(future_return.notna())
+    if mode == "binary":
+        return (future_return > positive_threshold).astype(float).where(future_return.notna())
+    if mode == "swing_cash":
+        target = pd.Series(np.nan, index=df.index, dtype=float)
+        target = target.mask(future_return >= positive_threshold, 1.0)
+        target = target.mask(future_return <= negative_threshold, 0.0)
+        return target.where(future_return.notna())
+    raise ValueError(f"Unsupported target mode: {mode}")
+
+
+def compute_future_return(df: pd.DataFrame, horizon: int = 5) -> pd.Series:
+    """Retourne le rendement futur aligné à la ligne courante."""
+    close = _build_adjusted_price_frame(df)["close"]
+    return close.shift(-horizon) / close - 1.0
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _build_adjusted_price_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Reconstruit un OHLCV prix ajusté à partir de `adj_close` quand disponible.
+
+    Pour des barres journalières actions, appliquer le ratio `adj_close / close`
+    à OHLC/VWAP permet d'éviter que les splits/dividendes polluent les returns,
+    la target et les indicateurs de volatilité.
+    """
+    close = pd.to_numeric(df["close"], errors="coerce").astype(float)
+    adj_close_raw = pd.to_numeric(df["adj_close"], errors="coerce").astype(float) if "adj_close" in df.columns else close.copy()
+
+    ratio = (adj_close_raw / close.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
+    ratio = ratio.where(ratio > 0.0, np.nan).fillna(1.0)
+
+    def _scaled_col(name: str) -> pd.Series:
+        base = df[name] if name in df.columns else close
+        return pd.to_numeric(base, errors="coerce").astype(float) * ratio
+
+    adjusted = pd.DataFrame({
+        "open": _scaled_col("open"),
+        "high": _scaled_col("high"),
+        "low": _scaled_col("low"),
+        "close": close * ratio,
+        "vwap": _scaled_col("vwap"),
+    })
+    return adjusted
+
+
+def _range_position(close: pd.Series, window: int) -> pd.Series:
+    rolling_low = close.rolling(window).min()
+    rolling_high = close.rolling(window).max()
+    return (close - rolling_low) / (rolling_high - rolling_low).clip(lower=1e-8)
 
 def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()

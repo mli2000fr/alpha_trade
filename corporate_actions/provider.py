@@ -226,3 +226,207 @@ class AlpacaCorporateActionProvider(CorporateActionProvider):
         ratio = (new_fraction / old_fraction).limit_denominator(10000)
         return int(ratio.denominator), int(ratio.numerator)
 
+
+# ---------------------------------------------------------------------------
+# Implémentation EODHD (Phase 6 plan_eodhd.md §5.8)
+# ---------------------------------------------------------------------------
+
+class EodhdCorporateActionProvider(CorporateActionProvider):
+    """Provider EODHD pour dividendes et splits.
+
+    Plan ``prompt/iex/plan_eodhd.md`` §5.8 : devient **source primaire** des
+    dividendes (et splits) quand ``market_data.bars_provider == 'eodhd'``,
+
+    Endpoints utilisés :
+    - ``GET /div/{ticker}.US``    -> dividendes (1 call/symbole)
+    - ``GET /splits/{ticker}.US`` -> splits (1 call/symbole, cache TTL 7j côté backfill)
+
+    Coût : 2 calls par symbole et par fenêtre (négligeable sur 100k/jour).
+    """
+
+    def __init__(self, *, tracker: Any = None) -> None:
+        from service.eodhd.quota import get_default_tracker
+        self._tracker = tracker or get_default_tracker()
+
+    def fetch_events(
+        self,
+        symbols: list[str] | None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[CorporateActionEvent]:
+        """Récupère dividendes + splits EODHD pour les symboles demandés.
+
+        Si ``symbols is None``, lève ``ValueError`` (EODHD facture par symbole,
+        on refuse une explosion implicite du quota).
+        """
+        if symbols is None:
+            raise ValueError(
+                "EodhdCorporateActionProvider exige une liste explicite de symboles "
+                "(eviter d'epuiser le quota par accident)."
+            )
+        from service.eodhd.clientEodhd import (
+            EodhdBarsFetchError,
+            fetch_dividends,
+            fetch_splits,
+        )
+
+        start_iso = start_date.isoformat() if start_date else None
+        end_iso = end_date.isoformat() if end_date else None
+        events: list[CorporateActionEvent] = []
+
+        for symbol in symbols:
+            sym = symbol.strip().upper()
+            if not sym:
+                continue
+            try:
+                div_rows = fetch_dividends(
+                    sym, start=start_iso, end=end_iso, tracker=self._tracker
+                )
+            except EodhdBarsFetchError as exc:
+                LOGGER.warning("[eodhd-ca] dividends %s skipped: %s", sym, exc)
+                div_rows = []
+            for raw in div_rows or []:
+                if not isinstance(raw, dict):
+                    continue
+                try:
+                    events.append(self._parse_dividend(sym, raw))
+                except Exception:
+                    LOGGER.exception("[eodhd-ca] dividend parse failed: %s %r", sym, raw)
+
+            try:
+                split_rows = fetch_splits(
+                    sym, start=start_iso, end=end_iso, tracker=self._tracker
+                )
+            except EodhdBarsFetchError as exc:
+                LOGGER.warning("[eodhd-ca] splits %s skipped: %s", sym, exc)
+                split_rows = []
+            for raw in split_rows or []:
+                if not isinstance(raw, dict):
+                    continue
+                try:
+                    events.append(self._parse_split(sym, raw))
+                except Exception:
+                    LOGGER.exception("[eodhd-ca] split parse failed: %s %r", sym, raw)
+
+        LOGGER.info(
+            "EODHD corporate actions fetched | symbols=%d range=%s..%s total_events=%d",
+            len(symbols), start_iso, end_iso, len(events),
+        )
+        return events
+
+    @staticmethod
+    def _parse_dividend(symbol: str, raw: dict[str, Any]) -> CorporateActionEvent:
+        """EODHD payload : ``{"date","value","unadjustedValue","currency",
+        "declarationDate","recordDate","paymentDate"}``. ``date`` = ex-date.
+        """
+        ex_date_str = raw.get("date")
+        if not ex_date_str:
+            raise ValueError("EODHD dividend sans date")
+        amount = raw.get("value")
+        if amount is None:
+            amount = raw.get("unadjustedValue", 0)
+        ev_id = raw.get("id") or f"eodhd-div-{symbol}-{ex_date_str}"
+        return CorporateActionEvent(
+            provider="eodhd",
+            provider_event_id=str(ev_id),
+            symbol=symbol,
+            ca_type=CaType.CASH_DIVIDEND,
+            amount_per_share=float(amount or 0),
+            currency=str(raw.get("currency") or "USD"),
+            ex_date=date.fromisoformat(str(ex_date_str)),
+            record_date=_safe_iso_date(raw.get("recordDate")),
+            payable_date=_safe_iso_date(raw.get("paymentDate")),
+            announcement_date=_safe_iso_date(raw.get("declarationDate")),
+            raw_payload=raw,
+        )
+
+    @staticmethod
+    def _parse_split(symbol: str, raw: dict[str, Any]) -> CorporateActionEvent:
+        """EODHD payload : ``{"date": "YYYY-MM-DD", "split": "N/M"}``.
+
+        Convention projet : ``"10/1"`` -> ``split_from=1, split_to=10``
+        (forward 10:1). ``"1/2"`` -> reverse split.
+        """
+        ex_date_str = raw.get("date")
+        if not ex_date_str:
+            raise ValueError("EODHD split sans date")
+        ratio_str = raw.get("split") or raw.get("ratio")
+        if not ratio_str:
+            raise ValueError("EODHD split sans ratio")
+        split_from, split_to = EodhdCorporateActionProvider._parse_split_ratio(str(ratio_str))
+        ca_type = CaType.SPLIT if split_to >= split_from else CaType.REVERSE_SPLIT
+        ev_id = raw.get("id") or f"eodhd-split-{symbol}-{ex_date_str}"
+        return CorporateActionEvent(
+            provider="eodhd",
+            provider_event_id=str(ev_id),
+            symbol=symbol,
+            ca_type=ca_type,
+            split_from=split_from,
+            split_to=split_to,
+            ex_date=date.fromisoformat(str(ex_date_str)),
+            raw_payload=raw,
+        )
+
+    @staticmethod
+    def _parse_split_ratio(ratio_str: str) -> tuple[int, int]:
+        """``"10/1"`` -> ``(1, 10)`` ; ``"10.000000/1.000000"`` -> ``(1, 10)`` ;
+        ``"1/2"`` -> ``(2, 1)`` (reverse) ; ``"3/2"`` -> ``(2, 3)``.
+
+        Retourne ``(split_from, split_to)``.
+        """
+        text = str(ratio_str).strip()
+        if "/" not in text:
+            raise ValueError(f"EODHD split ratio inattendu: {ratio_str!r}")
+        num_str, _, denom_str = text.partition("/")
+        num = Fraction(num_str.strip()).limit_denominator(10000)
+        denom = Fraction(denom_str.strip()).limit_denominator(10000)
+        if num <= 0 or denom <= 0:
+            raise ValueError(f"EODHD split ratio non positif: {ratio_str!r}")
+        ratio = (num / denom).limit_denominator(10000)
+        return int(ratio.denominator), int(ratio.numerator)
+
+
+def _safe_iso_date(value: Any) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Factory selon `market_data.bars_provider` (Phase 6 plan §5.8)
+# ---------------------------------------------------------------------------
+
+def build_corporate_action_provider(
+    *, account_id: str | None = None, config: dict | None = None,
+) -> CorporateActionProvider:
+    """Sélectionne le provider en fonction de ``market_data.bars_provider``.
+
+    - ``alpaca`` (défaut) -> :class:`AlpacaCorporateActionProvider`
+    - ``eodhd``           -> :class:`EodhdCorporateActionProvider`
+
+    L'opérateur peut overrider via la variable d'environnement
+    ``CORPORATE_ACTIONS_PROVIDER`` (priorité sur ``config.yaml``).
+    """
+    import os
+    explicit = os.environ.get("CORPORATE_ACTIONS_PROVIDER")
+    provider_name: str
+    if explicit:
+        provider_name = explicit.strip().lower()
+    else:
+        cfg = config
+        if cfg is None:
+            try:
+                from common.config_loader import load_config
+                cfg = load_config() or {}
+            except Exception:
+                cfg = {}
+        provider_name = str(((cfg.get("market_data") or {}).get("bars_provider", "alpaca"))).lower()
+
+    if provider_name == "eodhd":
+        LOGGER.info("[corporate_actions] provider=eodhd selected")
+        return EodhdCorporateActionProvider()
+    LOGGER.info("[corporate_actions] provider=alpaca selected (default)")
+    return AlpacaCorporateActionProvider(account_id=account_id)

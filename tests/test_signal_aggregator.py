@@ -113,6 +113,95 @@ def test_sentiment_boost_config_rejects_non_positive_half_life() -> None:
         SentimentBoostConfig(time_decay_half_life_days=0)
 
 
+def test_sentiment_boost_config_rejects_unsorted_horizon_weights() -> None:
+    with pytest.raises(ValueError, match="ticker_horizon_weights"):
+        SentimentBoostConfig(ticker_horizon_weights=((5, 0.5), (1, 0.5)))
+
+
+def test_feature_fetch_window_uses_max_horizon_for_swing_signals() -> None:
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(lookback_days=5),
+    )
+
+    assert aggregator._feature_fetch_window_days(aggregator.config.ticker_horizon_weights) == 20
+    assert aggregator._feature_fetch_window_days(((1, 1.0), (3, 0.5))) == 5
+
+
+def test_aggregate_ticker_multi_horizon_applies_staleness_decay_for_sparse_events() -> None:
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(time_decay_half_life_days=2.0),
+    )
+    ticker_df = pd.DataFrame([
+        {
+            "symbol": "AAPL",
+            "trade_date": date(2026, 4, 14),
+            "news_count_1d": 0,
+            "news_count_3d": 3,
+            "news_count_5d": 4,
+            "news_count_10d": 6,
+            "news_count_20d": 8,
+            "sentiment_net_mean_1d": 0.0,
+            "sentiment_net_mean_3d": 1.0,
+            "sentiment_net_mean_5d": 1.0,
+            "sentiment_net_mean_10d": 1.0,
+            "sentiment_net_mean_20d": 1.0,
+            "major_event_flag": 1,
+            "major_event_day_count_3d": 1,
+            "major_event_day_count_5d": 1,
+            "major_event_day_count_10d": 1,
+            "major_event_day_count_20d": 1,
+        }
+    ])
+
+    result = aggregator._aggregate_ticker_multi_horizon(ticker_df, reference_date=date(2026, 4, 19))
+
+    row = result.iloc[0]
+    expected_decay = 0.5 ** (5 / 2)
+    assert row["signal_age_days"] == 5
+    assert row["signal_staleness_weight"] == pytest.approx(expected_decay, rel=1e-6)
+    assert row["sentiment_net_agg"] == pytest.approx(expected_decay, rel=1e-6)
+    assert bool(row["signal_active"]) is True
+
+
+def test_aggregate_sector_multi_horizon_applies_staleness_decay_for_sparse_macro_regime() -> None:
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(time_decay_half_life_days=2.0),
+    )
+    sector_df = pd.DataFrame([
+        {
+            "sector": "TECH",
+            "trade_date": date(2026, 4, 16),
+            "sector_impact_score": 1.0,
+            "sector_impact_score_3d": 1.0,
+            "sector_impact_score_5d": 1.0,
+            "sector_impact_score_10d": 1.0,
+            "sector_impact_score_20d": 1.0,
+            "macro_event_intensity": 1.0,
+            "macro_event_intensity_3d": 1.0,
+            "macro_event_intensity_5d": 1.0,
+            "macro_event_intensity_10d": 1.0,
+            "macro_event_intensity_20d": 1.0,
+            "macro_event_flag": 1,
+            "macro_event_day_count_3d": 1,
+            "macro_event_day_count_5d": 1,
+            "macro_event_day_count_10d": 1,
+            "macro_event_day_count_20d": 1,
+        }
+    ])
+
+    result = aggregator._aggregate_sector_multi_horizon(sector_df, reference_date=date(2026, 4, 19))
+
+    row = result.iloc[0]
+    expected_decay = 0.5 ** (3 / 2)
+    assert row["macro_signal_age_days"] == 3
+    assert row["macro_signal_staleness_weight"] == pytest.approx(expected_decay, rel=1e-6)
+    assert row["sector_impact_agg"] == pytest.approx(expected_decay, rel=1e-6)
+    assert row["macro_event_flag_agg"] == 1
+
+
 def test_merge_handles_missing_signal_active_without_futurewarning(monkeypatch) -> None:
     aggregator = SentimentSignalAggregator(
         engine=cast(Engine, object()),
@@ -171,7 +260,15 @@ def test_merge_handles_missing_signal_active_without_futurewarning(monkeypatch) 
     assert bool(by_symbol["AAPL"]["signal_active"]) is True
     assert bool(by_symbol["MSFT"]["signal_active"]) is False
     assert by_symbol["MSFT"]["sentiment_net_agg"] == 0.0
-    assert by_symbol["MSFT"]["final_score_sentiment"] == pytest.approx(0.575, rel=1e-6)
+    assert by_symbol["AAPL"]["sentiment_signal_norm"] == pytest.approx(0.8, rel=1e-6)
+    assert by_symbol["AAPL"]["macro_signal_norm"] == pytest.approx(0.6, rel=1e-6)
+    assert by_symbol["MSFT"]["macro_signal_norm"] == pytest.approx(0.6, rel=1e-6)
+    assert by_symbol["AAPL"]["company_idio_signal_norm"] == pytest.approx(0.8, rel=1e-6)
+    assert by_symbol["AAPL"]["macro_regime_signal_norm"] == pytest.approx(0.6, rel=1e-6)
+    assert by_symbol["AAPL"]["company_idio_component"] == pytest.approx(0.12, rel=1e-6)
+    assert by_symbol["AAPL"]["macro_regime_component"] == pytest.approx(0.06, rel=1e-6)
+    assert by_symbol["AAPL"]["quant_component"] == pytest.approx(0.6, rel=1e-6)
+    assert by_symbol["MSFT"]["final_score_sentiment"] == pytest.approx(0.585, rel=1e-6)
 
 
 def test_normalize_to_01_returns_neutral_value_for_constant_series() -> None:
@@ -180,6 +277,14 @@ def test_normalize_to_01_returns_neutral_value_for_constant_series() -> None:
     normalized = SentimentSignalAggregator._normalize_to_01(series)
 
     assert normalized.tolist() == [0.5, 0.5, 0.5]
+
+
+def test_normalize_signed_signal_maps_neutral_and_clips_extremes() -> None:
+    series = pd.Series([-2.0, -1.0, 0.0, 0.25, 1.0, 4.0, None])
+
+    normalized = SentimentSignalAggregator._normalize_signed_signal(series)
+
+    assert normalized.tolist() == [0.0, 0.0, 0.5, 0.625, 1.0, 1.0, 0.5]
 
 
 def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
@@ -191,9 +296,22 @@ def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
                 symbol TEXT PRIMARY KEY,
                 sentiment_net_agg REAL,
                 sector_impact_agg REAL,
+                company_idio_score REAL,
+                macro_regime_score REAL,
                 sentiment_signal_norm REAL,
                 macro_signal_norm REAL,
+                company_idio_signal_norm REAL,
+                macro_regime_signal_norm REAL,
+                company_idio_component REAL,
+                macro_regime_component REAL,
+                quant_component REAL,
                 final_score_sentiment REAL,
+                final_score_walk_forward REAL,
+                walk_forward_sentiment_weight REAL,
+                walk_forward_macro_weight REAL,
+                walk_forward_quant_weight REAL,
+                calibration_run_id TEXT,
+                calibration_source TEXT,
                 signal_active INTEGER,
                 major_event_flag_agg INTEGER,
                 macro_event_flag_agg INTEGER,
@@ -211,9 +329,22 @@ def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
                 "symbol": "AAPL",
                 "sentiment_net_agg": 0.8,
                 "sector_impact_agg": 0.3,
+                "company_idio_score": 0.8,
+                "macro_regime_score": 0.3,
                 "sentiment_signal_norm": 0.9,
                 "macro_signal_norm": 0.7,
+                "company_idio_signal_norm": 0.9,
+                "macro_regime_signal_norm": 0.7,
+                "company_idio_component": 0.18,
+                "macro_regime_component": 0.07,
+                "quant_component": 0.56,
                 "final_score_sentiment": 0.81,
+                "final_score_walk_forward": 0.83,
+                "walk_forward_sentiment_weight": 0.2,
+                "walk_forward_macro_weight": 0.1,
+                "walk_forward_quant_weight": 0.7,
+                "calibration_run_id": "wf-run-1",
+                "calibration_source": "walk_forward",
                 "signal_active": True,
                 "major_event_flag_agg": True,
                 "macro_event_flag_agg": False,
@@ -223,9 +354,22 @@ def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
                 "symbol": "MSFT",
                 "sentiment_net_agg": 0.0,
                 "sector_impact_agg": -0.1,
+                "company_idio_score": 0.0,
+                "macro_regime_score": -0.1,
                 "sentiment_signal_norm": 0.5,
                 "macro_signal_norm": 0.4,
+                "company_idio_signal_norm": 0.5,
+                "macro_regime_signal_norm": 0.4,
+                "company_idio_component": 0.075,
+                "macro_regime_component": 0.04,
+                "quant_component": 0.505,
                 "final_score_sentiment": 0.62,
+                "final_score_walk_forward": 0.61,
+                "walk_forward_sentiment_weight": 0.2,
+                "walk_forward_macro_weight": 0.1,
+                "walk_forward_quant_weight": 0.7,
+                "calibration_run_id": "wf-run-1",
+                "calibration_source": "walk_forward",
                 "signal_active": False,
                 "major_event_flag_agg": False,
                 "macro_event_flag_agg": True,
@@ -240,7 +384,9 @@ def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
     with engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT symbol, signal_active, major_event_flag_agg, macro_event_flag_agg, total_news, final_score_sentiment "
+                "SELECT symbol, signal_active, major_event_flag_agg, macro_event_flag_agg, total_news, "
+                "company_idio_score, macro_regime_score, company_idio_component, macro_regime_component, "
+                "quant_component, final_score_sentiment, final_score_walk_forward, calibration_run_id, calibration_source "
                 "FROM stock_scores ORDER BY symbol"
             )
         ).mappings().all()
@@ -252,7 +398,15 @@ def test_save_to_db_updates_existing_rows_and_casts_boolean_flags() -> None:
     assert by_symbol["MSFT"]["signal_active"] == 0
     assert by_symbol["MSFT"]["macro_event_flag_agg"] == 1
     assert by_symbol["MSFT"]["total_news"] == 0
+    assert by_symbol["AAPL"]["company_idio_score"] == pytest.approx(0.8)
+    assert by_symbol["AAPL"]["macro_regime_score"] == pytest.approx(0.3)
+    assert by_symbol["AAPL"]["company_idio_component"] == pytest.approx(0.18)
+    assert by_symbol["AAPL"]["macro_regime_component"] == pytest.approx(0.07)
+    assert by_symbol["AAPL"]["quant_component"] == pytest.approx(0.56)
     assert by_symbol["AAPL"]["final_score_sentiment"] == pytest.approx(0.81)
+    assert by_symbol["AAPL"]["final_score_walk_forward"] == pytest.approx(0.83)
+    assert by_symbol["AAPL"]["calibration_run_id"] == "wf-run-1"
+    assert by_symbol["AAPL"]["calibration_source"] == "walk_forward"
 
 
 def test_save_to_db_rejects_missing_required_columns() -> None:
@@ -262,3 +416,185 @@ def test_save_to_db_rejects_missing_required_columns() -> None:
         aggregator.save_to_db(pd.DataFrame([{"symbol": "AAPL"}]))
 
 
+def test_merge_sanitizes_symbols_scores_and_missing_sectors(monkeypatch) -> None:
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(),
+    )
+
+    scores_df = pd.DataFrame(
+        [
+            {"symbol": " AAPL ", "sector": " TECH ", "final_score": 1.4},
+            {"symbol": None, "sector": "TECH", "final_score": 0.8},
+            {"symbol": "MSFT", "sector": None, "final_score": "bad"},
+        ]
+    )
+
+    ticker_df = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "trade_date": date(2026, 4, 19),
+                "news_count_1d": 2,
+                "sentiment_net_mean_1d": 1.8,
+                "sentiment_confidence_mean_1d": 0.9,
+                "major_event_flag": 1,
+            },
+        ]
+    )
+    sector_df = pd.DataFrame(
+        [
+            {
+                "sector": "TECH",
+                "trade_date": date(2026, 4, 19),
+                "sector_impact_score": -3.0,
+                "macro_event_intensity": 1.0,
+                "macro_event_flag": 1,
+            },
+        ]
+    )
+
+    monkeypatch.setattr(aggregator, "_load_ticker_sentiment", lambda symbols, trade_date: ticker_df.copy())
+    monkeypatch.setattr(aggregator, "_load_sector_sentiment", lambda sectors, trade_date: sector_df.copy())
+
+    result = aggregator.merge(scores_df, trade_date=date(2026, 4, 19))
+
+    assert result["symbol"].tolist() == ["AAPL", "MSFT"]
+    by_symbol = {row["symbol"]: row for row in result.to_dict(orient="records")}
+    assert by_symbol["AAPL"]["final_score"] == 1.0
+    assert by_symbol["AAPL"]["sentiment_signal_norm"] == 1.0
+    assert by_symbol["AAPL"]["macro_signal_norm"] == 0.0
+    assert by_symbol["MSFT"]["final_score"] == 0.0
+    assert by_symbol["MSFT"]["sector_impact_agg"] == 0.0
+    assert by_symbol["MSFT"]["macro_signal_norm"] == 0.5
+
+
+def test_merge_prefers_multi_horizon_features_when_available(monkeypatch) -> None:
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(),
+    )
+
+    scores_df = pd.DataFrame([
+        {"symbol": "AAPL", "sector": "TECH", "final_score": 0.8},
+    ])
+    ticker_df = pd.DataFrame([
+        {
+            "symbol": "AAPL",
+            "trade_date": date(2026, 4, 19),
+            "news_count_1d": 1,
+            "news_count_3d": 3,
+            "news_count_5d": 5,
+            "news_count_10d": 10,
+            "news_count_20d": 12,
+            "sentiment_net_mean_1d": 1.0,
+            "sentiment_net_mean_3d": 0.6,
+            "sentiment_net_mean_5d": 0.2,
+            "sentiment_net_mean_10d": 0.1,
+            "sentiment_net_mean_20d": 0.0,
+            "sentiment_confidence_mean_1d": 0.9,
+            "sentiment_confidence_mean_3d": 0.8,
+            "sentiment_confidence_mean_5d": 0.8,
+            "sentiment_confidence_mean_10d": 0.8,
+            "sentiment_confidence_mean_20d": 0.8,
+            "major_event_flag": 1,
+            "major_event_day_count_3d": 1,
+            "major_event_day_count_5d": 1,
+            "major_event_day_count_10d": 1,
+            "major_event_day_count_20d": 1,
+        }
+    ])
+    sector_df = pd.DataFrame([
+        {
+            "sector": "TECH",
+            "trade_date": date(2026, 4, 19),
+            "sector_impact_score": 0.2,
+            "sector_impact_score_3d": 0.3,
+            "sector_impact_score_5d": 0.1,
+            "sector_impact_score_10d": 0.0,
+            "sector_impact_score_20d": -0.1,
+            "macro_event_intensity": 0.4,
+            "macro_event_intensity_3d": 0.4,
+            "macro_event_intensity_5d": 0.4,
+            "macro_event_intensity_10d": 0.4,
+            "macro_event_intensity_20d": 0.4,
+            "macro_event_flag": 1,
+            "macro_event_day_count_3d": 1,
+            "macro_event_day_count_5d": 1,
+            "macro_event_day_count_10d": 1,
+            "macro_event_day_count_20d": 1,
+        }
+    ])
+
+    monkeypatch.setattr(aggregator, "_load_ticker_sentiment", lambda symbols, trade_date: ticker_df.copy())
+    monkeypatch.setattr(aggregator, "_load_sector_sentiment", lambda sectors, trade_date: sector_df.copy())
+
+    result = aggregator.merge(scores_df, trade_date=date(2026, 4, 19))
+
+    row = result.iloc[0]
+    assert bool(row["signal_active"]) is True
+    assert row["total_news"] == 12
+    assert row["sentiment_net_agg"] == pytest.approx(0.4545454545, rel=1e-6)
+    assert row["sector_impact_agg"] == pytest.approx(0.17, rel=1e-6)
+    assert row["sentiment_signal_norm"] == pytest.approx((0.4545454545 + 1.0) / 2.0, rel=1e-6)
+
+
+def test_merge_uses_core_conviction_fusion(monkeypatch) -> None:
+    """Phase 4.1.b — `merge` doit déléguer la fusion ternaire à
+    `core.conviction.fuse_sentiment` (zéro duplication de formule).
+    """
+    aggregator = SentimentSignalAggregator(
+        engine=cast(Engine, object()),
+        config=SentimentBoostConfig(
+            sentiment_weight=0.15,
+            macro_sector_weight=0.10,
+            quant_weight=0.75,
+            lookback_days=5,
+            min_news_count=2,
+            time_decay_half_life_days=2.0,
+        ),
+    )
+
+    scores_df = pd.DataFrame(
+        [{"symbol": "AAPL", "sector": "TECH", "final_score": 0.80}]
+    )
+    ticker_df = pd.DataFrame(
+        [{
+            "symbol": "AAPL",
+            "trade_date": date(2026, 4, 19),
+            "news_count_1d": 3,
+            "sentiment_net_mean_1d": 0.6,
+            "sentiment_confidence_mean_1d": 0.9,
+            "major_event_flag": 1,
+        }]
+    )
+    sector_df = pd.DataFrame(
+        [{
+            "sector": "TECH",
+            "trade_date": date(2026, 4, 19),
+            "sector_impact_score": 0.2,
+            "macro_event_intensity": 0.4,
+            "macro_event_flag": 1,
+        }]
+    )
+    monkeypatch.setattr(aggregator, "_load_ticker_sentiment", lambda symbols, trade_date: ticker_df.copy())
+    monkeypatch.setattr(aggregator, "_load_sector_sentiment", lambda sectors, trade_date: sector_df.copy())
+
+    calls: list[dict] = []
+    real_fuse = signal_aggregator.fuse_sentiment
+
+    def spy_fuse(**kwargs):
+        calls.append(kwargs)
+        return real_fuse(**kwargs)
+
+    monkeypatch.setattr(signal_aggregator, "fuse_sentiment", spy_fuse)
+
+    result = aggregator.merge(scores_df, trade_date=date(2026, 4, 19))
+    assert len(calls) == 1
+    kw = calls[0]
+    assert "quant_score" in kw and "sentiment_signal_norm" in kw
+    assert "macro_signal_norm" in kw and "signal_active" in kw
+    assert isinstance(kw["weights"], signal_aggregator.SentimentFusionWeights)
+    row = result.iloc[0]
+    expected = 0.75 * 0.80 + 0.15 * 0.8 + 0.10 * 0.6
+    assert row["final_score_sentiment"] == pytest.approx(expected, rel=1e-6)

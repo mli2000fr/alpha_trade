@@ -35,7 +35,7 @@ class _FakeRepository:
         self.macro_rows.extend(records)
         return len(records)
 
-    def load_feature_frames(self, start_date, end_date):
+    def load_feature_frames(self, start_date=None, end_date=None, trade_dates=None):
         import pandas as pd
 
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()

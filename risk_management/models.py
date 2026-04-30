@@ -11,6 +11,20 @@ class CandidateScore:
     symbol: str
     sector: str
     score_used: float
+    score_source: str = "final_score_sentiment"
+    company_idio_score: float | None = None
+    macro_regime_score: float | None = None
+    company_idio_signal_norm: float | None = None
+    macro_regime_signal_norm: float | None = None
+    company_idio_component: float | None = None
+    macro_regime_component: float | None = None
+    quant_component: float | None = None
+    walk_forward_sentiment_weight: float | None = None
+    walk_forward_macro_weight: float | None = None
+    walk_forward_quant_weight: float | None = None
+    calibration_run_id: str | None = None
+    calibration_source: str | None = None
+    snapshot_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +33,8 @@ class PriceInfo:
     symbol: str
     last_close: float
     atr_20: float | None
+    price_asof_date: date | None = None
+    atr_asof_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +70,29 @@ class PortfolioEntry:
     sizing_method: str = ""
     correlation_blocker: str | None = None
     correlation_value: float | None = None
+    company_idio_score: float | None = None
+    macro_regime_score: float | None = None
+    company_idio_signal_norm: float | None = None
+    macro_regime_signal_norm: float | None = None
+    company_idio_component: float | None = None
+    macro_regime_component: float | None = None
+    quant_component: float | None = None
+    walk_forward_sentiment_weight: float | None = None
+    walk_forward_macro_weight: float | None = None
+    walk_forward_quant_weight: float | None = None
+    calibration_run_id: str | None = None
+    calibration_source: str | None = None
+    candidate_rank: int | None = None
+    decision_rank: int | None = None
+    stop_price_initial: float | None = None
+    risk_per_share: float | None = None
+    risk_budget_dollars: float | None = None
+    initial_risk_dollars: float | None = None
+    score_snapshot_date: date | None = None
+    price_asof_date: date | None = None
+    atr_asof_date: date | None = None
+    prediction_asof_date: date | None = None
+    ml_metrics_asof_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +102,7 @@ class PredictionInfo:
     predicted_proba: float
     predicted_class: int
     run_id: str
+    prediction_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +112,7 @@ class WinRateInfo:
     directional_accuracy: float
     split_name: str
     run_id: str
+    asof_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,9 +130,40 @@ class EnrichedCandidate:
     symbol: str
     sector: str
     score_used: float
+    score_source: str
     predicted_proba: float | None
     historical_win_rate: float | None
     conviction_score: float
+    company_idio_score: float | None = None
+    macro_regime_score: float | None = None
+    company_idio_signal_norm: float | None = None
+    macro_regime_signal_norm: float | None = None
+    company_idio_component: float | None = None
+    macro_regime_component: float | None = None
+    quant_component: float | None = None
+    walk_forward_sentiment_weight: float | None = None
+    walk_forward_macro_weight: float | None = None
+    walk_forward_quant_weight: float | None = None
+    calibration_run_id: str | None = None
+    calibration_source: str | None = None
+    snapshot_date: date | None = None
+    prediction_asof_date: date | None = None
+    ml_metrics_asof_date: date | None = None
+    candidate_rank: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AccountRiskSnapshot:
+    """Snapshot compte utilisé par le moteur de risque."""
+    account_id: str
+    trade_date: date
+    cash: float
+    equity: float
+    buying_power: float
+    high_watermark: float | None = None
+    daily_realized_pnl: float | None = None
+    daily_unrealized_pnl: float | None = None
+    daily_total_pnl: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

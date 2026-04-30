@@ -8,7 +8,7 @@ from typing import Literal
 
 from ihm.services.pipeline_runner import PROJECT_ROOT, build_subprocess_env
 
-BacktestingCommandKind = Literal["run", "backfill-scores-history"]
+BacktestingCommandKind = Literal["run", "backfill-scores-history", "diagnose-screener", "recommend-screener"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +30,30 @@ class BacktestRunOptions:
     ml_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
     sentiment_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
     artifacts_dir: str = "artifacts/models"
+    score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
+    walk_forward_artifacts_dir: str | None = None
     output_dir: str | None = None
+    # Phase A (refactor) — reproductibilité + risk-free rate
+    risk_free_rate: float = 0.0
+    seed: int | None = None
+    # Phase B (refactor) — micro-structure
+    slippage_model: Literal["fixed", "linear", "sqrt"] = "fixed"
+    slippage_base_bps: float = 0.0
+    slippage_impact_coef: float = 0.0
+    initial_stop_pct: float = 0.0
+    max_entry_gap_pct: float = 0.0
+    intrabar_priority: Literal["conservative", "tp_first", "ts_first", "random"] = "conservative"
+    # Phase C (refactor) — risk overlays
+    sizing_mode: Literal["equal_weight", "conviction_weighted"] = "equal_weight"
+    sizing_min_weight_pct: float = 0.005
+    sizing_max_weight_pct: float = 0.20
+    regime_filter: bool = False
+    regime_sma_window: int = 200
+    regime_bear_threshold: float = -0.02
+    max_sector_exposure_pct: float = 0.0
+    max_portfolio_dd_pct: float = 0.0
+    dd_recovery_pct: float = 0.95
+    target_annual_vol: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,9 +69,41 @@ class BackfillScoresHistoryOptions:
     screener_workers: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DiagnoseScreenerOptions:
+    """Options de la commande `python -m backtesting diagnose-screener`."""
+
+    start: str
+    end: str | None = None
+    limit_days: int | None = None
+    mode: Literal["oat", "grid"] = "oat"
+    chunk_size: int = 500
+    selection_size: int = 100
+    max_positions: int = 20
+    screener_workers: int | None = None
+    max_scenarios: int = 64
+    rs_values: str = "100,102,105"
+    range_lookback_values: str = "252,504,756"
+    historical_range_score_values: str = "65,70,75"
+    liquidity_threshold_values: str = "5000000,10000000,20000000"
+    output_dir: str = "artifacts/screener_diagnostics"
+
+
+@dataclass(frozen=True, slots=True)
+class RecommendScreenerOptions:
+    """Options de la commande `python -m backtesting recommend-screener`."""
+
+    input_dir: str = "artifacts/screener_diagnostics"
+    summary_csv: str | None = None
+    daily_csv: str | None = None
+    output_dir: str | None = None
+    baseline_name: str | None = None
+    target_horizon: int = 20
+
+
 def build_backtesting_command(
     kind: BacktestingCommandKind,
-    options: BacktestRunOptions | BackfillScoresHistoryOptions,
+    options: BacktestRunOptions | BackfillScoresHistoryOptions | DiagnoseScreenerOptions | RecommendScreenerOptions,
 ) -> list[str]:
     """Construit la commande subprocess correspondant au backtesting."""
     command = [sys.executable, "-u", "-m", "backtesting", kind]
@@ -71,13 +126,51 @@ def build_backtesting_command(
             "--ml-mode", options.ml_mode,
             "--sentiment-mode", options.sentiment_mode,
             "--artifacts-dir", options.artifacts_dir,
+            "--score-column", options.score_column,
         ])
+        if options.walk_forward_artifacts_dir:
+            command.extend(["--walk-forward-artifacts-dir", options.walk_forward_artifacts_dir])
         if options.swing_only:
             command.append("--swing-only")
         if options.output_dir:
             command.extend(["--output-dir", options.output_dir])
         if options.no_save:
             command.append("--no-save")
+        # Phase A (refactor) — reproductibilité + risk-free rate.
+        if options.risk_free_rate:
+            command.extend(["--risk-free-rate", str(options.risk_free_rate)])
+        if options.seed is not None:
+            command.extend(["--seed", str(options.seed)])
+        # Phase B (refactor) — micro-structure (n'émet que si non-default pour
+        # garder les commandes courtes et compatibles avec les pipelines existants).
+        if options.slippage_model != "fixed":
+            command.extend(["--slippage-model", options.slippage_model])
+        if options.slippage_base_bps:
+            command.extend(["--slippage-base-bps", str(options.slippage_base_bps)])
+        if options.slippage_impact_coef:
+            command.extend(["--slippage-impact-coef", str(options.slippage_impact_coef)])
+        if options.initial_stop_pct:
+            command.extend(["--initial-stop-pct", str(options.initial_stop_pct)])
+        if options.max_entry_gap_pct:
+            command.extend(["--max-entry-gap-pct", str(options.max_entry_gap_pct)])
+        if options.intrabar_priority != "conservative":
+            command.extend(["--intrabar-priority", options.intrabar_priority])
+        # Phase C (refactor) — risk overlays.
+        if options.sizing_mode != "equal_weight":
+            command.extend(["--sizing-mode", options.sizing_mode])
+            command.extend(["--sizing-min-weight-pct", str(options.sizing_min_weight_pct)])
+            command.extend(["--sizing-max-weight-pct", str(options.sizing_max_weight_pct)])
+        if options.regime_filter:
+            command.append("--regime-filter")
+            command.extend(["--regime-sma-window", str(options.regime_sma_window)])
+            command.extend(["--regime-bear-threshold", str(options.regime_bear_threshold)])
+        if options.max_sector_exposure_pct:
+            command.extend(["--max-sector-exposure-pct", str(options.max_sector_exposure_pct)])
+        if options.max_portfolio_dd_pct:
+            command.extend(["--max-portfolio-dd-pct", str(options.max_portfolio_dd_pct)])
+            command.extend(["--dd-recovery-pct", str(options.dd_recovery_pct)])
+        if options.target_annual_vol is not None:
+            command.extend(["--target-annual-vol", str(options.target_annual_vol)])
         return command
 
     if kind == "backfill-scores-history":
@@ -100,6 +193,49 @@ def build_backtesting_command(
             command.extend(["--screener-workers", str(options.screener_workers)])
         return command
 
+    if kind == "diagnose-screener":
+        if not isinstance(options, DiagnoseScreenerOptions):
+            raise TypeError(
+                "options doit être une instance de DiagnoseScreenerOptions pour kind='diagnose-screener'."
+            )
+        command.extend(["--start", options.start])
+        if options.end:
+            command.extend(["--end", options.end])
+        if options.limit_days is not None:
+            command.extend(["--limit-days", str(options.limit_days)])
+        command.extend([
+            "--mode", options.mode,
+            "--chunk-size", str(options.chunk_size),
+            "--selection-size", str(options.selection_size),
+            "--max-positions", str(options.max_positions),
+            "--max-scenarios", str(options.max_scenarios),
+            "--rs-values", options.rs_values,
+            "--range-lookback-values", options.range_lookback_values,
+            "--historical-range-score-values", options.historical_range_score_values,
+            "--liquidity-threshold-values", options.liquidity_threshold_values,
+            "--output-dir", options.output_dir,
+        ])
+        if options.screener_workers is not None:
+            command.extend(["--screener-workers", str(options.screener_workers)])
+        return command
+
+    if kind == "recommend-screener":
+        if not isinstance(options, RecommendScreenerOptions):
+            raise TypeError(
+                "options doit être une instance de RecommendScreenerOptions pour kind='recommend-screener'."
+            )
+        command.extend(["--input-dir", options.input_dir])
+        if options.summary_csv:
+            command.extend(["--summary-csv", options.summary_csv])
+        if options.daily_csv:
+            command.extend(["--daily-csv", options.daily_csv])
+        if options.output_dir:
+            command.extend(["--output-dir", options.output_dir])
+        if options.baseline_name:
+            command.extend(["--baseline-name", options.baseline_name])
+        command.extend(["--target-horizon", str(options.target_horizon)])
+        return command
+
     raise KeyError(f"Commande backtesting inconnue : {kind}")
 
 
@@ -113,6 +249,8 @@ __all__ = [
     "BacktestingCommandKind",
     "BacktestRunOptions",
     "BackfillScoresHistoryOptions",
+    "DiagnoseScreenerOptions",
+    "RecommendScreenerOptions",
     "build_backtesting_command",
     "format_command_for_display",
 ]

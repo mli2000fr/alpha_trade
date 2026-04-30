@@ -1,4 +1,4 @@
-"""Services d'orchestration légère des pipelines depuis l'IHM Streamlit."""
+﻿"""Services d'orchestration légère des pipelines depuis l'IHM Streamlit."""
 from __future__ import annotations
 
 import os
@@ -12,10 +12,151 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Literal
 
+from event_sentiment.config import EventSentimentConfig
+from event_sentiment.signal_aggregator import SentimentBoostConfig
+from screener.models import ScreenerConfig
+from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SCREENER_CONFIG = ScreenerConfig()
+
+
+def _resolve_bars_provider_for_ihm() -> str:
+    """Lit ``market_data.bars_provider`` (Phase 6 plan_eodhd.md §5.6).
+
+    Retourne ``'alpaca'`` (défaut) ou ``'eodhd'``. Échec config -> ``'alpaca'``
+    pour préserver le comportement historique de l'IHM.
+    """
+    try:
+        from common.config_loader import load_config
+        cfg = load_config() or {}
+    except Exception:
+        return "alpaca"
+    return str(((cfg.get("market_data") or {}).get("bars_provider", "alpaca"))).lower()
+DEFAULT_SCREENER_CHUNK_SIZE = DEFAULT_SCREENER_CONFIG.chunk_size
+DEFAULT_SCREENER_BENCHMARK_SYMBOL = DEFAULT_SCREENER_CONFIG.benchmark_symbol
+DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD = DEFAULT_SCREENER_CONFIG.liquidity_threshold_usd
+DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX = DEFAULT_SCREENER_CONFIG.min_relative_strength_index
+DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS = DEFAULT_SCREENER_CONFIG.historical_range_lookback_days
+DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE = DEFAULT_SCREENER_CONFIG.min_historical_range_score
+DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS = DEFAULT_SCREENER_CONFIG.first_pass_window_days
+DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING = DEFAULT_SCREENER_CONFIG.enable_two_pass_loading
+DEFAULT_SELECTOR_CHUNK_SIZE = 500
+DEFAULT_SELECTOR_SELECTION_SIZE = 50
+DEFAULT_SELECTOR_MAX_ANOMALY_COUNT = 20
+DEFAULT_SELECTOR_SECTOR_CAP_RATIO = 0.30
+DEFAULT_SELECTOR_LOG_LEVEL = "INFO"
+DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD = STRICT_SWING_CASH_FILTERS.min_avg_dollar_volume_20d
+DEFAULT_SELECTOR_MIN_CLOSE = STRICT_SWING_CASH_FILTERS.min_close
+DEFAULT_SELECTOR_MAX_VOLATILITY_RATIO = STRICT_SWING_CASH_FILTERS.max_volatility_ratio
+DEFAULT_SELECTOR_MIN_RELATIVE_STRENGTH_INDEX = STRICT_SWING_CASH_FILTERS.min_relative_strength_index
+DEFAULT_SELECTOR_MIN_HIGH_52W_PROXIMITY = STRICT_SWING_CASH_FILTERS.min_high_52w_proximity
+DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE = STRICT_SWING_CASH_FILTERS.min_weekly_trend_score
+DEFAULT_SELECTOR_MIN_ATR_PCT_20 = STRICT_SWING_CASH_FILTERS.min_atr_pct_20
+DEFAULT_SELECTOR_MAX_ATR_PCT_20 = STRICT_SWING_CASH_FILTERS.max_atr_pct_20
+DEFAULT_SELECTOR_MIN_MARKET_CAP = STRICT_SWING_CASH_FILTERS.min_market_cap
+DEFAULT_SELECTOR_MIN_BETA_126 = STRICT_SWING_CASH_FILTERS.min_beta_126
+DEFAULT_SELECTOR_MAX_SPREAD_BPS = STRICT_SWING_CASH_FILTERS.max_spread_bps
+DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS = STRICT_SWING_CASH_FILTERS.earnings_blackout_days
+DEFAULT_EVENT_SENTIMENT_CONFIG = EventSentimentConfig()
+DEFAULT_SIGNAL_AGGREGATOR_CONFIG = SentimentBoostConfig()
+DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.sentiment_weight
+DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.macro_sector_weight
+DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.lookback_days
+DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.min_news_count
+DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.time_decay_half_life_days
+DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL = "INFO"
+DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE = 200
+DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS = 1.1
+DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY = 25
+DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE = 50
+DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME = True
+DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY = 50
+
+# --- Défauts swing trade (cf. prompt/refactor/audit_ihm_pipeline_options.md) ---
+# Risk management — sizing prudent compte cash 100k$
+DEFAULT_RISK_PER_TRADE_PCT = 0.01            # 1 % du capital risqué par trade
+DEFAULT_RISK_MAX_POSITIONS = 15              # 15 positions max (vs 20 backend)
+DEFAULT_RISK_MAX_POSITION_WEIGHT = 0.08      # 8 % max par ligne
+DEFAULT_RISK_MAX_SECTOR_WEIGHT = 0.30        # 30 % max par secteur
+DEFAULT_RISK_SCORE_WEIGHT = 0.40             # poids final_score dans la conviction
+DEFAULT_RISK_PREDICTION_WEIGHT = 0.60        # poids ML predict dans la conviction
+DEFAULT_RISK_CORRELATION_THRESHOLD = 0.80
+DEFAULT_RISK_CORRELATION_LOOKBACK_DAYS = 60
+DEFAULT_RISK_CORRELATION_MIN_OVERLAP = 40
+DEFAULT_RISK_ENABLE_KELLY = False
+DEFAULT_RISK_PAYOFF_RATIO = 1.5
+DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER = 0.25
+DEFAULT_RISK_LOG_LEVEL = "INFO"
+# Execution — swing cash batch
+DEFAULT_EXEC_SUBMISSION_WINDOW = "both"      # post_close + pre_open (batch quotidien)
+DEFAULT_EXEC_TRAILING_TRIGGER = "multiple_r"
+DEFAULT_EXEC_TRAILING_R_MULTIPLE = 1.0
+DEFAULT_EXEC_TRAILING_PROFIT_PCT = 0.03
+# ML train — cible swing cash + walk-forward
+DEFAULT_ML_TARGET_MODE = "swing_cash"
+DEFAULT_ML_FORECAST_HORIZON = 5              # 5 jours = horizon swing typique
+DEFAULT_ML_TARGET_UP_THRESHOLD = 0.02        # +2 % cible long
+DEFAULT_ML_TARGET_DOWN_THRESHOLD = -0.01
+DEFAULT_ML_DECISION_THRESHOLD = 0.55
+DEFAULT_ML_CALIBRATION_METHOD = "platt"
+DEFAULT_ML_FEATURE_SET = "v1"
+DEFAULT_ML_MAX_WORKERS = 4
+DEFAULT_ML_MAX_EPOCHS = 50
+DEFAULT_ML_WALKFORWARD = True                # walk-forward activé par défaut en swing prod
+DEFAULT_ML_WF_MIN_TRAIN_SIZE = 504
+DEFAULT_ML_WF_VAL_SIZE = 126
+DEFAULT_ML_WF_TEST_SIZE = 126
+DEFAULT_ML_WF_STEP_SIZE = 126
+DEFAULT_ML_WF_MAX_SPLITS = 3
+DEFAULT_ML_LOG_LEVEL = "INFO"
+DEFAULT_ML_MIN_ACTION_RATE = 0.03
+DEFAULT_ML_MAX_ACTION_RATE = 0.20            # plus prudent que 0.35 backend
+DEFAULT_ML_MIN_PRECISION_LONG = 0.55         # plus exigeant que 0.52 backend
+# ML — hyperparams avancés (alignés CLI modelFactory)
+DEFAULT_ML_SEQUENCE_LENGTH = 60
+DEFAULT_ML_BATCH_SIZE = 64
+DEFAULT_ML_HIDDEN_SIZE = 128
+DEFAULT_ML_ARTIFACTS_DIR = "artifacts/models"
+DEFAULT_ML_BENCHMARK_SYMBOL = "SPY"
+DEFAULT_ML_DEFAULT_CHAMPION = "lstm_attention"
+DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE = 20
+DEFAULT_ML_CALIBRATION_MIN_SAMPLES = 64
+DEFAULT_ML_CALIBRATION_MAX_ITER = 100
+DEFAULT_ML_LGBM_MAX_DEPTH = 4
+DEFAULT_ML_LGBM_N_ESTIMATORS = 200
+DEFAULT_ML_LGBM_LEARNING_RATE = 0.05
+DEFAULT_ML_CATBOOST_DEPTH = 6
+DEFAULT_ML_CATBOOST_ITERATIONS = 300
+DEFAULT_ML_CATBOOST_LEARNING_RATE = 0.03
+# ML — grilles candidate (resserrées swing 2-10 j)
+DEFAULT_ML_CANDIDATE_HORIZONS: tuple[int, ...] = (3, 5, 7, 10)
+DEFAULT_ML_CANDIDATE_UP_THRESHOLDS: tuple[float, ...] = (0.015, 0.02, 0.03)
+DEFAULT_ML_CANDIDATE_DOWN_THRESHOLDS: tuple[float, ...] = (-0.01, -0.015)
+DEFAULT_ML_CANDIDATE_DECISION_THRESHOLDS: tuple[float, ...] = (0.55, 0.60, 0.65)
+DEFAULT_ML_MIN_TRADES_FRACTION = 0.15
+# Execution — protection transition (timeout/poll trigger trailing)
+DEFAULT_EXEC_PROTECTION_TRANSITION_TIMEOUT_SECONDS = 120
+DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS = 5.0
+DEFAULT_EXEC_DEBUG = False
+# Selector — alpha scanner stage 2
+DEFAULT_SELECTOR_REQUIRE_ABOVE_MA200 = True
+# Corporate actions sync — fenêtre custom + batching (cf. audit_ihm_pipeline_options)
+DEFAULT_CA_SKIP_EXISTING = False
+DEFAULT_CA_USE_CUSTOM_WINDOW = False
+DEFAULT_CA_WINDOW_LOOKBACK_DAYS = 7  # J-7 → trade_date par défaut quand custom-window activé
+DEFAULT_CA_BATCH_SIZE = 25
 
 AccountUsage = Literal["none", "alpaca"]
 MLAccelerator = Literal["auto", "cpu", "gpu"]
+MLGlobalModelName = Literal["catboost", "lightgbm"]
+MLChampionMetric = Literal["selection_score", "business_score", "auc"]
+MLTargetMode = Literal["binary", "swing_cash"]
+MLFeatureSet = Literal["v1", "expert"]
+MLCalibrationMethod = Literal["none", "platt"]
+MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
+ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
+ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
 
 
@@ -30,12 +171,149 @@ class PipelineLaunchOptions:
     execution_run_id: str | None = None
     allow_outside_rth: bool = False
     auto_rebalance: bool = False
-    execution_account_type: Literal["margin", "cash"] = "margin"
-    execution_pdt_rule: Literal["auto", "off"] = "auto"
-    execution_swing_only: bool = False
+    # Défauts swing cash : compte cash + PDT off + swing only (cf. audit_ihm_pipeline_options.md P1)
+    execution_account_type: Literal["margin", "cash"] = "cash"
+    execution_pdt_rule: Literal["auto", "off"] = "off"
+    execution_swing_only: bool = True
+    # Stratégie de protection (sortie) — P1
+    execution_submission_window: ExecutionSubmissionWindow = "both"
+    execution_trailing_trigger: ExecutionTrailingTrigger = "multiple_r"
+    execution_trailing_r_multiple: float = DEFAULT_EXEC_TRAILING_R_MULTIPLE
+    execution_trailing_profit_pct: float = DEFAULT_EXEC_TRAILING_PROFIT_PCT
+    # Execution — transition trigger trailing (avancé) + debug
+    execution_protection_transition_timeout_seconds: int = DEFAULT_EXEC_PROTECTION_TRANSITION_TIMEOUT_SECONDS
+    execution_protection_transition_poll_interval_seconds: float = DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS
+    execution_debug: bool = DEFAULT_EXEC_DEBUG
     ml_accelerator: MLAccelerator = "auto"
+    ml_include_sentiment: bool = True
+    ml_enable_lightgbm: bool = True
+    ml_enable_catboost: bool = True
+    ml_enable_global_model: bool = False
+    ml_global_model_name: MLGlobalModelName = "catboost"
+    ml_enable_cross_sectional: bool = False
+    ml_select_champion: bool = True
+    ml_champion_selection_metric: MLChampionMetric = "selection_score"
+    ml_optimize_thresholds: bool = True
+    ml_optimize_target: bool = False
+    # ML — cible swing cash + horizon + walk-forward (P1)
+    ml_target_mode: MLTargetMode = DEFAULT_ML_TARGET_MODE  # type: ignore[assignment]
+    ml_forecast_horizon: int = DEFAULT_ML_FORECAST_HORIZON
+    ml_target_up_threshold: float = DEFAULT_ML_TARGET_UP_THRESHOLD
+    ml_target_down_threshold: float = DEFAULT_ML_TARGET_DOWN_THRESHOLD
+    ml_decision_threshold: float = DEFAULT_ML_DECISION_THRESHOLD
+    ml_calibration_method: MLCalibrationMethod = DEFAULT_ML_CALIBRATION_METHOD  # type: ignore[assignment]
+    ml_feature_set: MLFeatureSet = DEFAULT_ML_FEATURE_SET  # type: ignore[assignment]
+    ml_max_workers: int = DEFAULT_ML_MAX_WORKERS
+    ml_max_epochs: int = DEFAULT_ML_MAX_EPOCHS
+    ml_walkforward: bool = DEFAULT_ML_WALKFORWARD
+    ml_wf_min_train_size: int = DEFAULT_ML_WF_MIN_TRAIN_SIZE
+    ml_wf_val_size: int = DEFAULT_ML_WF_VAL_SIZE
+    ml_wf_test_size: int = DEFAULT_ML_WF_TEST_SIZE
+    ml_wf_step_size: int = DEFAULT_ML_WF_STEP_SIZE
+    ml_wf_max_splits: int = DEFAULT_ML_WF_MAX_SPLITS
+    ml_log_level: str = DEFAULT_ML_LOG_LEVEL
+    ml_min_action_rate: float = DEFAULT_ML_MIN_ACTION_RATE
+    ml_max_action_rate: float = DEFAULT_ML_MAX_ACTION_RATE
+    ml_min_precision_long: float = DEFAULT_ML_MIN_PRECISION_LONG
+    # ML — hyperparams avancés (architecture, boosters, grilles candidate)
+    ml_sequence_length: int = DEFAULT_ML_SEQUENCE_LENGTH
+    ml_batch_size: int = DEFAULT_ML_BATCH_SIZE
+    ml_hidden_size: int = DEFAULT_ML_HIDDEN_SIZE
+    ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
+    ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
+    ml_default_champion: MLDefaultChampion = DEFAULT_ML_DEFAULT_CHAMPION  # type: ignore[assignment]
+    ml_cross_sectional_min_universe: int = DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE
+    ml_calibration_min_samples: int = DEFAULT_ML_CALIBRATION_MIN_SAMPLES
+    ml_calibration_max_iter: int = DEFAULT_ML_CALIBRATION_MAX_ITER
+    ml_lgbm_max_depth: int = DEFAULT_ML_LGBM_MAX_DEPTH
+    ml_lgbm_n_estimators: int = DEFAULT_ML_LGBM_N_ESTIMATORS
+    ml_lgbm_learning_rate: float = DEFAULT_ML_LGBM_LEARNING_RATE
+    ml_catboost_depth: int = DEFAULT_ML_CATBOOST_DEPTH
+    ml_catboost_iterations: int = DEFAULT_ML_CATBOOST_ITERATIONS
+    ml_catboost_learning_rate: float = DEFAULT_ML_CATBOOST_LEARNING_RATE
+    ml_candidate_horizons: tuple[int, ...] = DEFAULT_ML_CANDIDATE_HORIZONS
+    ml_candidate_up_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_UP_THRESHOLDS
+    ml_candidate_down_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_DOWN_THRESHOLDS
+    ml_candidate_decision_thresholds: tuple[float, ...] = DEFAULT_ML_CANDIDATE_DECISION_THRESHOLDS
+    ml_min_trades_fraction: float = DEFAULT_ML_MIN_TRADES_FRACTION
+    # Risk management — P1 sizing + P2 conviction/correlation/kelly
+    risk_per_trade_pct: float = DEFAULT_RISK_PER_TRADE_PCT
+    risk_max_positions: int = DEFAULT_RISK_MAX_POSITIONS
+    risk_max_position_weight: float = DEFAULT_RISK_MAX_POSITION_WEIGHT
+    risk_max_sector_weight: float = DEFAULT_RISK_MAX_SECTOR_WEIGHT
+    risk_score_weight: float = DEFAULT_RISK_SCORE_WEIGHT
+    risk_prediction_weight: float = DEFAULT_RISK_PREDICTION_WEIGHT
+    risk_correlation_threshold: float = DEFAULT_RISK_CORRELATION_THRESHOLD
+    risk_correlation_lookback_days: int = DEFAULT_RISK_CORRELATION_LOOKBACK_DAYS
+    risk_correlation_min_overlap: int = DEFAULT_RISK_CORRELATION_MIN_OVERLAP
+    risk_enable_kelly: bool = DEFAULT_RISK_ENABLE_KELLY
+    risk_payoff_ratio: float = DEFAULT_RISK_PAYOFF_RATIO
+    risk_kelly_fraction_multiplier: float = DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER
+    risk_dry_run: bool = False
+    risk_log_level: str = DEFAULT_RISK_LOG_LEVEL
     news_import_start_date: str | None = None
     news_import_end_date: str | None = None
+    sentiment_start_utc: str | None = None
+    sentiment_end_utc: str | None = None
+    sentiment_symbols: str | None = None
+    screener_chunk_size: int = DEFAULT_SCREENER_CHUNK_SIZE
+    screener_max_workers: int | None = None
+    screener_benchmark_symbol: str = DEFAULT_SCREENER_BENCHMARK_SYMBOL
+    screener_liquidity_threshold_usd: float = DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD
+    screener_min_relative_strength_index: float = DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX
+    screener_historical_range_lookback_days: int = DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS
+    screener_min_historical_range_score: float = DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE
+    screener_first_pass_window_days: int = DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS
+    screener_enable_two_pass_loading: bool = DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING
+    selector_chunk_size: int = DEFAULT_SELECTOR_CHUNK_SIZE
+    selector_selection_size: int = DEFAULT_SELECTOR_SELECTION_SIZE
+    selector_max_workers: int | None = None
+    selector_liquidity_threshold: float = float(DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD)
+    selector_min_close: float = float(DEFAULT_SELECTOR_MIN_CLOSE)
+    selector_max_volatility_ratio: float = float(DEFAULT_SELECTOR_MAX_VOLATILITY_RATIO)
+    selector_min_relative_strength_index: float = float(DEFAULT_SELECTOR_MIN_RELATIVE_STRENGTH_INDEX or 100.0)
+    selector_min_high_52w_proximity: float = float(DEFAULT_SELECTOR_MIN_HIGH_52W_PROXIMITY or 0.75)
+    selector_min_weekly_trend_score: float = float(DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE or 1.0)
+    selector_min_atr_pct_20: float = float(DEFAULT_SELECTOR_MIN_ATR_PCT_20 or 0.015)
+    selector_max_atr_pct_20: float = float(DEFAULT_SELECTOR_MAX_ATR_PCT_20 or 0.06)
+    selector_min_market_cap: float = float(DEFAULT_SELECTOR_MIN_MARKET_CAP or 2_000_000_000.0)
+    selector_min_beta_126: float = float(DEFAULT_SELECTOR_MIN_BETA_126 or 1.0)
+    selector_max_spread_bps: float = float(DEFAULT_SELECTOR_MAX_SPREAD_BPS or 25.0)
+    selector_earnings_blackout_days: int = int(DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS or 3)
+    selector_max_anomaly_count: int = DEFAULT_SELECTOR_MAX_ANOMALY_COUNT
+    selector_sector_cap_ratio: float = DEFAULT_SELECTOR_SECTOR_CAP_RATIO
+    selector_log_level: str = DEFAULT_SELECTOR_LOG_LEVEL
+    selector_require_above_ma200: bool = DEFAULT_SELECTOR_REQUIRE_ABOVE_MA200
+    signal_aggregator_all_symbols: bool = False
+    signal_aggregator_sentiment_weight: float = DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT
+    signal_aggregator_macro_weight: float = DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT
+    signal_aggregator_lookback_days: int = DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS
+    signal_aggregator_min_news_count: int = DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT
+    signal_aggregator_time_decay_half_life_days: float = DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS
+    signal_aggregator_log_level: str = DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
+    data_integrity_quotes_limit: int | None = None
+    data_integrity_quotes_batch_size: int = DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE
+    data_integrity_earnings_from_date: str | None = None
+    data_integrity_earnings_to_date: str | None = None
+    data_integrity_earnings_limit: int | None = None
+    data_integrity_earnings_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
+    data_integrity_earnings_log_every: int = DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY
+    data_integrity_earnings_batch_size: int = DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE
+    data_integrity_earnings_resume: bool = DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME
+    data_integrity_fundamentals_limit: int | None = None
+    data_integrity_fundamentals_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
+    data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
+    corporate_actions_skip_existing: bool = DEFAULT_CA_SKIP_EXISTING
+    # Corporate actions sync — fenêtre custom + batching
+    corporate_actions_use_custom_window: bool = DEFAULT_CA_USE_CUSTOM_WINDOW
+    corporate_actions_start_date: str | None = None
+    corporate_actions_end_date: str | None = None
+    corporate_actions_batch_size: int = DEFAULT_CA_BATCH_SIZE
+    # EODHD backfill historique (Phase 5 plan_eodhd.md §6) — étape auxiliaire B3
+    eodhd_backfill_years: int = 30
+    eodhd_backfill_symbols: str | None = None
+    eodhd_backfill_resume: bool = True
+    eodhd_backfill_write: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,9 +368,12 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     PipelineStepDefinition(
         key="import_alpaca_bar",
         num="1",
-        name="Import Alpaca Bar",
-        desc="Ingestion des barres OHLCV journalières depuis Alpaca Market Data.",
-        tables="stock_bars",
+        name="Import Bars + rattrapage auto (Alpaca / EODHD)",
+        desc="Ingestion OHLCV daily incrémentale avec rattrapage automatique des jours manquants "
+             "depuis la dernière barre connue par symbole jusqu'à la date de marché courante. "
+             "Provider sélectionné automatiquement via `market_data.bars_provider` (alpaca | eodhd). "
+             "En mode EODHD, route vers `dataIntegrityEngine.import_eodhd_bar --write`.",
+        tables="stock_bars, stock_bars_daily",
         deps="—",
     ),
     PipelineStepDefinition(
@@ -100,7 +381,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         num="2",
         name="Data Sanitizer Daily",
         desc="Nettoyage, alignement calendrier, détection d'anomalies sur les barres brutes.",
-        tables="stock_bars_daily, cleaning_audit_log",
+        tables="stock_bars_daily, cleaning_audit_latest, cleaning_audit_runs",
         deps="import_alpaca_bar",
     ),
     PipelineStepDefinition(
@@ -154,16 +435,16 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     PipelineStepDefinition(
         key="ml_train",
         num="9",
-        name="ML Train (LSTM)",
-        desc="Entraînement des modèles LSTM+Attention par symbole candidat. Périodique (hebdomadaire recommandé).",
-        tables="model_registry, model_training_run, model_metrics",
+        name="ML Train (Model Factory)",
+        desc="Entraînement `modelFactory` par symbole candidat : LSTM+Attention, challengers locaux LightGBM/CatBoost, modèle global optionnel et sélection éventuelle du champion servi.",
+        tables="model_registry, model_training_run, model_metrics, model_governance",
         deps="signal_aggregator (is_candidate=1)",
     ),
     PipelineStepDefinition(
         key="ml_predict",
         num="10",
         name="ML Predict",
-        desc="Inférence LSTM → predicted_proba par symbole candidat. Quotidien, alimente le score de conviction du risk.",
+        desc="Inférence `modelFactory` sur le champion sélectionné par symbole (LSTM, LightGBM, CatBoost ou global_model selon les artefacts disponibles). Quotidien, alimente le score de conviction du risk.",
         tables="model_predictions",
         deps="ml_train (modèle entraîné requis)",
     ),
@@ -180,8 +461,8 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="execution",
         num="12",
         name="Execution",
-        desc="Soumission ordres Alpaca (market/limit), bracket synthétique TP+TS, réconciliation, TCA. Photographie les positions broker après exécution.",
-        tables="execution_runs, execution_orders, execution_fills, execution_events, broker_positions_snapshots",
+        desc="Run overnight canonique : snapshot des targets, requests, ordres broker, fills observés, reconstruction positions/lots, réconciliation actionnable et TCA. Photographie aussi l'état broker du compte.",
+        tables="execution_runs, execution_targets_snapshot, execution_order_requests, execution_broker_orders, execution_broker_fills, execution_positions, execution_position_lots, execution_reconciliation_results, execution_events, broker_positions_snapshots, broker_account_snapshots",
         deps="run_risk",
         account_usage="alpaca",
     ),
@@ -189,7 +470,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="corporate_actions_sync",
         num="13",
         name="Corporate Actions Sync",
-        desc="Récupère les dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour).",
+        desc="Recupere dividendes/splits pour les symboles detenus en portefeuille. Provider selectionne automatiquement via market_data.bars_provider (alpaca ou eodhd) ; Yahoo cross-check toujours appele. (Phase 6 EODHD)",
         tables="corporate_actions_events",
         deps="execution (broker_positions_snapshots requis)",
         account_usage="alpaca",
@@ -205,9 +486,51 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     ),
 )
 
+PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
+    PipelineStepDefinition(
+        key="import_alpaca_assets",
+        num="B1",
+        name="Import univers Alpaca",
+        desc="Bootstrap / rafraîchissement de l'univers `stock_metadata` depuis Alpaca.",
+        tables="stock_metadata",
+        deps="—",
+    ),
+    PipelineStepDefinition(
+        key="update_sector",
+        num="B2",
+        name="Mise à jour fondamentaux",
+        desc="Enrichit `stock_metadata` avec `sector` et `market_cap` via Finnhub pour les symboles encore incomplets.",
+        tables="stock_metadata",
+        deps="import_alpaca_assets (recommandé) ou univers déjà chargé",
+    ),
+    PipelineStepDefinition(
+        key="eodhd_backfill_history",
+        num="B3",
+        name="Backfill historique EODHD",
+        desc="One-shot : remplit `stock_bars` + `stock_bars_daily` avec l'historique long "
+             "EODHD (5 ans par défaut, jusqu'à 30 ans pour ML). Bookmark idempotent dans "
+             "`artifacts/eodhd_cache/backfill_state.json`. Coût ~1 call/symbole. "
+             "Depuis l'IHM, le mode par défaut est `write` pour persister directement dans la base ; "
+             "il reste possible de repasser en dry-run en décochant `B3 — mode écriture`. "
+             "Utile au démarrage initial post-cutover `bars_provider=eodhd`.",
+        tables="stock_bars, stock_bars_daily",
+        deps="import_alpaca_assets (univers requis)",
+    ),
+)
+
 
 def get_pipeline_steps() -> tuple[PipelineStepDefinition, ...]:
     return PIPELINE_STEPS
+
+
+def get_pipeline_workflow_steps(*, include_ml_train: bool = True) -> tuple[PipelineStepDefinition, ...]:
+    if include_ml_train:
+        return PIPELINE_STEPS
+    return tuple(step for step in PIPELINE_STEPS if step.key != "ml_train")
+
+
+def get_pipeline_auxiliary_steps() -> tuple[PipelineStepDefinition, ...]:
+    return PIPELINE_AUXILIARY_STEPS
 
 
 def _normalize_trade_date(value: str | None) -> str | None:
@@ -223,6 +546,16 @@ def _normalize_run_id(value: str | None) -> str | None:
 def _normalize_optional_date(value: str | None) -> str | None:
     cleaned = (value or "").strip()
     return cleaned or None
+
+
+def _normalize_symbol(value: str | None, default: str) -> str:
+    cleaned = (value or "").strip().upper()
+    return cleaned or default
+
+
+def _normalize_symbol_list(value: str | None) -> str | None:
+    normalized = sorted({part.strip().upper() for part in (value or "").split(",") if part and part.strip()})
+    return ",".join(normalized) if normalized else None
 
 
 def is_gpu_available() -> bool:
@@ -241,14 +574,84 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     account_id = (options.account_id or "").strip() or None
     news_import_start_date = _normalize_optional_date(options.news_import_start_date)
     news_import_end_date = _normalize_optional_date(options.news_import_end_date)
+    sentiment_start_utc = _normalize_optional_date(options.sentiment_start_utc)
+    sentiment_end_utc = _normalize_optional_date(options.sentiment_end_utc)
+    sentiment_symbols = _normalize_symbol_list(options.sentiment_symbols)
+    earnings_from_date = _normalize_optional_date(options.data_integrity_earnings_from_date)
+    earnings_to_date = _normalize_optional_date(options.data_integrity_earnings_to_date)
+    screener_max_workers = options.screener_max_workers if options.screener_max_workers and options.screener_max_workers > 0 else None
+    screener_benchmark_symbol = _normalize_symbol(options.screener_benchmark_symbol, DEFAULT_SCREENER_BENCHMARK_SYMBOL)
+    selector_max_workers = options.selector_max_workers if options.selector_max_workers and options.selector_max_workers > 0 else None
+    quotes_limit = options.data_integrity_quotes_limit if options.data_integrity_quotes_limit and options.data_integrity_quotes_limit > 0 else None
+    earnings_limit = options.data_integrity_earnings_limit if options.data_integrity_earnings_limit and options.data_integrity_earnings_limit > 0 else None
+    fundamentals_limit = options.data_integrity_fundamentals_limit if options.data_integrity_fundamentals_limit and options.data_integrity_fundamentals_limit > 0 else None
+
+    ca_start_date = _normalize_optional_date(options.corporate_actions_start_date)
+    ca_end_date = _normalize_optional_date(options.corporate_actions_end_date)
+    ml_benchmark_symbol = _normalize_symbol(options.ml_benchmark_symbol, DEFAULT_ML_BENCHMARK_SYMBOL)
+    ml_artifacts_dir = (options.ml_artifacts_dir or "").strip() or DEFAULT_ML_ARTIFACTS_DIR
+
+    if step_key == "import_alpaca_assets":
+        return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
 
     if step_key == "import_alpaca_bar":
+        # Phase 6 EODHD : route dynamiquement vers le bon module selon
+        # ``market_data.bars_provider`` (alpaca | eodhd). Garde la même clé
+        # ``import_alpaca_bar`` pour ne pas casser l'historique IHM.
+        provider = _resolve_bars_provider_for_ihm()
+        if provider == "eodhd":
+            return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_eodhd_bar", "--write"]
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
+
+    if step_key == "update_sector":
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "dataIntegrityEngine.update_sector",
+            "--sleep-seconds",
+            str(options.data_integrity_fundamentals_sleep_seconds),
+            "--log-every",
+            str(options.data_integrity_fundamentals_log_every),
+        ]
+        if fundamentals_limit is not None:
+            command.extend(["--limit", str(fundamentals_limit)])
+        return command
+
+    if step_key == "eodhd_backfill_history":
+        # Phase 5 plan_eodhd.md §6 : backfill historique long via EODHD /eod
+        command = [
+            sys.executable, "-u", "-m",
+            "dataIntegrityEngine.backfill_eodhd_history",
+            "--years", str(int(options.eodhd_backfill_years or 30)),
+        ]
+        if options.eodhd_backfill_write:
+            command.append("--write")
+        # Reprise sur bookmark par défaut ; --no-resume pour forcer
+        if options.eodhd_backfill_resume:
+            command.append("--resume")
+        else:
+            command.append("--no-resume")
+        if options.eodhd_backfill_symbols:
+            symbols = [s.strip().upper() for s in options.eodhd_backfill_symbols.split(",") if s.strip()]
+            if symbols:
+                command.append("--symbols")
+                command.extend(symbols)
+        return command
 
     if step_key == "corporate_actions_sync":
         # --portfolio-only : sync uniquement les symboles détenus en portefeuille
         # pas de --skip-existing : on re-interroge Alpaca à chaque fois pour ne rater aucun nouvel événement
         command = [sys.executable, "-u", "-m", "corporate_actions", "sync", "--portfolio-only"]
+        if options.corporate_actions_skip_existing:
+            command.append("--skip-existing")
+        if options.corporate_actions_batch_size and options.corporate_actions_batch_size > 0:
+            command.extend(["--batch-size", str(options.corporate_actions_batch_size)])
+        if options.corporate_actions_use_custom_window:
+            if ca_start_date:
+                command.extend(["--start", ca_start_date])
+            if ca_end_date:
+                command.extend(["--end", ca_end_date])
         if account_id:
             command.extend(["--account", account_id])
         return command
@@ -257,19 +660,123 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.data_sanitizer_daily"]
 
     if step_key == "stock_screener":
-        return [sys.executable, "-u", "-m", "screener.stock_screener"]
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "screener.stock_screener",
+            "--chunk-size",
+            str(options.screener_chunk_size),
+            "--benchmark",
+            screener_benchmark_symbol,
+            "--liquidity-threshold-usd",
+            str(options.screener_liquidity_threshold_usd),
+            "--min-relative-strength-index",
+            str(options.screener_min_relative_strength_index),
+            "--historical-range-lookback-days",
+            str(options.screener_historical_range_lookback_days),
+            "--min-historical-range-score",
+            str(options.screener_min_historical_range_score),
+            "--first-pass-window-days",
+            str(options.screener_first_pass_window_days),
+        ]
+        if screener_max_workers is not None:
+            command.extend(["--max-workers", str(screener_max_workers)])
+        if not options.screener_enable_two_pass_loading:
+            command.append("--disable-two-pass-loading")
+        return command
 
     if step_key == "sync_latest_quotes":
-        return [sys.executable, "-u", "-m", "dataIntegrityEngine.sync_latest_quotes"]
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "dataIntegrityEngine.sync_latest_quotes",
+            "--batch-size",
+            str(options.data_integrity_quotes_batch_size),
+        ]
+        if quotes_limit is not None:
+            command.extend(["--limit", str(quotes_limit)])
+        return command
 
     if step_key == "sync_earnings_calendar":
-        return [sys.executable, "-u", "-m", "dataIntegrityEngine.sync_earnings_calendar"]
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "dataIntegrityEngine.sync_earnings_calendar",
+            "--sleep-seconds",
+            str(options.data_integrity_earnings_sleep_seconds),
+            "--log-every",
+            str(options.data_integrity_earnings_log_every),
+            "--batch-size",
+            str(options.data_integrity_earnings_batch_size),
+        ]
+        if earnings_from_date:
+            command.extend(["--from-date", earnings_from_date])
+        if earnings_to_date:
+            command.extend(["--to-date", earnings_to_date])
+        if earnings_limit is not None:
+            command.extend(["--limit", str(earnings_limit)])
+        command.append("--resume" if options.data_integrity_earnings_resume else "--no-resume")
+        return command
 
     if step_key == "alpha_scanner":
-        return [sys.executable, "-u", "-m", "selector.alpha_scanner"]
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "selector.alpha_scanner",
+            "--chunk-size",
+            str(options.selector_chunk_size),
+            "--selection-size",
+            str(options.selector_selection_size),
+            "--liquidity-threshold",
+            str(options.selector_liquidity_threshold),
+            "--min-close",
+            str(options.selector_min_close),
+            "--max-volatility-ratio",
+            str(options.selector_max_volatility_ratio),
+            "--min-relative-strength-index",
+            str(options.selector_min_relative_strength_index),
+            "--min-high-52w-proximity",
+            str(options.selector_min_high_52w_proximity),
+            "--min-weekly-trend-score",
+            str(options.selector_min_weekly_trend_score),
+            "--min-atr-pct-20",
+            str(options.selector_min_atr_pct_20),
+            "--max-atr-pct-20",
+            str(options.selector_max_atr_pct_20),
+            "--min-market-cap",
+            str(options.selector_min_market_cap),
+            "--min-beta-126",
+            str(options.selector_min_beta_126),
+            "--max-spread-bps",
+            str(options.selector_max_spread_bps),
+            "--earnings-blackout-days",
+            str(options.selector_earnings_blackout_days),
+            "--max-anomaly-count",
+            str(options.selector_max_anomaly_count),
+            "--sector-cap-ratio",
+            str(options.selector_sector_cap_ratio),
+            "--log-level",
+            str(options.selector_log_level or DEFAULT_SELECTOR_LOG_LEVEL).upper(),
+        ]
+        if selector_max_workers is not None:
+            command.extend(["--max-workers", str(selector_max_workers)])
+        if options.selector_require_above_ma200:
+            command.append("--require-above-ma200")
+        return command
 
     if step_key == "sentiment_pipeline":
-        return [sys.executable, "-u", "-m", "event_sentiment"]
+        command = [sys.executable, "-u", "-m", "event_sentiment"]
+        if sentiment_start_utc:
+            command.extend(["--start-utc", sentiment_start_utc])
+        if sentiment_end_utc:
+            command.extend(["--end-utc", sentiment_end_utc])
+        if sentiment_symbols:
+            command.extend(["--symbols", sentiment_symbols])
+        return command
 
     if step_key == "import_news":
         if news_import_start_date is None:
@@ -286,23 +793,143 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "signal_aggregator":
-        command = [sys.executable, "-u", "-m", "event_sentiment.signal_aggregator"]
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "event_sentiment.signal_aggregator",
+            "--sentiment-weight",
+            str(options.signal_aggregator_sentiment_weight),
+            "--macro-weight",
+            str(options.signal_aggregator_macro_weight),
+            "--lookback-days",
+            str(options.signal_aggregator_lookback_days),
+            "--min-news-count",
+            str(options.signal_aggregator_min_news_count),
+            "--time-decay-half-life-days",
+            str(options.signal_aggregator_time_decay_half_life_days),
+            "--log-level",
+            str(options.signal_aggregator_log_level or DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL).upper(),
+        ]
         if trade_date:
             command.extend(["--trade-date", trade_date])
+        if options.signal_aggregator_all_symbols:
+            command.append("--all-symbols")
         return command
 
     if step_key == "ml_train":
-        return [
+        command = [
             sys.executable,
             "-u",
             "-m",
             "modelFactory",
             "--mode",
             "train",
-            "--include-sentiment",
             "--accelerator",
             options.ml_accelerator,
+            "--target-mode",
+            options.ml_target_mode,
+            "--forecast-horizon",
+            str(options.ml_forecast_horizon),
+            "--target-up-threshold",
+            str(options.ml_target_up_threshold),
+            "--target-down-threshold",
+            str(options.ml_target_down_threshold),
+            "--decision-threshold",
+            str(options.ml_decision_threshold),
+            "--calibration-method",
+            options.ml_calibration_method,
+            "--calibration-min-samples",
+            str(options.ml_calibration_min_samples),
+            "--calibration-max-iter",
+            str(options.ml_calibration_max_iter),
+            "--feature-set",
+            options.ml_feature_set,
+            "--benchmark-symbol",
+            ml_benchmark_symbol,
+            "--sequence-length",
+            str(options.ml_sequence_length),
+            "--batch-size",
+            str(options.ml_batch_size),
+            "--hidden-size",
+            str(options.ml_hidden_size),
+            "--artifacts-dir",
+            ml_artifacts_dir,
+            "--max-workers",
+            str(options.ml_max_workers),
+            "--max-epochs",
+            str(options.ml_max_epochs),
+            "--cross-sectional-min-universe",
+            str(options.ml_cross_sectional_min_universe),
+            "--lgbm-max-depth",
+            str(options.ml_lgbm_max_depth),
+            "--lgbm-n-estimators",
+            str(options.ml_lgbm_n_estimators),
+            "--lgbm-learning-rate",
+            str(options.ml_lgbm_learning_rate),
+            "--catboost-depth",
+            str(options.ml_catboost_depth),
+            "--catboost-iterations",
+            str(options.ml_catboost_iterations),
+            "--catboost-learning-rate",
+            str(options.ml_catboost_learning_rate),
+            "--default-champion",
+            options.ml_default_champion,
+            "--log-level",
+            str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
         ]
+        if options.ml_include_sentiment:
+            command.append("--include-sentiment")
+        if options.ml_enable_lightgbm:
+            command.append("--compare-lightgbm")
+        if options.ml_enable_catboost:
+            command.append("--enable-catboost")
+        if options.ml_enable_global_model:
+            command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
+        if options.ml_enable_cross_sectional:
+            command.append("--enable-cross-sectional")
+        if options.ml_select_champion:
+            command.extend(["--select-champion", "--champion-selection-metric", options.ml_champion_selection_metric])
+        if options.ml_optimize_thresholds:
+            command.extend([
+                "--optimize-thresholds",
+                "--min-action-rate",
+                str(options.ml_min_action_rate),
+                "--max-action-rate",
+                str(options.ml_max_action_rate),
+                "--min-precision-long",
+                str(options.ml_min_precision_long),
+            ])
+            if options.ml_candidate_decision_thresholds:
+                command.append("--candidate-decision-thresholds")
+                command.extend(str(v) for v in options.ml_candidate_decision_thresholds)
+        if options.ml_optimize_target:
+            command.append("--optimize-target")
+            command.extend(["--min-trades-fraction", str(options.ml_min_trades_fraction)])
+            if options.ml_candidate_horizons:
+                command.append("--candidate-horizons")
+                command.extend(str(v) for v in options.ml_candidate_horizons)
+            if options.ml_candidate_up_thresholds:
+                command.append("--candidate-up-thresholds")
+                command.extend(str(v) for v in options.ml_candidate_up_thresholds)
+            if options.ml_candidate_down_thresholds:
+                command.append("--candidate-down-thresholds")
+                command.extend(str(v) for v in options.ml_candidate_down_thresholds)
+        if options.ml_walkforward:
+            command.extend([
+                "--walkforward",
+                "--wf-min-train-size",
+                str(options.ml_wf_min_train_size),
+                "--wf-val-size",
+                str(options.ml_wf_val_size),
+                "--wf-test-size",
+                str(options.ml_wf_test_size),
+                "--wf-step-size",
+                str(options.ml_wf_step_size),
+                "--wf-max-splits",
+                str(options.ml_wf_max_splits),
+            ])
+        return command
 
     if step_key == "ml_predict":
         return [
@@ -314,6 +941,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "predict",
             "--accelerator",
             options.ml_accelerator,
+            "--artifacts-dir",
+            ml_artifacts_dir,
+            "--log-level",
+            str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
         ]
 
     if step_key == "risk_management":
@@ -324,7 +955,35 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "risk_management",
             "--account-equity",
             str(options.risk_account_equity),
+            "--risk-per-trade-pct",
+            str(options.risk_per_trade_pct),
+            "--max-positions",
+            str(options.risk_max_positions),
+            "--max-position-weight",
+            str(options.risk_max_position_weight),
+            "--max-sector-weight",
+            str(options.risk_max_sector_weight),
+            "--score-weight",
+            str(options.risk_score_weight),
+            "--prediction-weight",
+            str(options.risk_prediction_weight),
+            "--correlation-threshold",
+            str(options.risk_correlation_threshold),
+            "--correlation-lookback-days",
+            str(options.risk_correlation_lookback_days),
+            "--correlation-min-overlap",
+            str(options.risk_correlation_min_overlap),
+            "--assumed-payoff-ratio",
+            str(options.risk_payoff_ratio),
+            "--kelly-fraction-multiplier",
+            str(options.risk_kelly_fraction_multiplier),
+            "--log-level",
+            str(options.risk_log_level or DEFAULT_RISK_LOG_LEVEL).upper(),
         ]
+        if options.risk_enable_kelly:
+            command.append("--enable-kelly-sizing")
+        if options.risk_dry_run:
+            command.append("--dry-run")
         if trade_date:
             command.extend(["--trade-date", trade_date])
         if account_id:
@@ -337,14 +996,34 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--date", trade_date])
         if run_id:
             command.extend(["--run-id", run_id])
+        if options.execution_debug:
+            command.append("--debug")
         if options.allow_outside_rth:
             command.append("--allow-outside-rth")
         if options.auto_rebalance:
             command.append("--auto-rebalance")
         command.extend(["--account-type", options.execution_account_type])
         command.extend(["--pdt-rule", options.execution_pdt_rule])
-        if options.execution_swing_only:
-            command.append("--swing-only")
+        # --swing-only utilise BooleanOptionalAction côté backend (cf. run_execution.py)
+        command.append("--swing-only" if options.execution_swing_only else "--no-swing-only")
+        # Stratégie de protection (P1) — toujours transmise pour reproductibilité
+        command.extend(["--submission-window", options.execution_submission_window])
+        command.extend(["--trailing-activation-trigger", options.execution_trailing_trigger])
+        if options.execution_trailing_trigger == "multiple_r":
+            command.extend(["--trailing-activation-r-multiple", str(options.execution_trailing_r_multiple)])
+        else:
+            command.extend(["--trailing-activation-profit-pct", str(options.execution_trailing_profit_pct)])
+        # Transition trigger trailing (P2 avancé)
+        if options.execution_protection_transition_timeout_seconds and options.execution_protection_transition_timeout_seconds > 0:
+            command.extend([
+                "--protection-transition-timeout-seconds",
+                str(int(options.execution_protection_transition_timeout_seconds)),
+            ])
+        if options.execution_protection_transition_poll_interval_seconds and options.execution_protection_transition_poll_interval_seconds > 0:
+            command.extend([
+                "--protection-transition-poll-interval-seconds",
+                str(options.execution_protection_transition_poll_interval_seconds),
+            ])
         if account_id:
             command.extend(["--account", account_id])
         return command

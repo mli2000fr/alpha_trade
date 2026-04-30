@@ -39,6 +39,7 @@ class SentimentRecord:
     sentiment_net_score: float
     inference_status: str = "success"
     error_message: str | None = None
+    model_fingerprint: str = ""
 
 
 @dataclass(frozen=True, slots=True)

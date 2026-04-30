@@ -274,7 +274,7 @@ class TestDbRegistry:
         mock_conn = MagicMock()
         mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
-        mock_conn.execute.return_value.fetchall.return_value = [("AAPL",), ("MSFT",)]
+        mock_conn.execute.return_value.scalars.return_value.all.return_value = ["AAPL", "MSFT"]
         result = load_candidate_symbols(mock_engine)
         assert result == ["AAPL", "MSFT"]
 

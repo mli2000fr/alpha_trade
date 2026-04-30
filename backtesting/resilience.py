@@ -1,13 +1,15 @@
 """Politiques de résilience pour ML et sentiment dans le backtesting."""
 from __future__ import annotations
 
+from datetime import date
 import logging
 from pathlib import Path
-
+from typing import Any
 import pandas as pd
 from sqlalchemy.engine import Engine
 
 from backtesting.backfill_scores_history import BackfillScoresHistoryService
+from backtesting.walk_forward import apply_walk_forward_weights, resolve_latest_walk_forward_weights
 from modelFactory.predictor import predict_symbol
 
 LOGGER = logging.getLogger(__name__)
@@ -19,18 +21,55 @@ SentimentMode = str
 def _normalize_dates(df: pd.DataFrame, date_col: str = "trade_date") -> pd.DataFrame:
     normalized = df.copy()
     if date_col in normalized.columns:
-        normalized[date_col] = pd.to_datetime(normalized[date_col], errors="coerce").dt.normalize()
+        normalized_dates = pd.to_datetime(normalized[date_col], errors="coerce")
+        normalized[date_col] = normalized_dates.dt.floor("D")
     return normalized
 
 
-def _expected_symbol_dates(scores_df: pd.DataFrame) -> set[tuple[str, object]]:
+def _expected_symbol_dates(scores_df: pd.DataFrame) -> set[tuple[str, pd.Timestamp]]:
     if scores_df.empty:
         return set()
     normalized = _normalize_dates(scores_df)
     return {
-        (str(row["symbol"]), row["trade_date"])
+        (str(row["symbol"]), pd.Timestamp(row["trade_date"]))
         for _, row in normalized[["symbol", "trade_date"]].dropna().drop_duplicates().iterrows()
     }
+
+
+def _ensure_dataframe(value: object) -> pd.DataFrame:
+    if isinstance(value, pd.DataFrame):
+        return value.copy()
+    if isinstance(value, pd.Series):
+        return value.to_frame().T.copy()
+    return pd.DataFrame(value)
+
+
+def _merge_prediction_frames(existing: pd.DataFrame, rebuilt: pd.DataFrame) -> pd.DataFrame:
+    merged = pd.concat([existing, rebuilt], ignore_index=True)
+    merged_df = pd.DataFrame(merged)
+    deduped = merged_df.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
+    return pd.DataFrame(deduped)
+
+
+def _rebuild_prediction_frame(
+    *,
+    symbol: str,
+    trade_date: date,
+    artifacts_dir: Path,
+    engine: Engine,
+) -> pd.DataFrame:
+    prediction = predict_symbol(
+        symbol=symbol,
+        artifacts_dir=artifacts_dir,
+        engine=engine,
+        prediction_date=trade_date,
+        as_of_date=trade_date,
+        persist=True,
+    )
+    pred_df = _ensure_dataframe(prediction) if prediction is not None else pd.DataFrame()
+    if not pred_df.empty and "prediction_date" in pred_df.columns:
+        pred_df = pred_df.rename(columns={"prediction_date": "trade_date"})
+    return pred_df
 
 
 def prepare_scores_for_sentiment_mode(
@@ -38,6 +77,7 @@ def prepare_scores_for_sentiment_mode(
     scores_df: pd.DataFrame,
     *,
     sentiment_mode: SentimentMode,
+    walk_forward_artifacts_dir: Path | None = None,
 ) -> pd.DataFrame:
     """Applique une politique de résilience sur `final_score_sentiment`."""
     if scores_df.empty:
@@ -53,7 +93,7 @@ def prepare_scores_for_sentiment_mode(
     if sentiment_mode == "off":
         result["final_score_sentiment"] = result["final_score"]
         LOGGER.info("Sentiment mode=off — utilisation de final_score sans boost sentiment.")
-        return result
+        return _apply_walk_forward_overlay(result, walk_forward_artifacts_dir)
 
     missing_mask = result["final_score_sentiment"].isna()
     if sentiment_mode == "auto":
@@ -63,17 +103,18 @@ def prepare_scores_for_sentiment_mode(
                 "Sentiment mode=auto — %s lignes sans final_score_sentiment, fallback sur final_score.",
                 int(missing_mask.sum()),
             )
-        return result
+        return _apply_walk_forward_overlay(result, walk_forward_artifacts_dir)
 
     if sentiment_mode != "rebuild-missing":
         raise ValueError(f"sentiment_mode invalide: {sentiment_mode}")
 
+    parsed_missing_trade_dates = pd.to_datetime(result.loc[missing_mask, "trade_date"], errors="coerce")
     missing_dates = sorted({
-        trade_date for trade_date in pd.to_datetime(result.loc[missing_mask, "trade_date"], errors="coerce").dt.date.tolist()
-        if trade_date is not None
+        pd.Timestamp(value).date()
+        for value in parsed_missing_trade_dates.dropna().tolist()
     })
     if not missing_dates:
-        return result
+        return _apply_walk_forward_overlay(result, walk_forward_artifacts_dir)
 
     LOGGER.warning(
         "Sentiment mode=rebuild-missing — tentative de reconstruction des snapshots sentiment pour %s séance(s).",
@@ -124,7 +165,35 @@ def prepare_scores_for_sentiment_mode(
             "Sentiment mode=rebuild-missing — %s lignes restent sans sentiment, fallback final_score.",
             int(still_missing.sum()),
         )
-    return refreshed
+    return _apply_walk_forward_overlay(refreshed, walk_forward_artifacts_dir)
+
+
+def _apply_walk_forward_overlay(scores_df: pd.DataFrame, artifacts_dir: Path | None) -> pd.DataFrame:
+    result = scores_df.copy()
+    if result.empty:
+        return result
+    if "score_source" not in result.columns:
+        result["score_source"] = pd.NA
+    weights = resolve_latest_walk_forward_weights([artifacts_dir] if artifacts_dir is not None else None)
+    if weights is None:
+        if "final_score_walk_forward" in result.columns:
+            wf_mask = result["final_score_walk_forward"].notna()
+            result.loc[wf_mask, "score_source"] = "final_score_walk_forward"
+        sentiment_mask = result.get("final_score_sentiment", pd.Series(index=result.index, dtype=float)).notna()
+        result.loc[result["score_source"].isna() & sentiment_mask, "score_source"] = "final_score_sentiment"
+        final_mask = result.get("final_score", pd.Series(index=result.index, dtype=float)).notna()
+        result.loc[result["score_source"].isna() & final_mask, "score_source"] = "final_score"
+        return result
+
+    overlaid = apply_walk_forward_weights(result, weights)
+    LOGGER.info(
+        "Walk-forward overlay appliqué depuis %s (sentiment=%.4f macro=%.4f quant=%.4f).",
+        weights.artifact_path,
+        weights.sentiment_weight,
+        weights.macro_weight,
+        weights.quant_weight,
+    )
+    return overlaid
 
 
 def prepare_predictions_for_ml_mode(
@@ -140,15 +209,17 @@ def prepare_predictions_for_ml_mode(
         LOGGER.info("ML mode=off — aucune prédiction ML utilisée.")
         return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
 
-    existing = _normalize_dates(predictions_df) if not predictions_df.empty else pd.DataFrame(
-        columns=["symbol", "trade_date", "predicted_proba", "predicted_class"]
+    existing: pd.DataFrame = (
+        _normalize_dates(predictions_df)
+        if not predictions_df.empty
+        else pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
     )
 
     expected_keys = _expected_symbol_dates(scores_df)
     if not expected_keys:
         return existing
 
-    present_keys = set()
+    present_keys: set[tuple[str, pd.Timestamp]] = set()
     if not existing.empty:
         present_keys = {
             (str(row["symbol"]), row["trade_date"])
@@ -160,7 +231,7 @@ def prepare_predictions_for_ml_mode(
         return existing
 
     if ml_mode == "auto":
-        LOGGER.warning(
+        LOGGER.warning(  # type: ignore[arg-type]
             "ML mode=auto — %s prédiction(s) manquante(s), continuation sans ML pour ces lignes.",
             len(missing_keys),
         )
@@ -175,18 +246,17 @@ def prepare_predictions_for_ml_mode(
     )
     rebuilt_frames: list[pd.DataFrame] = []
     failed = 0
-    for symbol, trade_date in missing_keys:
+    for symbol, trade_key in missing_keys:
+        normalized_trade_date = pd.Timestamp(trade_key).date()
         try:
-            pred = predict_symbol(
+            pred_df = _rebuild_prediction_frame(
                 symbol=symbol,
+                trade_date=normalized_trade_date,
                 artifacts_dir=artifacts_dir,
                 engine=engine,
-                prediction_date=trade_date,
-                as_of_date=trade_date,
-                persist=True,
             )
-            if pred is not None and not pred.empty:
-                rebuilt_frames.append(pred.rename(columns={"prediction_date": "trade_date"}))
+            if not pred_df.empty:
+                rebuilt_frames.append(pred_df)
             else:
                 failed += 1
         except Exception:
@@ -194,16 +264,14 @@ def prepare_predictions_for_ml_mode(
             LOGGER.warning(
                 "Échec reconstruction prediction symbol=%s date=%s — fallback sans ML.",
                 symbol,
-                trade_date,
+                normalized_trade_date,
                 exc_info=True,
             )
 
     if rebuilt_frames:
-        rebuilt_df = pd.concat(rebuilt_frames, ignore_index=True)
+        rebuilt_df = _ensure_dataframe(pd.concat(rebuilt_frames, ignore_index=True))
         rebuilt_df = _normalize_dates(rebuilt_df)
-        existing = pd.concat([existing, rebuilt_df], ignore_index=True).drop_duplicates(
-            subset=["symbol", "trade_date"], keep="last"
-        )
+        existing = _merge_prediction_frames(existing, rebuilt_df)
 
     if failed > 0:
         LOGGER.warning(

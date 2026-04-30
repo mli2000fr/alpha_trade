@@ -2,6 +2,8 @@
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
+import pandas as pd
+
 from event_sentiment.aggregation import build_sector_daily_features, build_ticker_daily_features
 from event_sentiment.ingestion import NewsIngestionService
 from event_sentiment.macro_rules import MacroRuleEngine
@@ -21,6 +23,7 @@ class EventSentimentPipeline:
             model_version=config.finbert_model_version,
             batch_size=config.finbert_batch_size,
             max_length=config.finbert_max_length,
+            model_revision=getattr(config, "finbert_model_revision", None),
         )
         self.macro_engine = MacroRuleEngine(rule_version=config.macro_rule_version)
 
@@ -169,7 +172,13 @@ class EventSentimentPipeline:
             len(resolved_symbols),
         )
 
-        stats: dict[str, object] = {}
+        stats: dict[str, object] = {
+            "resolved_symbols": len(resolved_symbols),
+            "start_utc": aggregation_start.isoformat(),
+            "end_utc": end_utc.isoformat(),
+            "symbol_source": "explicit" if symbols is not None else "candidates",
+            "resume_from_checkpoints": start_utc is None,
+        }
         if resolved_symbols:
             stats["ingestion"] = self.ingestion.run(
                 start_utc=None,
@@ -206,7 +215,17 @@ class EventSentimentPipeline:
 
         sentiment_records = self.finbert.score_articles(articles)
         stats["sentiment_inferred"] = self.repository.upsert_news_sentiment([asdict(record) for record in sentiment_records])
+        stats["finbert_model_fingerprint"] = getattr(self.finbert, "model_fingerprint", None)
         sentiment_map = {record.article_id: record for record in sentiment_records}
+        impacted_trade_dates = sorted(
+            {
+                article.effective_trade_date
+                for article in articles
+                if article.article_id in sentiment_map
+            }
+        )
+        stats["pending_articles_loaded"] = len(articles)
+        stats["impacted_trade_dates"] = [trade_date.isoformat() for trade_date in impacted_trade_dates]
         macro_records = []
         for article in articles:
             sentiment = sentiment_map.get(article.article_id)
@@ -215,13 +234,35 @@ class EventSentimentPipeline:
             macro_records.extend(self.macro_engine.classify(article, sentiment))
 
         stats["macro_rows"] = self.repository.upsert_macro_event_audit([asdict(record) for record in macro_records])
-        ticker_df, sector_df, macro_df = self.repository.load_feature_frames(
-            start_date=aggregation_start.date(),
-            end_date=end_utc.date() + timedelta(days=5),
-        )
+        if impacted_trade_dates:
+            impacted_date_set = set(impacted_trade_dates)
+            feature_window_start = min(impacted_trade_dates) - timedelta(days=self.config.feature_history_buffer_days)
+            feature_window_end = max(impacted_trade_dates)
+            stats["feature_window_start"] = feature_window_start.isoformat()
+            stats["feature_window_end"] = feature_window_end.isoformat()
+            ticker_df, sector_df, macro_df = self.repository.load_feature_frames(
+                start_date=feature_window_start,
+                end_date=feature_window_end,
+            )
+        else:
+            ticker_df = pd.DataFrame()
+            sector_df = pd.DataFrame()
+            macro_df = pd.DataFrame()
 
-        ticker_features = build_ticker_daily_features(ticker_df, feature_version=self.config.feature_version)
-        sector_features = build_sector_daily_features(sector_df, macro_df, feature_version=self.config.feature_version)
+        ticker_features = build_ticker_daily_features(
+            ticker_df,
+            feature_version=self.config.feature_version,
+            rolling_windows=self.config.feature_rolling_windows,
+        )
+        sector_features = build_sector_daily_features(
+            sector_df,
+            macro_df,
+            feature_version=self.config.feature_version,
+            rolling_windows=self.config.feature_rolling_windows,
+        )
+        if impacted_trade_dates:
+            ticker_features = ticker_features[ticker_features["trade_date"].isin(impacted_date_set)].copy()
+            sector_features = sector_features[sector_features["trade_date"].isin(impacted_date_set)].copy()
         stats["ticker_day_rows"] = self.repository.upsert_ticker_daily_features(ticker_features.to_dict(orient="records"))
         stats["sector_day_rows"] = self.repository.upsert_sector_daily_features(sector_features.to_dict(orient="records"))
         LOGGER.info("Event sentiment pipeline summary | stats=%s", stats)

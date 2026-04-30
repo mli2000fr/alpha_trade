@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections import Counter
 from datetime import date, datetime
 
 from common.utils import configure_root_logging
+from core.run_summary import attach_schema_version
+from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from risk_management.audit import build_run_id, persist_decisions, persist_portfolio_targets
+from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.db_io import RiskRepository
 from risk_management.models import PortfolioEntry
@@ -68,22 +72,50 @@ def main(args: list[str] | None = None) -> None:
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
 
+    started_at = datetime.now()
+
     trade_date = datetime.strptime(args.trade_date, "%Y-%m-%d").date() if args.trade_date else date.today()
 
-    # --- Intégration corporate_actions : enrichir equity avec dividendes cumulés ---
-    effective_equity = args.account_equity
-    try:
-        from corporate_actions.db_io import CorporateActionRepository
-        ca_repo = CorporateActionRepository()
-        total_dividends = ca_repo.get_total_dividends()
-        if total_dividends > 0:
-            effective_equity += total_dividends
-            LOGGER.info(
-                "Dividendes cumules ajoutes a l'equity | dividendes=%.2f equity_base=%.2f equity_effective=%.2f",
-                total_dividends, args.account_equity, effective_equity,
+    repo = RiskRepository()
+    account_snapshot = repo.load_account_risk_snapshot(args.account, trade_date)
+    equity_breakdown = repo.load_account_equity_breakdown(args.account, trade_date)
+    if account_snapshot is None:
+        if args.dry_run:
+            effective_equity = float(args.account_equity)
+            pnl_snapshot = PnLSnapshot(
+                portfolio_high_watermark=effective_equity,
+                portfolio_current_value=effective_equity,
+                daily_pnl=0.0,
             )
-    except Exception as exc:
-        LOGGER.warning("Impossible de charger les dividendes cumules (corporate_actions) : %s", exc)
+            LOGGER.warning(
+                "Aucun account_risk_snapshot pour account=%s date=%s ; fallback dry-run sur --account-equity=%.2f.",
+                args.account or "default",
+                trade_date,
+                effective_equity,
+            )
+        else:
+            raise RuntimeError(
+                f"Aucun account_risk_snapshot disponible pour account={args.account or 'default'} au {trade_date}."
+            )
+    else:
+        effective_equity = float(account_snapshot.equity)
+        daily_pnl = account_snapshot.daily_total_pnl
+        if daily_pnl is None:
+            realized = account_snapshot.daily_realized_pnl or 0.0
+            unrealized = account_snapshot.daily_unrealized_pnl or 0.0
+            daily_pnl = realized + unrealized
+        pnl_snapshot = PnLSnapshot(
+            portfolio_high_watermark=account_snapshot.high_watermark,
+            portfolio_current_value=account_snapshot.equity,
+            daily_pnl=daily_pnl,
+        )
+        LOGGER.info(
+            "Account snapshot charge | account=%s snapshot_trade_date=%s equity=%.2f buying_power=%.2f",
+            account_snapshot.account_id,
+            account_snapshot.trade_date,
+            account_snapshot.equity,
+            account_snapshot.buying_power,
+        )
 
     config = RiskConfig(
         account_equity=effective_equity,
@@ -102,30 +134,29 @@ def main(args: list[str] | None = None) -> None:
         prediction_weight=args.prediction_weight,
     )
 
-    repo = RiskRepository()
     LOGGER.info("Chargement des candidats…")
-    candidates = repo.load_candidates(config)
+    candidates = repo.load_candidates_asof(trade_date)
     LOGGER.info("Candidats charges : %d", len(candidates))
 
     symbols = [c.symbol for c in candidates]
     LOGGER.info("Chargement des prix et ATR…")
-    prices = repo.load_prices(symbols, atr_window=config.atr_window)
+    prices = repo.load_prices_asof(symbols, trade_date, atr_window=config.atr_window)
     LOGGER.info("Prix charges pour %d symboles.", len(prices))
 
     # --- V2 data loading ---
     LOGGER.info("Chargement des predictions ML…")
-    predictions = repo.load_predictions(symbols, trade_date)
+    predictions = repo.load_predictions_asof(symbols, trade_date)
     LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
 
     LOGGER.info("Chargement des win rates…")
-    win_rates = repo.load_win_rates(symbols)
+    win_rates = repo.load_win_rates_asof(symbols, trade_date)
     LOGGER.info("Win rates charges pour %d symboles.", len(win_rates))
 
     LOGGER.info("Chargement de la matrice de rendements…")
-    return_matrix = repo.load_return_matrix(symbols, config.correlation_lookback_days)
+    return_matrix = repo.load_return_matrix_asof(symbols, trade_date, config.correlation_lookback_days)
     LOGGER.info("Matrice de rendements : %s", return_matrix.shape if not return_matrix.empty else "vide")
 
-    builder = PortfolioBuilder(config)
+    builder = PortfolioBuilder(config, pnl=pnl_snapshot)
     entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
 
     run_id = build_run_id()
@@ -137,6 +168,82 @@ def main(args: list[str] | None = None) -> None:
         n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=args.account)
         n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=args.account)
         LOGGER.info("Ecrit %d decisions et %d cibles en DB.", n_dec, n_tgt)
+
+    accepted_entries = [entry for entry in entries if entry.approved_shares > 0 and str(entry.decision).upper() == "ACCEPTED"]
+    reduced_entries = [entry for entry in entries if entry.approved_shares > 0 and str(entry.decision).upper() == "REDUCED"]
+    rejected_entries = [entry for entry in entries if entry.approved_shares == 0]
+    retained_entries = [entry for entry in entries if entry.approved_shares > 0]
+    total_target_notional = sum(entry.target_notional for entry in retained_entries)
+    gross_exposure_pct = (total_target_notional / effective_equity) if effective_equity > 0 else 0.0
+    max_target_weight = max((entry.target_weight for entry in retained_entries), default=0.0)
+    sector_weights: dict[str, float] = {}
+    for entry in retained_entries:
+        sector_weights[entry.sector] = sector_weights.get(entry.sector, 0.0) + entry.target_weight
+    max_sector_weight_realized = max(sector_weights.values(), default=0.0)
+    total_initial_risk_dollars = sum(float(entry.initial_risk_dollars or 0.0) for entry in retained_entries)
+    total_risk_budget_dollars = sum(float(entry.risk_budget_dollars or 0.0) for entry in retained_entries)
+    atr_available_symbols = sum(1 for entry in entries if entry.atr_20 is not None and entry.atr_20 > 0)
+    prediction_available_symbols = sum(1 for entry in entries if entry.predicted_proba is not None)
+    atr_coverage_pct = (atr_available_symbols / len(entries)) if entries else 0.0
+    prediction_coverage_pct = (prediction_available_symbols / len(entries)) if entries else 0.0
+    rejection_reason_counts = dict(Counter(str(entry.decision_reason or "").strip() or "UNKNOWN" for entry in rejected_entries))
+    finished_at = datetime.now()
+    summary = {
+        "run_id": run_id,
+        "trade_date": trade_date.isoformat(),
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "targeted_symbols": len(entries),
+        "accepted_symbols": len(accepted_entries),
+        "reduced_symbols": len(reduced_entries),
+        "rejected_symbols": len(rejected_entries),
+        "target_positions": len(retained_entries),
+        "total_target_shares": int(sum(entry.approved_shares for entry in retained_entries)),
+        "total_target_notional": round(total_target_notional, 2),
+        "gross_exposure_pct": round(gross_exposure_pct, 4),
+        "max_target_weight": round(max_target_weight, 4),
+        "max_sector_weight_realized": round(max_sector_weight_realized, 4),
+        "total_initial_risk_dollars": round(total_initial_risk_dollars, 2),
+        "total_risk_budget_dollars": round(total_risk_budget_dollars, 2),
+        "atr_available_symbols": atr_available_symbols,
+        "prediction_available_symbols": prediction_available_symbols,
+        "atr_coverage_pct": round(atr_coverage_pct, 4),
+        "prediction_coverage_pct": round(prediction_coverage_pct, 4),
+        "rejection_reason_counts": rejection_reason_counts,
+        "dry_run": bool(config.dry_run),
+        "effective_equity": round(float(effective_equity), 2),
+        "account_equity": round(float(args.account_equity), 2),
+        "account_snapshot_trade_date": account_snapshot.trade_date.isoformat() if account_snapshot is not None else None,
+        "circuit_breaker_active": CircuitBreaker(config, pnl_snapshot).is_active(),
+        # Phase 5.1.a — décomposition equity (cash + positions + dividendes ledger)
+        "account_equity_breakdown": equity_breakdown,
+        # Phase 5.1.b — pondérations conviction unifiées via core.conviction
+        "conviction_weights": {
+            "score_weight": float(config.score_weight),
+            "prediction_weight": float(config.prediction_weight),
+            "source": "core.conviction",
+        },
+        # Phase 5.1.c — placeholder calibration (cf. backlog Phase 7)
+        "conviction_weights_calibration": {
+            "source": "default",
+            "calibration_run_id": None,
+        },
+    }
+    summary = attach_schema_version(summary, version=1)
+    persist_run_business_summary(
+        summary=summary,
+        step_key="risk_management",
+        run_kind="step",
+        status="completed",
+        summary_run_id=run_id,
+        entity_run_id=run_id,
+        account_id=args.account,
+        trade_date=trade_date,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+    emit_run_summary(summary)
 
 
 if __name__ == "__main__":

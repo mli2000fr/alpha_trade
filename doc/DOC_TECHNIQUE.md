@@ -11,14 +11,16 @@
 ```
 alpha_trade/
 ├── run_execution.py              ← Point d'entrée principal (CLI interactif ou arguments)
+├── run_execution_protection_watch.py ← Point d'entrée opérateur du watcher post-exécution
 ├── pyproject.toml                ← Config build, dépendances, ruff, mypy
 ├── requirements.txt / -dev.txt   ← Dépendances runtime et dev
 ├── config.yaml                   ← Configuration centralisée YAML (DB, Alpaca, risk)
 ├── alembic.ini + alembic/        ← Migrations de schéma DB (Alembic)
 ├── mypy.ini / pytest.ini         ← Config mypy et pytest (cov ≥ 60%)
 ├── README.md                     ← Documentation rapide + ordre d'exécution
-├── DOC_FONCTIONNELLE.md          ← Documentation fonctionnelle complète
-├── DOC_TECHNIQUE.md              ← Ce document
+├── doc/
+│   ├── DOC_FONCTIONNELLE.md      ← Documentation fonctionnelle complète
+│   └── DOC_TECHNIQUE.md          ← Ce document
 ├── core/interfaces.py            ← Contrats (Protocol) : PriceRepository, RiskChecker, etc.
 ├── common/utils.py               ← Calendrier NYSE, RotatingFileHandler, load_config()
 ├── database/                     ← Persistance MySQL (SQLAlchemy + pymysql)
@@ -33,7 +35,8 @@ alpha_trade/
 ├── event_sentiment/              ← Pipeline NLP : news → FinBERT → agrégation → fusion
 ├── modelFactory/                 ← LSTM + Temporal Attention (Lightning)
 ├── risk_management/              ← Sizing, contraintes, circuit breaker, portefeuille cible
-├── execution_engine/             ← OMS/EMS : ordres, polling, bracket, réconciliation, TCA
+├── execution_engine/             ← Exécution canonique : targets snapshot, requests, ordres broker, fills observés, positions/lots, réconciliation, TCA, watcher post-exécution secondaire
+├── scripts/windows/              ← Packaging Windows : launcher, Task Scheduler, NSSM, secret store, bridge read-only
 ├── corporate_actions/            ← Corporate actions : dividendes, splits, audit, cash ledger
 ├── ihm/                          ← IHM opérateur Streamlit (dashboard de supervision)
 ├── artifacts/models/             ← Checkpoints PyTorch
@@ -53,9 +56,9 @@ alpha_trade/
 | `screener/` | Scores de base (liquidité, RSI relatif, range historique) |
 | `selector/` | Scoring avancé (Minervini, VCP, neutralisation sectorielle) + profils de filtres stricts partagés |
 | `event_sentiment/` | NLP FinBERT + fusion scores quant/sentiment |
-| `modelFactory/` | Entraînement/prédiction LSTM per-symbol |
+| `modelFactory/` | Gouvernance ML multi-modèles : LSTM per-symbol, challengers tabulaires locaux, modèle global optionnel, sélection du champion et serving d'inférence |
 | `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
-| `execution_engine/` | OMS/EMS complet (10 phases) |
+| `execution_engine/` | Chaîne canonique d'exécution (requests, ordres broker, fills, positions/lots, réconciliation) + watcher post-exécution secondaire |
 | `corporate_actions/` | Gestion dividendes, splits, reverse splits (audit + comptabilité portefeuille) |
 | `backtesting/` | Backtest intégré vectorbt : replay signaux conviction, bracket TP/TS, métriques, equity curve |
 | `ihm/` | IHM Streamlit : supervision pipeline, scores, risque, exécution, CA |
@@ -72,7 +75,7 @@ alpha_trade/
 3. Build intents + déduplication par idempotency_key + filtrage capital/PDT/cash/swing
 4. Submit entries (avec retry réseau, kill switch, throttle batch)
 5. Poll fills (polling broker jusqu'à terminal state)
-6. Submit children (synthetic bracket : TP limit + TS trailing), avec report possible en cas de `swing_only` / `PDT`
+6. Submit children / protections broker-side (stop initial + take-profit ; promotion trailing éventuelle via watcher secondaire), avec report possible en cas de `swing_only` / `PDT`
 7. *(phase réservée)*
 8. Réconciliation (positions broker vs cibles, rebalance optionnel)
 9. TCA (slippage, implementation shortfall)
@@ -95,19 +98,33 @@ Points d'implémentation importants :
 
 **`LSTMAttentionModule`** (`modelFactory/model.py`) — LightningModule : LSTM multi-couche + Temporal Attention (soft-attention axe temporel) + classification binaire (CrossEntropyLoss). Métriques : BinaryAccuracy, BinaryPrecision, BinaryRecall, BinaryAUROC.
 
-**`train_symbol()` / `predict_symbol()`** (`modelFactory/trainer.py`, `modelFactory/predictor.py`) — services d'entraînement et d'inférence par symbole. Les deux chemins supportent désormais `accelerator=auto|cpu|gpu` :
+**`train_symbol()` / `predict_symbol()`** (`modelFactory/trainer.py`, `modelFactory/predictor.py`) — services d'entraînement et d'inférence par symbole. Ils ne se limitent plus au LSTM : `train_symbol()` peut désormais produire un manifeste d'artefacts multi-backends (`lstm_attention`, `lightgbm`, `catboost`, `global_model`) et `predict_symbol()` route vers le backend réellement sélectionné. Les deux chemins supportent `accelerator=auto|cpu|gpu` :
 
 - `train` s'appuie sur Lightning et résout `cuda:0` si disponible ;
 - `predict` charge explicitement le checkpoint sur `cuda:0` en mode `auto`/`gpu` lorsque CUDA est disponible, sinon retombe sur CPU ;
 - les logs du module ML journalisent le `requested_accelerator`, le `resolved_device` et le `device_name` effectif.
 
+Points d'implémentation importants côté `modelFactory` :
+
+- `trainer.py` persiste `config.json` et `metrics.json` comme **manifeste d'inférence** et **rapport de gouvernance** par symbole ;
+- `tabular_baseline.py` persiste désormais les artefacts tabulaires locaux (`lightgbm_model.pkl`, `catboost_model.pkl`, calibrateurs associés) ;
+- `champion_selection.py` n'autorise un champion que s'il est **réellement inférable** (backend + chemins artefacts présents) ;
+- `predictor.py` sait router vers `lstm_attention`, `lightgbm_tabular`, `catboost_tabular` et `global_tabular` ;
+- la base MySQL reste volontairement **résumée** : la gouvernance détaillée des challengers vit surtout dans les artefacts disque.
+
 **`BrokerAdapter`** (`execution_engine/broker_adapter.py`) — Couche d'isolation broker : traduit `OrderIntent` → payload Alpaca → `BrokerOrder`. Expose aussi le snapshot de compte (`equity`, `buying_power`, `cash`, `non_marginable_buying_power`, `daytrade_count`) utilisé pour appliquer les contraintes `margin/cash/PDT` côté exécution. Seul fichier à modifier pour changer de broker.
+
+**`ProtectionTransitionWatcher`** / **`ProtectionWatcherService`** (`execution_engine/protection_watcher.py`) — Watcher post-exécution secondaire chargé de surveiller les protections créées par `Execution` et, si ce mode est activé, de promouvoir les stops initiaux vers un trailing stop dynamique selon les conditions métier. `ProtectionWatcherService` encapsule la boucle persistante, les heartbeats, la persistance de santé dans `run_business_summaries` et les garde-fous de résilience.
+
+**`watcher_runtime`** (`ihm/services/watcher_runtime.py`) — Couche IHM de pilotage local du watcher. Elle construit les commandes `once` / `service`, lance les processus managés par `process_registry`, expose l'historique dédié et sépare explicitement le pilotage local IHM du packaging Windows machine-wide.
+
+**`windows_watcher_bridge`** (`ihm/services/windows_watcher_bridge.py`) — Bridge IHM → PowerShell strictement allowlisté. Il n'expose que des opérations read-only sur Windows : lecture du statut watcher, inventaire des sources de logs détectables et import borné de ces logs.
 
 **`CircuitBreaker`** (`risk_management/circuit_breaker.py`) — Suspend le trading si drawdown ≥ 15% ou perte daily ≥ 5%.
 
-**`OcoManager`** (`execution_engine/oco_manager.py`) — Gestion OCO synthétique : quand un enfant bracket est FILLED, annule le sibling.
+**`OcoManager`** (`execution_engine/oco_manager.py`) — Gestion OCO logique : quand une protection enfant est `FILLED`, annule le sibling.
 
-**`CorporateActionEngine`** (`corporate_actions/engine.py`) — Orchestrateur corporate actions en 2 phases : `sync()` (ingestion provider → DB) et `apply()` (application idempotente sur positions). Stratégie : les OHLCV restent gérés par Alpaca (`adjustment="all"`), ce module gère uniquement la comptabilité portefeuille (qty, cost basis, cash). La sync résout par défaut l'univers depuis `stock_metadata` (`status='active'`, `tradable=1`, `bars_available=1`), puis interroge Alpaca par lots configurables (`batch_size`, défaut 25) avec persistance immédiate en base après chaque lot.
+**`CorporateActionEngine`** (`corporate_actions/engine.py`) — Orchestrateur corporate actions en 2 phases : `sync()` (ingestion provider → DB) et `apply()` (application idempotente sur positions). Stratégie : les OHLCV restent gérés par Alpaca avec la convention projet `adjustment="split"`, ce module gère uniquement la comptabilité portefeuille (qty, cost basis, cash). La sync résout par défaut l'univers depuis `stock_metadata` (`status='active'`, `tradable=1`, `bars_available=1`), puis interroge Alpaca par lots configurables (`batch_size`, défaut 25) avec persistance immédiate en base après chaque lot.
 
 **`AlpacaCorporateActionProvider`** (`corporate_actions/provider.py`) — Provider abstrait pour l'ingestion des dividendes et splits depuis l'API Alpaca Corporate Actions (`v1/corporate-actions`). Gère pagination (`next_page_token`), tri `asc`, `limit=1000`, retry réseau/HTTP, et retry spécifique aux timeouts sur le modèle de `fetch_bars` du client Alpaca. Extensible vers Polygon, Finnhub, etc.
 
@@ -197,6 +214,12 @@ Points d'implémentation importants :
 | `ALPACA_<ID>_MODE` | ⚠️ | Mode du compte (paper/live, défaut: paper) |
 | `FINNHUB_API_KEY` | ⚠️ | Token Finnhub (ou `CLE_FINNHUB`) — requis pour `update_sector` |
 
+Pour le watcher Windows, ces variables peuvent être injectées via :
+
+- environnement de la session ;
+- fichier `.env` ;
+- secret store DPAPI chargé par `scripts/windows/protection_watcher_launcher.ps1`.
+
 ### 4.2 Configuration multi-comptes (`config.yaml`)
 
 Le fichier `config.yaml` permet de déclarer plusieurs comptes Alpaca :
@@ -230,13 +253,41 @@ alpaca:
 - **SGBD** : MySQL 8.x, base `alpha_trade`, host `localhost`, charset `utf8mb4`
 - **Pool** : `pool_size=2`, `max_overflow=3`, `pool_pre_ping=True`, `pool_recycle=3600`
 
+### 4.5 Supervision Windows read-only
+
+Le packaging Windows du watcher repose sur un script de supervision dédié :
+
+- `scripts/windows/get_protection_watcher_status.ps1`
+
+Ce script :
+
+- interroge la tâche planifiée watcher ;
+- interroge le service Windows / NSSM watcher ;
+- remonte les chemins `stdout` / `stderr` détectables ;
+- retourne un JSON structuré ;
+- n'exécute aucune action `start/stop/install/remove`.
+
+Payload fonctionnel remonté :
+
+- bloc `task` : `exists`, `state`, `enabled`, `lastRunTime`, `nextRunTime`, `lastTaskResult`, `stdoutPath`, `stderrPath`, `actionArguments` ;
+- bloc `service` : `exists`, `status`, `startType`, `displayName`, `stdoutPath`, `stderrPath` ;
+- bloc `logSources` : sources importables `Task Scheduler stdout/stderr`, `NSSM stdout/stderr` quand détectables.
+
+Le bridge Python impose plusieurs garde-fous :
+
+- allowlist stricte (`status` uniquement à ce stade) ;
+- exécution limitée à Windows (`os.name == "nt"`) ;
+- timeout PowerShell ;
+- absence d'arguments libres pour des scripts non allowlistés ;
+- aucun start/stop/install/remove exposé.
+
 ### 4.4 Tables SQL (`database/sql/`)
 
-- **stock/** : `stock_metadata`, `stock_bars`, `stock_bars_daily`, `stock_scores`, `stock_scores_history`, `stock_quote_snapshots`, `stock_earnings_calendar`, `cleaning_audit_log`
+- **stock/** : `stock_metadata`, `stock_bars`, `stock_bars_daily`, `stock_scores`, `stock_scores_history`, `stock_quote_snapshots`, `stock_earnings_calendar`, `cleaning_audit_latest`, `cleaning_audit_runs`
 - **news/** : `news_raw`, `news_sentiment`, `news_ticker_map`, `macro_event_audit`, `ticker_daily_sentiment_features`, `sector_daily_sentiment_features`, `news_ingestion_checkpoint`
 - **ml/** : `model_registry`, `model_training_run`, `model_metrics`, `model_predictions`
 - **risk/** : `risk_decisions` ★, `portfolio_targets` ★
-- **execution/** : `execution_runs` ★, `execution_orders`, `execution_fills`, `execution_events`, `broker_positions_snapshots` ★
+- **execution/** : `execution_runs` ★, `execution_targets_snapshot` ★, `execution_order_requests` ★, `execution_broker_orders`, `execution_broker_fills`, `execution_positions` ★, `execution_position_lots` ★, `execution_reconciliation_results` ★, `execution_locks` ★, `execution_events`, `broker_account_snapshots` ★, `broker_positions_snapshots` ★
 - **corporate_actions/** : `corporate_actions_events`, `corporate_actions_applications` ★, `portfolio_cash_ledger` ★
 
 > ★ = tables avec colonne `account_id VARCHAR(32)` pour le support multi-comptes. Migration : `database/sql/migration_add_account_id.sql` ou Alembic `0002_add_account_id`.
@@ -282,6 +333,76 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 - Sortie : stdout + **RotatingFileHandler** (`alpha_trade.log`, 5 Mo, 3 backups)
 - Fonction utilitaire : `common.utils.setup_logging_with_file_handler()`
 
+### 5.5 Flux techniques `modelFactory`
+
+#### Entraînement (`python -m modelFactory --mode train`)
+
+1. résolution de l'univers depuis `--symbols` ou `stock_scores.is_candidate=1` ;
+2. chargement des bars, benchmark, sentiment et univers selon les options activées ;
+3. entraînement du `LSTMAttentionModule` ;
+4. calibration / optimisation de seuil côté LSTM ;
+5. entraînement optionnel des challengers locaux `LightGBM` et `CatBoost` ;
+6. entraînement optionnel du `global_model` ;
+7. construction des `artifact_routes` par symbole ;
+8. évaluation de l'éligibilité de chaque backend ;
+9. sélection du champion servi (`default`, `fallback_default_champion` ou `auto_selected_champion`) ;
+10. persistance des artefacts sur disque et des résumés DB.
+
+#### Inférence (`python -m modelFactory --mode predict`)
+
+1. résolution `config.json` / artefacts ;
+2. lecture de `artifact_routes.selected_model` ;
+3. routage du backend effectivement servi ;
+4. rechargement PIT-safe des données jusqu'à `prediction_date` / `as_of_date` ;
+5. génération des features ;
+6. calcul de `predicted_proba` et `predicted_class` ;
+7. insertion dans `model_predictions` si `persist=True`.
+
+#### Limite DB actuelle
+
+`model_predictions` ne persiste aujourd'hui que :
+
+- `symbol`
+- `prediction_date`
+- `predicted_proba`
+- `predicted_class`
+- `run_id`
+
+Le détail de serving (`selected_model`, `decision_threshold`, `signal_label`, `calibration_method`) est présent dans les résultats en mémoire et les artefacts, mais pas encore dans le schéma SQL.
+
+### 5.6 Flux technique du watcher post-exécution
+
+Positionnement technique :
+
+- le watcher ne s'exécute pas avant le pipeline 1→11 ;
+- il devient pertinent **après** `run_execution.py` / l'étape 12 `execution` ;
+- il peut tourner en parallèle des étapes 13 et 14 `corporate_actions_*`.
+
+Séquence type :
+
+1. `Execution` écrit `execution_runs`, fige `execution_targets_snapshot`, persiste `execution_order_requests`, `execution_broker_orders`, `execution_broker_fills`, `execution_events` et les instantanés broker ;
+2. le watcher lit les ordres/protections en attente depuis le repository d'exécution ;
+3. il vérifie les conditions de transition stop initial → trailing stop ;
+4. il annule / soumet les ordres broker nécessaires ;
+5. il persiste un résumé métier `execution_protection_watch` ou `execution_protection_watch_service` ;
+6. l'IHM `Supervision Ops` lit ensuite ces résumés, les logs IHM locaux et, côté Windows, le statut read-only de Task Scheduler / NSSM.
+
+Points d'entrée principaux :
+
+```powershell
+python run_execution_protection_watch.py --mode once --account default
+python run_execution_protection_watch.py --mode service --account default
+```
+
+Packaging Windows :
+
+- `scripts/windows/protection_watcher_launcher.ps1` : bootstrap `.env` / DPAPI / Python ;
+- `scripts/windows/install_protection_watcher_task.ps1` : mode `once` périodique ;
+- `scripts/windows/install_protection_watcher_service_nssm.ps1` : service persistant ;
+- `scripts/windows/get_protection_watcher_status.ps1` : supervision read-only.
+
+Référence dédiée : voir aussi `doc/watcher.md`.
+
 ---
 
 ## 6. Sécurité
@@ -317,7 +438,7 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 | ~~Pas de handler fichier pour les logs (stdout seul)~~ → ✅ RotatingFileHandler ajouté | ~~P1~~ |
 | ~~Import dynamique `risk_management` dans `executor.py` (couplage runtime)~~ → ✅ Circuit breaker injecté via constructeur | ~~P2~~ |
 | ~~Méthode `_make_entry` V1 inutilisée dans `portfolio_builder.py`~~ → ✅ Supprimée (seul `_make_entry_v2` reste) | ~~P2~~ |
-| Dossier `prompt/` (fichiers non structurés, hors code) | P3 |
+| `prompt/execution/` : historique audit → plan → sprints → cutover désormais structuré ; homogénéisation du reste de `prompt/` encore perfectible | P3 |
 | ~~`configure_optimizers()` sans type hint dans `model.py`~~ → ✅ Type hint `-> torch.optim.Optimizer` ajouté | ~~P3~~ |
 | ~~`corporate_actions*` absent de `pyproject.toml` packages.find.include~~ → ✅ Ajouté (`corporate_actions*`, `ihm*`) | ~~P1~~ |
 
@@ -365,28 +486,32 @@ $env:FINNHUB_API_KEY = "..."   # optionnel
 
 ### Créer les tables
 
-Exécuter les `.sql` de `database/sql/` dans MySQL (stock/ → news/ → ml/ → risk/ → execution/ → corporate_actions/).
+Utiliser le bundle SQL cible de `database/sql/` (stock/ → news/ → ml/ → risk/ → execution/ → corporate_actions/), par exemple via `database/sql/all_tables.py`.
+
+Dans le périmètre `execution/`, le cutover canonique n'installe plus les anciens fichiers `execution_orders.sql` et `execution_fills.sql` : le bootstrap cible repose désormais sur `execution_targets_snapshot`, `execution_order_requests`, `execution_broker_orders`, `execution_broker_fills`, `execution_positions`, `execution_position_lots`, `execution_reconciliation_results`, `execution_locks`, `execution_events`, `broker_account_snapshots` et `broker_positions_snapshots`.
 
 ### Pipeline complet
 
 ```powershell
-# Init (une fois)
+# Init (une fois) — correspond dans l'IHM aux steps auxiliaires Data Integrity hors workflow quotidien :
 python -m dataIntegrityEngine.import_alpaca_assets
 python -m dataIntegrityEngine.update_sector
 
-# Quotidien — dans cet ordre strict :
-python -m dataIntegrityEngine.import_alpaca_bar         # 1.  import bars
-python -m dataIntegrityEngine.data_sanitizer_daily       # 2.  sanitize bars
-python -m screener.stock_screener                        # 3.  screener
-python -m selector.alpha_scanner                         # 4.  alpha scanner
-python -m event_sentiment                                # 5.  sentiment pipeline
-python -m event_sentiment.signal_aggregator              # 6.  signal aggregator
-python -m modelFactory --mode train --include-sentiment --accelerator gpu --max-workers 1  # 7.  ML train périodique
-python -m modelFactory --mode predict --accelerator gpu  # 8.  ML predict quotidien
-python -m risk_management.run_risk --account-equity 100000  # 9.  risk management
-python run_execution.py simulate                         # 10. execution (ou paper / live)
-python -m corporate_actions sync --portfolio-only        # 11. sync CA sur positions détenues
-python -m corporate_actions apply                        # 12. appliquer CA sur positions
+# Quotidien — workflow IHM 1 → 14, dans cet ordre strict :
+python -m dataIntegrityEngine.import_alpaca_bar           # 1.  import bars
+python -m dataIntegrityEngine.data_sanitizer_daily        # 2.  sanitize bars
+python -m screener.stock_screener                         # 3.  screener
+python -m dataIntegrityEngine.sync_latest_quotes          # 4.  snapshot quotes pour filtre de spread
+python -m dataIntegrityEngine.sync_earnings_calendar      # 5.  earnings blackout
+python -m selector.alpha_scanner                          # 6.  alpha scanner
+python -m event_sentiment                                 # 7.  sentiment pipeline
+python -m event_sentiment.signal_aggregator               # 8.  signal aggregator
+python -m modelFactory --mode train --include-sentiment --compare-lightgbm --enable-catboost --select-champion --optimize-thresholds --accelerator gpu --max-workers 1  # 9.  ML train périodique
+python -m modelFactory --mode predict --accelerator gpu   # 10. ML predict quotidien
+python -m risk_management.run_risk --account-equity 100000  # 11. risk management
+python run_execution.py simulate                          # 12. execution (ou paper / live)
+python -m corporate_actions sync --portfolio-only         # 13. sync CA sur positions détenues
+python -m corporate_actions apply                         # 14. appliquer CA sur positions
 
 # Pour cibler un compte spécifique (multi-comptes) :
 python -m risk_management.run_risk --account-equity 100000 --account live1
@@ -407,7 +532,44 @@ Notes ML GPU :
 python -m streamlit run ihm/app.py
 ```
 
-Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent un paramètre **Accélérateur ML** (`auto | cpu | gpu`). L'IHM détecte la disponibilité locale de CUDA et transmet `--accelerator <mode>` aux sous-processus `modelFactory` lancés en arrière-plan. Le workflow complet IHM insère désormais `python -m dataIntegrityEngine.sync_latest_quotes` puis `python -m dataIntegrityEngine.sync_earnings_calendar` avant `Alpha Scanner`, afin d'alimenter automatiquement `stock_quote_snapshots` et `stock_earnings_calendar`. L'étape `Alpha Scanner` n'expose plus de toggle de preset : `python -m selector.alpha_scanner` applique déjà le profil strict partagé.
+La page `ihm/pages/pipeline.py` expose désormais :
+
+- un **workflow quotidien complet 1 → 14** ;
+- une zone **Bootstrap / maintenance Data Integrity** hors workflow avec :
+  - `B1. Import univers Alpaca` → `python -m dataIntegrityEngine.import_alpaca_assets`
+  - `B2. Mise à jour fondamentaux` → `python -m dataIntegrityEngine.update_sector ...`
+- un **centre d'exécution & d'investigation** pour suivre les runs actifs, consulter/télécharger les logs et comparer deux runs ;
+- des **résumés métier structurés** extraits automatiquement quand un script écrit un payload préfixé par `::alpha_trade_run_summary::`.
+
+Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` exposent aussi un sous-ensemble cohérent des options `modelFactory` :
+
+- **Accélérateur ML** (`auto | cpu | gpu`) ;
+- inclusion du **sentiment** ;
+- activation des challengers **LightGBM** et **CatBoost** ;
+- activation optionnelle du **modèle global** ;
+- activation des **features cross-sectionnelles** ;
+- activation de la **sélection automatique du champion** ;
+- choix de la **métrique de sélection** ;
+- optimisation du **seuil de décision** ;
+- optimisation optionnelle de la **target**.
+
+Le bloc de paramètres Pipeline expose en plus les options `Data Integrity` réellement supportées côté backend :
+
+- `sync_latest_quotes` : `limit`, `batch-size` ;
+- `sync_earnings_calendar` : `from-date`, `to-date`, `limit`, `sleep-seconds` ;
+- `update_sector` : `limit`, `sleep-seconds`, `log-every`.
+
+`ML Predict` n'expose pas de choix de backend manuel : il réutilise le `selected_model` trouvé dans les artefacts du symbole.
+
+Le workflow complet IHM insère `python -m dataIntegrityEngine.sync_latest_quotes` puis `python -m dataIntegrityEngine.sync_earnings_calendar` avant `Alpha Scanner`, afin d'alimenter automatiquement `stock_quote_snapshots` et `stock_earnings_calendar`.
+
+L'étape `Alpha Scanner` n'expose plus de toggle de preset : `python -m selector.alpha_scanner` applique déjà le profil strict partagé.
+
+Enfin, les résumés métier capturés par l'IHM sont réexposés dans :
+
+- la page `Pipeline` (run individuel + workflow parent) ;
+- la page `Overview` (résumés récents) ;
+- la page `Screening` (contexte qualité amont).
 
 ### Backtesting
 

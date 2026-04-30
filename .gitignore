@@ -1,4 +1,5 @@
 # Exclusion des modèles générés automatiquement
+\.idea/*
 modelFactory/artifacts/models/
 artifacts/
 checkpoints/
@@ -7,4 +8,9 @@ test/
 ./*.ckpt
 ./*.log
 ./*.txt
+.env
+.env.*
+scripts/windows/protection_watcher.env
+scripts/windows/*.secrets.json
+!scripts/windows/protection_watcher.env.example
 

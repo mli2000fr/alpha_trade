@@ -12,7 +12,7 @@ from backtesting.backfill_scores_history import BackfillScoresHistoryService
 def _build_sqlite_engine():
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as conn:
-        conn.execute(text("CREATE TABLE stock_bars_daily (symbol TEXT, `date` DATE)"))
+        conn.execute(text("CREATE TABLE stock_bars_daily (symbol TEXT, `date` DATE, data_source TEXT DEFAULT 'eodhd_eod')"))
         conn.execute(text("CREATE TABLE stock_scores_history (snapshot_date DATE, symbol TEXT)"))
     return engine
 

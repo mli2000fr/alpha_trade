@@ -1,0 +1,214 @@
+﻿from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pandas as pd
+
+from ihm.services.screener_recommendations import (
+    build_screener_artifact_summary,
+    list_screener_csv_files,
+    load_screener_csv_preview,
+    load_screener_recommendation_report,
+)
+def test_load_screener_recommendation_report_reads_phase7_artifacts(tmp_path: Path) -> None:
+    (tmp_path / "metadata.json").write_text(
+        json.dumps(
+            {
+                "baseline_name": "baseline",
+                "trading_dates": ["2026-04-01", "2026-04-02", "2026-04-03"],
+                "market_regimes": ["bull", "bear"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "recommendation_summary_by_objective.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "available_objectives": ["robust", "offensive", "bear_defensive", "executable_compromise"],
+                "cross_regime_analysis_available": True,
+                "bear_market_data_available": True,
+                "objectives": {
+                    "robust": {
+                        "label": "robuste",
+                        "scope": "cross_regime",
+                        "description": "Privilégie la stabilité.",
+                        "recommended_scenario": {
+                            "scenario_name": "robusto",
+                            "rank": 1,
+                            "objective_score": 0.81,
+                            "overall_score": 0.74,
+                            "reason": "Bon pire cas cross-régimes.",
+                        },
+                    },
+                    "offensive": {
+                        "label": "offensif",
+                        "scope": "global",
+                        "recommended_scenario": {
+                            "scenario_name": "rocket",
+                            "rank": 1,
+                            "objective_score": 0.88,
+                            "overall_score": 0.69,
+                            "reason": "Upside forward dominant.",
+                        },
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "objective": "robust",
+                "objective_label": "robuste",
+                "objective_scope": "cross_regime",
+                "rank": 1,
+                "scenario_name": "robusto",
+                "objective_score": 0.81,
+                "overall_score": 0.74,
+                "objective_reason": "Bon pire cas cross-régimes.",
+            },
+            {
+                "objective": "offensive",
+                "objective_label": "offensif",
+                "objective_scope": "global",
+                "rank": 1,
+                "scenario_name": "rocket",
+                "objective_score": 0.88,
+                "overall_score": 0.69,
+                "objective_reason": "Upside forward dominant.",
+            },
+        ]
+    ).to_csv(tmp_path / "scenario_recommendations_by_objective.csv", index=False)
+    report = load_screener_recommendation_report(tmp_path)
+    assert report["available"] is True
+    assert report["coverage_label"] == "2026-04-01 → 2026-04-03 (3 séance(s))"
+    assert list(report["objective_rows_df"]["objective"]) == ["robust", "offensive"]
+    assert report["objective_rows_df"].iloc[0]["scenario_name"] == "robusto"
+    assert report["leaderboard_df"].iloc[1]["scenario_name"] == "rocket"
+def test_load_screener_recommendation_report_falls_back_to_csv_when_summary_missing(tmp_path: Path) -> None:
+    pd.DataFrame(
+        [
+            {
+                "objective": "executable_compromise",
+                "objective_label": "meilleur compromis exécutable",
+                "objective_scope": "global",
+                "rank": 1,
+                "scenario_name": "deployable",
+                "objective_score": 0.79,
+                "overall_score": 0.72,
+                "objective_reason": "Conversion portefeuille robuste.",
+            },
+            {
+                "objective": "robust",
+                "objective_label": "robuste",
+                "objective_scope": "cross_regime",
+                "rank": 1,
+                "scenario_name": "steady",
+                "objective_score": 0.77,
+                "overall_score": 0.75,
+                "objective_reason": "Stable sur tous les régimes.",
+            },
+        ]
+    ).to_csv(tmp_path / "scenario_recommendations_by_objective.csv", index=False)
+    report = load_screener_recommendation_report(tmp_path)
+    assert report["available"] is True
+    assert set(report["objective_rows_df"]["scenario_name"]) == {"deployable", "steady"}
+    assert any("recommendation_summary_by_objective.json" in error for error in report["errors"])
+
+
+def test_build_screener_artifact_summary_exposes_file_inventory_and_best_compromise(tmp_path: Path) -> None:
+    (tmp_path / "metadata.json").write_text(
+        json.dumps(
+            {
+                "baseline_name": "baseline",
+                "trading_dates": ["2026-04-01", "2026-04-02"],
+                "market_regimes": ["bull", "bear"],
+                "scenarios": [{"scenario_name": "baseline"}, {"scenario_name": "steady"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame([
+        {"scenario_name": "baseline", "days_evaluated": 2},
+        {"scenario_name": "steady", "days_evaluated": 2},
+    ]).to_csv(tmp_path / "summary_metrics.csv", index=False)
+    pd.DataFrame([
+        {"trade_date": "2026-04-01", "scenario_name": "baseline"},
+        {"trade_date": "2026-04-02", "scenario_name": "steady"},
+    ]).to_csv(tmp_path / "daily_metrics.csv", index=False)
+    pd.DataFrame([
+        {
+            "objective": "robust",
+            "objective_label": "robuste",
+            "objective_scope": "cross_regime",
+            "rank": 1,
+            "scenario_name": "steady",
+            "objective_score": 0.82,
+            "overall_score": 0.78,
+            "objective_reason": "Stable sur tous les régimes.",
+        }
+    ]).to_csv(tmp_path / "scenario_recommendations_by_objective.csv", index=False)
+    (tmp_path / "recommendation_summary.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "recommended_scenario": {
+                    "scenario_name": "steady",
+                    "rank": 1,
+                    "overall_score": 0.78,
+                    "robustness_score": 0.8,
+                    "survival_score": 0.76,
+                    "forward_quality_score": 0.74,
+                    "confidence_score": 0.91,
+                    "reason": "Compromis global.",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = build_screener_artifact_summary(tmp_path)
+
+    assert summary["available"] is True
+    assert summary["trading_days"] == 2
+    assert summary["scenario_count"] == 2
+    assert summary["objective_count"] == 1
+    assert summary["best_compromise"]["scenario_name"] == "steady"
+    assert any(file["label"] == "summary_metrics.csv" and file["row_count"] == 2 for file in summary["files"])
+
+
+def test_list_screener_csv_files_and_load_preview_limit_rows(tmp_path: Path) -> None:
+    pd.DataFrame(
+        [
+            {"scenario_name": "baseline", "days_evaluated": 2},
+            {"scenario_name": "steady", "days_evaluated": 2},
+            {"scenario_name": "offensive", "days_evaluated": 2},
+        ]
+    ).to_csv(tmp_path / "summary_metrics.csv", index=False)
+    pd.DataFrame(
+        [
+            {"trade_date": "2026-04-01", "scenario_name": "baseline"},
+            {"trade_date": "2026-04-02", "scenario_name": "steady"},
+        ]
+    ).to_csv(tmp_path / "daily_metrics.csv", index=False)
+
+    summary = build_screener_artifact_summary(tmp_path)
+    csv_files = list_screener_csv_files(tmp_path, summary=summary)
+    preview = load_screener_csv_preview(tmp_path, file_key="summary_metrics", max_rows=2, summary=summary)
+
+    assert [file_info["key"] for file_info in csv_files] == ["summary_metrics", "daily_metrics"]
+    assert preview["available"] is True
+    assert preview["selected_file"]["key"] == "summary_metrics"
+    assert preview["preview_rows"] == 2
+    assert preview["total_rows"] == 3
+    assert preview["truncated"] is True
+    assert list(preview["preview_df"]["scenario_name"]) == ["baseline", "steady"]
+
+

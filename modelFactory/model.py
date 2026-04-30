@@ -101,6 +101,10 @@ class LSTMAttentionModule(L.LightningModule):
         self.val_precision = BinaryPrecision()
         self.val_recall = BinaryRecall()
         self.val_auc = BinaryAUROC()
+        self.test_acc = BinaryAccuracy()
+        self.test_precision = BinaryPrecision()
+        self.test_recall = BinaryRecall()
+        self.test_auc = BinaryAUROC()
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         return self.net(x)
@@ -133,8 +137,15 @@ class LSTMAttentionModule(L.LightningModule):
 
     def test_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         loss, probs, y = self._shared_step(batch)
+        self.test_acc(probs, y)
+        self.test_precision(probs, y)
+        self.test_recall(probs, y)
+        self.test_auc(probs, y)
         self.log("test_loss", loss)
-        self.log("test_acc", self.val_acc(probs, y))
+        self.log("test_acc", self.test_acc)
+        self.log("test_precision", self.test_precision)
+        self.log("test_recall", self.test_recall)
+        self.log("test_auc", self.test_auc)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:  # type: ignore[override]
         return torch.optim.AdamW(

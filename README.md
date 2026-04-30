@@ -4,6 +4,34 @@ Plateforme Python de **trading algorithmique swing US** orientée production, co
 
 Le projet s'appuie principalement sur **Python 3.12**, **MySQL**, **SQLAlchemy**, **Alpaca**, **Finnhub**, **PyTorch/Lightning** et une **IHM Streamlit** pour la supervision opérateur.
 
+> ℹ️ **Conventions clés (Phase 1 refactor — `prompt/refactor/audit_global.md`)**
+>
+> - **Politique de prix : `data_adjustment = 'split'`** (canonique projet).
+>   Les splits sont neutralisés au niveau Alpaca ; les **dividendes** sont
+>   comptabilisés séparément via le ledger `portfolio_cash_ledger`. Une
+>   contrainte SQL `CHECK chk_bars_adj` / `chk_daily_adj` matérialise cette
+>   convention sur `stock_bars` / `stock_bars_daily`. Voir `doc/database.md` §9
+>   et `doc/dataIntegrityEngine.md`.
+>   - Performance totale (dividendes inclus) =
+>     `MTM(positions, stock_bars_daily.close) + cumulative(portfolio_cash_ledger)`
+>
+> - **Limites Alpaca free / IEX** : le feed gratuit IEX couvre ~2-3 % du volume
+>   consolidé US. `volume`, `vwap`, spreads `stock_quote_snapshots` sont
+>   biaisés ; les compteurs `symbols_zero_volume_30d`, `stale_quote_pct`,
+>   `stale_market_cap_pct` sont propagés dans tous les `run_summary`
+>   (helper `core.run_summary.merge_iex_bias_counters`). Voir le bandeau IEX
+>   dans `doc/dataIntegrityEngine.md`.
+>
+> - **Sécurité opérationnelle** :
+>   - `run_execution.py` en mode `paper` / `live` lève désormais une
+>     `RuntimeError` si `broker.get_account_equity()` échoue (plus de fallback
+>     silencieux à 100 000 $).
+>   - Le mode `live` exige la ressaisie exacte du label du compte broker.
+>   - Les secrets DB (`LOGIN_DB`, `PASSWORD_DB`) doivent être en variables
+>     d'environnement ; les valeurs sentinelles `pass`, `user`, `changeme`
+>     sont rejetées au démarrage. `config.yaml` n'utilise que des
+>     placeholders `${VAR}` (voir `core.secrets`).
+
 ---
 
 ## 1. Vue d'ensemble
@@ -30,7 +58,7 @@ Le pipeline couvre les besoins suivants :
 | `selector/` | `AlphaScanner` multi-facteurs et sélection finale |
 | `event_sentiment/` | Pipeline news, FinBERT, agrégations ticker / secteur |
 | `risk_management/` | Sizing, contraintes, circuit breaker, portefeuille cible |
-| `execution_engine/` | Exécution des ordres, fills, réconciliation, TCA |
+| `execution_engine/` | Exécution canonique : snapshot des targets, requests, ordres broker, fills observés, positions/lots, réconciliation, TCA ; watcher post-run secondaire |
 | `corporate_actions/` | Sync des événements et application sur les positions |
 | `modelFactory/` | Entraînement et prédiction LSTM par symbole |
 | `ihm/` | IHM Streamlit de supervision et de consultation |
@@ -119,32 +147,41 @@ python -m dataIntegrityEngine.data_sanitizer_daily
 # 3. Screening initial (liquidité, force relative, range historique)
 python -m screener.stock_screener
 
-# 4. Scoring avancé Minervini/VCP + neutralisation sectorielle
+# 4. Sync latest quotes pour le filtre de spread aval
+python -m dataIntegrityEngine.sync_latest_quotes
+
+# 5. Sync earnings calendar pour le blackout résultats aval
+python -m dataIntegrityEngine.sync_earnings_calendar
+
+# 6. Scoring avancé Minervini/VCP + neutralisation sectorielle
 python -m selector.alpha_scanner
 
-# 5. Pipeline news FinBERT + agrégats ticker/secteur
+# 7. Pipeline news FinBERT + agrégats ticker/secteur
 python -m event_sentiment
 
-# 6. Fusion quant + sentiment + macro → score final
+# 8. Fusion quant + sentiment + macro → score final
 python -m event_sentiment.signal_aggregator
 
-# 7. Entraînement LSTM (périodique — hebdomadaire recommandé)
+# 9. Entraînement LSTM (périodique — hebdomadaire recommandé)
 python -m modelFactory --mode train
 
-# 8. Prédiction LSTM → predicted_proba (quotidien)
+# 10. Prédiction LSTM → predicted_proba (quotidien)
 python -m modelFactory --mode predict
 
-# 9. Calcul du portefeuille cible (sizing, contraintes, circuit breaker)
+# 11. Calcul du portefeuille cible (sizing, contraintes, circuit breaker)
 python -m risk_management.run_risk --account-equity 100000
 
-# 10. Exécution des ordres (simulate | paper | live)
+# 12. Exécution canonique des ordres (simulate | paper | live)
 python run_execution.py simulate
 
-# 11. Sync corporate actions — uniquement les symboles détenus en portefeuille
+# 12.bis. Watcher post-run de protections (optionnel, supervision secondaire)
+python run_execution_protection_watch.py --mode once --account default
+
+# 13. Sync corporate actions — uniquement les symboles détenus en portefeuille
 #     (re-interroge Alpaca à chaque fois — pas de --skip-existing)
 python -m corporate_actions sync --portfolio-only
 
-# 12. Application des dividendes/splits sur les positions existantes
+# 14. Application des dividendes/splits sur les positions existantes
 python -m corporate_actions apply
 ```
 
@@ -155,18 +192,20 @@ python -m corporate_actions apply
 | 1 | `import_alpaca_bar` | Import barres OHLCV journalières Alpaca |
 | 2 | `data_sanitizer_daily` | Nettoyage, alignement calendrier, détection anomalies |
 | 3 | `stock_screener` | Scores liquidité / force relative / range |
-| 4 | `alpha_scanner` | Ranking Minervini/VCP, neutralisation sectorielle |
-| 5 | `event_sentiment` | News → FinBERT → features sentiment |
-| 6 | `signal_aggregator` | Fusion quant (75%) + sentiment (15%) + macro (10%) |
-| 7 | `modelFactory --mode train` | Entraînement LSTM+Attention *(périodique)* |
-| 8 | `modelFactory --mode predict` | Inférence → `predicted_proba` *(quotidien)* |
-| 9 | `run_risk` | Portefeuille cible, sizing ATR/Kelly, conviction ML+quant |
-| 10 | `run_execution.py` | Soumission ordres + snapshot positions broker |
-| 11 | `corporate_actions sync --portfolio-only` | Sync CA uniquement pour les positions détenues |
-| 12 | `corporate_actions apply` | Crédit dividendes + ajustement qty/cost basis splits |
+| 4 | `sync_latest_quotes` | Snapshot bid/ask pour le filtre de spread aval |
+| 5 | `sync_earnings_calendar` | Calendrier earnings pour blackout résultats |
+| 6 | `alpha_scanner` | Ranking Minervini/VCP, neutralisation sectorielle |
+| 7 | `event_sentiment` | News → FinBERT → features sentiment |
+| 8 | `signal_aggregator` | Fusion quant (75%) + sentiment (15%) + macro (10%) |
+| 9 | `modelFactory --mode train` | Entraînement LSTM+Attention *(périodique)* |
+| 10 | `modelFactory --mode predict` | Inférence → `predicted_proba` *(quotidien)* |
+| 11 | `run_risk` | Portefeuille cible, sizing ATR/Kelly, conviction ML+quant |
+| 12 | `run_execution.py` | Snapshot des targets, requests, ordres broker, fills observés, reconstruction positions/lots, réconciliation |
+| 13 | `corporate_actions sync --portfolio-only` | Sync CA uniquement pour les positions détenues |
+| 14 | `corporate_actions apply` | Crédit dividendes + ajustement qty/cost basis splits |
 
-> **Pourquoi sync en étape 11 et non au début ?**  
-> `sync --portfolio-only` lit la liste des positions depuis `broker_positions_snapshots`, table qui n'est alimentée qu'après `run_execution` (étape 10). Le placer avant rendrait le périmètre de sync inexact (positions d'hier) ou vide (premier run).
+> **Pourquoi le sync CA vient-il après l’exécution et non au début ?**  
+> `sync --portfolio-only` lit la liste des positions depuis `broker_positions_snapshots`, table qui n'est alimentée qu'après `run_execution` (étape 12). Le placer avant rendrait le périmètre de sync inexact (positions d'hier) ou vide (premier run).
 
 ### Multi-comptes
 
@@ -180,6 +219,20 @@ python -m corporate_actions apply --account live1
 ```
 
 Le menu interactif de `run_execution.py` propose aussi un sélecteur de compte si plusieurs sont configurés.
+
+### Exécution canonique et watcher post-run
+
+Après cutover, la chaîne nominale d'exécution à superviser est :
+
+- `execution_targets_snapshot`
+- `execution_order_requests`
+- `execution_broker_orders`
+- `execution_broker_fills`
+- `execution_positions`
+- `execution_position_lots`
+- `execution_reconciliation_results`
+
+La page `Exécution` de l'IHM privilégie cette lecture **scopée par run**. Le watcher de protections reste un composant **secondaire** de supervision post-run : utile si l'on souhaite promouvoir un stop initial vers un trailing stop dynamique, mais distinct du pipeline quotidien `1 → 14`.
 
 ---
 
@@ -322,15 +375,19 @@ L'application ouvre une interface web locale sur :
 |---|---|---|
 | Accueil | `/` | Vue d'ensemble, statut DB, sélecteur de compte |
 | Pipeline Quotidien | `/pipeline` | Lancement et supervision des étapes du pipeline |
-| Screening | `/screening` | Résultats du screener et de l'alpha scanner |
+| Screening | `/screening` | Résultats du screener et de l'alpha scanner, plus recommandations par objectif issues des artefacts de diagnostic |
 | Portefeuille | `/portfolio` | Positions, performance, exposition sectorielle |
-| Exécution | `/execution` | Ordres, fills, TCA, réconciliation |
+| Exécution | `/execution` | Vue run-scopée : targets snapshot, requests, ordres broker, fills, positions/lots, TCA, réconciliation |
 | ML | `/ml` | Métriques des modèles LSTM, prédictions |
 | Corporate Actions | `/corporate_actions` | Événements CA, dividendes, splits |
 | Reporting | `/reporting` | Rapports agrégés |
 | Paramètres | `/settings` | Configuration DB, comptes Alpaca |
 
 Pour plus de détails sur les pages disponibles, voir `ihm/README.md`.
+
+Le dashboard **Vue d'ensemble** remonte aussi un résumé compact des dernières recommandations screener par objectif quand les artefacts `artifacts/screener_diagnostics/` sont présents.
+
+La page **🧪 Backtesting** de l'IHM permet désormais aussi de lancer directement `diagnose-screener` et `recommend-screener`, avec exécution en arrière-plan et logs historisés dans l'interface.
 
 ---
 
@@ -374,8 +431,9 @@ alpha_trade/
 ├── config.yaml
 ├── pyproject.toml
 ├── README.md
-├── DOC_FONCTIONNELLE.md
-├── DOC_TECHNIQUE.md
+├── doc/
+│   ├── DOC_FONCTIONNELLE.md
+│   └── DOC_TECHNIQUE.md
 ├── dataIntegrityEngine/
 ├── screener/
 ├── selector/
@@ -434,9 +492,17 @@ Quand plusieurs comptes sont configurés, un **sélecteur de compte** apparaît 
 
 ### Tables DB impactées
 
-Les tables suivantes possèdent une colonne `account_id VARCHAR(32)` :
+Les tables suivantes portent désormais `account_id VARCHAR(32)` sur les périmètres métier critiques :
 
 - `execution_runs`
+- `execution_targets_snapshot`
+- `execution_order_requests`
+- `execution_broker_orders`
+- `execution_broker_fills`
+- `execution_positions`
+- `execution_position_lots`
+- `execution_reconciliation_results`
+- `execution_locks`
 - `broker_positions_snapshots`
 - `risk_decisions`
 - `portfolio_targets`
@@ -459,6 +525,7 @@ Migration : `database/sql/migration_add_account_id.sql` ou Alembic `alembic upgr
 
 ## 14. Documentation complémentaire
 
-- `DOC_FONCTIONNELLE.md` : vision métier et flux fonctionnels
-- `DOC_TECHNIQUE.md` : architecture, composants, dette technique, recommandations
+- `doc/DOC_FONCTIONNELLE.md` : vision métier et flux fonctionnels
+- `doc/DOC_TECHNIQUE.md` : architecture, composants, dette technique, recommandations
 - `ihm/README.md` : documentation dédiée à l'interface opérateur
+- `prompt/execution/` : historique d'audit, de sprints et de cutover du module `execution` (archive projet, pas guide opérateur)

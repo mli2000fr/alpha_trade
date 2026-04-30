@@ -13,6 +13,8 @@ class ExecutionConfig:
     broker_mode: str = "paper"
     dry_run: bool = False
     account_id: str | None = None  # None = compte par défaut
+    execution_profile: Literal["overnight_cash_swing", "custom", "legacy_intraday"] = "overnight_cash_swing"
+    submission_window: Literal["post_close", "pre_open", "both"] = "both"
     account_type: Literal["margin", "cash"] = "margin"
     pdt_rule: Literal["auto", "off"] = "auto"
     swing_only: bool = False
@@ -30,6 +32,12 @@ class ExecutionConfig:
     profit_taker_pct: float = 0.08
     trailing_stop_pct: float = 0.05
     trailing_stop_type: str = "percent"
+    enable_dynamic_trailing_transition: bool = True
+    trailing_activation_trigger: Literal["multiple_r", "profit_pct"] = "multiple_r"
+    trailing_activation_r_multiple: float = 1.0
+    trailing_activation_profit_pct: float = 0.03
+    protection_transition_timeout_seconds: int = 0
+    protection_transition_poll_interval_seconds: float = 2.0
 
     # --- Execution ---
     allow_fractional_shares: bool = False
@@ -62,6 +70,10 @@ class ExecutionConfig:
     def __post_init__(self) -> None:
         if self.broker_mode not in ("paper", "live"):
             raise ValueError("broker_mode doit être 'paper' ou 'live'.")
+        if self.execution_profile not in ("overnight_cash_swing", "custom", "legacy_intraday"):
+            raise ValueError("execution_profile doit être 'overnight_cash_swing', 'custom' ou 'legacy_intraday'.")
+        if self.submission_window not in ("post_close", "pre_open", "both"):
+            raise ValueError("submission_window doit être 'post_close', 'pre_open' ou 'both'.")
         if self.account_type not in ("margin", "cash"):
             raise ValueError("account_type doit être 'margin' ou 'cash'.")
         if self.pdt_rule not in ("auto", "off"):
@@ -72,6 +84,12 @@ class ExecutionConfig:
             raise ValueError("profit_taker_pct doit être dans ]0, 1[.")
         if not (0 < self.trailing_stop_pct < 1):
             raise ValueError("trailing_stop_pct doit être dans ]0, 1[.")
+        if self.trailing_activation_trigger not in ("multiple_r", "profit_pct"):
+            raise ValueError("trailing_activation_trigger doit être 'multiple_r' ou 'profit_pct'.")
+        if self.trailing_activation_r_multiple <= 0:
+            raise ValueError("trailing_activation_r_multiple doit être > 0.")
+        if not (0 < self.trailing_activation_profit_pct < 1):
+            raise ValueError("trailing_activation_profit_pct doit être dans ]0, 1[.")
         if not (0 <= self.max_slippage_bps <= 500):
             raise ValueError("max_slippage_bps doit être dans [0, 500].")
         if self.max_order_retries < 0:
@@ -86,6 +104,10 @@ class ExecutionConfig:
             raise ValueError("fill_timeout_seconds doit être > 0.")
         if self.cancel_timeout_seconds <= 0:
             raise ValueError("cancel_timeout_seconds doit être > 0.")
+        if self.protection_transition_timeout_seconds < 0:
+            raise ValueError("protection_transition_timeout_seconds doit être >= 0.")
+        if self.protection_transition_poll_interval_seconds <= 0:
+            raise ValueError("protection_transition_poll_interval_seconds doit être > 0.")
         if self.execution_batch_size < 1:
             raise ValueError("execution_batch_size doit être >= 1.")
         if self.max_consecutive_failures < 1:
@@ -107,6 +129,14 @@ class ExecutionConfig:
             return "off"
         return self.pdt_rule
 
+    @property
+    def resolved_account_id(self) -> str:
+        return self.account_id or "default"
+
+    @property
+    def is_overnight_profile(self) -> bool:
+        return self.execution_profile == "overnight_cash_swing"
+
     def applies_pdt_limit(self, equity: float) -> bool:
         return self.effective_pdt_rule == "auto" and equity < self.pdt_equity_threshold
 
@@ -115,4 +145,29 @@ class ExecutionConfig:
 
     def is_live(self) -> bool:
         return self.broker_mode == "live"
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectionWatcherServiceConfig:
+    """Paramètres du scheduler/service persistant du watcher de protection."""
+
+    interval_seconds: float = 30.0
+    idle_interval_seconds: float = 120.0
+    heartbeat_interval_seconds: float = 300.0
+    max_iterations: int | None = None
+    stop_when_idle: bool = False
+    max_consecutive_failures: int = 3
+
+    def __post_init__(self) -> None:
+        if self.interval_seconds <= 0:
+            raise ValueError("interval_seconds doit être > 0.")
+        if self.idle_interval_seconds <= 0:
+            raise ValueError("idle_interval_seconds doit être > 0.")
+        if self.heartbeat_interval_seconds <= 0:
+            raise ValueError("heartbeat_interval_seconds doit être > 0.")
+        if self.max_iterations is not None and self.max_iterations < 1:
+            raise ValueError("max_iterations doit être >= 1 quand renseigné.")
+        if self.max_consecutive_failures < 1:
+            raise ValueError("max_consecutive_failures doit être >= 1.")
+
 

@@ -5,11 +5,16 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_predictions (
     predicted_proba     DOUBLE          NOT NULL  COMMENT 'Probabilité classe 1 (hausse 5j)',
     predicted_class     TINYINT(1)      NOT NULL  COMMENT '1=hausse, 0=baisse',
     run_id              VARCHAR(64)     NOT NULL,
+    selected_model      VARCHAR(32)     DEFAULT NULL COMMENT 'Backend réellement servi: lstm_attention|lightgbm|catboost|global_model',
+    decision_threshold  DOUBLE          DEFAULT NULL COMMENT 'Seuil utilisé pour convertir la probabilité en classe',
+    signal_label        VARCHAR(32)     DEFAULT NULL COMMENT 'Signal dérivé: long|no_trade',
+    calibration_method  VARCHAR(32)     DEFAULT NULL COMMENT 'Méthode de calibration appliquée à la probabilité',
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (prediction_id),
     UNIQUE KEY uq_symbol_date_run (symbol, prediction_date, run_id),
     INDEX idx_date (prediction_date),
-    INDEX idx_symbol (symbol)
+    INDEX idx_symbol (symbol),
+    INDEX idx_selected_model (selected_model)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Predictions quotidiennes du module ML';
 
 

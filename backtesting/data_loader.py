@@ -17,6 +17,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 LOGGER = logging.getLogger(__name__)
+BACKTEST_REQUIRED_BARS_DATA_SOURCE = "eodhd_eod"
 
 
 def _table_exists(engine: Engine, table_name: str) -> bool:
@@ -37,6 +38,29 @@ def _get_table_columns(engine: Engine, table_name: str) -> set[str]:
         return set()
 
 
+def get_required_bars_source_filter(
+    engine: Engine,
+    *,
+    table_name: str = "stock_bars_daily",
+    table_alias: str | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Retourne un fragment SQL imposant la source canonique EODHD.
+
+    Le backtesting doit désormais s'exécuter uniquement sur les barres issues
+    d'EODHD, même si la table contient un mélange de providers historiques.
+    """
+    columns = _get_table_columns(engine, table_name)
+    if not columns:
+        raise RuntimeError(f"La table {table_name} est introuvable ou inaccessible.")
+    if "data_source" not in columns:
+        raise RuntimeError(
+            f"La colonne {table_name}.data_source est requise pour forcer le backtest sur "
+            f"{BACKTEST_REQUIRED_BARS_DATA_SOURCE}."
+        )
+    qualified = f"{table_alias}.data_source" if table_alias else "`data_source`"
+    return f"AND {qualified} = :required_data_source", {"required_data_source": BACKTEST_REQUIRED_BARS_DATA_SOURCE}
+
+
 def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
     """Charge les barres OHLCV journalières.
 
@@ -53,6 +77,7 @@ def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
         raise RuntimeError("Aucune colonne date compatible dans stock_bars_daily (attendu: trade_date ou date).")
 
     close_expr = "COALESCE(adj_close, `close`)" if "adj_close" in columns else "`close`"
+    source_filter_sql, source_filter_params = get_required_bars_source_filter(engine, table_name="stock_bars_daily")
     query = text(f"""
         SELECT symbol,
                `{date_col}` AS trade_date,
@@ -63,10 +88,16 @@ def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
                volume
         FROM stock_bars_daily
         WHERE `{date_col}` BETWEEN :start AND :end
+          {source_filter_sql}
         ORDER BY `{date_col}`, symbol
     """)
     with engine.connect() as conn:
-        df = pd.read_sql(query, conn, params={"start": start, "end": end}, parse_dates=["trade_date"])
+        df = pd.read_sql(
+            query,
+            conn,
+            params={"start": start, "end": end, **source_filter_params},
+            parse_dates=["trade_date"],
+        )
     LOGGER.info("OHLCV chargé : %d lignes, %d symboles, [%s → %s]",
                 len(df), df["symbol"].nunique() if len(df) else 0, start, end)
     return df
@@ -80,14 +111,40 @@ def load_scores(engine: Engine, start: date, end: date) -> pd.DataFrame:
     2. `stock_scores` avec fallback sur les horodatages de mise à jour
     """
     history_exists = _table_exists(engine, "stock_scores_history")
+
+    def _optional_select(columns: set[str], column: str) -> str:
+        return column if column in columns else f"NULL AS {column}"
+
     if history_exists:
-        history_query = text("""
+        history_columns = _get_table_columns(engine, "stock_scores_history")
+        has_walk_forward = "final_score_walk_forward" in history_columns
+        history_query = text(f"""
             SELECT symbol,
                    snapshot_date AS trade_date,
                    final_score,
                    final_score_sentiment,
+                   {_optional_select(history_columns, 'final_score_walk_forward')},
                    sector,
-                   is_candidate
+                   is_candidate,
+                   {_optional_select(history_columns, 'sentiment_net_agg')},
+                   {_optional_select(history_columns, 'sector_impact_agg')},
+                   {_optional_select(history_columns, 'company_idio_score')},
+                   {_optional_select(history_columns, 'macro_regime_score')},
+                   {_optional_select(history_columns, 'company_idio_signal_norm')},
+                   {_optional_select(history_columns, 'macro_regime_signal_norm')},
+                   {_optional_select(history_columns, 'company_idio_component')},
+                   {_optional_select(history_columns, 'macro_regime_component')},
+                   {_optional_select(history_columns, 'quant_component')},
+                   {_optional_select(history_columns, 'walk_forward_sentiment_weight')},
+                   {_optional_select(history_columns, 'walk_forward_macro_weight')},
+                   {_optional_select(history_columns, 'walk_forward_quant_weight')},
+                   {_optional_select(history_columns, 'calibration_run_id')},
+                   {_optional_select(history_columns, 'calibration_source')},
+                   CASE
+                       WHEN {('final_score_walk_forward IS NOT NULL' if has_walk_forward else '0 = 1')} THEN 'final_score_walk_forward'
+                       WHEN final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'
+                       ELSE 'final_score'
+                   END AS score_source
             FROM stock_scores_history
             WHERE snapshot_date BETWEEN :start AND :end
               AND is_candidate = 1
@@ -108,13 +165,35 @@ def load_scores(engine: Engine, start: date, end: date) -> pd.DataFrame:
         "Lecture des scores depuis stock_scores (snapshot courant). "
         "Le backtest ne sera pas strictement point-in-time."
     )
-    query = text("""
+    stock_columns = _get_table_columns(engine, "stock_scores")
+    has_walk_forward = "final_score_walk_forward" in stock_columns
+    query = text(f"""
         SELECT symbol,
                DATE(COALESCE(last_updated_sentiment, last_updated_scan, last_updated_score)) AS trade_date,
                final_score,
                final_score_sentiment,
+               {_optional_select(stock_columns, 'final_score_walk_forward')},
                sector,
-               is_candidate
+               is_candidate,
+               {_optional_select(stock_columns, 'sentiment_net_agg')},
+               {_optional_select(stock_columns, 'sector_impact_agg')},
+               {_optional_select(stock_columns, 'company_idio_score')},
+               {_optional_select(stock_columns, 'macro_regime_score')},
+               {_optional_select(stock_columns, 'company_idio_signal_norm')},
+               {_optional_select(stock_columns, 'macro_regime_signal_norm')},
+               {_optional_select(stock_columns, 'company_idio_component')},
+               {_optional_select(stock_columns, 'macro_regime_component')},
+               {_optional_select(stock_columns, 'quant_component')},
+               {_optional_select(stock_columns, 'walk_forward_sentiment_weight')},
+               {_optional_select(stock_columns, 'walk_forward_macro_weight')},
+               {_optional_select(stock_columns, 'walk_forward_quant_weight')},
+               {_optional_select(stock_columns, 'calibration_run_id')},
+               {_optional_select(stock_columns, 'calibration_source')},
+               CASE
+                   WHEN {('final_score_walk_forward IS NOT NULL' if has_walk_forward else '0 = 1')} THEN 'final_score_walk_forward'
+                   WHEN final_score_sentiment IS NOT NULL THEN 'final_score_sentiment'
+                   ELSE 'final_score'
+               END AS score_source
         FROM stock_scores
         WHERE DATE(COALESCE(last_updated_sentiment, last_updated_scan, last_updated_score)) BETWEEN :start AND :end
           AND is_candidate = 1
@@ -159,8 +238,19 @@ def load_sentiment(engine: Engine, start: date, end: date, lookback_days: int = 
     return df
 
 
-def load_predictions(engine: Engine, start: date, end: date) -> pd.DataFrame:
-    """Charge les prédictions ML."""
+def load_predictions(
+    engine: Engine,
+    start: date,
+    end: date,
+    *,
+    symbols: list[str] | None = None,
+) -> pd.DataFrame:
+    """Charge les prédictions ML.
+
+    Phase E.2 (refactor) : ``symbols`` permet de restreindre l'I/O à un
+    sous-ensemble (typiquement les candidats déjà chargés) — gain x10 à x100
+    sur des univers larges.
+    """
     columns = _get_table_columns(engine, "model_predictions")
     if not columns:
         LOGGER.warning("model_predictions introuvable — prédictions ML ignorées.")
@@ -171,18 +261,27 @@ def load_predictions(engine: Engine, start: date, end: date) -> pd.DataFrame:
         LOGGER.warning("Aucune colonne date compatible dans model_predictions — prédictions ML ignorées.")
         return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
 
+    params: dict[str, object] = {"start": start, "end": end}
+    where_symbols = ""
+    if symbols:
+        unique_symbols = sorted({s for s in symbols if isinstance(s, str) and s})
+        if unique_symbols:
+            placeholders = ",".join(f":sym_{i}" for i in range(len(unique_symbols)))
+            where_symbols = f" AND symbol IN ({placeholders})"
+            params.update({f"sym_{i}": sym for i, sym in enumerate(unique_symbols)})
+
     query = text(f"""
         SELECT symbol,
                {date_col} AS trade_date,
                predicted_proba,
                predicted_class
         FROM model_predictions
-        WHERE {date_col} BETWEEN :start AND :end
+        WHERE {date_col} BETWEEN :start AND :end{where_symbols}
         ORDER BY {date_col}, symbol
     """)
     with engine.connect() as conn:
-        df = pd.read_sql(query, conn, params={"start": start, "end": end}, parse_dates=["trade_date"])
-    LOGGER.info("Prédictions ML chargées : %d lignes", len(df))
+        df = pd.read_sql(query, conn, params=params, parse_dates=["trade_date"])
+    LOGGER.info("Prédictions ML chargées : %d lignes (filter symbols=%s)", len(df), bool(symbols))
     return df
 
 

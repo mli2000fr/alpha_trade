@@ -208,17 +208,77 @@ python -m pytest tests/test_clientAlpaca.py tests/test_clientNewsAlpaca.py tests
 
 ## 8. Recommandation pratique
 
-Ordre conseillé :
-
-1. valider d'abord `AccountRegistry` ;
+Ordre conseille :
+1. valider d''abord `AccountRegistry` ;
 2. tester `get_account()` ou `fetch_alpaca_assets()` ;
-3. seulement ensuite brancher les modules métier ;
-4. utiliser Finnhub surtout pour l'enrichissement secteur, pas comme dépendance bloquante du pipeline principal.
-
-### Séquence recommandée
-
+3. seulement ensuite brancher les modules metier ;
+4. utiliser Finnhub surtout pour l''enrichissement secteur, pas comme dependance bloquante du pipeline principal.
+### Sequence recommandee
 ```powershell
-python -c 'from service.alpaca.accounts import AccountRegistry; print(AccountRegistry.get().list_account_ids())'
-python -c 'from service.alpaca.trading_client import AlpacaTradingClient; print(AlpacaTradingClient("paper").get_account().get("status"))'
-python -c 'from service.finnhub.clientFinnhub import fetch_symbol_sector; print(fetch_symbol_sector("AAPL"))'
+python -c "from service.alpaca.accounts import AccountRegistry; print(AccountRegistry.get().list_account_ids())"
+python -c "from service.alpaca.trading_client import AlpacaTradingClient; print(AlpacaTradingClient(''paper'').get_account().get(''status''))"
+python -c "from service.finnhub.clientFinnhub import fetch_symbol_sector; print(fetch_symbol_sector(''AAPL''))"
+```
+---
+## 9. Helpers transverses Phase 2.3 (refactor)
+### 9.1 `service/_http_retry.py` — politique unifiee
+Tous les clients HTTP (`clientAlpaca`, `clientFinnhub`, `clientNewsAlpaca`) utilisent
+desormais un helper unique :
+```python
+from service import RetryPolicy, request_with_retry
+policy = RetryPolicy(
+    max_attempts=10,
+    base_delay_seconds=5.0,
+    max_delay_seconds=60.0,
+    timeout_seconds=15.0,
+)
+response = request_with_retry(
+    session,                # requests.Session ou objet exposant get/post
+    "GET",
+    url,
+    policy=policy,
+    headers=headers,
+    params=params,
+)
+```
+Caracteristiques :
+- backoff exponentiel + jitter ;
+- retry uniquement sur `Timeout`, `ConnectionError`, `5xx`, `429` ;
+- `4xx` (sauf 429) leve immediatement (`requests.HTTPError`) ;
+- circuit breaker partage par hote (`service._http_retry.DEFAULT_CIRCUIT_BREAKER`)
+  qui ouvre apres N echecs consecutifs et bloque les appels pendant un cooldown.
+Telemetrie : compteurs disponibles via `service.get_telemetry()` (decompose par
+hote : `requests`, `retries`, `circuit_open`).
+### 9.2 Cache Finnhub 7 jours
+`service/_finnhub_cache.py` cache les profils Finnhub pendant 7 jours dans
+`artifacts/finnhub_cache/<symbol>.json`. Reduit fortement la consommation de
+quota lors des reruns dataIntegrityEngine.
+```python
+from service.finnhub.clientFinnhub import fetch_company_profile
+profile = fetch_company_profile("AAPL")  # cache hit/miss transparent
+```
+TTL configurable via env `FINNHUB_CACHE_TTL_DAYS` (defaut 7).
+### 9.3 Parametre `feed=iex` Alpaca — impact concret
+`service.alpaca.clientAlpaca.fetch_bars(symbol, timeframe, feed="iex")` :
+- Le parametre `feed` est valide via `Literal["iex", "sip"]`. Toute autre
+  valeur leve immediatement `ValueError` au lieu de partir en silence.
+- `feed="iex"` est le defaut et le seul tier supporte par notre abonnement
+  Alpaca actuel. **Implication tres importante** : les volumes et quotes IEX
+  ne representent qu'une fraction (~2-3%) du volume consolide US. Cela
+  introduit deux biais documentes :
+  - `avg_dollar_volume_20d` sous-estime ; les filtres liquidite (selector)
+    sont calibres en consequence (`spread_bps` relache, voir
+    `selector/audit_selector.md` §IEX).
+  - les `latest_quote` IEX peuvent etre 50-200ms en retard et avoir un
+    spread artificiellement large hors heures de pointe. Le compteur
+    `stale_quote_pct` (Phase 1.3) est propage dans `run_summary` pour
+    rendre ce biais visible operationnellement.
+- Si vous obtenez un acces SIP plus tard, basculer simplement
+  `ALPACA_DATA_FEED=sip` (env var) ou changer le defaut.
+  **Ne JAMAIS** appeler `fetch_bars(..., feed="sip")` en dur dans le code
+  metier : le bias-tracking suppose que `feed` est uniforme.
+Voir aussi `doc/dataIntegrityEngine.md` section "Limites IEX".
+### 9.4 Tests
+```powershell
+python -m pytest tests/test_phase1_http_retry.py tests/test_clientAlpaca.py tests/test_client_finnhub.py -q --no-cov
 ```

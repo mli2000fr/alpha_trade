@@ -12,12 +12,16 @@ transformers
 torch
 lightning
 torchmetrics
+lightgbm
 streamlit
 pyyaml
 vectorbt>=0.26
 plotly
 kaleido
 matplotlib
+
+[cross-check]
+yfinance>=0.2
 
 [dev]
 pytest>=8
@@ -31,3 +35,10 @@ types-requests
 types-pytz
 types-python-dateutil
 sqlalchemy[mypy]
+import-linter>=2.0
+
+[ml-challengers]
+catboost
+
+[observability]
+prometheus-client>=0.20

@@ -19,6 +19,9 @@ REQUIRED_SCORE_COLUMNS = (
 	"last_updated_score",
 	"is_candidate",
 	"sector",
+	"anomaly_count",
+	"missing_days_count",
+	"sanitizer_status",
 	"last_updated_scan",
 )
 
@@ -41,16 +44,24 @@ def _purge_missing_scores(engine: Engine, symbols: list[str]) -> None:
 
 
 def iter_symbol_chunks(engine: Engine, chunk_size: int) -> Iterator[list[str]]:
-	offset = 0
+	last_symbol: str | None = None
 	stmt = text(
 		"""
-		SELECT symbol
-		FROM (
-			SELECT DISTINCT symbol
-			FROM stock_bars_daily
-		) s
-		ORDER BY symbol
-		LIMIT :chunk_size OFFSET :offset
+		SELECT DISTINCT sbd.symbol
+		FROM stock_bars_daily sbd
+		INNER JOIN stock_metadata sm ON sm.symbol = sbd.symbol
+		WHERE sm.status = 'active'
+		  AND sm.tradable = 1
+		  AND sm.bars_available = 1
+		  AND sm.asset_class = 'us_equity'
+		  AND (
+		        sm.history_status IS NULL
+		     OR TRIM(sm.history_status) = ''
+		     OR LOWER(TRIM(sm.history_status)) IN ('pending', 'ready')
+		  )
+		  AND (:last_symbol IS NULL OR sbd.symbol > :last_symbol)
+		ORDER BY sbd.symbol
+		LIMIT :chunk_size
 		"""
 	)
 
@@ -60,7 +71,7 @@ def iter_symbol_chunks(engine: Engine, chunk_size: int) -> Iterator[list[str]]:
 				stmt,
 				{
 					"chunk_size": chunk_size,
-					"offset": offset,
+					"last_symbol": last_symbol,
 				},
 			).fetchall()
 
@@ -69,29 +80,21 @@ def iter_symbol_chunks(engine: Engine, chunk_size: int) -> Iterator[list[str]]:
 			break
 
 		yield symbols
-		offset += chunk_size
+		last_symbol = symbols[-1]
 
 
-def load_prices_for_chunk(
+def _resolve_reference_date(as_of_date: Optional[date]) -> date:
+	ref_dt = datetime.combine(as_of_date, datetime.min.time()) if as_of_date else datetime.now(UTC).replace(tzinfo=None)
+	return ref_dt.date()
+
+
+def _load_price_frame(
 	engine: Engine,
 	symbols: list[str],
-	config: ScreenerConfig,
+	*,
+	cutoff_lower: date,
 	as_of_date: Optional[date] = None,
 ) -> pd.DataFrame:
-	"""
-	Charge l'historique OHLCV pour un chunk de symboles.
-
-	:param as_of_date: Borne supérieure point-in-time (timestamp <= as_of_date).
-	    Si None, aucune borne supérieure n'est appliquée (mode live).
-	    À TOUJOURS spécifier en backtest pour éviter le look-ahead bias.
-	"""
-	if not symbols:
-		return pd.DataFrame()
-
-	ref_dt = datetime.combine(as_of_date, datetime.min.time()) if as_of_date else datetime.now(UTC).replace(tzinfo=None)
-	ref_date = ref_dt.date()
-	cutoff_lower = ref_date - timedelta(days=365 * config.lookback_history_years + 30)
-
 	query = """
 		SELECT symbol,
 		       `date` AS `timestamp`,
@@ -112,6 +115,88 @@ def load_prices_for_chunk(
 		params["cutoff_upper"] = as_of_date
 
 	query += "ORDER BY symbol, `date`"
+	stmt = text(query).bindparams(bindparam("symbols", expanding=True))
+	return pd.read_sql_query(stmt, engine, params=params)
+
+
+def load_recent_prices_for_chunk(
+	engine: Engine,
+	symbols: list[str],
+	config: ScreenerConfig,
+	as_of_date: Optional[date] = None,
+) -> pd.DataFrame:
+	"""Charge uniquement la fenêtre récente nécessaire à la passe 1 du screener."""
+	if not symbols:
+		return pd.DataFrame()
+
+	ref_date = _resolve_reference_date(as_of_date)
+	cutoff_lower = ref_date - timedelta(days=config.first_pass_window_days)
+	return _load_price_frame(
+		engine,
+		symbols,
+		cutoff_lower=cutoff_lower,
+		as_of_date=as_of_date,
+	)
+
+
+def load_prices_for_chunk(
+	engine: Engine,
+	symbols: list[str],
+	config: ScreenerConfig,
+	as_of_date: Optional[date] = None,
+) -> pd.DataFrame:
+	"""
+	Charge l'historique OHLCV pour un chunk de symboles.
+
+	:param as_of_date: Borne supérieure point-in-time (timestamp <= as_of_date).
+	    Si None, aucune borne supérieure n'est appliquée (mode live).
+	    À TOUJOURS spécifier en backtest pour éviter le look-ahead bias.
+	"""
+	if not symbols:
+		return pd.DataFrame()
+
+	ref_date = _resolve_reference_date(as_of_date)
+	cutoff_lower = ref_date - timedelta(days=365 * config.lookback_history_years + 30)
+	return _load_price_frame(
+		engine,
+		symbols,
+		cutoff_lower=cutoff_lower,
+		as_of_date=as_of_date,
+	)
+
+
+def load_historical_range_stats_for_symbols(
+	engine: Engine,
+	symbols: list[str],
+	config: ScreenerConfig,
+	as_of_date: Optional[date] = None,
+) -> pd.DataFrame:
+	"""Charge uniquement les agrégats min/max historiques nécessaires au range score."""
+	if not symbols:
+		return pd.DataFrame(columns=["symbol", "hist_low", "hist_high"])
+
+	ref_date = _resolve_reference_date(as_of_date)
+	cutoff_lower = ref_date - timedelta(days=config.historical_range_lookback_days)
+	# Phase 3.2.a : exclure les barres forward-filled du sanitizer pour ne pas
+	# polluer min/max historiques (pic figé par un fill long > seuil bas etc.).
+	query = """
+		SELECT symbol,
+		       MIN(low) AS hist_low,
+		       MAX(high) AS hist_high
+		FROM stock_bars_daily
+		WHERE symbol IN :symbols
+		  AND `date` >= :cutoff_lower
+		  AND (is_filled IS NULL OR is_filled = 0)
+	"""
+	params: dict = {
+		"symbols": symbols,
+		"cutoff_lower": cutoff_lower,
+	}
+	if as_of_date is not None:
+		query += "  AND `date` <= :cutoff_upper\n"
+		params["cutoff_upper"] = as_of_date
+
+	query += "GROUP BY symbol ORDER BY symbol"
 	stmt = text(query).bindparams(bindparam("symbols", expanding=True))
 
 	return pd.read_sql_query(stmt, engine, params=params)
@@ -186,6 +271,40 @@ def _enrich_scores_with_metadata_sector(engine: Engine, scores_df: pd.DataFrame)
 	return enriched
 
 
+def _load_latest_audit_metrics(engine: Engine, symbols: list[str]) -> pd.DataFrame:
+	if not symbols:
+		return pd.DataFrame(columns=["symbol", "anomaly_count", "missing_days_count", "sanitizer_status"])
+
+	stmt = text(
+		"""
+		SELECT symbol,
+		       anomaly_count,
+		       missing_days_count,
+		       status AS sanitizer_status
+		FROM cleaning_audit_latest
+		WHERE symbol IN :symbols
+		"""
+	).bindparams(bindparam("symbols", expanding=True))
+
+	return pd.read_sql_query(stmt, engine, params={"symbols": symbols})
+
+
+def _enrich_scores_with_audit(engine: Engine, scores_df: pd.DataFrame) -> pd.DataFrame:
+	if scores_df.empty:
+		return scores_df.copy()
+
+	enriched = scores_df.copy()
+	audit_df = _load_latest_audit_metrics(engine, enriched["symbol"].astype(str).tolist())
+	if audit_df.empty:
+		return enriched
+
+	audit_df = audit_df.copy()
+	audit_df["anomaly_count"] = pd.to_numeric(audit_df["anomaly_count"], errors="coerce")
+	audit_df["missing_days_count"] = pd.to_numeric(audit_df["missing_days_count"], errors="coerce")
+	audit_df["sanitizer_status"] = audit_df["sanitizer_status"].where(audit_df["sanitizer_status"].notna(), None)
+	return enriched.merge(audit_df, on="symbol", how="left", suffixes=("", "_audit"))
+
+
 def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 	if scores_df.empty:
 		return scores_df.copy()
@@ -202,6 +321,12 @@ def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 		normalized["is_candidate"] = 0
 	if "sector" not in normalized.columns:
 		normalized["sector"] = None
+	if "anomaly_count" not in normalized.columns:
+		normalized["anomaly_count"] = None
+	if "missing_days_count" not in normalized.columns:
+		normalized["missing_days_count"] = None
+	if "sanitizer_status" not in normalized.columns:
+		normalized["sanitizer_status"] = "pending"
 	if "last_updated_scan" not in normalized.columns:
 		normalized["last_updated_scan"] = normalized["last_updated_score"]
 
@@ -209,6 +334,9 @@ def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 	normalized["last_updated_scan"] = pd.to_datetime(normalized["last_updated_scan"], utc=False)
 	normalized["is_candidate"] = normalized["is_candidate"].fillna(0).astype(int)
 	normalized["sector"] = normalized["sector"].where(normalized["sector"].notna(), None)
+	normalized["anomaly_count"] = pd.to_numeric(normalized["anomaly_count"], errors="coerce")
+	normalized["missing_days_count"] = pd.to_numeric(normalized["missing_days_count"], errors="coerce")
+	normalized["sanitizer_status"] = normalized["sanitizer_status"].where(normalized["sanitizer_status"].notna(), "pending")
 
 	missing_columns = [column for column in REQUIRED_SCORE_COLUMNS if column not in normalized.columns]
 	if missing_columns:
@@ -233,14 +361,26 @@ def archive_scores_snapshot(engine: Engine, snapshot_date: Optional[date] = None
 			(snapshot_date, symbol, sector,
 			 liquidity_val, relative_strength_index, historical_range_score, total_score,
 			 trend_score, vcp_score, final_score, is_candidate,
-			 sentiment_net_agg, sector_impact_agg, final_score_sentiment, signal_active,
-			 anomaly_count, missing_days_count)
+			 sentiment_net_agg, sector_impact_agg, company_idio_score, macro_regime_score,
+			 company_idio_signal_norm, macro_regime_signal_norm,
+			 company_idio_component, macro_regime_component, quant_component,
+			 final_score_sentiment, final_score_walk_forward,
+			 walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
+			 calibration_run_id, calibration_source,
+			 signal_active,
+			 anomaly_count, missing_days_count, sanitizer_status)
 		SELECT
 			:snapshot_date, symbol, sector,
 			liquidity_val, relative_strength_index, historical_range_score, total_score,
 			trend_score, vcp_score, final_score, is_candidate,
-			sentiment_net_agg, sector_impact_agg, final_score_sentiment, signal_active,
-			anomaly_count, missing_days_count
+			sentiment_net_agg, sector_impact_agg, company_idio_score, macro_regime_score,
+			company_idio_signal_norm, macro_regime_signal_norm,
+			company_idio_component, macro_regime_component, quant_component,
+			final_score_sentiment, final_score_walk_forward,
+			walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
+			calibration_run_id, calibration_source,
+			signal_active,
+			anomaly_count, missing_days_count, sanitizer_status
 		FROM stock_scores
 		ON DUPLICATE KEY UPDATE
 			sector                  = VALUES(sector),
@@ -254,10 +394,24 @@ def archive_scores_snapshot(engine: Engine, snapshot_date: Optional[date] = None
 			is_candidate            = VALUES(is_candidate),
 			sentiment_net_agg       = VALUES(sentiment_net_agg),
 			sector_impact_agg       = VALUES(sector_impact_agg),
+			company_idio_score      = VALUES(company_idio_score),
+			macro_regime_score      = VALUES(macro_regime_score),
+			company_idio_signal_norm = VALUES(company_idio_signal_norm),
+			macro_regime_signal_norm = VALUES(macro_regime_signal_norm),
+			company_idio_component  = VALUES(company_idio_component),
+			macro_regime_component  = VALUES(macro_regime_component),
+			quant_component         = VALUES(quant_component),
 			final_score_sentiment   = VALUES(final_score_sentiment),
+			final_score_walk_forward = VALUES(final_score_walk_forward),
+			walk_forward_sentiment_weight = VALUES(walk_forward_sentiment_weight),
+			walk_forward_macro_weight = VALUES(walk_forward_macro_weight),
+			walk_forward_quant_weight = VALUES(walk_forward_quant_weight),
+			calibration_run_id      = VALUES(calibration_run_id),
+			calibration_source      = VALUES(calibration_source),
 			signal_active           = VALUES(signal_active),
 			anomaly_count           = VALUES(anomaly_count),
-			missing_days_count      = VALUES(missing_days_count)
+			missing_days_count      = VALUES(missing_days_count),
+			sanitizer_status        = VALUES(sanitizer_status)
 	""")
 	with engine.begin() as conn:
 		result = conn.execute(stmt, {"snapshot_date": ref_date})
@@ -276,6 +430,7 @@ def upsert_scores_snapshot(
 		return
 
 	scores_df = _enrich_scores_with_metadata_sector(engine, scores_df)
+	scores_df = _enrich_scores_with_audit(engine, scores_df)
 	scores_df = _normalize_scores_snapshot(scores_df)
 	scores_table = _get_scores_table(engine)
 	symbols = scores_df["symbol"].astype(str).tolist()
@@ -292,6 +447,9 @@ def upsert_scores_snapshot(
 				"last_updated_score": stmt.inserted.last_updated_score,
 				"is_candidate": stmt.inserted.is_candidate,
 				"sector": stmt.inserted.sector,
+				"anomaly_count": stmt.inserted.anomaly_count,
+				"missing_days_count": stmt.inserted.missing_days_count,
+				"sanitizer_status": stmt.inserted.sanitizer_status,
 				"last_updated_scan": stmt.inserted.last_updated_scan,
 			}
 			conn.execute(stmt.on_duplicate_key_update(**update_dict))

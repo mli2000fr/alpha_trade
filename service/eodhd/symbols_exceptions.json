@@ -1,0 +1,11 @@
+{
+  "_comment": "Exceptions au mapping standard symbole_projet -> symbole_eodhd. Mis a jour Phase 2 (plan_eodhd.md §5.3).",
+  "_rules": {
+    "default": "<TICKER>.<EXCHANGE>",
+    "class_share": "<PREFIX>-<CLASS>.<EXCHANGE> (ex: BRK.B -> BRK-B.US, BF.B -> BF-B.US)",
+    "alphabet": "<TICKER>.<EXCHANGE> (point conserve : GOOG.US, GOOGL.US)"
+  },
+  "exceptions": {},
+  "known_unsupported_basic_plan": []
+}
+

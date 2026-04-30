@@ -248,6 +248,78 @@ def test_enrich_and_filter_equities_logs_exclusion_breakdown(caplog) -> None:
     assert "detail={'metadata_missing': 1, 'inactive': 1, 'etf_name': 1}" in caplog.text
 
 
+def test_enrich_and_filter_equities_excludes_blocked_history_statuses() -> None:
+    scanner = AlphaScanner(engine=_create_shared_sqlite_engine(), config=AlphaScannerConfig(selection_size=10, max_workers=1))
+    merged = pd.DataFrame(
+        [
+            {"symbol": "READY", "sector": "Unknown", "final_score": 0.8},
+            {"symbol": "PEND", "sector": "Unknown", "final_score": 0.7},
+            {"symbol": "ERR", "sector": "Unknown", "final_score": 0.9},
+            {"symbol": "STALE", "sector": "Unknown", "final_score": 0.85},
+            {"symbol": "EMPTY", "sector": "Unknown", "final_score": 0.65},
+        ]
+    )
+    metadata = pd.DataFrame(
+        [
+            {
+                "symbol": "READY",
+                "company_name": "Ready Corp",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": True,
+                "history_status": "ready",
+                "sector": "Technology",
+            },
+            {
+                "symbol": "PEND",
+                "company_name": "Pending Corp",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": True,
+                "history_status": "pending",
+                "sector": "Finance",
+            },
+            {
+                "symbol": "ERR",
+                "company_name": "Provider Error Corp",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": True,
+                "history_status": "provider_error",
+                "sector": "Industrials",
+            },
+            {
+                "symbol": "STALE",
+                "company_name": "Stale Corp",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": True,
+                "history_status": "suspended_or_stale",
+                "sector": "Energy",
+            },
+            {
+                "symbol": "EMPTY",
+                "company_name": "No History Corp",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": False,
+                "history_status": "no_history",
+                "sector": "Healthcare",
+            },
+        ]
+    )
+
+    enriched = scanner._enrich_and_filter_equities(merged, metadata)
+
+    assert list(enriched["symbol"]) == ["READY", "PEND"]
+    assert list(enriched["history_status"]) == ["ready", "pending"]
+
+
 def test_apply_sector_neutrality_caps_each_sector() -> None:
     config = AlphaScannerConfig(selection_size=50, sector_cap_ratio=0.30, max_workers=1)
     scanner = AlphaScanner(engine=_create_shared_sqlite_engine(), config=config)
@@ -451,6 +523,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
                     earnings_blackout INTEGER DEFAULT 0,
                     anomaly_count INTEGER,
                     missing_days_count INTEGER,
+                    sanitizer_status TEXT DEFAULT 'success',
                     is_candidate INTEGER NOT NULL DEFAULT 0,
                     last_updated_scan DATETIME
                 )
@@ -577,6 +650,82 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
     assert legacy_row == ("ZZZ", None, None, None, 0)
 
 
+def test_iter_eligible_symbol_chunks_excludes_blocked_history_statuses_in_sql() -> None:
+    engine = _create_shared_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_bars_daily (
+                    symbol TEXT NOT NULL,
+                    date DATETIME NOT NULL,
+                    close REAL NOT NULL,
+                    volume REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    PRIMARY KEY(symbol, date)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_metadata (
+                    symbol TEXT PRIMARY KEY,
+                    company_name TEXT,
+                    asset_class TEXT,
+                    status TEXT,
+                    tradable BOOLEAN,
+                    bars_available BOOLEAN,
+                    history_status TEXT,
+                    sector TEXT,
+                    market_cap REAL
+                )
+                """
+            )
+        )
+
+        market_ready, _ = _make_market_frame("AAA", "Technology", drift=0.35, rows=260)
+        market_error, _ = _make_market_frame("ERR", "Technology", drift=0.35, rows=260)
+        pd.concat([market_ready, market_error], ignore_index=True).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "AAA",
+                    "company_name": "AAA Common Stock",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "history_status": "ready",
+                    "sector": "Technology",
+                    "market_cap": 5_000_000_000.0,
+                },
+                {
+                    "symbol": "ERR",
+                    "company_name": "ERR Common Stock",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "history_status": "provider_error",
+                    "sector": "Technology",
+                    "market_cap": 5_000_000_000.0,
+                },
+            ]
+        ).to_sql("stock_metadata", conn, if_exists="append", index=False)
+
+    scanner = AlphaScanner(
+        engine=engine,
+        config=AlphaScannerConfig(selection_size=5, chunk_size=10, max_workers=1),
+    )
+
+    chunks = list(scanner._iter_eligible_symbol_chunks())
+
+    assert chunks == [["AAA"]]
+
+
 def test_run_supports_strict_swing_preset_filters() -> None:
     engine = _create_shared_sqlite_engine()
     with engine.begin() as conn:
@@ -615,6 +764,7 @@ def test_run_supports_strict_swing_preset_filters() -> None:
                     earnings_blackout INTEGER DEFAULT 0,
                     anomaly_count INTEGER,
                     missing_days_count INTEGER,
+                    sanitizer_status TEXT DEFAULT 'success',
                     is_candidate INTEGER NOT NULL DEFAULT 0,
                     last_updated_scan DATETIME
                 )

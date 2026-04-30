@@ -1,133 +1,152 @@
+"""
+AlphaScanner — orchestration multi-facteurs (façade).
+
+Phase 3.3.a : la logique pure a été extraite dans des modules dédiés :
+
+- ``selector.factors`` : ``compute_factor_frame``, ``winsorize_and_normalize``,
+  ``FACTOR_COLUMNS``.
+- ``selector.filters`` : ``apply_filters_with_stats``, ``log_filter_stats``,
+  ``enrich_and_filter_equities``, ``merge_optional_symbol_overlays``,
+  constantes ``METADATA_COLUMNS``/``ETF_NAME_PATTERNS``/``ELIGIBLE_HISTORY_STATUSES``.
+- ``selector.ranking`` : ``merge_scores``, ``apply_factor_neutralization``,
+  ``apply_sector_neutrality``, ``rank_and_select``, constantes
+  ``SCORE_COLUMNS``/``OUTPUT_COLUMNS``/``PERSISTED_SELECTOR_SCORE_COLUMNS``.
+
+Ce module conserve :
+
+- ``AlphaScannerConfig`` (toutes les options/seuils + validations).
+- La classe ``AlphaScanner`` (I/O DB + orchestration multithread).
+- Tous les noms (publics ET privés tels que ``apply_filters``,
+  ``apply_sector_neutrality``, ``merge_scores``, ``compute_factors``,
+  ``_apply_filters_with_stats``, ``_winsorize_and_normalize``, etc.) sont
+  préservés à des fins de rétrocompatibilité (tests, scripts externes,
+  ``backtesting/*``).
+- La CLI ``main()`` et l'helper ``_build_cli_run_summary``.
+"""
+
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import threading
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Iterator, Optional, Sequence, cast
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from common.utils import configure_root_logging
+from core.run_summary import attach_schema_version, merge_iex_bias_counters
 from database.connection import get_sqlalchemy_engine
-from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
+
+# Phase 3.2.c — la source de vérité est ``core.filter_profiles`` ;
+# l'import historique ``selector.strict_filter_profiles`` est conservé
+# comme alias rétrocompatible pour les appelants legacy.
+from core.filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
+
+# Phase 3.3.a — modules extraits ; ré-exportés pour rétrocompatibilité.
+from selector.factors import (
+    FACTOR_COLUMNS,
+    compute_factor_frame,
+    winsorize_and_normalize,
+)
+from selector.filters import (
+    ELIGIBLE_HISTORY_STATUSES,
+    ETF_NAME_PATTERNS,
+    METADATA_COLUMNS,
+    apply_filters_with_stats,
+    enrich_and_filter_equities,
+    log_filter_stats,
+    merge_optional_symbol_overlays,
+)
+from selector.ranking import (
+    OUTPUT_COLUMNS,
+    PERSISTED_SELECTOR_SCORE_COLUMNS,
+    SCORE_COLUMNS,
+    apply_factor_neutralization,
+    apply_sector_neutrality,
+    merge_scores,
+    rank_and_select,
+)
 
 LOGGER = logging.getLogger(__name__)
+RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 
 PRICE_COLUMNS = ["symbol", "date", "close", "volume", "high", "low"]
-METADATA_COLUMNS = ["symbol", "company_name", "asset_class", "status", "tradable", "bars_available", "sector", "market_cap"]
-ETF_NAME_PATTERNS = (
-    "etf",
-    "etn",
-    "fund",
-    "index fund",
-    "ishares",
-    "spdr",
-    "vanguard",
-    "invesco",
-    "proshares",
-    "direxion",
-    "wisdomtree",
-    "global x",
-    "first trust",
-    "xtrackers",
-    "schwab",
-    "bond",
-    "treasury",
-)
-FACTOR_COLUMNS = [
-    "symbol",
-    "date",
-    "latest_close",
-    "avg_dollar_volume_20d",
-    "history_days",
-    "atr_20",
-    "atr_pct_20",
-    "beta_126",
-    "ma50",
-    "ma150",
-    "ma200",
-    "high_52w",
-    "low_52w",
-    "high_52w_proximity",
-    "weekly_close",
-    "weekly_ma10",
-    "weekly_ma30",
-    "weekly_trend_score",
-    "volatility_ratio",
-    "trend_score",
-    "vcp_score",
-]
-SCORE_COLUMNS = [
-    "symbol",
-    "liquidity_val",
-    "relative_strength_index",
-    "total_score",
-    "sector",
-    "market_cap",
-    "beta_126",
-    "spread_bps",
-    "earnings_date",
-    "days_to_earnings",
-    "earnings_blackout",
-    "anomaly_count",
-    "missing_days_count",
-]
-PERSISTED_SELECTOR_SCORE_COLUMNS = [
-    "symbol",
-    "trend_score",
-    "vcp_score",
-    "final_score",
-    "market_cap",
-    "beta_126",
-    "spread_bps",
-    "earnings_date",
-    "days_to_earnings",
-    "earnings_blackout",
-]
-OUTPUT_COLUMNS = [
-    "rank",
-    "symbol",
-    "sector",
-    "latest_close",
-    "avg_dollar_volume_20d",
-    "liquidity_val",
-    "relative_strength_index",
-    "total_score",
-    "trend_score",
-    "vcp_score",
-    "raw_final_score",
-    "final_score",
-    "volatility_ratio",
-    "atr_20",
-    "atr_pct_20",
-    "market_cap",
-    "beta_126",
-    "spread_bps",
-    "earnings_date",
-    "days_to_earnings",
-    "earnings_blackout",
-    "ma50",
-    "ma150",
-    "ma200",
-    "high_52w",
-    "low_52w",
-    "high_52w_proximity",
-    "weekly_close",
-    "weekly_ma10",
-    "weekly_ma30",
-    "weekly_trend_score",
-    "history_days",
-    "anomaly_count",
-    "missing_days_count",
-]
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _build_run_id(prefix: str) -> str:
+    return f"{prefix}-{_utc_now_naive().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+
+
+def _emit_run_summary(summary: dict[str, object]) -> None:
+    print(
+        f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
+        flush=True,
+    )
+
+
+def _build_cli_run_summary(
+    *,
+    config: "AlphaScannerConfig",
+    result: pd.DataFrame,
+    started_at: datetime,
+    finished_at: datetime,
+    rejected_by_filter: dict[str, int] | None = None,
+) -> dict[str, object]:
+    selected_symbols = result["symbol"].astype(str).tolist()[:5] if "symbol" in result.columns and not result.empty else []
+    sector_breakdown = (
+        result["sector"].fillna("Unknown").astype(str).str.strip().replace("", "Unknown").value_counts().to_dict()
+        if "sector" in result.columns and not result.empty
+        else {}
+    )
+    max_final_score = None
+    avg_final_score = None
+    if "final_score" in result.columns and not result.empty:
+        numeric_final_score = pd.to_numeric(result["final_score"], errors="coerce").dropna()
+        if not numeric_final_score.empty:
+            max_final_score = round(float(numeric_final_score.max()), 4)
+            avg_final_score = round(float(numeric_final_score.mean()), 4)
+
+    return {
+        "run_id": _build_run_id("alpha-scanner"),
+        "preset_profile": STRICT_SWING_CASH_FILTERS.name,
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "chunk_size": config.chunk_size,
+        "requested_selection_size": config.selection_size,
+        "selected_candidates": int(len(result)),
+        "selection_fill_ratio": round((len(result) / config.selection_size), 4) if config.selection_size > 0 else 0.0,
+        "workers": config.max_workers or min(8, os.cpu_count() or 1),
+        "sector_cap_ratio": round(float(config.sector_cap_ratio), 4),
+        "selected_sectors": int(result["sector"].nunique()) if "sector" in result.columns and not result.empty else 0,
+        "sector_breakdown": sector_breakdown,
+        "top_symbols": selected_symbols,
+        "max_final_score": max_final_score,
+        "avg_final_score": avg_final_score,
+        "max_anomaly_count": config.max_anomaly_count,
+        "max_spread_bps": config.max_spread_bps,
+        "max_spread_bps_iex": config.max_spread_bps_iex,
+        "min_quote_size": config.min_quote_size,
+        "market_cap_max_age_days": config.market_cap_max_age_days,
+        "earnings_blackout_days": config.earnings_blackout_days,
+        # Phase 3.3.b — agrégat des rejets par filtre (cross-chunks).
+        "rejected_by_filter": dict(sorted((rejected_by_filter or {}).items())),
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +167,11 @@ class AlphaScannerConfig:
     min_market_cap: float | None = None
     min_beta_126: float | None = None
     max_spread_bps: float | None = None
+    # Phase 3.3.c — extensions IEX : relâchement contrôlé du filtre spread.
+    max_spread_bps_iex: float | None = None
+    min_quote_size: float | None = None
+    # Phase 3.3.d — TTL appliqué au filtre ``min_market_cap``.
+    market_cap_max_age_days: int | None = None
     earnings_blackout_days: int | None = None
     require_above_ma200: bool = False
     max_anomaly_count: int = 20
@@ -164,25 +188,16 @@ class AlphaScannerConfig:
     update_batch_size: int = 500
     max_workers: int | None = None
 
-    # --- Composition des facteurs (P1 — poids configurables) -----------------
-    # Remplace les constantes hardcodées 0.5 / 0.3 / 0.2 dans merge_scores().
-    # Pour passer à un schéma IC-weighted, ajustez ces valeurs après avoir calculé
-    # l'Information Coefficient (corrélation rang-facteur → rendement futur 5/10/20j)
-    # via un backtest (ex. vectorbt / zipline).
-    weight_trend_vcp: float = 0.50    # 50 % : moyenne (trend_score + vcp_score)
-    weight_total_score: float = 0.30  # 30 % : score screener (RSI relatif, range historique)
-    weight_rsi: float = 0.20          # 20 % : RSI relatif vs SPY normalisé
+    # Composition multi-facteurs : poids configurables.
+    weight_trend_vcp: float = 0.50
+    weight_total_score: float = 0.30
+    weight_rsi: float = 0.20
 
-    # --- Winsorisation (P1 — protection contre les outliers) -----------------
-    # Percentiles utilisés pour borner les séries avant normalisation min-max.
-    # Valeurs standard : [1 %, 99 %]. Réduire à [2 %, 98 %] si outliers fréquents.
+    # Winsorisation (anti-outliers).
     winsor_lower_pct: float = 0.01
     winsor_upper_pct: float = 0.99
 
-    # --- Neutralisation sectorielle (P0) -------------------------------------
-    # Si True, RSI et total_score sont transformés en z-scores intra-secteur
-    # avant la composition du final_score, ce qui élimine le biais de secteur
-    # (ex. titres Energy surreprésentés en bull sectoriel).
+    # Neutralisation cross-sectorielle (P0).
     neutralize_by_sector: bool = True
 
     @classmethod
@@ -192,6 +207,10 @@ class AlphaScannerConfig:
         **overrides: object,
     ) -> "AlphaScannerConfig":
         merged_kwargs: dict[str, object] = dict(profile.to_scanner_config_kwargs())
+        # Phase 3.3.c/d — merger les extensions IEX/TTL.
+        for key, value in profile.iex_extensions().items():
+            if value is not None:
+                merged_kwargs[key] = value
         for key, value in overrides.items():
             merged_kwargs[key] = value
         return cls(**merged_kwargs)
@@ -229,6 +248,20 @@ class AlphaScannerConfig:
             raise ValueError("min_beta_126 doit être strictement positif lorsqu'il est renseigné.")
         if self.max_spread_bps is not None and self.max_spread_bps <= 0:
             raise ValueError("max_spread_bps doit être strictement positif lorsqu'il est renseigné.")
+        if self.max_spread_bps_iex is not None and self.max_spread_bps_iex <= 0:
+            raise ValueError("max_spread_bps_iex doit être strictement positif lorsqu'il est renseigné.")
+        if (
+            self.max_spread_bps is not None
+            and self.max_spread_bps_iex is not None
+            and self.max_spread_bps_iex < self.max_spread_bps
+        ):
+            raise ValueError(
+                "max_spread_bps_iex doit être >= max_spread_bps (relâchement IEX, pas durcissement)."
+            )
+        if self.min_quote_size is not None and self.min_quote_size < 0:
+            raise ValueError("min_quote_size doit être positif ou nul lorsqu'il est renseigné.")
+        if self.market_cap_max_age_days is not None and self.market_cap_max_age_days < 0:
+            raise ValueError("market_cap_max_age_days doit être positif ou nul lorsqu'il est renseigné.")
         if self.earnings_blackout_days is not None and self.earnings_blackout_days < 0:
             raise ValueError("earnings_blackout_days doit être positif ou nul lorsqu'il est renseigné.")
         if (
@@ -258,7 +291,13 @@ class AlphaScannerConfig:
 
 
 class AlphaScanner:
-    """Scanner multi-facteurs basé sur prix journaliers + table auxiliaire de scores."""
+    """Scanner multi-facteurs basé sur prix journaliers + table auxiliaire de scores.
+
+    Phase 3.3.a — la logique pure (compute_factors / merge_scores / filtres /
+    ranking) vit désormais dans ``selector.factors``, ``selector.filters`` et
+    ``selector.ranking``. Cette classe garde la responsabilité I/O (DB,
+    threading) et délègue tout le calcul.
+    """
 
     def __init__(
         self,
@@ -267,7 +306,49 @@ class AlphaScanner:
     ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
         self.config = config or AlphaScannerConfig.strict_swing_cash()
+        self._stock_metadata_columns_cache: set[str] | None = None
+        self._stock_quote_snapshots_columns_cache: set[str] | None = None
+        # Phase 3.3.b — agrégation des stats `apply_filters_with_stats`.
+        self._aggregated_filter_stats: Counter[str] = Counter()
+        self._filter_stats_lock = threading.Lock()
 
+    # ------------------------------------------------------------------
+    # Introspection schéma
+    # ------------------------------------------------------------------
+    def get_aggregated_filter_stats(self) -> dict[str, int]:
+        """Phase 3.3.b — snapshot agrégé (cross-chunks) des stats de filtrage."""
+        with self._filter_stats_lock:
+            return dict(self._aggregated_filter_stats)
+
+    def _get_stock_metadata_columns(self) -> set[str]:
+        if self._stock_metadata_columns_cache is not None:
+            return self._stock_metadata_columns_cache
+        try:
+            self._stock_metadata_columns_cache = {
+                str(column.get("name"))
+                for column in inspect(self.engine).get_columns("stock_metadata")
+            }
+        except Exception:
+            LOGGER.warning("Inspection stock_metadata indisponible; fallback sans history_status explicite.")
+            self._stock_metadata_columns_cache = set()
+        return self._stock_metadata_columns_cache
+
+    def _get_stock_quote_snapshots_columns(self) -> set[str]:
+        # Phase 3.3.c — introspection défensive.
+        if self._stock_quote_snapshots_columns_cache is not None:
+            return self._stock_quote_snapshots_columns_cache
+        try:
+            self._stock_quote_snapshots_columns_cache = {
+                str(column.get("name"))
+                for column in inspect(self.engine).get_columns("stock_quote_snapshots")
+            }
+        except Exception:
+            self._stock_quote_snapshots_columns_cache = set()
+        return self._stock_quote_snapshots_columns_cache
+
+    # ------------------------------------------------------------------
+    # Lecture DB (I/O)
+    # ------------------------------------------------------------------
     def fetch_market_data(self, symbols: Sequence[str]) -> pd.DataFrame:
         """Charge un chunk d'historique marché depuis la table daily."""
         if not symbols:
@@ -320,6 +401,7 @@ class AlphaScanner:
                    earnings_date,
                    days_to_earnings,
                    earnings_blackout,
+                   sanitizer_status,
                    anomaly_count,
                    missing_days_count
             FROM {self.config.score_table}
@@ -347,16 +429,28 @@ class AlphaScanner:
         if not symbols:
             return pd.DataFrame(columns=METADATA_COLUMNS)
 
+        available_columns = self._get_stock_metadata_columns()
+        select_columns = [
+            "symbol",
+            "company_name",
+            "asset_class",
+            "status",
+            "tradable",
+            "bars_available",
+        ]
+        if "history_status" in available_columns:
+            select_columns.append("history_status")
+        if "sector" in available_columns:
+            select_columns.append("sector")
+        if "market_cap" in available_columns:
+            select_columns.append("market_cap")
+        # Phase 3.3.d — TTL filtre market_cap basé sur la fraîcheur SQL.
+        if "market_cap_refreshed_at" in available_columns:
+            select_columns.append("market_cap_refreshed_at")
+
         stmt = text(
-            """
-            SELECT symbol,
-                   company_name,
-                   asset_class,
-                   status,
-                   tradable,
-                   bars_available,
-                   sector,
-                   market_cap
+            f"""
+            SELECT {', '.join(select_columns)}
             FROM stock_metadata
             WHERE symbol IN :symbols
             """
@@ -372,7 +466,13 @@ class AlphaScanner:
             LOGGER.warning("Lecture stock_metadata indisponible; impossibilite de filtrer explicitement les ETFs.")
             return pd.DataFrame(columns=METADATA_COLUMNS)
 
-        return metadata_df if not metadata_df.empty else pd.DataFrame(columns=METADATA_COLUMNS)
+        if metadata_df.empty:
+            return pd.DataFrame(columns=METADATA_COLUMNS)
+
+        for column in METADATA_COLUMNS:
+            if column not in metadata_df.columns:
+                metadata_df[column] = pd.NA
+        return metadata_df.loc[:, METADATA_COLUMNS]
 
     def _load_benchmark_returns(self, start_date: date, end_date: date) -> pd.DataFrame:
         stmt = text(
@@ -403,14 +503,26 @@ class AlphaScanner:
         return benchmark_df[["date", "spy_return"]].dropna().reset_index(drop=True)
 
     def fetch_quote_snapshots(self, symbols: Sequence[str], *, reference_date: date | None = None) -> pd.DataFrame:
+        # Phase 3.3.c — bid_size/ask_size requis pour le relâchement IEX.
+        available_columns = self._get_stock_quote_snapshots_columns()
+        select_extra: list[str] = []
+        if "bid_size" in available_columns:
+            select_extra.append("q.bid_size")
+        if "ask_size" in available_columns:
+            select_extra.append("q.ask_size")
+        empty_columns = ["symbol", "quote_date", "spread_bps", "bid_size", "ask_size"]
         if not symbols:
-            return pd.DataFrame(columns=["symbol", "quote_date", "spread_bps"])
+            return pd.DataFrame(columns=empty_columns)
 
         effective_reference_date = reference_date or date.today()
 
+        select_clause = "q.symbol, q.quote_date, q.spread_bps"
+        if select_extra:
+            select_clause = select_clause + ", " + ", ".join(select_extra)
+
         stmt = text(
-            """
-            SELECT q.symbol, q.quote_date, q.spread_bps
+            f"""
+            SELECT {select_clause}
             FROM stock_quote_snapshots q
             INNER JOIN (
                 SELECT symbol, MAX(quote_date) AS max_quote_date
@@ -431,8 +543,11 @@ class AlphaScanner:
             )
         except SQLAlchemyError:
             LOGGER.warning("Lecture stock_quote_snapshots indisponible; filtre de spread desactive.")
-            return pd.DataFrame(columns=["symbol", "quote_date", "spread_bps"])
-        return quotes_df if not quotes_df.empty else pd.DataFrame(columns=["symbol", "quote_date", "spread_bps"])
+            return pd.DataFrame(columns=empty_columns)
+        for column in ("bid_size", "ask_size"):
+            if column not in quotes_df.columns:
+                quotes_df[column] = pd.NA
+        return quotes_df if not quotes_df.empty else pd.DataFrame(columns=empty_columns)
 
     def fetch_next_earnings(self, symbols: Sequence[str], *, reference_date: date | None = None) -> pd.DataFrame:
         if not symbols:
@@ -482,633 +597,65 @@ class AlphaScanner:
         ).astype(int)
         return earnings_df
 
+    # ------------------------------------------------------------------
+    # Calcul (délégation pure aux modules factors / filters / ranking)
+    # ------------------------------------------------------------------
     def compute_factors(self, market_data: pd.DataFrame) -> pd.DataFrame:
-        """Calcule MA, range 52 semaines, trend_score Minervini et VCP score."""
+        """Délègue à ``selector.factors.compute_factor_frame`` après avoir
+        chargé les retours du benchmark SPY (I/O DB)."""
         if market_data.empty:
             return pd.DataFrame(columns=FACTOR_COLUMNS)
-
-        LOGGER.debug("Calcul facteurs | lignes_marche=%s symboles=%s", len(market_data), market_data["symbol"].nunique())
-
-        required = {"symbol", "date", "close", "volume"}
-        missing = required.difference(market_data.columns)
-        if missing:
-            raise ValueError(f"Colonnes marché manquantes: {sorted(missing)}")
-
-        prices = market_data.copy()
-        prices["date"] = pd.to_datetime(prices["date"], utc=False)
-        prices = prices.sort_values(["symbol", "date"]).reset_index(drop=True)
-        prices["close"] = prices["close"].astype(float)
-        prices["volume"] = prices["volume"].astype(float)
-        prices["high"] = prices["high"].astype(float) if "high" in prices.columns else prices["close"]
-        prices["low"] = prices["low"].astype(float) if "low" in prices.columns else prices["close"]
-        prices["dollar_volume"] = prices["close"] * prices["volume"]
-        grouped = prices.groupby("symbol", group_keys=False)
-        prices["prev_close"] = grouped["close"].shift(1)
-        prices["true_range"] = np.maximum.reduce(
-            [
-                (prices["high"] - prices["low"]).to_numpy(dtype=float),
-                (prices["high"] - prices["prev_close"]).abs().fillna(0.0).to_numpy(dtype=float),
-                (prices["low"] - prices["prev_close"]).abs().fillna(0.0).to_numpy(dtype=float),
-            ]
-        )
-        prices["daily_return"] = (
-            prices.groupby("symbol")["close"].pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
-        )
+        dates = pd.to_datetime(market_data["date"], utc=False)
         benchmark_returns = self._load_benchmark_returns(
-            start_date=prices["date"].min().date(),
-            end_date=prices["date"].max().date(),
+            start_date=dates.min().date(),
+            end_date=dates.max().date(),
         )
-        beta_rows: list[dict[str, float | str]] = []
-        for symbol, symbol_prices in prices.groupby("symbol", sort=False):
-            if benchmark_returns.empty:
-                beta_rows.append({"symbol": str(symbol), "beta_126": np.nan})
-                continue
-            merged_returns = symbol_prices[["date", "daily_return"]].merge(benchmark_returns, on="date", how="inner")
-            merged_returns = merged_returns.dropna(subset=["daily_return", "spy_return"])
-            if len(merged_returns) < 30:
-                beta_rows.append({"symbol": str(symbol), "beta_126": np.nan})
-                continue
-            tail = merged_returns.tail(126)
-            variance = float(tail["spy_return"].var(ddof=0))
-            if variance <= 1e-12:
-                beta_rows.append({"symbol": str(symbol), "beta_126": np.nan})
-                continue
-            covariance = float(np.cov(tail["daily_return"], tail["spy_return"], ddof=0)[0, 1])
-            beta_rows.append({"symbol": str(symbol), "beta_126": covariance / variance})
-
-        prices["ma50"] = grouped["close"].rolling(self.config.ma_short_window, min_periods=self.config.ma_short_window).mean().reset_index(level=0, drop=True)
-        prices["ma150"] = grouped["close"].rolling(self.config.ma_mid_window, min_periods=self.config.ma_mid_window).mean().reset_index(level=0, drop=True)
-        prices["ma200"] = grouped["close"].rolling(self.config.ma_long_window, min_periods=self.config.ma_long_window).mean().reset_index(level=0, drop=True)
-        prices["ma200_lag_20"] = prices.groupby("symbol")["ma200"].shift(20)
-        prices["high_52w"] = grouped["high"].rolling(self.config.trailing_range_window, min_periods=self.config.trailing_range_window).max().reset_index(level=0, drop=True)
-        prices["low_52w"] = grouped["low"].rolling(self.config.trailing_range_window, min_periods=self.config.trailing_range_window).min().reset_index(level=0, drop=True)
-        prices["avg_dollar_volume_20d"] = grouped["dollar_volume"].rolling(self.config.liquidity_lookback_days, min_periods=self.config.liquidity_lookback_days).mean().reset_index(level=0, drop=True)
-        prices["atr_20"] = grouped["true_range"].rolling(20, min_periods=20).mean().reset_index(level=0, drop=True)
-        prices["atr_pct_20"] = np.where(prices["close"] > 0, prices["atr_20"] / prices["close"], np.nan)
-        prices["vol_10"] = grouped["daily_return"].rolling(self.config.volatility_short_window, min_periods=self.config.volatility_short_window).std(ddof=0).reset_index(level=0, drop=True)
-        prices["vol_60"] = grouped["daily_return"].rolling(self.config.volatility_long_window, min_periods=self.config.volatility_long_window).std(ddof=0).reset_index(level=0, drop=True)
-        prices["volatility_ratio"] = np.where(prices["vol_60"] > 0, prices["vol_10"] / prices["vol_60"], np.nan)
-
-        latest = grouped.tail(1).copy()
-        history_days = prices.groupby("symbol")["date"].size().reset_index(name="history_days")
-        latest = latest.merge(history_days, on="symbol", how="left")
-        latest = latest.merge(pd.DataFrame(beta_rows), on="symbol", how="left")
-        latest["high_52w_proximity"] = np.where(
-            latest["high_52w"] > 0,
-            latest["close"] / latest["high_52w"],
-            np.nan,
-        )
-
-        weekly_feature_rows: list[dict[str, float | str]] = []
-        for symbol, symbol_prices in prices.groupby("symbol", sort=False):
-            weekly_close = (
-                symbol_prices.set_index("date")["close"]
-                .resample("W-FRI")
-                .last()
-                .dropna()
-            )
-            if weekly_close.empty:
-                weekly_feature_rows.append(
-                    {
-                        "symbol": str(symbol),
-                        "weekly_close": np.nan,
-                        "weekly_ma10": np.nan,
-                        "weekly_ma30": np.nan,
-                    }
-                )
-                continue
-
-            weekly_df = weekly_close.to_frame(name="weekly_close")
-            weekly_df["weekly_ma10"] = weekly_df["weekly_close"].rolling(10, min_periods=10).mean()
-            weekly_df["weekly_ma30"] = weekly_df["weekly_close"].rolling(30, min_periods=30).mean()
-            latest_week = weekly_df.iloc[-1]
-            weekly_feature_rows.append(
-                {
-                    "symbol": str(symbol),
-                    "weekly_close": float(latest_week["weekly_close"]),
-                    "weekly_ma10": float(latest_week["weekly_ma10"]) if pd.notna(latest_week["weekly_ma10"]) else np.nan,
-                    "weekly_ma30": float(latest_week["weekly_ma30"]) if pd.notna(latest_week["weekly_ma30"]) else np.nan,
-                }
-            )
-
-        latest = latest.merge(pd.DataFrame(weekly_feature_rows), on="symbol", how="left")
-
-        criteria = pd.DataFrame(
-            {
-                "close_gt_ma150": latest["close"] > latest["ma150"],
-                "close_gt_ma200": latest["close"] > latest["ma200"],
-                "ma150_gt_ma200": latest["ma150"] > latest["ma200"],
-                "ma200_uptrend": latest["ma200"] > latest["ma200_lag_20"],
-                "close_gt_ma50": latest["close"] > latest["ma50"],
-                "close_25pct_above_low52": latest["close"] >= (1.25 * latest["low_52w"]),
-                "close_within_25pct_high52": latest["close"] >= (0.75 * latest["high_52w"]),
-            }
-        )
-        latest["trend_score"] = criteria.fillna(False).astype(float).mean(axis=1)
-        weekly_criteria = pd.DataFrame(
-            {
-                "weekly_close_gt_ma10": latest["weekly_close"] > latest["weekly_ma10"],
-                "weekly_ma10_gt_ma30": latest["weekly_ma10"] > latest["weekly_ma30"],
-            }
-        )
-        latest["weekly_trend_score"] = weekly_criteria.fillna(False).astype(float).mean(axis=1)
-        latest["vcp_score"] = (
-            (self.config.vcp_ratio_threshold - latest["volatility_ratio"]) / self.config.vcp_ratio_threshold
-        ).clip(lower=0.0, upper=1.0)
-        latest["vcp_score"] = latest["vcp_score"].fillna(0.0)
-
-        factor_frame = latest[
-            [
-                "symbol",
-                "date",
-                "close",
-                "avg_dollar_volume_20d",
-                "history_days",
-                "atr_20",
-                "atr_pct_20",
-                "beta_126",
-                "ma50",
-                "ma150",
-                "ma200",
-                "high_52w",
-                "low_52w",
-                "high_52w_proximity",
-                "weekly_close",
-                "weekly_ma10",
-                "weekly_ma30",
-                "weekly_trend_score",
-                "volatility_ratio",
-                "trend_score",
-                "vcp_score",
-            ]
-        ].rename(columns={"close": "latest_close"})
-
-        factor_frame["volatility_ratio"] = factor_frame["volatility_ratio"].replace([np.inf, -np.inf], np.nan)
-        factor_frame["atr_pct_20"] = factor_frame["atr_pct_20"].replace([np.inf, -np.inf], np.nan)
-        factor_frame["beta_126"] = factor_frame["beta_126"].replace([np.inf, -np.inf], np.nan)
-        factor_frame["high_52w_proximity"] = factor_frame["high_52w_proximity"].clip(lower=0.0)
-        factor_frame["trend_score"] = factor_frame["trend_score"].clip(0.0, 1.0)
-        factor_frame["weekly_trend_score"] = factor_frame["weekly_trend_score"].clip(0.0, 1.0)
-        factor_frame["vcp_score"] = factor_frame["vcp_score"].clip(0.0, 1.0)
-        return factor_frame.reset_index(drop=True)
+        return compute_factor_frame(market_data, benchmark_returns, self.config)
 
     def merge_scores(self, computed_df: pd.DataFrame, scores_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Fusionne facteurs recalculés et scores auxiliaires.
-
-        Normalisation : winsorisation [winsor_lower_pct, winsor_upper_pct] + min-max → [0, 1].
-        Composition   : poids configurables via AlphaScannerConfig (weight_trend_vcp /
-                        weight_total_score / weight_rsi).
-
-        NOTE : La neutralisation sectorielle (cross-sectional z-score) est appliquée
-        APRÈS cet appel, dans _apply_factor_neutralization(), une fois le secteur connu
-        pour l'ensemble de l'univers (après _enrich_and_filter_equities + concat des chunks).
-        """
-        if computed_df.empty:
-            return pd.DataFrame(columns=FACTOR_COLUMNS + SCORE_COLUMNS + ["normalized_total_score", "normalized_rsi", "raw_final_score", "final_score"])
-
-        scores = scores_df.copy() if not scores_df.empty else pd.DataFrame(columns=SCORE_COLUMNS)
-        merged = computed_df.merge(scores, on="symbol", how="left", suffixes=("", "_aux"))
-
-        # Winsorisation + normalisation (remplace le min-max pur sensible aux outliers)
-        merged["normalized_total_score"] = self._winsorize_and_normalize(
-            merged.get("total_score"),
-            lower_pct=self.config.winsor_lower_pct,
-            upper_pct=self.config.winsor_upper_pct,
-        )
-        merged["normalized_rsi"] = self._winsorize_and_normalize(
-            merged.get("relative_strength_index"),
-            lower_pct=self.config.winsor_lower_pct,
-            upper_pct=self.config.winsor_upper_pct,
-        )
-        merged["sector"] = merged.get("sector").where(merged.get("sector").notna(), "Unknown") if "sector" in merged.columns else "Unknown"
-
-        # Composition multi-facteurs avec poids configurables
-        # vcp_score : (threshold - vol_ratio) / threshold, clipé [0,1].
-        # Un score proche de 1 = contraction de volatilité forte (signal VCP idéal).
-        # Un score proche de 0 = volatilité récente élevée (pas de setup VCP).
-        factor_component = 0.5 * (
-            merged["trend_score"].fillna(0.0) + merged["vcp_score"].fillna(0.0)
-        )
-        aux_mask = merged[["total_score", "relative_strength_index"]].notna().any(axis=1)
-        merged["raw_final_score"] = factor_component
-        merged.loc[aux_mask, "raw_final_score"] = (
-            self.config.weight_trend_vcp * factor_component[aux_mask]
-            + self.config.weight_total_score * merged.loc[aux_mask, "normalized_total_score"].fillna(0.0)
-            + self.config.weight_rsi * merged.loc[aux_mask, "normalized_rsi"].fillna(0.0)
-        )
-        merged["final_score"] = merged["raw_final_score"]
-        return merged
+        """Délègue à ``selector.ranking.merge_scores``."""
+        return merge_scores(computed_df, scores_df, self.config)
 
     def _apply_factor_neutralization(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Neutralisation cross-sectorielle (P0) — appliquée sur l'univers COMPLET
-        après concaténation de tous les chunks, une fois le secteur connu.
-
-        Pour chaque facteur (relative_strength_index, total_score) :
-          1. Calcule le z-score intra-secteur (mean=0, std=1 par secteur)
-          2. Winsorise + normalise en [0, 1]
-          3. Remplace la composante correspondante dans final_score
-
-        Cela élimine le biais sectoriel : un titre Energy surreprésenté en bull
-        sectoriel ne peut plus dominer un titre Tech simplement grâce à son secteur.
-
-        Si neutralize_by_sector=False ou si la colonne sector est absente, retourne df inchangé.
-        """
-        if not self.config.neutralize_by_sector or df.empty:
-            return df
-
-        if "sector" not in df.columns or df["sector"].isna().all():
-            LOGGER.warning(
-                "Neutralisation sectorielle desactivee : colonne sector absente ou entierement nulle."
-            )
-            return df
-
-        result = df.copy()
-        result["sector"] = result["sector"].fillna("Unknown").astype(str).str.strip().replace("", "Unknown")
-
-        def _intra_sector_zscore(series: pd.Series) -> pd.Series:
-            """Z-score robuste par secteur (ddof=0, fallback 0.0 si std≈0)."""
-            mu = series.mean()
-            sigma = series.std(ddof=0)
-            if sigma < 1e-9:
-                return pd.Series(0.0, index=series.index)
-            return (series - mu) / sigma
-
-        factors_to_neutralize = [
-            col for col in ["relative_strength_index", "total_score"]
-            if col in result.columns and result[col].notna().any()
-        ]
-
-        for col in factors_to_neutralize:
-            z_col = f"{col}_sector_z"
-            result[z_col] = result.groupby("sector")[col].transform(_intra_sector_zscore)
-            result[f"{col}_neutralized"] = self._winsorize_and_normalize(
-                result[z_col],
-                lower_pct=self.config.winsor_lower_pct,
-                upper_pct=self.config.winsor_upper_pct,
-            )
-
-        LOGGER.info(
-            "Neutralisation sectorielle appliquee | univers=%s secteurs=%s facteurs=%s",
-            len(result),
-            result["sector"].nunique(),
-            factors_to_neutralize,
-        )
-
-        # Recomposer final_score avec les composantes neutralisées
-        factor_component = 0.5 * (
-            result["trend_score"].fillna(0.0) + result["vcp_score"].fillna(0.0)
-        )
-
-        rsi_neutralized = result.get("relative_strength_index_neutralized")
-        total_neutralized = result.get("total_score_neutralized")
-
-        aux_mask = pd.Series(False, index=result.index)
-        if rsi_neutralized is not None:
-            aux_mask |= rsi_neutralized.notna()
-        if total_neutralized is not None:
-            aux_mask |= total_neutralized.notna()
-
-        result["raw_final_score"] = factor_component
-        if aux_mask.any():
-            result.loc[aux_mask, "raw_final_score"] = (
-                self.config.weight_trend_vcp * factor_component[aux_mask]
-                + self.config.weight_total_score * (total_neutralized[aux_mask].fillna(0.0) if total_neutralized is not None else 0.0)
-                + self.config.weight_rsi * (rsi_neutralized[aux_mask].fillna(0.0) if rsi_neutralized is not None else 0.0)
-            )
-        result["final_score"] = result["raw_final_score"]
-        return result
+        """Délègue à ``selector.ranking.apply_factor_neutralization``."""
+        return apply_factor_neutralization(df, self.config)
 
     def _apply_filters_with_stats(self, merged_df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
-        if merged_df.empty:
-            empty_stats = {
-                "input": 0,
-                "output": 0,
-                "rejected_etf": 0,
-                "rejected_history": 0,
-                "rejected_price": 0,
-                "rejected_market_liquidity": 0,
-                "rejected_volatility": 0,
-                "rejected_atr": 0,
-                "rejected_relative_strength": 0,
-                "rejected_ma200": 0,
-                "rejected_high_52w": 0,
-                "rejected_weekly": 0,
-                "rejected_market_cap": 0,
-                "rejected_beta": 0,
-                "rejected_spread": 0,
-                "rejected_earnings_blackout": 0,
-                "rejected_score_liquidity": 0,
-                "rejected_anomalies": 0,
-                "rejected_missing_days": 0,
-            }
-            return merged_df.copy(), empty_stats
-
-        filtered = merged_df.copy()
-        before_count = len(filtered)
-
-        # Exclusion ETF / crypto : seules les actions us_equity actives et tradables sont retenues.
-        # (Le JOIN stock_metadata dans _iter_eligible_symbol_chunks filtre déjà en amont ;
-        #  ce filtre pandas est un filet de sécurité au cas où metadata_df serait partielle.)
-        if "asset_class" in filtered.columns:
-            before_etf = len(filtered)
-            filtered = filtered[filtered["asset_class"].isna() | (filtered["asset_class"] == "us_equity")]
-            after_etf = len(filtered)
-            if before_etf - after_etf:
-                LOGGER.info("Filtre ETF/crypto | rejetes=%s", before_etf - after_etf)
-        if "tradable" in filtered.columns:
-            filtered = filtered[filtered["tradable"].isna() | (filtered["tradable"] == True)]  # noqa: E712
-
-        after_etf_filter = len(filtered)
-        filtered = filtered[filtered["history_days"] >= self.config.min_history_days]
-        after_history = len(filtered)
-        filtered = filtered[filtered["latest_close"] > self.config.min_close]
-        after_close = len(filtered)
-        filtered = filtered[filtered["avg_dollar_volume_20d"] > self.config.liquidity_threshold]
-        after_market_liquidity = len(filtered)
-
-        # Le filtre de volatilité relative dépend de facteurs calculés en pandas
-        # (vol_10 / vol_60). Il est donc appliqué ici, après compute_factors(),
-        # et non dans la présélection SQL brute.
-        if self.config.max_volatility_ratio is not None:
-            if "volatility_ratio" not in filtered.columns:
-                LOGGER.warning(
-                    "Filtre volatilite relative active mais colonne volatility_ratio absente; aucun titre retenu."
-                )
-                filtered = filtered.iloc[0:0].copy()
-            else:
-                filtered = filtered[
-                    filtered["volatility_ratio"].notna()
-                    & (filtered["volatility_ratio"] <= self.config.max_volatility_ratio)
-                ]
-        after_volatility = len(filtered)
-
-        if self.config.min_atr_pct_20 is not None or self.config.max_atr_pct_20 is not None:
-            if "atr_pct_20" not in filtered.columns:
-                LOGGER.warning(
-                    "Filtre ATR %% active mais colonne atr_pct_20 absente; aucun titre retenu."
-                )
-                filtered = filtered.iloc[0:0].copy()
-            else:
-                atr_mask = filtered["atr_pct_20"].notna()
-                if self.config.min_atr_pct_20 is not None:
-                    atr_mask &= filtered["atr_pct_20"] >= self.config.min_atr_pct_20
-                if self.config.max_atr_pct_20 is not None:
-                    atr_mask &= filtered["atr_pct_20"] <= self.config.max_atr_pct_20
-                filtered = filtered[atr_mask]
-        after_atr = len(filtered)
-
-        if self.config.min_relative_strength_index is not None:
-            if "relative_strength_index" not in filtered.columns:
-                LOGGER.warning(
-                    "Filtre force relative active mais colonne relative_strength_index absente; aucun titre retenu."
-                )
-                filtered = filtered.iloc[0:0].copy()
-            else:
-                filtered = filtered[
-                    filtered["relative_strength_index"].notna()
-                    & (filtered["relative_strength_index"] >= self.config.min_relative_strength_index)
-                ]
-        after_relative_strength = len(filtered)
-
-        if self.config.require_above_ma200:
-            required_ma200_cols = {"ma200", "latest_close"}
-            if not required_ma200_cols.issubset(filtered.columns):
-                LOGGER.warning(
-                    "Filtre close>MA200 active mais colonnes requises absentes; aucun titre retenu."
-                )
-                filtered = filtered.iloc[0:0].copy()
-            else:
-                filtered = filtered[filtered["ma200"].notna() & (filtered["latest_close"] > filtered["ma200"])]
-        after_ma200 = len(filtered)
-
-        if self.config.min_high_52w_proximity is not None:
-            if "high_52w_proximity" not in filtered.columns:
-                LOGGER.warning(
-                    "Filtre proximité high 52w active mais colonne high_52w_proximity absente; aucun titre retenu."
-                )
-                filtered = filtered.iloc[0:0].copy()
-            else:
-                filtered = filtered[
-                    filtered["high_52w_proximity"].notna()
-                    & (filtered["high_52w_proximity"] >= self.config.min_high_52w_proximity)
-                ]
-        after_high_52w = len(filtered)
-
-        if self.config.min_weekly_trend_score is not None:
-            if "weekly_trend_score" not in filtered.columns:
-                LOGGER.warning(
-                    "Filtre weekly trend active mais colonne weekly_trend_score absente; aucun titre retenu."
-                )
-                filtered = filtered.iloc[0:0].copy()
-            else:
-                filtered = filtered[
-                    filtered["weekly_trend_score"].notna()
-                    & (filtered["weekly_trend_score"] >= self.config.min_weekly_trend_score)
-                ]
-        after_weekly = len(filtered)
-
-        if self.config.min_market_cap is not None:
-            if "market_cap" not in filtered.columns:
-                LOGGER.warning(
-                    "Filtre market cap active mais colonne market_cap absente; aucun titre retenu."
-                )
-                filtered = filtered.iloc[0:0].copy()
-            else:
-                filtered = filtered[
-                    filtered["market_cap"].notna()
-                    & (pd.to_numeric(filtered["market_cap"], errors="coerce") >= self.config.min_market_cap)
-                ]
-        after_market_cap = len(filtered)
-
-        if self.config.min_beta_126 is not None:
-            if "beta_126" not in filtered.columns:
-                LOGGER.warning(
-                    "Filtre beta 126 active mais colonne beta_126 absente; aucun titre retenu."
-                )
-                filtered = filtered.iloc[0:0].copy()
-            else:
-                filtered = filtered[
-                    filtered["beta_126"].notna()
-                    & (pd.to_numeric(filtered["beta_126"], errors="coerce") >= self.config.min_beta_126)
-                ]
-        after_beta = len(filtered)
-
-        if self.config.max_spread_bps is not None:
-            if "spread_bps" not in filtered.columns:
-                LOGGER.warning(
-                    "Filtre spread active mais colonne spread_bps absente; aucun titre retenu."
-                )
-                filtered = filtered.iloc[0:0].copy()
-            else:
-                filtered = filtered[
-                    filtered["spread_bps"].notna()
-                    & (pd.to_numeric(filtered["spread_bps"], errors="coerce") <= self.config.max_spread_bps)
-                ]
-        after_spread = len(filtered)
-
-        if self.config.earnings_blackout_days is not None:
-            if "earnings_blackout" not in filtered.columns:
-                LOGGER.warning(
-                    "Filtre earnings blackout active mais colonne earnings_blackout absente; aucun titre retenu."
-                )
-                filtered = filtered.iloc[0:0].copy()
-            else:
-                filtered = filtered[
-                    pd.to_numeric(filtered["earnings_blackout"], errors="coerce").fillna(0).astype(int) == 0
-                ]
-        after_earnings_blackout = len(filtered)
-
-        if "liquidity_val" in filtered.columns:
-            filtered = filtered[(filtered["liquidity_val"].isna()) | (filtered["liquidity_val"] > self.config.liquidity_threshold)]
-        after_score_liquidity = len(filtered)
-        if "anomaly_count" in filtered.columns:
-            filtered = filtered[(filtered["anomaly_count"].isna()) | (filtered["anomaly_count"] <= self.config.max_anomaly_count)]
-        after_anomaly = len(filtered)
-        if "missing_days_count" in filtered.columns:
-            filtered = filtered[(filtered["missing_days_count"].isna()) | (filtered["missing_days_count"] < self.config.max_missing_days_count)]
-
-        stats = {
-            "input": before_count,
-            "output": len(filtered),
-            "rejected_etf": before_count - after_etf_filter,
-            "rejected_history": after_etf_filter - after_history,
-            "rejected_price": after_history - after_close,
-            "rejected_market_liquidity": after_close - after_market_liquidity,
-            "rejected_volatility": after_market_liquidity - after_volatility,
-            "rejected_atr": after_volatility - after_atr,
-            "rejected_relative_strength": after_atr - after_relative_strength,
-            "rejected_ma200": after_relative_strength - after_ma200,
-            "rejected_high_52w": after_ma200 - after_high_52w,
-            "rejected_weekly": after_high_52w - after_weekly,
-            "rejected_market_cap": after_weekly - after_market_cap,
-            "rejected_beta": after_market_cap - after_beta,
-            "rejected_spread": after_beta - after_spread,
-            "rejected_earnings_blackout": after_spread - after_earnings_blackout,
-            "rejected_score_liquidity": after_earnings_blackout - after_score_liquidity,
-            "rejected_anomalies": after_score_liquidity - after_anomaly,
-            "rejected_missing_days": after_anomaly - len(filtered),
-        }
-        return filtered.reset_index(drop=True), stats
+        """Délègue à ``selector.filters.apply_filters_with_stats``."""
+        return apply_filters_with_stats(merged_df, self.config)
 
     def apply_filters(self, merged_df: pd.DataFrame) -> pd.DataFrame:
         filtered, stats = self._apply_filters_with_stats(merged_df)
-
-        LOGGER.info(
-            "Filtres appliques | entree=%s sortie=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_volatilite_relative=%s rejet_atr_pct=%s rejet_force_relative=%s rejet_ma200=%s rejet_high_52w=%s rejet_weekly=%s rejet_market_cap=%s rejet_beta=%s rejet_spread=%s rejet_earnings_blackout=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
-            stats["input"],
-            stats["output"],
-            stats["rejected_etf"],
-            stats["rejected_history"],
-            stats["rejected_price"],
-            stats["rejected_market_liquidity"],
-            stats["rejected_volatility"],
-            stats["rejected_atr"],
-            stats["rejected_relative_strength"],
-            stats["rejected_ma200"],
-            stats["rejected_high_52w"],
-            stats["rejected_weekly"],
-            stats["rejected_market_cap"],
-            stats["rejected_beta"],
-            stats["rejected_spread"],
-            stats["rejected_earnings_blackout"],
-            stats["rejected_score_liquidity"],
-            stats["rejected_anomalies"],
-            stats["rejected_missing_days"],
-        )
-
+        self._log_filter_stats(stats)
         return filtered
 
+    def _log_filter_stats(self, stats: dict[str, int]) -> None:
+        log_filter_stats(stats)
+
     def apply_sector_neutrality(self, ranked_df: pd.DataFrame) -> pd.DataFrame:
-        """Sélection round-robin avec plafond sectoriel."""
-        if ranked_df.empty:
-            return ranked_df.copy()
-
-        target_size = min(self.config.selection_size, len(ranked_df))
-        sector_cap = max(1, int(np.floor(self.config.selection_size * self.config.sector_cap_ratio)))
-        LOGGER.info(
-            "Neutralisation sectorielle | candidats=%s cible=%s plafond_par_secteur=%s",
-            len(ranked_df),
-            target_size,
-            sector_cap,
-        )
-        prepared = ranked_df.copy()
-        prepared["sector"] = prepared["sector"].fillna("Unknown").astype(str).str.strip().replace("", "Unknown")
-        prepared = prepared.sort_values(
-            ["final_score", "trend_score", "vcp_score", "avg_dollar_volume_20d"],
-            ascending=False,
-        ).reset_index(drop=True)
-
-        groups = {
-            sector: group.reset_index(drop=True)
-            for sector, group in prepared.groupby("sector", sort=False)
-        }
-        pointers = {sector: 0 for sector in groups}
-        counts: Counter[str] = Counter()
-        selected_rows: list[pd.Series] = []
-
-        while len(selected_rows) < target_size:
-            available: list[tuple[float, str]] = []
-            for sector, group in groups.items():
-                sector_name = str(sector)
-                pointer = pointers[sector]
-                if (sector_name != "Unknown" and counts[sector_name] >= sector_cap) or pointer >= len(group):
-                    continue
-                available.append((float(group.iloc[pointer]["final_score"]), sector_name))
-
-            if not available:
-                break
-
-            for _, sector in sorted(available, key=lambda item: item[0], reverse=True):
-                if len(selected_rows) >= target_size:
-                    break
-                pointer = pointers[sector]
-                group = groups[sector]
-                if (sector != "Unknown" and counts[sector] >= sector_cap) or pointer >= len(group):
-                    continue
-                selected_rows.append(group.iloc[pointer])
-                pointers[sector] += 1
-                counts[sector] += 1
-
-        if not selected_rows:
-            return prepared.iloc[0:0].copy()
-
-        selected = pd.DataFrame(selected_rows).reset_index(drop=True)
-        LOGGER.info(
-            "Neutralisation terminee | retenus=%s secteurs=%s repartition=%s",
-            len(selected),
-            selected["sector"].nunique(),
-            selected["sector"].value_counts().to_dict(),
-        )
-        return selected
+        """Délègue à ``selector.ranking.apply_sector_neutrality``."""
+        return apply_sector_neutrality(ranked_df, self.config)
 
     def rank_and_select(self, merged_df: pd.DataFrame) -> pd.DataFrame:
-        """Trie, neutralise par secteur et retourne le top final."""
-        if merged_df.empty:
-            return pd.DataFrame(columns=OUTPUT_COLUMNS)
+        """Délègue à ``selector.ranking.rank_and_select``."""
+        return rank_and_select(merged_df, self.config)
 
-        LOGGER.info("Classement final | candidats_eligibles=%s", len(merged_df))
+    def _enrich_and_filter_equities(self, merged_df: pd.DataFrame, metadata_df: pd.DataFrame) -> pd.DataFrame:
+        """Délègue à ``selector.filters.enrich_and_filter_equities``."""
+        return enrich_and_filter_equities(merged_df, metadata_df)
 
-        ranked = merged_df.sort_values(
-            ["final_score", "trend_score", "vcp_score", "avg_dollar_volume_20d"],
-            ascending=False,
-        ).reset_index(drop=True)
-        selected = self.apply_sector_neutrality(ranked)
-        if selected.empty:
-            return pd.DataFrame(columns=OUTPUT_COLUMNS)
+    def _merge_optional_symbol_overlays(
+        self,
+        merged_df: pd.DataFrame,
+        quotes_df: pd.DataFrame,
+        earnings_df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Délègue à ``selector.filters.merge_optional_symbol_overlays``."""
+        return merge_optional_symbol_overlays(merged_df, quotes_df, earnings_df)
 
-        selected = selected.sort_values(
-            ["final_score", "trend_score", "vcp_score", "avg_dollar_volume_20d"],
-            ascending=False,
-        ).reset_index(drop=True)
-        selected.insert(0, "rank", np.arange(1, len(selected) + 1))
-        LOGGER.info("Classement termine | selection_finale=%s top3=%s", len(selected), selected["symbol"].head(3).tolist())
-        for column in OUTPUT_COLUMNS:
-            if column not in selected.columns:
-                selected[column] = np.nan
-        return selected.loc[:, OUTPUT_COLUMNS].copy()
-
+    # ------------------------------------------------------------------
+    # Persistance DB
+    # ------------------------------------------------------------------
     def update_database(self, selected_df: pd.DataFrame, scored_df: Optional[pd.DataFrame] = None) -> int:
         """Met à jour stock_scores avec les scores selector et les candidats retenus."""
         selected_symbols = selected_df["symbol"].astype(str).dropna().tolist() if not selected_df.empty else []
@@ -1183,6 +730,9 @@ class AlphaScanner:
         LOGGER.info("Mise a jour DB terminee | candidats_mis_a_jour=%s", len(selected_symbols))
         return len(selected_symbols)
 
+    # ------------------------------------------------------------------
+    # Orchestration
+    # ------------------------------------------------------------------
     def run(self) -> pd.DataFrame:
         """Exécute le scan complet et retourne le Top N final."""
         started_at = datetime.now(timezone.utc)
@@ -1239,22 +789,15 @@ class AlphaScanner:
         merged_candidates = pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
         LOGGER.info("Agregation terminee | lignes_candidates=%s", len(merged_candidates))
 
-        # Neutralisation cross-sectorielle sur l'univers COMPLET (après concat de tous les chunks).
-        # Cette étape doit impérativement se faire ici et non dans _process_chunk,
-        # car le z-score intra-secteur n'est significatif que sur l'univers entier.
+        # Neutralisation cross-sectorielle sur l'univers COMPLET (cf. ranking.apply_factor_neutralization).
         merged_candidates = self._apply_factor_neutralization(merged_candidates)
 
         selected = self.rank_and_select(merged_candidates)
-
 
         self.update_database(selected, merged_candidates)
 
         elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
 
-        # --- Monitoring : alerte si le pipeline produit 0 candidats (P1) ---
-        # Causes possibles : seuil de liquidité trop élevé, table stock_bars_daily vide,
-        # critères Minervini trop stricts en marché baissier.
-        # LOGGER.critical() est visible dans les outils de monitoring (Datadog, CloudWatch…).
         if selected.empty:
             LOGGER.critical(
                 "AlphaScanner a produit 0 candidats | duree=%.2fs | "
@@ -1279,7 +822,12 @@ class AlphaScanner:
             merged = self.merge_scores(computed, scores)
             merged = self._enrich_and_filter_equities(merged, metadata_df)
             merged = self._merge_optional_symbol_overlays(merged, quotes_df, earnings_df)
-            filtered = self.apply_filters(merged)
+            # Phase 3.3.b — collecte stats par filtre en un seul passage.
+            filtered, chunk_stats = self._apply_filters_with_stats(merged)
+            self._log_filter_stats(chunk_stats)
+            with self._filter_stats_lock:
+                for key, value in chunk_stats.items():
+                    self._aggregated_filter_stats[key] += int(value)
             LOGGER.debug(
                 "Fin chunk | symboles=%s lignes_market=%s facteurs=%s scores=%s metadata=%s quotes=%s earnings=%s fusion=%s filtre=%s",
                 len(symbols),
@@ -1312,6 +860,9 @@ class AlphaScanner:
         return min(8, os.cpu_count() or 1)
 
     def _reset_selector_outputs(self) -> None:
+        # Phase 3.3.b — réinitialiser l'agrégat de stats à chaque run.
+        with self._filter_stats_lock:
+            self._aggregated_filter_stats.clear()
         reset_stmt = text(
             f"""
             UPDATE {self.config.score_table}
@@ -1366,157 +917,20 @@ class AlphaScanner:
         snapshot = snapshot.where(pd.notna(snapshot), None)
         return snapshot.to_dict(orient="records")
 
-    def _enrich_and_filter_equities(self, merged_df: pd.DataFrame, metadata_df: pd.DataFrame) -> pd.DataFrame:
-        if merged_df.empty:
-            return merged_df.copy()
-        if metadata_df.empty:
-            LOGGER.info(
-                "Filtre instruments | entree=%s sortie_actions=%s exclus_total=%s detail=%s",
-                len(merged_df),
-                len(merged_df),
-                0,
-                {"metadata_unavailable": 0},
-            )
-            return merged_df.copy()
-
-        metadata = metadata_df.copy()
-        metadata = metadata.drop_duplicates(subset=["symbol"], keep="last")
-        metadata["company_name"] = metadata["company_name"].fillna("").astype(str)
-        metadata["asset_class"] = metadata["asset_class"].fillna("").astype(str).str.lower()
-        metadata["status"] = metadata["status"].fillna("").astype(str).str.lower()
-        metadata["tradable"] = metadata["tradable"].fillna(False).astype(bool)
-        metadata["bars_available"] = metadata["bars_available"].fillna(False).astype(bool)
-
-        requested_symbols = merged_df["symbol"].astype(str)
-        requested_symbol_set = set(requested_symbols)
-        metadata = metadata[metadata["symbol"].astype(str).isin(requested_symbol_set)].copy()
-
-        company_name_normalized = metadata["company_name"].str.lower()
-        etf_mask = company_name_normalized.apply(
-            lambda value: any(pattern in value for pattern in ETF_NAME_PATTERNS)
-        )
-        reason_masks = {
-            "metadata_missing": pd.Index(sorted(requested_symbol_set.difference(set(metadata["symbol"].astype(str))))),
-            "non_us_equity": metadata.loc[metadata["asset_class"] != "us_equity", "symbol"],
-            "inactive": metadata.loc[metadata["status"] != "active", "symbol"],
-            "non_tradable": metadata.loc[~metadata["tradable"], "symbol"],
-            "bars_unavailable": metadata.loc[~metadata["bars_available"], "symbol"],
-            "etf_name": metadata.loc[etf_mask, "symbol"],
-        }
-        exclusion_details = {
-            reason: sorted({str(symbol) for symbol in symbols if str(symbol) in requested_symbol_set})
-            for reason, symbols in reason_masks.items()
-        }
-        exclusion_counts = {
-            reason: len(symbols)
-            for reason, symbols in exclusion_details.items()
-            if len(symbols) > 0
-        }
-
-        disqualified_symbols = {
-            symbol
-            for symbols in exclusion_details.values()
-            for symbol in symbols
-        }
-        eligible_symbols = sorted(requested_symbol_set.difference(disqualified_symbols))
-
-        eligible_metadata_columns = ["symbol", "sector"]
-        if "market_cap" in metadata.columns:
-            eligible_metadata_columns.append("market_cap")
-        eligible_metadata = metadata.loc[
-            metadata["symbol"].astype(str).isin(eligible_symbols),
-            eligible_metadata_columns,
-        ].copy()
-        enriched = merged_df.merge(eligible_metadata, on="symbol", how="inner", suffixes=("", "_meta"))
-        if "sector_meta" in enriched.columns:
-            enriched["sector"] = enriched["sector_meta"].where(
-                enriched["sector_meta"].notna() & (enriched["sector_meta"].astype(str).str.strip() != ""),
-                enriched.get("sector"),
-            )
-            enriched = enriched.drop(columns=["sector_meta"])
-        if "market_cap_meta" in enriched.columns:
-            enriched["market_cap"] = pd.to_numeric(enriched["market_cap_meta"], errors="coerce").combine_first(
-                pd.to_numeric(enriched.get("market_cap"), errors="coerce")
-            )
-            enriched = enriched.drop(columns=["market_cap_meta"])
-
-        LOGGER.info(
-            "Filtre instruments | entree=%s sortie_actions=%s exclus_total=%s detail=%s",
-            len(merged_df),
-            len(enriched),
-            len(merged_df) - len(enriched),
-            exclusion_counts,
-        )
-        if exclusion_counts:
-            LOGGER.debug(
-                "Filtre instruments details symboles | %s",
-                {reason: symbols[:5] for reason, symbols in exclusion_details.items() if symbols},
-            )
-        return enriched.reset_index(drop=True)
-
-    def _merge_optional_symbol_overlays(
-        self,
-        merged_df: pd.DataFrame,
-        quotes_df: pd.DataFrame,
-        earnings_df: pd.DataFrame,
-    ) -> pd.DataFrame:
-        if merged_df.empty:
-            return merged_df.copy()
-
-        enriched = merged_df.copy()
-
-        if not quotes_df.empty:
-            latest_quotes = quotes_df[["symbol", "spread_bps"]].drop_duplicates(subset=["symbol"], keep="last")
-            enriched = enriched.merge(latest_quotes, on="symbol", how="left", suffixes=("", "_quote"))
-            if "spread_bps_quote" in enriched.columns:
-                enriched["spread_bps"] = pd.to_numeric(enriched["spread_bps_quote"], errors="coerce").combine_first(
-                    pd.to_numeric(enriched.get("spread_bps"), errors="coerce")
-                )
-                enriched = enriched.drop(columns=["spread_bps_quote"])
-
-        if not earnings_df.empty:
-            latest_earnings = earnings_df[
-                ["symbol", "earnings_date", "days_to_earnings", "earnings_blackout"]
-            ].drop_duplicates(subset=["symbol"], keep="last")
-            enriched = enriched.merge(latest_earnings, on="symbol", how="left", suffixes=("", "_earnings"))
-            if "earnings_date_earnings" in enriched.columns:
-                enriched["earnings_date"] = enriched["earnings_date_earnings"].combine_first(enriched.get("earnings_date"))
-                enriched = enriched.drop(columns=["earnings_date_earnings"])
-            if "days_to_earnings_earnings" in enriched.columns:
-                existing_days_to_earnings = (
-                    pd.to_numeric(enriched["days_to_earnings"], errors="coerce")
-                    if "days_to_earnings" in enriched.columns
-                    else pd.Series(index=enriched.index, dtype=float)
-                )
-                overlay_days_to_earnings = pd.to_numeric(
-                    enriched["days_to_earnings_earnings"], errors="coerce"
-                )
-                enriched["days_to_earnings"] = overlay_days_to_earnings.where(
-                    overlay_days_to_earnings.notna(),
-                    existing_days_to_earnings,
-                )
-                enriched = enriched.drop(columns=["days_to_earnings_earnings"])
-            if "earnings_blackout_earnings" in enriched.columns:
-                existing_earnings_blackout = (
-                    pd.to_numeric(enriched["earnings_blackout"], errors="coerce")
-                    if "earnings_blackout" in enriched.columns
-                    else pd.Series(index=enriched.index, dtype=float)
-                )
-                overlay_earnings_blackout = pd.to_numeric(
-                    enriched["earnings_blackout_earnings"], errors="coerce"
-                )
-                enriched["earnings_blackout"] = overlay_earnings_blackout.where(
-                    overlay_earnings_blackout.notna(),
-                    existing_earnings_blackout,
-                )
-                enriched = enriched.drop(columns=["earnings_blackout_earnings"])
-
-        return enriched
-
     def _iter_eligible_symbol_chunks(self) -> Iterator[list[str]]:
         """Filtre SQL brut: liquidité 20j, close > 5, historique >= 252 jours,
         actions US uniquement (asset_class='us_equity', tradable=1, exclut ETF/crypto)."""
         offset = 0
+        history_status_filter = ""
+        if "history_status" in self._get_stock_metadata_columns():
+            eligible_statuses = ", ".join(f"'{status}'" for status in sorted(ELIGIBLE_HISTORY_STATUSES))
+            history_status_filter = f"""
+                  AND (
+                        sm.history_status IS NULL
+                     OR TRIM(sm.history_status) = ''
+                     OR LOWER(TRIM(sm.history_status)) IN ({eligible_statuses})
+                  )
+            """
         stmt = text(
             f"""
             WITH ranked AS (
@@ -1533,6 +947,8 @@ class AlphaScanner:
                 WHERE sm.asset_class = 'us_equity'
                   AND sm.tradable    = 1
                   AND sm.status      = 'active'
+                  AND sm.bars_available = 1
+                  {history_status_filter}
                 GROUP BY r.symbol
                 HAVING COUNT(*) >= :min_history_days
                    AND MAX(CASE WHEN rn = 1 THEN close END) > :min_close
@@ -1576,50 +992,28 @@ class AlphaScanner:
             yield symbols
             offset += self.config.chunk_size
 
+    # ------------------------------------------------------------------
+    # Helpers de rétrocompatibilité (statiques) — Phase 3.3.a
+    # ------------------------------------------------------------------
     @staticmethod
     def _winsorize_and_normalize(
         series: Optional[pd.Series],
         lower_pct: float = 0.01,
         upper_pct: float = 0.99,
     ) -> pd.Series:
-        """
-        Winsorise [lower_pct, upper_pct] puis normalise en [0, 1] (min-max).
+        """Délègue à ``selector.factors.winsorize_and_normalize`` (préservé
+        pour compat. tests/scripts qui l'appellent en static method)."""
+        return winsorize_and_normalize(series, lower_pct=lower_pct, upper_pct=upper_pct)
 
-        Remplace le min-max pur (_normalize_zero_one) qui était sensible aux outliers :
-        1 seule valeur extrême compressait tous les autres scores vers 0 ou 1.
-
-        :param lower_pct: Percentile inférieur de winsorisation (défaut 1 %).
-        :param upper_pct: Percentile supérieur de winsorisation (défaut 99 %).
-        """
-        if series is None:
-            return pd.Series(dtype=float)
-
-        numeric = pd.to_numeric(series, errors="coerce")
-        if numeric.empty:
-            return pd.Series(dtype=float)
-
-        non_null = numeric.dropna()
-        if non_null.empty:
-            return pd.Series(np.nan, index=numeric.index, dtype=float)
-
-        lo = float(non_null.quantile(lower_pct))
-        hi = float(non_null.quantile(upper_pct))
-        winsorized = numeric.clip(lo, hi)
-
-        if np.isclose(hi, lo):
-            result = pd.Series(np.nan, index=numeric.index, dtype=float)
-            result.loc[non_null.index] = 0.5
-            return result
-
-        return ((winsorized - lo) / (hi - lo)).clip(0.0, 1.0)
-
-    # Alias de compatibilité conservé pour les appelants externes éventuels.
     @staticmethod
     def _normalize_zero_one(series: Optional[pd.Series]) -> pd.Series:
-        """Déprécié — utiliser _winsorize_and_normalize à la place."""
-        return AlphaScanner._winsorize_and_normalize(series)
+        """Déprécié — utiliser ``selector.factors.winsorize_and_normalize``."""
+        return winsorize_and_normalize(series)
 
 
+# ----------------------------------------------------------------------
+# CLI
+# ----------------------------------------------------------------------
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AlphaScanner multi-facteurs")
     parser.add_argument("--preset", choices=["strict"], default="strict", help=argparse.SUPPRESS)
@@ -1698,7 +1092,30 @@ def main() -> None:
 
     config = _build_config_from_args(args)
 
-    result = AlphaScanner(config=config).run()
+    started_at = _utc_now_naive()
+    scanner = AlphaScanner(config=config)
+    result = scanner.run()
+    finished_at = _utc_now_naive()
+
+    rejected_by_filter: dict[str, int] = {}
+    # Phase 3.3.b — récupération défensive (fakes de tests peuvent ne pas
+    # exposer cette méthode).
+    getter = getattr(scanner, "get_aggregated_filter_stats", None)
+    if callable(getter):
+        try:
+            rejected_by_filter = {str(k): int(v) for k, v in dict(getter()).items()}
+        except Exception:
+            rejected_by_filter = {}
+
+    _emit_run_summary(
+        _build_cli_run_summary(
+            config=config,
+            result=result,
+            started_at=started_at,
+            finished_at=finished_at,
+            rejected_by_filter=rejected_by_filter,
+        )
+    )
 
     if result.empty:
         print("Aucun candidat retenu.")
@@ -1712,8 +1129,40 @@ def main() -> None:
     print(result.loc[:, display_columns].to_string(index=False))
 
 
+# Phase 3.3.a — `attach_schema_version` / `merge_iex_bias_counters` sont importés
+# pour préserver la surface symbolique du module (utilisés par certains scripts
+# externes via ``from selector.alpha_scanner import …``).
+__all__ = [
+    "AlphaScanner",
+    "AlphaScannerConfig",
+    # Constantes (préservées pour rétrocompat)
+    "FACTOR_COLUMNS",
+    "SCORE_COLUMNS",
+    "OUTPUT_COLUMNS",
+    "PERSISTED_SELECTOR_SCORE_COLUMNS",
+    "METADATA_COLUMNS",
+    "ETF_NAME_PATTERNS",
+    "ELIGIBLE_HISTORY_STATUSES",
+    "PRICE_COLUMNS",
+    "RUN_SUMMARY_PREFIX",
+    # Fonctions pures ré-exportées
+    "compute_factor_frame",
+    "winsorize_and_normalize",
+    "apply_filters_with_stats",
+    "log_filter_stats",
+    "enrich_and_filter_equities",
+    "merge_optional_symbol_overlays",
+    "merge_scores",
+    "apply_factor_neutralization",
+    "apply_sector_neutrality",
+    "rank_and_select",
+    # Helpers CLI
+    "main",
+    "attach_schema_version",
+    "merge_iex_bias_counters",
+]
+
+
 if __name__ == "__main__":
     main()
-
-
 

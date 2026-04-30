@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS execution_broker_fills (
+    id                          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    fill_id                     VARCHAR(32) NOT NULL,
+    exec_run_id                 VARCHAR(32) NOT NULL,
+    account_id                  VARCHAR(32) NOT NULL,
+    broker_order_id             VARCHAR(64) NOT NULL,
+    request_id                  VARCHAR(32) NOT NULL,
+    symbol                      VARCHAR(20) NOT NULL,
+    filled_qty                  DOUBLE NOT NULL,
+    avg_fill_price              DOUBLE NOT NULL,
+    fill_timestamp              TIMESTAMP NOT NULL,
+    decision_price              DOUBLE NULL,
+    slippage_bps                DOUBLE NULL,
+    implementation_shortfall    DOUBLE NULL,
+    raw_fill_json               JSON NULL,
+    created_at                  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_ebf_fill_id (fill_id),
+    KEY idx_ebf_exec_run (exec_run_id),
+    KEY idx_ebf_request_id (request_id),
+    KEY idx_ebf_broker_order_id (broker_order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

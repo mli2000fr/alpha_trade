@@ -6,8 +6,8 @@ Ce document résume le fonctionnement du module `execution_engine/` et les comma
 
 - exécuter un portefeuille cible produit par `risk_management`,
 - soumettre des ordres Alpaca en mode simulation, paper ou live,
-- gérer un bracket synthétique take-profit + trailing stop,
-- auditer les ordres, événements, fills et écarts de réconciliation.
+- gérer des protections broker-side initiales et, si explicitement activé, une transition trailing secondaire,
+- auditer les requests, ordres broker, fills, positions et écarts de réconciliation.
 
 ---
 
@@ -24,8 +24,8 @@ Ce document résume le fonctionnement du module `execution_engine/` et les comma
 | `execution_engine/broker_adapter.py` | Adaptation des intents vers le broker |
 | `execution_engine/order_intents.py` | Construction des ordres d'entrée et de rebalance |
 | `execution_engine/state_machine.py` | Mapping et états d'ordres internes |
-| `execution_engine/oco_manager.py` | Gestion logique OCO du bracket synthétique |
-| `execution_engine/reconciliation.py` | Réconciliation cibles vs positions broker |
+| `execution_engine/oco_manager.py` | Gestion logique OCO des protections broker-side |
+| `execution_engine/reconciliation.py` | Réconciliation analytique targets / requests / broker / positions / protections |
 | `execution_engine/tca.py` | Transaction Cost Analysis |
 | `execution_engine/db_io.py` | Persistance SQL du module |
 | `execution_engine/models.py` | Modèles métiers d'exécution |
@@ -42,10 +42,16 @@ Ce document résume le fonctionnement du module `execution_engine/` et les comma
 
 - `portfolio_targets`
 - `execution_runs`
-- `execution_orders`
-- `execution_fills`
+- `execution_targets_snapshot`
+- `execution_order_requests`
+- `execution_broker_orders`
+- `execution_broker_fills`
+- `execution_positions`
+- `execution_position_lots`
+- `execution_reconciliation_results`
 - `execution_events`
 - `broker_positions_snapshots`
+- `broker_account_snapshots`
 
 #### Utiles selon le contexte
 
@@ -112,6 +118,23 @@ python run_execution.py paper --account default --account-type cash
 python run_execution.py paper --account default --account-type margin --pdt-rule off --swing-only
 ```
 
+### Watcher post-exécution
+
+Le watcher se lance **après** `Execution`, pas avant. Il ne fait plus partie du chemin nominal : il supervise en secondaire la vie des protections broker-side déjà créées par le run d'exécution.
+
+```powershell
+# contrôle ponctuel juste après l'étape 12 Execution
+python run_execution_protection_watch.py --mode once --account default
+
+# surveillance continue pendant la session
+python run_execution_protection_watch.py --mode service --account default
+```
+
+En exploitation Windows, on préfère généralement :
+
+- **Task Scheduler** pour un `once` périodique ;
+- **NSSM** pour un service persistant.
+
 ### Vérification de l'environnement
 
 ```powershell
@@ -157,28 +180,102 @@ En particulier :
 - en `cash`, le moteur s'appuie sur `non_marginable_buying_power` / `cash` settled ;
 - en `dry_run`, un multiplicateur de buying power simulé permet de distinguer un compte `margin` d'un compte `cash`.
 
-### 4.3 Bracket synthétique
+### 4.3 Protections broker-side
 
-Le moteur ne s'appuie pas sur un bracket natif Alpaca pour le trailing stop.
+Le moteur overnight nominal privilégie les protections simples et traçables.
 
-Le pattern utilisé est :
+Le pattern canonique est :
 
 1. soumettre l'entrée ;
-2. attendre le fill ;
-3. soumettre séparément le take-profit limit ;
-4. soumettre séparément le trailing stop ;
-5. laisser `OcoManager` annuler le sibling si un des deux est exécuté.
+2. observer l'ordre broker puis les fills ;
+3. soumettre le stop initial broker-side si le contexte le permet ;
+4. journaliser les requests, ordres broker et événements ;
+5. reconstruire positions, lots et réconciliation.
 
 Quand `--swing-only` est activé, ou quand une contrainte PDT ne laisse plus de slot de day trade, le moteur diffère l'armement des children le jour même. Le run journalise alors un événement `CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT`.
 
+Le trailing dynamique, s'il reste activé, doit être considéré comme une capacité secondaire de supervision plutôt qu'un prérequis du run nominal.
+
 ### 4.4 Réconciliation et TCA
 
-Après soumission, le moteur peut :
+Après soumission et synchronisation broker, le moteur peut :
 
-- comparer cibles et positions broker,
-- produire des écarts de réconciliation,
+- relire le snapshot figé `execution_targets_snapshot`,
+- comparer `execution_order_requests`, `execution_broker_orders`, `execution_positions`, positions broker et protections,
+- produire des résultats `execution_reconciliation_results` avec statuts `SAFE_AUTO`, `MANUAL_REVIEW`, `BLOCKED`,
 - calculer slippage et implementation shortfall,
 - écrire l'audit complet en base.
+
+### 4.4.bis Runbook réconciliation `MANUAL_REVIEW` / `BLOCKED` (Phase 5.2.d)
+
+À la fin d'un run d'exécution, chaque cible est classée par
+`execution_reconciliation_results.reconciliation_status`. Le `run_summary`
+expose désormais (Phase 5.2.d) la liste des symboles concernés via
+`reconciliation_manual_review_symbols` et `reconciliation_blocked_symbols`
+pour faciliter le pointage opérateur.
+
+| Statut | Cause typique | Action opérateur | SQL d'inspection |
+|---|---|---|---|
+| `SAFE_AUTO` | Tout aligné (positions, protections, ordres open). | Aucune action. | `SELECT * FROM execution_reconciliation_results WHERE reconciliation_status='SAFE_AUTO' AND exec_run_id=:run` |
+| `MANUAL_REVIEW` | Delta qty > tolérance, prix décalé > N %, ordre open inattendu, protection manquante. | 1) Inspecter `execution_reconciliation_results.reason_code`. 2) Vérifier `execution_broker_orders` (statut, broker_order_id). 3) Décider : compléter manuellement via UI broker ou attendre le prochain run. | `SELECT symbol, target_qty, broker_position_qty, position_delta, action, reason_code FROM execution_reconciliation_results WHERE reconciliation_status='MANUAL_REVIEW' AND exec_run_id=:run` |
+| `BLOCKED` | Symbole en trading halt, position broker non identifiée, mismatch lot critique. | 1) **STOP** : ne pas relancer le run. 2) Vérifier `service.alpaca` halt status. 3) Si nécessaire, déclencher kill switch (cf. §4.4.ter). 4) Reconcilier manuellement avant le prochain run. | `SELECT symbol, reason_code, position_delta, has_open_protection FROM execution_reconciliation_results WHERE reconciliation_status='BLOCKED' AND exec_run_id=:run` |
+
+> **Astuce** : `SELECT reconciliation_blocked_symbols FROM run_business_summaries
+> WHERE step_key='execution' ORDER BY started_at DESC LIMIT 5` permet d'obtenir
+> directement la liste des symboles bloqués des 5 derniers runs.
+
+### 4.4.ter Kill switch global (Phase 5.2.c)
+
+Pour annuler **tous** les ordres open d'un compte broker en une seule
+commande (sans passer par l'IHM ou un script ad-hoc) :
+
+```bash
+# Mode paper — exécution réelle des cancels
+python -m execution_engine cancel-all --account paper1 --reason "incident X"
+
+# Mode paper — dry-run (liste les ordres sans les annuler)
+python -m execution_engine cancel-all --account paper1 --dry-run
+
+# Mode live — exige --confirm-account == --account (garde-fou audit_execution.md §6 QW#5)
+python -m execution_engine cancel-all --account live1 --broker-mode live --confirm-account live1 --reason "halt-trading"
+```
+
+**Comportement** :
+
+1. Charge tous les ordres `status=open` via `BrokerAdapter.cancel_all_open_orders`.
+2. En mode normal : appelle `cancel_order(broker_order_id)` séquentiellement ;
+   un échec d'un ordre n'interrompt pas la boucle (chaque erreur est
+   capturée par-ordre dans la colonne `results_json`).
+3. En mode `--dry-run` : ne modifie rien côté broker, mais persiste
+   quand même un audit `execution_kill_switch_runs(dry_run=1)`.
+4. Persiste un row dans `execution_kill_switch_runs(run_id, account_id,
+   broker_mode, reason, total_open, canceled, failed, dry_run, started_at,
+   finished_at, results_json)`.
+5. Émet une ligne `::alpha_trade_run_summary::{...}` parsable par l'IHM,
+   avec `event_type=KILL_SWITCH_TRIGGERED` (à ne pas confondre avec
+   `KILL_SWITCH_ACTIVATED` interne sur N échecs consécutifs).
+
+**Pré-conditions** :
+
+- `--broker-mode live` exige `--confirm-account` strictement identique à
+  `--account` (sinon `SystemExit`).
+- Si un run d'exécution est en cours sur ce compte (`execution_locks` actif),
+  utiliser `--force` pour outrepasser le verrou (dangereux).
+
+**Post-conditions** :
+
+- `SELECT * FROM execution_kill_switch_runs ORDER BY created_at DESC LIMIT 5`
+  retourne les derniers kill switches.
+- L'IHM peut afficher l'historique via la table `execution_kill_switch_runs`.
+
+### 4.5 Watcher post-exécution
+
+Le watcher n'est pas une phase du pipeline 1→14 lui-même. C'est un runtime complémentaire et secondaire qui s'accroche juste après `Execution` pour :
+
+1. détecter les ordres/protections à surveiller ;
+2. vérifier les conditions de transition ;
+3. promouvoir un stop initial vers un trailing stop dynamique ;
+4. persister la santé du mécanisme pour `Supervision Ops`.
 
 ---
 
@@ -267,9 +364,10 @@ Ordre conseillé :
 
 1. lancer `risk_management` ;
 2. contrôler que `portfolio_targets` contient bien des lignes ;
-3. démarrer en `simulate` ;
-4. passer ensuite en `paper` ;
-5. réserver `live` au contexte opérateur validé.
+3. exécuter `Execution` et vérifier la chaîne `target snapshot → request → broker order → fill → position → réconciliation` ;
+4. démarrer en `simulate` ;
+5. passer ensuite en `paper` ;
+6. réserver `live` au contexte opérateur validé.
 
 ### Séquence recommandée
 

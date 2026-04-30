@@ -4,7 +4,9 @@ from typing import Any
 
 import pytz
 from dateutil import parser
-from sqlalchemy import text, Engine
+from sqlalchemy import MetaData, Table, text, Engine, and_, select
+
+from database.assets import build_eligible_stock_metadata_filters
 
 TZ_NEW_YORK = pytz.timezone('America/New_York')
 
@@ -19,6 +21,17 @@ class TimeFrame(Enum):
     def __init__(self, db_value: str, api_value: str):
         self.db_value = db_value
         self.api_value = api_value
+
+
+SUPPORTED_DATA_INTEGRITY_TIMEFRAMES: tuple[TimeFrame, ...] = (TimeFrame.ONE_DAY,)
+
+
+def validate_data_integrity_timeframe(time_frame: TimeFrame) -> None:
+    if time_frame not in SUPPORTED_DATA_INTEGRITY_TIMEFRAMES:
+        supported = ", ".join(tf.db_value for tf in SUPPORTED_DATA_INTEGRITY_TIMEFRAMES)
+        raise ValueError(
+            f"dataIntegrityEngine supporte uniquement les timeframes daily pour l'instant: {supported}."
+        )
 
 
 def _normalize_bar_timestamp(raw_timestamp: Any) -> Any:
@@ -40,10 +53,9 @@ def symbol_exists_in_stock_bars(conn, symbol: str) -> bool:
 
 def get_active_tradable_symbols(conn) -> list[str]:
     """Retourne les symboles actifs/tradables avec données disponibles (SQLAlchemy Core)."""
-    sql = text("""
-        SELECT symbol FROM stock_metadata WHERE status='active' AND tradable=1 AND bars_available=1
-    """)
-    result = conn.execute(sql)
+    stock_metadata = Table("stock_metadata", MetaData(), autoload_with=conn.engine)
+    stmt = select(stock_metadata.c.symbol).where(and_(*build_eligible_stock_metadata_filters(stock_metadata)))
+    result = conn.execute(stmt)
     return [row[0] for row in result.fetchall()]
 
 

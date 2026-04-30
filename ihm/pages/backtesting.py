@@ -25,10 +25,17 @@ from ihm.services.backtesting_runner import (
     PROJECT_ROOT,
     BackfillScoresHistoryOptions,
     BacktestRunOptions,
+    DiagnoseScreenerOptions,
+    RecommendScreenerOptions,
     build_backtesting_command,
     format_command_for_display,
 )
 from ihm.services.db import get_db_status, get_runtime_db_config
+from ihm.services.screener_artifact_history import (
+    build_global_screener_artifact_history,
+    build_screener_artifact_history_rows,
+)
+from ihm.services.screener_recommendations import build_screener_artifact_summary
 
 SELECTED_RUN_KEY = "ihm_backtesting_selected_run_id"
 LOG_FILTER_KEY = "ihm_backtesting_log_filter"
@@ -145,6 +152,50 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "ml_mode", "Explication": "auto/off/rebuild-missing pour la composante ML.", "Défaut": "auto"},
             {"Paramètre": "sentiment_mode", "Explication": "auto/off/rebuild-missing pour la composante sentiment.", "Défaut": "auto"},
             {"Paramètre": "artifacts_dir", "Explication": "Dossier des artefacts modèles utilisés pour rebuild-missing.", "Défaut": "artifacts/models"},
+            {"Paramètre": "score_column", "Explication": "Colonne de score privilégiée pour le replay : auto / walk-forward / sentiment / final.", "Défaut": "auto"},
+            {"Paramètre": "walk_forward_artifacts_dir", "Explication": "Répertoire racine optionnel des artefacts de calibration walk-forward à appliquer au run standard.", "Défaut": "None"},
+            # Phase A (refactor) — reproductibilité.
+            {"Paramètre": "risk_free_rate", "Explication": "Taux sans risque annualisé déduit avant Sharpe/Sortino (Phase A.6).", "Défaut": "0.0"},
+            {"Paramètre": "seed", "Explication": "Seed reproductibilité consigné dans report.json[run_metadata] (Phase A.4).", "Défaut": "None"},
+            # Phase B (refactor) — micro-structure.
+            {"Paramètre": "slippage_model", "Explication": "fixed/linear/sqrt — slippage volume-aware additionnel (Phase B.1).", "Défaut": "fixed"},
+            {"Paramètre": "slippage_base_bps", "Explication": "Composante fixe du slippage volume-aware (bps).", "Défaut": "0.0"},
+            {"Paramètre": "slippage_impact_coef", "Explication": "Coefficient d'impact appliqué à size/ADV (bps).", "Défaut": "0.0"},
+            {"Paramètre": "initial_stop_pct", "Explication": "Stop-loss initial dur en fraction (Phase B.2).", "Défaut": "0.0"},
+            {"Paramètre": "max_entry_gap_pct", "Explication": "Skip entrée si gap d'open > seuil (Phase B.3).", "Défaut": "0.0"},
+            {"Paramètre": "intrabar_priority", "Explication": "Politique TP vs TS intra-bar (Phase B.4).", "Défaut": "conservative"},
+            # Phase C (refactor) — risk overlays.
+            {"Paramètre": "sizing_mode", "Explication": "equal_weight | conviction_weighted (Phase C.1).", "Défaut": "equal_weight"},
+            {"Paramètre": "regime_filter", "Explication": "Active le filtre régime SMA200 sur le benchmark (Phase C.3).", "Défaut": "False"},
+            {"Paramètre": "max_sector_exposure_pct", "Explication": "Cap d'exposition par secteur en fraction (Phase C.4).", "Défaut": "0.0"},
+            {"Paramètre": "max_portfolio_dd_pct", "Explication": "Drawdown max avant coupe-circuit nouvelles entrées (Phase C.5).", "Défaut": "0.0"},
+            {"Paramètre": "target_annual_vol", "Explication": "Cible vol annualisée portefeuille (Phase C.2).", "Défaut": "None"},
+        ]
+    if kind == "diagnose-screener":
+        return [
+            {"Paramètre": "start", "Explication": "Date de début de l'analyse PIT screener.", "Défaut": "—"},
+            {"Paramètre": "end", "Explication": "Date de fin de l'analyse.", "Défaut": "aujourd'hui"},
+            {"Paramètre": "limit_days", "Explication": "Limiter à N séances pour une validation incrémentale.", "Défaut": "None"},
+            {"Paramètre": "mode", "Explication": "Balayage `oat` (one-at-a-time) ou `grid`.", "Défaut": "oat"},
+            {"Paramètre": "chunk_size", "Explication": "Taille des chunks symboles pour screener/scanner.", "Défaut": "500"},
+            {"Paramètre": "selection_size", "Explication": "Nombre final de candidats selector par séance.", "Défaut": "100"},
+            {"Paramètre": "max_positions", "Explication": "Nombre maximum de positions du portefeuille cible analysé.", "Défaut": "20"},
+            {"Paramètre": "screener_workers", "Explication": "Nombre de workers ProcessPool pour le screener PIT.", "Défaut": "auto"},
+            {"Paramètre": "max_scenarios", "Explication": "Garde-fou sur le nombre total de scénarios en mode grid.", "Défaut": "64"},
+            {"Paramètre": "rs_values", "Explication": "Liste CSV des seuils de relative strength testés.", "Défaut": "100,102,105"},
+            {"Paramètre": "range_lookback_values", "Explication": "Liste CSV des lookbacks historical range testés.", "Défaut": "252,504,756"},
+            {"Paramètre": "historical_range_score_values", "Explication": "Liste CSV des seuils historical range score testés.", "Défaut": "65,70,75"},
+            {"Paramètre": "liquidity_threshold_values", "Explication": "Liste CSV des seuils de liquidité testés.", "Défaut": "5000000,10000000,20000000"},
+            {"Paramètre": "output_dir", "Explication": "Répertoire cible des artefacts diagnostics/recommandations screener.", "Défaut": "artifacts/screener_diagnostics"},
+        ]
+    if kind == "recommend-screener":
+        return [
+            {"Paramètre": "input_dir", "Explication": "Répertoire source contenant `summary_metrics.csv` et éventuellement `daily_metrics.csv`.", "Défaut": "artifacts/screener_diagnostics"},
+            {"Paramètre": "summary_csv", "Explication": "Chemin explicite vers un `summary_metrics.csv`.", "Défaut": "auto depuis input_dir"},
+            {"Paramètre": "daily_csv", "Explication": "Chemin explicite vers un `daily_metrics.csv` pour enrichir l'analyse.", "Défaut": "auto depuis input_dir"},
+            {"Paramètre": "output_dir", "Explication": "Répertoire cible des artefacts de recommandation.", "Défaut": "même dossier que summary_metrics.csv"},
+            {"Paramètre": "baseline_name", "Explication": "Nom explicite du scénario baseline si nécessaire.", "Défaut": "auto"},
+            {"Paramètre": "target_horizon", "Explication": "Horizon forward prioritaire utilisé pour le compromis.", "Défaut": "20"},
         ]
     return [
         {"Paramètre": "start", "Explication": "Date de départ du backfill PIT (obligatoire).", "Défaut": "—"},
@@ -160,6 +211,260 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
 def _render_reference_table(kind: str) -> None:
     with st.expander("📘 Référence complète des paramètres", expanded=False):
         st.dataframe(pd.DataFrame(_parameter_reference_rows(kind)), use_container_width=True, hide_index=True)
+
+
+def _build_overlay_options() -> dict[str, Any]:
+    """Construit le sous-dict d'options pour les surcouches micro-structure / risk overlay.
+
+    Affiche un expander unique avec deux blocs (Phase B et Phase C). Toutes les
+    valeurs par défaut sont **neutres** : le backtest produit alors exactement
+    les mêmes résultats que sans la surcouche.
+    """
+    with st.expander("🧪 Reproductibilité & surcouches research-grade (Phase B/C)", expanded=False):
+        st.caption(
+            "Toutes ces options sont **opt-in** : laissées à zéro/désactivées, le backtest "
+            "produit le même résultat qu'avant. Voir `refactor/backtesting/audit_plan_resume.md`."
+        )
+
+        # --- Reproductibilité (Phase A) ---
+        repro_col1, repro_col2 = st.columns(2)
+        with repro_col1:
+            risk_free_rate = st.number_input(
+                "Risk-free rate annualisé (Sharpe/Sortino)",
+                min_value=0.0,
+                max_value=0.20,
+                value=float(st.session_state.get("bt_run_risk_free_rate", 0.0)),
+                step=0.005,
+                format="%.4f",
+                key="bt_run_risk_free_rate",
+                help="0.04 = 4% — déduit des returns avant Sharpe/Sortino.",
+            )
+        with repro_col2:
+            seed_raw = st.text_input(
+                "Seed reproductibilité (optionnel)",
+                value=cast(str, st.session_state.get("bt_run_seed_raw", "")),
+                key="bt_run_seed_raw",
+                help="Entier consigné dans report.json[run_metadata]. Utilisé par les sorties intra-bar 'random'.",
+            )
+
+        st.markdown("**Phase B — Micro-structure**")
+        micro_col1, micro_col2, micro_col3 = st.columns(3)
+        with micro_col1:
+            slippage_model = cast(
+                str,
+                st.selectbox(
+                    "Modèle slippage volume-aware",
+                    options=["fixed", "linear", "sqrt"],
+                    index=["fixed", "linear", "sqrt"].index(
+                        cast(str, st.session_state.get("bt_run_slippage_model", "fixed"))
+                        if st.session_state.get("bt_run_slippage_model", "fixed") in {"fixed", "linear", "sqrt"}
+                        else "fixed"
+                    ),
+                    key="bt_run_slippage_model",
+                    help="`fixed` (défaut, neutre) ; `linear` = base + impact*(size/ADV) ; `sqrt` = Almgren-Chriss.",
+                ),
+            )
+        with micro_col2:
+            slippage_base_bps = st.number_input(
+                "Slippage base (bps)",
+                min_value=0.0,
+                max_value=500.0,
+                value=float(st.session_state.get("bt_run_slippage_base_bps", 0.0)),
+                step=0.5,
+                key="bt_run_slippage_base_bps",
+            )
+        with micro_col3:
+            slippage_impact_coef = st.number_input(
+                "Slippage impact coef (bps)",
+                min_value=0.0,
+                max_value=2000.0,
+                value=float(st.session_state.get("bt_run_slippage_impact_coef", 0.0)),
+                step=1.0,
+                key="bt_run_slippage_impact_coef",
+            )
+
+        micro_col4, micro_col5, micro_col6 = st.columns(3)
+        with micro_col4:
+            initial_stop_pct = st.number_input(
+                "Stop-loss initial dur (fraction)",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_initial_stop_pct", 0.0)),
+                step=0.005,
+                format="%.4f",
+                key="bt_run_initial_stop_pct",
+                help="Ex 0.07 = 7%. 0 = désactivé.",
+            )
+        with micro_col5:
+            max_entry_gap_pct = st.number_input(
+                "Max gap d'ouverture (fraction)",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_max_entry_gap_pct", 0.0)),
+                step=0.005,
+                format="%.4f",
+                key="bt_run_max_entry_gap_pct",
+                help="Ex 0.05 = annule l'entrée si l'open gap > 5%. 0 = désactivé.",
+            )
+        with micro_col6:
+            intrabar_priority = cast(
+                str,
+                st.selectbox(
+                    "Priorité intra-bar TP/TS",
+                    options=["conservative", "tp_first", "ts_first", "random"],
+                    index=["conservative", "tp_first", "ts_first", "random"].index(
+                        cast(str, st.session_state.get("bt_run_intrabar_priority", "conservative"))
+                        if st.session_state.get("bt_run_intrabar_priority", "conservative")
+                        in {"conservative", "tp_first", "ts_first", "random"}
+                        else "conservative"
+                    ),
+                    key="bt_run_intrabar_priority",
+                    help="`conservative` = TS prioritaire (legacy). `random` requiert un seed.",
+                ),
+            )
+
+        st.markdown("**Phase C — Risk overlays**")
+        risk_col1, risk_col2, risk_col3 = st.columns(3)
+        with risk_col1:
+            sizing_mode = cast(
+                str,
+                st.selectbox(
+                    "Mode sizing",
+                    options=["equal_weight", "conviction_weighted"],
+                    index=["equal_weight", "conviction_weighted"].index(
+                        cast(str, st.session_state.get("bt_run_sizing_mode", "equal_weight"))
+                        if st.session_state.get("bt_run_sizing_mode", "equal_weight")
+                        in {"equal_weight", "conviction_weighted"}
+                        else "equal_weight"
+                    ),
+                    key="bt_run_sizing_mode",
+                ),
+            )
+        with risk_col2:
+            sizing_min_weight_pct = st.number_input(
+                "Sizing min weight",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_sizing_min_weight_pct", 0.005)),
+                step=0.005,
+                format="%.4f",
+                key="bt_run_sizing_min_weight_pct",
+            )
+        with risk_col3:
+            sizing_max_weight_pct = st.number_input(
+                "Sizing max weight",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_sizing_max_weight_pct", 0.20)),
+                step=0.01,
+                format="%.4f",
+                key="bt_run_sizing_max_weight_pct",
+            )
+
+        risk_col4, risk_col5, risk_col6 = st.columns(3)
+        with risk_col4:
+            regime_filter = st.checkbox(
+                "Active le filtre régime SMA200",
+                value=bool(st.session_state.get("bt_run_regime_filter", False)),
+                key="bt_run_regime_filter",
+                help="Bloque les nouvelles entrées si benchmark < SMA - threshold.",
+            )
+        with risk_col5:
+            regime_sma_window = st.number_input(
+                "SMA window",
+                min_value=20,
+                max_value=500,
+                value=int(st.session_state.get("bt_run_regime_sma_window", 200)),
+                step=10,
+                key="bt_run_regime_sma_window",
+            )
+        with risk_col6:
+            regime_bear_threshold = st.number_input(
+                "Bear threshold",
+                min_value=-0.50,
+                max_value=0.10,
+                value=float(st.session_state.get("bt_run_regime_bear_threshold", -0.02)),
+                step=0.005,
+                format="%.4f",
+                key="bt_run_regime_bear_threshold",
+            )
+
+        risk_col7, risk_col8, risk_col9, risk_col10 = st.columns(4)
+        with risk_col7:
+            max_sector_exposure_pct = st.number_input(
+                "Max exposure secteur",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_max_sector_exposure_pct", 0.0)),
+                step=0.05,
+                format="%.4f",
+                key="bt_run_max_sector_exposure_pct",
+                help="Ex 0.30 = 30%. 0 = désactivé.",
+            )
+        with risk_col8:
+            max_portfolio_dd_pct = st.number_input(
+                "Max DD portefeuille",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_max_portfolio_dd_pct", 0.0)),
+                step=0.01,
+                format="%.4f",
+                key="bt_run_max_portfolio_dd_pct",
+                help="Ex 0.20 = coupe les nouvelles entrées si DD > 20%. 0 = désactivé.",
+            )
+        with risk_col9:
+            dd_recovery_pct = st.number_input(
+                "DD recovery",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_dd_recovery_pct", 0.95)),
+                step=0.01,
+                format="%.4f",
+                key="bt_run_dd_recovery_pct",
+            )
+        with risk_col10:
+            target_annual_vol_raw = st.text_input(
+                "Target annual vol (optionnel)",
+                value=cast(str, st.session_state.get("bt_run_target_annual_vol_raw", "")),
+                key="bt_run_target_annual_vol_raw",
+                help="Ex 0.15 = cible 15% vol portefeuille. Vide = désactivé.",
+            )
+
+    seed_value: int | None = None
+    if seed_raw.strip():
+        try:
+            seed_value = int(seed_raw.strip())
+        except ValueError:
+            st.warning(f"Seed invalide ignoré : `{seed_raw}`.")
+
+    target_annual_vol_value: float | None = None
+    cleaned_vol = target_annual_vol_raw.strip()
+    if cleaned_vol:
+        try:
+            target_annual_vol_value = float(cleaned_vol)
+        except ValueError:
+            st.warning(f"Target annual vol invalide ignorée : `{cleaned_vol}`.")
+
+    return {
+        "risk_free_rate": float(risk_free_rate),
+        "seed": seed_value,
+        "slippage_model": cast(Any, slippage_model),
+        "slippage_base_bps": float(slippage_base_bps),
+        "slippage_impact_coef": float(slippage_impact_coef),
+        "initial_stop_pct": float(initial_stop_pct),
+        "max_entry_gap_pct": float(max_entry_gap_pct),
+        "intrabar_priority": cast(Any, intrabar_priority),
+        "sizing_mode": cast(Any, sizing_mode),
+        "sizing_min_weight_pct": float(sizing_min_weight_pct),
+        "sizing_max_weight_pct": float(sizing_max_weight_pct),
+        "regime_filter": bool(regime_filter),
+        "regime_sma_window": int(regime_sma_window),
+        "regime_bear_threshold": float(regime_bear_threshold),
+        "max_sector_exposure_pct": float(max_sector_exposure_pct),
+        "max_portfolio_dd_pct": float(max_portfolio_dd_pct),
+        "dd_recovery_pct": float(dd_recovery_pct),
+        "target_annual_vol": target_annual_vol_value,
+    }
 
 
 def _build_run_options() -> BacktestRunOptions:
@@ -345,6 +650,30 @@ def _build_run_options() -> BacktestRunOptions:
         help="Dossier contenant les checkpoints/scalers/configs de modèles pour `--ml-mode rebuild-missing`.",
     )
 
+    extra_col1, extra_col2 = st.columns(2)
+    with extra_col1:
+        score_column = cast(
+            str,
+            st.selectbox(
+                "Colonne de score",
+                options=["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"],
+                index=["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"].index(
+                    cast(str, st.session_state.get("bt_run_score_column", "auto"))
+                    if st.session_state.get("bt_run_score_column", "auto") in {"auto", "final_score_walk_forward", "final_score_sentiment", "final_score"}
+                    else "auto"
+                ),
+                key="bt_run_score_column",
+                help="Permet de forcer explicitement la source de score utilisée lors du replay des signaux.",
+            ),
+        )
+    with extra_col2:
+        walk_forward_artifacts_dir = st.text_input(
+            "Répertoire artefacts walk-forward (optionnel)",
+            value=cast(str, st.session_state.get("bt_run_walk_forward_artifacts_dir", "")),
+            key="bt_run_walk_forward_artifacts_dir",
+            help="Si renseigné, le backtest standard cherchera explicitement les meilleurs poids walk-forward dans ce répertoire.",
+        )
+
     options = BacktestRunOptions(
         start=start.strip(),
         end=end.strip() or None,
@@ -361,6 +690,9 @@ def _build_run_options() -> BacktestRunOptions:
         ml_mode=cast(Any, ml_mode),
         sentiment_mode=cast(Any, sentiment_mode),
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
+        score_column=cast(Any, score_column),
+        walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
+        **_build_overlay_options(),
     )
 
     st.code(format_command_for_display(build_backtesting_command("run", options)), language="powershell")
@@ -448,6 +780,210 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
     )
 
     st.code(format_command_for_display(build_backtesting_command("backfill-scores-history", options)), language="powershell")
+    return options
+
+
+def _build_diagnose_screener_options() -> DiagnoseScreenerOptions:
+    st.subheader("🧪 Diagnose screener PIT")
+    st.caption(
+        "Cette commande exécute `python -m backtesting diagnose-screener ...` en arrière-plan pour recalculer les artefacts diagnostics/recommandations du screener."
+    )
+    _render_reference_table("diagnose-screener")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        start = st.text_input(
+            "Date de début diagnostic",
+            value=cast(str, st.session_state.get("bt_diag_start", "2025-04-21")),
+            key="bt_diag_start",
+        )
+    with col2:
+        end = st.text_input(
+            "Date de fin diagnostic",
+            value=cast(str, st.session_state.get("bt_diag_end", "2026-04-20")),
+            key="bt_diag_end",
+        )
+    with col3:
+        mode = cast(
+            str,
+            st.selectbox(
+                "Mode de balayage",
+                options=["oat", "grid"],
+                index=["oat", "grid"].index(
+                    cast(str, st.session_state.get("bt_diag_mode", "oat"))
+                    if st.session_state.get("bt_diag_mode", "oat") in {"oat", "grid"}
+                    else "oat"
+                ),
+                key="bt_diag_mode",
+            ),
+        )
+    with col4:
+        limit_days_raw = st.text_input(
+            "Limiter à N séances (optionnel)",
+            value=cast(str, st.session_state.get("bt_diag_limit_days_raw", "")),
+            key="bt_diag_limit_days_raw",
+        )
+
+    col5, col6, col7, col8 = st.columns(4)
+    with col5:
+        chunk_size = st.number_input(
+            "Chunk size diagnostic",
+            min_value=1,
+            max_value=50_000,
+            value=int(st.session_state.get("bt_diag_chunk_size", 500)),
+            step=100,
+            key="bt_diag_chunk_size",
+        )
+    with col6:
+        selection_size = st.number_input(
+            "Selection size diagnostic",
+            min_value=1,
+            max_value=5_000,
+            value=int(st.session_state.get("bt_diag_selection_size", 100)),
+            step=10,
+            key="bt_diag_selection_size",
+        )
+    with col7:
+        max_positions = st.number_input(
+            "Max positions diagnostic",
+            min_value=1,
+            max_value=500,
+            value=int(st.session_state.get("bt_diag_max_positions", 20)),
+            step=1,
+            key="bt_diag_max_positions",
+        )
+    with col8:
+        max_scenarios = st.number_input(
+            "Max scenarios",
+            min_value=1,
+            max_value=5_000,
+            value=int(st.session_state.get("bt_diag_max_scenarios", 64)),
+            step=1,
+            key="bt_diag_max_scenarios",
+        )
+
+    col9, col10, col11, col12 = st.columns(4)
+    with col9:
+        screener_workers_raw = st.text_input(
+            "Screener workers (optionnel)",
+            value=cast(str, st.session_state.get("bt_diag_screener_workers_raw", "")),
+            key="bt_diag_screener_workers_raw",
+        )
+    with col10:
+        rs_values = st.text_input(
+            "RS values (CSV)",
+            value=cast(str, st.session_state.get("bt_diag_rs_values", "100,102,105")),
+            key="bt_diag_rs_values",
+        )
+    with col11:
+        range_lookback_values = st.text_input(
+            "Range lookback values (CSV)",
+            value=cast(str, st.session_state.get("bt_diag_range_lookback_values", "252,504,756")),
+            key="bt_diag_range_lookback_values",
+        )
+    with col12:
+        historical_range_score_values = st.text_input(
+            "Historical range score values (CSV)",
+            value=cast(str, st.session_state.get("bt_diag_historical_range_score_values", "65,70,75")),
+            key="bt_diag_historical_range_score_values",
+        )
+
+    liquidity_threshold_values = st.text_input(
+        "Liquidity threshold values (CSV)",
+        value=cast(str, st.session_state.get("bt_diag_liquidity_threshold_values", "5000000,10000000,20000000")),
+        key="bt_diag_liquidity_threshold_values",
+    )
+    output_dir = st.text_input(
+        "Répertoire des artefacts screener",
+        value=cast(str, st.session_state.get("bt_diag_output_dir", "artifacts/screener_diagnostics")),
+        key="bt_diag_output_dir",
+        help="Le dashboard Screening lira ce dossier par défaut s'il correspond à `artifacts/screener_diagnostics`.",
+    )
+
+    limit_days = _parse_optional_int(limit_days_raw, label="limit_days")
+    screener_workers = _parse_optional_int(screener_workers_raw, label="screener_workers")
+
+    options = DiagnoseScreenerOptions(
+        start=start.strip(),
+        end=end.strip() or None,
+        limit_days=limit_days,
+        mode=cast(Any, mode),
+        chunk_size=int(chunk_size),
+        selection_size=int(selection_size),
+        max_positions=int(max_positions),
+        screener_workers=screener_workers,
+        max_scenarios=int(max_scenarios),
+        rs_values=rs_values.strip() or "100,102,105",
+        range_lookback_values=range_lookback_values.strip() or "252,504,756",
+        historical_range_score_values=historical_range_score_values.strip() or "65,70,75",
+        liquidity_threshold_values=liquidity_threshold_values.strip() or "5000000,10000000,20000000",
+        output_dir=output_dir.strip() or "artifacts/screener_diagnostics",
+    )
+
+    st.code(format_command_for_display(build_backtesting_command("diagnose-screener", options)), language="powershell")
+    return options
+
+
+def _build_recommend_screener_options() -> RecommendScreenerOptions:
+    st.subheader("🎯 Recommend screener")
+    st.caption(
+        "Cette commande exécute `python -m backtesting recommend-screener ...` en arrière-plan pour recalculer les recommandations à partir d'un diagnostic existant."
+    )
+    _render_reference_table("recommend-screener")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        input_dir = st.text_input(
+            "Répertoire source",
+            value=cast(str, st.session_state.get("bt_reco_input_dir", "artifacts/screener_diagnostics")),
+            key="bt_reco_input_dir",
+        )
+    with col2:
+        output_dir = st.text_input(
+            "Répertoire de sortie (optionnel)",
+            value=cast(str, st.session_state.get("bt_reco_output_dir", "")),
+            key="bt_reco_output_dir",
+        )
+    with col3:
+        target_horizon = st.number_input(
+            "Target horizon",
+            min_value=1,
+            max_value=252,
+            value=int(st.session_state.get("bt_reco_target_horizon", 20)),
+            step=1,
+            key="bt_reco_target_horizon",
+        )
+
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        summary_csv = st.text_input(
+            "Summary CSV explicite (optionnel)",
+            value=cast(str, st.session_state.get("bt_reco_summary_csv", "")),
+            key="bt_reco_summary_csv",
+        )
+    with col5:
+        daily_csv = st.text_input(
+            "Daily CSV explicite (optionnel)",
+            value=cast(str, st.session_state.get("bt_reco_daily_csv", "")),
+            key="bt_reco_daily_csv",
+        )
+    with col6:
+        baseline_name = st.text_input(
+            "Baseline explicite (optionnel)",
+            value=cast(str, st.session_state.get("bt_reco_baseline_name", "")),
+            key="bt_reco_baseline_name",
+        )
+
+    options = RecommendScreenerOptions(
+        input_dir=input_dir.strip() or "artifacts/screener_diagnostics",
+        summary_csv=summary_csv.strip() or None,
+        daily_csv=daily_csv.strip() or None,
+        output_dir=output_dir.strip() or None,
+        baseline_name=baseline_name.strip() or None,
+        target_horizon=int(target_horizon),
+    )
+
+    st.code(format_command_for_display(build_backtesting_command("recommend-screener", options)), language="powershell")
     return options
 
 
@@ -554,6 +1090,72 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     col7.metric("Durée moy. (j)", f"{_to_float(summary.get('avg_trade_duration_days')):.1f}")
     col8.metric("Profit Factor", f"{_to_float(summary.get('profit_factor')):.2f}")
 
+    # Phase A.5/A.6 (refactor) — métriques de risque enrichies (Calmar, Ulcer,
+    # Sortino, CAGR) + risk-free utilisé pour Sharpe/Sortino. Tous "—" si
+    # absents (ex : ancien rapport antérieur au refactor).
+    st.markdown("**📊 Métriques avancées (Phase A/D refactor)**")
+
+    def _format_calmar(value: object) -> str:
+        if isinstance(value, str):  # sentinel "inf"
+            return "∞" if value.lower().startswith("inf") else value
+        try:
+            num = float(cast(Any, value))
+        except (TypeError, ValueError):
+            return "—"
+        if num != num or num in (float("inf"), float("-inf")):  # NaN / inf
+            return "∞" if num > 0 else "—"
+        return f"{num:.3f}"
+
+    extra_col1, extra_col2, extra_col3, extra_col4 = st.columns(4)
+    extra_col1.metric("CAGR", f"{_to_float(summary.get('cagr_pct')):.2f}%")
+    extra_col2.metric("Sortino", f"{_to_float(summary.get('sortino_ratio')):.3f}")
+    extra_col3.metric("Calmar", _format_calmar(summary.get("calmar_ratio")))
+    extra_col4.metric("Ulcer Index", f"{_to_float(summary.get('ulcer_index')):.3f}")
+
+    extra_col5, extra_col6, extra_col7, extra_col8 = st.columns(4)
+    extra_col5.metric(
+        "Dividendes encaissés",
+        f"${_to_float(summary.get('dividends_received')):,.2f}",
+    )
+    extra_col6.metric(
+        "Rendement total (avec div.)",
+        f"{_to_float(summary.get('total_return_with_dividends_pct')):.2f}%",
+    )
+    extra_col7.metric(
+        "Risk-free rate utilisé",
+        f"{_to_float(summary.get('risk_free_rate')) * 100:.2f}%",
+    )
+    extra_col8.metric("Capital initial", f"${_to_float(summary.get('initial_equity')):,.0f}")
+
+    # Phase A.4 — métadonnées de reproductibilité.
+    run_metadata = report_payload.get("run_metadata")
+    if isinstance(run_metadata, dict) and run_metadata:
+        with st.expander("🧬 Métadonnées de reproductibilité (Phase A.4)", expanded=False):
+            st.caption(
+                "Conservées dans `report.json[run_metadata]` pour rejouer un run "
+                "à l'identique (git SHA, version Python, hash dataset, seed)."
+            )
+            st.json(run_metadata)
+
+    # Glossaire local pour rappel des indicateurs (Phase G3).
+    with st.expander("📚 Glossaire — comprendre les indicateurs", expanded=False):
+        st.markdown(
+            "- **Sharpe** : (rendement excédentaire moyen) / volatilité annualisée. "
+            "≥ 1 = correct, ≥ 2 = excellent.\n"
+            "- **Sortino** : variante du Sharpe ne pénalisant que la volatilité négative.\n"
+            "- **Calmar** : CAGR / |Max Drawdown|. Mesure le rendement par unité de "
+            "douleur historique. `∞` = aucun drawdown observé sur la période.\n"
+            "- **Ulcer Index** : `sqrt(mean(drawdown²))`. Pénalise la durée et la "
+            "profondeur des drawdowns (Martin & McCann, 1989).\n"
+            "- **Profit Factor** : somme des gains / |somme des pertes|. ≥ 1.5 = sain.\n"
+            "- **Risk-free rate** : taux annualisé déduit avant Sharpe/Sortino. "
+            "Doit refléter le coût d'opportunité (ex T-Bill 4 %).\n"
+            "- **CAGR** : taux de croissance annuel composé sur la période.\n"
+            "- **Dividendes encaissés** : crédités séparément depuis "
+            "`portfolio_cash_ledger`. Le rendement total *avec* dividendes inclut "
+            "ce flux."
+        )
+
     with st.expander("⚙️ Paramètres du run utilisés", expanded=False):
         if params:
             st.json(params)
@@ -597,6 +1199,151 @@ def _render_live_artifacts(run_record: dict[str, object]) -> bool:
         st.dataframe(trades_df.head(200), use_container_width=True, hide_index=True)
 
     return rendered
+
+
+def _coerce_metric_text(value: object) -> str:
+    if value is None:
+        return "—"
+    text = str(value).strip()
+    return text or "—"
+
+
+def _resolve_screener_artifact_summary(run_record: dict[str, object]) -> dict[str, object] | None:
+    summary = run_record.get("screener_artifact_summary")
+    if isinstance(summary, dict):
+        return cast(dict[str, object], summary)
+    artifacts_dir = run_record.get("screener_artifacts_dir")
+    if not artifacts_dir:
+        return None
+    return build_screener_artifact_summary(str(artifacts_dir))
+
+
+def _build_screener_artifact_metric_rows(summary: dict[str, object]) -> list[tuple[str, str]]:
+    market_regimes = summary.get("market_regimes")
+    return [
+        ("Scénarios", _coerce_metric_text(summary.get("scenario_count"))),
+        ("Séances", _coerce_metric_text(summary.get("trading_days"))),
+        ("Fichiers détectés", _coerce_metric_text(summary.get("file_count"))),
+        ("Reco objectifs", _coerce_metric_text(summary.get("objective_count"))),
+        ("Baseline", _coerce_metric_text(summary.get("baseline_name"))),
+        ("Résumé CSV", _coerce_metric_text(summary.get("summary_rows"))),
+        ("Daily CSV", _coerce_metric_text(summary.get("daily_rows"))),
+        (
+            "Régimes",
+            _coerce_metric_text(len(market_regimes) if isinstance(market_regimes, list) else None),
+        ),
+    ]
+
+
+def _build_screener_artifact_objective_rows(summary: dict[str, object]) -> pd.DataFrame:
+    objective_rows = summary.get("objective_recommendations")
+    if not isinstance(objective_rows, list) or not objective_rows:
+        return pd.DataFrame()
+    frame = pd.DataFrame(objective_rows)
+    column_labels = {
+        "objective_label": "Objectif",
+        "objective_scope": "Périmètre",
+        "scenario_name": "Scénario recommandé",
+        "objective_score": "Score objectif",
+        "overall_score": "Score global",
+        "reason": "Pourquoi",
+    }
+    available_columns = [column for column in column_labels if column in frame.columns]
+    if not available_columns:
+        return pd.DataFrame()
+    return frame.loc[:, available_columns].rename(columns=column_labels)
+
+
+def _build_screener_artifact_file_rows(summary: dict[str, object]) -> pd.DataFrame:
+    files = summary.get("files")
+    if not isinstance(files, list) or not files:
+        return pd.DataFrame()
+    frame = pd.DataFrame(files)
+    column_labels = {
+        "label": "Fichier",
+        "exists": "Présent",
+        "kind": "Type",
+        "row_count": "Lignes",
+        "size_label": "Taille",
+        "path": "Chemin",
+    }
+    available_columns = [column for column in column_labels if column in frame.columns]
+    if not available_columns:
+        return pd.DataFrame()
+    formatted = frame.loc[:, available_columns].rename(columns=column_labels)
+    if "Présent" in formatted.columns:
+        formatted["Présent"] = formatted["Présent"].map(lambda value: "oui" if bool(value) else "non")
+    return formatted
+
+
+def _build_global_screener_history_dataframe(history_entries: list[dict[str, object]]) -> pd.DataFrame:
+    return pd.DataFrame(build_screener_artifact_history_rows(history_entries))
+
+
+def _render_screener_artifact_summary(run_record: dict[str, object]) -> bool:
+    if str(run_record.get("run_kind", "")) not in {"diagnose-screener", "recommend-screener"}:
+        return False
+
+    summary = _resolve_screener_artifact_summary(run_record)
+    st.markdown("**🧾 Résumé structuré des artefacts screener**")
+    screener_artifacts_dir = run_record.get("screener_artifacts_dir")
+    if screener_artifacts_dir:
+        st.caption(f"Répertoire du run : `{screener_artifacts_dir}`")
+
+    if not summary:
+        st.info("Aucun résumé screener disponible pour ce run.")
+        return True
+
+    st.caption(
+        f"Couverture : {summary.get('coverage_label', 'Période non renseignée')} · "
+        f"MAJ : {summary.get('updated_at_label', 'inconnue')}"
+    )
+
+    metric_rows = _build_screener_artifact_metric_rows(summary)
+    for offset in range(0, len(metric_rows), 4):
+        chunk = metric_rows[offset : offset + 4]
+        cols = st.columns(len(chunk))
+        for col, (label, value) in zip(cols, chunk, strict=False):
+            col.metric(label, value)
+
+    best_compromise = summary.get("best_compromise")
+    if isinstance(best_compromise, dict) and best_compromise.get("scenario_name"):
+        st.success(
+            "Meilleur compromis : `{}` · overall={} · robustesse={} · survie={} · forward={}".format(
+                best_compromise.get("scenario_name"),
+                _coerce_metric_text(best_compromise.get("overall_score")),
+                _coerce_metric_text(best_compromise.get("robustness_score")),
+                _coerce_metric_text(best_compromise.get("survival_score")),
+                _coerce_metric_text(best_compromise.get("forward_quality_score")),
+            )
+        )
+
+    best_cross_regime = summary.get("best_cross_regime")
+    if isinstance(best_cross_regime, dict) and best_cross_regime.get("scenario_name"):
+        st.info(
+            "Leader cross-régimes : `{}` · score={} · rang={}".format(
+                best_cross_regime.get("scenario_name"),
+                _coerce_metric_text(best_cross_regime.get("overall_score")),
+                _coerce_metric_text(best_cross_regime.get("rank")),
+            )
+        )
+
+    objective_rows = _build_screener_artifact_objective_rows(summary)
+    if not objective_rows.empty:
+        st.dataframe(objective_rows, use_container_width=True, hide_index=True)
+
+    file_rows = _build_screener_artifact_file_rows(summary)
+    if not file_rows.empty:
+        with st.expander("📁 Inventaire des fichiers screener du run", expanded=False):
+            st.dataframe(file_rows, use_container_width=True, hide_index=True)
+
+    errors = summary.get("errors")
+    if isinstance(errors, list) and errors:
+        with st.expander("ℹ️ Détails de lecture du snapshot", expanded=False):
+            for error in errors:
+                st.caption(f"- {error}")
+
+    return True
 
 
 @st.fragment(run_every="2s")
@@ -703,6 +1450,8 @@ def _render_runtime_center() -> None:
         has_live_artifacts = _render_live_artifacts(selected_run)
         if status == "completed" and not (has_report or has_live_artifacts):
             _render_latest_artifacts()
+    else:
+        _render_screener_artifact_summary(selected_run)
 
     history_df = pd.DataFrame(
         [
@@ -723,11 +1472,19 @@ def _render_runtime_center() -> None:
     with st.expander("🗃️ Historique des exécutions backtesting", expanded=False):
         st.dataframe(history_df, use_container_width=True, hide_index=True)
 
+    screener_history_df = _build_global_screener_history_dataframe(build_global_screener_artifact_history())
+    if not screener_history_df.empty:
+        with st.expander("🗂️ Historique global des artefacts screener", expanded=False):
+            st.caption(
+                "Vue transversale des répertoires screener connus par l'IHM, indépendamment du run actuellement sélectionné."
+            )
+            st.dataframe(screener_history_df, use_container_width=True, hide_index=True)
+
 
 def render() -> None:
     st.header("🧪 Backtesting intégré")
     st.caption(
-        "Page opérateur dédiée au backtesting : configuration complète, lancement direct depuis l'IHM, "
+        "Page opérateur dédiée au backtesting et aux diagnostics screener : configuration complète, lancement direct depuis l'IHM, "
         "suivi des runs et consultation des logs."
     )
 
@@ -743,8 +1500,12 @@ def render() -> None:
     db_config = get_runtime_db_config()
     active_backtest_runs = list_active_backtesting_runs_by_kind("run")
     active_backfill_runs = list_active_backtesting_runs_by_kind("backfill-scores-history")
+    active_diag_runs = list_active_backtesting_runs_by_kind("diagnose-screener")
+    active_recommend_runs = list_active_backtesting_runs_by_kind("recommend-screener")
 
-    run_tab, backfill_tab = st.tabs(["▶️ Backtest", "🧱 Backfill scores history"])
+    run_tab, backfill_tab, diagnose_tab, recommend_tab = st.tabs(
+        ["▶️ Backtest", "🧱 Backfill scores history", "🧪 Diagnose screener", "🎯 Recommend screener"]
+    )
     with run_tab:
         run_options = _build_run_options()
         if active_backtest_runs:
@@ -792,6 +1553,66 @@ def render() -> None:
             else:
                 st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
                 st.success(f"Backfill lancé en arrière-plan : `{record.run_id}`")
+                st.rerun()
+
+    with diagnose_tab:
+        diagnose_options = _build_diagnose_screener_options()
+        if active_diag_runs:
+            active_run_id = str(active_diag_runs[0].get("run_id", ""))
+            st.info(f"Un diagnostic screener est déjà en cours (`{active_run_id}`). Arrête-le ou attends sa fin pour relancer.")
+        st.caption(
+            "Conseil : garde `artifacts/screener_diagnostics` comme répertoire cible si tu veux que la page Screening relise automatiquement les nouveaux artefacts."
+        )
+        launch_diagnose_clicked = st.button(
+            "🧪 Lancer diagnose-screener",
+            key="launch_diagnose_screener_run",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(active_diag_runs),
+        )
+        if launch_diagnose_clicked:
+            try:
+                record = start_backtesting_run(
+                    "diagnose-screener",
+                    "Diagnostic screener PIT",
+                    diagnose_options,
+                    db_config=db_config,
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                st.success(f"Diagnostic screener lancé en arrière-plan : `{record.run_id}`")
+                st.rerun()
+
+    with recommend_tab:
+        recommend_options = _build_recommend_screener_options()
+        if active_recommend_runs:
+            active_run_id = str(active_recommend_runs[0].get("run_id", ""))
+            st.info(f"Une recommandation screener est déjà en cours (`{active_run_id}`). Arrête-la ou attends sa fin pour relancer.")
+        st.caption(
+            "Utilise ce recalcul pour regénérer rapidement les recommandations sans rejouer tout le diagnostic PIT."
+        )
+        launch_recommend_clicked = st.button(
+            "🎯 Lancer recommend-screener",
+            key="launch_recommend_screener_run",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(active_recommend_runs),
+        )
+        if launch_recommend_clicked:
+            try:
+                record = start_backtesting_run(
+                    "recommend-screener",
+                    "Recommandation screener",
+                    recommend_options,
+                    db_config=db_config,
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                st.success(f"Recommandation screener lancée en arrière-plan : `{record.run_id}`")
                 st.rerun()
 
     _render_runtime_center()

@@ -17,13 +17,18 @@ class EventSentimentConfig:
 
     finbert_model_name: str = "ProsusAI/finbert"
     finbert_model_version: str = "finbert_v1"
+    finbert_model_revision: str | None = None
     finbert_batch_size: int = 16
     finbert_max_length: int = 256
 
     allow_sector_fallback: bool = True
     sentiment_pending_limit: int = 1000
-    feature_version: str = "v1"
+    feature_version: str = "v2"
     macro_rule_version: str = "macro_rules_v1"
+    feature_rolling_windows: tuple[int, ...] = (3, 5, 10, 20)
+    feature_history_buffer_days: int = 45
+    bootstrap_default_years: int = 10
+    bootstrap_batch_days: int = 63
 
     def __post_init__(self) -> None:
         if self.page_limit < 1:
@@ -42,4 +47,16 @@ class EventSentimentConfig:
             raise ValueError("finbert_max_length doit être >= 32.")
         if self.sentiment_pending_limit < 1:
             raise ValueError("sentiment_pending_limit doit être >= 1.")
+        if not self.feature_rolling_windows:
+            raise ValueError("feature_rolling_windows ne doit pas être vide.")
+        if any(window < 2 for window in self.feature_rolling_windows):
+            raise ValueError("feature_rolling_windows doit contenir des fenêtres >= 2.")
+        if tuple(sorted(set(self.feature_rolling_windows))) != self.feature_rolling_windows:
+            raise ValueError("feature_rolling_windows doit être trié, sans doublons.")
+        if self.feature_history_buffer_days < max(self.feature_rolling_windows):
+            raise ValueError("feature_history_buffer_days doit couvrir au moins la plus grande fenêtre rolling.")
+        if self.bootstrap_default_years < 1:
+            raise ValueError("bootstrap_default_years doit être >= 1.")
+        if self.bootstrap_batch_days < 1:
+            raise ValueError("bootstrap_batch_days doit être >= 1.")
 

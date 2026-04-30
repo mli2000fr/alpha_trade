@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
+
+from execution_engine.audit import build_execution_run_summary
 from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.config import ExecutionConfig
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.executor import ProductionExecutor
-from execution_engine.models import BrokerOrder, EventType, ExecutionTarget, OrderStatus
+from execution_engine.models import BrokerOrder, EventType, ExecutionPosition, ExecutionTarget, OrderStatus
 from execution_engine.oco_manager import OcoManager
+from execution_engine.order_intents import build_entry_intents
 
 
 def _target(sym: str = "AAPL") -> ExecutionTarget:
@@ -16,6 +19,9 @@ def _target(sym: str = "AAPL") -> ExecutionTarget:
         risk_run_id="r1", trade_date=date(2026, 4, 18), symbol=sym,
         target_shares=100, entry_price=150.0, target_weight=0.05,
         sector="Tech", conviction_score=0.8, sizing_method="atr", kelly_fraction=0.1,
+        decision_rank=1, stop_price_initial=140.0, risk_per_share=10.0,
+        risk_budget_dollars=1_000.0, initial_risk_dollars=1_000.0, target_notional=15_000.0,
+        price_asof_date=date(2026, 4, 18), atr_asof_date=date(2026, 4, 18), atr_20=5.0,
     )
 
 
@@ -44,6 +50,7 @@ def _make_executor(config: ExecutionConfig | None = None, targets: list[Executio
     repo = MagicMock(spec=ExecutionRepository)
     repo.load_portfolio_targets.return_value = targets or [_target()]
     repo.load_submitted_idempotency_keys.return_value = set()
+    repo.acquire_execution_lock.return_value = True
     broker = MagicMock(spec=BrokerAdapter)
     broker.submit_intent.return_value = _filled_order()
     broker.poll_order_status.return_value = _filled_order()
@@ -56,7 +63,21 @@ def _make_executor(config: ExecutionConfig | None = None, targets: list[Executio
         "non_marginable_buying_power": 100_000.0,
         "daytrade_count": 0,
     }
+    broker.list_recent_orders.return_value = []
     broker.get_all_positions.return_value = [{"symbol": "AAPL", "qty": 100}]
+    repo.load_execution_positions.return_value = [ExecutionPosition(account_id=cfg.resolved_account_id, symbol="AAPL", net_qty=100)]
+    repo.load_open_reconciliation_order_state.return_value = []
+    repo.load_reconciliation_protection_state.return_value = [{"symbol": "AAPL", "protection_qty": 100.0}]
+    repo.load_latest_broker_account_snapshot.return_value = {
+        "snapshot_kind": "preflight",
+        "equity": 100_000.0,
+        "cash": 100_000.0,
+        "settled_cash": 100_000.0,
+        "buying_power": 200_000.0,
+        "daytrade_count": 0,
+        "raw_payload_json": None,
+    }
+    repo.replace_execution_reconciliation_results.return_value = 1
     oco = MagicMock(spec=OcoManager)
     oco.check_and_cancel_sibling.return_value = []
     executor = ProductionExecutor(cfg, repo, broker, oco)
@@ -64,11 +85,119 @@ def _make_executor(config: ExecutionConfig | None = None, targets: list[Executio
 
 
 class TestExecutor:
+    def test_build_execution_run_summary_computes_fill_rate(self) -> None:
+        summary = build_execution_run_summary(
+            {
+                "exec_run_id": "exec-1",
+                "risk_run_id": "risk-1",
+                "trade_date": "2026-04-24",
+                "status": "COMPLETED",
+                "targets": 3,
+                "submitted": 2,
+                "filled": 1,
+                "failed": 1,
+                "skipped": 0,
+                "rebalance_submitted": 1,
+                "rebalance_failed": 0,
+                "constraint_blocked": 2,
+                "children_deferred": 1,
+            },
+            started_at=datetime(2026, 4, 24, 10, 0, 0),
+            finished_at=datetime(2026, 4, 24, 10, 0, 10),
+            execution_mode="paper",
+            broker_mode="paper",
+            account_id="acct-1",
+            account_type="margin",
+            effective_pdt_rule="auto",
+            swing_only=False,
+            dry_run=False,
+            allow_outside_rth=False,
+        )
+
+        assert summary["run_id"] == "exec-1"
+        assert summary["submitted_orders"] == 2
+        assert summary["filled_orders"] == 1
+        assert summary["fill_rate"] == 0.5
+
+    def test_build_execution_run_summary_includes_risk_metrics(self) -> None:
+        summary = build_execution_run_summary(
+            {
+                "exec_run_id": "exec-1",
+                "risk_run_id": "risk-1",
+                "trade_date": "2026-04-24",
+                "status": "COMPLETED",
+                "targets": 3,
+                "submitted": 2,
+                "filled": 1,
+                "total_target_notional": 25_000.0,
+                "total_initial_risk_dollars": 1_500.0,
+                "total_risk_budget_dollars": 2_000.0,
+                "max_target_weight": 0.10,
+                "targets_with_risk_controls": 3,
+                "targets_with_broker_initial_stop": 2,
+                "targets_eligible_for_dynamic_trailing": 2,
+                "targets_with_trailing_fallback": 1,
+                "child_take_profit_orders_submitted": 1,
+                "child_initial_stop_orders_submitted": 1,
+                "child_trailing_stop_orders_submitted": 0,
+                "child_order_submit_failures": 0,
+                "stale_price_targets": 1,
+                "broker_orders_synced": 2,
+                "broker_fills_synced": 1,
+                "broker_positions_observed": 1,
+                "execution_positions_projected": 1,
+                "execution_position_lots_projected": 2,
+                "reconciliation_results": 2,
+                "reconciliation_safe_auto": 1,
+                "reconciliation_manual_review": 1,
+            },
+            started_at=datetime(2026, 4, 24, 10, 0, 0),
+            finished_at=datetime(2026, 4, 24, 10, 0, 10),
+            execution_mode="paper",
+            broker_mode="paper",
+            account_id="acct-1",
+            account_type="margin",
+            effective_pdt_rule="auto",
+            swing_only=False,
+            dry_run=False,
+            allow_outside_rth=False,
+        )
+
+        assert summary["total_target_notional"] == 25_000.0
+        assert summary["total_initial_risk_dollars"] == 1_500.0
+        assert summary["targets_with_risk_controls"] == 3
+        assert summary["targets_with_broker_initial_stop"] == 2
+        assert summary["targets_eligible_for_dynamic_trailing"] == 2
+        assert summary["targets_with_trailing_fallback"] == 1
+        assert summary["dynamic_trailing_activations"] == 0
+        assert summary["stale_price_targets"] == 1
+        assert summary["broker_orders_synced"] == 2
+        assert summary["execution_position_lots_projected"] == 2
+        assert summary["reconciliation_results"] == 2
+        assert summary["reconciliation_manual_review"] == 1
+
     def test_dry_run_no_broker_calls(self) -> None:
         executor, repo, broker, _ = _make_executor()
         metrics = executor.execute_run(risk_run_id="r1")
         broker.submit_intent.assert_not_called()
         assert metrics["submitted"] == 1
+        assert repo.upsert_execution_order_request_from_intent.called
+        assert repo.snapshot_broker_account.called
+
+    def test_execute_run_scopes_targets_and_lock_to_resolved_account_id(self) -> None:
+        cfg = ExecutionConfig(dry_run=True, allow_outside_rth=True, account_id="live1")
+        executor, repo, broker, _ = _make_executor(cfg)
+
+        executor.execute_run(risk_run_id="r1")
+
+        locked_run_id = repo.acquire_execution_lock.call_args.kwargs["exec_run_id"]
+        released_run_id = repo.release_execution_lock.call_args.kwargs["exec_run_id"]
+
+        repo.acquire_execution_lock.assert_called_once()
+        repo.load_portfolio_targets.assert_called_once_with(risk_run_id="r1", trade_date=None, account_id="live1")
+        repo.snapshot_execution_targets.assert_called_once()
+        repo.release_execution_lock.assert_called_once_with(account_id="live1", exec_run_id=locked_run_id)
+        assert locked_run_id == released_run_id
 
     def test_dry_run_persists_events(self) -> None:
         executor, repo, broker, _ = _make_executor()
@@ -143,6 +272,12 @@ class TestExecutor:
         broker.poll_order_status.return_value = partial
         metrics = executor.execute_run(risk_run_id="r1")
         assert metrics["filled"] == 1
+        assert repo.upsert_execution_broker_order.called
+        assert repo.insert_execution_broker_fill.called
+        assert not hasattr(repo, "insert_execution_fill")
+        assert not hasattr(repo, "upsert_execution_order")
+        assert repo.replace_execution_positions.called
+        assert repo.rebuild_execution_position_lots.called
 
     def test_slippage_alert(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, max_slippage_bps=5)
@@ -221,4 +356,146 @@ class TestExecutor:
         assert metrics["children_deferred"] == 1
         event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
         assert EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT in event_types
+
+    def test_children_use_target_risk_fields_for_tp_and_initial_stop(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, profit_taker_pct=0.02, trailing_stop_pct=0.05)
+        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
+        parent = executor._repo.load_portfolio_targets.return_value[0]
+        parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
+        filled_order = _filled_order(intent_id=parent_intent.intent_id)
+
+        executor._submit_children(
+            parent_intent,
+            filled_order,
+            "exec-1",
+            account_state=executor._build_account_constraint_state(),
+            metrics={"children_deferred": 0},
+            target=parent,
+        )
+
+        submitted_intents = [call.args[0] for call in broker.submit_intent.call_args_list]
+        assert len(submitted_intents) == 2
+        tp_intent = submitted_intents[0]
+        stop_intent = submitted_intents[1]
+        assert tp_intent.limit_price == 170.2
+        assert stop_intent.order_type == "stop"
+        assert stop_intent.stop_price == 140.0
+
+    def test_children_fallback_to_trailing_if_initial_stop_submit_fails(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, profit_taker_pct=0.02, trailing_stop_pct=0.05)
+        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
+        parent = executor._repo.load_portfolio_targets.return_value[0]
+        parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
+        filled_order = _filled_order(intent_id=parent_intent.intent_id)
+        broker.submit_intent.side_effect = [_accepted_order(intent_id="tp", symbol="AAPL"), Exception("stop rejected"), _accepted_order(intent_id="trail", symbol="AAPL")]
+
+        metrics = {
+            "children_deferred": 0,
+            "child_take_profit_orders_submitted": 0,
+            "child_initial_stop_orders_submitted": 0,
+            "child_trailing_stop_orders_submitted": 0,
+            "child_order_submit_failures": 0,
+        }
+        events = executor._submit_children(
+            parent_intent,
+            filled_order,
+            "exec-1",
+            account_state=executor._build_account_constraint_state(),
+            metrics=metrics,
+            target=parent,
+        )
+
+        submitted_intents = [call.args[0] for call in broker.submit_intent.call_args_list]
+        assert len(submitted_intents) == 3
+        assert submitted_intents[-1].order_type == "trailing_stop"
+        assert metrics["child_take_profit_orders_submitted"] == 1
+        assert metrics["child_initial_stop_orders_submitted"] == 0
+        assert metrics["child_trailing_stop_orders_submitted"] == 1
+        assert metrics["child_order_submit_failures"] == 1
+        assert events[0].payload_json is not None
+
+    def test_children_keep_initial_stop_and_delegate_dynamic_transition_to_watcher(self) -> None:
+        cfg = ExecutionConfig(
+            dry_run=False,
+            allow_outside_rth=True,
+            profit_taker_pct=0.02,
+            trailing_stop_pct=0.05,
+            protection_transition_timeout_seconds=1,
+            protection_transition_poll_interval_seconds=0.01,
+            trailing_activation_trigger="multiple_r",
+            trailing_activation_r_multiple=1.0,
+        )
+        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
+        parent = executor._repo.load_portfolio_targets.return_value[0]
+        parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
+        filled_order = _filled_order(intent_id=parent_intent.intent_id)
+
+        broker.submit_intent.side_effect = [
+            BrokerOrder("tp1", "ctp1", "tp", "AAPL", "sell", 100, 0, None, OrderStatus.SUBMITTED, "limit", 170.2, None, None, datetime.now(timezone.utc), datetime.now(timezone.utc)),
+            BrokerOrder("stop1", "cstop1", "stop", "AAPL", "sell", 100, 0, None, OrderStatus.SUBMITTED, "stop", None, 140.0, None, datetime.now(timezone.utc), datetime.now(timezone.utc)),
+        ]
+
+        metrics = {
+            "children_deferred": 0,
+            "child_take_profit_orders_submitted": 0,
+            "child_initial_stop_orders_submitted": 0,
+            "child_trailing_stop_orders_submitted": 0,
+            "child_order_submit_failures": 0,
+        }
+        events = executor._submit_children(
+            parent_intent,
+            filled_order,
+            "exec-1",
+            account_state=executor._build_account_constraint_state(),
+            metrics=metrics,
+            target=parent,
+        )
+
+        submitted_intents = [call.args[0] for call in broker.submit_intent.call_args_list]
+        assert len(submitted_intents) == 2
+        assert submitted_intents[1].order_type == "stop"
+        assert not broker.cancel_broker_order.called
+        assert metrics["child_initial_stop_orders_submitted"] == 1
+        assert metrics["child_trailing_stop_orders_submitted"] == 0
+        event_types = [event.event_type for event in events]
+        assert EventType.CHILDREN_SUBMITTED in event_types
+
+    def test_reconcile_auto_rebalance_only_submits_safe_auto_diffs(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, auto_rebalance_on_reconcile=True)
+        executor, repo, broker, _ = _make_executor(cfg)
+        broker.get_all_positions.return_value = [{"symbol": "AAPL", "qty": 80}]
+        repo.load_execution_positions.return_value = [ExecutionPosition(account_id="default", symbol="AAPL", net_qty=80)]
+        repo.load_open_reconciliation_order_state.return_value = []
+        repo.load_reconciliation_protection_state.return_value = [{"symbol": "AAPL", "protection_qty": 80.0}]
+        executor._submit_rebalance_orders = MagicMock(return_value=[])
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        assert metrics["reconciliation_safe_auto"] >= 1
+        executor._submit_rebalance_orders.assert_called_once()
+        safe_auto_diffs = executor._submit_rebalance_orders.call_args.args[0]
+        assert len(safe_auto_diffs) == 1
+        assert safe_auto_diffs[0].symbol == "AAPL"
+        assert safe_auto_diffs[0].action == "buy_more"
+
+    def test_reconcile_manual_review_does_not_auto_rebalance_even_when_enabled(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, auto_rebalance_on_reconcile=True)
+        executor, repo, broker, _ = _make_executor(cfg)
+        broker.get_all_positions.return_value = [{"symbol": "AAPL", "qty": 80}]
+        repo.load_execution_positions.return_value = [ExecutionPosition(account_id="default", symbol="AAPL", net_qty=80)]
+        repo.load_open_reconciliation_order_state.return_value = [{
+            "symbol": "AAPL",
+            "open_request_buy_qty": 20.0,
+            "open_request_sell_qty": 0.0,
+            "open_broker_buy_qty": 20.0,
+            "open_broker_sell_qty": 0.0,
+        }]
+        repo.load_reconciliation_protection_state.return_value = [{"symbol": "AAPL", "protection_qty": 80.0}]
+        executor._submit_rebalance_orders = MagicMock(return_value=[])
+
+        metrics = executor.execute_run(risk_run_id="r1")
+
+        assert metrics["reconciliation_manual_review"] >= 1
+        executor._submit_rebalance_orders.assert_not_called()
+        assert repo.replace_execution_reconciliation_results.called
 

@@ -2,6 +2,19 @@ import pytest
 from testcontainers.mysql import MySqlContainer
 import sqlalchemy
 
+
+def _docker_available() -> bool:
+    try:
+        import docker
+        client = docker.from_env()
+        client.ping()
+    except Exception:
+        return False
+    return True
+
+
+pytestmark = pytest.mark.skipif(not _docker_available(), reason="Docker indisponible sur cette machine")
+
 @pytest.fixture(scope="session")
 def mysql_url():
     with MySqlContainer("mysql:8.0") as mysql:

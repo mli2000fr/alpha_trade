@@ -8,7 +8,7 @@
 
 ### 1.1 Objectif de l'application
 
-**Alpha Trade** est un système de trading algorithmique **Swing Trade** sur actions US, de bout en bout. Il couvre la totalité de la chaîne : ingestion de données de marché, screening quantitatif, analyse de sentiment (NLP/FinBERT), prédiction par modèle LSTM, gestion du risque, construction de portefeuille, exécution automatisée des ordres via le broker **Alpaca**, et gestion des corporate actions (dividendes, splits). Une **IHM opérateur Streamlit** permet la supervision du pipeline.
+**Alpha Trade** est un système de trading algorithmique **Swing Trade** sur actions US, de bout en bout. Il couvre la totalité de la chaîne : ingestion de données de marché, screening quantitatif, analyse de sentiment (NLP/FinBERT), prédiction par **gouvernance multi-modèles `modelFactory`** (LSTM local, challengers tabulaires locaux, modèle global optionnel), gestion du risque, construction de portefeuille, exécution automatisée des ordres via le broker **Alpaca**, et gestion des corporate actions (dividendes, splits). Une **IHM opérateur Streamlit** permet la supervision du pipeline.
 
 ### 1.2 Contexte métier
 
@@ -26,10 +26,11 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 6. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
 7. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
 8. **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
-9. **ML Train** — entraînement des modèles LSTM+Attention par symbole candidat (périodique)
-10. **ML Predict** — inférence LSTM → `predicted_proba` par symbole candidat (quotidien)
+9. **ML Train** — entraînement `modelFactory` par symbole candidat : LSTM+Attention, challengers locaux `LightGBM` / `CatBoost`, modèle global optionnel et sélection éventuelle du champion servi (périodique)
+10. **ML Predict** — inférence quotidienne sur le **champion sélectionné** par symbole (`lstm_attention`, `lightgbm`, `catboost` ou `global_model` selon les artefacts disponibles)
 11. **Gestion du risque** : sizing de position (ATR, Kelly), contraintes de portefeuille, score de conviction (40% quant + 60% ML)
-12. **Exécution** automatisée des ordres sur Alpaca avec bracket orders (take-profit + trailing stop)
+12. **Exécution** automatisée des ordres sur Alpaca via une chaîne canonique `targets snapshot → order requests → broker orders → broker fills → positions/lots → réconciliation`, avec protections broker-side initiales
+12.bis **Watcher post-exécution** — supervision secondaire des protections broker-side après `Execution`, utile pour promouvoir certains stops initiaux vers un trailing stop dynamique si ce mode est activé ; ce watcher n'est pas une étape métier supplémentaire du pipeline 1→14, mais un runtime post-exécution lancé juste après l'étape 12
 13. **Corporate actions sync** — récupère dividendes/splits depuis Alpaca uniquement pour les symboles détenus en portefeuille (après exécution du jour)
 14. **Corporate actions apply** — application des dividendes/splits sur les positions existantes
 
@@ -53,7 +54,7 @@ L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 | **Ordres d'entrée** | Market ou limit (buffer configurable en bps) |
 | **Take-profit** | Ordre limit sell à +X% du prix de fill (défaut : +8%) |
 | **Trailing stop** | Ordre trailing_stop sell à -X% (défaut : -5%) |
-| **Synthetic bracket** | TP + TS soumis séparément après fill, car Alpaca ne supporte pas le trailing stop natif en bracket |
+| **Protections broker-side** | Stop initial + take-profit soumis via des requests distinctes après fill ; si activé, le watcher peut ensuite promouvoir le stop initial vers un trailing stop dynamique |
 | **OCO logique** | Si le TP ou le TS est exécuté, l'autre est automatiquement annulé |
 | **Ordres de rééquilibrage** | Vente d'excédent ou achat complémentaire lors de la réconciliation |
 | **Idempotence** | Clé SHA-256 basée sur risk_run_id + symbole + rôle pour éviter les doublons |
@@ -120,10 +121,14 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 - Fusion : `75% quant + 15% sentiment ticker + 10% macro sectoriel` (poids configurables)
 - Fenêtre glissante de 5 jours, pondérée par le nombre d'articles
 
-#### Prédiction LSTM
-- Modèle LSTM + Temporal Attention par symbole
-- Classification binaire : hausse/baisse à horizon 5 jours
-- Métriques : accuracy, precision, recall, AUC
+#### Model Factory — gouvernance multi-modèles
+- Modèle séquentiel principal : **LSTM + Temporal Attention** par symbole
+- Challengers tabulaires locaux optionnels : **LightGBM** et **CatBoost**
+- Modèle global multi-symboles optionnel : backend **LightGBM** ou **CatBoost**
+- Calibration possible des probabilités (`none` ou `platt`)
+- Optimisation possible du seuil de décision et de la target swing
+- Sélection automatique du **champion réellement inférable** parmi les modèles éligibles
+- Inférence quotidienne sur le backend sélectionné, avec sortie `predicted_proba` / `predicted_class`
 
 ### 2.4 Gestion du portefeuille
 
@@ -162,13 +167,20 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 ### 2.7 Historique / reporting
 
 - **Table `execution_runs`** : chaque run d'exécution est tracé (statut, timestamps, métriques)
-- **Table `execution_fills`** : chaque fill reçu du broker avec slippage et implementation shortfall
+- **Table `execution_targets_snapshot`** : snapshot figé des cibles effectivement consommées par un run donné
+- **Table `execution_order_requests`** : intentions / requests canoniques soumises par le moteur, avec hiérarchie parent/enfant et traçabilité d'idempotence
+- **Table `execution_broker_orders`** : observation broker-side des ordres réellement soumis et de leur statut normalisé
+- **Table `execution_broker_fills`** : chaque fill reçu du broker avec slippage et implementation shortfall
+- **Tables `execution_positions` / `execution_position_lots`** : reconstruction des positions et des lots FIFO au niveau compte
+- **Table `execution_reconciliation_results`** : résultat actionnable de la réconciliation entre cibles, positions internes, broker et protections
 - **Table `execution_events`** : journal complet de chaque événement (type, message, payload JSON)
 - **Table `risk_decisions`** : chaque décision d'acceptation/rejet d'un candidat
 - **Table `portfolio_targets`** : portefeuille cible issu du risk management
-- **Table `broker_positions_snapshots`** : photo des positions broker après chaque run
+- **Tables `broker_account_snapshots` / `broker_positions_snapshots`** : photos du compte et des positions broker après chaque run
 - **TCA (Transaction Cost Analysis)** : slippage moyen, max, implementation shortfall agrégé
 - **Rapport de backtest** : exporte aussi des diagnostics métier sur les contraintes de compte (`day trades exécutés`, `sorties same-day bloquées`, `entrées bloquées faute de cash settled`)
+
+La page `Exécution` de l'IHM privilégie désormais la lecture de ces tables canoniques **scopée par `exec_run_id`**, avec le contexte plus large du compte relégué dans des zones secondaires explicites.
 
 ### 2.8 Logs métier
 
@@ -190,7 +202,7 @@ Le module `corporate_actions` assure le suivi automatique des opérations sur ti
 | **Audit trail** | Tables `corporate_actions_events`, `corporate_actions_applications`, `portfolio_cash_ledger` |
 | **Réconciliation** | Comparaison positions internes post-CA vs positions broker |
 
-**Stratégie données de marché** : les barres OHLCV sont ingérées avec `adjustment="all"` (déjà ajustées par Alpaca). Le module corporate actions ne touche pas aux prix historiques — il gère uniquement la comptabilité portefeuille (qty, cost basis, cash).
+**Stratégie données de marché** : les barres OHLCV sont ingérées avec `adjustment="split"` (splits neutralisés, dividendes non réinjectés dans le passé). Le module corporate actions ne touche pas aux prix historiques — il gère uniquement la comptabilité portefeuille (qty, cost basis, cash).
 
 **Intégration pipeline** : s'exécute en fin de pipeline, juste avant l'apply, après que les positions du jour sont connues :
 ```
@@ -208,7 +220,7 @@ Le système supporte **plusieurs comptes broker Alpaca en parallèle** (paper et
 |---|---|
 | **Registre centralisé** | `AccountRegistry` charge les comptes depuis `config.yaml`, env vars préfixées, ou fallback classique |
 | **Isolation par compte** | Chaque exécution, chaque run de risk et chaque apply CA peut cibler un compte spécifique via `--account <ID>` |
-| **Traçabilité DB** | Colonne `account_id` sur 6 tables : `execution_runs`, `broker_positions_snapshots`, `risk_decisions`, `portfolio_targets`, `corporate_actions_applications`, `portfolio_cash_ledger` |
+| **Traçabilité DB** | Colonne `account_id` sur la chaîne canonique `execution` (`execution_runs`, `execution_targets_snapshot`, `execution_order_requests`, `execution_broker_orders`, `execution_broker_fills`, `execution_positions`, `execution_position_lots`, `execution_reconciliation_results`, `execution_locks`) ainsi que `broker_positions_snapshots`, `risk_decisions`, `portfolio_targets`, `corporate_actions_applications`, `portfolio_cash_ledger` |
 | **IHM** | Sélecteur de compte dans la sidebar Streamlit — filtre automatiquement les données affichées |
 | **Rétrocompatibilité** | Les données existantes (sans `account_id`) sont considérées comme `default` |
 | **Données de marché** | Les barres OHLCV, news et assets sont partagés (non liés à un compte) |
@@ -237,6 +249,55 @@ python -m risk_management.run_risk --account live1    # risk pour le compte live
 python -m corporate_actions apply --account live1     # appliquer CA sur le compte live
 ```
 
+### 2.11 Watcher de protections post-exécution
+
+Le watcher de protections est un composant **post-exécution** de supervision secondaire qui surveille les protections broker-side créées par `Execution` afin de gérer le cycle de vie :
+
+- stop initial broker-side ;
+- déclenchement des conditions de transition ;
+- promotion vers trailing stop dynamique, si ce mode est activé ;
+- suivi de la santé de ce mécanisme en base et dans l'IHM.
+
+Fonctionnellement :
+
+- il devient utile **après** l'étape 12 `Execution` ;
+- il ne remplace pas les étapes 13 et 14 ;
+- il peut tourner **en parallèle** des Corporate Actions ;
+- il ne sert pas à préparer le pipeline 1→11, mais à **sécuriser la vie post-exécution du trade** ;
+- il n'est pas requis pour comprendre le run nominal, qui doit déjà rester lisible via la chaîne canonique persistée en base.
+
+Règle opératoire simple :
+
+- **manuel** : lancer un `run watcher once` juste après `Execution` ;
+- **exploitation Windows** : préférer Task Scheduler (`once` périodique) ou NSSM (`service` persistant).
+
+Référence dédiée : voir aussi `doc/watcher.md`.
+
+### 2.12 Supervision Windows read-only du watcher
+
+L'IHM `Supervision Ops` sait maintenant superviser le **packaging Windows réel** du watcher sans administrer la machine.
+
+Fonctions disponibles :
+
+- lire le statut réel de la tâche `Task Scheduler` du watcher ;
+- lire le statut réel du service Windows / NSSM du watcher ;
+- détecter les chemins de logs `stdout` / `stderr` quand ils sont exposés par le packaging ;
+- importer ces logs dans `Supervision Ops` ;
+- expliquer via quel bridge PowerShell la supervision passe.
+
+Fonctions volontairement absentes :
+
+- installer/désinstaller la tâche planifiée ;
+- installer/désinstaller NSSM ;
+- démarrer/arrêter un service Windows externe ;
+- exécuter un script PowerShell arbitraire ;
+- manipuler le secret store DPAPI depuis l'IHM.
+
+Le compromis fonctionnel est donc :
+
+- **supervision réelle** depuis l'IHM ;
+- **administration système exclue** depuis l'IHM.
+
 ---
 
 ## 3. Flux de Fonctionnement Global
@@ -255,15 +316,18 @@ python -m corporate_actions apply --account live1     # appliquer CA sur le comp
      │ 1.  import_alpaca_bar        │ → stock_bars                                 │
      │ 2.  data_sanitizer_daily     │ → stock_bars_daily                           │
      │ 3.  stock_screener           │ → stock_scores                               │
-     │ 4.  alpha_scanner            │ → stock_scores (update)                      │
-     │ 5.  sentiment_pipeline       │ → ticker/sector feats                        │
-     │ 6.  signal_aggregator        │ → final_score_sentiment                      │
-     │ 7.  ml_train (périodique)    │ → model_registry, model_training_run         │
-     │ 8.  ml_predict (quotidien)   │ → model_predictions                          │
-     │ 9.  run_risk                 │ → portfolio_targets                          │
-     │ 10. run_execution            │ → ordres Alpaca + broker_positions_snapshots  │
-     │ 11. corporate_actions sync   │ → corporate_actions_events (portfolio only)  │
-     │ 12. corporate_actions apply  │ → position adjustments                       │
+     │ 4.  sync_latest_quotes       │ → stock_quote_snapshots                      │
+     │ 5.  sync_earnings_calendar   │ → stock_earnings_calendar                    │
+     │ 6.  alpha_scanner            │ → stock_scores (update)                      │
+     │ 7.  sentiment_pipeline       │ → ticker/sector feats                        │
+     │ 8.  signal_aggregator        │ → final_score_sentiment                      │
+     │ 9.  ml_train (périodique)    │ → artefacts Model Factory + champion servi   │
+     │ 10. ml_predict (quotidien)   │ → model_predictions                          │
+     │ 11. run_risk                 │ → portfolio_targets                          │
+     │ 12. run_execution            │ → targets snapshot / requests / ordres / fills / positions / réconciliation │
+     │ 12.bis watcher post-exec     │ → surveillance / transition des protections  │
+     │ 13. corporate_actions sync   │ → corporate_actions_events (portfolio only)  │
+     │ 14. corporate_actions apply  │ → position adjustments                       │
      └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -274,10 +338,11 @@ python -m corporate_actions apply --account live1     # appliquer CA sur le comp
 3. **Portfolio target** : si accepté, le symbole est ajouté à `portfolio_targets` avec nombre de parts et prix d'entrée
 4. **Soumission** : l'executor lit les targets et soumet un ordre market/limit d'achat
 5. **Fill** : polling du broker jusqu'au fill ou timeout (120s défaut)
-6. **Bracket synthétique** : après fill, soumission d'un take-profit (limit sell +8%) et d'un trailing stop (-5%)
-7. **OCO** : si l'un des enfants est exécuté, l'autre est annulé
-8. **Réconciliation** : comparaison positions broker vs cibles, rééquilibrage automatique optionnel
-9. **TCA** : calcul du slippage et de l'implementation shortfall
+6. **Protections broker-side initiales** : après fill, soumission d'un stop initial et d'un take-profit via des requests distinctes, avec traçabilité canonique en base
+7. **Watcher post-exécution** : supervision secondaire des protections en attente et promotion éventuelle du stop initial vers un trailing stop dynamique quand les conditions sont remplies
+8. **OCO** : si l'un des enfants est exécuté, l'autre est annulé
+9. **Réconciliation** : comparaison positions broker vs cibles, rééquilibrage automatique optionnel
+10. **TCA** : calcul du slippage et de l'implementation shortfall
 
 ### 3.3 Détection des signaux
 
@@ -342,7 +407,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 7. **L'idempotence est garantie** par une clé SHA-256, un même portefeuille cible ne génère pas de doublons
 8. **Les ordres 4xx du broker ne sont PAS retentés** (erreurs permanentes) ; seuls les 5xx/timeout/réseau sont retentés
 9. **Les positions broker hors cible** (action "investigate") ne sont pas soldées automatiquement pour éviter les erreurs
-10. **Le score de conviction combine** score quantitatif (40%) et probabilité prédite par le modèle ML (60%)
+10. **Le score de conviction combine** score quantitatif (40%) et probabilité prédite par le backend `modelFactory` effectivement servi (60%)
 11. **En backtest, un compte margin peut être soumis à la règle PDT** si `pdt_rule=auto` et `equity < 25k`, avec blocage du 4e day trade sur 5 séances glissantes
 12. **En backtest, l'option `swing_only` peut interdire toute revente le jour même**
 13. **En backtest, un cash account n'utilise que le cash settled** et retarde la réutilisation des fonds après vente jusqu'au settlement `T+1`
@@ -357,7 +422,7 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 |---|---|---|
 | **Marché fermé** (week-end, fériés) | Aucun ordre soumis, run avorté | Élevée si exécution non planifiée |
 | **Pas de news pour un symbole** | Boost sentiment neutre (0.5), signal quant seul | Moyenne |
-| **Modèle LSTM non entraîné** | Pas de prediction_proba, conviction dégradée | Moyenne |
+| **Aucun backend `modelFactory` servi disponible** | Pas de prediction_proba exploitable, conviction dégradée | Moyenne |
 | **Latence Alpaca API** | Fill timeout, ordres children non soumis | Faible |
 | **Circuit breaker déclenché** | Aucune allocation possible | Faible (sauf crash marché) |
 | **Corrélation élevée entre candidats** | Portefeuille réduit (moins de positions) | Moyenne |

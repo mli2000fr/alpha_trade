@@ -14,15 +14,37 @@ class FinBERTSentimentService:
         model_version: str = "finbert_v1",
         batch_size: int = 16,
         max_length: int = 256,
+        model_revision: str | None = None,
     ) -> None:
         self.model_name = model_name
         self.model_version = model_version
+        self.model_revision = model_revision
         self.batch_size = batch_size
         self.max_length = max_length
         self.device = None
         self.tokenizer = None
         self.model = None
         self.id2label: dict[int, str] = {}
+        self._fingerprint_cache: str | None = None
+
+    @property
+    def model_fingerprint(self) -> str:
+        """SHA256[:16] stable du couple (model_name, revision, config FinBERT).
+
+        Phase 4.1.c — permet de tracer le checkpoint exact consommé pour
+        chaque enregistrement ``news_sentiment`` (col. ``model_fingerprint``).
+        """
+        if self._fingerprint_cache is not None:
+            return self._fingerprint_cache
+        revision_part = self.model_revision if self.model_revision else "HEAD"
+        config_items = sorted({
+            "model_version": self.model_version,
+            "max_length": int(self.max_length),
+        }.items())
+        payload = f"{self.model_name}:{revision_part}:{config_items}"
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+        self._fingerprint_cache = digest
+        return digest
 
     @staticmethod
     def _get_torch_module():
@@ -49,8 +71,11 @@ class FinBERTSentimentService:
         auto_model_cls, auto_tokenizer_cls = self._get_transformers_classes()
 
         self.device = device
-        self.tokenizer = auto_tokenizer_cls.from_pretrained(self.model_name)
-        self.model = auto_model_cls.from_pretrained(self.model_name)
+        load_kwargs: dict[str, object] = {}
+        if self.model_revision:
+            load_kwargs["revision"] = self.model_revision
+        self.tokenizer = auto_tokenizer_cls.from_pretrained(self.model_name, **load_kwargs)
+        self.model = auto_model_cls.from_pretrained(self.model_name, **load_kwargs)
         self.model.to(self.device)
         self.model.eval()
         config_labels = getattr(self.model.config, "id2label", {}) or {}
@@ -185,6 +210,7 @@ class FinBERTSentimentService:
                         negative_score=negative,
                         sentiment_confidence=max(positive, neutral, negative),
                         sentiment_net_score=positive - negative,
+                        model_fingerprint=self.model_fingerprint,
                     )
                 )
 

@@ -104,3 +104,61 @@ def test_finbert_falls_back_to_cpu_after_cuda_failure(monkeypatch, caplog) -> No
     assert records[0].sentiment_label == "positive"
     assert "device=cpu (fallback after CUDA failure)" in caplog.text
 
+
+# ---------------- Phase 4.1.c — fingerprint FinBERT ----------------
+
+def test_fingerprint_stable_across_calls() -> None:
+    svc = FinBERTSentimentService(batch_size=1, max_length=64)
+    fp1 = svc.model_fingerprint
+    fp2 = svc.model_fingerprint
+    assert fp1 == fp2
+    assert isinstance(fp1, str) and len(fp1) == 16
+
+
+def test_fingerprint_changes_with_revision() -> None:
+    svc_no_rev = FinBERTSentimentService(batch_size=1, max_length=64)
+    svc_rev_a = FinBERTSentimentService(batch_size=1, max_length=64, model_revision="abc123")
+    svc_rev_b = FinBERTSentimentService(batch_size=1, max_length=64, model_revision="def456")
+    assert svc_no_rev.model_fingerprint != svc_rev_a.model_fingerprint
+    assert svc_rev_a.model_fingerprint != svc_rev_b.model_fingerprint
+
+
+def test_fingerprint_changes_with_model_name() -> None:
+    svc1 = FinBERTSentimentService(model_name="ProsusAI/finbert", batch_size=1, max_length=64)
+    svc2 = FinBERTSentimentService(model_name="other/finbert", batch_size=1, max_length=64)
+    assert svc1.model_fingerprint != svc2.model_fingerprint
+
+
+def test_score_articles_propagates_fingerprint(monkeypatch) -> None:
+    svc = FinBERTSentimentService(batch_size=1, max_length=64, model_revision="v1.0")
+    svc.tokenizer = _FakeTokenizer()
+    svc.model = _FakeModel()
+    svc.device = "cuda"
+    svc.id2label = {0: "positive", 1: "neutral", 2: "negative"}
+
+    monkeypatch.setattr(svc, "_ensure_model_loaded", lambda: None)
+    monkeypatch.setattr(svc, "_get_torch_module", lambda: torch)
+
+    def _fake_load_model_for_device(device: str, force_reload: bool = False) -> None:
+        svc.device = device
+        svc.model.to(device)
+
+    monkeypatch.setattr(svc, "_load_model_for_device", _fake_load_model_for_device)
+
+    article = NormalizedNewsArticle(
+        article_id="alpaca:fp",
+        headline="X",
+        summary="Y",
+        content=None,
+        source="src",
+        author=None,
+        url=None,
+        published_at_utc=datetime(2026, 1, 1),
+        event_timestamp_utc=datetime(2026, 1, 1),
+        event_timestamp_ny=datetime(2026, 1, 1),
+        effective_trade_date=date(2026, 1, 2),
+        market_session_tag="post_market",
+    )
+    records = svc.score_articles([article])
+    assert records[0].model_fingerprint == svc.model_fingerprint
+    assert records[0].model_fingerprint != ""

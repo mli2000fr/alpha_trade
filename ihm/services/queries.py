@@ -1,12 +1,296 @@
 """ihm/services/queries.py — Requêtes SQL centralisées pour l'IHM."""
 from __future__ import annotations
 
+from datetime import date, datetime
 import json
 
 import pandas as pd
 import streamlit as st
 
-from ihm.services.db import safe_query, safe_scalar
+from database.run_business_summaries import parse_summary_json
+from ihm.services.alpha_scanner_threshold_presets import DEFAULT_ALPHA_SCANNER_DEPENDENCY_THRESHOLDS
+from ihm.services.run_summary import build_run_summary_caption
+from ihm.services.db import get_last_query_error, safe_query, safe_scalar
+from ihm.services.screener_preferences import load_persisted_alpha_scanner_dependency_thresholds
+
+ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL = """
+    SELECT COUNT(DISTINCT sm.symbol)
+    FROM stock_metadata sm
+    WHERE LOWER(TRIM(COALESCE(sm.status, ''))) = 'active'
+      AND COALESCE(sm.tradable, 0) = 1
+      AND COALESCE(sm.bars_available, 0) = 1
+      AND LOWER(TRIM(COALESCE(sm.asset_class, ''))) = 'us_equity'
+      AND (
+            sm.history_status IS NULL
+         OR TRIM(sm.history_status) = ''
+         OR LOWER(TRIM(sm.history_status)) IN ('pending', 'ready')
+      )
+"""
+
+ALPHA_SCANNER_DEPENDENCY_THRESHOLDS: dict[str, dict[str, float]] = DEFAULT_ALPHA_SCANNER_DEPENDENCY_THRESHOLDS
+
+
+def _coerce_date(value: object) -> date | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, date):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    try:
+        return date.fromisoformat(text_value[:10])
+    except ValueError:
+        return None
+
+
+def _coverage_pct(covered_symbols: int, eligible_symbols: int) -> float:
+    if eligible_symbols <= 0:
+        return 0.0
+    return round((covered_symbols / eligible_symbols) * 100.0, 2)
+
+
+def _coerce_int(value: object) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_scalar_with_error(query: str, params: dict[str, object] | None = None) -> tuple[object, str | None]:
+    value = safe_scalar(query, params)
+    return value, get_last_query_error()
+
+
+def _parse_json_object(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def get_alpha_scanner_dependency_thresholds() -> dict[str, dict[str, float]]:
+    return load_persisted_alpha_scanner_dependency_thresholds(ALPHA_SCANNER_DEPENDENCY_THRESHOLDS)
+
+
+def _build_quotes_dependency_payload(
+    *,
+    today: date,
+    eligible_symbols: int,
+    latest_date: date | None,
+    covered_symbols: int,
+    query_error: str | None,
+    thresholds: dict[str, float],
+) -> dict[str, object]:
+    coverage_pct = _coverage_pct(covered_symbols, eligible_symbols)
+    age_days = max((today - latest_date).days, 0) if latest_date is not None else None
+    reasons: list[str] = []
+    status = "green"
+
+    if query_error:
+        status = "red"
+        reasons.append(query_error)
+    elif eligible_symbols <= 0:
+        status = "red"
+        reasons.append("univers éligible Alpha Scanner vide ou indisponible")
+    elif latest_date is None or covered_symbols <= 0:
+        status = "red"
+        reasons.append("aucun snapshot quote exploitable détecté")
+    else:
+        if age_days is not None and age_days > thresholds["max_age_error_days"]:
+            status = "red"
+            reasons.append(f"snapshot trop ancien ({age_days} j)")
+        elif age_days is not None and age_days > thresholds["max_age_warn_days"]:
+            status = "orange"
+            reasons.append(f"snapshot à rafraîchir ({age_days} j)")
+
+        if coverage_pct < thresholds["coverage_error_pct"]:
+            status = "red"
+            reasons.append(f"couverture trop faible ({coverage_pct:.1f}%)")
+        elif coverage_pct < thresholds["coverage_warn_pct"] and status != "red":
+            status = "orange"
+            reasons.append(f"couverture partielle ({coverage_pct:.1f}%)")
+
+    if not reasons:
+        reasons.append("quotes disponibles pour le filtre de spread")
+
+    return {
+        "step_key": "sync_latest_quotes",
+        "label": "Sync Latest Quotes",
+        "table": "stock_quote_snapshots",
+        "command": "python -m dataIntegrityEngine.sync_latest_quotes",
+        "status": status,
+        "latest_date": latest_date.isoformat() if latest_date is not None else None,
+        "covered_symbols": int(covered_symbols),
+        "eligible_symbols": int(eligible_symbols),
+        "coverage_pct": coverage_pct,
+        "coverage_label": f"{coverage_pct:.1f}% ({int(covered_symbols)}/{int(eligible_symbols)})" if eligible_symbols > 0 else "0.0% (0/0)",
+        "age_days": age_days,
+        "reason": " · ".join(reasons),
+        "query_error": query_error,
+    }
+
+
+def _build_earnings_dependency_payload(
+    *,
+    today: date,
+    eligible_symbols: int,
+    latest_date: date | None,
+    covered_symbols: int,
+    query_error: str | None,
+    thresholds: dict[str, float],
+) -> dict[str, object]:
+    coverage_pct = _coverage_pct(covered_symbols, eligible_symbols)
+    horizon_days = max((latest_date - today).days, 0) if latest_date is not None else None
+    reasons: list[str] = []
+    status = "green"
+
+    if query_error:
+        status = "red"
+        reasons.append(query_error)
+    elif eligible_symbols <= 0:
+        status = "red"
+        reasons.append("univers éligible Alpha Scanner vide ou indisponible")
+    elif latest_date is None or covered_symbols <= 0:
+        status = "red"
+        reasons.append("aucun earnings futur exploitable détecté")
+    else:
+        if horizon_days is not None and horizon_days < thresholds["min_horizon_error_days"]:
+            status = "red"
+            reasons.append(f"horizon trop court (latest_date à J+{horizon_days})")
+        elif horizon_days is not None and horizon_days < thresholds["min_horizon_warn_days"]:
+            status = "orange"
+            reasons.append(f"horizon à compléter (latest_date à J+{horizon_days})")
+
+        if coverage_pct < thresholds["coverage_error_pct"]:
+            status = "red"
+            reasons.append(f"couverture trop faible ({coverage_pct:.1f}%)")
+        elif coverage_pct < thresholds["coverage_warn_pct"] and status != "red":
+            status = "orange"
+            reasons.append(f"couverture partielle ({coverage_pct:.1f}%)")
+
+    if not reasons:
+        reasons.append("earnings futurs disponibles pour le blackout résultats")
+
+    return {
+        "step_key": "sync_earnings_calendar",
+        "label": "Sync Earnings Calendar",
+        "table": "stock_earnings_calendar",
+        "command": "python -m dataIntegrityEngine.sync_earnings_calendar",
+        "status": status,
+        "latest_date": latest_date.isoformat() if latest_date is not None else None,
+        "covered_symbols": int(covered_symbols),
+        "eligible_symbols": int(eligible_symbols),
+        "coverage_pct": coverage_pct,
+        "coverage_label": f"{coverage_pct:.1f}% ({int(covered_symbols)}/{int(eligible_symbols)})" if eligible_symbols > 0 else "0.0% (0/0)",
+        "horizon_days": horizon_days,
+        "reason": " · ".join(reasons),
+        "query_error": query_error,
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_alpha_scanner_dependency_diagnostic(*, today: date | None = None) -> dict[str, object]:
+    reference_day = today or date.today()
+    configured_thresholds = get_alpha_scanner_dependency_thresholds()
+
+    eligible_raw, eligible_error = _safe_scalar_with_error(ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL)
+    eligible_symbols = _coerce_int(eligible_raw)
+
+    quotes_latest_raw, quotes_latest_error = _safe_scalar_with_error(
+        f"""
+        SELECT MAX(q.quote_date)
+        FROM stock_quote_snapshots q
+        INNER JOIN (
+            {ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL.replace('SELECT COUNT(DISTINCT sm.symbol)', 'SELECT DISTINCT sm.symbol')}
+        ) eligible ON eligible.symbol = q.symbol
+        """
+    )
+    quotes_latest_date = _coerce_date(quotes_latest_raw)
+    quotes_covered_symbols = 0
+    quotes_covered_error = quotes_latest_error
+    if quotes_latest_date is not None and quotes_latest_error is None:
+        quotes_covered_raw, quotes_covered_error = _safe_scalar_with_error(
+            f"""
+            SELECT COUNT(DISTINCT q.symbol)
+            FROM stock_quote_snapshots q
+            INNER JOIN (
+                {ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL.replace('SELECT COUNT(DISTINCT sm.symbol)', 'SELECT DISTINCT sm.symbol')}
+            ) eligible ON eligible.symbol = q.symbol
+            WHERE q.quote_date = :latest_date
+            """,
+            {"latest_date": quotes_latest_date.isoformat()},
+        )
+        quotes_covered_symbols = _coerce_int(quotes_covered_raw)
+
+    earnings_latest_raw, earnings_latest_error = _safe_scalar_with_error(
+        f"""
+        SELECT MAX(e.earnings_date)
+        FROM stock_earnings_calendar e
+        INNER JOIN (
+            {ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL.replace('SELECT COUNT(DISTINCT sm.symbol)', 'SELECT DISTINCT sm.symbol')}
+        ) eligible ON eligible.symbol = e.symbol
+        WHERE e.earnings_date >= :today
+        """,
+        {"today": reference_day.isoformat()},
+    )
+    earnings_latest_date = _coerce_date(earnings_latest_raw)
+    earnings_covered_symbols = 0
+    earnings_covered_error = earnings_latest_error
+    if earnings_latest_error is None:
+        earnings_covered_raw, earnings_covered_error = _safe_scalar_with_error(
+            f"""
+            SELECT COUNT(DISTINCT e.symbol)
+            FROM stock_earnings_calendar e
+            INNER JOIN (
+                {ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL.replace('SELECT COUNT(DISTINCT sm.symbol)', 'SELECT DISTINCT sm.symbol')}
+            ) eligible ON eligible.symbol = e.symbol
+            WHERE e.earnings_date >= :today
+            """,
+            {"today": reference_day.isoformat()},
+        )
+        earnings_covered_symbols = _coerce_int(earnings_covered_raw)
+
+    quotes_payload = _build_quotes_dependency_payload(
+        today=reference_day,
+        eligible_symbols=eligible_symbols,
+        latest_date=quotes_latest_date,
+        covered_symbols=quotes_covered_symbols,
+        query_error=eligible_error or quotes_covered_error,
+        thresholds=configured_thresholds["sync_latest_quotes"],
+    )
+    earnings_payload = _build_earnings_dependency_payload(
+        today=reference_day,
+        eligible_symbols=eligible_symbols,
+        latest_date=earnings_latest_date,
+        covered_symbols=earnings_covered_symbols,
+        query_error=eligible_error or earnings_covered_error,
+        thresholds=configured_thresholds["sync_earnings_calendar"],
+    )
+
+    dependencies = {
+        quotes_payload["step_key"]: quotes_payload,
+        earnings_payload["step_key"]: earnings_payload,
+    }
+    all_red = all(str(payload.get("status")) == "red" for payload in dependencies.values())
+    any_red_or_orange = any(str(payload.get("status")) in {"red", "orange"} for payload in dependencies.values())
+    return {
+        "as_of_date": reference_day.isoformat(),
+        "eligible_symbols": eligible_symbols,
+        "dependencies": dependencies,
+        "thresholds": configured_thresholds,
+        "all_red": all_red,
+        "any_red_or_orange": any_red_or_orange,
+    }
 
 SELECTOR_DEPENDENCY_HEALTH_THRESHOLDS = {
     "quotes_min_coverage_ratio": 0.50,
@@ -165,21 +449,25 @@ def get_risk_run_ids() -> list[str]:
 def get_risk_decisions(run_id: str | None = None) -> pd.DataFrame:
     if run_id:
         return safe_query("""
-            SELECT * FROM risk_decisions WHERE run_id = :run_id ORDER BY created_at DESC
+            SELECT * FROM risk_decisions
+            WHERE run_id = :run_id
+            ORDER BY COALESCE(candidate_rank, 999999), created_at DESC
         """, {"run_id": run_id})
-    return safe_query("SELECT * FROM risk_decisions ORDER BY created_at DESC LIMIT 200")
+    return safe_query("SELECT * FROM risk_decisions ORDER BY COALESCE(candidate_rank, 999999), created_at DESC LIMIT 200")
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_portfolio_targets(run_id: str | None = None) -> pd.DataFrame:
     if run_id:
         return safe_query("""
-            SELECT * FROM portfolio_targets WHERE run_id = :run_id ORDER BY target_weight DESC
+            SELECT * FROM portfolio_targets
+            WHERE run_id = :run_id
+            ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
         """, {"run_id": run_id})
     return safe_query("""
         SELECT * FROM portfolio_targets
         WHERE run_id = (SELECT run_id FROM portfolio_targets ORDER BY created_at DESC LIMIT 1)
-        ORDER BY target_weight DESC
+        ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
     """)
 
 
@@ -193,13 +481,13 @@ def get_execution_runs(limit: int = 20, account_id: str | None = None) -> pd.Dat
         return safe_query(f"""
             SELECT exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
                    status, started_at, completed_at, total_targets, total_submitted,
-                   total_filled, error_message, account_id
+                   total_filled, error_message, account_id, execution_profile, submission_window
             FROM execution_runs WHERE account_id = :account_id ORDER BY started_at DESC LIMIT {limit}
         """, {"account_id": account_id})
     return safe_query(f"""
         SELECT exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
                status, started_at, completed_at, total_targets, total_submitted,
-               total_filled, error_message
+               total_filled, error_message, account_id, execution_profile, submission_window
         FROM execution_runs ORDER BY started_at DESC LIMIT {limit}
     """)
 
@@ -215,6 +503,65 @@ def get_execution_events(exec_run_id: str | None = None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def get_execution_orders(
+    exec_run_id: str | None = None,
+) -> pd.DataFrame:
+    params = {"eid": exec_run_id} if exec_run_id else None
+    query = """
+        SELECT req.exec_run_id,
+               req.risk_run_id,
+               req.symbol,
+               req.request_id AS intent_id,
+               req.parent_request_id AS parent_intent_id,
+               req.intent_role,
+               bo.broker_order_id,
+               req.side,
+               req.target_qty AS qty,
+               COALESCE(bo.filled_qty, fill_agg.filled_qty, 0) AS filled_qty,
+               COALESCE(bo.avg_fill_price, fill_agg.avg_fill_price) AS avg_fill_price,
+               req.order_type,
+               req.limit_price,
+               req.stop_price,
+               req.trail_percent,
+               req.decision_price,
+               COALESCE(bo.normalized_status, req.status) AS status,
+               req.created_at,
+               COALESCE(bo.last_seen_at, req.updated_at) AS updated_at,
+               req.business_key AS idempotency_key,
+               req.submission_key,
+               req.attempt_no,
+               bo.client_order_id,
+               req.account_id
+        FROM execution_order_requests req
+        LEFT JOIN execution_broker_orders bo
+               ON bo.request_id = req.request_id
+        LEFT JOIN (
+            SELECT request_id,
+                   SUM(filled_qty) AS filled_qty,
+                   CASE
+                       WHEN SUM(filled_qty) > 0 THEN SUM(filled_qty * avg_fill_price) / SUM(filled_qty)
+                       ELSE AVG(avg_fill_price)
+                   END AS avg_fill_price
+            FROM execution_broker_fills
+            GROUP BY request_id
+        ) fill_agg
+               ON fill_agg.request_id = req.request_id
+    """
+    if exec_run_id:
+        query += """
+        WHERE req.exec_run_id = :eid
+        ORDER BY CASE WHEN req.parent_request_id IS NULL THEN 0 ELSE 1 END,
+                 COALESCE(req.parent_request_id, req.request_id), req.created_at DESC
+        """
+    else:
+        query += """
+        ORDER BY req.created_at DESC
+        LIMIT 200
+        """
+    return safe_query(query, params)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def get_execution_account_constraints(exec_run_id: str) -> dict[str, object]:
     df = safe_query(
         """
@@ -226,21 +573,38 @@ def get_execution_account_constraints(exec_run_id: str) -> dict[str, object]:
         """,
         {"eid": exec_run_id},
     )
-    if df.empty:
-        return {}
+    if not df.empty:
+        row = df.iloc[0]
+        payload = _parse_json_object(row.get("payload_json"))
+        payload.setdefault("message", row.get("message", ""))
+        payload.setdefault("created_at", row.get("created_at"))
+        return payload
 
-    row = df.iloc[0]
-    payload_raw = row.get("payload_json")
-    payload: dict[str, object] = {}
-    if isinstance(payload_raw, str) and payload_raw.strip():
-        try:
-            parsed = json.loads(payload_raw)
-            if isinstance(parsed, dict):
-                payload = parsed
-        except Exception:
-            payload = {}
-    payload.setdefault("message", row.get("message", ""))
+    snapshot_df = safe_query(
+        """
+        SELECT snapshot_kind, equity, cash, settled_cash, buying_power,
+               daytrade_count, raw_payload_json, created_at
+        FROM broker_account_snapshots
+        WHERE exec_run_id = :eid
+          AND snapshot_kind = 'preflight'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        {"eid": exec_run_id},
+    )
+    if snapshot_df.empty:
+        return {}
+    row = snapshot_df.iloc[0]
+    payload = _parse_json_object(row.get("raw_payload_json"))
+    payload.setdefault("equity", row.get("equity"))
+    payload.setdefault("cash", row.get("cash"))
+    payload.setdefault("settled_cash", row.get("settled_cash"))
+    payload.setdefault("buying_power", row.get("buying_power"))
+    payload.setdefault("buying_power_available", row.get("buying_power"))
+    payload.setdefault("settled_cash_available", row.get("settled_cash"))
+    payload.setdefault("daytrade_count", row.get("daytrade_count"))
     payload.setdefault("created_at", row.get("created_at"))
+    payload.setdefault("message", "Contraintes relues depuis le snapshot broker preflight.")
     return payload
 
 
@@ -263,12 +627,233 @@ def get_broker_positions(account_id: str | None = None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_execution_fills(exec_run_id: str | None = None) -> pd.DataFrame:
+def get_execution_fills(
+    exec_run_id: str | None = None,
+) -> pd.DataFrame:
     if exec_run_id:
-        return safe_query("""
-            SELECT * FROM execution_fills WHERE exec_run_id = :eid ORDER BY fill_timestamp DESC
-        """, {"eid": exec_run_id})
-    return safe_query("SELECT * FROM execution_fills ORDER BY fill_timestamp DESC LIMIT 100")
+        return safe_query(
+            """
+            SELECT exec_run_id,
+                   fill_id,
+                   broker_order_id,
+                   request_id AS intent_id,
+                   symbol,
+                   filled_qty,
+                   avg_fill_price,
+                   fill_timestamp,
+                   decision_price,
+                   slippage_bps,
+                   implementation_shortfall,
+                   account_id,
+                   created_at
+            FROM execution_broker_fills
+            WHERE exec_run_id = :eid
+            ORDER BY fill_timestamp DESC
+            """,
+            {"eid": exec_run_id},
+        )
+    return safe_query(
+        """
+        SELECT exec_run_id,
+               fill_id,
+               broker_order_id,
+               request_id AS intent_id,
+               symbol,
+               filled_qty,
+               avg_fill_price,
+               fill_timestamp,
+               decision_price,
+               slippage_bps,
+               implementation_shortfall,
+               account_id,
+               created_at
+        FROM execution_broker_fills
+        ORDER BY fill_timestamp DESC
+        LIMIT 100
+        """
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_targets_snapshot(exec_run_id: str) -> pd.DataFrame:
+    return safe_query(
+        """
+        SELECT exec_run_id, account_id, risk_run_id, trade_date, symbol,
+               decision_rank, side, target_shares, entry_price, target_weight,
+               stop_price_initial, risk_per_share, risk_budget_dollars,
+               initial_risk_dollars, target_notional, price_asof_date, atr_asof_date,
+               created_at
+        FROM execution_targets_snapshot
+        WHERE exec_run_id = :eid
+        ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
+        """,
+        {"eid": exec_run_id},
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_positions(
+    *,
+    account_id: str | None = None,
+    exec_run_id: str | None = None,
+    allow_account_fallback: bool = True,
+) -> pd.DataFrame:
+    if exec_run_id:
+        df = safe_query(
+            """
+            SELECT account_id, symbol, net_qty, avg_entry_price, market_price,
+                   market_value, unrealized_pnl, broker_mode, source_exec_run_id,
+                   position_status, last_broker_snapshot_at, updated_at
+            FROM execution_positions
+            WHERE source_exec_run_id = :eid
+            ORDER BY CASE WHEN position_status = 'FLAT' THEN 1 ELSE 0 END,
+                     ABS(net_qty) DESC, symbol ASC
+            """,
+            {"eid": exec_run_id},
+        )
+        if not df.empty or not allow_account_fallback:
+            return df
+    if account_id:
+        return safe_query(
+            """
+            SELECT account_id, symbol, net_qty, avg_entry_price, market_price,
+                   market_value, unrealized_pnl, broker_mode, source_exec_run_id,
+                   position_status, last_broker_snapshot_at, updated_at
+            FROM execution_positions
+            WHERE account_id = :account_id
+            ORDER BY CASE WHEN position_status = 'FLAT' THEN 1 ELSE 0 END,
+                     ABS(net_qty) DESC, symbol ASC
+            """,
+            {"account_id": account_id},
+        )
+    return safe_query(
+        """
+        SELECT account_id, symbol, net_qty, avg_entry_price, market_price,
+               market_value, unrealized_pnl, broker_mode, source_exec_run_id,
+               position_status, last_broker_snapshot_at, updated_at
+        FROM execution_positions
+        ORDER BY updated_at DESC, account_id ASC, symbol ASC
+        LIMIT 200
+        """
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_position_lots(
+    *,
+    account_id: str | None = None,
+    exec_run_id: str | None = None,
+    allow_account_fallback: bool = True,
+) -> pd.DataFrame:
+    if exec_run_id:
+        df = safe_query(
+            """
+            SELECT lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+                   opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+                   close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+                   source_kind, updated_at
+            FROM execution_position_lots
+            WHERE open_exec_run_id = :eid OR close_exec_run_id = :eid
+            ORDER BY COALESCE(closed_at, opened_at) DESC, lot_id DESC
+            LIMIT 500
+            """,
+            {"eid": exec_run_id},
+        )
+        if not df.empty or not allow_account_fallback:
+            return df
+    if account_id:
+        return safe_query(
+            """
+            SELECT lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+                   opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+                   close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+                   source_kind, updated_at
+            FROM execution_position_lots
+            WHERE account_id = :account_id
+            ORDER BY opened_at DESC, lot_id DESC
+            LIMIT 500
+            """,
+            {"account_id": account_id},
+        )
+    return safe_query(
+        """
+        SELECT lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+               opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+               close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+               source_kind, updated_at
+        FROM execution_position_lots
+        ORDER BY opened_at DESC, lot_id DESC
+        LIMIT 500
+        """
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_execution_reconciliation_results(
+    *,
+    exec_run_id: str | None = None,
+    account_id: str | None = None,
+    allow_account_fallback: bool = True,
+) -> pd.DataFrame:
+    severity_order_sql = """
+        CASE reconciliation_status
+            WHEN 'BLOCKED' THEN 0
+            WHEN 'MANUAL_REVIEW' THEN 1
+            WHEN 'SAFE_AUTO' THEN 2
+            ELSE 3
+        END,
+        CASE action
+            WHEN 'investigate' THEN 0
+            WHEN 'sell_excess' THEN 1
+            WHEN 'buy_more' THEN 2
+            WHEN 'none' THEN 3
+            ELSE 4
+        END,
+        symbol ASC
+    """
+    if exec_run_id:
+        df = safe_query(
+            f"""
+            SELECT exec_run_id, account_id, symbol, target_qty, internal_position_qty,
+                   broker_position_qty, position_delta, open_request_buy_qty,
+                   open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty,
+                   has_open_protection, protection_qty, action,
+                   reconciliation_status, reason_code, created_at
+            FROM execution_reconciliation_results
+            WHERE exec_run_id = :eid
+            ORDER BY {severity_order_sql}
+            """,
+            {"eid": exec_run_id},
+        )
+        if not df.empty or not allow_account_fallback:
+            return df
+    if account_id:
+        return safe_query(
+            f"""
+            SELECT exec_run_id, account_id, symbol, target_qty, internal_position_qty,
+                   broker_position_qty, position_delta, open_request_buy_qty,
+                   open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty,
+                   has_open_protection, protection_qty, action,
+                   reconciliation_status, reason_code, created_at
+            FROM execution_reconciliation_results
+            WHERE account_id = :account_id
+            ORDER BY {severity_order_sql}
+            LIMIT 500
+            """,
+            {"account_id": account_id},
+        )
+    return safe_query(
+        f"""
+        SELECT exec_run_id, account_id, symbol, target_qty, internal_position_qty,
+               broker_position_qty, position_delta, open_request_buy_qty,
+               open_request_sell_qty, open_broker_buy_qty, open_broker_sell_qty,
+               has_open_protection, protection_qty, action,
+               reconciliation_status, reason_code, created_at
+        FROM execution_reconciliation_results
+        ORDER BY created_at DESC, {severity_order_sql}
+        LIMIT 500
+        """
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +888,155 @@ def get_total_dividends() -> float:
 # ML
 # ---------------------------------------------------------------------------
 
+def _normalize_filter_values(values: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    for value in values or []:
+        text_value = str(value).strip()
+        if text_value:
+            normalized.append(text_value)
+    return normalized
+
+
+def _append_in_clause(
+    conditions: list[str],
+    params: dict[str, object],
+    *,
+    column_sql: str,
+    param_prefix: str,
+    values: list[str] | None,
+) -> None:
+    normalized = _normalize_filter_values(values)
+    if not normalized:
+        return
+    placeholders: list[str] = []
+    for index, value in enumerate(normalized):
+        param_name = f"{param_prefix}_{index}"
+        params[param_name] = value
+        placeholders.append(f":{param_name}")
+    conditions.append(f"{column_sql} IN ({', '.join(placeholders)})")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_run_business_summaries(
+    *,
+    limit: int = 50,
+    step_keys: list[str] | None = None,
+    entity_run_id: str | None = None,
+    account_id: str | None = None,
+    run_kind: str | None = None,
+) -> pd.DataFrame:
+    params: dict[str, object] = {}
+    conditions: list[str] = []
+    if entity_run_id:
+        params["entity_run_id"] = entity_run_id
+        conditions.append("entity_run_id = :entity_run_id")
+    if account_id:
+        params["account_id"] = account_id
+        conditions.append("account_id = :account_id")
+    if run_kind:
+        params["run_kind"] = run_kind
+        conditions.append("run_kind = :run_kind")
+    _append_in_clause(conditions, params, column_sql="step_key", param_prefix="summary_step_key", values=step_keys)
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    df = safe_query(
+        f"""
+        SELECT summary_run_id, source_run_id, entity_run_id, parent_summary_run_id,
+               step_key, run_kind, status, account_id, trade_date, started_at, finished_at,
+               summary_json, created_at, updated_at
+        FROM run_business_summaries
+        {where_clause}
+        ORDER BY COALESCE(finished_at, started_at, created_at) DESC, summary_run_id DESC
+        LIMIT {limit}
+        """,
+        params or None,
+    )
+    if df.empty:
+        return df
+
+    df = df.copy()
+    df["run_summary"] = df["summary_json"].apply(parse_summary_json)
+    df["summary_caption"] = df.apply(
+        lambda row: build_run_summary_caption({"step_key": row.get("step_key"), "run_summary": row.get("run_summary")}),
+        axis=1,
+    )
+    return df
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_latest_run_business_summary(
+    *,
+    step_key: str,
+    entity_run_id: str | None = None,
+    account_id: str | None = None,
+    run_kind: str | None = None,
+) -> dict[str, object] | None:
+    df = get_run_business_summaries(
+        limit=1,
+        step_keys=[step_key],
+        entity_run_id=entity_run_id,
+        account_id=account_id,
+        run_kind=run_kind,
+    )
+    if df.empty:
+        return None
+    row = df.iloc[0].to_dict()
+    return row if isinstance(row, dict) else None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_latest_execution_protection_watch_service_summary(
+    *,
+    account_id: str | None = None,
+    exec_run_id: str | None = None,
+) -> dict[str, object] | None:
+    if exec_run_id:
+        scoped = get_latest_run_business_summary(
+            step_key="execution_protection_watch_service",
+            entity_run_id=exec_run_id,
+            account_id=account_id,
+            run_kind="service",
+        )
+        if scoped:
+            return scoped
+    return get_latest_run_business_summary(
+        step_key="execution_protection_watch_service",
+        account_id=account_id,
+        run_kind="service",
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_ops_service_summaries(
+    *,
+    account_id: str | None = None,
+    limit: int = 20,
+) -> pd.DataFrame:
+    return get_run_business_summaries(
+        limit=limit,
+        step_keys=["execution_protection_watch_service"],
+        account_id=account_id,
+        run_kind="service",
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_ops_latest_critical_summaries(
+    *,
+    account_id: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    return get_run_business_summaries(
+        limit=limit,
+        step_keys=[
+            "pipeline_workflow",
+            "risk_management",
+            "execution",
+            "execution_protection_watch",
+            "corporate_actions_run",
+        ],
+        account_id=account_id,
+    )
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_training_runs(limit: int = 20) -> pd.DataFrame:
     return safe_query(f"SELECT * FROM model_training_run ORDER BY started_at DESC LIMIT {limit}")
@@ -314,9 +1048,143 @@ def get_model_metrics() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_predictions(limit: int = 100) -> pd.DataFrame:
+def get_model_governance(
+    limit: int = 200,
+    symbol: str | None = None,
+    run_ids: list[str] | None = None,
+    selection_modes: list[str] | None = None,
+) -> pd.DataFrame:
+    params: dict[str, object] = {}
+    conditions: list[str] = []
+    if symbol:
+        params["symbol"] = symbol
+        conditions.append("symbol = :symbol")
+    _append_in_clause(conditions, params, column_sql="run_id", param_prefix="run_id", values=run_ids)
+    _append_in_clause(conditions, params, column_sql="selection_mode", param_prefix="selection_mode", values=selection_modes)
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     return safe_query(f"""
-        SELECT symbol, predicted_proba, predicted_class, prediction_date, run_id, created_at
-        FROM model_predictions ORDER BY prediction_date DESC, symbol LIMIT {limit}
-    """)
+        SELECT run_id, symbol, model_name, `rank`, is_selected_model, selection_mode, selection_metric,
+               selection_score, model_status, selection_eligible, eligibility_reason, reason,
+               inference_backend, backend_model_name, calibration_method, decision_threshold,
+               artifact_symbol, val_auc, test_auc, wf_auc,
+               val_threshold_business_score, test_threshold_business_score, wf_threshold_business_score,
+               created_at
+        FROM model_governance
+        {where_clause}
+        ORDER BY created_at DESC, run_id DESC, symbol ASC, is_selected_model DESC, `rank` ASC, model_name ASC
+        LIMIT {limit}
+    """, params or None)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_prediction_symbols(limit: int = 200) -> list[str]:
+    df = safe_query(f"SELECT DISTINCT symbol FROM model_predictions ORDER BY symbol LIMIT {limit}")
+    return df["symbol"].tolist() if not df.empty else []
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_predictions(
+    limit: int = 100,
+    symbol: str | None = None,
+    run_ids: list[str] | None = None,
+    served_models: list[str] | None = None,
+) -> pd.DataFrame:
+    params: dict[str, object] = {}
+    conditions: list[str] = []
+    if symbol:
+        params["symbol"] = symbol
+        conditions.append("symbol = :symbol")
+    _append_in_clause(conditions, params, column_sql="run_id", param_prefix="prediction_run_id", values=run_ids)
+    _append_in_clause(conditions, params, column_sql="selected_model", param_prefix="served_model", values=served_models)
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return safe_query(f"""
+        SELECT symbol, predicted_proba, predicted_class, prediction_date, run_id,
+               selected_model, decision_threshold, signal_label, calibration_method, created_at
+        FROM model_predictions
+        {where_clause}
+        ORDER BY prediction_date DESC, symbol LIMIT {limit}
+    """, params or None)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_prediction_governance_audit(
+    limit: int = 100,
+    symbol: str | None = None,
+    run_ids: list[str] | None = None,
+    selection_modes: list[str] | None = None,
+    served_models: list[str] | None = None,
+    governance_link_statuses: list[str] | None = None,
+) -> pd.DataFrame:
+    params: dict[str, object] = {}
+    conditions: list[str] = []
+    if symbol:
+        params["symbol"] = symbol
+        conditions.append("symbol = :symbol")
+    _append_in_clause(conditions, params, column_sql="run_id", param_prefix="audit_run_id", values=run_ids)
+    _append_in_clause(conditions, params, column_sql="governance_selection_mode", param_prefix="audit_selection_mode", values=selection_modes)
+    _append_in_clause(conditions, params, column_sql="served_model", param_prefix="audit_served_model", values=served_models)
+    _append_in_clause(
+        conditions,
+        params,
+        column_sql="governance_link_status",
+        param_prefix="audit_link_status",
+        values=governance_link_statuses,
+    )
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return safe_query(
+        f"""
+        SELECT *
+        FROM (
+            SELECT p.symbol,
+                   p.prediction_date,
+                   p.run_id,
+                   p.predicted_proba,
+                   p.predicted_class,
+                   p.selected_model AS served_model,
+                   p.decision_threshold AS served_decision_threshold,
+                   p.signal_label,
+                   p.calibration_method AS served_calibration_method,
+                   p.created_at,
+                   served.model_name AS governance_served_model,
+                   served.`rank` AS governance_served_rank,
+                   served.selection_eligible AS governance_served_eligible,
+                   served.eligibility_reason AS governance_served_eligibility_reason,
+                   served.reason AS governance_served_reason,
+                   served.inference_backend AS governance_served_backend,
+                   served.backend_model_name AS governance_served_backend_model_name,
+                   served.calibration_method AS governance_served_calibration_method,
+                   served.decision_threshold AS governance_served_decision_threshold,
+                   served.artifact_symbol AS governance_served_artifact_symbol,
+                   champion.model_name AS governance_champion_model,
+                   champion.selection_mode AS governance_selection_mode,
+                   champion.selection_metric AS governance_selection_metric,
+                   champion.selection_score AS governance_champion_selection_score,
+                   champion.inference_backend AS governance_champion_backend,
+                   champion.calibration_method AS governance_champion_calibration_method,
+                   champion.decision_threshold AS governance_champion_decision_threshold,
+                   champion.artifact_symbol AS governance_champion_artifact_symbol,
+                   CASE
+                       WHEN champion.run_id IS NULL THEN 'missing_governance_snapshot'
+                       WHEN p.selected_model IS NULL OR p.selected_model = '' THEN 'prediction_missing_selected_model'
+                       WHEN served.model_name IS NULL THEN 'served_model_missing_in_governance'
+                       WHEN champion.model_name <> p.selected_model THEN 'served_model_differs_from_governance_champion'
+                       ELSE 'aligned'
+                   END AS governance_link_status
+            FROM model_predictions p
+            LEFT JOIN model_governance served
+                   ON served.run_id = p.run_id
+                  AND served.symbol = p.symbol
+                  AND served.model_name = p.selected_model
+            LEFT JOIN model_governance champion
+                   ON champion.run_id = p.run_id
+                  AND champion.symbol = p.symbol
+                  AND champion.is_selected_model = 1
+        ) audit
+        {where_clause}
+        ORDER BY prediction_date DESC, created_at DESC, symbol ASC
+        LIMIT {limit}
+        """,
+        params or None,
+    )
+
 
