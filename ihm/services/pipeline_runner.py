@@ -69,6 +69,8 @@ DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL = "INFO"
 DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE = 200
 DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS = 1.1
 DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY = 25
+DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE = 50
+DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME = True
 DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY = 50
 
 # --- Défauts swing trade (cf. prompt/refactor/audit_ihm_pipeline_options.md) ---
@@ -296,6 +298,8 @@ class PipelineLaunchOptions:
     data_integrity_earnings_limit: int | None = None
     data_integrity_earnings_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_earnings_log_every: int = DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY
+    data_integrity_earnings_batch_size: int = DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE
+    data_integrity_earnings_resume: bool = DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME
     data_integrity_fundamentals_limit: int | None = None
     data_integrity_fundamentals_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
@@ -699,6 +703,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.data_integrity_earnings_sleep_seconds),
             "--log-every",
             str(options.data_integrity_earnings_log_every),
+            "--batch-size",
+            str(options.data_integrity_earnings_batch_size),
         ]
         if earnings_from_date:
             command.extend(["--from-date", earnings_from_date])
@@ -706,6 +712,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--to-date", earnings_to_date])
         if earnings_limit is not None:
             command.extend(["--limit", str(earnings_limit)])
+        command.append("--resume" if options.data_integrity_earnings_resume else "--no-resume")
         return command
 
     if step_key == "alpha_scanner":

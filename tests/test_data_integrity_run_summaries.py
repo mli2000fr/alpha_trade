@@ -68,6 +68,8 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
                     limit=22,
                     sleep_seconds=1.4,
                     log_every=7,
+                    batch_size=50,
+                    resume=True,
                 )
             },
         )(),
@@ -86,6 +88,8 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
     assert payload["requested_limit"] == 22
     assert payload["sleep_seconds"] == 1.4
     assert payload["log_every"] == 7
+    assert payload["batch_size"] == 50
+    assert payload["resume"] is True
     assert payload["rows_upserted"] == 18
 
 
@@ -93,13 +97,11 @@ def test_sync_earnings_calendar_emits_operator_visible_logs(monkeypatch, caplog)
     monkeypatch.setattr(sync_earnings_calendar, "list_active_tradable_symbols", lambda limit=None: ["AAPL", "MSFT"])
     monkeypatch.setattr(
         sync_earnings_calendar,
-        "fetch_multiple_symbols_earnings_calendar",
-        lambda symbols, **kwargs: [
-            {"symbol": "AAPL", "date": "2026-05-01", "epsEstimate": 1.23},
-            {"symbol": "MSFT", "earningsDate": "2026-05-02", "epsActual": 2.34},
-        ],
+        "fetch_earnings_calendar",
+        lambda symbol, **kwargs: [{"symbol": symbol, "date": "2026-05-01", "epsEstimate": 1.23}],
     )
     monkeypatch.setattr(sync_earnings_calendar, "upsert_earnings_calendar", lambda rows: len(rows))
+    monkeypatch.setattr(sync_earnings_calendar.time, "sleep", lambda seconds: None)
 
     with caplog.at_level(logging.INFO):
         summary = sync_earnings_calendar.sync_earnings_calendar(
@@ -108,13 +110,18 @@ def test_sync_earnings_calendar_emits_operator_visible_logs(monkeypatch, caplog)
             limit=2,
             sleep_seconds=0.0,
             log_every=1,
+            batch_size=25,
         )
 
-    assert summary == {"symbols": 2, "rows_upserted": 2}
+    assert summary["symbols"] == 2
+    assert summary["rows_upserted"] == 2
+    assert summary["batches_processed"] == 1
+    assert summary["failed_symbols"] == 0
     messages = "\n".join(record.getMessage() for record in caplog.records)
     assert "Sync earnings calendar start" in messages
     assert "Sync earnings calendar fetched" in messages
     assert "Sync earnings calendar normalized" in messages
+    assert "Sync earnings calendar batch committed" in messages
 
 
 def test_finnhub_earnings_batch_fetch_logs_progress(monkeypatch, caplog) -> None:

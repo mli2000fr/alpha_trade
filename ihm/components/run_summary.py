@@ -6,7 +6,12 @@ from typing import Mapping
 import streamlit as st
 
 from ihm.components.metrics import metric_row
-from ihm.services.run_summary import build_run_summary_caption, get_run_summary, get_run_summary_metric_items
+from ihm.services.run_summary import (
+    build_run_summary_caption,
+    get_run_summary,
+    get_run_summary_detail_lines,
+    get_run_summary_metric_items,
+)
 
 
 def render_run_summary_block(
@@ -34,11 +39,17 @@ def render_run_summary_block(
 
     metric_items = get_run_summary_metric_items(record)
     if metric_items:
-        metric_row([(label, value, None) for label, value in metric_items[:max_metrics]])
+        display_metrics: list[tuple[str, str | int | float, str | None]] = []
+        for label, value in metric_items[:max_metrics]:
+            display_value = value if isinstance(value, (str, int, float)) else str(value)
+            display_metrics.append((label, display_value, None))
+        metric_row(display_metrics)
 
     if show_caption:
         caption = str((record or {}).get("summary_caption", "") or "").strip()
         st.caption(caption or build_run_summary_caption(record))
+    for detail_line in get_run_summary_detail_lines(record):
+        st.caption(detail_line)
     return True
 
 

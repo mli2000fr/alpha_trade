@@ -371,6 +371,8 @@ def test_build_pipeline_command_selector_reference_sync_steps() -> None:
             data_integrity_earnings_limit=90,
             data_integrity_earnings_sleep_seconds=1.5,
             data_integrity_earnings_log_every=10,
+            data_integrity_earnings_batch_size=75,
+            data_integrity_earnings_resume=False,
         ),
     )
 
@@ -393,12 +395,33 @@ def test_build_pipeline_command_selector_reference_sync_steps() -> None:
         "1.5",
         "--log-every",
         "10",
+        "--batch-size",
+        "75",
         "--from-date",
         "2026-04-01",
         "--to-date",
         "2026-04-30",
         "--limit",
         "90",
+        "--no-resume",
+    ]
+
+
+def test_build_pipeline_command_sync_earnings_calendar_defaults_to_resumable_batches() -> None:
+    command = build_pipeline_command("sync_earnings_calendar", PipelineLaunchOptions())
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "dataIntegrityEngine.sync_earnings_calendar",
+        "--sleep-seconds",
+        "1.1",
+        "--log-every",
+        "25",
+        "--batch-size",
+        "50",
+        "--resume",
     ]
 
 

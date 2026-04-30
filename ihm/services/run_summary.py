@@ -49,8 +49,11 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
     ],
     "sync_earnings_calendar": [
         ("Symboles", "symbols"),
+        ("Repris", "symbols_skipped_resume"),
+        ("À rejouer", "symbols_remaining"),
         ("Rows upsert", "rows_upserted"),
-        ("Limite", "requested_limit"),
+        ("Batch", "batch_size"),
+        ("KO", "failed_symbols"),
     ],
     "alpha_scanner": [
         ("Demandé", "requested_selection_size"),
@@ -204,6 +207,25 @@ def build_run_summary_caption(record: Mapping[str, object] | None) -> str:
     if not items:
         return "—"
     return " | ".join(f"{label.lower()}={value}" for label, value in items)
+
+
+def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[str]:
+    summary = get_run_summary(record)
+    if not summary:
+        return []
+
+    if _step_key(record) != "sync_earnings_calendar":
+        return []
+
+    resumed = int(summary.get("symbols_skipped_resume", 0) or 0)
+    remaining = int(summary.get("symbols_remaining", 0) or 0)
+    lines = [
+        f"Reprise bookmark : {resumed} symbole(s) déjà traité(s), {remaining} restant(s) à rejouer.",
+    ]
+    bookmark_path = str(summary.get("bookmark_path", "") or "").strip()
+    if bookmark_path:
+        lines.append(f"Bookmark local : {bookmark_path}")
+    return lines
 
 
 def find_latest_run_with_summary(

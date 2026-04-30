@@ -314,6 +314,27 @@ def test_build_run_summary_caption_uses_signal_aggregator_metrics_mapping() -> N
     assert "score moy.=0.6123" in caption
 
 
+def test_build_run_summary_caption_uses_earnings_resume_metrics_mapping() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "sync_earnings_calendar",
+            "run_summary": {
+                "symbols": 120,
+                "symbols_skipped_resume": 45,
+                "symbols_remaining": 7,
+                "rows_upserted": 300,
+                "batch_size": 50,
+                "failed_symbols": 2,
+            },
+        }
+    )
+
+    assert "symboles=120" in caption
+    assert "repris=45" in caption
+    assert "à rejouer=7" in caption
+    assert "rows upsert=300" in caption
+
+
 def test_build_latest_run_summary_rows_preserves_scope_order_and_filters_missing_summaries() -> None:
     rows = build_latest_run_summary_rows(
         [

@@ -34,7 +34,9 @@ from ihm.services.account_defaults import (
     get_pipeline_execution_defaults,
 )
 from ihm.services.pipeline_runner import (
+    DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE,
     DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY,
+    DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME,
     DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY,
     DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS,
     DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE,
@@ -1652,6 +1654,17 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     key="pipeline_data_integrity_earnings_limit",
                 )
             )
+            data_integrity_earnings_batch_size = int(
+                st.number_input(
+                    "Earnings — taille de batch (symboles)",
+                    min_value=25,
+                    max_value=100,
+                    value=int(st.session_state.get("pipeline_data_integrity_earnings_batch_size", DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE)),
+                    step=25,
+                    key="pipeline_data_integrity_earnings_batch_size",
+                    help="Chaque batch est fetch + upsert + commit avant de passer au suivant. Intervalle supporté : 25 à 100 symboles.",
+                )
+            )
         with di_col2:
             data_integrity_earnings_sleep_seconds = float(
                 st.number_input(
@@ -1701,6 +1714,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     step=5,
                     key="pipeline_data_integrity_fundamentals_log_every",
                 )
+            )
+            data_integrity_earnings_resume = st.checkbox(
+                "Earnings — reprendre depuis le bookmark local",
+                value=bool(st.session_state.get("pipeline_data_integrity_earnings_resume", DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME)),
+                key="pipeline_data_integrity_earnings_resume",
+                help="Si activé, les symboles déjà commités sont sautés au redémarrage ; sinon le run repart du début et ignore le bookmark existant.",
             )
             data_integrity_earnings_custom_window = st.checkbox(
                 "Earnings — utiliser une fenêtre de dates personnalisée",
@@ -2002,6 +2021,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             data_integrity_earnings_limit=_to_optional_positive_int(data_integrity_earnings_limit),
             data_integrity_earnings_sleep_seconds=float(data_integrity_earnings_sleep_seconds),
             data_integrity_earnings_log_every=int(data_integrity_earnings_log_every),
+            data_integrity_earnings_batch_size=int(data_integrity_earnings_batch_size),
+            data_integrity_earnings_resume=bool(data_integrity_earnings_resume),
             data_integrity_fundamentals_limit=_to_optional_positive_int(data_integrity_fundamentals_limit),
             data_integrity_fundamentals_sleep_seconds=float(data_integrity_fundamentals_sleep_seconds),
             data_integrity_fundamentals_log_every=int(data_integrity_fundamentals_log_every),
