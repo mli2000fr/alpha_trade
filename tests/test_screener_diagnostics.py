@@ -884,8 +884,10 @@ def test_load_price_history_filters_stock_bars_daily_on_eodhd_source(monkeypatch
     service.engine = _FakeEngine()
     service._stock_bars_layout = ("date", "COALESCE(adj_close, `close`)")
 
+    # Phase G.2 : `screener_diagnostics` est devenu un package ; le binding
+    # effectif de `get_required_bars_source_filter` réside dans `_impl`.
     monkeypatch.setattr(
-        "backtesting.screener_diagnostics.get_required_bars_source_filter",
+        "backtesting.screener_diagnostics._impl.get_required_bars_source_filter",
         lambda engine, table_name="stock_bars_daily", table_alias=None: (
             "AND `data_source` = :required_data_source",
             {"required_data_source": "eodhd_eod"},
