@@ -235,6 +235,7 @@ def fetch_multiple_symbols_earnings_calendar(
     to_date: str,
     sleep_seconds: float = MIN_REQUEST_INTERVAL_SECONDS,
     session: Optional[requests.Session] = None,
+    log_every: int = 25,
 ) -> list[dict[str, Any]]:
     """Récupère le calendrier earnings Finnhub pour plusieurs symboles en respectant le rate limiting."""
     if sleep_seconds < 0:
@@ -254,6 +255,15 @@ def fetch_multiple_symbols_earnings_calendar(
                     records.append(normalized_row)
             except Exception:
                 LOGGER.exception("Erreur Finnhub earnings calendar sur le symbole %s.", symbol)
+
+            if log_every > 0 and (index == 1 or index % log_every == 0 or index == len(symbol_list)):
+                LOGGER.info(
+                    "Finnhub earnings calendar progress | processed=%s/%s records=%s latest_symbol=%s",
+                    index,
+                    len(symbol_list),
+                    len(records),
+                    symbol,
+                )
 
             if index < len(symbol_list):
                 time.sleep(sleep_seconds)

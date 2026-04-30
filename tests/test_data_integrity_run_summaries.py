@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+from datetime import date
 
 from dataIntegrityEngine import import_alpaca_assets, sync_earnings_calendar, sync_latest_quotes, update_sector
+from service.finnhub import clientFinnhub
 
 
 def _payload_from_stdout(stdout: str, prefix: str) -> dict[str, object]:
@@ -64,6 +67,7 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
                     to_date="2026-04-15",
                     limit=22,
                     sleep_seconds=1.4,
+                    log_every=7,
                 )
             },
         )(),
@@ -81,7 +85,59 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
     assert payload["to_date"] == "2026-04-15"
     assert payload["requested_limit"] == 22
     assert payload["sleep_seconds"] == 1.4
+    assert payload["log_every"] == 7
     assert payload["rows_upserted"] == 18
+
+
+def test_sync_earnings_calendar_emits_operator_visible_logs(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(sync_earnings_calendar, "list_active_tradable_symbols", lambda limit=None: ["AAPL", "MSFT"])
+    monkeypatch.setattr(
+        sync_earnings_calendar,
+        "fetch_multiple_symbols_earnings_calendar",
+        lambda symbols, **kwargs: [
+            {"symbol": "AAPL", "date": "2026-05-01", "epsEstimate": 1.23},
+            {"symbol": "MSFT", "earningsDate": "2026-05-02", "epsActual": 2.34},
+        ],
+    )
+    monkeypatch.setattr(sync_earnings_calendar, "upsert_earnings_calendar", lambda rows: len(rows))
+
+    with caplog.at_level(logging.INFO):
+        summary = sync_earnings_calendar.sync_earnings_calendar(
+            from_date=date(2026, 4, 1),
+            to_date=date(2026, 4, 30),
+            limit=2,
+            sleep_seconds=0.0,
+            log_every=1,
+        )
+
+    assert summary == {"symbols": 2, "rows_upserted": 2}
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Sync earnings calendar start" in messages
+    assert "Sync earnings calendar fetched" in messages
+    assert "Sync earnings calendar normalized" in messages
+
+
+def test_finnhub_earnings_batch_fetch_logs_progress(monkeypatch, caplog) -> None:
+    def _fake_fetch(symbol: str, from_date: str, to_date: str, session=None) -> list[dict[str, object]]:
+        return [{"symbol": symbol, "date": from_date, "to": to_date}]
+
+    monkeypatch.setattr(clientFinnhub, "fetch_earnings_calendar", _fake_fetch)
+    monkeypatch.setattr(clientFinnhub.time, "sleep", lambda seconds: None)
+
+    with caplog.at_level(logging.INFO):
+        rows = clientFinnhub.fetch_multiple_symbols_earnings_calendar(
+            ["AAPL", "MSFT", "NVDA"],
+            from_date="2026-04-01",
+            to_date="2026-04-30",
+            sleep_seconds=0.0,
+            log_every=2,
+        )
+
+    assert [row["symbol"] for row in rows] == ["AAPL", "MSFT", "NVDA"]
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "processed=1/3" in messages
+    assert "processed=2/3" in messages
+    assert "processed=3/3" in messages
 
 
 def test_update_sector_main_emits_structured_summary(monkeypatch, capsys) -> None:

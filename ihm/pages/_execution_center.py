@@ -34,6 +34,7 @@ from ihm.services.account_defaults import (
     get_pipeline_execution_defaults,
 )
 from ihm.services.pipeline_runner import (
+    DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY,
     DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY,
     DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS,
     DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE,
@@ -1662,6 +1663,16 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     key="pipeline_data_integrity_earnings_sleep_seconds",
                 )
             )
+            data_integrity_earnings_log_every = int(
+                st.number_input(
+                    "Earnings — journaliser tous les N symboles",
+                    min_value=0,
+                    value=int(st.session_state.get("pipeline_data_integrity_earnings_log_every", DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY)),
+                    step=5,
+                    key="pipeline_data_integrity_earnings_log_every",
+                    help="0 désactive les logs de progression Finnhub. Défaut : 25, soit environ un log toutes les ~30s avec la pause par défaut.",
+                )
+            )
             data_integrity_fundamentals_limit = int(
                 st.number_input(
                     "Fondamentaux — limite optionnelle",
@@ -1990,6 +2001,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             data_integrity_earnings_to_date=effective_earnings_to_date,
             data_integrity_earnings_limit=_to_optional_positive_int(data_integrity_earnings_limit),
             data_integrity_earnings_sleep_seconds=float(data_integrity_earnings_sleep_seconds),
+            data_integrity_earnings_log_every=int(data_integrity_earnings_log_every),
             data_integrity_fundamentals_limit=_to_optional_positive_int(data_integrity_fundamentals_limit),
             data_integrity_fundamentals_sleep_seconds=float(data_integrity_fundamentals_sleep_seconds),
             data_integrity_fundamentals_log_every=int(data_integrity_fundamentals_log_every),

@@ -68,6 +68,7 @@ DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS = DEFAULT_SIGNAL_AGGREGATOR_
 DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL = "INFO"
 DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE = 200
 DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS = 1.1
+DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY = 25
 DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY = 50
 
 # --- Défauts swing trade (cf. prompt/refactor/audit_ihm_pipeline_options.md) ---
@@ -294,6 +295,7 @@ class PipelineLaunchOptions:
     data_integrity_earnings_to_date: str | None = None
     data_integrity_earnings_limit: int | None = None
     data_integrity_earnings_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
+    data_integrity_earnings_log_every: int = DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY
     data_integrity_fundamentals_limit: int | None = None
     data_integrity_fundamentals_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
@@ -695,6 +697,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "dataIntegrityEngine.sync_earnings_calendar",
             "--sleep-seconds",
             str(options.data_integrity_earnings_sleep_seconds),
+            "--log-every",
+            str(options.data_integrity_earnings_log_every),
         ]
         if earnings_from_date:
             command.extend(["--from-date", earnings_from_date])

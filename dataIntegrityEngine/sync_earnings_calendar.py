@@ -38,6 +38,7 @@ def sync_earnings_calendar(
     to_date: date | None = None,
     limit: int | None = None,
     sleep_seconds: float = MIN_REQUEST_INTERVAL_SECONDS,
+    log_every: int = 25,
 ) -> dict[str, int]:
     if sleep_seconds < 0:
         raise ValueError("sleep_seconds doit être supérieur ou égal à 0.")
@@ -46,7 +47,17 @@ def sync_earnings_calendar(
     end = to_date or date.today() + timedelta(days=30)
     symbols = list_active_tradable_symbols(limit=limit)
     summary = {"symbols": len(symbols), "rows_upserted": 0}
+    LOGGER.info(
+        "Sync earnings calendar start | symbols=%s from=%s to=%s limit=%s sleep_seconds=%s log_every=%s",
+        len(symbols),
+        start,
+        end,
+        limit,
+        sleep_seconds,
+        log_every,
+    )
     if not symbols:
+        LOGGER.warning("Sync earnings calendar skipped | aucun symbole actif/tradable trouvé.")
         return summary
 
     session = requests.Session()
@@ -57,9 +68,11 @@ def sync_earnings_calendar(
             to_date=end.isoformat(),
             sleep_seconds=sleep_seconds,
             session=session,
+            log_every=log_every,
         )
     finally:
         session.close()
+    LOGGER.info("Sync earnings calendar fetched | raw_rows=%s", len(rows))
 
     normalized_rows: list[dict[str, object]] = []
     for row in rows:
@@ -78,6 +91,7 @@ def sync_earnings_calendar(
             }
         )
 
+    LOGGER.info("Sync earnings calendar normalized | normalized_rows=%s", len(normalized_rows))
     summary["rows_upserted"] = upsert_earnings_calendar(normalized_rows)
     LOGGER.info(
         "Sync earnings calendar | symbols=%s rows_upserted=%s from=%s to=%s",
@@ -95,6 +109,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--to-date", type=str, default=None, help="Date de fin ISO (YYYY-MM-DD)")
     parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles")
     parser.add_argument("--sleep-seconds", type=float, default=MIN_REQUEST_INTERVAL_SECONDS, help="Pause entre deux appels Finnhub")
+    parser.add_argument("--log-every", type=int, default=25, help="Journalise la progression tous les N symboles (0 pour désactiver)")
     return parser
 
 
@@ -116,6 +131,7 @@ def main() -> None:
             to_date=date.fromisoformat(args.to_date) if args.to_date else None,
             limit=args.limit,
             sleep_seconds=args.sleep_seconds,
+            log_every=args.log_every,
         )
     except Exception as exc:  # noqa: BLE001
         status = "failed"
@@ -154,6 +170,7 @@ def main() -> None:
             "to_date": args.to_date,
             "requested_limit": args.limit,
             "sleep_seconds": args.sleep_seconds,
+            "log_every": args.log_every,
             "audit_status": status,
             **summary,
         }

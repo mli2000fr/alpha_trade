@@ -370,6 +370,7 @@ def test_build_pipeline_command_selector_reference_sync_steps() -> None:
             data_integrity_earnings_to_date="2026-04-30",
             data_integrity_earnings_limit=90,
             data_integrity_earnings_sleep_seconds=1.5,
+            data_integrity_earnings_log_every=10,
         ),
     )
 
@@ -390,6 +391,8 @@ def test_build_pipeline_command_selector_reference_sync_steps() -> None:
         "dataIntegrityEngine.sync_earnings_calendar",
         "--sleep-seconds",
         "1.5",
+        "--log-every",
+        "10",
         "--from-date",
         "2026-04-01",
         "--to-date",
