@@ -154,6 +154,22 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "artifacts_dir", "Explication": "Dossier des artefacts modèles utilisés pour rebuild-missing.", "Défaut": "artifacts/models"},
             {"Paramètre": "score_column", "Explication": "Colonne de score privilégiée pour le replay : auto / walk-forward / sentiment / final.", "Défaut": "auto"},
             {"Paramètre": "walk_forward_artifacts_dir", "Explication": "Répertoire racine optionnel des artefacts de calibration walk-forward à appliquer au run standard.", "Défaut": "None"},
+            # Phase A (refactor) — reproductibilité.
+            {"Paramètre": "risk_free_rate", "Explication": "Taux sans risque annualisé déduit avant Sharpe/Sortino (Phase A.6).", "Défaut": "0.0"},
+            {"Paramètre": "seed", "Explication": "Seed reproductibilité consigné dans report.json[run_metadata] (Phase A.4).", "Défaut": "None"},
+            # Phase B (refactor) — micro-structure.
+            {"Paramètre": "slippage_model", "Explication": "fixed/linear/sqrt — slippage volume-aware additionnel (Phase B.1).", "Défaut": "fixed"},
+            {"Paramètre": "slippage_base_bps", "Explication": "Composante fixe du slippage volume-aware (bps).", "Défaut": "0.0"},
+            {"Paramètre": "slippage_impact_coef", "Explication": "Coefficient d'impact appliqué à size/ADV (bps).", "Défaut": "0.0"},
+            {"Paramètre": "initial_stop_pct", "Explication": "Stop-loss initial dur en fraction (Phase B.2).", "Défaut": "0.0"},
+            {"Paramètre": "max_entry_gap_pct", "Explication": "Skip entrée si gap d'open > seuil (Phase B.3).", "Défaut": "0.0"},
+            {"Paramètre": "intrabar_priority", "Explication": "Politique TP vs TS intra-bar (Phase B.4).", "Défaut": "conservative"},
+            # Phase C (refactor) — risk overlays.
+            {"Paramètre": "sizing_mode", "Explication": "equal_weight | conviction_weighted (Phase C.1).", "Défaut": "equal_weight"},
+            {"Paramètre": "regime_filter", "Explication": "Active le filtre régime SMA200 sur le benchmark (Phase C.3).", "Défaut": "False"},
+            {"Paramètre": "max_sector_exposure_pct", "Explication": "Cap d'exposition par secteur en fraction (Phase C.4).", "Défaut": "0.0"},
+            {"Paramètre": "max_portfolio_dd_pct", "Explication": "Drawdown max avant coupe-circuit nouvelles entrées (Phase C.5).", "Défaut": "0.0"},
+            {"Paramètre": "target_annual_vol", "Explication": "Cible vol annualisée portefeuille (Phase C.2).", "Défaut": "None"},
         ]
     if kind == "diagnose-screener":
         return [
@@ -195,6 +211,260 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
 def _render_reference_table(kind: str) -> None:
     with st.expander("📘 Référence complète des paramètres", expanded=False):
         st.dataframe(pd.DataFrame(_parameter_reference_rows(kind)), use_container_width=True, hide_index=True)
+
+
+def _build_overlay_options() -> dict[str, Any]:
+    """Construit le sous-dict d'options pour les surcouches micro-structure / risk overlay.
+
+    Affiche un expander unique avec deux blocs (Phase B et Phase C). Toutes les
+    valeurs par défaut sont **neutres** : le backtest produit alors exactement
+    les mêmes résultats que sans la surcouche.
+    """
+    with st.expander("🧪 Reproductibilité & surcouches research-grade (Phase B/C)", expanded=False):
+        st.caption(
+            "Toutes ces options sont **opt-in** : laissées à zéro/désactivées, le backtest "
+            "produit le même résultat qu'avant. Voir `refactor/backtesting/audit_plan_resume.md`."
+        )
+
+        # --- Reproductibilité (Phase A) ---
+        repro_col1, repro_col2 = st.columns(2)
+        with repro_col1:
+            risk_free_rate = st.number_input(
+                "Risk-free rate annualisé (Sharpe/Sortino)",
+                min_value=0.0,
+                max_value=0.20,
+                value=float(st.session_state.get("bt_run_risk_free_rate", 0.0)),
+                step=0.005,
+                format="%.4f",
+                key="bt_run_risk_free_rate",
+                help="0.04 = 4% — déduit des returns avant Sharpe/Sortino.",
+            )
+        with repro_col2:
+            seed_raw = st.text_input(
+                "Seed reproductibilité (optionnel)",
+                value=cast(str, st.session_state.get("bt_run_seed_raw", "")),
+                key="bt_run_seed_raw",
+                help="Entier consigné dans report.json[run_metadata]. Utilisé par les sorties intra-bar 'random'.",
+            )
+
+        st.markdown("**Phase B — Micro-structure**")
+        micro_col1, micro_col2, micro_col3 = st.columns(3)
+        with micro_col1:
+            slippage_model = cast(
+                str,
+                st.selectbox(
+                    "Modèle slippage volume-aware",
+                    options=["fixed", "linear", "sqrt"],
+                    index=["fixed", "linear", "sqrt"].index(
+                        cast(str, st.session_state.get("bt_run_slippage_model", "fixed"))
+                        if st.session_state.get("bt_run_slippage_model", "fixed") in {"fixed", "linear", "sqrt"}
+                        else "fixed"
+                    ),
+                    key="bt_run_slippage_model",
+                    help="`fixed` (défaut, neutre) ; `linear` = base + impact*(size/ADV) ; `sqrt` = Almgren-Chriss.",
+                ),
+            )
+        with micro_col2:
+            slippage_base_bps = st.number_input(
+                "Slippage base (bps)",
+                min_value=0.0,
+                max_value=500.0,
+                value=float(st.session_state.get("bt_run_slippage_base_bps", 0.0)),
+                step=0.5,
+                key="bt_run_slippage_base_bps",
+            )
+        with micro_col3:
+            slippage_impact_coef = st.number_input(
+                "Slippage impact coef (bps)",
+                min_value=0.0,
+                max_value=2000.0,
+                value=float(st.session_state.get("bt_run_slippage_impact_coef", 0.0)),
+                step=1.0,
+                key="bt_run_slippage_impact_coef",
+            )
+
+        micro_col4, micro_col5, micro_col6 = st.columns(3)
+        with micro_col4:
+            initial_stop_pct = st.number_input(
+                "Stop-loss initial dur (fraction)",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_initial_stop_pct", 0.0)),
+                step=0.005,
+                format="%.4f",
+                key="bt_run_initial_stop_pct",
+                help="Ex 0.07 = 7%. 0 = désactivé.",
+            )
+        with micro_col5:
+            max_entry_gap_pct = st.number_input(
+                "Max gap d'ouverture (fraction)",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_max_entry_gap_pct", 0.0)),
+                step=0.005,
+                format="%.4f",
+                key="bt_run_max_entry_gap_pct",
+                help="Ex 0.05 = annule l'entrée si l'open gap > 5%. 0 = désactivé.",
+            )
+        with micro_col6:
+            intrabar_priority = cast(
+                str,
+                st.selectbox(
+                    "Priorité intra-bar TP/TS",
+                    options=["conservative", "tp_first", "ts_first", "random"],
+                    index=["conservative", "tp_first", "ts_first", "random"].index(
+                        cast(str, st.session_state.get("bt_run_intrabar_priority", "conservative"))
+                        if st.session_state.get("bt_run_intrabar_priority", "conservative")
+                        in {"conservative", "tp_first", "ts_first", "random"}
+                        else "conservative"
+                    ),
+                    key="bt_run_intrabar_priority",
+                    help="`conservative` = TS prioritaire (legacy). `random` requiert un seed.",
+                ),
+            )
+
+        st.markdown("**Phase C — Risk overlays**")
+        risk_col1, risk_col2, risk_col3 = st.columns(3)
+        with risk_col1:
+            sizing_mode = cast(
+                str,
+                st.selectbox(
+                    "Mode sizing",
+                    options=["equal_weight", "conviction_weighted"],
+                    index=["equal_weight", "conviction_weighted"].index(
+                        cast(str, st.session_state.get("bt_run_sizing_mode", "equal_weight"))
+                        if st.session_state.get("bt_run_sizing_mode", "equal_weight")
+                        in {"equal_weight", "conviction_weighted"}
+                        else "equal_weight"
+                    ),
+                    key="bt_run_sizing_mode",
+                ),
+            )
+        with risk_col2:
+            sizing_min_weight_pct = st.number_input(
+                "Sizing min weight",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_sizing_min_weight_pct", 0.005)),
+                step=0.005,
+                format="%.4f",
+                key="bt_run_sizing_min_weight_pct",
+            )
+        with risk_col3:
+            sizing_max_weight_pct = st.number_input(
+                "Sizing max weight",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_sizing_max_weight_pct", 0.20)),
+                step=0.01,
+                format="%.4f",
+                key="bt_run_sizing_max_weight_pct",
+            )
+
+        risk_col4, risk_col5, risk_col6 = st.columns(3)
+        with risk_col4:
+            regime_filter = st.checkbox(
+                "Active le filtre régime SMA200",
+                value=bool(st.session_state.get("bt_run_regime_filter", False)),
+                key="bt_run_regime_filter",
+                help="Bloque les nouvelles entrées si benchmark < SMA - threshold.",
+            )
+        with risk_col5:
+            regime_sma_window = st.number_input(
+                "SMA window",
+                min_value=20,
+                max_value=500,
+                value=int(st.session_state.get("bt_run_regime_sma_window", 200)),
+                step=10,
+                key="bt_run_regime_sma_window",
+            )
+        with risk_col6:
+            regime_bear_threshold = st.number_input(
+                "Bear threshold",
+                min_value=-0.50,
+                max_value=0.10,
+                value=float(st.session_state.get("bt_run_regime_bear_threshold", -0.02)),
+                step=0.005,
+                format="%.4f",
+                key="bt_run_regime_bear_threshold",
+            )
+
+        risk_col7, risk_col8, risk_col9, risk_col10 = st.columns(4)
+        with risk_col7:
+            max_sector_exposure_pct = st.number_input(
+                "Max exposure secteur",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_max_sector_exposure_pct", 0.0)),
+                step=0.05,
+                format="%.4f",
+                key="bt_run_max_sector_exposure_pct",
+                help="Ex 0.30 = 30%. 0 = désactivé.",
+            )
+        with risk_col8:
+            max_portfolio_dd_pct = st.number_input(
+                "Max DD portefeuille",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_max_portfolio_dd_pct", 0.0)),
+                step=0.01,
+                format="%.4f",
+                key="bt_run_max_portfolio_dd_pct",
+                help="Ex 0.20 = coupe les nouvelles entrées si DD > 20%. 0 = désactivé.",
+            )
+        with risk_col9:
+            dd_recovery_pct = st.number_input(
+                "DD recovery",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("bt_run_dd_recovery_pct", 0.95)),
+                step=0.01,
+                format="%.4f",
+                key="bt_run_dd_recovery_pct",
+            )
+        with risk_col10:
+            target_annual_vol_raw = st.text_input(
+                "Target annual vol (optionnel)",
+                value=cast(str, st.session_state.get("bt_run_target_annual_vol_raw", "")),
+                key="bt_run_target_annual_vol_raw",
+                help="Ex 0.15 = cible 15% vol portefeuille. Vide = désactivé.",
+            )
+
+    seed_value: int | None = None
+    if seed_raw.strip():
+        try:
+            seed_value = int(seed_raw.strip())
+        except ValueError:
+            st.warning(f"Seed invalide ignoré : `{seed_raw}`.")
+
+    target_annual_vol_value: float | None = None
+    cleaned_vol = target_annual_vol_raw.strip()
+    if cleaned_vol:
+        try:
+            target_annual_vol_value = float(cleaned_vol)
+        except ValueError:
+            st.warning(f"Target annual vol invalide ignorée : `{cleaned_vol}`.")
+
+    return {
+        "risk_free_rate": float(risk_free_rate),
+        "seed": seed_value,
+        "slippage_model": cast(Any, slippage_model),
+        "slippage_base_bps": float(slippage_base_bps),
+        "slippage_impact_coef": float(slippage_impact_coef),
+        "initial_stop_pct": float(initial_stop_pct),
+        "max_entry_gap_pct": float(max_entry_gap_pct),
+        "intrabar_priority": cast(Any, intrabar_priority),
+        "sizing_mode": cast(Any, sizing_mode),
+        "sizing_min_weight_pct": float(sizing_min_weight_pct),
+        "sizing_max_weight_pct": float(sizing_max_weight_pct),
+        "regime_filter": bool(regime_filter),
+        "regime_sma_window": int(regime_sma_window),
+        "regime_bear_threshold": float(regime_bear_threshold),
+        "max_sector_exposure_pct": float(max_sector_exposure_pct),
+        "max_portfolio_dd_pct": float(max_portfolio_dd_pct),
+        "dd_recovery_pct": float(dd_recovery_pct),
+        "target_annual_vol": target_annual_vol_value,
+    }
 
 
 def _build_run_options() -> BacktestRunOptions:
@@ -422,6 +692,7 @@ def _build_run_options() -> BacktestRunOptions:
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
+        **_build_overlay_options(),
     )
 
     st.code(format_command_for_display(build_backtesting_command("run", options)), language="powershell")
@@ -818,6 +1089,72 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     col6.metric("Win Rate", f"{_to_float(summary.get('win_rate_pct')):.1f}%")
     col7.metric("Durée moy. (j)", f"{_to_float(summary.get('avg_trade_duration_days')):.1f}")
     col8.metric("Profit Factor", f"{_to_float(summary.get('profit_factor')):.2f}")
+
+    # Phase A.5/A.6 (refactor) — métriques de risque enrichies (Calmar, Ulcer,
+    # Sortino, CAGR) + risk-free utilisé pour Sharpe/Sortino. Tous "—" si
+    # absents (ex : ancien rapport antérieur au refactor).
+    st.markdown("**📊 Métriques avancées (Phase A/D refactor)**")
+
+    def _format_calmar(value: object) -> str:
+        if isinstance(value, str):  # sentinel "inf"
+            return "∞" if value.lower().startswith("inf") else value
+        try:
+            num = float(cast(Any, value))
+        except (TypeError, ValueError):
+            return "—"
+        if num != num or num in (float("inf"), float("-inf")):  # NaN / inf
+            return "∞" if num > 0 else "—"
+        return f"{num:.3f}"
+
+    extra_col1, extra_col2, extra_col3, extra_col4 = st.columns(4)
+    extra_col1.metric("CAGR", f"{_to_float(summary.get('cagr_pct')):.2f}%")
+    extra_col2.metric("Sortino", f"{_to_float(summary.get('sortino_ratio')):.3f}")
+    extra_col3.metric("Calmar", _format_calmar(summary.get("calmar_ratio")))
+    extra_col4.metric("Ulcer Index", f"{_to_float(summary.get('ulcer_index')):.3f}")
+
+    extra_col5, extra_col6, extra_col7, extra_col8 = st.columns(4)
+    extra_col5.metric(
+        "Dividendes encaissés",
+        f"${_to_float(summary.get('dividends_received')):,.2f}",
+    )
+    extra_col6.metric(
+        "Rendement total (avec div.)",
+        f"{_to_float(summary.get('total_return_with_dividends_pct')):.2f}%",
+    )
+    extra_col7.metric(
+        "Risk-free rate utilisé",
+        f"{_to_float(summary.get('risk_free_rate')) * 100:.2f}%",
+    )
+    extra_col8.metric("Capital initial", f"${_to_float(summary.get('initial_equity')):,.0f}")
+
+    # Phase A.4 — métadonnées de reproductibilité.
+    run_metadata = report_payload.get("run_metadata")
+    if isinstance(run_metadata, dict) and run_metadata:
+        with st.expander("🧬 Métadonnées de reproductibilité (Phase A.4)", expanded=False):
+            st.caption(
+                "Conservées dans `report.json[run_metadata]` pour rejouer un run "
+                "à l'identique (git SHA, version Python, hash dataset, seed)."
+            )
+            st.json(run_metadata)
+
+    # Glossaire local pour rappel des indicateurs (Phase G3).
+    with st.expander("📚 Glossaire — comprendre les indicateurs", expanded=False):
+        st.markdown(
+            "- **Sharpe** : (rendement excédentaire moyen) / volatilité annualisée. "
+            "≥ 1 = correct, ≥ 2 = excellent.\n"
+            "- **Sortino** : variante du Sharpe ne pénalisant que la volatilité négative.\n"
+            "- **Calmar** : CAGR / |Max Drawdown|. Mesure le rendement par unité de "
+            "douleur historique. `∞` = aucun drawdown observé sur la période.\n"
+            "- **Ulcer Index** : `sqrt(mean(drawdown²))`. Pénalise la durée et la "
+            "profondeur des drawdowns (Martin & McCann, 1989).\n"
+            "- **Profit Factor** : somme des gains / |somme des pertes|. ≥ 1.5 = sain.\n"
+            "- **Risk-free rate** : taux annualisé déduit avant Sharpe/Sortino. "
+            "Doit refléter le coût d'opportunité (ex T-Bill 4 %).\n"
+            "- **CAGR** : taux de croissance annuel composé sur la période.\n"
+            "- **Dividendes encaissés** : crédités séparément depuis "
+            "`portfolio_cash_ledger`. Le rendement total *avec* dividendes inclut "
+            "ce flux."
+        )
 
     with st.expander("⚙️ Paramètres du run utilisés", expanded=False):
         if params:

@@ -39,6 +39,56 @@ class TestPhaseA:
         assert out.iloc[0] == pytest.approx(0.5)
         assert out.iloc[1] == pytest.approx(0.4 * 0.8 + 0.6 * 0.9)
 
+    def test_vectorized_fuse_is_faster_than_naive_fallback(self):
+        """Phase F.3 (refactor) — micro-bench léger sans pytest-benchmark.
+
+        Vérifie que la fusion vectorisée reste sensiblement plus rapide qu'une
+        boucle ligne-par-ligne (équivalente à l'ancien `df.apply`). Le seuil
+        est volontairement large (×3) pour rester stable en CI partagée.
+        """
+        import time
+
+        from backtesting.signal_replay import _vectorized_fuse
+        from core.conviction import ConvictionWeights, fuse
+
+        rng = np.random.default_rng(42)
+        n = 50_000
+        scores = pd.Series(rng.random(n))
+        # ~30 % de NaN → exerce la branche fallback.
+        proba_arr = rng.random(n)
+        proba_arr[rng.random(n) < 0.3] = np.nan
+        proba = pd.Series(proba_arr)
+        weights = ConvictionWeights(0.4, 0.6)
+
+        # Warmup (JIT pandas/numpy + cache caches CPU).
+        _vectorized_fuse(scores.iloc[:1024], proba.iloc[:1024], weights)
+
+        start = time.perf_counter()
+        vec_out = _vectorized_fuse(scores, proba, weights)
+        vec_elapsed = time.perf_counter() - start
+
+        # Naive : appelle `core.conviction.fuse` ligne par ligne.
+        start = time.perf_counter()
+        naive_out = np.empty(n, dtype=float)
+        scores_arr = scores.to_numpy()
+        for i in range(n):
+            p = proba_arr[i]
+            naive_out[i] = fuse(
+                quant_score=scores_arr[i],
+                predicted_proba=None if np.isnan(p) else p,
+                weights=weights,
+            )
+        naive_elapsed = time.perf_counter() - start
+
+        # Cohérence numérique (NaN → score brut côté vectorisé).
+        np.testing.assert_allclose(vec_out.to_numpy(), naive_out, atol=1e-9)
+
+        # Garantit un gain réel (×3 minimum, généralement ×50+ en pratique).
+        assert vec_elapsed * 3 < naive_elapsed, (
+            f"_vectorized_fuse trop lent : vec={vec_elapsed:.4f}s "
+            f"naive={naive_elapsed:.4f}s"
+        )
+
     def test_report_calmar_and_ulcer_present(self):
         from backtesting.report import BacktestReport
 
@@ -306,6 +356,189 @@ class TestPhaseG:
 
         df = parameter_sensitivity(base, metric, perturbation=0.10)
         assert df.iloc[0]["parameter"] == "ts"  # plus sensible (coef -500 × value 0.05)
+
+
+# ---------------------------------------------------------------------------
+# Phase D.5 — schéma report.json (refactor v2)
+# ---------------------------------------------------------------------------
+
+
+class TestReportSchema:
+    def _minimal_payload(self) -> dict:
+        return {
+            "summary": {
+                "initial_equity": 100_000.0,
+                "final_value": 110_000.0,
+                "total_return_pct": 10.0,
+                "cagr_pct": 5.0,
+                "sharpe_ratio": 1.2,
+                "sortino_ratio": 1.5,
+                "max_drawdown_pct": 7.5,
+                "total_trades": 42,
+                "win_rate_pct": 55.0,
+                "avg_trade_duration_days": 4.2,
+                "profit_factor": "inf",
+                "calmar_ratio": 1.0,
+                "ulcer_index": 0.8,
+            },
+            "params": {"start": "2024-01-01"},
+            "artifacts": {"equity_curve_png": "/tmp/x.png"},
+            "diagnostics": {"take_profit_exits": 10},
+            "run_metadata": {"git_sha": "abc123", "seed": 42},
+        }
+
+    def test_validate_minimal_payload(self):
+        from backtesting.report_schema import validate_report_payload
+
+        schema = validate_report_payload(self._minimal_payload())
+        assert schema.summary.total_return_pct == pytest.approx(10.0)
+        assert schema.summary.profit_factor == "inf"
+        assert schema.diagnostics.take_profit_exits == 10
+        assert schema.run_metadata.seed == 42
+
+    def test_validate_missing_summary_raises(self):
+        from backtesting.report_schema import ReportSchemaError, validate_report_payload
+
+        payload = self._minimal_payload()
+        del payload["summary"]["sharpe_ratio"]
+        with pytest.raises(ReportSchemaError):
+            validate_report_payload(payload)
+
+    def test_validate_strict_rejects_unknown_keys(self):
+        from backtesting.report_schema import ReportSchemaError, validate_report_payload
+
+        payload = self._minimal_payload()
+        payload["unexpected_top_level"] = {"foo": "bar"}
+        with pytest.raises(ReportSchemaError):
+            validate_report_payload(payload, strict=True)
+        # Default tolerant mode passes.
+        validate_report_payload(payload, strict=False)
+
+
+# ---------------------------------------------------------------------------
+# Phase E.3 (refactor v2) — _RunState invariant
+# ---------------------------------------------------------------------------
+
+
+class TestRunStateInvariants:
+    def _build_minimal_inputs(self):
+        from datetime import date
+
+        idx = pd.date_range("2024-01-02", periods=5, freq="B")
+        symbols = ["AAA", "BBB"]
+        rng = np.random.default_rng(0)
+        prices = pd.DataFrame(
+            100 + rng.normal(0, 1, size=(len(idx), len(symbols))).cumsum(axis=0),
+            index=idx,
+            columns=symbols,
+        )
+        ohlcv = {
+            "open": prices,
+            "close": prices,
+            "high": prices * 1.01,
+            "low": prices * 0.99,
+        }
+        signals = pd.DataFrame(
+            [
+                {"trade_date": idx[0], "symbol": "AAA", "selected": True, "rank": 1, "signal_date": idx[0]},
+                {"trade_date": idx[1], "symbol": "BBB", "selected": True, "rank": 1, "signal_date": idx[1]},
+            ]
+        )
+        return ohlcv, signals, idx, date(2024, 1, 1), date(2024, 1, 10)
+
+    def test_equity_non_negative_for_random_seeds(self):
+        """Property léger : equity finale ≥ 0 pour 5 seeds différents (pas besoin d'hypothesis)."""
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        ohlcv, signals, _idx, start, end = self._build_minimal_inputs()
+        for seed in range(5):
+            cfg = BacktestConfig(
+                start_date=start, end_date=end,
+                initial_equity=10_000.0,
+                profit_taker_pct=0.05,
+                trailing_stop_pct=0.03,
+                max_positions=2,
+                fees_pct=0.001,
+                seed=seed,
+            )
+            engine = BacktestEngine(cfg)
+            result = engine.run(
+                open_df=ohlcv["open"], close=ohlcv["close"],
+                high=ohlcv["high"], low=ohlcv["low"], signals_df=signals,
+            )
+            assert result.final_value() >= 0.0
+
+    def test_legacy_neutral_overlays_match_default_run(self):
+        """Phase B/C : overlays par défaut => mêmes résultats qu'un run sans overlays."""
+        from backtesting.microstructure import MicrostructureConfig
+        from backtesting.risk_overlay import RiskOverlayConfig
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        ohlcv, signals, _idx, start, end = self._build_minimal_inputs()
+        common = dict(
+            start_date=start, end_date=end, initial_equity=10_000.0,
+            profit_taker_pct=0.05, trailing_stop_pct=0.03, max_positions=2, fees_pct=0.001,
+        )
+        cfg_a = BacktestConfig(**common)
+        cfg_b = BacktestConfig(
+            **common,
+            microstructure=MicrostructureConfig(),
+            risk_overlay=RiskOverlayConfig(),
+        )
+        eq_a = BacktestEngine(cfg_a).run(
+            open_df=ohlcv["open"], close=ohlcv["close"],
+            high=ohlcv["high"], low=ohlcv["low"], signals_df=signals,
+        ).equity_curve
+        eq_b = BacktestEngine(cfg_b).run(
+            open_df=ohlcv["open"], close=ohlcv["close"],
+            high=ohlcv["high"], low=ohlcv["low"], signals_df=signals,
+        ).equity_curve
+        assert (eq_a.values == eq_b.values).all()
+
+
+# ---------------------------------------------------------------------------
+# Phase F.3/G — property tests via Hypothesis (skipped si non installé)
+# ---------------------------------------------------------------------------
+
+
+try:
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
+
+    _HYPOTHESIS_AVAILABLE = True
+except ImportError:  # pragma: no cover — chemin sans dépendance.
+    _HYPOTHESIS_AVAILABLE = False
+
+
+@pytest.mark.skipif(not _HYPOTHESIS_AVAILABLE, reason="hypothesis non installé en local")
+def test_bootstrap_intervals_contain_mean():
+    """Property : la moyenne bootstrap est toujours dans [ci_low, ci_high]."""
+    from backtesting.statistical_validation import bootstrap_trades
+
+    @settings(max_examples=25, deadline=None)
+    @given(
+        n_trades=st.integers(min_value=5, max_value=50),
+        win_rate=st.floats(min_value=0.1, max_value=0.9),
+        seed=st.integers(min_value=0, max_value=10_000),
+    )
+    def _inner(n_trades, win_rate, seed):
+        rng = np.random.default_rng(seed)
+        returns = np.where(
+            rng.random(n_trades) < win_rate,
+            rng.uniform(0.5, 5.0, n_trades),
+            -rng.uniform(0.5, 5.0, n_trades),
+        )
+        trades = pd.DataFrame({"return_pct": returns})
+        out = bootstrap_trades(trades, n_iterations=200, initial_equity=10_000.0, seed=seed)
+        assert (
+            out.ci_low_total_return_pct - 1e-6
+            <= out.mean_total_return_pct
+            <= out.ci_high_total_return_pct + 1e-6
+        )
+
+    _inner()
+
+
 
 
 

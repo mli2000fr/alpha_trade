@@ -33,6 +33,27 @@ class BacktestRunOptions:
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
     output_dir: str | None = None
+    # Phase A (refactor) — reproductibilité + risk-free rate
+    risk_free_rate: float = 0.0
+    seed: int | None = None
+    # Phase B (refactor) — micro-structure
+    slippage_model: Literal["fixed", "linear", "sqrt"] = "fixed"
+    slippage_base_bps: float = 0.0
+    slippage_impact_coef: float = 0.0
+    initial_stop_pct: float = 0.0
+    max_entry_gap_pct: float = 0.0
+    intrabar_priority: Literal["conservative", "tp_first", "ts_first", "random"] = "conservative"
+    # Phase C (refactor) — risk overlays
+    sizing_mode: Literal["equal_weight", "conviction_weighted"] = "equal_weight"
+    sizing_min_weight_pct: float = 0.005
+    sizing_max_weight_pct: float = 0.20
+    regime_filter: bool = False
+    regime_sma_window: int = 200
+    regime_bear_threshold: float = -0.02
+    max_sector_exposure_pct: float = 0.0
+    max_portfolio_dd_pct: float = 0.0
+    dd_recovery_pct: float = 0.95
+    target_annual_vol: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +136,41 @@ def build_backtesting_command(
             command.extend(["--output-dir", options.output_dir])
         if options.no_save:
             command.append("--no-save")
+        # Phase A (refactor) — reproductibilité + risk-free rate.
+        if options.risk_free_rate:
+            command.extend(["--risk-free-rate", str(options.risk_free_rate)])
+        if options.seed is not None:
+            command.extend(["--seed", str(options.seed)])
+        # Phase B (refactor) — micro-structure (n'émet que si non-default pour
+        # garder les commandes courtes et compatibles avec les pipelines existants).
+        if options.slippage_model != "fixed":
+            command.extend(["--slippage-model", options.slippage_model])
+        if options.slippage_base_bps:
+            command.extend(["--slippage-base-bps", str(options.slippage_base_bps)])
+        if options.slippage_impact_coef:
+            command.extend(["--slippage-impact-coef", str(options.slippage_impact_coef)])
+        if options.initial_stop_pct:
+            command.extend(["--initial-stop-pct", str(options.initial_stop_pct)])
+        if options.max_entry_gap_pct:
+            command.extend(["--max-entry-gap-pct", str(options.max_entry_gap_pct)])
+        if options.intrabar_priority != "conservative":
+            command.extend(["--intrabar-priority", options.intrabar_priority])
+        # Phase C (refactor) — risk overlays.
+        if options.sizing_mode != "equal_weight":
+            command.extend(["--sizing-mode", options.sizing_mode])
+            command.extend(["--sizing-min-weight-pct", str(options.sizing_min_weight_pct)])
+            command.extend(["--sizing-max-weight-pct", str(options.sizing_max_weight_pct)])
+        if options.regime_filter:
+            command.append("--regime-filter")
+            command.extend(["--regime-sma-window", str(options.regime_sma_window)])
+            command.extend(["--regime-bear-threshold", str(options.regime_bear_threshold)])
+        if options.max_sector_exposure_pct:
+            command.extend(["--max-sector-exposure-pct", str(options.max_sector_exposure_pct)])
+        if options.max_portfolio_dd_pct:
+            command.extend(["--max-portfolio-dd-pct", str(options.max_portfolio_dd_pct)])
+            command.extend(["--dd-recovery-pct", str(options.dd_recovery_pct)])
+        if options.target_annual_vol is not None:
+            command.extend(["--target-annual-vol", str(options.target_annual_vol)])
         return command
 
     if kind == "backfill-scores-history":

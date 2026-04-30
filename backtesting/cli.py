@@ -138,6 +138,110 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seed reproductibilité (consignée dans report.json[run_metadata]).",
     )
 
+    # ------------------------------------------------------------------
+    # Phase B (refactor) — micro-structure (slippage volume-aware,
+    # initial stop dur, gap filter, intra-bar priority).
+    # ------------------------------------------------------------------
+    run_p.add_argument(
+        "--slippage-model",
+        choices=["fixed", "linear", "sqrt"],
+        default="fixed",
+        help="Modèle de slippage volume-aware additionnel (Phase B.1). 'fixed' = neutre.",
+    )
+    run_p.add_argument(
+        "--slippage-base-bps",
+        type=float,
+        default=0.0,
+        help="Composante fixe (bps) du slippage volume-aware additionnel.",
+    )
+    run_p.add_argument(
+        "--slippage-impact-coef",
+        type=float,
+        default=0.0,
+        help="Coefficient d'impact (bps) appliqué à size/ADV (Phase B.1).",
+    )
+    run_p.add_argument(
+        "--initial-stop-pct",
+        type=float,
+        default=0.0,
+        help="Stop-loss initial dur en fraction (Phase B.2). 0.0 = désactivé.",
+    )
+    run_p.add_argument(
+        "--max-entry-gap-pct",
+        type=float,
+        default=0.0,
+        help="Skip d'entrée si |open - prev_close| / prev_close > seuil (Phase B.3). 0.0 = désactivé.",
+    )
+    run_p.add_argument(
+        "--intrabar-priority",
+        choices=["conservative", "tp_first", "ts_first", "random"],
+        default="conservative",
+        help="Politique de résolution intra-bar TP/TS (Phase B.4). conservative = TS prioritaire (legacy).",
+    )
+
+    # ------------------------------------------------------------------
+    # Phase C (refactor) — risk overlays (sizing, regime, sectoral, DD breaker, vol-target).
+    # ------------------------------------------------------------------
+    run_p.add_argument(
+        "--sizing-mode",
+        choices=["equal_weight", "conviction_weighted"],
+        default="equal_weight",
+        help="Mode de sizing du portefeuille (Phase C.1).",
+    )
+    run_p.add_argument(
+        "--sizing-min-weight-pct",
+        type=float,
+        default=0.005,
+        help="Poids min par position quand sizing=conviction_weighted (Phase C.1).",
+    )
+    run_p.add_argument(
+        "--sizing-max-weight-pct",
+        type=float,
+        default=0.20,
+        help="Poids max par position quand sizing=conviction_weighted (Phase C.1).",
+    )
+    run_p.add_argument(
+        "--regime-filter",
+        action="store_true",
+        help="Active le filtre régime SMA200 sur le benchmark (Phase C.3).",
+    )
+    run_p.add_argument(
+        "--regime-sma-window",
+        type=int,
+        default=200,
+        help="Fenêtre SMA pour le filtre régime (défaut 200).",
+    )
+    run_p.add_argument(
+        "--regime-bear-threshold",
+        type=float,
+        default=-0.02,
+        help="Seuil bear (distance vs SMA) pour bloquer les nouvelles entrées.",
+    )
+    run_p.add_argument(
+        "--max-sector-exposure-pct",
+        type=float,
+        default=0.0,
+        help="Cap d'exposition par secteur en fraction (Phase C.4). 0.0 = désactivé.",
+    )
+    run_p.add_argument(
+        "--max-portfolio-dd-pct",
+        type=float,
+        default=0.0,
+        help="Drawdown max avant coupe-circuit nouvelles entrées (Phase C.5). 0.0 = désactivé.",
+    )
+    run_p.add_argument(
+        "--dd-recovery-pct",
+        type=float,
+        default=0.95,
+        help="Seuil de recovery pour rouvrir les entrées après coupe-circuit DD (Phase C.5).",
+    )
+    run_p.add_argument(
+        "--target-annual-vol",
+        type=float,
+        default=None,
+        help="Cible de volatilité annualisée portefeuille (Phase C.2). Désactivé si non fourni.",
+    )
+
     # --- backfill-scores-history ---
     backfill_p = sub.add_parser(
         "backfill-scores-history",
@@ -330,6 +434,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
     from backtesting.signal_replay import replay_signals
     from backtesting.trading_constraints import TradingConstraintConfig
     from backtesting.simulator import BacktestConfig, BacktestEngine
+    from backtesting.microstructure import MicrostructureConfig, SlippageConfig
+    from backtesting.risk_overlay import (
+        DrawdownCircuitBreaker,
+        RegimeFilterConfig,
+        RiskOverlayConfig,
+        SectoralCapConfig,
+        SizingConfig,
+    )
     from backtesting.profiles import apply_profile
     from backtesting.run_metadata import build_run_metadata
     from backtesting.report import (
@@ -436,6 +548,44 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     # 4. Backtest
     _safe_print("⚡ Exécution du backtest vectorbt...")
+
+    # Phase B/C (refactor) — construire les bundles micro-structure et risk overlay
+    # depuis les flags CLI. Tout est neutre par défaut (legacy preserved).
+    microstructure_cfg = MicrostructureConfig(
+        slippage=SlippageConfig(
+            base_bps=float(args.slippage_base_bps),
+            impact_coef=float(args.slippage_impact_coef),
+            model=args.slippage_model,
+        ),
+        initial_stop_pct=float(args.initial_stop_pct),
+        max_entry_gap_pct=float(args.max_entry_gap_pct),
+        intrabar_priority=args.intrabar_priority,
+    )
+    risk_overlay_cfg = RiskOverlayConfig(
+        sizing=SizingConfig(
+            mode=args.sizing_mode,
+            min_weight_pct=float(args.sizing_min_weight_pct),
+            max_weight_pct=float(args.sizing_max_weight_pct),
+        ),
+        regime_filter=RegimeFilterConfig(
+            enabled=bool(args.regime_filter),
+            sma_window=int(args.regime_sma_window),
+            bear_threshold=float(args.regime_bear_threshold),
+        ),
+        sectoral_cap=SectoralCapConfig(
+            enabled=float(args.max_sector_exposure_pct) > 0.0,
+            max_sector_exposure_pct=float(args.max_sector_exposure_pct) or 0.40,
+        ),
+        drawdown_breaker=DrawdownCircuitBreaker(
+            enabled=float(args.max_portfolio_dd_pct) > 0.0,
+            max_dd_pct=float(args.max_portfolio_dd_pct) or 0.20,
+            recovery_pct=float(args.dd_recovery_pct),
+        ),
+        target_annual_vol=(
+            float(args.target_annual_vol) if args.target_annual_vol is not None else None
+        ),
+    )
+
     bt_config = BacktestConfig(
         start_date=start, end_date=end,
         initial_equity=args.equity,
@@ -446,6 +596,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
         commission_bps=float(args.commission_bps),
         slippage_bps=float(args.slippage_bps),
         trading_constraints=trading_constraints,
+        microstructure=microstructure_cfg,
+        risk_overlay=risk_overlay_cfg,
+        seed=getattr(args, "seed", None),
     )
     bt_engine = BacktestEngine(bt_config)
     pf = bt_engine.run(
@@ -506,6 +659,32 @@ def _run_backtest(args: argparse.Namespace) -> None:
         "no_save": args.no_save,
         # Phase A.6 — risk-free rate utilisé pour Sharpe/Sortino.
         "risk_free_rate": float(getattr(args, "risk_free_rate", 0.0) or 0.0),
+        # Phase B (refactor) — micro-structure activable via CLI.
+        "microstructure": {
+            "slippage_model": args.slippage_model,
+            "slippage_base_bps": float(args.slippage_base_bps),
+            "slippage_impact_coef": float(args.slippage_impact_coef),
+            "initial_stop_pct": float(args.initial_stop_pct),
+            "max_entry_gap_pct": float(args.max_entry_gap_pct),
+            "intrabar_priority": args.intrabar_priority,
+            "is_default": microstructure_cfg.is_default(),
+        },
+        # Phase C (refactor) — risk overlays activables via CLI.
+        "risk_overlay": {
+            "sizing_mode": args.sizing_mode,
+            "sizing_min_weight_pct": float(args.sizing_min_weight_pct),
+            "sizing_max_weight_pct": float(args.sizing_max_weight_pct),
+            "regime_filter_enabled": bool(args.regime_filter),
+            "regime_sma_window": int(args.regime_sma_window),
+            "regime_bear_threshold": float(args.regime_bear_threshold),
+            "max_sector_exposure_pct": float(args.max_sector_exposure_pct),
+            "max_portfolio_dd_pct": float(args.max_portfolio_dd_pct),
+            "dd_recovery_pct": float(args.dd_recovery_pct),
+            "target_annual_vol": (
+                float(args.target_annual_vol) if args.target_annual_vol is not None else None
+            ),
+            "is_default": risk_overlay_cfg.is_default(),
+        },
     }
 
     # Phase A.4 — métadonnées de reproductibilité.

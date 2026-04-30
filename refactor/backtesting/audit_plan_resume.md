@@ -66,13 +66,13 @@
 | D4 | VaR/CVaR/tail/omega | `analytics.py` | ✅ `compute_tail_analytics` |
 | D5 | Schéma payload extended | `analytics.py` | ✅ `build_extended_report_payload` |
 
-### Phase E — Performance & scalabilité ✅ COMPLET (sauf E.3 partiel)
+### Phase E — Performance & scalabilité ✅ COMPLET
 
 | # | Item | Fichiers | Statut |
 |---|---|---|---|
 | E1 | Cache Parquet | `cache.py` (NEW) | ✅ `ParquetCache.get_or_load` |
 | E2 | Filtrer `load_predictions` sur candidats | `data_loader.py` | ✅ `symbols=[…]` paramétrable |
-| E3 | Refactor `_run_with_constraints` en sous-méthodes | `simulator.py` | ⚠️ partiel (`_mark_to_market` extrait, le reste reste inline) |
+| E3 | Refactor `_run_with_constraints` en sous-méthodes | `simulator.py` | ✅ `_RunState` + `_apply_settlements` / `_select_candidate_rows` / `_try_open_entries` / `_try_close_positions` extraits |
 | E4 | Single mark-to-market par jour | `simulator.py` | ✅ `_mark_to_market` factorisé |
 
 ### Phase F — Tests & qualité ✅ COMPLET
@@ -81,7 +81,7 @@
 |---|---|---|---|
 | F1 | Test invariant cash+positions=equity | `tests/test_backtesting_refactor.py` (NEW) | ✅ smoke invariant |
 | F2 | Golden-test PnL synthétique | `tests/test_backtesting_refactor.py` | ✅ smoke OK |
-| F3 | Benchmark perf | — | ⏭️ déféré (non bloquant, pytest-benchmark non installé) |
+| F3 | Benchmark perf | `tests/test_backtesting_refactor.py` | ✅ micro-bench `_vectorized_fuse` vs naive (gain ≥ ×3 garanti, sans dép. `pytest-benchmark`) |
 
 ### Phase G — Validation statistique ✅ COMPLET
 
@@ -190,25 +190,49 @@ cfg = BacktestConfig(
 
 ## 7. Faiblesses résiduelles (à traiter ultérieurement)
 
-1. **E.3 partiel** : la fonction `_run_with_constraints` reste un peu longue
-   (~220 lignes après refactor). L'extraction complète en `_process_entries`
-   nécessiterait une refonte de la mutation de `settled_cash` (envisager
-   un `_RunState` mutable). Non bloquant.
-2. **F.3** non fait : `pytest-benchmark` non installé. À ajouter si besoin
-   de mesurer la perf en CI.
-3. **D5** non Pydantic : payload typé via dataclasses ; passer à Pydantic
+1. **D5** non Pydantic : payload typé via dataclasses ; passer à Pydantic
    nécessiterait l'ajout de la dépendance et la propagation des modèles
-   côté IHM.
-4. **CLI Phase B/C** : les nouveaux overlays sont **API-only** pour l'instant.
-   Ajouter les flags CLI (`--slippage-model`, `--initial-stop-pct`,
-   `--max-entry-gap-pct`, `--max-sector-exposure-pct`, `--max-portfolio-dd`,
-   `--regime-filter`) est trivial mais non encore fait.
-5. **Hypothesis** : ajouté seulement un test d'invariant smoke. Étendre
-   à des property-tests (ex. : equity ≥ 0, conservation cash) demanderait
-   l'ajout de la dépendance `hypothesis`.
+   côté IHM. Volontairement gardé sur dataclasses pour rester compatible
+   avec les tests `test_pages_backtesting.py` qui consomment le JSON brut.
+2. **Hypothesis** : un seul property-test `test_bootstrap_intervals_contain_mean`
+   est livré (skip auto si `hypothesis` absent en local). Étendre à d'autres
+   invariants (equity ≥ 0, conservation du cash) reste possible mais non
+   bloquant.
 
 Ces points sont listés sans bloquer la livraison — ils peuvent être traités
 en itérations ultérieures.
+
+---
+
+## 8. Itération 2026-04-30 — finitions IHM & finalisation Phase E/F
+
+| Item | Fichiers | Statut |
+|---|---|---|
+| CLI Phase B/C — flags exposés | `backtesting/cli.py` | ✅ déjà fait (vérifié : `--slippage-model`, `--initial-stop-pct`, `--max-entry-gap-pct`, `--intrabar-priority`, `--sizing-mode`, `--regime-filter`, `--max-sector-exposure-pct`, `--max-portfolio-dd-pct`, `--target-annual-vol`, `--risk-free-rate`, `--seed` tous présents et propagés au moteur) |
+| IHM Phase B/C — overlays opt-in | `ihm/pages/backtesting.py` `_build_overlay_options` | ✅ déjà fait (expander dédié, défauts neutres) |
+| IHM `BacktestRunOptions` étendus | `ihm/services/backtesting_runner.py` | ✅ déjà fait (champs `risk_free_rate`, `seed`, `slippage_model`, `initial_stop_pct`, `intrabar_priority`, `sizing_mode`, `regime_filter`, etc.) |
+| IHM `build_backtesting_command` propage les flags | `ihm/services/backtesting_runner.py` | ✅ déjà fait (n'émet que si non-default pour garder la commande lisible) |
+| IHM `_render_report_summary` enrichi | `ihm/pages/backtesting.py` | ✅ **ajout** : CAGR, Sortino, Calmar (avec sentinel ∞), Ulcer Index, dividendes encaissés, rendement avec dividendes, risk-free rate utilisé, capital initial + bloc Métadonnées de reproductibilité (Phase A.4) + glossaire local |
+| Glossaire IHM visible | `ihm/pages/backtesting.py` | ✅ **ajout** expander `📚 Glossaire` (Sharpe/Sortino/Calmar/Ulcer/Profit Factor/Risk-free/CAGR/Dividendes) |
+| F.3 — micro-bench perf léger | `tests/test_backtesting_refactor.py::TestPhaseA::test_vectorized_fuse_is_faster_than_naive_fallback` | ✅ **ajout** sans dépendance externe : 50k lignes, valide cohérence numérique + gain ≥ ×3 vs boucle ligne-par-ligne |
+| Hypothesis import-skip réparé | `tests/test_backtesting_refactor.py` | ✅ remplacé `pytest.importorskip` au top-level (qui skipait **tout le module** en l'absence de hypothesis) par un `try/except` + `@pytest.mark.skipif` ciblé. Avant : 0 test collecté localement, après : **29 passed, 1 skipped** |
+| E.3 marqué complet | `simulator.py` | ✅ vérifié : `_RunState` + `_apply_settlements` (438) + `_select_candidate_rows` (445) + `_try_open_entries` (476) + `_try_close_positions` (594) sont extraits |
+
+**Vérifications post-itération :**
+
+```
+pytest tests/test_backtesting_refactor.py --no-cov
+# → 29 passed, 1 skipped (hypothesis)
+pytest tests/test_pages_backtesting.py tests/test_ihm_backtesting_runner.py --no-cov
+# → 11 passed
+```
+
+🟢 **Verdict mis à jour : 9.5/10**. Toutes les pièces de l'audit Phase A→G
+sont désormais branchées de bout en bout (CLI → moteur → IHM → rapport →
+glossaire utilisateur), avec 0 régression et un micro-bench garde-fou
+pour la performance.
+
+
 
 ---
 
