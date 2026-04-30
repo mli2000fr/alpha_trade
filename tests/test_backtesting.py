@@ -1128,6 +1128,37 @@ class TestReport:
 # ============================================================
 
 class TestCLI:
+    # Phase A/B/C (refactor) — défauts neutres à fournir aux Namespace
+    # construits manuellement dans les tests CLI. Reflète strictement les
+    # défauts de `backtesting.cli._build_parser()`.
+    _CLI_NEUTRAL_DEFAULTS: dict[str, object] = {
+        # Phase 6.1.b — costs explicites + profil.
+        "commission_bps": 5.0,
+        "slippage_bps": 5.0,
+        "profile": "custom",
+        # Phase A — reproductibilité + risk-free rate.
+        "risk_free_rate": 0.0,
+        "seed": None,
+        # Phase B — micro-structure (tous neutres).
+        "slippage_model": "fixed",
+        "slippage_base_bps": 0.0,
+        "slippage_impact_coef": 0.0,
+        "initial_stop_pct": 0.0,
+        "max_entry_gap_pct": 0.0,
+        "intrabar_priority": "conservative",
+        # Phase C — risk overlays (tous désactivés).
+        "sizing_mode": "equal_weight",
+        "sizing_min_weight_pct": 0.005,
+        "sizing_max_weight_pct": 0.20,
+        "regime_filter": False,
+        "regime_sma_window": 200,
+        "regime_bear_threshold": -0.02,
+        "max_sector_exposure_pct": 0.0,
+        "max_portfolio_dd_pct": 0.0,
+        "dd_recovery_pct": 0.95,
+        "target_annual_vol": None,
+    }
+
     def test_parse_run_command(self):
         from backtesting.cli import _build_parser
 
@@ -1315,6 +1346,7 @@ class TestCLI:
             output_dir=None,
             score_column="final_score_walk_forward",
             walk_forward_artifacts_dir=str(tmp_path),
+            **self._CLI_NEUTRAL_DEFAULTS,
         )
 
         cli._run_backtest(args)
@@ -1442,6 +1474,7 @@ class TestCLI:
             output_dir=str(output_dir),
             score_column="auto",
             walk_forward_artifacts_dir=str(tmp_path),
+            **self._CLI_NEUTRAL_DEFAULTS,
         )
 
         cli._run_backtest(args)
