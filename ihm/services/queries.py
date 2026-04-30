@@ -292,35 +292,6 @@ def get_alpha_scanner_dependency_diagnostic(*, today: date | None = None) -> dic
         "any_red_or_orange": any_red_or_orange,
     }
 
-SELECTOR_DEPENDENCY_HEALTH_THRESHOLDS = {
-    "quotes_min_coverage_ratio": 0.50,
-    "quotes_max_age_days": 3,
-    "earnings_min_coverage_ratio": 0.005,
-    "earnings_min_coverage_symbols": 25,
-}
-
-
-def _build_selector_dependency_payload(
-    *,
-    latest_date: object = None,
-    min_date: object = None,
-    max_date: object = None,
-    symbols_covered: int = 0,
-    active_symbols: int = 0,
-) -> dict[str, object]:
-    covered = int(symbols_covered or 0)
-    active = int(active_symbols or 0)
-    coverage_ratio = (covered / active) if active > 0 else 0.0
-    return {
-        "latest_date": latest_date,
-        "min_date": min_date,
-        "max_date": max_date,
-        "symbols_covered": covered,
-        "active_symbols": active,
-        "coverage_ratio": coverage_ratio,
-        "coverage_pct": round(coverage_ratio * 100.0, 1),
-    }
-
 
 # ---------------------------------------------------------------------------
 # Overview
@@ -372,67 +343,6 @@ def get_stock_scores() -> pd.DataFrame:
         FROM stock_scores
         ORDER BY final_score_sentiment DESC, total_score DESC
     """)
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def get_selector_dependency_health() -> dict[str, object]:
-    active_symbols_raw = safe_scalar(
-        """
-        SELECT COUNT(*)
-        FROM stock_metadata
-        WHERE status = 'active'
-          AND tradable = 1
-          AND bars_available = 1
-          AND asset_class = 'us_equity'
-        """
-    )
-    active_symbols = int(active_symbols_raw or 0)
-    quotes_df = safe_query(
-        """
-        SELECT q.quote_date AS latest_date, COUNT(DISTINCT q.symbol) AS symbols_covered
-        FROM stock_quote_snapshots q
-        INNER JOIN (
-            SELECT MAX(quote_date) AS latest_date
-            FROM stock_quote_snapshots
-        ) latest ON latest.latest_date = q.quote_date
-        GROUP BY q.quote_date
-        """
-    )
-    earnings_df = safe_query(
-        """
-        SELECT MIN(earnings_date) AS min_date,
-               MAX(earnings_date) AS max_date,
-               COUNT(DISTINCT symbol) AS symbols_covered
-        FROM stock_earnings_calendar
-        WHERE earnings_date >= CURRENT_DATE()
-        """
-    )
-
-    quotes = _build_selector_dependency_payload(active_symbols=active_symbols)
-    if not quotes_df.empty:
-        row = quotes_df.iloc[0]
-        quotes = _build_selector_dependency_payload(
-            latest_date=row.get("latest_date"),
-            symbols_covered=int(row.get("symbols_covered") or 0),
-            active_symbols=active_symbols,
-        )
-
-    earnings = _build_selector_dependency_payload(active_symbols=active_symbols)
-    if not earnings_df.empty:
-        row = earnings_df.iloc[0]
-        earnings = _build_selector_dependency_payload(
-            latest_date=row.get("max_date"),
-            min_date=row.get("min_date"),
-            max_date=row.get("max_date"),
-            symbols_covered=int(row.get("symbols_covered") or 0),
-            active_symbols=active_symbols,
-        )
-
-    return {
-        "active_symbols": active_symbols,
-        "quotes": quotes,
-        "earnings": earnings,
-    }
 
 
 # ---------------------------------------------------------------------------
