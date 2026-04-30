@@ -19,8 +19,8 @@ def test_strict_filter_profile_exports_scanner_and_backtest_keys() -> None:
         "min_atr_pct_20": 0.015,
         "max_atr_pct_20": 0.06,
         "min_market_cap": 2_000_000_000.0,
-        "min_beta_126": 1.0,
-        "max_spread_bps": 25.0,
+        "min_beta_126": 0.8,
+        "max_spread_bps": 40.0,
         "earnings_blackout_days": 3,
     }
     assert STRICT_SWING_CASH_FILTERS.to_backtest_filter_dict() == {

@@ -149,6 +149,79 @@ def _build_cli_run_summary(
     }
 
 
+def _summarize_zero_candidate_filters(rejected_by_filter: dict[str, int] | None) -> str:
+    stats = {str(key): int(value) for key, value in (rejected_by_filter or {}).items()}
+    if not stats:
+        return "rejets_par_filtre indisponibles"
+
+    label_map = {
+        "rejected_volatility": "volatilite_relative",
+        "rejected_relative_strength": "force_relative",
+        "rejected_beta": "beta",
+        "rejected_atr": "atr_pct",
+        "rejected_weekly": "weekly",
+        "rejected_spread": "spread",
+        "rejected_ma200": "ma200",
+        "rejected_market_cap": "market_cap",
+        "rejected_high_52w": "high_52w",
+        "rejected_earnings_blackout": "earnings_blackout",
+    }
+    ranked_rejections = sorted(
+        (
+            (label_map.get(key, key), value)
+            for key, value in stats.items()
+            if key.startswith("rejected_") and value > 0
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+    top_rejections = ", ".join(f"{label}={value}" for label, value in ranked_rejections[:4])
+    if not top_rejections:
+        top_rejections = "aucun rejet significatif capture"
+
+    survivors = int(stats.get("input", 0))
+    stage_order = (
+        "rejected_etf",
+        "rejected_history",
+        "rejected_price",
+        "rejected_market_liquidity",
+        "rejected_volatility",
+        "rejected_atr",
+        "rejected_relative_strength",
+        "rejected_ma200",
+        "rejected_high_52w",
+        "rejected_weekly",
+        "rejected_market_cap",
+        "rejected_market_cap_stale",
+        "rejected_beta",
+        "rejected_spread",
+        "rejected_earnings_blackout",
+        "rejected_score_liquidity",
+        "rejected_sanitizer",
+        "rejected_anomalies",
+        "rejected_missing_days",
+    )
+    remaining_after_stage: dict[str, int] = {}
+    for key in stage_order:
+        survivors = max(survivors - int(stats.get(key, 0)), 0)
+        remaining_after_stage[key] = survivors
+
+    extra_hints: list[str] = []
+    before_beta = remaining_after_stage.get("rejected_market_cap_stale", 0)
+    before_spread = remaining_after_stage.get("rejected_beta", 0)
+    after_spread = remaining_after_stage.get("rejected_spread", 0)
+    if before_spread > 0 and after_spread == 0 and int(stats.get("rejected_spread", 0)) == before_spread:
+        extra_hints.append(f"tous_les_survivants_avant_spread={before_spread} ont ete rejetes_au_spread")
+    if before_beta > 0 and int(stats.get("rejected_beta", 0)) >= max(10, before_beta // 2):
+        extra_hints.append(
+            f"beta_tres_selectif={stats.get('rejected_beta', 0)}/{before_beta} rejetes_apres_market_cap"
+        )
+
+    detail = f"top_rejets=[{top_rejections}]"
+    if extra_hints:
+        detail += " | " + " | ".join(extra_hints)
+    return detail
+
+
 @dataclass(frozen=True, slots=True)
 class AlphaScannerConfig:
     price_table: str = "stock_bars_daily"
@@ -799,11 +872,13 @@ class AlphaScanner:
         elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
 
         if selected.empty:
+            zero_candidate_diagnostic = _summarize_zero_candidate_filters(self.get_aggregated_filter_stats())
             LOGGER.critical(
                 "AlphaScanner a produit 0 candidats | duree=%.2fs | "
                 "Verifier : stock_bars_daily peuplee ? liquidity_threshold trop eleve ? "
-                "Marche en tendance baissiere (trend_score=0 pour tous) ?",
+                "Marche en tendance baissiere (trend_score=0 pour tous) ? | %s",
                 elapsed,
+                zero_candidate_diagnostic,
             )
         else:
             LOGGER.info("AlphaScanner termine en %.2fs | candidats=%s", elapsed, len(selected))
@@ -1158,6 +1233,7 @@ __all__ = [
     "rank_and_select",
     # Helpers CLI
     "main",
+    "_summarize_zero_candidate_filters",
     "attach_schema_version",
     "merge_iex_bias_counters",
 ]

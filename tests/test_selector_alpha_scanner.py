@@ -6,7 +6,13 @@ import pandas as pd
 import pytest
 from sqlalchemy.engine import Engine
 
-from selector.alpha_scanner import AlphaScanner, AlphaScannerConfig, _build_arg_parser, _build_config_from_args
+from selector.alpha_scanner import (
+    AlphaScanner,
+    AlphaScannerConfig,
+    _build_arg_parser,
+    _build_config_from_args,
+    _summarize_zero_candidate_filters,
+)
 
 
 def _make_scanner(config: AlphaScannerConfig | None = None) -> AlphaScanner:
@@ -35,8 +41,8 @@ def test_alpha_scanner_config_strict_swing_cash_uses_shared_profile() -> None:
     assert config.min_atr_pct_20 == pytest.approx(0.015)
     assert config.max_atr_pct_20 == pytest.approx(0.06)
     assert config.min_market_cap == pytest.approx(2_000_000_000.0)
-    assert config.min_beta_126 == pytest.approx(1.0)
-    assert config.max_spread_bps == pytest.approx(25.0)
+    assert config.min_beta_126 == pytest.approx(0.8)
+    assert config.max_spread_bps == pytest.approx(40.0)
     assert config.earnings_blackout_days == 3
     assert config.require_above_ma200 is True
     assert config.selection_size == 42
@@ -114,8 +120,8 @@ def test_cli_without_preset_uses_strict_profile_implicitly() -> None:
     assert config.min_relative_strength_index == pytest.approx(100.0)
     assert config.min_atr_pct_20 == pytest.approx(0.015)
     assert config.min_market_cap == pytest.approx(2_000_000_000.0)
-    assert config.min_beta_126 == pytest.approx(1.0)
-    assert config.max_spread_bps == pytest.approx(25.0)
+    assert config.min_beta_126 == pytest.approx(0.8)
+    assert config.max_spread_bps == pytest.approx(40.0)
     assert config.earnings_blackout_days == 3
     assert config.require_above_ma200 is True
 
@@ -389,9 +395,31 @@ def test_apply_sector_neutrality_respects_sector_cap() -> None:
 def test_strict_swing_cash_propagates_iex_and_ttl_extensions() -> None:
     """Phase 3.3.c/d — extensions IEX/TTL doivent transiter du profil → config."""
     config = AlphaScannerConfig.strict_swing_cash()
-    assert config.max_spread_bps_iex == pytest.approx(50.0)
+    assert config.max_spread_bps_iex == pytest.approx(65.0)
     assert config.min_quote_size == pytest.approx(100.0)
     assert config.market_cap_max_age_days == 45
+
+
+def test_summarize_zero_candidate_filters_highlights_last_bottlenecks() -> None:
+    summary = _summarize_zero_candidate_filters(
+        {
+            "input": 1661,
+            "rejected_volatility": 674,
+            "rejected_atr": 140,
+            "rejected_relative_strength": 491,
+            "rejected_ma200": 28,
+            "rejected_weekly": 55,
+            "rejected_market_cap": 3,
+            "rejected_market_cap_stale": 0,
+            "rejected_beta": 241,
+            "rejected_spread": 29,
+        }
+    )
+
+    assert "volatilite_relative=674" in summary
+    assert "force_relative=491" in summary
+    assert "beta_tres_selectif=241/270" in summary
+    assert "tous_les_survivants_avant_spread=29" in summary
 
 
 def test_alpha_scanner_config_rejects_iex_relaxation_below_strict() -> None:

@@ -247,12 +247,16 @@ STRICT_SWING_CASH_FILTERS = StrictFilterProfile(
     min_atr_pct_20=0.015,
     max_atr_pct_20=0.06,
     min_market_cap=2_000_000_000.0,
-    min_beta_126=1.0,
-    max_spread_bps=25.0,
+    # Assouplissement prudent : accepte aussi des leaders un peu moins "high beta"
+    # dans les régimes risk-off sans dégrader le filtre de tendance/prix.
+    min_beta_126=0.8,
+    # Les snapshots de quotes fin de séance peuvent être plus larges que le spread
+    # réellement exécutable ; 40 bps reste strict tout en évitant un univers vide.
+    max_spread_bps=40.0,
     earnings_blackout_days=3,
     require_above_ma200=True,
     # Phase 3.3.c — relâchement IEX documenté (cohabitation avec max_spread_bps).
-    max_spread_bps_iex=50.0,
+    max_spread_bps_iex=65.0,
     min_quote_size=100.0,
     # Phase 3.3.d — TTL market cap par défaut (cohérent avec --refresh-stale-days=30).
     market_cap_max_age_days=45,

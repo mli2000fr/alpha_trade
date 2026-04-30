@@ -141,7 +141,7 @@ def test_resolve_pit_scanner_disables_overlay_filters_when_historical_coverage_i
     assert earnings_available is False
     assert scanner.config.max_spread_bps is None
     assert scanner.config.earnings_blackout_days is None
-    assert service.scanner_config.max_spread_bps == 25.0
+    assert service.scanner_config.max_spread_bps == 40.0
     assert service.scanner_config.earnings_blackout_days == 3
 
 
@@ -165,7 +165,7 @@ def test_resolve_pit_scanner_keeps_strict_overlay_filters_when_historical_covera
 
     assert quotes_available is True
     assert earnings_available is True
-    assert scanner.config.max_spread_bps == 25.0
+    assert scanner.config.max_spread_bps == 40.0
     assert scanner.config.earnings_blackout_days == 3
 
 
@@ -184,7 +184,7 @@ def test_resolve_pit_scanner_disables_only_missing_overlay_filter() -> None:
 
     assert quotes_available is True
     assert earnings_available is False
-    assert scanner.config.max_spread_bps == 25.0
+    assert scanner.config.max_spread_bps == 40.0
     assert scanner.config.earnings_blackout_days is None
 
 
