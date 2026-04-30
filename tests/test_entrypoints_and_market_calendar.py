@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 import runpy
 import subprocess
 import sys
@@ -16,8 +17,8 @@ import risk_management.cli
 from backtesting import cli as backtesting_cli
 
 
-PROJECT_ROOT = "C:\\Users\\MLI\\PycharmProjects\\alpha_trade"
-RUN_PY_PATH = PROJECT_ROOT + "\\run.py"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RUN_PY_PATH = str(PROJECT_ROOT / "run.py")
 
 
 def test_is_trading_day_falls_back_to_weekday_logic_when_calendar_missing(monkeypatch) -> None:
