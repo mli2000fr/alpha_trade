@@ -5,7 +5,7 @@ import json
 import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 from sqlalchemy.engine import Engine
@@ -14,11 +14,12 @@ from modelFactory.champion_selection import build_challenger_ranking, select_cha
 from modelFactory.config import TrainingConfig
 from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment, load_universe_bars
 from modelFactory.features import fingerprint as compute_feature_fingerprint
-from modelFactory.db_registry import load_candidate_symbols, replace_model_governance
+from modelFactory.db_registry import load_candidate_symbols, load_stock_bars_daily_symbols, replace_model_governance
 from modelFactory.global_model import train_global_model
 from modelFactory.trainer import TrainResult, train_symbol
 
 LOGGER = logging.getLogger(__name__)
+SymbolSource = Literal["candidates", "stock-bars-daily"]
 
 
 def _inject_global_model_into_symbol_artifacts(
@@ -190,22 +191,27 @@ def run_training_batch(
     symbols: Optional[list[str]] = None,
     *,
     mode: str = "rebuild-all",
+    symbol_source: SymbolSource = "candidates",
 ) -> list[TrainResult]:
     """Entraîne tous les symboles candidats en parallèle.
 
     Args:
         cfg: Configuration d'entraînement.
         engine: Engine SQLAlchemy pour charger l'univers.
-        symbols: Liste explicite de symboles (sinon charge is_candidate=1).
+        symbols: Liste explicite de symboles (sinon charge selon ``symbol_source``).
         mode: Phase 4.2.g — ``rebuild-all`` (défaut), ``rebuild-missing``
             (skippe les symboles déjà entraînés au feature_fingerprint
             courant), ou ``refresh-stale``.
+        symbol_source: Source par défaut si ``symbols`` n'est pas fourni.
 
     Returns:
         Liste de TrainResult.
     """
     if symbols is None:
-        symbols = load_candidate_symbols(engine)
+        if symbol_source == "stock-bars-daily":
+            symbols = load_stock_bars_daily_symbols(engine)
+        else:
+            symbols = load_candidate_symbols(engine)
 
     if not symbols:
         LOGGER.warning("run_training_batch no_candidates")

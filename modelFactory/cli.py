@@ -28,12 +28,20 @@ from modelFactory.config import (
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
+SYMBOL_SOURCES = ("candidates", "stock-bars-daily")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Model Factory — LSTM per-symbol training & prediction")
     p.add_argument("--mode", choices=["train", "predict"], required=True, help="train ou predict")
     p.add_argument("--symbols", nargs="*", default=None, help="Liste de symboles (défaut: is_candidate=1)")
+    p.add_argument(
+        "--symbol-source",
+        type=str,
+        default="candidates",
+        choices=list(SYMBOL_SOURCES),
+        help="Source des symboles quand --symbols n'est pas fourni : candidates | stock-bars-daily",
+    )
     p.add_argument("--max-workers", type=int, default=4)
     p.add_argument("--max-epochs", type=int, default=50)
     p.add_argument("--sequence-length", type=int, default=60)
@@ -209,7 +217,13 @@ def main(args: list[str] | None = None) -> None:
 
     if opts.mode == "train":
         from modelFactory.orchestrator import run_training_batch
-        results = run_training_batch(cfg, engine, symbols=opts.symbols, mode=opts.ml_mode)
+        results = run_training_batch(
+            cfg,
+            engine,
+            symbols=opts.symbols,
+            mode=opts.ml_mode,
+            symbol_source=opts.symbol_source,
+        )
         completed = sum(1 for r in results if r.status == "completed")
         skipped = sum(1 for r in results if r.status == "skipped")
         failed = sum(1 for r in results if r.status == "failed")
@@ -302,6 +316,7 @@ def _build_run_summary(
         "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
         "walkforward_enabled": bool(getattr(opts, "walkforward", False)),
         "ml_mode": str(getattr(opts, "ml_mode", "rebuild-all")),
+        "symbol_source": str(getattr(opts, "symbol_source", "candidates")),
         "feature_fingerprint": feature_fp,
         "champion_min_runs": int(getattr(opts, "champion_min_runs", 0)),
         "champion_min_days": int(getattr(opts, "champion_min_days", 0)),

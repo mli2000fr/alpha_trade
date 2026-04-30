@@ -8,6 +8,28 @@ def test_orchestrator_importable():
     assert hasattr(orchestrator, "__doc__")
 
 
+def test_run_training_batch_loads_stock_bars_daily_symbols_when_requested(monkeypatch, tmp_path) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(),
+        model=ModelConfig(max_epochs=1),
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+
+    monkeypatch.setattr(orchestrator, "load_stock_bars_daily_symbols", lambda engine: ["AAPL", "MSFT"])
+    monkeypatch.setattr(orchestrator, "load_candidate_symbols", lambda engine: [])
+    monkeypatch.setattr(
+        orchestrator,
+        "_train_worker",
+        lambda symbol, cfg: orchestrator.TrainResult(symbol, f"run-{symbol}", "completed"),
+    )
+
+    results = orchestrator.run_training_batch(cfg, engine=object(), symbols=None, symbol_source="stock-bars-daily")
+
+    assert [result.symbol for result in results] == ["AAPL", "MSFT"]
+
+
 def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -> None:
     cfg = TrainingConfig(
         data=DataConfig(enable_cross_sectional_features=True, benchmark_symbol="SPY"),

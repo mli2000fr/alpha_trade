@@ -482,6 +482,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[:6] == [train_cmd[0], "-u", "-m", "modelFactory", "--mode", "train"]
     assert "--accelerator" in train_cmd
     assert train_cmd[train_cmd.index("--accelerator") + 1] == "gpu"
+    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "candidates"
 
     # Drapeaux booléens activés par défaut (swing prod)
     for flag in (
@@ -572,6 +573,14 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
         assert flag in train_cmd, f"Flag attendu manquant : {flag}"
 
     assert train_cmd[train_cmd.index("--global-model-name") + 1] == "lightgbm"
+
+
+def test_build_pipeline_command_ml_train_can_target_all_stock_bars_daily_symbols() -> None:
+    options = PipelineLaunchOptions(ml_train_symbol_source="stock_bars_daily")
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "stock-bars-daily"
 
 
 def test_build_pipeline_command_import_news() -> None:

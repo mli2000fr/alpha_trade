@@ -375,3 +375,20 @@ def load_candidate_symbols(engine: Engine) -> list[str]:
     LOGGER.info("load_candidate_symbols count=%d", len(symbols))
     return symbols
 
+
+def load_stock_bars_daily_symbols(engine: Engine) -> list[str]:
+    """Charge tous les symboles distincts présents dans stock_bars_daily."""
+    query = text(
+        """
+        SELECT DISTINCT UPPER(TRIM(symbol)) AS symbol
+        FROM stock_bars_daily
+        WHERE COALESCE(TRIM(symbol), '') <> ''
+        ORDER BY symbol
+        """
+    )
+    with engine.connect() as conn:
+        symbols = [str(symbol) for symbol in conn.execute(query).scalars().all() if symbol]
+    LOGGER.info("load_stock_bars_daily_symbols count=%d", len(symbols))
+    return symbols
+
+

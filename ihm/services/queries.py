@@ -304,6 +304,14 @@ def get_candidates_count() -> int:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def get_stock_bars_daily_symbol_count() -> int:
+    v = safe_scalar(
+        "SELECT COUNT(DISTINCT symbol) FROM stock_bars_daily WHERE COALESCE(TRIM(symbol), '') <> ''"
+    )
+    return int(v) if v is not None else 0
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def get_top_candidates(n: int = 10) -> pd.DataFrame:
     return safe_query(f"""
         SELECT symbol, sector, final_score_sentiment, final_score, total_score, is_candidate

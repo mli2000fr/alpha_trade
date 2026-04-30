@@ -8,6 +8,7 @@ ré-exports ci-dessous.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import streamlit as st
@@ -87,7 +88,7 @@ from ihm.services.pipeline_runner import (
     format_command_for_display,
 )
 from ihm.services.process_registry import stop_pipeline_run
-from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
+from ihm.services.queries import get_alpha_scanner_dependency_diagnostic, get_stock_bars_daily_symbol_count
 
 
 def _render_ml_inspection_link(step_key: str) -> None:
@@ -108,6 +109,41 @@ def _render_ml_inspection_link(step_key: str) -> None:
         st.session_state[ML_SELECTED_SYMBOL_KEY] = selected_symbol
         st.session_state[NAVIGATION_TARGET_PAGE_KEY] = "ml"
         st.rerun()
+
+
+def _render_ml_train_all_symbols_block(
+    options: PipelineLaunchOptions,
+    *,
+    workflow_active: bool,
+    active_for_step: list[dict[str, object]],
+    db_config: dict[str, str | None],
+    all_runs: list[dict[str, object]],
+) -> None:
+    symbol_count = get_stock_bars_daily_symbol_count()
+    disabled = workflow_active or bool(active_for_step) or symbol_count <= 0
+    st.caption(
+        f"Universe complet ML Train : `{symbol_count}` symbole(s) distinct(s) trouvés dans `stock_bars_daily`."
+    )
+    if symbol_count <= 0:
+        st.warning("Aucun symbole exploitable trouvé dans `stock_bars_daily` pour lancer cet entraînement global.")
+    elif workflow_active:
+        st.caption("Workflow complet en cours : le lancement 'tous les symbols' est temporairement désactivé.")
+    elif active_for_step:
+        st.caption("Un run `ML Train` est déjà actif : le lancement 'tous les symbols' attend la fin de ce run.")
+
+    if st.button(
+        "Entrainer tous les symbols",
+        key="run_pipeline_step_ml_train_all_symbols",
+        use_container_width=True,
+        disabled=disabled,
+    ):
+        _launch_pipeline_step(
+            "ml_train",
+            "9. ML Train (Model Factory) — tous les symbols",
+            replace(options, ml_train_symbol_source="stock_bars_daily"),
+            db_config,
+            all_runs,
+        )
 
 
 def _render_launchable_step_panel(
@@ -193,6 +229,16 @@ def _render_launchable_step_panel(
                         db_config,
                         all_runs,
                     )
+
+            if step.key == "ml_train":
+                st.divider()
+                _render_ml_train_all_symbols_block(
+                    options,
+                    workflow_active=workflow_active,
+                    active_for_step=active_for_step,
+                    db_config=db_config,
+                    all_runs=all_runs,
+                )
 
             if step.key in {"ml_train", "ml_predict"}:
                 st.divider()

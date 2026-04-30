@@ -89,3 +89,14 @@ def test_cli_parser_accepts_champion_selection_options() -> None:
     assert opts.champion_selection_metric == "business_score"
 
 
+def test_cli_parser_accepts_symbol_source_option() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "train",
+        "--symbol-source", "stock-bars-daily",
+    ])
+
+    assert opts.symbol_source == "stock-bars-daily"
+
+

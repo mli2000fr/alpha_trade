@@ -155,6 +155,7 @@ MLTargetMode = Literal["binary", "swing_cash"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
+MLTrainSymbolSource = Literal["candidates", "stock_bars_daily"]
 ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
 ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
@@ -219,6 +220,7 @@ class PipelineLaunchOptions:
     ml_sequence_length: int = DEFAULT_ML_SEQUENCE_LENGTH
     ml_batch_size: int = DEFAULT_ML_BATCH_SIZE
     ml_hidden_size: int = DEFAULT_ML_HIDDEN_SIZE
+    ml_train_symbol_source: MLTrainSymbolSource = "candidates"
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
     ml_default_champion: MLDefaultChampion = DEFAULT_ML_DEFAULT_CHAMPION  # type: ignore[assignment]
@@ -590,6 +592,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     ca_end_date = _normalize_optional_date(options.corporate_actions_end_date)
     ml_benchmark_symbol = _normalize_symbol(options.ml_benchmark_symbol, DEFAULT_ML_BENCHMARK_SYMBOL)
     ml_artifacts_dir = (options.ml_artifacts_dir or "").strip() or DEFAULT_ML_ARTIFACTS_DIR
+    ml_symbol_source = "stock-bars-daily" if options.ml_train_symbol_source == "stock_bars_daily" else "candidates"
 
     if step_key == "import_alpaca_assets":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
@@ -853,6 +856,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.ml_batch_size),
             "--hidden-size",
             str(options.ml_hidden_size),
+            "--symbol-source",
+            ml_symbol_source,
             "--artifacts-dir",
             ml_artifacts_dir,
             "--max-workers",
