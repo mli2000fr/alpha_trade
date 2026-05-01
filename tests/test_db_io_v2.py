@@ -195,12 +195,12 @@ def test_load_candidates_asof_falls_back_to_latest_snapshot_before_trade_date(ca
                 ('2026-04-30', 'IBM',  'Tech', 0.10, 0.20, 0, 0.2, 0.1, 0.7, 'wf-001', 'walk_forward')
         """))
     repo = RiskRepository(engine=engine)
-    with caplog.at_level(logging.WARNING, logger="risk_management.db_io"):
+    with caplog.at_level(logging.INFO, logger="risk_management.db_io"):
         candidates = repo.load_candidates_asof(date(2026, 5, 1))
 
     assert [c.symbol for c in candidates] == ["AAPL", "MSFT"]
     assert candidates[0].snapshot_date == date(2026, 4, 30)
-    assert any("fallback PIT" in rec.message for rec in caplog.records)
+    assert any("PIT as-of" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.unit

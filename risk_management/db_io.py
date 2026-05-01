@@ -113,9 +113,9 @@ class RiskRepository:
                 )
                 return []
             if resolved_snapshot_date != trade_date:
-                LOGGER.warning(
-                    "load_candidates_asof | snapshot_date=%s utilise (fallback PIT) car aucun candidat archive pour trade_date=%s. "
-                    "Verifier que le screener a bien archive stock_scores_history pour la date demandee.",
+                LOGGER.info(
+                    "load_candidates_asof | snapshot_date=%s utilise (PIT as-of) pour trade_date=%s. "
+                    "Comportement attendu : sémantique point-in-time, le snapshot le plus récent <= trade_date est sélectionné.",
                     resolved_snapshot_date,
                     trade_date,
                 )

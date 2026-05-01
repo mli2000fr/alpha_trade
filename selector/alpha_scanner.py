@@ -813,10 +813,12 @@ class AlphaScanner:
         try:
             from screener.db_io import archive_scores_snapshot
 
-            archived = archive_scores_snapshot(self.engine, snapshot_date=date.today())
+            override = getattr(self, "snapshot_date_override", None)
+            archive_target = override if isinstance(override, date) else date.today()
+            archived = archive_scores_snapshot(self.engine, snapshot_date=archive_target)
             LOGGER.info(
                 "Archivage stock_scores_history apres alpha_scanner | snapshot_date=%s lignes=%s",
-                date.today(),
+                archive_target,
                 archived,
             )
         except Exception:
@@ -1136,6 +1138,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-anomaly-count", type=int, default=20, help="Nombre maximum d'anomalies accepté par titre")
     parser.add_argument("--sector-cap-ratio", type=float, default=0.30, help="Plafond par secteur, ex. 0.30 = 30%")
     parser.add_argument("--log-level", type=str, default="INFO", help="Niveau de log (DEBUG, INFO, WARNING, ERROR)")
+    parser.add_argument(
+        "--trade-date",
+        type=str,
+        default=None,
+        help="Date logique du run (YYYY-MM-DD). Utilisée comme snapshot_date pour l'archivage stock_scores_history. Défaut : aujourd'hui.",
+    )
     return parser
 
 
@@ -1194,6 +1202,11 @@ def main() -> None:
 
     started_at = _utc_now_naive()
     scanner = AlphaScanner(config=config)
+    if args.trade_date:
+        try:
+            scanner.snapshot_date_override = date.fromisoformat(args.trade_date.strip())
+        except ValueError:
+            LOGGER.warning("Argument --trade-date=%r invalide ; fallback date.today().", args.trade_date)
     result = scanner.run()
     finished_at = _utc_now_naive()
 

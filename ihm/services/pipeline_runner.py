@@ -687,6 +687,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--max-workers", str(screener_max_workers)])
         if not options.screener_enable_two_pass_loading:
             command.append("--disable-two-pass-loading")
+        if trade_date:
+            command.extend(["--trade-date", trade_date])
         return command
 
     if step_key == "sync_latest_quotes":
@@ -769,6 +771,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--max-workers", str(selector_max_workers)])
         if options.selector_require_above_ma200:
             command.append("--require-above-ma200")
+        if trade_date:
+            command.extend(["--trade-date", trade_date])
         return command
 
     if step_key == "sentiment_pipeline":

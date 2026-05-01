@@ -191,8 +191,14 @@ def run_screener_with_report(
     config: ScreenerConfig,
     max_workers: Optional[int] = None,
     as_of_date: Optional[date] = None,
+    snapshot_date: Optional[date] = None,
 ) -> tuple[pd.DataFrame, ScreenerRunReport]:
-    """Exécute le screener et retourne les scores ainsi qu'un rapport détaillé."""
+    """Exécute le screener et retourne les scores ainsi qu'un rapport détaillé.
+
+    :param snapshot_date: Date logique d'archivage dans ``stock_scores_history``.
+        Si None, défaut ``date.today()``. À spécifier quand le workflow IHM a figé
+        un ``trade_date`` partagé pour garantir la cohérence multi-étapes.
+    """
     started_at = _utc_now_naive()
     start_perf = time.perf_counter()
     engine = get_engine()
@@ -270,7 +276,7 @@ def run_screener_with_report(
     summary["symbols_final"] = len(final_scores)
 
     upsert_started = time.perf_counter()
-    upsert_scores_snapshot(engine, final_scores, chunksize=1000)
+    upsert_scores_snapshot(engine, final_scores, chunksize=1000, snapshot_date=snapshot_date)
     summary["upsert_seconds"] = round(time.perf_counter() - upsert_started, 4)
 
     finished_at = _utc_now_naive()
@@ -328,6 +334,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-historical-range-score", type=float, default=70.0, help="Score minimal de position dans le range historique")
     parser.add_argument("--first-pass-window-days", type=int, default=400, help="Fenêtre calendaire chargée en passe 1")
     parser.add_argument("--disable-two-pass-loading", action="store_true", help="Désactive le chargement en 2 passes")
+    parser.add_argument(
+        "--trade-date",
+        type=str,
+        default=None,
+        help="Date logique du run (YYYY-MM-DD). Utilisée comme snapshot_date pour l'archivage stock_scores_history. Défaut : aujourd'hui.",
+    )
     return parser
 
 
@@ -338,6 +350,12 @@ def main() -> None:
         fmt="%(asctime)s %(levelname)s %(message)s",
     )
     args = _build_arg_parser().parse_args()
+    snapshot_date_override: Optional[date] = None
+    if args.trade_date:
+        try:
+            snapshot_date_override = date.fromisoformat(args.trade_date.strip())
+        except ValueError:
+            LOGGER.warning("Argument --trade-date=%r invalide ; fallback date.today().", args.trade_date)
     config = ScreenerConfig(
         chunk_size=args.chunk_size,
         benchmark_symbol=args.benchmark,
@@ -348,7 +366,7 @@ def main() -> None:
         enable_two_pass_loading=not args.disable_two_pass_loading,
         first_pass_window_days=args.first_pass_window_days,
     )
-    _, report = run_screener_with_report(config=config, max_workers=args.max_workers)
+    _, report = run_screener_with_report(config=config, max_workers=args.max_workers, snapshot_date=snapshot_date_override)
     payload = attach_schema_version(report.to_summary_dict())
     # Phase 3.2.b — alerte si trop de chunks ont échoué.
     ratio = float(payload.get("chunk_failure_ratio") or 0.0)

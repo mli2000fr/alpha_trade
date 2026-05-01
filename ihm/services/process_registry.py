@@ -561,6 +561,22 @@ def _run_pipeline_workflow(
     steps = cast(tuple[PipelineStepDefinition, ...], _resolve_workflow_steps(include_ml_train=include_ml_train))
     total_steps = len(steps)
 
+    # Freeze le trade_date au démarrage du workflow pour garantir que toutes les
+    # étapes (5 → 11+) partagent la même date logique, même si l'exécution
+    # déborde sur le lendemain (ex : workflow lancé à 22h, étape 11 atteinte
+    # après minuit). Sans ce gel, chaque sous-étape ré-évalue date.today() à
+    # son démarrage, créant des incohérences (cf. PIT fallback dans risk_management).
+    from dataclasses import replace as _dc_replace
+    from datetime import date as _date
+
+    if not (options.trade_date or "").strip():
+        frozen_trade_date = _date.today().isoformat()
+        options = _dc_replace(options, trade_date=frozen_trade_date)
+        _append_workflow_event(
+            managed,
+            f"trade_date du workflow figé à {frozen_trade_date} (toutes les étapes utiliseront cette date).",
+        )
+
     try:
         workflow_mode = "avec étape 9 — ML Train" if include_ml_train else "sans étape 9 — ML Train"
         _append_workflow_event(managed, f"Démarrage du workflow complet ({total_steps} étapes exécutées, {workflow_mode}).")
