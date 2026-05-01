@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -48,6 +49,10 @@ TAIL_MAX_LINES = 400
 RUNS_DIR = PROJECT_ROOT / "artifacts" / "ihm_pipeline_runs"
 HISTORY_INDEX_PATH = RUNS_DIR / "history_index.json"
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+WINDOWS_POST_SUCCESS_CRASH_CODES = {3221226505}
+ML_TRAIN_SUMMARY_RE = re.compile(r"Completed:\s*(\d+)\s+Skipped:\s*(\d+)\s+Failed:\s*(\d+)")
+ML_TRAIN_ORCHESTRATOR_RE = re.compile(r"run_training_batch finished completed=(\d+) skipped=(\d+) failed=(\d+)")
+ML_PREDICT_SUMMARY_RE = re.compile(r"Model Factory — Predictions:\s*(\d+)\s+rows")
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +226,101 @@ def _extract_run_summary(line: str) -> dict[str, object] | None:
     return parsed if isinstance(parsed, dict) else {"value": parsed}
 
 
+def _summary_int(summary: dict[str, object], key: str) -> int:
+    value = summary.get(key, 0)
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _infer_ml_run_summary_from_logs(record: PipelineRunRecord) -> dict[str, object] | None:
+    stdout_path = Path(record.stdout_path)
+    if not stdout_path.exists():
+        return None
+
+    try:
+        stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+    if record.step_key == "ml_train":
+        matches = ML_TRAIN_SUMMARY_RE.findall(stdout_text)
+        if matches:
+            completed, skipped, failed = (int(value) for value in matches[-1])
+            total = completed + skipped + failed
+            if total > 0:
+                return {
+                    "mode": "train",
+                    "symbols_total": total,
+                    "symbols_completed": completed,
+                    "symbols_skipped": skipped,
+                    "symbols_failed": failed,
+                    "summary_source": "log_fallback_training_summary",
+                }
+
+        matches = ML_TRAIN_ORCHESTRATOR_RE.findall(stdout_text)
+        if matches:
+            completed, skipped, failed = (int(value) for value in matches[-1])
+            total = completed + skipped + failed
+            if total > 0:
+                return {
+                    "mode": "train",
+                    "symbols_total": total,
+                    "symbols_completed": completed,
+                    "symbols_skipped": skipped,
+                    "symbols_failed": failed,
+                    "summary_source": "log_fallback_orchestrator",
+                }
+
+    if record.step_key == "ml_predict":
+        matches = ML_PREDICT_SUMMARY_RE.findall(stdout_text)
+        if matches:
+            completed = int(matches[-1])
+            if completed > 0:
+                return {
+                    "mode": "predict",
+                    "symbols_total": completed,
+                    "symbols_completed": completed,
+                    "symbols_skipped": 0,
+                    "symbols_failed": 0,
+                    "summary_source": "log_fallback_predictions_summary",
+                }
+
+    return None
+
+
+def _override_failed_status_run_summary(record: PipelineRunRecord, returncode: int | None) -> dict[str, object] | None:
+    if returncode not in WINDOWS_POST_SUCCESS_CRASH_CODES:
+        return None
+    if record.step_key not in {"ml_train", "ml_predict"}:
+        return None
+    summary = dict(record.run_summary) if isinstance(record.run_summary, dict) else {}
+    if not summary:
+        inferred_summary = _infer_ml_run_summary_from_logs(record)
+        if inferred_summary is None:
+            return None
+        summary = inferred_summary
+
+    mode = str(summary.get("mode", "")).strip().lower()
+    total = _summary_int(summary, "symbols_total")
+    completed = _summary_int(summary, "symbols_completed")
+    skipped = _summary_int(summary, "symbols_skipped")
+    failed = _summary_int(summary, "symbols_failed")
+
+    if mode == "train":
+        return summary if total > 0 and failed == 0 and total == (completed + skipped) else None
+
+    if mode == "predict":
+        return summary if total > 0 and failed == 0 and total == (completed + skipped) else None
+
+    return None
+
+
+def _should_override_failed_status(record: PipelineRunRecord, returncode: int | None) -> bool:
+    return _override_failed_status_run_summary(record, returncode) is not None
+
+
 def _drain_events(managed: _ManagedRun) -> bool:
     stdout_chunk: list[str] = []
     stderr_chunk: list[str] = []
@@ -312,6 +412,15 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
         status = "completed" if returncode == 0 else "failed"
         final_code = returncode
 
+    override_summary = _override_failed_status_run_summary(managed.record, final_code) if status == "failed" else None
+    if override_summary is not None:
+        normalized_summary = dict(override_summary)
+        normalized_summary.setdefault("process_returncode_original", final_code)
+        normalized_summary.setdefault("completion_override", "windows_post_success_crash")
+        managed.record = _with_updates(managed.record, run_summary=normalized_summary)
+        status = "completed"
+        final_code = 0
+
     managed.record = _with_updates(
         managed.record,
         status=status,
@@ -320,7 +429,7 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
         finished_at=datetime.now().isoformat(timespec="seconds"),
     )
     try:
-        persist_pipeline_run_record_summary(managed.record)
+        persist_pipeline_run_record_summary(managed.record.to_state())
     except Exception:
         pass
     _persist_record(managed.record)
@@ -417,7 +526,7 @@ def _finalize_workflow_record(
         workflow_current_step_label=None,
     )
     try:
-        persist_pipeline_run_record_summary(record)
+        persist_pipeline_run_record_summary(record.to_state())
     except Exception:
         pass
     return record

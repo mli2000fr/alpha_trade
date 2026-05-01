@@ -334,3 +334,107 @@ def test_pipeline_workflow_includes_ml_train_when_requested(monkeypatch, tmp_pat
     assert "ml_train" in logs
 
 
+def test_should_override_failed_status_for_ml_train_windows_post_success_crash() -> None:
+    record = registry.PipelineRunRecord(
+        run_id="run-1",
+        step_key="ml_train",
+        step_label="9. ML Train (Model Factory)",
+        command=["python", "-m", "modelFactory", "--mode", "train"],
+        command_display="python -m modelFactory --mode train",
+        account_id="default",
+        status="running",
+        executed_at="2026-05-01T00:51:18",
+        run_summary={
+            "mode": "train",
+            "symbols_total": 21,
+            "symbols_completed": 21,
+            "symbols_skipped": 0,
+            "symbols_failed": 0,
+        },
+    )
+
+    assert registry._should_override_failed_status(record, 3221226505) is True
+
+
+def test_should_not_override_failed_status_when_ml_summary_reports_failures() -> None:
+    record = registry.PipelineRunRecord(
+        run_id="run-2",
+        step_key="ml_train",
+        step_label="9. ML Train (Model Factory)",
+        command=["python", "-m", "modelFactory", "--mode", "train"],
+        command_display="python -m modelFactory --mode train",
+        account_id="default",
+        status="running",
+        executed_at="2026-05-01T00:51:18",
+        run_summary={
+            "mode": "train",
+            "symbols_total": 21,
+            "symbols_completed": 20,
+            "symbols_skipped": 0,
+            "symbols_failed": 1,
+        },
+    )
+
+    assert registry._should_override_failed_status(record, 3221226505) is False
+
+
+def test_should_override_failed_status_for_ml_train_from_text_summary_logs(tmp_path: Path) -> None:
+    stdout_path = tmp_path / "stdout.log"
+    stdout_path.write_text(
+        "\n".join(
+            [
+                "2026-05-01 00:53:53,660 modelFactory.orchestrator INFO run_training_batch finished completed=21 skipped=0 failed=0",
+                "",
+                "============================================================",
+                "  Model Factory — Training Summary",
+                "  Completed: 21  Skipped: 0  Failed: 0",
+                "============================================================",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    record = registry.PipelineRunRecord(
+        run_id="run-3",
+        step_key="ml_train",
+        step_label="9. ML Train (Model Factory)",
+        command=["python", "-m", "modelFactory", "--mode", "train"],
+        command_display="python -m modelFactory --mode train",
+        account_id="default",
+        status="running",
+        executed_at="2026-05-01T00:51:18",
+        stdout_path=str(stdout_path),
+    )
+
+    assert registry._should_override_failed_status(record, 3221226505) is True
+
+
+def test_should_not_override_failed_status_for_ml_train_from_text_summary_logs_when_failed(tmp_path: Path) -> None:
+    stdout_path = tmp_path / "stdout.log"
+    stdout_path.write_text(
+        "\n".join(
+            [
+                "2026-05-01 00:53:53,660 modelFactory.orchestrator INFO run_training_batch finished completed=20 skipped=0 failed=1",
+                "",
+                "============================================================",
+                "  Model Factory — Training Summary",
+                "  Completed: 20  Skipped: 0  Failed: 1",
+                "============================================================",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    record = registry.PipelineRunRecord(
+        run_id="run-4",
+        step_key="ml_train",
+        step_label="9. ML Train (Model Factory)",
+        command=["python", "-m", "modelFactory", "--mode", "train"],
+        command_display="python -m modelFactory --mode train",
+        account_id="default",
+        status="running",
+        executed_at="2026-05-01T00:51:18",
+        stdout_path=str(stdout_path),
+    )
+
+    assert registry._should_override_failed_status(record, 3221226505) is False
+
+

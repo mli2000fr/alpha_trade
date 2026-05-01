@@ -232,10 +232,6 @@ def main(args: list[str] | None = None) -> None:
             if isinstance(getattr(r, "metrics", None), dict)
             and r.metrics.get("champion_quarantine") is True
         )
-        print(f"\n{'=' * 60}")
-        print(f"  Model Factory — Training Summary")
-        print(f"  Completed: {completed}  Skipped: {skipped}  Failed: {failed}")
-        print(f"{'=' * 60}")
         finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
         _emit_run_summary(_build_run_summary(
             mode="train",
@@ -250,6 +246,10 @@ def main(args: list[str] | None = None) -> None:
             failed=failed,
             quarantined=quarantined,
         ))
+        print(f"\n{'=' * 60}")
+        print(f"  Model Factory — Training Summary")
+        print(f"  Completed: {completed}  Skipped: {skipped}  Failed: {failed}")
+        print(f"{'=' * 60}")
 
     elif opts.mode == "predict":
         from modelFactory.db_registry import load_candidate_symbols

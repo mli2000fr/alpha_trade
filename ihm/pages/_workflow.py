@@ -134,10 +134,9 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
         st.subheader("🚀 Workflow complet 1 → 14")
         include_ml_train = st.checkbox(
             "Inclure l'étape 9 — ML Train (Model Factory)",
-            value=bool(st.session_state.get(WORKFLOW_INCLUDE_ML_TRAIN_KEY, False)),
+            value=bool(st.session_state.get(WORKFLOW_INCLUDE_ML_TRAIN_KEY, True)),
             key=WORKFLOW_INCLUDE_ML_TRAIN_KEY,
             disabled=bool(active_runs),
-            help="Par défaut, le workflow quotidien complet saute l'étape 9 pour éviter un retrain ML inutile chaque jour.",
         )
         effective_steps = 14 if include_ml_train else 13
         st.caption(

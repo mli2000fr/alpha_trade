@@ -96,7 +96,7 @@ def test_build_watcher_handoff_rows_exposes_post_execution_launch_guidance() -> 
     assert any(row["Mode"] == "Task Scheduler" for row in rows)
 
 
-def test_workflow_launcher_starts_without_ml_train_by_default(monkeypatch) -> None:
+def test_workflow_launcher_starts_with_ml_train_by_default(monkeypatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
     monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
@@ -108,7 +108,7 @@ def test_workflow_launcher_starts_without_ml_train_by_default(monkeypatch) -> No
     monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
     monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
     monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
-    monkeypatch.setattr(workflow_page.st, "checkbox", lambda *args, **kwargs: False)
+    monkeypatch.setattr(workflow_page.st, "checkbox", lambda *args, **kwargs: kwargs.get("value", False))
     monkeypatch.setattr(workflow_page.st, "button", lambda *args, **kwargs: True)
 
     def _fake_start_pipeline_workflow(options, **kwargs):
@@ -119,7 +119,7 @@ def test_workflow_launcher_starts_without_ml_train_by_default(monkeypatch) -> No
 
     workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
 
-    assert captured["include_ml_train"] is False
+    assert captured["include_ml_train"] is True
 
 
 def test_workflow_launcher_can_include_ml_train(monkeypatch) -> None:
