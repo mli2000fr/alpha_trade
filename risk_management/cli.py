@@ -86,24 +86,27 @@ def main(args: list[str] | None = None) -> None:
     effective_account_id = account_snapshot.account_id if account_snapshot is not None else requested_account_id
     equity_breakdown = repo.load_account_equity_breakdown(effective_account_id, trade_date)
     if account_snapshot is None:
-        if args.dry_run or requested_account_id is None:
-            effective_equity = float(args.account_equity)
-            pnl_snapshot = PnLSnapshot(
-                portfolio_high_watermark=effective_equity,
-                portfolio_current_value=effective_equity,
-                daily_pnl=0.0,
-            )
-            LOGGER.warning(
-                "Aucun account_risk_snapshot pour account=%s date=%s ; fallback %s sur --account-equity=%.2f.",
-                raw_account_id or "default",
-                trade_date,
-                "dry-run" if args.dry_run else "compte implicite",
-                effective_equity,
-            )
-        else:
-            raise RuntimeError(
-                f"Aucun account_risk_snapshot disponible pour account={raw_account_id or 'default'} au {trade_date}."
-            )
+        # Fallback systématique sur --account-equity quand aucun snapshot broker
+        # n'est disponible. Cas typiques :
+        #   - premier run de la journée pour un compte (broker_account_snapshots
+        #     n'est rempli qu'après l'étape 12 — Execution paper/live).
+        #   - switch vers un compte qui n'a jamais exécuté l'étape 12.
+        #   - mode simulate (jamais d'écriture broker_account_snapshots).
+        # Le sizing utilise --account-equity de l'IHM ; le risque est borné
+        # par cette valeur, donc safe même en multi-comptes.
+        effective_equity = float(args.account_equity)
+        pnl_snapshot = PnLSnapshot(
+            portfolio_high_watermark=effective_equity,
+            portfolio_current_value=effective_equity,
+            daily_pnl=0.0,
+        )
+        LOGGER.warning(
+            "Aucun account_risk_snapshot pour account=%s date=%s ; fallback sur --account-equity=%.2f. "
+            "Pour utiliser l'equity broker reel, lancez l'etape 12 (Execution paper/live) sur ce compte.",
+            raw_account_id or "default",
+            trade_date,
+            effective_equity,
+        )
     else:
         effective_equity = float(account_snapshot.equity)
         daily_pnl = account_snapshot.daily_total_pnl
