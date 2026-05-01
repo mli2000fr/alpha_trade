@@ -79,6 +79,7 @@ DEFAULT_RISK_PER_TRADE_PCT = 0.01            # 1 % du capital risqué par trade
 DEFAULT_RISK_MAX_POSITIONS = 15              # 15 positions max (vs 20 backend)
 DEFAULT_RISK_MAX_POSITION_WEIGHT = 0.08      # 8 % max par ligne
 DEFAULT_RISK_MAX_SECTOR_WEIGHT = 0.30        # 30 % max par secteur
+DEFAULT_RISK_MIN_POSITION_NOTIONAL = 500.0   # ticket minimum en dollars
 DEFAULT_RISK_SCORE_WEIGHT = 0.40             # poids final_score dans la conviction
 DEFAULT_RISK_PREDICTION_WEIGHT = 0.60        # poids ML predict dans la conviction
 DEFAULT_RISK_CORRELATION_THRESHOLD = 0.80
@@ -249,6 +250,7 @@ class PipelineLaunchOptions:
     risk_max_positions: int = DEFAULT_RISK_MAX_POSITIONS
     risk_max_position_weight: float = DEFAULT_RISK_MAX_POSITION_WEIGHT
     risk_max_sector_weight: float = DEFAULT_RISK_MAX_SECTOR_WEIGHT
+    risk_min_position_notional: float = DEFAULT_RISK_MIN_POSITION_NOTIONAL
     risk_score_weight: float = DEFAULT_RISK_SCORE_WEIGHT
     risk_prediction_weight: float = DEFAULT_RISK_PREDICTION_WEIGHT
     risk_correlation_threshold: float = DEFAULT_RISK_CORRELATION_THRESHOLD
@@ -978,6 +980,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.risk_max_position_weight),
             "--max-sector-weight",
             str(options.risk_max_sector_weight),
+            "--min-position-notional",
+            str(options.risk_min_position_notional),
             "--score-weight",
             str(options.risk_score_weight),
             "--prediction-weight",

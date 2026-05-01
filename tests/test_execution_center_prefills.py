@@ -132,3 +132,33 @@ def test_apply_execution_prefills_preserves_manual_risk_equity_for_same_account(
     assert session_state["pipeline_risk_account_equity"] == 3_500.0
 
 
+def test_apply_selected_risk_preset_for_small_account_sets_expected_values(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        execution_center.RISK_PRESET_KEY: execution_center.RISK_PRESET_SMALL_ACCOUNT_2000,
+    }
+    monkeypatch.setattr(execution_center.st, "session_state", session_state, raising=False)
+
+    execution_center._apply_selected_risk_preset()
+
+    assert session_state["pipeline_risk_account_equity"] == 2_000.0
+    assert session_state["pipeline_risk_per_trade_pct"] == 0.02
+    assert session_state["pipeline_risk_max_position_weight"] == 0.15
+    assert session_state["pipeline_risk_min_position_notional"] == 150.0
+    assert session_state[execution_center.RISK_PRESET_APPLIED_KEY] == execution_center.RISK_PRESET_SMALL_ACCOUNT_2000
+
+
+def test_apply_selected_risk_preset_custom_does_not_override_existing_values(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        execution_center.RISK_PRESET_KEY: execution_center.RISK_PRESET_CUSTOM,
+        "pipeline_risk_account_equity": 3_000.0,
+        "pipeline_risk_min_position_notional": 180.0,
+    }
+    monkeypatch.setattr(execution_center.st, "session_state", session_state, raising=False)
+
+    execution_center._apply_selected_risk_preset()
+
+    assert session_state["pipeline_risk_account_equity"] == 3_000.0
+    assert session_state["pipeline_risk_min_position_notional"] == 180.0
+    assert session_state[execution_center.RISK_PRESET_APPLIED_KEY] == execution_center.RISK_PRESET_CUSTOM
+
+

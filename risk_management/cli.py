@@ -26,6 +26,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-positions", type=int, default=20)
     p.add_argument("--max-position-weight", type=float, default=0.10)
     p.add_argument("--max-sector-weight", type=float, default=0.30)
+    p.add_argument("--min-position-notional", type=float, default=500.0)
     p.add_argument("--trade-date", type=str, default=None, help="YYYY-MM-DD (défaut: aujourd'hui)")
     p.add_argument("--dry-run", action="store_true", default=False)
     p.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -147,6 +148,7 @@ def main(args: list[str] | None = None) -> None:
         max_positions=args.max_positions,
         max_position_weight=args.max_position_weight,
         max_sector_weight=args.max_sector_weight,
+        min_position_notional=args.min_position_notional,
         dry_run=args.dry_run,
         correlation_threshold=args.correlation_threshold,
         correlation_lookback_days=args.correlation_lookback_days,

@@ -222,6 +222,67 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
     assert captured["summary"]["account_snapshot_trade_date"] is None
 
 
+def test_cli_main_accepts_min_position_notional_argument(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {
+                "account_id": account_id or "default",
+                "trade_date": trade_date.isoformat(),
+                "cash": None,
+                "settled_cash": None,
+                "long_positions_value": None,
+                "short_positions_value": None,
+                "dividends_ledger": None,
+                "total": None,
+                "source": "missing",
+                "snapshot_at": None,
+            }
+
+        def load_candidates_asof(self, trade_date):
+            return []
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            return {}
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame()
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl):
+            captured["config"] = config
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            return []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+
+    cli.main([
+        "--trade-date", "2026-05-01",
+        "--account-equity", "2000",
+        "--min-position-notional", "150",
+    ])
+
+    assert captured["config"].min_position_notional == pytest.approx(150.0)
+
+
 def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

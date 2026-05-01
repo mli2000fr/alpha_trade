@@ -94,6 +94,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_RISK_CORRELATION_MIN_OVERLAP,
     DEFAULT_RISK_CORRELATION_THRESHOLD,
     DEFAULT_RISK_ENABLE_KELLY,
+    DEFAULT_RISK_MIN_POSITION_NOTIONAL,
     DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER,
     DEFAULT_RISK_LOG_LEVEL,
     DEFAULT_RISK_MAX_POSITION_WEIGHT,
@@ -149,6 +150,68 @@ __all__ = [
 EXECUTION_MODE_ACCOUNT_KEY = "pipeline_execution_mode_account_id"
 DETECTED_BROKER_MODE_KEY = "pipeline_detected_broker_mode"
 DETECTED_BROKER_MODE_ACCOUNT_KEY = "pipeline_detected_broker_mode_account_id"
+RISK_PRESET_KEY = "pipeline_risk_preset"
+RISK_PRESET_APPLIED_KEY = "pipeline_risk_preset_applied"
+RISK_PRESET_CUSTOM = "custom"
+RISK_PRESET_SWING_DEFAULT = "swing_default"
+RISK_PRESET_SMALL_ACCOUNT_2000 = "small_account_2000"
+RISK_PRESET_OPTIONS: tuple[str, ...] = (
+    RISK_PRESET_CUSTOM,
+    RISK_PRESET_SWING_DEFAULT,
+    RISK_PRESET_SMALL_ACCOUNT_2000,
+)
+RISK_PRESET_METADATA: dict[str, dict[str, object]] = {
+    RISK_PRESET_SWING_DEFAULT: {
+        "label": "Swing par défaut",
+        "description": (
+            "Preset historique du projet : capital 100 k$, 1 % de risque/trade, "
+            "8 % max/ligne, ticket minimum 500 $."
+        ),
+        "values": {
+            "pipeline_risk_account_equity": 100_000.0,
+            "pipeline_risk_per_trade_pct": DEFAULT_RISK_PER_TRADE_PCT,
+            "pipeline_risk_max_position_weight": DEFAULT_RISK_MAX_POSITION_WEIGHT,
+            "pipeline_risk_min_position_notional": DEFAULT_RISK_MIN_POSITION_NOTIONAL,
+        },
+    },
+    RISK_PRESET_SMALL_ACCOUNT_2000: {
+        "label": "Petit compte 2 000 $",
+        "description": (
+            "Preset small account : equity 2 000 $, 2 % de risque/trade, "
+            "15 % max/ligne, ticket minimum 150 $."
+        ),
+        "values": {
+            "pipeline_risk_account_equity": 2_000.0,
+            "pipeline_risk_per_trade_pct": 0.02,
+            "pipeline_risk_max_position_weight": 0.15,
+            "pipeline_risk_min_position_notional": 150.0,
+        },
+    },
+}
+
+
+def _format_risk_preset_label(preset_key: str) -> str:
+    if preset_key == RISK_PRESET_CUSTOM:
+        return "Personnalisé"
+    meta = RISK_PRESET_METADATA.get(preset_key)
+    return str(meta.get("label")) if meta is not None else preset_key
+
+
+def _apply_selected_risk_preset() -> None:
+    selected_key = str(st.session_state.get(RISK_PRESET_KEY, RISK_PRESET_CUSTOM) or RISK_PRESET_CUSTOM)
+    last_applied = str(st.session_state.get(RISK_PRESET_APPLIED_KEY, "") or "")
+    if selected_key == last_applied:
+        return
+    if selected_key == RISK_PRESET_CUSTOM:
+        st.session_state[RISK_PRESET_APPLIED_KEY] = selected_key
+        return
+    meta = RISK_PRESET_METADATA.get(selected_key)
+    if meta is None:
+        st.session_state[RISK_PRESET_APPLIED_KEY] = RISK_PRESET_CUSTOM
+        return
+    for session_key, value in dict(meta.get("values") or {}).items():
+        st.session_state[str(session_key)] = value
+    st.session_state[RISK_PRESET_APPLIED_KEY] = selected_key
 
 
 def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecutionDefaults | None:
@@ -492,6 +555,25 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "Pilote le sizing et les contraintes du portefeuille cible. "
             "Défauts swing : 1 % risque/trade, 15 positions max, 8 % max/ligne, conviction = 40 % score + 60 % ML."
         )
+        risk_preset_key = cast(
+            str,
+            st.selectbox(
+                "Risk — preset",
+                options=list(RISK_PRESET_OPTIONS),
+                index=list(RISK_PRESET_OPTIONS).index(
+                    cast(str, st.session_state.get(RISK_PRESET_KEY, RISK_PRESET_CUSTOM))
+                    if st.session_state.get(RISK_PRESET_KEY, RISK_PRESET_CUSTOM) in RISK_PRESET_OPTIONS
+                    else RISK_PRESET_CUSTOM
+                ),
+                format_func=_format_risk_preset_label,
+                key=RISK_PRESET_KEY,
+                help="Choisis un preset pour remplir rapidement les paramètres risk. Les valeurs restent éditables ensuite.",
+            ),
+        )
+        _apply_selected_risk_preset()
+        selected_risk_preset_meta = RISK_PRESET_METADATA.get(risk_preset_key)
+        if selected_risk_preset_meta is not None:
+            st.caption(str(selected_risk_preset_meta.get("description") or ""))
         risk_col1, risk_col2, risk_col3, risk_col4 = st.columns(4)
         with risk_col1:
             risk_per_trade_pct = float(
@@ -537,6 +619,17 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     step=0.05,
                     format="%.2f",
                     key="pipeline_risk_max_sector_weight",
+                )
+            )
+            risk_min_position_notional = float(
+                st.number_input(
+                    "Risk — ticket minimum ($)",
+                    min_value=0.0,
+                    value=float(st.session_state.get("pipeline_risk_min_position_notional", DEFAULT_RISK_MIN_POSITION_NOTIONAL)),
+                    step=10.0,
+                    format="%.2f",
+                    key="pipeline_risk_min_position_notional",
+                    help="Montant notionnel minimum par position. Pour un petit compte, réduis cette valeur pour éviter les rejets systématiques.",
                 )
             )
         with risk_col3:
@@ -2016,6 +2109,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             risk_max_positions=int(risk_max_positions),
             risk_max_position_weight=float(risk_max_position_weight),
             risk_max_sector_weight=float(risk_max_sector_weight),
+            risk_min_position_notional=float(risk_min_position_notional),
             risk_score_weight=float(risk_score_weight),
             risk_prediction_weight=float(risk_prediction_weight),
             risk_correlation_threshold=float(risk_correlation_threshold),

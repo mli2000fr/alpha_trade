@@ -46,6 +46,7 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
         account_id="test1",
         trade_date="2026-04-19",
         risk_account_equity=125000.0,
+        risk_min_position_notional=150.0,
         execution_mode="paper",
         execution_run_id="risk-123",
         allow_outside_rth=True,
@@ -63,6 +64,8 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert risk_command[-2:] == ["--account", "test1"]
     assert "--trade-date" in risk_command
     assert "125000.0" in risk_command
+    assert "--min-position-notional" in risk_command
+    assert risk_command[risk_command.index("--min-position-notional") + 1] == "150.0"
 
     assert execution_command[:3] == [execution_command[0], "-u", str(PROJECT_ROOT / "run_execution.py")]
     assert execution_command[3] == "paper"
@@ -105,6 +108,8 @@ def test_build_pipeline_command_omits_account_for_global_steps() -> None:
         "70.0",
         "--first-pass-window-days",
         "400",
+        "--trade-date",
+        "2026-04-19",
     ]
 
 
