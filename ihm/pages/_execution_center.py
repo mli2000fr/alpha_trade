@@ -211,10 +211,20 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
 
         col1, col2, col3 = st.columns(3)
         with col1:
+            # Pré-remplit avec la date du jour pour garantir la cohérence inter-étapes
+            # quand on lance les pipelines un par un (notamment si l'exécution
+            # déborde sur le lendemain). L'utilisateur peut écraser pour rejouer
+            # un PIT historique.
+            if "pipeline_trade_date" not in st.session_state:
+                st.session_state["pipeline_trade_date"] = date.today().isoformat()
             trade_date = st.text_input(
                 "Trade date / as-of (YYYY-MM-DD)",
                 key="pipeline_trade_date",
-                help="Utilisé par Signal Aggregator, ML Predict, Risk, Execution et Corporate Actions Apply.",
+                help=(
+                    "Date logique partagée par toutes les étapes (Screener, Alpha Scanner, "
+                    "Signal Aggregator, ML Predict, Risk, Execution, Corporate Actions Apply). "
+                    "Pré-rempli avec la date du jour ; modifiez pour rejouer un PIT historique."
+                ),
             )
         with col2:
             risk_account_equity = st.number_input(

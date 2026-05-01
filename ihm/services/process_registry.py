@@ -786,6 +786,15 @@ def start_pipeline_run(
     parent_run_id: str | None = None,
 ) -> PipelineRunRecord:
     """Démarre un pipeline en arrière-plan et retourne son enregistrement initial."""
+    # Freeze trade_date au lancement si non défini, pour éviter qu'un sous-process
+    # appelle date.today() après minuit alors que les étapes amont ont stamped
+    # une date différente. Idempotent : si un workflow parent a déjà figé la
+    # date, ce bloc est no-op.
+    if not (options.trade_date or "").strip():
+        from dataclasses import replace as _dc_replace
+        from datetime import date as _date
+
+        options = _dc_replace(options, trade_date=_date.today().isoformat())
     command = build_pipeline_command(step_key, options)
     return start_managed_run(
         step_key=step_key,
