@@ -28,6 +28,8 @@ from ihm.pages._alpha_scanner_diagnostics import (
 )
 from ihm.pages._data_integrity import _render_import_news_panel
 from ihm.pages._execution_center import (
+    DETECTED_ACCOUNT_TYPE_KEY,
+    DETECTED_PDT_RULE_KEY,
     _apply_execution_prefills,
     _build_execution_prefill_caption,
     _build_launch_options,
@@ -131,13 +133,77 @@ def _build_execution_mode_banner_payload(
     return severity, message
 
 
+def _build_execution_account_banner_payload(
+    options: PipelineLaunchOptions,
+    *,
+    detected_account_type: str | None = None,
+    detected_pdt_rule: str | None = None,
+) -> tuple[str, str]:
+    account_type = str(options.execution_account_type or "cash").strip().lower() or "cash"
+    pdt_rule = str(options.execution_pdt_rule or "off").strip().lower() or "off"
+
+    if account_type == "cash" and pdt_rule == "off":
+        severity = "success"
+        message = (
+            "🟢 **PARAMÈTRES COMPTE EXÉCUTION — PROFIL SWING CASH** — "
+            f"l'étape 12 utilisera `type de compte={account_type}` et `règle PDT={pdt_rule}`."
+        )
+    elif account_type == "margin" and pdt_rule == "auto":
+        severity = "warning"
+        message = (
+            "🟡 **PARAMÈTRES COMPTE EXÉCUTION — PROFIL MARGIN / PDT** — "
+            f"l'étape 12 utilisera `type de compte={account_type}` et `règle PDT={pdt_rule}`."
+        )
+    else:
+        severity = "info"
+        message = (
+            "ℹ️ **PARAMÈTRES COMPTE EXÉCUTION — CONFIGURATION SPÉCIFIQUE** — "
+            f"l'étape 12 utilisera `type de compte={account_type}` et `règle PDT={pdt_rule}`."
+        )
+
+    detected_parts: list[str] = []
+    mismatches: list[str] = []
+    normalized_detected_account_type = (detected_account_type or "").strip().lower() or None
+    normalized_detected_pdt_rule = (detected_pdt_rule or "").strip().lower() or None
+    if normalized_detected_account_type in {"margin", "cash"}:
+        detected_parts.append(f"type broker détecté : `{normalized_detected_account_type}`")
+        if account_type != normalized_detected_account_type:
+            mismatches.append("type de compte")
+    if normalized_detected_pdt_rule in {"auto", "off"}:
+        detected_parts.append(f"PDT détecté : `{normalized_detected_pdt_rule}`")
+        if pdt_rule != normalized_detected_pdt_rule:
+            mismatches.append("règle PDT")
+
+    if detected_parts:
+        message += " Préremplissage broker pour ce compte : " + " ; ".join(detected_parts) + "."
+    if mismatches:
+        severity = "error"
+        labels = ", ".join(mismatches)
+        message += (
+            f" ⚠️ Incohérence critique : le réglage actuellement sélectionné diffère du broker détecté pour {labels}."
+        )
+
+    return severity, message
+
+
 def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
     detected_mode = None
     detected_account = str(st.session_state.get("pipeline_detected_broker_mode_account_id") or "").strip()
     if detected_account == str(options.account_id or "").strip():
         detected_mode = str(st.session_state.get("pipeline_detected_broker_mode") or "").strip() or None
+        detected_account_type = str(st.session_state.get(DETECTED_ACCOUNT_TYPE_KEY) or "").strip() or None
+        detected_pdt_rule = str(st.session_state.get(DETECTED_PDT_RULE_KEY) or "").strip() or None
+    else:
+        detected_account_type = None
+        detected_pdt_rule = None
     severity, message = _build_execution_mode_banner_payload(options, detected_broker_mode=detected_mode)
     getattr(st, severity)(message)
+    account_severity, account_message = _build_execution_account_banner_payload(
+        options,
+        detected_account_type=detected_account_type,
+        detected_pdt_rule=detected_pdt_rule,
+    )
+    getattr(st, account_severity)(account_message)
 
 
 def _render_ml_inspection_link(step_key: str) -> None:

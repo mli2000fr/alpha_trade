@@ -150,6 +150,8 @@ __all__ = [
 EXECUTION_MODE_ACCOUNT_KEY = "pipeline_execution_mode_account_id"
 DETECTED_BROKER_MODE_KEY = "pipeline_detected_broker_mode"
 DETECTED_BROKER_MODE_ACCOUNT_KEY = "pipeline_detected_broker_mode_account_id"
+DETECTED_ACCOUNT_TYPE_KEY = "pipeline_detected_account_type"
+DETECTED_PDT_RULE_KEY = "pipeline_detected_pdt_rule"
 RISK_PRESET_KEY = "pipeline_risk_preset"
 RISK_PRESET_APPLIED_KEY = "pipeline_risk_preset_applied"
 RISK_PRESET_CUSTOM = "custom"
@@ -219,6 +221,8 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
     if cleaned_account_id is None:
         st.session_state.pop(DETECTED_BROKER_MODE_KEY, None)
         st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
+        st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
+        st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
         return None
 
     try:
@@ -226,18 +230,30 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
     except Exception:
         st.session_state.pop(DETECTED_BROKER_MODE_KEY, None)
         st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
+        st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
+        st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
         st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
         return None
 
     if defaults is None:
         st.session_state.pop(DETECTED_BROKER_MODE_KEY, None)
         st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
+        st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
+        st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
         st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
         return None
 
     account_changed = st.session_state.get(EXECUTION_DEFAULTS_ACCOUNT_KEY) != cleaned_account_id
     st.session_state[DETECTED_BROKER_MODE_KEY] = defaults.broker_mode
     st.session_state[DETECTED_BROKER_MODE_ACCOUNT_KEY] = cleaned_account_id
+    if defaults.account_type in {"margin", "cash"}:
+        st.session_state[DETECTED_ACCOUNT_TYPE_KEY] = defaults.account_type
+    else:
+        st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
+    if defaults.pdt_rule in {"auto", "off"}:
+        st.session_state[DETECTED_PDT_RULE_KEY] = defaults.pdt_rule
+    else:
+        st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
     if defaults.equity is not None and defaults.equity > 0 and (
         account_changed or "pipeline_risk_account_equity" not in st.session_state
     ):

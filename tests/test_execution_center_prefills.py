@@ -25,6 +25,7 @@ def test_apply_execution_prefills_auto_selects_execution_mode_from_broker_mode(m
     assert defaults is not None
     assert session_state[execution_center.DETECTED_BROKER_MODE_KEY] == "live"
     assert session_state[execution_center.DETECTED_BROKER_MODE_ACCOUNT_KEY] == "live1"
+    assert session_state[execution_center.DETECTED_ACCOUNT_TYPE_KEY] == "margin"
     assert session_state[execution_center.EXECUTION_DEFAULTS_ACCOUNT_KEY] == "live1"
     assert session_state[execution_center.EXECUTION_MODE_ACCOUNT_KEY] == "live1"
     assert session_state["pipeline_execution_mode"] == "live"
@@ -106,6 +107,8 @@ def test_apply_execution_prefills_sets_risk_equity_from_broker_equity_on_account
     execution_center._apply_execution_prefills("paper2")
 
     assert session_state["pipeline_risk_account_equity"] == 2_000.0
+    assert session_state[execution_center.DETECTED_ACCOUNT_TYPE_KEY] == "cash"
+    assert session_state[execution_center.DETECTED_PDT_RULE_KEY] == "off"
 
 
 def test_apply_execution_prefills_preserves_manual_risk_equity_for_same_account(monkeypatch) -> None:
