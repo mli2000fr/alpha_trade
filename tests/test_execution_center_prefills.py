@@ -84,3 +84,51 @@ def test_apply_execution_prefills_overrides_mode_when_switching_account(monkeypa
     assert session_state[execution_center.EXECUTION_MODE_ACCOUNT_KEY] == "paper2"
 
 
+def test_apply_execution_prefills_sets_risk_equity_from_broker_equity_on_account_switch(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        execution_center.EXECUTION_DEFAULTS_ACCOUNT_KEY: "paper1",
+        "pipeline_risk_account_equity": 100_000.0,
+    }
+    monkeypatch.setattr(execution_center.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(
+        execution_center,
+        "get_pipeline_execution_defaults",
+        lambda account_id: PipelineExecutionDefaults(
+            account_id=str(account_id),
+            broker_mode="paper",
+            equity=2_000.0,
+            account_type="cash",
+            pdt_rule="off",
+            swing_only=None,
+        ),
+    )
+
+    execution_center._apply_execution_prefills("paper2")
+
+    assert session_state["pipeline_risk_account_equity"] == 2_000.0
+
+
+def test_apply_execution_prefills_preserves_manual_risk_equity_for_same_account(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        execution_center.EXECUTION_DEFAULTS_ACCOUNT_KEY: "paper1",
+        "pipeline_risk_account_equity": 3_500.0,
+    }
+    monkeypatch.setattr(execution_center.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(
+        execution_center,
+        "get_pipeline_execution_defaults",
+        lambda account_id: PipelineExecutionDefaults(
+            account_id=str(account_id),
+            broker_mode="paper",
+            equity=2_000.0,
+            account_type="cash",
+            pdt_rule="off",
+            swing_only=None,
+        ),
+    )
+
+    execution_center._apply_execution_prefills("paper1")
+
+    assert session_state["pipeline_risk_account_equity"] == 3_500.0
+
+

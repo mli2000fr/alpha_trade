@@ -175,6 +175,13 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
     account_changed = st.session_state.get(EXECUTION_DEFAULTS_ACCOUNT_KEY) != cleaned_account_id
     st.session_state[DETECTED_BROKER_MODE_KEY] = defaults.broker_mode
     st.session_state[DETECTED_BROKER_MODE_ACCOUNT_KEY] = cleaned_account_id
+    if defaults.equity is not None and defaults.equity > 0 and (
+        account_changed or "pipeline_risk_account_equity" not in st.session_state
+    ):
+        # Aligne l'étape 11 avec l'equity du compte broker sélectionné.
+        # On ne force pas si l'utilisateur a déjà surchargé manuellement la
+        # valeur sur le même compte pendant la session.
+        st.session_state["pipeline_risk_account_equity"] = float(defaults.equity)
     if defaults.account_type in {"margin", "cash"} and (
         account_changed or "pipeline_execution_account_type" not in st.session_state
     ):

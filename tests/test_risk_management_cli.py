@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from datetime import date
 
 import pandas as pd
 import pytest
 
 from risk_management import cli
+from risk_management.models import AccountRiskSnapshot
 
 def test_cli_importable():
     assert hasattr(cli, "__doc__")
@@ -218,4 +220,76 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
     assert captured["config"].account_equity == pytest.approx(50_000.0)
     assert captured["summary"]["effective_equity"] == pytest.approx(50_000.0)
     assert captured["summary"]["account_snapshot_trade_date"] is None
+
+
+def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return AccountRiskSnapshot(
+                account_id=account_id or "default",
+                trade_date=date(2026, 4, 30),
+                cash=80_000.0,
+                equity=80_000.0,
+                buying_power=80_000.0,
+                high_watermark=80_000.0,
+            )
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {
+                "account_id": account_id or "default",
+                "trade_date": trade_date.isoformat(),
+                "cash": 80_000.0,
+                "settled_cash": 80_000.0,
+                "long_positions_value": 0.0,
+                "short_positions_value": 0.0,
+                "dividends_ledger": 0.0,
+                "total": 80_000.0,
+                "source": "broker_account_snapshots",
+                "snapshot_at": None,
+            }
+
+        def load_candidates_asof(self, trade_date):
+            return []
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            return {}
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame()
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl):
+            captured["config"] = config
+            captured["pnl"] = pnl
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            return []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+
+    cli.main([
+        "--trade-date", "2026-05-01",
+        "--account", "test1",
+        "--account-equity", "2000",
+    ])
+
+    assert captured["config"].account_equity == pytest.approx(2_000.0)
+    assert captured["summary"]["effective_equity"] == pytest.approx(2_000.0)
+    assert captured["summary"]["account_snapshot_trade_date"] == "2026-04-30"
+
 

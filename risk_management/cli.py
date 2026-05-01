@@ -76,6 +76,7 @@ def main(args: list[str] | None = None) -> None:
 
     trade_date = datetime.strptime(args.trade_date, "%Y-%m-%d").date() if args.trade_date else date.today()
     raw_account_id = (args.account or "").strip() or None
+    requested_equity = float(args.account_equity)
     # L'IHM transmet systématiquement `--account default`. On considère cette
     # valeur comme un compte implicite : si aucun snapshot n'est disponible, on
     # fallback sur `--account-equity` plutôt que de bloquer le pipeline.
@@ -94,7 +95,7 @@ def main(args: list[str] | None = None) -> None:
         #   - mode simulate (jamais d'écriture broker_account_snapshots).
         # Le sizing utilise --account-equity de l'IHM ; le risque est borné
         # par cette valeur, donc safe même en multi-comptes.
-        effective_equity = float(args.account_equity)
+        effective_equity = requested_equity
         pnl_snapshot = PnLSnapshot(
             portfolio_high_watermark=effective_equity,
             portfolio_current_value=effective_equity,
@@ -109,6 +110,19 @@ def main(args: list[str] | None = None) -> None:
         )
     else:
         effective_equity = float(account_snapshot.equity)
+        if account_snapshot.trade_date < trade_date and requested_equity > 0:
+            capped_equity = min(effective_equity, requested_equity)
+            if capped_equity < effective_equity:
+                LOGGER.warning(
+                    "Snapshot equity stale pour account=%s (snapshot=%s, trade_date=%s) ; "
+                    "cap conservateur applique: snapshot=%.2f -> requested=%.2f.",
+                    account_snapshot.account_id,
+                    account_snapshot.trade_date,
+                    trade_date,
+                    effective_equity,
+                    capped_equity,
+                )
+                effective_equity = capped_equity
         daily_pnl = account_snapshot.daily_total_pnl
         if daily_pnl is None:
             realized = account_snapshot.daily_realized_pnl or 0.0

@@ -254,6 +254,24 @@ def engine():
             )
         """))
         conn.execute(text("""
+            CREATE TABLE run_business_summaries (
+                summary_run_id VARCHAR(96) PRIMARY KEY,
+                source_run_id VARCHAR(96),
+                entity_run_id VARCHAR(96),
+                parent_summary_run_id VARCHAR(96),
+                step_key VARCHAR(64) NOT NULL,
+                run_kind VARCHAR(16) NOT NULL,
+                status VARCHAR(32),
+                account_id VARCHAR(64),
+                trade_date DATE,
+                started_at DATETIME,
+                finished_at DATETIME,
+                summary_json TEXT NOT NULL,
+                created_at DATETIME,
+                updated_at DATETIME
+            )
+        """))
+        conn.execute(text("""
             CREATE TABLE broker_positions_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 exec_run_id VARCHAR(32), broker_mode VARCHAR(10),
@@ -371,6 +389,82 @@ class TestExecutionDbIo:
 
         assert [target.symbol for target in default_targets] == ["AAPL"]
         assert [target.symbol for target in live_targets] == ["MSFT"]
+
+    def test_load_latest_portfolio_targets_returns_empty_when_latest_risk_run_has_zero_targets(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
+                    sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction, created_at)
+                VALUES ('r-old', 'test2', '2026-05-01', 'AAPL', 1, 'long', 10, 150.0,
+                    5.0, '2026-05-01', '2026-05-01', 140.0, 10.0,
+                    100.0, 100.0, 1500.0, 0.75,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1, '2026-05-01 07:00:00')
+            """))
+            conn.execute(text("""
+                INSERT INTO run_business_summaries (
+                    summary_run_id, entity_run_id, step_key, run_kind, status, account_id, trade_date,
+                    started_at, finished_at, summary_json, created_at, updated_at
+                ) VALUES (
+                    'r-old', 'r-old', 'risk_management', 'step', 'completed', 'test2', '2026-05-01',
+                    '2026-05-01 07:00:00', '2026-05-01 07:00:10',
+                    '{"run_id": "r-old", "target_positions": 1}',
+                    '2026-05-01 07:00:10', '2026-05-01 07:00:10'
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO run_business_summaries (
+                    summary_run_id, entity_run_id, step_key, run_kind, status, account_id, trade_date,
+                    started_at, finished_at, summary_json, created_at, updated_at
+                ) VALUES (
+                    'r-zero', 'r-zero', 'risk_management', 'step', 'completed', 'test2', '2026-05-01',
+                    '2026-05-01 07:48:00', '2026-05-01 07:48:17',
+                    '{"run_id": "r-zero", "target_positions": 0}',
+                    '2026-05-01 07:48:17', '2026-05-01 07:48:17'
+                )
+            """))
+
+        targets = repo.load_portfolio_targets(trade_date=date(2026, 5, 1), account_id="test2")
+
+        assert targets == []
+
+    def test_load_latest_portfolio_targets_prefers_latest_risk_summary_run_id_over_older_created_at_rows(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
+                    sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction, created_at)
+                VALUES ('r-old', 'test2', '2026-05-01', 'AAPL', 1, 'long', 10, 150.0,
+                    5.0, '2026-05-01', '2026-05-01', 140.0, 10.0,
+                    100.0, 100.0, 1500.0, 0.75,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1, '2026-05-01 08:30:00'),
+                       ('r-latest', 'test2', '2026-05-01', 'MSFT', 1, 'long', 5, 300.0,
+                    7.0, '2026-05-01', '2026-05-01', 280.0, 20.0,
+                    100.0, 100.0, 1500.0, 0.75,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1, '2026-05-01 07:10:00')
+            """))
+            conn.execute(text("""
+                INSERT INTO run_business_summaries (
+                    summary_run_id, entity_run_id, step_key, run_kind, status, account_id, trade_date,
+                    started_at, finished_at, summary_json, created_at, updated_at
+                ) VALUES (
+                    'r-old', 'r-old', 'risk_management', 'step', 'completed', 'test2', '2026-05-01',
+                    '2026-05-01 08:20:00', '2026-05-01 08:30:00',
+                    '{"run_id": "r-old", "target_positions": 1}',
+                    '2026-05-01 08:30:00', '2026-05-01 08:30:00'
+                ), (
+                    'r-latest', 'r-latest', 'risk_management', 'step', 'completed', 'test2', '2026-05-01',
+                    '2026-05-01 09:00:00', '2026-05-01 09:05:00',
+                    '{"run_id": "r-latest", "target_positions": 1}',
+                    '2026-05-01 09:05:00', '2026-05-01 09:05:00'
+                )
+            """))
+
+        targets = repo.load_portfolio_targets(trade_date=date(2026, 5, 1), account_id="test2")
+
+        assert [target.symbol for target in targets] == ["MSFT"]
 
     def test_execution_lock_acquire_release_cycle(self, repo) -> None:
         assert repo.acquire_execution_lock(account_id="default", exec_run_id="exec-1") is True

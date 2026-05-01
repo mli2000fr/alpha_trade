@@ -442,7 +442,10 @@ def run(
     print(f"  Remplis     : {GREEN}{metrics.get('filled', 0)}{RESET}")
     failed = metrics.get('failed', 0)
     print(f"  Echecs      : {(RED if failed else '')}{failed}{RESET}")
-    print(f"  Doublons    : {metrics.get('skipped', 0)}")
+    print(f"  Ignores     : {metrics.get('skipped', 0)}")
+    constraint_blocked = int(metrics.get("constraint_blocked", 0) or 0)
+    if constraint_blocked:
+        print(f"  Bloques     : {YELLOW}{constraint_blocked} contrainte(s) compte/capital{RESET}")
     rebal_sub = metrics.get("rebalance_submitted", 0)
     rebal_fail = metrics.get("rebalance_failed", 0)
     if rebal_sub or rebal_fail:
@@ -458,9 +461,19 @@ def run(
         print(f"{YELLOW}[!] Aucune cible trouvee. Verifie que portfolio_targets est alimente.{RESET}")
     elif targets_n > 0 and submitted_n == 0 and not PRESETS[mode]["dry_run"]:
         print(f"{YELLOW}[!] {targets_n} cible(s) chargee(s) mais AUCUN ordre soumis.{RESET}")
-        print(f"{YELLOW}    Cause probable : marche ferme (week-end ou hors RTH).{RESET}")
-        print(f"{YELLOW}    Prochaine ouverture : lundi 09:30 ET.{RESET}")
-        print(f"{YELLOW}    Pour forcer la soumission : coche 'Execution hors RTH' dans l'IHM ou ajoute --allow-outside-rth{RESET}")
+        if constraint_blocked > 0:
+            print(
+                f"{YELLOW}    Cause probable : contraintes de compte / capital insuffisant "
+                f"({constraint_blocked} ordre(s) bloques).{RESET}"
+            )
+            print(
+                f"{YELLOW}    Verifie l'equity utilisee a l'etape 11, le type de compte "
+                f"(cash vs margin) et les events `INTENT_SKIPPED_ACCOUNT_CONSTRAINT`.{RESET}"
+            )
+        else:
+            print(f"{YELLOW}    Cause probable : marche ferme (week-end ou hors RTH).{RESET}")
+            print(f"{YELLOW}    Prochaine ouverture : lundi 09:30 ET.{RESET}")
+            print(f"{YELLOW}    Pour forcer la soumission : coche 'Execution hors RTH' dans l'IHM ou ajoute --allow-outside-rth{RESET}")
     elif submitted_n > 0 and metrics.get("filled", 0) == 0 and not PRESETS[mode]["dry_run"]:
         print(f"{GREEN}[OK] {submitted_n} ordre(s) soumis chez Alpaca.{RESET}")
         print(f"{YELLOW}    Marche actuellement ferme -> les ordres seront remplis a l'ouverture.{RESET}")

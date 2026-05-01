@@ -6,11 +6,12 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from database.connection import get_sqlalchemy_engine
+from database.run_business_summaries import parse_summary_json
 from execution_engine.models import ExecutionOrderRequest
 from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionPosition, ExecutionPositionLot, ExecutionReconciliationResult, ExecutionTarget, OrderIntent, ProtectionWatchItem
 
@@ -84,6 +85,66 @@ class ExecutionRepository:
     # Lecture
     # ------------------------------------------------------------------
 
+    def _has_table(self, table_name: str) -> bool:
+        try:
+            return bool(inspect(self.engine).has_table(table_name))
+        except Exception:
+            return False
+
+    def _resolve_latest_risk_run_from_summary(
+        self,
+        *,
+        account_id: str,
+        trade_date: date | None,
+    ) -> tuple[str | None, bool]:
+        """Retourne (risk_run_id, latest_run_has_zero_targets).
+
+        Quand l'étape 11 la plus récente du compte/date a produit 0 cible, on ne
+        doit surtout pas retomber sur un ancien `portfolio_targets` encore présent
+        en base. Dans ce cas on renvoie `(None, True)` pour forcer un résultat vide.
+        """
+        if not self._has_table("run_business_summaries"):
+            return None, False
+
+        where_trade_date = "AND trade_date = :trade_date" if trade_date is not None else ""
+        stmt = text(
+            f"""
+            SELECT summary_run_id, entity_run_id, summary_json
+            FROM run_business_summaries
+            WHERE step_key = 'risk_management'
+              AND run_kind = 'step'
+              AND account_id = :account_id
+              {where_trade_date}
+            ORDER BY COALESCE(finished_at, started_at, created_at) DESC, summary_run_id DESC
+            LIMIT 1
+            """
+        )
+        params: dict[str, Any] = {"account_id": account_id}
+        if trade_date is not None:
+            params["trade_date"] = trade_date
+
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt, params).mappings().first()
+        if row is None:
+            return None, False
+
+        summary = parse_summary_json(row.get("summary_json"))
+        raw_target_positions = summary.get("target_positions")
+        try:
+            target_positions = int(raw_target_positions) if raw_target_positions is not None else None
+        except (TypeError, ValueError):
+            target_positions = None
+
+        resolved_run_id = str(
+            summary.get("run_id")
+            or row.get("entity_run_id")
+            or row.get("summary_run_id")
+            or ""
+        ).strip() or None
+        if target_positions is not None and target_positions <= 0:
+            return None, True
+        return resolved_run_id, False
+
     def load_portfolio_targets(
         self,
         risk_run_id: str | None = None,
@@ -106,8 +167,18 @@ class ExecutionRepository:
             """)
             params: dict[str, Any] = {"run_id": risk_run_id, "account_id": resolved_account_id}
         else:
-            # Dernier run_id par MAX(created_at)
-            if trade_date:
+            latest_risk_run_id, latest_risk_has_zero_targets = self._resolve_latest_risk_run_from_summary(
+                account_id=resolved_account_id,
+                trade_date=trade_date,
+            )
+            if latest_risk_has_zero_targets:
+                LOGGER.info(
+                    "load_portfolio_targets | dernier risk run pour account=%s trade_date=%s a 0 cible retenue ; aucun fallback vers un ancien portfolio_targets.",
+                    resolved_account_id,
+                    trade_date,
+                )
+                return []
+            if latest_risk_run_id:
                 query = text("""
                     SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
                            atr_20, price_asof_date, atr_asof_date, stop_price_initial,
@@ -115,33 +186,48 @@ class ExecutionRepository:
                            target_notional, target_weight, sector, conviction_score,
                            sizing_method, kelly_fraction
                     FROM portfolio_targets
-                    WHERE run_id = (
-                        SELECT run_id FROM portfolio_targets
-                        WHERE trade_date = :trade_date
-                          AND account_id = :account_id
-                        ORDER BY created_at DESC LIMIT 1
-                    )
+                    WHERE run_id = :run_id
                       AND account_id = :account_id
                     ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
                 """)
-                params = {"trade_date": trade_date, "account_id": resolved_account_id}
+                params = {"run_id": latest_risk_run_id, "account_id": resolved_account_id}
             else:
-                query = text("""
-                    SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
-                           atr_20, price_asof_date, atr_asof_date, stop_price_initial,
-                           risk_per_share, risk_budget_dollars, initial_risk_dollars,
-                           target_notional, target_weight, sector, conviction_score,
-                           sizing_method, kelly_fraction
-                    FROM portfolio_targets
-                    WHERE run_id = (
-                        SELECT run_id FROM portfolio_targets
-                        WHERE account_id = :account_id
-                        ORDER BY created_at DESC LIMIT 1
-                    )
-                      AND account_id = :account_id
-                    ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
-                """)
-                params = {"account_id": resolved_account_id}
+            # Dernier run_id par MAX(created_at)
+                if trade_date:
+                    query = text("""
+                        SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                               atr_20, price_asof_date, atr_asof_date, stop_price_initial,
+                               risk_per_share, risk_budget_dollars, initial_risk_dollars,
+                               target_notional, target_weight, sector, conviction_score,
+                               sizing_method, kelly_fraction
+                        FROM portfolio_targets
+                        WHERE run_id = (
+                            SELECT run_id FROM portfolio_targets
+                            WHERE trade_date = :trade_date
+                              AND account_id = :account_id
+                            ORDER BY created_at DESC LIMIT 1
+                        )
+                          AND account_id = :account_id
+                        ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
+                    """)
+                    params = {"trade_date": trade_date, "account_id": resolved_account_id}
+                else:
+                    query = text("""
+                        SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                               atr_20, price_asof_date, atr_asof_date, stop_price_initial,
+                               risk_per_share, risk_budget_dollars, initial_risk_dollars,
+                               target_notional, target_weight, sector, conviction_score,
+                               sizing_method, kelly_fraction
+                        FROM portfolio_targets
+                        WHERE run_id = (
+                            SELECT run_id FROM portfolio_targets
+                            WHERE account_id = :account_id
+                            ORDER BY created_at DESC LIMIT 1
+                        )
+                          AND account_id = :account_id
+                        ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
+                    """)
+                    params = {"account_id": resolved_account_id}
 
         with self.engine.connect() as conn:
             rows = conn.execute(query, params).mappings().all()
