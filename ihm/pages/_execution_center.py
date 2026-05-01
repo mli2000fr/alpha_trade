@@ -33,6 +33,12 @@ from ihm.services.account_defaults import (
     PipelineExecutionDefaults,
     get_pipeline_execution_defaults,
 )
+from ihm.services.capital_presets import (
+    CapitalPreset,
+    get_capital_preset_by_key,
+    load_capital_presets,
+    resolve_capital_preset_for_equity,
+)
 from ihm.services.pipeline_runner import (
     DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE,
     DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY,
@@ -142,6 +148,8 @@ from ihm.services.ml_artifacts import list_ml_artifact_symbols  # noqa: F401  # 
 
 __all__ = [
     "_apply_execution_prefills",
+    "_apply_selected_capital_preset",
+    "_build_parameter_rerun_guidance_rows",
     "_build_execution_prefill_caption",
     "_build_launch_options",
 ]
@@ -152,68 +160,76 @@ DETECTED_BROKER_MODE_KEY = "pipeline_detected_broker_mode"
 DETECTED_BROKER_MODE_ACCOUNT_KEY = "pipeline_detected_broker_mode_account_id"
 DETECTED_ACCOUNT_TYPE_KEY = "pipeline_detected_account_type"
 DETECTED_PDT_RULE_KEY = "pipeline_detected_pdt_rule"
-RISK_PRESET_KEY = "pipeline_risk_preset"
-RISK_PRESET_APPLIED_KEY = "pipeline_risk_preset_applied"
-RISK_PRESET_CUSTOM = "custom"
-RISK_PRESET_SWING_DEFAULT = "swing_default"
-RISK_PRESET_SMALL_ACCOUNT_2000 = "small_account_2000"
-RISK_PRESET_OPTIONS: tuple[str, ...] = (
-    RISK_PRESET_CUSTOM,
-    RISK_PRESET_SWING_DEFAULT,
-    RISK_PRESET_SMALL_ACCOUNT_2000,
+CAPITAL_PRESET_KEY = "pipeline_capital_preset"
+CAPITAL_PRESET_APPLIED_SIGNATURE_KEY = "pipeline_capital_preset_applied_signature"
+CAPITAL_PRESET_CUSTOM = "custom"
+DETECTED_CAPITAL_PRESET_KEY = "pipeline_detected_capital_preset"
+DETECTED_CAPITAL_PRESET_ACCOUNT_KEY = "pipeline_detected_capital_preset_account_id"
+
+PARAMETER_RERUN_GUIDANCE_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("risk_*", "11 → 12", "Le sizing et les cibles changent, puis l'exécution consomme ces nouvelles cibles."),
+    ("execution_*", "12", "Les règles d'envoi/compte/protections changent sans recalculer les cibles risk."),
+    ("selector_*", "6 → 12", "Alpha Scanner reconstruit la shortlist finale, puis toutes les étapes aval doivent être rejouées."),
+    ("screener_*", "3 → 12", "Le préfiltrage large change, donc tout l'aval du pipeline quotidien doit être recalculé."),
 )
-RISK_PRESET_METADATA: dict[str, dict[str, object]] = {
-    RISK_PRESET_SWING_DEFAULT: {
-        "label": "Swing par défaut",
-        "description": (
-            "Preset historique du projet : capital 100 k$, 1 % de risque/trade, "
-            "8 % max/ligne, ticket minimum 500 $."
-        ),
-        "values": {
-            "pipeline_risk_account_equity": 100_000.0,
-            "pipeline_risk_per_trade_pct": DEFAULT_RISK_PER_TRADE_PCT,
-            "pipeline_risk_max_position_weight": DEFAULT_RISK_MAX_POSITION_WEIGHT,
-            "pipeline_risk_min_position_notional": DEFAULT_RISK_MIN_POSITION_NOTIONAL,
-        },
-    },
-    RISK_PRESET_SMALL_ACCOUNT_2000: {
-        "label": "Petit compte 2 000 $",
-        "description": (
-            "Preset small account : equity 2 000 $, 2 % de risque/trade, "
-            "15 % max/ligne, ticket minimum 150 $."
-        ),
-        "values": {
-            "pipeline_risk_account_equity": 2_000.0,
-            "pipeline_risk_per_trade_pct": 0.02,
-            "pipeline_risk_max_position_weight": 0.15,
-            "pipeline_risk_min_position_notional": 150.0,
-        },
-    },
-}
 
 
-def _format_risk_preset_label(preset_key: str) -> str:
-    if preset_key == RISK_PRESET_CUSTOM:
+def _get_capital_presets() -> tuple[CapitalPreset, ...]:
+    try:
+        return load_capital_presets()
+    except Exception:
+        return ()
+
+
+def _get_capital_preset_options() -> list[str]:
+    return [CAPITAL_PRESET_CUSTOM, *[preset.key for preset in _get_capital_presets()]]
+
+
+def _format_capital_preset_label(preset_key: str) -> str:
+    if preset_key == CAPITAL_PRESET_CUSTOM:
         return "Personnalisé"
-    meta = RISK_PRESET_METADATA.get(preset_key)
-    return str(meta.get("label")) if meta is not None else preset_key
+    preset = get_capital_preset_by_key(preset_key)
+    return preset.label if preset is not None else preset_key
 
 
-def _apply_selected_risk_preset() -> None:
-    selected_key = str(st.session_state.get(RISK_PRESET_KEY, RISK_PRESET_CUSTOM) or RISK_PRESET_CUSTOM)
-    last_applied = str(st.session_state.get(RISK_PRESET_APPLIED_KEY, "") or "")
-    if selected_key == last_applied:
+def _build_parameter_rerun_guidance_rows() -> tuple[dict[str, str], ...]:
+    return tuple(
+        {
+            "Paramètres": family,
+            "Relancer": rerun_steps,
+            "Pourquoi": description,
+        }
+        for family, rerun_steps, description in PARAMETER_RERUN_GUIDANCE_ROWS
+    )
+
+
+def _apply_selected_capital_preset(
+    defaults: PipelineExecutionDefaults | None,
+    *,
+    selected_account_id: str | None,
+) -> None:
+    selected_key = str(st.session_state.get(CAPITAL_PRESET_KEY, CAPITAL_PRESET_CUSTOM) or CAPITAL_PRESET_CUSTOM)
+    effective_equity = float(defaults.equity) if defaults is not None and defaults.equity is not None else None
+    signature = f"{selected_key}|{str(selected_account_id or '').strip()}|{effective_equity if effective_equity is not None else 'none'}"
+    last_signature = str(st.session_state.get(CAPITAL_PRESET_APPLIED_SIGNATURE_KEY, "") or "")
+    if signature == last_signature:
         return
-    if selected_key == RISK_PRESET_CUSTOM:
-        st.session_state[RISK_PRESET_APPLIED_KEY] = selected_key
+    if selected_key == CAPITAL_PRESET_CUSTOM:
+        st.session_state[CAPITAL_PRESET_APPLIED_SIGNATURE_KEY] = signature
         return
-    meta = RISK_PRESET_METADATA.get(selected_key)
-    if meta is None:
-        st.session_state[RISK_PRESET_APPLIED_KEY] = RISK_PRESET_CUSTOM
+
+    preset = get_capital_preset_by_key(selected_key)
+    if preset is None:
+        st.session_state[CAPITAL_PRESET_APPLIED_SIGNATURE_KEY] = f"{CAPITAL_PRESET_CUSTOM}|{str(selected_account_id or '').strip()}"
         return
-    for session_key, value in dict(meta.get("values") or {}).items():
-        st.session_state[str(session_key)] = value
-    st.session_state[RISK_PRESET_APPLIED_KEY] = selected_key
+
+    for session_key, value in preset.to_session_state_values(detected_equity=effective_equity).items():
+        st.session_state[session_key] = value
+
+    if defaults is not None and defaults.equity is not None and defaults.equity > 0:
+        st.session_state["pipeline_risk_account_equity"] = float(defaults.equity)
+
+    st.session_state[CAPITAL_PRESET_APPLIED_SIGNATURE_KEY] = signature
 
 
 def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecutionDefaults | None:
@@ -223,6 +239,8 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
         st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
         st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
         st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
+        st.session_state.pop(DETECTED_CAPITAL_PRESET_KEY, None)
+        st.session_state.pop(DETECTED_CAPITAL_PRESET_ACCOUNT_KEY, None)
         return None
 
     try:
@@ -232,6 +250,8 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
         st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
         st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
         st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
+        st.session_state.pop(DETECTED_CAPITAL_PRESET_KEY, None)
+        st.session_state.pop(DETECTED_CAPITAL_PRESET_ACCOUNT_KEY, None)
         st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
         return None
 
@@ -240,6 +260,8 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
         st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
         st.session_state.pop(DETECTED_ACCOUNT_TYPE_KEY, None)
         st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
+        st.session_state.pop(DETECTED_CAPITAL_PRESET_KEY, None)
+        st.session_state.pop(DETECTED_CAPITAL_PRESET_ACCOUNT_KEY, None)
         st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
         return None
 
@@ -254,6 +276,17 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
         st.session_state[DETECTED_PDT_RULE_KEY] = defaults.pdt_rule
     else:
         st.session_state.pop(DETECTED_PDT_RULE_KEY, None)
+    detected_capital_preset = resolve_capital_preset_for_equity(defaults.equity)
+    if detected_capital_preset is not None:
+        st.session_state[DETECTED_CAPITAL_PRESET_KEY] = detected_capital_preset.key
+        st.session_state[DETECTED_CAPITAL_PRESET_ACCOUNT_KEY] = cleaned_account_id
+        if account_changed or CAPITAL_PRESET_KEY not in st.session_state:
+            st.session_state[CAPITAL_PRESET_KEY] = detected_capital_preset.key
+    else:
+        st.session_state.pop(DETECTED_CAPITAL_PRESET_KEY, None)
+        st.session_state.pop(DETECTED_CAPITAL_PRESET_ACCOUNT_KEY, None)
+        if account_changed:
+            st.session_state[CAPITAL_PRESET_KEY] = CAPITAL_PRESET_CUSTOM
     if defaults.equity is not None and defaults.equity > 0 and (
         account_changed or "pipeline_risk_account_equity" not in st.session_state
     ):
@@ -314,6 +347,60 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             st.info(f"Compte Alpaca actuellement sélectionné : `{selected_account_id}`")
         else:
             st.info("Aucun compte Alpaca explicitement sélectionné — le compte par défaut sera utilisé si nécessaire.")
+
+        capital_preset_options = _get_capital_preset_options()
+        capital_preset_key = cast(
+            str,
+            st.selectbox(
+                "Preset capital — Risk / Execution / Selector",
+                options=capital_preset_options,
+                index=capital_preset_options.index(
+                    cast(str, st.session_state.get(CAPITAL_PRESET_KEY, CAPITAL_PRESET_CUSTOM))
+                    if st.session_state.get(CAPITAL_PRESET_KEY, CAPITAL_PRESET_CUSTOM) in capital_preset_options
+                    else CAPITAL_PRESET_CUSTOM
+                ),
+                format_func=_format_capital_preset_label,
+                key=CAPITAL_PRESET_KEY,
+                help=(
+                    "Choisis un panier de capital pour préremplir automatiquement les paramètres Risk, "
+                    "Execution et Alpha Scanner. Les champs restent éditables manuellement ensuite."
+                ),
+            ),
+        )
+        _apply_selected_capital_preset(execution_defaults, selected_account_id=selected_account_id)
+        selected_capital_preset = get_capital_preset_by_key(capital_preset_key)
+        detected_capital_preset = resolve_capital_preset_for_equity(execution_defaults.equity if execution_defaults is not None else None)
+        if capital_preset_key == CAPITAL_PRESET_CUSTOM:
+            if detected_capital_preset is not None and execution_defaults is not None and execution_defaults.equity is not None:
+                st.info(
+                    "🧺 Preset capital manuel actif — panier recommandé pour ce compte : "
+                    f"`{detected_capital_preset.label}` (equity broker détectée ≈ `{execution_defaults.equity:,.2f}` $)."
+                )
+            else:
+                st.info("🧺 Preset capital manuel actif — aucun panier automatique n'est appliqué tant que tu restes en `Personnalisé`.")
+        elif selected_capital_preset is not None and execution_defaults is not None and execution_defaults.equity is not None:
+            if detected_capital_preset is not None and detected_capital_preset.key == selected_capital_preset.key:
+                st.success(
+                    "🧺 Panier capital appliqué automatiquement : "
+                    f"`{selected_capital_preset.label}` pour l'equity broker détectée ≈ `{execution_defaults.equity:,.2f}` $."
+                )
+            elif detected_capital_preset is not None:
+                st.warning(
+                    "🧺 Panier capital forcé manuellement : "
+                    f"`{selected_capital_preset.label}`. Le panier recommandé pour l'equity détectée ≈ `{execution_defaults.equity:,.2f}` $ "
+                    f"serait `{detected_capital_preset.label}`."
+                )
+            else:
+                st.info(
+                    "🧺 Panier capital appliqué : "
+                    f"`{selected_capital_preset.label}` (equity broker détectée ≈ `{execution_defaults.equity:,.2f}` $)."
+                )
+        elif selected_capital_preset is not None:
+            st.info(f"🧺 Panier capital appliqué : `{selected_capital_preset.label}`.")
+        if selected_capital_preset is not None:
+            st.caption(selected_capital_preset.description)
+        st.markdown("🔁 **Impact des réglages sur les relances**")
+        st.table(_build_parameter_rerun_guidance_rows())
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -571,25 +658,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "Pilote le sizing et les contraintes du portefeuille cible. "
             "Défauts swing : 1 % risque/trade, 15 positions max, 8 % max/ligne, conviction = 40 % score + 60 % ML."
         )
-        risk_preset_key = cast(
-            str,
-            st.selectbox(
-                "Risk — preset",
-                options=list(RISK_PRESET_OPTIONS),
-                index=list(RISK_PRESET_OPTIONS).index(
-                    cast(str, st.session_state.get(RISK_PRESET_KEY, RISK_PRESET_CUSTOM))
-                    if st.session_state.get(RISK_PRESET_KEY, RISK_PRESET_CUSTOM) in RISK_PRESET_OPTIONS
-                    else RISK_PRESET_CUSTOM
-                ),
-                format_func=_format_risk_preset_label,
-                key=RISK_PRESET_KEY,
-                help="Choisis un preset pour remplir rapidement les paramètres risk. Les valeurs restent éditables ensuite.",
-            ),
-        )
-        _apply_selected_risk_preset()
-        selected_risk_preset_meta = RISK_PRESET_METADATA.get(risk_preset_key)
-        if selected_risk_preset_meta is not None:
-            st.caption(str(selected_risk_preset_meta.get("description") or ""))
+        if selected_capital_preset is not None:
+            st.caption(f"Panier capital actif pour Risk / Execution / Selector : `{selected_capital_preset.label}`.")
         risk_col1, risk_col2, risk_col3, risk_col4 = st.columns(4)
         with risk_col1:
             risk_per_trade_pct = float(

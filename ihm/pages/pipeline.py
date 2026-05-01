@@ -28,10 +28,14 @@ from ihm.pages._alpha_scanner_diagnostics import (
 )
 from ihm.pages._data_integrity import _render_import_news_panel
 from ihm.pages._execution_center import (
+    CAPITAL_PRESET_KEY,
+    DETECTED_CAPITAL_PRESET_ACCOUNT_KEY,
+    DETECTED_CAPITAL_PRESET_KEY,
     DETECTED_ACCOUNT_TYPE_KEY,
     DETECTED_PDT_RULE_KEY,
     _apply_execution_prefills,
     _build_execution_prefill_caption,
+    _format_capital_preset_label,
     _build_launch_options,
 )
 from ihm.pages._shared import (
@@ -186,6 +190,46 @@ def _build_execution_account_banner_payload(
     return severity, message
 
 
+def _build_capital_preset_banner_payload(
+    selected_preset_key: str | None,
+    *,
+    detected_preset_key: str | None = None,
+    detected_equity: float | None = None,
+) -> tuple[str, str] | None:
+    selected_key = str(selected_preset_key or "").strip() or None
+    detected_key = str(detected_preset_key or "").strip() or None
+    selected_label = _format_capital_preset_label(selected_key or "custom") if selected_key else None
+    detected_label = _format_capital_preset_label(detected_key) if detected_key else None
+    equity_suffix = f" (equity détectée ≈ `{detected_equity:,.2f}` $)" if detected_equity is not None else ""
+
+    if selected_key is None and detected_key is None:
+        return None
+    if selected_key == "custom":
+        message = "ℹ️ **PANIER CAPITAL** — mode `Personnalisé` actif"
+        if detected_label is not None:
+            message += f" ; panier recommandé pour ce compte : `{detected_label}`{equity_suffix}."
+        else:
+            message += "."
+        return "info", message
+    if selected_label is None:
+        return None
+    if detected_key is not None and selected_key == detected_key:
+        return "success", f"🧺 **PANIER CAPITAL APPLIQUÉ** — `{selected_label}`{equity_suffix}."
+    if detected_label is not None:
+        return (
+            "warning",
+            f"🧺 **PANIER CAPITAL FORCÉ** — `{selected_label}`. Panier recommandé pour ce compte : `{detected_label}`{equity_suffix}.",
+        )
+    return "info", f"🧺 **PANIER CAPITAL SÉLECTIONNÉ** — `{selected_label}`."
+
+
+def _build_pipeline_scope_alert_lines() -> tuple[str, str]:
+    return (
+        "⚠️ Les étapes **3→10** recalculent des données globales partagées entre comptes.",
+        "✅ Les étapes **11→12** restent spécifiques au compte sélectionné.",
+    )
+
+
 def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
     detected_mode = None
     detected_account = str(st.session_state.get("pipeline_detected_broker_mode_account_id") or "").strip()
@@ -193,11 +237,25 @@ def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
         detected_mode = str(st.session_state.get("pipeline_detected_broker_mode") or "").strip() or None
         detected_account_type = str(st.session_state.get(DETECTED_ACCOUNT_TYPE_KEY) or "").strip() or None
         detected_pdt_rule = str(st.session_state.get(DETECTED_PDT_RULE_KEY) or "").strip() or None
+        detected_capital_preset = str(st.session_state.get(DETECTED_CAPITAL_PRESET_KEY) or "").strip() or None
+        selected_capital_preset = str(st.session_state.get(CAPITAL_PRESET_KEY) or "").strip() or None
+        detected_equity = float(options.risk_account_equity) if options.risk_account_equity > 0 else None
     else:
         detected_account_type = None
         detected_pdt_rule = None
+        detected_capital_preset = None
+        selected_capital_preset = None
+        detected_equity = None
     severity, message = _build_execution_mode_banner_payload(options, detected_broker_mode=detected_mode)
     getattr(st, severity)(message)
+    capital_preset_banner = _build_capital_preset_banner_payload(
+        selected_capital_preset,
+        detected_preset_key=detected_capital_preset,
+        detected_equity=detected_equity,
+    )
+    if capital_preset_banner is not None:
+        preset_severity, preset_message = capital_preset_banner
+        getattr(st, preset_severity)(preset_message)
     account_severity, account_message = _build_execution_account_banner_payload(
         options,
         detected_account_type=detected_account_type,
@@ -426,6 +484,9 @@ def render() -> None:
 
     _render_workflow_launcher(options, live_confirmed, db_config)
     _render_runtime_center()
+    scope_alert_global, scope_alert_account = _build_pipeline_scope_alert_lines()
+    st.warning(scope_alert_global)
+    st.success(scope_alert_account)
     _render_step_panels(options, live_confirmed, db_config)
 
 

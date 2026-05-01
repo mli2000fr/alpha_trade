@@ -136,6 +136,44 @@ def test_build_execution_account_banner_payload_marks_detected_mismatch_as_red()
     assert "incohérence critique" in message.lower()
 
 
+def test_build_capital_preset_banner_payload_marks_detected_bucket_as_applied() -> None:
+    payload = pipeline._build_capital_preset_banner_payload(
+        "capital_0_5000",
+        detected_preset_key="capital_0_5000",
+        detected_equity=2_000.0,
+    )
+
+    assert payload is not None
+    severity, message = payload
+    assert severity == "success"
+    assert "panier capital appliqué" in message.lower()
+    assert "0 → 5 000 $" in message
+
+
+def test_build_capital_preset_banner_payload_marks_custom_with_recommended_bucket() -> None:
+    payload = pipeline._build_capital_preset_banner_payload(
+        "custom",
+        detected_preset_key="capital_50001_100000",
+        detected_equity=52_000.0,
+    )
+
+    assert payload is not None
+    severity, message = payload
+    assert severity == "info"
+    assert "personnalisé" in message.lower()
+    assert "50 001 → 100 000 $" in message
+
+
+def test_build_pipeline_scope_alert_lines_distinguishes_global_and_account_specific_steps() -> None:
+    global_line, account_line = pipeline._build_pipeline_scope_alert_lines()
+
+    assert "3→10" in global_line
+    assert "globales" in global_line.lower()
+    assert "partagées entre comptes" in global_line.lower()
+    assert "11→12" in account_line
+    assert "spécifiques au compte sélectionné" in account_line.lower()
+
+
 def test_build_watcher_doc_reference_exposes_explicit_workspace_link() -> None:
     assert hasattr(pipeline, "render_watcher_documentation_panel")
 
