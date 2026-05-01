@@ -276,4 +276,49 @@ def _render_step_result(record: dict[str, object] | None) -> None:
         f"Début : `{record.get('executed_at', '—')}` | Fin : `{record.get('finished_at') or '—'}` | "
         f"Compte : `{record.get('account_id') or 'global'}`"
     )
+    _render_risk_snapshot_freshness_warning(record)
     _render_run_summary(record, compact=True)
+
+
+def _render_risk_snapshot_freshness_warning(record: dict[str, object]) -> None:
+    """Avertit si l'étape risk_management a utilisé un snapshot equity plus ancien que le trade_date.
+
+    Lit le ``run_summary`` produit par ``risk_management.cli`` (champs
+    ``account_snapshot_trade_date`` et ``trade_date``) et affiche un warning IHM
+    quand le snapshot est antérieur, ce qui indique qu'aucun snapshot du jour
+    n'était disponible (compte vide → fallback ``--account-equity``).
+    """
+    if str(record.get("step_key", "")) != "risk_management":
+        return
+    summary = get_run_summary(record)
+    if not summary:
+        return
+    trade_date_raw = str(summary.get("trade_date") or "").strip()
+    snapshot_raw = summary.get("account_snapshot_trade_date")
+    snapshot_str = str(snapshot_raw).strip() if snapshot_raw else ""
+    if not trade_date_raw:
+        return
+    if not snapshot_str:
+        st.info(
+            f"ℹ️ Aucun snapshot equity broker disponible pour `trade_date={trade_date_raw}` — "
+            f"sizing calculé sur `--account-equity` (paramètre IHM). "
+            "Comportement **normal au premier run de la journée** : la table `broker_account_snapshots` "
+            "n'est alimentée qu'après l'étape **12 — Execution**, qui s'exécute logiquement *après* le risk management. "
+            "Aux runs suivants, l'equity broker réel sera utilisé automatiquement."
+        )
+        return
+    try:
+        from datetime import date as _date
+        snapshot_date = _date.fromisoformat(snapshot_str)
+        trade_date = _date.fromisoformat(trade_date_raw)
+    except ValueError:
+        return
+    if snapshot_date < trade_date:
+        delta_days = (trade_date - snapshot_date).days
+        st.info(
+            f"ℹ️ Étape 11 (Risk Management) a utilisé un snapshot equity broker daté du "
+            f"`{snapshot_str}`, antérieur à `trade_date={trade_date_raw}` (écart : {delta_days} jour(s)). "
+            "Comportement attendu : `broker_account_snapshots` n'est rafraîchi que par l'étape **12 — Execution**. "
+            "Le sizing reste cohérent tant que l'écart d'equity réel est faible."
+        )
+

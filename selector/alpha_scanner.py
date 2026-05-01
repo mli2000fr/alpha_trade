@@ -806,6 +806,26 @@ class AlphaScanner:
             raise RuntimeError("Impossible de mettre à jour les candidats en base.") from exc
 
         LOGGER.info("Mise a jour DB terminee | candidats_mis_a_jour=%s", len(selected_symbols))
+
+        # Re-archive stock_scores -> stock_scores_history pour propager
+        # is_candidate=1 dans l'historique PIT (sinon risk_management/backtesting
+        # ne voient que les is_candidate=0 archivés par le screener amont).
+        try:
+            from screener.db_io import archive_scores_snapshot
+
+            archived = archive_scores_snapshot(self.engine, snapshot_date=date.today())
+            LOGGER.info(
+                "Archivage stock_scores_history apres alpha_scanner | snapshot_date=%s lignes=%s",
+                date.today(),
+                archived,
+            )
+        except Exception:
+            LOGGER.warning(
+                "Archivage stock_scores_history apres alpha_scanner echoue ; "
+                "risk_management pourrait ne pas voir les nouveaux is_candidate=1.",
+                exc_info=True,
+            )
+
         return len(selected_symbols)
 
     # ------------------------------------------------------------------

@@ -88,7 +88,7 @@ from ihm.services.pipeline_runner import (
     format_command_for_display,
 )
 from ihm.services.process_registry import stop_pipeline_run
-from ihm.services.queries import get_alpha_scanner_dependency_diagnostic, get_stock_bars_daily_symbol_count
+from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
 
 
 def _render_ml_inspection_link(step_key: str) -> None:
@@ -119,14 +119,12 @@ def _render_ml_train_all_symbols_block(
     db_config: dict[str, str | None],
     all_runs: list[dict[str, object]],
 ) -> None:
-    symbol_count = get_stock_bars_daily_symbol_count()
-    disabled = workflow_active or bool(active_for_step) or symbol_count <= 0
-    st.caption(
-        f"Universe complet ML Train : `{symbol_count}` symbole(s) distinct(s) trouvés dans `stock_bars_daily`."
-    )
-    if symbol_count <= 0:
-        st.warning("Aucun symbole exploitable trouvé dans `stock_bars_daily` pour lancer cet entraînement global.")
-    elif workflow_active:
+    # NOTE: l'ancien comptage `SELECT COUNT(DISTINCT symbol) FROM stock_bars_daily`
+    # a été retiré car il ralentissait l'affichage de la page Pipeline (12k+ lignes
+    # à scanner à chaque rendu). Le CLI `ml_train --symbol-source stock_bars_daily`
+    # gère lui-même le cas "univers vide" et journalise le résultat.
+    disabled = workflow_active or bool(active_for_step)
+    if workflow_active:
         st.caption("Workflow complet en cours : le lancement 'tous les symbols' est temporairement désactivé.")
     elif active_for_step:
         st.caption("Un run `ML Train` est déjà actif : le lancement 'tous les symbols' attend la fin de ce run.")
