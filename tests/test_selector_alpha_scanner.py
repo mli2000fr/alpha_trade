@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import cast
 
 import pandas as pd
@@ -514,6 +515,31 @@ def test_apply_filters_ignores_stale_quotes_for_spread_filter() -> None:
 
     assert filtered["symbol"].tolist() == ["STALE_OK"]
     assert stats["rejected_spread"] == 1
+
+
+def test_fetch_quote_snapshots_normalizes_missing_optional_columns(monkeypatch) -> None:
+    scanner = _make_scanner()
+    monkeypatch.setattr(
+        scanner,
+        "_get_stock_quote_snapshots_columns",
+        lambda: {"symbol", "quote_date", "spread_bps"},
+    )
+    monkeypatch.setattr(
+        "selector.alpha_scanner.pd.read_sql_query",
+        lambda *args, **kwargs: pd.DataFrame(
+            [
+                {"symbol": "AAPL", "quote_date": pd.Timestamp("2026-04-30"), "spread_bps": 12.0},
+            ]
+        ),
+    )
+
+    quotes_df = scanner.fetch_quote_snapshots(["AAPL"], reference_date=date(2026, 4, 30))
+
+    assert quotes_df.columns.tolist() == ["symbol", "quote_date", "quote_timestamp", "spread_bps", "bid_size", "ask_size"]
+    assert quotes_df.loc[0, "symbol"] == "AAPL"
+    assert pd.isna(quotes_df.loc[0, "quote_timestamp"])
+    assert pd.isna(quotes_df.loc[0, "bid_size"])
+    assert pd.isna(quotes_df.loc[0, "ask_size"])
 
 
 def test_merge_optional_symbol_overlays_tolerates_quotes_without_quote_timestamp() -> None:

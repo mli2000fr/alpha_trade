@@ -619,10 +619,13 @@ class AlphaScanner:
         except SQLAlchemyError:
             LOGGER.warning("Lecture stock_quote_snapshots indisponible; filtre de spread desactive.")
             return pd.DataFrame(columns=empty_columns)
-        for column in ("quote_timestamp", "bid_size", "ask_size"):
-            if column not in quotes_df.columns:
-                quotes_df[column] = pd.NA
-        return quotes_df if not quotes_df.empty else pd.DataFrame(columns=empty_columns)
+        normalized_quotes = quotes_df.copy()
+        for column in empty_columns:
+            if column not in normalized_quotes.columns:
+                normalized_quotes[column] = pd.NA
+        if normalized_quotes.empty:
+            return pd.DataFrame(columns=empty_columns)
+        return normalized_quotes.loc[:, empty_columns]
 
     def fetch_next_earnings(self, symbols: Sequence[str], *, reference_date: date | None = None) -> pd.DataFrame:
         if not symbols:

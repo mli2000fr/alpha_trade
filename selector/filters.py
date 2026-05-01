@@ -511,35 +511,36 @@ def merge_optional_symbol_overlays(
     enriched = merged_df.copy()
 
     if not quotes_df.empty:
-        # Phase 3.3.c — propager bid_size/ask_size pour le filtre spread IEX.
-        quote_columns = ["symbol", "spread_bps"]
-        for metadata_col in ("quote_date", "quote_timestamp"):
-            if metadata_col in quotes_df.columns:
-                quote_columns.append(metadata_col)
-        for optional_col in ("bid_size", "ask_size"):
-            if optional_col in quotes_df.columns:
-                quote_columns.append(optional_col)
-        latest_quotes = quotes_df[quote_columns].drop_duplicates(subset=["symbol"], keep="last")
-        enriched = enriched.merge(latest_quotes, on="symbol", how="left", suffixes=("", "_quote"))
-        for metadata_col in ("quote_date", "quote_timestamp"):
-            quote_col = f"{metadata_col}_quote"
-            if quote_col in enriched.columns:
-                enriched[metadata_col] = enriched[quote_col].combine_first(enriched.get(metadata_col))
-                enriched = enriched.drop(columns=[quote_col])
-        if "spread_bps_quote" in enriched.columns:
-            enriched["spread_bps"] = pd.to_numeric(enriched["spread_bps_quote"], errors="coerce").combine_first(
-                pd.to_numeric(enriched.get("spread_bps"), errors="coerce")
-            )
-            enriched = enriched.drop(columns=["spread_bps_quote"])
-        for size_col in ("bid_size", "ask_size"):
-            quote_col = f"{size_col}_quote"
-            if quote_col in enriched.columns:
-                enriched[size_col] = pd.to_numeric(enriched[quote_col], errors="coerce").combine_first(
-                    pd.to_numeric(enriched.get(size_col), errors="coerce")
-                    if size_col in enriched.columns
-                    else pd.Series(index=enriched.index, dtype=float)
+        if "symbol" not in quotes_df.columns:
+            LOGGER.warning("Overlay quotes ignore : colonne symbol absente dans quotes_df.")
+        else:
+            # Phase 3.3.c — propager bid_size/ask_size pour le filtre spread IEX.
+            normalized_quotes = quotes_df.copy()
+            quote_columns = ["symbol", "spread_bps", "quote_date", "quote_timestamp", "bid_size", "ask_size"]
+            for column in quote_columns:
+                if column not in normalized_quotes.columns:
+                    normalized_quotes[column] = pd.NA
+            latest_quotes = normalized_quotes.loc[:, quote_columns].drop_duplicates(subset=["symbol"], keep="last")
+            enriched = enriched.merge(latest_quotes, on="symbol", how="left", suffixes=("", "_quote"))
+            for metadata_col in ("quote_date", "quote_timestamp"):
+                quote_col = f"{metadata_col}_quote"
+                if quote_col in enriched.columns:
+                    enriched[metadata_col] = enriched[quote_col].combine_first(enriched.get(metadata_col))
+                    enriched = enriched.drop(columns=[quote_col])
+            if "spread_bps_quote" in enriched.columns:
+                enriched["spread_bps"] = pd.to_numeric(enriched["spread_bps_quote"], errors="coerce").combine_first(
+                    pd.to_numeric(enriched.get("spread_bps"), errors="coerce")
                 )
-                enriched = enriched.drop(columns=[quote_col])
+                enriched = enriched.drop(columns=["spread_bps_quote"])
+            for size_col in ("bid_size", "ask_size"):
+                quote_col = f"{size_col}_quote"
+                if quote_col in enriched.columns:
+                    enriched[size_col] = pd.to_numeric(enriched[quote_col], errors="coerce").combine_first(
+                        pd.to_numeric(enriched.get(size_col), errors="coerce")
+                        if size_col in enriched.columns
+                        else pd.Series(index=enriched.index, dtype=float)
+                    )
+                    enriched = enriched.drop(columns=[quote_col])
 
     if not earnings_df.empty:
         latest_earnings = earnings_df[

@@ -13,20 +13,7 @@ from database.connection import SessionLocal, get_sqlalchemy_engine
 @lru_cache(maxsize=1)
 def get_stock_quote_snapshots_table() -> Table:
     metadata = MetaData()
-    return Table(
-        "stock_quote_snapshots",
-        metadata,
-        Column("symbol", String(20), primary_key=True),
-        Column("quote_date", Date, primary_key=True),
-        Column("quote_timestamp", DateTime),
-        Column("bid_price", Float),
-        Column("ask_price", Float),
-        Column("bid_size", Float),
-        Column("ask_size", Float),
-        Column("spread_bps", Float),
-        Column("last_updated", DateTime),
-        autoload_with=get_sqlalchemy_engine(),
-    )
+    return Table("stock_quote_snapshots", metadata, autoload_with=get_sqlalchemy_engine())
 
 
 @lru_cache(maxsize=1)
@@ -57,18 +44,26 @@ def upsert_quote_snapshots(records: Iterable[dict[str, Any]]) -> int:
         return 0
 
     table = get_stock_quote_snapshots_table()
+    available_columns = {column.name for column in table.columns}
+    rows = [{key: value for key, value in row.items() if key in available_columns} for row in rows]
+    rows = [row for row in rows if {"symbol", "quote_date"}.issubset(row)]
+    if not rows:
+        return 0
+
     session = SessionLocal()
     try:
         stmt = mysql_insert(table).values(rows)
         update_dict = {
-            "quote_timestamp": stmt.inserted.quote_timestamp,
-            "bid_price": stmt.inserted.bid_price,
-            "ask_price": stmt.inserted.ask_price,
-            "bid_size": stmt.inserted.bid_size,
-            "ask_size": stmt.inserted.ask_size,
-            "spread_bps": stmt.inserted.spread_bps,
-            "last_updated": func.current_timestamp(),
+            column_name: getattr(stmt.inserted, column_name)
+            for column_name in ("quote_timestamp", "bid_price", "ask_price", "bid_size", "ask_size", "spread_bps")
+            if column_name in available_columns
         }
+        if "last_updated" in available_columns:
+            update_dict["last_updated"] = func.current_timestamp()
+        if not update_dict:
+            first_pk_column = next(iter(table.primary_key.columns), None)
+            if first_pk_column is not None:
+                update_dict[first_pk_column.name] = getattr(stmt.inserted, first_pk_column.name)
         session.execute(stmt.on_duplicate_key_update(**update_dict))
         session.commit()
         return len(rows)

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from datetime import date, datetime
+
 from sqlalchemy import create_engine, text
+from sqlalchemy.dialects import mysql
+from sqlalchemy import Date, Float, MetaData, String, Table, Column
 from sqlalchemy.pool import StaticPool
 
 from database import selector_reference
@@ -82,4 +86,63 @@ def test_list_active_tradable_symbols_falls_back_when_history_status_column_is_a
     monkeypatch.setattr(selector_reference, "get_sqlalchemy_engine", lambda: engine)
 
     assert selector_reference.list_active_tradable_symbols() == ["AAPL"]
+
+
+def test_upsert_quote_snapshots_ignores_missing_legacy_columns(monkeypatch) -> None:
+    legacy_table = Table(
+        "stock_quote_snapshots",
+        MetaData(),
+        Column("symbol", String(20), primary_key=True),
+        Column("quote_date", Date, primary_key=True),
+        Column("spread_bps", Float),
+    )
+    captured: dict[str, object] = {}
+
+    class _FakeSession:
+        def execute(self, stmt):
+            captured["sql"] = str(
+                stmt.compile(
+                    dialect=mysql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+
+        def commit(self):
+            captured["committed"] = True
+
+        def rollback(self):
+            captured["rolled_back"] = True
+
+        def close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(selector_reference, "get_stock_quote_snapshots_table", lambda: legacy_table)
+    monkeypatch.setattr(selector_reference, "SessionLocal", lambda: _FakeSession())
+
+    row_count = selector_reference.upsert_quote_snapshots(
+        [
+            {
+                "symbol": "AAPL",
+                "quote_date": date(2026, 4, 30),
+                "quote_timestamp": datetime(2026, 4, 30, 20, 0, 0),
+                "bid_price": 100.0,
+                "ask_price": 100.5,
+                "bid_size": 10.0,
+                "ask_size": 12.0,
+                "spread_bps": 49.9,
+            }
+        ]
+    )
+
+    sql = str(captured["sql"])
+    assert row_count == 1
+    assert captured["committed"] is True
+    assert captured["closed"] is True
+    assert "quote_timestamp" not in sql
+    assert "bid_size" not in sql
+    assert "ask_size" not in sql
+    assert "bid_price" not in sql
+    assert "ask_price" not in sql
+    assert "spread_bps" in sql
+
 

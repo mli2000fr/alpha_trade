@@ -75,12 +75,18 @@ def main(args: list[str] | None = None) -> None:
     started_at = datetime.now()
 
     trade_date = datetime.strptime(args.trade_date, "%Y-%m-%d").date() if args.trade_date else date.today()
+    raw_account_id = (args.account or "").strip() or None
+    # L'IHM transmet systématiquement `--account default`. On considère cette
+    # valeur comme un compte implicite : si aucun snapshot n'est disponible, on
+    # fallback sur `--account-equity` plutôt que de bloquer le pipeline.
+    requested_account_id = None if (raw_account_id is None or raw_account_id.lower() == "default") else raw_account_id
 
     repo = RiskRepository()
-    account_snapshot = repo.load_account_risk_snapshot(args.account, trade_date)
-    equity_breakdown = repo.load_account_equity_breakdown(args.account, trade_date)
+    account_snapshot = repo.load_account_risk_snapshot(requested_account_id, trade_date)
+    effective_account_id = account_snapshot.account_id if account_snapshot is not None else requested_account_id
+    equity_breakdown = repo.load_account_equity_breakdown(effective_account_id, trade_date)
     if account_snapshot is None:
-        if args.dry_run:
+        if args.dry_run or requested_account_id is None:
             effective_equity = float(args.account_equity)
             pnl_snapshot = PnLSnapshot(
                 portfolio_high_watermark=effective_equity,
@@ -88,14 +94,15 @@ def main(args: list[str] | None = None) -> None:
                 daily_pnl=0.0,
             )
             LOGGER.warning(
-                "Aucun account_risk_snapshot pour account=%s date=%s ; fallback dry-run sur --account-equity=%.2f.",
-                args.account or "default",
+                "Aucun account_risk_snapshot pour account=%s date=%s ; fallback %s sur --account-equity=%.2f.",
+                raw_account_id or "default",
                 trade_date,
+                "dry-run" if args.dry_run else "compte implicite",
                 effective_equity,
             )
         else:
             raise RuntimeError(
-                f"Aucun account_risk_snapshot disponible pour account={args.account or 'default'} au {trade_date}."
+                f"Aucun account_risk_snapshot disponible pour account={raw_account_id or 'default'} au {trade_date}."
             )
     else:
         effective_equity = float(account_snapshot.equity)
@@ -165,8 +172,8 @@ def main(args: list[str] | None = None) -> None:
     if config.dry_run:
         LOGGER.info("Mode dry-run — aucune ecriture en DB.")
     else:
-        n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=args.account)
-        n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=args.account)
+        n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=effective_account_id)
+        n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=effective_account_id)
         LOGGER.info("Ecrit %d decisions et %d cibles en DB.", n_dec, n_tgt)
 
     accepted_entries = [entry for entry in entries if entry.approved_shares > 0 and str(entry.decision).upper() == "ACCEPTED"]
@@ -238,7 +245,7 @@ def main(args: list[str] | None = None) -> None:
         status="completed",
         summary_run_id=run_id,
         entity_run_id=run_id,
-        account_id=args.account,
+        account_id=effective_account_id,
         trade_date=trade_date,
         started_at=started_at,
         finished_at=finished_at,

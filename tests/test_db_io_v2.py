@@ -76,6 +76,17 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
             )
         """))
         conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS broker_account_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id VARCHAR(32),
+                snapshot_kind VARCHAR(20),
+                cash DOUBLE,
+                equity DOUBLE,
+                buying_power DOUBLE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS risk_decisions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id VARCHAR(32), account_id VARCHAR(32), trade_date DATE, symbol VARCHAR(20),
@@ -164,6 +175,48 @@ def test_load_candidates_asof_uses_history_snapshot() -> None:
 
 
 @pytest.mark.unit
+def test_load_candidates_asof_falls_back_to_latest_snapshot_before_trade_date(caplog) -> None:
+    """Si stock_scores_history n'a pas encore de ligne pour trade_date, on doit
+    retomber sur le dernier snapshot_date <= trade_date contenant des candidats."""
+    import logging
+
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO stock_scores_history (
+                snapshot_date, symbol, sector, final_score_sentiment, final_score_walk_forward, is_candidate,
+                walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
+                calibration_run_id, calibration_source
+            )
+            VALUES
+                ('2026-04-30', 'AAPL', 'Tech', 0.81, 0.92, 1, 0.2, 0.1, 0.7, 'wf-001', 'walk_forward'),
+                ('2026-04-30', 'MSFT', 'Tech', 0.55, 0.60, 1, 0.2, 0.1, 0.7, 'wf-001', 'walk_forward'),
+                ('2026-04-30', 'IBM',  'Tech', 0.10, 0.20, 0, 0.2, 0.1, 0.7, 'wf-001', 'walk_forward')
+        """))
+    repo = RiskRepository(engine=engine)
+    with caplog.at_level(logging.WARNING, logger="risk_management.db_io"):
+        candidates = repo.load_candidates_asof(date(2026, 5, 1))
+
+    assert [c.symbol for c in candidates] == ["AAPL", "MSFT"]
+    assert candidates[0].snapshot_date == date(2026, 4, 30)
+    assert any("fallback PIT" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.unit
+def test_load_candidates_asof_returns_empty_when_no_history_at_all(caplog) -> None:
+    import logging
+
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    repo = RiskRepository(engine=engine)
+    with caplog.at_level(logging.WARNING, logger="risk_management.db_io"):
+        candidates = repo.load_candidates_asof(date(2026, 5, 1))
+    assert candidates == []
+    assert any("aucun snapshot stock_scores_history" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.unit
 def test_load_win_rates() -> None:
     engine = create_engine("sqlite:///:memory:")
     _create_tables(engine)
@@ -248,6 +301,32 @@ def test_load_account_risk_snapshot_returns_latest_before_trade_date() -> None:
     assert snapshot is not None
     assert snapshot.trade_date == date(2026, 4, 17)
     assert snapshot.equity == 101000
+
+
+@pytest.mark.unit
+def test_load_account_risk_snapshot_falls_back_to_broker_account_snapshots() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO broker_account_snapshots (
+                account_id, snapshot_kind, cash, equity, buying_power, created_at
+            ) VALUES
+                ('paper', 'preflight', 95000, 101000, 150000, '2026-04-17 20:00:00'),
+                ('paper', 'preflight', 97000, 103500, 155000, '2026-04-18 20:00:00')
+        """))
+    repo = RiskRepository(engine=engine)
+
+    snapshot = repo.load_account_risk_snapshot("paper", date(2026, 4, 18))
+
+    assert snapshot is not None
+    assert snapshot.account_id == "paper"
+    assert snapshot.trade_date == date(2026, 4, 18)
+    assert snapshot.cash == 97000
+    assert snapshot.equity == 103500
+    assert snapshot.buying_power == 155000
+    assert snapshot.high_watermark == 103500
+    assert snapshot.daily_total_pnl is None
 
 
 @pytest.mark.unit
@@ -376,5 +455,4 @@ def test_write_portfolio_targets_persists_walk_forward_metadata() -> None:
     assert row["atr_20"] == 5.0
     assert row["decision_rank"] == 1
     assert row["stop_price_initial"] == 140.0
-
 

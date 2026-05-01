@@ -30,7 +30,14 @@ class RiskRepository:
         return self.load_candidates_asof(trade_date or date.today())
 
     def load_candidates_asof(self, trade_date: date) -> list[CandidateScore]:
-        """Charge les candidats depuis stock_scores_history à snapshot_date = trade_date."""
+        """Charge les candidats depuis stock_scores_history avec sémantique PIT.
+
+        On cherche d'abord les candidats du `trade_date` exact ; si la date n'a
+        pas encore été archivée (cas fréquent quand `risk_management` tourne en
+        amont de `archive_scores_snapshot` du jour ou que le screener n'a pas
+        publié de nouveau snapshot), on retombe sur le dernier `snapshot_date`
+        <= `trade_date` qui contient au moins un candidat exploitable.
+        """
         stock_score_columns = self._get_table_columns("stock_scores_history")
         if not stock_score_columns:
             raise RuntimeError("La table stock_scores_history est requise pour les runs PIT risk_management.")
@@ -40,6 +47,8 @@ class RiskRepository:
             if has_walk_forward
             else "COALESCE(s.final_score_sentiment, s.final_score)"
         )
+        # Variante du score_expr sans alias `s.` pour le sous-SELECT de fallback.
+        score_expr_unaliased = score_expr.replace("s.", "")
         score_source_expr = (
             """
             CASE
@@ -82,13 +91,41 @@ class RiskRepository:
                 {score_source_expr}           AS score_source,
                 {", ".join(optional_selects)}
             FROM stock_scores_history s
-            WHERE s.snapshot_date = :trade_date
+            WHERE s.snapshot_date = :snapshot_date
               AND s.is_candidate = 1
               AND {score_expr} IS NOT NULL
             ORDER BY score_used DESC, s.symbol ASC
         """)
+        resolve_snapshot_query = text(f"""
+            SELECT MAX(snapshot_date) AS snapshot_date
+            FROM stock_scores_history
+            WHERE snapshot_date <= :trade_date
+              AND is_candidate = 1
+              AND {score_expr_unaliased} IS NOT NULL
+        """)
         with self.engine.connect() as conn:
-            rows = conn.execute(query, {"trade_date": trade_date}).mappings().all()
+            resolved_row = conn.execute(resolve_snapshot_query, {"trade_date": trade_date}).mappings().first()
+            resolved_snapshot_date = self._coerce_date(resolved_row["snapshot_date"]) if resolved_row else None
+            if resolved_snapshot_date is None:
+                LOGGER.warning(
+                    "load_candidates_asof | aucun snapshot stock_scores_history avec is_candidate=1 trouve pour trade_date<=%s.",
+                    trade_date,
+                )
+                return []
+            if resolved_snapshot_date != trade_date:
+                LOGGER.warning(
+                    "load_candidates_asof | snapshot_date=%s utilise (fallback PIT) car aucun candidat archive pour trade_date=%s. "
+                    "Verifier que le screener a bien archive stock_scores_history pour la date demandee.",
+                    resolved_snapshot_date,
+                    trade_date,
+                )
+            else:
+                LOGGER.info(
+                    "load_candidates_asof | snapshot_date=%s exact pour trade_date=%s.",
+                    resolved_snapshot_date,
+                    trade_date,
+                )
+            rows = conn.execute(query, {"snapshot_date": resolved_snapshot_date}).mappings().all()
         return [
             CandidateScore(
                 symbol=str(r["symbol"]).strip().upper(),
@@ -343,34 +380,95 @@ class RiskRepository:
 
     def load_account_risk_snapshot(self, account_id: str | None, trade_date: date) -> AccountRiskSnapshot | None:
         """Charge le dernier snapshot compte disponible <= trade_date."""
-        if not self._get_table_columns("account_risk_snapshots"):
+        resolved_account_id = account_id or "default"
+        if self._get_table_columns("account_risk_snapshots"):
+            query = text("""
+                SELECT account_id, trade_date, cash, equity, buying_power,
+                       high_watermark, daily_realized_pnl, daily_unrealized_pnl,
+                       daily_total_pnl, created_at
+                FROM account_risk_snapshots
+                WHERE account_id = :account_id
+                  AND trade_date <= :trade_date
+                ORDER BY trade_date DESC, created_at DESC
+                LIMIT 1
+            """)
+            with self.engine.connect() as conn:
+                row = conn.execute(query, {"account_id": resolved_account_id, "trade_date": trade_date}).mappings().first()
+            if row is not None:
+                return AccountRiskSnapshot(
+                    account_id=str(row["account_id"]),
+                    trade_date=self._coerce_date(row["trade_date"]) or trade_date,
+                    cash=float(row["cash"]),
+                    equity=float(row["equity"]),
+                    buying_power=float(row["buying_power"]),
+                    high_watermark=float(row["high_watermark"]) if row.get("high_watermark") is not None else None,
+                    daily_realized_pnl=float(row["daily_realized_pnl"]) if row.get("daily_realized_pnl") is not None else None,
+                    daily_unrealized_pnl=float(row["daily_unrealized_pnl"]) if row.get("daily_unrealized_pnl") is not None else None,
+                    daily_total_pnl=float(row["daily_total_pnl"]) if row.get("daily_total_pnl") is not None else None,
+                )
+        return self._load_broker_snapshot_as_account_risk_snapshot(resolved_account_id, trade_date)
+
+    def _load_broker_snapshot_as_account_risk_snapshot(
+        self,
+        account_id: str,
+        trade_date: date,
+    ) -> AccountRiskSnapshot | None:
+        broker_columns = self._get_table_columns("broker_account_snapshots")
+        if not broker_columns:
             return None
 
-        resolved_account_id = account_id or "default"
-        query = text("""
-            SELECT account_id, trade_date, cash, equity, buying_power,
-                   high_watermark, daily_realized_pnl, daily_unrealized_pnl,
-                   daily_total_pnl, created_at
-            FROM account_risk_snapshots
-            WHERE account_id = :account_id
-              AND trade_date <= :trade_date
-            ORDER BY trade_date DESC, created_at DESC
+        where_clauses = ["account_id = :account_id", "DATE(created_at) <= :trade_date"]
+        params: dict[str, Any] = {"account_id": account_id, "trade_date": trade_date}
+        if "snapshot_kind" in broker_columns:
+            where_clauses.append("snapshot_kind = :snapshot_kind")
+            params["snapshot_kind"] = "preflight"
+        order_by = "created_at DESC"
+        if "id" in broker_columns:
+            order_by += ", id DESC"
+
+        latest_stmt = text(
+            f"""
+            SELECT account_id, cash, equity, buying_power, created_at
+            FROM broker_account_snapshots
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY {order_by}
             LIMIT 1
-        """)
+            """
+        )
+        high_watermark_stmt = text(
+            f"""
+            SELECT MAX(equity) AS high_watermark
+            FROM broker_account_snapshots
+            WHERE {' AND '.join(where_clauses)}
+            """
+        )
         with self.engine.connect() as conn:
-            row = conn.execute(query, {"account_id": resolved_account_id, "trade_date": trade_date}).mappings().first()
-        if row is None:
-            return None
+            row = conn.execute(latest_stmt, params).mappings().first()
+            if row is None:
+                return None
+            high_watermark_row = conn.execute(high_watermark_stmt, params).mappings().first()
+
+        equity = float(row["equity"])
+        high_watermark = (
+            float(high_watermark_row["high_watermark"])
+            if high_watermark_row and high_watermark_row.get("high_watermark") is not None
+            else equity
+        )
+        LOGGER.info(
+            "Fallback account_risk_snapshot via broker_account_snapshots | account=%s trade_date=%s",
+            account_id,
+            trade_date,
+        )
         return AccountRiskSnapshot(
             account_id=str(row["account_id"]),
-            trade_date=self._coerce_date(row["trade_date"]) or trade_date,
+            trade_date=self._coerce_date(row.get("created_at")) or trade_date,
             cash=float(row["cash"]),
-            equity=float(row["equity"]),
+            equity=equity,
             buying_power=float(row["buying_power"]),
-            high_watermark=float(row["high_watermark"]) if row.get("high_watermark") is not None else None,
-            daily_realized_pnl=float(row["daily_realized_pnl"]) if row.get("daily_realized_pnl") is not None else None,
-            daily_unrealized_pnl=float(row["daily_unrealized_pnl"]) if row.get("daily_unrealized_pnl") is not None else None,
-            daily_total_pnl=float(row["daily_total_pnl"]) if row.get("daily_total_pnl") is not None else None,
+            high_watermark=high_watermark,
+            daily_realized_pnl=None,
+            daily_unrealized_pnl=None,
+            daily_total_pnl=None,
         )
 
     def load_account_equity_breakdown(
