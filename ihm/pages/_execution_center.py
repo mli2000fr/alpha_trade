@@ -226,6 +226,18 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Pré-rempli avec la date du jour ; modifiez pour rejouer un PIT historique."
                 ),
             )
+            force_trade_date_to_latest_snapshot = st.checkbox(
+                "Forcer trade_date sur le snapshot le plus récent",
+                value=bool(st.session_state.get("pipeline_force_trade_date_to_latest_snapshot", True)),
+                key="pipeline_force_trade_date_to_latest_snapshot",
+                help=(
+                    "Si coché (défaut), au lancement, trade_date est remplacé par MAX(snapshot_date) "
+                    "<= trade_date avec is_candidate=1 dans stock_scores_history. Permet de continuer un "
+                    "workflow démarré la veille même après réouverture de la session Streamlit (qui "
+                    "réinitialise trade_date à la date du jour). Décochez pour utiliser strictement la "
+                    "date saisie."
+                ),
+            )
         with col2:
             risk_account_equity = st.number_input(
                 "Equity pour le module Risk",
@@ -1907,6 +1919,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         PipelineLaunchOptions(
             account_id=selected_account_id,
             trade_date=trade_date,
+            force_trade_date_to_latest_snapshot=bool(force_trade_date_to_latest_snapshot),
             risk_account_equity=float(risk_account_equity),
             execution_mode=cast(Any, execution_mode),
             execution_run_id=execution_run_id,

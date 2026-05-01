@@ -167,6 +167,12 @@ class PipelineLaunchOptions:
 
     account_id: str | None = None
     trade_date: str | None = None
+    # Si True, écrase ``trade_date`` au lancement par le snapshot_date le plus
+    # récent <= trade_date présent dans ``stock_scores_history`` (avec
+    # is_candidate=1). Permet de continuer un workflow démarré la veille même
+    # après réouverture de la session Streamlit (qui ré-initialise trade_date à
+    # date.today()). Décochez pour forcer la date du jour.
+    force_trade_date_to_latest_snapshot: bool = True
     risk_account_equity: float = 100_000.0
     execution_mode: Literal["simulate", "paper", "live"] = "simulate"
     execution_run_id: str | None = None

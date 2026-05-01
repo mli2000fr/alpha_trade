@@ -303,6 +303,42 @@ def get_candidates_count() -> int:
     return int(v) if v is not None else 0
 
 
+def resolve_latest_candidate_snapshot_date(trade_date: str | date | None) -> date | None:
+    """Retourne le snapshot_date le plus récent <= trade_date avec is_candidate=1.
+
+    Utilisé par ``start_pipeline_run`` quand ``force_trade_date_to_latest_snapshot``
+    est activé : permet de continuer un workflow démarré la veille même après
+    réouverture de la session Streamlit (qui a réinitialisé trade_date à
+    ``date.today()``).
+
+    Retourne ``None`` si la table est vide, si trade_date est invalide, ou si
+    aucun snapshot is_candidate=1 n'existe <= trade_date.
+    """
+    if trade_date is None:
+        return None
+    if isinstance(trade_date, str):
+        cleaned = trade_date.strip()
+        if not cleaned:
+            return None
+        try:
+            trade_date = date.fromisoformat(cleaned)
+        except ValueError:
+            return None
+    raw = safe_scalar(
+        "SELECT MAX(snapshot_date) FROM stock_scores_history "
+        "WHERE snapshot_date <= :trade_date AND is_candidate = 1",
+        {"trade_date": trade_date},
+    )
+    if raw is None:
+        return None
+    if isinstance(raw, date):
+        return raw
+    try:
+        return date.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_stock_bars_daily_symbol_count() -> int:
     v = safe_scalar(
