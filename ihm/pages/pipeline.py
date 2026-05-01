@@ -91,6 +91,55 @@ from ihm.services.process_registry import stop_pipeline_run
 from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
 
 
+def _build_execution_mode_banner_payload(
+    options: PipelineLaunchOptions,
+    *,
+    detected_broker_mode: str | None = None,
+) -> tuple[str, str]:
+    mode = str(options.execution_mode or "simulate").strip().lower() or "simulate"
+    account_id = str(options.account_id or "default")
+    detected = (detected_broker_mode or "").strip().lower() or None
+
+    if mode == "live":
+        severity = "error"
+        message = (
+            f"🔴 **MODE LIVE ACTIF** — les lancements de l'étape 12 enverront de vrais ordres Alpaca "
+            f"sur le compte `{account_id}`."
+        )
+    elif mode == "paper":
+        severity = "success"
+        message = (
+            f"🟢 **MODE PAPER ACTIF** — les lancements de l'étape 12 enverront des ordres sur le compte "
+            f"paper Alpaca `{account_id}`."
+        )
+    else:
+        severity = "warning"
+        message = (
+            f"🟡 **MODE SIMULATION ACTIF** — aucun ordre ne sera envoyé à Alpaca pour le compte `{account_id}` ; "
+            "l'étape 12 reste un dry-run local."
+        )
+
+    if detected in {"paper", "live"}:
+        message += f" Mode broker détecté pour ce compte : `{detected}`."
+        if mode in {"paper", "live"} and mode != detected:
+            severity = "error"
+            message += (
+                " ⚠️ Incohérence : le mode d'exécution choisi ne correspond pas au mode broker configuré pour ce compte. "
+                "Basculez le sélecteur `Mode Execution` sur la même valeur pour éviter un run invalide."
+            )
+
+    return severity, message
+
+
+def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
+    detected_mode = None
+    detected_account = str(st.session_state.get("pipeline_detected_broker_mode_account_id") or "").strip()
+    if detected_account == str(options.account_id or "").strip():
+        detected_mode = str(st.session_state.get("pipeline_detected_broker_mode") or "").strip() or None
+    severity, message = _build_execution_mode_banner_payload(options, detected_broker_mode=detected_mode)
+    getattr(st, severity)(message)
+
+
 def _render_ml_inspection_link(step_key: str) -> None:
     if step_key not in {"ml_train", "ml_predict"}:
         return
@@ -306,6 +355,7 @@ def render() -> None:
     st.caption("Ordre d'exécution strict — chaque étape dépend de la précédente.")
 
     options, live_confirmed = _build_launch_options()
+    _render_execution_mode_banner(options)
     db_config = get_runtime_db_config()
 
     _render_workflow_launcher(options, live_confirmed, db_config)

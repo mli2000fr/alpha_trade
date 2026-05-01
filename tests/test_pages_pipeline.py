@@ -82,6 +82,25 @@ def test_pipeline_page_exposes_clear_screener_vs_alpha_scanner_labels() -> None:
     assert "préfiltrage large" in pipeline.SCREENER_PARAMS_CAPTION.lower()
 
 
+def test_build_execution_mode_banner_payload_marks_simulation_as_no_broker_orders() -> None:
+    severity, message = pipeline._build_execution_mode_banner_payload(pipeline.PipelineLaunchOptions(execution_mode="simulate"))
+
+    assert severity == "warning"
+    assert "simulation" in message.lower()
+    assert "aucun ordre" in message.lower()
+
+
+def test_build_execution_mode_banner_payload_escalates_mode_mismatch() -> None:
+    severity, message = pipeline._build_execution_mode_banner_payload(
+        pipeline.PipelineLaunchOptions(account_id="acct-live", execution_mode="paper"),
+        detected_broker_mode="live",
+    )
+
+    assert severity == "error"
+    assert "incohérence" in message.lower()
+    assert "acct-live" in message
+
+
 def test_build_watcher_doc_reference_exposes_explicit_workspace_link() -> None:
     assert hasattr(pipeline, "render_watcher_documentation_panel")
 

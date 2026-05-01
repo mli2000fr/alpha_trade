@@ -146,22 +146,35 @@ __all__ = [
 ]
 
 
+EXECUTION_MODE_ACCOUNT_KEY = "pipeline_execution_mode_account_id"
+DETECTED_BROKER_MODE_KEY = "pipeline_detected_broker_mode"
+DETECTED_BROKER_MODE_ACCOUNT_KEY = "pipeline_detected_broker_mode_account_id"
+
+
 def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecutionDefaults | None:
     cleaned_account_id = (selected_account_id or "").strip() or None
     if cleaned_account_id is None:
+        st.session_state.pop(DETECTED_BROKER_MODE_KEY, None)
+        st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
         return None
 
     try:
         defaults = get_pipeline_execution_defaults(cleaned_account_id)
     except Exception:
+        st.session_state.pop(DETECTED_BROKER_MODE_KEY, None)
+        st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
         st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
         return None
 
     if defaults is None:
+        st.session_state.pop(DETECTED_BROKER_MODE_KEY, None)
+        st.session_state.pop(DETECTED_BROKER_MODE_ACCOUNT_KEY, None)
         st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
         return None
 
     account_changed = st.session_state.get(EXECUTION_DEFAULTS_ACCOUNT_KEY) != cleaned_account_id
+    st.session_state[DETECTED_BROKER_MODE_KEY] = defaults.broker_mode
+    st.session_state[DETECTED_BROKER_MODE_ACCOUNT_KEY] = cleaned_account_id
     if defaults.account_type in {"margin", "cash"} and (
         account_changed or "pipeline_execution_account_type" not in st.session_state
     ):
@@ -174,6 +187,11 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
         account_changed or "pipeline_execution_swing_only" not in st.session_state
     ):
         st.session_state["pipeline_execution_swing_only"] = defaults.swing_only
+    if defaults.broker_mode in {"paper", "live"} and (
+        account_changed or "pipeline_execution_mode" not in st.session_state
+    ):
+        st.session_state["pipeline_execution_mode"] = defaults.broker_mode
+        st.session_state[EXECUTION_MODE_ACCOUNT_KEY] = cleaned_account_id
 
     st.session_state[EXECUTION_DEFAULTS_ACCOUNT_KEY] = cleaned_account_id
     return defaults
@@ -184,6 +202,8 @@ def _build_execution_prefill_caption(defaults: PipelineExecutionDefaults | None)
         return None
 
     notes: list[str] = []
+    if defaults.broker_mode in {"paper", "live"}:
+        notes.append(f"mode broker détecté : `{defaults.broker_mode}`")
     if defaults.account_type:
         notes.append(f"type de compte prérempli via broker : `{defaults.account_type}`")
     if defaults.pdt_rule:
