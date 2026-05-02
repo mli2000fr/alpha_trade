@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 import json
 import os
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pandas as pd
@@ -1567,6 +1568,76 @@ class TestCLI:
         assert args.chunk_size == 250
         assert args.selection_size == 50
         assert args.overwrite_existing is True
+
+    def test_run_backfill_scores_history_prefers_explicit_selection_size_without_duplicate_kwarg(self, monkeypatch):
+        import argparse
+        import backtesting.cli._impl as cli
+
+        captured: dict[str, object] = {}
+
+        class FakeBackfillService:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def backfill(self, *, start_date, end_date, overwrite_existing, limit_days):
+                captured["backfill_call"] = {
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "overwrite_existing": overwrite_existing,
+                    "limit_days": limit_days,
+                }
+                return SimpleNamespace(
+                    start_date=start_date,
+                    end_date=end_date,
+                    trading_days_processed=1,
+                    trading_days_requested=1,
+                    trading_days_skipped_existing=0,
+                    rows_inserted=50,
+                )
+
+        class FakeAlphaScannerConfig:
+            @classmethod
+            def strict_swing_cash(cls, **kwargs):
+                captured["scanner_kwargs"] = dict(kwargs)
+                return {"scanner_kwargs": dict(kwargs)}
+
+        monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(cli, "resolve_effective_capital_preset", lambda **kwargs: (SimpleNamespace(key="capital_50001_100000"), "explicit_key"))
+        monkeypatch.setattr(cli, "resolve_capital_preset_for_equity", lambda equity: SimpleNamespace(key="capital_25001_50000"))
+        monkeypatch.setattr(cli, "build_screener_config_kwargs_from_preset", lambda preset: {"liquidity_threshold_usd": 1_000_000.0})
+        monkeypatch.setattr(
+            cli,
+            "build_selector_config_kwargs_from_preset",
+            lambda preset: {"selection_size": 25, "sector_cap_ratio": 0.28, "min_close": 10.0},
+        )
+        monkeypatch.setattr(cli, "capital_preset_fingerprint", lambda preset: "fp-test")
+
+        from backtesting import backfill_scores_history
+        from selector import alpha_scanner
+
+        monkeypatch.setattr(backfill_scores_history, "BackfillScoresHistoryService", FakeBackfillService)
+        monkeypatch.setattr(alpha_scanner, "AlphaScannerConfig", FakeAlphaScannerConfig)
+        monkeypatch.setattr(cli.sys, "argv", ["python", "backfill-scores-history", "--selection-size", "50"])
+
+        args = argparse.Namespace(
+            start="2025-01-01",
+            end="2026-03-31",
+            capital=50_001.0,
+            capital_preset_key="capital_50001_100000",
+            overwrite_existing=False,
+            limit_days=None,
+            chunk_size=500,
+            selection_size=50,
+            screener_workers=None,
+        )
+
+        cli._run_backfill_scores_history(args)
+
+        scanner_kwargs = cast(dict[str, object], captured["scanner_kwargs"])
+        assert scanner_kwargs["selection_size"] == 50
+        assert scanner_kwargs["chunk_size"] == 500
+        assert scanner_kwargs["sector_cap_ratio"] == 0.28
+        assert set(scanner_kwargs.keys()) == {"chunk_size", "selection_size", "sector_cap_ratio", "min_close"}
 
     def test_parse_run_command_accepts_capital_preset_key(self):
         from backtesting.cli import _build_parser

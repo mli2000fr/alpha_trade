@@ -1,3 +1,5 @@
+from typing import cast
+
 from ihm.services.run_summary import aggregate_workflow_run_summary, build_latest_run_summary_rows, build_run_summary_caption
 
 
@@ -37,7 +39,8 @@ def test_aggregate_workflow_run_summary_merges_numeric_and_nested_counters() -> 
     assert aggregated["max_calendar_gap_days"] == 8
     assert aggregated["history_status_counts"] == {"ready": 2, "provider_error": 1}
     assert aggregated["status_breakdown"] == {"success": 3, "failed": 0}
-    assert len(aggregated["workflow_step_summaries"]) == 2
+    workflow_step_summaries = cast(list[object], aggregated["workflow_step_summaries"])
+    assert len(workflow_step_summaries) == 2
 
 
 def test_build_run_summary_caption_uses_workflow_metrics() -> None:
@@ -99,6 +102,36 @@ def test_aggregate_workflow_run_summary_uses_weighted_average_and_latest_thresho
     assert aggregated["max_slippage_bps_threshold"] == 25
     assert aggregated["account_ids"] == ["paper-a", "paper-b"]
     assert aggregated["dry_run"] is True
+
+
+def test_aggregate_workflow_run_summary_ignores_live_eodhd_progress_fields() -> None:
+    aggregated = aggregate_workflow_run_summary(
+        [
+            {
+                "run_id": "run-import",
+                "step_key": "import_alpaca_bar",
+                "step_label": "1. Import",
+                "status": "running",
+                "run_summary": {
+                    "provider": "eodhd",
+                    "targeted_symbols": 100,
+                    "current_symbol_index": 37,
+                    "current_symbol_total": 100,
+                    "current_symbol": "NVDA",
+                    "batch_commits": 2,
+                    "symbols_committed": 20,
+                    "pending_rows_stock_bars_daily": 17,
+                },
+            }
+        ]
+    )
+
+    assert aggregated["targeted_symbols"] == 100
+    assert "provider" not in aggregated
+    assert "current_symbol_index" not in aggregated
+    assert "current_symbol_total" not in aggregated
+    assert "current_symbol" not in aggregated
+    assert "batch_commits" not in aggregated
 
 
 def test_build_run_summary_caption_uses_harmonized_labels_for_execution_and_corporate_actions() -> None:

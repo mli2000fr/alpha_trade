@@ -200,6 +200,51 @@ def test_build_workflow_scope_help_lines_explains_1_to_12_3_to_12_and_13_14() ->
     assert "non incluses par défaut" in lines[2].lower()
 
 
+def test_build_run_provider_badge_prefers_run_summary_provider() -> None:
+    badge = workflow_page._build_run_provider_badge(
+        {
+            "run_summary": {"provider": "eodhd"},
+            "command": ["python", "-m", "dataIntegrityEngine.import_alpaca_bar"],
+        }
+    )
+
+    assert badge == "provider=eodhd"
+
+
+def test_build_run_symbol_progress_caption_formats_current_symbol_and_total() -> None:
+    caption = workflow_page._build_run_symbol_progress_caption(
+        {
+            "run_summary": {
+                "current_symbol_index": 125,
+                "current_symbol_total": 500,
+                "current_symbol": "NVDA",
+            }
+        }
+    )
+
+    assert caption is not None
+    assert "125/500" in caption
+    assert "NVDA" in caption
+
+
+def test_build_run_symbol_progress_payload_returns_fraction_and_caption() -> None:
+    payload = workflow_page._build_run_symbol_progress_payload(
+        {
+            "run_summary": {
+                "current_symbol_index": 25,
+                "current_symbol_total": 100,
+                "current_symbol": "AAPL",
+            }
+        }
+    )
+
+    assert payload is not None
+    fraction, caption = payload
+    assert fraction == 0.25
+    assert "25/100" in caption
+    assert "AAPL" in caption
+
+
 def test_workflow_launcher_starts_with_1_to_12_and_optional_steps_disabled_by_default(monkeypatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))

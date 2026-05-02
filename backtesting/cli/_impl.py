@@ -800,7 +800,8 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
         )
     screener_kwargs = build_screener_config_kwargs_from_preset(effective_preset)
     selector_kwargs = build_selector_config_kwargs_from_preset(effective_preset)
-    effective_selection_size = int(args.selection_size) if "selection_size" in explicit_flags else int(selector_kwargs.pop("selection_size"))
+    preset_selection_size = int(selector_kwargs.pop("selection_size"))
+    effective_selection_size = int(args.selection_size) if "selection_size" in explicit_flags else preset_selection_size
     preset_fingerprint = capital_preset_fingerprint(effective_preset)
 
     _safe_print(f"\n🧱 Backfill stock_scores_history : start={start} end={end or 'auto'}")

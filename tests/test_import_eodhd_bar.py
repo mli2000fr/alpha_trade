@@ -229,6 +229,55 @@ def test_write_mode_upserts_both_tables(monkeypatch, patched_env, fake_bulk_payl
     assert session.committed >= 1
 
 
+def test_write_mode_can_commit_in_batches(monkeypatch, patched_env, fake_bulk_payload):
+    monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk", lambda **kwargs: fake_bulk_payload)
+    monkeypatch.setattr(import_eodhd_bar, "fetch_splits", lambda symbol, **kwargs: [])
+
+    session = _FakeSession()
+    summary = import_eodhd_bar.run_eodhd_ingestion(
+        dry_run=False,
+        target_date="2026-04-28",
+        symbols=None,
+        enable_stooq_cross_check=False,
+        write_commit_every_symbols=2,
+        config={},
+        session=session,
+        tracker=patched_env["tracker"],
+    )
+
+    assert summary["write_commit_every_symbols"] == 2
+    assert summary["batch_commits"] == 2
+    assert summary["symbols_committed"] == 3
+    assert summary["last_commit_symbol_index"] == 3
+    assert summary["last_commit_reason"] == "final_flush"
+    assert summary["pending_rows_stock_bars_daily"] == 0
+    assert summary["pending_rows_stock_bars"] == 0
+    assert len(session.executed) == 5
+    assert session.committed == 2
+
+
+def test_write_mode_zero_commit_every_symbols_keeps_single_final_flush(monkeypatch, patched_env, fake_bulk_payload):
+    monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk", lambda **kwargs: fake_bulk_payload)
+    monkeypatch.setattr(import_eodhd_bar, "fetch_splits", lambda symbol, **kwargs: [])
+
+    session = _FakeSession()
+    summary = import_eodhd_bar.run_eodhd_ingestion(
+        dry_run=False,
+        target_date="2026-04-28",
+        symbols=None,
+        enable_stooq_cross_check=False,
+        write_commit_every_symbols=0,
+        config={},
+        session=session,
+        tracker=patched_env["tracker"],
+    )
+
+    assert summary["write_commit_every_symbols"] == 0
+    assert summary["batch_commits"] == 1
+    assert summary["last_commit_reason"] == "final_flush"
+    assert session.committed == 1
+
+
 def test_write_mode_sets_stock_bars_vwa_price_proxy(monkeypatch, patched_env, fake_bulk_payload):
     monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk", lambda **kwargs: fake_bulk_payload)
     monkeypatch.setattr(import_eodhd_bar, "fetch_splits", lambda symbol, **kwargs: [])
@@ -312,6 +361,9 @@ def test_run_eodhd_ingestion_logs_symbol_progress(monkeypatch, patched_env, fake
         )
 
     assert summary["targeted_symbols"] == 3
+    assert summary["current_symbol_index"] == 3
+    assert summary["current_symbol_total"] == 3
+    assert summary["current_symbol"] == "BRK.B"
     progress_messages = [record.getMessage() for record in caplog.records if "[eodhd] progression" in record.getMessage()]
     assert any("1/3" in message and "symbol=AAPL" in message for message in progress_messages)
     assert any("3/3" in message and "symbol=BRK.B" in message for message in progress_messages)

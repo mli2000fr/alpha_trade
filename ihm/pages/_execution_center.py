@@ -46,6 +46,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY,
     DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS,
     DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE,
+    DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS,
     DEFAULT_CA_SKIP_EXISTING,
     DEFAULT_CA_BATCH_SIZE,
     DEFAULT_CA_USE_CUSTOM_WINDOW,
@@ -1934,6 +1935,16 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 )
             )
         with di_col3:
+            eodhd_write_commit_every_symbols = int(
+                st.number_input(
+                    "Import Bars EODHD — commit intermédiaire tous les N symboles",
+                    min_value=0,
+                    value=int(st.session_state.get("pipeline_eodhd_write_commit_every_symbols", DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS)),
+                    step=25,
+                    key="pipeline_eodhd_write_commit_every_symbols",
+                    help="0 = commit final unique en fin de run. Toute valeur > 0 active des sauvegardes intermédiaires par batch de symboles quand `bars_provider=eodhd`.",
+                )
+            )
             data_integrity_fundamentals_log_every = int(
                 st.number_input(
                     "Fondamentaux — journaliser tous les N symboles",
@@ -2256,6 +2267,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             data_integrity_fundamentals_limit=_to_optional_positive_int(data_integrity_fundamentals_limit),
             data_integrity_fundamentals_sleep_seconds=float(data_integrity_fundamentals_sleep_seconds),
             data_integrity_fundamentals_log_every=int(data_integrity_fundamentals_log_every),
+            eodhd_write_commit_every_symbols=int(eodhd_write_commit_every_symbols),
             corporate_actions_skip_existing=bool(corporate_actions_skip_existing),
             corporate_actions_use_custom_window=bool(ca_use_custom_window),
             corporate_actions_start_date=ca_start_date_value,

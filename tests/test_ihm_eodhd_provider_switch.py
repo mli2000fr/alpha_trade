@@ -46,6 +46,19 @@ def test_pipeline_command_for_eodhd_routes_to_eodhd_module(monkeypatch):
     cmd = _build_command(monkeypatch, "import_alpaca_bar")
     assert "dataIntegrityEngine.import_eodhd_bar" in cmd
     assert "--write" in cmd
+    assert "--commit-every-symbols" in cmd
+    assert str(pipeline_runner.DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS) in cmd
+
+
+def test_pipeline_command_for_eodhd_can_disable_intermediate_commits(monkeypatch):
+    monkeypatch.setattr(pipeline_runner, "_resolve_bars_provider_for_ihm", lambda: "eodhd")
+    from ihm.services.pipeline_runner import PipelineLaunchOptions, build_pipeline_command
+
+    cmd = build_pipeline_command("import_alpaca_bar", PipelineLaunchOptions(eodhd_write_commit_every_symbols=0))
+
+    assert "dataIntegrityEngine.import_eodhd_bar" in cmd
+    assert "--write" in cmd
+    assert "--commit-every-symbols" not in cmd
 
 
 # ---------------------------------------------------------------------------

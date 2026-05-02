@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence as SequenceABC
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence, cast
 
 from ihm.services.pipeline_runner import get_pipeline_auxiliary_steps, get_pipeline_steps
 
@@ -160,6 +160,17 @@ _SUMMARY_METADATA_KEYS = {
     "finished_at",
     "timeframe",
     "market_date",
+    "provider",
+    "current_symbol",
+    "current_symbol_index",
+    "current_symbol_total",
+    "write_commit_every_symbols",
+    "batch_commits",
+    "symbols_committed",
+    "last_commit_symbol_index",
+    "last_commit_reason",
+    "pending_rows_stock_bars_daily",
+    "pending_rows_stock_bars",
     "workflow_step_summaries",
     "workflow_child_run_ids_with_summary",
     "workflow_timeframes",
@@ -303,11 +314,16 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _to_float(value: object) -> float | None:
+    return float(value) if _is_number(value) else None
+
+
 def _merge_nested_counts(target: dict[str, object], key: str, value: Mapping[str, object]) -> None:
-    merged = dict(target.get(key, {})) if isinstance(target.get(key), Mapping) else {}
+    current = target.get(key)
+    merged = dict(cast(Mapping[str, object], current)) if isinstance(current, Mapping) else {}
     for nested_key, nested_value in value.items():
         if _is_number(nested_value):
-            merged[nested_key] = int(merged.get(nested_key, 0)) + int(nested_value)
+            merged[nested_key] = int(_to_float(merged.get(nested_key, 0)) or 0) + int(nested_value)
     if merged:
         target[key] = merged
 
@@ -317,16 +333,16 @@ def _merge_scalar_metric(target: dict[str, object], key: str, value: int | float
         target[key] = value
         return
     if key.startswith("max_"):
-        current = target.get(key)
-        target[key] = value if not _is_number(current) else max(float(current), float(value))
+        current_value = _to_float(target.get(key))
+        target[key] = value if current_value is None else max(current_value, float(value))
         return
     if key == "duration_seconds":
         current = float(target.get("children_duration_seconds", 0.0) or 0.0)
         target["children_duration_seconds"] = round(current + float(value), 2)
         return
-    current = target.get(key)
-    if _is_number(current):
-        total = float(current) + float(value)
+    current_value = _to_float(target.get(key))
+    if current_value is not None:
+        total = current_value + float(value)
         target[key] = int(total) if float(total).is_integer() else round(total, 2)
     else:
         target[key] = int(value) if float(value).is_integer() else round(float(value), 2)
@@ -368,7 +384,8 @@ def _infer_weight_key(summary: Mapping[str, object], key: str) -> str | None:
         "fetched_events",
     )
     for candidate in (*candidates_by_key.get(key, ()), *generic_candidates):
-        if candidate in summary and _is_number(summary[candidate]) and float(summary[candidate]) > 0:
+        candidate_value = _to_float(summary.get(candidate))
+        if candidate_value is not None and candidate_value > 0:
             return candidate
     return None
 
@@ -419,15 +436,16 @@ def aggregate_workflow_run_summary(child_runs: Iterable[Mapping[str, object]]) -
                 rule = _metric_rule(key, value)
                 if rule == "weighted_avg":
                     weight_key = _infer_weight_key(summary, key)
-                    weight_value = summary.get(weight_key) if weight_key else None
-                    if _is_number(weight_value) and float(weight_value) > 0:
-                        weighted_totals[key] = weighted_totals.get(key, 0.0) + (float(value) * float(weight_value))
-                        weighted_weights[key] = weighted_weights.get(key, 0.0) + float(weight_value)
+                    numeric_value = float(value)
+                    weight_value = _to_float(summary.get(weight_key)) if weight_key else None
+                    if weight_value is not None and weight_value > 0:
+                        weighted_totals[key] = weighted_totals.get(key, 0.0) + (numeric_value * weight_value)
+                        weighted_weights[key] = weighted_weights.get(key, 0.0) + weight_value
                     else:
-                        weighted_totals[key] = weighted_totals.get(key, 0.0) + float(value)
+                        weighted_totals[key] = weighted_totals.get(key, 0.0) + numeric_value
                         weighted_counts[key] = weighted_counts.get(key, 0) + 1
                     continue
-                _merge_scalar_metric(aggregated, key, value)
+                _merge_scalar_metric(aggregated, key, cast(int | float, value))
             elif key.endswith("_mode") or key.endswith("_id") or key.endswith("_date"):
                 aggregated[key] = value
 

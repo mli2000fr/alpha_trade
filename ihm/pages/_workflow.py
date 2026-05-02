@@ -42,6 +42,9 @@ __all__ = [
     "_build_workflow_scope_help_lines",
     "_build_history_rows",
     "_build_workflow_child_run_payload",
+    "_build_run_provider_badge",
+    "_build_run_symbol_progress_payload",
+    "_build_run_symbol_progress_caption",
     "_latest_run_by_step",
     "_merge_runs",
     "_prime_runtime_center_state",
@@ -84,6 +87,59 @@ def _workflow_mode_label(run: dict[str, object]) -> str:
         scope = f"{scope} + 13"
     ml_mode = "avec ML Train" if "ml_train" in normalized_command else "sans ML Train"
     return f"{scope} {ml_mode}"
+
+
+def _build_run_provider_badge(run: dict[str, object] | None) -> str | None:
+    if not isinstance(run, dict):
+        return None
+
+    summary = run.get("run_summary")
+    if isinstance(summary, dict):
+        provider = str(summary.get("provider") or "").strip().lower()
+        if provider:
+            return f"provider={provider}"
+        eodhd_payload = summary.get("eodhd")
+        if isinstance(eodhd_payload, dict):
+            data_source = str(eodhd_payload.get("data_source") or "").strip().lower()
+            if data_source.startswith("eodhd"):
+                return "provider=eodhd"
+
+    command = run.get("command")
+    tokens = [str(token).strip().lower() for token in command] if isinstance(command, list) else []
+    command_display = str(run.get("command_display") or "").strip().lower()
+    searchable = " ".join(tokens + ([command_display] if command_display else []))
+    if "import_eodhd_bar" in searchable:
+        return "provider=eodhd"
+    if "import_alpaca_bar" in searchable:
+        return "provider=alpaca"
+    return None
+
+
+def _build_run_symbol_progress_caption(run: dict[str, object] | None) -> str | None:
+    payload = _build_run_symbol_progress_payload(run)
+    if payload is None:
+        return None
+    _, caption = payload
+    return caption
+
+
+def _build_run_symbol_progress_payload(run: dict[str, object] | None) -> tuple[float, str] | None:
+    if not isinstance(run, dict):
+        return None
+
+    summary = run.get("run_summary")
+    if not isinstance(summary, dict):
+        return None
+
+    current_index = summary.get("current_symbol_index")
+    total_symbols = summary.get("current_symbol_total") or summary.get("targeted_symbols")
+    current_symbol = str(summary.get("current_symbol") or "").strip()
+    if not isinstance(current_index, int) or not isinstance(total_symbols, int) or current_index <= 0 or total_symbols <= 0:
+        return None
+
+    percent = min(max((current_index / total_symbols) * 100.0, 0.0), 100.0)
+    symbol_suffix = f" — symbole courant `{current_symbol}`" if current_symbol else ""
+    return (percent / 100.0, f"📍 Progression live import bars : {current_index}/{total_symbols} ({percent:.1f} %){symbol_suffix}")
 
 
 def _build_workflow_child_run_payload(workflow_run: dict[str, object]) -> tuple[list[str], dict[str, str]]:
@@ -344,6 +400,14 @@ def _render_runtime_center() -> None:
                 if cols[4].button("⏹️ Arrêter", key=f"stop_run_{run_id}", use_container_width=True):
                     stop_pipeline_run(run_id)
                     st.rerun()
+                provider_badge = _build_run_provider_badge(run)
+                if provider_badge:
+                    st.caption(f"🏷️ `{provider_badge}`")
+                symbol_progress_payload = _build_run_symbol_progress_payload(run)
+                if symbol_progress_payload is not None:
+                    progress_fraction, progress_caption = symbol_progress_payload
+                    st.progress(progress_fraction)
+                    st.caption(progress_caption)
                 if _is_workflow_run(run):
                     _, _, progress_fraction, progress_label = _workflow_progress(run)
                     st.progress(progress_fraction)
@@ -491,6 +555,14 @@ def _render_runtime_center() -> None:
                 selected_child_run = get_pipeline_run_record(selected_child_run_id)
                 if selected_child_run is not None:
                     selected_child_logs = read_pipeline_logs(selected_child_run_id, stream=cast(Any, stream_map[log_filter]))
+                    provider_badge = _build_run_provider_badge(selected_child_run)
+                    symbol_progress_payload = _build_run_symbol_progress_payload(selected_child_run)
+                    if provider_badge:
+                        st.caption(f"🏷️ `{provider_badge}`")
+                    if symbol_progress_payload is not None:
+                        progress_fraction, symbol_progress_caption = symbol_progress_payload
+                        st.progress(progress_fraction)
+                        st.caption(symbol_progress_caption)
                     child_metric_col1, child_metric_col2, child_metric_col3, child_metric_col4 = st.columns(4)
                     child_metric_col1.metric(
                         "Étape détaillée",
@@ -519,6 +591,14 @@ def _render_runtime_center() -> None:
         metric_col2.metric("Durée", format_duration_hhmmss(selected_run.get("duration_seconds", 0.0)))
         metric_col3.metric("Lignes stdout", to_int(selected_run.get("stdout_lines", 0)))
         metric_col4.metric("Lignes stderr", to_int(selected_run.get("stderr_lines", 0)))
+        selected_run_provider_badge = _build_run_provider_badge(selected_run)
+        selected_run_progress_payload = _build_run_symbol_progress_payload(selected_run)
+        if selected_run_provider_badge:
+            st.caption(f"🏷️ `{selected_run_provider_badge}`")
+        if selected_run_progress_payload is not None:
+            progress_fraction, selected_run_progress_caption = selected_run_progress_payload
+            st.progress(progress_fraction)
+            st.caption(selected_run_progress_caption)
         _render_run_summary(selected_run)
 
         st.caption(

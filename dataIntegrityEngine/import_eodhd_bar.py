@@ -75,6 +75,7 @@ DEFAULT_PER_SYMBOL_LIMIT = 100
 DEFAULT_BULK_PUBLISH_OFFSET_HOURS = 2
 PROGRESS_LOG_FIRST_SYMBOLS = 10
 PROGRESS_LOG_EVERY = 100
+DEFAULT_WRITE_COMMIT_EVERY_SYMBOLS = 100
 _PREFERRED_SERIES_SYMBOL_RE = re.compile(r"^[A-Z]+\.PR[A-Z0-9]+$")
 
 
@@ -98,10 +99,53 @@ def _emit_run_summary(summary: dict[str, Any]) -> None:
     )
 
 
+def _emit_live_progress_summary(summary: dict[str, Any]) -> None:
+    live_summary = dict(summary)
+    _emit_run_summary(attach_schema_version(live_summary))
+
+
 def _should_log_symbol_progress(index: int, total: int) -> bool:
     if total <= 0 or index <= 0:
         return False
     return index <= min(PROGRESS_LOG_FIRST_SYMBOLS, total) or index % PROGRESS_LOG_EVERY == 0 or index == total
+
+
+def _flush_pending_write_rows(
+    *,
+    session,
+    rows_daily: list[dict],
+    rows_bars: list[dict],
+    summary: dict[str, Any],
+    symbol_index: int,
+    reason: str,
+) -> tuple[list[dict], list[dict]]:
+    if not rows_daily and not rows_bars:
+        summary["pending_rows_stock_bars_daily"] = 0
+        summary["pending_rows_stock_bars"] = 0
+        return rows_daily, rows_bars
+
+    inserted_daily = _upsert_stock_bars_daily(session, rows_daily)
+    inserted_bars = _upsert_stock_bars(session, rows_bars)
+    session.commit()
+    summary["rows_upserted_stock_bars_daily"] += inserted_daily
+    summary["rows_upserted_stock_bars"] += inserted_bars
+    summary["batch_commits"] += 1
+    summary["symbols_committed"] = max(int(summary.get("symbols_committed", 0)), symbol_index)
+    summary["last_commit_symbol_index"] = symbol_index
+    summary["last_commit_reason"] = reason
+    summary["pending_rows_stock_bars_daily"] = 0
+    summary["pending_rows_stock_bars"] = 0
+    LOGGER.info(
+        "[eodhd] commit batch #%d | raison=%s | checkpoint=%d/%d | rows_daily=%d | rows_bars=%d",
+        summary["batch_commits"],
+        reason,
+        symbol_index,
+        summary.get("current_symbol_total", 0),
+        inserted_daily,
+        inserted_bars,
+    )
+    _emit_live_progress_summary(summary)
+    return [], []
 
 
 def resolve_bars_provider(config: Optional[dict] = None) -> str:
@@ -383,6 +427,7 @@ def run_eodhd_ingestion(
     symbols: Optional[list[str]] = None,
     per_symbol_limit: int = DEFAULT_PER_SYMBOL_LIMIT,
     enable_stooq_cross_check: bool = True,
+    write_commit_every_symbols: int = DEFAULT_WRITE_COMMIT_EVERY_SYMBOLS,
     config: Optional[dict] = None,
     session=None,
     tracker: Optional[EodhdQuotaTracker] = None,
@@ -397,6 +442,7 @@ def run_eodhd_ingestion(
         Path((cfg.get("eodhd") or {}).get("cache_dir", "artifacts/eodhd_cache"))
     )
     tracker = tracker or get_default_tracker()
+    commit_every_symbols = max(int(write_commit_every_symbols or 0), 0)
 
     summary: dict[str, Any] = {
         "run_id": _build_run_id(),
@@ -407,6 +453,16 @@ def run_eodhd_ingestion(
         "finished_at": None,
         "duration_seconds": 0.0,
         "targeted_symbols": 0,
+        "current_symbol_index": 0,
+        "current_symbol_total": 0,
+        "current_symbol": None,
+        "write_commit_every_symbols": commit_every_symbols,
+        "batch_commits": 0,
+        "symbols_committed": 0,
+        "last_commit_symbol_index": 0,
+        "last_commit_reason": None,
+        "pending_rows_stock_bars_daily": 0,
+        "pending_rows_stock_bars": 0,
         "symbols_with_existing_history": 0,
         "up_to_date_symbols": 0,
         "bulk_size": 0,
@@ -439,7 +495,9 @@ def run_eodhd_ingestion(
         else:
             universe = _get_active_tradable_symbols(session)
         summary["targeted_symbols"] = len(universe)
+        summary["current_symbol_total"] = len(universe)
         LOGGER.info("[eodhd] univers ciblé : %d symboles", len(universe))
+        _emit_live_progress_summary(summary)
 
         if not universe:
             LOGGER.warning("[eodhd] univers vide -> sortie")
@@ -470,9 +528,13 @@ def run_eodhd_ingestion(
         rows_bars: list[dict] = []
         recovered_budget = max(0, int(per_symbol_limit))
         recovered_missing_without_history = 0
+        symbols_since_last_commit = 0
 
         total_symbols = len(universe)
         for index, symbol in enumerate(universe, start=1):
+            summary["current_symbol_index"] = index
+            summary["current_symbol_total"] = total_symbols
+            summary["current_symbol"] = symbol
             if tracker.is_circuit_open():
                 summary["stopped_reason"] = "circuit_open"
                 LOGGER.warning("[eodhd] circuit-breaker ouvert -> arrêt propre de l'ingestion")
@@ -493,6 +555,7 @@ def run_eodhd_ingestion(
                     summary["per_symbol_recovered"],
                     summary["errors"],
                 )
+                _emit_live_progress_summary(summary)
             raw_bars: list[dict] = []
             target_date_covered_by_bulk = False
 
@@ -603,6 +666,24 @@ def run_eodhd_ingestion(
                     {"date": bar["date"], "close": bar["close"], "volume": bar["volume"]}
                 )
 
+            summary["pending_rows_stock_bars_daily"] = len(rows_daily)
+            summary["pending_rows_stock_bars"] = len(rows_bars)
+            _emit_live_progress_summary(summary)
+            symbols_since_last_commit += 1
+            if not dry_run and commit_every_symbols > 0 and symbols_since_last_commit >= commit_every_symbols:
+                rows_daily, rows_bars = _flush_pending_write_rows(
+                    session=session,
+                    rows_daily=rows_daily,
+                    rows_bars=rows_bars,
+                    summary=summary,
+                    symbol_index=index,
+                    reason="batch_threshold",
+                )
+                symbols_since_last_commit = 0
+
+        if total_symbols > 0:
+            summary["current_symbol_index"] = total_symbols
+
         # 4) Synthèse des absents du bulk
         missing = [s for s in universe if s not in indexed]
         summary["missing_from_bulk"] = len(missing)
@@ -616,11 +697,18 @@ def run_eodhd_ingestion(
             )
             summary["rows_upserted_stock_bars_daily"] = 0
             summary["rows_upserted_stock_bars"] = 0
+            summary["pending_rows_stock_bars_daily"] = len(rows_daily)
+            summary["pending_rows_stock_bars"] = len(rows_bars)
         else:
             try:
-                summary["rows_upserted_stock_bars_daily"] = _upsert_stock_bars_daily(session, rows_daily)
-                summary["rows_upserted_stock_bars"] = _upsert_stock_bars(session, rows_bars)
-                session.commit()
+                rows_daily, rows_bars = _flush_pending_write_rows(
+                    session=session,
+                    rows_daily=rows_daily,
+                    rows_bars=rows_bars,
+                    summary=summary,
+                    symbol_index=int(summary.get("current_symbol_index", 0) or 0),
+                    reason="final_flush",
+                )
             except Exception:
                 session.rollback()
                 LOGGER.exception("[eodhd] échec upsert -> rollback")
@@ -705,6 +793,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_PER_SYMBOL_LIMIT,
         help=f"Plafond appels per-symbol pour récup absences bulk (défaut: {DEFAULT_PER_SYMBOL_LIMIT}).",
     )
+    p.add_argument(
+        "--commit-every-symbols",
+        type=int,
+        default=DEFAULT_WRITE_COMMIT_EVERY_SYMBOLS,
+        help=(
+            "En mode --write, effectue un upsert + commit intermédiaire toutes les N itérations symbole. "
+            f"0 = commit final unique uniquement. Défaut: {DEFAULT_WRITE_COMMIT_EVERY_SYMBOLS}."
+        ),
+    )
     grp = p.add_mutually_exclusive_group()
     grp.add_argument("--dry-run", action="store_true", default=True,
                      help="Mode shadow (défaut Phase 3) — aucune écriture DB.")
@@ -751,6 +848,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         target_date=args.target_date,
         symbols=args.symbols,
         per_symbol_limit=args.per_symbol_limit,
+        write_commit_every_symbols=args.commit_every_symbols,
         enable_stooq_cross_check=not args.no_stooq_cross_check,
         config=cfg,
     )
@@ -764,6 +862,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "DEFAULT_PER_SYMBOL_LIMIT",
+    "DEFAULT_WRITE_COMMIT_EVERY_SYMBOLS",
     "main",
     "resolve_bars_provider",
     "run_eodhd_ingestion",
