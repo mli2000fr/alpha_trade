@@ -19,6 +19,14 @@ Ta mission n’est pas de faire un simple résumé : tu dois produire un **audit
 6. Quand c’est possible, **cite les preuves avec `fichier:ligne`** ou à minima `fichier + symbole`.
 7. **Tu ne dois pas modifier le code** dans cette mission, uniquement auditer et produire les documents demandés.
 8. **Tu dois être franc et exigeant** : si un module vaut 4/10, dis 4/10. N’adoucis pas artificiellement la note.
+9. **Tu dois proposer des tests précis et actionnables** : chaque anomalie significative et chaque sprint doivent déboucher sur des tests concrets à écrire ou à renforcer.
+10. Les tests proposés ne doivent pas être vagues. Tu dois préciser au minimum :
+   - le type de test ;
+   - le périmètre ;
+   - le comportement attendu ;
+   - les fichiers de test probables ;
+   - les fixtures/mocks/données minimales ;
+   - le risque couvert.
 
 ---
 
@@ -127,6 +135,16 @@ En plus des livrables d’audit, tu devras **mettre à jour la documentation dan
 
 ### Tests
 - lire un échantillon significatif de `tests/` pour évaluer la robustesse réelle, la couverture métier et les zones sensibles déjà sécurisées ou non.
+- identifier, pour chaque faiblesse importante, **les tests manquants à écrire** ;
+- distinguer clairement les tests :
+  - unitaires ;
+  - intégration ;
+  - non-régression ;
+  - E2E / IHM ;
+  - données / qualité / sanitation ;
+  - SQL / persistance / migrations ;
+  - configuration ;
+  - parité backtest ↔ live/paper quand pertinent.
 
 ---
 
@@ -415,6 +433,25 @@ Fournis :
 - recommandation précise ;
 - test ou contrôle à ajouter.
 
+### Exigence de test obligatoire pour chaque anomalie
+Pour **chaque anomalie**, tu dois proposer un bloc de tests **précis**. Ce bloc doit contenir au minimum :
+
+- **objectif du test** ;
+- **type de test** : unitaire / intégration / non-régression / E2E-IHM / data quality / SQL / config / backtest-live parity ;
+- **priorité du test** ;
+- **module(s) couvert(s)** ;
+- **fichier(s) de test probables** dans `tests/` ;
+- **scénario précis** en format Given / When / Then ou équivalent ;
+- **jeu de données minimal / fixtures / mocks nécessaires** ;
+- **oracle attendu** : ce qui doit être observé pour considérer le test comme passant ;
+- **ce que le test empêche comme régression** ;
+- **si le test existe partiellement déjà**, comment l’étendre.
+
+Règle minimale :
+- toute anomalie `P0` ou `P1` doit avoir **au moins un test précis associé** ;
+- si une anomalie touche l’IHM, l’orchestration ou la cohérence inter-modules, privilégie aussi un **test d’intégration** ou **E2E** ;
+- si une anomalie touche les conventions de données, la config, la DB ou le provider switch, propose aussi les **tests de non-régression** adaptés.
+
 ---
 
 ## 8) Plan d’action par sprints — exigence majeure
@@ -426,6 +463,7 @@ Je veux un **plan d’action extrêmement précis**, organisé par sprints, pour
 - Il doit être **réaliste**, **séquencé**, **priorisé**, et **orienté impact**.
 - Il doit viser une application **excellente pour le swing trade** une fois le plan exécuté.
 - Il doit inclure, quand nécessaire, des sprints de **mise à jour documentaire** pour réaligner `doc/` avec le code réel.
+- Il doit inclure, pour chaque sprint, un **volet tests** explicite et vérifiable.
 - Il doit distinguer :
   - quick wins ;
   - correctifs critiques ;
@@ -441,6 +479,7 @@ Fournis :
 - objectif du sprint ;
 - priorité ;
 - modules impactés ;
+- anomalies traitées pendant ce sprint ;
 - liste des tâches détaillées ;
 - fichiers probablement concernés ;
 - justification ;
@@ -449,6 +488,30 @@ Fournis :
 - critères d’acceptation ;
 - tests à ajouter/exécuter ;
 - gain attendu sur les notes des modules.
+
+### Exigence de test obligatoire pour chaque sprint
+Pour **chaque sprint**, détaille explicitement :
+
+- les **tests nouveaux** à créer ;
+- les **tests existants** à étendre ;
+- les **tests de non-régression** à exécuter impérativement ;
+- la **matrice anomalies corrigées → tests associés** ;
+- les tests par catégorie quand pertinent :
+  - unitaires ;
+  - intégration ;
+  - E2E / IHM ;
+  - qualité des données ;
+  - SQL / persistance / migrations ;
+  - configuration ;
+  - parité backtest ↔ exécution réelle/paper.
+
+Pour chaque test de sprint, donne si possible :
+- un nom de test probable ;
+- le fichier `tests/...` probable ;
+- la cible métier exacte ;
+- les fixtures/mocks clés ;
+- le comportement attendu ;
+- le motif pour lequel ce test est indispensable avant validation du sprint.
 
 ### Exigence finale
 À la fin du plan, ajoute une section :
@@ -473,6 +536,7 @@ Tu dois créer le dossier **`prompt/tod/`** s’il n’existe pas, puis y produi
 9. `prompt/tod/08_sprint_plan.md`
 10. `prompt/tod/09_final_verdict.md`
 11. `prompt/tod/README.md`
+12. `prompt/tod/10_anomaly_test_matrix.md`
 
 En plus de ces livrables d’audit, tu dois produire les **mises à jour documentaires dans `doc/`** pour réaligner la documentation avec le code courant et les constats de l’audit.
 
@@ -487,6 +551,7 @@ En plus de ces livrables d’audit, tu dois produire les **mises à jour documen
 - `07_swing_trade_fitness_assessment.md` : adéquation métier pure swing trade
 - `08_sprint_plan.md` : plan d’exécution détaillé par sprint
 - `09_final_verdict.md` : conclusion ferme, note globale, niveau pro estimé
+- `10_anomaly_test_matrix.md` : matrice traçable `anomalie → correctif → test(s) → sprint`
 - `README.md` : index des livrables et ordre de lecture recommandé
 
 ### Mises à jour documentaires obligatoires dans `doc/`
@@ -519,7 +584,8 @@ Je veux que ton audit suive cette logique :
 9. noter chaque module ;
 10. établir la note globale ;
 11. produire un plan de correction par sprint ;
-12. mettre à jour la documentation `doc/` pour qu’elle reflète l’état réel de l’application.
+12. définir les tests précis à écrire par anomalie et par sprint ;
+13. mettre à jour la documentation `doc/` pour qu’elle reflète l’état réel de l’application.
 
 Tu dois toujours répondre à ces questions :
 - **Est-ce cohérent ?**
@@ -554,7 +620,10 @@ Enrichis l’audit avec les vérifications suivantes, même si elles ne sont pas
 - qualité de la séparation entre logique métier, infra, persistance, supervision ;
 - cohérence des pipelines lancés depuis l’IHM par rapport au backend réellement exécuté ;
 - cohérence des options IHM avec les vraies capacités des modules ;
-- cohérence des différents modules entre eux sur les flux et les conventions partagées.
+- cohérence des différents modules entre eux sur les flux et les conventions partagées ;
+- qualité et suffisance des tests existants pour sécuriser les modules critiques ;
+- trous de couverture de tests sur les anomalies majeures ;
+- pertinence des tests à ajouter pour verrouiller les régressions futures.
 
 ---
 
@@ -586,7 +655,8 @@ Ne te contente pas de dire “c’est bien conçu”. Explique :
 4. savoir quelles corrections faire en priorité ;
 5. disposer d’un plan de sprints concret ;
 6. faire converger l’application vers une qualité **excellente pour le swing trade réel** ;
-7. disposer d’une documentation `doc/` remise à niveau, cohérente avec le code réel et exploitable pour la maintenance.
+7. disposer d’une documentation `doc/` remise à niveau, cohérente avec le code réel et exploitable pour la maintenance ;
+8. disposer d’une feuille de route de **tests précis à écrire** pour sécuriser chaque correction importante.
 
 Commence maintenant l’audit complet du dépôt en respectant strictement les consignes ci-dessus.
 
