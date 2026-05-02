@@ -11,6 +11,7 @@ from ihm.services.pipeline_runner import (
     format_command_for_display,
     get_pipeline_auxiliary_steps,
     get_pipeline_steps,
+    get_pipeline_workflow_steps,
     run_pipeline_step,
 )
 
@@ -38,6 +39,51 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
 def test_get_pipeline_auxiliary_steps_contains_expected_keys() -> None:
     keys = [step.key for step in get_pipeline_auxiliary_steps()]
     assert keys == ["import_alpaca_assets", "update_sector", "eodhd_backfill_history"]
+
+
+def test_get_pipeline_workflow_steps_defaults_to_1_to_12_with_ml_train() -> None:
+    keys = [step.key for step in get_pipeline_workflow_steps()]
+
+    assert keys == [
+        "import_alpaca_bar",
+        "data_sanitizer_daily",
+        "stock_screener",
+        "sync_latest_quotes",
+        "sync_earnings_calendar",
+        "alpha_scanner",
+        "sentiment_pipeline",
+        "signal_aggregator",
+        "ml_train",
+        "ml_predict",
+        "risk_management",
+        "execution",
+    ]
+
+
+def test_get_pipeline_workflow_steps_can_start_at_3_and_append_corporate_actions() -> None:
+    keys = [
+        step.key
+        for step in get_pipeline_workflow_steps(
+            start_step="3",
+            include_ml_train=False,
+            include_corporate_actions_sync=False,
+            include_corporate_actions_apply=True,
+        )
+    ]
+
+    assert keys == [
+        "stock_screener",
+        "sync_latest_quotes",
+        "sync_earnings_calendar",
+        "alpha_scanner",
+        "sentiment_pipeline",
+        "signal_aggregator",
+        "ml_predict",
+        "risk_management",
+        "execution",
+        "corporate_actions_sync",
+        "corporate_actions_apply",
+    ]
 
 
 

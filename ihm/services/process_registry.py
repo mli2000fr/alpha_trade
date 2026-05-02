@@ -36,10 +36,11 @@ from ihm.services.pipeline_runner import (
     PROJECT_ROOT,
     PipelineLaunchOptions,
     PipelineStepDefinition,
+    WorkflowStartStep,
     build_pipeline_command,
     build_subprocess_env,
     format_command_for_display,
-    get_pipeline_steps,
+    get_pipeline_workflow_steps,
 )
 from ihm.services.run_summary import aggregate_workflow_run_summary
 from database.run_business_summaries import persist_pipeline_run_record_summary
@@ -127,22 +128,69 @@ _ACTIVE_RUNS: dict[str, _ManagedRun] = {}
 _ACTIVE_WORKFLOWS: dict[str, _ManagedWorkflow] = {}
 
 
-def _resolve_workflow_steps(*, include_ml_train: bool) -> tuple[PipelineStepDefinition, ...]:
-    steps = cast(tuple[PipelineStepDefinition, ...], get_pipeline_steps())
-    if include_ml_train:
-        return steps
-    return tuple(step for step in steps if step.key != "ml_train")
+def _resolve_workflow_steps(
+    *,
+    start_step: WorkflowStartStep,
+    include_ml_train: bool,
+    include_corporate_actions_sync: bool,
+    include_corporate_actions_apply: bool,
+) -> tuple[PipelineStepDefinition, ...]:
+    return cast(
+        tuple[PipelineStepDefinition, ...],
+        get_pipeline_workflow_steps(
+            start_step=start_step,
+            include_ml_train=include_ml_train,
+            include_corporate_actions_sync=include_corporate_actions_sync,
+            include_corporate_actions_apply=include_corporate_actions_apply,
+        ),
+    )
 
 
-def _workflow_step_label(*, include_ml_train: bool) -> str:
-    if include_ml_train:
-        return "Workflow complet 1 → 14 (avec étape 9 — ML Train)"
-    return "Workflow complet 1 → 14 (sans étape 9 — ML Train)"
+def _workflow_scope_label(
+    *,
+    start_step: WorkflowStartStep,
+    include_corporate_actions_sync: bool,
+    include_corporate_actions_apply: bool,
+) -> str:
+    scope = f"{start_step} → 12"
+    if include_corporate_actions_apply:
+        return f"{scope} + 13 → 14"
+    if include_corporate_actions_sync:
+        return f"{scope} + 13"
+    return scope
 
 
-def _workflow_command_display(*, include_ml_train: bool, total_steps: int) -> str:
+def _workflow_step_label(
+    *,
+    start_step: WorkflowStartStep,
+    include_ml_train: bool,
+    include_corporate_actions_sync: bool,
+    include_corporate_actions_apply: bool,
+) -> str:
+    ml_mode = "avec étape 9 — ML Train" if include_ml_train else "sans étape 9 — ML Train"
+    scope = _workflow_scope_label(
+        start_step=start_step,
+        include_corporate_actions_sync=include_corporate_actions_sync,
+        include_corporate_actions_apply=include_corporate_actions_apply,
+    )
+    return f"Workflow complet {scope} ({ml_mode})"
+
+
+def _workflow_command_display(
+    *,
+    start_step: WorkflowStartStep,
+    include_ml_train: bool,
+    include_corporate_actions_sync: bool,
+    include_corporate_actions_apply: bool,
+    total_steps: int,
+) -> str:
     ml_mode = "avec ML Train" if include_ml_train else "sans ML Train"
-    return f"Workflow séquentiel Pipeline 1 → 14 | {ml_mode} | {total_steps} étape(s) exécutée(s)"
+    scope = _workflow_scope_label(
+        start_step=start_step,
+        include_corporate_actions_sync=include_corporate_actions_sync,
+        include_corporate_actions_apply=include_corporate_actions_apply,
+    )
+    return f"Workflow séquentiel Pipeline {scope} | {ml_mode} | {total_steps} étape(s) exécutée(s)"
 
 
 def _ensure_storage() -> None:
@@ -558,9 +606,20 @@ def _run_pipeline_workflow(
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
+    start_step: WorkflowStartStep = "1",
     include_ml_train: bool = True,
+    include_corporate_actions_sync: bool = False,
+    include_corporate_actions_apply: bool = False,
 ) -> None:
-    steps = cast(tuple[PipelineStepDefinition, ...], _resolve_workflow_steps(include_ml_train=include_ml_train))
+    steps = cast(
+        tuple[PipelineStepDefinition, ...],
+        _resolve_workflow_steps(
+            start_step=start_step,
+            include_ml_train=include_ml_train,
+            include_corporate_actions_sync=include_corporate_actions_sync,
+            include_corporate_actions_apply=include_corporate_actions_apply,
+        ),
+    )
     total_steps = len(steps)
 
     # Freeze le trade_date au démarrage du workflow pour garantir que toutes les
@@ -580,8 +639,16 @@ def _run_pipeline_workflow(
         )
 
     try:
-        workflow_mode = "avec étape 9 — ML Train" if include_ml_train else "sans étape 9 — ML Train"
-        _append_workflow_event(managed, f"Démarrage du workflow complet ({total_steps} étapes exécutées, {workflow_mode}).")
+        workflow_mode = _workflow_scope_label(
+            start_step=start_step,
+            include_corporate_actions_sync=include_corporate_actions_sync,
+            include_corporate_actions_apply=include_corporate_actions_apply,
+        )
+        ml_mode = "avec étape 9 — ML Train" if include_ml_train else "sans étape 9 — ML Train"
+        _append_workflow_event(
+            managed,
+            f"Démarrage du workflow complet {workflow_mode} ({total_steps} étapes exécutées, {ml_mode}).",
+        )
         _update_workflow_record(managed, status="running", workflow_total_steps=total_steps, workflow_completed_steps=0)
 
         completed_steps = 0
@@ -847,7 +914,10 @@ def start_pipeline_workflow(
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
+    start_step: WorkflowStartStep = "1",
     include_ml_train: bool = True,
+    include_corporate_actions_sync: bool = False,
+    include_corporate_actions_apply: bool = False,
 ) -> PipelineRunRecord:
     """Démarre un workflow séquentiel complet en arrière-plan."""
     if list_active_pipeline_runs():
@@ -864,14 +934,34 @@ def start_pipeline_workflow(
     stderr_path.write_text("", encoding="utf-8")
     combined_path.write_text("", encoding="utf-8")
 
-    steps = cast(tuple[PipelineStepDefinition, ...], _resolve_workflow_steps(include_ml_train=include_ml_train))
-    workflow_label = _workflow_step_label(include_ml_train=include_ml_train)
+    include_sync = include_corporate_actions_sync or include_corporate_actions_apply
+    steps = cast(
+        tuple[PipelineStepDefinition, ...],
+        _resolve_workflow_steps(
+            start_step=start_step,
+            include_ml_train=include_ml_train,
+            include_corporate_actions_sync=include_sync,
+            include_corporate_actions_apply=include_corporate_actions_apply,
+        ),
+    )
+    workflow_label = _workflow_step_label(
+        start_step=start_step,
+        include_ml_train=include_ml_train,
+        include_corporate_actions_sync=include_sync,
+        include_corporate_actions_apply=include_corporate_actions_apply,
+    )
     record = PipelineRunRecord(
         run_id=run_id,
         step_key="pipeline_workflow",
         step_label=workflow_label,
         command=[step.key for step in steps],
-        command_display=_workflow_command_display(include_ml_train=include_ml_train, total_steps=len(steps)),
+        command_display=_workflow_command_display(
+            start_step=start_step,
+            include_ml_train=include_ml_train,
+            include_corporate_actions_sync=include_sync,
+            include_corporate_actions_apply=include_corporate_actions_apply,
+            total_steps=len(steps),
+        ),
         account_id=options.account_id,
         status="running",
         executed_at=datetime.now().isoformat(timespec="seconds"),
@@ -892,7 +982,10 @@ def start_pipeline_workflow(
             options,
             db_config=db_config,
             timeout_seconds=timeout_seconds,
+            start_step=start_step,
             include_ml_train=include_ml_train,
+            include_corporate_actions_sync=include_sync,
+            include_corporate_actions_apply=include_corporate_actions_apply,
         )
 
     thread = threading.Thread(target=_workflow_target, daemon=True, name=f"pipeline-workflow-{run_id}")

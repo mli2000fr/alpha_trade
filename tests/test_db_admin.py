@@ -1,8 +1,10 @@
 from pathlib import Path
 
+from ihm.pages import db_admin as db_admin_page
 from ihm.services.db_admin import (
     DatabaseTableSnapshot,
     PROTECTED_TABLES,
+    TableCatalogEntry,
     build_table_purge_plan,
     discover_tables_from_sql_directory,
     list_grouped_tables,
@@ -133,4 +135,34 @@ def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() 
     assert not any(entry.table_name == "execution_orders" for entry in grouped["Exécution broker"])
     assert not any(entry.table_name == "execution_fills" for entry in grouped["Exécution broker"])
     assert any(entry.table_name == "custom_table" for entry in grouped["Autres / non classées"])
+
+
+def test_apply_pending_widget_resets_clears_table_selection_and_confirmation(monkeypatch) -> None:
+    session_state = {
+        db_admin_page.PENDING_RESET_TABLES_KEY: ["stock_scores"],
+        db_admin_page.PENDING_RESET_CONFIRM_KEY: True,
+        db_admin_page._checkbox_key("stock_scores"): True,
+        db_admin_page.CONFIRM_PURGE_KEY: True,
+    }
+    monkeypatch.setattr(db_admin_page.st, "session_state", session_state, raising=False)
+
+    db_admin_page._apply_pending_widget_resets(
+        {
+            "Scoring": [
+                TableCatalogEntry(
+                    table_name="stock_scores",
+                    functionality_group="Scoring",
+                    exists_in_database=True,
+                    protected=False,
+                    row_estimate=12,
+                )
+            ]
+        }
+    )
+
+    assert session_state[db_admin_page._checkbox_key("stock_scores")] is False
+    assert session_state[db_admin_page.CONFIRM_PURGE_KEY] is False
+    assert db_admin_page.PENDING_RESET_TABLES_KEY not in session_state
+    assert db_admin_page.PENDING_RESET_CONFIRM_KEY not in session_state
+
 

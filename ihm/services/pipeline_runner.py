@@ -160,6 +160,7 @@ MLTrainSymbolSource = Literal["candidates", "stock_bars_daily"]
 ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
 ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
+WorkflowStartStep = Literal["1", "3"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,10 +534,33 @@ def get_pipeline_steps() -> tuple[PipelineStepDefinition, ...]:
     return PIPELINE_STEPS
 
 
-def get_pipeline_workflow_steps(*, include_ml_train: bool = True) -> tuple[PipelineStepDefinition, ...]:
-    if include_ml_train:
-        return PIPELINE_STEPS
-    return tuple(step for step in PIPELINE_STEPS if step.key != "ml_train")
+def get_pipeline_workflow_steps(
+    *,
+    start_step: WorkflowStartStep = "1",
+    include_ml_train: bool = True,
+    include_corporate_actions_sync: bool = False,
+    include_corporate_actions_apply: bool = False,
+) -> tuple[PipelineStepDefinition, ...]:
+    normalized_start = "3" if start_step == "3" else "1"
+    include_sync = include_corporate_actions_sync or include_corporate_actions_apply
+
+    selected_steps: list[PipelineStepDefinition] = []
+    for step in PIPELINE_STEPS:
+        step_num = int(step.num)
+        if step_num < int(normalized_start):
+            continue
+        if step_num > 12:
+            continue
+        if step.key == "ml_train" and not include_ml_train:
+            continue
+        selected_steps.append(step)
+
+    if include_sync:
+        selected_steps.append(next(step for step in PIPELINE_STEPS if step.key == "corporate_actions_sync"))
+    if include_corporate_actions_apply:
+        selected_steps.append(next(step for step in PIPELINE_STEPS if step.key == "corporate_actions_apply"))
+
+    return tuple(selected_steps)
 
 
 def get_pipeline_auxiliary_steps() -> tuple[PipelineStepDefinition, ...]:

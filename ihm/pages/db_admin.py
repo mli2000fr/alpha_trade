@@ -18,6 +18,8 @@ from ihm.services.db_admin import (
 
 CHECKBOX_PREFIX = "ihm_db_admin_table_"
 CONFIRM_PURGE_KEY = "ihm_db_admin_confirm_purge"
+PENDING_RESET_TABLES_KEY = "ihm_db_admin_pending_reset_tables"
+PENDING_RESET_CONFIRM_KEY = "ihm_db_admin_pending_reset_confirm"
 
 
 def _checkbox_key(table_name: str) -> str:
@@ -29,6 +31,18 @@ def _set_selection(grouped_tables: dict[str, list[TableCatalogEntry]], *, value:
 		for entry in entries:
 			if entry.exists_in_database and not entry.protected:
 				st.session_state[_checkbox_key(entry.table_name)] = value
+
+
+def _apply_pending_widget_resets(grouped_tables: dict[str, list[TableCatalogEntry]]) -> None:
+	reset_tables = st.session_state.pop(PENDING_RESET_TABLES_KEY, None)
+	if isinstance(reset_tables, list):
+		known_tables = {entry.table_name for entries in grouped_tables.values() for entry in entries}
+		for table_name in reset_tables:
+			if isinstance(table_name, str) and table_name in known_tables:
+				st.session_state[_checkbox_key(table_name)] = False
+
+	if bool(st.session_state.pop(PENDING_RESET_CONFIRM_KEY, False)):
+		st.session_state[CONFIRM_PURGE_KEY] = False
 
 
 def _render_group(group_name: str, entries: list[TableCatalogEntry]) -> None:
@@ -93,6 +107,7 @@ def render() -> None:
 
 	snapshot = load_database_table_snapshot(engine)
 	grouped_tables = list_grouped_tables(snapshot)
+	_apply_pending_widget_resets(grouped_tables)
 	active_db = get_runtime_db_config()
 
 	st.info(
@@ -184,9 +199,8 @@ def render() -> None:
 		except Exception as exc:
 			st.error(f"Échec du vidage : {exc}")
 		else:
-			for table_name in result.executed_tables:
-				st.session_state[_checkbox_key(table_name)] = False
-			st.session_state[CONFIRM_PURGE_KEY] = False
+			st.session_state[PENDING_RESET_TABLES_KEY] = list(result.executed_tables)
+			st.session_state[PENDING_RESET_CONFIRM_KEY] = True
 			st.success(
 				f"Vidage terminé pour {len(result.executed_tables)} table(s). Total de lignes affectées : {result.total_rows_affected}."
 			)

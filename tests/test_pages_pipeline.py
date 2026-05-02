@@ -188,7 +188,7 @@ def test_build_watcher_handoff_rows_exposes_post_execution_launch_guidance() -> 
     assert any(row["Mode"] == "Task Scheduler" for row in rows)
 
 
-def test_workflow_launcher_starts_with_ml_train_by_default(monkeypatch) -> None:
+def test_workflow_launcher_starts_with_1_to_12_and_optional_steps_disabled_by_default(monkeypatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
     monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
@@ -200,6 +200,7 @@ def test_workflow_launcher_starts_with_ml_train_by_default(monkeypatch) -> None:
     monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
     monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
     monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "selectbox", lambda *args, **kwargs: kwargs["options"][0])
     monkeypatch.setattr(workflow_page.st, "checkbox", lambda *args, **kwargs: kwargs.get("value", False))
     monkeypatch.setattr(workflow_page.st, "button", lambda *args, **kwargs: True)
 
@@ -211,10 +212,13 @@ def test_workflow_launcher_starts_with_ml_train_by_default(monkeypatch) -> None:
 
     workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
 
+    assert captured["start_step"] == "1"
     assert captured["include_ml_train"] is True
+    assert captured["include_corporate_actions_sync"] is False
+    assert captured["include_corporate_actions_apply"] is False
 
 
-def test_workflow_launcher_can_include_ml_train(monkeypatch) -> None:
+def test_workflow_launcher_can_start_at_step_3_and_include_corporate_actions(monkeypatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
     monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
@@ -226,6 +230,7 @@ def test_workflow_launcher_can_include_ml_train(monkeypatch) -> None:
     monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
     monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
     monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "selectbox", lambda *args, **kwargs: "3")
     monkeypatch.setattr(workflow_page.st, "checkbox", lambda *args, **kwargs: True)
     monkeypatch.setattr(workflow_page.st, "button", lambda *args, **kwargs: True)
 
@@ -237,7 +242,10 @@ def test_workflow_launcher_can_include_ml_train(monkeypatch) -> None:
 
     workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
 
+    assert captured["start_step"] == "3"
     assert captured["include_ml_train"] is True
+    assert captured["include_corporate_actions_sync"] is True
+    assert captured["include_corporate_actions_apply"] is True
 
 
 def test_build_workflow_child_run_payload_returns_latest_runs_first_with_labels(monkeypatch) -> None:

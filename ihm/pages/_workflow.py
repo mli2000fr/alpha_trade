@@ -1,6 +1,6 @@
 """ihm/pages/_workflow.py — Phase 6.2 (Backlog L10).
 
-Workflow launcher 1→14 + runtime center (suivi des runs en cours / historique)
+Workflow launcher configurable 1→12 / 3→12 (+ options 13/14) + runtime center (suivi des runs en cours / historique)
 extraits de ``pipeline.py``.
 """
 from __future__ import annotations
@@ -36,6 +36,7 @@ from ihm.services.process_registry import (
     start_pipeline_workflow,
     stop_pipeline_run,
 )
+from ihm.services.pipeline_runner import get_pipeline_workflow_steps
 
 __all__ = [
     "_build_history_rows",
@@ -49,15 +50,31 @@ __all__ = [
 ]
 
 WORKFLOW_INCLUDE_ML_TRAIN_KEY = "pipeline_workflow_include_ml_train"
+WORKFLOW_RANGE_KEY = "pipeline_workflow_range"
+WORKFLOW_INCLUDE_CA_SYNC_KEY = "pipeline_workflow_include_ca_sync"
+WORKFLOW_INCLUDE_CA_APPLY_KEY = "pipeline_workflow_include_ca_apply"
 WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_autofollow_"
 WORKFLOW_CHILD_LAST_AUTO_KEY_PREFIX = "workflow_child_run_last_auto_"
+WORKFLOW_RANGE_OPTIONS: tuple[str, ...] = ("1", "3")
 
 
 def _workflow_mode_label(run: dict[str, object]) -> str:
     command = run.get("command")
-    if isinstance(command, list) and any(str(token) == "ml_train" for token in command):
-        return "1 → 14 avec ML Train"
-    return "1 → 14 sans ML Train"
+    if not isinstance(command, list):
+        return "Workflow personnalisé"
+
+    normalized_command = [str(token).strip() for token in command if str(token).strip()]
+    if not normalized_command:
+        return "Workflow personnalisé"
+
+    starts_at_3 = "import_alpaca_bar" not in normalized_command and "data_sanitizer_daily" not in normalized_command
+    scope = "3 → 12" if starts_at_3 else "1 → 12"
+    if "corporate_actions_apply" in normalized_command:
+        scope = f"{scope} + 13 → 14"
+    elif "corporate_actions_sync" in normalized_command:
+        scope = f"{scope} + 13"
+    ml_mode = "avec ML Train" if "ml_train" in normalized_command else "sans ML Train"
+    return f"{scope} {ml_mode}"
 
 
 def _build_workflow_child_run_payload(workflow_run: dict[str, object]) -> tuple[list[str], dict[str, str]]:
@@ -199,16 +216,51 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
     execution_locked = options.execution_mode == "live" and not live_confirmed
 
     with st.container(border=True):
-        st.subheader("🚀 Workflow complet 1 → 14")
+        st.subheader("🚀 Workflow complet configurable")
+        workflow_range = st.selectbox(
+            "Périmètre du workflow",
+            options=WORKFLOW_RANGE_OPTIONS,
+            index=WORKFLOW_RANGE_OPTIONS.index(str(st.session_state.get(WORKFLOW_RANGE_KEY, "1")))
+            if str(st.session_state.get(WORKFLOW_RANGE_KEY, "1")) in WORKFLOW_RANGE_OPTIONS
+            else 0,
+            format_func=lambda value: f"Workflow complet {value} → 12",
+            key=WORKFLOW_RANGE_KEY,
+            disabled=bool(active_runs),
+        )
         include_ml_train = st.checkbox(
             "Inclure l'étape 9 — ML Train (Model Factory)",
             value=bool(st.session_state.get(WORKFLOW_INCLUDE_ML_TRAIN_KEY, True)),
             key=WORKFLOW_INCLUDE_ML_TRAIN_KEY,
             disabled=bool(active_runs),
         )
-        effective_steps = 14 if include_ml_train else 13
+        include_corporate_actions_sync = st.checkbox(
+            "Inclure l'étape 13 — Corporate Actions Sync",
+            value=bool(st.session_state.get(WORKFLOW_INCLUDE_CA_SYNC_KEY, False)),
+            key=WORKFLOW_INCLUDE_CA_SYNC_KEY,
+            disabled=bool(active_runs),
+        )
+        if not include_corporate_actions_sync and bool(st.session_state.get(WORKFLOW_INCLUDE_CA_APPLY_KEY, False)):
+            st.session_state[WORKFLOW_INCLUDE_CA_APPLY_KEY] = False
+        include_corporate_actions_apply = st.checkbox(
+            "Inclure l'étape 14 — Corporate Actions Apply",
+            value=bool(st.session_state.get(WORKFLOW_INCLUDE_CA_APPLY_KEY, False)),
+            key=WORKFLOW_INCLUDE_CA_APPLY_KEY,
+            disabled=bool(active_runs) or not include_corporate_actions_sync,
+            help=(
+                "Disponible après activation de l'étape 13, car l'application dépend de la synchronisation des corporate actions."
+            ),
+        )
+        effective_steps = len(
+            get_pipeline_workflow_steps(
+                start_step="3" if workflow_range == "3" else "1",
+                include_ml_train=include_ml_train,
+                include_corporate_actions_sync=include_corporate_actions_sync,
+                include_corporate_actions_apply=include_corporate_actions_apply,
+            )
+        )
+        scope_suffix = " + 13 → 14" if include_corporate_actions_apply else " + 13" if include_corporate_actions_sync else ""
         st.caption(
-            f"Lance automatiquement le workflow quotidien 1 → 14 dans l'ordre, avec {effective_steps} étape(s) réellement exécutée(s) "
+            f"Lance automatiquement le workflow quotidien {workflow_range} → 12{scope_suffix} dans l'ordre, avec {effective_steps} étape(s) réellement exécutée(s) "
             f"({'ML Train inclus' if include_ml_train else 'ML Train exclu'}). "
             "Les sous-runs restent historisés individuellement, et ce workflow fournit une vue globale avec logs consolidés."
         )
@@ -235,7 +287,14 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
         )
         if launch_clicked:
             try:
-                record = start_pipeline_workflow(options, db_config=db_config, include_ml_train=include_ml_train)
+                record = start_pipeline_workflow(
+                    options,
+                    db_config=db_config,
+                    start_step="3" if workflow_range == "3" else "1",
+                    include_ml_train=include_ml_train,
+                    include_corporate_actions_sync=include_corporate_actions_sync,
+                    include_corporate_actions_apply=include_corporate_actions_apply,
+                )
             except RuntimeError as exc:
                 st.warning(str(exc))
             else:
