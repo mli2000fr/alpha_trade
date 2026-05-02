@@ -20,6 +20,14 @@ def test_parameter_reference_rows_include_walk_forward_run_options() -> None:
 
     assert any(row["Paramètre"] == "score_column" for row in run_rows)
     assert any(row["Paramètre"] == "walk_forward_artifacts_dir" for row in run_rows)
+    assert any(row["Paramètre"] == "capital_preset_key" for row in run_rows)
+
+
+def test_parameter_reference_rows_include_backfill_capital_preset_options() -> None:
+    backfill_rows = backtesting._parameter_reference_rows("backfill")
+
+    assert any(row["Paramètre"] == "capital" for row in backfill_rows)
+    assert any(row["Paramètre"] == "capital_preset_key" for row in backfill_rows)
 
 
 def test_build_screener_artifact_objective_rows_formats_expected_columns() -> None:

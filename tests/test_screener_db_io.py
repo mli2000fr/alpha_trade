@@ -394,13 +394,17 @@ def test_archive_scores_snapshot_executes_insert_select() -> None:
 
     engine.connection.execute = patched_execute
 
-    count = db_io.archive_scores_snapshot(engine, snapshot_date=_date(2025, 6, 15))
+    count = db_io.archive_scores_snapshot(engine, snapshot_date=_date(2025, 6, 15), capital_preset_key="capital_0_5000")
 
     assert count == 5
     # Vérifie qu'on a bien exécuté une requête avec la bonne date
     assert len(engine.connection.executed) == 1
     _, params = engine.connection.executed[0]
-    assert params == {"snapshot_date": _date(2025, 6, 15)}
+    assert params == {
+        "snapshot_date": _date(2025, 6, 15),
+        "capital_preset_key": "capital_0_5000",
+        "config_fingerprint": None,
+    }
 
 
 def test_archive_scores_snapshot_defaults_to_today() -> None:
@@ -423,7 +427,11 @@ def test_upsert_scores_snapshot_calls_archive(monkeypatch) -> None:
     """upsert_scores_snapshot doit appeler archive_scores_snapshot à la fin."""
     archive_calls: list = []
 
-    monkeypatch.setattr(db_io, "archive_scores_snapshot", lambda engine, snapshot_date=None: archive_calls.append(snapshot_date) or 0)
+    monkeypatch.setattr(
+        db_io,
+        "archive_scores_snapshot",
+        lambda engine, snapshot_date=None, **kwargs: archive_calls.append((snapshot_date, kwargs)) or 0,
+    )
     monkeypatch.setattr(db_io, "_purge_missing_scores", lambda engine, symbols: None)
     monkeypatch.setattr(db_io, "_enrich_scores_with_metadata_sector", lambda engine, df: df)
     monkeypatch.setattr(db_io, "_enrich_scores_with_audit", lambda engine, df: df)
@@ -448,12 +456,13 @@ def test_upsert_scores_snapshot_calls_archive(monkeypatch) -> None:
     db_io.upsert_scores_snapshot(engine, scores_df, chunksize=1000)
 
     assert len(archive_calls) == 1, "archive_scores_snapshot doit être appelé une fois"
+    assert archive_calls[0][1]["capital_preset_key"] == "capital_50001_100000"
 
 
 def test_upsert_scores_snapshot_archive_failure_does_not_break(monkeypatch) -> None:
     """Si l'archivage échoue (table absente), le pipeline principal ne casse pas."""
 
-    def failing_archive(engine, snapshot_date=None):
+    def failing_archive(engine, snapshot_date=None, **kwargs):
         raise Exception("Table stock_scores_history does not exist")
 
     monkeypatch.setattr(db_io, "archive_scores_snapshot", failing_archive)

@@ -18,6 +18,7 @@ class BacktestRunOptions:
     start: str
     end: str | None = None
     equity: float = 100_000.0
+    capital_preset_key: str | None = None
     tp: float = 0.08
     ts: float = 0.05
     max_positions: int = 20
@@ -62,6 +63,8 @@ class BackfillScoresHistoryOptions:
 
     start: str
     end: str | None = None
+    capital: float | None = None
+    capital_preset_key: str | None = None
     overwrite_existing: bool = False
     limit_days: int | None = None
     chunk_size: int = 500
@@ -128,6 +131,8 @@ def build_backtesting_command(
             "--artifacts-dir", options.artifacts_dir,
             "--score-column", options.score_column,
         ])
+        if options.capital_preset_key:
+            command.extend(["--capital-preset-key", options.capital_preset_key])
         if options.walk_forward_artifacts_dir:
             command.extend(["--walk-forward-artifacts-dir", options.walk_forward_artifacts_dir])
         if options.swing_only:
@@ -181,6 +186,10 @@ def build_backtesting_command(
         command.extend(["--start", options.start])
         if options.end:
             command.extend(["--end", options.end])
+        if options.capital is not None:
+            command.extend(["--capital", str(options.capital)])
+        if options.capital_preset_key:
+            command.extend(["--capital-preset-key", options.capital_preset_key])
         if options.overwrite_existing:
             command.append("--overwrite-existing")
         if options.limit_days is not None:

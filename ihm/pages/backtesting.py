@@ -8,6 +8,13 @@ from typing import Any, cast
 import pandas as pd
 import streamlit as st
 
+from common.capital_presets import (
+    CapitalPreset,
+    DEFAULT_CAPITAL_PRESET_KEY,
+    get_capital_preset_by_key,
+    load_capital_presets,
+    resolve_capital_preset_for_equity,
+)
 from ihm.components.db_controls import render_db_connection_form
 from ihm.components.metrics import format_duration_hhmmss
 from ihm.pages import run_page_if_standalone
@@ -41,6 +48,11 @@ SELECTED_RUN_KEY = "ihm_backtesting_selected_run_id"
 LOG_FILTER_KEY = "ihm_backtesting_log_filter"
 PENDING_SELECTED_RUN_KEY = "ihm_backtesting_pending_selected_run_id"
 TAIL_LINES = 250
+CAPITAL_PRESET_CUSTOM = "custom"
+BT_RUN_CAPITAL_PRESET_KEY = "bt_run_capital_preset"
+BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY = "bt_run_capital_preset_signature"
+BT_BACKFILL_CAPITAL_PRESET_KEY = "bt_backfill_capital_preset"
+BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature"
 
 
 def _to_float(value: object, default: float = 0.0) -> float:
@@ -66,6 +78,81 @@ def _parse_optional_int(raw_value: str, *, label: str) -> int | None:
     except ValueError:
         st.warning(f"Valeur invalide pour `{label}` : `{raw_value}`. Le champ est ignoré.")
         return None
+
+
+def _get_capital_presets() -> tuple[CapitalPreset, ...]:
+    try:
+        return load_capital_presets()
+    except Exception:
+        return ()
+
+
+def _get_capital_preset_options() -> list[str]:
+    presets = _get_capital_presets()
+    base_options = [preset.key for preset in presets]
+    if DEFAULT_CAPITAL_PRESET_KEY in base_options:
+        return [CAPITAL_PRESET_CUSTOM, *base_options]
+    return [CAPITAL_PRESET_CUSTOM, DEFAULT_CAPITAL_PRESET_KEY, *base_options]
+
+
+def _format_capital_preset_label(preset_key: str) -> str:
+    if preset_key == CAPITAL_PRESET_CUSTOM:
+        return "Personnalisé / auto"
+    preset = get_capital_preset_by_key(preset_key)
+    return preset.label if preset is not None else preset_key
+
+
+def _resolve_default_capital_preset_key(equity: float | None) -> str:
+    detected = resolve_capital_preset_for_equity(equity)
+    if detected is not None:
+        return detected.key
+    return DEFAULT_CAPITAL_PRESET_KEY
+
+
+def _ensure_capital_preset_session_key(session_key: str, equity: float | None) -> str:
+    options = _get_capital_preset_options()
+    current = str(st.session_state.get(session_key, "") or "")
+    if current not in options:
+        current = _resolve_default_capital_preset_key(equity)
+        st.session_state[session_key] = current
+    return current
+
+
+def _apply_run_capital_preset(selected_preset_key: str, equity: float) -> CapitalPreset | None:
+    signature = f"{selected_preset_key}|{equity:.2f}"
+    if str(st.session_state.get(BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY, "") or "") == signature:
+        return get_capital_preset_by_key(selected_preset_key) if selected_preset_key != CAPITAL_PRESET_CUSTOM else None
+    if selected_preset_key == CAPITAL_PRESET_CUSTOM:
+        st.session_state[BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY] = signature
+        return None
+    preset = get_capital_preset_by_key(selected_preset_key)
+    if preset is None:
+        st.session_state[BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY] = signature
+        return None
+    values = preset.values
+    st.session_state["bt_run_account_type"] = str(values.get("execution_account_type", st.session_state.get("bt_run_account_type", "margin")))
+    st.session_state["bt_run_pdt_rule"] = str(values.get("execution_pdt_rule", st.session_state.get("bt_run_pdt_rule", "auto")))
+    st.session_state["bt_run_swing_only"] = bool(values.get("execution_swing_only", st.session_state.get("bt_run_swing_only", False)))
+    st.session_state["bt_run_max_positions"] = int(values.get("risk_max_positions", st.session_state.get("bt_run_max_positions", 20)))
+    st.session_state[BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY] = signature
+    return preset
+
+
+def _apply_backfill_capital_preset(selected_preset_key: str, capital: float) -> CapitalPreset | None:
+    signature = f"{selected_preset_key}|{capital:.2f}"
+    if str(st.session_state.get(BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY, "") or "") == signature:
+        return get_capital_preset_by_key(selected_preset_key) if selected_preset_key != CAPITAL_PRESET_CUSTOM else None
+    if selected_preset_key == CAPITAL_PRESET_CUSTOM:
+        st.session_state[BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY] = signature
+        return None
+    preset = get_capital_preset_by_key(selected_preset_key)
+    if preset is None:
+        st.session_state[BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY] = signature
+        return None
+    values = preset.values
+    st.session_state["bt_backfill_selection_size"] = int(values.get("selector_selection_size", st.session_state.get("bt_backfill_selection_size", 100)))
+    st.session_state[BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY] = signature
+    return preset
 
 
 def _tail_text(value: str, max_lines: int = TAIL_LINES) -> str:
@@ -128,6 +215,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "start", "Explication": "Date de début du backtest (obligatoire).", "Défaut": "—"},
             {"Paramètre": "end", "Explication": "Date de fin, bornée par les données disponibles.", "Défaut": "aujourd'hui"},
             {"Paramètre": "equity", "Explication": "Capital initial simulé du portefeuille.", "Défaut": "100000"},
+            {"Paramètre": "capital_preset_key", "Explication": "Preset capital utilisé pour lire `stock_scores_history` et aligner les contraintes compte/positions. Si absent, résolu depuis `equity`.", "Défaut": "auto depuis equity"},
             {"Paramètre": "tp", "Explication": "Take-profit en fraction (0.08 = 8%).", "Défaut": "0.08"},
             {"Paramètre": "ts", "Explication": "Trailing stop en fraction (0.05 = 5%).", "Défaut": "0.05"},
             {"Paramètre": "max_positions", "Explication": "Nombre maximal de positions simultanées.", "Défaut": "20"},
@@ -200,6 +288,8 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
     return [
         {"Paramètre": "start", "Explication": "Date de départ du backfill PIT (obligatoire).", "Défaut": "—"},
         {"Paramètre": "end", "Explication": "Date de fin explicite. Si vide, le service résout la borne utile.", "Défaut": "auto"},
+        {"Paramètre": "capital", "Explication": "Capital de référence pour résoudre automatiquement un preset backfill PIT.", "Défaut": "100000"},
+        {"Paramètre": "capital_preset_key", "Explication": "Preset explicite à utiliser pour reconstruire `stock_scores_history`. Si absent, résolu depuis `capital`.", "Défaut": "auto depuis capital"},
         {"Paramètre": "overwrite_existing", "Explication": "Recalcule aussi les dates déjà historisées.", "Défaut": "False"},
         {"Paramètre": "limit_days", "Explication": "Limite à N séances pour un test progressif.", "Défaut": "None"},
         {"Paramètre": "chunk_size", "Explication": "Taille des lots symboles pour screener/scanner.", "Défaut": "500"},
@@ -500,6 +590,35 @@ def _build_run_options() -> BacktestRunOptions:
             help="Capital de départ simulé du portefeuille.",
         )
 
+    run_preset_options = _get_capital_preset_options()
+    _ensure_capital_preset_session_key(BT_RUN_CAPITAL_PRESET_KEY, float(equity))
+    run_preset_col1, run_preset_col2 = st.columns([1.4, 2.6])
+    with run_preset_col1:
+        selected_run_preset_key = cast(
+            str,
+            st.selectbox(
+                "Preset capital PIT",
+                options=run_preset_options,
+                format_func=_format_capital_preset_label,
+                key=BT_RUN_CAPITAL_PRESET_KEY,
+                help=(
+                    "`custom/auto` = le backend résout le preset à partir du capital saisi. "
+                    "Sinon, le preset explicite est transmis au backtest et préremplit les contraintes compte/positions."
+                ),
+            ),
+        )
+    with run_preset_col2:
+        auto_run_preset_key = _resolve_default_capital_preset_key(float(equity))
+        if selected_run_preset_key == CAPITAL_PRESET_CUSTOM:
+            st.caption(
+                f"Résolution automatique active : capital `{float(equity):,.0f}$` → preset `{_format_capital_preset_label(auto_run_preset_key)}`."
+            )
+        else:
+            _apply_run_capital_preset(selected_run_preset_key, float(equity))
+            st.caption(
+                f"Preset explicite transmis au backtest : `{_format_capital_preset_label(selected_run_preset_key)}`."
+            )
+
     col4, col5, col6, col7 = st.columns(4)
     with col4:
         tp = st.number_input(
@@ -678,6 +797,7 @@ def _build_run_options() -> BacktestRunOptions:
         start=start.strip(),
         end=end.strip() or None,
         equity=float(equity),
+        capital_preset_key=None if selected_run_preset_key == CAPITAL_PRESET_CUSTOM else selected_run_preset_key,
         tp=float(tp),
         ts=float(ts),
         max_positions=int(max_positions),
@@ -730,6 +850,43 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
             help="Très pratique pour un test sur 1, 5 ou 10 jours avant un run complet.",
         )
 
+    capital = st.number_input(
+        "Capital de référence pour le preset ($)",
+        min_value=1_000.0,
+        value=float(st.session_state.get("bt_backfill_capital", st.session_state.get("bt_run_equity", 100_000.0))),
+        step=1_000.0,
+        key="bt_backfill_capital",
+        help="Utilisé pour résoudre automatiquement le preset si vous laissez `Personnalisé / auto`.",
+    )
+    backfill_preset_options = _get_capital_preset_options()
+    _ensure_capital_preset_session_key(BT_BACKFILL_CAPITAL_PRESET_KEY, float(capital))
+    backfill_preset_col1, backfill_preset_col2 = st.columns([1.4, 2.6])
+    with backfill_preset_col1:
+        selected_backfill_preset_key = cast(
+            str,
+            st.selectbox(
+                "Preset capital PIT backfill",
+                options=backfill_preset_options,
+                format_func=_format_capital_preset_label,
+                key=BT_BACKFILL_CAPITAL_PRESET_KEY,
+                help=(
+                    "Le backfill reconstruit `stock_scores_history` par preset. "
+                    "`custom/auto` = résolution par le capital ci-dessus."
+                ),
+            ),
+        )
+    with backfill_preset_col2:
+        auto_backfill_preset_key = _resolve_default_capital_preset_key(float(capital))
+        if selected_backfill_preset_key == CAPITAL_PRESET_CUSTOM:
+            st.caption(
+                f"Résolution automatique active : capital `{float(capital):,.0f}$` → preset `{_format_capital_preset_label(auto_backfill_preset_key)}`."
+            )
+        else:
+            _apply_backfill_capital_preset(selected_backfill_preset_key, float(capital))
+            st.caption(
+                f"Preset explicite utilisé pour écrire `stock_scores_history` : `{_format_capital_preset_label(selected_backfill_preset_key)}`."
+            )
+
     col4, col5, col6, col7 = st.columns(4)
     with col4:
         overwrite_existing = st.checkbox(
@@ -772,6 +929,8 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
     options = BackfillScoresHistoryOptions(
         start=start.strip(),
         end=end.strip() or None,
+        capital=float(capital),
+        capital_preset_key=None if selected_backfill_preset_key == CAPITAL_PRESET_CUSTOM else selected_backfill_preset_key,
         overwrite_existing=bool(overwrite_existing),
         limit_days=limit_days,
         chunk_size=int(chunk_size),

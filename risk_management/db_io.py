@@ -9,6 +9,7 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from database.connection import get_sqlalchemy_engine
 from risk_management.config import RiskConfig
 from risk_management.models import AccountRiskSnapshot, CandidateScore, PredictionInfo, PriceInfo, WinRateInfo
@@ -42,6 +43,12 @@ class RiskRepository:
         if not stock_score_columns:
             raise RuntimeError("La table stock_scores_history est requise pour les runs PIT risk_management.")
         has_walk_forward = "final_score_walk_forward" in stock_score_columns
+        has_capital_preset_key = "capital_preset_key" in stock_score_columns
+        preset_filter_sql = ""
+        preset_params: dict[str, Any] = {}
+        if has_capital_preset_key:
+            preset_filter_sql = " AND capital_preset_key = :capital_preset_key"
+            preset_params["capital_preset_key"] = DEFAULT_CAPITAL_PRESET_KEY
         score_expr = (
             "COALESCE(s.final_score_walk_forward, s.final_score_sentiment, s.final_score)"
             if has_walk_forward
@@ -92,6 +99,7 @@ class RiskRepository:
                 {", ".join(optional_selects)}
             FROM stock_scores_history s
             WHERE s.snapshot_date = :snapshot_date
+              {preset_filter_sql}
               AND s.is_candidate = 1
               AND {score_expr} IS NOT NULL
             ORDER BY score_used DESC, s.symbol ASC
@@ -100,11 +108,12 @@ class RiskRepository:
             SELECT MAX(snapshot_date) AS snapshot_date
             FROM stock_scores_history
             WHERE snapshot_date <= :trade_date
+              {preset_filter_sql}
               AND is_candidate = 1
               AND {score_expr_unaliased} IS NOT NULL
         """)
         with self.engine.connect() as conn:
-            resolved_row = conn.execute(resolve_snapshot_query, {"trade_date": trade_date}).mappings().first()
+            resolved_row = conn.execute(resolve_snapshot_query, {"trade_date": trade_date, **preset_params}).mappings().first()
             resolved_snapshot_date = self._coerce_date(resolved_row["snapshot_date"]) if resolved_row else None
             if resolved_snapshot_date is None:
                 LOGGER.warning(
@@ -125,7 +134,7 @@ class RiskRepository:
                     resolved_snapshot_date,
                     trade_date,
                 )
-            rows = conn.execute(query, {"snapshot_date": resolved_snapshot_date}).mappings().all()
+            rows = conn.execute(query, {"snapshot_date": resolved_snapshot_date, **preset_params}).mappings().all()
         return [
             CandidateScore(
                 symbol=str(r["symbol"]).strip().upper(),

@@ -13,6 +13,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
 from backtesting.data_loader import get_required_bars_source_filter
+from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from database.connection import get_sqlalchemy_engine
 from event_sentiment.signal_aggregator import SentimentBoostConfig, SentimentSignalAggregator
 from screener.db_io import iter_symbol_chunks, load_spy_return_6m
@@ -49,6 +50,8 @@ SELECTOR_FILTER_STAT_KEYS = (
 
 HISTORY_COLUMNS = [
     "snapshot_date",
+    "capital_preset_key",
+    "config_fingerprint",
     "symbol",
     "sector",
     "liquidity_val",
@@ -107,12 +110,16 @@ class BackfillScoresHistoryService:
         scanner_config: AlphaScannerConfig | None = None,
         sentiment_config: SentimentBoostConfig | None = None,
         screener_max_workers: int | None = None,
+        capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+        config_fingerprint: str | None = None,
     ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
         self.screener_config = screener_config or ScreenerConfig()
         self.scanner_config = scanner_config or AlphaScannerConfig.strict_swing_cash()
         self.sentiment_config = sentiment_config or SentimentBoostConfig()
         self.screener_max_workers = screener_max_workers
+        self.capital_preset_key = str(capital_preset_key or DEFAULT_CAPITAL_PRESET_KEY).strip() or DEFAULT_CAPITAL_PRESET_KEY
+        self.config_fingerprint = str(config_fingerprint).strip() if config_fingerprint else None
         self.scanner = AlphaScanner(engine=self.engine, config=self.scanner_config)
         self.aggregator = SentimentSignalAggregator(engine=self.engine, config=self.sentiment_config)
 
@@ -477,6 +484,8 @@ class BackfillScoresHistoryService:
 
         history_df = enriched_df.copy()
         history_df["snapshot_date"] = snapshot_date
+        history_df["capital_preset_key"] = self.capital_preset_key
+        history_df["config_fingerprint"] = self.config_fingerprint
         defaults: dict[str, Any] = {
             "sector": None,
             "liquidity_val": None,
@@ -549,11 +558,15 @@ class BackfillScoresHistoryService:
         if len(snapshot_dates) != 1:
             raise ValueError("persist_snapshot attend exactement une seule snapshot_date par lot.")
         snapshot_date = snapshot_dates[0]
+        preset_keys = snapshot_df["capital_preset_key"].dropna().astype(str).unique().tolist()
+        if len(preset_keys) != 1:
+            raise ValueError("persist_snapshot attend exactement une seule capital_preset_key par lot.")
+        capital_preset_key = preset_keys[0]
 
         insert_stmt = text(
             """
             INSERT INTO stock_scores_history (
-                snapshot_date, symbol, sector,
+                snapshot_date, capital_preset_key, config_fingerprint, symbol, sector,
                 liquidity_val, relative_strength_index, historical_range_score, total_score,
                 trend_score, vcp_score, final_score,
                 market_cap, beta_126, spread_bps, earnings_date, days_to_earnings, earnings_blackout,
@@ -568,7 +581,7 @@ class BackfillScoresHistoryService:
                 signal_active,
                 anomaly_count, missing_days_count
             ) VALUES (
-                :snapshot_date, :symbol, :sector,
+                :snapshot_date, :capital_preset_key, :config_fingerprint, :symbol, :sector,
                 :liquidity_val, :relative_strength_index, :historical_range_score, :total_score,
                 :trend_score, :vcp_score, :final_score,
                 :market_cap, :beta_126, :spread_bps, :earnings_date, :days_to_earnings, :earnings_blackout,
@@ -595,8 +608,10 @@ class BackfillScoresHistoryService:
         with self.engine.begin() as conn:
             if overwrite_existing:
                 conn.execute(
-                    text("DELETE FROM stock_scores_history WHERE snapshot_date = :snapshot_date"),
-                    {"snapshot_date": snapshot_date},
+                    text(
+                        "DELETE FROM stock_scores_history WHERE snapshot_date = :snapshot_date AND capital_preset_key = :capital_preset_key"
+                    ),
+                    {"snapshot_date": snapshot_date, "capital_preset_key": capital_preset_key},
                 )
             conn.execute(insert_stmt, clean_records)
         return len(snapshot_df)

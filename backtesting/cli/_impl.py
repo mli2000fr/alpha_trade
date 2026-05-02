@@ -15,6 +15,14 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from common.capital_presets import (
+    apply_backtest_defaults_from_preset,
+    build_screener_config_kwargs_from_preset,
+    build_selector_config_kwargs_from_preset,
+    capital_preset_fingerprint,
+    resolve_capital_preset_for_equity,
+    resolve_effective_capital_preset,
+)
 from common.utils import configure_root_logging
 
 LOGGER = logging.getLogger(__name__)
@@ -43,6 +51,11 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
     run_p.add_argument("--end", default=str(date.today()), help="Date de fin (YYYY-MM-DD)")
     run_p.add_argument("--equity", type=float, default=100_000, help="Capital initial ($)")
+    run_p.add_argument(
+        "--capital-preset-key",
+        default=None,
+        help="Preset capital à utiliser pour charger les snapshots PIT et, si non contredit, préremplir les contraintes compte/positions.",
+    )
     run_p.add_argument("--tp", type=float, default=0.08, help="Take-profit %% (défaut 0.08)")
     run_p.add_argument("--ts", type=float, default=0.05, help="Trailing stop %% (défaut 0.05)")
     run_p.add_argument("--max-positions", type=int, default=20, help="Positions max simultanées")
@@ -249,6 +262,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     backfill_p.add_argument("--start", required=True, help="Date de début (YYYY-MM-DD)")
     backfill_p.add_argument("--end", default=None, help="Date de fin explicite (YYYY-MM-DD)")
+    backfill_p.add_argument("--capital", type=float, default=None, help="Capital de référence pour résoudre automatiquement un preset")
+    backfill_p.add_argument("--capital-preset-key", default=None, help="Preset capital explicite à utiliser pour reconstruire les snapshots PIT")
     backfill_p.add_argument("--overwrite-existing", action="store_true", help="Recalculer aussi les dates déjà historisées")
     backfill_p.add_argument("--limit-days", type=int, default=None, help="Limiter à N séances (test progressif)")
     backfill_p.add_argument("--chunk-size", type=int, default=500, help="Taille des chunks symboles screener/scanner")
@@ -408,12 +423,16 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--tp": "tp",
         "--ts": "ts",
         "--max-positions": "max_positions",
+        "--chunk-size": "chunk_size",
+        "--selection-size": "selection_size",
         "--commission-bps": "commission_bps",
         "--slippage-bps": "slippage_bps",
         "--account-type": "account_type",
         "--pdt-rule": "pdt_rule",
         "--swing-only": "swing_only",
         "--fees": "fees",
+        "--capital-preset-key": "capital_preset_key",
+        "--capital": "capital",
     }
     for token in argv:
         key = token.split("=", 1)[0]
@@ -458,6 +477,22 @@ def _run_backtest(args: argparse.Namespace) -> None:
     explicit_flags = _explicit_flags(sys.argv[1:])
     apply_profile(args, getattr(args, "profile", None), explicit_flags=explicit_flags)
 
+    effective_preset, preset_source = resolve_effective_capital_preset(
+        capital_preset_key=getattr(args, "capital_preset_key", None),
+        equity=float(getattr(args, "equity", 0.0) or 0.0),
+    )
+    detected_from_equity = resolve_capital_preset_for_equity(float(getattr(args, "equity", 0.0) or 0.0))
+    if preset_source == "explicit_key" and detected_from_equity is not None and detected_from_equity.key != effective_preset.key:
+        _safe_print(
+            f"⚠️ Preset explicite `{effective_preset.key}` prioritaire sur le bucket détecté depuis equity `{detected_from_equity.key}`."
+        )
+    args.capital_preset_key = effective_preset.key
+    if preset_source == "explicit_key":
+        preset_applied_values = apply_backtest_defaults_from_preset(vars(args), effective_preset, explicit_flags=explicit_flags)
+        for field_name, value in preset_applied_values.items():
+            setattr(args, field_name, value)
+    preset_fingerprint = capital_preset_fingerprint(effective_preset)
+
     # Phase 6.1.b — gestion --fees (déprécié) vs commission/slippage_bps.
     if args.fees is not None:
         import warnings as _warnings
@@ -482,6 +517,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     )
 
     _safe_print(f"\n🚀 Backtest Alpha Trade : {start} → {end}, capital={args.equity:,.0f}$")
+    _safe_print(f"   preset_capital={effective_preset.key} ({preset_source}) | fingerprint={preset_fingerprint}\n")
     _safe_print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
     _safe_print(f"   ml_mode={args.ml_mode}, sentiment_mode={args.sentiment_mode}\n")
     _safe_print(
@@ -509,7 +545,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     _safe_print("📈 Chargement scores...")
-    scores_df = load_scores(engine, start, end)
+    scores_df = load_scores(engine, start, end, capital_preset_key=effective_preset.key)
     if scores_df.empty:
         _safe_print("❌ Aucun score candidat trouvé sur la période demandée.")
         _safe_print("   Vérifie d'abord :")
@@ -636,6 +672,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
         "fees": args.fees,  # legacy : conserve la valeur fournie (None si absent).
         # Phase 6.1.e — profil utilisé.
         "profile": getattr(args, "profile", "custom"),
+        "capital_preset_key": effective_preset.key,
+        "capital_preset_source": preset_source,
+        "capital_preset_fingerprint": preset_fingerprint,
         # Phase 6.1.a — fusion conviction unifiée via core.conviction.
         "conviction_weights": {
             "source": "core.conviction",
@@ -747,21 +786,43 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
 
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
     end = datetime.strptime(args.end, "%Y-%m-%d").date() if args.end else None
+    explicit_flags = _explicit_flags(sys.argv[1:])
+    effective_preset, preset_source = resolve_effective_capital_preset(
+        capital_preset_key=getattr(args, "capital_preset_key", None),
+        equity=float(args.capital) if getattr(args, "capital", None) is not None else None,
+    )
+    detected_from_capital = (
+        resolve_capital_preset_for_equity(float(args.capital)) if getattr(args, "capital", None) is not None else None
+    )
+    if preset_source == "explicit_key" and detected_from_capital is not None and detected_from_capital.key != effective_preset.key:
+        _safe_print(
+            f"⚠️ Preset explicite `{effective_preset.key}` prioritaire sur le bucket détecté depuis capital `{detected_from_capital.key}`."
+        )
+    screener_kwargs = build_screener_config_kwargs_from_preset(effective_preset)
+    selector_kwargs = build_selector_config_kwargs_from_preset(effective_preset)
+    effective_selection_size = int(args.selection_size) if "selection_size" in explicit_flags else int(selector_kwargs.pop("selection_size"))
+    preset_fingerprint = capital_preset_fingerprint(effective_preset)
 
     _safe_print(f"\n🧱 Backfill stock_scores_history : start={start} end={end or 'auto'}")
     _safe_print(
         f"   overwrite={args.overwrite_existing} limit_days={args.limit_days or 'all'} "
         f"chunk_size={args.chunk_size} selection_size={args.selection_size}\n"
     )
+    _safe_print(
+        f"   preset_capital={effective_preset.key} ({preset_source}) selection_size_effective={effective_selection_size} fingerprint={preset_fingerprint}\n"
+    )
 
     service = BackfillScoresHistoryService(
-        screener_config=ScreenerConfig(chunk_size=args.chunk_size),
+        screener_config=ScreenerConfig(chunk_size=args.chunk_size, **screener_kwargs),
         scanner_config=AlphaScannerConfig.strict_swing_cash(
             chunk_size=args.chunk_size,
-            selection_size=args.selection_size,
+            selection_size=effective_selection_size,
+            **selector_kwargs,
         ),
         sentiment_config=SentimentBoostConfig(),
         screener_max_workers=args.screener_workers,
+        capital_preset_key=effective_preset.key,
+        config_fingerprint=preset_fingerprint,
     )
     result = service.backfill(
         start_date=start,

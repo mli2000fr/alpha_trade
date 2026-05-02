@@ -187,6 +187,51 @@ class TestDataLoader:
         assert "FROM stock_scores_history" in captured["sql"]
         assert "snapshot_date AS trade_date" in captured["sql"]
 
+    def test_load_scores_filters_history_by_capital_preset_when_requested(self, monkeypatch):
+        from backtesting import data_loader
+
+        captured = {}
+
+        class FakeInspector:
+            def has_table(self, table_name):
+                return table_name == "stock_scores_history"
+
+        def fake_inspect(_engine):
+            return FakeInspector()
+
+        def fake_get_table_columns(_engine, table_name):
+            if table_name == "stock_scores_history":
+                return {"symbol", "snapshot_date", "final_score", "final_score_sentiment", "sector", "is_candidate", "capital_preset_key"}
+            return set()
+
+        def fake_read_sql(query, conn, params=None, parse_dates=None):
+            captured["sql"] = str(query)
+            captured["params"] = params
+            return pd.DataFrame(
+                {
+                    "symbol": ["AAPL"],
+                    "trade_date": pd.to_datetime(["2025-01-02"]),
+                    "final_score": [0.8],
+                    "final_score_sentiment": [0.82],
+                    "sector": ["Tech"],
+                    "is_candidate": [1],
+                }
+            )
+
+        monkeypatch.setattr(data_loader, "inspect", fake_inspect)
+        monkeypatch.setattr(data_loader, "_get_table_columns", fake_get_table_columns)
+        monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
+
+        df = data_loader.load_scores(
+            cast(Engine, self._FakeEngine()),
+            date(2025, 1, 1),
+            date(2025, 1, 31),
+            capital_preset_key="capital_0_5000",
+        )
+        assert not df.empty
+        assert "capital_preset_key = :capital_preset_key" in captured["sql"]
+        assert captured["params"]["capital_preset_key"] == "capital_0_5000"
+
     def test_load_scores_falls_back_when_history_is_empty(self, monkeypatch):
         from backtesting import data_loader
 
@@ -1293,7 +1338,11 @@ class TestCLI:
         monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
         monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
         monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
-        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end: scores_df.copy())
+        monkeypatch.setattr(
+            data_loader,
+            "load_scores",
+            lambda engine, start, end, capital_preset_key=None: scores_df.copy(),
+        )
         monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
@@ -1445,7 +1494,11 @@ class TestCLI:
         monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
         monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
         monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
-        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end: scores_df.copy())
+        monkeypatch.setattr(
+            data_loader,
+            "load_scores",
+            lambda engine, start, end, capital_preset_key=None: scores_df.copy(),
+        )
         monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
         monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
         monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {"selected_count": 1})
@@ -1499,6 +1552,8 @@ class TestCLI:
         args = parser.parse_args([
             "backfill-scores-history",
             "--start", "2025-01-01",
+            "--capital", "2000",
+            "--capital-preset-key", "capital_0_5000",
             "--limit-days", "5",
             "--chunk-size", "250",
             "--selection-size", "50",
@@ -1506,10 +1561,25 @@ class TestCLI:
         ])
         assert args.command == "backfill-scores-history"
         assert args.start == "2025-01-01"
+        assert args.capital == 2000
+        assert args.capital_preset_key == "capital_0_5000"
         assert args.limit_days == 5
         assert args.chunk_size == 250
         assert args.selection_size == 50
         assert args.overwrite_existing is True
+
+    def test_parse_run_command_accepts_capital_preset_key(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "run",
+            "--start", "2025-01-01",
+            "--capital-preset-key", "capital_0_5000",
+        ])
+
+        assert args.command == "run"
+        assert args.capital_preset_key == "capital_0_5000"
 
     def test_parse_diagnose_screener_command(self):
         from backtesting.cli import _build_parser

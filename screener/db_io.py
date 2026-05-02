@@ -6,6 +6,8 @@ from sqlalchemy import MetaData, Table, bindparam, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import Engine
 
+from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
+
 from screener.models import ScreenerConfig
 from database.connection import get_sqlalchemy_engine
 
@@ -345,7 +347,13 @@ def _normalize_scores_snapshot(scores_df: pd.DataFrame) -> pd.DataFrame:
 	return normalized.loc[:, REQUIRED_SCORE_COLUMNS].copy()
 
 
-def archive_scores_snapshot(engine: Engine, snapshot_date: Optional[date] = None) -> int:
+def archive_scores_snapshot(
+	engine: Engine,
+	snapshot_date: Optional[date] = None,
+	*,
+	capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+	config_fingerprint: str | None = None,
+) -> int:
 	"""Archive le contenu actuel de stock_scores dans stock_scores_history.
 
 	Copie toutes les lignes de stock_scores vers stock_scores_history pour la date
@@ -356,9 +364,10 @@ def archive_scores_snapshot(engine: Engine, snapshot_date: Optional[date] = None
 	:return: Nombre de lignes archivées.
 	"""
 	ref_date = snapshot_date or date.today()
+	resolved_preset_key = str(capital_preset_key or DEFAULT_CAPITAL_PRESET_KEY).strip() or DEFAULT_CAPITAL_PRESET_KEY
 	stmt = text("""
 		INSERT INTO stock_scores_history
-			(snapshot_date, symbol, sector,
+			(snapshot_date, capital_preset_key, config_fingerprint, symbol, sector,
 			 liquidity_val, relative_strength_index, historical_range_score, total_score,
 			 trend_score, vcp_score, final_score, is_candidate,
 			 sentiment_net_agg, sector_impact_agg, company_idio_score, macro_regime_score,
@@ -370,7 +379,7 @@ def archive_scores_snapshot(engine: Engine, snapshot_date: Optional[date] = None
 			 signal_active,
 			 anomaly_count, missing_days_count, sanitizer_status)
 		SELECT
-			:snapshot_date, symbol, sector,
+			:snapshot_date, :capital_preset_key, :config_fingerprint, symbol, sector,
 			liquidity_val, relative_strength_index, historical_range_score, total_score,
 			trend_score, vcp_score, final_score, is_candidate,
 			sentiment_net_agg, sector_impact_agg, company_idio_score, macro_regime_score,
@@ -414,7 +423,14 @@ def archive_scores_snapshot(engine: Engine, snapshot_date: Optional[date] = None
 			sanitizer_status        = VALUES(sanitizer_status)
 	""")
 	with engine.begin() as conn:
-		result = conn.execute(stmt, {"snapshot_date": ref_date})
+		result = conn.execute(
+			stmt,
+			{
+				"snapshot_date": ref_date,
+				"capital_preset_key": resolved_preset_key,
+				"config_fingerprint": config_fingerprint,
+			},
+		)
 	return result.rowcount
 
 
@@ -423,6 +439,9 @@ def upsert_scores_snapshot(
 	scores_df: pd.DataFrame,
 	chunksize: int = 1000,
 	snapshot_date: Optional[date] = None,
+	*,
+	capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+	config_fingerprint: str | None = None,
 ) -> None:
 	if scores_df.empty:
 		with engine.begin() as conn:
@@ -458,7 +477,12 @@ def upsert_scores_snapshot(
 
 	# --- Archivage automatique dans stock_scores_history ---
 	try:
-		archive_scores_snapshot(engine, snapshot_date=snapshot_date)
+		archive_scores_snapshot(
+			engine,
+			snapshot_date=snapshot_date,
+			capital_preset_key=capital_preset_key,
+			config_fingerprint=config_fingerprint,
+		)
 	except Exception:
 		# L'archivage ne doit jamais casser le pipeline principal.
 		# Si la table n'existe pas encore, on ignore silencieusement.

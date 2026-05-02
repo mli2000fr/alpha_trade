@@ -103,7 +103,7 @@ def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
     return df
 
 
-def load_scores(engine: Engine, start: date, end: date) -> pd.DataFrame:
+def load_scores(engine: Engine, start: date, end: date, capital_preset_key: str | None = None) -> pd.DataFrame:
     """Charge les scores candidats.
 
     Priorité :
@@ -118,6 +118,12 @@ def load_scores(engine: Engine, start: date, end: date) -> pd.DataFrame:
     if history_exists:
         history_columns = _get_table_columns(engine, "stock_scores_history")
         has_walk_forward = "final_score_walk_forward" in history_columns
+        has_capital_preset_key = "capital_preset_key" in history_columns
+        history_preset_filter = ""
+        history_params: dict[str, object] = {"start": start, "end": end}
+        if has_capital_preset_key and capital_preset_key:
+            history_preset_filter = " AND capital_preset_key = :capital_preset_key"
+            history_params["capital_preset_key"] = str(capital_preset_key)
         history_query = text(f"""
             SELECT symbol,
                    snapshot_date AS trade_date,
@@ -147,13 +153,18 @@ def load_scores(engine: Engine, start: date, end: date) -> pd.DataFrame:
                    END AS score_source
             FROM stock_scores_history
             WHERE snapshot_date BETWEEN :start AND :end
+              {history_preset_filter}
               AND is_candidate = 1
             ORDER BY snapshot_date, symbol
         """)
         with engine.connect() as conn:
-            df = pd.read_sql(history_query, conn, params={"start": start, "end": end}, parse_dates=["trade_date"])
+            df = pd.read_sql(history_query, conn, params=history_params, parse_dates=["trade_date"])
         if not df.empty:
-            LOGGER.info("Scores candidats chargés depuis stock_scores_history : %d lignes", len(df))
+            LOGGER.info(
+                "Scores candidats chargés depuis stock_scores_history : %d lignes%s",
+                len(df),
+                f" | preset={capital_preset_key}" if capital_preset_key and has_capital_preset_key else "",
+            )
             return df
         LOGGER.warning(
             "stock_scores_history existe mais aucune ligne n'a ete trouvee sur [%s → %s] — fallback sur stock_scores.",

@@ -38,8 +38,21 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 	assert command[pdt_rule_index + 1] == "auto"
 	score_column_index = command.index("--score-column")
 	assert command[score_column_index + 1] == "auto"
+	assert "--capital-preset-key" not in command
 	assert "--swing-only" not in command
 	assert "--walk-forward-artifacts-dir" not in command
+
+
+def test_build_backtesting_run_command_includes_capital_preset_key():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(start="2025-01-01", equity=2_000, capital_preset_key="capital_0_5000"),
+	)
+
+	assert "--capital-preset-key" in command
+	assert command[command.index("--capital-preset-key") + 1] == "capital_0_5000"
 
 
 def test_build_backtesting_run_command_includes_walk_forward_options():
@@ -109,5 +122,24 @@ def test_build_backtesting_recommend_screener_command_includes_target_horizon_an
 	assert "--daily-csv" in command
 	assert "--baseline-name" in command and command[command.index("--baseline-name") + 1] == "baseline"
 	assert "--target-horizon" in command and command[command.index("--target-horizon") + 1] == "10"
+
+
+def test_build_backtesting_backfill_command_includes_capital_and_preset():
+	from ihm.services.backtesting_runner import BackfillScoresHistoryOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"backfill-scores-history",
+		BackfillScoresHistoryOptions(
+			start="2025-01-01",
+			end="2025-01-31",
+			capital=2_000,
+			capital_preset_key="capital_0_5000",
+		),
+	)
+
+	assert "--capital" in command
+	assert command[command.index("--capital") + 1] == "2000"
+	assert "--capital-preset-key" in command
+	assert command[command.index("--capital-preset-key") + 1] == "capital_0_5000"
 
 
