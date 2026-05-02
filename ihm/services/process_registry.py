@@ -83,6 +83,7 @@ class PipelineRunRecord:
     workflow_completed_steps: int = 0
     workflow_current_step_key: str | None = None
     workflow_current_step_label: str | None = None
+    workflow_current_child_run_id: str | None = None
     workflow_child_run_ids: list[str] = field(default_factory=list)
     run_summary: dict[str, object] = field(default_factory=dict)
 
@@ -524,6 +525,7 @@ def _finalize_workflow_record(
         workflow_completed_steps=workflow_completed_steps,
         workflow_current_step_key=None,
         workflow_current_step_label=None,
+        workflow_current_child_run_id=None,
     )
     try:
         persist_pipeline_run_record_summary(record.to_state())
@@ -609,6 +611,7 @@ def _run_pipeline_workflow(
                 managed,
                 workflow_current_step_key=step.key,
                 workflow_current_step_label=step_label,
+                workflow_current_child_run_id=child_record.run_id,
                 workflow_child_run_ids=list(child_run_ids),
                 workflow_completed_steps=completed_steps,
             )
@@ -633,6 +636,7 @@ def _run_pipeline_workflow(
                     duration_seconds=round(time.perf_counter() - managed.started_perf, 2),
                     workflow_current_step_key=step.key,
                     workflow_current_step_label=step_label,
+                    workflow_current_child_run_id=child_record.run_id,
                     workflow_child_run_ids=list(child_run_ids),
                     workflow_completed_steps=completed_steps,
                     run_summary=aggregated_summary,
@@ -668,7 +672,12 @@ def _run_pipeline_workflow(
                 return
 
             completed_steps = index
-            _update_workflow_record(managed, workflow_completed_steps=completed_steps, workflow_child_run_ids=list(child_run_ids))
+            _update_workflow_record(
+                managed,
+                workflow_completed_steps=completed_steps,
+                workflow_current_child_run_id=None,
+                workflow_child_run_ids=list(child_run_ids),
+            )
             _append_workflow_event(managed, f"=== [{index}/{total_steps}] Terminé {step_label} (run `{child_record.run_id}`) ===")
 
         _append_workflow_event(managed, "Workflow complet terminé avec succès.")

@@ -278,6 +278,45 @@ def test_pipeline_workflow_can_be_stopped(monkeypatch, tmp_path: Path) -> None:
     assert snapshot["workflow_completed_steps"] == 0
 
 
+def test_pipeline_workflow_exposes_current_child_run_id_while_running(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("slow_step", "1", "Slow Step", "", "", "—"),
+        PipelineStepDefinition("never_reached", "2", "Never Reached", "", "", "slow_step"),
+    )
+    monkeypatch.setattr(registry, "get_pipeline_steps", lambda: steps)
+    monkeypatch.setattr(
+        registry,
+        "build_pipeline_command",
+        lambda step_key, options: [
+            sys.executable,
+            "-c",
+            "import time; print('started', flush=True); time.sleep(1)",
+        ],
+    )
+
+    record = registry.start_pipeline_workflow(PipelineLaunchOptions())
+
+    running_snapshot = None
+    for _ in range(40):
+        snapshot = registry.poll_pipeline_run(record.run_id)
+        if snapshot and snapshot.get("workflow_current_child_run_id"):
+            running_snapshot = snapshot
+            break
+        time.sleep(0.05)
+
+    assert running_snapshot is not None
+    assert running_snapshot["status"] in {"starting", "running"}
+    assert isinstance(running_snapshot["workflow_current_child_run_id"], str)
+    assert running_snapshot["workflow_current_child_run_id"] in running_snapshot["workflow_child_run_ids"]
+
+    final_snapshot = _wait_for_final_snapshot(record.run_id, attempts=120)
+    assert final_snapshot is not None
+    assert final_snapshot["status"] == "completed"
+    assert final_snapshot["workflow_current_child_run_id"] is None
+
+
 def test_pipeline_workflow_skips_ml_train_when_not_requested(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
 

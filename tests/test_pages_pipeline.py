@@ -240,3 +240,84 @@ def test_workflow_launcher_can_include_ml_train(monkeypatch) -> None:
     assert captured["include_ml_train"] is True
 
 
+def test_build_workflow_child_run_payload_returns_latest_runs_first_with_labels(monkeypatch) -> None:
+    child_runs = {
+        "run-step-1": {
+            "step_label": "1. Import Bars",
+            "status": "completed",
+            "executed_at": "2026-05-02T20:12:59",
+        },
+        "run-step-2": {
+            "step_label": "2. Sanitize",
+            "status": "running",
+            "executed_at": "2026-05-02T20:13:59",
+        },
+    }
+    monkeypatch.setattr(workflow_page, "get_pipeline_run_record", lambda run_id: child_runs.get(run_id))
+
+    child_ids, child_labels = workflow_page._build_workflow_child_run_payload(
+        {
+            "workflow_child_run_ids": ["run-step-1", "run-step-2", "run-step-2", "  ", None],
+        }
+    )
+
+    assert child_ids == ["run-step-2", "run-step-1"]
+    assert "2. Sanitize" in child_labels["run-step-2"]
+    assert "🟨 En cours" in child_labels["run-step-2"]
+    assert "1. Import Bars" in child_labels["run-step-1"]
+    assert "🟢 Terminé" in child_labels["run-step-1"]
+
+
+def test_prepare_workflow_child_run_state_auto_selects_current_run(monkeypatch) -> None:
+    monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
+
+    child_select_key, follow_enabled, current_child_run_id, selected_child_run_id, last_auto_key = (
+        workflow_page._prepare_workflow_child_run_state(
+            {
+                "run_id": "wf-1",
+                "status": "running",
+                "workflow_current_child_run_id": "run-step-2",
+            },
+            ["run-step-2", "run-step-1"],
+            {
+                "run-step-2": "2. Sanitize | run-step-2",
+                "run-step-1": "1. Import Bars | run-step-1",
+            },
+        )
+    )
+
+    assert child_select_key == "workflow_child_run_select_wf-1"
+    assert follow_enabled is True
+    assert current_child_run_id == "run-step-2"
+    assert selected_child_run_id == "run-step-2"
+    assert last_auto_key == "workflow_child_run_last_auto_wf-1"
+    assert workflow_page.st.session_state[child_select_key] == "run-step-2"
+
+
+def test_prepare_workflow_child_run_state_preserves_manual_selection_when_follow_disabled(monkeypatch) -> None:
+    session_state = {
+        "workflow_child_run_autofollow_wf-2": False,
+        "workflow_child_run_select_wf-2": "run-step-1",
+    }
+    monkeypatch.setattr(workflow_page.st, "session_state", session_state, raising=False)
+
+    child_select_key, follow_enabled, current_child_run_id, selected_child_run_id, _ = workflow_page._prepare_workflow_child_run_state(
+        {
+            "run_id": "wf-2",
+            "status": "running",
+            "workflow_current_child_run_id": "run-step-2",
+        },
+        ["run-step-2", "run-step-1"],
+        {
+            "run-step-2": "2. Sanitize | run-step-2",
+            "run-step-1": "1. Import Bars | run-step-1",
+        },
+    )
+
+    assert child_select_key == "workflow_child_run_select_wf-2"
+    assert follow_enabled is False
+    assert current_child_run_id == "run-step-2"
+    assert selected_child_run_id == "run-step-1"
+    assert workflow_page.st.session_state[child_select_key] == "run-step-1"
+
+

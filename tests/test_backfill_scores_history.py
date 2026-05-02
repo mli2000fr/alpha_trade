@@ -235,12 +235,16 @@ def test_compute_selector_snapshot_logs_aggregated_pit_summary(monkeypatch, capl
                 "rejected_high_52w": 0,
                 "rejected_weekly": 0,
                 "rejected_market_cap": 0,
+                "rejected_market_cap_stale": 1,
                 "rejected_beta": 0,
                 "rejected_spread": 0,
+                "rescued_spread_iex": 1,
                 "rejected_earnings_blackout": 0,
                 "rejected_score_liquidity": 0,
+                "rejected_sanitizer": 1,
                 "rejected_anomalies": 0,
                 "rejected_missing_days": 0,
+                "future_filter_key": 3,
             }
             return filtered, stats
 
@@ -268,5 +272,8 @@ def test_compute_selector_snapshot_logs_aggregated_pit_summary(monkeypatch, capl
     assert len(result) == 1
     assert "Backfill PIT summary | date=2026-04-17 quotes_available=True earnings_available=False avant_filtres=2 apres_filtres=1" in caplog.text
     assert "rejet_historique=1" in caplog.text
+    assert "rejet_market_cap_stale=1" in caplog.text
+    assert "rescues_spread_iex=1" in caplog.text
+    assert "rejet_sanitizer=1" in caplog.text
 
 

@@ -39,14 +39,18 @@ from ihm.services.process_registry import (
 
 __all__ = [
     "_build_history_rows",
+    "_build_workflow_child_run_payload",
     "_latest_run_by_step",
     "_merge_runs",
     "_prime_runtime_center_state",
+    "_prepare_workflow_child_run_state",
     "_render_runtime_center",
     "_render_workflow_launcher",
 ]
 
 WORKFLOW_INCLUDE_ML_TRAIN_KEY = "pipeline_workflow_include_ml_train"
+WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_autofollow_"
+WORKFLOW_CHILD_LAST_AUTO_KEY_PREFIX = "workflow_child_run_last_auto_"
 
 
 def _workflow_mode_label(run: dict[str, object]) -> str:
@@ -54,6 +58,70 @@ def _workflow_mode_label(run: dict[str, object]) -> str:
     if isinstance(command, list) and any(str(token) == "ml_train" for token in command):
         return "1 → 14 avec ML Train"
     return "1 → 14 sans ML Train"
+
+
+def _build_workflow_child_run_payload(workflow_run: dict[str, object]) -> tuple[list[str], dict[str, str]]:
+    raw_child_ids = workflow_run.get("workflow_child_run_ids", [])
+    if not isinstance(raw_child_ids, list):
+        return [], {}
+
+    child_run_ids: list[str] = []
+    seen: set[str] = set()
+    for raw_child_id in reversed(raw_child_ids):
+        if not isinstance(raw_child_id, str):
+            continue
+        child_id = raw_child_id.strip()
+        if not child_id or child_id in seen:
+            continue
+        seen.add(child_id)
+        child_run_ids.append(child_id)
+
+    labels: dict[str, str] = {}
+    for child_id in child_run_ids:
+        child_run = get_pipeline_run_record(child_id) or {}
+        child_label = str(child_run.get("step_label") or child_run.get("step_key") or "Sous-run")
+        child_status = _status_badge(str(child_run.get("status") or "inconnu"))
+        child_started_at = str(child_run.get("executed_at") or "—")
+        labels[child_id] = f"{child_label} | {child_id} | {child_status} | {child_started_at}"
+
+    return child_run_ids, labels
+
+
+def _prepare_workflow_child_run_state(
+    workflow_run: dict[str, object],
+    child_run_ids: list[str],
+    child_labels: dict[str, str],
+) -> tuple[str | None, bool, str | None, str | None, str | None]:
+    workflow_run_id = str(workflow_run.get("run_id") or "").strip()
+    if not workflow_run_id or not child_run_ids:
+        return None, False, None, None, None
+
+    current_child_run_id = str(workflow_run.get("workflow_current_child_run_id") or "").strip() or None
+    workflow_status = str(workflow_run.get("status") or "")
+    workflow_active = workflow_status in {"starting", "running"}
+    child_select_key = f"workflow_child_run_select_{workflow_run_id}"
+    follow_key = f"{WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX}{workflow_run_id}"
+    last_auto_key = f"{WORKFLOW_CHILD_LAST_AUTO_KEY_PREFIX}{workflow_run_id}"
+
+    default_child_run_id = current_child_run_id if current_child_run_id in child_labels else child_run_ids[0]
+
+    follow_value = st.session_state.get(follow_key)
+    if not isinstance(follow_value, bool):
+        st.session_state[follow_key] = workflow_active and current_child_run_id is not None
+
+    if st.session_state.get(child_select_key) not in child_labels:
+        st.session_state[child_select_key] = default_child_run_id
+
+    if workflow_active and bool(st.session_state.get(follow_key)) and current_child_run_id in child_labels:
+        st.session_state[child_select_key] = current_child_run_id
+        st.session_state[last_auto_key] = current_child_run_id
+
+    selected_child_run_id = st.session_state.get(child_select_key)
+    if not isinstance(selected_child_run_id, str) or selected_child_run_id not in child_labels:
+        selected_child_run_id = default_child_run_id
+        st.session_state[child_select_key] = selected_child_run_id
+
+    return child_select_key, bool(st.session_state.get(follow_key)), current_child_run_id, selected_child_run_id, last_auto_key
 
 
 def _merge_runs() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
@@ -284,6 +352,96 @@ def _render_runtime_center() -> None:
             current_step_label = str(selected_run.get("workflow_current_step_label") or "").strip()
             if current_step_label:
                 st.caption(f"Étape en cours : `{current_step_label}`")
+
+            child_run_ids, child_labels = _build_workflow_child_run_payload(selected_run)
+            if child_run_ids:
+                st.markdown("**Logs détaillés d’un sous-run workflow**")
+                st.caption(
+                    "Le log consolidé du workflow reste disponible plus bas. "
+                    "Ce panneau affiche le log brut d’une étape précise, comme lors d’un lancement unitaire."
+                )
+                child_select_key, follow_current_child, current_child_run_id, _, last_auto_key = _prepare_workflow_child_run_state(
+                    selected_run,
+                    child_run_ids,
+                    child_labels,
+                )
+                if child_select_key is None:
+                    current_child_run_id = None
+                    follow_current_child = False
+                    child_select_key = f"workflow_child_run_select_{selected_label}"
+
+                workflow_active = status in {"starting", "running"}
+                child_control_cols = st.columns([2.2, 1.2, 1.2])
+                with child_control_cols[0]:
+                    follow_current_child = cast(
+                        bool,
+                        st.checkbox(
+                            "Suivre automatiquement le sous-run courant",
+                            key=f"{WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX}{selected_label}",
+                            disabled=not (workflow_active and current_child_run_id),
+                            help=(
+                                "Quand activé, la vue bascule automatiquement sur l’étape en cours à chaque rafraîchissement. "
+                                "Désactivez-le pour inspecter un sous-run précédent sans être ramené sur l’étape active."
+                            ),
+                        ),
+                    )
+                with child_control_cols[1]:
+                    if current_child_run_id:
+                        st.caption(f"Sous-run courant : `{current_child_run_id}`")
+                with child_control_cols[2]:
+                    if current_child_run_id and not follow_current_child and st.button(
+                        "↩️ Revenir au courant",
+                        key=f"workflow_child_run_back_to_current_{selected_label}",
+                        use_container_width=True,
+                    ):
+                        st.session_state[child_select_key] = current_child_run_id
+                        st.session_state[f"{WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX}{selected_label}"] = True
+                        if last_auto_key is not None:
+                            st.session_state[last_auto_key] = current_child_run_id
+                        st.rerun()
+
+                if workflow_active and follow_current_child and current_child_run_id in child_labels:
+                    st.session_state[child_select_key] = current_child_run_id
+                    if last_auto_key is not None:
+                        st.session_state[last_auto_key] = current_child_run_id
+                selected_child_run_id = cast(
+                    str,
+                    st.selectbox(
+                        "Sous-run à inspecter",
+                        options=child_run_ids,
+                        format_func=lambda rid: child_labels[rid],
+                        key=child_select_key,
+                    ),
+                )
+                if workflow_active and follow_current_child and current_child_run_id and selected_child_run_id != current_child_run_id:
+                    st.session_state[f"{WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX}{selected_label}"] = False
+                    follow_current_child = False
+                    st.caption("Suivi automatique suspendu après sélection manuelle d’un sous-run différent.")
+                selected_child_run = get_pipeline_run_record(selected_child_run_id)
+                if selected_child_run is not None:
+                    selected_child_logs = read_pipeline_logs(selected_child_run_id, stream=cast(Any, stream_map[log_filter]))
+                    child_metric_col1, child_metric_col2, child_metric_col3, child_metric_col4 = st.columns(4)
+                    child_metric_col1.metric(
+                        "Étape détaillée",
+                        str(selected_child_run.get("step_label", selected_child_run.get("step_key", ""))),
+                    )
+                    child_metric_col2.metric("Durée", format_duration_hhmmss(selected_child_run.get("duration_seconds", 0.0)))
+                    child_metric_col3.metric("Lignes stdout", to_int(selected_child_run.get("stdout_lines", 0)))
+                    child_metric_col4.metric("Lignes stderr", to_int(selected_child_run.get("stderr_lines", 0)))
+                    _render_run_summary(selected_child_run, compact=True)
+                    st.download_button(
+                        label=f"⬇️ Télécharger le log détaillé du sous-run ({log_filter})",
+                        data=selected_child_logs,
+                        file_name=build_log_download_name(selected_child_run_id, stream=cast(Any, stream_map[log_filter])),
+                        mime="text/plain",
+                        key=f"download_workflow_child_{selected_child_run_id}_{log_filter}",
+                    )
+                    _render_log_block(
+                        "Logs détaillés du sous-run sélectionné",
+                        selected_child_logs,
+                        key=f"workflow_child_logs_{selected_child_run_id}_{log_filter}",
+                        expanded=True,
+                    )
 
         metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
         metric_col1.metric("Étape", str(selected_run.get("step_label", selected_run.get("step_key", ""))))

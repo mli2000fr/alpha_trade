@@ -22,6 +22,31 @@ from selector.alpha_scanner import AlphaScanner, AlphaScannerConfig
 
 LOGGER = logging.getLogger(__name__)
 
+SELECTOR_FILTER_STAT_KEYS = (
+    "input",
+    "output",
+    "rejected_etf",
+    "rejected_history",
+    "rejected_price",
+    "rejected_market_liquidity",
+    "rejected_volatility",
+    "rejected_atr",
+    "rejected_relative_strength",
+    "rejected_ma200",
+    "rejected_high_52w",
+    "rejected_weekly",
+    "rejected_market_cap",
+    "rejected_market_cap_stale",
+    "rejected_beta",
+    "rejected_spread",
+    "rescued_spread_iex",
+    "rejected_earnings_blackout",
+    "rejected_score_liquidity",
+    "rejected_sanitizer",
+    "rejected_anomalies",
+    "rejected_missing_days",
+)
+
 HISTORY_COLUMNS = [
     "snapshot_date",
     "symbol",
@@ -291,27 +316,7 @@ class BackfillScoresHistoryService:
 
         scanner, quotes_available, earnings_available = self._resolve_pit_scanner(as_of_date)
         all_frames: list[pd.DataFrame] = []
-        aggregated_filter_stats = {
-            "input": 0,
-            "output": 0,
-            "rejected_etf": 0,
-            "rejected_history": 0,
-            "rejected_price": 0,
-            "rejected_market_liquidity": 0,
-            "rejected_volatility": 0,
-            "rejected_atr": 0,
-            "rejected_relative_strength": 0,
-            "rejected_ma200": 0,
-            "rejected_high_52w": 0,
-            "rejected_weekly": 0,
-            "rejected_market_cap": 0,
-            "rejected_beta": 0,
-            "rejected_spread": 0,
-            "rejected_earnings_blackout": 0,
-            "rejected_score_liquidity": 0,
-            "rejected_anomalies": 0,
-            "rejected_missing_days": 0,
-        }
+        aggregated_filter_stats = {key: 0 for key in SELECTOR_FILTER_STAT_KEYS}
         symbols = screener_df["symbol"].dropna().astype(str).tolist()
         chunk_size = max(1, self.scanner_config.chunk_size)
 
@@ -334,12 +339,12 @@ class BackfillScoresHistoryService:
             merged = scanner._merge_optional_symbol_overlays(merged, quotes_df, earnings_df)
             filtered, filter_stats = scanner._apply_filters_with_stats(merged)
             for key, value in filter_stats.items():
-                aggregated_filter_stats[key] += value
+                aggregated_filter_stats[key] = aggregated_filter_stats.get(key, 0) + int(value)
             if not filtered.empty:
                 all_frames.append(filtered)
 
         LOGGER.info(
-            "Backfill PIT summary | date=%s quotes_available=%s earnings_available=%s avant_filtres=%s apres_filtres=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_volatilite_relative=%s rejet_atr_pct=%s rejet_force_relative=%s rejet_ma200=%s rejet_high_52w=%s rejet_weekly=%s rejet_market_cap=%s rejet_beta=%s rejet_spread=%s rejet_earnings_blackout=%s rejet_liquidite_scores=%s rejet_anomalies=%s rejet_missing_days=%s",
+            "Backfill PIT summary | date=%s quotes_available=%s earnings_available=%s avant_filtres=%s apres_filtres=%s rejet_etf=%s rejet_historique=%s rejet_prix=%s rejet_liquidite_marche=%s rejet_volatilite_relative=%s rejet_atr_pct=%s rejet_force_relative=%s rejet_ma200=%s rejet_high_52w=%s rejet_weekly=%s rejet_market_cap=%s rejet_market_cap_stale=%s rejet_beta=%s rejet_spread=%s rescues_spread_iex=%s rejet_earnings_blackout=%s rejet_liquidite_scores=%s rejet_sanitizer=%s rejet_anomalies=%s rejet_missing_days=%s",
             as_of_date,
             quotes_available,
             earnings_available,
@@ -356,10 +361,13 @@ class BackfillScoresHistoryService:
             aggregated_filter_stats["rejected_high_52w"],
             aggregated_filter_stats["rejected_weekly"],
             aggregated_filter_stats["rejected_market_cap"],
+            aggregated_filter_stats["rejected_market_cap_stale"],
             aggregated_filter_stats["rejected_beta"],
             aggregated_filter_stats["rejected_spread"],
+            aggregated_filter_stats["rescued_spread_iex"],
             aggregated_filter_stats["rejected_earnings_blackout"],
             aggregated_filter_stats["rejected_score_liquidity"],
+            aggregated_filter_stats["rejected_sanitizer"],
             aggregated_filter_stats["rejected_anomalies"],
             aggregated_filter_stats["rejected_missing_days"],
         )
