@@ -39,6 +39,7 @@ from ihm.services.process_registry import (
 from ihm.services.pipeline_runner import get_pipeline_workflow_steps
 
 __all__ = [
+    "_build_workflow_scope_help_lines",
     "_build_history_rows",
     "_build_workflow_child_run_payload",
     "_latest_run_by_step",
@@ -56,6 +57,14 @@ WORKFLOW_INCLUDE_CA_APPLY_KEY = "pipeline_workflow_include_ca_apply"
 WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_autofollow_"
 WORKFLOW_CHILD_LAST_AUTO_KEY_PREFIX = "workflow_child_run_last_auto_"
 WORKFLOW_RANGE_OPTIONS: tuple[str, ...] = ("1", "3")
+
+
+def _build_workflow_scope_help_lines() -> tuple[str, str, str]:
+    return (
+        "• `1 → 12` = cycle quotidien complet : import bars, sanitation, sélection, risk et exécution.",
+        "• `3 → 12` = reprise rapide : saute les étapes 1 et 2 si les données marché sont déjà prêtes, pratique après changement de compte Alpaca.",
+        "• `13` et `14` = extensions post-exécution optionnelles : non incluses par défaut ; `14` nécessite toujours `13`.",
+    )
 
 
 def _workflow_mode_label(run: dict[str, object]) -> str:
@@ -217,6 +226,8 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
 
     with st.container(border=True):
         st.subheader("🚀 Workflow complet configurable")
+        for help_line in _build_workflow_scope_help_lines():
+            st.caption(help_line)
         workflow_range = st.selectbox(
             "Périmètre du workflow",
             options=WORKFLOW_RANGE_OPTIONS,
@@ -259,8 +270,9 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
             )
         )
         scope_suffix = " + 13 → 14" if include_corporate_actions_apply else " + 13" if include_corporate_actions_sync else ""
+        workflow_kind = "cycle quotidien complet" if workflow_range == "1" else "reprise rapide sans relancer 1 et 2"
         st.caption(
-            f"Lance automatiquement le workflow quotidien {workflow_range} → 12{scope_suffix} dans l'ordre, avec {effective_steps} étape(s) réellement exécutée(s) "
+            f"Lance {workflow_kind} {workflow_range} → 12{scope_suffix} dans l'ordre, avec {effective_steps} étape(s) réellement exécutée(s) "
             f"({'ML Train inclus' if include_ml_train else 'ML Train exclu'}). "
             "Les sous-runs restent historisés individuellement, et ce workflow fournit une vue globale avec logs consolidés."
         )

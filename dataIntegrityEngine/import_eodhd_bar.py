@@ -73,6 +73,8 @@ LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 DEFAULT_PER_SYMBOL_LIMIT = 100
 DEFAULT_BULK_PUBLISH_OFFSET_HOURS = 2
+PROGRESS_LOG_FIRST_SYMBOLS = 10
+PROGRESS_LOG_EVERY = 100
 _PREFERRED_SERIES_SYMBOL_RE = re.compile(r"^[A-Z]+\.PR[A-Z0-9]+$")
 
 
@@ -94,6 +96,12 @@ def _emit_run_summary(summary: dict[str, Any]) -> None:
         f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
         flush=True,
     )
+
+
+def _should_log_symbol_progress(index: int, total: int) -> bool:
+    if total <= 0 or index <= 0:
+        return False
+    return index <= min(PROGRESS_LOG_FIRST_SYMBOLS, total) or index % PROGRESS_LOG_EVERY == 0 or index == total
 
 
 def resolve_bars_provider(config: Optional[dict] = None) -> str:
@@ -463,7 +471,8 @@ def run_eodhd_ingestion(
         recovered_budget = max(0, int(per_symbol_limit))
         recovered_missing_without_history = 0
 
-        for symbol in universe:
+        total_symbols = len(universe)
+        for index, symbol in enumerate(universe, start=1):
             if tracker.is_circuit_open():
                 summary["stopped_reason"] = "circuit_open"
                 LOGGER.warning("[eodhd] circuit-breaker ouvert -> arrêt propre de l'ingestion")
@@ -471,6 +480,19 @@ def run_eodhd_ingestion(
 
             entry = indexed.get(symbol)
             last_known_date = latest_bar_dates.get(symbol)
+            if _should_log_symbol_progress(index, total_symbols):
+                LOGGER.info(
+                    "[eodhd] progression %d/%d (%.1f%%) | symbol=%s | source=%s | last_known=%s | up_to_date=%d | recovered=%d | errors=%d",
+                    index,
+                    total_symbols,
+                    (index / total_symbols) * 100.0,
+                    symbol,
+                    "bulk" if entry is not None else "fallback",
+                    last_known_date.isoformat() if last_known_date is not None else "none",
+                    summary["up_to_date_symbols"],
+                    summary["per_symbol_recovered"],
+                    summary["errors"],
+                )
             raw_bars: list[dict] = []
             target_date_covered_by_bulk = False
 

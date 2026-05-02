@@ -188,6 +188,18 @@ def test_build_watcher_handoff_rows_exposes_post_execution_launch_guidance() -> 
     assert any(row["Mode"] == "Task Scheduler" for row in rows)
 
 
+def test_build_workflow_scope_help_lines_explains_1_to_12_3_to_12_and_13_14() -> None:
+    lines = workflow_page._build_workflow_scope_help_lines()
+
+    assert len(lines) == 3
+    assert "1 → 12" in lines[0]
+    assert "3 → 12" in lines[1]
+    assert "changement de compte alpaca" in lines[1].lower()
+    assert "13" in lines[2]
+    assert "14" in lines[2]
+    assert "non incluses par défaut" in lines[2].lower()
+
+
 def test_workflow_launcher_starts_with_1_to_12_and_optional_steps_disabled_by_default(monkeypatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))

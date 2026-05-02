@@ -457,7 +457,11 @@ def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db
                 dependency_diagnostic=dependency_diagnostic,
             )
 
-    st.subheader("🪜 Étapes du workflow quotidien 1 → 14")
+    st.subheader("🪜 Étapes pilotables — cœur quotidien 1 → 12 + options 13/14")
+    st.caption(
+        "Les étapes 1 à 12 constituent le workflow quotidien principal. "
+        "Les étapes 13 et 14 sont des extensions post-exécution, pilotables séparément et non incluses par défaut dans le lancement workflow."
+    )
     for step in get_pipeline_steps():
         _render_launchable_step_panel(
             step,

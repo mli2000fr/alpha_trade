@@ -13,6 +13,7 @@ But des tests :
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pytest
@@ -285,6 +286,35 @@ def test_missing_from_bulk_recovered_via_per_symbol(monkeypatch, patched_env):
 
     assert summary["missing_from_bulk"] == 3
     assert summary["per_symbol_recovered"] == 3
+
+
+def test_should_log_symbol_progress_logs_first_interval_and_last() -> None:
+    assert import_eodhd_bar._should_log_symbol_progress(1, 250) is True
+    assert import_eodhd_bar._should_log_symbol_progress(10, 250) is True
+    assert import_eodhd_bar._should_log_symbol_progress(11, 250) is False
+    assert import_eodhd_bar._should_log_symbol_progress(100, 250) is True
+    assert import_eodhd_bar._should_log_symbol_progress(250, 250) is True
+
+
+def test_run_eodhd_ingestion_logs_symbol_progress(monkeypatch, patched_env, fake_bulk_payload, caplog) -> None:
+    monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk", lambda **kwargs: fake_bulk_payload)
+    monkeypatch.setattr(import_eodhd_bar, "fetch_splits", lambda symbol, **kwargs: [])
+
+    with caplog.at_level(logging.INFO, logger="dataIntegrityEngine.import_eodhd_bar"):
+        summary = import_eodhd_bar.run_eodhd_ingestion(
+            dry_run=True,
+            target_date="2026-04-28",
+            symbols=None,
+            enable_stooq_cross_check=False,
+            config={},
+            session=_FakeSession(),
+            tracker=patched_env["tracker"],
+        )
+
+    assert summary["targeted_symbols"] == 3
+    progress_messages = [record.getMessage() for record in caplog.records if "[eodhd] progression" in record.getMessage()]
+    assert any("1/3" in message and "symbol=AAPL" in message for message in progress_messages)
+    assert any("3/3" in message and "symbol=BRK.B" in message for message in progress_messages)
 
 
 def test_existing_history_is_caught_up_until_target_date(monkeypatch, patched_env, fake_bulk_payload):
