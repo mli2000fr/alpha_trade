@@ -49,11 +49,17 @@ RunStatus = Literal["starting", "running", "completed", "failed", "timeout", "st
 TAIL_MAX_LINES = 400
 RUNS_DIR = PROJECT_ROOT / "artifacts" / "ihm_pipeline_runs"
 HISTORY_INDEX_PATH = RUNS_DIR / "history_index.json"
+RUN_RECORD_FILENAME = "record.json"
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 WINDOWS_POST_SUCCESS_CRASH_CODES = {3221226505}
 ML_TRAIN_SUMMARY_RE = re.compile(r"Completed:\s*(\d+)\s+Skipped:\s*(\d+)\s+Failed:\s*(\d+)")
 ML_TRAIN_ORCHESTRATOR_RE = re.compile(r"run_training_batch finished completed=(\d+) skipped=(\d+) failed=(\d+)")
 ML_PREDICT_SUMMARY_RE = re.compile(r"Model Factory — Predictions:\s*(\d+)\s+rows")
+RECOVERABLE_RUN_ID_RE = re.compile(r"^\d{8}_\d{6}_[0-9a-f]{8}$")
+WORKFLOW_TOTAL_STEPS_RE = re.compile(r"workflow complet(?: [^()]*)? \((\d+) étapes exécutées,")
+WORKFLOW_STEP_START_RE = re.compile(r"=== \[(\d+)/(\d+)\] Démarrage (.+?) ===")
+WORKFLOW_STEP_DONE_RE = re.compile(r"=== \[(\d+)/(\d+)\] Terminé (.+?) \(run `([^`]+)`\) ===")
+WORKFLOW_INTERRUPTED_RE = re.compile(r"Workflow interrompu sur (.+?) — statut `([^`]+)` \(run `([^`]+)`\)\.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +229,271 @@ def _persist_record(record: PipelineRunRecord) -> None:
         index = _read_history_index()
         index[record.run_id] = record.to_state()
         _write_history_index(index)
+    _write_record_artifact(record.to_state())
+
+
+def _record_artifact_path_from_record(record: dict[str, object]) -> Path:
+    stdout_path = Path(str(record.get("stdout_path") or "")).resolve() if str(record.get("stdout_path") or "").strip() else None
+    if stdout_path is not None and stdout_path.name:
+        return stdout_path.parent / RUN_RECORD_FILENAME
+    return _run_dir_for(str(record.get("step_key") or "pipeline"), str(record.get("run_id") or "unknown")) / RUN_RECORD_FILENAME
+
+
+def _write_record_artifact(record: dict[str, object]) -> None:
+    try:
+        artifact_path = _record_artifact_path_from_record(record)
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        LOGGER.debug("Persist record artifact failed for run_id=%s", record.get("run_id"), exc_info=True)
+
+
+def _load_record_artifact(run_dir: Path) -> dict[str, object] | None:
+    artifact_path = run_dir / RUN_RECORD_FILENAME
+    if not artifact_path.exists():
+        return None
+    try:
+        parsed = json.loads(artifact_path.read_text(encoding="utf-8") or "{}")
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_run_id_datetime(run_id: str, fallback_path: Path | None = None) -> str:
+    cleaned = str(run_id or "").strip()
+    if RECOVERABLE_RUN_ID_RE.match(cleaned):
+        try:
+            return datetime.strptime(cleaned[:15], "%Y%m%d_%H%M%S").isoformat(timespec="seconds")
+        except ValueError:
+            pass
+    if fallback_path is not None:
+        try:
+            return datetime.fromtimestamp(fallback_path.stat().st_mtime).isoformat(timespec="seconds")
+        except OSError:
+            pass
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _file_line_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            return sum(1 for _ in fh)
+    except OSError:
+        return 0
+
+
+def _safe_read_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _infer_finished_at(run_dir: Path) -> str | None:
+    timestamps: list[float] = []
+    for file_name in ("stdout.log", "stderr.log", "combined.log", RUN_RECORD_FILENAME):
+        candidate = run_dir / file_name
+        if not candidate.exists():
+            continue
+        try:
+            timestamps.append(candidate.stat().st_mtime)
+        except OSError:
+            continue
+    if not timestamps:
+        return None
+    return datetime.fromtimestamp(max(timestamps)).isoformat(timespec="seconds")
+
+
+def _recover_workflow_run_from_directory(run_dir: Path) -> tuple[dict[str, object] | None, dict[str, dict[str, object]]]:
+    artifact = _load_record_artifact(run_dir)
+    if artifact is not None:
+        return artifact, {}
+
+    run_id = run_dir.name.strip()
+    if not RECOVERABLE_RUN_ID_RE.match(run_id):
+        return None, {}
+
+    combined_path = run_dir / "combined.log"
+    stdout_path = run_dir / "stdout.log"
+    stderr_path = run_dir / "stderr.log"
+    combined_text = _safe_read_text(combined_path)
+
+    child_hints: dict[str, dict[str, object]] = {}
+    child_run_ids: list[str] = []
+    workflow_completed_steps = 0
+    workflow_total_steps = 0
+    current_step_label: str | None = None
+    current_child_run_id: str | None = None
+    interrupted_status: str | None = None
+
+    total_steps_match = WORKFLOW_TOTAL_STEPS_RE.search(combined_text)
+    if total_steps_match is not None:
+        workflow_total_steps = int(total_steps_match.group(1))
+
+    for line in combined_text.splitlines():
+        step_start_match = WORKFLOW_STEP_START_RE.search(line)
+        if step_start_match is not None:
+            workflow_total_steps = max(workflow_total_steps, int(step_start_match.group(2)))
+            current_step_label = step_start_match.group(3)
+
+        step_done_match = WORKFLOW_STEP_DONE_RE.search(line)
+        if step_done_match is not None:
+            workflow_completed_steps = max(workflow_completed_steps, int(step_done_match.group(1)))
+            workflow_total_steps = max(workflow_total_steps, int(step_done_match.group(2)))
+            current_step_label = step_done_match.group(3)
+            child_run_id = step_done_match.group(4)
+            if child_run_id not in child_run_ids:
+                child_run_ids.append(child_run_id)
+            child_hints[child_run_id] = {
+                "parent_run_id": run_id,
+                "step_label": step_done_match.group(3),
+                "status": "completed",
+            }
+            continue
+
+        interrupted_match = WORKFLOW_INTERRUPTED_RE.search(line)
+        if interrupted_match is not None:
+            current_step_label = interrupted_match.group(1)
+            interrupted_status = interrupted_match.group(2)
+            current_child_run_id = interrupted_match.group(3)
+            if current_child_run_id not in child_run_ids:
+                child_run_ids.append(current_child_run_id)
+            child_hints[current_child_run_id] = {
+                "parent_run_id": run_id,
+                "step_label": interrupted_match.group(1),
+                "status": interrupted_status,
+            }
+
+    status: str = "stopped"
+    if "Workflow complet terminé avec succès." in combined_text:
+        status = "completed"
+        current_step_label = None
+        current_child_run_id = None
+    elif interrupted_status in {"failed", "timeout", "stopped"}:
+        status = interrupted_status
+    elif "Erreur interne du workflow" in combined_text:
+        status = "failed"
+
+    recovered = {
+        "run_id": run_id,
+        "step_key": "pipeline_workflow",
+        "step_label": "Workflow complet",
+        "command": [],
+        "command_display": "",
+        "account_id": None,
+        "status": status,
+        "executed_at": _parse_run_id_datetime(run_id, run_dir),
+        "finished_at": None if status in {"starting", "running"} else _infer_finished_at(run_dir),
+        "returncode": None,
+        "duration_seconds": 0.0,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "combined_path": str(combined_path),
+        "stdout_lines": _file_line_count(stdout_path),
+        "stderr_lines": _file_line_count(stderr_path),
+        "timeout_seconds": None,
+        "stop_requested": status == "stopped",
+        "run_kind": "workflow",
+        "parent_run_id": None,
+        "workflow_total_steps": workflow_total_steps,
+        "workflow_completed_steps": workflow_completed_steps,
+        "workflow_current_step_key": None,
+        "workflow_current_step_label": current_step_label if status in {"starting", "running", "failed", "timeout", "stopped"} else None,
+        "workflow_current_child_run_id": current_child_run_id if status in {"starting", "running", "failed", "timeout", "stopped"} else None,
+        "workflow_child_run_ids": child_run_ids,
+        "run_summary": {},
+    }
+    return recovered, child_hints
+
+
+def _recover_step_run_from_directory(
+    step_key: str,
+    run_dir: Path,
+    *,
+    child_hints: dict[str, dict[str, object]],
+) -> dict[str, object] | None:
+    artifact = _load_record_artifact(run_dir)
+    if artifact is not None:
+        return artifact
+
+    run_id = run_dir.name.strip()
+    if not RECOVERABLE_RUN_ID_RE.match(run_id):
+        return None
+
+    hint = child_hints.get(run_id, {})
+    stdout_path = run_dir / "stdout.log"
+    stderr_path = run_dir / "stderr.log"
+    combined_path = run_dir / "combined.log"
+    stderr_lines = _file_line_count(stderr_path)
+    inferred_status = str(hint.get("status") or "").strip() or ("failed" if stderr_lines > 0 else "completed")
+
+    return {
+        "run_id": run_id,
+        "step_key": step_key,
+        "step_label": str(hint.get("step_label") or step_key),
+        "command": [],
+        "command_display": "",
+        "account_id": None,
+        "status": inferred_status,
+        "executed_at": _parse_run_id_datetime(run_id, run_dir),
+        "finished_at": None if inferred_status in {"starting", "running"} else _infer_finished_at(run_dir),
+        "returncode": None,
+        "duration_seconds": 0.0,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "combined_path": str(combined_path),
+        "stdout_lines": _file_line_count(stdout_path),
+        "stderr_lines": stderr_lines,
+        "timeout_seconds": None,
+        "stop_requested": inferred_status == "stopped",
+        "run_kind": "step",
+        "parent_run_id": str(hint.get("parent_run_id") or "") or None,
+        "workflow_total_steps": 0,
+        "workflow_completed_steps": 0,
+        "workflow_current_step_key": None,
+        "workflow_current_step_label": None,
+        "workflow_current_child_run_id": None,
+        "workflow_child_run_ids": [],
+        "run_summary": {},
+    }
+
+
+def _recover_history_index_entries(existing_index: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+    if not RUNS_DIR.exists():
+        return {}
+
+    recovered: dict[str, dict[str, object]] = {}
+    child_hints: dict[str, dict[str, object]] = {}
+    known_run_ids = set(existing_index)
+
+    workflow_dir = RUNS_DIR / "pipeline_workflow"
+    if workflow_dir.exists() and workflow_dir.is_dir():
+        for run_dir in sorted((candidate for candidate in workflow_dir.iterdir() if candidate.is_dir()), reverse=True):
+            workflow_record, workflow_child_hints = _recover_workflow_run_from_directory(run_dir)
+            child_hints.update(workflow_child_hints)
+            if workflow_record is None:
+                continue
+            run_id = str(workflow_record.get("run_id") or "").strip()
+            if run_id and run_id not in known_run_ids:
+                recovered[run_id] = workflow_record
+                known_run_ids.add(run_id)
+
+    for step_dir in sorted((candidate for candidate in RUNS_DIR.iterdir() if candidate.is_dir() and candidate.name != "pipeline_workflow"), reverse=True):
+        for run_dir in sorted((candidate for candidate in step_dir.iterdir() if candidate.is_dir()), reverse=True):
+            run_id = run_dir.name.strip()
+            if run_id in known_run_ids:
+                continue
+            recovered_record = _recover_step_run_from_directory(step_dir.name, run_dir, child_hints=child_hints)
+            if recovered_record is None:
+                continue
+            recovered[run_id] = recovered_record
+            known_run_ids.add(run_id)
+
+    return recovered
 
 
 def _reader(stream: subprocess.PIPE | None, stream_name: str, events: queue.Queue[tuple[str, str]]) -> None:  # type: ignore[type-arg]
@@ -1070,7 +1341,13 @@ def stop_pipeline_run(run_id: str) -> bool:
 
 def load_pipeline_history() -> list[dict[str, object]]:
     """Charge l'historique persistant des runs IHM."""
-    history = list(_read_history_index().values())
+    with _REGISTRY_LOCK:
+        index = _read_history_index()
+        recovered = _recover_history_index_entries(index)
+        if recovered:
+            index.update(recovered)
+            _write_history_index(index)
+    history = list(index.values())
     history.sort(
         key=lambda item: str(item.get("finished_at") or item.get("executed_at") or ""),
         reverse=True,

@@ -319,6 +319,51 @@ def test_pipeline_workflow_exposes_current_child_run_id_while_running(monkeypatc
     assert final_snapshot["workflow_current_child_run_id"] is None
 
 
+def test_load_pipeline_history_recovers_orphan_workflow_and_child_run_dirs(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    workflow_run_id = "20260502_201257_10cc319a"
+    child_run_id = "20260502_201257_ec468847"
+    workflow_dir = registry.RUNS_DIR / "pipeline_workflow" / workflow_run_id
+    workflow_dir.mkdir(parents=True, exist_ok=True)
+    (workflow_dir / "stdout.log").write_text(
+        "Démarrage du workflow complet\n",
+        encoding="utf-8",
+    )
+    (workflow_dir / "stderr.log").write_text("", encoding="utf-8")
+    (workflow_dir / "combined.log").write_text(
+        "[workflow] Démarrage du workflow complet (14 étapes exécutées, avec étape 9 — ML Train).\n"
+        "[workflow] === [1/14] Démarrage 1. Import Bars + rattrapage auto (Alpaca / EODHD) ===\n"
+        "[workflow] Workflow interrompu sur 1. Import Bars + rattrapage auto (Alpaca / EODHD) — statut `stopped` (run `20260502_201257_ec468847`).\n",
+        encoding="utf-8",
+    )
+
+    child_dir = registry.RUNS_DIR / "import_alpaca_bar" / child_run_id
+    child_dir.mkdir(parents=True, exist_ok=True)
+    (child_dir / "stdout.log").write_text(
+        "2026-05-02 20:12:59,635 INFO [eodhd] univers ciblé : 12357 symboles\n",
+        encoding="utf-8",
+    )
+    (child_dir / "stderr.log").write_text("", encoding="utf-8")
+    (child_dir / "combined.log").write_text(
+        "[stdout] 2026-05-02 20:12:59,635 INFO [eodhd] univers ciblé : 12357 symboles\n",
+        encoding="utf-8",
+    )
+
+    history = registry.load_pipeline_history()
+
+    by_run_id = {str(item["run_id"]): item for item in history}
+    assert workflow_run_id in by_run_id
+    assert child_run_id in by_run_id
+    assert by_run_id[workflow_run_id]["run_kind"] == "workflow"
+    assert by_run_id[workflow_run_id]["status"] == "stopped"
+    assert by_run_id[workflow_run_id]["workflow_child_run_ids"] == [child_run_id]
+    assert by_run_id[child_run_id]["parent_run_id"] == workflow_run_id
+    assert "Import Bars" in str(by_run_id[child_run_id]["step_label"])
+    assert registry.read_pipeline_logs(workflow_run_id, "all")
+    assert registry.read_pipeline_logs(child_run_id, "all")
+
+
 def test_pipeline_workflow_skips_ml_train_when_not_requested(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
 
