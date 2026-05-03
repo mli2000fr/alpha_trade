@@ -1,4 +1,9 @@
+from copy import deepcopy
+from types import SimpleNamespace
+
+import ihm.pages._alpha_scanner_diagnostics as alpha_scanner_diagnostics
 from ihm.components.alpha_scanner_dependency import build_alpha_scanner_dependency_rows
+from ihm.services import queries
 
 
 def test_build_alpha_scanner_dependency_rows_formats_shared_diagnostic_table() -> None:
@@ -42,4 +47,25 @@ def test_build_alpha_scanner_dependency_rows_formats_shared_diagnostic_table() -
 	assert rows.iloc[0]["latest_date"] == "2026-04-25"
 	assert rows.iloc[0]["% couverture"] == "92.5%"
 	assert rows.iloc[1]["N symboles"] == "12"
+
+
+def test_prime_alpha_scanner_dependency_threshold_state_consumes_pending_values(monkeypatch) -> None:
+	pending_thresholds = deepcopy(queries.ALPHA_SCANNER_DEPENDENCY_THRESHOLDS)
+	pending_thresholds["sync_earnings_calendar"]["coverage_error_pct"] = 9.0
+	session_state = {
+		alpha_scanner_diagnostics.ALPHA_SCANNER_PENDING_THRESHOLDS_KEY: pending_thresholds,
+	}
+	monkeypatch.setattr(alpha_scanner_diagnostics, "st", SimpleNamespace(session_state=session_state))
+	monkeypatch.setattr(
+		alpha_scanner_diagnostics,
+		"get_alpha_scanner_dependency_thresholds",
+		lambda: deepcopy(queries.ALPHA_SCANNER_DEPENDENCY_THRESHOLDS),
+	)
+
+	thresholds = alpha_scanner_diagnostics._prime_alpha_scanner_dependency_threshold_state()
+
+	assert thresholds["sync_earnings_calendar"]["coverage_error_pct"] == 9.0
+	assert session_state[alpha_scanner_diagnostics._threshold_widget_key("sync_earnings_calendar", "coverage_error_pct")] == 9.0
+	assert alpha_scanner_diagnostics.ALPHA_SCANNER_PENDING_THRESHOLDS_KEY not in session_state
+
 

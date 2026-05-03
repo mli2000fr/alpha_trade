@@ -1,3 +1,4 @@
+from copy import deepcopy
 from types import SimpleNamespace
 
 from ihm.pages import settings
@@ -35,5 +36,29 @@ def test_prime_bars_provider_widget_state_consumes_pending_sync(monkeypatch) -> 
     assert selected == settings.DEFAULT_BARS_PROVIDER
     assert session_state[settings.BARS_PROVIDER_WIDGET_KEY] == settings.DEFAULT_BARS_PROVIDER
     assert settings.BARS_PROVIDER_PENDING_SYNC_KEY not in session_state
+
+
+def test_prime_alpha_scanner_dependency_threshold_state_consumes_pending_values_before_widgets(monkeypatch) -> None:
+    pending_thresholds = deepcopy(queries.ALPHA_SCANNER_DEPENDENCY_THRESHOLDS)
+    pending_thresholds["sync_latest_quotes"]["coverage_warn_pct"] = 91.0
+    session_state = {
+        settings.ALPHA_SCANNER_PENDING_THRESHOLDS_KEY: pending_thresholds,
+        settings.ALPHA_SCANNER_PENDING_MARKET_REGIME_KEY: "normal",
+    }
+    monkeypatch.setattr(settings, "st", SimpleNamespace(session_state=session_state))
+    monkeypatch.setattr(settings, "get_alpha_scanner_dependency_thresholds", lambda: deepcopy(queries.ALPHA_SCANNER_DEPENDENCY_THRESHOLDS))
+    monkeypatch.setattr(
+        settings,
+        "load_persisted_alpha_scanner_dependency_preset_metadata",
+        lambda: {"selected_style": "aggressive", "selected_market_regime": "weak"},
+    )
+
+    thresholds = settings._prime_alpha_scanner_dependency_threshold_state()
+
+    assert thresholds["sync_latest_quotes"]["coverage_warn_pct"] == 91.0
+    assert session_state[settings._threshold_widget_key("sync_latest_quotes", "coverage_warn_pct")] == 91.0
+    assert session_state[settings.ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY] == "normal"
+    assert settings.ALPHA_SCANNER_PENDING_THRESHOLDS_KEY not in session_state
+    assert settings.ALPHA_SCANNER_PENDING_MARKET_REGIME_KEY not in session_state
 
 
