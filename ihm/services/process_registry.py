@@ -26,6 +26,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, cast
 
+from ihm.components.status_badges import classify_heartbeat_freshness
+
 LOGGER = logging.getLogger(__name__)
 
 # Phase 6.2 — rétention configurable via env (défaut 30 jours).
@@ -93,6 +95,12 @@ class PipelineRunRecord:
     workflow_current_child_run_id: str | None = None
     workflow_child_run_ids: list[str] = field(default_factory=list)
     run_summary: dict[str, object] = field(default_factory=dict)
+    heartbeat_interval_seconds: float | None = None
+    last_heartbeat_at: str | None = None
+    heartbeat_age_seconds: int | None = None
+    watchdog_timeout_seconds: int | None = None
+    watchdog_state: str = "unknown"
+    watchdog_message: str = ""
 
     def to_state(self) -> dict[str, object]:
         return asdict(self)
@@ -554,6 +562,77 @@ def _summary_int(summary: dict[str, object], key: str) -> int:
         return 0
 
 
+def _summary_float(summary: dict[str, object], key: str) -> float | None:
+    value = summary.get(key)
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _derive_watchdog_payload(record: PipelineRunRecord) -> dict[str, object]:
+    summary = record.run_summary if isinstance(record.run_summary, dict) else {}
+    heartbeat_interval_seconds = _summary_float(summary, "heartbeat_interval_seconds")
+    watchdog_timeout_seconds = _summary_int(summary, "watchdog_timeout_seconds") or None
+    last_heartbeat_at = str(summary.get("last_heartbeat_at") or "").strip() or None
+    if record.status not in {"starting", "running"}:
+        return {
+            "heartbeat_interval_seconds": heartbeat_interval_seconds,
+            "last_heartbeat_at": last_heartbeat_at,
+            "heartbeat_age_seconds": None,
+            "watchdog_timeout_seconds": watchdog_timeout_seconds,
+            "watchdog_state": "inactive",
+            "watchdog_message": "Watchdog inactif (run terminé).",
+            "should_timeout": False,
+        }
+    if heartbeat_interval_seconds is None or heartbeat_interval_seconds <= 0:
+        return {
+            "heartbeat_interval_seconds": heartbeat_interval_seconds,
+            "last_heartbeat_at": last_heartbeat_at,
+            "heartbeat_age_seconds": None,
+            "watchdog_timeout_seconds": watchdog_timeout_seconds,
+            "watchdog_state": "disabled",
+            "watchdog_message": "Aucun heartbeat structuré reçu — surveillance limitée aux logs/processus.",
+            "should_timeout": False,
+        }
+
+    level, label, age_seconds = classify_heartbeat_freshness(
+        last_heartbeat_at,
+        heartbeat_interval_seconds,
+        service_status=record.status,
+    )
+    if level == "ok":
+        state = "alive"
+        message = "Heartbeat frais — job vivant, même si les logs restent silencieux entre deux phases."
+    elif level == "warn":
+        state = "watch"
+        message = "Heartbeat à surveiller — progression lente ou phase longue en cours."
+    else:
+        state = "stalled"
+        message = "Heartbeat stale — le run semble réellement figé ou bloqué."
+    should_timeout = bool(
+        watchdog_timeout_seconds
+        and age_seconds is not None
+        and age_seconds >= watchdog_timeout_seconds
+        and level != "ok"
+    )
+    return {
+        "heartbeat_interval_seconds": heartbeat_interval_seconds,
+        "last_heartbeat_at": last_heartbeat_at,
+        "heartbeat_age_seconds": age_seconds,
+        "watchdog_timeout_seconds": watchdog_timeout_seconds,
+        "watchdog_state": state,
+        "watchdog_message": message,
+        "should_timeout": should_timeout,
+    }
+
+
+def _apply_watchdog_payload(record: PipelineRunRecord) -> PipelineRunRecord:
+    payload = _derive_watchdog_payload(record)
+    updates = {key: value for key, value in payload.items() if key != "should_timeout"}
+    return _with_updates(record, **updates)
+
+
 def _infer_ml_run_summary_from_logs(record: PipelineRunRecord) -> dict[str, object] | None:
     stdout_path = Path(record.stdout_path)
     if not stdout_path.exists():
@@ -686,7 +765,10 @@ def _drain_events(managed: _ManagedRun) -> bool:
         )
 
     if latest_summary is not None:
-        managed.record = _with_updates(managed.record, run_summary=latest_summary)
+        merged_summary = dict(managed.record.run_summary) if isinstance(managed.record.run_summary, dict) else {}
+        merged_summary.update(latest_summary)
+        managed.record = _with_updates(managed.record, run_summary=merged_summary)
+        managed.record = _apply_watchdog_payload(managed.record)
 
     return drained
 
@@ -712,6 +794,25 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
         returncode = -2
 
     _drain_events(managed)
+    managed.record = _apply_watchdog_payload(managed.record)
+    watchdog_payload = _derive_watchdog_payload(managed.record)
+    if returncode is None and watchdog_payload.get("should_timeout"):
+        _kill_process_tree(managed.process)
+        managed.timed_out = True
+        Path(managed.record.stderr_path).parent.mkdir(parents=True, exist_ok=True)
+        timeout_message = "\nWatchdog heartbeat timeout dépassé : le run n'émet plus de heartbeat structuré.\n"
+        with Path(managed.record.stderr_path).open("a", encoding="utf-8") as fh:
+            fh.write(timeout_message)
+        with Path(managed.record.combined_path).open("a", encoding="utf-8") as fh:
+            fh.write(f"[stderr] {timeout_message}")
+        _append_tail(managed.stderr_tail or [], timeout_message)
+        managed.record = _with_updates(
+            managed.record,
+            stderr_lines=managed.record.stderr_lines + 1,
+            watchdog_state="timed_out",
+            watchdog_message="Watchdog heartbeat timeout dépassé — run arrêté automatiquement.",
+        )
+        returncode = -2
     returncode = managed.process.poll() if returncode is None else returncode
 
     if returncode is None:
@@ -721,6 +822,7 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
     managed.stdout_thread.join(timeout=0.2)
     managed.stderr_thread.join(timeout=0.2)
     _drain_events(managed)
+    managed.record = _apply_watchdog_payload(managed.record)
 
     if managed.timed_out:
         status: RunStatus = "timeout"
@@ -747,6 +849,12 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
         returncode=final_code,
         duration_seconds=round(time.perf_counter() - managed.started_perf, 2),
         finished_at=datetime.now().isoformat(timespec="seconds"),
+        watchdog_state="timed_out" if managed.timed_out else managed.record.watchdog_state,
+        watchdog_message=(
+            "Watchdog heartbeat timeout dépassé — run arrêté automatiquement."
+            if managed.timed_out
+            else managed.record.watchdog_message
+        ),
     )
     try:
         persist_pipeline_run_record_summary(managed.record.to_state())

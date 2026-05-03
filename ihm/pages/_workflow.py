@@ -22,6 +22,7 @@ from ihm.pages._shared import (
     _render_log_block,
     _render_run_summary,
     _sanitize_compare_ids,
+    _render_watchdog_status,
     _status_badge,
     _workflow_progress,
     build_run_summary_caption,
@@ -650,6 +651,7 @@ def _render_runtime_center() -> None:
             st.error(f"Run sélectionné : {_status_badge(status)}")
         else:
             st.warning(f"Run sélectionné : {_status_badge(status)}")
+        _render_watchdog_status(selected_run)
 
         if _is_workflow_run(selected_run):
             completed, total, progress_fraction, progress_label = _workflow_progress(selected_run)
@@ -737,6 +739,7 @@ def _render_runtime_center() -> None:
                     symbol_progress_payload = _build_run_symbol_progress_payload(selected_child_run)
                     if provider_badge:
                         st.caption(f"🏷️ `{provider_badge}`")
+                    _render_watchdog_status(selected_child_run)
                     if symbol_progress_payload is not None:
                         progress_fraction, symbol_progress_caption = symbol_progress_payload
                         st.progress(progress_fraction)

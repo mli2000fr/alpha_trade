@@ -71,8 +71,10 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE,
     DEFAULT_ML_DECISION_THRESHOLD,
     DEFAULT_ML_DEFAULT_CHAMPION,
+    DEFAULT_ML_DEBUG_TRAIN,
     DEFAULT_ML_FEATURE_SET,
     DEFAULT_ML_FORECAST_HORIZON,
+    DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
     DEFAULT_ML_LGBM_LEARNING_RATE,
     DEFAULT_ML_LGBM_MAX_DEPTH,
@@ -92,6 +94,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_TARGET_MODE,
     DEFAULT_ML_TARGET_UP_THRESHOLD,
     DEFAULT_ML_WALKFORWARD,
+    DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS,
     DEFAULT_ML_WF_MAX_SPLITS,
     DEFAULT_ML_WF_MIN_TRAIN_SIZE,
     DEFAULT_ML_WF_STEP_SIZE,
@@ -144,12 +147,19 @@ from ihm.services.pipeline_runner import (
     DEFAULT_SELECTOR_SECTOR_CAP_RATIO,
     DEFAULT_SELECTOR_SELECTION_SIZE,
     is_gpu_available,
+    RECOMMENDED_ML_DEBUG_TRAIN_HEARTBEAT_INTERVAL_SECONDS,
+    RECOMMENDED_ML_DEBUG_TRAIN_LOG_LEVEL,
+    RECOMMENDED_ML_DEBUG_TRAIN_MAX_EPOCHS,
+    RECOMMENDED_ML_DEBUG_TRAIN_MAX_WORKERS,
+    RECOMMENDED_ML_DEBUG_TRAIN_WATCHDOG_TIMEOUT_SECONDS,
 )
 from ihm.services.ml_artifacts import list_ml_artifact_symbols  # noqa: F401  # re-export legacy
 
 __all__ = [
     "_apply_execution_prefills",
+    "_apply_selected_ml_train_preset",
     "_apply_selected_capital_preset",
+    "_build_ml_train_preset_session_state_values",
     "_build_parameter_rerun_guidance_rows",
     "_build_execution_prefill_caption",
     "_build_launch_options",
@@ -166,6 +176,11 @@ CAPITAL_PRESET_APPLIED_SIGNATURE_KEY = "pipeline_capital_preset_applied_signatur
 CAPITAL_PRESET_CUSTOM = "custom"
 DETECTED_CAPITAL_PRESET_KEY = "pipeline_detected_capital_preset"
 DETECTED_CAPITAL_PRESET_ACCOUNT_KEY = "pipeline_detected_capital_preset_account_id"
+ML_TRAIN_PRESET_KEY = "pipeline_ml_train_preset"
+ML_TRAIN_PRESET_APPLIED_SIGNATURE_KEY = "pipeline_ml_train_preset_applied_signature"
+ML_TRAIN_PRESET_CUSTOM = "custom"
+ML_TRAIN_PRESET_DEBUG = "debug_train"
+ML_TRAIN_PRESET_VERSION = "v1"
 
 PARAMETER_RERUN_GUIDANCE_ROWS: tuple[tuple[str, str, str], ...] = (
     ("risk_*", "11 → 12", "Le sizing et les cibles changent, puis l'exécution consomme ces nouvelles cibles."),
@@ -202,6 +217,37 @@ def _build_parameter_rerun_guidance_rows() -> tuple[dict[str, str], ...]:
         }
         for family, rerun_steps, description in PARAMETER_RERUN_GUIDANCE_ROWS
     )
+
+
+def _build_ml_train_preset_session_state_values(preset_key: str) -> dict[str, object]:
+    normalized = str(preset_key or ML_TRAIN_PRESET_CUSTOM).strip() or ML_TRAIN_PRESET_CUSTOM
+    if normalized != ML_TRAIN_PRESET_DEBUG:
+        return {}
+    return {
+        "pipeline_ml_log_level": RECOMMENDED_ML_DEBUG_TRAIN_LOG_LEVEL,
+        "pipeline_ml_debug_train": True,
+        "pipeline_ml_max_workers": RECOMMENDED_ML_DEBUG_TRAIN_MAX_WORKERS,
+        "pipeline_ml_walkforward": False,
+        "pipeline_ml_max_epochs": RECOMMENDED_ML_DEBUG_TRAIN_MAX_EPOCHS,
+        "pipeline_ml_heartbeat_interval_seconds": RECOMMENDED_ML_DEBUG_TRAIN_HEARTBEAT_INTERVAL_SECONDS,
+        "pipeline_ml_watchdog_timeout_seconds": RECOMMENDED_ML_DEBUG_TRAIN_WATCHDOG_TIMEOUT_SECONDS,
+    }
+
+
+def _apply_selected_ml_train_preset() -> None:
+    selected_key = str(st.session_state.get(ML_TRAIN_PRESET_KEY, ML_TRAIN_PRESET_CUSTOM) or ML_TRAIN_PRESET_CUSTOM)
+    signature = f"{selected_key}|{ML_TRAIN_PRESET_VERSION}"
+    last_signature = str(st.session_state.get(ML_TRAIN_PRESET_APPLIED_SIGNATURE_KEY, "") or "")
+    if signature == last_signature:
+        return
+    if selected_key == ML_TRAIN_PRESET_CUSTOM:
+        st.session_state[ML_TRAIN_PRESET_APPLIED_SIGNATURE_KEY] = signature
+        return
+
+    for session_key, value in _build_ml_train_preset_session_state_values(selected_key).items():
+        st.session_state[session_key] = value
+
+    st.session_state[ML_TRAIN_PRESET_APPLIED_SIGNATURE_KEY] = signature
 
 
 def _apply_selected_capital_preset(
@@ -857,6 +903,34 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "Ces options pilotent directement `python -m modelFactory --mode train`. "
             "L'objectif est d'aligner l'IHM sur la gouvernance multi-modèles réellement disponible côté backend."
         )
+        ml_train_preset = cast(
+            str,
+            st.selectbox(
+                "Preset ML Train",
+                options=[ML_TRAIN_PRESET_CUSTOM, ML_TRAIN_PRESET_DEBUG],
+                index=[ML_TRAIN_PRESET_CUSTOM, ML_TRAIN_PRESET_DEBUG].index(
+                    cast(str, st.session_state.get(ML_TRAIN_PRESET_KEY, ML_TRAIN_PRESET_CUSTOM))
+                    if st.session_state.get(ML_TRAIN_PRESET_KEY, ML_TRAIN_PRESET_CUSTOM) in {ML_TRAIN_PRESET_CUSTOM, ML_TRAIN_PRESET_DEBUG}
+                    else ML_TRAIN_PRESET_CUSTOM
+                ),
+                key=ML_TRAIN_PRESET_KEY,
+                format_func=lambda key: "Personnalisé" if key == ML_TRAIN_PRESET_CUSTOM else "Debug ML train",
+                help=(
+                    "Préremplit automatiquement un profil de diagnostic ML : logs DEBUG, mono-worker, "
+                    "walk-forward off, epochs réduits et heartbeat/watchdog recommandés."
+                ),
+            ),
+        )
+        _apply_selected_ml_train_preset()
+        if ml_train_preset == ML_TRAIN_PRESET_DEBUG:
+            st.info(
+                "🪲 Preset `Debug ML train` appliqué : niveau `DEBUG`, `max_workers=1`, `walk-forward` désactivé, "
+                f"`max_epochs={RECOMMENDED_ML_DEBUG_TRAIN_MAX_EPOCHS}`, heartbeat `"
+                f"{int(RECOMMENDED_ML_DEBUG_TRAIN_HEARTBEAT_INTERVAL_SECONDS)}` s et watchdog `"
+                f"{RECOMMENDED_ML_DEBUG_TRAIN_WATCHDOG_TIMEOUT_SECONDS}` s (5 min sans heartbeat structuré frais)."
+            )
+        else:
+            st.caption("Le preset ML ne modifie rien tant que tu restes en `Personnalisé`.")
 
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
         with ml_opt_col1:
@@ -1181,6 +1255,35 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         ),
                         key="pipeline_ml_log_level",
                     ),
+                )
+                ml_debug_train = st.checkbox(
+                    "ML — mode debug train",
+                    value=bool(st.session_state.get("pipeline_ml_debug_train", DEFAULT_ML_DEBUG_TRAIN)),
+                    key="pipeline_ml_debug_train",
+                    help="Active des logs ML plus détaillés et force un ordonnancement plus déterministe côté orchestrateur.",
+                )
+                ml_heartbeat_interval_seconds = float(
+                    st.number_input(
+                        "ML — heartbeat interval (s)",
+                        min_value=5.0,
+                        max_value=3600.0,
+                        value=float(st.session_state.get("pipeline_ml_heartbeat_interval_seconds", DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS)),
+                        step=5.0,
+                        format="%.0f",
+                        key="pipeline_ml_heartbeat_interval_seconds",
+                        help="Heartbeat structuré consommé par l'IHM pour distinguer un run vivant mais silencieux d'un run figé. Ce n'est pas le timeout.",
+                    )
+                )
+                ml_watchdog_timeout_seconds = int(
+                    st.number_input(
+                        "ML — watchdog timeout (s)",
+                        min_value=0,
+                        max_value=86400,
+                        value=int(st.session_state.get("pipeline_ml_watchdog_timeout_seconds", DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS)),
+                        step=30,
+                        key="pipeline_ml_watchdog_timeout_seconds",
+                        help="0 = surveillance seule. >0 = timeout si le dernier heartbeat structuré devient trop ancien. Ex. 300 = 5 min depuis le dernier heartbeat frais.",
+                    )
                 )
 
         # ──────────────────────────────────────────────────────────────────
@@ -2179,6 +2282,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_wf_step_size=int(ml_wf_step_size),
             ml_wf_max_splits=int(ml_wf_max_splits),
             ml_log_level=str(ml_log_level).upper(),
+            ml_debug_train=bool(ml_debug_train),
+            ml_heartbeat_interval_seconds=float(ml_heartbeat_interval_seconds),
+            ml_watchdog_timeout_seconds=int(ml_watchdog_timeout_seconds),
             ml_min_action_rate=float(ml_min_action_rate),
             ml_max_action_rate=float(ml_max_action_rate),
             ml_min_precision_long=float(ml_min_precision_long),

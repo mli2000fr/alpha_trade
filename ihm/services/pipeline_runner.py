@@ -112,6 +112,14 @@ DEFAULT_ML_WF_TEST_SIZE = 126
 DEFAULT_ML_WF_STEP_SIZE = 126
 DEFAULT_ML_WF_MAX_SPLITS = 3
 DEFAULT_ML_LOG_LEVEL = "INFO"
+DEFAULT_ML_DEBUG_TRAIN = False
+DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS = 60.0
+DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS = 0
+RECOMMENDED_ML_DEBUG_TRAIN_LOG_LEVEL = "DEBUG"
+RECOMMENDED_ML_DEBUG_TRAIN_MAX_WORKERS = 1
+RECOMMENDED_ML_DEBUG_TRAIN_MAX_EPOCHS = 10
+RECOMMENDED_ML_DEBUG_TRAIN_HEARTBEAT_INTERVAL_SECONDS = 30.0
+RECOMMENDED_ML_DEBUG_TRAIN_WATCHDOG_TIMEOUT_SECONDS = 300
 DEFAULT_ML_MIN_ACTION_RATE = 0.03
 DEFAULT_ML_MAX_ACTION_RATE = 0.20            # plus prudent que 0.35 backend
 DEFAULT_ML_MIN_PRECISION_LONG = 0.55         # plus exigeant que 0.52 backend
@@ -222,6 +230,9 @@ class PipelineLaunchOptions:
     ml_wf_step_size: int = DEFAULT_ML_WF_STEP_SIZE
     ml_wf_max_splits: int = DEFAULT_ML_WF_MAX_SPLITS
     ml_log_level: str = DEFAULT_ML_LOG_LEVEL
+    ml_debug_train: bool = DEFAULT_ML_DEBUG_TRAIN
+    ml_heartbeat_interval_seconds: float = DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS
+    ml_watchdog_timeout_seconds: int = DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS
     ml_min_action_rate: float = DEFAULT_ML_MIN_ACTION_RATE
     ml_max_action_rate: float = DEFAULT_ML_MAX_ACTION_RATE
     ml_min_precision_long: float = DEFAULT_ML_MIN_PRECISION_LONG
@@ -921,11 +932,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.ml_catboost_learning_rate),
             "--default-champion",
             options.ml_default_champion,
+            "--heartbeat-interval-seconds",
+            str(options.ml_heartbeat_interval_seconds),
             "--log-level",
             str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
         ]
+        if options.ml_watchdog_timeout_seconds and options.ml_watchdog_timeout_seconds > 0:
+            command.extend(["--watchdog-timeout-seconds", str(int(options.ml_watchdog_timeout_seconds))])
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
+        if options.ml_debug_train:
+            command.append("--debug-train")
         if options.ml_enable_lightgbm:
             command.append("--compare-lightgbm")
         if options.ml_enable_catboost:

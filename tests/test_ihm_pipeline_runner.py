@@ -562,6 +562,7 @@ def test_build_pipeline_command_ml_steps() -> None:
         "--hidden-size",
         "--artifacts-dir",
         "--benchmark-symbol",
+        "--heartbeat-interval-seconds",
         "--lgbm-max-depth",
         "--catboost-depth",
         "--default-champion",
@@ -583,6 +584,7 @@ def test_build_pipeline_command_ml_steps() -> None:
 def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options() -> None:
     options = PipelineLaunchOptions(
         ml_accelerator="cpu",
+        ml_debug_train=True,
         ml_include_sentiment=False,
         ml_enable_lightgbm=False,
         ml_enable_catboost=False,
@@ -593,6 +595,8 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
         ml_optimize_thresholds=False,
         ml_optimize_target=True,
         ml_walkforward=False,
+        ml_heartbeat_interval_seconds=30.0,
+        ml_watchdog_timeout_seconds=600,
     )
 
     train_cmd = build_pipeline_command("ml_train", options)
@@ -613,6 +617,7 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
 
     # Drapeaux activés explicitement
     for flag in (
+        "--debug-train",
         "--enable-global-model",
         "--enable-cross-sectional",
         "--optimize-target",
@@ -620,10 +625,13 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
         "--candidate-up-thresholds",
         "--candidate-down-thresholds",
         "--min-trades-fraction",
+        "--watchdog-timeout-seconds",
     ):
         assert flag in train_cmd, f"Flag attendu manquant : {flag}"
 
     assert train_cmd[train_cmd.index("--global-model-name") + 1] == "lightgbm"
+    assert train_cmd[train_cmd.index("--heartbeat-interval-seconds") + 1] == "30.0"
+    assert train_cmd[train_cmd.index("--watchdog-timeout-seconds") + 1] == "600"
 
 
 def test_build_pipeline_command_ml_train_can_target_all_stock_bars_daily_symbols() -> None:
