@@ -148,6 +148,7 @@ def _resolve_workflow_steps(
     include_ml_train: bool,
     include_corporate_actions_sync: bool,
     include_corporate_actions_apply: bool,
+    selected_step_keys: tuple[str, ...] | None = None,
 ) -> tuple[PipelineStepDefinition, ...]:
     return cast(
         tuple[PipelineStepDefinition, ...],
@@ -156,8 +157,26 @@ def _resolve_workflow_steps(
             include_ml_train=include_ml_train,
             include_corporate_actions_sync=include_corporate_actions_sync,
             include_corporate_actions_apply=include_corporate_actions_apply,
+            selected_step_keys=selected_step_keys,
         ),
     )
+
+
+def _format_workflow_core_step_ranges(steps: tuple[PipelineStepDefinition, ...]) -> str:
+    core_numbers = [int(step.num) for step in steps if step.num.isdigit() and 1 <= int(step.num) <= 12]
+    if not core_numbers:
+        return "aucune"
+
+    ranges: list[str] = []
+    start = end = core_numbers[0]
+    for current in core_numbers[1:]:
+        if current == end + 1:
+            end = current
+            continue
+        ranges.append(f"{start}" if start == end else f"{start} → {end}")
+        start = end = current
+    ranges.append(f"{start}" if start == end else f"{start} → {end}")
+    return ", ".join(ranges)
 
 
 def _workflow_scope_label(
@@ -165,7 +184,19 @@ def _workflow_scope_label(
     start_step: WorkflowStartStep,
     include_corporate_actions_sync: bool,
     include_corporate_actions_apply: bool,
+    selected_step_keys: tuple[str, ...] | None = None,
+    steps: tuple[PipelineStepDefinition, ...] | None = None,
 ) -> str:
+    if selected_step_keys is not None:
+        effective_steps = steps or _resolve_workflow_steps(
+            start_step=start_step,
+            include_ml_train=True,
+            include_corporate_actions_sync=include_corporate_actions_sync,
+            include_corporate_actions_apply=include_corporate_actions_apply,
+            selected_step_keys=selected_step_keys,
+        )
+        return f"étapes { _format_workflow_core_step_ranges(effective_steps) }"
+
     scope = f"{start_step} → 12"
     if include_corporate_actions_apply:
         return f"{scope} + 13 → 14"
@@ -180,7 +211,19 @@ def _workflow_step_label(
     include_ml_train: bool,
     include_corporate_actions_sync: bool,
     include_corporate_actions_apply: bool,
+    selected_step_keys: tuple[str, ...] | None = None,
+    steps: tuple[PipelineStepDefinition, ...] | None = None,
 ) -> str:
+    if selected_step_keys is not None:
+        scope = _workflow_scope_label(
+            start_step=start_step,
+            include_corporate_actions_sync=include_corporate_actions_sync,
+            include_corporate_actions_apply=include_corporate_actions_apply,
+            selected_step_keys=selected_step_keys,
+            steps=steps,
+        )
+        return f"Workflow personnalisé — {scope}"
+
     ml_mode = "avec étape 9 — ML Train" if include_ml_train else "sans étape 9 — ML Train"
     scope = _workflow_scope_label(
         start_step=start_step,
@@ -197,7 +240,19 @@ def _workflow_command_display(
     include_corporate_actions_sync: bool,
     include_corporate_actions_apply: bool,
     total_steps: int,
+    selected_step_keys: tuple[str, ...] | None = None,
+    steps: tuple[PipelineStepDefinition, ...] | None = None,
 ) -> str:
+    if selected_step_keys is not None:
+        scope = _workflow_scope_label(
+            start_step=start_step,
+            include_corporate_actions_sync=include_corporate_actions_sync,
+            include_corporate_actions_apply=include_corporate_actions_apply,
+            selected_step_keys=selected_step_keys,
+            steps=steps,
+        )
+        return f"Workflow séquentiel Pipeline personnalisé {scope} | {total_steps} étape(s) exécutée(s)"
+
     ml_mode = "avec ML Train" if include_ml_train else "sans ML Train"
     scope = _workflow_scope_label(
         start_step=start_step,
@@ -989,6 +1044,7 @@ def _run_pipeline_workflow(
     include_ml_train: bool = True,
     include_corporate_actions_sync: bool = False,
     include_corporate_actions_apply: bool = False,
+    selected_step_keys: tuple[str, ...] | None = None,
 ) -> None:
     steps = cast(
         tuple[PipelineStepDefinition, ...],
@@ -997,6 +1053,7 @@ def _run_pipeline_workflow(
             include_ml_train=include_ml_train,
             include_corporate_actions_sync=include_corporate_actions_sync,
             include_corporate_actions_apply=include_corporate_actions_apply,
+            selected_step_keys=selected_step_keys,
         ),
     )
     total_steps = len(steps)
@@ -1022,12 +1079,20 @@ def _run_pipeline_workflow(
             start_step=start_step,
             include_corporate_actions_sync=include_corporate_actions_sync,
             include_corporate_actions_apply=include_corporate_actions_apply,
+            selected_step_keys=selected_step_keys,
+            steps=steps,
         )
-        ml_mode = "avec étape 9 — ML Train" if include_ml_train else "sans étape 9 — ML Train"
-        _append_workflow_event(
-            managed,
-            f"Démarrage du workflow complet {workflow_mode} ({total_steps} étapes exécutées, {ml_mode}).",
-        )
+        if selected_step_keys is not None:
+            _append_workflow_event(
+                managed,
+                f"Démarrage du workflow personnalisé ({total_steps} étapes exécutées, {workflow_mode}).",
+            )
+        else:
+            ml_mode = "avec étape 9 — ML Train" if include_ml_train else "sans étape 9 — ML Train"
+            _append_workflow_event(
+                managed,
+                f"Démarrage du workflow complet {workflow_mode} ({total_steps} étapes exécutées, {ml_mode}).",
+            )
         _update_workflow_record(managed, status="running", workflow_total_steps=total_steps, workflow_completed_steps=0)
 
         completed_steps = 0
@@ -1297,6 +1362,7 @@ def start_pipeline_workflow(
     include_ml_train: bool = True,
     include_corporate_actions_sync: bool = False,
     include_corporate_actions_apply: bool = False,
+    selected_step_keys: tuple[str, ...] | None = None,
 ) -> PipelineRunRecord:
     """Démarre un workflow séquentiel complet en arrière-plan."""
     if list_active_pipeline_runs():
@@ -1321,6 +1387,7 @@ def start_pipeline_workflow(
             include_ml_train=include_ml_train,
             include_corporate_actions_sync=include_sync,
             include_corporate_actions_apply=include_corporate_actions_apply,
+            selected_step_keys=selected_step_keys,
         ),
     )
     workflow_label = _workflow_step_label(
@@ -1328,6 +1395,8 @@ def start_pipeline_workflow(
         include_ml_train=include_ml_train,
         include_corporate_actions_sync=include_sync,
         include_corporate_actions_apply=include_corporate_actions_apply,
+        selected_step_keys=selected_step_keys,
+        steps=steps,
     )
     record = PipelineRunRecord(
         run_id=run_id,
@@ -1340,6 +1409,8 @@ def start_pipeline_workflow(
             include_corporate_actions_sync=include_sync,
             include_corporate_actions_apply=include_corporate_actions_apply,
             total_steps=len(steps),
+            selected_step_keys=selected_step_keys,
+            steps=steps,
         ),
         account_id=options.account_id,
         status="running",
@@ -1365,6 +1436,7 @@ def start_pipeline_workflow(
             include_ml_train=include_ml_train,
             include_corporate_actions_sync=include_sync,
             include_corporate_actions_apply=include_corporate_actions_apply,
+            selected_step_keys=selected_step_keys,
         )
 
     thread = threading.Thread(target=_workflow_target, daemon=True, name=f"pipeline-workflow-{run_id}")

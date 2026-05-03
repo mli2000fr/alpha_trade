@@ -86,6 +86,22 @@ def test_get_pipeline_workflow_steps_can_start_at_3_and_append_corporate_actions
     ]
 
 
+def test_get_pipeline_workflow_steps_can_use_explicit_selected_step_keys_in_canonical_order() -> None:
+    keys = [
+        step.key
+        for step in get_pipeline_workflow_steps(
+            selected_step_keys=("execution", "stock_screener", "import_alpaca_bar", "ml_predict"),
+        )
+    ]
+
+    assert keys == [
+        "import_alpaca_bar",
+        "stock_screener",
+        "ml_predict",
+        "execution",
+    ]
+
+
 
 def test_build_pipeline_command_injects_account_for_account_aware_steps() -> None:
     options = PipelineLaunchOptions(

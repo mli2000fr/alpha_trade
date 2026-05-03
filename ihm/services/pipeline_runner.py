@@ -572,19 +572,29 @@ def get_pipeline_workflow_steps(
     include_ml_train: bool = True,
     include_corporate_actions_sync: bool = False,
     include_corporate_actions_apply: bool = False,
+    selected_step_keys: tuple[str, ...] | None = None,
 ) -> tuple[PipelineStepDefinition, ...]:
     normalized_start = "3" if start_step == "3" else "1"
     include_sync = include_corporate_actions_sync or include_corporate_actions_apply
+    normalized_selected_step_keys = (
+        {str(step_key).strip() for step_key in selected_step_keys if str(step_key).strip()}
+        if selected_step_keys is not None
+        else None
+    )
 
     selected_steps: list[PipelineStepDefinition] = []
     for step in PIPELINE_STEPS:
         step_num = int(step.num)
-        if step_num < int(normalized_start):
-            continue
         if step_num > 12:
             continue
-        if step.key == "ml_train" and not include_ml_train:
-            continue
+        if normalized_selected_step_keys is not None:
+            if step.key not in normalized_selected_step_keys:
+                continue
+        else:
+            if step_num < int(normalized_start):
+                continue
+            if step.key == "ml_train" and not include_ml_train:
+                continue
         selected_steps.append(step)
 
     if include_sync:

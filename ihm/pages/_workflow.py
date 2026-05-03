@@ -38,7 +38,7 @@ from ihm.services.process_registry import (
     start_pipeline_workflow,
     stop_pipeline_run,
 )
-from ihm.services.pipeline_runner import get_pipeline_workflow_steps
+from ihm.services.pipeline_runner import get_pipeline_steps, get_pipeline_workflow_steps
 
 __all__ = [
     "_build_workflow_scope_help_lines",
@@ -65,6 +65,7 @@ WORKFLOW_CHILD_LAST_AUTO_KEY_PREFIX = "workflow_child_run_last_auto_"
 WORKFLOW_CHILD_PENDING_SELECT_KEY_PREFIX = "workflow_child_run_pending_select_"
 WORKFLOW_CHILD_PENDING_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_pending_autofollow_"
 WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY = "pipeline_workflow_runtime_auto_selected_run_id"
+WORKFLOW_CUSTOM_STEP_KEY_PREFIX = "pipeline_workflow_custom_step_"
 WORKFLOW_RANGE_OPTIONS: tuple[str, ...] = ("1", "3")
 _GENERIC_PROGRESS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"processed=(?P<current>\d+)/(?:\s*)?(?P<total>\d+)(?:.*?latest_symbol=(?P<symbol>[A-Za-z0-9._-]+))?", re.IGNORECASE),
@@ -95,6 +96,10 @@ def _build_workflow_scope_help_lines() -> tuple[str, str, str]:
 
 
 def _workflow_mode_label(run: dict[str, object]) -> str:
+    explicit_label = str(run.get("step_label") or "").strip()
+    if explicit_label.startswith("Workflow personnalisé"):
+        return explicit_label
+
     command = run.get("command")
     if not isinstance(command, list):
         return "Workflow personnalisé"
@@ -111,6 +116,10 @@ def _workflow_mode_label(run: dict[str, object]) -> str:
         scope = f"{scope} + 13"
     ml_mode = "avec ML Train" if "ml_train" in normalized_command else "sans ML Train"
     return f"{scope} {ml_mode}"
+
+
+def _custom_workflow_checkbox_key(step_key: str) -> str:
+    return f"{WORKFLOW_CUSTOM_STEP_KEY_PREFIX}{step_key}"
 
 
 def _build_run_provider_badge(run: dict[str, object] | None) -> str | None:
@@ -559,6 +568,74 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
                 existing_compare = cast(list[str], st.session_state.get(COMPARE_RUNS_KEY, [])) if isinstance(st.session_state.get(COMPARE_RUNS_KEY, []), list) else []
                 st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *existing_compare][:2]
                 st.success(f"Workflow lancé en arrière-plan : `{record.run_id}`")
+                st.rerun()
+
+        st.divider()
+        st.markdown("#### Sélection personnalisée des pipelines 1 → 12")
+        st.caption(
+            "Coche uniquement les étapes à exécuter. Le lancement respecte toujours l'ordre numérique 1 → 12, "
+            "sans inclure automatiquement les extensions 13/14."
+        )
+        selectable_steps = tuple(
+            step
+            for step in get_pipeline_steps()
+            if step.num.isdigit() and 1 <= int(step.num) <= 12
+        )
+        selection_columns = st.columns(3)
+        selected_step_keys: list[str] = []
+        for index, step in enumerate(selectable_steps):
+            checkbox_key = _custom_workflow_checkbox_key(step.key)
+            with selection_columns[index % len(selection_columns)]:
+                is_selected = st.checkbox(
+                    f"{step.num}. {step.name}",
+                    value=bool(st.session_state.get(checkbox_key, True)),
+                    key=checkbox_key,
+                    disabled=bool(active_runs),
+                    help=step.desc,
+                )
+            if is_selected:
+                selected_step_keys.append(step.key)
+
+        if selected_step_keys:
+            selected_step_labels = [
+                str(step.num)
+                for step in selectable_steps
+                if step.key in set(selected_step_keys)
+            ]
+            st.caption(
+                "Étapes sélectionnées : "
+                + ", ".join(f"`{step_num}`" for step_num in selected_step_labels)
+                + ". Elles seront exécutées dans cet ordre."
+            )
+        else:
+            st.warning("Sélection vide : cochez au moins une étape entre 1 et 12 pour lancer un workflow personnalisé.")
+
+        custom_execution_locked = execution_locked and "execution" in selected_step_keys
+        if custom_execution_locked:
+            st.warning(
+                "Le workflow personnalisé inclut l'étape 12 — confirmez d'abord le mode LIVE dans les paramètres ci-dessus."
+            )
+
+        launch_selected_clicked = st.button(
+            "▶️ Lancer les pipelines sélectionnés",
+            key="run_pipeline_workflow_selected_steps",
+            use_container_width=True,
+            disabled=bool(active_runs) or not selected_step_keys or custom_execution_locked,
+        )
+        if launch_selected_clicked:
+            try:
+                record = start_pipeline_workflow(
+                    options,
+                    db_config=db_config,
+                    selected_step_keys=tuple(selected_step_keys),
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                existing_compare = cast(list[str], st.session_state.get(COMPARE_RUNS_KEY, [])) if isinstance(st.session_state.get(COMPARE_RUNS_KEY, []), list) else []
+                st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *existing_compare][:2]
+                st.success(f"Workflow personnalisé lancé en arrière-plan : `{record.run_id}`")
                 st.rerun()
 
 

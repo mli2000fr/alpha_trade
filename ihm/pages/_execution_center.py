@@ -984,6 +984,47 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         if abs(conviction_total - 1.0) > 0.001:
             st.warning(f"⚠️ Risk : poids score + poids ML = {conviction_total} (≠ 1.0). Le backend pourrait normaliser.")
 
+        st.markdown("#### Paramètres Model Factory")
+        st.caption(
+            "Ces options pilotent directement `python -m modelFactory --mode train`. "
+            "L'objectif est d'aligner l'IHM sur la gouvernance multi-modèles réellement disponible côté backend."
+        )
+        normalized_ml_train_preset = _ensure_normalized_ml_train_preset_session_state(cast(dict[str, object], st.session_state))
+        _apply_selected_ml_train_preset()
+        ml_train_preset = cast(
+            str,
+            st.selectbox(
+                "Preset ML Train",
+                options=list(ML_TRAIN_PRESET_OPTIONS),
+                index=list(ML_TRAIN_PRESET_OPTIONS).index(normalized_ml_train_preset),
+                key=ML_TRAIN_PRESET_KEY,
+                format_func=_format_ml_train_preset_label,
+                help=(
+                    "Préremplit automatiquement un profil ML adapté au contexte : prod swing, debug rapide CPU ou debug GPU. "
+                    "Les champs restent modifiables ensuite."
+                ),
+            ),
+        )
+        ml_train_preset_dirty = _is_selected_ml_train_preset_dirty(cast(dict[str, object], st.session_state))
+        ml_train_preset_status = "🟡 preset modifié manuellement" if ml_train_preset_dirty else "🟢 preset aligné"
+        st.caption(f"{_build_ml_train_preset_summary(ml_train_preset)} — {ml_train_preset_status}.")
+        if ml_train_preset != ML_TRAIN_PRESET_CUSTOM:
+            ml_preset_action_col1, ml_preset_action_col2 = st.columns([1, 3])
+            with ml_preset_action_col1:
+                st.button(
+                    "↩️ Reset vers preset",
+                    key="pipeline_ml_train_reset_to_preset",
+                    use_container_width=True,
+                    help="Réapplique volontairement toutes les valeurs recommandées du preset ML sélectionné.",
+                    on_click=_apply_selected_ml_train_preset,
+                    kwargs={"force": True},
+                )
+            with ml_preset_action_col2:
+                if ml_train_preset_dirty:
+                    st.caption("Des champs ML ont été modifiés depuis l'application initiale du preset ; ce bouton écrasera ces surcharges manuelles.")
+                else:
+                    st.caption("Tu peux réappliquer explicitement ce preset à tout moment si tu veux revenir aux valeurs recommandées.")
+
         ml_col1, ml_col2 = st.columns([2, 3])
         with ml_col1:
             ml_accelerator = cast(
@@ -1006,46 +1047,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 st.success("GPU CUDA détecté dans l'environnement de l'IHM : les jobs ML peuvent être lancés en mode `auto` ou `gpu`.")
             else:
                 st.info("Aucun GPU CUDA détecté dans l'environnement de l'IHM : le mode `auto` retombera sur CPU.")
-
-        st.markdown("#### Paramètres Model Factory")
-        st.caption(
-            "Ces options pilotent directement `python -m modelFactory --mode train`. "
-            "L'objectif est d'aligner l'IHM sur la gouvernance multi-modèles réellement disponible côté backend."
-        )
-        normalized_ml_train_preset = _ensure_normalized_ml_train_preset_session_state(cast(dict[str, object], st.session_state))
-        ml_train_preset = cast(
-            str,
-            st.selectbox(
-                "Preset ML Train",
-                options=list(ML_TRAIN_PRESET_OPTIONS),
-                index=list(ML_TRAIN_PRESET_OPTIONS).index(normalized_ml_train_preset),
-                key=ML_TRAIN_PRESET_KEY,
-                format_func=_format_ml_train_preset_label,
-                help=(
-                    "Préremplit automatiquement un profil ML adapté au contexte : prod swing, debug rapide CPU ou debug GPU. "
-                    "Les champs restent modifiables ensuite."
-                ),
-            ),
-        )
-        _apply_selected_ml_train_preset()
-        ml_train_preset_dirty = _is_selected_ml_train_preset_dirty(cast(dict[str, object], st.session_state))
-        ml_train_preset_status = "🟡 preset modifié manuellement" if ml_train_preset_dirty else "🟢 preset aligné"
-        st.caption(f"{_build_ml_train_preset_summary(ml_train_preset)} — {ml_train_preset_status}.")
-        if ml_train_preset != ML_TRAIN_PRESET_CUSTOM:
-            ml_preset_action_col1, ml_preset_action_col2 = st.columns([1, 3])
-            with ml_preset_action_col1:
-                if st.button(
-                    "↩️ Reset vers preset",
-                    key="pipeline_ml_train_reset_to_preset",
-                    use_container_width=True,
-                    help="Réapplique volontairement toutes les valeurs recommandées du preset ML sélectionné.",
-                ):
-                    _apply_selected_ml_train_preset(force=True)
-            with ml_preset_action_col2:
-                if ml_train_preset_dirty:
-                    st.caption("Des champs ML ont été modifiés depuis l'application initiale du preset ; ce bouton écrasera ces surcharges manuelles.")
-                else:
-                    st.caption("Tu peux réappliquer explicitement ce preset à tout moment si tu veux revenir aux valeurs recommandées.")
 
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
         with ml_opt_col1:

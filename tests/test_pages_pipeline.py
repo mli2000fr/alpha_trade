@@ -420,6 +420,59 @@ def test_workflow_launcher_can_start_at_step_3_and_include_corporate_actions(mon
     assert captured["include_corporate_actions_apply"] is True
 
 
+def test_workflow_launcher_can_launch_explicit_selected_pipelines_in_order(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
+    monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
+    monkeypatch.setattr(workflow_page.st, "container", lambda **kwargs: _DummyContainer())
+    monkeypatch.setattr(workflow_page.st, "subheader", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "caption", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "info", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "warning", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "markdown", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "divider", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "columns", lambda n: [_DummyContainer() for _ in range(n)])
+    monkeypatch.setattr(workflow_page.st, "selectbox", lambda *args, **kwargs: kwargs["options"][0])
+
+    def _fake_checkbox(*args, **kwargs):
+        key = kwargs.get("key")
+        if key == workflow_page.WORKFLOW_INCLUDE_ML_TRAIN_KEY:
+            return kwargs.get("value", False)
+        if key == workflow_page.WORKFLOW_INCLUDE_CA_SYNC_KEY:
+            return False
+        if key == workflow_page.WORKFLOW_INCLUDE_CA_APPLY_KEY:
+            return False
+        return key in {
+            f"{workflow_page.WORKFLOW_CUSTOM_STEP_KEY_PREFIX}import_alpaca_bar",
+            f"{workflow_page.WORKFLOW_CUSTOM_STEP_KEY_PREFIX}stock_screener",
+            f"{workflow_page.WORKFLOW_CUSTOM_STEP_KEY_PREFIX}execution",
+        }
+
+    monkeypatch.setattr(workflow_page.st, "checkbox", _fake_checkbox)
+    monkeypatch.setattr(
+        workflow_page.st,
+        "button",
+        lambda *args, **kwargs: kwargs.get("key") == "run_pipeline_workflow_selected_steps",
+    )
+
+    def _fake_start_pipeline_workflow(options, **kwargs):
+        captured.update(kwargs)
+        return type("_Record", (), {"run_id": "wf-custom"})()
+
+    monkeypatch.setattr(workflow_page, "start_pipeline_workflow", _fake_start_pipeline_workflow)
+
+    workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
+
+    assert captured["selected_step_keys"] == (
+        "import_alpaca_bar",
+        "stock_screener",
+        "execution",
+    )
+
+
 def test_build_workflow_child_run_payload_returns_latest_runs_first_with_labels(monkeypatch) -> None:
     child_runs = {
         "run-step-1": {
