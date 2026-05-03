@@ -14,6 +14,7 @@ import logging
 import sys
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 from common.capital_presets import (
     apply_backtest_defaults_from_preset,
@@ -159,6 +160,24 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["off", "execution_replay"],
         default="off",
         help="Phase 3 opt-in: `execution_replay` réinjecte chronologiquement les quantités issues du bridge risk+execution dans le moteur de backtest. Exige `--phase2-mode risk_execution`.",
+    )
+    run_p.add_argument(
+        "--phase4-mode",
+        choices=["off", "protection_replay"],
+        default="off",
+        help="Phase 4 opt-in: `protection_replay` rejoue les child intents de protection (TP/initial stop/trailing) dans le moteur de backtest. Exige `--phase3-mode execution_replay`.",
+    )
+    run_p.add_argument(
+        "--phase5-mode",
+        choices=["off", "watcher_replay"],
+        default="off",
+        help="Phase 5 opt-in: `watcher_replay` rejoue les transitions du watcher de protection (trigger -> promotion trailing) dans le moteur de backtest. Exige `--phase4-mode protection_replay`.",
+    )
+    run_p.add_argument(
+        "--phase7-mode",
+        choices=["off", "exit_lifecycle_replay"],
+        default="off",
+        help="Phase 7 opt-in: `exit_lifecycle_replay` rejoue explicitement l'issue terminale des child orders (exit + annulation OCO du sibling) dans le moteur de backtest. Exige `--phase5-mode watcher_replay`.",
     )
     # Phase A.6 (refactor) — risk-free rate annualisé pour Sharpe/Sortino.
     run_p.add_argument(
@@ -543,11 +562,29 @@ def _run_backtest(args: argparse.Namespace) -> None:
     ml_pit_strategy = str(getattr(args, "ml_pit_strategy", "auto") or "auto").strip().lower()
     phase2_mode = str(getattr(args, "phase2_mode", "off") or "off").strip().lower()
     phase3_mode = str(getattr(args, "phase3_mode", "off") or "off").strip().lower()
+    phase4_mode = str(getattr(args, "phase4_mode", "off") or "off").strip().lower()
+    phase5_mode = str(getattr(args, "phase5_mode", "off") or "off").strip().lower()
+    phase7_mode = str(getattr(args, "phase7_mode", "off") or "off").strip().lower()
     strict_pit = engine_mode == "pipeline"
 
     if phase3_mode != "off" and phase2_mode != "risk_execution":
         _safe_print(
             "❌ La Phase 3 `execution_replay` exige `--phase2-mode risk_execution` pour disposer des cibles et fills d'exécution."
+        )
+        sys.exit(1)
+    if phase4_mode != "off" and phase3_mode != "execution_replay":
+        _safe_print(
+            "❌ La Phase 4 `protection_replay` exige `--phase3-mode execution_replay` pour disposer d'un calendrier d'exécution rejouable."
+        )
+        sys.exit(1)
+    if phase5_mode != "off" and phase4_mode != "protection_replay":
+        _safe_print(
+            "❌ La Phase 5 `watcher_replay` exige `--phase4-mode protection_replay` pour disposer des protections rejouées."
+        )
+        sys.exit(1)
+    if phase7_mode != "off" and phase5_mode != "watcher_replay":
+        _safe_print(
+            "❌ La Phase 7 `exit_lifecycle_replay` exige `--phase5-mode watcher_replay` pour disposer du lifecycle du watcher."
         )
         sys.exit(1)
 
@@ -563,6 +600,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _safe_print(f"   engine_mode={engine_mode} strict_pit={strict_pit}\n")
     _safe_print(f"   phase2_mode={phase2_mode}\n")
     _safe_print(f"   phase3_mode={phase3_mode}\n")
+    _safe_print(f"   phase4_mode={phase4_mode}\n")
+    _safe_print(f"   phase5_mode={phase5_mode}\n")
+    _safe_print(f"   phase7_mode={phase7_mode}\n")
     _safe_print(f"   ml_mode={args.ml_mode}, sentiment_mode={args.sentiment_mode}\n")
     _safe_print(f"   ml_pit_strategy={ml_pit_strategy}\n")
     _safe_print(
@@ -659,6 +699,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
     phase2_risk_result = None
     phase2_execution_result = None
     phase3_execution_replay_result = None
+    phase4_protection_replay_result = None
+    phase5_watcher_replay_result = None
+    phase7_exit_lifecycle_result = None
     phase2_risk_run_id = f"bt_phase2_{start:%Y%m%d}_{end:%Y%m%d}"
     if phase2_mode == "off":
         signals_df = replay_signals(
@@ -714,6 +757,53 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 )
                 phase2_execution_result = phase3_execution_replay_result.execution_result
                 signals_df = phase3_execution_replay_result.signals_df
+                if phase4_mode == "protection_replay":
+                    from backtesting.execution_lifecycle_replay import build_phase4_protection_replay
+
+                    phase4_protection_replay_result = build_phase4_protection_replay(
+                        phase3_execution_replay_result,
+                        execution_config=execution_config,
+                    )
+                    signals_df = phase4_protection_replay_result.signals_df
+                    if phase5_mode == "watcher_replay":
+                        from backtesting.protection_watcher_replay import build_phase5_watcher_replay
+
+                        phase5_watcher_replay_result = build_phase5_watcher_replay(
+                            phase4_protection_replay_result,
+                            high_df=pivoted["high"],
+                        )
+                        signals_df = phase5_watcher_replay_result.signals_df
+                        if phase7_mode == "exit_lifecycle_replay":
+                            from backtesting.exit_lifecycle_replay import build_phase7_exit_lifecycle_replay
+
+                            phase7_exit_lifecycle_result = build_phase7_exit_lifecycle_replay(
+                                phase5_watcher_replay_result,
+                                high_df=pivoted["high"],
+                                low_df=pivoted["low"],
+                                intrabar_priority=args.intrabar_priority,
+                            )
+                            signals_df = phase7_exit_lifecycle_result.signals_df
+                            _safe_print(
+                                "   Phase 7 exit lifecycle replay: exits={} oco_cancels={} trailing={}\n".format(
+                                    phase7_exit_lifecycle_result.diagnostics.get("exit_rows", 0),
+                                    phase7_exit_lifecycle_result.diagnostics.get("oco_cancels", 0),
+                                    phase7_exit_lifecycle_result.diagnostics.get("filled_trailing_stop", 0),
+                                )
+                            )
+                        _safe_print(
+                            "   Phase 5 watcher replay: transitions={} pending={} failed={}\n".format(
+                                phase5_watcher_replay_result.diagnostics.get("transitioned_items", 0),
+                                phase5_watcher_replay_result.diagnostics.get("pending_items", 0),
+                                phase5_watcher_replay_result.diagnostics.get("failed_items", 0),
+                            )
+                        )
+                    _safe_print(
+                        "   Phase 4 protection replay: protections={} trailing={} initial_stop={}\n".format(
+                            phase4_protection_replay_result.diagnostics.get("protections_replayed", 0),
+                            phase4_protection_replay_result.diagnostics.get("trailing_stop_protections", 0),
+                            phase4_protection_replay_result.diagnostics.get("initial_stop_protections", 0),
+                        )
+                    )
                 _safe_print(
                     "   Phase 3 execution replay: scheduled_entries={} signals={} skipped_no_next_session={}\n".format(
                         phase3_execution_replay_result.diagnostics.get("scheduled_entries", 0),
@@ -793,6 +883,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
         risk_overlay=risk_overlay_cfg,
         seed=getattr(args, "seed", None),
         execution_replay_mode=phase3_mode,
+        protection_replay_mode=phase4_mode,
+        watcher_replay_mode=phase5_mode,
+        exit_lifecycle_replay_mode=phase7_mode,
     )
     bt_engine = BacktestEngine(bt_config)
     pf = bt_engine.run(
@@ -848,6 +941,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
         "engine_mode": engine_mode,
         "phase2_mode": phase2_mode,
         "phase3_mode": phase3_mode,
+        "phase4_mode": phase4_mode,
+        "phase5_mode": phase5_mode,
+        "phase7_mode": phase7_mode,
         "ml_pit_strategy": ml_pit_strategy,
         # Phase 6.1.a — fusion conviction unifiée via core.conviction.
         "conviction_weights": {
@@ -914,6 +1010,33 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 else None
             ),
         },
+        "phase4": {
+            "enabled": phase4_mode != "off",
+            "mode": phase4_mode,
+            "protection_replay": (
+                phase4_protection_replay_result.diagnostics
+                if phase4_protection_replay_result is not None
+                else None
+            ),
+        },
+        "phase5": {
+            "enabled": phase5_mode != "off",
+            "mode": phase5_mode,
+            "watcher_replay": (
+                phase5_watcher_replay_result.diagnostics
+                if phase5_watcher_replay_result is not None
+                else None
+            ),
+        },
+        "phase7": {
+            "enabled": phase7_mode != "off",
+            "mode": phase7_mode,
+            "exit_lifecycle_replay": (
+                phase7_exit_lifecycle_result.diagnostics
+                if phase7_exit_lifecycle_result is not None
+                else None
+            ),
+        },
     }
 
     # Phase A.4 — métadonnées de reproductibilité.
@@ -943,7 +1066,35 @@ def _run_backtest(args: argparse.Namespace) -> None:
         if phase3_execution_replay_result is not None:
             from backtesting.execution_replay import save_phase3_execution_replay_artifacts
 
-            artifact_paths.update(save_phase3_execution_replay_artifacts(phase3_execution_replay_result, output_dir))
+            phase3_artifacts = cast(
+                dict[str, str],
+                save_phase3_execution_replay_artifacts(phase3_execution_replay_result, output_dir),
+            )
+            artifact_paths.update(phase3_artifacts)
+        if phase4_protection_replay_result is not None:
+            from backtesting.execution_lifecycle_replay import save_phase4_protection_replay_artifacts
+
+            phase4_artifacts = cast(
+                dict[str, str],
+                save_phase4_protection_replay_artifacts(phase4_protection_replay_result, output_dir),
+            )
+            artifact_paths.update(phase4_artifacts)
+        if phase5_watcher_replay_result is not None:
+            from backtesting.protection_watcher_replay import save_phase5_watcher_replay_artifacts
+
+            phase5_artifacts = cast(
+                dict[str, str],
+                save_phase5_watcher_replay_artifacts(phase5_watcher_replay_result, output_dir),
+            )
+            artifact_paths.update(phase5_artifacts)
+        if phase7_exit_lifecycle_result is not None:
+            from backtesting.exit_lifecycle_replay import save_phase7_exit_lifecycle_replay_artifacts
+
+            phase7_artifacts = cast(
+                dict[str, str],
+                save_phase7_exit_lifecycle_replay_artifacts(phase7_exit_lifecycle_result, output_dir),
+            )
+            artifact_paths.update(phase7_artifacts)
         report_json_path = save_report_json(
             report,
             output_dir=output_dir,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
+import pytest
 
 
 def test_build_phase2_risk_result_generates_entries_and_signals() -> None:
@@ -195,6 +197,221 @@ def test_simulate_phase3_execution_replay_generates_replay_signals() -> None:
     assert signal["symbol"] == "AAPL"
     assert float(signal["filled_qty"]) == 40.0
     assert float(signal["fill_price"]) == 105.0
+
+
+def test_build_phase4_protection_replay_enriches_signals_with_child_protections() -> None:
+    from backtesting.execution_lifecycle_replay import build_phase4_protection_replay
+    from backtesting.execution_replay import simulate_phase3_execution_replay
+    from execution_engine.config import ExecutionConfig
+    from risk_management.models import PortfolioEntry
+
+    execution_config = ExecutionConfig(
+        broker_mode="paper",
+        dry_run=True,
+        account_type="margin",
+        pdt_rule="auto",
+        swing_only=False,
+        simulated_account_equity=100_000.0,
+        profit_taker_pct=0.08,
+        trailing_stop_pct=0.05,
+    )
+    open_df = pd.DataFrame(
+        {"AAPL": [100.0, 105.0, 106.0]},
+        index=pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"]),
+    )
+    entry = PortfolioEntry(
+        symbol="AAPL",
+        sector="Tech",
+        entry_price=123.45,
+        score_used=0.82,
+        score_source="final_score_sentiment",
+        atr_20=2.5,
+        proposed_shares=40,
+        approved_shares=40,
+        target_notional=4_938.0,
+        target_weight=0.04938,
+        decision="ACCEPTED",
+        decision_reason="OK",
+        conviction_score=0.83,
+        sizing_method="atr",
+        decision_rank=1,
+        stop_price_initial=100.0,
+        risk_per_share=5.0,
+        risk_budget_dollars=1_000.0,
+        initial_risk_dollars=200.0,
+        score_snapshot_date=date(2025, 1, 1),
+        price_asof_date=date(2025, 1, 1),
+        atr_asof_date=date(2025, 1, 1),
+    )
+
+    replay_result = simulate_phase3_execution_replay(
+        [entry],
+        execution_config=execution_config,
+        open_df=open_df,
+        risk_run_id_prefix="bt_phase4_20250101_20250103",
+        exec_run_id="exec_replay_002",
+    )
+    protection_result = build_phase4_protection_replay(
+        replay_result,
+        execution_config=execution_config,
+    )
+
+    assert protection_result.diagnostics["protections_replayed"] == 1
+    assert protection_result.diagnostics["bridge"] == "execution_engine.child_intents+protection_replay"
+    assert not protection_result.protection_frame.empty
+    enriched_signal = protection_result.signals_df.iloc[0]
+    assert float(enriched_signal["replay_take_profit_price"]) > float(enriched_signal["fill_price"])
+    assert float(enriched_signal["replay_initial_stop_price"]) < float(enriched_signal["fill_price"])
+    assert float(enriched_signal["replay_trailing_stop_pct"]) == pytest.approx(0.0476, rel=1e-2)
+    assert float(enriched_signal["replay_trailing_activation_price"]) > float(enriched_signal["fill_price"])
+
+
+def test_build_phase5_watcher_replay_generates_lifecycle_and_events() -> None:
+    from backtesting.execution_lifecycle_replay import build_phase4_protection_replay
+    from backtesting.execution_replay import simulate_phase3_execution_replay
+    from backtesting.protection_watcher_replay import build_phase5_watcher_replay
+    from execution_engine.config import ExecutionConfig
+    from execution_engine.models import EventType
+    from risk_management.models import PortfolioEntry
+
+    execution_config = ExecutionConfig(
+        broker_mode="paper",
+        dry_run=True,
+        account_type="margin",
+        pdt_rule="auto",
+        swing_only=False,
+        simulated_account_equity=100_000.0,
+        profit_taker_pct=0.08,
+        trailing_stop_pct=0.05,
+    )
+    trading_index = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06"])
+    open_df = pd.DataFrame({"AAPL": [100.0, 105.0, 106.0, 107.0]}, index=trading_index)
+    high_df = pd.DataFrame({"AAPL": [100.0, 105.0, 111.0, 112.0]}, index=trading_index)
+    entry = PortfolioEntry(
+        symbol="AAPL",
+        sector="Tech",
+        entry_price=123.45,
+        score_used=0.82,
+        score_source="final_score_sentiment",
+        atr_20=2.5,
+        proposed_shares=40,
+        approved_shares=40,
+        target_notional=4_938.0,
+        target_weight=0.04938,
+        decision="ACCEPTED",
+        decision_reason="OK",
+        conviction_score=0.83,
+        sizing_method="atr",
+        decision_rank=1,
+        stop_price_initial=100.0,
+        risk_per_share=5.0,
+        risk_budget_dollars=1_000.0,
+        initial_risk_dollars=200.0,
+        score_snapshot_date=date(2025, 1, 1),
+        price_asof_date=date(2025, 1, 1),
+        atr_asof_date=date(2025, 1, 1),
+    )
+
+    replay_result = simulate_phase3_execution_replay(
+        [entry],
+        execution_config=execution_config,
+        open_df=open_df,
+        risk_run_id_prefix="bt_phase5_20250101_20250106",
+        exec_run_id="exec_replay_003",
+    )
+    protection_result = build_phase4_protection_replay(
+        replay_result,
+        execution_config=execution_config,
+    )
+    watcher_result = build_phase5_watcher_replay(
+        protection_result,
+        high_df=high_df,
+    )
+
+    assert watcher_result.diagnostics["bridge"] == "execution_engine.protection_watcher+watcher_replay"
+    assert watcher_result.diagnostics["transitioned_items"] == 1
+    assert len(watcher_result.event_frame) == 2
+    assert set(watcher_result.event_frame["event_type"]) == {
+        EventType.PROTECTION_TRIGGER_HIT,
+        EventType.PROTECTION_TRANSITION_COMPLETED,
+    }
+    lifecycle = watcher_result.lifecycle_frame.iloc[0]
+    assert lifecycle["watcher_transition_state"] == "transitioned"
+    assert lifecycle["watcher_trigger_date"] == pd.Timestamp("2025-01-03")
+    assert lifecycle["watcher_transition_effective_date"] == pd.Timestamp("2025-01-06")
+
+
+def test_build_phase7_exit_lifecycle_replay_generates_terminal_exit_and_oco_cancel() -> None:
+    from backtesting.exit_lifecycle_replay import build_phase7_exit_lifecycle_replay
+    from backtesting.protection_watcher_replay import ProtectionWatcherReplayResult
+    from execution_engine.models import EventType
+
+    trading_index = pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"])
+    signals_df = pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "execution_date": pd.to_datetime(["2025-01-02"]),
+            "symbol": ["AAPL"],
+            "selected": [True],
+            "fill_price": [100.0],
+            "replay_take_profit_price": [150.0],
+            "replay_initial_stop_price": [90.0],
+            "replay_trailing_stop_pct": [0.05],
+            "watcher_transition_effective_date": pd.to_datetime(["2025-01-03"]),
+        }
+    )
+    watcher_result = ProtectionWatcherReplayResult(
+        signals_df=signals_df,
+        lifecycle_frame=pd.DataFrame(),
+        event_frame=pd.DataFrame(),
+        diagnostics={"bridge": "execution_engine.protection_watcher+watcher_replay"},
+    )
+    high_df = pd.DataFrame({"AAPL": [106.0, 107.0, 101.0]}, index=trading_index)
+    low_df = pd.DataFrame({"AAPL": [99.0, 100.0, 99.0]}, index=trading_index)
+
+    result = build_phase7_exit_lifecycle_replay(
+        watcher_result,
+        high_df=high_df,
+        low_df=low_df,
+    )
+
+    assert result.diagnostics["bridge"] == "execution_engine.oco_manager+exit_lifecycle_replay"
+    assert result.diagnostics["exit_rows"] == 1
+    assert result.diagnostics["filled_trailing_stop"] == 1
+    assert result.diagnostics["oco_cancels"] == 1
+    assert len(result.event_frame) == 2
+    exit_row = result.exit_frame.iloc[0]
+    assert exit_row["replay_exit_date"] == pd.Timestamp("2025-01-03")
+    assert exit_row["replay_exit_reason"] == "trailing_stop"
+    assert exit_row["replay_exit_intent_role"] == "trailing_stop"
+    assert bool(exit_row["replay_oco_sibling_canceled"]) is True
+    assert EventType.OCO_CANCEL_TRIGGERED in set(result.event_frame["event_type"])
+    enriched_signal = result.signals_df.iloc[0]
+    assert enriched_signal["replay_exit_reason"] == "trailing_stop"
+    assert bool(enriched_signal["replay_oco_sibling_canceled"]) is True
+
+
+def test_save_phase7_exit_lifecycle_replay_artifacts_writes_expected_files(tmp_path) -> None:
+    from backtesting.exit_lifecycle_replay import ExitLifecycleReplayResult, save_phase7_exit_lifecycle_replay_artifacts
+
+    result = ExitLifecycleReplayResult(
+        signals_df=pd.DataFrame({"symbol": ["AAPL"], "replay_exit_reason": ["take_profit"]}),
+        exit_frame=pd.DataFrame({"symbol": ["AAPL"], "replay_exit_reason": ["take_profit"]}),
+        event_frame=pd.DataFrame({"symbol": ["AAPL"], "event_type": ["EXIT_FILLED_TAKE_PROFIT"]}),
+        diagnostics={"exit_rows": 1, "events_generated": 1, "bridge": "execution_engine.oco_manager+exit_lifecycle_replay"},
+    )
+
+    artifact_paths = save_phase7_exit_lifecycle_replay_artifacts(result, tmp_path)
+
+    assert set(artifact_paths) == {
+        "phase7_exit_lifecycle_replay_csv",
+        "phase7_exit_lifecycle_replay_events_csv",
+        "phase7_exit_lifecycle_replay_signals_csv",
+        "phase7_exit_lifecycle_replay_summary_json",
+    }
+    for path in artifact_paths.values():
+        assert pd.notna(path)
+        assert Path(path).exists()
 
 
 

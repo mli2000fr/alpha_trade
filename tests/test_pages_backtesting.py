@@ -25,6 +25,9 @@ def test_parameter_reference_rows_include_walk_forward_run_options() -> None:
     assert any(row["Paramètre"] == "ml_pit_strategy" for row in run_rows)
     assert any(row["Paramètre"] == "phase2_mode" for row in run_rows)
     assert any(row["Paramètre"] == "phase3_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "phase4_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "phase5_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "phase7_mode" for row in run_rows)
 
 
 def test_parameter_reference_rows_include_backfill_capital_preset_options() -> None:

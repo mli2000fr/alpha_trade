@@ -53,6 +53,9 @@ class BacktestConfig:
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
     execution_timing: str = "next_open"
     execution_replay_mode: str = "off"
+    protection_replay_mode: str = "off"
+    watcher_replay_mode: str = "off"
+    exit_lifecycle_replay_mode: str = "off"
     # Phase B (refactor) — micro-structure (slippage volume-aware,
     # initial stop, gap filter, intrabar priority).
     microstructure: MicrostructureConfig = field(default_factory=MicrostructureConfig)
@@ -74,6 +77,24 @@ class BacktestConfig:
                 "execution_replay_mode doit être 'off' ou 'execution_replay'."
             )
         self.execution_replay_mode = normalized_replay_mode
+        normalized_protection_mode = str(self.protection_replay_mode or "off").strip().lower()
+        if normalized_protection_mode not in {"off", "protection_replay"}:
+            raise ValueError(
+                "protection_replay_mode doit être 'off' ou 'protection_replay'."
+            )
+        self.protection_replay_mode = normalized_protection_mode
+        normalized_watcher_mode = str(self.watcher_replay_mode or "off").strip().lower()
+        if normalized_watcher_mode not in {"off", "watcher_replay"}:
+            raise ValueError(
+                "watcher_replay_mode doit être 'off' ou 'watcher_replay'."
+            )
+        self.watcher_replay_mode = normalized_watcher_mode
+        normalized_exit_lifecycle_mode = str(self.exit_lifecycle_replay_mode or "off").strip().lower()
+        if normalized_exit_lifecycle_mode not in {"off", "exit_lifecycle_replay"}:
+            raise ValueError(
+                "exit_lifecycle_replay_mode doit être 'off' ou 'exit_lifecycle_replay'."
+            )
+        self.exit_lifecycle_replay_mode = normalized_exit_lifecycle_mode
 
 
 @dataclass(slots=True)
@@ -93,6 +114,9 @@ class BacktestDiagnostics:
     blocked_by_regime: int = 0
     blocked_by_sectoral_cap: int = 0
     blocked_by_drawdown_breaker: int = 0
+    protection_replay_activations: int = 0
+    watcher_replay_transitions: int = 0
+    exit_lifecycle_replayed: int = 0
 
     def to_dict(self) -> dict[str, int]:
         return {
@@ -107,6 +131,9 @@ class BacktestDiagnostics:
             "blocked_by_regime": self.blocked_by_regime,
             "blocked_by_sectoral_cap": self.blocked_by_sectoral_cap,
             "blocked_by_drawdown_breaker": self.blocked_by_drawdown_breaker,
+            "protection_replay_activations": self.protection_replay_activations,
+            "watcher_replay_transitions": self.watcher_replay_transitions,
+            "exit_lifecycle_replayed": self.exit_lifecycle_replayed,
         }
 
 
@@ -122,6 +149,20 @@ class _OpenPosition:
     entry_cost: float
     # Phase B.2 — stop-loss initial dur (None = désactivé).
     initial_stop_price: float | None = None
+    replay_take_profit_price: float | None = None
+    replay_initial_stop_price: float | None = None
+    replay_trailing_stop_pct: float | None = None
+    replay_trailing_activation_price: float | None = None
+    replay_trailing_activation_mode: str | None = None
+    replay_trailing_active: bool = False
+    watcher_transition_state: str | None = None
+    watcher_trigger_date: pd.Timestamp | None = None
+    watcher_transition_effective_date: pd.Timestamp | None = None
+    explicit_exit_date: pd.Timestamp | None = None
+    explicit_exit_price: float | None = None
+    explicit_exit_reason: str | None = None
+    explicit_exit_intent_role: str | None = None
+    explicit_oco_sibling_canceled: bool = False
     # Phase D.2 — secteur pour attribution sectorielle.
     sector: str | None = None
 
@@ -608,6 +649,71 @@ class BacktestEngine:
                 peak_high=entry_price,
                 entry_cost=entry_cost,
                 initial_stop_price=initial_stop_price,
+                replay_take_profit_price=(
+                    self._resolve_signal_float(row, "replay_take_profit_price")
+                    if cfg.protection_replay_mode == "protection_replay"
+                    else None
+                ),
+                replay_initial_stop_price=(
+                    self._resolve_signal_float(row, "replay_initial_stop_price")
+                    if cfg.protection_replay_mode == "protection_replay"
+                    else None
+                ),
+                replay_trailing_stop_pct=(
+                    self._resolve_signal_float(row, "replay_trailing_stop_pct")
+                    if cfg.protection_replay_mode == "protection_replay"
+                    else None
+                ),
+                replay_trailing_activation_price=(
+                    self._resolve_signal_float(row, "replay_trailing_activation_price")
+                    if cfg.protection_replay_mode == "protection_replay"
+                    else None
+                ),
+                replay_trailing_activation_mode=(
+                    self._resolve_signal_text(row, "replay_trailing_activation_mode")
+                    if cfg.protection_replay_mode == "protection_replay"
+                    else None
+                ),
+                watcher_transition_state=(
+                    self._resolve_signal_text(row, "watcher_transition_state")
+                    if cfg.watcher_replay_mode == "watcher_replay"
+                    else None
+                ),
+                watcher_trigger_date=(
+                    self._resolve_signal_timestamp(row, "watcher_trigger_date")
+                    if cfg.watcher_replay_mode == "watcher_replay"
+                    else None
+                ),
+                watcher_transition_effective_date=(
+                    self._resolve_signal_timestamp(row, "watcher_transition_effective_date")
+                    if cfg.watcher_replay_mode == "watcher_replay"
+                    else None
+                ),
+                explicit_exit_date=(
+                    self._resolve_signal_timestamp(row, "replay_exit_date")
+                    if cfg.exit_lifecycle_replay_mode == "exit_lifecycle_replay"
+                    else None
+                ),
+                explicit_exit_price=(
+                    self._resolve_signal_float(row, "replay_exit_price")
+                    if cfg.exit_lifecycle_replay_mode == "exit_lifecycle_replay"
+                    else None
+                ),
+                explicit_exit_reason=(
+                    self._resolve_signal_text(row, "replay_exit_reason")
+                    if cfg.exit_lifecycle_replay_mode == "exit_lifecycle_replay"
+                    else None
+                ),
+                explicit_exit_intent_role=(
+                    self._resolve_signal_text(row, "replay_exit_intent_role")
+                    if cfg.exit_lifecycle_replay_mode == "exit_lifecycle_replay"
+                    else None
+                ),
+                explicit_oco_sibling_canceled=(
+                    self._resolve_signal_bool(row, "replay_oco_sibling_canceled")
+                    if cfg.exit_lifecycle_replay_mode == "exit_lifecycle_replay"
+                    else False
+                ),
                 sector=sector,
             )
             if risk.sectoral_cap.enabled:
@@ -640,22 +746,83 @@ class BacktestEngine:
 
             previous_peak_high = position.peak_high
             peak_high = max(previous_peak_high, day_high)
-            take_profit_price = position.entry_price * (1.0 + cfg.profit_taker_pct)
-            trailing_stop_price = previous_peak_high * (1.0 - cfg.trailing_stop_pct)
+            explicit_resolution = None
+            if (
+                cfg.exit_lifecycle_replay_mode == "exit_lifecycle_replay"
+                and position.explicit_exit_date is not None
+                and position.explicit_exit_price is not None
+                and position.explicit_exit_reason is not None
+            ):
+                if trade_day.normalize() == position.explicit_exit_date.normalize():
+                    explicit_resolution = {
+                        "exit_price": float(position.explicit_exit_price),
+                        "exit_reason": str(position.explicit_exit_reason),
+                    }
+                else:
+                    position.peak_high = peak_high
+                    continue
+            if cfg.protection_replay_mode == "protection_replay" and self._position_uses_replayed_protection(position):
+                take_profit_price = (
+                    position.replay_take_profit_price
+                    if position.replay_take_profit_price is not None
+                    else position.entry_price * (1.0 + cfg.profit_taker_pct)
+                )
+                if cfg.watcher_replay_mode == "watcher_replay":
+                    if (
+                        not position.replay_trailing_active
+                        and position.watcher_transition_effective_date is not None
+                        and trade_day.normalize() >= position.watcher_transition_effective_date.normalize()
+                    ):
+                        position.replay_trailing_active = True
+                        diagnostics.watcher_replay_transitions += 1
+                        diagnostics.protection_replay_activations += 1
+                else:
+                    if (
+                        not position.replay_trailing_active
+                        and position.replay_trailing_activation_price is not None
+                        and day_high >= position.replay_trailing_activation_price
+                    ):
+                        position.replay_trailing_active = True
+                        diagnostics.protection_replay_activations += 1
+                trailing_stop_pct = (
+                    position.replay_trailing_stop_pct
+                    if position.replay_trailing_active and position.replay_trailing_stop_pct is not None
+                    else None
+                )
+                trailing_stop_price = (
+                    previous_peak_high * (1.0 - trailing_stop_pct)
+                    if trailing_stop_pct is not None
+                    else float("-inf")
+                )
+                active_initial_stop = (
+                    None
+                    if position.replay_trailing_active
+                    else (position.replay_initial_stop_price or position.initial_stop_price)
+                )
+            else:
+                take_profit_price = position.entry_price * (1.0 + cfg.profit_taker_pct)
+                trailing_stop_price = previous_peak_high * (1.0 - cfg.trailing_stop_pct)
+                active_initial_stop = position.initial_stop_price
             is_same_day = trade_day.normalize() == position.entry_date.normalize()
 
-            resolution = resolve_intrabar_exit(
-                day_high=day_high,
-                day_low=day_low,
-                take_profit_price=take_profit_price,
-                trailing_stop_price=trailing_stop_price,
-                initial_stop_price=position.initial_stop_price,
-                priority=micro.intrabar_priority,
-                rng=rng,
-            )
-            if not resolution.triggered:
-                position.peak_high = peak_high
-                continue
+            if explicit_resolution is None:
+                resolution = resolve_intrabar_exit(
+                    day_high=day_high,
+                    day_low=day_low,
+                    take_profit_price=take_profit_price,
+                    trailing_stop_price=trailing_stop_price,
+                    initial_stop_price=active_initial_stop,
+                    priority=micro.intrabar_priority,
+                    rng=rng,
+                )
+                if not resolution.triggered:
+                    position.peak_high = peak_high
+                    continue
+                exit_price = resolution.exit_price
+                exit_reason = resolution.exit_reason
+            else:
+                exit_price = float(explicit_resolution["exit_price"])
+                exit_reason = str(explicit_resolution["exit_reason"])
 
             if is_same_day and constraints.restrict_same_day_exit:
                 diagnostics.blocked_same_day_exits += 1
@@ -673,14 +840,14 @@ class BacktestEngine:
                     position.peak_high = peak_high
                     continue
 
-            exit_price = resolution.exit_price
-            exit_reason = resolution.exit_reason
             if exit_reason == "take_profit":
                 diagnostics.take_profit_exits += 1
             elif exit_reason == "trailing_stop":
                 diagnostics.trailing_stop_exits += 1
             elif exit_reason == "initial_stop":
                 diagnostics.initial_stop_exits += 1
+            if explicit_resolution is not None:
+                diagnostics.exit_lifecycle_replayed += 1
 
             size_usd = position.quantity * exit_price
             adv_usd = self._get_adv_usd(adv_usd_df, trade_day, symbol)
@@ -772,6 +939,65 @@ class BacktestEngine:
         except (TypeError, ValueError):
             return None
         return target_weight if target_weight > 0 else None
+
+    @staticmethod
+    def _resolve_signal_float(row: pd.Series, column_name: str) -> float | None:
+        if column_name not in row.index:
+            return None
+        value = row.get(column_name)
+        if value is None or pd.isna(value):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _resolve_signal_text(row: pd.Series, column_name: str) -> str | None:
+        if column_name not in row.index:
+            return None
+        value = row.get(column_name)
+        if value is None or pd.isna(value):
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _resolve_signal_timestamp(row: pd.Series, column_name: str) -> pd.Timestamp | None:
+        if column_name not in row.index:
+            return None
+        value = row.get(column_name)
+        if value is None or pd.isna(value):
+            return None
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError):
+            return None
+        return None if pd.isna(timestamp) else timestamp
+
+    @staticmethod
+    def _resolve_signal_bool(row: pd.Series, column_name: str) -> bool:
+        if column_name not in row.index:
+            return False
+        value = row.get(column_name)
+        if value is None or pd.isna(value):
+            return False
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        return text in {"1", "true", "yes", "oui"}
+
+    @staticmethod
+    def _position_uses_replayed_protection(position: _OpenPosition) -> bool:
+        return any(
+            value is not None
+            for value in (
+                position.replay_take_profit_price,
+                position.replay_initial_stop_price,
+                position.replay_trailing_stop_pct,
+                position.replay_trailing_activation_price,
+            )
+        )
 
     @staticmethod
     def _mark_to_market(

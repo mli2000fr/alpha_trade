@@ -243,6 +243,9 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "ml_pit_strategy", "Explication": "Stratégie PIT ML explicite : auto / use-persisted / rebuild-missing / walk-forward-train-then-predict.", "Défaut": "auto"},
             {"Paramètre": "phase2_mode", "Explication": "off = backtest standard, risk = bridge risk_management, risk_execution = risk + intents/fills d'exécution simulés.", "Défaut": "off"},
             {"Paramètre": "phase3_mode", "Explication": "off = comportement Phase 2, execution_replay = réinjecte chronologiquement les quantités exécutées simulées dans le moteur de backtest.", "Défaut": "off"},
+            {"Paramètre": "phase4_mode", "Explication": "off = comportement Phase 3, protection_replay = rejoue les protections TP/stop/trailing issues des child intents d'exécution.", "Défaut": "off"},
+            {"Paramètre": "phase5_mode", "Explication": "off = comportement Phase 4, watcher_replay = rejoue les transitions du watcher de protection (trigger -> promotion trailing) dans le moteur.", "Défaut": "off"},
+            {"Paramètre": "phase7_mode", "Explication": "off = comportement Phase 5, exit_lifecycle_replay = rejoue l'issue terminale des child orders et l'annulation OCO du sibling.", "Défaut": "off"},
             {"Paramètre": "artifacts_dir", "Explication": "Dossier des artefacts modèles utilisés pour rebuild-missing.", "Défaut": "artifacts/models"},
             {"Paramètre": "score_column", "Explication": "Colonne de score privilégiée pour le replay : auto / walk-forward / sentiment / final.", "Défaut": "auto"},
             {"Paramètre": "walk_forward_artifacts_dir", "Explication": "Répertoire racine optionnel des artefacts de calibration walk-forward à appliquer au run standard.", "Défaut": "None"},
@@ -756,7 +759,7 @@ def _build_run_options() -> BacktestRunOptions:
             help="Si coché, le PNG d'equity curve et le CSV des trades ne seront pas écrits dans `artifacts/backtesting/`.",
         )
 
-    mode_col1, mode_col2, mode_col3, mode_col4 = st.columns(4)
+    mode_col1, mode_col2, mode_col3, mode_col4, mode_col5, mode_col6, mode_col7 = st.columns(7)
     with mode_col1:
         engine_mode = cast(
             str,
@@ -815,6 +818,51 @@ def _build_run_options() -> BacktestRunOptions:
                 ),
                 key="bt_run_phase3_mode",
                 help="`execution_replay` reprend les cibles/fills simulés du bridge d'exécution pour rejouer les quantités dans le moteur de backtest. Exige `phase2_mode = risk_execution`.",
+            ),
+        )
+    with mode_col5:
+        phase4_mode = cast(
+            str,
+            st.selectbox(
+                "Mode Phase 4",
+                options=["off", "protection_replay"],
+                index=["off", "protection_replay"].index(
+                    cast(str, st.session_state.get("bt_run_phase4_mode", "off"))
+                    if st.session_state.get("bt_run_phase4_mode", "off") in {"off", "protection_replay"}
+                    else "off"
+                ),
+                key="bt_run_phase4_mode",
+                help="`protection_replay` rejoue les child intents de protection (take-profit, initial stop, trailing) dans le moteur de backtest. Exige `phase3_mode = execution_replay`.",
+            ),
+        )
+    with mode_col6:
+        phase5_mode = cast(
+            str,
+            st.selectbox(
+                "Mode Phase 5",
+                options=["off", "watcher_replay"],
+                index=["off", "watcher_replay"].index(
+                    cast(str, st.session_state.get("bt_run_phase5_mode", "off"))
+                    if st.session_state.get("bt_run_phase5_mode", "off") in {"off", "watcher_replay"}
+                    else "off"
+                ),
+                key="bt_run_phase5_mode",
+                help="`watcher_replay` rejoue la logique de transition du watcher de protection avec une temporalité conservative (promotion effective à partir de la séance suivante). Exige `phase4_mode = protection_replay`.",
+            ),
+        )
+    with mode_col7:
+        phase7_mode = cast(
+            str,
+            st.selectbox(
+                "Mode Phase 7",
+                options=["off", "exit_lifecycle_replay"],
+                index=["off", "exit_lifecycle_replay"].index(
+                    cast(str, st.session_state.get("bt_run_phase7_mode", "off"))
+                    if st.session_state.get("bt_run_phase7_mode", "off") in {"off", "exit_lifecycle_replay"}
+                    else "off"
+                ),
+                key="bt_run_phase7_mode",
+                help="`exit_lifecycle_replay` matérialise l'exit terminal (TP/initial stop/trailing) et l'annulation OCO du sibling comme source de vérité de sortie. Exige `phase5_mode = watcher_replay`.",
             ),
         )
 
@@ -879,6 +927,9 @@ def _build_run_options() -> BacktestRunOptions:
         ml_pit_strategy=cast(Any, ml_pit_strategy),
         phase2_mode=cast(Any, phase2_mode),
         phase3_mode=cast(Any, phase3_mode),
+        phase4_mode=cast(Any, phase4_mode),
+        phase5_mode=cast(Any, phase5_mode),
+        phase7_mode=cast(Any, phase7_mode),
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,

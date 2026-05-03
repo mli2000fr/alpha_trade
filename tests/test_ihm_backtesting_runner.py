@@ -46,6 +46,12 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 	assert command[phase2_mode_index + 1] == "off"
 	phase3_mode_index = command.index("--phase3-mode")
 	assert command[phase3_mode_index + 1] == "off"
+	phase4_mode_index = command.index("--phase4-mode")
+	assert command[phase4_mode_index + 1] == "off"
+	phase5_mode_index = command.index("--phase5-mode")
+	assert command[phase5_mode_index + 1] == "off"
+	phase7_mode_index = command.index("--phase7-mode")
+	assert command[phase7_mode_index + 1] == "off"
 	assert "--capital-preset-key" not in command
 	assert "--swing-only" not in command
 	assert "--walk-forward-artifacts-dir" not in command
@@ -128,6 +134,60 @@ def test_build_backtesting_run_command_includes_phase3_flags():
 
 	assert "--phase3-mode" in command
 	assert command[command.index("--phase3-mode") + 1] == "execution_replay"
+
+
+def test_build_backtesting_run_command_includes_phase4_flags():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			phase2_mode="risk_execution",
+			phase3_mode="execution_replay",
+			phase4_mode="protection_replay",
+		),
+	)
+
+	assert "--phase4-mode" in command
+	assert command[command.index("--phase4-mode") + 1] == "protection_replay"
+
+
+def test_build_backtesting_run_command_includes_phase5_flags():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			phase2_mode="risk_execution",
+			phase3_mode="execution_replay",
+			phase4_mode="protection_replay",
+			phase5_mode="watcher_replay",
+		),
+	)
+
+	assert "--phase5-mode" in command
+	assert command[command.index("--phase5-mode") + 1] == "watcher_replay"
+
+
+def test_build_backtesting_run_command_includes_phase7_flags():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			phase2_mode="risk_execution",
+			phase3_mode="execution_replay",
+			phase4_mode="protection_replay",
+			phase5_mode="watcher_replay",
+			phase7_mode="exit_lifecycle_replay",
+		),
+	)
+
+	assert "--phase7-mode" in command
+	assert command[command.index("--phase7-mode") + 1] == "exit_lifecycle_replay"
 
 
 def test_build_backtesting_diagnose_screener_command_includes_grid_parameters():
