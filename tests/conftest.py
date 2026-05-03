@@ -1,18 +1,19 @@
 # conftest.py
 #
-# Le sys.path hack a été supprimé (fix P1 — Engineering Quality).
-# Le projet est maintenant installable via : pip install -e ".[dev]"
-# ce qui enregistre tous les packages dans l'environnement et rend
-# toute manipulation manuelle de sys.path inutile.
-#
-# Si vous voyez des ModuleNotFoundError en lançant pytest :
-#   cd C:\Users\PC MLI\PycharmProjects\alpha_trade
-#   pip install -e ".[dev]"
+# Le projet est idéalement installé via : pip install -e ".[dev]".
+# En pratique, certains lancements pytest locaux ne résolvent pas toujours
+# les modules top-level (ex: `run_execution.py`). On sécurise donc ici la
+# racine du repo dans sys.path pour rendre la collecte déterministe.
 
-import os
-import tempfile
+from pathlib import Path
+import sys
 
 import pytest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 @pytest.fixture(autouse=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 import runpy
@@ -95,11 +96,21 @@ def test_risk_management_dunder_main_exits_with_cli_return_code(monkeypatch) -> 
 
 def test_run_py_launches_streamlit_app(monkeypatch) -> None:
     calls: list[tuple[list[str], bool]] = []
+    sleep_guard_calls: list[str] = []
+
+    @contextmanager
+    def _fake_prevent_windows_sleep():
+        sleep_guard_calls.append("enter")
+        try:
+            yield True
+        finally:
+            sleep_guard_calls.append("exit")
 
     def _fake_run(command: list[str], check: bool) -> None:
         calls.append((command, check))
         return None
 
+    monkeypatch.setattr("common.windows_sleep_guard.prevent_windows_sleep", _fake_prevent_windows_sleep)
     monkeypatch.setattr(subprocess, "run", _fake_run)
 
     runpy.run_path(RUN_PY_PATH, run_name="__main__")
@@ -111,12 +122,18 @@ def test_run_py_launches_streamlit_app(monkeypatch) -> None:
         "run",
         "ihm/app.py",
     ], True)]
+    assert sleep_guard_calls == ["enter", "exit"]
 
 
 def test_run_py_exits_with_clear_message_when_streamlit_is_missing(monkeypatch, capsys) -> None:
+    @contextmanager
+    def _fake_prevent_windows_sleep():
+        yield True
+
     def _raise_missing(command: list[str], check: bool) -> None:
         raise FileNotFoundError()
 
+    monkeypatch.setattr("common.windows_sleep_guard.prevent_windows_sleep", _fake_prevent_windows_sleep)
     monkeypatch.setattr(subprocess, "run", _raise_missing)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -127,9 +144,14 @@ def test_run_py_exits_with_clear_message_when_streamlit_is_missing(monkeypatch, 
 
 
 def test_run_py_propagates_streamlit_process_return_code(monkeypatch, capsys) -> None:
+    @contextmanager
+    def _fake_prevent_windows_sleep():
+        yield True
+
     def _raise_failure(command: list[str], check: bool) -> None:
         raise subprocess.CalledProcessError(returncode=3, cmd=command)
 
+    monkeypatch.setattr("common.windows_sleep_guard.prevent_windows_sleep", _fake_prevent_windows_sleep)
     monkeypatch.setattr(subprocess, "run", _raise_failure)
 
     with pytest.raises(SystemExit) as exc_info:

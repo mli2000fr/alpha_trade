@@ -135,6 +135,27 @@ class AlpacaTradingClient:
     def get_account(self) -> dict:  # type: ignore[type-arg]
         return self._request("GET", "/v2/account")  # type: ignore[return-value]
 
+    def get_portfolio_history(
+        self,
+        *,
+        period: str = "1M",
+        timeframe: str = "1D",
+        intraday_reporting: str | None = None,
+        pnl_reset: str | None = None,
+        extended_hours: bool | None = None,
+    ) -> dict:  # type: ignore[type-arg]
+        params: dict[str, str] = {
+            "period": period,
+            "timeframe": timeframe,
+        }
+        if intraday_reporting:
+            params["intraday_reporting"] = intraday_reporting
+        if pnl_reset:
+            params["pnl_reset"] = pnl_reset
+        if extended_hours is not None:
+            params["extended_hours"] = "true" if extended_hours else "false"
+        return self._request("GET", "/v2/account/portfolio/history", params=params)  # type: ignore[return-value]
+
     def get_clock(self) -> dict:  # type: ignore[type-arg]
         return self._request("GET", "/v2/clock")  # type: ignore[return-value]
 

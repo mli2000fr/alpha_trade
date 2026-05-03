@@ -37,7 +37,7 @@ Cela évite que les pages `Execution`, `Corporate Actions`, `ML`, etc. paraissen
 
 La sidebar est ordonnée **de haut en bas selon le flux opératoire principal** :
 
-`🏠 Vue d'ensemble` → `🔄 Pipeline` → `📊 Screening` → `🤖 ML / Prédictions` → `⚖️ Risk` → `🚀 Execution` → `📑 Corporate Actions`
+`🏠 Vue d'ensemble` → `🔄 Pipeline` → `📊 Screening` → `🤖 ML / Prédictions` → `⚖️ Risk` → `🚀 Execution` → `🏦 Comptes Alpaca` → `📑 Corporate Actions`
 
 Les pages **hors workflow quotidien** sont volontairement regroupées en fin de navigation :
 
@@ -51,6 +51,7 @@ Les pages **hors workflow quotidien** sont volontairement regroupées en fin de 
 | 🤖 ML / Prédictions | Runs training, métriques, prédictions LSTM |
 | ⚖️ Risk | Décisions de risque, portefeuille cible, synthèse par secteur |
 | 🚀 Execution | Vue canonique run-scopée : targets snapshot, requests, ordres broker, fills, positions/lots, TCA, réconciliation ; contexte compte en lecture secondaire |
+| 🏦 Comptes Alpaca | Consultation live des comptes broker : état du compte, évolution du capital, positions, ordres, plus fallback sur les snapshots / runs persistés en base |
 | 📑 Corporate Actions | Événements CA, applications, dividendes cumulés |
 | 🧪 Backtesting | Formulaire complet des commandes `backtesting run`, `backfill-scores-history`, `diagnose-screener` et `recommend-screener`, lancement en arrière-plan, logs centralisés, KPIs auto-rafraîchis et graphique live des artefacts |
 | 🗃️ Administration DB | Outils d'inspection / maintenance SQL et plan de vidage contrôlé |
@@ -173,4 +174,5 @@ Chaque lancement :
 - Si la DB est indisponible, les pages affichent un diagnostic clair et un formulaire de connexion
 - Si une table SQL n'existe pas encore, la page correspondante affiche un message indiquant un schéma ou une migration manquante
 - Le cache Streamlit est configuré à 60 secondes (TTL) sur les requêtes DB
+- `python run.py` active maintenant une garde Windows anti-veille pour éviter la mise en sommeil liée à l'inactivité pendant que l'IHM tourne ; en revanche cela **ne garantit pas** l'absence de redémarrage forcé (Windows Update, redémarrage administrateur, panne secteur, crash)
 

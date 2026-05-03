@@ -350,18 +350,21 @@ def test_get_latest_execution_protection_watch_service_summary_falls_back_to_acc
 
 
 def test_get_ops_service_summaries_filters_on_service_step(monkeypatch):
+    import pandas as pd
+
     queries.get_ops_service_summaries.clear()
     captured = {}
+    expected = pd.DataFrame({"summary_run_id": ["svc-1"]})
 
     def fake_get_run_business_summaries(**kwargs):
         captured.update(kwargs)
-        return "ok"
+        return expected
 
     monkeypatch.setattr(queries, "get_run_business_summaries", fake_get_run_business_summaries)
 
     result = queries.get_ops_service_summaries(account_id="acct-1", limit=12)
 
-    assert result == "ok"
+    assert result is expected
     assert captured == {
         "limit": 12,
         "step_keys": ["execution_protection_watch_service"],
@@ -371,18 +374,21 @@ def test_get_ops_service_summaries_filters_on_service_step(monkeypatch):
 
 
 def test_get_ops_latest_critical_summaries_filters_expected_step_keys(monkeypatch):
+    import pandas as pd
+
     queries.get_ops_latest_critical_summaries.clear()
     captured = {}
+    expected = pd.DataFrame({"summary_run_id": ["crit-1"]})
 
     def fake_get_run_business_summaries(**kwargs):
         captured.update(kwargs)
-        return "ok"
+        return expected
 
     monkeypatch.setattr(queries, "get_run_business_summaries", fake_get_run_business_summaries)
 
     result = queries.get_ops_latest_critical_summaries(account_id="acct-1", limit=33)
 
-    assert result == "ok"
+    assert result is expected
     assert captured["limit"] == 33
     assert captured["account_id"] == "acct-1"
     assert captured["step_keys"] == [
@@ -478,6 +484,23 @@ def test_get_execution_fills_does_not_query_legacy_tables(monkeypatch):
     assert "execution_fills" not in calls[0][0]
 
 
+def test_get_execution_orders_can_filter_by_account_id(monkeypatch):
+    queries.get_execution_orders.clear()
+    captured = {}
+
+    def fake_safe_query(query, params=None):
+        captured["query"] = query
+        captured["params"] = params
+        return "ok"
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    queries.get_execution_orders(account_id="acct-1")
+
+    assert "WHERE req.account_id = :account_id" in captured["query"]
+    assert captured["params"] == {"account_id": "acct-1"}
+
+
 def test_get_execution_account_constraints_falls_back_to_broker_snapshot(monkeypatch):
     import pandas as pd
 
@@ -514,6 +537,25 @@ def test_get_execution_account_constraints_falls_back_to_broker_snapshot(monkeyp
     assert payload["settled_cash_available"] == 75000.0
     assert "snapshot broker preflight" in str(payload["message"]).lower()
     assert len(calls) == 2
+
+
+def test_get_broker_account_snapshots_history_scopes_account(monkeypatch):
+    queries.get_broker_account_snapshots_history.clear()
+    captured = {}
+
+    def fake_safe_query(query, params=None):
+        captured["query"] = query
+        captured["params"] = params
+        return "ok"
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    queries.get_broker_account_snapshots_history("acct-2", limit=25)
+
+    assert "FROM broker_account_snapshots" in captured["query"]
+    assert "WHERE account_id = :account_id" in captured["query"]
+    assert "LIMIT 25" in captured["query"]
+    assert captured["params"] == {"account_id": "acct-2"}
 
 
 def test_get_execution_targets_snapshot_scopes_exec_run(monkeypatch):
@@ -657,21 +699,23 @@ def test_get_execution_reconciliation_results_prefers_exec_run_scope(monkeypatch
 
 
 def test_get_execution_reconciliation_results_scopes_account_when_run_empty(monkeypatch):
+    import pandas as pd
+
     queries.get_execution_reconciliation_results.clear()
     calls = []
+    expected = pd.DataFrame({"symbol": ["AAPL"]})
 
     def fake_safe_query(query, params=None):
         calls.append((query, params))
         if params == {"eid": "exec-empty"}:
-            import pandas as pd
             return pd.DataFrame()
-        return "ok"
+        return expected
 
     monkeypatch.setattr(queries, "safe_query", fake_safe_query)
 
     result = queries.get_execution_reconciliation_results(exec_run_id="exec-empty", account_id="acct-1")
 
-    assert result == "ok"
+    assert result is expected
     assert calls[1][1] == {"account_id": "acct-1"}
     assert "WHERE account_id = :account_id" in calls[1][0]
 

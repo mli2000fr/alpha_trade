@@ -11,6 +11,7 @@ def test_navigation_sidebar_order_matches_pipeline_then_support_pages() -> None:
         "ml",
         "risk",
         "execution",
+        "alpaca_accounts",
         "corporate_actions",
         "supervision_ops",
         "backtesting",
@@ -21,6 +22,7 @@ def test_navigation_sidebar_order_matches_pipeline_then_support_pages() -> None:
 
 def test_navigation_captions_explain_pipeline_and_support_sections() -> None:
     assert "screening" in navigation.build_primary_navigation_caption().lower()
+    assert "comptes alpaca" in navigation.build_primary_navigation_caption().lower()
     assert "corporate actions" in navigation.build_primary_navigation_caption().lower()
     assert "hors workflow quotidien" in navigation.build_support_navigation_caption().lower()
     assert "supervision ops" in navigation.build_support_navigation_caption().lower()

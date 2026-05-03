@@ -25,6 +25,7 @@ PIPELINE_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
     NavigationPage("🤖 ML / Prédictions", "ml", "ihm.pages.ml", "pipeline"),
     NavigationPage("⚖️ Risk", "risk", "ihm.pages.risk", "pipeline"),
     NavigationPage("🚀 Execution", "execution", "ihm.pages.execution", "pipeline"),
+    NavigationPage("🏦 Comptes Alpaca", "alpaca_accounts", "ihm.pages.alpaca_accounts", "pipeline"),
     NavigationPage("📑 Corporate Actions", "corporate_actions", "ihm.pages.corporate_actions", "pipeline"),
 )
 
@@ -59,7 +60,7 @@ def get_navigation_page_imports() -> dict[str, str]:
 def build_primary_navigation_caption() -> str:
     return (
         "Flux quotidien du haut vers le bas : "
-        "Vue d'ensemble → Pipeline → Screening → ML / Prédictions → Risk → Execution → Corporate Actions"
+        "Vue d'ensemble → Pipeline → Screening → ML / Prédictions → Risk → Execution → Comptes Alpaca → Corporate Actions"
     )
 
 

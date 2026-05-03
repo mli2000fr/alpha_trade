@@ -66,6 +66,26 @@ class TestAlpacaTradingClient:
         c = AlpacaTradingClient(broker_mode="paper", session=session)
         assert c.is_market_open() is True
 
+    def test_get_portfolio_history_uses_expected_endpoint_and_params(self, mock_creds) -> None:
+        session = MagicMock(spec=requests.Session)
+        session.headers = {}
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"timestamp": [1], "equity": [100000.0]}
+        session.request.return_value = resp
+
+        c = AlpacaTradingClient(broker_mode="paper", session=session)
+
+        payload = c.get_portfolio_history(period="3M", timeframe="1D", extended_hours=False)
+
+        assert payload["equity"] == [100000.0]
+        session.request.assert_called_once_with(
+            "GET",
+            f"{PAPER_BASE}/v2/account/portfolio/history",
+            params={"period": "3M", "timeframe": "1D", "extended_hours": "false"},
+            timeout=10,
+        )
+
     def test_credentials_reused(self) -> None:
         with patch("service.alpaca.trading_client.get_alpaca_credentials", return_value=("k", "s")) as mock_cred:
             AlpacaTradingClient(broker_mode="paper")

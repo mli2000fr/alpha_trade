@@ -459,8 +459,9 @@ def get_execution_events(exec_run_id: str | None = None) -> pd.DataFrame:
 @st.cache_data(ttl=60, show_spinner=False)
 def get_execution_orders(
     exec_run_id: str | None = None,
+    account_id: str | None = None,
 ) -> pd.DataFrame:
-    params = {"eid": exec_run_id} if exec_run_id else None
+    params: dict[str, object] | None = {"eid": exec_run_id} if exec_run_id else None
     query = """
         SELECT req.exec_run_id,
                req.risk_run_id,
@@ -506,6 +507,14 @@ def get_execution_orders(
         WHERE req.exec_run_id = :eid
         ORDER BY CASE WHEN req.parent_request_id IS NULL THEN 0 ELSE 1 END,
                  COALESCE(req.parent_request_id, req.request_id), req.created_at DESC
+        """
+    elif account_id:
+        params = {"account_id": account_id}
+        query += """
+        WHERE req.account_id = :account_id
+        ORDER BY COALESCE(bo.last_seen_at, req.updated_at, req.created_at) DESC,
+                 req.created_at DESC
+        LIMIT 200
         """
     else:
         query += """
@@ -642,6 +651,22 @@ def get_execution_targets_snapshot(exec_run_id: str) -> pd.DataFrame:
         ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC
         """,
         {"eid": exec_run_id},
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_broker_account_snapshots_history(account_id: str, limit: int = 200) -> pd.DataFrame:
+    return safe_query(
+        f"""
+        SELECT exec_run_id, account_id, broker_mode, snapshot_kind,
+               equity, cash, settled_cash, buying_power, daytrade_count,
+               raw_payload_json, created_at
+        FROM broker_account_snapshots
+        WHERE account_id = :account_id
+        ORDER BY created_at DESC
+        LIMIT {limit}
+        """,
+        {"account_id": account_id},
     )
 
 
