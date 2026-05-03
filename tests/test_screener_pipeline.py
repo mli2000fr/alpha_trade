@@ -160,3 +160,17 @@ def test_screener_config_strict_swing_cash_accepts_overrides() -> None:
     # Seuils communs alignés sur le profil partagé.
     assert config.min_close_price == 10.0
     assert config.liquidity_threshold_usd == 30_000_000.0
+
+
+def test_screener_config_effective_first_pass_window_days_expands_short_calendar_window() -> None:
+    config = ScreenerConfig(first_pass_window_days=252, min_history_days=252)
+
+    assert config.first_pass_window_days == 252
+    assert config.effective_first_pass_window_days == 400
+
+
+def test_screener_config_effective_first_pass_window_days_preserves_larger_explicit_window() -> None:
+    config = ScreenerConfig(first_pass_window_days=504, min_history_days=252, lookback_relative_days=183)
+
+    assert config.effective_first_pass_window_days == 504
+

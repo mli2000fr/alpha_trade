@@ -42,7 +42,7 @@ def test_run_screener_upserts_snapshot(monkeypatch) -> None:
     monkeypatch.setattr("screener.stock_screener.iter_symbol_chunks", lambda engine, chunk_size: iter(()))
     monkeypatch.setattr(
         "screener.stock_screener.upsert_scores_snapshot",
-        lambda engine, df, chunksize=1000: calls.append(("upsert", len(df))),
+        lambda engine, df, chunksize=1000, snapshot_date=None: calls.append(("upsert", len(df))),
     )
 
     scores = run_screener(ScreenerConfig(), max_workers=1)
@@ -100,7 +100,7 @@ def test_run_screener_with_report_aggregates_two_pass_metrics(monkeypatch) -> No
     )
     monkeypatch.setattr(
         "screener.stock_screener.upsert_scores_snapshot",
-        lambda engine, df, chunksize=1000: upsert_calls.append((engine, len(df))),
+        lambda engine, df, chunksize=1000, snapshot_date=None: upsert_calls.append((engine, len(df))),
     )
 
     scores, report = run_screener_with_report(ScreenerConfig(), max_workers=1)

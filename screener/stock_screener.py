@@ -259,13 +259,14 @@ def run_screener_with_report(
     pending = set()
 
     LOGGER.info(
-        "Demarrage screener | benchmark=%s chunk_size=%s workers=%s as_of=%s two_pass=%s first_pass_window_days=%s",
+        "Demarrage screener | benchmark=%s chunk_size=%s workers=%s as_of=%s two_pass=%s first_pass_window_days=%s effective_first_pass_window_days=%s",
         config.benchmark_symbol,
         config.chunk_size,
         workers,
         as_of_iso or "live",
         config.enable_two_pass_loading,
         config.first_pass_window_days,
+        config.effective_first_pass_window_days,
     )
 
     symbol_chunks = list(iter_symbol_chunks(engine, config.chunk_size))

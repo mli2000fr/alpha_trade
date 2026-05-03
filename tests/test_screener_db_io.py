@@ -270,6 +270,26 @@ def test_load_recent_prices_for_chunk_uses_first_pass_window(monkeypatch) -> Non
     assert captured["params"]["cutoff_upper"] == as_of_date
 
 
+def test_load_recent_prices_for_chunk_expands_window_to_cover_min_history_days(monkeypatch) -> None:
+    from screener.models import ScreenerConfig
+
+    captured: dict[str, object] = {}
+    as_of_date = date(2025, 3, 31)
+
+    monkeypatch.setattr(
+        pd,
+        "read_sql_query",
+        lambda stmt, engine, params=None: captured.update({"stmt": stmt, "params": params}) or pd.DataFrame(),
+    )
+
+    config = ScreenerConfig(first_pass_window_days=252, min_history_days=252)
+    db_io.load_recent_prices_for_chunk(object(), ["AAA"], config, as_of_date=as_of_date)
+
+    assert config.effective_first_pass_window_days == 400
+    assert captured["params"]["cutoff_lower"] == as_of_date - timedelta(days=400)
+    assert captured["params"]["cutoff_upper"] == as_of_date
+
+
 def test_load_historical_range_stats_for_symbols_uses_aggregates(monkeypatch) -> None:
     captured: dict[str, object] = {}
     as_of_date = date(2026, 4, 24)

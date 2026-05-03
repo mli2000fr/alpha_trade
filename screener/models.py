@@ -1,5 +1,6 @@
 from dataclasses import asdict, dataclass
-from typing import Any
+from math import ceil
+from typing import Any, ClassVar
 
 # Phase 3.2.c — la source de vérité des seuils communs (close, ADV20,
 # RSI relatif) est ``core.filter_profiles.StrictFilterProfile``.
@@ -28,6 +29,10 @@ class ScreenerConfig:
     enable_two_pass_loading: bool = True
     first_pass_window_days: int = 400
 
+    APPROX_TRADING_DAYS_PER_YEAR: ClassVar[int] = 252
+    APPROX_CALENDAR_DAYS_PER_YEAR: ClassVar[int] = 365
+    FIRST_PASS_WINDOW_SAFETY_DAYS: ClassVar[int] = 35
+
     def __post_init__(self) -> None:
         if self.chunk_size < 1:
             raise ValueError("chunk_size doit être supérieur ou égal à 1.")
@@ -49,8 +54,10 @@ class ScreenerConfig:
             raise ValueError("min_relative_strength_index doit être strictement positif.")
         if not 0.0 <= self.min_historical_range_score <= 100.0:
             raise ValueError("min_historical_range_score doit être compris entre 0 et 100.")
-        if self.first_pass_window_days < max(self.lookback_relative_days, self.min_history_days):
-            raise ValueError("first_pass_window_days doit couvrir au minimum lookback_relative_days et min_history_days.")
+        if self.first_pass_window_days < 1:
+            raise ValueError("first_pass_window_days doit être supérieur ou égal à 1.")
+        if self.effective_first_pass_window_days < self.lookback_relative_days:
+            raise ValueError("effective_first_pass_window_days doit couvrir au minimum lookback_relative_days.")
 
         weights = (
             self.weight_liquidity,
@@ -64,6 +71,29 @@ class ScreenerConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def min_calendar_window_for_history_days(cls, history_days: int) -> int:
+        """Convertit un minimum de séances en fenêtre calendaire réaliste.
+
+        Le screener charge ses prix sur une fenêtre exprimée en jours calendrier,
+        mais ``min_history_days`` représente un nombre de séances. On applique une
+        conversion 252 -> 365 jours puis une petite marge de sécurité pour couvrir
+        jours fériés, débuts/fin d'année et dates PIT serrées.
+        """
+        normalized_history_days = max(1, int(history_days))
+        calendar_days = ceil(
+            normalized_history_days * cls.APPROX_CALENDAR_DAYS_PER_YEAR / cls.APPROX_TRADING_DAYS_PER_YEAR
+        )
+        return calendar_days + cls.FIRST_PASS_WINDOW_SAFETY_DAYS
+
+    @property
+    def effective_first_pass_window_days(self) -> int:
+        return max(
+            int(self.first_pass_window_days),
+            int(self.lookback_relative_days),
+            self.min_calendar_window_for_history_days(int(self.min_history_days)),
+        )
 
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "ScreenerConfig":

@@ -132,7 +132,8 @@ def load_recent_prices_for_chunk(
 		return pd.DataFrame()
 
 	ref_date = _resolve_reference_date(as_of_date)
-	cutoff_lower = ref_date - timedelta(days=config.first_pass_window_days)
+	effective_window_days = int(getattr(config, "effective_first_pass_window_days", config.first_pass_window_days))
+	cutoff_lower = ref_date - timedelta(days=effective_window_days)
 	return _load_price_frame(
 		engine,
 		symbols,
