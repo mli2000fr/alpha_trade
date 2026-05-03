@@ -37,8 +37,11 @@ from ihm.services.screener_preferences import (
 ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY = "settings_alpha_scanner_dependency_thresholds_flash"
 ALPHA_SCANNER_SELECTED_STYLE_KEY = "settings_alpha_scanner_selected_style"
 ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY = "settings_alpha_scanner_selected_market_regime"
+ALPHA_SCANNER_PENDING_THRESHOLDS_KEY = "settings_alpha_scanner_pending_thresholds"
+ALPHA_SCANNER_PENDING_MARKET_REGIME_KEY = "settings_alpha_scanner_pending_market_regime"
 BARS_PROVIDER_FLASH_KEY = "settings_bars_provider_flash"
 BARS_PROVIDER_WIDGET_KEY = "settings_bars_provider_radio"
+BARS_PROVIDER_PENDING_SYNC_KEY = "settings_bars_provider_pending_sync"
 
 BARS_PROVIDER_LABELS: dict[str, str] = {
     "eodhd": "🟢 EODHD (recommandé — bulk EOD, volume consolidé)",
@@ -56,6 +59,22 @@ BARS_PROVIDER_HELP: dict[str, str] = {
 }
 
 
+def _prime_bars_provider_widget_state(current: str) -> str:
+    options = list(BARS_PROVIDER_LABELS.keys())
+    initial = current if current in options else DEFAULT_BARS_PROVIDER
+    pending = st.session_state.pop(BARS_PROVIDER_PENDING_SYNC_KEY, None)
+    if isinstance(pending, str) and pending in options:
+        st.session_state[BARS_PROVIDER_WIDGET_KEY] = pending
+        return pending
+
+    selected = st.session_state.get(BARS_PROVIDER_WIDGET_KEY)
+    if selected not in options:
+        st.session_state[BARS_PROVIDER_WIDGET_KEY] = initial
+        return initial
+
+    return str(selected)
+
+
 def _render_bars_provider_settings() -> None:
     flash = st.session_state.pop(BARS_PROVIDER_FLASH_KEY, None)
     if isinstance(flash, tuple) and len(flash) == 2:
@@ -71,9 +90,7 @@ def _render_bars_provider_settings() -> None:
     )
 
     options = list(BARS_PROVIDER_LABELS.keys())  # eodhd d'abord (défaut recommandé)
-    initial = current if current in options else DEFAULT_BARS_PROVIDER
-    if BARS_PROVIDER_WIDGET_KEY not in st.session_state:
-        st.session_state[BARS_PROVIDER_WIDGET_KEY] = initial
+    _prime_bars_provider_widget_state(current)
 
     with st.container(border=True):
         selected = st.radio(
@@ -107,6 +124,7 @@ def _render_bars_provider_settings() -> None:
                         f"Échec écriture `config.yaml` : {exc}",
                     )
                 else:
+                    st.session_state[BARS_PROVIDER_PENDING_SYNC_KEY] = applied
                     st.session_state[BARS_PROVIDER_FLASH_KEY] = (
                         "success",
                         f"Provider mis à jour : `{applied}`. Relance des pipelines IHM nécessaire pour prise en compte.",
@@ -124,7 +142,7 @@ def _render_bars_provider_settings() -> None:
                 except (OSError, ValueError) as exc:
                     st.session_state[BARS_PROVIDER_FLASH_KEY] = ("error", f"Échec reset : {exc}")
                 else:
-                    st.session_state[BARS_PROVIDER_WIDGET_KEY] = DEFAULT_BARS_PROVIDER
+                    st.session_state[BARS_PROVIDER_PENDING_SYNC_KEY] = DEFAULT_BARS_PROVIDER
                     st.session_state[BARS_PROVIDER_FLASH_KEY] = (
                         "success",
                         f"Provider réinitialisé sur `{DEFAULT_BARS_PROVIDER}` (défaut recommandé).",
@@ -136,13 +154,26 @@ def _threshold_widget_key(step_key: str, metric_key: str) -> str:
     return f"settings_alpha_scanner_threshold_{step_key}_{metric_key}"
 
 
+def _apply_alpha_scanner_dependency_threshold_state_to_session(thresholds: dict[str, dict[str, float]]) -> None:
+    for step_key, metrics in thresholds.items():
+        for metric_key, metric_value in metrics.items():
+            st.session_state[_threshold_widget_key(step_key, metric_key)] = float(metric_value)
+
+
 def _prime_alpha_scanner_dependency_threshold_state() -> dict[str, dict[str, float]]:
     thresholds = get_alpha_scanner_dependency_thresholds()
     metadata = load_persisted_alpha_scanner_dependency_preset_metadata()
+    pending_market_regime = st.session_state.pop(ALPHA_SCANNER_PENDING_MARKET_REGIME_KEY, None)
+    if isinstance(pending_market_regime, str) and pending_market_regime in MARKET_REGIME_LABELS:
+        st.session_state[ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY] = pending_market_regime
     if ALPHA_SCANNER_SELECTED_STYLE_KEY not in st.session_state:
         st.session_state[ALPHA_SCANNER_SELECTED_STYLE_KEY] = metadata.get("selected_style") or DEFAULT_PRESET_STYLE
     if ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY not in st.session_state:
         st.session_state[ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY] = metadata.get("selected_market_regime") or DEFAULT_MARKET_REGIME
+    pending_thresholds = st.session_state.pop(ALPHA_SCANNER_PENDING_THRESHOLDS_KEY, None)
+    if isinstance(pending_thresholds, dict) and pending_thresholds:
+        _apply_alpha_scanner_dependency_threshold_state_to_session(pending_thresholds)
+        thresholds = pending_thresholds
     for step_key, metrics in thresholds.items():
         for metric_key, metric_value in metrics.items():
             widget_key = _threshold_widget_key(step_key, metric_key)
@@ -162,9 +193,7 @@ def _collect_alpha_scanner_dependency_threshold_inputs() -> dict[str, dict[str, 
 
 
 def _set_alpha_scanner_dependency_threshold_state(thresholds: dict[str, dict[str, float]]) -> None:
-    for step_key, metrics in thresholds.items():
-        for metric_key, metric_value in metrics.items():
-            st.session_state[_threshold_widget_key(step_key, metric_key)] = float(metric_value)
+    _apply_alpha_scanner_dependency_threshold_state_to_session(thresholds)
 
 
 def _apply_alpha_scanner_threshold_preset(style: str, market_regime: str) -> None:
@@ -172,7 +201,9 @@ def _apply_alpha_scanner_threshold_preset(style: str, market_regime: str) -> Non
         style=style,  # type: ignore[arg-type]
         market_regime=market_regime,  # type: ignore[arg-type]
     )
-    _set_alpha_scanner_dependency_threshold_state(normalized)
+    st.session_state[ALPHA_SCANNER_SELECTED_STYLE_KEY] = style
+    st.session_state[ALPHA_SCANNER_PENDING_MARKET_REGIME_KEY] = market_regime
+    st.session_state[ALPHA_SCANNER_PENDING_THRESHOLDS_KEY] = normalized
     save_persisted_alpha_scanner_dependency_thresholds(
         normalized,
         defaults=ALPHA_SCANNER_DEPENDENCY_THRESHOLDS,
@@ -233,7 +264,6 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
             with column:
                 st.caption(PRESET_STYLE_LABELS[style_key])
                 if st.button(label, key=f"apply_alpha_scanner_preset_{style_key}", use_container_width=True):
-                    st.session_state[ALPHA_SCANNER_SELECTED_STYLE_KEY] = style_key
                     _apply_alpha_scanner_threshold_preset(style_key, selected_market_regime)
 
     with st.container(border=True):
@@ -330,7 +360,7 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
                     selected_market_regime=str(st.session_state.get(ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY, DEFAULT_MARKET_REGIME)),
                     selection_mode="custom",
                 )
-                _set_alpha_scanner_dependency_threshold_state(normalized)
+                st.session_state[ALPHA_SCANNER_PENDING_THRESHOLDS_KEY] = normalized
                 get_alpha_scanner_dependency_diagnostic.clear()
                 reset_db_caches()
                 st.session_state[ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY] = "Seuils Alpha Scanner enregistrés."
@@ -338,9 +368,9 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
         with action_col2:
             if st.button("↩️ Reset défauts", key="settings_reset_alpha_scanner_thresholds", use_container_width=True):
                 reset_persisted_alpha_scanner_dependency_thresholds()
-                _set_alpha_scanner_dependency_threshold_state(ALPHA_SCANNER_DEPENDENCY_THRESHOLDS)
+                st.session_state[ALPHA_SCANNER_PENDING_THRESHOLDS_KEY] = ALPHA_SCANNER_DEPENDENCY_THRESHOLDS
                 st.session_state[ALPHA_SCANNER_SELECTED_STYLE_KEY] = DEFAULT_PRESET_STYLE
-                st.session_state[ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY] = DEFAULT_MARKET_REGIME
+                st.session_state[ALPHA_SCANNER_PENDING_MARKET_REGIME_KEY] = DEFAULT_MARKET_REGIME
                 get_alpha_scanner_dependency_diagnostic.clear()
                 reset_db_caches()
                 st.session_state[ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY] = "Seuils Alpha Scanner réinitialisés aux valeurs recommandées."

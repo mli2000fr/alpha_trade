@@ -486,6 +486,63 @@ def test_prepare_workflow_child_run_state_preserves_manual_selection_when_follow
     assert workflow_page.st.session_state[child_select_key] == "run-step-1"
 
 
+def test_prepare_workflow_child_run_state_disables_follow_when_manual_selection_differs_current(monkeypatch) -> None:
+    session_state = {
+        "workflow_child_run_autofollow_wf-3": True,
+        "workflow_child_run_select_wf-3": "run-step-1",
+    }
+    monkeypatch.setattr(workflow_page.st, "session_state", session_state, raising=False)
+
+    child_select_key, follow_enabled, current_child_run_id, selected_child_run_id, _ = workflow_page._prepare_workflow_child_run_state(
+        {
+            "run_id": "wf-3",
+            "status": "running",
+            "workflow_current_child_run_id": "run-step-2",
+        },
+        ["run-step-2", "run-step-1"],
+        {
+            "run-step-2": "2. Sanitize | run-step-2",
+            "run-step-1": "1. Import Bars | run-step-1",
+        },
+    )
+
+    assert child_select_key == "workflow_child_run_select_wf-3"
+    assert follow_enabled is False
+    assert current_child_run_id == "run-step-2"
+    assert selected_child_run_id == "run-step-1"
+    assert workflow_page.st.session_state["workflow_child_run_autofollow_wf-3"] is False
+
+
+def test_prepare_workflow_child_run_state_consumes_pending_reselect_to_current(monkeypatch) -> None:
+    session_state = {
+        "workflow_child_run_autofollow_wf-4": False,
+        "workflow_child_run_select_wf-4": "run-step-1",
+        "workflow_child_run_pending_select_wf-4": "run-step-2",
+        "workflow_child_run_pending_autofollow_wf-4": True,
+    }
+    monkeypatch.setattr(workflow_page.st, "session_state", session_state, raising=False)
+
+    child_select_key, follow_enabled, current_child_run_id, selected_child_run_id, _ = workflow_page._prepare_workflow_child_run_state(
+        {
+            "run_id": "wf-4",
+            "status": "running",
+            "workflow_current_child_run_id": "run-step-2",
+        },
+        ["run-step-2", "run-step-1"],
+        {
+            "run-step-2": "2. Sanitize | run-step-2",
+            "run-step-1": "1. Import Bars | run-step-1",
+        },
+    )
+
+    assert child_select_key == "workflow_child_run_select_wf-4"
+    assert follow_enabled is True
+    assert current_child_run_id == "run-step-2"
+    assert selected_child_run_id == "run-step-2"
+    assert workflow_page.WORKFLOW_CHILD_PENDING_SELECT_KEY_PREFIX + "wf-4" not in workflow_page.st.session_state
+    assert workflow_page.WORKFLOW_CHILD_PENDING_AUTOFOLLOW_KEY_PREFIX + "wf-4" not in workflow_page.st.session_state
+
+
 def test_prime_runtime_center_state_prefers_active_workflow_parent_over_latest_child_run(monkeypatch) -> None:
     monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
 

@@ -62,6 +62,8 @@ WORKFLOW_INCLUDE_CA_SYNC_KEY = "pipeline_workflow_include_ca_sync"
 WORKFLOW_INCLUDE_CA_APPLY_KEY = "pipeline_workflow_include_ca_apply"
 WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_autofollow_"
 WORKFLOW_CHILD_LAST_AUTO_KEY_PREFIX = "workflow_child_run_last_auto_"
+WORKFLOW_CHILD_PENDING_SELECT_KEY_PREFIX = "workflow_child_run_pending_select_"
+WORKFLOW_CHILD_PENDING_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_pending_autofollow_"
 WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY = "pipeline_workflow_runtime_auto_selected_run_id"
 WORKFLOW_RANGE_OPTIONS: tuple[str, ...] = ("1", "3")
 _GENERIC_PROGRESS_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -297,8 +299,18 @@ def _prepare_workflow_child_run_state(
     child_select_key = f"workflow_child_run_select_{workflow_run_id}"
     follow_key = f"{WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX}{workflow_run_id}"
     last_auto_key = f"{WORKFLOW_CHILD_LAST_AUTO_KEY_PREFIX}{workflow_run_id}"
+    pending_select_key = f"{WORKFLOW_CHILD_PENDING_SELECT_KEY_PREFIX}{workflow_run_id}"
+    pending_follow_key = f"{WORKFLOW_CHILD_PENDING_AUTOFOLLOW_KEY_PREFIX}{workflow_run_id}"
 
     default_child_run_id = current_child_run_id if current_child_run_id in child_labels else child_run_ids[0]
+
+    pending_child_run_id = st.session_state.pop(pending_select_key, None)
+    if isinstance(pending_child_run_id, str) and pending_child_run_id in child_labels:
+        st.session_state[child_select_key] = pending_child_run_id
+
+    pending_follow_value = st.session_state.pop(pending_follow_key, None)
+    if isinstance(pending_follow_value, bool):
+        st.session_state[follow_key] = pending_follow_value
 
     follow_value = st.session_state.get(follow_key)
     if not isinstance(follow_value, bool):
@@ -307,9 +319,13 @@ def _prepare_workflow_child_run_state(
     if st.session_state.get(child_select_key) not in child_labels:
         st.session_state[child_select_key] = default_child_run_id
 
+    current_selection = st.session_state.get(child_select_key)
     if workflow_active and bool(st.session_state.get(follow_key)) and current_child_run_id in child_labels:
-        st.session_state[child_select_key] = current_child_run_id
-        st.session_state[last_auto_key] = current_child_run_id
+        if isinstance(current_selection, str) and current_selection in child_labels and current_selection != current_child_run_id:
+            st.session_state[follow_key] = False
+        else:
+            st.session_state[child_select_key] = current_child_run_id
+            st.session_state[last_auto_key] = current_child_run_id
 
     selected_child_run_id = st.session_state.get(child_select_key)
     if not isinstance(selected_child_run_id, str) or selected_child_run_id not in child_labels:
@@ -709,10 +725,8 @@ def _render_runtime_center() -> None:
                         key=f"workflow_child_run_back_to_current_{selected_label}",
                         use_container_width=True,
                     ):
-                        st.session_state[child_select_key] = current_child_run_id
-                        st.session_state[f"{WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX}{selected_label}"] = True
-                        if last_auto_key is not None:
-                            st.session_state[last_auto_key] = current_child_run_id
+                        st.session_state[f"{WORKFLOW_CHILD_PENDING_SELECT_KEY_PREFIX}{selected_label}"] = current_child_run_id
+                        st.session_state[f"{WORKFLOW_CHILD_PENDING_AUTOFOLLOW_KEY_PREFIX}{selected_label}"] = True
                         st.rerun()
 
                 if workflow_active and follow_current_child and current_child_run_id in child_labels:
@@ -728,9 +742,7 @@ def _render_runtime_center() -> None:
                         key=child_select_key,
                     ),
                 )
-                if workflow_active and follow_current_child and current_child_run_id and selected_child_run_id != current_child_run_id:
-                    st.session_state[f"{WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX}{selected_label}"] = False
-                    follow_current_child = False
+                if workflow_active and not follow_current_child and current_child_run_id and selected_child_run_id != current_child_run_id:
                     st.caption("Suivi automatique suspendu après sélection manuelle d’un sous-run différent.")
                 selected_child_run = get_pipeline_run_record(selected_child_run_id)
                 if selected_child_run is not None:

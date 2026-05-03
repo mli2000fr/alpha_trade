@@ -120,11 +120,22 @@ def test_apply_selected_ml_train_preset_normalizes_legacy_debug_key(monkeypatch)
     session_state: dict[str, object] = {
         execution_center.ML_TRAIN_PRESET_KEY: execution_center.ML_TRAIN_PRESET_DEBUG,
     }
+
+    normalized = execution_center._ensure_normalized_ml_train_preset_session_state(session_state)
+
+    assert normalized == execution_center.ML_TRAIN_PRESET_DEBUG_FAST
+    assert session_state[execution_center.ML_TRAIN_PRESET_KEY] == execution_center.ML_TRAIN_PRESET_DEBUG_FAST
+
+
+def test_apply_selected_ml_train_preset_uses_legacy_key_without_rewriting_widget_state(monkeypatch) -> None:
+    session_state: dict[str, object] = {
+        execution_center.ML_TRAIN_PRESET_KEY: execution_center.ML_TRAIN_PRESET_DEBUG,
+    }
     monkeypatch.setattr(execution_center, "st", SimpleNamespace(session_state=session_state))
 
     execution_center._apply_selected_ml_train_preset()
 
-    assert session_state[execution_center.ML_TRAIN_PRESET_KEY] == execution_center.ML_TRAIN_PRESET_DEBUG_FAST
+    assert session_state[execution_center.ML_TRAIN_PRESET_KEY] == execution_center.ML_TRAIN_PRESET_DEBUG
     assert session_state["pipeline_ml_accelerator"] == RECOMMENDED_ML_DEBUG_RAPIDE_ACCELERATOR
     assert session_state["pipeline_ml_log_level"] == RECOMMENDED_ML_DEBUG_TRAIN_LOG_LEVEL
 
