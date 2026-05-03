@@ -6,6 +6,7 @@ import sys
 import pandas as pd
 
 from screener import stock_screener
+from screener.models import ScreenerChunkMetrics
 from screener.models import ScreenerRunReport
 
 
@@ -19,7 +20,7 @@ def test_stock_screener_main_emits_structured_summary(monkeypatch, capsys) -> No
     monkeypatch.setattr(
         stock_screener,
         "run_screener_with_report",
-        lambda config, max_workers=None: (
+        lambda config, max_workers=None, snapshot_date=None, progress_callback=None: (
             pd.DataFrame(),
             ScreenerRunReport(
                 run_id="stock-screener-20260425010101-abc123",
@@ -81,4 +82,64 @@ def test_stock_screener_main_emits_structured_summary(monkeypatch, capsys) -> No
     assert payload["benchmark_symbol"] == "QQQ"
     assert payload["symbols_final"] == 120
     assert payload["rows_avoided_estimate"] == 250000
+
+
+def test_run_screener_with_report_emits_live_progress_callbacks(monkeypatch) -> None:
+    class _FakeFuture:
+        def __init__(self, result):
+            self._result = result
+
+        def result(self):
+            return self._result
+
+    class _FakeExecutor:
+        def __init__(self, max_workers=None):
+            self.max_workers = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, func, *args, **kwargs):
+            return _FakeFuture(func(*args, **kwargs))
+
+    monkeypatch.setattr(stock_screener, "get_engine", lambda: object())
+    monkeypatch.setattr(stock_screener, "load_spy_return_6m", lambda engine, config, as_of_date=None: 0.12)
+    monkeypatch.setattr(stock_screener, "iter_symbol_chunks", lambda engine, chunk_size: [["AAA", "BBB"]])
+    monkeypatch.setattr(stock_screener, "ProcessPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(stock_screener, "wait", lambda pending, return_when=None: (set(pending), set()))
+    monkeypatch.setattr(stock_screener, "upsert_scores_snapshot", lambda engine, final_scores, chunksize=1000, snapshot_date=None: None)
+    monkeypatch.setattr(
+        stock_screener,
+        "_process_chunk_two_passes",
+        lambda symbols, config_dict, spy_return_6m, as_of_date_iso: (
+            pd.DataFrame([{"symbol": "AAA", "total_score": 10.0}]),
+            ScreenerChunkMetrics(
+                input_symbols=len(symbols),
+                recent_rows_loaded=20,
+                range_rows_loaded=10,
+                symbols_pass_history=2,
+                symbols_pass_liquidity=2,
+                symbols_pass_relative_strength=1,
+                symbols_final=1,
+            ),
+        ),
+    )
+
+    progress_payloads: list[dict[str, object]] = []
+    _, report = stock_screener.run_screener_with_report(
+        config=stock_screener.ScreenerConfig(chunk_size=2),
+        max_workers=1,
+        progress_callback=progress_payloads.append,
+    )
+
+    assert report.chunks_total == 1
+    assert report.chunks_completed == 1
+    assert len(progress_payloads) >= 2
+    assert progress_payloads[0]["progress_phase"] == "scan_chunks"
+    assert progress_payloads[-1]["progress_current"] == 1
+    assert progress_payloads[-1]["progress_total"] == 1
+
 

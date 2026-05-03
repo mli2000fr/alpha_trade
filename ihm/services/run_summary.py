@@ -175,6 +175,14 @@ _SUMMARY_METADATA_KEYS = {
     "workflow_child_run_ids_with_summary",
     "workflow_timeframes",
     "workflow_market_dates",
+    "progress_live",
+    "progress_current",
+    "progress_total",
+    "progress_ratio",
+    "progress_label",
+    "progress_phase",
+    "progress_unit",
+    "progress_item",
 }
 _CAPTION_EXCLUDED_KEYS = _SUMMARY_METADATA_KEYS | {"history_status_counts", "status_breakdown"}
 
@@ -315,7 +323,9 @@ def _is_number(value: Any) -> bool:
 
 
 def _to_float(value: object) -> float | None:
-    return float(value) if _is_number(value) else None
+    if not _is_number(value):
+        return None
+    return float(cast(int | float, value))
 
 
 def _merge_nested_counts(target: dict[str, object], key: str, value: Mapping[str, object]) -> None:
@@ -323,7 +333,7 @@ def _merge_nested_counts(target: dict[str, object], key: str, value: Mapping[str
     merged = dict(cast(Mapping[str, object], current)) if isinstance(current, Mapping) else {}
     for nested_key, nested_value in value.items():
         if _is_number(nested_value):
-            merged[nested_key] = int(_to_float(merged.get(nested_key, 0)) or 0) + int(nested_value)
+            merged[nested_key] = int(_to_float(merged.get(nested_key, 0)) or 0) + int(cast(int | float, nested_value))
     if merged:
         target[key] = merged
 
@@ -436,7 +446,7 @@ def aggregate_workflow_run_summary(child_runs: Iterable[Mapping[str, object]]) -
                 rule = _metric_rule(key, value)
                 if rule == "weighted_avg":
                     weight_key = _infer_weight_key(summary, key)
-                    numeric_value = float(value)
+                    numeric_value = float(cast(int | float, value))
                     weight_value = _to_float(summary.get(weight_key)) if weight_key else None
                     if weight_value is not None and weight_value > 0:
                         weighted_totals[key] = weighted_totals.get(key, 0.0) + (numeric_value * weight_value)

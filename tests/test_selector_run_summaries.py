@@ -110,3 +110,53 @@ def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> Non
     assert "min_quote_size" in payload
     assert "market_cap_max_age_days" in payload
 
+
+def test_alpha_scanner_run_emits_live_progress(monkeypatch) -> None:
+    class _FakeFuture:
+        def __init__(self, result):
+            self._result = result
+
+        def result(self):
+            return self._result
+
+    class _FakeExecutor:
+        def __init__(self, max_workers=None):
+            self.max_workers = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, func, *args, **kwargs):
+            return _FakeFuture(func(*args, **kwargs))
+
+    scanner = alpha_scanner.AlphaScanner(
+        engine=None,
+        config=alpha_scanner.AlphaScannerConfig.strict_swing_cash(chunk_size=2, selection_size=2, max_workers=1),
+    )
+    progress_payloads: list[dict[str, object]] = []
+    scanner.progress_callback = progress_payloads.append
+
+    monkeypatch.setattr(scanner, "_reset_selector_outputs", lambda: None)
+    monkeypatch.setattr(scanner, "_iter_eligible_symbol_chunks", lambda: iter([["AAA", "BBB"], ["CCC"]]))
+    monkeypatch.setattr(
+        scanner,
+        "_process_chunk",
+        lambda symbols: pd.DataFrame([{"symbol": symbol, "sector": "Tech", "final_score": 1.0}] for symbol in symbols),
+    )
+    monkeypatch.setattr(scanner, "rank_and_select", lambda merged_df: merged_df.head(2).copy())
+    monkeypatch.setattr(scanner, "update_database", lambda selected_df, scored_df=None: len(selected_df))
+    monkeypatch.setattr(alpha_scanner, "ThreadPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(alpha_scanner, "wait", lambda pending, return_when=None: (set(pending), set()))
+
+    result = scanner.run()
+
+    assert len(result) == 2
+    assert progress_payloads
+    assert progress_payloads[0]["progress_phase"] == "scan_chunks"
+    assert any(payload.get("progress_phase") == "rank_select" for payload in progress_payloads)
+    assert any(payload.get("progress_current") == 2 and payload.get("progress_total") == 2 for payload in progress_payloads)
+
+

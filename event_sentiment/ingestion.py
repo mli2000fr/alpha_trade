@@ -2,7 +2,7 @@
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 import dateutil.parser
 import requests
 from event_sentiment.trading_calendar import TradingCalendarAligner
@@ -192,10 +192,12 @@ class NewsIngestionService:
         symbol_start_overrides: dict[str, datetime] | None = None,
         symbol_resume_overrides: dict[str, bool] | None = None,
         resume_checkpoints: bool = True,
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> dict[str, int]:
         summary = {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
         normalized_symbols = self._normalize_symbol_list(symbols)
-        for symbol in normalized_symbols:
+        total_symbols = len(normalized_symbols)
+        for index, symbol in enumerate(normalized_symbols, start=1):
             effective_start = (
                 symbol_start_overrides.get(symbol)
                 if symbol_start_overrides and symbol in symbol_start_overrides
@@ -213,4 +215,13 @@ class NewsIngestionService:
             )
             for key in summary:
                 summary[key] += symbol_summary[key]
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "ingestion": dict(summary),
+                        "current_symbol": symbol,
+                        "current_symbol_index": index,
+                        "current_symbol_total": total_symbols,
+                    }
+                )
         return summary

@@ -87,7 +87,11 @@ def main() -> None:
     if args.finbert_revision:
         config_kwargs["finbert_model_revision"] = args.finbert_revision
     config = EventSentimentConfig(**config_kwargs)
-    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    pipeline = EventSentimentPipeline(
+        repository=repository,
+        config=config,
+        progress_callback=lambda payload: _emit_run_summary(payload),
+    )
     started_at = _utc_now_naive()
     stats = pipeline.run(start_utc=start_utc, end_utc=end_utc, symbols=symbols)
     finished_at = _utc_now_naive()

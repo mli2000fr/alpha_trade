@@ -5,13 +5,13 @@ import os
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import date, datetime, timezone
-from typing import List, Optional
+from typing import Callable, List, Optional
 from uuid import uuid4
 
 import pandas as pd
 
 from common.utils import configure_root_logging
-from core.run_summary import attach_schema_version
+from core.run_summary import attach_live_progress, attach_schema_version
 from screener.db_io import (
     get_engine,
     iter_symbol_chunks,
@@ -43,6 +43,24 @@ def _emit_run_summary(summary: dict[str, object]) -> None:
     print(
         f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
         flush=True,
+    )
+
+
+def _emit_live_progress(
+    progress_callback: Callable[[dict[str, object]], None] | None,
+    summary: dict[str, object],
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        attach_live_progress(
+            summary,
+            current=int(summary.get("chunks_completed") or 0),
+            total=int(summary.get("chunks_total") or 0),
+            label="🔎 Progression stock screener",
+            phase="scan_chunks",
+            unit="chunks",
+        )
     )
 
 
@@ -192,6 +210,7 @@ def run_screener_with_report(
     max_workers: Optional[int] = None,
     as_of_date: Optional[date] = None,
     snapshot_date: Optional[date] = None,
+    progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> tuple[pd.DataFrame, ScreenerRunReport]:
     """Exécute le screener et retourne les scores ainsi qu'un rapport détaillé.
 
@@ -249,19 +268,24 @@ def run_screener_with_report(
         config.first_pass_window_days,
     )
 
+    symbol_chunks = list(iter_symbol_chunks(engine, config.chunk_size))
+    summary["chunks_total"] = len(symbol_chunks)
+    summary["targeted_symbols"] = sum(len(symbol_chunk) for symbol_chunk in symbol_chunks)
+    _emit_live_progress(progress_callback, summary)
+
     with ProcessPoolExecutor(max_workers=workers) as executor:
-        for symbol_chunk in iter_symbol_chunks(engine, config.chunk_size):
-            summary["chunks_total"] = int(summary["chunks_total"]) + 1
-            summary["targeted_symbols"] = int(summary["targeted_symbols"]) + len(symbol_chunk)
+        for symbol_chunk in symbol_chunks:
             while len(pending) >= max_in_flight:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 _append_completed_results(done, all_results, summary)
+                _emit_live_progress(progress_callback, summary)
 
             pending.add(executor.submit(_process_chunk_two_passes, symbol_chunk, config_dict, spy_return_6m, as_of_iso))
 
         while pending:
             done, pending = wait(pending, return_when=FIRST_COMPLETED)
             _append_completed_results(done, all_results, summary)
+            _emit_live_progress(progress_callback, summary)
 
     if all_results:
         final_scores = pd.concat(all_results, ignore_index=True)
@@ -366,7 +390,12 @@ def main() -> None:
         enable_two_pass_loading=not args.disable_two_pass_loading,
         first_pass_window_days=args.first_pass_window_days,
     )
-    _, report = run_screener_with_report(config=config, max_workers=args.max_workers, snapshot_date=snapshot_date_override)
+    _, report = run_screener_with_report(
+        config=config,
+        max_workers=args.max_workers,
+        snapshot_date=snapshot_date_override,
+        progress_callback=lambda payload: _emit_run_summary(payload),
+    )
     payload = attach_schema_version(report.to_summary_dict())
     # Phase 3.2.b — alerte si trop de chunks ont échoué.
     ratio = float(payload.get("chunk_failure_ratio") or 0.0)

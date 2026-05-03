@@ -23,6 +23,16 @@ IEX_BIAS_KEYS: tuple[str, ...] = (
     "stale_quote_pct",
     "stale_market_cap_pct",
 )
+LIVE_PROGRESS_KEYS: tuple[str, ...] = (
+    "progress_live",
+    "progress_current",
+    "progress_total",
+    "progress_ratio",
+    "progress_label",
+    "progress_phase",
+    "progress_unit",
+    "progress_item",
+)
 
 
 def attach_schema_version(
@@ -54,4 +64,34 @@ def merge_iex_bias_counters(
     for key in IEX_BIAS_KEYS:
         if key in counters and counters[key] is not None:
             summary[key] = counters[key]
+
+
+def attach_live_progress(
+    summary: Mapping[str, Any] | MutableMapping[str, Any] | None,
+    *,
+    current: int,
+    total: int,
+    label: str,
+    phase: str | None = None,
+    unit: str | None = None,
+    item: str | None = None,
+) -> dict[str, Any]:
+    """Retourne un ``run_summary`` enrichi d'un état de progression live explicite."""
+    payload = attach_schema_version(summary)
+    normalized_total = max(int(total), 0)
+    normalized_current = min(max(int(current), 0), normalized_total) if normalized_total > 0 else max(int(current), 0)
+    payload["progress_live"] = True
+    payload["progress_current"] = normalized_current
+    payload["progress_total"] = normalized_total
+    if normalized_total > 0:
+        payload["progress_ratio"] = round(min(max(normalized_current / normalized_total, 0.0), 1.0), 4)
+    payload["progress_label"] = str(label).strip()
+    if phase:
+        payload["progress_phase"] = str(phase).strip()
+    if unit:
+        payload["progress_unit"] = str(unit).strip()
+    if item:
+        payload["progress_item"] = str(item).strip()
+    return payload
+
 

@@ -15,9 +15,10 @@ def _payload_from_stdout(stdout: str, prefix: str) -> dict[str, object]:
 
 
 class _FakeEventSentimentPipeline:
-    def __init__(self, repository=None, config=None) -> None:
+    def __init__(self, repository=None, config=None, progress_callback=None) -> None:
         self.repository = repository
         self.config = config
+        self.progress_callback = progress_callback
 
     def run(self, start_utc=None, end_utc=None, symbols=None) -> dict[str, object]:
         return {
@@ -92,6 +93,85 @@ def test_event_sentiment_cli_main_emits_structured_summary(monkeypatch, capsys) 
     assert payload["sentiment_inferred"] == 17
     assert payload["ticker_day_rows"] == 6
     assert payload["sector_day_rows"] == 2
+
+
+def test_event_sentiment_pipeline_emits_live_progress(monkeypatch) -> None:
+    class _DummyRepository:
+        def load_candidate_symbols(self):
+            return ["AAPL", "MSFT"]
+
+        def load_pending_articles(self, limit=None):
+            return []
+
+        def upsert_news_sentiment(self, rows):
+            return 0
+
+        def upsert_macro_event_audit(self, rows):
+            return 0
+
+        def load_feature_frames(self, start_date=None, end_date=None):
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        def upsert_ticker_daily_features(self, rows):
+            return 0
+
+        def upsert_sector_daily_features(self, rows):
+            return 0
+
+    class _DummyConfig:
+        finbert_model_name = "dummy"
+        finbert_model_version = "1"
+        finbert_batch_size = 4
+        finbert_max_length = 128
+        finbert_model_revision = None
+        macro_rule_version = "1"
+        initial_backfill_days = 2
+        checkpoint_overlap_minutes = 60
+        candidate_reactivation_backfill_days = 5
+        sentiment_pending_limit = 100
+        feature_history_buffer_days = 2
+        feature_version = "v1"
+        feature_rolling_windows = [3]
+        source_name = "alpaca_news"
+        regular_session_maps_to_same_day = True
+
+    progress_payloads: list[dict[str, object]] = []
+    pipeline = cli.EventSentimentPipeline(
+        repository=_DummyRepository(),
+        config=_DummyConfig(),
+        progress_callback=progress_payloads.append,
+    )
+
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_symbol_windows",
+        lambda start_utc, end_utc, symbols: ({symbol: cli.dateutil.parser.isoparse("2026-04-01T00:00:00Z") for symbol in symbols}, {symbol: False for symbol in symbols}, cli.dateutil.parser.isoparse("2026-04-02T00:00:00Z")),
+    )
+    monkeypatch.setattr(
+        pipeline.ingestion,
+        "run",
+        lambda **kwargs: kwargs["progress_callback"]({
+            "ingestion": {"fetched": 10, "deduped": 8, "landed": 7, "ticker_maps": 6},
+            "current_symbol": "AAPL",
+            "current_symbol_index": 1,
+            "current_symbol_total": 2,
+        }) or {"fetched": 20, "deduped": 16, "landed": 14, "ticker_maps": 12},
+    )
+    monkeypatch.setattr(pipeline.finbert, "score_articles", lambda articles: [])
+
+    stats = pipeline.run(symbols=["AAPL", "MSFT"])
+
+    assert stats["resolved_symbols"] == 2
+    assert progress_payloads
+    assert any(payload.get("progress_phase") == "ingestion" for payload in progress_payloads)
+    ingestion_payload = next(
+        payload
+        for payload in progress_payloads
+        if payload.get("progress_phase") == "ingestion" and payload.get("progress_current") == 1
+    )
+    assert ingestion_payload["progress_current"] == 1
+    assert ingestion_payload["progress_total"] == 2
+    assert ingestion_payload["progress_item"] == "AAPL"
 
 
 def test_signal_aggregator_main_emits_structured_summary(monkeypatch, capsys) -> None:

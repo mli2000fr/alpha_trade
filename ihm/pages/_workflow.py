@@ -5,6 +5,7 @@ extraits de ``pipeline.py``.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, cast
 
 import pandas as pd
@@ -61,6 +62,24 @@ WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_autofollow_"
 WORKFLOW_CHILD_LAST_AUTO_KEY_PREFIX = "workflow_child_run_last_auto_"
 WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY = "pipeline_workflow_runtime_auto_selected_run_id"
 WORKFLOW_RANGE_OPTIONS: tuple[str, ...] = ("1", "3")
+_GENERIC_PROGRESS_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"processed=(?P<current>\d+)/(?:\s*)?(?P<total>\d+)(?:.*?latest_symbol=(?P<symbol>[A-Za-z0-9._-]+))?", re.IGNORECASE),
+    re.compile(r"current=(?P<current>\d+)/(?:\s*)?(?P<total>\d+)(?:.*?latest_symbol=(?P<symbol>[A-Za-z0-9._-]+))?", re.IGNORECASE),
+    re.compile(r"progress=(?P<current>\d+)/(?:\s*)?(?P<total>\d+)(?:.*?latest_symbol=(?P<symbol>[A-Za-z0-9._-]+))?", re.IGNORECASE),
+    re.compile(r"Traitement(?: du symbole)? \((?P<current>\d+)/(?:\s*)?(?P<total>\d+)\)\s*:\s*(?P<symbol>[A-Za-z0-9._-]+)", re.IGNORECASE),
+    re.compile(r"Traitement (?P<current>\d+)/(?:\s*)?(?P<total>\d+)\s*:\s*(?P<symbol>[A-Za-z0-9._-]+)", re.IGNORECASE),
+)
+_RUN_PROGRESS_SUMMARY_SPECS: dict[str, tuple[tuple[str, ...], tuple[str, ...], str]] = {
+    "import_alpaca_bar": (("current_symbol_total", "targeted_symbols"), ("current_symbol_index",), "📍 Progression live import bars"),
+    "data_sanitizer_daily": (("targeted_symbols",), ("successful_symbols", "skipped_symbols", "failed_symbols"), "🧹 Progression sanitizeur"),
+    "sync_earnings_calendar": (("symbols",), ("completed_symbols", "failed_symbols"), "📅 Progression earnings"),
+    "update_sector": (("total",), ("updated", "skipped", "failed"), "🏷️ Progression mise à jour fondamentaux"),
+    "risk_management": (("targeted_symbols",), ("accepted_symbols", "reduced_symbols", "rejected_symbols"), "🛡️ Progression risk management"),
+    "execution": (("targeted_symbols",), ("filled_orders", "failed_orders", "skipped_orders"), "💼 Progression execution"),
+    "signal_aggregator": (("loaded_symbols",), ("updated_symbols",), "📰 Progression signal aggregator"),
+    "ml_train": (("symbols_total",), ("symbols_completed", "symbols_skipped", "symbols_failed"), "🧠 Progression ML Train"),
+    "ml_predict": (("symbols_total",), ("symbols_completed", "symbols_skipped", "symbols_failed"), "🤖 Progression ML Predict"),
+}
 
 
 def _build_workflow_scope_help_lines() -> tuple[str, str, str]:
@@ -129,18 +148,109 @@ def _build_run_symbol_progress_payload(run: dict[str, object] | None) -> tuple[f
         return None
 
     summary = run.get("run_summary")
-    if not isinstance(summary, dict):
+    if isinstance(summary, dict):
+        explicit_progress = _build_run_progress_payload_from_explicit_summary(summary)
+        if explicit_progress is not None:
+            return explicit_progress
+
+        current_index = summary.get("current_symbol_index")
+        total_symbols = summary.get("current_symbol_total") or summary.get("targeted_symbols")
+        current_symbol = str(summary.get("current_symbol") or "").strip()
+        if isinstance(current_index, int) and isinstance(total_symbols, int) and current_index > 0 and total_symbols > 0:
+            percent = min(max((current_index / total_symbols) * 100.0, 0.0), 100.0)
+            symbol_suffix = f" — symbole courant `{current_symbol}`" if current_symbol else ""
+            return (percent / 100.0, f"📍 Progression live import bars : {current_index}/{total_symbols} ({percent:.1f} %){symbol_suffix}")
+
+        step_key = str(run.get("step_key") or "").strip()
+        progress_from_summary = _build_run_progress_payload_from_summary(step_key, summary)
+        if progress_from_summary is not None:
+            return progress_from_summary
+
+    return _build_run_progress_payload_from_logs(run)
+
+
+def _to_non_negative_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        normalized = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return normalized if normalized >= 0 else None
+
+
+def _build_run_progress_payload_from_explicit_summary(summary: dict[str, object]) -> tuple[float, str] | None:
+    total = _to_non_negative_int(summary.get("progress_total"))
+    current = _to_non_negative_int(summary.get("progress_current"))
+    if total is None or current is None or total <= 0:
         return None
 
-    current_index = summary.get("current_symbol_index")
-    total_symbols = summary.get("current_symbol_total") or summary.get("targeted_symbols")
-    current_symbol = str(summary.get("current_symbol") or "").strip()
-    if not isinstance(current_index, int) or not isinstance(total_symbols, int) or current_index <= 0 or total_symbols <= 0:
+    clamped_current = min(max(current, 0), total)
+    percent = min(max((clamped_current / total) * 100.0, 0.0), 100.0)
+    label = str(summary.get("progress_label") or "📍 Progression live").strip()
+    item = str(summary.get("progress_item") or summary.get("current_symbol") or "").strip()
+    item_suffix = f" — élément courant `{item}`" if item else ""
+    return (percent / 100.0, f"{label} : {clamped_current}/{total} ({percent:.1f} %){item_suffix}")
+
+
+def _build_run_progress_payload_from_summary(step_key: str, summary: dict[str, object]) -> tuple[float, str] | None:
+    spec = _RUN_PROGRESS_SUMMARY_SPECS.get(step_key)
+    if spec is None:
         return None
 
-    percent = min(max((current_index / total_symbols) * 100.0, 0.0), 100.0)
-    symbol_suffix = f" — symbole courant `{current_symbol}`" if current_symbol else ""
-    return (percent / 100.0, f"📍 Progression live import bars : {current_index}/{total_symbols} ({percent:.1f} %){symbol_suffix}")
+    total: int | None = None
+    for total_key in spec[0]:
+        total = _to_non_negative_int(summary.get(total_key))
+        if total is not None:
+            break
+    if total is None or total <= 0:
+        return None
+
+    current = 0
+    for current_key in spec[1]:
+        current += _to_non_negative_int(summary.get(current_key)) or 0
+    if current <= 0:
+        return None
+
+    clamped_current = min(current, total)
+    percent = min(max((clamped_current / total) * 100.0, 0.0), 100.0)
+    return (percent / 100.0, f"{spec[2]} : {clamped_current}/{total} ({percent:.1f} %)")
+
+
+def _build_run_progress_payload_from_logs(run: dict[str, object]) -> tuple[float, str] | None:
+    tail_parts = []
+    for key in ("stdout_tail", "stderr_tail"):
+        raw_value = run.get(key)
+        if isinstance(raw_value, str) and raw_value.strip():
+            tail_parts.append(raw_value)
+    if not tail_parts:
+        return None
+
+    step_key = str(run.get("step_key") or "").strip()
+    title = {
+        "data_sanitizer_daily": "🧹 Progression sanitizeur",
+        "sync_earnings_calendar": "📅 Progression earnings",
+        "update_sector": "🏷️ Progression mise à jour fondamentaux",
+    }.get(step_key, "📍 Progression live")
+
+    for line in reversed("\n".join(tail_parts).splitlines()):
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        for pattern in _GENERIC_PROGRESS_PATTERNS:
+            match = pattern.search(cleaned)
+            if match is None:
+                continue
+            current = _to_non_negative_int(match.groupdict().get("current"))
+            total = _to_non_negative_int(match.groupdict().get("total"))
+            if current is None or total is None or total <= 0:
+                continue
+            clamped_current = min(current, total)
+            percent = min(max((clamped_current / total) * 100.0, 0.0), 100.0)
+            symbol = str(match.groupdict().get("symbol") or "").strip()
+            suffix = f" — élément courant `{symbol}`" if symbol else ""
+            return (percent / 100.0, f"{title} : {clamped_current}/{total} ({percent:.1f} %){suffix}")
+    return None
 
 
 def _build_workflow_child_run_payload(workflow_run: dict[str, object]) -> tuple[list[str], dict[str, str]]:

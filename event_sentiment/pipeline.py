@@ -1,9 +1,11 @@
 ﻿import logging
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from typing import Callable
 
 import pandas as pd
 
+from core.run_summary import attach_live_progress
 from event_sentiment.aggregation import build_sector_daily_features, build_ticker_daily_features
 from event_sentiment.ingestion import NewsIngestionService
 from event_sentiment.macro_rules import MacroRuleEngine
@@ -14,9 +16,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 class EventSentimentPipeline:
-    def __init__(self, repository, config) -> None:
+    def __init__(self, repository, config, progress_callback: Callable[[dict[str, object]], None] | None = None) -> None:
         self.repository = repository
         self.config = config
+        self.progress_callback = progress_callback
         self.ingestion = NewsIngestionService(repository=repository, config=config)
         self.finbert = FinBERTSentimentService(
             model_name=config.finbert_model_name,
@@ -179,6 +182,13 @@ class EventSentimentPipeline:
             "symbol_source": "explicit" if symbols is not None else "candidates",
             "resume_from_checkpoints": start_utc is None,
         }
+        self._emit_progress(
+            stats,
+            current=0,
+            total=max(len(resolved_symbols), 1),
+            label="📰 Progression sentiment pipeline — ingestion news",
+            phase="ingestion",
+        )
         if resolved_symbols:
             stats["ingestion"] = self.ingestion.run(
                 start_utc=None,
@@ -187,6 +197,7 @@ class EventSentimentPipeline:
                 symbol_start_overrides=symbol_windows,
                 symbol_resume_overrides=symbol_resume_modes,
                 resume_checkpoints=start_utc is None,
+                progress_callback=lambda payload: self._emit_ingestion_progress(stats, payload),
             )
         else:
             stats["ingestion"] = {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
@@ -216,6 +227,13 @@ class EventSentimentPipeline:
         sentiment_records = self.finbert.score_articles(articles)
         stats["sentiment_inferred"] = self.repository.upsert_news_sentiment([asdict(record) for record in sentiment_records])
         stats["finbert_model_fingerprint"] = getattr(self.finbert, "model_fingerprint", None)
+        self._emit_progress(
+            stats,
+            current=max(len(articles), 1),
+            total=max(len(articles), 1),
+            label="📰 Progression sentiment pipeline — scoring FinBERT",
+            phase="finbert_scoring",
+        )
         sentiment_map = {record.article_id: record for record in sentiment_records}
         impacted_trade_dates = sorted(
             {
@@ -234,8 +252,14 @@ class EventSentimentPipeline:
             macro_records.extend(self.macro_engine.classify(article, sentiment))
 
         stats["macro_rows"] = self.repository.upsert_macro_event_audit([asdict(record) for record in macro_records])
+        self._emit_progress(
+            stats,
+            current=max(len(articles), 1),
+            total=max(len(articles), 1),
+            label="📰 Progression sentiment pipeline — agrégation features",
+            phase="feature_aggregation",
+        )
         if impacted_trade_dates:
-            impacted_date_set = set(impacted_trade_dates)
             feature_window_start = min(impacted_trade_dates) - timedelta(days=self.config.feature_history_buffer_days)
             feature_window_end = max(impacted_trade_dates)
             stats["feature_window_start"] = feature_window_start.isoformat()
@@ -261,9 +285,55 @@ class EventSentimentPipeline:
             rolling_windows=self.config.feature_rolling_windows,
         )
         if impacted_trade_dates:
-            ticker_features = ticker_features[ticker_features["trade_date"].isin(impacted_date_set)].copy()
-            sector_features = sector_features[sector_features["trade_date"].isin(impacted_date_set)].copy()
+            ticker_features = ticker_features[ticker_features["trade_date"].isin(set(impacted_trade_dates))].copy()
+            sector_features = sector_features[sector_features["trade_date"].isin(set(impacted_trade_dates))].copy()
         stats["ticker_day_rows"] = self.repository.upsert_ticker_daily_features(ticker_features.to_dict(orient="records"))
         stats["sector_day_rows"] = self.repository.upsert_sector_daily_features(sector_features.to_dict(orient="records"))
+        self._emit_progress(
+            stats,
+            current=max(len(resolved_symbols), 1),
+            total=max(len(resolved_symbols), 1),
+            label="📰 Progression sentiment pipeline — persistance finale",
+            phase="persist_features",
+        )
         LOGGER.info("Event sentiment pipeline summary | stats=%s", stats)
         return stats
+
+    def _emit_ingestion_progress(self, stats: dict[str, object], payload: dict[str, object]) -> None:
+        ingestion = payload.get("ingestion") if isinstance(payload.get("ingestion"), dict) else {}
+        merged_stats = dict(stats)
+        if ingestion:
+            merged_stats["ingestion"] = dict(ingestion)
+        self._emit_progress(
+            merged_stats,
+            current=int(payload.get("current_symbol_index") or 0),
+            total=max(int(payload.get("current_symbol_total") or 0), 1),
+            label="📰 Progression sentiment pipeline — ingestion news",
+            phase="ingestion",
+            item=str(payload.get("current_symbol") or "").strip() or None,
+        )
+
+    def _emit_progress(
+        self,
+        stats: dict[str, object],
+        *,
+        current: int,
+        total: int,
+        label: str,
+        phase: str,
+        item: str | None = None,
+    ) -> None:
+        if not callable(self.progress_callback):
+            return
+        self.progress_callback(
+            attach_live_progress(
+                stats,
+                current=current,
+                total=total,
+                label=label,
+                phase=phase,
+                unit="symboles" if phase == "ingestion" else "articles",
+                item=item,
+            )
+        )
+

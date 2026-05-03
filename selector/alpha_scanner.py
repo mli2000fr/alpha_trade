@@ -45,7 +45,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from common.utils import configure_root_logging
-from core.run_summary import attach_schema_version, merge_iex_bias_counters
+from core.run_summary import attach_live_progress, attach_schema_version, merge_iex_bias_counters
 from database.connection import get_sqlalchemy_engine
 
 # Phase 3.2.c — la source de vérité est ``core.filter_profiles`` ;
@@ -384,6 +384,7 @@ class AlphaScanner:
         # Phase 3.3.b — agrégation des stats `apply_filters_with_stats`.
         self._aggregated_filter_stats: Counter[str] = Counter()
         self._filter_stats_lock = threading.Lock()
+        self.progress_callback = None
 
     # ------------------------------------------------------------------
     # Introspection schéma
@@ -772,6 +773,23 @@ class AlphaScanner:
             self.config.update_batch_size,
         )
 
+        total_score_batches = max((len(scores_snapshot) + self.config.update_batch_size - 1) // self.config.update_batch_size, 0)
+        total_candidate_batches = max((len(selected_symbols) + self.config.update_batch_size - 1) // self.config.update_batch_size, 0)
+        total_db_batches = total_score_batches + total_candidate_batches
+        completed_db_batches = 0
+        self._emit_live_progress(
+            current=completed_db_batches,
+            total=total_db_batches,
+            label="🎯 Progression Alpha Scanner — persistance DB",
+            phase="persist_db",
+            extra_summary={
+                "eligible_symbols": len(scores_snapshot),
+                "selected_candidates": len(selected_symbols),
+                "db_batches_total": total_db_batches,
+                "db_batches_completed": completed_db_batches,
+            },
+        )
+
         try:
             with self.engine.begin() as conn:
                 for start in range(0, len(scores_snapshot), self.config.update_batch_size):
@@ -788,6 +806,19 @@ class AlphaScanner:
                         start + len(score_batch),
                         len(score_batch),
                     )
+                    completed_db_batches += 1
+                    self._emit_live_progress(
+                        current=completed_db_batches,
+                        total=total_db_batches,
+                        label="🎯 Progression Alpha Scanner — persistance DB",
+                        phase="persist_db",
+                        extra_summary={
+                            "eligible_symbols": len(scores_snapshot),
+                            "selected_candidates": len(selected_symbols),
+                            "db_batches_total": total_db_batches,
+                            "db_batches_completed": completed_db_batches,
+                        },
+                    )
                 conn.execute(reset_stmt)
                 LOGGER.info("Mise a jour DB | reset is_candidate=0 effectue")
                 for start in range(0, len(selected_symbols), self.config.update_batch_size):
@@ -800,6 +831,19 @@ class AlphaScanner:
                         start + 1,
                         start + len(batch),
                         len(batch),
+                    )
+                    completed_db_batches += 1
+                    self._emit_live_progress(
+                        current=completed_db_batches,
+                        total=total_db_batches,
+                        label="🎯 Progression Alpha Scanner — persistance DB",
+                        phase="persist_db",
+                        extra_summary={
+                            "eligible_symbols": len(scores_snapshot),
+                            "selected_candidates": len(selected_symbols),
+                            "db_batches_total": total_db_batches,
+                            "db_batches_completed": completed_db_batches,
+                        },
                     )
         except SQLAlchemyError as exc:
             LOGGER.exception("Echec de mise a jour transactionnelle de %s.", self.config.score_table)
@@ -853,12 +897,42 @@ class AlphaScanner:
         pending: set[Future[pd.DataFrame]] = set()
         submitted_chunks = 0
         completed_chunks = 0
+        symbol_chunks = list(self._iter_eligible_symbol_chunks())
+        eligible_symbols = sum(len(chunk) for chunk in symbol_chunks)
+        total_chunks = len(symbol_chunks)
+
+        self._emit_live_progress(
+            current=0,
+            total=total_chunks,
+            label="🎯 Progression Alpha Scanner — scan multi-facteurs",
+            phase="scan_chunks",
+            extra_summary={
+                "eligible_symbols": eligible_symbols,
+                "chunks_submitted": 0,
+                "chunks_completed": 0,
+                "chunks_total": total_chunks,
+                "selected_candidates": 0,
+            },
+        )
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            for symbols in self._iter_eligible_symbol_chunks():
+            for symbols in symbol_chunks:
                 while len(pending) >= max_in_flight:
                     done, pending = wait(pending, return_when=FIRST_COMPLETED)
                     completed_chunks += self._collect_completed(done, all_frames)
+                    self._emit_live_progress(
+                        current=completed_chunks,
+                        total=total_chunks,
+                        label="🎯 Progression Alpha Scanner — scan multi-facteurs",
+                        phase="scan_chunks",
+                        extra_summary={
+                            "eligible_symbols": eligible_symbols,
+                            "chunks_submitted": submitted_chunks,
+                            "chunks_completed": completed_chunks,
+                            "chunks_total": total_chunks,
+                            "selected_candidates": sum(len(frame) for frame in all_frames),
+                        },
+                    )
                     LOGGER.info(
                         "Progression scan | chunks_termines=%s chunks_soumis=%s en_vol=%s candidats_cumules=%s",
                         completed_chunks,
@@ -868,6 +942,19 @@ class AlphaScanner:
                     )
                 pending.add(executor.submit(self._process_chunk, symbols))
                 submitted_chunks += 1
+                self._emit_live_progress(
+                    current=completed_chunks,
+                    total=total_chunks,
+                    label="🎯 Progression Alpha Scanner — scan multi-facteurs",
+                    phase="scan_chunks",
+                    extra_summary={
+                        "eligible_symbols": eligible_symbols,
+                        "chunks_submitted": submitted_chunks,
+                        "chunks_completed": completed_chunks,
+                        "chunks_total": total_chunks,
+                        "selected_candidates": sum(len(frame) for frame in all_frames),
+                    },
+                )
                 LOGGER.info(
                     "Chunk soumis | index=%s taille=%s en_vol=%s",
                     submitted_chunks,
@@ -878,6 +965,19 @@ class AlphaScanner:
             while pending:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 completed_chunks += self._collect_completed(done, all_frames)
+                self._emit_live_progress(
+                    current=completed_chunks,
+                    total=total_chunks,
+                    label="🎯 Progression Alpha Scanner — scan multi-facteurs",
+                    phase="scan_chunks",
+                    extra_summary={
+                        "eligible_symbols": eligible_symbols,
+                        "chunks_submitted": submitted_chunks,
+                        "chunks_completed": completed_chunks,
+                        "chunks_total": total_chunks,
+                        "selected_candidates": sum(len(frame) for frame in all_frames),
+                    },
+                )
                 LOGGER.info(
                     "Progression scan | chunks_termines=%s chunks_soumis=%s en_vol=%s candidats_cumules=%s",
                     completed_chunks,
@@ -893,6 +993,20 @@ class AlphaScanner:
         merged_candidates = self._apply_factor_neutralization(merged_candidates)
 
         selected = self.rank_and_select(merged_candidates)
+
+        self._emit_live_progress(
+            current=total_chunks,
+            total=total_chunks,
+            label="🎯 Progression Alpha Scanner — sélection finale",
+            phase="rank_select",
+            extra_summary={
+                "eligible_symbols": eligible_symbols,
+                "chunks_submitted": submitted_chunks,
+                "chunks_completed": completed_chunks,
+                "chunks_total": total_chunks,
+                "selected_candidates": int(len(selected)),
+            },
+        )
 
         self.update_database(selected, merged_candidates)
 
@@ -960,6 +1074,29 @@ class AlphaScanner:
         if self.config.max_workers is not None:
             return self.config.max_workers
         return min(8, os.cpu_count() or 1)
+
+    def _emit_live_progress(
+        self,
+        *,
+        current: int,
+        total: int,
+        label: str,
+        phase: str,
+        extra_summary: dict[str, object] | None = None,
+    ) -> None:
+        callback = getattr(self, "progress_callback", None)
+        if not callable(callback):
+            return
+        callback(
+            attach_live_progress(
+                extra_summary or {},
+                current=current,
+                total=total,
+                label=label,
+                phase=phase,
+                unit="chunks" if phase == "scan_chunks" else "batches" if phase == "persist_db" else "étapes",
+            )
+        )
 
     def _reset_selector_outputs(self) -> None:
         # Phase 3.3.b — réinitialiser l'agrégat de stats à chaque run.
@@ -1202,6 +1339,7 @@ def main() -> None:
 
     started_at = _utc_now_naive()
     scanner = AlphaScanner(config=config)
+    scanner.progress_callback = lambda payload: _emit_run_summary(payload)
     if args.trade_date:
         try:
             scanner.snapshot_date_override = date.fromisoformat(args.trade_date.strip())

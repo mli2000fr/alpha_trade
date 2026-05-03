@@ -245,6 +245,80 @@ def test_build_run_symbol_progress_payload_returns_fraction_and_caption() -> Non
     assert "AAPL" in caption
 
 
+def test_build_run_symbol_progress_payload_uses_generic_summary_counters_for_data_sanitizer() -> None:
+    payload = workflow_page._build_run_symbol_progress_payload(
+        {
+            "step_key": "data_sanitizer_daily",
+            "run_summary": {
+                "targeted_symbols": 100,
+                "successful_symbols": 70,
+                "skipped_symbols": 5,
+                "failed_symbols": 10,
+            },
+        }
+    )
+
+    assert payload is not None
+    fraction, caption = payload
+    assert fraction == 0.85
+    assert "85/100" in caption
+    assert "sanitizeur" in caption.lower()
+
+
+def test_build_run_symbol_progress_payload_falls_back_to_live_logs_when_summary_has_no_progress() -> None:
+    payload = workflow_page._build_run_symbol_progress_payload(
+        {
+            "step_key": "sync_earnings_calendar",
+            "run_summary": {},
+            "stdout_tail": (
+                "2026-05-03 08:00:00 INFO Finnhub earnings calendar progress | "
+                "processed=40/120 records=300 completed=38 failed=2 latest_symbol=NVDA\n"
+            ),
+        }
+    )
+
+    assert payload is not None
+    fraction, caption = payload
+    assert round(fraction, 4) == round(40 / 120, 4)
+    assert "40/120" in caption
+    assert "NVDA" in caption
+
+
+def test_build_run_symbol_progress_payload_parses_traitement_log_pattern() -> None:
+    payload = workflow_page._build_run_symbol_progress_payload(
+        {
+            "step_key": "data_sanitizer_daily",
+            "stdout_tail": "2026-05-03 08:00:00 INFO Traitement 37/200: AAPL\n",
+        }
+    )
+
+    assert payload is not None
+    fraction, caption = payload
+    assert fraction == 0.185
+    assert "37/200" in caption
+    assert "AAPL" in caption
+
+
+def test_build_run_symbol_progress_payload_prefers_explicit_live_progress_fields() -> None:
+    payload = workflow_page._build_run_symbol_progress_payload(
+        {
+            "step_key": "stock_screener",
+            "run_summary": {
+                "progress_current": 3,
+                "progress_total": 8,
+                "progress_label": "🔎 Progression stock screener",
+                "progress_item": "chunk #3",
+            },
+        }
+    )
+
+    assert payload is not None
+    fraction, caption = payload
+    assert fraction == 0.375
+    assert "3/8" in caption
+    assert "chunk #3" in caption
+
+
 def test_workflow_launcher_starts_with_1_to_12_and_optional_steps_disabled_by_default(monkeypatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
