@@ -188,6 +188,21 @@ def test_build_watcher_handoff_rows_exposes_post_execution_launch_guidance() -> 
     assert any(row["Mode"] == "Task Scheduler" for row in rows)
 
 
+def test_render_ml_inspection_link_uses_pending_symbol_for_cross_page_navigation(monkeypatch) -> None:
+    session_state: dict[str, object] = {}
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline, "list_ml_artifact_symbols", lambda: ["AAPL", "MSFT"])
+    monkeypatch.setattr(pipeline.st, "selectbox", lambda *args, **kwargs: "MSFT")
+    monkeypatch.setattr(pipeline.st, "button", lambda *args, **kwargs: True)
+    monkeypatch.setattr(pipeline.st, "rerun", lambda: None)
+
+    pipeline._render_ml_inspection_link("ml_train")
+
+    assert session_state[pipeline.ML_PENDING_SELECTED_SYMBOL_KEY] == "MSFT"
+    assert session_state[pipeline.NAVIGATION_TARGET_PAGE_KEY] == "ml"
+    assert "ihm_ml_selected_symbol" not in session_state
+
+
 def test_build_workflow_scope_help_lines_explains_1_to_12_3_to_12_and_13_14() -> None:
     lines = workflow_page._build_workflow_scope_help_lines()
 

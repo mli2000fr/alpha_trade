@@ -10,6 +10,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pandas as pd
 import streamlit as st
 
+from ihm.pages._shared import ML_PENDING_SELECTED_SYMBOL_KEY, ML_SELECTED_SYMBOL_KEY
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_connection_form, render_query_diagnostic
 from ihm.components.tables import show_dataframe
@@ -24,9 +25,6 @@ from ihm.services.queries import (
     get_training_runs,
 )
 
-
-ML_SELECTED_SYMBOL_KEY = "ihm_ml_selected_symbol"
-ML_PENDING_SELECTED_SYMBOL_KEY = "ihm_ml_pending_selected_symbol"
 ML_AUDIT_FILTER_SOURCE_LIMIT = 500
 ML_SELECTED_AUDIT_NAVIGATION_KEY = "ihm_ml_selected_audit_navigation"
 

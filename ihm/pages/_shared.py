@@ -39,6 +39,7 @@ __all__ = [
     "IMPORT_NEWS_END_DATE_KEY",
     "IMPORT_NEWS_START_DATE_KEY",
     "LOG_FILTER_KEY",
+    "ML_PENDING_SELECTED_SYMBOL_KEY",
     "ML_SELECTED_SYMBOL_KEY",
     "NAVIGATION_TARGET_PAGE_KEY",
     "PENDING_COMPARE_RUNS_KEY",
@@ -82,6 +83,7 @@ EXECUTION_DEFAULTS_ACCOUNT_KEY = "pipeline_execution_defaults_applied_account_id
 IMPORT_NEWS_START_DATE_KEY = "pipeline_import_news_start_date"
 IMPORT_NEWS_END_DATE_KEY = "pipeline_import_news_end_date"
 ML_SELECTED_SYMBOL_KEY = "ihm_ml_selected_symbol"
+ML_PENDING_SELECTED_SYMBOL_KEY = "ihm_ml_pending_selected_symbol"
 NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
 EARNINGS_CUSTOM_WINDOW_KEY = "pipeline_data_integrity_earnings_custom_window"
 ALPHA_SCANNER_DEPENDENCY_ACTION_RUNS_KEY = "pipeline_alpha_scanner_dependency_action_runs"
