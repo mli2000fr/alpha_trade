@@ -124,6 +124,7 @@ class BacktestReportSchema:
     artifacts: dict[str, str] = field(default_factory=dict)
     diagnostics: DiagnosticsSchema = field(default_factory=DiagnosticsSchema)
     run_metadata: RunMetadataSchema = field(default_factory=RunMetadataSchema)
+    fidelity: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -204,21 +205,26 @@ def validate_report_payload(payload: dict[str, Any], *, strict: bool = False) ->
 
     diagnostics_payload = payload.get("diagnostics", {}) or {}
     _check_type(diagnostics_payload, (dict,), "diagnostics")
+    diagnostics_fields = getattr(DiagnosticsSchema, "__dataclass_fields__", {})
     diagnostics_obj = DiagnosticsSchema(
-        **{k: int(v) for k, v in diagnostics_payload.items() if k in DiagnosticsSchema.__dataclass_fields__}
+        **{k: int(v) for k, v in diagnostics_payload.items() if k in diagnostics_fields}
     )
 
     run_metadata_payload = payload.get("run_metadata", {}) or {}
     _check_type(run_metadata_payload, (dict,), "run_metadata")
+    run_metadata_fields = getattr(RunMetadataSchema, "__dataclass_fields__", {})
     run_metadata_obj = RunMetadataSchema(
         **{
             k: v
             for k, v in run_metadata_payload.items()
-            if k in RunMetadataSchema.__dataclass_fields__
+            if k in run_metadata_fields
         }
     )
 
-    known_root = {"summary", "params", "artifacts", "diagnostics", "run_metadata"}
+    fidelity_payload = payload.get("fidelity", {}) or {}
+    _check_type(fidelity_payload, (dict,), "fidelity")
+
+    known_root = {"summary", "params", "artifacts", "diagnostics", "run_metadata", "fidelity"}
     extra = set(payload.keys()) - known_root
     if extra:
         message = f"Clés racine inconnues: {sorted(extra)}"
@@ -232,6 +238,7 @@ def validate_report_payload(payload: dict[str, Any], *, strict: bool = False) ->
         artifacts={str(k): str(v) for k, v in artifacts.items()},
         diagnostics=diagnostics_obj,
         run_metadata=run_metadata_obj,
+        fidelity=dict(fidelity_payload),
     )
 
 

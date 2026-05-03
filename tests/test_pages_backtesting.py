@@ -21,6 +21,10 @@ def test_parameter_reference_rows_include_walk_forward_run_options() -> None:
     assert any(row["Paramètre"] == "score_column" for row in run_rows)
     assert any(row["Paramètre"] == "walk_forward_artifacts_dir" for row in run_rows)
     assert any(row["Paramètre"] == "capital_preset_key" for row in run_rows)
+    assert any(row["Paramètre"] == "engine_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "ml_pit_strategy" for row in run_rows)
+    assert any(row["Paramètre"] == "phase2_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "phase3_mode" for row in run_rows)
 
 
 def test_parameter_reference_rows_include_backfill_capital_preset_options() -> None:

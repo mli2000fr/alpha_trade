@@ -239,6 +239,10 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "no_save", "Explication": "Désactive l'écriture des artefacts PNG/CSV.", "Défaut": "False"},
             {"Paramètre": "ml_mode", "Explication": "auto/off/rebuild-missing pour la composante ML.", "Défaut": "auto"},
             {"Paramètre": "sentiment_mode", "Explication": "auto/off/rebuild-missing pour la composante sentiment.", "Défaut": "auto"},
+            {"Paramètre": "engine_mode", "Explication": "research = tolérant/rapide, pipeline = strict PIT + diagnostics renforcés.", "Défaut": "research"},
+            {"Paramètre": "ml_pit_strategy", "Explication": "Stratégie PIT ML explicite : auto / use-persisted / rebuild-missing / walk-forward-train-then-predict.", "Défaut": "auto"},
+            {"Paramètre": "phase2_mode", "Explication": "off = backtest standard, risk = bridge risk_management, risk_execution = risk + intents/fills d'exécution simulés.", "Défaut": "off"},
+            {"Paramètre": "phase3_mode", "Explication": "off = comportement Phase 2, execution_replay = réinjecte chronologiquement les quantités exécutées simulées dans le moteur de backtest.", "Défaut": "off"},
             {"Paramètre": "artifacts_dir", "Explication": "Dossier des artefacts modèles utilisés pour rebuild-missing.", "Défaut": "artifacts/models"},
             {"Paramètre": "score_column", "Explication": "Colonne de score privilégiée pour le replay : auto / walk-forward / sentiment / final.", "Défaut": "auto"},
             {"Paramètre": "walk_forward_artifacts_dir", "Explication": "Répertoire racine optionnel des artefacts de calibration walk-forward à appliquer au run standard.", "Défaut": "None"},
@@ -752,6 +756,68 @@ def _build_run_options() -> BacktestRunOptions:
             help="Si coché, le PNG d'equity curve et le CSV des trades ne seront pas écrits dans `artifacts/backtesting/`.",
         )
 
+    mode_col1, mode_col2, mode_col3, mode_col4 = st.columns(4)
+    with mode_col1:
+        engine_mode = cast(
+            str,
+            st.selectbox(
+                "Mode moteur",
+                options=["research", "pipeline"],
+                index=["research", "pipeline"].index(
+                    cast(str, st.session_state.get("bt_run_engine_mode", "research"))
+                    if st.session_state.get("bt_run_engine_mode", "research") in {"research", "pipeline"}
+                    else "research"
+                ),
+                key="bt_run_engine_mode",
+                help="`research` conserve le comportement tolérant du backtest standard ; `pipeline` exige des snapshots PIT valides et évite les écritures implicites.",
+            ),
+        )
+    with mode_col2:
+        ml_pit_strategy = cast(
+            str,
+            st.selectbox(
+                "Stratégie ML PIT",
+                options=["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"],
+                index=["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"].index(
+                    cast(str, st.session_state.get("bt_run_ml_pit_strategy", "auto"))
+                    if st.session_state.get("bt_run_ml_pit_strategy", "auto") in {"auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"}
+                    else "auto"
+                ),
+                key="bt_run_ml_pit_strategy",
+                help="Permet d'expliciter comment le backtest doit traiter les prédictions ML en mode PIT. `walk-forward-train-then-predict` fail-fast tant qu'il n'est pas encore supporté.",
+            ),
+        )
+    with mode_col3:
+        phase2_mode = cast(
+            str,
+            st.selectbox(
+                "Mode Phase 2",
+                options=["off", "risk", "risk_execution"],
+                index=["off", "risk", "risk_execution"].index(
+                    cast(str, st.session_state.get("bt_run_phase2_mode", "off"))
+                    if st.session_state.get("bt_run_phase2_mode", "off") in {"off", "risk", "risk_execution"}
+                    else "off"
+                ),
+                key="bt_run_phase2_mode",
+                help="Active de manière opt-in les bridges de fidélité Phase 2. `off` conserve strictement le replay historique ; `risk` réutilise `risk_management`; `risk_execution` ajoute les intents/fills simulés via `execution_engine`.",
+            ),
+        )
+    with mode_col4:
+        phase3_mode = cast(
+            str,
+            st.selectbox(
+                "Mode Phase 3",
+                options=["off", "execution_replay"],
+                index=["off", "execution_replay"].index(
+                    cast(str, st.session_state.get("bt_run_phase3_mode", "off"))
+                    if st.session_state.get("bt_run_phase3_mode", "off") in {"off", "execution_replay"}
+                    else "off"
+                ),
+                key="bt_run_phase3_mode",
+                help="`execution_replay` reprend les cibles/fills simulés du bridge d'exécution pour rejouer les quantités dans le moteur de backtest. Exige `phase2_mode = risk_execution`.",
+            ),
+        )
+
     info_col1, info_col2 = st.columns(2)
     with info_col1:
         st.caption(
@@ -809,6 +875,10 @@ def _build_run_options() -> BacktestRunOptions:
         no_save=bool(no_save),
         ml_mode=cast(Any, ml_mode),
         sentiment_mode=cast(Any, sentiment_mode),
+        engine_mode=cast(Any, engine_mode),
+        ml_pit_strategy=cast(Any, ml_pit_strategy),
+        phase2_mode=cast(Any, phase2_mode),
+        phase3_mode=cast(Any, phase3_mode),
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,

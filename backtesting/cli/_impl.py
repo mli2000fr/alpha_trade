@@ -136,6 +136,30 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Répertoire racine où chercher explicitement les meilleurs poids walk-forward à appliquer au backtest standard.",
     )
+    run_p.add_argument(
+        "--engine-mode",
+        choices=["research", "pipeline"],
+        default="research",
+        help="Mode du moteur de backtest: research (rapide, tolérant) ou pipeline (strict PIT, diagnostics renforcés).",
+    )
+    run_p.add_argument(
+        "--ml-pit-strategy",
+        choices=["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"],
+        default="auto",
+        help="Stratégie PIT explicite pour la composante ML. `auto` conserve le comportement historique, `walk-forward-train-then-predict` fail-fast tant que non supporté.",
+    )
+    run_p.add_argument(
+        "--phase2-mode",
+        choices=["off", "risk", "risk_execution"],
+        default="off",
+        help="Phase 2 opt-in: `risk` branche le vrai risk_management pour générer les cibles, `risk_execution` ajoute en plus une simulation d'intents/fills via execution_engine. Par défaut `off` pour zéro régression.",
+    )
+    run_p.add_argument(
+        "--phase3-mode",
+        choices=["off", "execution_replay"],
+        default="off",
+        help="Phase 3 opt-in: `execution_replay` réinjecte chronologiquement les quantités issues du bridge risk+execution dans le moteur de backtest. Exige `--phase2-mode risk_execution`.",
+    )
     # Phase A.6 (refactor) — risk-free rate annualisé pour Sharpe/Sortino.
     run_p.add_argument(
         "--risk-free-rate",
@@ -447,6 +471,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     import pandas as pd
 
+    from backtesting.fidelity import (
+        PitHistoryRequiredError,
+        PitMlStrategyUnsupportedError,
+        build_fidelity_manifest,
+        save_fidelity_manifest,
+    )
     from database.connection import get_sqlalchemy_engine
     from backtesting.data_loader import load_ohlcv, load_scores, load_predictions, pivot_ohlcv
     from backtesting.resilience import prepare_predictions_for_ml_mode, prepare_scores_for_sentiment_mode
@@ -509,6 +539,17 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
     end = datetime.strptime(args.end, "%Y-%m-%d").date()
+    engine_mode = str(getattr(args, "engine_mode", "research") or "research").strip().lower()
+    ml_pit_strategy = str(getattr(args, "ml_pit_strategy", "auto") or "auto").strip().lower()
+    phase2_mode = str(getattr(args, "phase2_mode", "off") or "off").strip().lower()
+    phase3_mode = str(getattr(args, "phase3_mode", "off") or "off").strip().lower()
+    strict_pit = engine_mode == "pipeline"
+
+    if phase3_mode != "off" and phase2_mode != "risk_execution":
+        _safe_print(
+            "❌ La Phase 3 `execution_replay` exige `--phase2-mode risk_execution` pour disposer des cibles et fills d'exécution."
+        )
+        sys.exit(1)
 
     trading_constraints = TradingConstraintConfig(
         account_type=args.account_type,
@@ -519,7 +560,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _safe_print(f"\n🚀 Backtest Alpha Trade : {start} → {end}, capital={args.equity:,.0f}$")
     _safe_print(f"   preset_capital={effective_preset.key} ({preset_source}) | fingerprint={preset_fingerprint}\n")
     _safe_print(f"   TP={args.tp*100:.1f}%, TS={args.ts*100:.1f}%, max_positions={args.max_positions}\n")
+    _safe_print(f"   engine_mode={engine_mode} strict_pit={strict_pit}\n")
+    _safe_print(f"   phase2_mode={phase2_mode}\n")
+    _safe_print(f"   phase3_mode={phase3_mode}\n")
     _safe_print(f"   ml_mode={args.ml_mode}, sentiment_mode={args.sentiment_mode}\n")
+    _safe_print(f"   ml_pit_strategy={ml_pit_strategy}\n")
     _safe_print(
         "   score_column={} walk_forward_artifacts_dir={}\n".format(
             args.score_column,
@@ -545,7 +590,21 @@ def _run_backtest(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     _safe_print("📈 Chargement scores...")
-    scores_df = load_scores(engine, start, end, capital_preset_key=effective_preset.key)
+    try:
+        score_load_result = load_scores(
+            engine,
+            start,
+            end,
+            capital_preset_key=effective_preset.key,
+            strict_pit=strict_pit,
+            return_diagnostics=True,
+        )
+    except PitHistoryRequiredError as exc:
+        _safe_print(f"❌ {exc}")
+        _safe_print("   En mode `pipeline`, le backtest exige des snapshots PIT historisés dans `stock_scores_history`.")
+        sys.exit(1)
+    scores_df = score_load_result.frame
+    score_load_diagnostics = score_load_result.diagnostics
     if scores_df.empty:
         _safe_print("❌ Aucun score candidat trouvé sur la période demandée.")
         _safe_print("   Vérifie d'abord :")
@@ -554,33 +613,131 @@ def _run_backtest(args: argparse.Namespace) -> None:
         _safe_print("   Pour un vrai backtest 10 ans, il faut historiser les snapshots dans `stock_scores_history`.")
         sys.exit(1)
 
-    scores_df = prepare_scores_for_sentiment_mode(
+    prepared_scores = prepare_scores_for_sentiment_mode(
         engine,
         scores_df,
         sentiment_mode=args.sentiment_mode,
         walk_forward_artifacts_dir=Path(args.walk_forward_artifacts_dir) if args.walk_forward_artifacts_dir else None,
+        engine_mode=engine_mode,
+        return_diagnostics=True,
     )
+    if hasattr(prepared_scores, "frame") and hasattr(prepared_scores, "diagnostics"):
+        scores_df = prepared_scores.frame
+        sentiment_diagnostics = prepared_scores.diagnostics
+    else:
+        scores_df = prepared_scores
+        sentiment_diagnostics = None
 
     _safe_print("🤖 Chargement prédictions ML...")
     preds_df = load_predictions(engine, start, end)
-    preds_df = prepare_predictions_for_ml_mode(
-        engine,
-        scores_df,
-        preds_df,
-        ml_mode=args.ml_mode,
-        artifacts_dir=Path(args.artifacts_dir),
-    )
+    try:
+        prepared_predictions = prepare_predictions_for_ml_mode(
+            engine,
+            scores_df,
+            preds_df,
+            ml_mode=args.ml_mode,
+            artifacts_dir=Path(args.artifacts_dir),
+            engine_mode=engine_mode,
+            ml_pit_strategy=ml_pit_strategy,
+            return_diagnostics=True,
+        )
+    except PitMlStrategyUnsupportedError as exc:
+        _safe_print(f"❌ {exc}")
+        sys.exit(1)
+    if hasattr(prepared_predictions, "frame") and hasattr(prepared_predictions, "diagnostics"):
+        preds_df = prepared_predictions.frame
+        ml_diagnostics = prepared_predictions.diagnostics
+    else:
+        preds_df = prepared_predictions
+        ml_diagnostics = None
 
     # 2. Pivoter OHLCV
     pivoted = pivot_ohlcv(ohlcv_df)
 
     # 3. Reconstruire les signaux
     _safe_print("🔄 Reconstruction des signaux de conviction...")
-    signals_df = replay_signals(
-        scores_df, preds_df if not preds_df.empty else None,
-        score_column=None if args.score_column == "auto" else args.score_column,
-        max_positions=args.max_positions,
-    )
+    phase2_risk_result = None
+    phase2_execution_result = None
+    phase3_execution_replay_result = None
+    phase2_risk_run_id = f"bt_phase2_{start:%Y%m%d}_{end:%Y%m%d}"
+    if phase2_mode == "off":
+        signals_df = replay_signals(
+            scores_df, preds_df if not preds_df.empty else None,
+            score_column=None if args.score_column == "auto" else args.score_column,
+            max_positions=args.max_positions,
+        )
+    else:
+        from backtesting.risk_bridge import build_phase2_risk_result
+        from risk_management.config import RiskConfig
+
+        phase2_risk_result = build_phase2_risk_result(
+            scores_df=scores_df,
+            predictions_df=preds_df if isinstance(preds_df, pd.DataFrame) else pd.DataFrame(),
+            close_df=pivoted["close"],
+            high_df=pivoted["high"],
+            low_df=pivoted["low"],
+            risk_config=RiskConfig(
+                account_equity=float(args.equity),
+                max_positions=int(args.max_positions),
+            ),
+        )
+        signals_df = phase2_risk_result.signals_df
+        _safe_print(
+            "   Phase 2 risk bridge: snapshots={} entries={} accepted={} signals={}\n".format(
+                phase2_risk_result.diagnostics.get("snapshot_dates", 0),
+                phase2_risk_result.diagnostics.get("entries_total", 0),
+                phase2_risk_result.diagnostics.get("entries_accepted", 0),
+                phase2_risk_result.diagnostics.get("signals_generated", 0),
+            )
+        )
+        if phase2_mode == "risk_execution":
+            from execution_engine.config import ExecutionConfig
+
+            execution_config = ExecutionConfig(
+                broker_mode="paper",
+                dry_run=True,
+                account_type=args.account_type,
+                pdt_rule=args.pdt_rule,
+                swing_only=args.swing_only,
+                simulated_account_equity=float(args.equity),
+                profit_taker_pct=float(args.tp),
+                trailing_stop_pct=float(args.ts),
+            )
+            if phase3_mode == "execution_replay":
+                from backtesting.execution_replay import simulate_phase3_execution_replay
+
+                phase3_execution_replay_result = simulate_phase3_execution_replay(
+                    phase2_risk_result.entries,
+                    execution_config=execution_config,
+                    open_df=pivoted["open"],
+                    risk_run_id_prefix=phase2_risk_run_id,
+                )
+                phase2_execution_result = phase3_execution_replay_result.execution_result
+                signals_df = phase3_execution_replay_result.signals_df
+                _safe_print(
+                    "   Phase 3 execution replay: scheduled_entries={} signals={} skipped_no_next_session={}\n".format(
+                        phase3_execution_replay_result.diagnostics.get("scheduled_entries", 0),
+                        phase3_execution_replay_result.diagnostics.get("signals_generated", 0),
+                        phase3_execution_replay_result.diagnostics.get("skipped_no_next_session", 0),
+                    )
+                )
+            else:
+                from backtesting.execution_bridge import simulate_phase2_execution
+
+                phase2_execution_result = simulate_phase2_execution(
+                    phase2_risk_result.entries,
+                    execution_config=execution_config,
+                    trade_date=end,
+                    risk_run_id=phase2_risk_run_id,
+                )
+            _safe_print(
+                "   Phase 2 execution bridge: targets={} entry_intents={} child_intents={} fills={}\n".format(
+                    phase2_execution_result.diagnostics.get("targets", 0),
+                    phase2_execution_result.diagnostics.get("entry_intents", 0),
+                    phase2_execution_result.diagnostics.get("child_intents", 0),
+                    phase2_execution_result.diagnostics.get("fills", 0),
+                )
+            )
 
     # 4. Backtest
     _safe_print("⚡ Exécution du backtest vectorbt...")
@@ -635,6 +792,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         microstructure=microstructure_cfg,
         risk_overlay=risk_overlay_cfg,
         seed=getattr(args, "seed", None),
+        execution_replay_mode=phase3_mode,
     )
     bt_engine = BacktestEngine(bt_config)
     pf = bt_engine.run(
@@ -657,6 +815,18 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     output_dir = Path(args.output_dir) if args.output_dir else None
     artifact_paths: dict[str, str] = {}
+    fidelity_manifest = build_fidelity_manifest(
+        engine_mode=engine_mode,
+        start_date=start,
+        end_date=end,
+        capital_preset_key=effective_preset.key,
+        score_diagnostics=score_load_diagnostics,
+        sentiment_diagnostics=sentiment_diagnostics,
+        ml_diagnostics=ml_diagnostics,
+        sentiment_mode=args.sentiment_mode,
+        ml_mode=args.ml_mode,
+        ml_pit_strategy=ml_pit_strategy,
+    )
 
     common_params: dict[str, object] = {
         "start": args.start,
@@ -675,6 +845,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
         "capital_preset_key": effective_preset.key,
         "capital_preset_source": preset_source,
         "capital_preset_fingerprint": preset_fingerprint,
+        "engine_mode": engine_mode,
+        "phase2_mode": phase2_mode,
+        "phase3_mode": phase3_mode,
+        "ml_pit_strategy": ml_pit_strategy,
         # Phase 6.1.a — fusion conviction unifiée via core.conviction.
         "conviction_weights": {
             "source": "core.conviction",
@@ -724,6 +898,22 @@ def _run_backtest(args: argparse.Namespace) -> None:
             ),
             "is_default": risk_overlay_cfg.is_default(),
         },
+        "phase2": {
+            "enabled": phase2_mode != "off",
+            "mode": phase2_mode,
+            "risk_bridge": phase2_risk_result.diagnostics if phase2_risk_result is not None else None,
+            "execution_bridge": phase2_execution_result.diagnostics if phase2_execution_result is not None else None,
+            "execution_tca": phase2_execution_result.tca_summary if phase2_execution_result is not None else None,
+        },
+        "phase3": {
+            "enabled": phase3_mode != "off",
+            "mode": phase3_mode,
+            "execution_replay": (
+                phase3_execution_replay_result.diagnostics
+                if phase3_execution_replay_result is not None
+                else None
+            ),
+        },
     }
 
     # Phase A.4 — métadonnées de reproductibilité.
@@ -740,6 +930,20 @@ def _run_backtest(args: argparse.Namespace) -> None:
         _safe_print("📝 Sauvegarde du rapport structuré...")
         equity_curve_csv_path = save_equity_curve_csv(pf, output_dir=output_dir)
         artifact_paths["equity_curve_csv"] = str(equity_curve_csv_path)
+        fidelity_manifest_path = save_fidelity_manifest(fidelity_manifest, output_dir)
+        artifact_paths["fidelity_manifest_json"] = str(fidelity_manifest_path)
+        if phase2_risk_result is not None:
+            from backtesting.risk_bridge import save_phase2_risk_artifacts
+
+            artifact_paths.update(save_phase2_risk_artifacts(phase2_risk_result, output_dir))
+        if phase2_execution_result is not None and phase3_execution_replay_result is None:
+            from backtesting.execution_bridge import save_phase2_execution_artifacts
+
+            artifact_paths.update(save_phase2_execution_artifacts(phase2_execution_result, output_dir))
+        if phase3_execution_replay_result is not None:
+            from backtesting.execution_replay import save_phase3_execution_replay_artifacts
+
+            artifact_paths.update(save_phase3_execution_replay_artifacts(phase3_execution_replay_result, output_dir))
         report_json_path = save_report_json(
             report,
             output_dir=output_dir,
@@ -747,10 +951,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
             params=common_params,
             diagnostics=diagnostics,
             run_metadata=run_metadata,
+            fidelity=fidelity_manifest,
         )
         artifact_paths["report_json"] = str(report_json_path)
         _safe_print(f"   → {report_json_path}")
         _safe_print(f"   → {equity_curve_csv_path}")
+        _safe_print(f"   → {fidelity_manifest_path}")
 
     # 6. Artefacts
     if not args.no_save:
@@ -770,6 +976,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 params=common_params,
                 diagnostics=diagnostics,
                 run_metadata=run_metadata,
+                fidelity=fidelity_manifest,
             )
 
     _safe_print("✅ Backtest terminé.\n")

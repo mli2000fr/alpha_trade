@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
+from typing import Any
 
 import pandas as pd
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
+
+from backtesting.fidelity import PitHistoryRequiredError, ScoreLoadDiagnostics, ScoreLoadResult
 
 LOGGER = logging.getLogger(__name__)
 BACKTEST_REQUIRED_BARS_DATA_SOURCE = "eodhd_eod"
@@ -103,7 +106,15 @@ def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
     return df
 
 
-def load_scores(engine: Engine, start: date, end: date, capital_preset_key: str | None = None) -> pd.DataFrame:
+def load_scores(
+    engine: Engine,
+    start: date,
+    end: date,
+    capital_preset_key: str | None = None,
+    *,
+    strict_pit: bool = False,
+    return_diagnostics: bool = False,
+) -> Any:
     """Charge les scores candidats.
 
     Priorité :
@@ -114,6 +125,11 @@ def load_scores(engine: Engine, start: date, end: date, capital_preset_key: str 
 
     def _optional_select(columns: set[str], column: str) -> str:
         return column if column in columns else f"NULL AS {column}"
+
+    def _build_result(df: pd.DataFrame, diagnostics: ScoreLoadDiagnostics) -> Any:
+        if return_diagnostics:
+            return ScoreLoadResult(frame=df, diagnostics=diagnostics)
+        return df
 
     if history_exists:
         history_columns = _get_table_columns(engine, "stock_scores_history")
@@ -127,6 +143,8 @@ def load_scores(engine: Engine, start: date, end: date, capital_preset_key: str 
         history_query = text(f"""
             SELECT symbol,
                    snapshot_date AS trade_date,
+                   {_optional_select(history_columns, 'capital_preset_key')},
+                   {_optional_select(history_columns, 'config_fingerprint')},
                    final_score,
                    final_score_sentiment,
                    {_optional_select(history_columns, 'final_score_walk_forward')},
@@ -165,12 +183,36 @@ def load_scores(engine: Engine, start: date, end: date, capital_preset_key: str 
                 len(df),
                 f" | preset={capital_preset_key}" if capital_preset_key and has_capital_preset_key else "",
             )
-            return df
+            return _build_result(
+                df,
+                ScoreLoadDiagnostics(
+                    source_table="stock_scores_history",
+                    strict_pit_requested=bool(strict_pit),
+                    history_table_exists=True,
+                    history_rows_found=int(len(df)),
+                    capital_preset_key=str(capital_preset_key) if capital_preset_key else None,
+                    config_fingerprint_present="config_fingerprint" in df.columns and df["config_fingerprint"].notna().any(),
+                ),
+            )
         LOGGER.warning(
             "stock_scores_history existe mais aucune ligne n'a ete trouvee sur [%s → %s] — fallback sur stock_scores.",
             start,
             end,
         )
+        if strict_pit:
+            raise PitHistoryRequiredError(
+                "Mode pipeline: aucun snapshot PIT disponible dans stock_scores_history "
+                f"sur [{start} → {end}]"
+                + (f" pour preset={capital_preset_key}." if capital_preset_key else ".")
+            )
+        degraded_reasons = ("stock_scores_history_empty",)
+    else:
+        if strict_pit:
+            raise PitHistoryRequiredError(
+                "Mode pipeline: table stock_scores_history indisponible — "
+                "impossible de garantir un replay strictement point-in-time."
+            )
+        degraded_reasons = ("stock_scores_history_missing",)
 
     LOGGER.warning(
         "Lecture des scores depuis stock_scores (snapshot courant). "
@@ -181,6 +223,8 @@ def load_scores(engine: Engine, start: date, end: date, capital_preset_key: str 
     query = text(f"""
         SELECT symbol,
                DATE(COALESCE(last_updated_sentiment, last_updated_scan, last_updated_score)) AS trade_date,
+               NULL AS capital_preset_key,
+               NULL AS config_fingerprint,
                final_score,
                final_score_sentiment,
                {_optional_select(stock_columns, 'final_score_walk_forward')},
@@ -213,7 +257,18 @@ def load_scores(engine: Engine, start: date, end: date, capital_preset_key: str 
     with engine.connect() as conn:
         df = pd.read_sql(query, conn, params={"start": start, "end": end}, parse_dates=["trade_date"])
     LOGGER.info("Scores candidats chargés : %d lignes", len(df))
-    return df
+    return _build_result(
+        df,
+        ScoreLoadDiagnostics(
+            source_table="stock_scores",
+            strict_pit_requested=bool(strict_pit),
+            history_table_exists=history_exists,
+            history_rows_found=0,
+            capital_preset_key=str(capital_preset_key) if capital_preset_key else None,
+            fallback_used=True,
+            degraded_reasons=degraded_reasons,
+        ),
+    )
 
 
 def load_sentiment(engine: Engine, start: date, end: date, lookback_days: int = 365) -> pd.DataFrame:

@@ -30,14 +30,28 @@ Usage :
 from __future__ import annotations
 
 import math
+import importlib
 from typing import Any
 
+BaseModel = object  # type: ignore[assignment,misc]
+ConfigDict = dict  # type: ignore[assignment,misc]
+Field = lambda *args, **kwargs: None  # type: ignore[assignment]
+field_validator = lambda *args, **kwargs: (lambda func: func)  # type: ignore[assignment]
+
 try:
-    from pydantic import BaseModel, ConfigDict, Field, field_validator
+    _pydantic = importlib.import_module("pydantic")
+    BaseModel = _pydantic.BaseModel
+    ConfigDict = _pydantic.ConfigDict
+    Field = _pydantic.Field
+    field_validator = _pydantic.field_validator
 
     HAS_PYDANTIC = True
 except ImportError:  # pragma: no cover — chemin sans dépendance.
     HAS_PYDANTIC = False
+    BaseModel = object  # type: ignore[assignment,misc]
+    ConfigDict = dict  # type: ignore[assignment,misc]
+    Field = lambda *args, **kwargs: None  # type: ignore[assignment]
+    field_validator = lambda *args, **kwargs: (lambda func: func)  # type: ignore[assignment]
     PydanticBacktestReport = None  # type: ignore[assignment]
     PydanticSummary = None  # type: ignore[assignment]
 
@@ -110,6 +124,7 @@ if HAS_PYDANTIC:
         artifacts: dict[str, Any] = Field(default_factory=dict)
         diagnostics: dict[str, Any] = Field(default_factory=dict)
         run_metadata: PydanticRunMetadata | None = None
+        fidelity: dict[str, Any] = Field(default_factory=dict)
 
 
 __all__ = [

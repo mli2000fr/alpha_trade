@@ -19,7 +19,6 @@ import pandas as pd
 from backtesting.trading_constraints import TradingConstraintConfig
 from backtesting.microstructure import (
     MicrostructureConfig,
-    SlippageConfig,
     compute_adv_usd,
     resolve_intrabar_exit,
     should_skip_entry_for_gap,
@@ -53,6 +52,7 @@ class BacktestConfig:
     slippage_bps: float = 5.0
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
     execution_timing: str = "next_open"
+    execution_replay_mode: str = "off"
     # Phase B (refactor) — micro-structure (slippage volume-aware,
     # initial stop, gap filter, intrabar priority).
     microstructure: MicrostructureConfig = field(default_factory=MicrostructureConfig)
@@ -68,6 +68,12 @@ class BacktestConfig:
         if self.exec_config:
             self.profit_taker_pct = self.exec_config.profit_taker_pct
             self.trailing_stop_pct = self.exec_config.trailing_stop_pct
+        normalized_replay_mode = str(self.execution_replay_mode or "off").strip().lower()
+        if normalized_replay_mode not in {"off", "execution_replay"}:
+            raise ValueError(
+                "execution_replay_mode doit être 'off' ou 'execution_replay'."
+            )
+        self.execution_replay_mode = normalized_replay_mode
 
 
 @dataclass(slots=True)
@@ -517,10 +523,16 @@ class BacktestEngine:
             if not np.isfinite(entry_price) or entry_price <= 0:
                 continue
 
+            quantity_override = (
+                self._resolve_signal_quantity_override(row)
+                if cfg.execution_replay_mode == "execution_replay"
+                else None
+            )
+
             # Phase B.3 — gap d'ouverture excessif.
             previous_close: float | None = None
             if day_idx > 0 and symbol in close.columns:
-                prev_day = trading_days[day_idx - 1]
+                prev_day = close.index[day_idx - 1]
                 try:
                     previous_close = float(close.at[prev_day, symbol])
                 except (KeyError, ValueError):
@@ -531,11 +543,15 @@ class BacktestEngine:
                 diagnostics.blocked_entry_gap += 1
                 continue
 
-            target_weight_pct = (
-                float(sizing_weights.iloc[candidate_pos])
-                if not sizing_weights.empty and candidate_pos < len(sizing_weights)
-                else 1.0 / max(cfg.max_positions, 1)
-            )
+            signal_target_weight = self._resolve_signal_target_weight(row)
+            if quantity_override is not None and signal_target_weight is not None:
+                target_weight_pct = signal_target_weight
+            else:
+                target_weight_pct = (
+                    float(sizing_weights.iloc[candidate_pos])
+                    if not sizing_weights.empty and candidate_pos < len(sizing_weights)
+                    else 1.0 / max(cfg.max_positions, 1)
+                )
 
             sector = (
                 str(row["sector"])
@@ -552,11 +568,18 @@ class BacktestEngine:
             per_position_cap = current_equity * target_weight_pct
             candidate_budget = min(per_position_cap, state.settled_cash / remaining_candidates)
 
-            preliminary_size_usd = max(candidate_budget, 0.0)
+            preliminary_size_usd = max(
+                float(quantity_override) * entry_price if quantity_override is not None else candidate_budget,
+                0.0,
+            )
             adv_usd = self._get_adv_usd(adv_usd_df, trade_day, symbol)
             extra_slippage_pct = micro.slippage.compute_bps(preliminary_size_usd, adv_usd) / 10_000.0
             effective_unit_cost = entry_price * (1.0 + cfg.fees_pct + extra_slippage_pct)
-            quantity = int(candidate_budget // effective_unit_cost)
+            if quantity_override is not None:
+                affordable_quantity = int(state.settled_cash // effective_unit_cost) if effective_unit_cost > 0 else 0
+                quantity = min(int(quantity_override), affordable_quantity)
+            else:
+                quantity = int(candidate_budget // effective_unit_cost)
 
             if quantity <= 0:
                 if constraints.use_settled_cash_only:
@@ -718,6 +741,37 @@ class BacktestEngine:
             return float(adv_usd_df.at[trade_day, symbol])
         except (KeyError, ValueError):
             return None
+
+    @staticmethod
+    def _resolve_signal_quantity_override(row: pd.Series) -> int | None:
+        """Retourne une quantité explicite issue du signal, si disponible."""
+        for column_name in ("filled_qty", "approved_shares", "target_shares"):
+            if column_name not in row.index:
+                continue
+            value = row.get(column_name)
+            if value is None or pd.isna(value):
+                continue
+            try:
+                quantity = int(float(value))
+            except (TypeError, ValueError):
+                continue
+            if quantity > 0:
+                return quantity
+        return None
+
+    @staticmethod
+    def _resolve_signal_target_weight(row: pd.Series) -> float | None:
+        """Retourne un target_weight explicite issu du signal, si disponible."""
+        if "target_weight" not in row.index:
+            return None
+        value = row.get("target_weight")
+        if value is None or pd.isna(value):
+            return None
+        try:
+            target_weight = float(value)
+        except (TypeError, ValueError):
+            return None
+        return target_weight if target_weight > 0 else None
 
     @staticmethod
     def _mark_to_market(

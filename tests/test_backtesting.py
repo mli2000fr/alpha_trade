@@ -270,6 +270,47 @@ class TestDataLoader:
         assert "FROM stock_scores_history" in calls[0]
         assert "FROM stock_scores" in calls[1]
 
+    def test_load_scores_pipeline_mode_requires_history_table(self, monkeypatch):
+        from backtesting import data_loader
+        from backtesting.fidelity import PitHistoryRequiredError
+
+        class FakeInspector:
+            def has_table(self, table_name):
+                return False
+
+        monkeypatch.setattr(data_loader, "inspect", lambda _engine: FakeInspector())
+
+        with pytest.raises(PitHistoryRequiredError, match="stock_scores_history"):
+            data_loader.load_scores(
+                cast(Engine, self._FakeEngine()),
+                date(2025, 1, 1),
+                date(2025, 1, 31),
+                strict_pit=True,
+            )
+
+    def test_load_scores_pipeline_mode_requires_history_rows(self, monkeypatch):
+        from backtesting import data_loader
+        from backtesting.fidelity import PitHistoryRequiredError
+
+        class FakeInspector:
+            def has_table(self, table_name):
+                return table_name == "stock_scores_history"
+
+        def fake_read_sql(query, conn, params=None, parse_dates=None):
+            return pd.DataFrame(columns=["symbol", "trade_date", "final_score", "final_score_sentiment", "sector", "is_candidate"])
+
+        monkeypatch.setattr(data_loader, "inspect", lambda _engine: FakeInspector())
+        monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
+
+        with pytest.raises(PitHistoryRequiredError, match="aucun snapshot PIT"):
+            data_loader.load_scores(
+                cast(Engine, self._FakeEngine()),
+                date(2025, 1, 1),
+                date(2025, 1, 31),
+                capital_preset_key="capital_0_5000",
+                strict_pit=True,
+            )
+
     def test_load_predictions_supports_prediction_date(self, monkeypatch):
         from backtesting import data_loader
 
@@ -578,6 +619,106 @@ class TestResilience:
             True,
         )]
 
+    def test_prepare_scores_pipeline_rebuild_missing_does_not_write_back(self, monkeypatch):
+        from backtesting import resilience
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "final_score": [0.7],
+            "final_score_sentiment": [None],
+            "capital_preset_key": ["capital_0_5000"],
+            "config_fingerprint": ["fp-123"],
+        })
+        persisted: list[bool] = []
+
+        class FakeService:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def build_snapshot_for_date(self, snapshot_date):
+                return pd.DataFrame({
+                    "snapshot_date": [snapshot_date],
+                    "symbol": ["AAPL"],
+                    "final_score_sentiment": [0.91],
+                })
+
+            def persist_snapshot(self, snapshot, overwrite_existing=False):
+                persisted.append(True)
+                return len(snapshot)
+
+        monkeypatch.setattr(resilience, "BackfillScoresHistoryService", FakeService)
+
+        prepared = resilience.prepare_scores_for_sentiment_mode(
+            None,  # type: ignore[arg-type]
+            scores,
+            sentiment_mode="rebuild-missing",
+            engine_mode="pipeline",
+            return_diagnostics=True,
+        )
+
+        assert prepared.frame.iloc[0]["final_score_sentiment"] == 0.91
+        assert prepared.diagnostics.writeback_enabled is False
+        assert prepared.diagnostics.writeback_performed is False
+        assert persisted == []
+
+    def test_prepare_predictions_pipeline_rebuild_missing_disables_persist(self, monkeypatch):
+        from backtesting import resilience
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+        })
+        preds = pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
+        calls: list[tuple[str, date, date, bool]] = []
+
+        def fake_predict_symbol(symbol, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=True):
+            calls.append((symbol, prediction_date, as_of_date, persist))
+            return pd.DataFrame({
+                "symbol": [symbol],
+                "prediction_date": [prediction_date],
+                "predicted_proba": [0.66],
+                "predicted_class": [1],
+            })
+
+        monkeypatch.setattr(resilience, "predict_symbol", fake_predict_symbol)
+
+        prepared = resilience.prepare_predictions_for_ml_mode(
+            None,  # type: ignore[arg-type]
+            scores,
+            preds,
+            ml_mode="rebuild-missing",
+            artifacts_dir=Path("artifacts/models"),
+            engine_mode="pipeline",
+            ml_pit_strategy="rebuild-missing",
+            return_diagnostics=True,
+        )
+
+        assert len(prepared.frame) == 1
+        assert prepared.diagnostics.persist_enabled is False
+        assert prepared.diagnostics.persist_performed is False
+        assert calls == [("AAPL", date(2025, 1, 1), date(2025, 1, 1), False)]
+
+    def test_prepare_predictions_walk_forward_strategy_not_supported_yet(self):
+        from backtesting import resilience
+        from backtesting.fidelity import PitMlStrategyUnsupportedError
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+        })
+
+        with pytest.raises(PitMlStrategyUnsupportedError, match="walk-forward-train-then-predict"):
+            resilience.prepare_predictions_for_ml_mode(
+                None,  # type: ignore[arg-type]
+                scores,
+                pd.DataFrame(),
+                ml_mode="auto",
+                artifacts_dir=Path("artifacts/models"),
+                engine_mode="pipeline",
+                ml_pit_strategy="walk-forward-train-then-predict",
+            )
+
 
 # ============================================================
 # test simulator (BacktestConfig)
@@ -668,6 +809,40 @@ class TestBacktestConfig:
         trades_df = pf.trades.records_readable
         assert not trades_df.empty
         assert float(trades_df["Size"].iloc[0]).is_integer()
+
+    def test_backtest_engine_execution_replay_mode_uses_signal_share_override(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 105.0, 106.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 110.0, 106.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [101.0, 120.0, 107.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 104.0, 105.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+                "approved_shares": [7],
+                "filled_qty": [7.0],
+                "target_weight": [0.10],
+            }
+        )
+
+        result = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=1,
+                execution_replay_mode="execution_replay",
+            )
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        trades_df = result.trades.records_readable
+        assert not trades_df.empty
+        assert float(trades_df["Size"].iloc[0]) == 7.0
 
     def test_to_scalar_supports_series_and_scalar(self):
         from backtesting.simulator import BacktestEngine, BacktestConfig
@@ -1168,6 +1343,33 @@ class TestReport:
         assert payload["params"]["start"] == "2025-01-01"
         assert payload["diagnostics"]["blocked_pdt_day_trades"] == 1
 
+    def test_save_report_json_includes_fidelity_block(self, tmp_path):
+        from backtesting.report import BacktestReport, save_report_json
+
+        report = BacktestReport(
+            initial_equity=10_000,
+            final_value=11_000,
+            total_return_pct=10.0,
+            cagr_pct=5.0,
+            sharpe_ratio=1.0,
+            sortino_ratio=1.2,
+            max_drawdown_pct=3.0,
+            total_trades=4,
+            win_rate_pct=50.0,
+            avg_trade_duration_days=2.0,
+            profit_factor=1.5,
+        )
+
+        report_json_path = save_report_json(
+            report,
+            output_dir=tmp_path,
+            fidelity={"engine_mode": "pipeline", "strict_pit_requested": True},
+        )
+
+        payload = json.loads(report_json_path.read_text(encoding="utf-8"))
+        assert payload["fidelity"]["engine_mode"] == "pipeline"
+        assert payload["fidelity"]["strict_pit_requested"] is True
+
 
 # ============================================================
 # test CLI parsing
@@ -1203,6 +1405,9 @@ class TestCLI:
         "max_portfolio_dd_pct": 0.0,
         "dd_recovery_pct": 0.95,
         "target_annual_vol": None,
+        # Phase 2 — bridges opt-in.
+        "phase2_mode": "off",
+        "phase3_mode": "off",
     }
 
     def test_parse_run_command(self):
@@ -1237,7 +1442,47 @@ class TestCLI:
         assert args.sentiment_mode == "auto"
         assert args.score_column == "auto"
         assert args.walk_forward_artifacts_dir is None
+        assert args.engine_mode == "research"
+        assert args.ml_pit_strategy == "auto"
+        assert args.phase2_mode == "off"
+        assert args.phase3_mode == "off"
         assert args.no_save is False
+
+    def test_parse_run_engine_mode_pipeline(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(["run", "--start", "2020-01-01", "--engine-mode", "pipeline"])
+
+        assert args.command == "run"
+        assert args.engine_mode == "pipeline"
+
+    def test_parse_run_ml_pit_strategy(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(["run", "--start", "2020-01-01", "--ml-pit-strategy", "use-persisted"])
+
+        assert args.command == "run"
+        assert args.ml_pit_strategy == "use-persisted"
+
+    def test_parse_run_phase2_mode(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(["run", "--start", "2020-01-01", "--phase2-mode", "risk_execution"])
+
+        assert args.command == "run"
+        assert args.phase2_mode == "risk_execution"
+
+    def test_parse_run_phase3_mode(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(["run", "--start", "2020-01-01", "--phase3-mode", "execution_replay"])
+
+        assert args.command == "run"
+        assert args.phase3_mode == "execution_replay"
 
     def test_parse_custom_params(self):
         from backtesting.cli import _build_parser
@@ -1299,6 +1544,7 @@ class TestCLI:
         import argparse
         import backtesting.cli as cli
         from backtesting import data_loader, resilience, signal_replay, report, simulator
+        from backtesting.fidelity import ScoreLoadDiagnostics, ScoreLoadResult
         from database import connection
 
         calls: dict[str, object] = {}
@@ -1339,11 +1585,16 @@ class TestCLI:
         monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
         monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
         monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
-        monkeypatch.setattr(
-            data_loader,
-            "load_scores",
-            lambda engine, start, end, capital_preset_key=None: scores_df.copy(),
-        )
+        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end, capital_preset_key=None, **kwargs: ScoreLoadResult(
+            frame=scores_df.copy(),
+            diagnostics=ScoreLoadDiagnostics(
+                source_table="stock_scores_history",
+                strict_pit_requested=bool(kwargs.get("strict_pit", False)),
+                history_table_exists=True,
+                history_rows_found=len(scores_df),
+                capital_preset_key=capital_preset_key,
+            ),
+        ))
         monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
@@ -1352,7 +1603,7 @@ class TestCLI:
             "low": df.pivot_table(index="trade_date", columns="symbol", values="low"),
         })
 
-        def fake_prepare_scores(engine, scores_df_in, *, sentiment_mode, walk_forward_artifacts_dir):
+        def fake_prepare_scores(engine, scores_df_in, *, sentiment_mode, walk_forward_artifacts_dir, **kwargs):
             calls["walk_forward_artifacts_dir"] = walk_forward_artifacts_dir
             calls["sentiment_mode"] = sentiment_mode
             return scores_df_in.copy()
@@ -1396,6 +1647,7 @@ class TestCLI:
             output_dir=None,
             score_column="final_score_walk_forward",
             walk_forward_artifacts_dir=str(tmp_path),
+            engine_mode="research",
             **self._CLI_NEUTRAL_DEFAULTS,
         )
 
@@ -1404,10 +1656,48 @@ class TestCLI:
         assert calls["score_column"] == "final_score_walk_forward"
         assert calls["walk_forward_artifacts_dir"] == Path(tmp_path)
 
+    def test_run_backtest_phase3_requires_phase2_risk_execution(self, monkeypatch):
+        import argparse
+        import backtesting.cli as cli
+        import backtesting.cli._impl as cli_impl
+
+        printed: list[str] = []
+        monkeypatch.setattr(cli_impl, "_safe_print", lambda *args, **kwargs: printed.append(" ".join(str(arg) for arg in args)))
+
+        args = argparse.Namespace(
+            start="2025-01-01",
+            end="2025-01-02",
+            equity=100_000.0,
+            tp=0.08,
+            ts=0.05,
+            max_positions=5,
+            fees=None,
+            account_type="margin",
+            pdt_rule="auto",
+            swing_only=False,
+            sentiment_lookback=365,
+            no_save=True,
+            ml_mode="auto",
+            sentiment_mode="auto",
+            artifacts_dir="artifacts/models",
+            output_dir=None,
+            score_column="auto",
+            walk_forward_artifacts_dir=None,
+            engine_mode="research",
+            **{**self._CLI_NEUTRAL_DEFAULTS, "phase2_mode": "off", "phase3_mode": "execution_replay"},
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            cli._run_backtest(args)
+
+        assert exc.value.code == 1
+        assert any("risk_execution" in line for line in printed)
+
     def test_run_backtest_with_real_walk_forward_artifact_writes_structured_artifacts(self, monkeypatch, tmp_path):
         import argparse
         import backtesting.cli as cli
         from backtesting import data_loader, report, simulator
+        from backtesting.fidelity import ScoreLoadDiagnostics, ScoreLoadResult
         from database import connection
 
         output_dir = tmp_path / "out"
@@ -1487,7 +1777,12 @@ class TestCLI:
         def fake_save_report_json(report_obj, *, output_dir, artifacts, params, diagnostics, **_kwargs):
             output_dir.mkdir(parents=True, exist_ok=True)
             path = output_dir / "report.json"
-            payload = {"artifacts": artifacts, "params": params, "diagnostics": diagnostics}
+            payload = {
+                "artifacts": artifacts,
+                "params": params,
+                "diagnostics": diagnostics,
+                "fidelity": _kwargs.get("fidelity", {}),
+            }
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
             captured["report_payload"] = payload
             return path
@@ -1495,11 +1790,16 @@ class TestCLI:
         monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
         monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
         monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
-        monkeypatch.setattr(
-            data_loader,
-            "load_scores",
-            lambda engine, start, end, capital_preset_key=None: scores_df.copy(),
-        )
+        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end, capital_preset_key=None, **kwargs: ScoreLoadResult(
+            frame=scores_df.copy(),
+            diagnostics=ScoreLoadDiagnostics(
+                source_table="stock_scores_history",
+                strict_pit_requested=bool(kwargs.get("strict_pit", False)),
+                history_table_exists=True,
+                history_rows_found=len(scores_df),
+                capital_preset_key=capital_preset_key,
+            ),
+        ))
         monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
         monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
         monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {"selected_count": 1})
@@ -1528,6 +1828,7 @@ class TestCLI:
             output_dir=str(output_dir),
             score_column="auto",
             walk_forward_artifacts_dir=str(tmp_path),
+            engine_mode="research",
             **self._CLI_NEUTRAL_DEFAULTS,
         )
 
@@ -1541,10 +1842,505 @@ class TestCLI:
         report_payload = cast(dict[str, object], captured["report_payload"])
         assert report_payload["params"]["walk_forward_artifacts_dir"] == str(tmp_path)
         assert report_payload["params"]["score_column"] == "auto"
+        assert report_payload["params"]["engine_mode"] == "research"
+        assert report_payload["fidelity"]["strict_pit_requested"] is False
         artifacts = cast(dict[str, str], report_payload["artifacts"])
         assert artifacts["equity_curve_csv"].endswith("equity_curve.csv")
         assert artifacts["trades_csv"].endswith("trades.csv")
+        assert artifacts["fidelity_manifest_json"].endswith("fidelity_manifest.json")
         assert (output_dir / "report.json").exists()
+
+    def test_run_backtest_phase2_risk_uses_bridge_signals_and_artifacts(self, monkeypatch, tmp_path):
+        import argparse
+        import backtesting.cli as cli
+        from backtesting import data_loader, report, resilience, risk_bridge, signal_replay, simulator
+        from backtesting.fidelity import ScoreLoadDiagnostics, ScoreLoadResult
+        from database import connection
+
+        captured: dict[str, object] = {}
+        output_dir = tmp_path / "phase2_risk_out"
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        ohlcv_df = pd.DataFrame({
+            "symbol": ["AAPL", "AAPL"],
+            "trade_date": idx,
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1000, 1100],
+        })
+        scores_df = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "final_score": [0.7],
+            "final_score_sentiment": [0.75],
+            "sector": ["Tech"],
+            "is_candidate": [1],
+        })
+        phase2_signals_df = pd.DataFrame({
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "symbol": ["AAPL"],
+            "selected": [True],
+            "rank": [1.0],
+            "score": [0.75],
+            "score_source": ["risk_bridge"],
+        })
+
+        class FakePF:
+            pass
+
+        class FakeReport:
+            def print_summary(self) -> None:
+                return None
+
+        class FakeBacktestEngine:
+            def __init__(self, cfg):
+                self.cfg = cfg
+
+            def run(self, **kwargs):
+                captured["signals_df"] = kwargs["signals_df"].copy()
+                return FakePF()
+
+        def fake_save_report_json(report_obj, *, output_dir, artifacts, params, diagnostics, **kwargs):
+            captured["report_payload"] = {
+                "artifacts": artifacts,
+                "params": params,
+                "diagnostics": diagnostics,
+                "fidelity": kwargs.get("fidelity", {}),
+            }
+            return output_dir / "report.json"
+
+        monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
+        monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
+        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end, capital_preset_key=None, **kwargs: ScoreLoadResult(
+            frame=scores_df.copy(),
+            diagnostics=ScoreLoadDiagnostics(
+                source_table="stock_scores_history",
+                strict_pit_requested=bool(kwargs.get("strict_pit", False)),
+                history_table_exists=True,
+                history_rows_found=len(scores_df),
+                capital_preset_key=capital_preset_key,
+            ),
+        ))
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
+            "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
+            "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
+            "high": df.pivot_table(index="trade_date", columns="symbol", values="high"),
+            "low": df.pivot_table(index="trade_date", columns="symbol", values="low"),
+        })
+        monkeypatch.setattr(resilience, "prepare_scores_for_sentiment_mode", lambda *args, **kwargs: scores_df.copy())
+        monkeypatch.setattr(resilience, "prepare_predictions_for_ml_mode", lambda *args, **kwargs: pd.DataFrame())
+        monkeypatch.setattr(signal_replay, "replay_signals", lambda *args, **kwargs: pytest.fail("replay_signals ne doit pas être utilisé en phase2_mode=risk"))
+
+        def fake_build_phase2_risk_result(**kwargs):
+            captured["risk_bridge_kwargs"] = kwargs
+            return SimpleNamespace(
+                entries=[{"symbol": "AAPL"}],
+                signals_df=phase2_signals_df.copy(),
+                diagnostics={
+                    "snapshot_dates": 1,
+                    "entries_total": 1,
+                    "entries_accepted": 1,
+                    "signals_generated": 1,
+                    "bridge": "risk_management.portfolio_builder",
+                },
+            )
+
+        monkeypatch.setattr(risk_bridge, "build_phase2_risk_result", fake_build_phase2_risk_result)
+        monkeypatch.setattr(
+            risk_bridge,
+            "save_phase2_risk_artifacts",
+            lambda result, output_dir: {"phase2_risk_summary_json": str(output_dir / "phase2_risk_summary.json")},
+        )
+        monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
+        monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {"selected_count": 1})
+        monkeypatch.setattr(report, "generate_report", lambda pf, equity, **kwargs: FakeReport())
+        monkeypatch.setattr(report, "save_equity_curve", lambda *args, **kwargs: tmp_path / "eq.png")
+        monkeypatch.setattr(report, "save_equity_curve_csv", lambda *args, **kwargs: tmp_path / "eq.csv")
+        monkeypatch.setattr(report, "save_report_json", fake_save_report_json)
+        monkeypatch.setattr(report, "save_trades_csv", lambda *args, **kwargs: tmp_path / "trades.csv")
+
+        args = argparse.Namespace(
+            start="2025-01-01",
+            end="2025-01-02",
+            equity=100_000.0,
+            tp=0.08,
+            ts=0.05,
+            max_positions=5,
+            fees=0.001,
+            account_type="margin",
+            pdt_rule="auto",
+            swing_only=False,
+            sentiment_lookback=365,
+            no_save=True,
+            ml_mode="auto",
+            sentiment_mode="auto",
+            artifacts_dir="artifacts/models",
+            output_dir=str(output_dir),
+            score_column="auto",
+            walk_forward_artifacts_dir=None,
+            engine_mode="research",
+            **{**self._CLI_NEUTRAL_DEFAULTS, "phase2_mode": "risk"},
+        )
+
+        cli._run_backtest(args)
+
+        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase2_signals_df)
+        risk_kwargs = cast(dict[str, object], captured["risk_bridge_kwargs"])
+        assert "risk_config" in risk_kwargs
+        report_payload = cast(dict[str, object], captured["report_payload"])
+        assert report_payload["params"]["phase2_mode"] == "risk"
+        assert report_payload["params"]["phase2"]["enabled"] is True
+        assert report_payload["params"]["phase2"]["mode"] == "risk"
+        assert report_payload["params"]["phase2"]["risk_bridge"]["bridge"] == "risk_management.portfolio_builder"
+        assert report_payload["params"]["phase2"]["execution_bridge"] is None
+        artifacts = cast(dict[str, str], report_payload["artifacts"])
+        assert artifacts["phase2_risk_summary_json"].endswith("phase2_risk_summary.json")
+
+    def test_run_backtest_phase2_risk_execution_adds_execution_artifacts(self, monkeypatch, tmp_path):
+        import argparse
+        import backtesting.cli as cli
+        from backtesting import data_loader, execution_bridge, report, resilience, risk_bridge, signal_replay, simulator
+        from backtesting.fidelity import ScoreLoadDiagnostics, ScoreLoadResult
+        from database import connection
+
+        captured: dict[str, object] = {}
+        output_dir = tmp_path / "phase2_exec_out"
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        ohlcv_df = pd.DataFrame({
+            "symbol": ["AAPL", "AAPL"],
+            "trade_date": idx,
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1000, 1100],
+        })
+        scores_df = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "final_score": [0.7],
+            "final_score_sentiment": [0.75],
+            "sector": ["Tech"],
+            "is_candidate": [1],
+        })
+        phase2_signals_df = pd.DataFrame({
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "symbol": ["AAPL"],
+            "selected": [True],
+            "rank": [1.0],
+        })
+
+        class FakePF:
+            pass
+
+        class FakeReport:
+            def print_summary(self) -> None:
+                return None
+
+        class FakeBacktestEngine:
+            def __init__(self, cfg):
+                self.cfg = cfg
+
+            def run(self, **kwargs):
+                captured["signals_df"] = kwargs["signals_df"].copy()
+                return FakePF()
+
+        def fake_save_report_json(report_obj, *, output_dir, artifacts, params, diagnostics, **kwargs):
+            captured["report_payload"] = {
+                "artifacts": artifacts,
+                "params": params,
+                "diagnostics": diagnostics,
+                "fidelity": kwargs.get("fidelity", {}),
+            }
+            return output_dir / "report.json"
+
+        monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
+        monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
+        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end, capital_preset_key=None, **kwargs: ScoreLoadResult(
+            frame=scores_df.copy(),
+            diagnostics=ScoreLoadDiagnostics(
+                source_table="stock_scores_history",
+                strict_pit_requested=bool(kwargs.get("strict_pit", False)),
+                history_table_exists=True,
+                history_rows_found=len(scores_df),
+                capital_preset_key=capital_preset_key,
+            ),
+        ))
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
+            "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
+            "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
+            "high": df.pivot_table(index="trade_date", columns="symbol", values="high"),
+            "low": df.pivot_table(index="trade_date", columns="symbol", values="low"),
+        })
+        monkeypatch.setattr(resilience, "prepare_scores_for_sentiment_mode", lambda *args, **kwargs: scores_df.copy())
+        monkeypatch.setattr(resilience, "prepare_predictions_for_ml_mode", lambda *args, **kwargs: pd.DataFrame())
+        monkeypatch.setattr(signal_replay, "replay_signals", lambda *args, **kwargs: pytest.fail("replay_signals ne doit pas être utilisé en phase2_mode=risk_execution"))
+        monkeypatch.setattr(
+            risk_bridge,
+            "build_phase2_risk_result",
+            lambda **kwargs: SimpleNamespace(
+                entries=["entry-a"],
+                signals_df=phase2_signals_df.copy(),
+                diagnostics={
+                    "snapshot_dates": 1,
+                    "entries_total": 1,
+                    "entries_accepted": 1,
+                    "signals_generated": 1,
+                    "bridge": "risk_management.portfolio_builder",
+                },
+            ),
+        )
+        monkeypatch.setattr(
+            risk_bridge,
+            "save_phase2_risk_artifacts",
+            lambda result, output_dir: {"phase2_risk_summary_json": str(output_dir / "phase2_risk_summary.json")},
+        )
+
+        def fake_simulate_phase2_execution(entries, **kwargs):
+            captured["execution_entries"] = list(entries)
+            captured["execution_kwargs"] = kwargs
+            return SimpleNamespace(
+                diagnostics={
+                    "targets": 1,
+                    "entry_intents": 1,
+                    "child_intents": 3,
+                    "fills": 1,
+                    "bridge": "execution_engine.order_intents+tca",
+                },
+                tca_summary={"total_fills": 1, "breaches": 0},
+            )
+
+        monkeypatch.setattr(execution_bridge, "simulate_phase2_execution", fake_simulate_phase2_execution)
+        monkeypatch.setattr(
+            execution_bridge,
+            "save_phase2_execution_artifacts",
+            lambda result, output_dir: {"phase2_execution_summary_json": str(output_dir / "phase2_execution_summary.json")},
+        )
+        monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
+        monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {"selected_count": 1})
+        monkeypatch.setattr(report, "generate_report", lambda pf, equity, **kwargs: FakeReport())
+        monkeypatch.setattr(report, "save_equity_curve", lambda *args, **kwargs: tmp_path / "eq.png")
+        monkeypatch.setattr(report, "save_equity_curve_csv", lambda *args, **kwargs: tmp_path / "eq.csv")
+        monkeypatch.setattr(report, "save_report_json", fake_save_report_json)
+        monkeypatch.setattr(report, "save_trades_csv", lambda *args, **kwargs: tmp_path / "trades.csv")
+
+        args = argparse.Namespace(
+            start="2025-01-01",
+            end="2025-01-02",
+            equity=100_000.0,
+            tp=0.08,
+            ts=0.05,
+            max_positions=5,
+            fees=0.001,
+            account_type="margin",
+            pdt_rule="auto",
+            swing_only=False,
+            sentiment_lookback=365,
+            no_save=True,
+            ml_mode="auto",
+            sentiment_mode="auto",
+            artifacts_dir="artifacts/models",
+            output_dir=str(output_dir),
+            score_column="auto",
+            walk_forward_artifacts_dir=None,
+            engine_mode="research",
+            **{**self._CLI_NEUTRAL_DEFAULTS, "phase2_mode": "risk_execution"},
+        )
+
+        cli._run_backtest(args)
+
+        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase2_signals_df)
+        assert cast(list[object], captured["execution_entries"]) == ["entry-a"]
+        execution_kwargs = cast(dict[str, object], captured["execution_kwargs"])
+        assert execution_kwargs["risk_run_id"] == "bt_phase2_20250101_20250102"
+        report_payload = cast(dict[str, object], captured["report_payload"])
+        assert report_payload["params"]["phase2_mode"] == "risk_execution"
+        assert report_payload["params"]["phase2"]["execution_bridge"]["bridge"] == "execution_engine.order_intents+tca"
+        assert report_payload["params"]["phase2"]["execution_tca"]["total_fills"] == 1
+        artifacts = cast(dict[str, str], report_payload["artifacts"])
+        assert artifacts["phase2_execution_summary_json"].endswith("phase2_execution_summary.json")
+
+    def test_run_backtest_phase3_execution_replay_uses_replay_signals_and_artifacts(self, monkeypatch, tmp_path):
+        import argparse
+        import backtesting.cli as cli
+        from backtesting import data_loader, execution_replay, report, resilience, risk_bridge, signal_replay, simulator
+        from backtesting.fidelity import ScoreLoadDiagnostics, ScoreLoadResult
+        from database import connection
+
+        captured: dict[str, object] = {}
+        output_dir = tmp_path / "phase3_exec_out"
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        ohlcv_df = pd.DataFrame({
+            "symbol": ["AAPL", "AAPL"],
+            "trade_date": idx,
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1000, 1100],
+        })
+        scores_df = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "final_score": [0.7],
+            "final_score_sentiment": [0.75],
+            "sector": ["Tech"],
+            "is_candidate": [1],
+        })
+        phase3_signals_df = pd.DataFrame({
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "execution_date": pd.to_datetime(["2025-01-02"]),
+            "symbol": ["AAPL"],
+            "selected": [True],
+            "rank": [1.0],
+            "approved_shares": [12],
+            "filled_qty": [12.0],
+            "fill_price": [101.0],
+        })
+
+        class FakePF:
+            pass
+
+        class FakeReport:
+            def print_summary(self) -> None:
+                return None
+
+        class FakeBacktestEngine:
+            def __init__(self, cfg):
+                self.cfg = cfg
+
+            def run(self, **kwargs):
+                captured["signals_df"] = kwargs["signals_df"].copy()
+                captured["bt_config"] = self.cfg
+                return FakePF()
+
+        def fake_save_report_json(report_obj, *, output_dir, artifacts, params, diagnostics, **kwargs):
+            captured["report_payload"] = {
+                "artifacts": artifacts,
+                "params": params,
+                "diagnostics": diagnostics,
+                "fidelity": kwargs.get("fidelity", {}),
+            }
+            return output_dir / "report.json"
+
+        monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
+        monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
+        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end, capital_preset_key=None, **kwargs: ScoreLoadResult(
+            frame=scores_df.copy(),
+            diagnostics=ScoreLoadDiagnostics(
+                source_table="stock_scores_history",
+                strict_pit_requested=bool(kwargs.get("strict_pit", False)),
+                history_table_exists=True,
+                history_rows_found=len(scores_df),
+                capital_preset_key=capital_preset_key,
+            ),
+        ))
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
+            "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
+            "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
+            "high": df.pivot_table(index="trade_date", columns="symbol", values="high"),
+            "low": df.pivot_table(index="trade_date", columns="symbol", values="low"),
+        })
+        monkeypatch.setattr(resilience, "prepare_scores_for_sentiment_mode", lambda *args, **kwargs: scores_df.copy())
+        monkeypatch.setattr(resilience, "prepare_predictions_for_ml_mode", lambda *args, **kwargs: pd.DataFrame())
+        monkeypatch.setattr(signal_replay, "replay_signals", lambda *args, **kwargs: pytest.fail("replay_signals ne doit pas être utilisé en phase3_mode=execution_replay"))
+        monkeypatch.setattr(
+            risk_bridge,
+            "build_phase2_risk_result",
+            lambda **kwargs: SimpleNamespace(
+                entries=["entry-a"],
+                signals_df=pd.DataFrame({"symbol": ["AAPL"]}),
+                diagnostics={
+                    "snapshot_dates": 1,
+                    "entries_total": 1,
+                    "entries_accepted": 1,
+                    "signals_generated": 1,
+                    "bridge": "risk_management.portfolio_builder",
+                },
+            ),
+        )
+        monkeypatch.setattr(
+            risk_bridge,
+            "save_phase2_risk_artifacts",
+            lambda result, output_dir: {"phase2_risk_summary_json": str(output_dir / "phase2_risk_summary.json")},
+        )
+        monkeypatch.setattr(
+            execution_replay,
+            "simulate_phase3_execution_replay",
+            lambda entries, **kwargs: SimpleNamespace(
+                execution_result=SimpleNamespace(
+                    diagnostics={
+                        "targets": 1,
+                        "entry_intents": 1,
+                        "child_intents": 3,
+                        "fills": 1,
+                        "bridge": "execution_engine.order_intents+tca",
+                    },
+                    tca_summary={"total_filled": 1, "slippage_alerts": 0},
+                ),
+                signals_df=phase3_signals_df.copy(),
+                diagnostics={
+                    "scheduled_entries": 1,
+                    "signals_generated": 1,
+                    "skipped_no_next_session": 0,
+                    "bridge": "execution_engine.order_intents+tca+execution_replay",
+                },
+            ),
+        )
+        monkeypatch.setattr(
+            execution_replay,
+            "save_phase3_execution_replay_artifacts",
+            lambda result, output_dir: {"phase3_execution_replay_summary_json": str(output_dir / "phase3_execution_replay_summary.json")},
+        )
+        monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
+        monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {"selected_count": 1})
+        monkeypatch.setattr(report, "generate_report", lambda pf, equity, **kwargs: FakeReport())
+        monkeypatch.setattr(report, "save_equity_curve", lambda *args, **kwargs: tmp_path / "eq.png")
+        monkeypatch.setattr(report, "save_equity_curve_csv", lambda *args, **kwargs: tmp_path / "eq.csv")
+        monkeypatch.setattr(report, "save_report_json", fake_save_report_json)
+        monkeypatch.setattr(report, "save_trades_csv", lambda *args, **kwargs: tmp_path / "trades.csv")
+
+        args = argparse.Namespace(
+            start="2025-01-01",
+            end="2025-01-02",
+            equity=100_000.0,
+            tp=0.08,
+            ts=0.05,
+            max_positions=5,
+            fees=0.001,
+            account_type="margin",
+            pdt_rule="auto",
+            swing_only=False,
+            sentiment_lookback=365,
+            no_save=True,
+            ml_mode="auto",
+            sentiment_mode="auto",
+            artifacts_dir="artifacts/models",
+            output_dir=str(output_dir),
+            score_column="auto",
+            walk_forward_artifacts_dir=None,
+            engine_mode="research",
+            **{**self._CLI_NEUTRAL_DEFAULTS, "phase2_mode": "risk_execution", "phase3_mode": "execution_replay"},
+        )
+
+        cli._run_backtest(args)
+
+        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase3_signals_df)
+        bt_config = captured["bt_config"]
+        assert bt_config.execution_replay_mode == "execution_replay"
+        report_payload = cast(dict[str, object], captured["report_payload"])
+        assert report_payload["params"]["phase3_mode"] == "execution_replay"
+        assert report_payload["params"]["phase3"]["enabled"] is True
+        assert report_payload["params"]["phase3"]["execution_replay"]["bridge"] == "execution_engine.order_intents+tca+execution_replay"
+        artifacts = cast(dict[str, str], report_payload["artifacts"])
+        assert artifacts["phase3_execution_replay_summary_json"].endswith("phase3_execution_replay_summary.json")
 
     def test_parse_backfill_scores_history_command(self):
         from backtesting.cli import _build_parser
