@@ -386,3 +386,91 @@ def test_prepare_workflow_child_run_state_preserves_manual_selection_when_follow
     assert workflow_page.st.session_state[child_select_key] == "run-step-1"
 
 
+def test_prime_runtime_center_state_prefers_active_workflow_parent_over_latest_child_run(monkeypatch) -> None:
+    monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
+
+    all_runs = [
+        {
+            "run_id": "run-step-1",
+            "run_kind": "step",
+            "status": "running",
+            "parent_run_id": "wf-1",
+        },
+        {
+            "run_id": "wf-1",
+            "run_kind": "workflow",
+            "status": "running",
+        },
+    ]
+    labels = {
+        "run-step-1": "1. Import | run-step-1 | 🟨 En cours",
+        "wf-1": "Workflow complet | wf-1 | 🟨 En cours",
+    }
+
+    compare_defaults = workflow_page._prime_runtime_center_state(all_runs, ["run-step-1", "wf-1"], labels)
+
+    assert compare_defaults == []
+    assert workflow_page.st.session_state[workflow_page.SELECTED_RUN_KEY] == "wf-1"
+    assert workflow_page.st.session_state[workflow_page.WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY] == "wf-1"
+
+
+def test_prime_runtime_center_state_promotes_auto_selected_child_run_back_to_active_workflow(monkeypatch) -> None:
+    session_state = {
+        workflow_page.SELECTED_RUN_KEY: "run-step-1",
+    }
+    monkeypatch.setattr(workflow_page.st, "session_state", session_state, raising=False)
+
+    all_runs = [
+        {
+            "run_id": "run-step-1",
+            "run_kind": "step",
+            "status": "completed",
+            "parent_run_id": "wf-1",
+        },
+        {
+            "run_id": "wf-1",
+            "run_kind": "workflow",
+            "status": "running",
+        },
+    ]
+    labels = {
+        "run-step-1": "1. Import | run-step-1 | 🟢 Terminé",
+        "wf-1": "Workflow complet | wf-1 | 🟨 En cours",
+    }
+
+    workflow_page._prime_runtime_center_state(all_runs, ["run-step-1", "wf-1"], labels)
+
+    assert workflow_page.st.session_state[workflow_page.SELECTED_RUN_KEY] == "wf-1"
+    assert workflow_page.st.session_state[workflow_page.WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY] == "wf-1"
+
+
+def test_prime_runtime_center_state_preserves_manual_child_selection_during_active_workflow(monkeypatch) -> None:
+    session_state = {
+        workflow_page.SELECTED_RUN_KEY: "run-step-1",
+        workflow_page.WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY: "wf-1",
+    }
+    monkeypatch.setattr(workflow_page.st, "session_state", session_state, raising=False)
+
+    all_runs = [
+        {
+            "run_id": "run-step-1",
+            "run_kind": "step",
+            "status": "completed",
+            "parent_run_id": "wf-1",
+        },
+        {
+            "run_id": "wf-1",
+            "run_kind": "workflow",
+            "status": "running",
+        },
+    ]
+    labels = {
+        "run-step-1": "1. Import | run-step-1 | 🟢 Terminé",
+        "wf-1": "Workflow complet | wf-1 | 🟨 En cours",
+    }
+
+    workflow_page._prime_runtime_center_state(all_runs, ["run-step-1", "wf-1"], labels)
+
+    assert workflow_page.st.session_state[workflow_page.SELECTED_RUN_KEY] == "run-step-1"
+
+

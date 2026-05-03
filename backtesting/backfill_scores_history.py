@@ -168,9 +168,10 @@ class BackfillScoresHistoryService:
                     SELECT MIN(snapshot_date)
                     FROM stock_scores_history
                     WHERE snapshot_date >= :start_date
+                      AND capital_preset_key = :capital_preset_key
                     """
                 ),
-                {"start_date": start_date},
+                {"start_date": start_date, "capital_preset_key": self.capital_preset_key},
             ).scalar_one_or_none()
 
             first_existing_snapshot = self._coerce_date(first_existing_snapshot)
@@ -228,9 +229,14 @@ class BackfillScoresHistoryService:
                         SELECT DISTINCT snapshot_date
                         FROM stock_scores_history
                         WHERE snapshot_date BETWEEN :start_date AND :end_date
+                          AND capital_preset_key = :capital_preset_key
                         """
                     ),
-                    {"start_date": start_date, "end_date": end_date},
+                    {
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "capital_preset_key": self.capital_preset_key,
+                    },
                 ).scalars().all()
                 if (normalized := self._coerce_date(raw_day)) is not None
             }
@@ -666,9 +672,22 @@ class BackfillScoresHistoryService:
 
         for idx, trading_day in enumerate(trading_days, start=1):
             LOGGER.info("Backfill progression | %s/%s | date=%s", idx, len(trading_days), trading_day)
-            snapshot = self.build_snapshot_for_date(trading_day)
-            rows_inserted += self.persist_snapshot(snapshot, overwrite_existing=overwrite_existing)
+            try:
+                snapshot = self.build_snapshot_for_date(trading_day)
+            except Exception:
+                LOGGER.exception("Backfill interrompu pendant la construction du snapshot | date=%s", trading_day)
+                raise
+            inserted_for_day = self.persist_snapshot(snapshot, overwrite_existing=overwrite_existing)
+            rows_inserted += inserted_for_day
             processed += 1
+            LOGGER.info(
+                "Backfill snapshot persisté | date=%s lignes=%s lignes_cumulées=%s séances_traitées=%s/%s",
+                trading_day,
+                inserted_for_day,
+                rows_inserted,
+                processed,
+                len(trading_days),
+            )
 
         return BackfillScoresHistoryResult(
             start_date=start_date,

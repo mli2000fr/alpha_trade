@@ -13,7 +13,11 @@ def _build_sqlite_engine():
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as conn:
         conn.execute(text("CREATE TABLE stock_bars_daily (symbol TEXT, `date` DATE, data_source TEXT DEFAULT 'eodhd_eod')"))
-        conn.execute(text("CREATE TABLE stock_scores_history (snapshot_date DATE, symbol TEXT)"))
+        conn.execute(
+            text(
+                "CREATE TABLE stock_scores_history (snapshot_date DATE, capital_preset_key TEXT DEFAULT 'capital_50001_100000', symbol TEXT)"
+            )
+        )
     return engine
 
 
@@ -56,6 +60,62 @@ def test_list_trading_dates_skips_existing_days() -> None:
     service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
     dates = service.list_trading_dates(date(2026, 4, 15), date(2026, 4, 17), overwrite_existing=False)
     assert dates == [date(2026, 4, 15), date(2026, 4, 17)]
+
+
+def test_resolve_end_date_ignores_existing_snapshot_from_other_capital_preset() -> None:
+    engine = _build_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO stock_bars_daily(symbol, `date`) VALUES (:s, :d)"),
+            [
+                {"s": "AAPL", "d": date(2026, 4, 16)},
+                {"s": "AAPL", "d": date(2026, 4, 17)},
+            ],
+        )
+        conn.execute(
+            text(
+                "INSERT INTO stock_scores_history(snapshot_date, capital_preset_key, symbol) VALUES (:d, :p, :s)"
+            ),
+            [{"d": date(2026, 4, 17), "p": "capital_other", "s": "AAPL"}],
+        )
+
+    service = BackfillScoresHistoryService(
+        engine=engine,
+        screener_max_workers=1,
+        capital_preset_key="capital_current",
+    )
+
+    resolved = service.resolve_end_date(date(2026, 4, 16))
+
+    assert resolved == date(2026, 4, 17)
+
+
+def test_list_trading_dates_keeps_days_existing_only_for_other_capital_preset() -> None:
+    engine = _build_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO stock_bars_daily(symbol, `date`) VALUES (:s, :d)"),
+            [
+                {"s": "AAPL", "d": date(2026, 4, 15)},
+                {"s": "AAPL", "d": date(2026, 4, 16)},
+            ],
+        )
+        conn.execute(
+            text(
+                "INSERT INTO stock_scores_history(snapshot_date, capital_preset_key, symbol) VALUES (:d, :p, :s)"
+            ),
+            [{"d": date(2026, 4, 16), "p": "capital_other", "s": "AAPL"}],
+        )
+
+    service = BackfillScoresHistoryService(
+        engine=engine,
+        screener_max_workers=1,
+        capital_preset_key="capital_current",
+    )
+
+    dates = service.list_trading_dates(date(2026, 4, 15), date(2026, 4, 16), overwrite_existing=False)
+
+    assert dates == [date(2026, 4, 15), date(2026, 4, 16)]
 
 
 def test_to_history_snapshot_normalizes_required_columns() -> None:
@@ -129,6 +189,60 @@ def test_backfill_orchestrates_dates_and_persistence(monkeypatch) -> None:
     assert result.trading_days_processed == 2
     assert result.rows_inserted == 2
     assert inserted_dates == [date(2026, 4, 15), date(2026, 4, 16)]
+
+
+def test_backfill_persists_completed_days_before_later_interruption(monkeypatch) -> None:
+    engine = _build_sqlite_engine()
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+
+    monkeypatch.setattr(service, "resolve_end_date", lambda start_date, explicit_end_date=None: date(2026, 4, 16))
+    monkeypatch.setattr(
+        service,
+        "list_trading_dates",
+        lambda start_date, end_date, overwrite_existing=False: [date(2026, 4, 15), date(2026, 4, 16)],
+    )
+
+    def _build_snapshot(as_of_date: date) -> pd.DataFrame:
+        if as_of_date == date(2026, 4, 16):
+            raise RuntimeError("stop here")
+        return pd.DataFrame(
+            {
+                "snapshot_date": [as_of_date],
+                "symbol": ["AAPL"],
+                "sector": ["Tech"],
+                "liquidity_val": [1.0],
+                "relative_strength_index": [1.0],
+                "historical_range_score": [1.0],
+                "total_score": [1.0],
+                "trend_score": [1.0],
+                "vcp_score": [1.0],
+                "final_score": [1.0],
+                "is_candidate": [1],
+                "sentiment_net_agg": [0.0],
+                "sector_impact_agg": [0.0],
+                "final_score_sentiment": [1.0],
+                "signal_active": [1],
+                "anomaly_count": [0],
+                "missing_days_count": [0],
+            }
+        )
+
+    inserted_dates: list[date] = []
+    monkeypatch.setattr(service, "build_snapshot_for_date", _build_snapshot)
+    monkeypatch.setattr(
+        service,
+        "persist_snapshot",
+        lambda snapshot_df, overwrite_existing=False: inserted_dates.append(snapshot_df.iloc[0]["snapshot_date"]) or len(snapshot_df),
+    )
+
+    try:
+        service.backfill(date(2026, 4, 15), limit_days=None)
+    except RuntimeError as exc:
+        assert str(exc) == "stop here"
+    else:
+        raise AssertionError("Une interruption était attendue")
+
+    assert inserted_dates == [date(2026, 4, 15)]
 
 
 def test_resolve_pit_scanner_disables_overlay_filters_when_historical_coverage_is_missing() -> None:

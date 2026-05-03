@@ -59,6 +59,7 @@ WORKFLOW_INCLUDE_CA_SYNC_KEY = "pipeline_workflow_include_ca_sync"
 WORKFLOW_INCLUDE_CA_APPLY_KEY = "pipeline_workflow_include_ca_apply"
 WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_autofollow_"
 WORKFLOW_CHILD_LAST_AUTO_KEY_PREFIX = "workflow_child_run_last_auto_"
+WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY = "pipeline_workflow_runtime_auto_selected_run_id"
 WORKFLOW_RANGE_OPTIONS: tuple[str, ...] = ("1", "3")
 
 
@@ -254,18 +255,63 @@ def _build_history_rows(all_runs: list[dict[str, object]]) -> pd.DataFrame:
     )
 
 
-def _prime_runtime_center_state(run_ids: list[str], labels: dict[str, str]) -> list[str]:
+def _active_workflow_run_id(all_runs: list[dict[str, object]]) -> str | None:
+    for run in all_runs:
+        if not _is_workflow_run(run):
+            continue
+        if str(run.get("status") or "") not in {"starting", "running"}:
+            continue
+        run_id = str(run.get("run_id") or "").strip()
+        if run_id:
+            return run_id
+    return None
+
+
+def _resolve_runtime_center_default_selected_run_id(all_runs: list[dict[str, object]], run_ids: list[str]) -> str:
+    active_workflow_run_id = _active_workflow_run_id(all_runs)
+    if active_workflow_run_id in run_ids:
+        return active_workflow_run_id
+
+    for run in all_runs:
+        run_id = str(run.get("run_id") or "").strip()
+        if run_id in run_ids and str(run.get("status") or "") in {"starting", "running"}:
+            return run_id
+
+    return run_ids[0]
+
+
+def _prime_runtime_center_state(all_runs: list[dict[str, object]], run_ids: list[str], labels: dict[str, str]) -> list[str]:
     pending_selected = st.session_state.pop(PENDING_SELECTED_RUN_KEY, None)
     if isinstance(pending_selected, str) and pending_selected in labels:
         st.session_state[SELECTED_RUN_KEY] = pending_selected
+        st.session_state[WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY] = pending_selected
 
     pending_compare = st.session_state.pop(PENDING_COMPARE_RUNS_KEY, None)
     if pending_compare is not None:
         st.session_state[COMPARE_RUNS_KEY] = _sanitize_compare_ids(run_ids, labels, pending_compare)
 
+    preferred_selected = _resolve_runtime_center_default_selected_run_id(all_runs, run_ids)
     default_selected = st.session_state.get(SELECTED_RUN_KEY)
     if default_selected not in labels:
-        st.session_state[SELECTED_RUN_KEY] = run_ids[0]
+        st.session_state[SELECTED_RUN_KEY] = preferred_selected
+        st.session_state[WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY] = preferred_selected
+    else:
+        active_workflow_run_id = _active_workflow_run_id(all_runs)
+        run_by_id = {
+            str(run.get("run_id") or "").strip(): run
+            for run in all_runs
+            if str(run.get("run_id") or "").strip()
+        }
+        selected_run = run_by_id.get(str(default_selected))
+        selected_parent_run_id = str(selected_run.get("parent_run_id") or "").strip() if isinstance(selected_run, dict) else ""
+        auto_selected_run_id = st.session_state.get(WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY)
+        if (
+            active_workflow_run_id is not None
+            and selected_parent_run_id == active_workflow_run_id
+            and (auto_selected_run_id is None or auto_selected_run_id == default_selected)
+        ):
+            st.session_state[SELECTED_RUN_KEY] = active_workflow_run_id
+            st.session_state[WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY] = active_workflow_run_id
 
     compare_defaults = _sanitize_compare_ids(run_ids, labels, st.session_state.get(COMPARE_RUNS_KEY, []))
     if compare_defaults != st.session_state.get(COMPARE_RUNS_KEY):
@@ -428,7 +474,7 @@ def _render_runtime_center() -> None:
         for run in all_runs
     }
     run_ids = list(labels.keys())
-    compare_defaults = _prime_runtime_center_state(run_ids, labels)
+    compare_defaults = _prime_runtime_center_state(all_runs, run_ids, labels)
 
     control_col1, control_col2 = st.columns([2, 3])
     with control_col1:
