@@ -52,6 +52,7 @@ __all__ = [
     "_prepare_workflow_child_run_state",
     "_render_runtime_center",
     "_render_workflow_launcher",
+    "_should_render_active_run_live_progress",
 ]
 
 WORKFLOW_INCLUDE_ML_TRAIN_KEY = "pipeline_workflow_include_ml_train"
@@ -365,6 +366,21 @@ def _build_history_rows(all_runs: list[dict[str, object]]) -> pd.DataFrame:
     )
 
 
+def _should_render_active_run_live_progress(
+    run: dict[str, object],
+    *,
+    active_workflow_run_ids: set[str] | None = None,
+) -> bool:
+    if _is_workflow_run(run):
+        return False
+
+    parent_run_id = str(run.get("parent_run_id") or "").strip()
+    if parent_run_id and parent_run_id in (active_workflow_run_ids or set()):
+        return False
+
+    return True
+
+
 def _active_workflow_run_id(all_runs: list[dict[str, object]]) -> str | None:
     for run in all_runs:
         if not _is_workflow_run(run):
@@ -533,6 +549,11 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
 @st.fragment(run_every="2s")
 def _render_runtime_center() -> None:
     active_runs, all_runs = _merge_runs()
+    active_workflow_run_ids = {
+        str(run.get("run_id") or "").strip()
+        for run in active_runs
+        if _is_workflow_run(run)
+    }
 
     st.subheader("🖥️ Centre d'exécution & d'investigation")
     st.caption(
@@ -559,11 +580,12 @@ def _render_runtime_center() -> None:
                 provider_badge = _build_run_provider_badge(run)
                 if provider_badge:
                     st.caption(f"🏷️ `{provider_badge}`")
-                symbol_progress_payload = _build_run_symbol_progress_payload(run)
-                if symbol_progress_payload is not None:
-                    progress_fraction, progress_caption = symbol_progress_payload
-                    st.progress(progress_fraction)
-                    st.caption(progress_caption)
+                if _should_render_active_run_live_progress(run, active_workflow_run_ids=active_workflow_run_ids):
+                    symbol_progress_payload = _build_run_symbol_progress_payload(run)
+                    if symbol_progress_payload is not None:
+                        progress_fraction, progress_caption = symbol_progress_payload
+                        st.progress(progress_fraction)
+                        st.caption(progress_caption)
                 if _is_workflow_run(run):
                     _, _, progress_fraction, progress_label = _workflow_progress(run)
                     st.progress(progress_fraction)

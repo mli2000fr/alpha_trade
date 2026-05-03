@@ -319,6 +319,32 @@ def test_build_run_symbol_progress_payload_prefers_explicit_live_progress_fields
     assert "chunk #3" in caption
 
 
+def test_should_render_active_run_live_progress_returns_false_for_workflow_child_when_parent_workflow_is_active() -> None:
+    should_render = workflow_page._should_render_active_run_live_progress(
+        {
+            "run_id": "run-step-1",
+            "run_kind": "step",
+            "parent_run_id": "wf-1",
+        },
+        active_workflow_run_ids={"wf-1"},
+    )
+
+    assert should_render is False
+
+
+def test_should_render_active_run_live_progress_returns_true_for_standalone_step() -> None:
+    should_render = workflow_page._should_render_active_run_live_progress(
+        {
+            "run_id": "run-step-1",
+            "run_kind": "step",
+            "parent_run_id": None,
+        },
+        active_workflow_run_ids={"wf-1"},
+    )
+
+    assert should_render is True
+
+
 def test_workflow_launcher_starts_with_1_to_12_and_optional_steps_disabled_by_default(monkeypatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
