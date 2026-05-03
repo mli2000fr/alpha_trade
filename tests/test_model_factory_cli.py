@@ -100,3 +100,18 @@ def test_cli_parser_accepts_symbol_source_option() -> None:
     assert opts.symbol_source == "stock-bars-daily"
 
 
+def test_cli_parser_accepts_debug_train_and_watchdog_options() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "train",
+        "--debug-train",
+        "--heartbeat-interval-seconds", "45",
+        "--watchdog-timeout-seconds", "900",
+    ])
+
+    assert opts.debug_train is True
+    assert opts.heartbeat_interval_seconds == 45
+    assert opts.watchdog_timeout_seconds == 900
+
+

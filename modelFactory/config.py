@@ -265,6 +265,7 @@ class TrainingConfig:
     artifacts_dir: Path = Path("artifacts/models")
     max_workers: int = 4
     accelerator: str = "auto"  # auto | cpu | gpu
+    debug_train: bool = False
 
     def __post_init__(self) -> None:
         if self.max_workers < 1:

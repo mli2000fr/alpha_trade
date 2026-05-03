@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -23,12 +25,83 @@ from modelFactory.config import (
     TrainingConfig,
     WalkForwardConfig,
 )
+from modelFactory.runtime_status import increment_runtime_counter, reset_runtime_status, snapshot_runtime_status, update_runtime_status
 
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
 SYMBOL_SOURCES = ("candidates", "stock-bars-daily")
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
+
+
+class _LiveRunSummaryEmitter:
+    def __init__(
+        self,
+        *,
+        run_id: str,
+        mode: str,
+        heartbeat_interval_seconds: float,
+        watchdog_timeout_seconds: int,
+        debug_train: bool,
+    ) -> None:
+        self.run_id = run_id
+        self.mode = mode
+        self.heartbeat_interval_seconds = max(float(heartbeat_interval_seconds), 0.0)
+        self.watchdog_timeout_seconds = max(int(watchdog_timeout_seconds), 0)
+        self.debug_train = bool(debug_train)
+        self.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "_LiveRunSummaryEmitter":
+        if self.heartbeat_interval_seconds > 0:
+            self.emit_now()
+            self._thread = threading.Thread(target=self._run, daemon=True, name=f"ml-heartbeat-{self.run_id}")
+            self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(self.heartbeat_interval_seconds, 1.0))
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self.heartbeat_interval_seconds):
+            self.emit_now()
+
+    def emit_now(self) -> None:
+        heartbeat_count = increment_runtime_counter("heartbeat_count", 1)
+        heartbeat_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+        runtime_status = update_runtime_status(last_heartbeat_at=heartbeat_dt.isoformat(timespec="seconds"), heartbeat_count=heartbeat_count)
+        payload = {
+            "run_id": self.run_id,
+            "mode": self.mode,
+            "started_at": self.started_at.isoformat(timespec="seconds"),
+            "heartbeat_interval_seconds": self.heartbeat_interval_seconds,
+            "watchdog_timeout_seconds": self.watchdog_timeout_seconds,
+            "last_heartbeat_at": heartbeat_dt.isoformat(timespec="seconds"),
+            "heartbeat_count": heartbeat_count,
+            "debug_train_enabled": self.debug_train,
+            "progress_live": True,
+            "progress_label": str(runtime_status.get("progress_label") or "🧠 Progression ML Train"),
+            "progress_total": int(runtime_status.get("progress_total", runtime_status.get("symbols_total", 0)) or 0),
+            "progress_current": int(runtime_status.get("progress_current", 0) or 0),
+            "progress_item": runtime_status.get("progress_item"),
+            "current_symbol": runtime_status.get("current_symbol"),
+            "current_symbol_index": int(runtime_status.get("current_symbol_index", 0) or 0),
+            "current_symbol_total": int(runtime_status.get("current_symbol_total", runtime_status.get("symbols_total", 0)) or 0),
+            "symbols_total": int(runtime_status.get("symbols_total", 0) or 0),
+            "symbols_completed": int(runtime_status.get("symbols_completed", 0) or 0),
+            "symbols_skipped": int(runtime_status.get("symbols_skipped", 0) or 0),
+            "symbols_failed": int(runtime_status.get("symbols_failed", 0) or 0),
+            "current_phase": runtime_status.get("current_phase"),
+            "phase_detail": runtime_status.get("phase_detail"),
+            "current_epoch": runtime_status.get("current_epoch"),
+            "total_epochs": runtime_status.get("total_epochs"),
+            "current_split_index": runtime_status.get("current_split_index"),
+        }
+        _emit_run_summary(payload)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -124,6 +197,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-action-rate", type=float, default=0.35)
     p.add_argument("--min-precision-long", type=float, default=0.52)
     p.add_argument("--accelerator", type=str, default="auto", choices=["auto", "cpu", "gpu"])
+    p.add_argument("--debug-train", action="store_true", default=False,
+                   help="Mode debug ML train : logs plus détaillés et exécution plus déterministe côté orchestrateur")
+    p.add_argument("--heartbeat-interval-seconds", type=float, default=DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+                   help="Intervalle d'émission des heartbeats structurés consommés par l'IHM")
+    p.add_argument("--watchdog-timeout-seconds", type=int, default=0,
+                   help="Timeout heartbeat côté IHM (0 = alerte seule, >0 = échec si heartbeat stale trop longtemps)")
     p.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return p
 
@@ -132,8 +211,10 @@ def main(args: list[str] | None = None) -> None:
     parser = build_arg_parser()
     opts = parser.parse_args(args)
 
+    effective_log_level = logging.DEBUG if opts.debug_train else getattr(logging, opts.log_level)
+
     configure_root_logging(
-        level=getattr(logging, opts.log_level),
+        level=effective_log_level,
         log_path="./log/model_factory.log",
         fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
@@ -208,22 +289,51 @@ def main(args: list[str] | None = None) -> None:
         artifacts_dir=Path(opts.artifacts_dir),
         max_workers=opts.max_workers,
         accelerator=opts.accelerator,
+        debug_train=opts.debug_train,
     )
 
     engine = get_sqlalchemy_engine()
 
     started_at = datetime.now(timezone.utc).replace(tzinfo=None)
     run_id = f"model-factory-{started_at.strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+    reset_runtime_status(
+        {
+            "current_phase": "cli_initialized",
+            "progress_label": "🧠 Progression ML Train",
+            "progress_total": 0,
+            "progress_current": 0,
+            "symbols_total": 0,
+            "symbols_completed": 0,
+            "symbols_skipped": 0,
+            "symbols_failed": 0,
+            "current_symbol_index": 0,
+            "current_symbol_total": 0,
+            "heartbeat_count": 0,
+            "debug_train_enabled": bool(opts.debug_train),
+        }
+    )
+    update_runtime_status(
+        current_phase="cli_ready",
+        phase_detail=f"accelerator={opts.accelerator} max_workers={opts.max_workers} log_level={logging.getLevelName(effective_log_level)}",
+    )
 
     if opts.mode == "train":
         from modelFactory.orchestrator import run_training_batch
-        results = run_training_batch(
-            cfg,
-            engine,
-            symbols=opts.symbols,
-            mode=opts.ml_mode,
-            symbol_source=opts.symbol_source,
-        )
+        update_runtime_status(current_phase="batch_dispatch")
+        with _LiveRunSummaryEmitter(
+            run_id=run_id,
+            mode="train",
+            heartbeat_interval_seconds=opts.heartbeat_interval_seconds,
+            watchdog_timeout_seconds=opts.watchdog_timeout_seconds,
+            debug_train=opts.debug_train,
+        ):
+            results = run_training_batch(
+                cfg,
+                engine,
+                symbols=opts.symbols,
+                mode=opts.ml_mode,
+                symbol_source=opts.symbol_source,
+            )
         completed = sum(1 for r in results if r.status == "completed")
         skipped = sum(1 for r in results if r.status == "skipped")
         failed = sum(1 for r in results if r.status == "failed")
@@ -233,6 +343,17 @@ def main(args: list[str] | None = None) -> None:
             and r.metrics.get("champion_quarantine") is True
         )
         finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        update_runtime_status(
+            current_phase="cli_completed",
+            progress_live=False,
+            progress_current=completed + skipped + failed,
+            progress_total=len(opts.symbols or []) or len(results),
+            symbols_total=len(opts.symbols or []) or len(results),
+            symbols_completed=completed,
+            symbols_skipped=skipped,
+            symbols_failed=failed,
+            phase_detail="training batch finished",
+        )
         _emit_run_summary(_build_run_summary(
             mode="train",
             run_id=run_id,
@@ -303,6 +424,7 @@ def _build_run_summary(
     quarantined: int,
 ) -> dict[str, object]:
     from modelFactory.features import fingerprint as compute_feature_fingerprint
+    runtime_status = snapshot_runtime_status()
     feature_fp = compute_feature_fingerprint(
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
@@ -317,6 +439,24 @@ def _build_run_summary(
         "walkforward_enabled": bool(getattr(opts, "walkforward", False)),
         "ml_mode": str(getattr(opts, "ml_mode", "rebuild-all")),
         "symbol_source": str(getattr(opts, "symbol_source", "candidates")),
+        "debug_train_enabled": bool(getattr(opts, "debug_train", False)),
+        "heartbeat_interval_seconds": float(getattr(opts, "heartbeat_interval_seconds", DEFAULT_HEARTBEAT_INTERVAL_SECONDS) or 0.0),
+        "watchdog_timeout_seconds": int(getattr(opts, "watchdog_timeout_seconds", 0) or 0),
+        "last_heartbeat_at": runtime_status.get("last_heartbeat_at"),
+        "heartbeat_count": int(runtime_status.get("heartbeat_count", 0) or 0),
+        "progress_live": False,
+        "progress_label": str(runtime_status.get("progress_label") or "🧠 Progression ML Train"),
+        "progress_total": int(runtime_status.get("progress_total", symbols_total) or symbols_total),
+        "progress_current": int(runtime_status.get("progress_current", completed + skipped + failed) or (completed + skipped + failed)),
+        "progress_item": runtime_status.get("progress_item"),
+        "current_symbol": runtime_status.get("current_symbol"),
+        "current_symbol_index": int(runtime_status.get("current_symbol_index", 0) or 0),
+        "current_symbol_total": int(runtime_status.get("current_symbol_total", symbols_total) or symbols_total),
+        "current_phase": runtime_status.get("current_phase"),
+        "phase_detail": runtime_status.get("phase_detail"),
+        "current_epoch": runtime_status.get("current_epoch"),
+        "total_epochs": runtime_status.get("total_epochs"),
+        "current_split_index": runtime_status.get("current_split_index"),
         "feature_fingerprint": feature_fp,
         "champion_min_runs": int(getattr(opts, "champion_min_runs", 0)),
         "champion_min_days": int(getattr(opts, "champion_min_days", 0)),
