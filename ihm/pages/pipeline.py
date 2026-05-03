@@ -51,7 +51,7 @@ from ihm.pages._shared import (
     IMPORT_NEWS_END_DATE_KEY,
     IMPORT_NEWS_START_DATE_KEY,
     LOG_FILTER_KEY,
-    ML_SELECTED_SYMBOL_KEY,
+    ML_PENDING_SELECTED_SYMBOL_KEY,
     NAVIGATION_TARGET_PAGE_KEY,
     PENDING_COMPARE_RUNS_KEY,
     PENDING_SELECTED_RUN_KEY,
@@ -279,7 +279,7 @@ def _render_ml_inspection_link(step_key: str) -> None:
         key=inspect_key,
     )
     if st.button("🔎 Ouvrir dans la page ML", key=f"pipeline_open_ml_{step_key}", use_container_width=True):
-        st.session_state[ML_SELECTED_SYMBOL_KEY] = selected_symbol
+        st.session_state[ML_PENDING_SELECTED_SYMBOL_KEY] = selected_symbol
         st.session_state[NAVIGATION_TARGET_PAGE_KEY] = "ml"
         st.rerun()
 
