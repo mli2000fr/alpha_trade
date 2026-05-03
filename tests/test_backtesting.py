@@ -6,7 +6,7 @@ from pathlib import Path
 import json
 import os
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -1568,6 +1568,19 @@ class TestCLI:
         assert args.chunk_size == 250
         assert args.selection_size == 50
         assert args.overwrite_existing is True
+
+    def test_parse_backfill_scores_history_command_uses_optimized_defaults(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "backfill-scores-history",
+            "--start", "2025-01-01",
+        ])
+
+        assert args.command == "backfill-scores-history"
+        assert args.chunk_size == 1000
+        assert args.screener_workers == 4
 
     def test_run_backfill_scores_history_prefers_explicit_selection_size_without_duplicate_kwarg(self, monkeypatch):
         import argparse

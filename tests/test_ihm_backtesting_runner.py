@@ -143,3 +143,12 @@ def test_build_backtesting_backfill_command_includes_capital_and_preset():
 	assert command[command.index("--capital-preset-key") + 1] == "capital_0_5000"
 
 
+def test_backfill_options_defaults_to_optimized_chunk_and_workers():
+	from ihm.services.backtesting_runner import BackfillScoresHistoryOptions
+
+	options = BackfillScoresHistoryOptions(start="2025-01-01")
+
+	assert options.chunk_size == 1000
+	assert options.screener_workers == 4
+
+

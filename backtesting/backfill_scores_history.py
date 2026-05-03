@@ -122,6 +122,7 @@ class BackfillScoresHistoryService:
         self.config_fingerprint = str(config_fingerprint).strip() if config_fingerprint else None
         self.scanner = AlphaScanner(engine=self.engine, config=self.scanner_config)
         self.aggregator = SentimentSignalAggregator(engine=self.engine, config=self.sentiment_config)
+        self._symbol_chunks_cache: tuple[tuple[str, ...], ...] | None = None
 
     @staticmethod
     def _coerce_date(value: Any) -> date | None:
@@ -247,9 +248,14 @@ class BackfillScoresHistoryService:
     # Construction d'un snapshot journalier
     # ------------------------------------------------------------------
 
-    def build_snapshot_for_date(self, as_of_date: date) -> pd.DataFrame:
+    def build_snapshot_for_date(
+        self,
+        as_of_date: date,
+        *,
+        screener_executor: ProcessPoolExecutor | None = None,
+    ) -> pd.DataFrame:
         """Construit un snapshot complet `stock_scores_history` pour une séance."""
-        screener_df = self._compute_screener_snapshot(as_of_date)
+        screener_df = self._compute_screener_snapshot(as_of_date, screener_executor=screener_executor)
         if screener_df.empty:
             LOGGER.warning("Aucun score screener pour %s.", as_of_date)
             return self._empty_history_frame()
@@ -274,7 +280,51 @@ class BackfillScoresHistoryService:
         )
         return history_df
 
-    def _compute_screener_snapshot(self, as_of_date: date) -> pd.DataFrame:
+    def _get_symbol_chunks(self) -> tuple[tuple[str, ...], ...]:
+        if self._symbol_chunks_cache is None:
+            self._symbol_chunks_cache = tuple(
+                tuple(chunk) for chunk in iter_symbol_chunks(self.engine, self.screener_config.chunk_size)
+            )
+        return self._symbol_chunks_cache
+
+    @staticmethod
+    def _index_prefetched_symbol_frame(frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty or "symbol" not in frame.columns:
+            return frame.copy()
+        indexed = frame.copy()
+        indexed["symbol"] = indexed["symbol"].astype(str)
+        indexed = indexed.drop_duplicates(subset=["symbol"], keep="last")
+        return indexed.set_index("symbol", drop=False)
+
+    @staticmethod
+    def _slice_prefetched_symbol_frame(frame: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
+        if frame.empty or not symbols:
+            return frame.iloc[0:0].copy()
+        available_symbols = [symbol for symbol in symbols if symbol in frame.index]
+        if not available_symbols:
+            return frame.iloc[0:0].copy()
+        sliced = frame.loc[available_symbols]
+        if isinstance(sliced, pd.Series):
+            sliced = sliced.to_frame().T
+        return cast(pd.DataFrame, sliced.reset_index(drop=True).copy())
+
+    def _create_screener_executor(self) -> ProcessPoolExecutor:
+        workers = self._resolve_screener_workers()
+        LOGGER.info("Backfill screener pool créé | workers=%s", workers)
+        return ProcessPoolExecutor(max_workers=workers)
+
+    def _shutdown_screener_executor(self, executor: ProcessPoolExecutor | None) -> None:
+        if executor is None:
+            return
+        LOGGER.info("Backfill screener pool fermé")
+        executor.shutdown(wait=True)
+
+    def _compute_screener_snapshot(
+        self,
+        as_of_date: date,
+        *,
+        screener_executor: ProcessPoolExecutor | None = None,
+    ) -> pd.DataFrame:
         """Rejoue le screener en mémoire sans toucher à stock_scores."""
         start_ts = datetime.now(timezone.utc)
         spy_return_6m = load_spy_return_6m(self.engine, self.screener_config, as_of_date=as_of_date)
@@ -292,8 +342,14 @@ class BackfillScoresHistoryService:
             self.screener_config.chunk_size,
         )
 
-        with ProcessPoolExecutor(max_workers=workers) as executor:
-            for symbol_chunk in iter_symbol_chunks(self.engine, self.screener_config.chunk_size):
+        symbol_chunks = self._get_symbol_chunks()
+
+        executor = screener_executor
+        owns_executor = executor is None
+        if executor is None:
+            executor = self._create_screener_executor()
+        try:
+            for symbol_chunk in symbol_chunks:
                 while len(pending) >= max_in_flight:
                     done, pending = wait(pending, return_when=FIRST_COMPLETED)
                     self._append_completed_results(done, all_results)
@@ -302,6 +358,9 @@ class BackfillScoresHistoryService:
             while pending:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 self._append_completed_results(done, all_results)
+        finally:
+            if owns_executor:
+                self._shutdown_screener_executor(executor)
 
         if not all_results:
             return pd.DataFrame()
@@ -332,21 +391,24 @@ class BackfillScoresHistoryService:
         aggregated_filter_stats = {key: 0 for key in SELECTOR_FILTER_STAT_KEYS}
         symbols = screener_df["symbol"].dropna().astype(str).tolist()
         chunk_size = max(1, self.scanner_config.chunk_size)
+        prefetched_metadata = self._index_prefetched_symbol_frame(scanner.fetch_instrument_metadata(symbols))
+        prefetched_quotes = self._index_prefetched_symbol_frame(
+            scanner.fetch_quote_snapshots(symbols, reference_date=as_of_date)
+            if quotes_available else pd.DataFrame(columns=["symbol", "quote_date", "spread_bps"])
+        )
+        prefetched_earnings = self._index_prefetched_symbol_frame(
+            scanner.fetch_next_earnings(symbols, reference_date=as_of_date)
+            if earnings_available else pd.DataFrame(columns=["symbol", "earnings_date", "days_to_earnings", "earnings_blackout"])
+        )
 
         for start in range(0, len(symbols), chunk_size):
             chunk_symbols = symbols[start:start + chunk_size]
             market_data = self._load_market_data(chunk_symbols, as_of_date)
             computed = scanner.compute_factors(market_data)
             aux_scores = screener_df[screener_df["symbol"].isin(chunk_symbols)].copy()
-            metadata_df = scanner.fetch_instrument_metadata(chunk_symbols)
-            quotes_df = (
-                scanner.fetch_quote_snapshots(chunk_symbols, reference_date=as_of_date)
-                if quotes_available else pd.DataFrame(columns=["symbol", "quote_date", "spread_bps"])
-            )
-            earnings_df = (
-                scanner.fetch_next_earnings(chunk_symbols, reference_date=as_of_date)
-                if earnings_available else pd.DataFrame(columns=["symbol", "earnings_date", "days_to_earnings", "earnings_blackout"])
-            )
+            metadata_df = self._slice_prefetched_symbol_frame(prefetched_metadata, chunk_symbols)
+            quotes_df = self._slice_prefetched_symbol_frame(prefetched_quotes, chunk_symbols)
+            earnings_df = self._slice_prefetched_symbol_frame(prefetched_earnings, chunk_symbols)
             merged = scanner.merge_scores(computed, aux_scores)
             merged = scanner._enrich_and_filter_equities(merged, metadata_df)
             merged = scanner._merge_optional_symbol_overlays(merged, quotes_df, earnings_df)
@@ -670,24 +732,28 @@ class BackfillScoresHistoryService:
                 ).scalar_one()
             skipped_existing = int(total_trading_days) - len(trading_days)
 
-        for idx, trading_day in enumerate(trading_days, start=1):
-            LOGGER.info("Backfill progression | %s/%s | date=%s", idx, len(trading_days), trading_day)
-            try:
-                snapshot = self.build_snapshot_for_date(trading_day)
-            except Exception:
-                LOGGER.exception("Backfill interrompu pendant la construction du snapshot | date=%s", trading_day)
-                raise
-            inserted_for_day = self.persist_snapshot(snapshot, overwrite_existing=overwrite_existing)
-            rows_inserted += inserted_for_day
-            processed += 1
-            LOGGER.info(
-                "Backfill snapshot persisté | date=%s lignes=%s lignes_cumulées=%s séances_traitées=%s/%s",
-                trading_day,
-                inserted_for_day,
-                rows_inserted,
-                processed,
-                len(trading_days),
-            )
+        screener_executor = self._create_screener_executor() if trading_days else None
+        try:
+            for idx, trading_day in enumerate(trading_days, start=1):
+                LOGGER.info("Backfill progression | %s/%s | date=%s", idx, len(trading_days), trading_day)
+                try:
+                    snapshot = self.build_snapshot_for_date(trading_day, screener_executor=screener_executor)
+                except Exception:
+                    LOGGER.exception("Backfill interrompu pendant la construction du snapshot | date=%s", trading_day)
+                    raise
+                inserted_for_day = self.persist_snapshot(snapshot, overwrite_existing=overwrite_existing)
+                rows_inserted += inserted_for_day
+                processed += 1
+                LOGGER.info(
+                    "Backfill snapshot persisté | date=%s lignes=%s lignes_cumulées=%s séances_traitées=%s/%s",
+                    trading_day,
+                    inserted_for_day,
+                    rows_inserted,
+                    processed,
+                    len(trading_days),
+                )
+        finally:
+            self._shutdown_screener_executor(screener_executor)
 
         return BackfillScoresHistoryResult(
             start_date=start_date,

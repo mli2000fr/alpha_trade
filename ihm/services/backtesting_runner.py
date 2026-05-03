@@ -67,9 +67,9 @@ class BackfillScoresHistoryOptions:
     capital_preset_key: str | None = None
     overwrite_existing: bool = False
     limit_days: int | None = None
-    chunk_size: int = 500
+    chunk_size: int = 1000
     selection_size: int = 100
-    screener_workers: int | None = None
+    screener_workers: int | None = 4
 
 
 @dataclass(frozen=True, slots=True)

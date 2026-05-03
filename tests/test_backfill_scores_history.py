@@ -6,7 +6,7 @@ from datetime import date
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-from backtesting.backfill_scores_history import BackfillScoresHistoryService
+from backtesting.backfill_scores_history import BackfillScoresHistoryService, SELECTOR_FILTER_STAT_KEYS
 
 
 def _build_sqlite_engine():
@@ -158,7 +158,7 @@ def test_backfill_orchestrates_dates_and_persistence(monkeypatch) -> None:
     monkeypatch.setattr(
         service,
         "build_snapshot_for_date",
-        lambda as_of_date: pd.DataFrame({
+        lambda as_of_date, **kwargs: pd.DataFrame({
             "snapshot_date": [as_of_date],
             "symbol": ["AAPL"],
             "sector": ["Tech"],
@@ -202,7 +202,7 @@ def test_backfill_persists_completed_days_before_later_interruption(monkeypatch)
         lambda start_date, end_date, overwrite_existing=False: [date(2026, 4, 15), date(2026, 4, 16)],
     )
 
-    def _build_snapshot(as_of_date: date) -> pd.DataFrame:
+    def _build_snapshot(as_of_date: date, **kwargs) -> pd.DataFrame:
         if as_of_date == date(2026, 4, 16):
             raise RuntimeError("stop here")
         return pd.DataFrame(
@@ -389,5 +389,185 @@ def test_compute_selector_snapshot_logs_aggregated_pit_summary(monkeypatch, capl
     assert "rejet_market_cap_stale=1" in caplog.text
     assert "rescues_spread_iex=1" in caplog.text
     assert "rejet_sanitizer=1" in caplog.text
+
+
+def test_get_symbol_chunks_caches_iterated_universe(monkeypatch) -> None:
+    engine = _build_sqlite_engine()
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+    calls: list[int] = []
+
+    monkeypatch.setattr(
+        "backtesting.backfill_scores_history.iter_symbol_chunks",
+        lambda current_engine, chunk_size: calls.append(chunk_size) or iter([["AAA", "BBB"], ["CCC"]]),
+    )
+
+    first = service._get_symbol_chunks()
+    second = service._get_symbol_chunks()
+
+    assert first == (("AAA", "BBB"), ("CCC",))
+    assert second == first
+    assert calls == [service.screener_config.chunk_size]
+
+
+def test_compute_selector_snapshot_prefetches_metadata_and_overlays_once_per_day(monkeypatch) -> None:
+    engine = _build_sqlite_engine()
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+    service.scanner_config = type(service.scanner_config)(chunk_size=2)
+
+    calls = {"metadata": 0, "quotes": 0, "earnings": 0}
+
+    class _FakeScanner:
+        def compute_factors(self, market_data: pd.DataFrame) -> pd.DataFrame:
+            return pd.DataFrame({"symbol": market_data["symbol"].astype(str).unique()})
+
+        def fetch_instrument_metadata(self, symbols: list[str]) -> pd.DataFrame:
+            calls["metadata"] += 1
+            return pd.DataFrame({"symbol": symbols, "asset_class": ["us_equity"] * len(symbols)})
+
+        def fetch_quote_snapshots(self, symbols: list[str], *, reference_date: date | None = None) -> pd.DataFrame:
+            calls["quotes"] += 1
+            return pd.DataFrame({"symbol": symbols, "quote_date": [reference_date] * len(symbols), "spread_bps": [10.0] * len(symbols)})
+
+        def fetch_next_earnings(self, symbols: list[str], *, reference_date: date | None = None) -> pd.DataFrame:
+            calls["earnings"] += 1
+            return pd.DataFrame({"symbol": symbols, "earnings_date": [reference_date] * len(symbols), "days_to_earnings": [10] * len(symbols), "earnings_blackout": [0] * len(symbols)})
+
+        def merge_scores(self, computed: pd.DataFrame, aux_scores: pd.DataFrame) -> pd.DataFrame:
+            return computed.merge(aux_scores, on="symbol", how="left")
+
+        def _enrich_and_filter_equities(self, merged: pd.DataFrame, metadata_df: pd.DataFrame) -> pd.DataFrame:
+            return merged.merge(metadata_df[["symbol"]], on="symbol", how="inner")
+
+        def _merge_optional_symbol_overlays(self, merged: pd.DataFrame, quotes_df: pd.DataFrame, earnings_df: pd.DataFrame) -> pd.DataFrame:
+            return merged
+
+        def _apply_filters_with_stats(self, merged: pd.DataFrame):
+            return merged.copy(), {key: 0 for key in SELECTOR_FILTER_STAT_KEYS} | {"input": len(merged), "output": len(merged)}
+
+        def _apply_factor_neutralization(self, df: pd.DataFrame) -> pd.DataFrame:
+            return df
+
+        def rank_and_select(self, df: pd.DataFrame) -> pd.DataFrame:
+            return df.head(2)
+
+    screener_df = pd.DataFrame(
+        {
+            "symbol": ["AAA", "BBB", "CCC", "DDD"],
+            "liquidity_val": [1.0, 1.0, 1.0, 1.0],
+            "relative_strength_index": [100.0, 100.0, 100.0, 100.0],
+            "historical_range_score": [80.0, 80.0, 80.0, 80.0],
+            "total_score": [1.0, 1.0, 1.0, 1.0],
+        }
+    )
+
+    monkeypatch.setattr(service, "_resolve_pit_scanner", lambda as_of_date: (_FakeScanner(), True, True))
+    monkeypatch.setattr(
+        service,
+        "_load_market_data",
+        lambda symbols, as_of_date: pd.DataFrame({"symbol": symbols}),
+    )
+
+    result = service._compute_selector_snapshot(screener_df, date(2026, 4, 17))
+
+    assert not result.empty
+    assert calls == {"metadata": 1, "quotes": 1, "earnings": 1}
+
+
+def test_backfill_reuses_single_screener_pool_across_trading_days(monkeypatch) -> None:
+    engine = _build_sqlite_engine()
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=2)
+    created_executors: list[object] = []
+    shutdown_calls: list[bool] = []
+
+    class _ImmediateFuture:
+        def __init__(self, value: pd.DataFrame) -> None:
+            self._value = value
+
+        def result(self) -> pd.DataFrame:
+            return self._value
+
+    class _FakeExecutor:
+        def __init__(self, max_workers: int | None = None) -> None:
+            self.max_workers = max_workers
+            created_executors.append(self)
+
+        def submit(self, fn, *args, **kwargs):
+            return _ImmediateFuture(fn(*args, **kwargs))
+
+        def shutdown(self, wait: bool = True) -> None:
+            shutdown_calls.append(wait)
+
+    monkeypatch.setattr(service, "resolve_end_date", lambda start_date, explicit_end_date=None: date(2026, 4, 16))
+    monkeypatch.setattr(
+        service,
+        "list_trading_dates",
+        lambda start_date, end_date, overwrite_existing=False: [date(2026, 4, 15), date(2026, 4, 16)],
+    )
+    monkeypatch.setattr(
+        "backtesting.backfill_scores_history.ProcessPoolExecutor",
+        _FakeExecutor,
+    )
+    monkeypatch.setattr(
+        "backtesting.backfill_scores_history.wait",
+        lambda pending, return_when=None: (set(pending), set()),
+    )
+    monkeypatch.setattr(
+        "backtesting.backfill_scores_history.load_spy_return_6m",
+        lambda engine, config, as_of_date=None: 0.05,
+    )
+    monkeypatch.setattr(
+        "backtesting.backfill_scores_history.iter_symbol_chunks",
+        lambda engine, chunk_size: iter([["AAA", "BBB"]]),
+    )
+    monkeypatch.setattr(
+        "backtesting.backfill_scores_history.screener_process_chunk",
+        lambda symbol_chunk, config_dict, spy_return_6m, as_of_iso: pd.DataFrame(
+            {
+                "symbol": [symbol_chunk[0]],
+                "liquidity_val": [1.0],
+                "relative_strength_index": [100.0],
+                "historical_range_score": [80.0],
+                "total_score": [1.0],
+            }
+        ),
+    )
+    monkeypatch.setattr(service, "_compute_selector_snapshot", lambda screener_df, as_of_date: pd.DataFrame())
+
+    service.backfill(date(2026, 4, 15), limit_days=None)
+
+    assert len(created_executors) == 1
+    assert created_executors[0].max_workers == 2
+    assert shutdown_calls == [True]
+
+
+def test_backfill_closes_screener_pool_when_snapshot_build_fails(monkeypatch) -> None:
+    engine = _build_sqlite_engine()
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=2)
+    shutdown_calls: list[bool] = []
+
+    class _FakeExecutor:
+        def __init__(self, max_workers: int | None = None) -> None:
+            self.max_workers = max_workers
+
+        def shutdown(self, wait: bool = True) -> None:
+            shutdown_calls.append(wait)
+
+    monkeypatch.setattr(service, "resolve_end_date", lambda start_date, explicit_end_date=None: date(2026, 4, 16))
+    monkeypatch.setattr(
+        service,
+        "list_trading_dates",
+        lambda start_date, end_date, overwrite_existing=False: [date(2026, 4, 15)],
+    )
+    monkeypatch.setattr("backtesting.backfill_scores_history.ProcessPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(service, "build_snapshot_for_date", lambda as_of_date, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    try:
+        service.backfill(date(2026, 4, 15), limit_days=None)
+    except RuntimeError as exc:
+        assert str(exc) == "boom"
+    else:
+        raise AssertionError("Une interruption était attendue")
+
+    assert shutdown_calls == [True]
 
 
