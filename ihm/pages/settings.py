@@ -39,6 +39,7 @@ ALPHA_SCANNER_SELECTED_STYLE_KEY = "settings_alpha_scanner_selected_style"
 ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY = "settings_alpha_scanner_selected_market_regime"
 BARS_PROVIDER_FLASH_KEY = "settings_bars_provider_flash"
 BARS_PROVIDER_WIDGET_KEY = "settings_bars_provider_radio"
+BARS_PROVIDER_PENDING_SYNC_KEY = "settings_bars_provider_pending_sync"
 
 BARS_PROVIDER_LABELS: dict[str, str] = {
     "eodhd": "🟢 EODHD (recommandé — bulk EOD, volume consolidé)",
@@ -56,6 +57,22 @@ BARS_PROVIDER_HELP: dict[str, str] = {
 }
 
 
+def _prime_bars_provider_widget_state(current: str) -> str:
+    options = list(BARS_PROVIDER_LABELS.keys())
+    initial = current if current in options else DEFAULT_BARS_PROVIDER
+    pending = st.session_state.pop(BARS_PROVIDER_PENDING_SYNC_KEY, None)
+    if isinstance(pending, str) and pending in options:
+        st.session_state[BARS_PROVIDER_WIDGET_KEY] = pending
+        return pending
+
+    selected = st.session_state.get(BARS_PROVIDER_WIDGET_KEY)
+    if selected not in options:
+        st.session_state[BARS_PROVIDER_WIDGET_KEY] = initial
+        return initial
+
+    return str(selected)
+
+
 def _render_bars_provider_settings() -> None:
     flash = st.session_state.pop(BARS_PROVIDER_FLASH_KEY, None)
     if isinstance(flash, tuple) and len(flash) == 2:
@@ -71,9 +88,7 @@ def _render_bars_provider_settings() -> None:
     )
 
     options = list(BARS_PROVIDER_LABELS.keys())  # eodhd d'abord (défaut recommandé)
-    initial = current if current in options else DEFAULT_BARS_PROVIDER
-    if BARS_PROVIDER_WIDGET_KEY not in st.session_state:
-        st.session_state[BARS_PROVIDER_WIDGET_KEY] = initial
+    _prime_bars_provider_widget_state(current)
 
     with st.container(border=True):
         selected = st.radio(
@@ -107,6 +122,7 @@ def _render_bars_provider_settings() -> None:
                         f"Échec écriture `config.yaml` : {exc}",
                     )
                 else:
+                    st.session_state[BARS_PROVIDER_PENDING_SYNC_KEY] = applied
                     st.session_state[BARS_PROVIDER_FLASH_KEY] = (
                         "success",
                         f"Provider mis à jour : `{applied}`. Relance des pipelines IHM nécessaire pour prise en compte.",
@@ -124,7 +140,7 @@ def _render_bars_provider_settings() -> None:
                 except (OSError, ValueError) as exc:
                     st.session_state[BARS_PROVIDER_FLASH_KEY] = ("error", f"Échec reset : {exc}")
                 else:
-                    st.session_state[BARS_PROVIDER_WIDGET_KEY] = DEFAULT_BARS_PROVIDER
+                    st.session_state[BARS_PROVIDER_PENDING_SYNC_KEY] = DEFAULT_BARS_PROVIDER
                     st.session_state[BARS_PROVIDER_FLASH_KEY] = (
                         "success",
                         f"Provider réinitialisé sur `{DEFAULT_BARS_PROVIDER}` (défaut recommandé).",

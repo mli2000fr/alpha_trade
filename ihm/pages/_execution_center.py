@@ -258,6 +258,14 @@ def _normalize_ml_train_preset_key(preset_key: str | None) -> str:
     return ML_TRAIN_PRESET_CUSTOM
 
 
+def _ensure_normalized_ml_train_preset_session_state(session_state: dict[str, object]) -> str:
+    raw_value = cast(str | None, session_state.get(ML_TRAIN_PRESET_KEY))
+    normalized = _normalize_ml_train_preset_key(raw_value)
+    if raw_value != normalized:
+        session_state[ML_TRAIN_PRESET_KEY] = normalized
+    return normalized
+
+
 def _format_ml_train_preset_label(preset_key: str) -> str:
     normalized = _normalize_ml_train_preset_key(preset_key)
     return {
@@ -337,7 +345,6 @@ def _is_selected_ml_train_preset_dirty(session_state: dict[str, object]) -> bool
 
 def _apply_selected_ml_train_preset(*, force: bool = False) -> None:
     selected_key = _normalize_ml_train_preset_key(cast(str | None, st.session_state.get(ML_TRAIN_PRESET_KEY)))
-    st.session_state[ML_TRAIN_PRESET_KEY] = selected_key
     signature = f"{selected_key}|{ML_TRAIN_PRESET_VERSION}"
     last_signature = str(st.session_state.get(ML_TRAIN_PRESET_APPLIED_SIGNATURE_KEY, "") or "")
     if not force and signature == last_signature:
@@ -1005,14 +1012,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "Ces options pilotent directement `python -m modelFactory --mode train`. "
             "L'objectif est d'aligner l'IHM sur la gouvernance multi-modèles réellement disponible côté backend."
         )
+        normalized_ml_train_preset = _ensure_normalized_ml_train_preset_session_state(cast(dict[str, object], st.session_state))
         ml_train_preset = cast(
             str,
             st.selectbox(
                 "Preset ML Train",
                 options=list(ML_TRAIN_PRESET_OPTIONS),
-                index=list(ML_TRAIN_PRESET_OPTIONS).index(
-                    _normalize_ml_train_preset_key(cast(str | None, st.session_state.get(ML_TRAIN_PRESET_KEY)))
-                ),
+                index=list(ML_TRAIN_PRESET_OPTIONS).index(normalized_ml_train_preset),
                 key=ML_TRAIN_PRESET_KEY,
                 format_func=_format_ml_train_preset_label,
                 help=(

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from ihm.pages import settings
 from ihm.services import queries
 
@@ -19,5 +21,19 @@ def test_alpha_scanner_dependency_default_thresholds_match_recommended_swing_cas
     assert queries.ALPHA_SCANNER_DEPENDENCY_THRESHOLDS["sync_earnings_calendar"]["coverage_error_pct"] == 5.0
     assert queries.ALPHA_SCANNER_DEPENDENCY_THRESHOLDS["sync_earnings_calendar"]["min_horizon_warn_days"] == 14.0
     assert queries.ALPHA_SCANNER_DEPENDENCY_THRESHOLDS["sync_earnings_calendar"]["min_horizon_error_days"] == 7.0
+
+
+def test_prime_bars_provider_widget_state_consumes_pending_sync(monkeypatch) -> None:
+    session_state = {
+        settings.BARS_PROVIDER_WIDGET_KEY: "alpaca",
+        settings.BARS_PROVIDER_PENDING_SYNC_KEY: settings.DEFAULT_BARS_PROVIDER,
+    }
+    monkeypatch.setattr(settings, "st", SimpleNamespace(session_state=session_state))
+
+    selected = settings._prime_bars_provider_widget_state("alpaca")
+
+    assert selected == settings.DEFAULT_BARS_PROVIDER
+    assert session_state[settings.BARS_PROVIDER_WIDGET_KEY] == settings.DEFAULT_BARS_PROVIDER
+    assert settings.BARS_PROVIDER_PENDING_SYNC_KEY not in session_state
 
 
