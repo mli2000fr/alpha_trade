@@ -15,8 +15,9 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
+from core.run_summary import attach_live_progress
 from execution_engine.audit import (
     build_run_id,
     event_to_db_dict,
@@ -84,12 +85,41 @@ class ProductionExecutor:
         broker: BrokerAdapter,
         oco: OcoManager,
         circuit_breaker: Optional[Any] = None,
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> None:
         self._cfg = config
         self._repo = repo
         self._broker = broker
         self._oco = oco
         self._circuit_breaker = circuit_breaker
+        self._progress_callback = progress_callback
+
+    def _emit_progress(
+        self,
+        metrics: dict[str, Any],
+        *,
+        current: int,
+        total: int,
+        label: str,
+        phase: str,
+        item: str | None = None,
+        unit: str = "symboles",
+    ) -> None:
+        if not callable(self._progress_callback):
+            return
+        payload = dict(metrics)
+        payload["last_phase"] = phase
+        self._progress_callback(
+            attach_live_progress(
+                payload,
+                current=current,
+                total=total,
+                label=label,
+                phase=phase,
+                unit=unit,
+                item=item,
+            )
+        )
 
     # ------------------------------------------------------------------
     # Public
@@ -148,6 +178,14 @@ class ProductionExecutor:
             if not targets:
                 events.append(make_event(exec_run_id, EventType.PRECHECK_FAILED, "No portfolio targets found"))
                 metrics["status"] = "ABORTED"
+                self._emit_progress(
+                    metrics,
+                    current=0,
+                    total=1,
+                    label="⚙️ Progression execution — pré-check",
+                    phase="precheck",
+                    unit="étapes",
+                )
                 return metrics
 
             actual_risk_run_id = targets[0].risk_run_id
@@ -172,6 +210,13 @@ class ProductionExecutor:
                 if t.price_asof_date is not None and actual_trade_date is not None and t.price_asof_date < actual_trade_date
             )
             target_by_symbol = {t.symbol: t for t in targets}
+            self._emit_progress(
+                metrics,
+                current=len(targets),
+                total=max(len(targets), 1),
+                label="⚙️ Progression execution — pré-check & chargement des cibles",
+                phase="precheck",
+            )
 
             self._repo.insert_execution_run(
                 exec_run_id=exec_run_id,
@@ -200,6 +245,14 @@ class ProductionExecutor:
                         events.append(make_event(exec_run_id, EventType.CIRCUIT_BREAKER_ACTIVE, "CB active — aborting"))
                         self._repo.update_execution_run_status(exec_run_id, "ABORTED")
                         metrics["status"] = "ABORTED"
+                        self._emit_progress(
+                            metrics,
+                            current=1,
+                            total=1,
+                            label="⚙️ Progression execution — arrêt circuit breaker",
+                            phase="precheck",
+                            unit="étapes",
+                        )
                         return metrics
                 except Exception as exc:
                     LOGGER.warning("Circuit breaker check failed: %s", exc)
@@ -211,6 +264,14 @@ class ProductionExecutor:
                         events.append(make_event(exec_run_id, EventType.PRECHECK_FAILED, "Market closed"))
                         self._repo.update_execution_run_status(exec_run_id, "ABORTED")
                         metrics["status"] = "ABORTED"
+                        self._emit_progress(
+                            metrics,
+                            current=1,
+                            total=1,
+                            label="⚙️ Progression execution — marché fermé",
+                            phase="precheck",
+                            unit="étapes",
+                        )
                         return metrics
                 except Exception:
                     LOGGER.warning("Cannot check market clock — proceeding")
@@ -291,12 +352,30 @@ class ProductionExecutor:
                         symbol=intent.symbol, intent_id=intent.intent_id,
                     ))
                     new_intents.append(intent)
+            self._emit_progress(
+                metrics,
+                current=len(new_intents),
+                total=max(len(entry_intents), 1),
+                label="⚙️ Progression execution — construction des intents",
+                phase="build_intents",
+            )
 
             # Phase 4 — Submit entries
             submitted_orders: dict[str, tuple[OrderIntent, BrokerOrder]] = {}
             batch_count = 0
+            submit_total = max(len(new_intents), 1)
+            submit_processed = 0
             for intent in new_intents:
+                submit_processed += 1
                 if not self._reserve_account_capacity_for_intent(intent, account_state, exec_run_id, events, metrics):
+                    self._emit_progress(
+                        metrics,
+                        current=submit_processed,
+                        total=submit_total,
+                        label="⚙️ Progression execution — soumission des ordres d'entrée",
+                        phase="submit_entries",
+                        item=intent.symbol,
+                    )
                     continue
 
                 # Kill switch
@@ -323,6 +402,14 @@ class ProductionExecutor:
                     ))
                     metrics["submitted"] += 1
                     batch_count += 1
+                    self._emit_progress(
+                        metrics,
+                        current=submit_processed,
+                        total=submit_total,
+                        label="⚙️ Progression execution — soumission des ordres d'entrée",
+                        phase="submit_entries",
+                        item=intent.symbol,
+                    )
                     continue
 
                 # Submit to broker avec retry UNIQUEMENT sur erreurs reseau / 5xx / 429
@@ -386,6 +473,14 @@ class ProductionExecutor:
                     self._persist_broker_order_state(intent, order)
 
                 batch_count += 1
+                self._emit_progress(
+                    metrics,
+                    current=submit_processed,
+                    total=submit_total,
+                    label="⚙️ Progression execution — soumission des ordres d'entrée",
+                    phase="submit_entries",
+                    item=intent.symbol,
+                )
 
             # Phase 5 — Poll fills
             # Si le marche est ferme, les ordres resteront en "accepted" (SUBMITTED)
@@ -399,7 +494,10 @@ class ProductionExecutor:
                     market_open_for_poll = False
 
             if not self._cfg.dry_run and market_open_for_poll:
+                poll_total = max(len(submitted_orders), 1)
+                poll_processed = 0
                 for intent_id, (intent, order) in list(submitted_orders.items()):
+                    poll_processed += 1
                     filled_order = self._poll_until_terminal(order.broker_order_id, intent.intent_id, exec_run_id)
                     if filled_order and filled_order.status == OrderStatus.FILLED:
                         metrics["filled"] += 1
@@ -436,6 +534,14 @@ class ProductionExecutor:
                             f"{filled_order.status}: {intent.symbol}",
                             symbol=intent.symbol, broker_order_id=filled_order.broker_order_id,
                         ))
+                    self._emit_progress(
+                        metrics,
+                        current=poll_processed,
+                        total=poll_total,
+                        label="⚙️ Progression execution — suivi des fills",
+                        phase="poll_fills",
+                        item=intent.symbol,
+                    )
             elif not self._cfg.dry_run and not market_open_for_poll and submitted_orders:
                 LOGGER.info(
                     "Marche ferme — %d ordres soumis, pas de polling. "
@@ -447,6 +553,13 @@ class ProductionExecutor:
                     f"Market closed — {len(submitted_orders)} orders queued, no polling. "
                     "They will fill at next market open.",
                 ))
+                self._emit_progress(
+                    metrics,
+                    current=len(submitted_orders),
+                    total=max(len(submitted_orders), 1),
+                    label="⚙️ Progression execution — ordres en attente d'ouverture marché",
+                    phase="poll_fills",
+                )
 
             if not self._cfg.dry_run:
                 try:
@@ -476,6 +589,14 @@ class ProductionExecutor:
                         ),
                         payload=sync_metrics,
                     ))
+                    self._emit_progress(
+                        metrics,
+                        current=1,
+                        total=1,
+                        label="⚙️ Progression execution — synchronisation broker",
+                        phase="broker_sync",
+                        unit="étapes",
+                    )
                 except Exception as exc:
                     LOGGER.warning("Broker state sync failed: %s", exc, exc_info=True)
                     events.append(make_event(
@@ -483,6 +604,14 @@ class ProductionExecutor:
                         EventType.BROKER_SYNC_FAILED,
                         f"Broker sync failed: {str(exc)[:160]}",
                     ))
+                    self._emit_progress(
+                        metrics,
+                        current=1,
+                        total=1,
+                        label="⚙️ Progression execution — synchronisation broker",
+                        phase="broker_sync",
+                        unit="étapes",
+                    )
 
             # Phase 8 — Reconciliation
             if self._cfg.reconcile_after_submit and not self._cfg.dry_run:
@@ -545,8 +674,24 @@ class ProductionExecutor:
                             events.extend(rebalance_events)
                     else:
                         events.append(make_event(exec_run_id, EventType.RECONCILE_OK, "Reconciliation OK"))
+                    self._emit_progress(
+                        metrics,
+                        current=1,
+                        total=1,
+                        label="⚙️ Progression execution — réconciliation",
+                        phase="reconcile",
+                        unit="étapes",
+                    )
                 except Exception as exc:
                     LOGGER.warning("Reconciliation failed: %s", exc)
+                    self._emit_progress(
+                        metrics,
+                        current=1,
+                        total=1,
+                        label="⚙️ Progression execution — réconciliation",
+                        phase="reconcile",
+                        unit="étapes",
+                    )
 
             # Phase 9 — TCA
             if self._cfg.enable_tca and fills:
@@ -570,6 +715,14 @@ class ProductionExecutor:
                 total_submitted=metrics["submitted"], total_filled=metrics["filled"],
             )
             metrics["status"] = "COMPLETED"
+            self._emit_progress(
+                metrics,
+                current=1,
+                total=1,
+                label="⚙️ Progression execution — finalisation",
+                phase="finalize",
+                unit="étapes",
+            )
 
         except Exception as exc:
             LOGGER.exception("Execution run failed: %s", exc)
@@ -579,6 +732,14 @@ class ProductionExecutor:
             except Exception:
                 pass
             metrics["status"] = "FAILED"
+            self._emit_progress(
+                metrics,
+                current=1,
+                total=1,
+                label="⚙️ Progression execution — échec du run",
+                phase="failed",
+                unit="étapes",
+            )
         finally:
             self._persist_events(events)
             if lock_acquired:

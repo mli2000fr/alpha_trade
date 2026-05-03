@@ -386,7 +386,14 @@ def run(
             )
     pnl = PnLSnapshot(portfolio_current_value=equity, portfolio_high_watermark=equity)
     cb = CircuitBreaker(RiskConfig(account_equity=max(equity, 1.0)), pnl)
-    executor = ProductionExecutor(config, repo, broker, oco, circuit_breaker=cb)
+    executor = ProductionExecutor(
+        config,
+        repo,
+        broker,
+        oco,
+        circuit_breaker=cb,
+        progress_callback=lambda summary: emit_run_summary(summary),
+    )
 
     trade_date_val: date | None = None
     if trade_date:

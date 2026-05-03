@@ -354,3 +354,79 @@ def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -
     assert captured["summary"]["account_snapshot_trade_date"] == "2026-04-30"
 
 
+def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
+    emitted_payloads: list[dict[str, object]] = []
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {
+                "account_id": account_id or "default",
+                "trade_date": trade_date.isoformat(),
+                "cash": None,
+                "settled_cash": None,
+                "long_positions_value": None,
+                "short_positions_value": None,
+                "dividends_ledger": None,
+                "total": None,
+                "source": "missing",
+                "snapshot_at": None,
+            }
+
+        def load_candidates_asof(self, trade_date):
+            return []
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            return {}
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame()
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl):
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            if callable(self.progress_callback):
+                self.progress_callback(
+                    {
+                        "progress_live": True,
+                        "progress_current": 0,
+                        "progress_total": 1,
+                        "progress_phase": "build_portfolio",
+                        "progress_label": "🛡️ Progression risk management — construction portefeuille",
+                        "targeted_symbols": len(candidates),
+                    }
+                )
+            return []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: emitted_payloads.append(dict(summary)))
+
+    cli.main(["--trade-date", "2026-05-01", "--dry-run"])
+
+    live_payloads = [payload for payload in emitted_payloads if payload.get("progress_live")]
+    final_payload = next(payload for payload in reversed(emitted_payloads) if not payload.get("progress_live"))
+
+    assert live_payloads
+    assert any(payload.get("progress_phase") == "resolve_account" for payload in live_payloads)
+    assert any(payload.get("progress_phase") == "load_candidates" for payload in live_payloads)
+    assert any(payload.get("progress_phase") == "build_portfolio" for payload in live_payloads)
+    assert any(payload.get("progress_phase") == "persist_results" for payload in live_payloads)
+    assert final_payload["trade_date"] == "2026-05-01"
+
+

@@ -14,6 +14,10 @@ def _payload_from_stdout(stdout: str, prefix: str) -> dict[str, object]:
     return json.loads(stdout[len(prefix):])
 
 
+def _payloads_from_output(output: str, prefix: str) -> list[dict[str, object]]:
+    return [_payload_from_stdout(line, prefix) for line in output.splitlines() if line.strip()]
+
+
 class _FakeEventSentimentPipeline:
     def __init__(self, repository=None, config=None, progress_callback=None) -> None:
         self.repository = repository
@@ -86,7 +90,8 @@ def test_event_sentiment_cli_main_emits_structured_summary(monkeypatch, capsys) 
 
     cli.main()
 
-    payload = _payload_from_stdout(capsys.readouterr().out.strip(), cli.RUN_SUMMARY_PREFIX)
+    payloads = _payloads_from_output(capsys.readouterr().out.strip(), cli.RUN_SUMMARY_PREFIX)
+    payload = payloads[-1]
     assert payload["resolved_symbols"] == 2
     assert payload["fetched_articles"] == 24
     assert payload["landed_articles"] == 18
@@ -209,9 +214,13 @@ def test_signal_aggregator_main_emits_structured_summary(monkeypatch, capsys) ->
         ]
     )
 
-    stdout = capsys.readouterr().out.strip().splitlines()
-    payload = _payload_from_stdout(stdout[0], signal_aggregator.RUN_SUMMARY_PREFIX)
+    payloads = _payloads_from_output(capsys.readouterr().out.strip(), signal_aggregator.RUN_SUMMARY_PREFIX)
+    progress_payloads = [payload for payload in payloads if payload.get("progress_live")]
+    payload = next(payload for payload in reversed(payloads) if not payload.get("progress_live"))
     assert result == 0
+    assert progress_payloads
+    assert any(progress.get("progress_phase") == "load_scores" for progress in progress_payloads)
+    assert any(progress.get("progress_phase") == "finalize" for progress in progress_payloads)
     assert payload["trade_date"] == "2026-04-19"
     assert payload["all_symbols"] is True
     assert payload["loaded_symbols"] == 2

@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import date, datetime
 
 from common.utils import configure_root_logging
-from core.run_summary import attach_schema_version
+from core.run_summary import attach_live_progress, attach_schema_version
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from risk_management.audit import build_run_id, persist_decisions, persist_portfolio_targets
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
@@ -17,6 +17,29 @@ from risk_management.models import PortfolioEntry
 from risk_management.portfolio_builder import PortfolioBuilder
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _emit_live_progress(
+    summary: dict[str, object],
+    *,
+    current: int,
+    total: int,
+    label: str,
+    phase: str,
+    item: str | None = None,
+    unit: str = "étapes",
+) -> None:
+    emit_run_summary(
+        attach_live_progress(
+            summary,
+            current=current,
+            total=total,
+            label=label,
+            phase=phase,
+            unit=unit,
+            item=item,
+        )
+    )
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -142,6 +165,21 @@ def main(args: list[str] | None = None) -> None:
             account_snapshot.buying_power,
         )
 
+    progress_total_steps = 8
+    progress_context: dict[str, object] = {
+        "trade_date": trade_date.isoformat(),
+        "dry_run": bool(args.dry_run),
+        "effective_equity": round(float(effective_equity), 2),
+        "account_id": effective_account_id or raw_account_id or "default",
+    }
+    _emit_live_progress(
+        dict(progress_context),
+        current=1,
+        total=progress_total_steps,
+        label="🛡️ Progression risk management — résolution du compte",
+        phase="resolve_account",
+    )
+
     config = RiskConfig(
         account_equity=effective_equity,
         risk_per_trade_pct=args.risk_per_trade_pct,
@@ -163,27 +201,76 @@ def main(args: list[str] | None = None) -> None:
     LOGGER.info("Chargement des candidats…")
     candidates = repo.load_candidates_asof(trade_date)
     LOGGER.info("Candidats charges : %d", len(candidates))
+    _emit_live_progress(
+        dict(progress_context, targeted_symbols=len(candidates)),
+        current=2,
+        total=progress_total_steps,
+        label="🛡️ Progression risk management — chargement des candidats",
+        phase="load_candidates",
+        unit="étapes",
+    )
 
     symbols = [c.symbol for c in candidates]
     LOGGER.info("Chargement des prix et ATR…")
     prices = repo.load_prices_asof(symbols, trade_date, atr_window=config.atr_window)
     LOGGER.info("Prix charges pour %d symboles.", len(prices))
+    _emit_live_progress(
+        dict(progress_context, targeted_symbols=len(candidates), price_symbols=len(prices)),
+        current=3,
+        total=progress_total_steps,
+        label="🛡️ Progression risk management — chargement prix & ATR",
+        phase="load_prices",
+    )
 
     # --- V2 data loading ---
     LOGGER.info("Chargement des predictions ML…")
     predictions = repo.load_predictions_asof(symbols, trade_date)
     LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
+    _emit_live_progress(
+        dict(progress_context, targeted_symbols=len(candidates), prediction_symbols=len(predictions)),
+        current=4,
+        total=progress_total_steps,
+        label="🛡️ Progression risk management — chargement des prédictions ML",
+        phase="load_predictions",
+    )
 
     LOGGER.info("Chargement des win rates…")
     win_rates = repo.load_win_rates_asof(symbols, trade_date)
     LOGGER.info("Win rates charges pour %d symboles.", len(win_rates))
+    _emit_live_progress(
+        dict(progress_context, targeted_symbols=len(candidates), win_rate_symbols=len(win_rates)),
+        current=5,
+        total=progress_total_steps,
+        label="🛡️ Progression risk management — chargement des win rates",
+        phase="load_win_rates",
+    )
 
     LOGGER.info("Chargement de la matrice de rendements…")
     return_matrix = repo.load_return_matrix_asof(symbols, trade_date, config.correlation_lookback_days)
     LOGGER.info("Matrice de rendements : %s", return_matrix.shape if not return_matrix.empty else "vide")
+    _emit_live_progress(
+        dict(
+            progress_context,
+            targeted_symbols=len(candidates),
+            return_matrix_rows=int(return_matrix.shape[0]) if not return_matrix.empty else 0,
+            return_matrix_columns=int(return_matrix.shape[1]) if not return_matrix.empty else 0,
+        ),
+        current=6,
+        total=progress_total_steps,
+        label="🛡️ Progression risk management — chargement de la matrice de rendements",
+        phase="load_return_matrix",
+    )
 
     builder = PortfolioBuilder(config, pnl=pnl_snapshot)
+    builder.progress_callback = emit_run_summary
     entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
+    _emit_live_progress(
+        dict(progress_context, targeted_symbols=len(candidates), built_entries=len(entries)),
+        current=7,
+        total=progress_total_steps,
+        label="🛡️ Progression risk management — portefeuille construit",
+        phase="build_portfolio",
+    )
 
     run_id = build_run_id()
     _print_summary(entries, run_id, trade_date)
@@ -194,6 +281,19 @@ def main(args: list[str] | None = None) -> None:
         n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=effective_account_id)
         n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=effective_account_id)
         LOGGER.info("Ecrit %d decisions et %d cibles en DB.", n_dec, n_tgt)
+
+    _emit_live_progress(
+        dict(
+            progress_context,
+            targeted_symbols=len(entries),
+            persisted_decisions=0 if config.dry_run else int(n_dec),
+            persisted_targets=0 if config.dry_run else int(n_tgt),
+        ),
+        current=8,
+        total=progress_total_steps,
+        label="🛡️ Progression risk management — finalisation",
+        phase="persist_results",
+    )
 
     accepted_entries = [entry for entry in entries if entry.approved_shares > 0 and str(entry.decision).upper() == "ACCEPTED"]
     reduced_entries = [entry for entry in entries if entry.approved_shares > 0 and str(entry.decision).upper() == "REDUCED"]

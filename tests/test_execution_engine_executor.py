@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -201,5 +202,57 @@ def test_should_defer_children_for_swing_only() -> None:
 
     assert defer is True
     assert reason == "swing_only"
+
+
+def test_execute_run_emits_live_progress_payloads(monkeypatch) -> None:
+    progress_payloads: list[dict[str, object]] = []
+    config = ExecutionConfig(dry_run=True, allow_outside_rth=True, inter_order_delay_ms=0, poll_interval_seconds=0.01)
+    repo = MagicMock()
+    repo.acquire_execution_lock.return_value = True
+    repo.load_portfolio_targets.return_value = [
+        SimpleNamespace(
+            symbol="AAPL",
+            risk_run_id="risk-1",
+            trade_date=date(2026, 5, 1),
+            target_notional=1_500.0,
+            target_shares=10,
+            entry_price=150.0,
+            initial_risk_dollars=50.0,
+            risk_budget_dollars=100.0,
+            target_weight=0.1,
+            stop_price_initial=145.0,
+            risk_per_share=5.0,
+            price_asof_date=date(2026, 5, 1),
+        )
+    ]
+    broker = MagicMock()
+    broker.get_account_snapshot.return_value = {
+        "equity": 100_000.0,
+        "cash": 100_000.0,
+        "buying_power": 200_000.0,
+        "non_marginable_buying_power": 100_000.0,
+        "daytrade_count": 0,
+    }
+    oco = MagicMock()
+
+    monkeypatch.setattr(executor_module, "build_entry_intents", lambda targets, cfg, exec_run_id: [])
+
+    executor = ProductionExecutor(
+        config,
+        repo,
+        broker,
+        oco,
+        progress_callback=lambda payload: progress_payloads.append(dict(payload)),
+    )
+
+    metrics = executor.execute_run(risk_run_id="risk-1", trade_date=date(2026, 5, 1))
+
+    assert metrics["status"] == "COMPLETED"
+    assert progress_payloads
+    assert any(payload.get("progress_phase") == "precheck" for payload in progress_payloads)
+    assert any(payload.get("progress_phase") == "build_intents" for payload in progress_payloads)
+    assert any(payload.get("progress_phase") == "finalize" for payload in progress_payloads)
+    finalize_payload = next(payload for payload in progress_payloads if payload.get("progress_phase") == "finalize")
+    assert finalize_payload["status"] == "COMPLETED"
 
 

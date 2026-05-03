@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from pandas import DataFrame
 
+from core.run_summary import attach_live_progress
 from risk_management.config import RiskConfig
 from risk_management.constraints import PortfolioState
 from core.conviction import ConvictionWeights, fuse as _fuse_conviction
@@ -34,6 +35,32 @@ class PortfolioBuilder:
         self._sizer = PositionSizer(config)
         self._kelly_sizer = KellySizer(config) if config.enable_kelly_sizing else None
         self._pnl = pnl
+        self.progress_callback: Callable[[dict[str, object]], None] | None = None
+
+    def _emit_progress(
+        self,
+        summary: dict[str, object],
+        *,
+        current: int,
+        total: int,
+        label: str,
+        phase: str,
+        item: str | None = None,
+        unit: str = "candidats",
+    ) -> None:
+        if not callable(self.progress_callback):
+            return
+        self.progress_callback(
+            attach_live_progress(
+                summary,
+                current=current,
+                total=total,
+                label=label,
+                phase=phase,
+                unit=unit,
+                item=item,
+            )
+        )
 
     def build(
         self,
@@ -46,6 +73,7 @@ class PortfolioBuilder:
         """Construit la liste des PortfolioEntry."""
         predictions = predictions or {}
         win_rates = win_rates or {}
+        total_candidates = len(candidates)
 
         # 1. Enrichir en EnrichedCandidate
         enriched: list[EnrichedCandidate] = []
@@ -132,6 +160,21 @@ class PortfolioBuilder:
         else:
             retained = enriched
 
+        processed_candidates = len(entries)
+        if total_candidates > 0:
+            self._emit_progress(
+                {
+                    "targeted_symbols": total_candidates,
+                    "correlation_rejections": len(entries),
+                    "retained_after_correlation": len(retained),
+                },
+                current=processed_candidates,
+                total=total_candidates,
+                label="🛡️ Progression risk management — construction portefeuille",
+                phase="build_portfolio",
+                item="filtre corrélation" if processed_candidates > 0 else None,
+            )
+
         # 4. Sizing + contraintes
         sector_map = {c.symbol: c.sector for c in candidates}
         state = PortfolioState()
@@ -143,6 +186,20 @@ class PortfolioBuilder:
             pi = prices.get(ec.symbol)
             if pi is None or pi.last_close <= 0:
                 entries.append(self._make_entry_v2(ec, pi, 0, 0, "REJECTED", "prix indisponible"))
+                processed_candidates += 1
+                self._emit_progress(
+                    {
+                        "targeted_symbols": total_candidates,
+                        "accepted_symbols": accepted_rank,
+                        "processed_symbols": processed_candidates,
+                        "retained_after_correlation": len(retained),
+                    },
+                    current=processed_candidates,
+                    total=total_candidates,
+                    label="🛡️ Progression risk management — construction portefeuille",
+                    phase="build_portfolio",
+                    item=ec.symbol,
+                )
                 continue
 
             # Sizing
@@ -156,6 +213,20 @@ class PortfolioBuilder:
                     ec, pi, 0, 0, "REJECTED", "sizing insuffisant",
                     sizing_method=sizing.method,
                 ))
+                processed_candidates += 1
+                self._emit_progress(
+                    {
+                        "targeted_symbols": total_candidates,
+                        "accepted_symbols": accepted_rank,
+                        "processed_symbols": processed_candidates,
+                        "retained_after_correlation": len(retained),
+                    },
+                    current=processed_candidates,
+                    total=total_candidates,
+                    label="🛡️ Progression risk management — construction portefeuille",
+                    phase="build_portfolio",
+                    item=ec.symbol,
+                )
                 continue
 
             approved = int(checker.check_position_size(ec.symbol, sizing.proposed_shares, pi.last_close))
@@ -167,6 +238,20 @@ class PortfolioBuilder:
                     ec, pi, sizing.proposed_shares, 0, "REJECTED", reason,
                     sizing_method=sizing.method,
                 ))
+                processed_candidates += 1
+                self._emit_progress(
+                    {
+                        "targeted_symbols": total_candidates,
+                        "accepted_symbols": accepted_rank,
+                        "processed_symbols": processed_candidates,
+                        "retained_after_correlation": len(retained),
+                    },
+                    current=processed_candidates,
+                    total=total_candidates,
+                    label="🛡️ Progression risk management — construction portefeuille",
+                    phase="build_portfolio",
+                    item=ec.symbol,
+                )
                 continue
 
             decision = "ACCEPTED" if approved == sizing.proposed_shares else "REDUCED"
@@ -227,6 +312,20 @@ class PortfolioBuilder:
                 prediction_asof_date=ec.prediction_asof_date,
                 ml_metrics_asof_date=ec.ml_metrics_asof_date,
             ))
+            processed_candidates += 1
+            self._emit_progress(
+                {
+                    "targeted_symbols": total_candidates,
+                    "accepted_symbols": accepted_rank,
+                    "processed_symbols": processed_candidates,
+                    "retained_after_correlation": len(retained),
+                },
+                current=processed_candidates,
+                total=total_candidates,
+                label="🛡️ Progression risk management — construction portefeuille",
+                phase="build_portfolio",
+                item=ec.symbol,
+            )
 
         return entries
 

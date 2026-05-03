@@ -36,7 +36,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Any, Optional, cast
+from typing import Any, Callable, Optional, cast
 from uuid import uuid4
 
 import numpy as np
@@ -46,6 +46,7 @@ from sqlalchemy.engine import Engine
 
 from common.utils import configure_root_logging
 from core.conviction import SentimentFusionWeights, fuse_sentiment
+from core.run_summary import attach_live_progress
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
@@ -205,6 +206,32 @@ class SentimentSignalAggregator:
     def __init__(self, engine: Engine, config: SentimentBoostConfig | None = None) -> None:
         self.engine = engine
         self.config = config or SentimentBoostConfig()
+        self.progress_callback: Callable[[dict[str, object]], None] | None = None
+
+    def _emit_progress(
+        self,
+        summary: dict[str, object],
+        *,
+        current: int,
+        total: int,
+        label: str,
+        phase: str,
+        item: str | None = None,
+        unit: str = "étapes",
+    ) -> None:
+        if not callable(self.progress_callback):
+            return
+        self.progress_callback(
+            attach_live_progress(
+                summary,
+                current=current,
+                total=total,
+                label=label,
+                phase=phase,
+                unit=unit,
+                item=item,
+            )
+        )
 
     def _feature_fetch_window_days(self, horizon_weights: tuple[tuple[int, float], ...]) -> int:
         max_horizon = max((int(horizon) for horizon, _ in horizon_weights), default=1)
@@ -783,6 +810,19 @@ class SentimentSignalAggregator:
         # --- Chargement ---
         ticker_df = self._load_ticker_sentiment(symbols, ref_date)
         sector_df = self._load_sector_sentiment(sectors, ref_date) if sectors else pd.DataFrame()
+        self._emit_progress(
+            {
+                "trade_date": ref_date.isoformat(),
+                "loaded_symbols": len(symbols),
+                "loaded_sectors": len(sectors),
+                "ticker_feature_rows": int(len(ticker_df)),
+                "sector_feature_rows": int(len(sector_df)),
+            },
+            current=1,
+            total=2,
+            label="🧠 Progression signal aggregator — chargement features sentiment",
+            phase="load_features",
+        )
 
         # --- Agrégation fenêtrée ---
         ticker_agg = self._aggregate_ticker_multi_horizon(ticker_df, reference_date=ref_date)
@@ -983,6 +1023,18 @@ class SentimentSignalAggregator:
             sum(bool(value) for value in result["signal_active"].tolist()),
             avg_delta,
         )
+        self._emit_progress(
+            {
+                "trade_date": ref_date.isoformat(),
+                "loaded_symbols": len(symbols),
+                "signal_active_symbols": int(sum(bool(value) for value in result["signal_active"].tolist())),
+                "avg_score_delta": round(float(avg_delta), 4),
+            },
+            current=2,
+            total=2,
+            label="🧠 Progression signal aggregator — fusion quant + sentiment",
+            phase="merge_scores",
+        )
         return result
 
     # ------------------------------------------------------------------
@@ -1163,6 +1215,16 @@ class SentimentSignalAggregator:
             "save_to_db | %d lignes mises a jour dans stock_scores (colonnes sentiment).",
             len(clean_records),
         )
+        self._emit_progress(
+            {
+                "updated_symbols": len(clean_records),
+            },
+            current=len(clean_records),
+            total=len(clean_records),
+            label="🧠 Progression signal aggregator — persistance DB",
+            phase="persist_scores",
+            unit="symboles",
+        )
         return len(clean_records)
 
 
@@ -1314,9 +1376,42 @@ def main(argv: list[str] | None = None) -> int:
     engine = get_sqlalchemy_engine()
     started_at = _utc_now_naive()
 
+    def _emit_cli_progress(
+        summary: dict[str, object],
+        *,
+        current: int,
+        total: int,
+        label: str,
+        phase: str,
+        item: str | None = None,
+        unit: str = "étapes",
+    ) -> None:
+        _emit_run_summary(
+            attach_live_progress(
+                summary,
+                current=current,
+                total=total,
+                label=label,
+                phase=phase,
+                unit=unit,
+                item=item,
+            )
+        )
+
     # 1. Chargement des scores quantitatifs depuis stock_scores
     LOGGER.info("Chargement des scores depuis stock_scores…")
     scores_df = _load_scores_from_db(engine, args.all_symbols)
+    _emit_cli_progress(
+        {
+            "trade_date": ref_date.isoformat(),
+            "all_symbols": bool(args.all_symbols),
+            "loaded_symbols": int(len(scores_df)),
+        },
+        current=1,
+        total=4,
+        label="🧠 Progression signal aggregator — chargement stock_scores",
+        phase="load_scores",
+    )
 
     if scores_df.empty:
         LOGGER.warning("Aucun symbole trouve dans stock_scores — arret.")
@@ -1339,6 +1434,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # 2. Fusion quant + sentiment
     aggregator = SentimentSignalAggregator(engine, config)
+    aggregator.progress_callback = _emit_run_summary
     enriched = aggregator.merge(scores_df, trade_date=ref_date)
 
     # 3. Persistance dans stock_scores
@@ -1353,6 +1449,20 @@ def main(argv: list[str] | None = None) -> int:
         finbert_fingerprints = EventSentimentRepository().get_active_finbert_fingerprints(ref_date)
     except Exception as exc:  # noqa: BLE001 — best-effort
         LOGGER.warning("Lecture fingerprints FinBERT impossible (%s)", exc)
+
+    _emit_cli_progress(
+        {
+            "trade_date": ref_date.isoformat(),
+            "all_symbols": bool(args.all_symbols),
+            "loaded_symbols": len(scores_df),
+            "updated_symbols": int(saved),
+            "finbert_model_fingerprints": list(finbert_fingerprints),
+        },
+        current=4,
+        total=4,
+        label="🧠 Progression signal aggregator — finalisation",
+        phase="finalize",
+    )
 
     _emit_run_summary(
         _build_cli_run_summary(
