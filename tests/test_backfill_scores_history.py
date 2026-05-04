@@ -4,6 +4,7 @@ import logging
 from datetime import date
 
 import pandas as pd
+import pytest
 from sqlalchemy import create_engine, text
 
 from backtesting.backfill_scores_history import BackfillScoresHistoryService, SELECTOR_FILTER_STAT_KEYS
@@ -302,6 +303,51 @@ def test_resolve_pit_scanner_disables_only_missing_overlay_filter() -> None:
     assert scanner.config.earnings_blackout_days is None
 
 
+def test_resolve_pit_scanner_treats_null_or_stale_quotes_as_missing_coverage() -> None:
+    engine = _build_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE stock_quote_snapshots (symbol TEXT, quote_date DATE, spread_bps REAL)"))
+        conn.execute(
+            text("INSERT INTO stock_quote_snapshots(symbol, quote_date, spread_bps) VALUES (:s, :d, :v)"),
+            [
+                {"s": "NULLSPREAD", "d": date(2026, 4, 16), "v": None},
+                {"s": "STALE", "d": date(2026, 4, 1), "v": 12.0},
+            ],
+        )
+
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+
+    scanner, quotes_available, earnings_available = service._resolve_pit_scanner(date(2026, 4, 17))
+
+    assert quotes_available is False
+    assert earnings_available is False
+    assert scanner.config.max_spread_bps is None
+
+
+def test_prepare_pit_quote_snapshots_filters_stale_quotes_and_measures_coverage() -> None:
+    service = BackfillScoresHistoryService(engine=_build_sqlite_engine(), screener_max_workers=1)
+    quotes_df = pd.DataFrame(
+        [
+            {"symbol": "AAA", "quote_date": pd.Timestamp("2026-04-17"), "spread_bps": 12.0},
+            {"symbol": "BBB", "quote_date": pd.Timestamp("2026-04-10"), "spread_bps": 15.0},
+            {"symbol": "CCC", "quote_date": pd.Timestamp("2026-04-17"), "spread_bps": pd.NA},
+        ]
+    )
+
+    usable_quotes, diagnostics = service._prepare_pit_quote_snapshots(
+        ["AAA", "BBB", "CCC"],
+        quotes_df,
+        date(2026, 4, 17),
+    )
+
+    assert usable_quotes["symbol"].tolist() == ["AAA"]
+    assert diagnostics["covered_symbols"] == 1
+    assert diagnostics["stale_symbols"] == 1
+    assert diagnostics["missing_spread_symbols"] == 1
+    assert diagnostics["coverage_pct"] == pytest.approx(33.33)
+    assert diagnostics["spread_filter_coverage_ok"] is False
+
+
 def test_compute_selector_snapshot_logs_aggregated_pit_summary(monkeypatch, caplog) -> None:
     engine = _build_sqlite_engine()
     service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
@@ -379,6 +425,7 @@ def test_compute_selector_snapshot_logs_aggregated_pit_summary(monkeypatch, capl
         "_load_market_data",
         lambda symbols, as_of_date: pd.DataFrame({"symbol": symbols}),
     )
+    monkeypatch.setattr(service, "_build_scanner_with_overrides", lambda **kwargs: _FakeScanner())
 
     with caplog.at_level(logging.INFO):
         result = service._compute_selector_snapshot(screener_df, date(2026, 4, 17))
@@ -389,6 +436,71 @@ def test_compute_selector_snapshot_logs_aggregated_pit_summary(monkeypatch, capl
     assert "rejet_market_cap_stale=1" in caplog.text
     assert "rescues_spread_iex=1" in caplog.text
     assert "rejet_sanitizer=1" in caplog.text
+
+
+def test_compute_selector_snapshot_disables_spread_filter_when_quote_coverage_is_too_low(monkeypatch, caplog) -> None:
+    engine = _build_sqlite_engine()
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+
+    class _FakeScanner:
+        def __init__(self, max_spread_bps: float | None) -> None:
+            self.config = type(service.scanner_config)(chunk_size=10, selection_size=3, max_spread_bps=max_spread_bps)
+
+        def compute_factors(self, market_data: pd.DataFrame) -> pd.DataFrame:
+            return pd.DataFrame({"symbol": market_data["symbol"].astype(str).unique()})
+
+        def fetch_instrument_metadata(self, symbols: list[str]) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def fetch_quote_snapshots(self, symbols: list[str], *, reference_date: date | None = None) -> pd.DataFrame:
+            return pd.DataFrame(
+                [{"symbol": symbols[0], "quote_date": pd.Timestamp(reference_date), "spread_bps": 10.0}]
+            )
+
+        def fetch_next_earnings(self, symbols: list[str], *, reference_date: date | None = None) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def merge_scores(self, computed: pd.DataFrame, aux_scores: pd.DataFrame) -> pd.DataFrame:
+            return computed.copy()
+
+        def _enrich_and_filter_equities(self, merged: pd.DataFrame, metadata_df: pd.DataFrame) -> pd.DataFrame:
+            return merged
+
+        def _merge_optional_symbol_overlays(self, merged: pd.DataFrame, quotes_df: pd.DataFrame, earnings_df: pd.DataFrame) -> pd.DataFrame:
+            return merged
+
+        def _apply_filters_with_stats(self, merged: pd.DataFrame):
+            if self.config.max_spread_bps is None:
+                stats = {key: 0 for key in SELECTOR_FILTER_STAT_KEYS} | {"input": len(merged), "output": len(merged)}
+                return merged.copy(), stats
+            stats = {key: 0 for key in SELECTOR_FILTER_STAT_KEYS} | {"input": len(merged), "output": 0, "rejected_spread": len(merged)}
+            return merged.iloc[0:0].copy(), stats
+
+        def _apply_factor_neutralization(self, df: pd.DataFrame) -> pd.DataFrame:
+            return df
+
+        def rank_and_select(self, df: pd.DataFrame) -> pd.DataFrame:
+            return df.head(1)
+
+    strict_scanner = _FakeScanner(max_spread_bps=40.0)
+    relaxed_scanner = _FakeScanner(max_spread_bps=None)
+    screener_df = pd.DataFrame({"symbol": ["AAA", "BBB", "CCC"]})
+
+    monkeypatch.setattr(service, "_resolve_pit_scanner", lambda as_of_date: (strict_scanner, True, False))
+    monkeypatch.setattr(service, "_build_scanner_with_overrides", lambda **kwargs: relaxed_scanner)
+    monkeypatch.setattr(
+        service,
+        "_load_market_data",
+        lambda symbols, as_of_date: pd.DataFrame({"symbol": symbols}),
+    )
+
+    with caplog.at_level(logging.INFO):
+        result = service._compute_selector_snapshot(screener_df, date(2026, 4, 17))
+
+    assert len(result) == 3
+    assert int(result["is_candidate"].sum()) == 1
+    assert "couverture quotes PIT insuffisante pour filtre spread" in caplog.text
+    assert "spread_filter_active=False" in caplog.text
 
 
 def test_get_symbol_chunks_caches_iterated_universe(monkeypatch) -> None:
