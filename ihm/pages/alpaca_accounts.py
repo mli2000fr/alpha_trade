@@ -27,7 +27,6 @@ from ihm.services.queries import (
 )
 
 _PAGE_ACCOUNT_SELECT_KEY = "alpaca_accounts_page_account_id"
-_PAGE_ACCOUNT_LAST_SYNC_KEY = "alpaca_accounts_page_last_synced_account_id"
 
 
 def _format_currency(value: object) -> str:
@@ -133,54 +132,6 @@ def _clear_page_caches() -> None:
 	get_execution_runs.clear()
 
 
-def _sync_page_account_selector_state(session_state: dict[str, object], account_ids: list[str]) -> str | None:
-	if not account_ids:
-		session_state.pop(_PAGE_ACCOUNT_SELECT_KEY, None)
-		session_state.pop(_PAGE_ACCOUNT_LAST_SYNC_KEY, None)
-		return None
-
-	resolved_global_account_id = resolve_selected_account_id(cast(str | None, session_state.get("selected_account_id")))
-	if resolved_global_account_id not in account_ids:
-		resolved_global_account_id = account_ids[0]
-
-	page_account_id = str(session_state.get(_PAGE_ACCOUNT_SELECT_KEY) or "").strip() or None
-	if page_account_id not in account_ids:
-		page_account_id = None
-
-	last_synced_account_id = str(session_state.get(_PAGE_ACCOUNT_LAST_SYNC_KEY) or "").strip() or None
-	if last_synced_account_id not in account_ids:
-		last_synced_account_id = None
-
-	if page_account_id is None:
-		session_state[_PAGE_ACCOUNT_SELECT_KEY] = resolved_global_account_id
-		session_state["selected_account_id"] = resolved_global_account_id
-		session_state[_PAGE_ACCOUNT_LAST_SYNC_KEY] = resolved_global_account_id
-		return resolved_global_account_id
-
-	if page_account_id == resolved_global_account_id:
-		session_state[_PAGE_ACCOUNT_LAST_SYNC_KEY] = page_account_id
-		return page_account_id
-
-	global_changed = resolved_global_account_id != last_synced_account_id
-	page_changed = page_account_id != last_synced_account_id
-
-	if global_changed and not page_changed:
-		session_state[_PAGE_ACCOUNT_SELECT_KEY] = resolved_global_account_id
-		session_state[_PAGE_ACCOUNT_LAST_SYNC_KEY] = resolved_global_account_id
-		return resolved_global_account_id
-
-	if page_changed and not global_changed:
-		session_state["selected_account_id"] = page_account_id
-		session_state[_PAGE_ACCOUNT_LAST_SYNC_KEY] = page_account_id
-		return page_account_id
-
-	# En cas de conflit, la sélection globale (sidebar) reste la source de vérité.
-	session_state[_PAGE_ACCOUNT_SELECT_KEY] = resolved_global_account_id
-	session_state["selected_account_id"] = resolved_global_account_id
-	session_state[_PAGE_ACCOUNT_LAST_SYNC_KEY] = resolved_global_account_id
-	return resolved_global_account_id
-
-
 def render() -> None:
 	st.header("🏦 Comptes Alpaca")
 	st.caption(
@@ -194,7 +145,7 @@ def render() -> None:
 
 	account_ids = [account.account_id for account in accounts]
 	account_labels = {account.account_id: build_account_label(account) for account in accounts}
-	default_account_id = _sync_page_account_selector_state(cast(dict[str, object], st.session_state), account_ids)
+	default_account_id = resolve_selected_account_id(st.session_state.get("selected_account_id"))
 	default_index = account_ids.index(default_account_id) if default_account_id in account_ids else 0
 
 	selector_col, action_col = st.columns([4, 1])
@@ -214,7 +165,6 @@ def render() -> None:
 			st.rerun()
 
 	st.session_state["selected_account_id"] = selected_account_id
-	st.session_state[_PAGE_ACCOUNT_LAST_SYNC_KEY] = selected_account_id
 	selected_account = next(account for account in accounts if account.account_id == selected_account_id)
 	st.info(
 		f"Compte actif : `{selected_account.account_id}` | label=`{selected_account.label}` | mode=`{selected_account.mode}` | rafraîchissement auto ~60s."
