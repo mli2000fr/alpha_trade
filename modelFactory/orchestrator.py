@@ -1,6 +1,7 @@
 """modelFactory/orchestrator.py — Orchestrateur distribué multi-symboles."""
 from __future__ import annotations
 
+from datetime import date
 import json
 import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -12,7 +13,15 @@ from sqlalchemy.engine import Engine
 
 from modelFactory.champion_selection import build_challenger_ranking, select_champion
 from modelFactory.config import TrainingConfig
-from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment, load_universe_bars
+from modelFactory.data_loader import (
+    load_benchmark_bars,
+    load_symbol_bars,
+    load_symbol_latest_bar_date,
+    load_symbol_latest_bar_dates,
+    load_symbol_sentiment,
+    load_universe_bars,
+    resolve_history_window_start_date,
+)
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.db_registry import load_candidate_symbols, load_stock_bars_daily_symbols, replace_model_governance
 from modelFactory.global_model import train_global_model
@@ -131,39 +140,62 @@ def _filter_symbols_by_mode(
 ) -> list[str]:
     """Phase 4.2.g — filtre la liste de symboles selon le mode ML.
 
-    - ``rebuild-missing`` : skippe les symboles dont le dernier
-      ``config.json`` champion (sur disque) a déjà le ``feature_fingerprint``
-      courant (= contrat de features inchangé depuis le dernier train).
-    - ``refresh-stale`` : équivalent ``rebuild-missing`` aujourd'hui (plage
-      future pour ajouter un critère d'âge en jours).
-    Tolérant aux fichiers manquants : on retient le symbole.
+    - ``rebuild-missing`` : ne garde que les symboles sans ``config.json``.
+    - ``refresh-stale`` : garde les symboles sans artefacts, avec contrat de
+      features/fenêtre historique différent, ou entraînés avant la dernière
+      barre disponible pour le symbole.
     """
     current_fp = compute_feature_fingerprint(
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
     )
+
+    def _parse_iso_date(value: object) -> date | None:
+        if isinstance(value, str) and value.strip():
+            try:
+                return date.fromisoformat(value.strip())
+            except ValueError:
+                return None
+        return None
+
     artifacts_dir = Path(cfg.artifacts_dir)
     kept: list[str] = []
     skipped: list[str] = []
+    latest_dates = load_symbol_latest_bar_dates(engine, symbols) if mode == "refresh-stale" else {}
     for symbol in symbols:
         config_path = artifacts_dir / symbol / "config.json"
         if not config_path.exists():
             kept.append(symbol)
+            continue
+        if mode == "rebuild-missing":
+            skipped.append(symbol)
             continue
         try:
             with open(config_path, encoding="utf-8") as fh:
                 cfg_data = json.load(fh)
             persisted = cfg_data.get("feature_fingerprint")
         except Exception:  # noqa: BLE001
-            persisted = None
-        if persisted == current_fp:
-            skipped.append(symbol)
-        else:
             kept.append(symbol)
+            continue
+
+        persisted_history_window = (cfg_data.get("data") or {}).get("history_window_years")
+        trained_through_date = _parse_iso_date(cfg_data.get("trained_through_date"))
+        latest_available_date = latest_dates.get(symbol)
+
+        if persisted != current_fp:
+            kept.append(symbol)
+            continue
+        if persisted_history_window != cfg.data.history_window_years:
+            kept.append(symbol)
+            continue
+        if trained_through_date is None or latest_available_date is None or trained_through_date < latest_available_date:
+            kept.append(symbol)
+            continue
+        skipped.append(symbol)
     LOGGER.info(
-        "ml_mode=%s current_fp=%s symbols_kept=%d symbols_skipped=%d",
-        mode, current_fp, len(kept), len(skipped),
+        "ml_mode=%s current_fp=%s history_window_years=%s symbols_kept=%d symbols_skipped=%d",
+        mode, current_fp, cfg.data.history_window_years, len(kept), len(skipped),
     )
     return kept
 
@@ -172,17 +204,34 @@ def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] 
     """Worker function exécutée dans un sous-process. Crée son propre engine."""
     from database.connection import get_sqlalchemy_engine
     engine = get_sqlalchemy_engine()
-    bars = load_symbol_bars(engine, symbol)
+    history_end_date = load_symbol_latest_bar_date(engine, symbol)
+    history_start_date = resolve_history_window_start_date(history_end_date, cfg.data.history_window_years)
+    bars = load_symbol_bars(engine, symbol, end_date=history_end_date, start_date=history_start_date)
     benchmark_df = None
     if cfg.data.feature_set == "expert" or cfg.data.enable_cross_sectional_features:
-        benchmark_df = load_benchmark_bars(engine, cfg.data.benchmark_symbol)
+        benchmark_df = load_benchmark_bars(
+            engine,
+            cfg.data.benchmark_symbol,
+            end_date=history_end_date,
+            start_date=history_start_date,
+        )
     sentiment_df = None
     if cfg.data.include_sentiment_features:
-        sentiment_df = load_symbol_sentiment(engine, symbol)
+        sentiment_df = load_symbol_sentiment(
+            engine,
+            symbol,
+            end_date=history_end_date,
+            start_date=history_start_date,
+        )
     universe_df = None
     if cfg.data.enable_cross_sectional_features:
         effective_universe = list(dict.fromkeys((universe_symbols or []) + [symbol]))
-        universe_df = load_universe_bars(engine, effective_universe)
+        universe_df = load_universe_bars(
+            engine,
+            effective_universe,
+            end_date=history_end_date,
+            start_date=history_start_date,
+        )
     return train_symbol(symbol, bars, cfg, engine, sentiment_df=sentiment_df, benchmark_df=benchmark_df, universe_df=universe_df)
 
 

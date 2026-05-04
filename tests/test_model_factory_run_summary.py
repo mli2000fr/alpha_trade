@@ -21,6 +21,7 @@ def _make_opts(**overrides) -> argparse.Namespace:
     base = dict(
         walkforward=True,
         ml_mode="rebuild-all",
+        history_window="10",
         champion_min_runs=0,
         champion_min_days=0,
     )
@@ -30,7 +31,7 @@ def _make_opts(**overrides) -> argparse.Namespace:
 
 def _make_cfg() -> TrainingConfig:
     return TrainingConfig(
-        data=DataConfig(),
+        data=DataConfig(history_window_years=10),
         model=ModelConfig(),
         calibration=CalibrationConfig(method="none"),
         walk_forward=WalkForwardConfig(),
@@ -61,6 +62,8 @@ def test_build_run_summary_contains_required_fields() -> None:
     assert summary["mode"] == "train"
     assert summary["walkforward_enabled"] is True
     assert summary["ml_mode"] == "rebuild-all"
+    assert summary["history_window"] == "10"
+    assert summary["history_window_years"] == 10
     assert "feature_fingerprint" in summary
     assert summary["champion_min_runs"] == 0
     assert summary["champion_min_days"] == 0
@@ -112,6 +115,7 @@ def test_run_summary_round_trips_through_json() -> None:
     assert decoded["mode"] == "predict"
     assert decoded["walkforward_enabled"] is False
     assert decoded["ml_mode"] == "rebuild-missing"
+    assert decoded["history_window"] == "10"
 
 
 def test_cli_parses_walkforward_default_on_and_no_walkforward() -> None:
@@ -119,10 +123,12 @@ def test_cli_parses_walkforward_default_on_and_no_walkforward() -> None:
     opts_default = parser.parse_args(["--mode", "train"])
     assert opts_default.walkforward is True
     assert opts_default.ml_mode == "rebuild-all"
+    assert opts_default.history_window == "10"
 
-    opts_off = parser.parse_args(["--mode", "train", "--no-walkforward", "--ml-mode", "rebuild-missing"])
+    opts_off = parser.parse_args(["--mode", "train", "--no-walkforward", "--ml-mode", "rebuild-missing", "--history-window", "all"])
     assert opts_off.walkforward is False
     assert opts_off.ml_mode == "rebuild-missing"
+    assert opts_off.history_window == "all"
 
 
 def test_cli_parses_champion_quarantine_thresholds() -> None:

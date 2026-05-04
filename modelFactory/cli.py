@@ -119,6 +119,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-epochs", type=int, default=50)
     p.add_argument("--sequence-length", type=int, default=60)
     p.add_argument("--forecast-horizon", type=int, default=5)
+    p.add_argument(
+        "--history-window",
+        type=str,
+        default="10",
+        choices=["5", "10", "all"],
+        help="Fenêtre historique utilisée au training : 5 | 10 | all",
+    )
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--hidden-size", type=int, default=128)
     p.add_argument("--artifacts-dir", type=str, default="artifacts/models")
@@ -223,6 +230,7 @@ def main(args: list[str] | None = None) -> None:
         data=DataConfig(
             sequence_length=opts.sequence_length,
             forecast_horizon=opts.forecast_horizon,
+            history_window_years=None if str(opts.history_window) == "all" else int(opts.history_window),
             include_sentiment_features=opts.include_sentiment,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
@@ -438,6 +446,8 @@ def _build_run_summary(
         "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
         "walkforward_enabled": bool(getattr(opts, "walkforward", False)),
         "ml_mode": str(getattr(opts, "ml_mode", "rebuild-all")),
+        "history_window": str(getattr(opts, "history_window", "10")),
+        "history_window_years": cfg.data.history_window_years,
         "symbol_source": str(getattr(opts, "symbol_source", "candidates")),
         "debug_train_enabled": bool(getattr(opts, "debug_train", False)),
         "heartbeat_interval_seconds": float(getattr(opts, "heartbeat_interval_seconds", DEFAULT_HEARTBEAT_INTERVAL_SECONDS) or 0.0),

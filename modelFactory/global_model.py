@@ -13,7 +13,13 @@ import pandas as pd
 
 from modelFactory.config import TrainingConfig
 from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
-from modelFactory.data_loader import load_benchmark_bars, load_symbols_sentiment, load_universe_bars
+from modelFactory.data_loader import (
+    load_benchmark_bars,
+    load_symbols_sentiment,
+    load_universe_bars,
+    load_universe_latest_bar_date,
+    resolve_history_window_start_date,
+)
 from modelFactory.features import build_target, compute_features, compute_future_return, get_feature_columns
 from modelFactory.tabular_baseline import apply_tabular_calibration, compute_tabular_metrics, fit_tabular_calibrator
 
@@ -156,17 +162,29 @@ def train_global_model(
         cfg.data,
         enable_cross_sectional_features=(cfg.data.enable_cross_sectional_features and cfg.global_model.use_cross_sectional_features),
     )
-    universe_df = load_universe_bars(engine, symbols)
+    history_end_date = load_universe_latest_bar_date(engine, symbols)
+    history_start_date = resolve_history_window_start_date(history_end_date, effective_data_cfg.history_window_years)
+    universe_df = load_universe_bars(engine, symbols, end_date=history_end_date, start_date=history_start_date)
     if universe_df.empty:
         return {"status": "skipped", "model_name": "global_model", "reason": "empty_universe"}
 
     benchmark_df = None
     if effective_data_cfg.feature_set == "expert" or effective_data_cfg.enable_cross_sectional_features:
-        benchmark_df = load_benchmark_bars(engine, effective_data_cfg.benchmark_symbol)
+        benchmark_df = load_benchmark_bars(
+            engine,
+            effective_data_cfg.benchmark_symbol,
+            end_date=history_end_date,
+            start_date=history_start_date,
+        )
 
     sentiment_df = None
     if effective_data_cfg.include_sentiment_features:
-        sentiment_df = load_symbols_sentiment(engine, symbols)
+        sentiment_df = load_symbols_sentiment(
+            engine,
+            symbols,
+            end_date=history_end_date,
+            start_date=history_start_date,
+        )
 
     cross_sectional_df = None
     cross_sectional_diagnostics: dict[str, Any] = {}
@@ -295,6 +313,7 @@ def train_global_model(
         "model_path": str(model_path),
         "calibrator_path": calibrator_path,
         "selected_decision_threshold": selected_threshold,
+        "trained_through_date": history_end_date.isoformat() if history_end_date is not None else None,
         "architecture_selected": "global_model",
         "selection_mode": "global_compare_only",
         "inference_backend": "global_tabular",

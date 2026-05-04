@@ -79,9 +79,11 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_LGBM_LEARNING_RATE,
     DEFAULT_ML_LGBM_MAX_DEPTH,
     DEFAULT_ML_LGBM_N_ESTIMATORS,
+    DEFAULT_ML_HISTORY_WINDOW,
     DEFAULT_ML_LOG_LEVEL,
     DEFAULT_ML_MAX_ACTION_RATE,
     DEFAULT_ML_MAX_EPOCHS,
+    DEFAULT_ML_MODE,
     DEFAULT_ML_MAX_WORKERS,
     DEFAULT_ML_MIN_ACTION_RATE,
     DEFAULT_ML_MIN_PRECISION_LONG,
@@ -1047,6 +1049,47 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 st.success("GPU CUDA détecté dans l'environnement de l'IHM : les jobs ML peuvent être lancés en mode `auto` ou `gpu`.")
             else:
                 st.info("Aucun GPU CUDA détecté dans l'environnement de l'IHM : le mode `auto` retombera sur CPU.")
+
+        ml_scope_col1, ml_scope_col2 = st.columns(2)
+        with ml_scope_col1:
+            ml_mode = cast(
+                str,
+                st.selectbox(
+                    "Mode de reconstruction ML",
+                    options=["rebuild-all", "rebuild-missing", "refresh-stale"],
+                    index=["rebuild-all", "rebuild-missing", "refresh-stale"].index(
+                        cast(str, st.session_state.get("pipeline_ml_mode", DEFAULT_ML_MODE))
+                        if st.session_state.get("pipeline_ml_mode", DEFAULT_ML_MODE) in {"rebuild-all", "rebuild-missing", "refresh-stale"}
+                        else DEFAULT_ML_MODE
+                    ),
+                    key="pipeline_ml_mode",
+                    help=(
+                        "`rebuild-all` réentraîne tout. `rebuild-missing` n'entraîne que les symboles sans artefacts. "
+                        "`refresh-stale` réentraîne les modèles manquants, incompatibles avec la config courante ou en retard sur les dernières barres disponibles."
+                    ),
+                ),
+            )
+        with ml_scope_col2:
+            ml_history_window = cast(
+                str,
+                st.selectbox(
+                    "Historique ML utilisé au training",
+                    options=["5", "10", "all"],
+                    index=["5", "10", "all"].index(
+                        cast(str, st.session_state.get("pipeline_ml_history_window", DEFAULT_ML_HISTORY_WINDOW))
+                        if st.session_state.get("pipeline_ml_history_window", DEFAULT_ML_HISTORY_WINDOW) in {"5", "10", "all"}
+                        else DEFAULT_ML_HISTORY_WINDOW
+                    ),
+                    key="pipeline_ml_history_window",
+                    format_func=lambda value: {"5": "5 ans", "10": "10 ans", "all": "Tout l'historique"}.get(str(value), str(value)),
+                    help="Fenêtre de barres daily transmise au backend Model Factory. `10 ans` est le défaut recommandé pour le swing daily.",
+                ),
+            )
+
+        st.caption(
+            "Rappel modes ML : `rebuild-all` = tout reconstruire ; `rebuild-missing` = seulement les symboles sans modèle ; "
+            "`refresh-stale` = reconstruire si le modèle est absent, obsolète ou hors contrat de features / fenêtre historique."
+        )
 
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
         with ml_opt_col1:
@@ -2407,6 +2450,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_sequence_length=int(ml_sequence_length),
             ml_batch_size=int(ml_batch_size),
             ml_hidden_size=int(ml_hidden_size),
+            ml_mode=cast(Any, ml_mode),
+            ml_history_window=cast(Any, ml_history_window),
             ml_artifacts_dir=str(ml_artifacts_dir or DEFAULT_ML_ARTIFACTS_DIR).strip() or DEFAULT_ML_ARTIFACTS_DIR,
             ml_benchmark_symbol=str(ml_benchmark_symbol or DEFAULT_ML_BENCHMARK_SYMBOL).strip().upper() or DEFAULT_ML_BENCHMARK_SYMBOL,
             ml_default_champion=cast(Any, ml_default_champion),

@@ -149,6 +149,8 @@ DEFAULT_ML_HIDDEN_SIZE = 128
 DEFAULT_ML_ARTIFACTS_DIR = "artifacts/models"
 DEFAULT_ML_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_ML_DEFAULT_CHAMPION = "lstm_attention"
+DEFAULT_ML_MODE = "rebuild-all"
+DEFAULT_ML_HISTORY_WINDOW = "10"
 DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE = 20
 DEFAULT_ML_CALIBRATION_MIN_SAMPLES = 64
 DEFAULT_ML_CALIBRATION_MAX_ITER = 100
@@ -184,6 +186,8 @@ MLTargetMode = Literal["binary", "swing_cash"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
+MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
+MLHistoryWindow = Literal["5", "10", "all"]
 MLTrainSymbolSource = Literal["candidates", "stock_bars_daily"]
 ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
 ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
@@ -259,6 +263,8 @@ class PipelineLaunchOptions:
     ml_sequence_length: int = DEFAULT_ML_SEQUENCE_LENGTH
     ml_batch_size: int = DEFAULT_ML_BATCH_SIZE
     ml_hidden_size: int = DEFAULT_ML_HIDDEN_SIZE
+    ml_mode: MLMode = DEFAULT_ML_MODE
+    ml_history_window: MLHistoryWindow = DEFAULT_ML_HISTORY_WINDOW
     ml_train_symbol_source: MLTrainSymbolSource = "candidates"
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
@@ -937,6 +943,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.ml_batch_size),
             "--hidden-size",
             str(options.ml_hidden_size),
+            "--ml-mode",
+            options.ml_mode,
+            "--history-window",
+            options.ml_history_window,
             "--symbol-source",
             ml_symbol_source,
             "--artifacts-dir",

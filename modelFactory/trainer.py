@@ -930,6 +930,10 @@ def train_symbol(
         )
         cross_sectional_feature_columns = list(getattr(dm, "cross_sectional_feature_columns", []))
         cross_sectional_diagnostics = dict(getattr(dm, "cross_sectional_diagnostics", {}))
+        trained_through_date = None
+        if not bars_df.empty and "date" in bars_df.columns:
+            trained_through_raw = bars_df["date"].max()
+            trained_through_date = trained_through_raw.date().isoformat() if hasattr(trained_through_raw, "date") else str(trained_through_raw)
         config_data = {
             "data": asdict(effective_cfg.data),
             "model": {**asdict(effective_cfg.model), "input_size": dm.n_features},
@@ -949,6 +953,7 @@ def train_symbol(
             "selected_target_up_threshold": effective_cfg.data.target_up_threshold,
             "selected_target_down_threshold": effective_cfg.data.target_down_threshold,
             "selected_decision_threshold": effective_cfg.data.decision_threshold,
+            "trained_through_date": trained_through_date,
             "architecture_selected": selected_architecture,
             "selection_mode": selection_mode,
             "artifact_routes": {

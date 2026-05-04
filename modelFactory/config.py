@@ -24,6 +24,7 @@ class DataConfig:
     target_up_threshold: float = 0.0
     target_down_threshold: float = 0.0
     decision_threshold: float = 0.5
+    history_window_years: int | None = None
 
     def __post_init__(self) -> None:
         if self.sequence_length < 1:
@@ -50,6 +51,8 @@ class DataConfig:
             raise ValueError("target_down_threshold doit être <= target_up_threshold.")
         if not self.benchmark_symbol.strip():
             raise ValueError("benchmark_symbol ne doit pas être vide.")
+        if self.history_window_years is not None and self.history_window_years < 1:
+            raise ValueError("history_window_years doit être >= 1 ou None.")
 
 
 @dataclass(frozen=True, slots=True)
