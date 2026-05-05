@@ -262,6 +262,11 @@ class BacktestEngine:
             return float(value.iloc[0])
         return float(value)
 
+    @staticmethod
+    def _empty_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
+        """Préserve l'index du marché tout en retirant toutes les colonnes symboles."""
+        return frame.iloc[:, 0:0].copy()
+
     def run(
         self,
         open_df: pd.DataFrame | None = None,
@@ -298,11 +303,51 @@ class BacktestEngine:
         cfg = self.config
         constraints = cfg.trading_constraints
 
+        signals = signals_df.copy()
+        if signals.empty:
+            for column_name, dtype in {
+                "trade_date": "datetime64[ns]",
+                "symbol": "object",
+                "selected": "bool",
+                "rank": "float64",
+            }.items():
+                if column_name not in signals.columns:
+                    signals[column_name] = pd.Series(dtype=dtype)
+
+        missing_columns = [
+            column_name for column_name in ("trade_date", "symbol", "selected") if column_name not in signals.columns
+        ]
+        if missing_columns:
+            raise ValueError(
+                f"BacktestEngine.run requiert les colonnes de signaux suivantes : {missing_columns}"
+            )
+
         # Aligner les symboles communs
-        selected = signals_df[signals_df["selected"]].copy()
+        selected = signals.loc[signals["selected"].fillna(False).astype(bool)].copy()
+        if selected.empty:
+            LOGGER.info("Aucun signal sélectionné — backtest plat sans trade.")
+            return self._run_with_constraints(
+                open_df=self._empty_market_frame(open_df),
+                close=self._empty_market_frame(close),
+                high=self._empty_market_frame(high),
+                low=self._empty_market_frame(low),
+                signals_df=selected,
+                volume=self._empty_market_frame(volume) if volume is not None else None,
+                sector_map=sector_map,
+            )
+
         symbols = sorted(set(selected["symbol"]) & set(close.columns))
         if not symbols:
-            raise ValueError("Aucun symbole en commun entre signaux et OHLCV.")
+            LOGGER.warning("Aucun symbole exécutable en commun entre signaux sélectionnés et OHLCV — backtest plat.")
+            return self._run_with_constraints(
+                open_df=self._empty_market_frame(open_df),
+                close=self._empty_market_frame(close),
+                high=self._empty_market_frame(high),
+                low=self._empty_market_frame(low),
+                signals_df=selected,
+                volume=self._empty_market_frame(volume) if volume is not None else None,
+                sector_map=sector_map,
+            )
 
         open_df = open_df[symbols].copy()
         close = close[symbols].copy()

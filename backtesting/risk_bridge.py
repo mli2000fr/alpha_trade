@@ -13,6 +13,21 @@ from risk_management.models import CandidateScore, PortfolioEntry, PredictionInf
 from risk_management.portfolio_builder import PortfolioBuilder
 
 
+RISK_SIGNAL_COLUMNS = [
+    "trade_date",
+    "symbol",
+    "selected",
+    "rank",
+    "score",
+    "score_source",
+    "target_weight",
+    "target_notional",
+    "approved_shares",
+    "decision",
+    "decision_reason",
+]
+
+
 @dataclass(slots=True)
 class RiskBridgeResult:
     entries: list[PortfolioEntry]
@@ -173,7 +188,7 @@ def portfolio_entries_to_signals(entries: list[PortfolioEntry], snapshot_date: d
                 "decision_reason": entry.decision_reason,
             }
         )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=RISK_SIGNAL_COLUMNS)
 
 
 def build_phase2_risk_result(
@@ -212,21 +227,7 @@ def build_phase2_risk_result(
         all_entries.extend(entries)
         signal_frames.append(portfolio_entries_to_signals(entries, snapshot_date))
 
-    signals_df = pd.concat(signal_frames, ignore_index=True) if signal_frames else pd.DataFrame(
-        columns=[
-            "trade_date",
-            "symbol",
-            "selected",
-            "rank",
-            "score",
-            "score_source",
-            "target_weight",
-            "target_notional",
-            "approved_shares",
-            "decision",
-            "decision_reason",
-        ]
-    )
+    signals_df = pd.concat(signal_frames, ignore_index=True) if signal_frames else pd.DataFrame(columns=RISK_SIGNAL_COLUMNS)
     accepted_entries = [entry for entry in all_entries if entry.approved_shares > 0]
     diagnostics = {
         "snapshot_dates": len(snapshot_dates),

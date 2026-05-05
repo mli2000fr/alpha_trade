@@ -844,6 +844,30 @@ class TestBacktestConfig:
         assert not trades_df.empty
         assert float(trades_df["Size"].iloc[0]) == 7.0
 
+    def test_backtest_engine_returns_flat_result_when_signals_are_empty(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 101.0, 102.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 101.0, 102.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [101.0, 102.0, 103.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 100.0, 101.0]}, index=idx)
+
+        engine = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2025, 1, 1),
+                end_date=date(2025, 1, 3),
+                initial_equity=10_000,
+                max_positions=1,
+            )
+        )
+
+        result = engine.run(open=open_, close=close, high=high, low=low, signals_df=pd.DataFrame())
+
+        assert result.final_value() == 10_000.0
+        assert result.trades.count() == 0
+        assert result.value().tolist() == [10_000.0, 10_000.0, 10_000.0]
+
     def test_backtest_engine_protection_replay_mode_uses_replayed_initial_stop(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
 
@@ -935,7 +959,7 @@ class TestBacktestConfig:
         assert engine._to_scalar(pd.Series([123.4])) == 123.4
         assert engine._to_scalar(99.0) == 99.0
 
-    def test_backtest_engine_raises_when_no_common_symbols(self):
+    def test_backtest_engine_returns_flat_result_when_no_common_symbols(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
 
         idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
@@ -953,12 +977,11 @@ class TestBacktestConfig:
 
         engine = BacktestEngine(BacktestConfig(start_date=date(2025, 1, 1), end_date=date(2025, 1, 2)))
 
-        try:
-            engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
-        except ValueError as exc:
-            assert "Aucun symbole en commun" in str(exc)
-        else:
-            raise AssertionError("Le moteur aurait dû refuser un backtest sans symbole commun.")
+        result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        assert result.final_value() == 100000.0
+        assert result.trades.count() == 0
+        assert result.closed_trades_df.empty
 
     def test_backtest_engine_swing_mode_blocks_same_day_exit(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
@@ -1655,6 +1678,157 @@ class TestCLI:
         ])
         assert args.score_column == "final_score_walk_forward"
         assert args.walk_forward_artifacts_dir == "artifacts/sentiment_walk_forward/run_1"
+
+    def test_phase2_ohlcv_history_start_adds_warmup_for_atr_and_correlation(self):
+        from backtesting.cli._impl import _resolve_phase2_ohlcv_history_start
+
+        start = date(2020, 1, 1)
+
+        history_start = _resolve_phase2_ohlcv_history_start(
+            start,
+            atr_window=20,
+            correlation_lookback_days=60,
+        )
+
+        assert history_start < start
+        assert (start - history_start).days == 95
+
+    def test_run_backtest_phase2_loads_ohlcv_warmup_for_risk_but_keeps_execution_window(self, monkeypatch, tmp_path):
+        import argparse
+        import backtesting.cli as cli
+        from backtesting import data_loader, report, resilience, risk_bridge, simulator
+        from backtesting.fidelity import ScoreLoadDiagnostics, ScoreLoadResult
+        from database import connection
+
+        captured: dict[str, object] = {}
+        requested_start = date(2020, 1, 1)
+        requested_end = date(2020, 1, 2)
+        trading_days = pd.to_datetime(["2019-12-30", "2019-12-31", "2020-01-01", "2020-01-02"])
+        ohlcv_df = pd.DataFrame(
+            {
+                "symbol": ["AAPL"] * len(trading_days),
+                "trade_date": trading_days,
+                "open": [98.0, 99.0, 100.0, 101.0],
+                "high": [99.0, 100.0, 101.0, 102.0],
+                "low": [97.0, 98.0, 99.0, 100.0],
+                "close": [98.5, 99.5, 100.5, 101.5],
+                "volume": [1000, 1000, 1000, 1000],
+            }
+        )
+        scores_df = pd.DataFrame(
+            {
+                "symbol": ["AAPL"],
+                "trade_date": pd.to_datetime(["2020-01-01"]),
+                "final_score": [0.7],
+                "final_score_sentiment": [0.75],
+                "sector": ["Tech"],
+                "is_candidate": [1],
+            }
+        )
+        phase2_signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2020-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+            }
+        )
+
+        class FakePF:
+            pass
+
+        class FakeReport:
+            def print_summary(self) -> None:
+                return None
+
+        class FakeBacktestEngine:
+            def __init__(self, cfg):
+                self.cfg = cfg
+
+            def run(self, **kwargs):
+                captured["engine_open_index"] = list(kwargs["open"].index)
+                captured["signals_df"] = kwargs["signals_df"].copy()
+                return FakePF()
+
+        def fake_load_ohlcv(_engine, start, end):
+            captured["ohlcv_start"] = start
+            captured["ohlcv_end"] = end
+            return ohlcv_df.copy()
+
+        def fake_build_phase2_risk_result(**kwargs):
+            captured["risk_close_index"] = list(kwargs["close_df"].index)
+            return SimpleNamespace(
+                entries=[{"symbol": "AAPL"}],
+                signals_df=phase2_signals_df.copy(),
+                diagnostics={
+                    "snapshot_dates": 1,
+                    "entries_total": 1,
+                    "entries_accepted": 1,
+                    "signals_generated": 1,
+                    "bridge": "risk_management.portfolio_builder",
+                },
+            )
+
+        monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
+        monkeypatch.setattr(data_loader, "load_ohlcv", fake_load_ohlcv)
+        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end, capital_preset_key=None, **kwargs: ScoreLoadResult(
+            frame=scores_df.copy(),
+            diagnostics=ScoreLoadDiagnostics(
+                source_table="stock_scores_history",
+                strict_pit_requested=bool(kwargs.get("strict_pit", False)),
+                history_table_exists=True,
+                history_rows_found=len(scores_df),
+                capital_preset_key=capital_preset_key,
+            ),
+        ))
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(resilience, "prepare_scores_for_sentiment_mode", lambda *args, **kwargs: scores_df.copy())
+        monkeypatch.setattr(resilience, "prepare_predictions_for_ml_mode", lambda *args, **kwargs: pd.DataFrame())
+        monkeypatch.setattr(risk_bridge, "build_phase2_risk_result", fake_build_phase2_risk_result)
+        monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
+        monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {})
+        monkeypatch.setattr(report, "generate_report", lambda pf, equity, **kwargs: FakeReport())
+        monkeypatch.setattr(report, "save_equity_curve", lambda *args, **kwargs: tmp_path / "eq.png")
+        monkeypatch.setattr(report, "save_equity_curve_csv", lambda *args, **kwargs: tmp_path / "eq.csv")
+        monkeypatch.setattr(report, "save_report_json", lambda *args, **kwargs: tmp_path / "report.json")
+        monkeypatch.setattr(report, "save_trades_csv", lambda *args, **kwargs: tmp_path / "trades.csv")
+
+        args = argparse.Namespace(
+            start="2020-01-01",
+            end="2020-01-02",
+            equity=2_000.0,
+            tp=0.08,
+            ts=0.05,
+            max_positions=4,
+            fees=0.001,
+            account_type="cash",
+            pdt_rule="off",
+            swing_only=True,
+            sentiment_lookback=365,
+            no_save=True,
+            ml_mode="auto",
+            sentiment_mode="auto",
+            artifacts_dir="artifacts/models",
+            output_dir=None,
+            score_column="auto",
+            walk_forward_artifacts_dir=None,
+            engine_mode="pipeline",
+            ml_pit_strategy="use-persisted",
+            capital_preset_key="capital_0_5000",
+            **{**self._CLI_NEUTRAL_DEFAULTS, "phase2_mode": "risk"},
+        )
+
+        cli._run_backtest(args)
+
+        assert captured["ohlcv_end"] == requested_end
+        assert cast(date, captured["ohlcv_start"]) < requested_start
+        assert min(cast(list[pd.Timestamp], captured["risk_close_index"])) < pd.Timestamp(requested_start)
+        assert cast(list[pd.Timestamp], captured["engine_open_index"]) == [
+            pd.Timestamp("2020-01-01"),
+            pd.Timestamp("2020-01-02"),
+        ]
+        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase2_signals_df)
 
     def test_run_backtest_propagates_walk_forward_options(self, monkeypatch, tmp_path):
         import argparse

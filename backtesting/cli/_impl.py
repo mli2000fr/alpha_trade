@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -27,6 +27,25 @@ from common.capital_presets import (
 from common.utils import configure_root_logging
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _resolve_phase2_ohlcv_history_start(
+    start_date: date,
+    *,
+    atr_window: int,
+    correlation_lookback_days: int,
+) -> date:
+    """Calcule un warm-up OHLCV suffisant pour la phase 2 risk.
+
+    - ATR nécessite ``atr_window + 1`` clôtures pour produire ``atr_window`` true ranges.
+    - Le filtre de corrélation requiert ``correlation_lookback_days + 1`` clôtures.
+
+    La conversion trading days -> jours calendaires ajoute une marge conservative
+    pour weekends et jours fériés afin d'éviter un faux `atr_20=None` au début du backtest.
+    """
+    required_trading_bars = max(int(atr_window) + 1, int(correlation_lookback_days) + 1)
+    required_calendar_days = max(30, int(required_trading_bars * 7 / 5) + 10)
+    return start_date - timedelta(days=required_calendar_days)
 
 
 def _safe_print(*values: object, sep: str = " ", end: str = "\n") -> None:
@@ -566,6 +585,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
     phase5_mode = str(getattr(args, "phase5_mode", "off") or "off").strip().lower()
     phase7_mode = str(getattr(args, "phase7_mode", "off") or "off").strip().lower()
     strict_pit = engine_mode == "pipeline"
+    phase2_risk_config = None
+    if phase2_mode != "off":
+        from risk_management.config import RiskConfig
+
+        phase2_risk_config = RiskConfig(
+            account_equity=float(args.equity),
+            max_positions=int(args.max_positions),
+        )
 
     if phase3_mode != "off" and phase2_mode != "risk_execution":
         _safe_print(
@@ -622,12 +649,36 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     # 1. Charger les données
     engine = get_sqlalchemy_engine()
+    ohlcv_start = (
+        _resolve_phase2_ohlcv_history_start(
+            start,
+            atr_window=phase2_risk_config.atr_window,
+            correlation_lookback_days=phase2_risk_config.correlation_lookback_days,
+        )
+        if phase2_risk_config is not None
+        else start
+    )
 
     _safe_print("📊 Chargement OHLCV...")
-    ohlcv_df = load_ohlcv(engine, start, end)
+    ohlcv_df = load_ohlcv(engine, ohlcv_start, end)
     if ohlcv_df.empty:
         _safe_print("❌ Aucune donnée OHLCV trouvée. Vérifiez la base de données.")
         sys.exit(1)
+    if ohlcv_start < start:
+        _safe_print(
+            "   warmup_ohlcv={} jours calendaires ({} → {}) pour ATR/corrélation phase2\n".format(
+                (start - ohlcv_start).days,
+                ohlcv_start,
+                start,
+            )
+        )
+        first_loaded_trade_date = pd.Timestamp(ohlcv_df["trade_date"].min()).date()
+        if first_loaded_trade_date >= start:
+            _safe_print(
+                "   ⚠️ warmup incomplet: aucune barre OHLCV antérieure à {} n'a été chargée ; l'ATR phase2 peut rester indisponible.\n".format(
+                    start,
+                )
+            )
 
     _safe_print("📈 Chargement scores...")
     try:
@@ -693,6 +744,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     # 2. Pivoter OHLCV
     pivoted = pivot_ohlcv(ohlcv_df)
+    backtest_start_ts = pd.Timestamp(start)
+    backtest_end_ts = pd.Timestamp(end)
+    execution_pivoted = {
+        key: frame.loc[(frame.index >= backtest_start_ts) & (frame.index <= backtest_end_ts)].copy()
+        for key, frame in pivoted.items()
+    }
 
     # 3. Reconstruire les signaux
     _safe_print("🔄 Reconstruction des signaux de conviction...")
@@ -711,7 +768,6 @@ def _run_backtest(args: argparse.Namespace) -> None:
         )
     else:
         from backtesting.risk_bridge import build_phase2_risk_result
-        from risk_management.config import RiskConfig
 
         phase2_risk_result = build_phase2_risk_result(
             scores_df=scores_df,
@@ -719,10 +775,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             close_df=pivoted["close"],
             high_df=pivoted["high"],
             low_df=pivoted["low"],
-            risk_config=RiskConfig(
-                account_equity=float(args.equity),
-                max_positions=int(args.max_positions),
-            ),
+            risk_config=phase2_risk_config,
         )
         signals_df = phase2_risk_result.signals_df
         _safe_print(
@@ -752,7 +805,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 phase3_execution_replay_result = simulate_phase3_execution_replay(
                     phase2_risk_result.entries,
                     execution_config=execution_config,
-                    open_df=pivoted["open"],
+                    open_df=execution_pivoted["open"],
                     risk_run_id_prefix=phase2_risk_run_id,
                 )
                 phase2_execution_result = phase3_execution_replay_result.execution_result
@@ -770,7 +823,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
                         phase5_watcher_replay_result = build_phase5_watcher_replay(
                             phase4_protection_replay_result,
-                            high_df=pivoted["high"],
+                            high_df=execution_pivoted["high"],
                         )
                         signals_df = phase5_watcher_replay_result.signals_df
                         if phase7_mode == "exit_lifecycle_replay":
@@ -778,8 +831,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
                             phase7_exit_lifecycle_result = build_phase7_exit_lifecycle_replay(
                                 phase5_watcher_replay_result,
-                                high_df=pivoted["high"],
-                                low_df=pivoted["low"],
+                                high_df=execution_pivoted["high"],
+                                low_df=execution_pivoted["low"],
                                 intrabar_priority=args.intrabar_priority,
                             )
                             signals_df = phase7_exit_lifecycle_result.signals_df
@@ -889,7 +942,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     )
     bt_engine = BacktestEngine(bt_config)
     pf = bt_engine.run(
-        open=pivoted["open"], close=pivoted["close"], high=pivoted["high"], low=pivoted["low"],
+        open=execution_pivoted["open"], close=execution_pivoted["close"], high=execution_pivoted["high"], low=execution_pivoted["low"],
         signals_df=signals_df,
     )
     diagnostics = extract_diagnostics(pf)

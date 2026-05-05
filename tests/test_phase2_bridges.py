@@ -74,6 +74,58 @@ def test_build_phase2_risk_result_generates_entries_and_signals() -> None:
     assert int(signal.get("approved_shares", 0)) == int(entry.approved_shares)
 
 
+def test_build_phase2_risk_result_preserves_empty_signal_schema_when_all_entries_rejected() -> None:
+    from backtesting.risk_bridge import build_phase2_risk_result
+    from risk_management.config import RiskConfig
+
+    trade_dates = pd.to_datetime(["2025-01-01", "2025-01-02"])
+    close_df = pd.DataFrame({"AAPL": [100.0, 101.0]}, index=trade_dates)
+    high_df = pd.DataFrame({"AAPL": [101.0, 102.0]}, index=trade_dates)
+    low_df = pd.DataFrame({"AAPL": [99.0, 100.0]}, index=trade_dates)
+    scores_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL"],
+            "trade_date": [trade_dates[-1]],
+            "final_score": [0.80],
+            "final_score_sentiment": [0.82],
+            "score": [0.82],
+            "score_source": ["final_score_sentiment"],
+            "sector": ["Tech"],
+        }
+    )
+
+    result = build_phase2_risk_result(
+        scores_df=scores_df,
+        predictions_df=pd.DataFrame(),
+        close_df=close_df,
+        high_df=high_df,
+        low_df=low_df,
+        risk_config=RiskConfig(
+            account_equity=2_000.0,
+            max_positions=4,
+            min_position_notional=500.0,
+        ),
+    )
+
+    assert result.signals_df.empty
+    assert result.diagnostics["entries_total"] == 1
+    assert result.diagnostics["entries_accepted"] == 0
+    assert result.diagnostics["signals_generated"] == 0
+    assert list(result.signals_df.columns) == [
+        "trade_date",
+        "symbol",
+        "selected",
+        "rank",
+        "score",
+        "score_source",
+        "target_weight",
+        "target_notional",
+        "approved_shares",
+        "decision",
+        "decision_reason",
+    ]
+
+
 def test_simulate_phase2_execution_generates_targets_intents_and_fills() -> None:
     from backtesting.execution_bridge import simulate_phase2_execution
     from execution_engine.config import ExecutionConfig
