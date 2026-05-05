@@ -112,6 +112,33 @@ DEFAULT_ML_WF_TEST_SIZE = 126
 DEFAULT_ML_WF_STEP_SIZE = 126
 DEFAULT_ML_WF_MAX_SPLITS = 3
 DEFAULT_ML_LOG_LEVEL = "INFO"
+DEFAULT_ML_DEBUG_TRAIN = False
+DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS = 60.0
+DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS = 0
+RECOMMENDED_ML_PROD_SWING_ACCELERATOR = "auto"
+RECOMMENDED_ML_PROD_SWING_LOG_LEVEL = DEFAULT_ML_LOG_LEVEL
+RECOMMENDED_ML_PROD_SWING_DEBUG_TRAIN = DEFAULT_ML_DEBUG_TRAIN
+RECOMMENDED_ML_PROD_SWING_MAX_WORKERS = DEFAULT_ML_MAX_WORKERS
+RECOMMENDED_ML_PROD_SWING_WALKFORWARD = DEFAULT_ML_WALKFORWARD
+RECOMMENDED_ML_PROD_SWING_MAX_EPOCHS = DEFAULT_ML_MAX_EPOCHS
+RECOMMENDED_ML_PROD_SWING_HEARTBEAT_INTERVAL_SECONDS = DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS
+RECOMMENDED_ML_PROD_SWING_WATCHDOG_TIMEOUT_SECONDS = DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS
+RECOMMENDED_ML_DEBUG_RAPIDE_ACCELERATOR = "cpu"
+RECOMMENDED_ML_DEBUG_TRAIN_LOG_LEVEL = "DEBUG"
+RECOMMENDED_ML_DEBUG_TRAIN_DEBUG_TRAIN = True
+RECOMMENDED_ML_DEBUG_TRAIN_MAX_WORKERS = 1
+RECOMMENDED_ML_DEBUG_TRAIN_WALKFORWARD = False
+RECOMMENDED_ML_DEBUG_TRAIN_MAX_EPOCHS = 10
+RECOMMENDED_ML_DEBUG_TRAIN_HEARTBEAT_INTERVAL_SECONDS = 30.0
+RECOMMENDED_ML_DEBUG_TRAIN_WATCHDOG_TIMEOUT_SECONDS = 300
+RECOMMENDED_ML_DEBUG_GPU_ACCELERATOR = "gpu"
+RECOMMENDED_ML_DEBUG_GPU_LOG_LEVEL = RECOMMENDED_ML_DEBUG_TRAIN_LOG_LEVEL
+RECOMMENDED_ML_DEBUG_GPU_DEBUG_TRAIN = RECOMMENDED_ML_DEBUG_TRAIN_DEBUG_TRAIN
+RECOMMENDED_ML_DEBUG_GPU_MAX_WORKERS = RECOMMENDED_ML_DEBUG_TRAIN_MAX_WORKERS
+RECOMMENDED_ML_DEBUG_GPU_WALKFORWARD = RECOMMENDED_ML_DEBUG_TRAIN_WALKFORWARD
+RECOMMENDED_ML_DEBUG_GPU_MAX_EPOCHS = RECOMMENDED_ML_DEBUG_TRAIN_MAX_EPOCHS
+RECOMMENDED_ML_DEBUG_GPU_HEARTBEAT_INTERVAL_SECONDS = RECOMMENDED_ML_DEBUG_TRAIN_HEARTBEAT_INTERVAL_SECONDS
+RECOMMENDED_ML_DEBUG_GPU_WATCHDOG_TIMEOUT_SECONDS = RECOMMENDED_ML_DEBUG_TRAIN_WATCHDOG_TIMEOUT_SECONDS
 DEFAULT_ML_MIN_ACTION_RATE = 0.03
 DEFAULT_ML_MAX_ACTION_RATE = 0.20            # plus prudent que 0.35 backend
 DEFAULT_ML_MIN_PRECISION_LONG = 0.55         # plus exigeant que 0.52 backend
@@ -122,6 +149,8 @@ DEFAULT_ML_HIDDEN_SIZE = 128
 DEFAULT_ML_ARTIFACTS_DIR = "artifacts/models"
 DEFAULT_ML_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_ML_DEFAULT_CHAMPION = "lstm_attention"
+DEFAULT_ML_MODE = "rebuild-all"
+DEFAULT_ML_HISTORY_WINDOW = "10"
 DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE = 20
 DEFAULT_ML_CALIBRATION_MIN_SAMPLES = 64
 DEFAULT_ML_CALIBRATION_MAX_ITER = 100
@@ -157,6 +186,8 @@ MLTargetMode = Literal["binary", "swing_cash"]
 MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
+MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
+MLHistoryWindow = Literal["5", "10", "all"]
 MLTrainSymbolSource = Literal["candidates", "stock_bars_daily"]
 ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
 ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
@@ -222,6 +253,9 @@ class PipelineLaunchOptions:
     ml_wf_step_size: int = DEFAULT_ML_WF_STEP_SIZE
     ml_wf_max_splits: int = DEFAULT_ML_WF_MAX_SPLITS
     ml_log_level: str = DEFAULT_ML_LOG_LEVEL
+    ml_debug_train: bool = DEFAULT_ML_DEBUG_TRAIN
+    ml_heartbeat_interval_seconds: float = DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS
+    ml_watchdog_timeout_seconds: int = DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS
     ml_min_action_rate: float = DEFAULT_ML_MIN_ACTION_RATE
     ml_max_action_rate: float = DEFAULT_ML_MAX_ACTION_RATE
     ml_min_precision_long: float = DEFAULT_ML_MIN_PRECISION_LONG
@@ -229,6 +263,8 @@ class PipelineLaunchOptions:
     ml_sequence_length: int = DEFAULT_ML_SEQUENCE_LENGTH
     ml_batch_size: int = DEFAULT_ML_BATCH_SIZE
     ml_hidden_size: int = DEFAULT_ML_HIDDEN_SIZE
+    ml_mode: MLMode = DEFAULT_ML_MODE
+    ml_history_window: MLHistoryWindow = DEFAULT_ML_HISTORY_WINDOW
     ml_train_symbol_source: MLTrainSymbolSource = "candidates"
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
@@ -542,19 +578,29 @@ def get_pipeline_workflow_steps(
     include_ml_train: bool = True,
     include_corporate_actions_sync: bool = False,
     include_corporate_actions_apply: bool = False,
+    selected_step_keys: tuple[str, ...] | None = None,
 ) -> tuple[PipelineStepDefinition, ...]:
     normalized_start = "3" if start_step == "3" else "1"
     include_sync = include_corporate_actions_sync or include_corporate_actions_apply
+    normalized_selected_step_keys = (
+        {str(step_key).strip() for step_key in selected_step_keys if str(step_key).strip()}
+        if selected_step_keys is not None
+        else None
+    )
 
     selected_steps: list[PipelineStepDefinition] = []
     for step in PIPELINE_STEPS:
         step_num = int(step.num)
-        if step_num < int(normalized_start):
-            continue
         if step_num > 12:
             continue
-        if step.key == "ml_train" and not include_ml_train:
-            continue
+        if normalized_selected_step_keys is not None:
+            if step.key not in normalized_selected_step_keys:
+                continue
+        else:
+            if step_num < int(normalized_start):
+                continue
+            if step.key == "ml_train" and not include_ml_train:
+                continue
         selected_steps.append(step)
 
     if include_sync:
@@ -592,6 +638,18 @@ def _normalize_symbol(value: str | None, default: str) -> str:
 def _normalize_symbol_list(value: str | None) -> str | None:
     normalized = sorted({part.strip().upper() for part in (value or "").split(",") if part and part.strip()})
     return ",".join(normalized) if normalized else None
+
+
+def _build_powershell_file_command(script_path: Path, arguments: list[str] | None = None) -> list[str]:
+    return [
+        "powershell.exe" if os.name == "nt" else "pwsh",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script_path),
+        *(arguments or []),
+    ]
 
 
 def is_gpu_available() -> bool:
@@ -836,6 +894,22 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--end-date", news_import_end_date])
         return command
 
+    if step_key == "import_news_pending_loop":
+        if news_import_start_date is None:
+            raise ValueError("La date de début est obligatoire pour l'import + scoring auto des news.")
+        script_path = PROJECT_ROOT / "scripts" / "windows" / "import_news_and_score_pending.ps1"
+        command_args = [
+            "-ProjectRoot",
+            str(PROJECT_ROOT),
+            "-PythonExe",
+            sys.executable,
+            "-StartDate",
+            news_import_start_date,
+        ]
+        if news_import_end_date:
+            command_args.extend(["-EndDate", news_import_end_date])
+        return _build_powershell_file_command(script_path, command_args)
+
     if step_key == "signal_aggregator":
         command = [
             sys.executable,
@@ -897,6 +971,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.ml_batch_size),
             "--hidden-size",
             str(options.ml_hidden_size),
+            "--ml-mode",
+            options.ml_mode,
+            "--history-window",
+            options.ml_history_window,
             "--symbol-source",
             ml_symbol_source,
             "--artifacts-dir",
@@ -921,11 +999,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.ml_catboost_learning_rate),
             "--default-champion",
             options.ml_default_champion,
+            "--heartbeat-interval-seconds",
+            str(options.ml_heartbeat_interval_seconds),
             "--log-level",
             str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
         ]
+        if options.ml_watchdog_timeout_seconds and options.ml_watchdog_timeout_seconds > 0:
+            command.extend(["--watchdog-timeout-seconds", str(int(options.ml_watchdog_timeout_seconds))])
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
+        if options.ml_debug_train:
+            command.append("--debug-train")
         if options.ml_enable_lightgbm:
             command.append("--compare-lightgbm")
         if options.ml_enable_catboost:

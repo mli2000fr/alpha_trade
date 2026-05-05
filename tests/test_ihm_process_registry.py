@@ -481,6 +481,48 @@ def test_pipeline_workflow_can_start_at_step_3_and_append_corporate_actions(monk
     assert "corporate_actions_apply" in logs
 
 
+def test_pipeline_workflow_can_run_explicit_selected_steps_in_order(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("step_1", "1", "Step 1", "", "", "—"),
+        PipelineStepDefinition("step_3", "3", "Step 3", "", "", "step_1"),
+        PipelineStepDefinition("step_8", "8", "Step 8", "", "", "step_3"),
+        PipelineStepDefinition("step_12", "12", "Step 12", "", "", "step_8"),
+    )
+    monkeypatch.setattr(
+        registry,
+        "get_pipeline_workflow_steps",
+        lambda **kwargs: tuple(
+            step
+            for step in steps
+            if kwargs.get("selected_step_keys") is None or step.key in set(kwargs.get("selected_step_keys") or ())
+        ),
+    )
+    monkeypatch.setattr(
+        registry,
+        "build_pipeline_command",
+        lambda step_key, options: [sys.executable, "-c", f"print('{step_key}', flush=True)"],
+    )
+
+    record = registry.start_pipeline_workflow(
+        PipelineLaunchOptions(),
+        selected_step_keys=("step_12", "step_3", "step_1"),
+    )
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=120)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert snapshot["workflow_total_steps"] == 3
+    assert snapshot["command"] == ["step_1", "step_3", "step_12"]
+    assert "Workflow personnalisé" in str(snapshot["step_label"])
+    logs = registry.read_pipeline_logs(record.run_id, "all")
+    assert "step_1" in logs
+    assert "step_3" in logs
+    assert "step_12" in logs
+    assert "step_8" not in logs
+
+
 def test_should_override_failed_status_for_ml_train_windows_post_success_crash() -> None:
     record = registry.PipelineRunRecord(
         run_id="run-1",

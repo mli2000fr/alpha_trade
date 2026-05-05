@@ -188,6 +188,21 @@ def test_build_watcher_handoff_rows_exposes_post_execution_launch_guidance() -> 
     assert any(row["Mode"] == "Task Scheduler" for row in rows)
 
 
+def test_render_ml_inspection_link_uses_pending_symbol_for_cross_page_navigation(monkeypatch) -> None:
+    session_state: dict[str, object] = {}
+    monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(pipeline, "list_ml_artifact_symbols", lambda: ["AAPL", "MSFT"])
+    monkeypatch.setattr(pipeline.st, "selectbox", lambda *args, **kwargs: "MSFT")
+    monkeypatch.setattr(pipeline.st, "button", lambda *args, **kwargs: True)
+    monkeypatch.setattr(pipeline.st, "rerun", lambda: None)
+
+    pipeline._render_ml_inspection_link("ml_train")
+
+    assert session_state[pipeline.ML_PENDING_SELECTED_SYMBOL_KEY] == "MSFT"
+    assert session_state[pipeline.NAVIGATION_TARGET_PAGE_KEY] == "ml"
+    assert "ihm_ml_selected_symbol" not in session_state
+
+
 def test_build_workflow_scope_help_lines_explains_1_to_12_3_to_12_and_13_14() -> None:
     lines = workflow_page._build_workflow_scope_help_lines()
 
@@ -405,6 +420,59 @@ def test_workflow_launcher_can_start_at_step_3_and_include_corporate_actions(mon
     assert captured["include_corporate_actions_apply"] is True
 
 
+def test_workflow_launcher_can_launch_explicit_selected_pipelines_in_order(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
+    monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
+    monkeypatch.setattr(workflow_page.st, "container", lambda **kwargs: _DummyContainer())
+    monkeypatch.setattr(workflow_page.st, "subheader", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "caption", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "info", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "warning", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "markdown", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "divider", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "columns", lambda n: [_DummyContainer() for _ in range(n)])
+    monkeypatch.setattr(workflow_page.st, "selectbox", lambda *args, **kwargs: kwargs["options"][0])
+
+    def _fake_checkbox(*args, **kwargs):
+        key = kwargs.get("key")
+        if key == workflow_page.WORKFLOW_INCLUDE_ML_TRAIN_KEY:
+            return kwargs.get("value", False)
+        if key == workflow_page.WORKFLOW_INCLUDE_CA_SYNC_KEY:
+            return False
+        if key == workflow_page.WORKFLOW_INCLUDE_CA_APPLY_KEY:
+            return False
+        return key in {
+            f"{workflow_page.WORKFLOW_CUSTOM_STEP_KEY_PREFIX}import_alpaca_bar",
+            f"{workflow_page.WORKFLOW_CUSTOM_STEP_KEY_PREFIX}stock_screener",
+            f"{workflow_page.WORKFLOW_CUSTOM_STEP_KEY_PREFIX}execution",
+        }
+
+    monkeypatch.setattr(workflow_page.st, "checkbox", _fake_checkbox)
+    monkeypatch.setattr(
+        workflow_page.st,
+        "button",
+        lambda *args, **kwargs: kwargs.get("key") == "run_pipeline_workflow_selected_steps",
+    )
+
+    def _fake_start_pipeline_workflow(options, **kwargs):
+        captured.update(kwargs)
+        return type("_Record", (), {"run_id": "wf-custom"})()
+
+    monkeypatch.setattr(workflow_page, "start_pipeline_workflow", _fake_start_pipeline_workflow)
+
+    workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
+
+    assert captured["selected_step_keys"] == (
+        "import_alpaca_bar",
+        "stock_screener",
+        "execution",
+    )
+
+
 def test_build_workflow_child_run_payload_returns_latest_runs_first_with_labels(monkeypatch) -> None:
     child_runs = {
         "run-step-1": {
@@ -484,6 +552,63 @@ def test_prepare_workflow_child_run_state_preserves_manual_selection_when_follow
     assert current_child_run_id == "run-step-2"
     assert selected_child_run_id == "run-step-1"
     assert workflow_page.st.session_state[child_select_key] == "run-step-1"
+
+
+def test_prepare_workflow_child_run_state_disables_follow_when_manual_selection_differs_current(monkeypatch) -> None:
+    session_state = {
+        "workflow_child_run_autofollow_wf-3": True,
+        "workflow_child_run_select_wf-3": "run-step-1",
+    }
+    monkeypatch.setattr(workflow_page.st, "session_state", session_state, raising=False)
+
+    child_select_key, follow_enabled, current_child_run_id, selected_child_run_id, _ = workflow_page._prepare_workflow_child_run_state(
+        {
+            "run_id": "wf-3",
+            "status": "running",
+            "workflow_current_child_run_id": "run-step-2",
+        },
+        ["run-step-2", "run-step-1"],
+        {
+            "run-step-2": "2. Sanitize | run-step-2",
+            "run-step-1": "1. Import Bars | run-step-1",
+        },
+    )
+
+    assert child_select_key == "workflow_child_run_select_wf-3"
+    assert follow_enabled is False
+    assert current_child_run_id == "run-step-2"
+    assert selected_child_run_id == "run-step-1"
+    assert workflow_page.st.session_state["workflow_child_run_autofollow_wf-3"] is False
+
+
+def test_prepare_workflow_child_run_state_consumes_pending_reselect_to_current(monkeypatch) -> None:
+    session_state = {
+        "workflow_child_run_autofollow_wf-4": False,
+        "workflow_child_run_select_wf-4": "run-step-1",
+        "workflow_child_run_pending_select_wf-4": "run-step-2",
+        "workflow_child_run_pending_autofollow_wf-4": True,
+    }
+    monkeypatch.setattr(workflow_page.st, "session_state", session_state, raising=False)
+
+    child_select_key, follow_enabled, current_child_run_id, selected_child_run_id, _ = workflow_page._prepare_workflow_child_run_state(
+        {
+            "run_id": "wf-4",
+            "status": "running",
+            "workflow_current_child_run_id": "run-step-2",
+        },
+        ["run-step-2", "run-step-1"],
+        {
+            "run-step-2": "2. Sanitize | run-step-2",
+            "run-step-1": "1. Import Bars | run-step-1",
+        },
+    )
+
+    assert child_select_key == "workflow_child_run_select_wf-4"
+    assert follow_enabled is True
+    assert current_child_run_id == "run-step-2"
+    assert selected_child_run_id == "run-step-2"
+    assert workflow_page.WORKFLOW_CHILD_PENDING_SELECT_KEY_PREFIX + "wf-4" not in workflow_page.st.session_state
+    assert workflow_page.WORKFLOW_CHILD_PENDING_AUTOFOLLOW_KEY_PREFIX + "wf-4" not in workflow_page.st.session_state
 
 
 def test_prime_runtime_center_state_prefers_active_workflow_parent_over_latest_child_run(monkeypatch) -> None:

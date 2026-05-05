@@ -1,6 +1,7 @@
 """modelFactory/orchestrator.py — Orchestrateur distribué multi-symboles."""
 from __future__ import annotations
 
+from datetime import date
 import json
 import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -12,10 +13,19 @@ from sqlalchemy.engine import Engine
 
 from modelFactory.champion_selection import build_challenger_ranking, select_champion
 from modelFactory.config import TrainingConfig
-from modelFactory.data_loader import load_benchmark_bars, load_symbol_bars, load_symbol_sentiment, load_universe_bars
+from modelFactory.data_loader import (
+    load_benchmark_bars,
+    load_symbol_bars,
+    load_symbol_latest_bar_date,
+    load_symbol_latest_bar_dates,
+    load_symbol_sentiment,
+    load_universe_bars,
+    resolve_history_window_start_date,
+)
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.db_registry import load_candidate_symbols, load_stock_bars_daily_symbols, replace_model_governance
 from modelFactory.global_model import train_global_model
+from modelFactory.runtime_status import update_runtime_status
 from modelFactory.trainer import TrainResult, train_symbol
 
 LOGGER = logging.getLogger(__name__)
@@ -130,39 +140,62 @@ def _filter_symbols_by_mode(
 ) -> list[str]:
     """Phase 4.2.g — filtre la liste de symboles selon le mode ML.
 
-    - ``rebuild-missing`` : skippe les symboles dont le dernier
-      ``config.json`` champion (sur disque) a déjà le ``feature_fingerprint``
-      courant (= contrat de features inchangé depuis le dernier train).
-    - ``refresh-stale`` : équivalent ``rebuild-missing`` aujourd'hui (plage
-      future pour ajouter un critère d'âge en jours).
-    Tolérant aux fichiers manquants : on retient le symbole.
+    - ``rebuild-missing`` : ne garde que les symboles sans ``config.json``.
+    - ``refresh-stale`` : garde les symboles sans artefacts, avec contrat de
+      features/fenêtre historique différent, ou entraînés avant la dernière
+      barre disponible pour le symbole.
     """
     current_fp = compute_feature_fingerprint(
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
     )
+
+    def _parse_iso_date(value: object) -> date | None:
+        if isinstance(value, str) and value.strip():
+            try:
+                return date.fromisoformat(value.strip())
+            except ValueError:
+                return None
+        return None
+
     artifacts_dir = Path(cfg.artifacts_dir)
     kept: list[str] = []
     skipped: list[str] = []
+    latest_dates = load_symbol_latest_bar_dates(engine, symbols) if mode == "refresh-stale" else {}
     for symbol in symbols:
         config_path = artifacts_dir / symbol / "config.json"
         if not config_path.exists():
             kept.append(symbol)
+            continue
+        if mode == "rebuild-missing":
+            skipped.append(symbol)
             continue
         try:
             with open(config_path, encoding="utf-8") as fh:
                 cfg_data = json.load(fh)
             persisted = cfg_data.get("feature_fingerprint")
         except Exception:  # noqa: BLE001
-            persisted = None
-        if persisted == current_fp:
-            skipped.append(symbol)
-        else:
             kept.append(symbol)
+            continue
+
+        persisted_history_window = (cfg_data.get("data") or {}).get("history_window_years")
+        trained_through_date = _parse_iso_date(cfg_data.get("trained_through_date"))
+        latest_available_date = latest_dates.get(symbol)
+
+        if persisted != current_fp:
+            kept.append(symbol)
+            continue
+        if persisted_history_window != cfg.data.history_window_years:
+            kept.append(symbol)
+            continue
+        if trained_through_date is None or latest_available_date is None or trained_through_date < latest_available_date:
+            kept.append(symbol)
+            continue
+        skipped.append(symbol)
     LOGGER.info(
-        "ml_mode=%s current_fp=%s symbols_kept=%d symbols_skipped=%d",
-        mode, current_fp, len(kept), len(skipped),
+        "ml_mode=%s current_fp=%s history_window_years=%s symbols_kept=%d symbols_skipped=%d",
+        mode, current_fp, cfg.data.history_window_years, len(kept), len(skipped),
     )
     return kept
 
@@ -171,17 +204,34 @@ def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] 
     """Worker function exécutée dans un sous-process. Crée son propre engine."""
     from database.connection import get_sqlalchemy_engine
     engine = get_sqlalchemy_engine()
-    bars = load_symbol_bars(engine, symbol)
+    history_end_date = load_symbol_latest_bar_date(engine, symbol)
+    history_start_date = resolve_history_window_start_date(history_end_date, cfg.data.history_window_years)
+    bars = load_symbol_bars(engine, symbol, end_date=history_end_date, start_date=history_start_date)
     benchmark_df = None
     if cfg.data.feature_set == "expert" or cfg.data.enable_cross_sectional_features:
-        benchmark_df = load_benchmark_bars(engine, cfg.data.benchmark_symbol)
+        benchmark_df = load_benchmark_bars(
+            engine,
+            cfg.data.benchmark_symbol,
+            end_date=history_end_date,
+            start_date=history_start_date,
+        )
     sentiment_df = None
     if cfg.data.include_sentiment_features:
-        sentiment_df = load_symbol_sentiment(engine, symbol)
+        sentiment_df = load_symbol_sentiment(
+            engine,
+            symbol,
+            end_date=history_end_date,
+            start_date=history_start_date,
+        )
     universe_df = None
     if cfg.data.enable_cross_sectional_features:
         effective_universe = list(dict.fromkeys((universe_symbols or []) + [symbol]))
-        universe_df = load_universe_bars(engine, effective_universe)
+        universe_df = load_universe_bars(
+            engine,
+            effective_universe,
+            end_date=history_end_date,
+            start_date=history_start_date,
+        )
     return train_symbol(symbol, bars, cfg, engine, sentiment_df=sentiment_df, benchmark_df=benchmark_df, universe_df=universe_df)
 
 
@@ -225,6 +275,12 @@ def run_training_batch(
 
     use_gpu = _gpu_requested_or_available(cfg)
     effective_workers = 1 if use_gpu else cfg.max_workers
+    if cfg.debug_train and effective_workers != 1:
+        LOGGER.warning(
+            "run_training_batch debug_train enabled requested_max_workers=%d -> forcing effective_workers=1 for deterministic logs",
+            cfg.max_workers,
+        )
+        effective_workers = 1
     if use_gpu and cfg.max_workers != 1:
         LOGGER.warning(
             "run_training_batch gpu_detected accelerator=%s requested_max_workers=%d -> forcing effective_workers=1",
@@ -240,20 +296,59 @@ def run_training_batch(
         cfg.accelerator,
         torch.cuda.is_available(),
     )
+    update_runtime_status(
+        current_phase="batch_start",
+        progress_label="🧠 Progression ML Train",
+        progress_total=len(symbols),
+        progress_current=0,
+        progress_item=None,
+        symbols_total=len(symbols),
+        symbols_completed=0,
+        symbols_skipped=0,
+        symbols_failed=0,
+        current_symbol=None,
+        current_symbol_index=0,
+        current_symbol_total=len(symbols),
+        effective_workers=effective_workers,
+        accelerator=cfg.accelerator,
+    )
     results: list[TrainResult] = []
 
     if effective_workers == 1:
-        for sym in symbols:
+        for index, sym in enumerate(symbols, start=1):
             try:
+                update_runtime_status(
+                    current_phase="symbol_train_start",
+                    current_symbol=sym,
+                    current_symbol_index=index,
+                    progress_item=sym,
+                )
                 if cfg.data.enable_cross_sectional_features:
                     result = _train_worker(sym, cfg, symbols)
                 else:
                     result = _train_worker(sym, cfg)
                 results.append(result)
+                update_runtime_status(
+                    progress_current=len(results),
+                    symbols_completed=sum(1 for r in results if r.status == "completed"),
+                    symbols_skipped=sum(1 for r in results if r.status == "skipped"),
+                    symbols_failed=sum(1 for r in results if r.status == "failed"),
+                    current_phase=f"symbol_{result.status}",
+                )
                 LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
             except Exception as exc:
                 LOGGER.exception("orchestrator worker_exception symbol=%s", sym)
                 results.append(TrainResult(sym, "N/A", "failed", skip_reason=str(exc)))
+                update_runtime_status(
+                    progress_current=len(results),
+                    symbols_completed=sum(1 for r in results if r.status == "completed"),
+                    symbols_skipped=sum(1 for r in results if r.status == "skipped"),
+                    symbols_failed=sum(1 for r in results if r.status == "failed"),
+                    current_phase="symbol_failed",
+                    current_symbol=sym,
+                    current_symbol_index=index,
+                    progress_item=sym,
+                )
     else:
         with ProcessPoolExecutor(max_workers=effective_workers) as pool:
             if cfg.data.enable_cross_sectional_features:
@@ -265,10 +360,28 @@ def run_training_batch(
                 try:
                     result = future.result()
                     results.append(result)
+                    update_runtime_status(
+                        progress_current=len(results),
+                        symbols_completed=sum(1 for r in results if r.status == "completed"),
+                        symbols_skipped=sum(1 for r in results if r.status == "skipped"),
+                        symbols_failed=sum(1 for r in results if r.status == "failed"),
+                        current_phase=f"symbol_{result.status}",
+                        current_symbol=sym,
+                        progress_item=sym,
+                    )
                     LOGGER.info("orchestrator done symbol=%s status=%s", sym, result.status)
                 except Exception as exc:
                     LOGGER.exception("orchestrator worker_exception symbol=%s", sym)
                     results.append(TrainResult(sym, "N/A", "failed", skip_reason=str(exc)))
+                    update_runtime_status(
+                        progress_current=len(results),
+                        symbols_completed=sum(1 for r in results if r.status == "completed"),
+                        symbols_skipped=sum(1 for r in results if r.status == "skipped"),
+                        symbols_failed=sum(1 for r in results if r.status == "failed"),
+                        current_phase="symbol_failed",
+                        current_symbol=sym,
+                        progress_item=sym,
+                    )
 
     # Summary
     completed = sum(1 for r in results if r.status == "completed")
@@ -276,6 +389,7 @@ def run_training_batch(
     failed = sum(1 for r in results if r.status == "failed")
 
     if cfg.global_model.enabled and symbols:
+        update_runtime_status(current_phase="global_model_training", progress_item="__GLOBAL__")
         global_result = train_global_model(symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine)
         LOGGER.info("run_training_batch global_model status=%s", global_result.get("status"))
         for result in results:
@@ -283,6 +397,14 @@ def run_training_batch(
                 continue
             _inject_global_model_into_symbol_artifacts(result.symbol, cfg, global_result, engine)
             result.metrics["global_model"] = global_result.get("by_symbol", {}).get(result.symbol, global_result)
+    update_runtime_status(
+        current_phase="batch_completed",
+        progress_current=len(results),
+        symbols_completed=completed,
+        symbols_skipped=skipped,
+        symbols_failed=failed,
+        progress_item=None,
+    )
     LOGGER.info("run_training_batch finished completed=%d skipped=%d failed=%d", completed, skipped, failed)
     return results
 

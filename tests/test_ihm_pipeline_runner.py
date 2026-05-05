@@ -86,6 +86,22 @@ def test_get_pipeline_workflow_steps_can_start_at_3_and_append_corporate_actions
     ]
 
 
+def test_get_pipeline_workflow_steps_can_use_explicit_selected_step_keys_in_canonical_order() -> None:
+    keys = [
+        step.key
+        for step in get_pipeline_workflow_steps(
+            selected_step_keys=("execution", "stock_screener", "import_alpaca_bar", "ml_predict"),
+        )
+    ]
+
+    assert keys == [
+        "import_alpaca_bar",
+        "stock_screener",
+        "ml_predict",
+        "execution",
+    ]
+
+
 
 def test_build_pipeline_command_injects_account_for_account_aware_steps() -> None:
     options = PipelineLaunchOptions(
@@ -533,6 +549,8 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[:6] == [train_cmd[0], "-u", "-m", "modelFactory", "--mode", "train"]
     assert "--accelerator" in train_cmd
     assert train_cmd[train_cmd.index("--accelerator") + 1] == "gpu"
+    assert train_cmd[train_cmd.index("--ml-mode") + 1] == "rebuild-all"
+    assert train_cmd[train_cmd.index("--history-window") + 1] == "10"
     assert train_cmd[train_cmd.index("--symbol-source") + 1] == "candidates"
 
     # Drapeaux booléens activés par défaut (swing prod)
@@ -562,6 +580,7 @@ def test_build_pipeline_command_ml_steps() -> None:
         "--hidden-size",
         "--artifacts-dir",
         "--benchmark-symbol",
+        "--heartbeat-interval-seconds",
         "--lgbm-max-depth",
         "--catboost-depth",
         "--default-champion",
@@ -583,6 +602,7 @@ def test_build_pipeline_command_ml_steps() -> None:
 def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options() -> None:
     options = PipelineLaunchOptions(
         ml_accelerator="cpu",
+        ml_debug_train=True,
         ml_include_sentiment=False,
         ml_enable_lightgbm=False,
         ml_enable_catboost=False,
@@ -593,11 +613,17 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
         ml_optimize_thresholds=False,
         ml_optimize_target=True,
         ml_walkforward=False,
+        ml_mode="refresh-stale",
+        ml_history_window="all",
+        ml_heartbeat_interval_seconds=30.0,
+        ml_watchdog_timeout_seconds=600,
     )
 
     train_cmd = build_pipeline_command("ml_train", options)
 
     assert train_cmd[train_cmd.index("--accelerator") + 1] == "cpu"
+    assert train_cmd[train_cmd.index("--ml-mode") + 1] == "refresh-stale"
+    assert train_cmd[train_cmd.index("--history-window") + 1] == "all"
 
     # Drapeaux désactivés
     for flag in (
@@ -613,6 +639,7 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
 
     # Drapeaux activés explicitement
     for flag in (
+        "--debug-train",
         "--enable-global-model",
         "--enable-cross-sectional",
         "--optimize-target",
@@ -620,10 +647,13 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
         "--candidate-up-thresholds",
         "--candidate-down-thresholds",
         "--min-trades-fraction",
+        "--watchdog-timeout-seconds",
     ):
         assert flag in train_cmd, f"Flag attendu manquant : {flag}"
 
     assert train_cmd[train_cmd.index("--global-model-name") + 1] == "lightgbm"
+    assert train_cmd[train_cmd.index("--heartbeat-interval-seconds") + 1] == "30.0"
+    assert train_cmd[train_cmd.index("--watchdog-timeout-seconds") + 1] == "600"
 
 
 def test_build_pipeline_command_ml_train_can_target_all_stock_bars_daily_symbols() -> None:
@@ -644,6 +674,29 @@ def test_build_pipeline_command_import_news() -> None:
 
     assert command[:3] == [command[0], "-u", str(PROJECT_ROOT / "event_sentiment" / "importe_news.py")]
     assert command[-4:] == ["--start-date", "2026-04-01", "--end-date", "2026-04-15"]
+
+
+def test_build_pipeline_command_import_news_pending_loop() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+    )
+
+    command = build_pipeline_command("import_news_pending_loop", options)
+
+    assert command[:5] == [
+        "powershell.exe" if sys.platform.startswith("win") else "pwsh",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+    ]
+    assert command[5] == str(PROJECT_ROOT / "scripts" / "windows" / "import_news_and_score_pending.ps1")
+    assert "-ProjectRoot" in command
+    assert command[command.index("-ProjectRoot") + 1] == str(PROJECT_ROOT)
+    assert "-PythonExe" in command
+    assert command[command.index("-PythonExe") + 1] == sys.executable
+    assert command[-4:] == ["-StartDate", "2026-04-01", "-EndDate", "2026-04-15"]
 
 
 def test_run_pipeline_step_streams_logs_via_callback(monkeypatch) -> None:

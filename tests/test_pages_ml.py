@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from io import BytesIO
 
 import pandas as pd
@@ -105,6 +106,20 @@ def test_resolve_navigation_symbol_falls_back_to_symbol() -> None:
     resolved = ml._resolve_navigation_symbol(option, ["AAPL", "MSFT"])
 
     assert resolved == "AAPL"
+
+
+def test_prime_selected_symbol_state_consumes_pending_symbol(monkeypatch) -> None:
+    session_state = {
+        ml.ML_SELECTED_SYMBOL_KEY: "AAPL",
+        ml.ML_PENDING_SELECTED_SYMBOL_KEY: "MSFT",
+    }
+    monkeypatch.setattr(ml, "st", SimpleNamespace(session_state=session_state))
+
+    selected = ml._prime_selected_symbol_state(["AAPL", "MSFT"])
+
+    assert selected == "MSFT"
+    assert session_state[ml.ML_SELECTED_SYMBOL_KEY] == "MSFT"
+    assert ml.ML_PENDING_SELECTED_SYMBOL_KEY not in session_state
 
 
 def test_focus_dataframe_on_navigation_row_moves_selected_row_first() -> None:

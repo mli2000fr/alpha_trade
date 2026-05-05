@@ -10,6 +10,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pandas as pd
 import streamlit as st
 
+from ihm.pages._shared import ML_PENDING_SELECTED_SYMBOL_KEY, ML_SELECTED_SYMBOL_KEY
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_connection_form, render_query_diagnostic
 from ihm.components.tables import show_dataframe
@@ -24,8 +25,6 @@ from ihm.services.queries import (
     get_training_runs,
 )
 
-
-ML_SELECTED_SYMBOL_KEY = "ihm_ml_selected_symbol"
 ML_AUDIT_FILTER_SOURCE_LIMIT = 500
 ML_SELECTED_AUDIT_NAVIGATION_KEY = "ihm_ml_selected_audit_navigation"
 
@@ -357,6 +356,23 @@ def _summarize_prediction_governance_audit(audit_df: pd.DataFrame) -> dict[str, 
     }
 
 
+def _prime_selected_symbol_state(symbols: list[str]) -> str | None:
+    if not symbols:
+        return None
+
+    pending_symbol = st.session_state.pop(ML_PENDING_SELECTED_SYMBOL_KEY, None)
+    if isinstance(pending_symbol, str) and pending_symbol in symbols:
+        st.session_state[ML_SELECTED_SYMBOL_KEY] = pending_symbol
+        return pending_symbol
+
+    selected_symbol = st.session_state.get(ML_SELECTED_SYMBOL_KEY)
+    if isinstance(selected_symbol, str) and selected_symbol in symbols:
+        return selected_symbol
+
+    st.session_state[ML_SELECTED_SYMBOL_KEY] = symbols[0]
+    return symbols[0]
+
+
 def render() -> None:
     st.header("🤖 Model Factory — Entraînement & prédictions")
     st.caption(
@@ -376,11 +392,7 @@ def render() -> None:
     if not symbols:
         st.info("Aucun artefact `modelFactory` détecté pour le moment. Lancez d'abord `ML Train` ou vérifiez le dossier des artefacts.")
     else:
-        preselected_symbol = st.session_state.get(ML_SELECTED_SYMBOL_KEY)
-        if preselected_symbol in symbols:
-            st.session_state[ML_SELECTED_SYMBOL_KEY] = preselected_symbol
-        elif ML_SELECTED_SYMBOL_KEY not in st.session_state:
-            st.session_state[ML_SELECTED_SYMBOL_KEY] = symbols[0]
+        _prime_selected_symbol_state(symbols)
         selected_symbol = st.selectbox(
             "Symbole à inspecter (artefacts)",
             options=symbols,
@@ -563,7 +575,7 @@ def render() -> None:
                 if served_model and served_model != "—":
                     st.session_state["ml_audit_filter_served_model"] = [served_model]
                 if target_symbol is not None:
-                    st.session_state[ML_SELECTED_SYMBOL_KEY] = target_symbol
+                    st.session_state[ML_PENDING_SELECTED_SYMBOL_KEY] = target_symbol
                 st.rerun()
             if col_nav_3.button("🏆 Isoler gouvernance + serving", key="ml_audit_focus_governance", use_container_width=True):
                 st.session_state["ml_audit_filter_run_id"] = [run_id]

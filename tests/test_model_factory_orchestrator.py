@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 from modelFactory import orchestrator
 from modelFactory.config import ChampionSelectionConfig, DataConfig, ModelConfig, TrainingConfig
@@ -41,10 +42,11 @@ def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -
     import database.connection as db_connection
 
     monkeypatch.setattr(db_connection, "get_sqlalchemy_engine", lambda: object())
-    monkeypatch.setattr(orchestrator, "load_symbol_bars", lambda engine, symbol: "bars")
-    monkeypatch.setattr(orchestrator, "load_benchmark_bars", lambda engine, benchmark_symbol: "benchmark")
-    monkeypatch.setattr(orchestrator, "load_symbol_sentiment", lambda engine, symbol: "sentiment")
-    monkeypatch.setattr(orchestrator, "load_universe_bars", lambda engine, symbols: {"symbols": list(symbols)})
+    monkeypatch.setattr(orchestrator, "load_symbol_latest_bar_date", lambda engine, symbol: date(2026, 4, 17))
+    monkeypatch.setattr(orchestrator, "load_symbol_bars", lambda engine, symbol, end_date=None, start_date=None: {"symbol": symbol, "start_date": start_date, "end_date": end_date})
+    monkeypatch.setattr(orchestrator, "load_benchmark_bars", lambda engine, benchmark_symbol, end_date=None, start_date=None: "benchmark")
+    monkeypatch.setattr(orchestrator, "load_symbol_sentiment", lambda engine, symbol, end_date=None, start_date=None: "sentiment")
+    monkeypatch.setattr(orchestrator, "load_universe_bars", lambda engine, symbols, end_date=None, start_date=None: {"symbols": list(symbols), "start_date": start_date, "end_date": end_date})
 
     def fake_train_symbol(symbol, bars, cfg, engine, sentiment_df=None, benchmark_df=None, universe_df=None):
         captured["symbol"] = symbol
@@ -57,7 +59,9 @@ def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -
 
     assert result.status == "completed"
     assert captured["symbol"] == "AAPL"
-    assert captured["universe_df"] == {"symbols": ["AAPL", "MSFT"]}
+    assert captured["universe_df"]["symbols"] == ["AAPL", "MSFT"]
+    assert captured["universe_df"]["end_date"] == date(2026, 4, 17)
+    assert captured["universe_df"]["start_date"] is None
 
 
 def test_run_training_batch_injects_global_model_into_symbol_artifacts(monkeypatch, tmp_path) -> None:
@@ -245,5 +249,59 @@ def test_inject_global_model_persists_model_governance(monkeypatch, tmp_path) ->
     assert governance_call["run_id"] == "run-AAPL"
     assert governance_call["selected_model"] == "global_model"
     assert any(row["model_name"] == "global_model" for row in governance_call["ranking"])
+
+
+def test_filter_symbols_by_mode_rebuild_missing_keeps_only_absent_artifacts(monkeypatch, tmp_path) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(),
+        model=ModelConfig(max_epochs=1),
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+    (tmp_path / "AAPL").mkdir(parents=True, exist_ok=True)
+    with open(tmp_path / "AAPL" / "config.json", "w", encoding="utf-8") as fh:
+        json.dump({"feature_fingerprint": "anything"}, fh)
+
+    kept = orchestrator._filter_symbols_by_mode(object(), ["AAPL", "MSFT"], mode="rebuild-missing", cfg=cfg)
+
+    assert kept == ["MSFT"]
+
+
+def test_filter_symbols_by_mode_refresh_stale_keeps_only_outdated_models(monkeypatch, tmp_path) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(history_window_years=10),
+        model=ModelConfig(max_epochs=1),
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+    current_fp = orchestrator.compute_feature_fingerprint(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
+    for symbol, trained_through in (("AAPL", "2026-04-16"), ("MSFT", "2026-04-17")):
+        symbol_dir = tmp_path / symbol
+        symbol_dir.mkdir(parents=True, exist_ok=True)
+        with open(symbol_dir / "config.json", "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "feature_fingerprint": current_fp,
+                    "trained_through_date": trained_through,
+                    "data": {"history_window_years": 10},
+                },
+                fh,
+            )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "load_symbol_latest_bar_dates",
+        lambda engine, symbols: {"AAPL": date(2026, 4, 17), "MSFT": date(2026, 4, 17)},
+    )
+
+    kept = orchestrator._filter_symbols_by_mode(object(), ["AAPL", "MSFT"], mode="refresh-stale", cfg=cfg)
+
+    assert kept == ["AAPL"]
 
 

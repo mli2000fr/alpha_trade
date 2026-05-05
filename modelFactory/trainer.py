@@ -17,10 +17,10 @@ from torch.utils.data import DataLoader
 
 try:
     import lightning as L
-    from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+    from lightning.pytorch.callbacks import Callback, EarlyStopping, ModelCheckpoint
 except ImportError:  # pragma: no cover
     import pytorch_lightning as L  # type: ignore[no-redef]
-    from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint  # type: ignore[no-redef]
+    from pytorch_lightning.callbacks import Callback, EarlyStopping, ModelCheckpoint  # type: ignore[no-redef]
 
 from sqlalchemy.engine import Engine
 
@@ -48,9 +48,80 @@ from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.catboost_baseline import run_catboost_baseline
 from modelFactory.lightgbm_baseline import run_lightgbm_baseline
 from modelFactory.model import LSTMAttentionModule
+from modelFactory.runtime_status import update_runtime_status
 from modelFactory.target_optimization import optimize_target_parameters
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _metric_to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, torch.Tensor):
+            if value.numel() != 1:
+                return None
+            return float(value.detach().cpu().item())
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_metric(value: Any) -> str:
+    numeric = _metric_to_float(value)
+    return f"{numeric:.4f}" if numeric is not None else "n/a"
+
+
+class _EpochProgressLogger(Callback):
+    """Callback Lightning minimaliste pour produire des heartbeats lisibles en log."""
+
+    def __init__(
+        self,
+        *,
+        symbol: str,
+        phase: str,
+        debug_enabled: bool = False,
+        split_index: int | None = None,
+    ) -> None:
+        super().__init__()
+        self.symbol = symbol
+        self.phase = phase
+        self.debug_enabled = debug_enabled
+        self.split_index = split_index
+
+    def on_validation_epoch_end(self, trainer: "L.Trainer", pl_module: L.LightningModule) -> None:  # type: ignore[override]
+        if trainer.sanity_checking:
+            return
+        metrics = trainer.callback_metrics
+        parts = [f"training_progress phase={self.phase}", f"symbol={self.symbol}"]
+        if self.split_index is not None:
+            parts.append(f"split={self.split_index}")
+        epoch_text = f"epoch={trainer.current_epoch + 1}/{trainer.max_epochs}"
+        metric_parts = [
+            f"train_loss={_format_metric(metrics.get('train_loss'))}",
+            f"val_loss={_format_metric(metrics.get('val_loss'))}",
+            f"val_acc={_format_metric(metrics.get('val_acc'))}",
+            f"val_auc={_format_metric(metrics.get('val_auc'))}",
+        ]
+        if self.debug_enabled:
+            metric_parts.extend(
+                [
+                    f"train_acc={_format_metric(metrics.get('train_acc'))}",
+                    f"val_precision={_format_metric(metrics.get('val_precision'))}",
+                    f"val_recall={_format_metric(metrics.get('val_recall'))}",
+                ]
+            )
+        parts.extend([epoch_text, *metric_parts])
+        update_runtime_status(
+            current_phase=self.phase,
+            current_symbol=self.symbol,
+            progress_item=self.symbol,
+            phase_detail=" ".join([epoch_text, *metric_parts]),
+            current_epoch=trainer.current_epoch + 1,
+            total_epochs=trainer.max_epochs,
+            current_split_index=self.split_index,
+        )
+        LOGGER.info(" ".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +475,24 @@ def _run_walk_forward_validation(
     )
     if not splits:
         LOGGER.warning("walk_forward skipped symbol=%s reason=no_valid_split", symbol)
+        update_runtime_status(current_phase="walk_forward_skipped", current_symbol=symbol, progress_item=symbol)
         return {}
+
+    update_runtime_status(
+        current_phase="walk_forward_start",
+        current_symbol=symbol,
+        progress_item=symbol,
+        walk_forward_splits=len(splits),
+        current_split_index=0,
+    )
+    LOGGER.info(
+        "walk_forward start symbol=%s splits=%d prepared_rows=%d max_epochs=%d accelerator=%s",
+        symbol,
+        len(splits),
+        len(prepared_df),
+        cfg.model.max_epochs,
+        cfg.accelerator,
+    )
 
     feature_cols = get_feature_columns(
         cfg.data.include_sentiment_features,
@@ -427,6 +515,28 @@ def _run_walk_forward_validation(
             )
             continue
 
+        LOGGER.info(
+            "walk_forward split_start symbol=%s split=%d train_rows=%d val_rows=%d test_rows=%d train_sequences=%d val_sequences=%d test_sequences=%d",
+            symbol,
+            split.split_index,
+            len(split.train),
+            len(split.val),
+            len(split.test),
+            len(train_ds),
+            len(val_ds),
+            len(test_ds),
+        )
+        update_runtime_status(
+            current_phase="walk_forward_split_start",
+            current_symbol=symbol,
+            progress_item=symbol,
+            current_split_index=split.split_index,
+            phase_detail=(
+                f"split={split.split_index} train_rows={len(split.train)} val_rows={len(split.val)} "
+                f"test_rows={len(split.test)} train_sequences={len(train_ds)} val_sequences={len(val_ds)} test_sequences={len(test_ds)}"
+            ),
+        )
+
         with TemporaryDirectory(prefix=f"mf_wf_{symbol}_{split.split_index}_") as tmp_dir:
             ckpt_callback = ModelCheckpoint(
                 dirpath=tmp_dir,
@@ -436,6 +546,12 @@ def _run_walk_forward_validation(
                 save_top_k=1,
             )
             early_stop = EarlyStopping(monitor="val_loss", patience=cfg.model.patience, mode="min")
+            progress_logger = _EpochProgressLogger(
+                symbol=symbol,
+                phase="walk_forward",
+                debug_enabled=cfg.debug_train,
+                split_index=split.split_index,
+            )
             wf_model = LSTMAttentionModule(
                 input_size=len(feature_cols),
                 hidden_size=cfg.model.hidden_size,
@@ -449,10 +565,26 @@ def _run_walk_forward_validation(
                 max_epochs=cfg.model.max_epochs,
                 accelerator=cfg.accelerator,
                 devices=1,
-                callbacks=[ckpt_callback, early_stop],
+                callbacks=[ckpt_callback, early_stop, progress_logger],
                 enable_progress_bar=False,
                 logger=False,
                 enable_model_summary=False,
+            )
+            LOGGER.info(
+                "walk_forward fit_start symbol=%s split=%d accelerator=%s max_epochs=%d",
+                symbol,
+                split.split_index,
+                cfg.accelerator,
+                cfg.model.max_epochs,
+            )
+            update_runtime_status(
+                current_phase="walk_forward_fit_start",
+                current_symbol=symbol,
+                progress_item=symbol,
+                current_split_index=split.split_index,
+                current_epoch=0,
+                total_epochs=cfg.model.max_epochs,
+                phase_detail=f"split={split.split_index} accelerator={cfg.accelerator}",
             )
             trainer.fit(
                 wf_model,
@@ -460,6 +592,22 @@ def _run_walk_forward_validation(
                 val_dataloaders=_build_loader(val_ds, cfg.model.batch_size, shuffle=False),
             )
             best_path = Path(ckpt_callback.best_model_path) if ckpt_callback.best_model_path else Path(tmp_dir) / "best.ckpt"
+            LOGGER.info(
+                "walk_forward fit_completed symbol=%s split=%d epochs_ran=%d best_model_path=%s",
+                symbol,
+                split.split_index,
+                trainer.current_epoch,
+                best_path,
+            )
+            update_runtime_status(
+                current_phase="walk_forward_fit_completed",
+                current_symbol=symbol,
+                progress_item=symbol,
+                current_split_index=split.split_index,
+                current_epoch=trainer.current_epoch,
+                total_epochs=cfg.model.max_epochs,
+                phase_detail=f"split={split.split_index} best_model_path={best_path}",
+            )
             if not best_path.exists():
                 continue
             _, test_metrics, calibrator, threshold_summary, _ = _evaluate_best_checkpoint(
@@ -484,12 +632,20 @@ def _run_walk_forward_validation(
 
     summary = _aggregate_walk_forward_metrics(fold_metrics)
     if summary:
+        update_runtime_status(
+            current_phase="walk_forward_completed",
+            current_symbol=symbol,
+            progress_item=symbol,
+            phase_detail=f"splits={summary['n_splits']} mean_auc={summary['mean'].get('auc')}",
+        )
         LOGGER.info(
             "walk_forward completed symbol=%s splits=%d mean_auc=%s",
             symbol,
             summary["n_splits"],
             summary["mean"].get("auc"),
         )
+    else:
+        update_runtime_status(current_phase="walk_forward_completed", current_symbol=symbol, progress_item=symbol)
     return summary
 
 
@@ -579,6 +735,7 @@ def train_symbol(
             effective_cfg.model,
             **datamodule_kwargs,
         )
+        update_runtime_status(current_phase="dataset_setup", current_symbol=symbol, progress_item=symbol)
         dm.setup()
 
         if dm.train_ds is None or dm.val_ds is None or len(dm.train_ds) == 0 or len(dm.val_ds) == 0:
@@ -619,7 +776,11 @@ def train_symbol(
             max_epochs=effective_cfg.model.max_epochs,
             accelerator=effective_cfg.accelerator,
             devices=1,
-            callbacks=[ckpt_callback, early_stop],
+            callbacks=[
+                ckpt_callback,
+                early_stop,
+                _EpochProgressLogger(symbol=symbol, phase="final_train", debug_enabled=effective_cfg.debug_train),
+            ],
             enable_progress_bar=False,
             logger=False,
             enable_model_summary=False,
@@ -637,7 +798,37 @@ def train_symbol(
             dm.train_dataloader().num_workers,
         )
 
+        LOGGER.info(
+            "train_symbol fit_start symbol=%s max_epochs=%d walk_forward_enabled=%s",
+            symbol,
+            effective_cfg.model.max_epochs,
+            effective_cfg.walk_forward.enabled,
+        )
+        update_runtime_status(
+            current_phase="final_fit_start",
+            current_symbol=symbol,
+            progress_item=symbol,
+            current_epoch=0,
+            total_epochs=effective_cfg.model.max_epochs,
+            phase_detail=f"walk_forward_enabled={effective_cfg.walk_forward.enabled}",
+        )
+
         trainer.fit(model, datamodule=dm)
+
+        LOGGER.info(
+            "train_symbol fit_completed symbol=%s epochs_ran=%d best_model_path=%s",
+            symbol,
+            trainer.current_epoch,
+            ckpt_callback.best_model_path or (sym_dir / "best.ckpt"),
+        )
+        update_runtime_status(
+            current_phase="final_fit_completed",
+            current_symbol=symbol,
+            progress_item=symbol,
+            current_epoch=trainer.current_epoch,
+            total_epochs=effective_cfg.model.max_epochs,
+            phase_detail=f"best_model_path={ckpt_callback.best_model_path or (sym_dir / 'best.ckpt')}",
+        )
 
         best_source = Path(ckpt_callback.best_model_path) if ckpt_callback.best_model_path else sym_dir / "best.ckpt"
         split = dm.split
@@ -660,9 +851,11 @@ def train_symbol(
 
         baseline_metrics: dict[str, Any] = {}
         if prepared_df is not None and effective_cfg.baseline.enabled:
+            update_runtime_status(current_phase="baseline_lightgbm", current_symbol=symbol, progress_item=symbol)
             baseline_metrics = run_lightgbm_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir)
         catboost_metrics: dict[str, Any] = {}
         if prepared_df is not None and effective_cfg.baseline.enable_catboost:
+            update_runtime_status(current_phase="baseline_catboost", current_symbol=symbol, progress_item=symbol)
             catboost_metrics = run_catboost_baseline(prepared_df, effective_cfg, artifact_dir=sym_dir)
 
         best_ckpt = sym_dir / "best.ckpt"
@@ -737,6 +930,10 @@ def train_symbol(
         )
         cross_sectional_feature_columns = list(getattr(dm, "cross_sectional_feature_columns", []))
         cross_sectional_diagnostics = dict(getattr(dm, "cross_sectional_diagnostics", {}))
+        trained_through_date = None
+        if not bars_df.empty and "date" in bars_df.columns:
+            trained_through_raw = bars_df["date"].max()
+            trained_through_date = trained_through_raw.date().isoformat() if hasattr(trained_through_raw, "date") else str(trained_through_raw)
         config_data = {
             "data": asdict(effective_cfg.data),
             "model": {**asdict(effective_cfg.model), "input_size": dm.n_features},
@@ -756,6 +953,7 @@ def train_symbol(
             "selected_target_up_threshold": effective_cfg.data.target_up_threshold,
             "selected_target_down_threshold": effective_cfg.data.target_down_threshold,
             "selected_decision_threshold": effective_cfg.data.decision_threshold,
+            "trained_through_date": trained_through_date,
             "architecture_selected": selected_architecture,
             "selection_mode": selection_mode,
             "artifact_routes": {
@@ -843,10 +1041,22 @@ def train_symbol(
             calibrator.method if calibrator is not None and calibrator.fitted else "none",
             effective_cfg.data.decision_threshold,
         )
+        update_runtime_status(
+            current_phase="train_symbol_completed",
+            current_symbol=symbol,
+            progress_item=symbol,
+            phase_detail=f"run_id={run_id} decision_threshold={effective_cfg.data.decision_threshold:.2f}",
+        )
         return TrainResult(symbol, run_id, "completed", metrics=all_metrics)
 
     except Exception as exc:
         LOGGER.exception("train_symbol failed symbol=%s run_id=%s", symbol, run_id)
+        update_runtime_status(
+            current_phase="train_symbol_failed",
+            current_symbol=symbol,
+            progress_item=symbol,
+            phase_detail=str(exc)[:200],
+        )
         if engine is not None:
             update_training_run(engine, run_id, status="failed", skip_reason=str(exc)[:200], finished_at=datetime.now(timezone.utc))
         return TrainResult(symbol, run_id, "failed", skip_reason=str(exc))

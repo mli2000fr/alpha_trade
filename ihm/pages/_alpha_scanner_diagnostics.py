@@ -44,6 +44,8 @@ __all__ = [
     "_threshold_widget_key",
 ]
 
+ALPHA_SCANNER_PENDING_THRESHOLDS_KEY = "pipeline_alpha_scanner_pending_thresholds"
+
 
 def _alpha_scanner_dependency_block_reason(dependency_diagnostic: dict[str, object] | None) -> str | None:
     if not isinstance(dependency_diagnostic, dict) or not bool(dependency_diagnostic.get("all_red")):
@@ -58,8 +60,18 @@ def _threshold_widget_key(step_key: str, metric_key: str) -> str:
     return f"pipeline_alpha_scanner_threshold_{step_key}_{metric_key}"
 
 
+def _apply_alpha_scanner_dependency_threshold_state_to_session(thresholds: dict[str, dict[str, float]]) -> None:
+    for step_key, metrics in thresholds.items():
+        for metric_key, metric_value in metrics.items():
+            st.session_state[_threshold_widget_key(step_key, metric_key)] = float(metric_value)
+
+
 def _prime_alpha_scanner_dependency_threshold_state() -> dict[str, dict[str, float]]:
     thresholds = get_alpha_scanner_dependency_thresholds()
+    pending_thresholds = st.session_state.pop(ALPHA_SCANNER_PENDING_THRESHOLDS_KEY, None)
+    if isinstance(pending_thresholds, dict) and pending_thresholds:
+        _apply_alpha_scanner_dependency_threshold_state_to_session(pending_thresholds)
+        thresholds = pending_thresholds
     for step_key, metrics in thresholds.items():
         for metric_key, metric_value in metrics.items():
             widget_key = _threshold_widget_key(step_key, metric_key)
@@ -79,9 +91,7 @@ def _collect_alpha_scanner_dependency_threshold_inputs() -> dict[str, dict[str, 
 
 
 def _set_alpha_scanner_dependency_threshold_state(thresholds: dict[str, dict[str, float]]) -> None:
-    for step_key, metrics in thresholds.items():
-        for metric_key, metric_value in metrics.items():
-            st.session_state[_threshold_widget_key(step_key, metric_key)] = float(metric_value)
+    _apply_alpha_scanner_dependency_threshold_state_to_session(thresholds)
 
 
 def _render_alpha_scanner_dependency_threshold_editor() -> None:
@@ -178,7 +188,7 @@ def _render_alpha_scanner_dependency_threshold_editor() -> None:
                     _collect_alpha_scanner_dependency_threshold_inputs(),
                     defaults=ALPHA_SCANNER_DEPENDENCY_THRESHOLDS,
                 )
-                _set_alpha_scanner_dependency_threshold_state(normalized)
+                st.session_state[ALPHA_SCANNER_PENDING_THRESHOLDS_KEY] = normalized
                 get_alpha_scanner_dependency_diagnostic.clear()
                 reset_db_caches()
                 st.session_state[ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY] = "Seuils du diagnostic Alpha Scanner enregistrés."
@@ -186,7 +196,7 @@ def _render_alpha_scanner_dependency_threshold_editor() -> None:
         with action_col2:
             if st.button("↩️ Reset défauts", key="reset_alpha_scanner_dependency_thresholds", use_container_width=True):
                 reset_persisted_alpha_scanner_dependency_thresholds()
-                _set_alpha_scanner_dependency_threshold_state(ALPHA_SCANNER_DEPENDENCY_THRESHOLDS)
+                st.session_state[ALPHA_SCANNER_PENDING_THRESHOLDS_KEY] = ALPHA_SCANNER_DEPENDENCY_THRESHOLDS
                 get_alpha_scanner_dependency_diagnostic.clear()
                 reset_db_caches()
                 st.session_state[ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY] = "Seuils du diagnostic Alpha Scanner réinitialisés aux valeurs par défaut."

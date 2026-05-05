@@ -15,6 +15,7 @@ from typing import cast
 import pandas as pd
 import streamlit as st
 
+from ihm.components.status_badges import heartbeat_badge
 from ihm.components.metrics import format_duration_hhmmss, to_int
 from ihm.components.run_summary import render_run_summary_block
 from ihm.services.pipeline_runner import (
@@ -38,6 +39,7 @@ __all__ = [
     "IMPORT_NEWS_END_DATE_KEY",
     "IMPORT_NEWS_START_DATE_KEY",
     "LOG_FILTER_KEY",
+    "ML_PENDING_SELECTED_SYMBOL_KEY",
     "ML_SELECTED_SYMBOL_KEY",
     "NAVIGATION_TARGET_PAGE_KEY",
     "PENDING_COMPARE_RUNS_KEY",
@@ -48,6 +50,7 @@ __all__ = [
     "SELECTED_RUN_KEY",
     "TAIL_LINES",
     "_is_workflow_run",
+    "_render_watchdog_status",
     "_launch_pipeline_step",
     "_pipeline_step_label",
     "_record_dependency_action_run",
@@ -80,6 +83,7 @@ EXECUTION_DEFAULTS_ACCOUNT_KEY = "pipeline_execution_defaults_applied_account_id
 IMPORT_NEWS_START_DATE_KEY = "pipeline_import_news_start_date"
 IMPORT_NEWS_END_DATE_KEY = "pipeline_import_news_end_date"
 ML_SELECTED_SYMBOL_KEY = "ihm_ml_selected_symbol"
+ML_PENDING_SELECTED_SYMBOL_KEY = "ihm_ml_pending_selected_symbol"
 NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
 EARNINGS_CUSTOM_WINDOW_KEY = "pipeline_data_integrity_earnings_custom_window"
 ALPHA_SCANNER_DEPENDENCY_ACTION_RUNS_KEY = "pipeline_alpha_scanner_dependency_action_runs"
@@ -248,6 +252,38 @@ def _workflow_progress(run: dict[str, object]) -> tuple[int, int, float, str]:
     return completed, total, fraction, label
 
 
+def _build_watchdog_badge(record: dict[str, object] | None) -> str | None:
+    if not isinstance(record, dict):
+        return None
+    heartbeat_interval = record.get("heartbeat_interval_seconds")
+    last_heartbeat_at = record.get("last_heartbeat_at")
+    if heartbeat_interval in {None, 0, 0.0, "", "0", "0.0"} and not last_heartbeat_at:
+        return None
+    return heartbeat_badge(
+        cast(str | None, last_heartbeat_at),
+        cast(float | int | None, heartbeat_interval),
+        service_status=cast(str | None, record.get("status")),
+    )
+
+
+def _render_watchdog_status(record: dict[str, object] | None) -> None:
+    badge = _build_watchdog_badge(record)
+    if badge:
+        st.caption(badge)
+    if not isinstance(record, dict):
+        return
+    message = str(record.get("watchdog_message") or "").strip()
+    state = str(record.get("watchdog_state") or "").strip().lower()
+    if not message:
+        return
+    if state in {"stalled", "timed_out"}:
+        st.error(message)
+    elif state == "watch":
+        st.warning(message)
+    elif state == "alive":
+        st.info(message)
+
+
 def _sanitize_compare_ids(run_ids: list[str], labels: dict[str, str], value: object) -> list[str]:
     candidates = value if isinstance(value, list) else []
     return [rid for rid in candidates if isinstance(rid, str) and rid in labels and rid in run_ids][:2]
@@ -276,6 +312,7 @@ def _render_step_result(record: dict[str, object] | None) -> None:
         f"Début : `{record.get('executed_at', '—')}` | Fin : `{record.get('finished_at') or '—'}` | "
         f"Compte : `{record.get('account_id') or 'global'}`"
     )
+    _render_watchdog_status(record)
     _render_risk_snapshot_freshness_warning(record)
     _render_run_summary(record, compact=True)
 

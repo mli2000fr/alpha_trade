@@ -71,15 +71,19 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE,
     DEFAULT_ML_DECISION_THRESHOLD,
     DEFAULT_ML_DEFAULT_CHAMPION,
+    DEFAULT_ML_DEBUG_TRAIN,
     DEFAULT_ML_FEATURE_SET,
     DEFAULT_ML_FORECAST_HORIZON,
+    DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
     DEFAULT_ML_LGBM_LEARNING_RATE,
     DEFAULT_ML_LGBM_MAX_DEPTH,
     DEFAULT_ML_LGBM_N_ESTIMATORS,
+    DEFAULT_ML_HISTORY_WINDOW,
     DEFAULT_ML_LOG_LEVEL,
     DEFAULT_ML_MAX_ACTION_RATE,
     DEFAULT_ML_MAX_EPOCHS,
+    DEFAULT_ML_MODE,
     DEFAULT_ML_MAX_WORKERS,
     DEFAULT_ML_MIN_ACTION_RATE,
     DEFAULT_ML_MIN_PRECISION_LONG,
@@ -92,6 +96,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_TARGET_MODE,
     DEFAULT_ML_TARGET_UP_THRESHOLD,
     DEFAULT_ML_WALKFORWARD,
+    DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS,
     DEFAULT_ML_WF_MAX_SPLITS,
     DEFAULT_ML_WF_MIN_TRAIN_SIZE,
     DEFAULT_ML_WF_STEP_SIZE,
@@ -144,12 +149,40 @@ from ihm.services.pipeline_runner import (
     DEFAULT_SELECTOR_SECTOR_CAP_RATIO,
     DEFAULT_SELECTOR_SELECTION_SIZE,
     is_gpu_available,
+    RECOMMENDED_ML_DEBUG_TRAIN_HEARTBEAT_INTERVAL_SECONDS,
+    RECOMMENDED_ML_DEBUG_TRAIN_LOG_LEVEL,
+    RECOMMENDED_ML_DEBUG_TRAIN_MAX_EPOCHS,
+    RECOMMENDED_ML_DEBUG_TRAIN_MAX_WORKERS,
+    RECOMMENDED_ML_DEBUG_TRAIN_WALKFORWARD,
+    RECOMMENDED_ML_DEBUG_TRAIN_WATCHDOG_TIMEOUT_SECONDS,
+    RECOMMENDED_ML_DEBUG_RAPIDE_ACCELERATOR,
+    RECOMMENDED_ML_DEBUG_TRAIN_DEBUG_TRAIN,
+    RECOMMENDED_ML_DEBUG_GPU_ACCELERATOR,
+    RECOMMENDED_ML_DEBUG_GPU_DEBUG_TRAIN,
+    RECOMMENDED_ML_DEBUG_GPU_HEARTBEAT_INTERVAL_SECONDS,
+    RECOMMENDED_ML_DEBUG_GPU_LOG_LEVEL,
+    RECOMMENDED_ML_DEBUG_GPU_MAX_EPOCHS,
+    RECOMMENDED_ML_DEBUG_GPU_MAX_WORKERS,
+    RECOMMENDED_ML_DEBUG_GPU_WALKFORWARD,
+    RECOMMENDED_ML_DEBUG_GPU_WATCHDOG_TIMEOUT_SECONDS,
+    RECOMMENDED_ML_PROD_SWING_ACCELERATOR,
+    RECOMMENDED_ML_PROD_SWING_DEBUG_TRAIN,
+    RECOMMENDED_ML_PROD_SWING_HEARTBEAT_INTERVAL_SECONDS,
+    RECOMMENDED_ML_PROD_SWING_LOG_LEVEL,
+    RECOMMENDED_ML_PROD_SWING_MAX_EPOCHS,
+    RECOMMENDED_ML_PROD_SWING_MAX_WORKERS,
+    RECOMMENDED_ML_PROD_SWING_WALKFORWARD,
+    RECOMMENDED_ML_PROD_SWING_WATCHDOG_TIMEOUT_SECONDS,
 )
 from ihm.services.ml_artifacts import list_ml_artifact_symbols  # noqa: F401  # re-export legacy
 
 __all__ = [
     "_apply_execution_prefills",
+    "_apply_selected_ml_train_preset",
     "_apply_selected_capital_preset",
+    "_build_ml_train_preset_summary",
+    "_build_ml_train_preset_session_state_values",
+    "_is_selected_ml_train_preset_dirty",
     "_build_parameter_rerun_guidance_rows",
     "_build_execution_prefill_caption",
     "_build_launch_options",
@@ -166,6 +199,20 @@ CAPITAL_PRESET_APPLIED_SIGNATURE_KEY = "pipeline_capital_preset_applied_signatur
 CAPITAL_PRESET_CUSTOM = "custom"
 DETECTED_CAPITAL_PRESET_KEY = "pipeline_detected_capital_preset"
 DETECTED_CAPITAL_PRESET_ACCOUNT_KEY = "pipeline_detected_capital_preset_account_id"
+ML_TRAIN_PRESET_KEY = "pipeline_ml_train_preset"
+ML_TRAIN_PRESET_APPLIED_SIGNATURE_KEY = "pipeline_ml_train_preset_applied_signature"
+ML_TRAIN_PRESET_CUSTOM = "custom"
+ML_TRAIN_PRESET_PROD_SWING = "prod_swing"
+ML_TRAIN_PRESET_DEBUG_FAST = "debug_fast"
+ML_TRAIN_PRESET_DEBUG_GPU = "debug_gpu"
+ML_TRAIN_PRESET_DEBUG = "debug_train"
+ML_TRAIN_PRESET_VERSION = "v1"
+ML_TRAIN_PRESET_OPTIONS: tuple[str, ...] = (
+    ML_TRAIN_PRESET_CUSTOM,
+    ML_TRAIN_PRESET_PROD_SWING,
+    ML_TRAIN_PRESET_DEBUG_FAST,
+    ML_TRAIN_PRESET_DEBUG_GPU,
+)
 
 PARAMETER_RERUN_GUIDANCE_ROWS: tuple[tuple[str, str, str], ...] = (
     ("risk_*", "11 → 12", "Le sizing et les cibles changent, puis l'exécution consomme ces nouvelles cibles."),
@@ -202,6 +249,116 @@ def _build_parameter_rerun_guidance_rows() -> tuple[dict[str, str], ...]:
         }
         for family, rerun_steps, description in PARAMETER_RERUN_GUIDANCE_ROWS
     )
+
+
+def _normalize_ml_train_preset_key(preset_key: str | None) -> str:
+    normalized = str(preset_key or ML_TRAIN_PRESET_CUSTOM).strip() or ML_TRAIN_PRESET_CUSTOM
+    if normalized == ML_TRAIN_PRESET_DEBUG:
+        return ML_TRAIN_PRESET_DEBUG_FAST
+    if normalized in ML_TRAIN_PRESET_OPTIONS:
+        return normalized
+    return ML_TRAIN_PRESET_CUSTOM
+
+
+def _ensure_normalized_ml_train_preset_session_state(session_state: dict[str, object]) -> str:
+    raw_value = cast(str | None, session_state.get(ML_TRAIN_PRESET_KEY))
+    normalized = _normalize_ml_train_preset_key(raw_value)
+    if raw_value != normalized:
+        session_state[ML_TRAIN_PRESET_KEY] = normalized
+    return normalized
+
+
+def _format_ml_train_preset_label(preset_key: str) -> str:
+    normalized = _normalize_ml_train_preset_key(preset_key)
+    return {
+        ML_TRAIN_PRESET_CUSTOM: "Personnalisé",
+        ML_TRAIN_PRESET_PROD_SWING: "Prod swing",
+        ML_TRAIN_PRESET_DEBUG_FAST: "Debug rapide",
+        ML_TRAIN_PRESET_DEBUG_GPU: "Debug GPU",
+    }.get(normalized, normalized)
+
+
+def _build_ml_train_preset_session_state_values(preset_key: str) -> dict[str, object]:
+    normalized = _normalize_ml_train_preset_key(preset_key)
+    if normalized == ML_TRAIN_PRESET_PROD_SWING:
+        return {
+            "pipeline_ml_accelerator": RECOMMENDED_ML_PROD_SWING_ACCELERATOR,
+            "pipeline_ml_log_level": RECOMMENDED_ML_PROD_SWING_LOG_LEVEL,
+            "pipeline_ml_debug_train": RECOMMENDED_ML_PROD_SWING_DEBUG_TRAIN,
+            "pipeline_ml_max_workers": RECOMMENDED_ML_PROD_SWING_MAX_WORKERS,
+            "pipeline_ml_walkforward": RECOMMENDED_ML_PROD_SWING_WALKFORWARD,
+            "pipeline_ml_max_epochs": RECOMMENDED_ML_PROD_SWING_MAX_EPOCHS,
+            "pipeline_ml_heartbeat_interval_seconds": RECOMMENDED_ML_PROD_SWING_HEARTBEAT_INTERVAL_SECONDS,
+            "pipeline_ml_watchdog_timeout_seconds": RECOMMENDED_ML_PROD_SWING_WATCHDOG_TIMEOUT_SECONDS,
+        }
+    if normalized == ML_TRAIN_PRESET_DEBUG_FAST:
+        return {
+            "pipeline_ml_accelerator": RECOMMENDED_ML_DEBUG_RAPIDE_ACCELERATOR,
+            "pipeline_ml_log_level": RECOMMENDED_ML_DEBUG_TRAIN_LOG_LEVEL,
+            "pipeline_ml_debug_train": RECOMMENDED_ML_DEBUG_TRAIN_DEBUG_TRAIN,
+            "pipeline_ml_max_workers": RECOMMENDED_ML_DEBUG_TRAIN_MAX_WORKERS,
+            "pipeline_ml_walkforward": RECOMMENDED_ML_DEBUG_TRAIN_WALKFORWARD,
+            "pipeline_ml_max_epochs": RECOMMENDED_ML_DEBUG_TRAIN_MAX_EPOCHS,
+            "pipeline_ml_heartbeat_interval_seconds": RECOMMENDED_ML_DEBUG_TRAIN_HEARTBEAT_INTERVAL_SECONDS,
+            "pipeline_ml_watchdog_timeout_seconds": RECOMMENDED_ML_DEBUG_TRAIN_WATCHDOG_TIMEOUT_SECONDS,
+        }
+    if normalized == ML_TRAIN_PRESET_DEBUG_GPU:
+        return {
+            "pipeline_ml_accelerator": RECOMMENDED_ML_DEBUG_GPU_ACCELERATOR,
+            "pipeline_ml_log_level": RECOMMENDED_ML_DEBUG_GPU_LOG_LEVEL,
+            "pipeline_ml_debug_train": RECOMMENDED_ML_DEBUG_GPU_DEBUG_TRAIN,
+            "pipeline_ml_max_workers": RECOMMENDED_ML_DEBUG_GPU_MAX_WORKERS,
+            "pipeline_ml_walkforward": RECOMMENDED_ML_DEBUG_GPU_WALKFORWARD,
+            "pipeline_ml_max_epochs": RECOMMENDED_ML_DEBUG_GPU_MAX_EPOCHS,
+            "pipeline_ml_heartbeat_interval_seconds": RECOMMENDED_ML_DEBUG_GPU_HEARTBEAT_INTERVAL_SECONDS,
+            "pipeline_ml_watchdog_timeout_seconds": RECOMMENDED_ML_DEBUG_GPU_WATCHDOG_TIMEOUT_SECONDS,
+        }
+    return {}
+
+
+def _build_ml_train_preset_summary(preset_key: str) -> str:
+    normalized = _normalize_ml_train_preset_key(preset_key)
+    expected_values = _build_ml_train_preset_session_state_values(normalized)
+    if normalized == ML_TRAIN_PRESET_CUSTOM or not expected_values:
+        return "🎛️ Preset ML manuel : aucun profil automatique n'est appliqué tant que tu restes en `Personnalisé`."
+
+    accelerator = str(expected_values["pipeline_ml_accelerator"])
+    log_level = str(expected_values["pipeline_ml_log_level"])
+    debug_train = "on" if bool(expected_values["pipeline_ml_debug_train"]) else "off"
+    walkforward = "on" if bool(expected_values["pipeline_ml_walkforward"]) else "off"
+    max_workers = int(expected_values["pipeline_ml_max_workers"])
+    max_epochs = int(expected_values["pipeline_ml_max_epochs"])
+    heartbeat_seconds = float(expected_values["pipeline_ml_heartbeat_interval_seconds"])
+    watchdog_seconds = int(expected_values["pipeline_ml_watchdog_timeout_seconds"])
+    return (
+        f"🧭 Preset ML actif : `{_format_ml_train_preset_label(normalized)}` · accélérateur `{accelerator}` · logs `{log_level}` "
+        f"· debug `{debug_train}` · walk-forward `{walkforward}` · workers `{max_workers}` · epochs `{max_epochs}` "
+        f"· heartbeat `{int(heartbeat_seconds)}` s · watchdog `{watchdog_seconds}` s"
+    )
+
+
+def _is_selected_ml_train_preset_dirty(session_state: dict[str, object]) -> bool:
+    selected_key = _normalize_ml_train_preset_key(cast(str | None, session_state.get(ML_TRAIN_PRESET_KEY)))
+    expected_values = _build_ml_train_preset_session_state_values(selected_key)
+    if selected_key == ML_TRAIN_PRESET_CUSTOM or not expected_values:
+        return False
+    return any(session_state.get(session_key) != expected_value for session_key, expected_value in expected_values.items())
+
+
+def _apply_selected_ml_train_preset(*, force: bool = False) -> None:
+    selected_key = _normalize_ml_train_preset_key(cast(str | None, st.session_state.get(ML_TRAIN_PRESET_KEY)))
+    signature = f"{selected_key}|{ML_TRAIN_PRESET_VERSION}"
+    last_signature = str(st.session_state.get(ML_TRAIN_PRESET_APPLIED_SIGNATURE_KEY, "") or "")
+    if not force and signature == last_signature:
+        return
+    if selected_key == ML_TRAIN_PRESET_CUSTOM:
+        st.session_state[ML_TRAIN_PRESET_APPLIED_SIGNATURE_KEY] = signature
+        return
+
+    for session_key, value in _build_ml_train_preset_session_state_values(selected_key).items():
+        st.session_state[session_key] = value
+
+    st.session_state[ML_TRAIN_PRESET_APPLIED_SIGNATURE_KEY] = signature
 
 
 def _apply_selected_capital_preset(
@@ -829,6 +986,47 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         if abs(conviction_total - 1.0) > 0.001:
             st.warning(f"⚠️ Risk : poids score + poids ML = {conviction_total} (≠ 1.0). Le backend pourrait normaliser.")
 
+        st.markdown("#### Paramètres Model Factory")
+        st.caption(
+            "Ces options pilotent directement `python -m modelFactory --mode train`. "
+            "L'objectif est d'aligner l'IHM sur la gouvernance multi-modèles réellement disponible côté backend."
+        )
+        normalized_ml_train_preset = _ensure_normalized_ml_train_preset_session_state(cast(dict[str, object], st.session_state))
+        _apply_selected_ml_train_preset()
+        ml_train_preset = cast(
+            str,
+            st.selectbox(
+                "Preset ML Train",
+                options=list(ML_TRAIN_PRESET_OPTIONS),
+                index=list(ML_TRAIN_PRESET_OPTIONS).index(normalized_ml_train_preset),
+                key=ML_TRAIN_PRESET_KEY,
+                format_func=_format_ml_train_preset_label,
+                help=(
+                    "Préremplit automatiquement un profil ML adapté au contexte : prod swing, debug rapide CPU ou debug GPU. "
+                    "Les champs restent modifiables ensuite."
+                ),
+            ),
+        )
+        ml_train_preset_dirty = _is_selected_ml_train_preset_dirty(cast(dict[str, object], st.session_state))
+        ml_train_preset_status = "🟡 preset modifié manuellement" if ml_train_preset_dirty else "🟢 preset aligné"
+        st.caption(f"{_build_ml_train_preset_summary(ml_train_preset)} — {ml_train_preset_status}.")
+        if ml_train_preset != ML_TRAIN_PRESET_CUSTOM:
+            ml_preset_action_col1, ml_preset_action_col2 = st.columns([1, 3])
+            with ml_preset_action_col1:
+                st.button(
+                    "↩️ Reset vers preset",
+                    key="pipeline_ml_train_reset_to_preset",
+                    use_container_width=True,
+                    help="Réapplique volontairement toutes les valeurs recommandées du preset ML sélectionné.",
+                    on_click=_apply_selected_ml_train_preset,
+                    kwargs={"force": True},
+                )
+            with ml_preset_action_col2:
+                if ml_train_preset_dirty:
+                    st.caption("Des champs ML ont été modifiés depuis l'application initiale du preset ; ce bouton écrasera ces surcharges manuelles.")
+                else:
+                    st.caption("Tu peux réappliquer explicitement ce preset à tout moment si tu veux revenir aux valeurs recommandées.")
+
         ml_col1, ml_col2 = st.columns([2, 3])
         with ml_col1:
             ml_accelerator = cast(
@@ -852,10 +1050,45 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             else:
                 st.info("Aucun GPU CUDA détecté dans l'environnement de l'IHM : le mode `auto` retombera sur CPU.")
 
-        st.markdown("#### Paramètres Model Factory")
+        ml_scope_col1, ml_scope_col2 = st.columns(2)
+        with ml_scope_col1:
+            ml_mode = cast(
+                str,
+                st.selectbox(
+                    "Mode de reconstruction ML",
+                    options=["rebuild-all", "rebuild-missing", "refresh-stale"],
+                    index=["rebuild-all", "rebuild-missing", "refresh-stale"].index(
+                        cast(str, st.session_state.get("pipeline_ml_mode", DEFAULT_ML_MODE))
+                        if st.session_state.get("pipeline_ml_mode", DEFAULT_ML_MODE) in {"rebuild-all", "rebuild-missing", "refresh-stale"}
+                        else DEFAULT_ML_MODE
+                    ),
+                    key="pipeline_ml_mode",
+                    help=(
+                        "`rebuild-all` réentraîne tout. `rebuild-missing` n'entraîne que les symboles sans artefacts. "
+                        "`refresh-stale` réentraîne les modèles manquants, incompatibles avec la config courante ou en retard sur les dernières barres disponibles."
+                    ),
+                ),
+            )
+        with ml_scope_col2:
+            ml_history_window = cast(
+                str,
+                st.selectbox(
+                    "Historique ML utilisé au training",
+                    options=["5", "10", "all"],
+                    index=["5", "10", "all"].index(
+                        cast(str, st.session_state.get("pipeline_ml_history_window", DEFAULT_ML_HISTORY_WINDOW))
+                        if st.session_state.get("pipeline_ml_history_window", DEFAULT_ML_HISTORY_WINDOW) in {"5", "10", "all"}
+                        else DEFAULT_ML_HISTORY_WINDOW
+                    ),
+                    key="pipeline_ml_history_window",
+                    format_func=lambda value: {"5": "5 ans", "10": "10 ans", "all": "Tout l'historique"}.get(str(value), str(value)),
+                    help="Fenêtre de barres daily transmise au backend Model Factory. `10 ans` est le défaut recommandé pour le swing daily.",
+                ),
+            )
+
         st.caption(
-            "Ces options pilotent directement `python -m modelFactory --mode train`. "
-            "L'objectif est d'aligner l'IHM sur la gouvernance multi-modèles réellement disponible côté backend."
+            "Rappel modes ML : `rebuild-all` = tout reconstruire ; `rebuild-missing` = seulement les symboles sans modèle ; "
+            "`refresh-stale` = reconstruire si le modèle est absent, obsolète ou hors contrat de features / fenêtre historique."
         )
 
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
@@ -1181,6 +1414,35 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         ),
                         key="pipeline_ml_log_level",
                     ),
+                )
+                ml_debug_train = st.checkbox(
+                    "ML — mode debug train",
+                    value=bool(st.session_state.get("pipeline_ml_debug_train", DEFAULT_ML_DEBUG_TRAIN)),
+                    key="pipeline_ml_debug_train",
+                    help="Active des logs ML plus détaillés et force un ordonnancement plus déterministe côté orchestrateur.",
+                )
+                ml_heartbeat_interval_seconds = float(
+                    st.number_input(
+                        "ML — heartbeat interval (s)",
+                        min_value=5.0,
+                        max_value=3600.0,
+                        value=float(st.session_state.get("pipeline_ml_heartbeat_interval_seconds", DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS)),
+                        step=5.0,
+                        format="%.0f",
+                        key="pipeline_ml_heartbeat_interval_seconds",
+                        help="Heartbeat structuré consommé par l'IHM pour distinguer un run vivant mais silencieux d'un run figé. Ce n'est pas le timeout.",
+                    )
+                )
+                ml_watchdog_timeout_seconds = int(
+                    st.number_input(
+                        "ML — watchdog timeout (s)",
+                        min_value=0,
+                        max_value=86400,
+                        value=int(st.session_state.get("pipeline_ml_watchdog_timeout_seconds", DEFAULT_ML_WATCHDOG_TIMEOUT_SECONDS)),
+                        step=30,
+                        key="pipeline_ml_watchdog_timeout_seconds",
+                        help="0 = surveillance seule. >0 = timeout si le dernier heartbeat structuré devient trop ancien. Ex. 300 = 5 min depuis le dernier heartbeat frais.",
+                    )
                 )
 
         # ──────────────────────────────────────────────────────────────────
@@ -2179,12 +2441,17 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_wf_step_size=int(ml_wf_step_size),
             ml_wf_max_splits=int(ml_wf_max_splits),
             ml_log_level=str(ml_log_level).upper(),
+            ml_debug_train=bool(ml_debug_train),
+            ml_heartbeat_interval_seconds=float(ml_heartbeat_interval_seconds),
+            ml_watchdog_timeout_seconds=int(ml_watchdog_timeout_seconds),
             ml_min_action_rate=float(ml_min_action_rate),
             ml_max_action_rate=float(ml_max_action_rate),
             ml_min_precision_long=float(ml_min_precision_long),
             ml_sequence_length=int(ml_sequence_length),
             ml_batch_size=int(ml_batch_size),
             ml_hidden_size=int(ml_hidden_size),
+            ml_mode=cast(Any, ml_mode),
+            ml_history_window=cast(Any, ml_history_window),
             ml_artifacts_dir=str(ml_artifacts_dir or DEFAULT_ML_ARTIFACTS_DIR).strip() or DEFAULT_ML_ARTIFACTS_DIR,
             ml_benchmark_symbol=str(ml_benchmark_symbol or DEFAULT_ML_BENCHMARK_SYMBOL).strip().upper() or DEFAULT_ML_BENCHMARK_SYMBOL,
             ml_default_champion=cast(Any, ml_default_champion),
