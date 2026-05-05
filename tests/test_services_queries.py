@@ -97,6 +97,70 @@ def test_services_queries_importable():
     assert hasattr(queries, "__doc__")
 
 
+def test_get_backtesting_pit_history_diagnostic_reports_available_history(monkeypatch):
+    queries.get_backtesting_pit_history_diagnostic.clear()
+
+    def fake_safe_scalar(query, params=None):
+        if "SHOW COLUMNS FROM stock_scores_history" in query:
+            return "capital_preset_key"
+        if "SELECT COUNT(*) FROM stock_scores_history" in query:
+            return 42
+        if "COUNT(DISTINCT snapshot_date)" in query:
+            return 7
+        if "SELECT MIN(snapshot_date)" in query:
+            return "2025-04-21"
+        if "SELECT MAX(snapshot_date)" in query:
+            return "2025-04-29"
+        raise AssertionError(query)
+
+    monkeypatch.setattr(queries, "safe_scalar", fake_safe_scalar)
+    monkeypatch.setattr(queries, "get_last_query_error", lambda: None)
+
+    payload = queries.get_backtesting_pit_history_diagnostic(
+        start="2025-04-21",
+        end="2025-04-29",
+        capital_preset_key="capital_50001_100000",
+    )
+
+    assert payload["status"] == "available"
+    assert payload["capital_preset_filtered"] is True
+    assert payload["rows"] == 42
+    assert payload["snapshot_days"] == 7
+    assert payload["first_snapshot_date"] == "2025-04-21"
+    assert payload["last_snapshot_date"] == "2025-04-29"
+
+
+def test_get_backtesting_pit_history_diagnostic_reports_missing_history(monkeypatch):
+    queries.get_backtesting_pit_history_diagnostic.clear()
+
+    def fake_safe_scalar(query, params=None):
+        if "SHOW COLUMNS FROM stock_scores_history" in query:
+            return "capital_preset_key"
+        if "SELECT COUNT(*) FROM stock_scores_history" in query:
+            return 0
+        if "COUNT(DISTINCT snapshot_date)" in query:
+            return 0
+        if "SELECT MIN(snapshot_date)" in query:
+            return None
+        if "SELECT MAX(snapshot_date)" in query:
+            return None
+        raise AssertionError(query)
+
+    monkeypatch.setattr(queries, "safe_scalar", fake_safe_scalar)
+    monkeypatch.setattr(queries, "get_last_query_error", lambda: None)
+
+    payload = queries.get_backtesting_pit_history_diagnostic(
+        start="2025-04-21",
+        end="2026-04-20",
+        capital_preset_key="capital_50001_100000",
+    )
+
+    assert payload["status"] == "missing"
+    assert payload["rows"] == 0
+    assert payload["snapshot_days"] == 0
+    assert payload["capital_preset_key"] == "capital_50001_100000"
+
+
 def test_get_predictions_can_filter_by_symbol(monkeypatch):
     captured = {}
 

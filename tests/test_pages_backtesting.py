@@ -45,6 +45,45 @@ def test_run_configuration_preset_pipeline_live_like_exposes_expected_phase_chai
     assert updates["bt_run_phase7_mode"] == "exit_lifecycle_replay"
 
 
+def test_build_pipeline_pit_status_message_warns_when_history_is_missing() -> None:
+    level, message = backtesting._build_pipeline_pit_status_message(
+        {
+            "status": "missing",
+            "start": "2025-04-21",
+            "end": "2026-04-20",
+            "capital_preset_key": "capital_50001_100000",
+            "capital_preset_filtered": True,
+            "rows": 0,
+            "snapshot_days": 0,
+        }
+    )
+
+    assert level == "error"
+    assert "stock_scores_history" in message
+    assert "Backfill scores history" in message
+    assert "capital_50001_100000" in message
+
+
+def test_build_pipeline_pit_status_message_confirms_when_history_is_available() -> None:
+    level, message = backtesting._build_pipeline_pit_status_message(
+        {
+            "status": "available",
+            "start": "2025-04-21",
+            "end": "2025-04-29",
+            "capital_preset_key": "capital_50001_100000",
+            "capital_preset_filtered": True,
+            "rows": 42,
+            "snapshot_days": 7,
+            "first_snapshot_date": "2025-04-21",
+            "last_snapshot_date": "2025-04-29",
+        }
+    )
+
+    assert level == "success"
+    assert "42 ligne(s)" in message
+    assert "7 séance(s)" in message
+
+
 def test_parameter_reference_rows_include_backfill_capital_preset_options() -> None:
     backfill_rows = backtesting._parameter_reference_rows("backfill")
 

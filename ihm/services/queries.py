@@ -340,6 +340,95 @@ def resolve_latest_candidate_snapshot_date(trade_date: str | date | None) -> dat
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def get_backtesting_pit_history_diagnostic(
+    *,
+    start: str | date | None,
+    end: str | date | None,
+    capital_preset_key: str | None,
+) -> dict[str, object]:
+    """Diagnostique la disponibilité PIT de `stock_scores_history` pour un run backtesting.
+
+    Le mode `pipeline` du backtesting exige au moins un snapshot historisé sur la
+    plage demandée, filtré par `capital_preset_key` lorsque la colonne est
+    présente. Cette fonction permet à l'IHM d'avertir l'opérateur avant de
+    lancer réellement le subprocess.
+    """
+    start_date = _coerce_date(start)
+    end_date = _coerce_date(end)
+    if start_date is None or end_date is None or start_date > end_date:
+        return {
+            "status": "invalid_input",
+            "reason": "dates invalides ou incohérentes pour le diagnostic PIT",
+            "start": start_date.isoformat() if start_date else None,
+            "end": end_date.isoformat() if end_date else None,
+            "capital_preset_key": capital_preset_key,
+            "rows": 0,
+            "snapshot_days": 0,
+            "first_snapshot_date": None,
+            "last_snapshot_date": None,
+            "query_error": None,
+        }
+
+    preset_column_query = "SHOW COLUMNS FROM stock_scores_history LIKE 'capital_preset_key'"
+    preset_column_present_raw, preset_column_error = _safe_scalar_with_error(preset_column_query)
+    has_capital_preset_key = bool(preset_column_present_raw) and preset_column_error is None
+
+    filters = ["snapshot_date BETWEEN :start AND :end", "is_candidate = 1"]
+    params: dict[str, object] = {"start": start_date.isoformat(), "end": end_date.isoformat()}
+    if has_capital_preset_key and capital_preset_key:
+        filters.append("capital_preset_key = :capital_preset_key")
+        params["capital_preset_key"] = capital_preset_key
+
+    where_clause = " AND ".join(filters)
+    rows_raw, rows_error = _safe_scalar_with_error(
+        f"SELECT COUNT(*) FROM stock_scores_history WHERE {where_clause}",
+        params,
+    )
+    snapshot_days_raw, snapshot_days_error = _safe_scalar_with_error(
+        f"SELECT COUNT(DISTINCT snapshot_date) FROM stock_scores_history WHERE {where_clause}",
+        params,
+    )
+    first_snapshot_raw, first_snapshot_error = _safe_scalar_with_error(
+        f"SELECT MIN(snapshot_date) FROM stock_scores_history WHERE {where_clause}",
+        params,
+    )
+    last_snapshot_raw, last_snapshot_error = _safe_scalar_with_error(
+        f"SELECT MAX(snapshot_date) FROM stock_scores_history WHERE {where_clause}",
+        params,
+    )
+
+    query_error = preset_column_error or rows_error or snapshot_days_error or first_snapshot_error or last_snapshot_error
+    rows = _coerce_int(rows_raw)
+    snapshot_days = _coerce_int(snapshot_days_raw)
+    first_snapshot_date = _coerce_date(first_snapshot_raw)
+    last_snapshot_date = _coerce_date(last_snapshot_raw)
+
+    status = "available" if query_error is None and rows > 0 else "missing"
+    reason = (
+        "snapshots PIT disponibles"
+        if status == "available"
+        else "aucun snapshot PIT candidat détecté sur la plage demandée"
+    )
+    if query_error:
+        status = "unavailable"
+        reason = query_error
+
+    return {
+        "status": status,
+        "reason": reason,
+        "start": start_date.isoformat(),
+        "end": end_date.isoformat(),
+        "capital_preset_key": capital_preset_key,
+        "capital_preset_filtered": bool(has_capital_preset_key and capital_preset_key),
+        "rows": rows,
+        "snapshot_days": snapshot_days,
+        "first_snapshot_date": first_snapshot_date.isoformat() if first_snapshot_date else None,
+        "last_snapshot_date": last_snapshot_date.isoformat() if last_snapshot_date else None,
+        "query_error": query_error,
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def get_stock_bars_daily_symbol_count() -> int:
     v = safe_scalar(
         "SELECT COUNT(DISTINCT symbol) FROM stock_bars_daily WHERE COALESCE(TRIM(symbol), '') <> ''"

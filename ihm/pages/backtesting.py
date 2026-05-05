@@ -38,6 +38,7 @@ from ihm.services.backtesting_runner import (
     format_command_for_display,
 )
 from ihm.services.db import get_db_status, get_runtime_db_config
+from ihm.services.queries import get_backtesting_pit_history_diagnostic
 from ihm.services.screener_artifact_history import (
     build_global_screener_artifact_history,
     build_screener_artifact_history_rows,
@@ -375,6 +376,81 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
 def _render_reference_table(kind: str) -> None:
     with st.expander("📘 Référence complète des paramètres", expanded=False):
         st.dataframe(pd.DataFrame(_parameter_reference_rows(kind)), use_container_width=True, hide_index=True)
+
+
+def _build_pipeline_pit_status_message(diagnostic: dict[str, object]) -> tuple[str, str]:
+    status = str(diagnostic.get("status", "unknown") or "unknown")
+    preset_key = str(diagnostic.get("capital_preset_key", "") or "auto")
+    start = str(diagnostic.get("start", "?") or "?")
+    end = str(diagnostic.get("end", "?") or "?")
+    rows = _to_int(diagnostic.get("rows"))
+    snapshot_days = _to_int(diagnostic.get("snapshot_days"))
+    first_snapshot = str(diagnostic.get("first_snapshot_date", "") or "—")
+    last_snapshot = str(diagnostic.get("last_snapshot_date", "") or "—")
+    filtered_on_preset = bool(diagnostic.get("capital_preset_filtered", False))
+
+    if status == "available":
+        return (
+            "success",
+            "Couverture PIT détectée pour `stock_scores_history` sur [{start} → {end}]"
+            " avec preset `{preset}`{preset_note} : {rows} ligne(s), {days} séance(s), première={first}, dernière={last}.".format(
+                start=start,
+                end=end,
+                preset=preset_key,
+                preset_note=" (filtrage actif)" if filtered_on_preset else "",
+                rows=rows,
+                days=snapshot_days,
+                first=first_snapshot,
+                last=last_snapshot,
+            ),
+        )
+    if status == "missing":
+        return (
+            "error",
+            "Aucun snapshot PIT candidat n'a été détecté dans `stock_scores_history` sur [{start} → {end}]"
+            " pour le preset effectif `{preset}`{preset_note}. En mode `pipeline`, ce run échouera. "
+            "Action recommandée : lancer l'onglet `Backfill scores history` avec la même plage et le même preset, "
+            "ou repasser le backtest en mode `research`.".format(
+                start=start,
+                end=end,
+                preset=preset_key,
+                preset_note=" (filtrage actif)" if filtered_on_preset else "",
+            ),
+        )
+    if status == "invalid_input":
+        return (
+            "warning",
+            "Diagnostic PIT non exécutable tant que les dates de début/fin ne sont pas valides.",
+        )
+    return (
+        "warning",
+        "Diagnostic PIT indisponible : {}".format(str(diagnostic.get("reason", "erreur inconnue"))),
+    )
+
+
+def _render_pipeline_pit_hint(
+    *,
+    engine_mode: str,
+    start: str,
+    end: str | None,
+    selected_run_preset_key: str,
+    auto_run_preset_key: str,
+) -> None:
+    if engine_mode != "pipeline":
+        return
+    effective_preset_key = auto_run_preset_key if selected_run_preset_key == CAPITAL_PRESET_CUSTOM else selected_run_preset_key
+    diagnostic = get_backtesting_pit_history_diagnostic(
+        start=start,
+        end=end,
+        capital_preset_key=effective_preset_key,
+    )
+    level, message = _build_pipeline_pit_status_message(diagnostic)
+    if level == "success":
+        st.success(message)
+    elif level == "error":
+        st.error(message)
+    else:
+        st.warning(message)
 
 
 def _build_overlay_options() -> dict[str, Any]:
@@ -1001,6 +1077,14 @@ def _build_run_options() -> BacktestRunOptions:
             key="bt_run_walk_forward_artifacts_dir",
             help="Si renseigné, le backtest standard cherchera explicitement les meilleurs poids walk-forward dans ce répertoire.",
         )
+
+    _render_pipeline_pit_hint(
+        engine_mode=engine_mode,
+        start=start.strip(),
+        end=end.strip() or None,
+        selected_run_preset_key=selected_run_preset_key,
+        auto_run_preset_key=auto_run_preset_key,
+    )
 
     options = BacktestRunOptions(
         start=start.strip(),
