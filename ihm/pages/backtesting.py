@@ -53,6 +53,42 @@ BT_RUN_CAPITAL_PRESET_KEY = "bt_run_capital_preset"
 BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY = "bt_run_capital_preset_signature"
 BT_BACKFILL_CAPITAL_PRESET_KEY = "bt_backfill_capital_preset"
 BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature"
+BT_RUN_CONFIGURATION_PRESET_KEY = "bt_run_configuration_preset"
+
+RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
+    "standard_research": {
+        "label": "Backtest standard (research)",
+        "description": (
+            "Réinitialise les options de fidélité opt-in sur le comportement standard : "
+            "`research`, stratégie ML PIT `auto`, phases 2/3/4/5/7 désactivées."
+        ),
+        "state_updates": {
+            "bt_run_engine_mode": "research",
+            "bt_run_ml_pit_strategy": "auto",
+            "bt_run_phase2_mode": "off",
+            "bt_run_phase3_mode": "off",
+            "bt_run_phase4_mode": "off",
+            "bt_run_phase5_mode": "off",
+            "bt_run_phase7_mode": "off",
+        },
+    },
+    "pipeline_live_like": {
+        "label": "Replay le plus proche du pipeline live aujourd'hui",
+        "description": (
+            "Préremplit `--engine-mode pipeline`, `--ml-pit-strategy use-persisted` et la chaîne "
+            "Phase 2 → 3 → 4 → 5 → 7 pour rejouer au plus près le pipeline live aujourd'hui."
+        ),
+        "state_updates": {
+            "bt_run_engine_mode": "pipeline",
+            "bt_run_ml_pit_strategy": "use-persisted",
+            "bt_run_phase2_mode": "risk_execution",
+            "bt_run_phase3_mode": "execution_replay",
+            "bt_run_phase4_mode": "protection_replay",
+            "bt_run_phase5_mode": "watcher_replay",
+            "bt_run_phase7_mode": "exit_lifecycle_replay",
+        },
+    },
+}
 
 
 def _to_float(value: object, default: float = 0.0) -> float:
@@ -93,6 +129,37 @@ def _get_capital_preset_options() -> list[str]:
     if DEFAULT_CAPITAL_PRESET_KEY in base_options:
         return [CAPITAL_PRESET_CUSTOM, *base_options]
     return [CAPITAL_PRESET_CUSTOM, DEFAULT_CAPITAL_PRESET_KEY, *base_options]
+
+
+def _get_run_configuration_preset(preset_key: str) -> dict[str, object] | None:
+    preset = RUN_CONFIGURATION_PRESETS.get(preset_key)
+    return cast(dict[str, object] | None, preset)
+
+
+def _ensure_run_configuration_preset_session_key() -> str:
+    options = list(RUN_CONFIGURATION_PRESETS)
+    current = str(st.session_state.get(BT_RUN_CONFIGURATION_PRESET_KEY, "standard_research") or "standard_research")
+    if current not in options:
+        current = "standard_research"
+        st.session_state[BT_RUN_CONFIGURATION_PRESET_KEY] = current
+    return current
+
+
+def _format_run_configuration_preset_label(preset_key: str) -> str:
+    preset = _get_run_configuration_preset(preset_key)
+    if preset is None:
+        return preset_key
+    return str(preset.get("label", preset_key))
+
+
+def _apply_run_configuration_preset(selected_preset_key: str) -> dict[str, object] | None:
+    preset = _get_run_configuration_preset(selected_preset_key)
+    if preset is None:
+        return None
+    updates = cast(dict[str, object], preset.get("state_updates", {}))
+    for session_key, session_value in updates.items():
+        st.session_state[session_key] = session_value
+    return preset
 
 
 def _format_capital_preset_label(preset_key: str) -> str:
@@ -570,6 +637,34 @@ def _build_run_options() -> BacktestRunOptions:
         "Le backtest exécute `python -m backtesting run ...` en arrière-plan. "
         "Tous les paramètres CLI sont exposés ci-dessous et les logs sont visibles plus bas dans la page."
     )
+    _ensure_run_configuration_preset_session_key()
+    preset_col1, preset_col2 = st.columns([1.5, 3.5])
+    with preset_col1:
+        selected_run_configuration_preset = cast(
+            str,
+            st.selectbox(
+                "Preset de configuration",
+                options=list(RUN_CONFIGURATION_PRESETS),
+                format_func=_format_run_configuration_preset_label,
+                key=BT_RUN_CONFIGURATION_PRESET_KEY,
+                help=(
+                    "Raccourci IHM pour préremplir rapidement les flags `run`. "
+                    "Le preset n'exécute rien tant que vous ne lancez pas explicitement le backtest."
+                ),
+            ),
+        )
+    with preset_col2:
+        selected_preset = _get_run_configuration_preset(selected_run_configuration_preset)
+        if selected_preset is not None:
+            st.caption(str(selected_preset.get("description", "")))
+        if st.button("Préremplir les options du backtest", key="bt_apply_run_configuration_preset", use_container_width=True):
+            _apply_run_configuration_preset(selected_run_configuration_preset)
+    if selected_run_configuration_preset == "pipeline_live_like":
+        st.info(
+            "Ce preset correspond à la commande `python -m backtesting run ...` la plus proche du pipeline live aujourd'hui. "
+            "Il ne fait pas partie de `backfill-scores-history`. Pour qu'il fonctionne en mode `pipeline`, "
+            "il faut déjà disposer d'un historique PIT valide dans `stock_scores_history` — à reconstruire via l'onglet `Backfill scores history` si nécessaire."
+        )
     _render_reference_table("run")
 
     col1, col2, col3 = st.columns(3)

@@ -190,6 +190,36 @@ def test_build_backtesting_run_command_includes_phase7_flags():
 	assert command[command.index("--phase7-mode") + 1] == "exit_lifecycle_replay"
 
 
+def test_build_backtesting_run_command_matches_pipeline_live_like_replay_preset():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			end="2025-03-31",
+			engine_mode="pipeline",
+			ml_pit_strategy="use-persisted",
+			phase2_mode="risk_execution",
+			phase3_mode="execution_replay",
+			phase4_mode="protection_replay",
+			phase5_mode="watcher_replay",
+			phase7_mode="exit_lifecycle_replay",
+		),
+	)
+
+	assert command[:5] == [command[0], "-u", "-m", "backtesting", "run"]
+	assert "--start" in command and command[command.index("--start") + 1] == "2025-01-01"
+	assert "--end" in command and command[command.index("--end") + 1] == "2025-03-31"
+	assert "--engine-mode" in command and command[command.index("--engine-mode") + 1] == "pipeline"
+	assert "--ml-pit-strategy" in command and command[command.index("--ml-pit-strategy") + 1] == "use-persisted"
+	assert "--phase2-mode" in command and command[command.index("--phase2-mode") + 1] == "risk_execution"
+	assert "--phase3-mode" in command and command[command.index("--phase3-mode") + 1] == "execution_replay"
+	assert "--phase4-mode" in command and command[command.index("--phase4-mode") + 1] == "protection_replay"
+	assert "--phase5-mode" in command and command[command.index("--phase5-mode") + 1] == "watcher_replay"
+	assert "--phase7-mode" in command and command[command.index("--phase7-mode") + 1] == "exit_lifecycle_replay"
+
+
 def test_build_backtesting_diagnose_screener_command_includes_grid_parameters():
 	from ihm.services.backtesting_runner import DiagnoseScreenerOptions, build_backtesting_command
 

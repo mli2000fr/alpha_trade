@@ -1,6 +1,6 @@
 # Alpha Trade — Documentation Fonctionnelle
 
-> *Version : 0.3.0 — Dernière mise à jour : avril 2026*
+> *Version : 0.3.0 — Dernière mise à jour : mai 2026*
 
 ---
 
@@ -178,9 +178,37 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 - **Table `portfolio_targets`** : portefeuille cible issu du risk management
 - **Tables `broker_account_snapshots` / `broker_positions_snapshots`** : photos du compte et des positions broker après chaque run
 - **TCA (Transaction Cost Analysis)** : slippage moyen, max, implementation shortfall agrégé
-- **Rapport de backtest** : exporte aussi des diagnostics métier sur les contraintes de compte (`day trades exécutés`, `sorties same-day bloquées`, `entrées bloquées faute de cash settled`)
+- **Rapport de backtest** : exporte un `report.json` structuré avec résumé de performance, paramètres effectifs, diagnostics simulateur, métadonnées de reproductibilité (`git`, `python`, `dataset_hash`, `seed`) et manifeste de fidélité PIT
 
 La page `Exécution` de l'IHM privilégie désormais la lecture de ces tables canoniques **scopée par `exec_run_id`**, avec le contexte plus large du compte relégué dans des zones secondaires explicites.
+
+### 2.7 bis Backtesting, recherche et audit de fidélité
+
+Le module `backtesting/` n'est plus un simple replay de signaux. Fonctionnellement, il offre désormais :
+
+- un mode **`research`** pour itérer rapidement sur des hypothèses ;
+- un mode **`pipeline`** plus strict, centré sur la fidélité point-in-time ;
+- une convention d'exécution réaliste **signal J → entrée open J+1** ;
+- la simulation explicite des contraintes **`margin / cash / PDT / swing_only`** ;
+- des **phases opt-in** de rapprochement avec le live :
+  - **Phase 2** : bridge `risk_management` puis `execution_engine`,
+  - **Phase 3** : replay explicite des entrées exécutées,
+  - **Phase 4** : replay des protections,
+  - **Phase 5** : replay du watcher de protection,
+  - **Phase 7** : replay de l'exit terminal et de l'annulation OCO logique ;
+- des **presets capital** PIT et des **profils** de backtest pour garder la cohérence entre backfill, reruns et IHM ;
+- des surcouches **microstructure** et **risk overlay** activables pour la recherche (slippage volume-aware, stop initial, filtre de gap, sizing conviction-weighted, cap sectoriel, drawdown breaker, etc.) ;
+- un outillage complet de **diagnostic screener** avec recommandations globales, par régime et par objectif ;
+- des commandes de **calibration des poids sentiment** et de **walk-forward** pour rejouer des poids hors échantillon.
+
+Dans l'IHM Streamlit, la page `Backtesting` permet aujourd'hui de lancer et superviser :
+
+- `run`,
+- `backfill-scores-history`,
+- `diagnose-screener`,
+- `recommend-screener`,
+
+avec historique des runs, lecture des logs et visualisation des KPIs du `report.json`.
 
 ### 2.8 Logs métier
 
@@ -331,6 +359,14 @@ Le compromis fonctionnel est donc :
      └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+En parallèle de ce pipeline live, le projet dispose d'une **boucle de recherche/backtesting hors production** permettant de :
+
+- reconstruire les snapshots PIT manquants ;
+- rejouer le portefeuille sur historique ;
+- mesurer la robustesse du screener ;
+- comparer plusieurs réglages par régime ou objectif ;
+- documenter l'écart entre backtest et chaîne live.
+
 ### 3.2 Cycle d'un trade
 
 1. **Sélection** : le symbole est identifié comme candidat (`is_candidate=1` dans `stock_scores`)
@@ -451,7 +487,7 @@ Concernant l'exécution réelle/paper :
 
 1. **Alertes externes** : intégrer Slack/email/SMS pour circuit breaker, slippage, et fin de run
 2. ~~**Dashboard temps réel**~~ → ✅ **Implémenté** : IHM Streamlit opérateur (`ihm/app.py`)
-3. ~~**Backtesting intégré**~~ → ✅ **Implémenté** : module `backtesting/` basé sur vectorbt — replay signaux conviction + bracket TP/TS, métriques Sharpe/Sortino/CAGR/drawdown, equity curve PNG
+3. ~~**Backtesting intégré**~~ → ✅ **Implémenté** : module `backtesting/` research/pipeline avec replay PIT, contraintes compte (`cash` / `margin` / `PDT` / `swing_only`), phases de fidélité 2/3/4/5/7, diagnostics screener et reporting structuré (`report.json`, `fidelity_manifest.json`)
 4. **Support short selling** : étendre la stratégie aux positions short
 5. **Streaming WebSocket** : remplacer le polling des fills par un stream Alpaca pour réduire la latence
 6. **Scheduler automatisé** : cron/Airflow/Prefect pour automatiser l'exécution quotidienne du pipeline

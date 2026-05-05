@@ -30,6 +30,21 @@ def test_parameter_reference_rows_include_walk_forward_run_options() -> None:
     assert any(row["Paramètre"] == "phase7_mode" for row in run_rows)
 
 
+def test_run_configuration_preset_pipeline_live_like_exposes_expected_phase_chain() -> None:
+    preset = backtesting._get_run_configuration_preset("pipeline_live_like")
+
+    assert preset is not None
+    assert preset["label"] == "Replay le plus proche du pipeline live aujourd'hui"
+    updates = preset["state_updates"]
+    assert updates["bt_run_engine_mode"] == "pipeline"
+    assert updates["bt_run_ml_pit_strategy"] == "use-persisted"
+    assert updates["bt_run_phase2_mode"] == "risk_execution"
+    assert updates["bt_run_phase3_mode"] == "execution_replay"
+    assert updates["bt_run_phase4_mode"] == "protection_replay"
+    assert updates["bt_run_phase5_mode"] == "watcher_replay"
+    assert updates["bt_run_phase7_mode"] == "exit_lifecycle_replay"
+
+
 def test_parameter_reference_rows_include_backfill_capital_preset_options() -> None:
     backfill_rows = backtesting._parameter_reference_rows("backfill")
 
