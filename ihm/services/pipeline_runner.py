@@ -640,6 +640,18 @@ def _normalize_symbol_list(value: str | None) -> str | None:
     return ",".join(normalized) if normalized else None
 
 
+def _build_powershell_file_command(script_path: Path, arguments: list[str] | None = None) -> list[str]:
+    return [
+        "powershell.exe" if os.name == "nt" else "pwsh",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script_path),
+        *(arguments or []),
+    ]
+
+
 def is_gpu_available() -> bool:
     try:
         import torch
@@ -881,6 +893,22 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if news_import_end_date:
             command.extend(["--end-date", news_import_end_date])
         return command
+
+    if step_key == "import_news_pending_loop":
+        if news_import_start_date is None:
+            raise ValueError("La date de début est obligatoire pour l'import + scoring auto des news.")
+        script_path = PROJECT_ROOT / "scripts" / "windows" / "import_news_and_score_pending.ps1"
+        command_args = [
+            "-ProjectRoot",
+            str(PROJECT_ROOT),
+            "-PythonExe",
+            sys.executable,
+            "-StartDate",
+            news_import_start_date,
+        ]
+        if news_import_end_date:
+            command_args.extend(["-EndDate", news_import_end_date])
+        return _build_powershell_file_command(script_path, command_args)
 
     if step_key == "signal_aggregator":
         command = [

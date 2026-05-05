@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
-from typing import Iterable
+from typing import Iterable, Optional
 
 import pytest
 
@@ -69,7 +69,18 @@ _PARSER_RESOLVERS: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 
-def _resolve_parser(module_name: str, candidates: Iterable[str]) -> argparse.ArgumentParser | None:
+def _resolve_step_parser_target(step_key: str, command: list[str]) -> tuple[str, tuple[str, ...]]:
+    if step_key == "import_alpaca_bar" and len(command) >= 4 and command[2] == "-m":
+        module_name = command[3]
+        if module_name == "dataIntegrityEngine.import_eodhd_bar":
+            return (
+                "dataIntegrityEngine.import_eodhd_bar",
+                ("_build_arg_parser", "build_arg_parser", "_build_parser", "build_parser"),
+            )
+    return _PARSER_RESOLVERS[step_key]
+
+
+def _resolve_parser(module_name: str, candidates: Iterable[str]) -> Optional[argparse.ArgumentParser]:
     try:
         module = importlib.import_module(module_name)
     except Exception:
@@ -108,7 +119,7 @@ def test_ihm_cli_contract_flags_are_known_by_target_argparse(step) -> None:
         f"build_pipeline_command({step.key}) doit invoquer `python -u ...`; got {command[:4]}"
     )
 
-    module_name, candidates = _PARSER_RESOLVERS[step.key]
+    module_name, candidates = _resolve_step_parser_target(step.key, command)
     parser = _resolve_parser(module_name, candidates)
     if parser is None:
         pytest.skip(f"{module_name} : aucun build_parser exposé (parser introspection indisponible)")

@@ -676,6 +676,29 @@ def test_build_pipeline_command_import_news() -> None:
     assert command[-4:] == ["--start-date", "2026-04-01", "--end-date", "2026-04-15"]
 
 
+def test_build_pipeline_command_import_news_pending_loop() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+    )
+
+    command = build_pipeline_command("import_news_pending_loop", options)
+
+    assert command[:5] == [
+        "powershell.exe" if sys.platform.startswith("win") else "pwsh",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+    ]
+    assert command[5] == str(PROJECT_ROOT / "scripts" / "windows" / "import_news_and_score_pending.ps1")
+    assert "-ProjectRoot" in command
+    assert command[command.index("-ProjectRoot") + 1] == str(PROJECT_ROOT)
+    assert "-PythonExe" in command
+    assert command[command.index("-PythonExe") + 1] == sys.executable
+    assert command[-4:] == ["-StartDate", "2026-04-01", "-EndDate", "2026-04-15"]
+
+
 def test_run_pipeline_step_streams_logs_via_callback(monkeypatch) -> None:
     command = [
         sys.executable,
