@@ -47,7 +47,7 @@ from ihm.services.pipeline_runner import (
 from ihm.services.run_summary import aggregate_workflow_run_summary
 from database.run_business_summaries import persist_pipeline_run_record_summary
 
-RunStatus = Literal["starting", "running", "completed", "failed", "timeout", "stopped"]
+RunStatus = Literal["scheduled", "starting", "running", "completed", "failed", "timeout", "stopped"]
 TAIL_MAX_LINES = 400
 RUNS_DIR = PROJECT_ROOT / "artifacts" / "ihm_pipeline_runs"
 HISTORY_INDEX_PATH = RUNS_DIR / "history_index.json"
@@ -59,8 +59,8 @@ ML_TRAIN_ORCHESTRATOR_RE = re.compile(r"run_training_batch finished completed=(\
 ML_PREDICT_SUMMARY_RE = re.compile(r"Model Factory — Predictions:\s*(\d+)\s+rows")
 RECOVERABLE_RUN_ID_RE = re.compile(r"^\d{8}_\d{6}_[0-9a-f]{8}$")
 WORKFLOW_TOTAL_STEPS_RE = re.compile(r"workflow complet(?: [^()]*)? \((\d+) étapes exécutées,")
-WORKFLOW_STEP_START_RE = re.compile(r"=== \[(\d+)/(\d+)\] Démarrage (.+?) ===")
-WORKFLOW_STEP_DONE_RE = re.compile(r"=== \[(\d+)/(\d+)\] Terminé (.+?) \(run `([^`]+)`\) ===")
+WORKFLOW_STEP_START_RE = re.compile(r"=== \[(\d+)/(\d+)] Démarrage (.+?) ===")
+WORKFLOW_STEP_DONE_RE = re.compile(r"=== \[(\d+)/(\d+)] Terminé (.+?) \(run `([^`]+)`\) ===")
 WORKFLOW_INTERRUPTED_RE = re.compile(r"Workflow interrompu sur (.+?) — statut `([^`]+)` \(run `([^`]+)`\)\.")
 
 
@@ -76,6 +76,8 @@ class PipelineRunRecord:
     account_id: str | None
     status: RunStatus
     executed_at: str
+    scheduled_for: str | None = None
+    actual_started_at: str | None = None
     finished_at: str | None = None
     returncode: int | None = None
     duration_seconds: float = 0.0
@@ -129,7 +131,7 @@ class _ManagedRun:
 class _ManagedWorkflow:
     record: PipelineRunRecord
     thread: threading.Thread
-    started_perf: float
+    started_perf: float | None
     stop_event: threading.Event
     lock: threading.Lock = field(default_factory=threading.Lock)
     stdout_tail: list[str] = field(default_factory=list)
@@ -422,14 +424,15 @@ def _recover_workflow_run_from_directory(run_dir: Path) -> tuple[dict[str, objec
         if interrupted_match is not None:
             current_step_label = interrupted_match.group(1)
             interrupted_status = interrupted_match.group(2)
-            current_child_run_id = interrupted_match.group(3)
-            if current_child_run_id not in child_run_ids:
-                child_run_ids.append(current_child_run_id)
-            child_hints[current_child_run_id] = {
-                "parent_run_id": run_id,
-                "step_label": interrupted_match.group(1),
-                "status": interrupted_status,
-            }
+            interrupted_child_run_id = interrupted_match.group(3)
+            current_child_run_id = interrupted_child_run_id
+            if interrupted_child_run_id not in child_run_ids:
+                child_run_ids.append(interrupted_child_run_id)
+            child_hints[interrupted_child_run_id] = {
+                    "parent_run_id": run_id,
+                    "step_label": interrupted_match.group(1),
+                    "status": interrupted_status,
+                }
 
     status: str = "stopped"
     if "Workflow complet terminé avec succès." in combined_text:
@@ -450,7 +453,8 @@ def _recover_workflow_run_from_directory(run_dir: Path) -> tuple[dict[str, objec
         "account_id": None,
         "status": status,
         "executed_at": _parse_run_id_datetime(run_id, run_dir),
-        "finished_at": None if status in {"starting", "running"} else _infer_finished_at(run_dir),
+        "actual_started_at": None if status == "scheduled" else _parse_run_id_datetime(run_id, run_dir),
+        "finished_at": None if status in {"scheduled", "starting", "running"} else _infer_finished_at(run_dir),
         "returncode": None,
         "duration_seconds": 0.0,
         "stdout_path": str(stdout_path),
@@ -465,8 +469,8 @@ def _recover_workflow_run_from_directory(run_dir: Path) -> tuple[dict[str, objec
         "workflow_total_steps": workflow_total_steps,
         "workflow_completed_steps": workflow_completed_steps,
         "workflow_current_step_key": None,
-        "workflow_current_step_label": current_step_label if status in {"starting", "running", "failed", "timeout", "stopped"} else None,
-        "workflow_current_child_run_id": current_child_run_id if status in {"starting", "running", "failed", "timeout", "stopped"} else None,
+        "workflow_current_step_label": current_step_label if status in {"scheduled", "starting", "running", "failed", "timeout", "stopped"} else None,
+        "workflow_current_child_run_id": current_child_run_id if status in {"scheduled", "starting", "running", "failed", "timeout", "stopped"} else None,
         "workflow_child_run_ids": child_run_ids,
         "run_summary": {},
     }
@@ -503,6 +507,7 @@ def _recover_step_run_from_directory(
         "account_id": None,
         "status": inferred_status,
         "executed_at": _parse_run_id_datetime(run_id, run_dir),
+        "actual_started_at": _parse_run_id_datetime(run_id, run_dir),
         "finished_at": None if inferred_status in {"starting", "running"} else _infer_finished_at(run_dir),
         "returncode": None,
         "duration_seconds": 0.0,
@@ -557,6 +562,33 @@ def _recover_history_index_entries(existing_index: dict[str, dict[str, object]])
             known_run_ids.add(run_id)
 
     return recovered
+
+
+def _normalize_inactive_scheduled_workflow_record(
+    record: dict[str, object],
+    *,
+    active_workflow_run_ids: set[str],
+) -> tuple[dict[str, object], bool]:
+    run_id = str(record.get("run_id") or "").strip()
+    if not run_id or run_id in active_workflow_run_ids:
+        return record, False
+    if str(record.get("run_kind") or "") != "workflow":
+        return record, False
+    if str(record.get("status") or "") != "scheduled":
+        return record, False
+
+    normalized = dict(record)
+    normalized["status"] = "stopped"
+    normalized["stop_requested"] = True
+    normalized["workflow_current_step_key"] = None
+    normalized["workflow_current_step_label"] = None
+    normalized["workflow_current_child_run_id"] = None
+    normalized["finished_at"] = str(record.get("finished_at") or datetime.now().isoformat(timespec="seconds"))
+    normalized["watchdog_state"] = "inactive"
+    normalized["watchdog_message"] = (
+        "Workflow planifié non repris après arrêt/redémarrage de l'IHM — relancez-le ou replanifiez un nouveau départ différé."
+    )
+    return normalized, True
 
 
 def _reader(stream: subprocess.PIPE | None, stream_name: str, events: queue.Queue[tuple[str, str]]) -> None:  # type: ignore[type-arg]
@@ -923,6 +955,13 @@ def _tail_text(lines: list[str]) -> str:
     return "".join(lines)
 
 
+def _workflow_elapsed_seconds(managed: _ManagedWorkflow) -> float:
+    started_perf = managed.started_perf
+    if started_perf is None:
+        return 0.0
+    return round(time.perf_counter() - started_perf, 2)
+
+
 def _count_lines(text: str) -> int:
     return len(text.splitlines()) if text else 0
 
@@ -1002,7 +1041,7 @@ def _finalize_workflow_record(
         managed,
         status=status,
         returncode=returncode,
-        duration_seconds=round(time.perf_counter() - managed.started_perf, 2),
+        duration_seconds=_workflow_elapsed_seconds(managed),
         finished_at=datetime.now().isoformat(timespec="seconds"),
         workflow_completed_steps=workflow_completed_steps,
         workflow_current_step_key=None,
@@ -1144,7 +1183,7 @@ def _run_pipeline_workflow(
                 _update_workflow_record(
                     managed,
                     status="running",
-                    duration_seconds=round(time.perf_counter() - managed.started_perf, 2),
+                    duration_seconds=_workflow_elapsed_seconds(managed),
                     workflow_current_step_key=step.key,
                     workflow_current_step_label=step_label,
                     workflow_current_child_run_id=child_record.run_id,
@@ -1202,14 +1241,18 @@ def _poll_workflow_run(run_id: str, managed: _ManagedWorkflow) -> dict[str, obje
     with managed.lock:
         record = managed.record
         if record.status in {"starting", "running"}:
-            managed.record = _with_updates(record, duration_seconds=round(time.perf_counter() - managed.started_perf, 2))
+            managed.record = _with_updates(record, duration_seconds=_workflow_elapsed_seconds(managed))
+            record = managed.record
+            _persist_record(record)
+        elif record.status == "scheduled" and record.duration_seconds != 0.0:
+            managed.record = _with_updates(record, duration_seconds=0.0)
             record = managed.record
             _persist_record(record)
         snapshot = {
             **record.to_state(),
             "stdout_tail": _tail_text(managed.stdout_tail),
             "stderr_tail": _tail_text(managed.stderr_tail),
-            "is_active": record.status in {"starting", "running"},
+            "is_active": record.status in {"scheduled", "starting", "running"},
         }
 
     if not snapshot["is_active"] and not managed.thread.is_alive():
@@ -1246,6 +1289,7 @@ def start_managed_run(
     stdout_path.write_text("", encoding="utf-8")
     stderr_path.write_text("", encoding="utf-8")
     combined_path.write_text("", encoding="utf-8")
+    created_at = datetime.now().isoformat(timespec="seconds")
 
     process = subprocess.Popen(
         command,
@@ -1274,7 +1318,8 @@ def start_managed_run(
         command_display=command_display,
         account_id=account_id,
         status="running",
-        executed_at=datetime.now().isoformat(timespec="seconds"),
+        executed_at=created_at,
+        actual_started_at=created_at,
         stdout_path=str(stdout_path),
         stderr_path=str(stderr_path),
         combined_path=str(combined_path),
@@ -1363,27 +1408,14 @@ def start_pipeline_workflow(
     include_corporate_actions_sync: bool = False,
     include_corporate_actions_apply: bool = False,
     selected_step_keys: tuple[str, ...] | None = None,
+    scheduled_for: datetime | None = None,
 ) -> PipelineRunRecord:
     """Démarre un workflow séquentiel complet en arrière-plan."""
     if list_active_pipeline_runs():
         raise RuntimeError("Un run pipeline est déjà actif. Attendez sa fin ou arrêtez-le avant de lancer le workflow complet.")
 
-    # Sprint S2 / A-014 — verrou cross-process : refuse si un backtesting
-    # tourne en parallèle (conflits stock_scores / artefacts ML).
-    from ihm.services.pipeline_lock import (
-        PipelineLockBusy,
-        acquire_lock as _acquire_lock,
-    )
-
     _ensure_storage()
     run_id = f"{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
-    try:
-        workflow_lock = _acquire_lock("pipeline", owner="pipeline_workflow", run_id=run_id)
-    except PipelineLockBusy as exc:
-        raise RuntimeError(
-            f"Verrou pipeline actif : {exc}. "
-            "Attendez la fin du run concurrent (pipeline ou backtesting) avant de relancer."
-        ) from exc
     run_dir = _run_dir_for("pipeline_workflow", run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = run_dir / "stdout.log"
@@ -1392,6 +1424,7 @@ def start_pipeline_workflow(
     stdout_path.write_text("", encoding="utf-8")
     stderr_path.write_text("", encoding="utf-8")
     combined_path.write_text("", encoding="utf-8")
+    created_at = datetime.now().isoformat(timespec="seconds")
 
     include_sync = include_corporate_actions_sync or include_corporate_actions_apply
     steps = cast(
@@ -1427,8 +1460,10 @@ def start_pipeline_workflow(
             steps=steps,
         ),
         account_id=options.account_id,
-        status="running",
-        executed_at=datetime.now().isoformat(timespec="seconds"),
+        status="scheduled" if scheduled_for is not None else "running",
+        executed_at=created_at,
+        scheduled_for=scheduled_for.isoformat(timespec="seconds") if scheduled_for is not None else None,
+        actual_started_at=None if scheduled_for is not None else created_at,
         stdout_path=str(stdout_path),
         stderr_path=str(stderr_path),
         combined_path=str(combined_path),
@@ -1441,9 +1476,45 @@ def start_pipeline_workflow(
     managed: _ManagedWorkflow
 
     def _workflow_target() -> None:
-        from ihm.services.pipeline_lock import release_lock as _release_lock
+        from ihm.services.pipeline_lock import (
+            PipelineLockBusy,
+            acquire_lock as _acquire_lock,
+            release_lock as _release_lock,
+        )
+
+        workflow_lock = None
 
         try:
+            if scheduled_for is not None:
+                while not stop_event.is_set():
+                    remaining_seconds = (scheduled_for - datetime.now()).total_seconds()
+                    if remaining_seconds <= 0:
+                        break
+                    time.sleep(min(remaining_seconds, 1.0))
+                if stop_event.is_set():
+                    _append_workflow_event(managed, "Workflow planifié annulé avant son démarrage.", is_error=True)
+                    _finalize_workflow_record(managed, status="stopped", returncode=-3, workflow_completed_steps=0)
+                    return
+                _append_workflow_event(managed, f"Démarrage différé atteint ({scheduled_for.isoformat(timespec='seconds')}) — tentative de lancement du workflow.")
+                managed.started_perf = time.perf_counter()
+                _update_workflow_record(
+                    managed,
+                    status="starting",
+                    actual_started_at=datetime.now().isoformat(timespec="seconds"),
+                    duration_seconds=0.0,
+                )
+
+            try:
+                workflow_lock = _acquire_lock("pipeline", owner="pipeline_workflow", run_id=run_id)
+            except PipelineLockBusy as exc:
+                _append_workflow_event(
+                    managed,
+                    f"Impossible de démarrer le workflow planifié : verrou pipeline actif ({exc}).",
+                    is_error=True,
+                )
+                _finalize_workflow_record(managed, status="failed", returncode=-2, workflow_completed_steps=0)
+                return
+
             _run_pipeline_workflow(
                 managed,
                 options,
@@ -1456,13 +1527,14 @@ def start_pipeline_workflow(
                 selected_step_keys=selected_step_keys,
             )
         finally:
-            _release_lock(workflow_lock)
+            if workflow_lock is not None:
+                _release_lock(workflow_lock)
 
     thread = threading.Thread(target=_workflow_target, daemon=True, name=f"pipeline-workflow-{run_id}")
     managed = _ManagedWorkflow(
         record=record,
         thread=thread,
-        started_perf=time.perf_counter(),
+        started_perf=None if scheduled_for is not None else time.perf_counter(),
         stop_event=stop_event,
     )
 
@@ -1545,6 +1617,18 @@ def load_pipeline_history() -> list[dict[str, object]]:
         recovered = _recover_history_index_entries(index)
         if recovered:
             index.update(recovered)
+        active_workflow_run_ids = set(_ACTIVE_WORKFLOWS.keys())
+        normalized_index: dict[str, dict[str, object]] = {}
+        mutated = bool(recovered)
+        for run_id, payload in index.items():
+            normalized_payload, changed = _normalize_inactive_scheduled_workflow_record(
+                payload,
+                active_workflow_run_ids=active_workflow_run_ids,
+            )
+            normalized_index[run_id] = normalized_payload
+            mutated = mutated or changed
+        index = normalized_index
+        if mutated:
             _write_history_index(index)
     history = list(index.values())
     history.sort(
@@ -1558,7 +1642,19 @@ def get_pipeline_run_record(run_id: str) -> dict[str, object] | None:
     active = poll_pipeline_run(run_id)
     if active is not None:
         return active
-    return _read_history_index().get(run_id)
+    with _REGISTRY_LOCK:
+        history = _read_history_index()
+        payload = history.get(run_id)
+        if payload is None:
+            return None
+        normalized_payload, changed = _normalize_inactive_scheduled_workflow_record(
+            payload,
+            active_workflow_run_ids=set(_ACTIVE_WORKFLOWS.keys()),
+        )
+        if changed:
+            history[run_id] = normalized_payload
+            _write_history_index(history)
+        return normalized_payload
 
 
 def read_pipeline_logs(run_id: str, stream: Literal["stdout", "stderr", "all"] = "all") -> str:

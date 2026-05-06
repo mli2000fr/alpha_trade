@@ -1,3 +1,6 @@
+from datetime import datetime, time as dt_time, timedelta
+from typing import cast
+
 from ihm.pages import _workflow as workflow_page, pipeline
 
 
@@ -438,6 +441,101 @@ def test_workflow_launcher_can_start_at_step_3_and_include_corporate_actions(mon
     assert captured["include_ml_train"] is True
     assert captured["include_corporate_actions_sync"] is True
     assert captured["include_corporate_actions_apply"] is True
+
+
+def test_workflow_launcher_can_schedule_delayed_start(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
+    monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
+    monkeypatch.setattr(workflow_page.st, "container", lambda **kwargs: _DummyContainer())
+    monkeypatch.setattr(workflow_page.st, "subheader", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "caption", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "info", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "warning", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "selectbox", lambda *args, **kwargs: kwargs["options"][0])
+
+    def _fake_checkbox(*args, **kwargs):
+        key = kwargs.get("key")
+        if key == workflow_page.WORKFLOW_DELAYED_START_ENABLED_KEY:
+            return True
+        return kwargs.get("value", False)
+
+    monkeypatch.setattr(workflow_page.st, "checkbox", _fake_checkbox)
+    monkeypatch.setattr(workflow_page.st, "time_input", lambda *args, **kwargs: dt_time(hour=2, minute=0))
+    monkeypatch.setattr(workflow_page.st, "button", lambda *args, **kwargs: kwargs.get("key") == "run_pipeline_workflow_all_steps")
+
+    def _fake_start_pipeline_workflow(options, **kwargs):
+        captured.update(kwargs)
+        return type("_Record", (), {"run_id": "wf-delayed"})()
+
+    monkeypatch.setattr(workflow_page, "start_pipeline_workflow", _fake_start_pipeline_workflow)
+
+    workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
+
+    scheduled_for = cast(datetime, captured["scheduled_for"])
+    assert scheduled_for is not None
+    assert scheduled_for.hour == 2
+    assert scheduled_for.minute == 0
+
+
+def test_build_scheduled_countdown_caption_displays_remaining_time() -> None:
+    now = datetime(2026, 5, 7, 23, 0, 0)
+    scheduled_for = now + timedelta(hours=3, minutes=15, seconds=4)
+
+    caption = workflow_page._build_scheduled_countdown_caption(
+        {
+            "status": "scheduled",
+            "scheduled_for": scheduled_for.isoformat(timespec="seconds"),
+        },
+        now=now,
+    )
+
+    assert caption is not None
+    assert "2026-05-08 02:15:04" in caption
+    assert "03:15:04" in caption
+    assert "départ dans" in caption.lower()
+
+
+def test_build_scheduled_countdown_caption_returns_none_for_non_scheduled_run() -> None:
+    caption = workflow_page._build_scheduled_countdown_caption(
+        {
+            "status": "running",
+            "scheduled_for": "2026-05-08T02:15:04",
+        }
+    )
+
+    assert caption is None
+
+
+def test_build_actual_start_caption_displays_actual_and_planned_times() -> None:
+    caption = workflow_page._build_actual_start_caption(
+        {
+            "status": "running",
+            "scheduled_for": "2026-05-08T02:00:00",
+            "actual_started_at": "2026-05-08T02:00:07",
+        }
+    )
+
+    assert caption is not None
+    assert "démarrage réel" in caption.lower()
+    assert "2026-05-08 02:00:07" in caption
+    assert "2026-05-08 02:00:00" in caption
+    assert "planifié pour" in caption.lower()
+
+
+def test_build_actual_start_caption_returns_none_while_workflow_is_still_scheduled() -> None:
+    caption = workflow_page._build_actual_start_caption(
+        {
+            "status": "scheduled",
+            "scheduled_for": "2026-05-08T02:00:00",
+            "actual_started_at": "2026-05-08T02:00:07",
+        }
+    )
+
+    assert caption is None
 
 
 def test_workflow_launcher_can_launch_explicit_selected_pipelines_in_order(monkeypatch) -> None:

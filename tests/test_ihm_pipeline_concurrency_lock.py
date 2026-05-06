@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -83,6 +84,49 @@ def test_stale_lock_dead_pid_is_reclaimed(tmp_path: Path):
         active = list_active_locks()
         assert any(entry.get("scope") == "backtesting" for entry in active)
         assert not any(entry.get("owner") == "ghost" for entry in active)
+    finally:
+        release_lock(handle)
+
+
+def test_stale_lock_live_reused_pid_is_reclaimed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    fake_payload = {
+        "scope": "pipeline",
+        "owner": "ghost",
+        "run_id": "stale-reused-pid",
+        "pid": 4242,
+        "acquired_at": "2026-05-07T00:00:20",
+    }
+    (tmp_path / "pipeline.lock").write_text(json.dumps(fake_payload), encoding="utf-8")
+
+    from ihm.services import pipeline_lock as module
+
+    monkeypatch.setattr(module, "_is_pid_alive", lambda pid: pid in {4242, 111})
+    monkeypatch.setattr(
+        module,
+        "_get_process_started_at",
+        lambda pid: datetime.fromisoformat("2026-05-07T00:10:00") if pid == 4242 else datetime.fromisoformat("2026-05-07T00:00:00"),
+    )
+
+    handle = acquire_lock("backtesting", owner="t", run_id="r1", pid=111)
+    try:
+        active = list_active_locks()
+        assert any(entry.get("scope") == "backtesting" for entry in active)
+        assert not any(entry.get("owner") == "ghost" for entry in active)
+    finally:
+        release_lock(handle)
+
+
+def test_acquire_lock_persists_process_started_at(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    started_at = datetime.fromisoformat("2026-05-07T09:15:30")
+
+    from ihm.services import pipeline_lock as module
+
+    monkeypatch.setattr(module, "_get_process_started_at", lambda pid: started_at)
+
+    handle = acquire_lock("pipeline", owner="t", run_id="r1", pid=1234)
+    try:
+        payload = json.loads((tmp_path / "pipeline.lock").read_text(encoding="utf-8"))
+        assert payload["process_started_at"] == "2026-05-07T09:15:30"
     finally:
         release_lock(handle)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -65,7 +66,7 @@ def _wait_for_final_snapshot(run_id: str, *, attempts: int = 80, delay: float = 
     snapshot = None
     for _ in range(attempts):
         snapshot = registry.poll_pipeline_run(run_id)
-        if snapshot and snapshot.get("status") not in {"starting", "running"}:
+        if snapshot and snapshot.get("status") not in {"scheduled", "starting", "running"}:
             return snapshot
         time.sleep(delay)
     return snapshot
@@ -564,6 +565,177 @@ def test_pipeline_workflow_can_run_explicit_selected_steps_in_order(monkeypatch,
     assert "step_3" in logs
     assert "step_12" in logs
     assert "step_8" not in logs
+
+
+def test_pipeline_workflow_can_be_scheduled_and_then_runs(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("step_1", "1", "Step 1", "", "", "—"),
+    )
+    monkeypatch.setattr(registry, "get_pipeline_workflow_steps", lambda **kwargs: steps)
+    monkeypatch.setattr(
+        registry,
+        "build_pipeline_command",
+        lambda step_key, options: [sys.executable, "-c", f"print('{step_key}', flush=True)"],
+    )
+
+    scheduled_for = datetime.now() + timedelta(seconds=0.3)
+    record = registry.start_pipeline_workflow(
+        PipelineLaunchOptions(force_trade_date_to_latest_snapshot=False),
+        scheduled_for=scheduled_for,
+    )
+
+    initial_snapshot = registry.poll_pipeline_run(record.run_id)
+    assert initial_snapshot is not None
+    assert initial_snapshot["status"] == "scheduled"
+    assert initial_snapshot["scheduled_for"] is not None
+
+    final_snapshot = _wait_for_final_snapshot(record.run_id, attempts=160)
+    assert final_snapshot is not None
+    assert final_snapshot["status"] == "completed"
+    logs = registry.read_pipeline_logs(record.run_id, "all")
+    assert "Démarrage différé atteint" in logs
+    assert "step_1" in logs
+
+
+def test_pipeline_workflow_scheduled_keeps_duration_at_zero_until_effective_start(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("step_1", "1", "Step 1", "", "", "—"),
+    )
+    monkeypatch.setattr(registry, "get_pipeline_workflow_steps", lambda **kwargs: steps)
+    monkeypatch.setattr(
+        registry,
+        "build_pipeline_command",
+        lambda step_key, options: [
+            sys.executable,
+            "-c",
+            "import time; print('step_1', flush=True); time.sleep(0.25)",
+        ],
+    )
+
+    scheduled_for = datetime.now() + timedelta(seconds=0.6)
+    record = registry.start_pipeline_workflow(
+        PipelineLaunchOptions(force_trade_date_to_latest_snapshot=False),
+        scheduled_for=scheduled_for,
+    )
+
+    scheduled_snapshot = registry.poll_pipeline_run(record.run_id)
+    assert scheduled_snapshot is not None
+    assert scheduled_snapshot["status"] == "scheduled"
+    assert scheduled_snapshot["duration_seconds"] == 0.0
+    assert scheduled_snapshot["actual_started_at"] is None
+
+    time.sleep(0.2)
+    scheduled_snapshot = registry.poll_pipeline_run(record.run_id)
+    assert scheduled_snapshot is not None
+    assert scheduled_snapshot["status"] == "scheduled"
+    assert scheduled_snapshot["duration_seconds"] == 0.0
+    assert scheduled_snapshot["actual_started_at"] is None
+
+    started_snapshot = None
+    for _ in range(80):
+        snapshot = registry.poll_pipeline_run(record.run_id)
+        if snapshot and snapshot.get("status") in {"starting", "running"}:
+            started_snapshot = snapshot
+            break
+        time.sleep(0.05)
+
+    assert started_snapshot is not None
+    assert started_snapshot["actual_started_at"] is not None
+
+    final_snapshot = _wait_for_final_snapshot(record.run_id, attempts=160)
+    assert final_snapshot is not None
+    assert final_snapshot["status"] == "completed"
+    assert float(final_snapshot["duration_seconds"]) >= 0.2
+
+
+def test_pipeline_workflow_scheduled_can_be_stopped_before_start(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    steps = (
+        PipelineStepDefinition("step_1", "1", "Step 1", "", "", "—"),
+    )
+    monkeypatch.setattr(registry, "get_pipeline_workflow_steps", lambda **kwargs: steps)
+    monkeypatch.setattr(
+        registry,
+        "build_pipeline_command",
+        lambda step_key, options: [sys.executable, "-c", f"print('{step_key}', flush=True)"],
+    )
+
+    scheduled_for = datetime.now() + timedelta(seconds=2)
+    record = registry.start_pipeline_workflow(
+        PipelineLaunchOptions(force_trade_date_to_latest_snapshot=False),
+        scheduled_for=scheduled_for,
+    )
+    assert registry.stop_pipeline_run(record.run_id) is True
+
+    final_snapshot = _wait_for_final_snapshot(record.run_id, attempts=120)
+    assert final_snapshot is not None
+    assert final_snapshot["status"] == "stopped"
+    logs = registry.read_pipeline_logs(record.run_id, "all")
+    assert "Workflow planifié annulé avant son démarrage" in logs
+
+
+def test_load_pipeline_history_marks_orphan_scheduled_workflow_as_stopped_after_restart(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    run_id = "20260507_230000_deadbeef"
+    registry.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    registry.HISTORY_INDEX_PATH.write_text(
+        registry.json.dumps(
+            {
+                run_id: {
+                    "run_id": run_id,
+                    "step_key": "pipeline_workflow",
+                    "step_label": "Workflow complet 1 → 12",
+                    "command": ["step_1"],
+                    "command_display": "Workflow séquentiel Pipeline 1 → 12 | sans ML Train | 1 étape(s) exécutée(s)",
+                    "account_id": "acct-1",
+                    "status": "scheduled",
+                    "executed_at": "2026-05-07T23:00:00",
+                    "scheduled_for": "2026-05-08T02:00:00",
+                    "actual_started_at": None,
+                    "finished_at": None,
+                    "returncode": None,
+                    "duration_seconds": 0.0,
+                    "stdout_path": "",
+                    "stderr_path": "",
+                    "combined_path": "",
+                    "stdout_lines": 0,
+                    "stderr_lines": 0,
+                    "timeout_seconds": None,
+                    "stop_requested": False,
+                    "run_kind": "workflow",
+                    "parent_run_id": None,
+                    "workflow_total_steps": 1,
+                    "workflow_completed_steps": 0,
+                    "workflow_current_step_key": None,
+                    "workflow_current_step_label": None,
+                    "workflow_current_child_run_id": None,
+                    "workflow_child_run_ids": [],
+                    "run_summary": {},
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    history = registry.load_pipeline_history()
+
+    by_run_id = {str(item["run_id"]): item for item in history}
+    assert by_run_id[run_id]["status"] == "stopped"
+    assert by_run_id[run_id]["stop_requested"] is True
+    assert by_run_id[run_id]["actual_started_at"] is None
+    assert "non repris" in str(by_run_id[run_id]["watchdog_message"]).lower()
+
+    record = registry.get_pipeline_run_record(run_id)
+    assert record is not None
+    assert record["status"] == "stopped"
 
 
 def test_should_override_failed_status_for_ml_train_windows_post_success_crash() -> None:

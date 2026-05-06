@@ -55,6 +55,28 @@ immédiatement une barre de progression :
 
 > ⏱️ Comptez **15 à 30 minutes** pour un premier pipeline complet.
 
+### c.bis) Départ différé si vous voulez dormir avant l'exécution
+
+Dans le bloc **« 🚀 Workflow complet configurable »**, vous pouvez cocher
+**« Départ différé »** puis choisir une **heure de démarrage souhaitée**
+(par exemple `02:00`).
+
+Comportement :
+
+- si l'heure choisie est **dans le futur aujourd'hui**, le workflow démarre
+  aujourd'hui à cette heure ;
+- si l'heure choisie est **déjà passée**, le workflow est planifié pour
+  **demain** à cette heure ;
+- pendant l'attente, le run apparaît en état **🕒 Planifié** dans le centre
+  d'exécution ;
+- vous pouvez encore **l'arrêter** avant son démarrage effectif.
+- si vous **arrêtez l'IHM / `python run.py`** avant l'heure prévue, le
+  workflow différé **n'est pas repris automatiquement** au redémarrage : il
+  faut le replanifier.
+
+👉 Cas d'usage typique : vous préparez tout vers `23:00`, puis vous planifiez
+le lancement automatique à `02:00`.
+
 ### d) Que faire pendant que ça tourne
 
 Vous pouvez :

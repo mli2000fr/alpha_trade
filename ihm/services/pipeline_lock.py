@@ -20,7 +20,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -78,6 +78,58 @@ def _is_pid_alive(pid: int) -> bool:
         return False
 
 
+def _get_process_started_at(pid: int) -> datetime | None:
+    if pid <= 0:
+        return None
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = ctypes.windll.kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
+            )
+            if not handle:
+                return None
+            try:
+                creation_time = wintypes.FILETIME()
+                exit_time = wintypes.FILETIME()
+                kernel_time = wintypes.FILETIME()
+                user_time = wintypes.FILETIME()
+                success = ctypes.windll.kernel32.GetProcessTimes(
+                    handle,
+                    ctypes.byref(creation_time),
+                    ctypes.byref(exit_time),
+                    ctypes.byref(kernel_time),
+                    ctypes.byref(user_time),
+                )
+                if not success:
+                    return None
+                filetime = (creation_time.dwHighDateTime << 32) | creation_time.dwLowDateTime
+                unix_timestamp = (filetime - 116444736000000000) / 10_000_000
+                return datetime.fromtimestamp(unix_timestamp)
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+
+        proc_dir = Path(f"/proc/{int(pid)}")
+        if proc_dir.exists():
+            return datetime.fromtimestamp(proc_dir.stat().st_ctime)
+    except Exception:
+        return None
+    return None
+
+
+def _parse_lock_datetime(value: object) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class LockHandle:
     """Référence à un verrou actif (utilisée pour ``release_lock``)."""
@@ -115,7 +167,27 @@ def _is_lock_active(payload: dict[str, object] | None) -> bool:
     if not payload or payload.get("_corrupt"):
         return False
     pid = int(payload.get("pid") or 0)
-    return _is_pid_alive(pid)
+    if not _is_pid_alive(pid):
+        return False
+
+    process_started_at = _get_process_started_at(pid)
+    expected_started_at = _parse_lock_datetime(payload.get("process_started_at"))
+    if process_started_at is None:
+        return True
+    if expected_started_at is not None:
+        return abs((process_started_at - expected_started_at).total_seconds()) <= 2.0
+
+    acquired_at = _parse_lock_datetime(payload.get("acquired_at"))
+    if acquired_at is not None and process_started_at > acquired_at + timedelta(seconds=2):
+        LOGGER.warning(
+            "Lock '%s' considere obsolete : pid=%s reutilise (process started_at=%s > acquired_at=%s).",
+            payload.get("scope"),
+            pid,
+            process_started_at.isoformat(timespec="seconds"),
+            acquired_at.isoformat(timespec="seconds"),
+        )
+        return False
+    return True
 
 
 def list_active_locks() -> list[dict[str, object]]:
@@ -148,6 +220,7 @@ def acquire_lock(
     if scope not in _VALID_SCOPES:
         raise ValueError(f"scope invalide : {scope!r}")
     pid_int = int(pid if pid is not None else os.getpid())
+    process_started_at = _get_process_started_at(pid_int)
     locks_dir = _locks_dir()
     locks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -179,6 +252,7 @@ def acquire_lock(
             "run_id": str(run_id),
             "pid": pid_int,
             "acquired_at": datetime.now().isoformat(timespec="seconds"),
+            "process_started_at": process_started_at.isoformat(timespec="seconds") if process_started_at is not None else None,
         }
         target.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
 

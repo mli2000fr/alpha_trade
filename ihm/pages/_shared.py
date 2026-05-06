@@ -228,6 +228,7 @@ def _launch_pipeline_step(
 
 def _status_badge(status: str) -> str:
     return {
+        "scheduled": "🕒 Planifié",
         "starting": "🟦 Démarrage",
         "running": "🟨 En cours",
         "completed": "🟢 Terminé",

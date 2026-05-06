@@ -5,7 +5,9 @@ extraits de ``pipeline.py``.
 """
 from __future__ import annotations
 
+import math
 import re
+from datetime import datetime, time as dt_time, timedelta
 from typing import Any, cast
 
 import pandas as pd
@@ -62,11 +64,14 @@ WORKFLOW_INCLUDE_ML_TRAIN_KEY = "pipeline_workflow_include_ml_train"
 WORKFLOW_RANGE_KEY = "pipeline_workflow_range"
 WORKFLOW_INCLUDE_CA_SYNC_KEY = "pipeline_workflow_include_ca_sync"
 WORKFLOW_INCLUDE_CA_APPLY_KEY = "pipeline_workflow_include_ca_apply"
+WORKFLOW_DELAYED_START_ENABLED_KEY = "pipeline_workflow_delayed_start_enabled"
+WORKFLOW_DELAYED_START_TIME_KEY = "pipeline_workflow_delayed_start_time"
 WORKFLOW_CHILD_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_autofollow_"
 WORKFLOW_CHILD_LAST_AUTO_KEY_PREFIX = "workflow_child_run_last_auto_"
 WORKFLOW_CHILD_PENDING_SELECT_KEY_PREFIX = "workflow_child_run_pending_select_"
 WORKFLOW_CHILD_PENDING_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_pending_autofollow_"
 WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY = "pipeline_workflow_runtime_auto_selected_run_id"
+WORKFLOW_RUNTIME_LAST_ACTIVE_COUNT_KEY = "pipeline_workflow_runtime_last_active_count"
 WORKFLOW_CUSTOM_STEP_KEY_PREFIX = "pipeline_workflow_custom_step_"
 WORKFLOW_RANGE_OPTIONS: tuple[str, ...] = ("1", "3")
 _GENERIC_PROGRESS_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -87,6 +92,64 @@ _RUN_PROGRESS_SUMMARY_SPECS: dict[str, tuple[tuple[str, ...], tuple[str, ...], s
     "ml_train": (("symbols_total",), ("symbols_completed", "symbols_skipped", "symbols_failed"), "🧠 Progression ML Train"),
     "ml_predict": (("symbols_total",), ("symbols_completed", "symbols_skipped", "symbols_failed"), "🤖 Progression ML Predict"),
 }
+
+
+def _resolve_delayed_workflow_start(target_time: dt_time, *, now: datetime | None = None) -> datetime:
+    current = now or datetime.now()
+    scheduled_for = datetime.combine(current.date(), target_time)
+    if scheduled_for <= current:
+        scheduled_for = datetime.combine(current.date() + timedelta(days=1), target_time)
+    return scheduled_for
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+    try:
+        return datetime.fromisoformat(raw_value)
+    except ValueError:
+        return None
+
+
+def _format_countdown(total_seconds: int) -> str:
+    normalized = max(int(total_seconds), 0)
+    days, remainder = divmod(normalized, 24 * 3600)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    hhmmss = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{days}j {hhmmss}" if days else hhmmss
+
+
+def _rerun_app() -> None:
+    try:
+        st.rerun(scope="app")
+    except TypeError:
+        st.rerun()
+
+
+def _build_scheduled_countdown_caption(run: dict[str, object], *, now: datetime | None = None) -> str | None:
+    if str(run.get("status") or "") != "scheduled":
+        return None
+    scheduled_at = _parse_iso_datetime(run.get("scheduled_for"))
+    if scheduled_at is None:
+        return None
+    current = now or datetime.now()
+    remaining_seconds = max(math.ceil((scheduled_at - current).total_seconds()), 0)
+    scheduled_label = scheduled_at.strftime("%Y-%m-%d %H:%M:%S")
+    if remaining_seconds <= 0:
+        return f"⏰ Démarrage planifié pour `{scheduled_label}` — lancement imminent."
+    return f"⏰ Démarrage planifié pour `{scheduled_label}` — départ dans `{_format_countdown(remaining_seconds)}`."
+
+
+def _build_actual_start_caption(run: dict[str, object]) -> str | None:
+    scheduled_at = _parse_iso_datetime(run.get("scheduled_for"))
+    actual_started_at = _parse_iso_datetime(run.get("actual_started_at"))
+    if scheduled_at is None or actual_started_at is None:
+        return None
+    if str(run.get("status") or "") == "scheduled":
+        return None
+    return f"🚀 Démarrage réel à `{actual_started_at.strftime('%Y-%m-%d %H:%M:%S')}` (planifié pour `{scheduled_at.strftime('%Y-%m-%d %H:%M:%S')}`)."
 
 
 def _build_workflow_scope_help_lines() -> tuple[str, str, str]:
@@ -381,7 +444,7 @@ def _build_history_rows(all_runs: list[dict[str, object]]) -> pd.DataFrame:
             {
                 "run_id": run.get("run_id"),
                 "type": "workflow" if _is_workflow_run(run) else "étape",
-                "étape": run.get("step_label", run.get("step_key")),
+                "étape": str(run.get("step_label") or run.get("step_key") or ""),
                 "progression": (
                     f"{to_int(run.get('workflow_completed_steps', 0))}/{to_int(run.get('workflow_total_steps', 0))}"
                     if _is_workflow_run(run)
@@ -420,7 +483,7 @@ def _active_workflow_run_id(all_runs: list[dict[str, object]]) -> str | None:
     for run in all_runs:
         if not _is_workflow_run(run):
             continue
-        if str(run.get("status") or "") not in {"starting", "running"}:
+        if str(run.get("status") or "") not in {"scheduled", "starting", "running"}:
             continue
         run_id = str(run.get("run_id") or "").strip()
         if run_id:
@@ -430,12 +493,12 @@ def _active_workflow_run_id(all_runs: list[dict[str, object]]) -> str | None:
 
 def _resolve_runtime_center_default_selected_run_id(all_runs: list[dict[str, object]], run_ids: list[str]) -> str:
     active_workflow_run_id = _active_workflow_run_id(all_runs)
-    if active_workflow_run_id in run_ids:
+    if active_workflow_run_id is not None and active_workflow_run_id in run_ids:
         return active_workflow_run_id
 
     for run in all_runs:
         run_id = str(run.get("run_id") or "").strip()
-        if run_id in run_ids and str(run.get("status") or "") in {"starting", "running"}:
+        if run_id in run_ids and str(run.get("status") or "") in {"scheduled", "starting", "running"}:
             return run_id
 
     return run_ids[0]
@@ -539,6 +602,30 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
             f"({'ML Train inclus' if include_ml_train else 'ML Train exclu'}). "
             "Les sous-runs restent historisés individuellement, et ce workflow fournit une vue globale avec logs consolidés."
         )
+        delayed_start_enabled = st.checkbox(
+            "Départ différé",
+            value=bool(st.session_state.get(WORKFLOW_DELAYED_START_ENABLED_KEY, False)),
+            key=WORKFLOW_DELAYED_START_ENABLED_KEY,
+            disabled=bool(active_runs),
+            help="Permet de préparer le workflow maintenant et de le lancer automatiquement plus tard, par exemple pendant la nuit.",
+        )
+        scheduled_for = None
+        if delayed_start_enabled:
+            delayed_start_time = cast(
+                dt_time,
+                st.time_input(
+                    "Heure de démarrage souhaitée",
+                    value=cast(dt_time, st.session_state.get(WORKFLOW_DELAYED_START_TIME_KEY, dt_time(hour=2, minute=0))),
+                    key=WORKFLOW_DELAYED_START_TIME_KEY,
+                    disabled=bool(active_runs),
+                    help="Si l'heure choisie est déjà passée aujourd'hui, le workflow sera planifié pour demain à cette heure.",
+                ),
+            )
+            scheduled_for = _resolve_delayed_workflow_start(delayed_start_time)
+            st.info(
+                "⏰ Départ différé actif — le workflow complet démarrera automatiquement le "
+                f"`{scheduled_for.strftime('%Y-%m-%d %H:%M')}`."
+            )
 
         if active_workflows:
             workflow_run = active_workflows[0]
@@ -547,6 +634,12 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
             st.progress(progress_fraction)
             st.caption(progress_label)
             st.caption(f"Mode actif : {_workflow_mode_label(workflow_run)}")
+            scheduled_caption = _build_scheduled_countdown_caption(workflow_run)
+            if scheduled_caption:
+                st.caption(scheduled_caption)
+            actual_start_caption = _build_actual_start_caption(workflow_run)
+            if actual_start_caption:
+                st.caption(actual_start_caption)
         elif has_other_active_runs:
             st.warning("Un run pipeline unitaire est déjà en cours. Attendez sa fin avant de lancer le workflow complet.")
 
@@ -569,6 +662,7 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
                     include_ml_train=include_ml_train,
                     include_corporate_actions_sync=include_corporate_actions_sync,
                     include_corporate_actions_apply=include_corporate_actions_apply,
+                    scheduled_for=scheduled_for,
                 )
             except RuntimeError as exc:
                 st.warning(str(exc))
@@ -576,8 +670,13 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
                 st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
                 existing_compare = cast(list[str], st.session_state.get(COMPARE_RUNS_KEY, [])) if isinstance(st.session_state.get(COMPARE_RUNS_KEY, []), list) else []
                 st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *existing_compare][:2]
-                st.success(f"Workflow lancé en arrière-plan : `{record.run_id}`")
-                st.rerun()
+                if scheduled_for is not None:
+                    st.success(
+                        f"Workflow planifié en arrière-plan : `{record.run_id}` — démarrage prévu le `{scheduled_for.strftime('%Y-%m-%d %H:%M')}`"
+                    )
+                else:
+                    st.success(f"Workflow lancé en arrière-plan : `{record.run_id}`")
+                _rerun_app()
 
         st.divider()
         st.markdown("#### Sélection personnalisée des pipelines 1 → 12")
@@ -645,13 +744,16 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
                 existing_compare = cast(list[str], st.session_state.get(COMPARE_RUNS_KEY, [])) if isinstance(st.session_state.get(COMPARE_RUNS_KEY, []), list) else []
                 st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *existing_compare][:2]
                 st.success(f"Workflow personnalisé lancé en arrière-plan : `{record.run_id}`")
-                st.rerun()
+                _rerun_app()
 
 
 
 @st.fragment(run_every="2s")
 def _render_runtime_center() -> None:
     active_runs, all_runs = _merge_runs()
+    active_runs_count = len(active_runs)
+    previous_active_runs_count = int(st.session_state.get(WORKFLOW_RUNTIME_LAST_ACTIVE_COUNT_KEY, 0) or 0)
+    st.session_state[WORKFLOW_RUNTIME_LAST_ACTIVE_COUNT_KEY] = active_runs_count
     active_workflow_run_ids = {
         str(run.get("run_id") or "").strip()
         for run in active_runs
@@ -665,7 +767,7 @@ def _render_runtime_center() -> None:
     )
 
     if st.button("🔄 Rafraîchir maintenant", key="pipeline_manual_refresh", use_container_width=False):
-        st.rerun()
+        _rerun_app()
 
     if active_runs:
         st.markdown("**Runs actifs**")
@@ -679,7 +781,13 @@ def _render_runtime_center() -> None:
                 cols[3].markdown(f"🏦 `{run.get('account_id') or 'global'}`")
                 if cols[4].button("⏹️ Arrêter", key=f"stop_run_{run_id}", use_container_width=True):
                     stop_pipeline_run(run_id)
-                    st.rerun()
+                    _rerun_app()
+                scheduled_caption = _build_scheduled_countdown_caption(run)
+                if scheduled_caption:
+                    st.caption(scheduled_caption)
+                actual_start_caption = _build_actual_start_caption(run)
+                if actual_start_caption:
+                    st.caption(actual_start_caption)
                 provider_badge = _build_run_provider_badge(run)
                 stooq_badge = _build_run_stooq_badge(run)
                 if provider_badge:
@@ -698,6 +806,9 @@ def _render_runtime_center() -> None:
                     st.caption(progress_label)
     else:
         st.info("Aucun run actif pour le moment.")
+
+    if previous_active_runs_count > 0 and active_runs_count == 0:
+        _rerun_app()
 
     if not all_runs:
         st.info("Aucun run IHM historisé pour le moment.")
@@ -743,7 +854,7 @@ def _render_runtime_center() -> None:
             compare_ids = compare_ids[:2]
             st.session_state[PENDING_COMPARE_RUNS_KEY] = compare_ids
             st.warning("La comparaison est limitée à 2 runs.")
-            st.rerun()
+            _rerun_app()
 
     stream_map = {"tout": "all", "stdout": "stdout", "stderr": "stderr"}
     selected_run = get_pipeline_run_record(selected_label)
@@ -770,6 +881,12 @@ def _render_runtime_center() -> None:
             workflow_cols[1].metric("Progression", f"{completed}/{total}")
             workflow_cols[2].metric("Sous-runs", child_runs_count)
             current_step_label = str(selected_run.get("workflow_current_step_label") or "").strip()
+            scheduled_caption = _build_scheduled_countdown_caption(selected_run)
+            if scheduled_caption:
+                st.caption(scheduled_caption)
+            actual_start_caption = _build_actual_start_caption(selected_run)
+            if actual_start_caption:
+                st.caption(actual_start_caption)
             if current_step_label:
                 st.caption(f"Étape en cours : `{current_step_label}`")
 
@@ -816,7 +933,7 @@ def _render_runtime_center() -> None:
                     ):
                         st.session_state[f"{WORKFLOW_CHILD_PENDING_SELECT_KEY_PREFIX}{selected_label}"] = current_child_run_id
                         st.session_state[f"{WORKFLOW_CHILD_PENDING_AUTOFOLLOW_KEY_PREFIX}{selected_label}"] = True
-                        st.rerun()
+                        _rerun_app()
 
                 if workflow_active and follow_current_child and current_child_run_id in child_labels:
                     st.session_state[child_select_key] = current_child_run_id
