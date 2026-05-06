@@ -699,6 +699,16 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
     assert command[-4:] == ["-StartDate", "2026-04-01", "-EndDate", "2026-04-15"]
 
 
+def test_build_pipeline_command_import_bars_eodhd_disables_stooq_cross_check_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline_runner, "_resolve_bars_provider_for_ihm", lambda: "eodhd")
+
+    command = build_pipeline_command("import_alpaca_bar", PipelineLaunchOptions())
+
+    assert command[:4] == [command[0], "-u", "-m", "dataIntegrityEngine.import_eodhd_bar"]
+    assert "--write" in command
+    assert "--no-stooq-cross-check" in command
+
+
 def test_run_pipeline_step_streams_logs_via_callback(monkeypatch) -> None:
     command = [
         sys.executable,

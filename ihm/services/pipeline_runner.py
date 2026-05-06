@@ -73,6 +73,7 @@ DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE = 50
 DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME = True
 DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY = 50
 DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS = 100
+DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK = False
 
 # --- Défauts swing trade (cf. prompt/refactor/audit_ihm_pipeline_options.md) ---
 # Risk management — sizing prudent compte cash 100k$
@@ -352,6 +353,7 @@ class PipelineLaunchOptions:
     data_integrity_fundamentals_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
     eodhd_write_commit_every_symbols: int = DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS
+    eodhd_enable_stooq_cross_check: bool = DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK
     corporate_actions_skip_existing: bool = DEFAULT_CA_SKIP_EXISTING
     # Corporate actions sync — fenêtre custom + batching
     corporate_actions_use_custom_window: bool = DEFAULT_CA_USE_CUSTOM_WINDOW
@@ -698,6 +700,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command = [sys.executable, "-u", "-m", "dataIntegrityEngine.import_eodhd_bar", "--write"]
             if options.eodhd_write_commit_every_symbols > 0:
                 command.extend(["--commit-every-symbols", str(int(options.eodhd_write_commit_every_symbols))])
+            if not options.eodhd_enable_stooq_cross_check:
+                command.append("--no-stooq-cross-check")
             return command
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
 

@@ -183,6 +183,7 @@ _SUMMARY_METADATA_KEYS = {
     "progress_phase",
     "progress_unit",
     "progress_item",
+    "stooq_cross_check_enabled",
 }
 _CAPTION_EXCLUDED_KEYS = _SUMMARY_METADATA_KEYS | {"history_status_counts", "status_breakdown"}
 
@@ -200,6 +201,24 @@ def _step_key(record: Mapping[str, object] | None) -> str:
     return str(record.get("step_key", "") or "")
 
 
+def get_stooq_cross_check_status(record: Mapping[str, object] | None) -> str | None:
+    if _step_key(record) != "import_alpaca_bar" or not record:
+        return None
+
+    summary = get_run_summary(record)
+    enabled_value = summary.get("stooq_cross_check_enabled")
+    if isinstance(enabled_value, bool):
+        return "activé" if enabled_value else "désactivé"
+
+    command = record.get("command")
+    tokens = [str(token).strip().lower() for token in command] if isinstance(command, SequenceABC) else []
+    command_display = str(record.get("command_display") or "").strip().lower()
+    searchable = " ".join(tokens + ([command_display] if command_display else []))
+    if "import_eodhd_bar" not in searchable:
+        return None
+    return "désactivé" if "--no-stooq-cross-check" in searchable else "activé"
+
+
 def get_run_summary_metric_items(record: Mapping[str, object] | None) -> list[tuple[str, object]]:
     summary = get_run_summary(record)
     if not summary:
@@ -208,6 +227,9 @@ def get_run_summary_metric_items(record: Mapping[str, object] | None) -> list[tu
     specs = RUN_SUMMARY_METRICS.get(_step_key(record), [])
     if specs:
         items = [(label, summary.get(key)) for label, key in specs if summary.get(key) not in (None, "")]
+        stooq_status = get_stooq_cross_check_status(record)
+        if _step_key(record) == "import_alpaca_bar" and stooq_status is not None:
+            items.append(("Stooq", stooq_status))
         if items:
             return items
 
@@ -233,14 +255,31 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
     if not summary:
         return []
 
-    if _step_key(record) != "sync_earnings_calendar":
-        return []
+    step_key = _step_key(record)
+    lines: list[str] = []
+
+    if step_key == "import_alpaca_bar":
+        stooq_status = get_stooq_cross_check_status(record)
+        if stooq_status is not None:
+            lines.append(f"Cross-check Stooq : {stooq_status}.")
+            cross_payload = summary.get("cross_check_stooq")
+            if isinstance(cross_payload, Mapping):
+                failed = bool(cross_payload.get("failed", False))
+                skipped = bool(cross_payload.get("skipped", False))
+                anomalies = int(cross_payload.get("anomalies_count", 0) or 0)
+                if failed:
+                    lines.append("Audit Stooq terminé en échec non bloquant (warnings réseau / timeout possibles).")
+                elif skipped and stooq_status == "activé":
+                    lines.append("Audit Stooq sauté faute de données ingérées exploitables pour le contrôle.")
+                elif stooq_status == "activé":
+                    lines.append(f"Audit Stooq : {anomalies} anomalie(s) détectée(s).")
+
+    if step_key != "sync_earnings_calendar":
+        return lines
 
     resumed = int(summary.get("symbols_skipped_resume", 0) or 0)
     remaining = int(summary.get("symbols_remaining", 0) or 0)
-    lines = [
-        f"Reprise bookmark : {resumed} symbole(s) déjà traité(s), {remaining} restant(s) à rejouer.",
-    ]
+    lines.append(f"Reprise bookmark : {resumed} symbole(s) déjà traité(s), {remaining} restant(s) à rejouer.")
     bookmark_path = str(summary.get("bookmark_path", "") or "").strip()
     if bookmark_path:
         lines.append(f"Bookmark local : {bookmark_path}")

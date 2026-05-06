@@ -41,13 +41,14 @@ def test_pipeline_command_for_alpaca_uses_alpaca_module(monkeypatch):
 
 
 def test_pipeline_command_for_eodhd_routes_to_eodhd_module(monkeypatch):
-    """Phase 6 : provider=eodhd -> import_eodhd_bar --write."""
+    """Phase 6 : provider=eodhd -> import_eodhd_bar --write sans cross-check Stooq par défaut côté IHM."""
     monkeypatch.setattr(pipeline_runner, "_resolve_bars_provider_for_ihm", lambda: "eodhd")
     cmd = _build_command(monkeypatch, "import_alpaca_bar")
     assert "dataIntegrityEngine.import_eodhd_bar" in cmd
     assert "--write" in cmd
     assert "--commit-every-symbols" in cmd
     assert str(pipeline_runner.DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS) in cmd
+    assert "--no-stooq-cross-check" in cmd
 
 
 def test_pipeline_command_for_eodhd_can_disable_intermediate_commits(monkeypatch):
@@ -59,6 +60,21 @@ def test_pipeline_command_for_eodhd_can_disable_intermediate_commits(monkeypatch
     assert "dataIntegrityEngine.import_eodhd_bar" in cmd
     assert "--write" in cmd
     assert "--commit-every-symbols" not in cmd
+    assert "--no-stooq-cross-check" in cmd
+
+
+def test_pipeline_command_for_eodhd_can_reenable_stooq_cross_check(monkeypatch):
+    monkeypatch.setattr(pipeline_runner, "_resolve_bars_provider_for_ihm", lambda: "eodhd")
+    from ihm.services.pipeline_runner import PipelineLaunchOptions, build_pipeline_command
+
+    cmd = build_pipeline_command(
+        "import_alpaca_bar",
+        PipelineLaunchOptions(eodhd_enable_stooq_cross_check=True),
+    )
+
+    assert "dataIntegrityEngine.import_eodhd_bar" in cmd
+    assert "--write" in cmd
+    assert "--no-stooq-cross-check" not in cmd
 
 
 # ---------------------------------------------------------------------------

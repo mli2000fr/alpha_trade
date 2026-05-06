@@ -1,6 +1,12 @@
 from typing import cast
 
-from ihm.services.run_summary import aggregate_workflow_run_summary, build_latest_run_summary_rows, build_run_summary_caption
+from ihm.services.run_summary import (
+    aggregate_workflow_run_summary,
+    build_latest_run_summary_rows,
+    build_run_summary_caption,
+    get_run_summary_detail_lines,
+    get_stooq_cross_check_status,
+)
 
 
 def test_aggregate_workflow_run_summary_merges_numeric_and_nested_counters() -> None:
@@ -59,6 +65,33 @@ def test_build_run_summary_caption_uses_workflow_metrics() -> None:
     assert "étapes résumées=2" in caption
     assert "cibles=6" in caption
     assert "succès=5" in caption
+
+
+def test_import_bars_summary_caption_and_details_expose_stooq_cross_check_status() -> None:
+    record = {
+        "step_key": "import_alpaca_bar",
+        "command": [
+            "python",
+            "-u",
+            "-m",
+            "dataIntegrityEngine.import_eodhd_bar",
+            "--write",
+            "--no-stooq-cross-check",
+        ],
+        "run_summary": {
+            "targeted_symbols": 12,
+            "successful_symbols": 11,
+            "cross_check_stooq": {"anomalies_count": 0, "failed": False, "skipped": True},
+            "stooq_cross_check_enabled": False,
+        },
+    }
+
+    caption = build_run_summary_caption(record)
+    detail_lines = get_run_summary_detail_lines(record)
+
+    assert "stooq=désactivé" in caption
+    assert get_stooq_cross_check_status(record) == "désactivé"
+    assert any("Cross-check Stooq : désactivé." == line for line in detail_lines)
 
 
 def test_aggregate_workflow_run_summary_uses_weighted_average_and_latest_thresholds() -> None:

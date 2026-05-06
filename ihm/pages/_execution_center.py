@@ -46,6 +46,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY,
     DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS,
     DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE,
+    DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK,
     DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS,
     DEFAULT_CA_SKIP_EXISTING,
     DEFAULT_CA_BATCH_SIZE,
@@ -2207,6 +2208,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     help="0 = commit final unique en fin de run. Toute valeur > 0 active des sauvegardes intermédiaires par batch de symboles quand `bars_provider=eodhd`.",
                 )
             )
+            eodhd_enable_stooq_cross_check = st.checkbox(
+                "Import Bars EODHD — activer le cross-check Stooq après import",
+                value=bool(st.session_state.get("pipeline_eodhd_enable_stooq_cross_check", DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK)),
+                key="pipeline_eodhd_enable_stooq_cross_check",
+                help=(
+                    "Décoché par défaut pour éviter qu'un workflow quotidien reste bloqué longtemps après le `final_flush`. "
+                    "Si coché, l'étape 1 lance aussi l'audit best-effort Stooq pour comparer EODHD à une source indépendante."
+                ),
+            )
             data_integrity_fundamentals_log_every = int(
                 st.number_input(
                     "Fondamentaux — journaliser tous les N symboles",
@@ -2535,6 +2545,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             data_integrity_fundamentals_sleep_seconds=float(data_integrity_fundamentals_sleep_seconds),
             data_integrity_fundamentals_log_every=int(data_integrity_fundamentals_log_every),
             eodhd_write_commit_every_symbols=int(eodhd_write_commit_every_symbols),
+            eodhd_enable_stooq_cross_check=bool(eodhd_enable_stooq_cross_check),
             corporate_actions_skip_existing=bool(corporate_actions_skip_existing),
             corporate_actions_use_custom_window=bool(ca_use_custom_window),
             corporate_actions_start_date=ca_start_date_value,

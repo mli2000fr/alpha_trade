@@ -478,6 +478,7 @@ def run_eodhd_ingestion(
         "rows_upserted_stock_bars_daily": 0,
         "errors": 0,
         "stopped_reason": None,
+        "stooq_cross_check_enabled": bool(enable_stooq_cross_check),
         # clés normalisées pour run_summary global (cf. plan §8.1)
         "eodhd": {},
         "cross_check_stooq": {"anomalies_count": 0, "failed": False, "skipped": True},
@@ -837,6 +838,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             "finished_at": _utc_now_naive().isoformat(timespec="seconds"),
             "duration_seconds": 0.0,
             "eodhd": {"calls_used": 0, "calls_failed": 0, "circuit_open": False},
+            "stooq_cross_check_enabled": False,
             "cross_check_stooq": {"anomalies_count": 0, "failed": False, "skipped": True},
         }
         _emit_run_summary(attach_schema_version(skip_summary))

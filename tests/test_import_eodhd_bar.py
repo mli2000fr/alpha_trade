@@ -564,6 +564,7 @@ def test_run_summary_keys_compliance_plan_section_8_1(
 
     cross = summary["cross_check_stooq"]
     assert "anomalies_count" in cross and "failed" in cross
+    assert summary["stooq_cross_check_enabled"] is False
 
 
 def test_main_noop_when_provider_alpaca(monkeypatch, capsys):

@@ -29,6 +29,7 @@ from ihm.pages._shared import (
     format_duration_hhmmss,
     to_int,
 )
+from ihm.services.run_summary import get_stooq_cross_check_status
 from ihm.services.process_registry import (
     build_log_download_name,
     get_pipeline_run_record,
@@ -45,6 +46,7 @@ __all__ = [
     "_build_history_rows",
     "_build_workflow_child_run_payload",
     "_build_run_provider_badge",
+    "_build_run_stooq_badge",
     "_build_run_symbol_progress_payload",
     "_build_run_symbol_progress_caption",
     "_latest_run_by_step",
@@ -146,6 +148,13 @@ def _build_run_provider_badge(run: dict[str, object] | None) -> str | None:
     if "import_alpaca_bar" in searchable:
         return "provider=alpaca"
     return None
+
+
+def _build_run_stooq_badge(run: dict[str, object] | None) -> str | None:
+    status = get_stooq_cross_check_status(run)
+    if status is None:
+        return None
+    return f"cross-check stooq={status}"
 
 
 def _build_run_symbol_progress_caption(run: dict[str, object] | None) -> str | None:
@@ -672,8 +681,11 @@ def _render_runtime_center() -> None:
                     stop_pipeline_run(run_id)
                     st.rerun()
                 provider_badge = _build_run_provider_badge(run)
+                stooq_badge = _build_run_stooq_badge(run)
                 if provider_badge:
                     st.caption(f"🏷️ `{provider_badge}`")
+                if stooq_badge:
+                    st.caption(f"🔎 `{stooq_badge}`")
                 if _should_render_active_run_live_progress(run, active_workflow_run_ids=active_workflow_run_ids):
                     symbol_progress_payload = _build_run_symbol_progress_payload(run)
                     if symbol_progress_payload is not None:
@@ -825,9 +837,12 @@ def _render_runtime_center() -> None:
                 if selected_child_run is not None:
                     selected_child_logs = read_pipeline_logs(selected_child_run_id, stream=cast(Any, stream_map[log_filter]))
                     provider_badge = _build_run_provider_badge(selected_child_run)
+                    stooq_badge = _build_run_stooq_badge(selected_child_run)
                     symbol_progress_payload = _build_run_symbol_progress_payload(selected_child_run)
                     if provider_badge:
                         st.caption(f"🏷️ `{provider_badge}`")
+                    if stooq_badge:
+                        st.caption(f"🔎 `{stooq_badge}`")
                     _render_watchdog_status(selected_child_run)
                     if symbol_progress_payload is not None:
                         progress_fraction, symbol_progress_caption = symbol_progress_payload
@@ -862,9 +877,12 @@ def _render_runtime_center() -> None:
         metric_col3.metric("Lignes stdout", to_int(selected_run.get("stdout_lines", 0)))
         metric_col4.metric("Lignes stderr", to_int(selected_run.get("stderr_lines", 0)))
         selected_run_provider_badge = _build_run_provider_badge(selected_run)
+        selected_run_stooq_badge = _build_run_stooq_badge(selected_run)
         selected_run_progress_payload = _build_run_symbol_progress_payload(selected_run)
         if selected_run_provider_badge:
             st.caption(f"🏷️ `{selected_run_provider_badge}`")
+        if selected_run_stooq_badge:
+            st.caption(f"🔎 `{selected_run_stooq_badge}`")
         if selected_run_progress_payload is not None:
             progress_fraction, selected_run_progress_caption = selected_run_progress_payload
             st.progress(progress_fraction)
