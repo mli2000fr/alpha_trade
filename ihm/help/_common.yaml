@@ -1,0 +1,53 @@
+# ihm/help/_common.yaml — tooltips partagés (Sprint S20)
+# Encodage : utf-8 strict (no BOM).
+
+account:
+  title: "Compte de trading actif"
+  description: |
+    Identifiant du compte broker actuellement sélectionné dans la
+    sidebar. Toutes les actions (ordres, fills, KPI) sont scopées à ce
+    compte.
+  impact: |
+    - Module impacté : `service/alpaca/accounts.py`, `ihm/services/alpaca_accounts.py`
+    - Décision impactée : routage des ordres et calculs P&L
+  example: "`paper-default` (sandbox) ou `live-prop-01`."
+  default: "default"
+  range: "enum (comptes déclarés dans config.yaml)"
+  doc_ref: "doc/multi_account.md"
+
+date_from:
+  title: "Date de début"
+  description: |
+    Borne inférieure (incluse) de la fenêtre temporelle utilisée pour
+    filtrer les données affichées.
+  impact: |
+    - Décision impactée : périmètre des KPI, des tables et des exports
+  example: "2026-01-01"
+  default: "J-90"
+  range: "date >= 2020-01-01"
+  doc_ref: "doc/operator_handbook.md#filtres-temporels"
+
+date_to:
+  title: "Date de fin"
+  description: |
+    Borne supérieure (incluse) de la fenêtre temporelle.
+  impact: |
+    - Décision impactée : périmètre des KPI, tables et exports
+  example: "2026-05-06"
+  default: "aujourd'hui"
+  range: "date <= aujourd'hui"
+  doc_ref: "doc/operator_handbook.md#filtres-temporels"
+
+mode_broker:
+  title: "Mode broker (paper / live)"
+  description: |
+    Sélection du mode d'exécution du broker. ``paper`` route les ordres
+    vers la sandbox ; ``live`` exécute en argent réel.
+  impact: |
+    - Module impacté : `service/alpaca/client.py`, `execution_engine/executor.py`
+    - Décision impactée : tous les ordres réels du run
+  example: "Tester en paper avant la bascule live."
+  default: "paper"
+  range: "{paper, live}"
+  doc_ref: "doc/operator_handbook.md#mode-broker"
+

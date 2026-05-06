@@ -1,0 +1,37 @@
+# ihm/help/pipeline.yaml (Sprint S20.3)
+overview:
+  title: "Pipeline orchestrator"
+  description: "Orchestration des étapes screening → selector → exec."
+  impact: "Module : `ihm/services/pipeline_runner.py`."
+  example: "Run quotidien post-close."
+  default: "—"
+  range: "—"
+  doc_ref: "doc/pipeline.md"
+
+steps_enabled:
+  title: "Étapes activées"
+  description: "Sous-ensemble des étapes pipeline à exécuter."
+  impact: "Réduit le périmètre du run."
+  example: "{screening, selector}"
+  default: "(toutes)"
+  range: "set d'enum"
+  doc_ref: "doc/pipeline.md#steps"
+
+parallelism:
+  title: "Parallélisme (workers)"
+  description: "Nombre de workers concurrents."
+  impact: "Performance / charge CPU."
+  example: "4"
+  default: 4
+  range: "[1, 32]"
+  doc_ref: "doc/pipeline.md#parallelism"
+
+dry_run:
+  title: "Dry-run"
+  description: "Mode simulation sans écriture en base."
+  impact: "Aucune mutation persistée."
+  example: "Activer pour test config."
+  default: false
+  range: "{true, false}"
+  doc_ref: "doc/pipeline.md#dry-run"
+

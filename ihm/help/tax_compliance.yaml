@@ -1,0 +1,99 @@
+# ihm/help/tax_compliance.yaml (Sprint S19.4 / S20)
+overview:
+  title: "Tax Compliance — wash sales (IRS §1091)"
+  description: |
+    Détection des wash sales et ajustement du cost basis. Permet de
+    générer un export CSV équivalent au formulaire 1099-B pour le fisc
+    américain.
+  impact: |
+    - Module impacté : `tax/wash_sale.py`
+    - Décision impactée : cost basis ajusté + perte non déductible
+  example: "Vente AAPL à perte le 15-04, rachat le 25-04 ⇒ wash sale."
+  default: "—"
+  range: "—"
+  doc_ref: "doc/tax_wash_sale.md"
+
+date_from:
+  title: "Période d'analyse — début"
+  description: |
+    Borne inférieure de la fenêtre fiscale analysée pour les wash
+    sales.
+  impact: "Périmètre des lots et ajustements calculés."
+  example: "2026-01-01 (début d'année fiscale)"
+  default: "J-90"
+  range: "date <= aujourd'hui"
+  doc_ref: "doc/tax_wash_sale.md#filtre-temporel"
+
+date_to:
+  title: "Période d'analyse — fin"
+  description: |
+    Borne supérieure (incluse) de la fenêtre analysée.
+  impact: "Périmètre des lots et ajustements calculés."
+  example: "2026-12-31"
+  default: "aujourd'hui"
+  range: "date <= aujourd'hui"
+  doc_ref: "doc/tax_wash_sale.md#filtre-temporel"
+
+symbol_filter:
+  title: "Filtre symbole"
+  description: |
+    Restreint l'analyse à un symbole précis (laisser vide pour
+    l'ensemble des positions).
+  impact: "Réduit le scope de calcul wash sale."
+  example: "AAPL"
+  default: "(vide)"
+  range: "ticker US"
+  doc_ref: "doc/tax_wash_sale.md"
+
+account:
+  title: "Compte fiscal"
+  description: |
+    Compte broker pour lequel les lots sont chargés.
+  impact: "Source des fills réels (table `fills`)."
+  example: "live-prop-01"
+  default: "default"
+  range: "enum"
+  doc_ref: "doc/multi_account.md"
+
+kpi_lots:
+  title: "Nombre total de lots"
+  description: "Mouvements (achats + ventes) sur la période."
+  impact: "Volume de données analysées."
+  example: "120 lots / trimestre"
+  default: "—"
+  range: ">= 0"
+  doc_ref: "doc/tax_wash_sale.md"
+
+kpi_wash_count:
+  title: "Wash sales détectées"
+  description: |
+    Nombre d'opérations qualifiant la règle des 30 jours (achat de
+    titre substantiellement identique encadrant une vente à perte).
+  impact: "Indicateur clé de non-déductibilité fiscale."
+  example: "3 wash sales détectées sur Q1."
+  default: "0"
+  range: ">= 0"
+  doc_ref: "doc/tax_wash_sale.md#detection"
+
+kpi_disallowed:
+  title: "Perte non déductible totale ($)"
+  description: |
+    Somme des pertes ré-allouées au cost basis des lots de
+    remplacement et donc non déductibles dans l'année.
+  impact: "Impact direct sur le P&L fiscal déclaré."
+  example: "$2 480.50 non déductibles → reportés en cost basis."
+  default: "0.00"
+  range: ">= 0"
+  doc_ref: "doc/tax_wash_sale.md#disallowed-loss"
+
+export_csv:
+  title: "Export CSV (1099-B)"
+  description: |
+    Télécharge la table des lots ajustés au format CSV exploitable
+    par les outils fiscaux US (TurboTax, IRS form 8949).
+  impact: "Output : fichier CSV téléchargé dans le navigateur."
+  example: "tax_lots_2026-01-01_2026-12-31.csv"
+  default: "—"
+  range: "—"
+  doc_ref: "doc/tax_wash_sale.md#export-1099b"
+

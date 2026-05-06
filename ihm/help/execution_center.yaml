@@ -1,0 +1,67 @@
+# ihm/help/execution_center.yaml (Sprint S20.3)
+overview:
+  title: "Execution center"
+  description: |
+    Tableau de bord live : positions ouvertes, ordres en attente,
+    brackets synthétiques, fills, état circuit breaker, santé broker
+    et chaîne audit.
+  impact: |
+    - Modules : `execution_engine/`, `service/alpaca/`, `risk_management/`
+    - Décisions : suivi temps réel, override manuel des risques
+  example: "Vue sentinelle pendant la séance."
+  default: "—"
+  range: "—"
+  doc_ref: "doc/execution.md"
+
+preflight_enabled:
+  title: "Pre-flight enabled"
+  description: |
+    Active le checklist preflight (data integrity, broker health,
+    quotas) avant tout lancement de run d'exécution.
+  impact: "Bloque l'envoi si un check est rouge."
+  example: "Activé en production ; désactivable en debug."
+  default: true
+  range: "{true, false}"
+  doc_ref: "doc/execution.md#preflight"
+
+oco_strategy:
+  title: "Stratégie OCO"
+  description: "Mode d'envoi des sorties take-profit / stop-loss."
+  impact: "Module : `execution_engine/synthetic_bracket.py`."
+  example: "synthetic ⇒ pilotage côté serveur ; native ⇒ délégué broker."
+  default: "synthetic"
+  range: "{synthetic, native}"
+  doc_ref: "doc/execution.md#bracket-oco"
+
+bracket_offset_atr_mult:
+  title: "Multiplicateur ATR (offset bracket)"
+  description: |
+    Multiplie l'ATR pour positionner le take-profit et le stop par
+    rapport au prix d'entrée.
+  impact: "Décision : niveau TP/SL."
+  example: "k=2 ⇒ stop = entry - 2·ATR."
+  default: 2.0
+  range: "[0.5, 6.0]"
+  doc_ref: "doc/execution.md#bracket"
+
+flatten_confirmation:
+  title: "Confirmation flatten"
+  description: |
+    Demande une confirmation explicite avant l'exécution d'un flatten
+    global (toutes positions à zéro).
+  impact: "Évite les flatten accidentels."
+  example: "Modal de confirmation à 2 clics."
+  default: true
+  range: "{true, false}"
+  doc_ref: "doc/execution.md#flatten"
+
+replay_window:
+  title: "Fenêtre de replay (jours)"
+  description: |
+    Profondeur historique chargée pour le replay d'un run sélectionné.
+  impact: "Volume de données / performance d'affichage."
+  example: "7 jours."
+  default: 7
+  range: "[1, 90]"
+  doc_ref: "doc/execution.md#replay"
+

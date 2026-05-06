@@ -1,11 +1,25 @@
-"""Configuration centralisée de la navigation IHM Streamlit."""
+"""Configuration centralisée de la navigation IHM Streamlit.
+
+Sprint S19.5 — Refonte hiérarchique en **5 sections** logiques (cf.
+``prompt/tod/plan_ihm.md`` §2.2). Compatibilité ascendante préservée :
+les helpers historiques ``get_navigation_pages`` / ``_labels`` /
+``_mapping`` / ``_imports`` continuent à exposer une vue à plat.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
-NavigationGroup = Literal["pipeline", "support"]
+NavigationGroup = Literal[
+    "pipeline",
+    "support",
+    "home",
+    "trading",
+    "research",
+    "config",
+    "compliance",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +31,20 @@ class NavigationPage:
     module_name: str
     group: NavigationGroup
 
+
+@dataclass(frozen=True, slots=True)
+class NavigationSection:
+    """Section logique regroupant plusieurs pages (S19.5)."""
+
+    key: str
+    label: str
+    icon: str
+    pages: tuple[NavigationPage, ...] = field(default_factory=tuple)
+
+
+# ---------------------------------------------------------------------------
+# Pages — compat ascendante (groupes "pipeline" / "support" historiques)
+# ---------------------------------------------------------------------------
 
 PIPELINE_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
     NavigationPage("🏠 Vue d'ensemble", "overview", "ihm.pages.overview", "pipeline"),
@@ -36,10 +64,88 @@ SUPPORT_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
     NavigationPage("🔀 Parité Backtest ↔ Live", "parity", "ihm.pages.parity", "support"),
     NavigationPage("🗃️ Administration DB", "db_admin", "ihm.pages.db_admin", "support"),
     NavigationPage("⚙️ Paramètres / Santé", "settings", "ihm.pages.settings", "support"),
+    # Sprint S19.4 / S19.5 — nouvelles pages institutionnelles
+    NavigationPage("💰 Tax Compliance", "tax_compliance", "ihm.pages.tax_compliance", "support"),
+    NavigationPage("📜 Compliance & Audit", "compliance_audit", "ihm.pages.compliance_audit", "support"),
+    NavigationPage("📚 Glossaire", "glossary", "ihm.pages.glossary", "support"),
 )
 
 
-NAVIGATION_PAGES: tuple[NavigationPage, ...] = PIPELINE_NAVIGATION_PAGES + SUPPORT_NAVIGATION_PAGES
+NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
+    PIPELINE_NAVIGATION_PAGES + SUPPORT_NAVIGATION_PAGES
+)
+
+
+# ---------------------------------------------------------------------------
+# Sections hiérarchiques cible (Sprint S19.5)
+# ---------------------------------------------------------------------------
+
+
+def _get_page(key: str) -> NavigationPage:
+    for page in NAVIGATION_PAGES:
+        if page.key == key:
+            return page
+    raise KeyError(f"Page navigation inconnue : {key}")
+
+
+def get_navigation_sections() -> tuple[NavigationSection, ...]:
+    """Retourne les 5 sections logiques (Sprint S19.5)."""
+    return (
+        NavigationSection(
+            key="home",
+            label="Accueil",
+            icon="🏠",
+            pages=(_get_page("overview"),),
+        ),
+        NavigationSection(
+            key="trading",
+            label="Trading",
+            icon="📈",
+            pages=(
+                _get_page("execution"),
+                _get_page("risk"),
+                _get_page("alpaca_accounts"),
+            ),
+        ),
+        NavigationSection(
+            key="research",
+            label="Analyse & Recherche",
+            icon="🔬",
+            pages=(
+                _get_page("screening"),
+                _get_page("backtesting"),
+                _get_page("parity"),
+                _get_page("ml"),
+            ),
+        ),
+        NavigationSection(
+            key="config",
+            label="Configuration",
+            icon="⚙️",
+            pages=(
+                _get_page("settings"),
+                _get_page("pipeline"),
+            ),
+        ),
+        NavigationSection(
+            key="compliance",
+            label="Conformité & Admin",
+            icon="🛡️",
+            pages=(
+                _get_page("compliance_audit"),
+                _get_page("tax_compliance"),
+                _get_page("corporate_actions"),
+                _get_page("db_admin"),
+                _get_page("supervision_ops"),
+                _get_page("glossary"),
+            ),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers historiques (rétro-compat — ne pas casser app.py / tests)
+# ---------------------------------------------------------------------------
 
 
 def get_navigation_pages() -> tuple[NavigationPage, ...]:
@@ -66,4 +172,14 @@ def build_primary_navigation_caption() -> str:
 
 
 def build_support_navigation_caption() -> str:
-    return "Pages hors workflow quotidien : Supervision Ops → Backtesting → Parité Backtest ↔ Live → Administration DB → Paramètres / Santé"
+    return (
+        "Pages hors workflow quotidien : Supervision Ops → Backtesting → "
+        "Parité Backtest ↔ Live → Administration DB → Paramètres / Santé → "
+        "Tax Compliance → Compliance & Audit → Glossaire"
+    )
+
+
+def build_section_navigation_caption() -> str:
+    """Sprint S19.5 — caption pour la nouvelle vue par sections."""
+    sections = get_navigation_sections()
+    return " · ".join(f"{s.icon} {s.label}" for s in sections)

@@ -1,0 +1,77 @@
+# ihm/help/backtesting.yaml (Sprint S20.3)
+overview:
+  title: "Backtesting"
+  description: |
+    Lance un run backtesting sur la période et l'univers choisis,
+    inspecte les KPI, l'attribution sectorielle Brinson-Fachler et le
+    replay des décisions.
+  impact: "Module : `backtesting/`."
+  example: "Run S&P 500, 2024-01-01 → 2024-12-31."
+  default: "—"
+  range: "—"
+  doc_ref: "doc/backtesting.md"
+
+start_date:
+  title: "Date de début backtest"
+  description: "Borne inférieure de la période simulée."
+  impact: "Périmètre du run."
+  example: "2024-01-01"
+  default: "J-365"
+  range: ">= 2010-01-01"
+  doc_ref: "doc/backtesting.md#periode"
+
+end_date:
+  title: "Date de fin backtest"
+  description: "Borne supérieure (incluse)."
+  impact: "Périmètre du run."
+  example: "2024-12-31"
+  default: "aujourd'hui"
+  range: "<= aujourd'hui"
+  doc_ref: "doc/backtesting.md#periode"
+
+universe:
+  title: "Univers"
+  description: "Liste de symboles ou nom d'univers prédéfini."
+  impact: "Définit le scope screening / selector."
+  example: "SP500, NASDAQ100, custom_csv"
+  default: "SP500"
+  range: "enum / list"
+  doc_ref: "doc/backtesting.md#univers"
+
+initial_capital:
+  title: "Capital initial ($)"
+  description: "Capital de départ du portefeuille simulé."
+  impact: "Sizing absolu de toutes les positions."
+  example: "100 000 $"
+  default: 100000
+  range: "[1000, 100000000]"
+  doc_ref: "doc/backtesting.md#capital"
+
+commission_model:
+  title: "Modèle de commissions"
+  description: "Schéma de tarification appliqué aux fills simulés."
+  impact: "Affecte le P&L net du backtest."
+  example: "alpaca_zero, ibkr_tiered, fixed_per_share"
+  default: "alpaca_zero"
+  range: "enum"
+  doc_ref: "doc/backtesting.md#commissions"
+
+slippage_model:
+  title: "Modèle de slippage"
+  description: "Pénalité d'exécution appliquée à chaque fill."
+  impact: "Estime le drag réaliste vs frictionless."
+  example: "spread_half, k_atr=0.1"
+  default: "spread_half"
+  range: "enum"
+  doc_ref: "doc/backtesting.md#slippage"
+
+walk_forward_window:
+  title: "Fenêtre walk-forward (mois)"
+  description: |
+    Taille de la fenêtre d'entraînement pour calibration walk-forward.
+  impact: "Stabilité de la calibration."
+  example: "12 mois train / 3 mois test."
+  default: 12
+  range: "[3, 60]"
+  doc_ref: "doc/walk_forward.md"
+

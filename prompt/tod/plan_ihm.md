@@ -18,7 +18,7 @@
 > 5. **Testée** : couverture AppTest (Streamlit testing API) > 80 %.
 >
 > **Score IHM cible** : 8.0 → **9.5** (cf.
-> [`prompt/tod/28_plan_10_10_2.md`](../tod/28_plan_10_10_2.md), Phase D).
+> [`prompt/tod/28_plan_10_10_2.md`](28_plan_10_10_2.md), Phase D).
 
 ---
 

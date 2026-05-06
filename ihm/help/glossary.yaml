@@ -1,0 +1,195 @@
+# ihm/help/glossary.yaml — Termes Alpha Trade (Sprint S20.4)
+# Encodage : utf-8 strict (no BOM).
+
+overview:
+  title: "Glossaire Alpha Trade"
+  description: "Définitions des termes techniques utilisés dans l'IHM."
+  impact: "—"
+  example: "—"
+  default: "—"
+  range: "—"
+  doc_ref: "doc/onboarding_operator.md#glossaire"
+
+search:
+  title: "Filtre de recherche"
+  description: "Recherche fuzzy dans les titres et descriptions."
+  impact: "Réduit la liste affichée."
+  example: "tap 'OCO' pour les ordres bracket"
+  default: "(vide)"
+  range: "string"
+  doc_ref: "doc/onboarding_operator.md"
+
+ATR:
+  title: "ATR — Average True Range"
+  description: |
+    Mesure de volatilité (Wilder, 1978). Moyenne mobile (14 jours par
+    défaut) du True Range. Utilisée comme métrique de stop dynamique
+    et de sizing : `position_size = (capital × risk%) / (entry - k·ATR)`.
+  impact: "Sizing, stop-loss, filtre minimal de volatilité."
+  example: "ATR(14) = 2.50 $ ⇒ stop placé à entry - 2·ATR."
+  default: "période 14"
+  range: "[1, 200]"
+  doc_ref: "doc/risk_management.md#atr"
+
+slippage:
+  title: "Slippage"
+  description: |
+    Écart entre le prix attendu (mid au moment de la décision) et le
+    prix réel d'exécution. Mesure la qualité d'exécution / impact
+    marché.
+  impact: "Décrémente le P&L réel ; suivi en parité backtest/live."
+  example: "Decision 50.00, fill 50.04 ⇒ slippage = +4 bps."
+  default: "—"
+  range: "tracker en bps"
+  doc_ref: "doc/parity.md#slippage"
+
+OCO:
+  title: "OCO — One Cancels the Other"
+  description: |
+    Pattern d'ordres : take-profit + stop-loss liés. Le premier qui
+    se déclenche annule l'autre. Implémenté via `synthetic_bracket`.
+  impact: "Garantit qu'une position n'a qu'une seule sortie active."
+  example: "TP=110$, SL=95$ — si TP frappe, SL est annulé."
+  default: "—"
+  range: "—"
+  doc_ref: "doc/execution.md#bracket-oco"
+
+bracket:
+  title: "Ordre bracket"
+  description: |
+    Triplet (entrée + take-profit + stop-loss) émis ensemble. Si
+    l'entrée est partielle, les sorties sont rebalancées au prorata.
+  impact: "Mode d'envoi standard pour les positions long-only."
+  example: "BUY 100 AAPL @ 180 + TP 195 + SL 175"
+  default: "activé"
+  range: "{actif, désactivé}"
+  doc_ref: "doc/execution.md#bracket"
+
+RPO_RTO:
+  title: "RPO / RTO — Recovery objectives"
+  description: |
+    RPO = Recovery Point Objective (perte de données acceptable),
+    RTO = Recovery Time Objective (durée d'indisponibilité
+    acceptable). Mesurés mensuellement par le DR drill.
+  impact: "Garanties contractuelles de continuité d'activité."
+  example: "RPO 5 min ; RTO 30 min."
+  default: "—"
+  range: "minutes"
+  doc_ref: "doc/disaster_recovery.md"
+
+HMAC:
+  title: "HMAC — Hash-based MAC"
+  description: |
+    Signature cryptographique chaînée appliquée à chaque entrée du
+    journal d'audit (RFC 2104). Garantit l'intégrité bout-en-bout.
+  impact: "Détection immédiate de toute modification d'audit."
+  example: "Clé tournée 90 j, SHA-256."
+  default: "SHA-256"
+  range: "{SHA-256, SHA-512}"
+  doc_ref: "doc/audit_chain.md#hmac"
+
+walk_forward:
+  title: "Walk-forward optimization"
+  description: |
+    Validation hors échantillon roulante : entraînement sur fenêtre
+    [t0, t1], test sur [t1, t2], puis avancement. Évite le
+    sur-apprentissage statique.
+  impact: "Méthodologie de calibration ML / weights backtesting."
+  example: "Train 12 mois ⇒ test 3 mois ⇒ roll."
+  default: "12/3 mois"
+  range: "[3 mois, 60 mois]"
+  doc_ref: "doc/walk_forward.md"
+
+drift:
+  title: "Drift (modèle ML)"
+  description: |
+    Dérive de la distribution des features ou des prédictions par
+    rapport au baseline d'entraînement. Mesurée par PSI / KS.
+  impact: "Déclenche la rétrogradation automatique champion → challenger."
+  example: "PSI > 0.25 ⇒ alerte ; > 0.40 ⇒ rollback auto."
+  default: "0.25"
+  range: "[0, 1]"
+  doc_ref: "doc/ml_drift.md"
+
+champion_challenger:
+  title: "Champion / Challenger"
+  description: |
+    Pattern de promotion ML : le modèle « champion » sert en
+    production, un « challenger » est entraîné en parallèle. Bascule
+    si le challenger surperforme sur fenêtre de validation.
+  impact: "Active `modelFactory/auto_rollback.py`."
+  example: "Challenger AUC > champion + 1 % sur 30 j ⇒ promotion."
+  default: "—"
+  range: "—"
+  doc_ref: "doc/model_factory.md#champion-challenger"
+
+wash_sale:
+  title: "Wash sale (IRS §1091)"
+  description: |
+    Vente à perte d'un titre suivie (ou précédée) de l'achat d'un
+    titre substantiellement identique dans une fenêtre de 30 jours :
+    la perte n'est pas déductible et est ajoutée au cost basis du
+    nouveau lot.
+  impact: "Module : `tax/wash_sale.py`."
+  example: "Voir page Tax Compliance."
+  default: "fenêtre 30 j"
+  range: "30 j (US) / 30 j (UK 'bed & breakfast')"
+  doc_ref: "doc/tax_wash_sale.md"
+
+brinson_fachler:
+  title: "Brinson-Fachler (attribution sectorielle)"
+  description: |
+    Décomposition de l'écart de performance entre un portefeuille et
+    son benchmark en effets allocation sectorielle vs sélection de
+    titres.
+  impact: "Page Backtesting → onglet Attribution."
+  example: "Allocation +120 bps, sélection -30 bps."
+  default: "—"
+  range: "bps"
+  doc_ref: "doc/attribution.md"
+
+parity_score:
+  title: "Parity score (backtest ↔ live)"
+  description: |
+    Distance normalisée entre les KPI d'un run backtest et son
+    équivalent live (P&L, hit ratio, exposure). Score de 0 (parfait)
+    à 1 (divergence totale).
+  impact: "Page Parité Backtest ↔ Live."
+  example: "Score 0.08 ⇒ divergence faible."
+  default: "tolérance 0.10"
+  range: "[0, 1]"
+  doc_ref: "doc/parity.md"
+
+drawdown:
+  title: "Drawdown"
+  description: |
+    Recul depuis le plus haut historique du portefeuille. Mesuré en
+    % et en valeur absolue.
+  impact: "Déclenche le circuit breaker au-delà du seuil."
+  example: "Pic 100 k$, valeur 95 k$ ⇒ DD = -5 %."
+  default: "seuil CB 3 %"
+  range: "[0, 100] %"
+  doc_ref: "doc/risk_management.md#circuit-breaker"
+
+RS:
+  title: "RS — Relative Strength"
+  description: |
+    Force relative d'un titre par rapport à un benchmark sur fenêtre
+    glissante. Score IBD (1-99) utilisé par le screener Minervini.
+  impact: "Filtre entrée du screener (`min RS = 80` par défaut)."
+  example: "RS = 92 ⇒ top décile."
+  default: "80"
+  range: "[1, 99]"
+  doc_ref: "doc/screener.md#rs"
+
+sector_neutralization:
+  title: "Sector neutralization"
+  description: |
+    Plafonne l'exposition par secteur (% du portefeuille) pour
+    éviter la concentration thématique.
+  impact: "Selector — diversification."
+  example: "Plafond 25 % par secteur GICS L1."
+  default: "25 %"
+  range: "[5, 100] %"
+  doc_ref: "doc/selector.md#sector-cap"
+
