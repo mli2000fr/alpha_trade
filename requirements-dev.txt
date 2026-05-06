@@ -34,3 +34,5 @@ alembic>=1.13.0
 
 # --- Integration tests (Phase 2.2) ---
 testcontainers[mysql]>=4.0  # tests d'intgration MySQL en CI
+testcontainers[redis]>=4.0  # Sprint S21.6 — tests live Redis cache
+redis>=5.0                  # client Redis (utilisé par service/cache/redis_cache.py)

@@ -112,20 +112,157 @@ class IBKRBrokerClient:
             ))
         return out
 
-    def submit_order(self, request: OrderRequest) -> BrokerOrderSnapshot:  # noqa: ARG002
+    def submit_order(self, request: OrderRequest) -> BrokerOrderSnapshot:
+        """Soumet un ordre à TWS/Gateway (Sprint S21.3).
+
+        Supporte ``market``, ``limit``, ``stop`` et ``stop_limit`` ; TIF
+        ``day/gtc/ioc/fok``. Le bracket OCO peut être passé via
+        ``request.extra = {"bracket": {"take_profit": ..., "stop_loss": ...}}``
+        — il est alors transmis à ``ib_insync.IB.bracketOrder()``.
+        """
         if self._readonly:
             raise IBKRUnavailableError(
-                "IBKRBrokerClient est en mode lecture seule (Sprint S13.2)."
+                "IBKRBrokerClient est en mode lecture seule (readonly=True)."
             )
-        raise NotImplementedError("submit_order IBKR sera livré en Sprint S13-bis.")
+        contract = self._build_contract(request.symbol)
+        order = self._build_order(request)
+        bracket_cfg = (request.extra or {}).get("bracket") if request.extra else None
 
-    def cancel_order(self, order_id: str) -> bool:  # noqa: ARG002
+        if bracket_cfg:
+            tp = float(bracket_cfg.get("take_profit"))
+            sl = float(bracket_cfg.get("stop_loss"))
+            qty = float(request.qty)
+            limit_price = float(request.limit_price or 0.0)
+            action = "BUY" if request.side == "buy" else "SELL"
+            bracket = self._ib.bracketOrder(
+                action, qty,
+                limitPrice=limit_price,
+                takeProfitPrice=tp,
+                stopLossPrice=sl,
+            )
+            parent_trade = None
+            for sub in bracket:
+                if request.client_order_id and getattr(sub, "orderRef", "") == "":
+                    sub.orderRef = request.client_order_id
+                trade = self._ib.placeOrder(contract, sub)
+                if parent_trade is None:
+                    parent_trade = trade
+            self._ib.waitOnUpdate(timeout=2)
+            assert parent_trade is not None
+            return self._snapshot_from_trade(parent_trade, request)
+
+        trade = self._ib.placeOrder(contract, order)
+        self._ib.waitOnUpdate(timeout=2)
+        return self._snapshot_from_trade(trade, request)
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Annule un ordre via son ``orderId`` IBKR (string)."""
         if self._readonly:
             raise IBKRUnavailableError("IBKRBrokerClient en lecture seule.")
-        raise NotImplementedError
+        try:
+            target_id = int(order_id)
+        except (TypeError, ValueError):
+            return False
+        for trade in self._ib.openTrades():
+            if int(getattr(trade.order, "orderId", -1)) == target_id:
+                self._ib.cancelOrder(trade.order)
+                self._ib.waitOnUpdate(timeout=2)
+                return True
+        return False
 
     def stream_trades(self, callback: Callable[[BrokerOrderSnapshot], None]) -> Any:
-        raise NotImplementedError("stream_trades IBKR sera livré en Sprint S13-bis.")
+        """Abonne ``callback`` au flux ``orderStatusEvent`` de ib_insync.
+
+        Retourne un handle (``unsubscribe``) qui détache l'écouteur.
+        """
+
+        def _handler(trade: Any) -> None:
+            try:
+                snap = self._snapshot_from_trade(trade, None)
+                callback(snap)
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("stream_trades callback failed")
+
+        self._ib.orderStatusEvent += _handler
+
+        def _unsubscribe() -> None:
+            try:
+                self._ib.orderStatusEvent -= _handler
+            except Exception:  # noqa: BLE001
+                pass
+
+        return _unsubscribe
+
+    # ------------------------------------------------------------------
+    # Helpers internes (Sprint S21.3)
+    # ------------------------------------------------------------------
+
+    def _build_contract(
+        self,
+        symbol: str,
+        *,
+        sec_type: str = "STK",
+        currency: str = "USD",
+        exchange: str = "SMART",
+        primary_exchange: str = "NASDAQ",
+    ) -> Any:
+        Stock = self._ib_insync.Stock
+        return Stock(symbol, exchange, currency, primaryExchange=primary_exchange) \
+            if sec_type == "STK" else self._ib_insync.Contract(
+                symbol=symbol, secType=sec_type, currency=currency, exchange=exchange,
+            )
+
+    def _build_order(self, req: OrderRequest) -> Any:
+        ib = self._ib_insync
+        action = "BUY" if req.side == "buy" else "SELL"
+        qty = float(req.qty)
+        tif = (req.time_in_force or "day").upper()
+        otype = req.type or "market"
+
+        if otype == "market":
+            order = ib.MarketOrder(action, qty)
+        elif otype == "limit":
+            if req.limit_price is None:
+                raise ValueError("limit order requires limit_price")
+            order = ib.LimitOrder(action, qty, float(req.limit_price))
+        elif otype == "stop":
+            if req.stop_price is None:
+                raise ValueError("stop order requires stop_price")
+            order = ib.StopOrder(action, qty, float(req.stop_price))
+        elif otype == "stop_limit":
+            if req.stop_price is None or req.limit_price is None:
+                raise ValueError("stop_limit order requires stop_price and limit_price")
+            order = ib.StopLimitOrder(
+                action, qty, float(req.limit_price), float(req.stop_price),
+            )
+        else:
+            raise ValueError(f"unsupported order type: {otype}")
+
+        order.tif = tif
+        if req.client_order_id:
+            order.orderRef = req.client_order_id
+        return order
+
+    def _snapshot_from_trade(
+        self, trade: Any, request: OrderRequest | None,
+    ) -> BrokerOrderSnapshot:
+        o = trade.order
+        os_ = trade.orderStatus
+        symbol = str(getattr(trade.contract, "symbol", request.symbol if request else ""))
+        side: Any = "buy" if str(o.action).lower() == "buy" else "sell"
+        return BrokerOrderSnapshot(
+            order_id=str(getattr(o, "orderId", "")),
+            client_order_id=getattr(o, "orderRef", None) or None,
+            symbol=symbol,
+            side=side,
+            qty=Decimal(str(o.totalQuantity)),
+            filled_qty=Decimal(str(getattr(os_, "filled", 0))),
+            avg_fill_price=(
+                Decimal(str(os_.avgFillPrice)) if getattr(os_, "avgFillPrice", 0) else None
+            ),
+            status=_map_ibkr_status(getattr(os_, "status", "")),
+            type=str(getattr(o, "orderType", "")).lower(),  # type: ignore[arg-type]
+        )
 
     def close(self) -> None:
         try:

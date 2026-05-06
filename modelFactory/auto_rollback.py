@@ -196,9 +196,170 @@ def auto_rollback_if_needed(
     )
 
 
+# ---------------------------------------------------------------------------
+# Adapters SQL (Sprint S21.1) — branchés sur la table ``champion_history``
+# ---------------------------------------------------------------------------
+
+
+def _coerce_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return datetime.fromisoformat(str(value)).date()
+
+
+def decision_history_loader_sql(
+    symbol: str,
+    *,
+    engine: Any,
+    threshold_days: int = 14,
+    table: str = "ml_drift_runs",
+) -> list[tuple[date, Any]]:
+    """Lit l'historique récent de décisions ML pour ``symbol``.
+
+    Parcourt ``ml_drift_runs`` (status ``OK``/``WARN``/``ALERT``) — le mapping
+    ``status='ALERT' → gate='disabled'`` permet de réutiliser
+    :func:`count_consecutive_disabled_days`.
+
+    Le retour est ordonné chronologiquement décroissant (plus récent en tête).
+    """
+    from sqlalchemy import text
+
+    query = text(
+        f"""
+        SELECT DATE(computed_at) AS day, status
+          FROM {table}
+         WHERE model_id LIKE :symbol_like
+         ORDER BY computed_at DESC
+         LIMIT :limit
+        """
+    )
+    out: list[tuple[date, Any]] = []
+    seen_days: set[date] = set()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            query, {"symbol_like": f"%{symbol}%", "limit": int(threshold_days) * 4}
+        ).fetchall()
+    for row in rows:
+        try:
+            day = _coerce_date(row[0])
+        except Exception:
+            continue
+        if day in seen_days:
+            continue
+        seen_days.add(day)
+        status = str(row[1] or "").upper()
+        gate = "disabled" if status == "ALERT" else "enabled"
+        out.append((day, {"gate": gate, "status": status}))
+        if len(out) >= int(threshold_days):
+            break
+    return out
+
+
+def current_champion_loader_sql(
+    symbol: str,
+    *,
+    engine: Any,
+) -> Optional[str]:
+    """Retourne le ``model_id`` du dernier champion non-rétrogradé pour ``symbol``."""
+    from sqlalchemy import text
+
+    query = text(
+        """
+        SELECT model_id
+          FROM champion_history
+         WHERE symbol = :symbol
+           AND demoted_at IS NULL
+         ORDER BY promoted_at DESC
+         LIMIT 1
+        """
+    )
+    with engine.connect() as conn:
+        row = conn.execute(query, {"symbol": symbol}).fetchone()
+    return str(row[0]) if row else None
+
+
+def champion_swapper_sql(
+    symbol: str,
+    *,
+    from_model: Optional[str],
+    to_model: str,
+    engine: Any,
+    reason: str,
+    dry_run: bool = False,
+    version: Optional[str] = None,
+) -> dict[str, Any]:
+    """Persiste un swap dans ``champion_history``.
+
+    Atomicité : transaction unique (UPDATE ancien champion → ``demoted_at``,
+    INSERT nouveau champion). En ``dry_run`` aucune écriture n'est effectuée
+    (audit retourné avec ``"applied": False``).
+    """
+    from sqlalchemy import text
+
+    audit: dict[str, Any] = {
+        "symbol": symbol,
+        "from_model": from_model,
+        "to_model": to_model,
+        "reason": reason,
+        "dry_run": dry_run,
+        "applied": False,
+    }
+    if dry_run:
+        audit["skipped"] = True
+        return audit
+
+    now = datetime.now(timezone.utc)
+    insert_sql = text(
+        """
+        INSERT INTO champion_history
+            (symbol, model_id, version, promoted_at, reason,
+             previous_model_id, dry_run, created_at)
+        VALUES
+            (:symbol, :model_id, :version, :promoted_at, :reason,
+             :previous_model_id, :dry_run, :created_at)
+        """
+    )
+    demote_sql = text(
+        """
+        UPDATE champion_history
+           SET demoted_at = :demoted_at
+         WHERE symbol = :symbol
+           AND model_id = :model_id
+           AND demoted_at IS NULL
+        """
+    )
+    with engine.begin() as conn:
+        if from_model:
+            conn.execute(
+                demote_sql,
+                {"demoted_at": now, "symbol": symbol, "model_id": from_model},
+            )
+        conn.execute(
+            insert_sql,
+            {
+                "symbol": symbol,
+                "model_id": to_model,
+                "version": version,
+                "promoted_at": now,
+                "reason": reason or "",
+                "previous_model_id": from_model,
+                "dry_run": False,
+                "created_at": now,
+            },
+        )
+    audit["applied"] = True
+    audit["promoted_at"] = now.isoformat(timespec="seconds")
+    return audit
+
+
 __all__ = [
     "AutoRollbackOutcome",
     "auto_rollback_if_needed",
     "count_consecutive_disabled_days",
+    "decision_history_loader_sql",
+    "current_champion_loader_sql",
+    "champion_swapper_sql",
 ]
 
