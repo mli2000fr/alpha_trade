@@ -93,6 +93,8 @@ DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER = 0.25
 DEFAULT_RISK_LOG_LEVEL = "INFO"
 # Execution — swing cash batch
 DEFAULT_EXEC_SUBMISSION_WINDOW = "both"      # post_close + pre_open (batch quotidien)
+DEFAULT_EXEC_TAKE_PROFIT_PCT = 0.08
+DEFAULT_EXEC_TRAILING_STOP_PCT = 0.05
 DEFAULT_EXEC_TRAILING_TRIGGER = "multiple_r"
 DEFAULT_EXEC_TRAILING_R_MULTIPLE = 1.0
 DEFAULT_EXEC_TRAILING_PROFIT_PCT = 0.03
@@ -219,6 +221,8 @@ class PipelineLaunchOptions:
     execution_swing_only: bool = True
     # Stratégie de protection (sortie) — P1
     execution_submission_window: ExecutionSubmissionWindow = "both"
+    execution_take_profit_pct: float = DEFAULT_EXEC_TAKE_PROFIT_PCT
+    execution_trailing_stop_pct: float = DEFAULT_EXEC_TRAILING_STOP_PCT
     execution_trailing_trigger: ExecutionTrailingTrigger = "multiple_r"
     execution_trailing_r_multiple: float = DEFAULT_EXEC_TRAILING_R_MULTIPLE
     execution_trailing_profit_pct: float = DEFAULT_EXEC_TRAILING_PROFIT_PCT
@@ -1144,6 +1148,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         command.append("--swing-only" if options.execution_swing_only else "--no-swing-only")
         # Stratégie de protection (P1) — toujours transmise pour reproductibilité
         command.extend(["--submission-window", options.execution_submission_window])
+        command.extend(["--profit-taker-pct", str(options.execution_take_profit_pct)])
+        command.extend(["--trailing-stop-pct", str(options.execution_trailing_stop_pct)])
         command.extend(["--trailing-activation-trigger", options.execution_trailing_trigger])
         if options.execution_trailing_trigger == "multiple_r":
             command.extend(["--trailing-activation-r-multiple", str(options.execution_trailing_r_multiple)])

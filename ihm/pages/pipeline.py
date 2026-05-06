@@ -223,6 +223,27 @@ def _build_capital_preset_banner_payload(
     return "info", f"🧺 **PANIER CAPITAL SÉLECTIONNÉ** — `{selected_label}`."
 
 
+def _build_execution_protection_banner_payload(options: PipelineLaunchOptions) -> tuple[str, str]:
+    take_profit_pct = float(getattr(options, "execution_take_profit_pct", 0.08) or 0.08)
+    trailing_stop_pct = float(getattr(options, "execution_trailing_stop_pct", 0.05) or 0.05)
+    submission_window = str(getattr(options, "execution_submission_window", "both") or "both")
+    trailing_trigger = str(getattr(options, "execution_trailing_trigger", "multiple_r") or "multiple_r")
+    if trailing_trigger == "profit_pct":
+        trigger_label = f"`profit_pct` à +{float(getattr(options, 'execution_trailing_profit_pct', 0.03) or 0.03) * 100:.1f} %"
+    else:
+        trigger_label = f"`multiple_r` à {float(getattr(options, 'execution_trailing_r_multiple', 1.0) or 1.0):.2f}R"
+    return (
+        "info",
+        "🎯 **PROTECTION POSITION** — "
+        f"TP `+{take_profit_pct * 100:.1f} %` ; "
+        f"trigger trailing {trigger_label} ; "
+        f"trailing stop `-{trailing_stop_pct * 100:.1f} %` ; "
+        f"fenêtre de soumission `{submission_window}`. "
+        "Le **stop initial** est calculé automatiquement par le step 11 Risk "
+        "(`stop_price_initial` / `risk_per_share`, basé sur l'ATR).",
+    )
+
+
 def _build_pipeline_scope_alert_lines() -> tuple[str, str]:
     return (
         "⚠️ Les étapes **3→10** recalculent des données globales partagées entre comptes.",
@@ -256,6 +277,8 @@ def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
     if capital_preset_banner is not None:
         preset_severity, preset_message = capital_preset_banner
         getattr(st, preset_severity)(preset_message)
+    protection_severity, protection_message = _build_execution_protection_banner_payload(options)
+    getattr(st, protection_severity)(protection_message)
     account_severity, account_message = _build_execution_account_banner_payload(
         options,
         detected_account_type=detected_account_type,

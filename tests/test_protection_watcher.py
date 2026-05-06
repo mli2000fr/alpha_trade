@@ -180,6 +180,7 @@ def test_service_stops_after_max_consecutive_failures() -> None:
 def test_parse_args_accepts_service_mode_options() -> None:
     args = parse_args([
         "--mode", "service",
+        "--profit-taker-pct", "0.09",
         "--service-interval-seconds", "15",
         "--idle-interval-seconds", "45",
         "--heartbeat-interval-seconds", "120",
@@ -189,6 +190,7 @@ def test_parse_args_accepts_service_mode_options() -> None:
     ])
 
     assert args.mode == "service"
+    assert args.profit_taker_pct == 0.09
     assert args.service_interval_seconds == 15.0
     assert args.idle_interval_seconds == 45.0
     assert args.heartbeat_interval_seconds == 120.0

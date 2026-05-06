@@ -848,6 +848,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--account", type=str, default=None)
     parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--broker-mode", type=str, default="paper", choices=["paper", "live"])
+    parser.add_argument("--profit-taker-pct", type=float, default=0.08)
     parser.add_argument("--trailing-stop-pct", type=float, default=0.05)
     parser.add_argument("--trailing-activation-trigger", type=str, default="multiple_r", choices=["multiple_r", "profit_pct"])
     parser.add_argument("--trailing-activation-r-multiple", type=float, default=1.0)
@@ -874,6 +875,7 @@ def main(argv: list[str] | None = None) -> None:
         return ExecutionConfig(
             broker_mode=broker_mode,
             account_id=account_id,
+            profit_taker_pct=args.profit_taker_pct,
             trailing_stop_pct=args.trailing_stop_pct,
             trailing_activation_trigger=args.trailing_activation_trigger,
             trailing_activation_r_multiple=args.trailing_activation_r_multiple,

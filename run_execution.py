@@ -371,6 +371,7 @@ def _launch_post_watcher(
         str(script),
         "--mode", "once",
         "--broker-mode", str(broker_mode or "paper"),
+        "--profit-taker-pct", str(float(preset.get("profit_taker_pct", 0.08))),
         "--trailing-stop-pct", str(float(preset.get("trailing_stop_pct", 0.05))),
         "--trailing-activation-trigger", str(preset.get("trailing_activation_trigger", "multiple_r")),
         "--trailing-activation-r-multiple", str(float(preset.get("trailing_activation_r_multiple", 1.0))),
@@ -406,6 +407,8 @@ def run(
     submission_window: str = "both",
     auto_watcher: bool = False,
     skip_preflight: bool = False,
+    take_profit_pct: float | None = None,
+    trailing_stop_pct: float | None = None,
 ) -> None:
     level = logging.DEBUG if debug else logging.INFO
     configure_root_logging(
@@ -421,6 +424,10 @@ def run(
         preset["allow_outside_rth"] = True
     if auto_rebalance:
         preset["auto_rebalance_on_reconcile"] = True
+    if take_profit_pct is not None:
+        preset["profit_taker_pct"] = take_profit_pct
+    if trailing_stop_pct is not None:
+        preset["trailing_stop_pct"] = trailing_stop_pct
     preset["account_type"] = account_type
     preset["pdt_rule"] = pdt_rule
     preset["swing_only"] = swing_only
@@ -438,7 +445,7 @@ def run(
     print(f"  Mode        : {mode_label}")
     print(f"  Run ID      : {run_id or '(dernier run disponible)'}")
     print(f"  Date        : {trade_date or '(auto)'}")
-    print(f"  Bracket     : TP +{preset['profit_taker_pct']*100:.0f}%  /  TS -{preset['trailing_stop_pct']*100:.0f}%")
+    print(f"  Bracket     : TP +{preset['profit_taker_pct']*100:.1f}%  /  TS -{preset['trailing_stop_pct']*100:.1f}%")
     print(f"  Profil      : {preset.get('execution_profile', 'custom')}  |  Fenetre={preset.get('submission_window', 'both')}")
     print(f"  Activation trailing : {preset['trailing_activation_trigger']}  |  timeout={preset['protection_transition_timeout_seconds']}s")
     print(f"  Max slippage: {preset['max_slippage_bps']} bps")
@@ -703,6 +710,8 @@ Exemples :
     p.add_argument("--pdt-rule",                dest="pdt_rule",           choices=["auto", "off"], default="off", help="Application de la regle PDT sur compte margin")
     p.add_argument("--swing-only",              dest="swing_only",         action=argparse.BooleanOptionalAction, default=True, help="Interdit les sorties le jour meme en execution")
     p.add_argument("--submission-window",       dest="submission_window",  choices=["post_close", "pre_open", "both"], default=None, help="Fenetre nominale de soumission hors seance")
+    p.add_argument("--profit-taker-pct",        dest="profit_taker_pct", type=float, default=None, help="Take-profit cible (fraction: 0.08 = +8%%)")
+    p.add_argument("--trailing-stop-pct",       dest="trailing_stop_pct", type=float, default=None, help="Trailing stop broker-side (fraction: 0.05 = 5%%)")
     p.add_argument("--trailing-activation-trigger", dest="trailing_activation_trigger", choices=["multiple_r", "profit_pct"], default=None, help="Trigger métier pour passer du stop initial au trailing dynamique")
     p.add_argument("--trailing-activation-r-multiple", dest="trailing_activation_r_multiple", type=float, default=None, help="Multiple de R pour activer le trailing dynamique")
     p.add_argument("--trailing-activation-profit-pct", dest="trailing_activation_profit_pct", type=float, default=None, help="Profit pct pour activer le trailing dynamique")
@@ -766,6 +775,8 @@ def main() -> None:
         mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window = interactive_menu()
         auto_watcher = False
         skip_preflight = False
+        take_profit_pct = None
+        trailing_stop_pct = None
     else:
         mode              = args.mode
         run_id            = args.run_id
@@ -780,6 +791,8 @@ def main() -> None:
         submission_window = args.submission_window or PRESETS[mode].get("submission_window", "both")
         auto_watcher      = bool(getattr(args, "auto_watcher", False))
         skip_preflight    = bool(getattr(args, "skip_preflight", False))
+        take_profit_pct   = args.profit_taker_pct
+        trailing_stop_pct = args.trailing_stop_pct
         if args.trailing_activation_trigger is not None:
             PRESETS[mode]["trailing_activation_trigger"] = args.trailing_activation_trigger
         if args.trailing_activation_r_multiple is not None:
@@ -792,7 +805,23 @@ def main() -> None:
             PRESETS[mode]["protection_transition_poll_interval_seconds"] = args.protection_transition_poll_interval_seconds
 
     abort_missing_env(account_id=account_id, mode=mode)
-    run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window, auto_watcher=auto_watcher, skip_preflight=skip_preflight)
+    run(
+        mode,
+        run_id,
+        trade_date,
+        debug,
+        allow_outside_rth,
+        auto_rebalance,
+        account_id,
+        account_type,
+        pdt_rule,
+        swing_only,
+        submission_window,
+        auto_watcher=auto_watcher,
+        skip_preflight=skip_preflight,
+        take_profit_pct=take_profit_pct,
+        trailing_stop_pct=trailing_stop_pct,
+    )
 
 
 if __name__ == "__main__":

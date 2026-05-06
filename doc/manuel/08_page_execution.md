@@ -92,6 +92,13 @@ heures de marché (`allow_outside_rth=True`). Conséquence importante :
 
 **Comment vérifier que TP/SL sont bien armés sur vos positions actuelles ?**
 
+> ℹ️ Le **TP cible** se règle maintenant dans **Pipeline** → *Centre
+> d'exécution avancé* → *Execution* → *Stratégie de protection — sortie*.
+> Le **trailing stop (%)** (`trailing_stop_pct`) s'y règle aussi : c'est le
+> pourcentage utilisé pour les ordres `trailing_stop` broker-side / fallback.
+> Le **stop initial** reste calculé automatiquement par le step **11 Risk**
+> (ATR / `risk_per_share`).
+
 1. Page **Execution** → section *Ordres* : filtrez sur `intent_role` =
    `take_profit` et `initial_stop` / `trailing_stop`. Chaque entrée
    `FILLED` doit avoir ses 2 enfants ouverts.

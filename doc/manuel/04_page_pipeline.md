@@ -97,6 +97,29 @@ Sous l'onglet « **Centre d'exécution avancé** » :
 | **B2 — Sync Earnings Calendar** | 1×/semaine (résultats trimestriels) |
 | **B3 — Backfill EODHD** | 1× au tout début (5-10 ans d'historique) |
 
+## Paramétrer TP / SL depuis la page Pipeline
+
+Dans **Centre d'exécution avancé** → bloc **Execution** → section
+**Stratégie de protection — sortie** :
+
+- vous pouvez désormais régler le **take-profit cible (%)** directement dans l'IHM ;
+- vous pouvez aussi régler le **trailing stop (%)** (`trailing_stop_pct`) ;
+  c'est le pourcentage utilisé pour le trailing stop broker-side / fallback
+  quand le moteur doit armer une protection de type trailing ;
+- ce réglage est transmis à `run_execution.py` puis au watcher de protection ;
+- le **stop initial** n'est pas saisi manuellement ici : il est calculé
+  automatiquement par le step **11 Risk** (`stop_price_initial` /
+  `risk_per_share`, basé sur l'ATR).
+
+👉 Le bandeau de la page Pipeline rappelle maintenant, sous
+**PANIER CAPITAL APPLIQUÉ** :
+
+- le **TP actif** ;
+- le **trigger trailing** actif ;
+- le **trailing stop %** ;
+- la **fenêtre de soumission** (`post_close` / `pre_open` / `both`) ;
+- et le fait que le **stop initial** est calculé automatiquement.
+
 ## Lecture des résultats
 
 ### Bandeau « Run summary »

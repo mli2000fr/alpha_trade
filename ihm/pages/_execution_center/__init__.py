@@ -78,9 +78,11 @@ from ihm.services.pipeline_runner import (
     DEFAULT_CA_USE_CUSTOM_WINDOW,
     DEFAULT_CA_WINDOW_LOOKBACK_DAYS,
     DEFAULT_EXEC_DEBUG,
+    DEFAULT_EXEC_TAKE_PROFIT_PCT,
     DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS,
     DEFAULT_EXEC_PROTECTION_TRANSITION_TIMEOUT_SECONDS,
     DEFAULT_EXEC_SUBMISSION_WINDOW,
+    DEFAULT_EXEC_TRAILING_STOP_PCT,
     DEFAULT_EXEC_TRAILING_PROFIT_PCT,
     DEFAULT_EXEC_TRAILING_R_MULTIPLE,
     DEFAULT_EXEC_TRAILING_TRIGGER,
@@ -1815,11 +1817,56 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         # ──────────────────────────────────────────────────────────────────
         st.markdown("#### Stratégie de protection — sortie (`run_execution.py`)")
         st.caption(
-            "Pilote la fenêtre de soumission hors RTH et le déclencheur du trailing stop dynamique. "
-            "Défauts swing : fenêtre `both` (post_close + pre_open), trigger `multiple_r` à 1.0R."
+            "Pilote le take-profit, le trailing stop broker-side, la fenêtre de soumission hors RTH et le déclencheur du trailing stop dynamique. "
+            "Le stop initial n'est pas saisi ici : il est calculé automatiquement par le step 11 Risk (`stop_price_initial` / `risk_per_share`, basé sur l'ATR). "
+            "Défauts swing : TP `+8 %`, trailing stop `5 %`, fenêtre `both` (post_close + pre_open), trigger `multiple_r` à 1.0R."
         )
-        prot_col1, prot_col2, prot_col3 = st.columns(3)
+        prot_col1, prot_col2, prot_col3, prot_col4, prot_col5 = st.columns(5)
         with prot_col1:
+            execution_take_profit_pct_percent_default = float(
+                st.session_state.get(
+                    "pipeline_execution_take_profit_pct_percent",
+                    float(st.session_state.get("pipeline_execution_take_profit_pct", DEFAULT_EXEC_TAKE_PROFIT_PCT)) * 100.0,
+                )
+            )
+            execution_take_profit_pct_percent = float(
+                st.number_input(
+                    "Take-profit cible (%)",
+                    min_value=0.1,
+                    max_value=50.0,
+                    value=execution_take_profit_pct_percent_default,
+                    step=0.5,
+                    format="%.2f",
+                    key="pipeline_execution_take_profit_pct_percent",
+                    help="Exemple : `8.0` = +8 %. Le TP effectif garde la logique risk-based du moteur (`max` entre la règle % et la cible métier basée sur le risque).",
+                )
+            )
+            execution_take_profit_pct = float(
+                execution_take_profit_pct_percent / 100.0
+            )
+            st.session_state["pipeline_execution_take_profit_pct"] = execution_take_profit_pct
+        with prot_col2:
+            execution_trailing_stop_pct_percent_default = float(
+                st.session_state.get(
+                    "pipeline_execution_trailing_stop_pct_percent",
+                    float(st.session_state.get("pipeline_execution_trailing_stop_pct", DEFAULT_EXEC_TRAILING_STOP_PCT)) * 100.0,
+                )
+            )
+            execution_trailing_stop_pct_percent = float(
+                st.number_input(
+                    "Trailing stop (%)",
+                    min_value=0.1,
+                    max_value=50.0,
+                    value=execution_trailing_stop_pct_percent_default,
+                    step=0.5,
+                    format="%.2f",
+                    key="pipeline_execution_trailing_stop_pct_percent",
+                    help="Exemple : `5.0` = trailing stop à 5 %. Ce pourcentage est utilisé pour le trailing broker-side / fallback si le calcul risk-based ne le remplace pas.",
+                )
+            )
+            execution_trailing_stop_pct = float(execution_trailing_stop_pct_percent / 100.0)
+            st.session_state["pipeline_execution_trailing_stop_pct"] = execution_trailing_stop_pct
+        with prot_col3:
             execution_submission_window = cast(
                 str,
                 st.selectbox(
@@ -1834,7 +1881,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     help="`both` : essaie post-close puis bascule sur pre-open si la fenêtre post-close est passée.",
                 ),
             )
-        with prot_col2:
+        with prot_col4:
             execution_trailing_trigger = cast(
                 str,
                 st.selectbox(
@@ -1849,7 +1896,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     help="`multiple_r` : armer le trailing après N×R atteint. `profit_pct` : armer après X% de profit.",
                 ),
             )
-        with prot_col3:
+        with prot_col5:
             if execution_trailing_trigger == "multiple_r":
                 execution_trailing_r_multiple = float(
                     st.number_input(
@@ -2734,6 +2781,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             execution_pdt_rule=cast(Any, execution_pdt_rule),
             execution_swing_only=bool(execution_swing_only),
             execution_submission_window=cast(Any, execution_submission_window),
+            execution_take_profit_pct=float(execution_take_profit_pct),
+            execution_trailing_stop_pct=float(execution_trailing_stop_pct),
             execution_trailing_trigger=cast(Any, execution_trailing_trigger),
             execution_trailing_r_multiple=float(execution_trailing_r_multiple),
             execution_trailing_profit_pct=float(execution_trailing_profit_pct),

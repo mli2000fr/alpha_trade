@@ -33,6 +33,7 @@ def test_parser_exposes_auto_watcher_flag():
 def test_launch_post_watcher_builds_command_with_account(tmp_path: Path):
     summary = {"run_id": "exec-123"}
     preset = {
+        "profit_taker_pct": 0.065,
         "trailing_stop_pct": 0.05,
         "trailing_activation_trigger": "multiple_r",
         "trailing_activation_r_multiple": 1.0,
@@ -53,6 +54,7 @@ def test_launch_post_watcher_builds_command_with_account(tmp_path: Path):
     assert "run_execution_protection_watch.py" in " ".join(cmd)
     assert "--mode" in cmd and "once" in cmd
     assert "--broker-mode" in cmd and "paper" in cmd
+    assert "--profit-taker-pct" in cmd and "0.065" in cmd
     assert "--exec-run-id" in cmd
     assert "exec-123" in cmd
     assert "--account" in cmd and "paper1" in cmd
@@ -65,6 +67,7 @@ def test_launch_post_watcher_omits_account_when_none():
         run_execution._launch_post_watcher(
             summary={"run_id": "r"},
             preset={
+                "profit_taker_pct": 0.065,
                 "trailing_stop_pct": 0.05,
                 "trailing_activation_trigger": "multiple_r",
                 "trailing_activation_r_multiple": 1.0,
@@ -87,6 +90,7 @@ def test_launch_post_watcher_raises_if_script_missing(monkeypatch):
         run_execution._launch_post_watcher(
             summary={},
             preset={
+                "profit_taker_pct": 0.065,
                 "trailing_stop_pct": 0.05,
                 "trailing_activation_trigger": "multiple_r",
                 "trailing_activation_r_multiple": 1.0,
