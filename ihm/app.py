@@ -168,6 +168,50 @@ if selection not in PAGES:
 page_key = PAGES[selection]
 
 # ---------------------------------------------------------------------------
+# Sprint S27.7 / A14 — « Mode avancé » : réintroduit les 3 expanders
+# historiques de la sidebar (Aperçu navigation, Thème, Connexion DB)
+# précédemment masqués (régression de découvrabilité). L'opérateur garde
+# le contrôle via un toggle dans la sidebar (persisté en session_state).
+# ---------------------------------------------------------------------------
+ADVANCED_MODE_KEY = "ihm_sidebar_advanced_mode"
+st.session_state.setdefault(ADVANCED_MODE_KEY, False)
+
+st.sidebar.markdown("---")
+st.sidebar.toggle(
+    "🛠️ Mode avancé",
+    key=ADVANCED_MODE_KEY,
+    help=(
+        "Affiche les expanders avancés de la sidebar : aperçu de la "
+        "navigation, sélecteur de thème, paramètres de connexion DB. "
+        "Désactivé par défaut pour garder la sidebar épurée."
+    ),
+)
+
+if st.session_state[ADVANCED_MODE_KEY]:
+    with st.sidebar.expander("🧭 Aperçu navigation", expanded=False):
+        try:
+            from ihm.services.navigation import build_section_navigation_caption
+            st.caption(build_section_navigation_caption())
+        except Exception as exc:  # pragma: no cover — affichage défensif
+            st.caption(f"Aperçu indisponible : {exc}")
+
+    with st.sidebar.expander("🎨 Thème", expanded=False):
+        try:
+            from ihm.services.theme_manager import render_theme_toggle
+            render_theme_toggle(st)
+        except Exception as exc:  # pragma: no cover
+            st.caption(f"Thème indisponible : {exc}")
+
+    with st.sidebar.expander("🗄️ Connexion DB", expanded=False):
+        try:
+            from database.connection import get_sqlalchemy_engine
+            engine = get_sqlalchemy_engine()
+            url = getattr(engine, "url", None)
+            st.caption(f"DSN : `{url}`" if url else "DSN indisponible.")
+        except Exception as exc:  # pragma: no cover
+            st.caption(f"Connexion indisponible : {exc}")
+
+# ---------------------------------------------------------------------------
 # Routage vers la page sélectionnée
 # ---------------------------------------------------------------------------
 

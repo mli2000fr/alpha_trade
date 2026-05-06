@@ -56,9 +56,11 @@ matplotlib
 # Adapter Interactive Brokers (S13.2, read-only) — TWS / IB Gateway requis.
 # ib_insync
 
-# --- Phase F / S23.3 — POC async DB I/O (opt-in via ALPHA_TRADE_ASYNC_DB=1) ---
-# Décommenter pour activer le POC ; sans ces paquets, le code retombe sur sync.
-# aiosqlite>=0.19
-# asyncpg>=0.29 ; python_version >= "3.11"
-# sqlalchemy[asyncio]>=2.0
+# --- Sprint S28.4 / Phase G-bis — Async DB réelle (opt-in via ALPHA_TRADE_ASYNC_DB=1) ---
+# Activé par défaut depuis S28.4 ; le code retombe gracieusement sur sync
+# si l'opérateur n'active pas le toggle. Cible perf : ≥ 30 % sur 3 loaders
+# read-only chauds (cf. doc/async_db_benchmark.md).
+aiosqlite>=0.19
+asyncpg>=0.29 ; python_version >= "3.11"
+sqlalchemy[asyncio]>=2.0
 

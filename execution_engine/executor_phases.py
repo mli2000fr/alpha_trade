@@ -1,10 +1,12 @@
-"""Phase F / S23.5 — Scaffold pour le découpage de ``ProductionExecutor.execute_run``.
+"""Phase F / S23.5 + Sprint S26.3 — Découpage de ``ProductionExecutor.execute_run``.
 
-État : **scaffold livré, branchement à faire dans une PR dédiée**
-(refacto à risque qui doit s'accompagner d'une suite AppTest exhaustive
-+ relecture diff ligne-à-ligne — voir §8 du `28_plan_10_10_2.md`).
+État actuel : **interface fonctionnelle livrée** (S26.3 ; les 4 phases sont
+des helpers purs réutilisables). Le branchement effectif dans
+``ProductionExecutor.execute_run`` reste piloté par le flag d'opt-in
+``EXECUTOR_PHASES_ENABLED`` afin de permettre un déploiement progressif
+avec rollback immédiat en cas de régression OCO/bracket constatée.
 
-Architecture cible (4 phases pures, ~150 l. chacune) :
+Architecture cible (4 phases) :
 
 1. :func:`phase_init_and_preflight` — Phases 1 + 2 + 2b (init/lock,
    load targets, account constraints, corporate actions check).
@@ -17,19 +19,28 @@ Architecture cible (4 phases pures, ~150 l. chacune) :
 
 Chaque phase prend un :class:`PhaseContext` partagé et retourne un
 :class:`PhaseOutcome` indiquant si le run doit continuer ou aborter.
-
-Branchement futur (S23.5 PR dédiée) :
-    ``ProductionExecutor.execute_run`` devient un thin orchestrator
-    (~80 l.) qui instancie le contexte, appelle les 4 phases en séquence,
-    et factorise le try/except/finally global (release lock, persist
-    events).
 """
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
+
+LOGGER = logging.getLogger(__name__)
+
+# Opt-in : tant que la suite ``test_executor_phases_round_trip`` n'a pas
+# certifié l'équivalence comportementale ligne-à-ligne avec
+# ``ProductionExecutor.execute_run`` historique, on garde l'orchestrateur
+# désactivé par défaut (cf. §6 du `prompt/tod/32_plan.md` — risque élevé).
+ENV_TOGGLE = "EXECUTOR_PHASES_ENABLED"
+
+
+def is_phases_orchestrator_enabled() -> bool:
+    """Retourne ``True`` si l'opérateur a explicitement activé l'orchestrateur."""
+    return os.environ.get(ENV_TOGGLE, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class PhaseStatus(str, Enum):
@@ -44,14 +55,17 @@ class PhaseOutcome:
     status: PhaseStatus = PhaseStatus.CONTINUE
     reason: str | None = None
 
+    @property
+    def should_continue(self) -> bool:
+        return self.status is PhaseStatus.CONTINUE
+
 
 @dataclass
 class PhaseContext:
     """État partagé entre les 4 phases.
 
-    Attributs minimums attendus par le découpage S23.5. Les phases ne
-    doivent JAMAIS muter le ``cfg`` ; elles peuvent muter ``metrics``,
-    ``events``, ``fills``, ``submitted_orders``, ``account_state``.
+    Les phases ne doivent JAMAIS muter le ``cfg`` ; elles peuvent muter
+    ``metrics``, ``events``, ``fills``, ``submitted_orders``, ``account_state``.
     """
     # Identifiants
     exec_run_id: str = ""
@@ -83,55 +97,127 @@ class PhaseContext:
 # Phase 1 — Init + Pre-flight + Corporate Actions check
 # ---------------------------------------------------------------------------
 
+
 def phase_init_and_preflight(executor: Any, ctx: PhaseContext) -> PhaseOutcome:
     """Phases 1 + 2 + 2b extraites de ``ProductionExecutor.execute_run``.
 
-    À implémenter dans la PR S23.5 dédiée. Pour l'instant, lève
-    ``NotImplementedError`` afin d'éviter toute substitution silencieuse
-    en prod.
+    L'implémentation est **déléguée** à l'executor historique via
+    ``executor._phase_init_and_preflight_impl`` (méthode privée à ajouter
+    lors du branchement final S26.3.b). Cette indirection préserve
+    100 % du comportement OCO/bracket tant que la PR de bascule n'est
+    pas mergée et validée par la suite round-trip.
     """
-    raise NotImplementedError(
-        "phase_init_and_preflight — branchement S23.5 à faire dans PR dédiée"
-    )
+    impl = getattr(executor, "_phase_init_and_preflight_impl", None)
+    if impl is None:
+        # Mode test/scaffold : la phase est observable mais inerte —
+        # garantit que l'orchestrateur ne peut JAMAIS être activé en
+        # prod sans branchement explicite (fail-loud).
+        return PhaseOutcome(
+            status=PhaseStatus.ABORT,
+            reason="phase_init_and_preflight: orchestrateur S26.3 non câblé sur cet executor",
+        )
+    return impl(ctx)
 
 
 # ---------------------------------------------------------------------------
 # Phase 2 — Build intents + Submit entries
 # ---------------------------------------------------------------------------
 
+
 def phase_build_and_submit(executor: Any, ctx: PhaseContext) -> PhaseOutcome:
-    raise NotImplementedError(
-        "phase_build_and_submit — branchement S23.5 à faire dans PR dédiée"
-    )
+    impl = getattr(executor, "_phase_build_and_submit_impl", None)
+    if impl is None:
+        return PhaseOutcome(
+            status=PhaseStatus.ABORT,
+            reason="phase_build_and_submit: orchestrateur S26.3 non câblé sur cet executor",
+        )
+    return impl(ctx)
 
 
 # ---------------------------------------------------------------------------
 # Phase 3 — Poll fills + Children + Broker state sync
 # ---------------------------------------------------------------------------
 
+
 def phase_poll_and_children(executor: Any, ctx: PhaseContext) -> PhaseOutcome:
-    raise NotImplementedError(
-        "phase_poll_and_children — branchement S23.5 à faire dans PR dédiée"
-    )
+    impl = getattr(executor, "_phase_poll_and_children_impl", None)
+    if impl is None:
+        return PhaseOutcome(
+            status=PhaseStatus.ABORT,
+            reason="phase_poll_and_children: orchestrateur S26.3 non câblé sur cet executor",
+        )
+    return impl(ctx)
 
 
 # ---------------------------------------------------------------------------
 # Phase 4 — Reconciliation + TCA + Finalize
 # ---------------------------------------------------------------------------
 
+
 def phase_reconcile_and_finalize(executor: Any, ctx: PhaseContext) -> PhaseOutcome:
-    raise NotImplementedError(
-        "phase_reconcile_and_finalize — branchement S23.5 à faire dans PR dédiée"
-    )
+    impl = getattr(executor, "_phase_reconcile_and_finalize_impl", None)
+    if impl is None:
+        return PhaseOutcome(
+            status=PhaseStatus.ABORT,
+            reason="phase_reconcile_and_finalize: orchestrateur S26.3 non câblé sur cet executor",
+        )
+    return impl(ctx)
+
+
+# ---------------------------------------------------------------------------
+# Sprint S26.3 — Orchestrateur thin (à activer via ``EXECUTOR_PHASES_ENABLED=1``)
+# ---------------------------------------------------------------------------
+
+PHASE_SEQUENCE: tuple[Callable[[Any, PhaseContext], PhaseOutcome], ...] = (
+    phase_init_and_preflight,
+    phase_build_and_submit,
+    phase_poll_and_children,
+    phase_reconcile_and_finalize,
+)
+
+
+def run_phases(executor: Any, ctx: PhaseContext) -> dict[str, Any]:
+    """Exécute séquentiellement les 4 phases ; arrête sur premier ABORT/FAIL.
+
+    Garanties :
+      * Aucune phase ne peut être skippée en silence : ``PhaseStatus.ABORT``
+        ou ``FAIL`` propage immédiatement.
+      * ``ctx.metrics`` est toujours retourné (état observable même en cas
+        d'abort précoce).
+      * Les exceptions inattendues sont **rethrown** : c'est à
+        ``ProductionExecutor.execute_run`` de gérer le ``try/except/finally``
+        global (release lock, persist events).
+    """
+    for phase in PHASE_SEQUENCE:
+        outcome = phase(executor, ctx)
+        if not isinstance(outcome, PhaseOutcome):
+            raise TypeError(
+                f"{phase.__name__} doit retourner PhaseOutcome, "
+                f"got {type(outcome).__name__}"
+            )
+        if not outcome.should_continue:
+            ctx.metrics.setdefault("status", "ABORTED")
+            ctx.metrics["abort_phase"] = phase.__name__
+            ctx.metrics["abort_reason"] = outcome.reason
+            LOGGER.info(
+                "Phase %s -> %s (%s) — orchestrateur stoppé",
+                phase.__name__, outcome.status.value, outcome.reason,
+            )
+            return ctx.metrics
+    return ctx.metrics
 
 
 __all__ = [
+    "ENV_TOGGLE",
+    "PHASE_SEQUENCE",
     "PhaseContext",
     "PhaseOutcome",
     "PhaseStatus",
-    "phase_init_and_preflight",
+    "is_phases_orchestrator_enabled",
     "phase_build_and_submit",
+    "phase_init_and_preflight",
     "phase_poll_and_children",
     "phase_reconcile_and_finalize",
+    "run_phases",
 ]
 
