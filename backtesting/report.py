@@ -432,6 +432,7 @@ def save_report_json(
     params: dict[str, object] | None = None,
     diagnostics: dict[str, object] | None = None,
     run_metadata: dict[str, object] | None = None,
+    fidelity: dict[str, object] | None = None,
 ) -> Path:
     """Sauvegarde un manifeste JSON des métriques et artefacts du backtest.
 
@@ -447,6 +448,7 @@ def save_report_json(
         "params": params or {},
         "diagnostics": diagnostics or {},
         "run_metadata": run_metadata or {},
+        "fidelity": fidelity or {},
     }
     filepath.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     LOGGER.info("Rapport JSON sauvegardé : %s", filepath)

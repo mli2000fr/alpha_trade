@@ -30,6 +30,13 @@ class BacktestRunOptions:
     no_save: bool = False
     ml_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
     sentiment_mode: Literal["auto", "off", "rebuild-missing"] = "auto"
+    engine_mode: Literal["research", "pipeline"] = "research"
+    ml_pit_strategy: Literal["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"] = "auto"
+    phase2_mode: Literal["off", "risk", "risk_execution"] = "off"
+    phase3_mode: Literal["off", "execution_replay"] = "off"
+    phase4_mode: Literal["off", "protection_replay"] = "off"
+    phase5_mode: Literal["off", "watcher_replay"] = "off"
+    phase7_mode: Literal["off", "exit_lifecycle_replay"] = "off"
     artifacts_dir: str = "artifacts/models"
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
@@ -67,9 +74,9 @@ class BackfillScoresHistoryOptions:
     capital_preset_key: str | None = None
     overwrite_existing: bool = False
     limit_days: int | None = None
-    chunk_size: int = 500
+    chunk_size: int = 1000
     selection_size: int = 100
-    screener_workers: int | None = None
+    screener_workers: int | None = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +135,13 @@ def build_backtesting_command(
             "--sentiment-lookback", str(options.sentiment_lookback),
             "--ml-mode", options.ml_mode,
             "--sentiment-mode", options.sentiment_mode,
+            "--engine-mode", options.engine_mode,
+            "--ml-pit-strategy", options.ml_pit_strategy,
+            "--phase2-mode", options.phase2_mode,
+            "--phase3-mode", options.phase3_mode,
+            "--phase4-mode", options.phase4_mode,
+            "--phase5-mode", options.phase5_mode,
+            "--phase7-mode", options.phase7_mode,
             "--artifacts-dir", options.artifacts_dir,
             "--score-column", options.score_column,
         ])

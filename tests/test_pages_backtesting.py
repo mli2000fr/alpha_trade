@@ -21,6 +21,67 @@ def test_parameter_reference_rows_include_walk_forward_run_options() -> None:
     assert any(row["Paramètre"] == "score_column" for row in run_rows)
     assert any(row["Paramètre"] == "walk_forward_artifacts_dir" for row in run_rows)
     assert any(row["Paramètre"] == "capital_preset_key" for row in run_rows)
+    assert any(row["Paramètre"] == "engine_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "ml_pit_strategy" for row in run_rows)
+    assert any(row["Paramètre"] == "phase2_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "phase3_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "phase4_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "phase5_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "phase7_mode" for row in run_rows)
+
+
+def test_run_configuration_preset_pipeline_live_like_exposes_expected_phase_chain() -> None:
+    preset = backtesting._get_run_configuration_preset("pipeline_live_like")
+
+    assert preset is not None
+    assert preset["label"] == "Replay le plus proche du pipeline live aujourd'hui"
+    updates = preset["state_updates"]
+    assert updates["bt_run_engine_mode"] == "pipeline"
+    assert updates["bt_run_ml_pit_strategy"] == "use-persisted"
+    assert updates["bt_run_phase2_mode"] == "risk_execution"
+    assert updates["bt_run_phase3_mode"] == "execution_replay"
+    assert updates["bt_run_phase4_mode"] == "protection_replay"
+    assert updates["bt_run_phase5_mode"] == "watcher_replay"
+    assert updates["bt_run_phase7_mode"] == "exit_lifecycle_replay"
+
+
+def test_build_pipeline_pit_status_message_warns_when_history_is_missing() -> None:
+    level, message = backtesting._build_pipeline_pit_status_message(
+        {
+            "status": "missing",
+            "start": "2025-04-21",
+            "end": "2026-04-20",
+            "capital_preset_key": "capital_50001_100000",
+            "capital_preset_filtered": True,
+            "rows": 0,
+            "snapshot_days": 0,
+        }
+    )
+
+    assert level == "error"
+    assert "stock_scores_history" in message
+    assert "Backfill scores history" in message
+    assert "capital_50001_100000" in message
+
+
+def test_build_pipeline_pit_status_message_confirms_when_history_is_available() -> None:
+    level, message = backtesting._build_pipeline_pit_status_message(
+        {
+            "status": "available",
+            "start": "2025-04-21",
+            "end": "2025-04-29",
+            "capital_preset_key": "capital_50001_100000",
+            "capital_preset_filtered": True,
+            "rows": 42,
+            "snapshot_days": 7,
+            "first_snapshot_date": "2025-04-21",
+            "last_snapshot_date": "2025-04-29",
+        }
+    )
+
+    assert level == "success"
+    assert "42 ligne(s)" in message
+    assert "7 séance(s)" in message
 
 
 def test_parameter_reference_rows_include_backfill_capital_preset_options() -> None:

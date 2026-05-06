@@ -38,6 +38,20 @@ def test_build_backtesting_run_command_defaults_to_standard_mode():
 	assert command[pdt_rule_index + 1] == "auto"
 	score_column_index = command.index("--score-column")
 	assert command[score_column_index + 1] == "auto"
+	engine_mode_index = command.index("--engine-mode")
+	assert command[engine_mode_index + 1] == "research"
+	ml_pit_strategy_index = command.index("--ml-pit-strategy")
+	assert command[ml_pit_strategy_index + 1] == "auto"
+	phase2_mode_index = command.index("--phase2-mode")
+	assert command[phase2_mode_index + 1] == "off"
+	phase3_mode_index = command.index("--phase3-mode")
+	assert command[phase3_mode_index + 1] == "off"
+	phase4_mode_index = command.index("--phase4-mode")
+	assert command[phase4_mode_index + 1] == "off"
+	phase5_mode_index = command.index("--phase5-mode")
+	assert command[phase5_mode_index + 1] == "off"
+	phase7_mode_index = command.index("--phase7-mode")
+	assert command[phase7_mode_index + 1] == "off"
 	assert "--capital-preset-key" not in command
 	assert "--swing-only" not in command
 	assert "--walk-forward-artifacts-dir" not in command
@@ -71,6 +85,139 @@ def test_build_backtesting_run_command_includes_walk_forward_options():
 	assert command[command.index("--score-column") + 1] == "final_score_walk_forward"
 	assert "--walk-forward-artifacts-dir" in command
 	assert command[command.index("--walk-forward-artifacts-dir") + 1] == "artifacts/sentiment_walk_forward/run_001"
+
+
+def test_build_backtesting_run_command_includes_phase1_pipeline_flags():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			engine_mode="pipeline",
+			ml_pit_strategy="use-persisted",
+		),
+	)
+
+	assert "--engine-mode" in command
+	assert command[command.index("--engine-mode") + 1] == "pipeline"
+	assert "--ml-pit-strategy" in command
+	assert command[command.index("--ml-pit-strategy") + 1] == "use-persisted"
+
+
+def test_build_backtesting_run_command_includes_phase2_flags():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			phase2_mode="risk_execution",
+		),
+	)
+
+	assert "--phase2-mode" in command
+	assert command[command.index("--phase2-mode") + 1] == "risk_execution"
+
+
+def test_build_backtesting_run_command_includes_phase3_flags():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			phase2_mode="risk_execution",
+			phase3_mode="execution_replay",
+		),
+	)
+
+	assert "--phase3-mode" in command
+	assert command[command.index("--phase3-mode") + 1] == "execution_replay"
+
+
+def test_build_backtesting_run_command_includes_phase4_flags():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			phase2_mode="risk_execution",
+			phase3_mode="execution_replay",
+			phase4_mode="protection_replay",
+		),
+	)
+
+	assert "--phase4-mode" in command
+	assert command[command.index("--phase4-mode") + 1] == "protection_replay"
+
+
+def test_build_backtesting_run_command_includes_phase5_flags():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			phase2_mode="risk_execution",
+			phase3_mode="execution_replay",
+			phase4_mode="protection_replay",
+			phase5_mode="watcher_replay",
+		),
+	)
+
+	assert "--phase5-mode" in command
+	assert command[command.index("--phase5-mode") + 1] == "watcher_replay"
+
+
+def test_build_backtesting_run_command_includes_phase7_flags():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			phase2_mode="risk_execution",
+			phase3_mode="execution_replay",
+			phase4_mode="protection_replay",
+			phase5_mode="watcher_replay",
+			phase7_mode="exit_lifecycle_replay",
+		),
+	)
+
+	assert "--phase7-mode" in command
+	assert command[command.index("--phase7-mode") + 1] == "exit_lifecycle_replay"
+
+
+def test_build_backtesting_run_command_matches_pipeline_live_like_replay_preset():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			end="2025-03-31",
+			engine_mode="pipeline",
+			ml_pit_strategy="use-persisted",
+			phase2_mode="risk_execution",
+			phase3_mode="execution_replay",
+			phase4_mode="protection_replay",
+			phase5_mode="watcher_replay",
+			phase7_mode="exit_lifecycle_replay",
+		),
+	)
+
+	assert command[:5] == [command[0], "-u", "-m", "backtesting", "run"]
+	assert "--start" in command and command[command.index("--start") + 1] == "2025-01-01"
+	assert "--end" in command and command[command.index("--end") + 1] == "2025-03-31"
+	assert "--engine-mode" in command and command[command.index("--engine-mode") + 1] == "pipeline"
+	assert "--ml-pit-strategy" in command and command[command.index("--ml-pit-strategy") + 1] == "use-persisted"
+	assert "--phase2-mode" in command and command[command.index("--phase2-mode") + 1] == "risk_execution"
+	assert "--phase3-mode" in command and command[command.index("--phase3-mode") + 1] == "execution_replay"
+	assert "--phase4-mode" in command and command[command.index("--phase4-mode") + 1] == "protection_replay"
+	assert "--phase5-mode" in command and command[command.index("--phase5-mode") + 1] == "watcher_replay"
+	assert "--phase7-mode" in command and command[command.index("--phase7-mode") + 1] == "exit_lifecycle_replay"
 
 
 def test_build_backtesting_diagnose_screener_command_includes_grid_parameters():
@@ -141,5 +288,14 @@ def test_build_backtesting_backfill_command_includes_capital_and_preset():
 	assert command[command.index("--capital") + 1] == "2000"
 	assert "--capital-preset-key" in command
 	assert command[command.index("--capital-preset-key") + 1] == "capital_0_5000"
+
+
+def test_backfill_options_defaults_to_optimized_chunk_and_workers():
+	from ihm.services.backtesting_runner import BackfillScoresHistoryOptions
+
+	options = BackfillScoresHistoryOptions(start="2025-01-01")
+
+	assert options.chunk_size == 1000
+	assert options.screener_workers == 4
 
 

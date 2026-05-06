@@ -1,6 +1,6 @@
 ﻿# Alpha Trade — Documentation Technique
 
-> *Version : 0.3.0 — Python ≥ 3.12 — Dernière mise à jour : avril 2026*
+> *Version : 0.3.0 — Python ≥ 3.12 — Dernière mise à jour : mai 2026*
 
 ---
 
@@ -60,7 +60,7 @@ alpha_trade/
 | `risk_management/` | Sizing ATR/Kelly, contraintes, circuit breaker, portefeuille |
 | `execution_engine/` | Chaîne canonique d'exécution (requests, ordres broker, fills, positions/lots, réconciliation) + watcher post-exécution secondaire |
 | `corporate_actions/` | Gestion dividendes, splits, reverse splits (audit + comptabilité portefeuille) |
-| `backtesting/` | Backtest intégré vectorbt : replay signaux conviction, bracket TP/TS, métriques, equity curve |
+| `backtesting/` | Backtest intégré research/pipeline : replay PIT, contraintes compte, phases de fidélité 2/3/4/5/7, backfill, diagnostics screener, calibration sentiment, reporting structuré |
 | `ihm/` | IHM Streamlit : supervision pipeline, scores, risque, exécution, CA |
 
 ---
@@ -132,17 +132,27 @@ Points d'implémentation importants côté `modelFactory` :
 
 **`AccountRegistry`** (`service/alpaca/accounts.py`) — Singleton de résolution multi-comptes. Charge les comptes depuis `config.yaml`, env vars préfixées, ou fallback classique. Fournit `resolve(account_id)` → `BrokerAccount(api_key, secret_key, mode)`. Tous les clients (trading, market data, news, corporate actions) passent par cette résolution.
 
-**`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest. En mode `standard`, il s'appuie sur vectorbt (`vbt.Portfolio.from_signals()`) avec bracket TP/trailing SL. Quand une contrainte de compte est activée, il bascule sur une simulation Python stateful pour appliquer correctement les règles `PDT`, `swing-only` et `cash account` (cash settled T+1). Sizing equal-weight plafonné à `max_positions`. Paramétrable via `BacktestConfig` (hérite de `RiskConfig` + `ExecutionConfig`).
+**`BacktestEngine`** (`backtesting/simulator.py`) — Moteur de backtest stateful utilisé par la CLI `run`. Il applique la convention `signal J -> entrée J+1 open`, simule les contraintes de compte (`margin`, `cash`, `PDT`, `swing_only`), supporte les phases opt-in `execution_replay`, `protection_replay`, `watcher_replay`, `exit_lifecycle_replay`, et sait consommer les bundles `MicrostructureConfig` et `RiskOverlayConfig`. Le moteur conserve un `BacktestDiagnostics` structuré exporté dans `report.json`.
 
-**`TradingConstraintConfig`** (`backtesting/trading_constraints.py`) — Dataclass pure décrivant les contraintes de compte backtesting via trois axes indépendants : `account_type` (`margin|cash`), `pdt_rule` (`auto|off`) et `swing_only` (`bool`). Encapsule le seuil `25 000 $`, la limite `3 day trades / 5 séances` et le settlement simplifié `T+1` pour les cash accounts. Un mapping legacy depuis `standard|pdt|swing|cash` est conservé temporairement pour compatibilité CLI.
+**`TradingConstraintConfig`** (`backtesting/trading_constraints.py`) — Dataclass pure décrivant les contraintes de compte backtesting via trois axes indépendants : `account_type` (`margin|cash`), `pdt_rule` (`auto|off`) et `swing_only` (`bool`). Encapsule le seuil `25 000 $`, la limite `3 day trades / 5 séances` et le settlement simplifié `T+1` pour les cash accounts.
 
-**`replay_signals()`** (`backtesting/signal_replay.py`) — Reconstruction jour par jour des signaux de conviction à partir des scores `stock_scores`, avec fallback ligne par ligne `final_score_sentiment -> final_score` si le sentiment est absent, et fusion optionnelle des prédictions ML `model_predictions`. Top-N candidats sélectionnés par jour.
+**`replay_signals()`** (`backtesting/signal_replay.py`) — Reconstruction jour par jour des signaux de conviction à partir des scores PIT, avec cascade de fallback factorisée `final_score_walk_forward -> final_score_sentiment -> final_score`, fusion vectorisée des probabilités ML et ranking top-N quotidien.
 
-**`BacktestReport`** (`backtesting/report.py`) — Dataclass de résumé : Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor. Génère equity curve PNG et export trades CSV dans `artifacts/backtesting/`.
+**`BacktestReport`** (`backtesting/report.py`) — Dataclass de résumé : rendement total, dividendes, CAGR, Sharpe, Sortino, Calmar, Ulcer Index, max drawdown, win rate, profit factor. Le module exporte `report.json`, `equity_curve.csv/png`, `trades.csv` et sérialise les sentinels comme `"inf"` pour rester JSON-friendly.
 
-**`BackfillScoresHistoryService`** (`backtesting/backfill_scores_history.py`) — Orchestrateur de backfill point-in-time de `stock_scores_history`. Rejoue, pour chaque séance manquante, le screener sur `stock_bars_daily`, le scoring `AlphaScanner`, puis la fusion sentiment `SentimentSignalAggregator`, avant insertion idempotente dans `stock_scores_history`. Permet de rendre le backtest réellement exploitable sur plusieurs années sans dépendre d'un snapshot courant unique. Quand un run strict impose des filtres d'éligibilité plus durs (prix, liquidité, volatilité relative), ceux-ci doivent être injectés dans `scanner_config` dès le backfill pour que les snapshots PIT reflètent exactement le même univers que le rerun.
+**`BackfillScoresHistoryService`** (`backtesting/backfill_scores_history.py`) — Orchestrateur de backfill point-in-time de `stock_scores_history`. Rejoue, pour chaque séance manquante, le screener sur `stock_bars_daily`, le scoring `AlphaScanner`, la fusion sentiment `SentimentSignalAggregator`, puis insère un snapshot historisé avec `capital_preset_key` et `config_fingerprint`. Il intègre aussi une logique de couverture PIT pour les overlays quotes/earnings.
 
-**`prepare_predictions_for_ml_mode()` / `prepare_scores_for_sentiment_mode()`** (`backtesting/resilience.py`) — Couche de résilience du backtest. Implémente les politiques `auto | off | rebuild-missing` pour les prédictions ML et le sentiment : fallback sans ML, neutralisation du boost sentiment, ou reconstruction ciblée des données manquantes lorsque les artefacts / tables nécessaires sont disponibles.
+**`prepare_predictions_for_ml_mode()` / `prepare_scores_for_sentiment_mode()`** (`backtesting/resilience.py`) — Couche de résilience du backtest. Implémente les politiques `auto | off | rebuild-missing` pour les prédictions ML et le sentiment, et s'articule avec `engine_mode` / `ml_pit_strategy` pour distinguer comportement tolérant et comportement PIT strict.
+
+**`build_fidelity_manifest()`** (`backtesting/fidelity.py`) — Construit le manifeste de fidélité PIT (`fidelity_manifest.json`) à partir des diagnostics de chargement scores, sentiment et ML.
+
+**`build_run_metadata()`** (`backtesting/run_metadata.py`) — Construit le bloc `run_metadata` avec `git_commit_sha`, branche courante, statut dirty, version Python, plateforme, versions de packages et `dataset_hash`.
+
+**`ParquetCache`** (`backtesting/cache.py`) — Cache Parquet utilitaire pour OHLCV / scores / predictions. Présent dans le code et les tests, mais pas encore branché par défaut à la commande `run`.
+
+**`compute_benchmark_analytics()` / `compute_tail_analytics()`** (`backtesting/analytics.py`) — Utilitaires benchmark, tail analytics, attribution sectorielle et exports HTML interactifs. Là encore, briques disponibles côté code mais non encore automatiquement branchées à la CLI standard.
+
+**`bootstrap_trades()` / `parameter_sensitivity()`** (`backtesting/statistical_validation.py`) — Fonctions de validation statistique pour bootstrap Monte Carlo et analyse de sensibilité paramétrique.
 
 ### 2.2 Fonctions clés
 
@@ -574,56 +584,43 @@ Enfin, les résumés métier capturés par l'IHM sont réexposés dans :
 ### Backtesting
 
 ```powershell
-# Backtest complet sur 10 ans (paramètres production)
-python -m backtesting run --start 2016-01-01 --end 2026-04-20 --equity 100000
+# Backtest standard
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 100000
 
-# Backtest personnalisé (TP=10%, TS=4%, 15 positions max)
-python -m backtesting run --start 2020-01-01 --end 2026-04-20 --equity 50000 --tp 0.10 --ts 0.04 --max-positions 15
+# Mode pipeline strict PIT
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --engine-mode pipeline --equity 100000
 
-# Compte < 25k avec règle PDT (3 day trades max sur 5 séances)
+# Compte < 25k avec règle PDT
 python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule auto
-
-# Swing strict : aucune sortie le jour même
-python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type margin --pdt-rule off --swing-only
-
-# Cash account : cash settled uniquement (T+1)
-python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash
 
 # Cash account + swing strict
 python -m backtesting run --start 2025-01-01 --end 2025-03-31 --equity 2000 --account-type cash --swing-only
 
-# Sans sauvegarde artefacts (console only)
-python -m backtesting run --start 2023-01-01 --no-save
+# Replay le plus proche du pipeline live aujourd'hui
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --engine-mode pipeline --ml-pit-strategy use-persisted --phase2-mode risk_execution --phase3-mode execution_replay --phase4-mode protection_replay --phase5-mode watcher_replay --phase7-mode exit_lifecycle_replay
 
-# Modes de résilience ML / sentiment
-python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode off --sentiment-mode off
-python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode auto --sentiment-mode auto
-python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode rebuild-missing --artifacts-dir artifacts/models
-python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --sentiment-mode rebuild-missing
+# Microstructure et overlays research-grade
+python -m backtesting run --start 2025-01-01 --end 2025-03-31 --slippage-model sqrt --slippage-base-bps 2 --slippage-impact-coef 25 --initial-stop-pct 0.07 --max-sector-exposure-pct 0.30 --target-annual-vol 0.15
 
-# Reconstruction ML + sentiment en même temps
-python -m backtesting run --start 2025-01-01 --end 2026-04-17 --equity 100000 --ml-mode rebuild-missing --sentiment-mode rebuild-missing --artifacts-dir artifacts/models
+# Backfill PIT
+python -m backtesting backfill-scores-history --start 2025-01-01 --screener-workers 2
 
-# Artefacts générés dans artifacts/backtesting/ :
-#   - equity_curve.png   (courbe de valeur du portefeuille)
-#   - trades.csv         (liste de tous les trades avec P&L)
+# Diagnostic et recommandation screener
+python -m backtesting diagnose-screener --start 2024-01-01 --end 2024-12-31 --mode oat --limit-days 60
+python -m backtesting recommend-screener --input-dir artifacts/screener_diagnostics
+
+# Calibration sentiment / walk-forward
+python -m backtesting calibrate-sentiment-weights --start 2024-01-01 --end 2025-12-31 --top-n 20 --horizons 5,10,20
+python -m backtesting walk-forward-sentiment --start 2024-01-01 --end 2025-12-31 --min-train-days 252 --test-days 63 --max-positions 20
 ```
 
 Notes :
 
-- `--ml-mode auto` (défaut) : utilise les prédictions disponibles et ignore les trous ;
-- `--ml-mode off` : désactive entièrement la composante ML ;
-- `--ml-mode rebuild-missing` : tente de reconstruire les prédictions historiques manquantes depuis `artifacts/models/`, en bornant l'inférence à la date du signal ;
-- `--account-type margin` (défaut) : simule un compte margin ;
-- `--account-type cash` : simule un cash account, sans levier implicite et avec utilisation du cash settled uniquement ;
-- `--pdt-rule auto` (défaut) : applique la règle PDT sur un compte margin si `equity < 25 000 $` ;
-- `--pdt-rule off` : désactive la contrainte PDT dans le backtest ;
-- `--swing-only` : interdit les sorties le jour même de l'entrée ;
-- `--sentiment-mode auto` (défaut) : utilise `final_score_sentiment` si disponible, sinon fallback sur `final_score` ;
-- `--sentiment-mode off` : neutralise le sentiment (`final_score_sentiment = final_score`) ;
-- `--sentiment-mode rebuild-missing` : tente de reconstruire les snapshots PIT manquants dans `stock_scores_history`, puis applique un fallback sur `final_score` pour les lignes encore incomplètes.
-
-Le manifeste `report.json` produit par le backtest inclut désormais un bloc `diagnostics` permettant d'auditer l'effet de ces contraintes (`blocked_pdt_day_trades`, `blocked_same_day_exits`, `blocked_cash_entries`, `executed_day_trades`).
+- `--engine-mode pipeline` exige un historique PIT valide dans `stock_scores_history` ;
+- `--phase3-mode` dépend de `phase2_mode=risk_execution`, `--phase4-mode` dépend de `phase3-mode`, `--phase5-mode` dépend de `phase4-mode`, `--phase7-mode` dépend de `phase5-mode` ;
+- `report.json` inclut `summary`, `params`, `diagnostics`, `run_metadata` et `fidelity` ;
+- `fidelity_manifest.json` documente les dégradations PIT éventuelles ;
+- les modules `analytics.py`, `cache.py` et `statistical_validation.py` fournissent des briques complémentaires non branchées automatiquement à la commande `run` standard.
 
 ### Execution Engine — contraintes de compte
 

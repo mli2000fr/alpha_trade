@@ -38,6 +38,7 @@ from ihm.services.backtesting_runner import (
     format_command_for_display,
 )
 from ihm.services.db import get_db_status, get_runtime_db_config
+from ihm.services.queries import get_backtesting_pit_history_diagnostic
 from ihm.services.screener_artifact_history import (
     build_global_screener_artifact_history,
     build_screener_artifact_history_rows,
@@ -53,6 +54,42 @@ BT_RUN_CAPITAL_PRESET_KEY = "bt_run_capital_preset"
 BT_RUN_CAPITAL_PRESET_SIGNATURE_KEY = "bt_run_capital_preset_signature"
 BT_BACKFILL_CAPITAL_PRESET_KEY = "bt_backfill_capital_preset"
 BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature"
+BT_RUN_CONFIGURATION_PRESET_KEY = "bt_run_configuration_preset"
+
+RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
+    "standard_research": {
+        "label": "Backtest standard (research)",
+        "description": (
+            "Réinitialise les options de fidélité opt-in sur le comportement standard : "
+            "`research`, stratégie ML PIT `auto`, phases 2/3/4/5/7 désactivées."
+        ),
+        "state_updates": {
+            "bt_run_engine_mode": "research",
+            "bt_run_ml_pit_strategy": "auto",
+            "bt_run_phase2_mode": "off",
+            "bt_run_phase3_mode": "off",
+            "bt_run_phase4_mode": "off",
+            "bt_run_phase5_mode": "off",
+            "bt_run_phase7_mode": "off",
+        },
+    },
+    "pipeline_live_like": {
+        "label": "Replay le plus proche du pipeline live aujourd'hui",
+        "description": (
+            "Préremplit `--engine-mode pipeline`, `--ml-pit-strategy use-persisted` et la chaîne "
+            "Phase 2 → 3 → 4 → 5 → 7 pour rejouer au plus près le pipeline live aujourd'hui."
+        ),
+        "state_updates": {
+            "bt_run_engine_mode": "pipeline",
+            "bt_run_ml_pit_strategy": "use-persisted",
+            "bt_run_phase2_mode": "risk_execution",
+            "bt_run_phase3_mode": "execution_replay",
+            "bt_run_phase4_mode": "protection_replay",
+            "bt_run_phase5_mode": "watcher_replay",
+            "bt_run_phase7_mode": "exit_lifecycle_replay",
+        },
+    },
+}
 
 
 def _to_float(value: object, default: float = 0.0) -> float:
@@ -93,6 +130,37 @@ def _get_capital_preset_options() -> list[str]:
     if DEFAULT_CAPITAL_PRESET_KEY in base_options:
         return [CAPITAL_PRESET_CUSTOM, *base_options]
     return [CAPITAL_PRESET_CUSTOM, DEFAULT_CAPITAL_PRESET_KEY, *base_options]
+
+
+def _get_run_configuration_preset(preset_key: str) -> dict[str, object] | None:
+    preset = RUN_CONFIGURATION_PRESETS.get(preset_key)
+    return cast(dict[str, object] | None, preset)
+
+
+def _ensure_run_configuration_preset_session_key() -> str:
+    options = list(RUN_CONFIGURATION_PRESETS)
+    current = str(st.session_state.get(BT_RUN_CONFIGURATION_PRESET_KEY, "standard_research") or "standard_research")
+    if current not in options:
+        current = "standard_research"
+        st.session_state[BT_RUN_CONFIGURATION_PRESET_KEY] = current
+    return current
+
+
+def _format_run_configuration_preset_label(preset_key: str) -> str:
+    preset = _get_run_configuration_preset(preset_key)
+    if preset is None:
+        return preset_key
+    return str(preset.get("label", preset_key))
+
+
+def _apply_run_configuration_preset(selected_preset_key: str) -> dict[str, object] | None:
+    preset = _get_run_configuration_preset(selected_preset_key)
+    if preset is None:
+        return None
+    updates = cast(dict[str, object], preset.get("state_updates", {}))
+    for session_key, session_value in updates.items():
+        st.session_state[session_key] = session_value
+    return preset
 
 
 def _format_capital_preset_label(preset_key: str) -> str:
@@ -239,6 +307,13 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "no_save", "Explication": "Désactive l'écriture des artefacts PNG/CSV.", "Défaut": "False"},
             {"Paramètre": "ml_mode", "Explication": "auto/off/rebuild-missing pour la composante ML.", "Défaut": "auto"},
             {"Paramètre": "sentiment_mode", "Explication": "auto/off/rebuild-missing pour la composante sentiment.", "Défaut": "auto"},
+            {"Paramètre": "engine_mode", "Explication": "research = tolérant/rapide, pipeline = strict PIT + diagnostics renforcés.", "Défaut": "research"},
+            {"Paramètre": "ml_pit_strategy", "Explication": "Stratégie PIT ML explicite : auto / use-persisted / rebuild-missing / walk-forward-train-then-predict.", "Défaut": "auto"},
+            {"Paramètre": "phase2_mode", "Explication": "off = backtest standard, risk = bridge risk_management, risk_execution = risk + intents/fills d'exécution simulés.", "Défaut": "off"},
+            {"Paramètre": "phase3_mode", "Explication": "off = comportement Phase 2, execution_replay = réinjecte chronologiquement les quantités exécutées simulées dans le moteur de backtest.", "Défaut": "off"},
+            {"Paramètre": "phase4_mode", "Explication": "off = comportement Phase 3, protection_replay = rejoue les protections TP/stop/trailing issues des child intents d'exécution.", "Défaut": "off"},
+            {"Paramètre": "phase5_mode", "Explication": "off = comportement Phase 4, watcher_replay = rejoue les transitions du watcher de protection (trigger -> promotion trailing) dans le moteur.", "Défaut": "off"},
+            {"Paramètre": "phase7_mode", "Explication": "off = comportement Phase 5, exit_lifecycle_replay = rejoue l'issue terminale des child orders et l'annulation OCO du sibling.", "Défaut": "off"},
             {"Paramètre": "artifacts_dir", "Explication": "Dossier des artefacts modèles utilisés pour rebuild-missing.", "Défaut": "artifacts/models"},
             {"Paramètre": "score_column", "Explication": "Colonne de score privilégiée pour le replay : auto / walk-forward / sentiment / final.", "Défaut": "auto"},
             {"Paramètre": "walk_forward_artifacts_dir", "Explication": "Répertoire racine optionnel des artefacts de calibration walk-forward à appliquer au run standard.", "Défaut": "None"},
@@ -301,6 +376,81 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
 def _render_reference_table(kind: str) -> None:
     with st.expander("📘 Référence complète des paramètres", expanded=False):
         st.dataframe(pd.DataFrame(_parameter_reference_rows(kind)), use_container_width=True, hide_index=True)
+
+
+def _build_pipeline_pit_status_message(diagnostic: dict[str, object]) -> tuple[str, str]:
+    status = str(diagnostic.get("status", "unknown") or "unknown")
+    preset_key = str(diagnostic.get("capital_preset_key", "") or "auto")
+    start = str(diagnostic.get("start", "?") or "?")
+    end = str(diagnostic.get("end", "?") or "?")
+    rows = _to_int(diagnostic.get("rows"))
+    snapshot_days = _to_int(diagnostic.get("snapshot_days"))
+    first_snapshot = str(diagnostic.get("first_snapshot_date", "") or "—")
+    last_snapshot = str(diagnostic.get("last_snapshot_date", "") or "—")
+    filtered_on_preset = bool(diagnostic.get("capital_preset_filtered", False))
+
+    if status == "available":
+        return (
+            "success",
+            "Couverture PIT détectée pour `stock_scores_history` sur [{start} → {end}]"
+            " avec preset `{preset}`{preset_note} : {rows} ligne(s), {days} séance(s), première={first}, dernière={last}.".format(
+                start=start,
+                end=end,
+                preset=preset_key,
+                preset_note=" (filtrage actif)" if filtered_on_preset else "",
+                rows=rows,
+                days=snapshot_days,
+                first=first_snapshot,
+                last=last_snapshot,
+            ),
+        )
+    if status == "missing":
+        return (
+            "error",
+            "Aucun snapshot PIT candidat n'a été détecté dans `stock_scores_history` sur [{start} → {end}]"
+            " pour le preset effectif `{preset}`{preset_note}. En mode `pipeline`, ce run échouera. "
+            "Action recommandée : lancer l'onglet `Backfill scores history` avec la même plage et le même preset, "
+            "ou repasser le backtest en mode `research`.".format(
+                start=start,
+                end=end,
+                preset=preset_key,
+                preset_note=" (filtrage actif)" if filtered_on_preset else "",
+            ),
+        )
+    if status == "invalid_input":
+        return (
+            "warning",
+            "Diagnostic PIT non exécutable tant que les dates de début/fin ne sont pas valides.",
+        )
+    return (
+        "warning",
+        "Diagnostic PIT indisponible : {}".format(str(diagnostic.get("reason", "erreur inconnue"))),
+    )
+
+
+def _render_pipeline_pit_hint(
+    *,
+    engine_mode: str,
+    start: str,
+    end: str | None,
+    selected_run_preset_key: str,
+    auto_run_preset_key: str,
+) -> None:
+    if engine_mode != "pipeline":
+        return
+    effective_preset_key = auto_run_preset_key if selected_run_preset_key == CAPITAL_PRESET_CUSTOM else selected_run_preset_key
+    diagnostic = get_backtesting_pit_history_diagnostic(
+        start=start,
+        end=end,
+        capital_preset_key=effective_preset_key,
+    )
+    level, message = _build_pipeline_pit_status_message(diagnostic)
+    if level == "success":
+        st.success(message)
+    elif level == "error":
+        st.error(message)
+    else:
+        st.warning(message)
 
 
 def _build_overlay_options() -> dict[str, Any]:
@@ -563,6 +713,34 @@ def _build_run_options() -> BacktestRunOptions:
         "Le backtest exécute `python -m backtesting run ...` en arrière-plan. "
         "Tous les paramètres CLI sont exposés ci-dessous et les logs sont visibles plus bas dans la page."
     )
+    _ensure_run_configuration_preset_session_key()
+    preset_col1, preset_col2 = st.columns([1.5, 3.5])
+    with preset_col1:
+        selected_run_configuration_preset = cast(
+            str,
+            st.selectbox(
+                "Preset de configuration",
+                options=list(RUN_CONFIGURATION_PRESETS),
+                format_func=_format_run_configuration_preset_label,
+                key=BT_RUN_CONFIGURATION_PRESET_KEY,
+                help=(
+                    "Raccourci IHM pour préremplir rapidement les flags `run`. "
+                    "Le preset n'exécute rien tant que vous ne lancez pas explicitement le backtest."
+                ),
+            ),
+        )
+    with preset_col2:
+        selected_preset = _get_run_configuration_preset(selected_run_configuration_preset)
+        if selected_preset is not None:
+            st.caption(str(selected_preset.get("description", "")))
+        if st.button("Préremplir les options du backtest", key="bt_apply_run_configuration_preset", use_container_width=True):
+            _apply_run_configuration_preset(selected_run_configuration_preset)
+    if selected_run_configuration_preset == "pipeline_live_like":
+        st.info(
+            "Ce preset correspond à la commande `python -m backtesting run ...` la plus proche du pipeline live aujourd'hui. "
+            "Il ne fait pas partie de `backfill-scores-history`. Pour qu'il fonctionne en mode `pipeline`, "
+            "il faut déjà disposer d'un historique PIT valide dans `stock_scores_history` — à reconstruire via l'onglet `Backfill scores history` si nécessaire."
+        )
     _render_reference_table("run")
 
     col1, col2, col3 = st.columns(3)
@@ -752,6 +930,113 @@ def _build_run_options() -> BacktestRunOptions:
             help="Si coché, le PNG d'equity curve et le CSV des trades ne seront pas écrits dans `artifacts/backtesting/`.",
         )
 
+    mode_col1, mode_col2, mode_col3, mode_col4, mode_col5, mode_col6, mode_col7 = st.columns(7)
+    with mode_col1:
+        engine_mode = cast(
+            str,
+            st.selectbox(
+                "Mode moteur",
+                options=["research", "pipeline"],
+                index=["research", "pipeline"].index(
+                    cast(str, st.session_state.get("bt_run_engine_mode", "research"))
+                    if st.session_state.get("bt_run_engine_mode", "research") in {"research", "pipeline"}
+                    else "research"
+                ),
+                key="bt_run_engine_mode",
+                help="`research` conserve le comportement tolérant du backtest standard ; `pipeline` exige des snapshots PIT valides et évite les écritures implicites.",
+            ),
+        )
+    with mode_col2:
+        ml_pit_strategy = cast(
+            str,
+            st.selectbox(
+                "Stratégie ML PIT",
+                options=["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"],
+                index=["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"].index(
+                    cast(str, st.session_state.get("bt_run_ml_pit_strategy", "auto"))
+                    if st.session_state.get("bt_run_ml_pit_strategy", "auto") in {"auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"}
+                    else "auto"
+                ),
+                key="bt_run_ml_pit_strategy",
+                help="Permet d'expliciter comment le backtest doit traiter les prédictions ML en mode PIT. `walk-forward-train-then-predict` fail-fast tant qu'il n'est pas encore supporté.",
+            ),
+        )
+    with mode_col3:
+        phase2_mode = cast(
+            str,
+            st.selectbox(
+                "Mode Phase 2",
+                options=["off", "risk", "risk_execution"],
+                index=["off", "risk", "risk_execution"].index(
+                    cast(str, st.session_state.get("bt_run_phase2_mode", "off"))
+                    if st.session_state.get("bt_run_phase2_mode", "off") in {"off", "risk", "risk_execution"}
+                    else "off"
+                ),
+                key="bt_run_phase2_mode",
+                help="Active de manière opt-in les bridges de fidélité Phase 2. `off` conserve strictement le replay historique ; `risk` réutilise `risk_management`; `risk_execution` ajoute les intents/fills simulés via `execution_engine`.",
+            ),
+        )
+    with mode_col4:
+        phase3_mode = cast(
+            str,
+            st.selectbox(
+                "Mode Phase 3",
+                options=["off", "execution_replay"],
+                index=["off", "execution_replay"].index(
+                    cast(str, st.session_state.get("bt_run_phase3_mode", "off"))
+                    if st.session_state.get("bt_run_phase3_mode", "off") in {"off", "execution_replay"}
+                    else "off"
+                ),
+                key="bt_run_phase3_mode",
+                help="`execution_replay` reprend les cibles/fills simulés du bridge d'exécution pour rejouer les quantités dans le moteur de backtest. Exige `phase2_mode = risk_execution`.",
+            ),
+        )
+    with mode_col5:
+        phase4_mode = cast(
+            str,
+            st.selectbox(
+                "Mode Phase 4",
+                options=["off", "protection_replay"],
+                index=["off", "protection_replay"].index(
+                    cast(str, st.session_state.get("bt_run_phase4_mode", "off"))
+                    if st.session_state.get("bt_run_phase4_mode", "off") in {"off", "protection_replay"}
+                    else "off"
+                ),
+                key="bt_run_phase4_mode",
+                help="`protection_replay` rejoue les child intents de protection (take-profit, initial stop, trailing) dans le moteur de backtest. Exige `phase3_mode = execution_replay`.",
+            ),
+        )
+    with mode_col6:
+        phase5_mode = cast(
+            str,
+            st.selectbox(
+                "Mode Phase 5",
+                options=["off", "watcher_replay"],
+                index=["off", "watcher_replay"].index(
+                    cast(str, st.session_state.get("bt_run_phase5_mode", "off"))
+                    if st.session_state.get("bt_run_phase5_mode", "off") in {"off", "watcher_replay"}
+                    else "off"
+                ),
+                key="bt_run_phase5_mode",
+                help="`watcher_replay` rejoue la logique de transition du watcher de protection avec une temporalité conservative (promotion effective à partir de la séance suivante). Exige `phase4_mode = protection_replay`.",
+            ),
+        )
+    with mode_col7:
+        phase7_mode = cast(
+            str,
+            st.selectbox(
+                "Mode Phase 7",
+                options=["off", "exit_lifecycle_replay"],
+                index=["off", "exit_lifecycle_replay"].index(
+                    cast(str, st.session_state.get("bt_run_phase7_mode", "off"))
+                    if st.session_state.get("bt_run_phase7_mode", "off") in {"off", "exit_lifecycle_replay"}
+                    else "off"
+                ),
+                key="bt_run_phase7_mode",
+                help="`exit_lifecycle_replay` matérialise l'exit terminal (TP/initial stop/trailing) et l'annulation OCO du sibling comme source de vérité de sortie. Exige `phase5_mode = watcher_replay`.",
+            ),
+        )
+
     info_col1, info_col2 = st.columns(2)
     with info_col1:
         st.caption(
@@ -793,6 +1078,14 @@ def _build_run_options() -> BacktestRunOptions:
             help="Si renseigné, le backtest standard cherchera explicitement les meilleurs poids walk-forward dans ce répertoire.",
         )
 
+    _render_pipeline_pit_hint(
+        engine_mode=engine_mode,
+        start=start.strip(),
+        end=end.strip() or None,
+        selected_run_preset_key=selected_run_preset_key,
+        auto_run_preset_key=auto_run_preset_key,
+    )
+
     options = BacktestRunOptions(
         start=start.strip(),
         end=end.strip() or None,
@@ -809,6 +1102,13 @@ def _build_run_options() -> BacktestRunOptions:
         no_save=bool(no_save),
         ml_mode=cast(Any, ml_mode),
         sentiment_mode=cast(Any, sentiment_mode),
+        engine_mode=cast(Any, engine_mode),
+        ml_pit_strategy=cast(Any, ml_pit_strategy),
+        phase2_mode=cast(Any, phase2_mode),
+        phase3_mode=cast(Any, phase3_mode),
+        phase4_mode=cast(Any, phase4_mode),
+        phase5_mode=cast(Any, phase5_mode),
+        phase7_mode=cast(Any, phase7_mode),
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
