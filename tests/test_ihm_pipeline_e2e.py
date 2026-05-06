@@ -38,9 +38,19 @@ from ihm.pages._shared import PipelineLaunchOptions
 def test_execution_center_exposes_sprint_s6_helpers() -> None:
     """Les helpers ``_render_*_block`` extraits du Sprint S6 doivent exister."""
     expected_callables = (
+        # Sprint S6 (livré initial)
         "_render_event_sentiment_block",
         "_render_signal_aggregator_block",
         "_render_live_confirmation_block",
+        # Sprint S6.1 (extraction complète des 9 blocs)
+        "_render_execution_block",
+        "_render_risk_block",
+        "_render_model_factory_block",
+        "_render_selector_block",
+        "_render_screener_block",
+        "_render_data_integrity_block",
+        "_render_corporate_actions_block",
+        # Façade publique
         "_build_launch_options",
     )
     for name in expected_callables:
@@ -123,6 +133,61 @@ def test_render_signal_aggregator_block_returns_expected_keys() -> None:
 
     at = AppTest.from_function(_runner).run(timeout=10)
     assert not at.exception, f"Exception remontée par AppTest : {at.exception}"
+
+
+@pytest.mark.e2e
+def test_render_execution_block_returns_expected_keys() -> None:
+    """Smoke S6.1 : helper Execution renvoie le dict attendu sous AppTest."""
+
+    def _runner() -> None:
+        import streamlit as st
+
+        from ihm.pages._execution_center import _render_execution_block
+
+        result = _render_execution_block(None, None)
+        st.session_state["__test_execution_keys"] = sorted(result.keys())
+
+    at = AppTest.from_function(_runner).run(timeout=20)
+    assert not at.exception, f"Exception remontée par AppTest : {at.exception}"
+    keys = set(at.session_state["__test_execution_keys"])
+    assert {
+        "trade_date",
+        "execution_mode",
+        "execution_account_type",
+        "execution_pdt_rule",
+        "execution_swing_only",
+        "execution_submission_window",
+        "execution_trailing_trigger",
+        "execution_debug",
+        "selected_capital_preset",
+        "capital_preset_key",
+    } <= keys
+
+
+@pytest.mark.e2e
+def test_render_model_factory_block_returns_expected_keys() -> None:
+    """Smoke S6.1 : helper Model Factory renvoie le dict attendu sous AppTest."""
+
+    def _runner() -> None:
+        import streamlit as st
+
+        from ihm.pages._execution_center import _render_model_factory_block
+
+        result = _render_model_factory_block()
+        st.session_state["__test_ml_keys"] = sorted(result.keys())
+
+    at = AppTest.from_function(_runner).run(timeout=20)
+    assert not at.exception, f"Exception remontée par AppTest : {at.exception}"
+    keys = set(at.session_state["__test_ml_keys"])
+    # Quelques clés représentatives (target / WF / candidate grids)
+    assert {
+        "ml_accelerator",
+        "ml_target_mode",
+        "ml_walkforward",
+        "ml_wf_max_splits",
+        "ml_candidate_horizons_selection",
+        "ml_min_trades_fraction",
+    } <= keys
 
 
 @pytest.mark.e2e
