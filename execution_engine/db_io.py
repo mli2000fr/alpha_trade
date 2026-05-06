@@ -462,6 +462,128 @@ class ExecutionRepository:
             v2_rows = conn.execute(v2_query, {"parent_intent_id": parent_intent_id}).mappings().all()
         return [self._row_to_broker_order(row) for row in v2_rows]
 
+    # ------------------------------------------------------------------
+    # Sprint S26 (gap P3) — Filets de sécurité TP/SL
+    # ------------------------------------------------------------------
+    # Cas observé : en profil overnight (`overnight_cash_swing`), Execution
+    # soumet l'ordre d'entrée puis saute la phase de polling/`_submit_children`
+    # car le marché est fermé. À l'ouverture, l'entrée est remplie chez le
+    # broker mais aucun TP / STOP n'a jamais été soumis.
+    # Cette méthode retourne tous les ordres d'entrée FILLED (ou
+    # PARTIALLY_FILLED) qui n'ont AUCUN take-profit ni AUCUN stop encore
+    # ouvert chez le broker. L'executor + le watcher consomment cette liste
+    # pour armer les enfants manquants ("synthetic bracket post-fill").
+    def load_unprotected_filled_parents(
+        self,
+        *,
+        exec_run_id: str | None = None,
+        account_id: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        query = text(f"""
+            SELECT
+                parent_req.request_id          AS parent_intent_id,
+                parent_req.exec_run_id         AS exec_run_id,
+                parent_req.risk_run_id         AS risk_run_id,
+                parent_req.account_id          AS account_id,
+                er.broker_mode                 AS broker_mode,
+                parent_req.symbol              AS symbol,
+                parent_req.side                AS side,
+                parent_req.target_qty          AS target_qty,
+                parent_req.order_type          AS order_type,
+                parent_req.limit_price         AS limit_price,
+                parent_req.decision_price      AS decision_price,
+                parent_req.business_key        AS business_key,
+                parent_req.submission_key      AS submission_key,
+                parent_obs.broker_order_id     AS parent_broker_order_id,
+                COALESCE(
+                    parent_fill.total_filled_qty,
+                    parent_obs.filled_qty,
+                    0
+                ) AS fill_qty,
+                COALESCE(
+                    parent_fill.weighted_avg_fill_price,
+                    parent_obs.avg_fill_price,
+                    parent_req.decision_price
+                ) AS fill_price
+            FROM execution_order_requests parent_req
+            INNER JOIN execution_runs er
+                    ON er.exec_run_id = parent_req.exec_run_id
+            LEFT JOIN execution_broker_orders parent_obs
+                   ON parent_obs.request_id = parent_req.request_id
+            LEFT JOIN (
+                SELECT request_id,
+                       SUM(filled_qty) AS total_filled_qty,
+                       CASE
+                           WHEN SUM(filled_qty) > 0
+                               THEN SUM(filled_qty * avg_fill_price) / SUM(filled_qty)
+                           ELSE AVG(avg_fill_price)
+                       END AS weighted_avg_fill_price
+                FROM execution_broker_fills
+                GROUP BY request_id
+            ) parent_fill
+                   ON parent_fill.request_id = parent_req.request_id
+            WHERE parent_req.intent_role = 'entry'
+              AND parent_req.side = 'buy'
+              AND COALESCE(parent_obs.normalized_status, parent_req.status)
+                  IN ('FILLED', 'PARTIALLY_FILLED')
+              AND COALESCE(parent_fill.total_filled_qty, parent_obs.filled_qty, 0) > 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM execution_order_requests c
+                  LEFT JOIN execution_broker_orders co
+                         ON co.request_id = c.request_id
+                  WHERE c.parent_request_id = parent_req.request_id
+                    AND c.intent_role = 'take_profit'
+                    AND COALESCE(co.normalized_status, c.status)
+                        NOT IN ('CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM execution_order_requests c
+                  LEFT JOIN execution_broker_orders co
+                         ON co.request_id = c.request_id
+                  WHERE c.parent_request_id = parent_req.request_id
+                    AND c.intent_role IN ('initial_stop', 'trailing_stop')
+                    AND COALESCE(co.normalized_status, c.status)
+                        NOT IN ('CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+              )
+              AND (:exec_run_id IS NULL OR parent_req.exec_run_id = :exec_run_id)
+              AND (:account_id IS NULL OR parent_req.account_id = :account_id)
+            ORDER BY parent_req.created_at ASC
+            LIMIT {int(limit)}
+        """)
+        params = {"exec_run_id": exec_run_id, "account_id": account_id}
+        with self.engine.connect() as conn:
+            rows = conn.execute(query, params).mappings().all()
+        return [dict(r) for r in rows]
+
+    def load_latest_broker_order_status(
+        self,
+        *,
+        account_id: str,
+        broker_order_id: str,
+    ) -> dict[str, Any] | None:
+        stmt = text("""
+            SELECT bo.broker_order_id, bo.client_order_id, req.request_id,
+                   req.exec_run_id, req.account_id, req.risk_run_id, req.symbol, req.side,
+                   req.target_qty, req.order_type, req.business_key, req.submission_key, req.attempt_no,
+                   req.parent_request_id, req.intent_role, req.decision_price, req.limit_price,
+                   req.stop_price, req.trail_percent, req.status, req.failure_reason,
+                   bo.filled_qty, bo.avg_fill_price, bo.raw_status, bo.normalized_status,
+                   bo.submitted_at, bo.last_seen_at
+            FROM execution_broker_orders bo
+            INNER JOIN execution_order_requests req
+                    ON req.request_id = bo.request_id
+            WHERE req.account_id = :account_id
+              AND bo.broker_order_id = :broker_order_id
+            ORDER BY bo.last_seen_at DESC
+            LIMIT 1
+        """)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt, {"account_id": account_id, "broker_order_id": broker_order_id}).mappings().first()
+        return dict(row) if row is not None else None
+
     def load_pending_protection_watch_items(
         self,
         *,
@@ -589,9 +711,9 @@ class ExecutionRepository:
             business_key=str(r["business_key"]),
             submission_key=str(r["submission_key"]) if r.get("submission_key") not in (None, "") else None,
             attempt_no=int(r["attempt_no"]),
-            intent_role=str(r["intent_role"]),
-            decision_price=float(r["decision_price"]) if r.get("decision_price") is not None else 0.0,
             parent_request_id=str(r["parent_request_id"]) if r.get("parent_request_id") not in (None, "") else None,
+            intent_role=str(r["intent_role"]),
+            decision_price=float(r["decision_price"]),
             limit_price=float(r["limit_price"]) if r.get("limit_price") is not None else None,
             stop_price=float(r["stop_price"]) if r.get("stop_price") is not None else None,
             trail_percent=float(r["trail_percent"]) if r.get("trail_percent") is not None else None,

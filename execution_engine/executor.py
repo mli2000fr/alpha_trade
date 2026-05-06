@@ -618,6 +618,64 @@ class ProductionExecutor:
                         unit="étapes",
                     )
 
+            # Phase 7b — Sprint S26 (gap P3) — Filet de sécurité TP/SL post-sync.
+            # Cas overnight : l'entrée a été soumise marché fermé, _submit_children
+            # n'a pas tourné, mais à l'ouverture le broker l'a remplie. La sync
+            # broker (Phase 7) vient de matérialiser ces fills en base. On arme
+            # maintenant les TP + STOP manquants pour chaque parent FILLED qui
+            # n'a aucun enfant ouvert chez le broker.
+            if not self._cfg.dry_run:
+                try:
+                    unprotected = self._repo.load_unprotected_filled_parents(
+                        exec_run_id=exec_run_id,
+                        account_id=resolved_account_id,
+                    )
+                except Exception as exc:
+                    LOGGER.warning("load_unprotected_filled_parents failed: %s", exc, exc_info=True)
+                    unprotected = []
+
+                metrics["children_armed_post_sync"] = 0
+                metrics["children_armed_post_sync_failed"] = 0
+                for row in unprotected:
+                    try:
+                        parent_intent, filled_order = self._reconstruct_parent_for_arming(row)
+                    except Exception as exc:
+                        LOGGER.warning(
+                            "Impossible de reconstruire le parent pour armement TP/SL (symbol=%s): %s",
+                            row.get("symbol"), exc,
+                        )
+                        metrics["children_armed_post_sync_failed"] += 1
+                        continue
+                    try:
+                        child_events = self._submit_children(
+                            parent_intent,
+                            filled_order,
+                            exec_run_id,
+                            account_state=account_state,
+                            metrics=metrics,
+                            target=target_by_symbol.get(parent_intent.symbol),
+                        )
+                        events.extend(child_events)
+                        metrics["children_armed_post_sync"] += 1
+                        events.append(make_event(
+                            exec_run_id,
+                            EventType.CHILDREN_SUBMITTED,
+                            f"Post-sync TP/SL armés pour {parent_intent.symbol}",
+                            symbol=parent_intent.symbol,
+                            intent_id=parent_intent.intent_id,
+                            payload={
+                                "fill_qty": filled_order.filled_qty,
+                                "fill_price": filled_order.avg_fill_price,
+                                "trigger": "post_broker_sync",
+                            },
+                        ))
+                    except Exception as exc:
+                        metrics["children_armed_post_sync_failed"] += 1
+                        LOGGER.warning(
+                            "Échec armement post-sync TP/SL pour %s: %s",
+                            parent_intent.symbol, exc, exc_info=True,
+                        )
+
             # Phase 8 — Reconciliation
             if self._cfg.reconcile_after_submit and not self._cfg.dry_run:
                 try:
@@ -950,6 +1008,56 @@ class ProductionExecutor:
             metrics=metrics,
             target=target,
         )
+
+    # ------------------------------------------------------------------
+    # Sprint S26 (gap P3) — Reconstruction parent pour armement TP/SL post-sync.
+    # Voir Phase 7b dans ``execute_run``.
+    # ------------------------------------------------------------------
+    def _reconstruct_parent_for_arming(self, row: dict[str, Any]) -> tuple[OrderIntent, BrokerOrder]:
+        symbol = str(row["symbol"]).strip().upper()
+        fill_qty = float(row.get("fill_qty") or 0.0)
+        fill_price = float(row.get("fill_price") or 0.0)
+        decision_price = float(row.get("decision_price") or fill_price or 0.0)
+        target_qty = float(row.get("target_qty") or fill_qty)
+        order_type = str(row.get("order_type") or "market")
+        limit_price = row.get("limit_price")
+        broker_mode = str(row.get("broker_mode") or self._cfg.broker_mode)
+        parent_intent = OrderIntent(
+            intent_id=str(row["parent_intent_id"]),
+            risk_run_id=str(row.get("risk_run_id") or ""),
+            exec_run_id=str(row["exec_run_id"]),
+            symbol=symbol,
+            side=str(row.get("side") or "buy"),
+            qty=target_qty,
+            order_type=order_type,
+            limit_price=float(limit_price) if limit_price is not None else None,
+            trail_percent=None,
+            broker_mode=broker_mode,
+            parent_intent_id=None,
+            intent_role=IntentRole.ENTRY,
+            idempotency_key=str(row.get("business_key") or row.get("submission_key") or row["parent_intent_id"]),
+            decision_price=decision_price,
+            stop_price=None,
+            submission_key=str(row["submission_key"]) if row.get("submission_key") else None,
+        )
+        filled_order = BrokerOrder(
+            broker_order_id=str(row.get("parent_broker_order_id") or ""),
+            client_order_id=str(row.get("submission_key") or ""),
+            intent_id=str(row["parent_intent_id"]),
+            symbol=symbol,
+            side=str(row.get("side") or "buy"),
+            qty=target_qty,
+            filled_qty=fill_qty,
+            avg_fill_price=fill_price,
+            status=OrderStatus.FILLED,
+            order_type=order_type,
+            limit_price=float(limit_price) if limit_price is not None else None,
+            stop_price=None,
+            trail_percent=None,
+            created_at=None,
+            updated_at=None,
+        )
+        return parent_intent, filled_order
 
     def _submit_rebalance_orders(
         self,

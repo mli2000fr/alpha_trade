@@ -5,7 +5,7 @@ Lit les artefacts ``artifacts/parity_runs/<YYYY-MM-DD>/parity_summary.json``
 
 - KPI (matched / divergent / score) pour la date sélectionnée ;
 - tableau filtrable des divergences ;
-- bouton « relancer » (best-effort, subprocess) ;
+- bouton « relancer » (Sprint S26 — via ``ops_runner`` + ``process_registry``) ;
 - **Sprint S11 / S11.5** — vue rolling 30 j (ligne de score quotidien),
   agrégat top divergences récurrentes par symbole, drill-down par symbole.
 """
@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
-import sys
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -272,24 +270,29 @@ def render() -> None:
             value=selected,
             key="parity_relaunch_date",
         )
-        if st.button("Lancer scripts.run_daily_parity"):
-            try:
-                date.fromisoformat(target_date_str)
-            except ValueError:
-                st.error("Date invalide.")
-            else:
-                cmd = [sys.executable, "-m", "scripts.run_daily_parity",
-                       "--trade-date", target_date_str, "--no-alert"]
-                try:
-                    out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-                    if out.returncode in (0, 2):
-                        st.success(f"Job exécuté (exit={out.returncode}).")
-                    else:
-                        st.error(f"Job en erreur (exit={out.returncode}).")
-                    if out.stdout:
-                        st.code(out.stdout[-2000:])
-                except (subprocess.SubprocessError, OSError) as exc:
-                    st.error(f"Échec subprocess : {exc}")
+        no_alert = st.checkbox(
+            "Désactiver l'alerte Slack (`--no-alert`)",
+            value=True,
+            key="parity_relaunch_no_alert",
+        )
+        try:
+            date.fromisoformat(target_date_str)
+            valid_date = True
+        except ValueError:
+            st.error("Date invalide (format attendu : YYYY-MM-DD).")
+            valid_date = False
+
+        if valid_date:
+            from ihm.components.ops_command_panel import render_ops_command_panel
+
+            render_ops_command_panel(
+                "daily_parity",
+                account_id=str(st.session_state.get("selected_account_id") or ""),
+                command_kwargs={
+                    "trade_date": target_date_str,
+                    "no_alert": no_alert,
+                },
+            )
 
 
 __all__ = [

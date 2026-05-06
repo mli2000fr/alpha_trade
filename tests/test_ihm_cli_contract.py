@@ -150,4 +150,65 @@ def test_ihm_cli_contract_pipeline_steps_emit_python_module_invocations() -> Non
         )
 
 
+# ---------------------------------------------------------------------------
+# Sprint S26 — couverture des commandes ops (`ihm.services.ops_runner`).
+# ---------------------------------------------------------------------------
+
+from ihm.services.ops_runner import OPS_COMMAND_CATALOG, build_ops_command
+
+# kwargs minimaux pour les commandes qui exigent des paramètres obligatoires.
+_OPS_DEFAULT_KWARGS: dict[str, dict[str, object]] = {
+    "execution_kill_switch": {"account": "paper-test"},
+    "pre_live_checklist": {"account": "paper-test"},
+    "daily_parity": {"account": "paper-test"},
+    "restore_from_backup": {"backup_path": "dummy.sql"},
+}
+
+
+@pytest.mark.parametrize("ops_key", sorted(OPS_COMMAND_CATALOG.keys()))
+def test_ihm_cli_contract_ops_commands_emit_python_invocations(ops_key: str) -> None:
+    """Chaque commande ops doit produire une commande `python -u …` exploitable."""
+    kwargs = _OPS_DEFAULT_KWARGS.get(ops_key, {})
+    command = build_ops_command(ops_key, **kwargs)  # type: ignore[arg-type]
+    assert command, f"Ops `{ops_key}` : commande vide"
+    assert command[1] == "-u", (
+        f"Ops `{ops_key}` : second token doit être `-u`, got {command[1]!r}"
+    )
+    third = command[2]
+    assert third == "-m" or third.endswith(".py"), (
+        f"Ops `{ops_key}` : forme attendue `-m <module>` ou `<script.py>`, got {third!r}"
+    )
+
+
+def test_ihm_cli_contract_ops_kill_switch_flags_known_by_execution_engine() -> None:
+    """Garde-fou IHM↔CLI sur la sous-commande `execution_engine cancel-all`."""
+    command = build_ops_command(
+        "execution_kill_switch",
+        account="paper-test",
+        broker_mode="paper",
+        confirm_account="paper-test",
+        reason="test",
+        dry_run=True,
+    )
+    parser = _resolve_parser(
+        "execution_engine.cli",
+        ("_build_arg_parser", "build_arg_parser", "_build_parser", "build_parser"),
+    )
+    if parser is None:
+        pytest.skip("execution_engine.cli : aucun build_parser exposé.")
+    # On retire le flag de la sous-commande (`cancel-all`) qui n'est pas un long flag.
+    used = _extract_long_flags(command)
+    # Récupère les flags de tous les sous-parsers.
+    known: set[str] = set(_parser_known_flags(parser))
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):  # type: ignore[attr-defined]
+            for sub in action.choices.values():
+                known.update(_parser_known_flags(sub))
+    unknown = used - known
+    assert not unknown, (
+        f"Ops kill switch : flags inconnus de `execution_engine` : {sorted(unknown)}.\n"
+        f"  Flags connus : {sorted(known)}"
+    )
+
+
 

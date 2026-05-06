@@ -26,6 +26,10 @@
 - [ ] Test : recevoir un email Alpaca de confirmation d'ordre paper.
 - [ ] Antivirus à jour, machine non partagée.
 - [ ] Watcher de protection 💚 et stable depuis 7 jours minimum.
+- [ ] **TP/SL armés sur 100 % des positions ouvertes** (vérifier requête
+      SQL §"Cas marché fermé" de
+      [08_page_execution.md](08_page_execution.md) → 0 ligne attendue).
+      En live, une position sans stop-loss = perte non bornée.
 
 ## 📊 Validation stratégique
 

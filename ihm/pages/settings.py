@@ -8,6 +8,7 @@ import streamlit as st
 
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_connection_form
+from ihm.components.ops_command_panel import render_ops_command_panel
 from ihm.components.status_badges import env_badge
 from ihm.services.alpha_scanner_threshold_presets import (
     DEFAULT_MARKET_REGIME,
@@ -415,6 +416,28 @@ def render() -> None:
     st.subheader("🧭 Paramétrage pipeline")
     _render_bars_provider_settings()
     _render_alpha_scanner_dependency_threshold_settings()
+
+    # ---- Sprint S26 (gap P3) — Maintenance & sécurité ops ------------
+    st.subheader("🧹 Maintenance & sécurité ops")
+    st.caption(
+        "Lancement direct des scripts ops `prune_artifacts` et "
+        "`verify_vault_rotation`. Chaque run est tracé dans "
+        "`artifacts/ihm_pipeline_runs/` (préfixe `ops:`)."
+    )
+    ops_tabs = st.tabs(["🧹 Nettoyage artefacts", "🗝️ Rotation des secrets"])
+    with ops_tabs[0]:
+        apply_changes = st.checkbox(
+            "Appliquer les suppressions (sinon dry-run)",
+            value=False,
+            key="settings_prune_artifacts_apply",
+        )
+        render_ops_command_panel(
+            "prune_artifacts",
+            confirm_phrase="PRUNE" if apply_changes else None,
+            command_kwargs={"apply_changes": apply_changes},
+        )
+    with ops_tabs[1]:
+        render_ops_command_panel("verify_vault_rotation")
 
     with st.expander("🖥️ Diagnostic environnement Python", expanded=False):
         st.text(f"Python : {sys.version}")

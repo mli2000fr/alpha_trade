@@ -14,6 +14,57 @@
 
 ## 2. Procédures clés
 
+### Positions sans protection broker-side (TP/SL manquants)
+
+**Symptôme** : une position est ouverte (entrée `FILLED`) mais aucun
+ordre `take_profit` ni `initial_stop`/`trailing_stop` n'est actif côté
+broker. Risque immédiat : pas de stop-loss → perte non bornée.
+
+**Détection** :
+
+```sql
+SELECT r.symbol, r.account_id, r.intent_id, r.exec_run_id
+FROM execution_order_requests r
+LEFT JOIN execution_broker_orders o ON o.intent_id = r.intent_id
+WHERE r.intent_role='entry' AND r.side='buy'
+  AND COALESCE(o.normalized_status, r.status) IN ('FILLED','PARTIALLY_FILLED')
+  AND NOT EXISTS (
+    SELECT 1 FROM execution_order_requests c
+    WHERE c.parent_request_id = r.intent_id
+      AND c.intent_role IN ('take_profit','initial_stop','trailing_stop')
+      AND c.status NOT IN ('CANCELLED','REJECTED','EXPIRED')
+  );
+```
+
+**Cause typique** : entrée soumise hors RTH (profil `overnight_cash_swing`,
+presets `paper`/`live`) puis remplie à l'ouverture suivante alors que ni
+l'executor (déjà terminé) ni le watcher (non lancé) n'étaient en mesure
+d'armer TP/SL.
+
+**Action 1ère ligne** :
+
+1. Lancer un watcher one-shot pour armer immédiatement les protections
+   manquantes (filet `_arm_missing_protections`) :
+   ```bash
+   python run_execution_protection_watch.py --mode once --account <id>
+   ```
+2. Vérifier les métriques émises dans le `run_summary` :
+   `armed_missing_protections` > 0 attendu, `armed_missing_protections_failed` == 0.
+3. Re-jouer la requête SQL ci-dessus → doit retourner 0 ligne.
+4. Si le filet échoue (`_failed > 0`) : ouvrir le watcher en mode debug,
+   inspecter `execution_events WHERE event_type='CHILDREN_SUBMITTED' AND
+   payload_json LIKE '%watcher_safety_net%'`.
+5. En dernier recours, armer manuellement TP/SL via l'UI Alpaca puis
+   réconcilier : `python -m execution_engine.reconciliation`.
+
+**Prévention** :
+
+- En exploitation overnight : un watcher persistant **doit** tourner
+  (NSSM ou Task Scheduler — cf. `doc/watcher.md` §4).
+- Surveiller dans Supervision Ops la métrique
+  `armed_missing_protections` : > 0 récurrent en intraday = bug à
+  investiguer (la Phase 7b de l'executor devrait avoir armé en run).
+
 ### Bascule broker Alpaca → IBKR (read-only failover)
 
 ```bash

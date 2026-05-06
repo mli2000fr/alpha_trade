@@ -13,6 +13,7 @@ import streamlit as st
 
 from ihm.components.help_tooltip import _help
 from ihm.components.kpi_card import kpi_card
+from ihm.components.ops_command_panel import render_ops_command_panel
 from ihm.components.section_header import section_header
 from ihm.services import compliance_loader as loader
 from ihm.theme.badges import status_badge
@@ -71,6 +72,67 @@ def render() -> None:
     tlaps = snapshot["tlaps"]
     fuzz = snapshot["fuzz"]
     sandbox = snapshot["sandbox"]
+
+    # ---- Sprint S26 (gap P1/P3) — Centre de relance ops compliance ----
+    with st.expander("⚙️ Relancer un job de conformité", expanded=False):
+        st.caption(
+            "Lancement direct des jobs CLI compliance/audit depuis l'IHM. Chaque run "
+            "est tracé dans `artifacts/ihm_pipeline_runs/` (préfixe `ops:`)."
+        )
+        account_id = st.session_state.get("selected_account_id")
+        ops_tabs = st.tabs([
+            "🚦 Pré-live checklist",
+            "🔐 Audit chain",
+            "🛡️ Scan CVE",
+            "🗝️ Vault rotation",
+            "📅 Rapport mensuel broker",
+            "🧮 Réconciliation broker",
+        ])
+        with ops_tabs[0]:
+            pre_live_broker_mode = st.selectbox(
+                "Broker mode cible",
+                options=["live", "paper"],
+                index=0,
+                key="cmpl_pre_live_broker_mode",
+            )
+            pre_live_skip_network = st.checkbox(
+                "Skip checks réseau (`--skip-network`)",
+                value=False,
+                key="cmpl_pre_live_skip_network",
+            )
+            if not account_id:
+                st.error("Sélectionnez un compte dans la sidebar.")
+            else:
+                render_ops_command_panel(
+                    "pre_live_checklist",
+                    account_id=str(account_id),
+                    command_kwargs={
+                        "broker_mode": pre_live_broker_mode,
+                        "skip_network": pre_live_skip_network,
+                    },
+                )
+        with ops_tabs[1]:
+            render_ops_command_panel("verify_audit_chain")
+        with ops_tabs[2]:
+            render_ops_command_panel("scan_cves")
+        with ops_tabs[3]:
+            render_ops_command_panel("verify_vault_rotation")
+        with ops_tabs[4]:
+            month = st.text_input(
+                "Mois (YYYY-MM, vide = mois en cours)",
+                value="",
+                key="cmpl_monthly_broker_month",
+            )
+            render_ops_command_panel(
+                "monthly_broker_report",
+                account_id=str(account_id) if account_id else None,
+                command_kwargs={"month": month or None},
+            )
+        with ops_tabs[5]:
+            render_ops_command_panel(
+                "broker_reconciliation",
+                account_id=str(account_id) if account_id else None,
+            )
 
     tabs = st.tabs([
         "🔗 HMAC",

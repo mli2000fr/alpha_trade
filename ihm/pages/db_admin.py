@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 from ihm.components.db_controls import render_db_connection_form, render_db_unavailable
+from ihm.components.ops_command_panel import render_ops_command_panel
 from ihm.pages import run_page_if_standalone
 from ihm.services.db import get_engine, get_runtime_db_config, reset_db_caches
 from ihm.services.db_admin import (
@@ -208,6 +209,40 @@ def render() -> None:
 
 	protected_names = ", ".join(sorted(name for name in PROTECTED_TABLES if name.endswith("s") or name == "stock_metadata"))
 	st.caption(f"Tables protégées côté IHM : `{protected_names}`.")
+
+	# ---- Sprint S26 (gap P3) — Restauration depuis backup ------------
+	st.divider()
+	st.subheader("♻️ Restauration depuis backup")
+	st.caption(
+		"Exécute `scripts/restore_from_backup.py` pour restaurer la base depuis un dump SQL "
+		"(option `--dump-path`). Action **destructive** — confirmation requise."
+	)
+	with st.container(border=True):
+		backup_path = st.text_input(
+			"Chemin du dump SQL (`--dump-path`)",
+			key="db_admin_restore_dump_path",
+			placeholder="/backups/alpha_trade-20260506.sql.gz",
+		)
+		col1, col2, col3 = st.columns(3)
+		with col1:
+			dry_run = st.checkbox("Dry-run", value=True, key="db_admin_restore_dry_run")
+		with col2:
+			skip_alembic = st.checkbox("Skip Alembic", value=False, key="db_admin_restore_skip_alembic")
+		with col3:
+			skip_audit = st.checkbox("Skip audit", value=False, key="db_admin_restore_skip_audit")
+		if backup_path.strip():
+			render_ops_command_panel(
+				"restore_from_backup",
+				confirm_phrase=None if dry_run else "RESTORE",
+				command_kwargs={
+					"backup_path": backup_path.strip(),
+					"dry_run": dry_run,
+					"skip_alembic": skip_alembic,
+					"skip_audit": skip_audit,
+				},
+			)
+		else:
+			st.info("Renseigne le chemin du dump pour activer le bouton.")
 
 
 run_page_if_standalone(__name__, render)

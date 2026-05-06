@@ -5,6 +5,7 @@ import streamlit as st
 
 from ihm.components.help_tooltip import _help
 from ihm.components.kpi_card import kpi_card
+from ihm.components.ops_command_panel import render_ops_command_panel
 from ihm.components.section_header import section_header
 from ihm.services.sandbox_health_loader import load_day, load_rollup
 from ihm.theme.badges import status_badge
@@ -102,4 +103,17 @@ def render() -> None:
     if last_failure:
         st.warning(f"Dernier échec observé : **{last_failure}**. "
                    "Voir `doc/sandbox_health_runbook.md`.")
+
+    # ---- Sprint S26 (gap P2) — Relance manuelle health checks --------
+    st.divider()
+    with st.expander("⚙️ Relancer un health check", expanded=False):
+        st.caption(
+            "Lancement direct des checks de cross-validation OHLCV et de santé providers. "
+            "Chaque run est tracé dans `artifacts/ihm_pipeline_runs/` (préfixe `ops:`)."
+        )
+        ops_tabs = st.tabs(["📊 Cross-check Stooq", "💚 Health providers"])
+        with ops_tabs[0]:
+            render_ops_command_panel("cross_check_stooq")
+        with ops_tabs[1]:
+            render_ops_command_panel("data_source_health")
 

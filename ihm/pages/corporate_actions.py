@@ -6,6 +6,7 @@ import streamlit as st
 from ihm.components.run_summary import render_persistent_business_summary
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
+from ihm.components.ops_command_panel import render_ops_command_panel
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available
 from ihm.services.queries import (
@@ -36,6 +37,26 @@ def render() -> None:
 
     st.subheader("Résumé par statut / type")
     st.dataframe(summary, use_container_width=True)
+
+    # ---- Sprint S26 (gap P3) — Statut formaté + apply manuel -------------
+    with st.expander("⚙️ Lancer une commande corporate_actions", expanded=False):
+        st.caption(
+            "Exécute directement les sous-commandes CLI `python -m corporate_actions`."
+            " Chaque run est tracé dans `artifacts/ihm_pipeline_runs/` (préfixe `ops:`)."
+        )
+        ops_tabs = st.tabs(["📑 status", "✅ apply"])
+        with ops_tabs[0]:
+            render_ops_command_panel("corporate_actions_status")
+        with ops_tabs[1]:
+            apply_as_of = st.text_input(
+                "as-of (YYYY-MM-DD, vide = aujourd'hui)",
+                value="",
+                key="ca_apply_as_of",
+            )
+            render_ops_command_panel(
+                "corporate_actions_apply",
+                command_kwargs={"as_of": apply_as_of} if apply_as_of else None,
+            )
 
     latest_sync = get_latest_run_business_summary(step_key="corporate_actions_sync")
     latest_apply = get_latest_run_business_summary(step_key="corporate_actions_apply")

@@ -27,6 +27,21 @@ Indicateurs :
 > ⚠️ Si le watcher est mort, vos positions ne sont **plus protégées**.
 > Relancez-le manuellement (cf. ci-dessous).
 
+#### Métriques d'armement TP/SL (filet S26)
+
+Le watcher expose dans son `run_summary` deux compteurs supplémentaires
+(visibles dans la section *Historique des runs*) :
+
+| Métrique | Signification | Lecture |
+|---|---|---|
+| `armed_missing_protections` | Nb de positions `FILLED` pour lesquelles le watcher vient d'armer TP/SL manquants. | > 0 attendu en exploitation overnight (entrée la veille → fill à l'ouverture). > 0 récurrent en intraday = anomalie. |
+| `armed_missing_protections_failed` | Nb d'échecs lors de l'armement post-fill. | **Doit rester 0**. Sinon : ouvrir runbook §positions sans protection. |
+
+L'executor expose les mêmes notions sous les noms
+`children_armed_post_sync` / `children_armed_post_sync_failed` (visibles
+dans la page **Execution** → section *Métriques du run*).
+
+
 ### Lancer / arrêter le watcher
 
 > ⚠️ **GAP CONNU** : pas encore de bouton dans l'IHM. En attendant :

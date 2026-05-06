@@ -19,6 +19,10 @@
       (`SELECT status, payload FROM ml_drift_runs ORDER BY computed_at DESC LIMIT 1;`).
 - [ ] **Watcher de protection** prêt à être lancé
       (`python run_execution_protection_watch.py`).
+- [ ] **Filet TP/SL S26 vérifié** : aucune position `entry/buy FILLED`
+      sans `take_profit` + `initial_stop`/`trailing_stop` ouverts (cf.
+      requête SQL dans `doc/manuel/08_page_execution.md` §Cas marché
+      fermé). Si non vide → relancer le watcher avant la bascule.
 
 ## 2. À faire le jour J (avant ouverture)
 

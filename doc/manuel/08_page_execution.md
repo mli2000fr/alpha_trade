@@ -61,6 +61,58 @@ Affiche le statut du processus 24/7 qui vérifie que les stop-loss / TP
 sont bien en place chez le broker. Voir
 [12_page_supervision_ops.md](12_page_supervision_ops.md).
 
+## ⚠️ Cas particulier : marché fermé au moment du run (overnight cash swing)
+
+En presets `paper` / `live`, l'execution utilise par défaut le profil
+`overnight_cash_swing` qui autorise la soumission d'ordres en dehors des
+heures de marché (`allow_outside_rth=True`). Conséquence importante :
+
+- l'**entrée** est soumise immédiatement (statut `accepted` / `pending_new`) ;
+- elle ne sera **remplie** qu'à la prochaine ouverture (RTH) ;
+- TP/SL ne peuvent être armés **qu'après** le fill.
+
+> 🛡️ **Filets de sécurité (sprint S26)** — depuis avril 2026, deux mécanismes
+> garantissent que TP/SL finissent toujours par être armés :
+>
+> 1. **Phase 7b dans l'executor** : si l'entrée se remplit pendant le run
+>    (ex. ouverture pendant l'exécution), TP/SL sont armés immédiatement
+>    après `BrokerStateSynchronizer.sync`. Métriques visibles dans le
+>    `run_summary` : `children_armed_post_sync` (ok) /
+>    `children_armed_post_sync_failed` (erreur).
+> 2. **Watcher de protection** (`run_execution_protection_watch.py`) : à
+>    chaque tick, repère les positions remplies sans TP/SL et les arme.
+>    Métriques : `armed_missing_protections` /
+>    `armed_missing_protections_failed`. Événement audit
+>    `CHILDREN_SUBMITTED` avec `trigger="watcher_safety_net"`.
+>
+> 👉 **Conséquence opérateur** : si vous lancez l'execution la veille au
+> soir (overnight), **lancez aussi un watcher** (Task Scheduler ou NSSM)
+> sinon les positions remplies à l'ouverture suivante resteront sans
+> protection broker-side jusqu'au prochain run executor.
+
+**Comment vérifier que TP/SL sont bien armés sur vos positions actuelles ?**
+
+1. Page **Execution** → section *Ordres* : filtrez sur `intent_role` =
+   `take_profit` et `initial_stop` / `trailing_stop`. Chaque entrée
+   `FILLED` doit avoir ses 2 enfants ouverts.
+2. Page **Supervision Ops** → bloc *Watcher* : surveillez
+   `armed_missing_protections`. Une valeur > 0 indique que le watcher
+   vient de combler des protections oubliées (normal en exploitation
+   overnight, anormal si récurrent en intraday).
+3. SQL rapide :
+   ```sql
+   SELECT symbol, COUNT(*) FROM execution_order_requests
+   WHERE intent_role='entry' AND side='buy' AND status IN ('FILLED','PARTIALLY_FILLED')
+     AND NOT EXISTS (
+       SELECT 1 FROM execution_order_requests c
+       WHERE c.parent_request_id = execution_order_requests.intent_id
+         AND c.intent_role IN ('take_profit','initial_stop','trailing_stop')
+         AND c.status NOT IN ('CANCELLED','REJECTED','EXPIRED')
+     )
+   GROUP BY symbol;
+   ```
+   Doit retourner **0 lignes** en régime nominal.
+
 ## Lancer un run d'exécution
 
 Le run d'exécution est lancé via la page **🔄 Pipeline** (étape 12). Vous

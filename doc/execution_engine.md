@@ -184,13 +184,35 @@ En particulier :
 
 Le moteur overnight nominal privilégie les protections simples et traçables.
 
-Le pattern canonique est :
+Le pattern canonique (« synthetic bracket ») est :
 
 1. soumettre l'entrée ;
 2. observer l'ordre broker puis les fills ;
-3. soumettre le stop initial broker-side si le contexte le permet ;
+3. soumettre le take-profit (limit) et le stop initial broker-side une fois l'entrée remplie (`_submit_children`) ;
 4. journaliser les requests, ordres broker et événements ;
 5. reconstruire positions, lots et réconciliation.
+
+> ℹ️ Alpaca ne supporte pas le `trailing_stop` comme leg native d'un bracket order. Le moteur utilise donc un **bracket synthétique** : l'entrée est soumise seule, puis TP + SL sont armés post-fill côté application. L'OCO est gérée applicativement (`oco_manager.py`).
+
+#### 4.3.bis Filet de sécurité TP/SL (Phase 7b — sprint S26)
+
+**Problème historique** : en profil `overnight_cash_swing` (presets `paper`/`live`), l'entrée est soumise hors RTH. La phase de polling et `_submit_children` étaient sautées (`if not dry_run and market_open_for_poll:`). Résultat : si l'entrée se remplissait à l'ouverture suivante, **TP/SL n'étaient jamais armés**.
+
+**Correctif (S26)** — Deux filets idempotents :
+
+1. **Phase 7b (`executor.py`)** — Après `BrokerStateSynchronizer.sync`, `db_io.load_unprotected_filled_parents(exec_run_id, account_id)` retourne les parents `entry/buy` `FILLED` (ou `PARTIALLY_FILLED` avec `filled_qty>0`) **sans** enfant `take_profit` ouvert **et sans** enfant `initial_stop`/`trailing_stop` ouvert. Pour chaque ligne, `_reconstruct_parent_for_arming(row)` rebâtit un `OrderIntent` (role `ENTRY`) + un `BrokerOrder` synthétique `FILLED`, puis appelle `_submit_children`. Métriques exposées dans le `run_summary` :
+   - `children_armed_post_sync`
+   - `children_armed_post_sync_failed`
+   - événement audit : `CHILDREN_SUBMITTED` avec payload `{"trigger": "post_broker_sync", ...}`.
+
+2. **Filet `protection_watcher` (`_arm_missing_protections`)** — Le watcher (mode `once` ou `service`) rejoue la même requête à chaque tick et arme TP + SL via `build_take_profit_intent` / `build_initial_stop_intent` (avec fallback `build_trailing_stop_intent` si l'initial échoue). Métriques :
+   - `armed_missing_protections`
+   - `armed_missing_protections_failed`
+   - événement audit : `CHILDREN_SUBMITTED` avec `trigger="watcher_safety_net"`.
+
+**Idempotence** : la requête SQL exclut tout parent ayant déjà un enfant non-cancellé → relance sans risque de doublons.
+
+**Observabilité opérateur** : un `armed_missing_protections > 0` récurrent indique que l'executor termine systématiquement avant l'ouverture (cas `overnight_cash_swing` nominal) — c'est attendu, le watcher fait le travail. Un `children_armed_post_sync_failed` ou `armed_missing_protections_failed` > 0 doit être investigué (cf. runbook §positions sans protection).
 
 Quand `--swing-only` est activé, ou quand une contrainte PDT ne laisse plus de slot de day trade, le moteur diffère l'armement des children le jour même. Le run journalise alors un événement `CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT`.
 

@@ -32,8 +32,10 @@ from ihm.services.backtesting_runner import (
     PROJECT_ROOT,
     BackfillScoresHistoryOptions,
     BacktestRunOptions,
+    CalibrateSentimentWeightsOptions,
     DiagnoseScreenerOptions,
     RecommendScreenerOptions,
+    WalkForwardSentimentOptions,
     build_backtesting_command,
     format_command_for_display,
 )
@@ -1446,6 +1448,227 @@ def _build_recommend_screener_options() -> RecommendScreenerOptions:
     return options
 
 
+# ----------------------------------------------------------------------
+# Sprint S26 — gap P2 : sentiment calibration + walk-forward sentiment
+# ----------------------------------------------------------------------
+
+
+def _build_calibrate_sentiment_options() -> "CalibrateSentimentWeightsOptions":
+    from datetime import date, timedelta
+
+    st.subheader("📰 Calibrate sentiment weights")
+    st.caption(
+        "Calibre les poids `sentiment_weight` / `macro_sector_weight` à partir de "
+        "`stock_scores_history` et des forward returns. Lance `python -m backtesting calibrate-sentiment-weights ...`."
+    )
+    today = date.today()
+    default_start = (today - timedelta(days=365 * 2)).isoformat()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        start = st.text_input(
+            "Date de début (YYYY-MM-DD)",
+            value=cast(str, st.session_state.get("bt_calibrate_start", default_start)),
+            key="bt_calibrate_start",
+        )
+    with col2:
+        end = st.text_input(
+            "Date de fin (YYYY-MM-DD)",
+            value=cast(str, st.session_state.get("bt_calibrate_end", today.isoformat())),
+            key="bt_calibrate_end",
+        )
+    with col3:
+        top_n = st.number_input(
+            "Top N (titres / jour)",
+            min_value=5,
+            max_value=200,
+            value=int(st.session_state.get("bt_calibrate_top_n", 20)),
+            step=5,
+            key="bt_calibrate_top_n",
+        )
+
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        horizons = st.text_input(
+            "Horizons forward (CSV)",
+            value=cast(str, st.session_state.get("bt_calibrate_horizons", "5,10,20")),
+            key="bt_calibrate_horizons",
+        )
+    with col5:
+        output_dir = st.text_input(
+            "Répertoire artefacts",
+            value=cast(str, st.session_state.get("bt_calibrate_output_dir", "artifacts/sentiment_calibration")),
+            key="bt_calibrate_output_dir",
+        )
+    with col6:
+        all_symbols = st.checkbox(
+            "Univers entier (`--all-symbols`)",
+            value=bool(st.session_state.get("bt_calibrate_all_symbols", False)),
+            key="bt_calibrate_all_symbols",
+            help="Sinon limité aux candidats historiques.",
+        )
+
+    options = CalibrateSentimentWeightsOptions(
+        start=start.strip(),
+        end=end.strip(),
+        top_n=int(top_n),
+        horizons=horizons.strip() or "5,10,20",
+        output_dir=output_dir.strip() or "artifacts/sentiment_calibration",
+        all_symbols=bool(all_symbols),
+    )
+    st.code(
+        format_command_for_display(build_backtesting_command("calibrate-sentiment-weights", options)),
+        language="powershell",
+    )
+    return options
+
+
+def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
+    from datetime import date, timedelta
+
+    st.subheader("🚶 Walk-forward sentiment")
+    st.caption(
+        "Calibration walk-forward stricte avec backtest portefeuille hors échantillon. "
+        "Lance `python -m backtesting walk-forward-sentiment ...`."
+    )
+    today = date.today()
+    default_start = (today - timedelta(days=365 * 3)).isoformat()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        start = st.text_input(
+            "Date de début (YYYY-MM-DD)",
+            value=cast(str, st.session_state.get("bt_wfs_start", default_start)),
+            key="bt_wfs_start",
+        )
+    with col2:
+        end = st.text_input(
+            "Date de fin (YYYY-MM-DD)",
+            value=cast(str, st.session_state.get("bt_wfs_end", today.isoformat())),
+            key="bt_wfs_end",
+        )
+    with col3:
+        top_n = st.number_input(
+            "Top N",
+            min_value=5,
+            max_value=200,
+            value=int(st.session_state.get("bt_wfs_top_n", 20)),
+            step=5,
+            key="bt_wfs_top_n",
+        )
+
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        horizons = st.text_input(
+            "Horizons (CSV)",
+            value=cast(str, st.session_state.get("bt_wfs_horizons", "5,10,20")),
+            key="bt_wfs_horizons",
+        )
+    with col5:
+        min_train_days = st.number_input(
+            "Min train days / fold",
+            min_value=63,
+            max_value=2000,
+            value=int(st.session_state.get("bt_wfs_min_train_days", 252)),
+            step=21,
+            key="bt_wfs_min_train_days",
+        )
+    with col6:
+        test_days = st.number_input(
+            "Test days / fold",
+            min_value=21,
+            max_value=504,
+            value=int(st.session_state.get("bt_wfs_test_days", 63)),
+            step=21,
+            key="bt_wfs_test_days",
+        )
+
+    col7, col8, col9 = st.columns(3)
+    with col7:
+        max_positions = st.number_input(
+            "Max positions",
+            min_value=1,
+            max_value=200,
+            value=int(st.session_state.get("bt_wfs_max_positions", 20)),
+            step=1,
+            key="bt_wfs_max_positions",
+        )
+    with col8:
+        equity = st.number_input(
+            "Equity initial ($)",
+            min_value=100.0,
+            max_value=10_000_000.0,
+            value=float(st.session_state.get("bt_wfs_equity", 100_000.0)),
+            step=1000.0,
+            key="bt_wfs_equity",
+        )
+    with col9:
+        fees = st.number_input(
+            "Fees (fraction)",
+            min_value=0.0,
+            max_value=0.05,
+            value=float(st.session_state.get("bt_wfs_fees", 0.001)),
+            step=0.0005,
+            format="%.4f",
+            key="bt_wfs_fees",
+        )
+
+    col10, col11, col12 = st.columns(3)
+    with col10:
+        tp = st.number_input(
+            "TP (%)",
+            min_value=0.0,
+            max_value=1.0,
+            value=float(st.session_state.get("bt_wfs_tp", 0.08)),
+            step=0.01,
+            format="%.3f",
+            key="bt_wfs_tp",
+        )
+    with col11:
+        ts = st.number_input(
+            "TS (%)",
+            min_value=0.0,
+            max_value=1.0,
+            value=float(st.session_state.get("bt_wfs_ts", 0.05)),
+            step=0.01,
+            format="%.3f",
+            key="bt_wfs_ts",
+        )
+    with col12:
+        all_symbols_wf = st.checkbox(
+            "Univers entier (`--all-symbols`)",
+            value=bool(st.session_state.get("bt_wfs_all_symbols", False)),
+            key="bt_wfs_all_symbols",
+        )
+
+    output_dir = st.text_input(
+        "Répertoire artefacts",
+        value=cast(str, st.session_state.get("bt_wfs_output_dir", "artifacts/sentiment_walk_forward")),
+        key="bt_wfs_output_dir",
+    )
+
+    options = WalkForwardSentimentOptions(
+        start=start.strip(),
+        end=end.strip(),
+        top_n=int(top_n),
+        horizons=horizons.strip() or "5,10,20",
+        min_train_days=int(min_train_days),
+        test_days=int(test_days),
+        max_positions=int(max_positions),
+        equity=float(equity),
+        tp=float(tp),
+        ts=float(ts),
+        fees=float(fees),
+        output_dir=output_dir.strip() or "artifacts/sentiment_walk_forward",
+        all_symbols=bool(all_symbols_wf),
+    )
+    st.code(
+        format_command_for_display(build_backtesting_command("walk-forward-sentiment", options)),
+        language="powershell",
+    )
+    return options
+
+
 def _render_latest_artifacts() -> None:
     out_dir = PROJECT_ROOT / "artifacts" / "backtesting"
     equity_curve = out_dir / "equity_curve.png"
@@ -1961,9 +2184,19 @@ def render() -> None:
     active_backfill_runs = list_active_backtesting_runs_by_kind("backfill-scores-history")
     active_diag_runs = list_active_backtesting_runs_by_kind("diagnose-screener")
     active_recommend_runs = list_active_backtesting_runs_by_kind("recommend-screener")
+    active_calibrate_runs = list_active_backtesting_runs_by_kind("calibrate-sentiment-weights")
+    active_walkfwd_runs = list_active_backtesting_runs_by_kind("walk-forward-sentiment")
 
-    run_tab, backfill_tab, diagnose_tab, recommend_tab = st.tabs(
-        ["▶️ Backtest", "🧱 Backfill scores history", "🧪 Diagnose screener", "🎯 Recommend screener"]
+    run_tab, backfill_tab, diagnose_tab, recommend_tab, calibrate_tab, walkfwd_tab, quarterly_tab = st.tabs(
+        [
+            "▶️ Backtest",
+            "🧱 Backfill scores history",
+            "🧪 Diagnose screener",
+            "🎯 Recommend screener",
+            "📰 Calibrate sentiment",
+            "🚶 Walk-forward sentiment",
+            "🎛️ Calibration trimestrielle poids",
+        ]
     )
     with run_tab:
         run_options = _build_run_options()
@@ -2073,6 +2306,71 @@ def render() -> None:
                 st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
                 st.success(f"Recommandation screener lancée en arrière-plan : `{record.run_id}`")
                 st.rerun()
+
+    with calibrate_tab:
+        calibrate_options = _build_calibrate_sentiment_options()
+        if active_calibrate_runs:
+            active_run_id = str(active_calibrate_runs[0].get("run_id", ""))
+            st.info(f"Une calibration sentiment est déjà en cours (`{active_run_id}`).")
+        launch_calibrate_clicked = st.button(
+            "📰 Lancer calibrate-sentiment-weights",
+            key="launch_calibrate_sentiment_run",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(active_calibrate_runs),
+        )
+        if launch_calibrate_clicked:
+            try:
+                record = start_backtesting_run(
+                    "calibrate-sentiment-weights",
+                    "Calibration poids sentiment",
+                    calibrate_options,
+                    db_config=db_config,
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                st.success(f"Calibration sentiment lancée : `{record.run_id}`")
+                st.rerun()
+
+    with walkfwd_tab:
+        walkfwd_options = _build_walk_forward_sentiment_options()
+        if active_walkfwd_runs:
+            active_run_id = str(active_walkfwd_runs[0].get("run_id", ""))
+            st.info(f"Un walk-forward sentiment est déjà en cours (`{active_run_id}`).")
+        launch_walkfwd_clicked = st.button(
+            "🚶 Lancer walk-forward-sentiment",
+            key="launch_walk_forward_sentiment_run",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(active_walkfwd_runs),
+        )
+        if launch_walkfwd_clicked:
+            try:
+                record = start_backtesting_run(
+                    "walk-forward-sentiment",
+                    "Walk-forward sentiment",
+                    walkfwd_options,
+                    db_config=db_config,
+                )
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
+                st.success(f"Walk-forward sentiment lancé : `{record.run_id}`")
+                st.rerun()
+
+    with quarterly_tab:
+        # Sprint S26 (gap P3) — script ops `run_quarterly_weights_calibration.py`.
+        from ihm.components.ops_command_panel import render_ops_command_panel
+
+        st.caption(
+            "Lance `scripts/run_quarterly_weights_calibration.py` pour recalibrer "
+            "les poids de score (Sharpe / hit-ratio / IC) sur les 4 derniers "
+            "trimestres. Run tracé sous `ops:quarterly_weights_calibration`."
+        )
+        render_ops_command_panel("quarterly_weights_calibration")
 
     _render_runtime_center()
 
