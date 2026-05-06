@@ -46,6 +46,9 @@ def build_css(theme: ThemeName) -> str:
     * Badges harmonisés (success/warning/danger/info).
     """
     p = get_palette(theme)
+    nav_active_bg = "#CBD5E1" if theme == "light" else "#64748B"
+    nav_active_hover_bg = "#BFCAD8" if theme == "light" else "#75859A"
+    nav_active_text = p["text"]
     return (
         "<style>"
         # === Conteneur principal ===
@@ -69,6 +72,8 @@ def build_css(theme: ThemeName) -> str:
         f"[data-testid='stSidebar'] {{ "
         f"  background-color: {p['surface']} !important; "
         f"  border-right: 1px solid {p['border']} !important; "
+        f"  --primary-color: {nav_active_bg} !important; "
+        f"  accent-color: {nav_active_bg} !important; "
         f"}}"
         f"[data-testid='stSidebar'] * {{ "
         f"  color: {p['text']} !important; "
@@ -121,6 +126,33 @@ def build_css(theme: ThemeName) -> str:
         f"  background-color: {p['surface']}; "
         f"  border: 1px solid {p['border']}; "
         f"  border-radius: 6px; "
+        f"}}"
+        # === Navigation active (sidebar) ===
+        # Streamlit peut rendre un bouton primaire avec plusieurs variantes
+        # de markup selon la version (`kind='primary'`, `data-testid`,
+        # wrapper `.stButton`, etc.). On cible volontairement large pour
+        # écraser toute couleur primaire résiduelle (ici rouge côté user).
+        f"[data-testid='stSidebar'] .stButton > button[kind='primary'], "
+        f"[data-testid='stSidebar'] button[kind='primary'], "
+        f"[data-testid='stSidebar'] button[data-testid='baseButton-primary'] {{ "
+        f"  background: {nav_active_bg} !important; "
+        f"  background-color: {nav_active_bg} !important; "
+        f"  border: 1px solid {nav_active_bg} !important; "
+        f"  border-color: {nav_active_bg} !important; "
+        f"  color: {nav_active_text} !important; "
+        f"  box-shadow: none !important; "
+        f"}}"
+        f"[data-testid='stSidebar'] .stButton > button[kind='primary']:hover, "
+        f"[data-testid='stSidebar'] button[kind='primary']:hover, "
+        f"[data-testid='stSidebar'] button[data-testid='baseButton-primary']:hover, "
+        f"[data-testid='stSidebar'] .stButton > button[kind='primary']:focus, "
+        f"[data-testid='stSidebar'] button[kind='primary']:focus, "
+        f"[data-testid='stSidebar'] button[data-testid='baseButton-primary']:focus {{ "
+        f"  background: {nav_active_hover_bg} !important; "
+        f"  background-color: {nav_active_hover_bg} !important; "
+        f"  border-color: {nav_active_hover_bg} !important; "
+        f"  color: {nav_active_text} !important; "
+        f"  box-shadow: none !important; "
         f"}}"
         # === Liens ===
         f"a {{ color: {p['primary']} !important; }}"

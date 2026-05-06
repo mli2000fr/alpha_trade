@@ -10,9 +10,7 @@ import logging
 
 import streamlit as st
 
-from ihm.components.db_controls import render_db_connection_form
 from ihm.services.navigation import (
-    build_section_navigation_caption,
     get_navigation_page_imports,
     get_navigation_page_labels,
     get_navigation_page_mapping,
@@ -22,7 +20,6 @@ from ihm.services.security import render_auth_gate, render_security_banner
 from ihm.services.theme_manager import (
     apply_theme_chrome,
     get_current_theme,
-    render_theme_toggle,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,18 +90,6 @@ st.sidebar.caption("Cockpit opérateur — supervision et suivi")
 # Phase 6.2 — bannière sécurité (auth/exposition réseau).
 render_security_banner()
 
-with st.sidebar.expander("🧭 Aperçu navigation", expanded=False):
-    st.caption(build_section_navigation_caption())
-
-with st.sidebar.expander("🎨 Thème", expanded=False):
-    try:
-        render_theme_toggle(st)
-    except Exception:
-        # Loggé pour debug ; ne doit jamais bloquer le rendu de la page.
-        logger.exception("Échec du rendu du toggle thème")
-
-with st.sidebar.expander("🗄️ Connexion DB", expanded=False):
-    render_db_connection_form("sidebar_db_connection_form", show_host_fields=True)
 
 # --- Sélecteur multi-comptes ---
 try:

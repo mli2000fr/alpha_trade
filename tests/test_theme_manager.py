@@ -82,6 +82,40 @@ def test_build_css_uses_important_to_override_streamlit_defaults() -> None:
     assert "!important" in css
 
 
+def test_build_css_styles_active_sidebar_navigation_button_in_gray_light() -> None:
+    css = theme_manager.build_css("light")
+    palette = get_palette("light")
+    nav_active_bg = "#CBD5E1"
+
+    assert f"--primary-color: {nav_active_bg} !important;" in css
+    assert f"accent-color: {nav_active_bg} !important;" in css
+    assert "[data-testid='stSidebar'] .stButton > button[kind='primary']" in css
+    assert "[data-testid='stSidebar'] button[kind='primary']" in css
+    assert "[data-testid='stSidebar'] button[data-testid='baseButton-primary']" in css
+    assert f"background: {nav_active_bg} !important;" in css
+    assert f"background-color: {nav_active_bg} !important;" in css
+    assert f"border: 1px solid {nav_active_bg} !important;" in css
+    assert f"border-color: {nav_active_bg} !important;" in css
+    assert f"color: {palette['text']} !important;" in css
+
+
+def test_build_css_styles_active_sidebar_navigation_button_in_gray_dark() -> None:
+    css = theme_manager.build_css("dark")
+    palette = get_palette("dark")
+    nav_active_bg = "#64748B"
+
+    assert f"--primary-color: {nav_active_bg} !important;" in css
+    assert f"accent-color: {nav_active_bg} !important;" in css
+    assert "[data-testid='stSidebar'] .stButton > button[kind='primary']" in css
+    assert "[data-testid='stSidebar'] button[kind='primary']" in css
+    assert "[data-testid='stSidebar'] button[data-testid='baseButton-primary']" in css
+    assert f"background: {nav_active_bg} !important;" in css
+    assert f"background-color: {nav_active_bg} !important;" in css
+    assert f"border: 1px solid {nav_active_bg} !important;" in css
+    assert f"border-color: {nav_active_bg} !important;" in css
+    assert f"color: {palette['text']} !important;" in css
+
+
 # ---------------------------------------------------------------------------
 # Anomalie (a) — le toggle doit se rendre dans le contexte courant,
 # pas via ``st.sidebar.toggle`` (sinon l'expander « 🎨 Thème » est vide).
