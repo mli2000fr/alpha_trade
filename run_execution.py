@@ -405,6 +405,7 @@ def run(
     swing_only: bool = False,
     submission_window: str = "both",
     auto_watcher: bool = False,
+    skip_preflight: bool = False,
 ) -> None:
     level = logging.DEBUG if debug else logging.INFO
     configure_root_logging(
@@ -464,6 +465,58 @@ def run(
         print(f"{RED}Erreur d'import : {exc}{RESET}")
         print("-> Verifie que le projet est installe : pip install -e .")
         sys.exit(1)
+
+    # Sprint S11 / S11.4 — preflight obligatoire en mode live.
+    # Refus de boot si un check critique échoue, à moins que --skip-preflight
+    # soit explicitement passé (réservé aux tests / dev local).
+    if mode == "live" and not skip_preflight:
+        try:
+            from execution_engine.preflight import run_preflight
+        except ImportError as exc:
+            print(f"{RED}{BOLD}[FATAL] Impossible d'importer le module preflight : {exc}{RESET}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            preflight_report = run_preflight(
+                account_id=account_id or "default",
+                broker_mode="live",
+            )
+        except Exception as exc:  # pragma: no cover - filet
+            print(
+                f"{RED}{BOLD}[FATAL] preflight a levé une exception : {exc}{RESET}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        # Persistance du rapport pour audit (best-effort).
+        try:
+            import json as _json
+            reports_dir = PROJECT_ROOT / "artifacts" / "preflight_reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+            (reports_dir / f"preflight_{stamp}_{account_id or 'default'}.json").write_text(
+                _json.dumps(preflight_report.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            logging.getLogger(__name__).debug("Persistance preflight_reports indisponible.", exc_info=True)
+        if not preflight_report.passed:
+            print(f"\n{RED}{BOLD}[FATAL] Preflight live a échoué — boot refusé.{RESET}", file=sys.stderr)
+            for check in preflight_report.checks:
+                if check.status == "fail":
+                    print(f"  {RED}[FAIL]{RESET} {check.name}: {check.message}", file=sys.stderr)
+            print(
+                f"\n{YELLOW}    -> corriger les checks ci-dessus puis relancer, "
+                f"ou lancer manuellement : python -m execution_engine.preflight "
+                f"--account {account_id or 'default'} --broker-mode live{RESET}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        print(f"{GREEN}[OK] Preflight live: tous les checks critiques sont verts.{RESET}\n")
+    elif mode == "live" and skip_preflight:
+        print(
+            f"{YELLOW}{BOLD}[!!] --skip-preflight actif : les checks live sont contournés. "
+            f"À utiliser exclusivement en dev/test.{RESET}\n",
+            file=sys.stderr,
+        )
 
     config   = ExecutionConfig(**preset, account_id=account_id)
     repo     = ExecutionRepository()
@@ -662,6 +715,12 @@ Exemples :
         help="Lance run_execution_protection_watch.py --mode once en post-run (Sprint S2 / A-018).",
     )
     p.add_argument(
+        "--skip-preflight",
+        dest="skip_preflight",
+        action="store_true",
+        help="Sprint S11 / S11.4 — DANGER: contourne les checks preflight live. Réservé dev/test.",
+    )
+    p.add_argument(
         "--disable-sentiment",
         dest="disable_sentiment",
         action="store_true",
@@ -706,6 +765,7 @@ def main() -> None:
     if args.mode is None:
         mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window = interactive_menu()
         auto_watcher = False
+        skip_preflight = False
     else:
         mode              = args.mode
         run_id            = args.run_id
@@ -719,6 +779,7 @@ def main() -> None:
         swing_only        = args.swing_only
         submission_window = args.submission_window or PRESETS[mode].get("submission_window", "both")
         auto_watcher      = bool(getattr(args, "auto_watcher", False))
+        skip_preflight    = bool(getattr(args, "skip_preflight", False))
         if args.trailing_activation_trigger is not None:
             PRESETS[mode]["trailing_activation_trigger"] = args.trailing_activation_trigger
         if args.trailing_activation_r_multiple is not None:
@@ -731,7 +792,7 @@ def main() -> None:
             PRESETS[mode]["protection_transition_poll_interval_seconds"] = args.protection_transition_poll_interval_seconds
 
     abort_missing_env(account_id=account_id, mode=mode)
-    run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window, auto_watcher=auto_watcher)
+    run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window, auto_watcher=auto_watcher, skip_preflight=skip_preflight)
 
 
 if __name__ == "__main__":

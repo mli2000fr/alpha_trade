@@ -190,15 +190,23 @@ class EventSentimentPipeline:
             phase="ingestion",
         )
         if resolved_symbols:
-            stats["ingestion"] = self.ingestion.run(
-                start_utc=None,
-                end_utc=end_utc,
-                symbols=resolved_symbols,
-                symbol_start_overrides=symbol_windows,
-                symbol_resume_overrides=symbol_resume_modes,
-                resume_checkpoints=start_utc is None,
-                progress_callback=lambda payload: self._emit_ingestion_progress(stats, payload),
-            )
+            ingestion_kwargs: dict[str, object] = {
+                "start_utc": None,
+                "end_utc": end_utc,
+                "symbols": resolved_symbols,
+                "symbol_start_overrides": symbol_windows,
+                "symbol_resume_overrides": symbol_resume_modes,
+                "resume_checkpoints": start_utc is None,
+            }
+            # S10.2 — progress_callback est optionnel : ne le transmet pas si la
+            # pipeline n'a pas été configurée avec un callback (compat tests/fakes
+            # qui n'acceptent pas ce kwarg). En production, NewsIngestionService
+            # accepte progress_callback et le forwarder est conservé.
+            if callable(self.progress_callback):
+                ingestion_kwargs["progress_callback"] = (
+                    lambda payload: self._emit_ingestion_progress(stats, payload)
+                )
+            stats["ingestion"] = self.ingestion.run(**ingestion_kwargs)
         else:
             stats["ingestion"] = {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
 
