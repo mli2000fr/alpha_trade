@@ -7,12 +7,15 @@ def test_load_capital_presets_reads_versioned_yaml_file() -> None:
     presets = capital_presets.load_capital_presets()
 
     assert len(presets) >= 6
-    assert presets[0].key == "capital_0_5000"
+    # Sprint S26 — preset micro-compte (~2 000 €) prepended.
+    assert presets[0].key == "capital_0_2000_eur"
     assert presets[-1].key == "capital_100001_plus"
 
 
 def test_resolve_capital_preset_for_equity_selects_expected_bucket() -> None:
-    assert capital_presets.resolve_capital_preset_for_equity(2_000.0).key == "capital_0_5000"
+    # Sprint S26 — 2 000 USD relève désormais du preset micro-compte EUR.
+    assert capital_presets.resolve_capital_preset_for_equity(2_000.0).key == "capital_0_2000_eur"
+    assert capital_presets.resolve_capital_preset_for_equity(3_500.0).key == "capital_0_5000"
     assert capital_presets.resolve_capital_preset_for_equity(7_500.0).key == "capital_5001_10000"
     assert capital_presets.resolve_capital_preset_for_equity(75_000.0).key == "capital_50001_100000"
     assert capital_presets.resolve_capital_preset_for_equity(150_000.0).key == "capital_100001_plus"
