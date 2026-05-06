@@ -472,6 +472,10 @@ alpha_trade/
 └── tests/
 ```
 
+> **Rétention `artifacts/`** : voir
+> [`doc/artifacts_retention_policy.md`](doc/artifacts_retention_policy.md)
+> et le script `scripts/prune_artifacts.py` (Sprint S4 / A-023).
+
 ---
 
 ## 12. Configuration multi-comptes
