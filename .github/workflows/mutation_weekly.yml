@@ -1,0 +1,35 @@
+name: mutation_weekly
+on:
+  schedule:
+    - cron: "0 6 * * 0"  # dimanche 06h UTC
+  workflow_dispatch:
+    inputs:
+      module:
+        description: "Module à muter (corporate_actions|risk_management|execution_engine)"
+        required: false
+        default: "corporate_actions"
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,mutation]" || (pip install -e ".[dev]" && pip install mutmut>=2.5)
+      - name: Run mutation testing
+        run: |
+          MODULE="${{ github.event.inputs.module || 'corporate_actions' }}"
+          python scripts/run_mutation_testing.py --module "$MODULE" --threshold 50
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-${{ github.run_id }}
+          path: artifacts/mutation_runs
+

@@ -1,0 +1,36 @@
+name: monthly_broker_report
+on:
+  schedule:
+    - cron: "30 5 1 * *"  # 1er du mois 05:30 UTC
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,reporting]" || pip install -e ".[dev]"
+      - name: Run monthly report
+        env:
+          ALPHA_TRADE_REPORT_SECRET: ${{ secrets.ALPHA_TRADE_REPORT_SECRET }}
+        run: |
+          # Mode dry-run par défaut tant que script SQL absent.
+          python -c "from reporting import build_monthly_report, MonthlyReportInputs; \
+                     from datetime import date; \
+                     r = build_monthly_report(MonthlyReportInputs( \
+                         account_id='SMOKE', period_start=date.today(), \
+                         period_end=date.today()), secret=b'smoke'); \
+                     print(r.to_json())"
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-report-${{ github.run_id }}
+          path: artifacts/monthly_reports
+
