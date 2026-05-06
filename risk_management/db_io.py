@@ -12,6 +12,7 @@ from sqlalchemy.engine import Engine
 from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from database.connection import get_sqlalchemy_engine
 from risk_management.config import RiskConfig
+from risk_management.ml_gate import resolve_ml_gate_state
 from risk_management.models import AccountRiskSnapshot, CandidateScore, PredictionInfo, PriceInfo, WinRateInfo
 
 LOGGER = logging.getLogger(__name__)
@@ -263,8 +264,22 @@ class RiskRepository:
     def load_predictions_asof(
         self, symbols: list[str], trade_date: date,
     ) -> dict[str, PredictionInfo]:
-        """Charge la dernière prédiction ML par symbole à la date de trade."""
+        """Charge la dernière prédiction ML par symbole à la date de trade.
+
+        Sprint S8 — kill-switch ML : si :func:`risk_management.ml_gate.resolve_ml_gate_state`
+        renvoie ``enabled=False`` (drift policy ALERT ou flag CLI ``--disable-ml``),
+        on retourne ``{}`` sans même interroger ``model_predictions``. Le risk
+        sizer retombe ainsi sur le score quantitatif pur.
+        """
         if not symbols:
+            return {}
+        gate = resolve_ml_gate_state(self.engine)
+        if not gate.enabled:
+            LOGGER.warning(
+                "[ml_gate] consommation model_predictions désactivée (raison=%s decision=%s) → score quant pur",
+                gate.reason,
+                gate.decision_id,
+            )
             return {}
         placeholders = ", ".join(f":s{i}" for i in range(len(symbols)))
         params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}

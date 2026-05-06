@@ -218,6 +218,41 @@ class SentimentBoostConfig:
         if all(float(weight) <= 0 for _, weight in weights):
             raise ValueError(f"{name} doit contenir au moins un poids positif.")
 
+    @classmethod
+    def from_global_config(
+        cls,
+        config: dict | None = None,
+        **overrides,
+    ) -> "SentimentBoostConfig":
+        """Sprint S8 — construit la config en lisant la section ``conviction:``.
+
+        Si ``config`` est ``None``, on charge ``config.yaml`` via
+        :func:`common.config_loader.load_config`. Les ``overrides`` (kwargs)
+        priment sur les valeurs YAML, qui priment sur les défauts dataclass.
+
+        Permet la calibration formelle des poids 75/15/10 (cf. plan §S8) sans
+        toucher au code applicatif.
+        """
+        if config is None:
+            try:
+                from common.config_loader import load_config
+                config = load_config() or {}
+            except Exception:
+                config = {}
+        conviction_cfg = (config.get("conviction") or {}) if isinstance(config, dict) else {}
+        kwargs: dict = {}
+        if "quant_weight" in conviction_cfg:
+            kwargs["quant_weight"] = float(conviction_cfg["quant_weight"])
+        if "sentiment_weight" in conviction_cfg:
+            kwargs["sentiment_weight"] = float(conviction_cfg["sentiment_weight"])
+        if "macro_weight" in conviction_cfg:
+            kwargs["macro_sector_weight"] = float(conviction_cfg["macro_weight"])
+        # macro_sector_weight prime sur macro_weight si fourni explicitement
+        if "macro_sector_weight" in conviction_cfg:
+            kwargs["macro_sector_weight"] = float(conviction_cfg["macro_sector_weight"])
+        kwargs.update(overrides)
+        return cls(**kwargs)
+
     def to_fusion_weights(self) -> SentimentFusionWeights:
         """Convertit en :class:`core.conviction.SentimentFusionWeights`."""
         return SentimentFusionWeights(
@@ -815,9 +850,35 @@ class SentimentSignalAggregator:
                  - sector_impact_agg       : impact macro sectoriel moyen
                  - final_score             : score quantitatif AlphaScanner (inchangé)
                  - final_score_sentiment   : score fusionné quant + sentiment (nouveau champ)
+
+        Sprint S8 — feature flag ``ALPHA_TRADE_DISABLE_SENTIMENT`` (CLI
+        ``--disable-sentiment``) : si actif, on retourne le DataFrame avec
+        ``final_score_sentiment = final_score`` (skip complet de la fusion,
+        utile pour mesurer l'apport empirique du sentiment dans
+        ``backtesting/attribution.py``).
         """
         if scores_df.empty:
             return scores_df.copy()
+
+        from core.feature_flags import is_sentiment_disabled
+
+        if is_sentiment_disabled():
+            LOGGER.warning(
+                "[signal_aggregator] feature flag ALPHA_TRADE_DISABLE_SENTIMENT actif → fusion sentiment SKIPPÉE"
+            )
+            disabled = scores_df.copy()
+            if "symbol" in disabled.columns:
+                disabled["symbol"] = [self._normalize_identifier(value) for value in disabled["symbol"].tolist()]
+                disabled = disabled[disabled["symbol"].notna()].copy()
+            quant = pd.Series(
+                pd.to_numeric(disabled.get("final_score"), errors="coerce"),
+                index=disabled.index,
+                dtype=float,
+            ).fillna(0.0).clip(0.0, 1.0)
+            disabled["final_score"] = quant
+            disabled["final_score_sentiment"] = quant
+            disabled["sentiment_disabled"] = True
+            return disabled
 
         required = {"symbol", "final_score"}
         missing = required - set(scores_df.columns)

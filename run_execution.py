@@ -661,12 +661,42 @@ Exemples :
         action="store_true",
         help="Lance run_execution_protection_watch.py --mode once en post-run (Sprint S2 / A-018).",
     )
+    p.add_argument(
+        "--disable-sentiment",
+        dest="disable_sentiment",
+        action="store_true",
+        help="Sprint S8 — désactive la fusion sentiment (positionne ALPHA_TRADE_DISABLE_SENTIMENT=1).",
+    )
+    p.add_argument(
+        "--disable-ml",
+        dest="disable_ml",
+        action="store_true",
+        help="Sprint S8 — désactive la consommation des prédictions ML (positionne ALPHA_TRADE_DISABLE_ML=1).",
+    )
     return p
+
+
+def _apply_feature_flags(args) -> None:
+    """Sprint S8 — propage --disable-sentiment / --disable-ml dans os.environ."""
+    from core.feature_flags import FeatureFlags
+    flags = FeatureFlags(
+        disable_sentiment=bool(getattr(args, "disable_sentiment", False)),
+        disable_ml=bool(getattr(args, "disable_ml", False)),
+    )
+    flags.export_env()
+    if flags.disable_sentiment or flags.disable_ml:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "[feature_flags] disable_sentiment=%s disable_ml=%s (Sprint S8)",
+            flags.disable_sentiment, flags.disable_ml,
+        )
 
 
 def main() -> None:
     parser = build_parser()
     args   = parser.parse_args()
+
+    _apply_feature_flags(args)
 
     if args.mode == "check":
         print(BANNER)
