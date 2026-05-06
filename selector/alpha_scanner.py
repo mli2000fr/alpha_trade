@@ -1368,6 +1368,16 @@ def main() -> None:
         )
     )
 
+    # Sprint S2 (A-017, A-023) — check télémétrie data_source en fin de run.
+    try:
+        from dataIntegrityEngine.data_source_health import check_data_source_homogeneity
+        from database.connection import get_sqlalchemy_engine
+
+        mix_check = check_data_source_homogeneity(get_sqlalchemy_engine())
+        _emit_run_summary({"data_source_mix_check": mix_check})
+    except Exception:
+        LOGGER.debug("data_source_mix_check indisponible (selector).", exc_info=True)
+
     if result.empty:
         print("Aucun candidat retenu.")
         return
