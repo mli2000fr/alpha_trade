@@ -50,3 +50,8 @@ plotly
 kaleido
 matplotlib
 
+# --- Sprint S12 / S13 — dépendances optionnelles ---
+# Vault HashiCorp (S12.5) — fallback EnvFallbackVault si absent.
+# hvac
+# Adapter Interactive Brokers (S13.2, read-only) — TWS / IB Gateway requis.
+# ib_insync

@@ -789,6 +789,28 @@ class ExecutionRepository:
                 "execution_profile": execution_profile,
                 "submission_window": submission_window,
             })
+        # Sprint S12.2 — chaîne d'audit HMAC SOX-like (best-effort).
+        try:
+            from database.audit_chain import AuditChainRepository
+
+            AuditChainRepository(self.engine).append(
+                "execution_runs",
+                exec_run_id,
+                {
+                    "exec_run_id": exec_run_id,
+                    "risk_run_id": risk_run_id,
+                    "trade_date": str(trade_date),
+                    "broker_mode": broker_mode,
+                    "dry_run": bool(dry_run),
+                    "total_targets": int(total_targets),
+                    "account_id": resolved_account_id,
+                    "execution_profile": execution_profile,
+                    "submission_window": submission_window,
+                    "event": "insert",
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def update_execution_run_status(
         self,

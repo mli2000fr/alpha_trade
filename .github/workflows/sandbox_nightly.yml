@@ -1,0 +1,94 @@
+name: Sandbox nightly (paper)
+
+# Sprint S13.4 — Pipeline complet quotidien sur compte Alpaca paper.
+# Assure que le code en HEAD reste exécutable end-to-end.
+
+on:
+  schedule:
+    - cron: "0 7 * * 2-6"   # Tue-Sat 07:00 UTC (après clôture US)
+  workflow_dispatch:
+
+jobs:
+  sandbox-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: alpha_trade
+          MYSQL_USER: alpha
+          MYSQL_PASSWORD: alpha_pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -prootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      LOGIN_DB: alpha
+      PASSWORD_DB: alpha_pass
+      DB_HOST: 127.0.0.1
+      DB_NAME: alpha_trade
+      ALPHA_TRADE_AUDIT_HMAC_KEY: ${{ secrets.ALPHA_TRADE_AUDIT_HMAC_KEY }}
+      APCA_API_KEY_ID: ${{ secrets.ALPACA_PAPER_KEY }}
+      APCA_API_SECRET_KEY: ${{ secrets.ALPACA_PAPER_SECRET }}
+      ALPHA_TRADE_SLACK_WEBHOOK: ${{ secrets.ALPHA_TRADE_SLACK_WEBHOOK }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Schema
+        run: python -m alembic upgrade head
+
+      - name: Pre-live checklist
+        run: python scripts/run_pre_live_checklist.py || true
+
+      - name: Screener
+        run: python -m screener --max-symbols 200
+
+      - name: Selector + Risk
+        run: |
+          python -m selector
+          python -m risk_management
+
+      - name: Execution (paper, dry-run)
+        run: |
+          python -m execution_engine \
+            --broker-mode paper \
+            --dry-run \
+            --account default
+
+      - name: Broker reconciliation
+        run: |
+          python scripts/run_broker_reconciliation.py \
+            --account default --broker-mode paper \
+            --report-out artifacts/sandbox_nightly/${{ github.run_id }}/reconciliation.json \
+            || echo "::warning::reconciliation diffs detected"
+
+      - name: Verify audit chain
+        run: python scripts/verify_audit_chain.py --strict
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-nightly-${{ github.run_id }}
+          path: |
+            artifacts/sandbox_nightly/
+            log/
+          retention-days: 30
+

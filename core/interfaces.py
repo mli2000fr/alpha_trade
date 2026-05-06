@@ -22,6 +22,12 @@ from typing import Any, Iterator, Mapping, Optional, Protocol, Sequence, runtime
 import pandas as pd
 
 from core.types import AccountId, Adjustment, Feed, Symbol
+from core.broker_models import (  # noqa: F401  (re-export pour BrokerClient Protocol)
+    AccountSnapshot,
+    BrokerOrderSnapshot,
+    BrokerPosition,
+    OrderRequest,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +171,49 @@ class BrokerPort(Protocol):
 
     def get_positions(self) -> list:
         """Retourne la liste des positions courantes."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Sprint S13.1 — Interface ``BrokerClient`` formalisée multi-broker.
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class BrokerClient(Protocol):
+    """Contrat unifié multi-broker (Alpaca, IBKR, Mock, …).
+
+    Les implémentations doivent être substituables (Liskov) — vérification
+    par ``tests/test_broker_interface_contract.py``.
+    """
+
+    name: str  # ex. "alpaca", "ibkr", "mock"
+
+    def get_account(self) -> "AccountSnapshot":  # noqa: F821
+        """Snapshot du compte (equity, cash, buying_power)."""
+        ...
+
+    def submit_order(self, request: "OrderRequest") -> "BrokerOrderSnapshot":  # noqa: F821
+        """Soumet un ordre normalisé. Retourne le snapshot initial."""
+        ...
+
+    def get_positions(self) -> list["BrokerPosition"]:  # noqa: F821
+        """Liste des positions courantes."""
+        ...
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Annule un ordre. Retourne ``True`` si l'annulation a été acceptée."""
+        ...
+
+    def get_orders(
+        self,
+        status: str = "all",
+        since: datetime | None = None,
+    ) -> list["BrokerOrderSnapshot"]:  # noqa: F821
+        """Liste des ordres filtrés par statut et date de soumission."""
+        ...
+
+    def stream_trades(self, callback) -> Any:  # noqa: ANN001
+        """Stream temps réel des trades. Retourne un context manager (`__enter__`/`__exit__`)."""
         ...
 
 
