@@ -33,6 +33,7 @@ PIPELINE_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
 SUPPORT_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
     NavigationPage("🛟 Supervision Ops", "supervision_ops", "ihm.pages.supervision_ops", "support"),
     NavigationPage("🧪 Backtesting", "backtesting", "ihm.pages.backtesting", "support"),
+    NavigationPage("🔀 Parité Backtest ↔ Live", "parity", "ihm.pages.parity", "support"),
     NavigationPage("🗃️ Administration DB", "db_admin", "ihm.pages.db_admin", "support"),
     NavigationPage("⚙️ Paramètres / Santé", "settings", "ihm.pages.settings", "support"),
 )
@@ -65,4 +66,4 @@ def build_primary_navigation_caption() -> str:
 
 
 def build_support_navigation_caption() -> str:
-    return "Pages hors workflow quotidien : Supervision Ops → Backtesting → Administration DB → Paramètres / Santé"
+    return "Pages hors workflow quotidien : Supervision Ops → Backtesting → Parité Backtest ↔ Live → Administration DB → Paramètres / Santé"

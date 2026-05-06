@@ -620,6 +620,48 @@ class RiskRepository:
     # ------------------------------------------------------------------
     # Écriture
     # ------------------------------------------------------------------
+    def load_risk_decisions_for_date(
+        self,
+        trade_date: date,
+        *,
+        account_id: str | None = None,
+    ) -> pd.DataFrame:
+        """Sprint S9 — Charge les décisions risk live d'un jour J.
+
+        Sélectionne le DERNIER ``run_id`` du jour pour le compte demandé
+        (ou tous comptes si ``account_id`` est ``None``). Retourne un
+        DataFrame normalisé pour la comparaison de parité (cf.
+        :mod:`backtesting.parity`).
+        """
+        params: dict[str, Any] = {"trade_date": trade_date}
+        account_clause = ""
+        if account_id is not None:
+            account_clause = " AND account_id = :account_id"
+            params["account_id"] = account_id
+        query = text(
+            f"""
+            SELECT run_id, trade_date, symbol, decision, approved_shares,
+                   target_weight, conviction_score, predicted_proba,
+                   score_used, score_source, sector, account_id
+            FROM risk_decisions
+            WHERE trade_date = :trade_date{account_clause}
+              AND run_id = (
+                  SELECT run_id FROM risk_decisions
+                  WHERE trade_date = :trade_date{account_clause}
+                  ORDER BY created_at DESC LIMIT 1
+              )
+            """
+        )
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(query, params).mappings().all()
+        except Exception as exc:  # pragma: no cover - best effort lecture
+            LOGGER.warning("[parity] lecture risk_decisions impossible: %s", exc)
+            return pd.DataFrame()
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([dict(r) for r in rows])
+
     def write_risk_decisions(self, records: list[dict[str, Any]], account_id: str | None = None) -> int:
         """Insère dans risk_decisions via le schéma canonique Sprint 1."""
         if not records:

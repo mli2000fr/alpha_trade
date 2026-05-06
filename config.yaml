@@ -71,3 +71,10 @@ eodhd:
     consecutive_failures: 5
     cooldown_minutes: 30
 
+
+# Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)
+conviction:
+  # Poids de fusion sentiment (somme = 1.0). Defauts historiques : 0.75 / 0.15 / 0.10.
+  quant_weight: 0.75
+  sentiment_weight: 0.15
+  macro_weight: 0.10
