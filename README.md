@@ -135,10 +135,25 @@ Ces commandes permettent notamment de :
 
 ## 6. Pipeline quotidien recommandé
 
+> ⚠️ **Choix du provider OHLCV — étape 1 conditionnelle.**
+> Le provider primaire des barres (`stock_bars`, `stock_bars_daily`) est
+> piloté par `config.yaml › market_data.bars_provider`.
+> - `bars_provider: eodhd` (**défaut recommandé actuel**) → étape 1 =
+>   `python -m dataIntegrityEngine.import_eodhd_bar`. Lancer
+>   `import_alpaca_bar` dans ce mode est un **no-op** (rien ingéré).
+> - `bars_provider: alpaca` → étape 1 =
+>   `python -m dataIntegrityEngine.import_alpaca_bar` (mode rétrocompat IEX).
+>
+> Les autres étapes (quotes, metadata, exécution) restent toujours sur
+> Alpaca quel que soit ce flag.
+
 ### Ordre d'exécution
 
 ```powershell
-# 1. Import des barres OHLCV depuis Alpaca
+# 1. Import des barres OHLCV — choisir UNE seule commande selon bars_provider :
+#    a) bars_provider = eodhd  (défaut recommandé)
+python -m dataIntegrityEngine.import_eodhd_bar
+#    b) bars_provider = alpaca (rétrocompat IEX)
 python -m dataIntegrityEngine.import_alpaca_bar
 
 # 2. Nettoyage et alignement des données daily
@@ -189,7 +204,7 @@ python -m corporate_actions apply
 
 | # | Commande | Rôle |
 |---|---|---|
-| 1 | `import_alpaca_bar` | Import barres OHLCV journalières Alpaca |
+| 1 | `import_eodhd_bar` *ou* `import_alpaca_bar` | Import barres OHLCV journalières (provider piloté par `market_data.bars_provider`) |
 | 2 | `data_sanitizer_daily` | Nettoyage, alignement calendrier, détection anomalies |
 | 3 | `stock_screener` | Scores liquidité / force relative / range |
 | 4 | `sync_latest_quotes` | Snapshot bid/ask pour le filtre de spread aval |
@@ -426,22 +441,33 @@ python run_execution.py check
 
 ```text
 alpha_trade/
-├── run.py                  ← point d'entrée IHM (python run.py)
-├── run_execution.py        ← point d'entrée exécution ordres
+├── run.py                      ← point d'entrée IHM (python run.py)
+├── run_execution.py            ← point d'entrée exécution ordres
+├── run_execution_protection_watch.py
 ├── config.yaml
+├── config/
+│   └── capital_presets.yaml    ← presets risk/selector/execution par tranche d'equity
 ├── pyproject.toml
+├── requirements.txt
 ├── README.md
+├── alembic/                    ← migrations DB
 ├── doc/
 │   ├── DOC_FONCTIONNELLE.md
-│   └── DOC_TECHNIQUE.md
+│   ├── DOC_TECHNIQUE.md
+│   └── …                       ← docs par module
+├── common/                     ← utilitaires transverses (config, logging, calendar)
+├── core/                       ← types, interfaces, conviction, run_summary
+├── database/                   ← repositories SQL + schémas
+├── service/                    ← clients providers externes (eodhd, alpaca, finnhub)
 ├── dataIntegrityEngine/
+├── corporate_actions/
 ├── screener/
 ├── selector/
 ├── event_sentiment/
+├── modelFactory/
 ├── risk_management/
 ├── execution_engine/
-├── corporate_actions/
-├── modelFactory/
+├── backtesting/
 ├── ihm/
 └── tests/
 ```

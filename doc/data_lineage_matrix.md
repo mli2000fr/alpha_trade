@@ -1,9 +1,15 @@
 # Matrice Data Lineage — table ↔ producteur ↔ consommateurs (Phase 7.6)
 
+<!-- primary_provider: eodhd -->
+
 > **Audience** : développeurs et opérateurs.
 > **Objectif** : référencer pour chaque table métier qui l'écrit, qui la lit,
 > et la criticité opérationnelle. Mise à jour requise à chaque ajout de table
 > (cf. `doc/guide_add_new_table.md`).
+>
+> **Provider OHLCV primaire actuel** : `EODHD` (cf. `config.yaml ›
+> market_data.bars_provider`). Le mode `alpaca` est conservé en
+> rétrocompatibilité (colonne « provider actif » ci-dessous).
 
 > **Maintenance** : édité à la main pour l'instant (≤ 30 tables). À terme,
 > auto-générer via `scripts/generate_data_lineage.py` (grep des
@@ -21,16 +27,16 @@
 
 ## 1. Données de marché
 
-| Table | Producteur (CLI / module) | Consommateurs | Source upstream | Fréquence | Criticité |
-|---|---|---|---|---|---|
-| `stock_assets` | `dataIntegrityEngine.import_alpaca_assets` | screener, selector, ihm | Alpaca | daily | P1 |
-| `stock_bars_daily` | `dataIntegrityEngine.import_alpaca_bar` | screener, selector, modelFactory, backtesting | Alpaca IEX | daily | P1 |
-| `stock_bars_daily` *(provider=eodhd)* | `dataIntegrityEngine.import_eodhd_bar` (Phase 6) | idem | EODHD bulk EOD | daily | P1 |
-| `stock_bars` | `dataIntegrityEngine.import_alpaca_bar` (intraday) | execution_engine.tca | Alpaca IEX | intraday | P2 |
-| `stock_bars` (1D, provider=eodhd) | `import_eodhd_bar` + `backfill_eodhd_history` | selector, modelFactory | EODHD `/eod` | daily / one-shot | P1 |
-| `stock_quote_snapshots` | `dataIntegrityEngine.sync_latest_quotes` | selector (`spread_bps`) | Alpaca IEX | daily | P1 |
-| `stock_metadata` | `dataIntegrityEngine.update_sector` | screener, selector (filtres market_cap, sector) | Finnhub | weekly | P2 |
-| `earnings_calendar` | `dataIntegrityEngine.sync_earnings_calendar` | selector, risk_management (blackout) | Finnhub | daily | P2 |
+| Table | Producteur (CLI / module) | Consommateurs | Source upstream | Provider actif | Fréquence | Criticité |
+|---|---|---|---|---|---|---|
+| `stock_assets` | `dataIntegrityEngine.import_alpaca_assets` | screener, selector, ihm | Alpaca | Alpaca (toujours) | daily | P1 |
+| `stock_bars_daily` *(provider=eodhd, défaut)* | `dataIntegrityEngine.import_eodhd_bar` | screener, selector, modelFactory, backtesting | EODHD bulk EOD | **EODHD (primaire)** | daily | P1 |
+| `stock_bars_daily` *(provider=alpaca, rétrocompat)* | `dataIntegrityEngine.import_alpaca_bar` | idem | Alpaca IEX | Alpaca (rétrocompat) | daily | P1 |
+| `stock_bars` (1D, provider=eodhd) | `import_eodhd_bar` + `backfill_eodhd_history` | selector, modelFactory | EODHD `/eod` | **EODHD (primaire)** | daily / one-shot | P1 |
+| `stock_bars` (intraday, provider=alpaca) | `dataIntegrityEngine.import_alpaca_bar` (intraday) | execution_engine.tca | Alpaca IEX | Alpaca (toujours pour l'intraday) | intraday | P2 |
+| `stock_quote_snapshots` | `dataIntegrityEngine.sync_latest_quotes` | selector (`spread_bps`) | Alpaca IEX | Alpaca (toujours) | daily | P1 |
+| `stock_metadata` | `dataIntegrityEngine.update_sector` | screener, selector (filtres market_cap, sector) | Finnhub | Finnhub (toujours) | weekly | P2 |
+| `earnings_calendar` | `dataIntegrityEngine.sync_earnings_calendar` | selector, risk_management (blackout) | Finnhub | Finnhub (toujours) | daily | P2 |
 
 ## 2. Scoring & sélection
 

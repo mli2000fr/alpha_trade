@@ -52,7 +52,8 @@ market_data:
   fallback_on_failure: true
 
 eodhd:
-  enabled: false                          # Phase 1 : désactivé par défaut.
+  # NB : l'activation runtime se pilote via market_data.bars_provider.
+  # Aucun flag `enabled` ici (cf. audit S1 / A-002 : clé fantôme supprimée).
   api_token_env: EODHD_API_TOKEN          # Variable d'env contenant le token.
   exchange: US                            # NYSE + NASDAQ + AMEX consolidés.
   cache_dir: artifacts/eodhd_cache

@@ -33,9 +33,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Optional, cast
 from uuid import uuid4
 
@@ -50,6 +52,43 @@ from core.run_summary import attach_live_progress
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+
+#: Répertoire des verrous d'idempotence (audit S1 / A-022).
+#: Une exécution réussie de signal_aggregator pour un trade_date donné
+#: dépose un fichier ``{trade_date}.lock`` ; un re-lancement le même jour
+#: sur le même périmètre (--all-symbols ou non) est rejeté en sortie 0
+#: avec un WARNING, sauf si --allow-rerun est passé.
+SIGNAL_AGGREGATOR_LOCK_DIR_ENV = "SIGNAL_AGGREGATOR_LOCK_DIR"
+SIGNAL_AGGREGATOR_LOCK_DEFAULT = Path("artifacts") / "signal_aggregator_runs"
+
+
+def _resolve_lock_dir() -> Path:
+    raw = os.environ.get(SIGNAL_AGGREGATOR_LOCK_DIR_ENV)
+    return Path(raw) if raw else SIGNAL_AGGREGATOR_LOCK_DEFAULT
+
+
+def _lock_path(trade_date: date, all_symbols: bool) -> Path:
+    scope = "all" if all_symbols else "candidates"
+    return _resolve_lock_dir() / f"{trade_date.isoformat()}_{scope}.lock"
+
+
+def _is_already_run(trade_date: date, all_symbols: bool) -> bool:
+    return _lock_path(trade_date, all_symbols).exists()
+
+
+def _mark_run_done(trade_date: date, all_symbols: bool) -> None:
+    lock = _lock_path(trade_date, all_symbols)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(
+        json.dumps(
+            {
+                "trade_date": trade_date.isoformat(),
+                "all_symbols": all_symbols,
+                "completed_at": _utc_now_naive().isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _utc_now_naive() -> datetime:
@@ -1322,6 +1361,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--allow-rerun",
+        action="store_true",
+        default=False,
+        help=(
+            "Autorise un re-lancement pour un trade_date déjà traité (audit "
+            "S1 / A-022). Par défaut, le module refuse une seconde "
+            "application le même jour pour éviter une double fusion sentiment."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -1353,6 +1402,27 @@ def main(argv: list[str] | None = None) -> int:
         "=== SentimentSignalAggregator standalone | trade_date=%s all_symbols=%s ===",
         ref_date, args.all_symbols,
     )
+
+    # Garde-fou idempotence (audit S1 / A-022).
+    if _is_already_run(ref_date, bool(args.all_symbols)) and not args.allow_rerun:
+        LOGGER.warning(
+            "signal_aggregator deja execute pour trade_date=%s scope=%s "
+            "(verrou=%s). Re-lancement refuse pour eviter une double fusion "
+            "sentiment. Utiliser --allow-rerun pour forcer.",
+            ref_date,
+            "all" if args.all_symbols else "candidates",
+            _lock_path(ref_date, bool(args.all_symbols)),
+        )
+        _emit_run_summary(
+            {
+                "module": "signal_aggregator",
+                "trade_date": ref_date.isoformat(),
+                "all_symbols": bool(args.all_symbols),
+                "status": "skipped",
+                "skipped_reason": "already_applied_today",
+            }
+        )
+        return 0
 
     # Validation des poids
     quant_weight = round(1.0 - args.sentiment_weight - args.macro_weight, 6)
@@ -1480,6 +1550,7 @@ def main(argv: list[str] | None = None) -> int:
     LOGGER.info(
         "=== Termine | %d symboles mis a jour dans stock_scores ===", saved
     )
+    _mark_run_done(ref_date, bool(args.all_symbols))
     return 0
 
 
