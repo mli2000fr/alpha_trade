@@ -17,9 +17,12 @@ Composants :
 - :mod:`service.eodhd.accounts`   : registre du token API.
 
 L'activation runtime est pilotée par :
-- ``config.yaml`` clés ``market_data.bars_provider`` (``alpaca``/``eodhd``)
-  et ``eodhd.enabled``.
+- ``config.yaml`` clé ``market_data.bars_provider`` (``alpaca`` / ``eodhd``).
 - variable d'environnement ``EODHD_API_TOKEN``.
+
+Note : il n'existe **aucun** flag ``eodhd.enabled`` (audit S1 / anomalie
+A-002). La bascule de provider se fait exclusivement via
+``market_data.bars_provider``.
 """
 from __future__ import annotations
 

@@ -1,0 +1,48 @@
+# ihm/help/selector.yaml (Sprint S20.3)
+overview:
+  title: "Selector / Alpha scanner"
+  description: "Score composite + neutralisation sectorielle + top N."
+  impact: "Module : `selector/`."
+  example: "Score = 0.4·trend + 0.3·rs + 0.3·earnings"
+  default: "—"
+  range: "—"
+  doc_ref: "doc/selector.md"
+
+score_weights:
+  title: "Pondérations du score"
+  description: "Poids relatifs des facteurs (trend, RS, earnings, …)."
+  impact: "Décision de classement final."
+  example: "trend=0.4, rs=0.3, earnings=0.3"
+  default: "calibrés walk-forward"
+  range: "somme = 1"
+  doc_ref: "doc/selector.md#scoring"
+
+sector_neutralization:
+  title: "Sector neutralization"
+  description: "Plafonne l'exposition par secteur (% portefeuille)."
+  impact: "Diversification."
+  example: "Plafond 25 % par secteur GICS L1."
+  default: 25
+  range: "[5, 100]"
+  doc_ref: "doc/selector.md#sector-cap"
+
+top_n:
+  title: "Top N candidats"
+  description: "Nombre de candidats retenus par run."
+  impact: "Volume de positions à passer à l'execution."
+  example: "Top 10."
+  default: 10
+  range: "[1, 100]"
+  doc_ref: "doc/selector.md#top-n"
+
+filter_profile_strict:
+  title: "Profil filtre strict"
+  description: |
+    Active un profil de filtres durci (drawdown, beta, qualité
+    earnings) avant scoring.
+  impact: "Réduit le candidat-pool."
+  example: "Activé en marché baissier."
+  default: false
+  range: "{true, false}"
+  doc_ref: "doc/selector.md#filter-profiles"
+

@@ -1,15 +1,40 @@
-"""ihm/pages/_execution_center.py — Phase 6.2 (Backlog L10).
+"""ihm/pages/_execution_center.py — Phase 6.2 (Backlog L10) + Sprint S6 / S6.1 (A-016).
 
 Préfill exécution (compte/PDT/swing) + ``_build_launch_options`` (tous les
 panneaux de paramètres pipeline : execution, risk, ML, screener, selector,
 signal aggregator, corporate actions, data integrity).
 
-Extrait de ``pipeline.py``. Le bloc ``_build_launch_options`` reste massif
-(~1760 lignes) ; un découpage plus fin par sous-bloc est laissé en TODO 2e
-passe (cf. backlog L10 — Further Considerations).
+Sprint S6 + S6.1 — refactor `_build_launch_options` (A-016) :
+    * Introduction de :class:`LaunchOptionsContext` (état partagé immuable
+      entre helpers).
+    * **Extraction complète** des 9 sous-blocs en helpers privés
+      ``_render_*_block`` (S6 : 3 blocs ; S6.1 : 6 blocs restants) :
+
+      - :func:`_render_execution_block` (BLOCK 1)
+      - :func:`_render_risk_block` (BLOCK 2)
+      - :func:`_render_model_factory_block` (BLOCK 3)
+      - :func:`_render_selector_block` (BLOCK 4)
+      - :func:`_render_event_sentiment_block` (BLOCK 5)
+      - :func:`_render_signal_aggregator_block` (BLOCK 6)
+      - :func:`_render_screener_block` (BLOCK 7)
+      - :func:`_render_data_integrity_block` (BLOCK 8)
+      - :func:`_render_corporate_actions_block` (BLOCK 8b)
+      - :func:`_render_live_confirmation_block` (BLOCK 9)
+
+    * Le corps de :func:`_build_launch_options` se limite désormais à
+      l'orchestration : appel séquentiel des 10 helpers (l'ordre des
+      widgets Streamlit est strictement préservé) puis assemblage du
+      :class:`PipelineLaunchOptions`.
+    * Chaque appel reste préfixé par sa bannière
+      ``# === BLOCK <N>/9 : <thème> (extrait — _render_*_block) ===``
+      pour faciliter la navigation / le grep.
+    * Tests E2E ajoutés via ``streamlit.testing.v1.AppTest`` (cf.
+      ``tests/test_ihm_pipeline_e2e.py`` et
+      ``tests/test_ihm_execution_e2e.py``).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, cast
 
@@ -187,7 +212,18 @@ __all__ = [
     "_build_parameter_rerun_guidance_rows",
     "_build_execution_prefill_caption",
     "_build_launch_options",
+    # Sprint S19.1 — stubs d'API pour BLOCK 1 et BLOCK 3 (extraction
+    # complète planifiée S19.1-bis ; cf. ``_render_pending.py``).
+    "_render_execution_block",
+    "_render_model_factory_block",
 ]
+
+
+# Sprint S19.1 — exposition publique des stubs d'extraction (BLOCK 1 + 3).
+from ihm.pages._execution_center._render_pending import (  # noqa: E402
+    render_execution_block as _render_execution_block,
+    render_model_factory_block as _render_model_factory_block,
+)
 
 
 EXECUTION_MODE_ACCOUNT_KEY = "pipeline_execution_mode_account_id"
@@ -492,11 +528,1085 @@ def _build_execution_prefill_caption(defaults: PipelineExecutionDefaults | None)
     return " | ".join(notes)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Sprint S6 (A-016) — découpage thématique de `_build_launch_options`
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class LaunchOptionsContext:
+    """État partagé immuable entre les helpers ``_render_*_block``.
+
+    Exposé pour faciliter les tests E2E (cf.
+    ``tests/test_ihm_pipeline_e2e.py``) et la seconde passe d'extraction
+    (S6.1) des sous-blocs Execution / Risk / ML / Selector / Data Integrity
+    / Corporate Actions.
+    """
+
+    selected_account_id: str | None
+    execution_defaults: PipelineExecutionDefaults | None
+    selected_capital_preset: CapitalPreset | None
+    capital_preset_key: str
+
+
+def _render_event_sentiment_block() -> dict[str, Any]:
+    """Sous-bloc « Paramètres Event Sentiment » de ``_build_launch_options``.
+
+    Retourne les valeurs nettoyées (``start_utc``, ``end_utc``, ``symbols``)
+    qui seront passées à :class:`PipelineLaunchOptions`.
+    """
+    st.markdown("#### Paramètres Event Sentiment")
+    st.caption(
+        "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment`. "
+        "Si les symboles sont laissés vides, le backend consomme automatiquement les candidats `stock_scores.is_candidate=1`."
+    )
+
+    sentiment_col1, sentiment_col2, sentiment_col3 = st.columns(3)
+    with sentiment_col1:
+        sentiment_start_utc = str(
+            st.text_input(
+                "Event Sentiment — start UTC",
+                value=str(st.session_state.get("pipeline_sentiment_start_utc", "")),
+                key="pipeline_sentiment_start_utc",
+                help="Exemple : 2026-01-01T00:00:00Z",
+            )
+        ).strip()
+    with sentiment_col2:
+        sentiment_end_utc = str(
+            st.text_input(
+                "Event Sentiment — end UTC",
+                value=str(st.session_state.get("pipeline_sentiment_end_utc", "")),
+                key="pipeline_sentiment_end_utc",
+                help="Exemple : 2026-01-31T23:59:59Z",
+            )
+        ).strip()
+    with sentiment_col3:
+        sentiment_symbols = str(
+            st.text_input(
+                "Event Sentiment — symboles (CSV)",
+                value=str(st.session_state.get("pipeline_sentiment_symbols", "")),
+                key="pipeline_sentiment_symbols",
+                help="Exemple : AAPL,MSFT,NVDA",
+            )
+        ).strip().upper()
+    return {
+        "sentiment_start_utc": sentiment_start_utc,
+        "sentiment_end_utc": sentiment_end_utc,
+        "sentiment_symbols": sentiment_symbols,
+    }
+
+
+def _render_signal_aggregator_block() -> dict[str, Any]:
+    """Sous-bloc « Paramètres Signal Aggregator » de ``_build_launch_options``."""
+    st.markdown("#### Paramètres Signal Aggregator")
+    st.caption(
+        "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment.signal_aggregator`. "
+        "La `trade date` réutilise le champ global situé en haut du formulaire quand il est renseigné."
+    )
+
+    signal_agg_col1, signal_agg_col2, signal_agg_col3 = st.columns(3)
+    with signal_agg_col1:
+        signal_aggregator_all_symbols = st.checkbox(
+            "Signal Aggregator — traiter tous les symboles",
+            value=bool(st.session_state.get("pipeline_signal_aggregator_all_symbols", False)),
+            key="pipeline_signal_aggregator_all_symbols",
+        )
+        signal_aggregator_log_level = cast(
+            str,
+            st.selectbox(
+                "Signal Aggregator — niveau de log",
+                options=["DEBUG", "INFO", "WARNING", "ERROR"],
+                index=["DEBUG", "INFO", "WARNING", "ERROR"].index(
+                    cast(str, st.session_state.get("pipeline_signal_aggregator_log_level", DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL)).upper()
+                    if str(st.session_state.get("pipeline_signal_aggregator_log_level", DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL)).upper() in {"DEBUG", "INFO", "WARNING", "ERROR"}
+                    else DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
+                ),
+                key="pipeline_signal_aggregator_log_level",
+            ),
+        )
+    with signal_agg_col2:
+        signal_aggregator_sentiment_weight = float(
+            st.number_input(
+                "Signal Aggregator — poids sentiment",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_signal_aggregator_sentiment_weight", DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT)),
+                step=0.01,
+                format="%.2f",
+                key="pipeline_signal_aggregator_sentiment_weight",
+            )
+        )
+        signal_aggregator_macro_weight = float(
+            st.number_input(
+                "Signal Aggregator — poids macro sectoriel",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_signal_aggregator_macro_weight", DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT)),
+                step=0.01,
+                format="%.2f",
+                key="pipeline_signal_aggregator_macro_weight",
+            )
+        )
+    with signal_agg_col3:
+        signal_aggregator_lookback_days = int(
+            st.number_input(
+                "Signal Aggregator — lookback (jours)",
+                min_value=1,
+                value=int(st.session_state.get("pipeline_signal_aggregator_lookback_days", DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS)),
+                step=1,
+                key="pipeline_signal_aggregator_lookback_days",
+            )
+        )
+        signal_aggregator_min_news_count = int(
+            st.number_input(
+                "Signal Aggregator — news mini",
+                min_value=1,
+                value=int(st.session_state.get("pipeline_signal_aggregator_min_news_count", DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT)),
+                step=1,
+                key="pipeline_signal_aggregator_min_news_count",
+            )
+        )
+
+    signal_agg_decay_col1, signal_agg_decay_col2 = st.columns(2)
+    with signal_agg_decay_col1:
+        signal_aggregator_time_decay_half_life_days = float(
+            st.number_input(
+                "Signal Aggregator — demi-vie décroissance (jours)",
+                min_value=0.1,
+                value=float(st.session_state.get("pipeline_signal_aggregator_time_decay_half_life_days", DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS)),
+                step=0.1,
+                format="%.2f",
+                key="pipeline_signal_aggregator_time_decay_half_life_days",
+            )
+        )
+    with signal_agg_decay_col2:
+        derived_quant_weight = round(1.0 - signal_aggregator_sentiment_weight - signal_aggregator_macro_weight, 4)
+        if derived_quant_weight < 0:
+            st.error(
+                "Configuration invalide côté Signal Aggregator : `poids sentiment + poids macro > 1.0`. "
+                "Le backend rejettera ce lancement."
+            )
+        else:
+            st.info(f"Poids quantitatif implicite côté backend : `{derived_quant_weight}`")
+
+    return {
+        "signal_aggregator_all_symbols": signal_aggregator_all_symbols,
+        "signal_aggregator_log_level": signal_aggregator_log_level,
+        "signal_aggregator_sentiment_weight": signal_aggregator_sentiment_weight,
+        "signal_aggregator_macro_weight": signal_aggregator_macro_weight,
+        "signal_aggregator_lookback_days": signal_aggregator_lookback_days,
+        "signal_aggregator_min_news_count": signal_aggregator_min_news_count,
+        "signal_aggregator_time_decay_half_life_days": signal_aggregator_time_decay_half_life_days,
+    }
+
+
+def _render_live_confirmation_block(execution_mode: str) -> bool:
+    """Sous-bloc « Confirmation LIVE » de ``_build_launch_options``.
+
+    Affiche le checkbox de confirmation LIVE quand
+    ``execution_mode == "live"`` et retourne ``True`` sinon (mode paper /
+    simulate ⇒ aucune confirmation requise).
+    """
+    if execution_mode != "live":
+        return True
+    st.warning("Mode LIVE sélectionné : cette action peut envoyer de vrais ordres chez le broker.")
+    return bool(
+        st.checkbox(
+            "Je confirme explicitement le lancement en LIVE",
+            value=bool(st.session_state.get("pipeline_live_confirmed", False)),
+            key="pipeline_live_confirmed",
+        )
+    )
+
+
+def _render_screener_block() -> dict[str, Any]:
+    """Sous-bloc « Paramètres Screener » de ``_build_launch_options``."""
+    st.markdown(SCREENER_PARAMS_TITLE)
+    st.caption(SCREENER_PARAMS_CAPTION)
+    st.caption(
+        "Ces réglages reflètent les options réellement disponibles côté `screener.stock_screener`. "
+        "`0` sur `max workers` signifie : auto (`os.cpu_count()`)."
+    )
+
+    screener_col1, screener_col2, screener_col3 = st.columns(3)
+    with screener_col1:
+        screener_chunk_size = int(
+            st.number_input(
+                "Screener — taille de chunk",
+                min_value=1,
+                value=int(st.session_state.get("pipeline_screener_chunk_size", DEFAULT_SCREENER_CHUNK_SIZE)),
+                step=50,
+                key="pipeline_screener_chunk_size",
+            )
+        )
+        screener_max_workers = int(
+            st.number_input(
+                "Screener — max workers (0 = auto)",
+                min_value=0,
+                value=int(st.session_state.get("pipeline_screener_max_workers", 0)),
+                step=1,
+                key="pipeline_screener_max_workers",
+            )
+        )
+        screener_benchmark_symbol = str(
+            st.text_input(
+                "Screener — benchmark",
+                value=str(st.session_state.get("pipeline_screener_benchmark_symbol", DEFAULT_SCREENER_BENCHMARK_SYMBOL)),
+                key="pipeline_screener_benchmark_symbol",
+            )
+        ).strip().upper()
+    with screener_col2:
+        screener_liquidity_threshold_usd = float(
+            st.number_input(
+                "Screener — liquidité mini (USD)",
+                min_value=0.0,
+                value=float(st.session_state.get("pipeline_screener_liquidity_threshold_usd", DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD)),
+                step=1_000_000.0,
+                format="%.2f",
+                key="pipeline_screener_liquidity_threshold_usd",
+            )
+        )
+        screener_min_relative_strength_index = float(
+            st.number_input(
+                "Screener — RS mini vs benchmark",
+                min_value=0.01,
+                value=float(st.session_state.get("pipeline_screener_min_relative_strength_index", DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX)),
+                step=1.0,
+                format="%.2f",
+                key="pipeline_screener_min_relative_strength_index",
+            )
+        )
+        screener_enable_two_pass_loading = st.checkbox(
+            "Screener — activer le chargement en 2 passes",
+            value=bool(st.session_state.get("pipeline_screener_enable_two_pass_loading", DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING)),
+            key="pipeline_screener_enable_two_pass_loading",
+        )
+    with screener_col3:
+        screener_historical_range_lookback_days = int(
+            st.number_input(
+                "Screener — fenêtre range historique (jours)",
+                min_value=2,
+                value=int(st.session_state.get("pipeline_screener_historical_range_lookback_days", DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS)),
+                step=21,
+                key="pipeline_screener_historical_range_lookback_days",
+            )
+        )
+        screener_min_historical_range_score = float(
+            st.number_input(
+                "Screener — score mini range historique",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(st.session_state.get("pipeline_screener_min_historical_range_score", DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE)),
+                step=1.0,
+                format="%.2f",
+                key="pipeline_screener_min_historical_range_score",
+            )
+        )
+        screener_first_pass_window_days = int(
+            st.number_input(
+                "Screener — fenêtre passe 1 (jours)",
+                min_value=252,
+                value=int(st.session_state.get("pipeline_screener_first_pass_window_days", DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS)),
+                step=21,
+                key="pipeline_screener_first_pass_window_days",
+            )
+        )
+    return {
+        "screener_chunk_size": screener_chunk_size,
+        "screener_max_workers": screener_max_workers,
+        "screener_benchmark_symbol": screener_benchmark_symbol,
+        "screener_liquidity_threshold_usd": screener_liquidity_threshold_usd,
+        "screener_min_relative_strength_index": screener_min_relative_strength_index,
+        "screener_enable_two_pass_loading": screener_enable_two_pass_loading,
+        "screener_historical_range_lookback_days": screener_historical_range_lookback_days,
+        "screener_min_historical_range_score": screener_min_historical_range_score,
+        "screener_first_pass_window_days": screener_first_pass_window_days,
+    }
+
+
+def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[str, Any]:
+    """Sous-bloc « Paramètres Risk Management » de ``_build_launch_options``.
+
+    Retourne les 15 valeurs ``risk_*`` consommées par
+    :class:`PipelineLaunchOptions` (sizing, conviction, contraintes
+    portefeuille, Kelly avancé, log level).
+    """
+    st.markdown("#### Paramètres Risk Management (`python -m risk_management`)")
+    st.caption(
+        "Pilote le sizing et les contraintes du portefeuille cible. "
+        "Défauts swing : 1 % risque/trade, 15 positions max, 8 % max/ligne, conviction = 40 % score + 60 % ML."
+    )
+    if selected_capital_preset is not None:
+        st.caption(f"Panier capital actif pour Risk / Execution / Selector : `{selected_capital_preset.label}`.")
+
+    risk_col1, risk_col2, risk_col3, risk_col4 = st.columns(4)
+    with risk_col1:
+        risk_per_trade_pct = float(
+            st.number_input(
+                "Risk — risque par trade (fraction)",
+                min_value=0.001,
+                max_value=0.10,
+                value=float(st.session_state.get("pipeline_risk_per_trade_pct", DEFAULT_RISK_PER_TRADE_PCT)),
+                step=0.001,
+                format="%.4f",
+                key="pipeline_risk_per_trade_pct",
+                help="Ex. 0.01 = 1 % du capital risqué par trade (distance prix → stop).",
+            )
+        )
+        risk_max_positions = int(
+            st.number_input(
+                "Risk — positions max",
+                min_value=1,
+                max_value=100,
+                value=int(st.session_state.get("pipeline_risk_max_positions", DEFAULT_RISK_MAX_POSITIONS)),
+                step=1,
+                key="pipeline_risk_max_positions",
+            )
+        )
+    with risk_col2:
+        risk_max_position_weight = float(
+            st.number_input(
+                "Risk — poids max par position",
+                min_value=0.01,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_risk_max_position_weight", DEFAULT_RISK_MAX_POSITION_WEIGHT)),
+                step=0.01,
+                format="%.2f",
+                key="pipeline_risk_max_position_weight",
+            )
+        )
+        risk_max_sector_weight = float(
+            st.number_input(
+                "Risk — poids max par secteur",
+                min_value=0.05,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_risk_max_sector_weight", DEFAULT_RISK_MAX_SECTOR_WEIGHT)),
+                step=0.05,
+                format="%.2f",
+                key="pipeline_risk_max_sector_weight",
+            )
+        )
+        risk_min_position_notional = float(
+            st.number_input(
+                "Risk — ticket minimum ($)",
+                min_value=0.0,
+                value=float(st.session_state.get("pipeline_risk_min_position_notional", DEFAULT_RISK_MIN_POSITION_NOTIONAL)),
+                step=10.0,
+                format="%.2f",
+                key="pipeline_risk_min_position_notional",
+                help="Montant notionnel minimum par position. Pour un petit compte, réduis cette valeur pour éviter les rejets systématiques.",
+            )
+        )
+    with risk_col3:
+        risk_score_weight = float(
+            st.number_input(
+                "Risk — poids score (conviction)",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_risk_score_weight", DEFAULT_RISK_SCORE_WEIGHT)),
+                step=0.05,
+                format="%.2f",
+                key="pipeline_risk_score_weight",
+            )
+        )
+        risk_prediction_weight = float(
+            st.number_input(
+                "Risk — poids ML predict (conviction)",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_risk_prediction_weight", DEFAULT_RISK_PREDICTION_WEIGHT)),
+                step=0.05,
+                format="%.2f",
+                key="pipeline_risk_prediction_weight",
+            )
+        )
+    with risk_col4:
+        risk_correlation_threshold = float(
+            st.number_input(
+                "Risk — corrélation max",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_risk_correlation_threshold", DEFAULT_RISK_CORRELATION_THRESHOLD)),
+                step=0.05,
+                format="%.2f",
+                key="pipeline_risk_correlation_threshold",
+            )
+        )
+        risk_correlation_lookback_days = int(
+            st.number_input(
+                "Risk — lookback corrélation (jours)",
+                min_value=10,
+                max_value=252,
+                value=int(st.session_state.get("pipeline_risk_correlation_lookback_days", DEFAULT_RISK_CORRELATION_LOOKBACK_DAYS)),
+                step=10,
+                key="pipeline_risk_correlation_lookback_days",
+            )
+        )
+
+    with st.expander("Risk — Kelly sizing & options avancées", expanded=False):
+        risk_adv_col1, risk_adv_col2, risk_adv_col3 = st.columns(3)
+        with risk_adv_col1:
+            risk_enable_kelly = st.checkbox(
+                "Activer Kelly sizing",
+                value=bool(st.session_state.get("pipeline_risk_enable_kelly", DEFAULT_RISK_ENABLE_KELLY)),
+                key="pipeline_risk_enable_kelly",
+            )
+            risk_dry_run = st.checkbox(
+                "Dry run (n'écrit pas en DB)",
+                value=bool(st.session_state.get("pipeline_risk_dry_run", False)),
+                key="pipeline_risk_dry_run",
+            )
+        with risk_adv_col2:
+            risk_payoff_ratio = float(
+                st.number_input(
+                    "Risk — payoff ratio assumé",
+                    min_value=0.5,
+                    value=float(st.session_state.get("pipeline_risk_payoff_ratio", DEFAULT_RISK_PAYOFF_RATIO)),
+                    step=0.1,
+                    format="%.2f",
+                    key="pipeline_risk_payoff_ratio",
+                )
+            )
+            risk_kelly_fraction_multiplier = float(
+                st.number_input(
+                    "Risk — multiplicateur Kelly fraction",
+                    min_value=0.05,
+                    max_value=1.0,
+                    value=float(st.session_state.get("pipeline_risk_kelly_fraction_multiplier", DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER)),
+                    step=0.05,
+                    format="%.2f",
+                    key="pipeline_risk_kelly_fraction_multiplier",
+                )
+            )
+        with risk_adv_col3:
+            risk_correlation_min_overlap = int(
+                st.number_input(
+                    "Risk — min overlap corrélation",
+                    min_value=10,
+                    max_value=200,
+                    value=int(st.session_state.get("pipeline_risk_correlation_min_overlap", DEFAULT_RISK_CORRELATION_MIN_OVERLAP)),
+                    step=5,
+                    key="pipeline_risk_correlation_min_overlap",
+                )
+            )
+            risk_log_level = cast(
+                str,
+                st.selectbox(
+                    "Risk — niveau de log",
+                    options=["DEBUG", "INFO", "WARNING", "ERROR"],
+                    index=["DEBUG", "INFO", "WARNING", "ERROR"].index(
+                        cast(str, st.session_state.get("pipeline_risk_log_level", DEFAULT_RISK_LOG_LEVEL)).upper()
+                        if str(st.session_state.get("pipeline_risk_log_level", DEFAULT_RISK_LOG_LEVEL)).upper() in {"DEBUG", "INFO", "WARNING", "ERROR"}
+                        else DEFAULT_RISK_LOG_LEVEL
+                    ),
+                    key="pipeline_risk_log_level",
+                ),
+            )
+
+    conviction_total = round(risk_score_weight + risk_prediction_weight, 4)
+    if abs(conviction_total - 1.0) > 0.001:
+        st.warning(f"⚠️ Risk : poids score + poids ML = {conviction_total} (≠ 1.0). Le backend pourrait normaliser.")
+
+    return {
+        "risk_per_trade_pct": risk_per_trade_pct,
+        "risk_max_positions": risk_max_positions,
+        "risk_max_position_weight": risk_max_position_weight,
+        "risk_max_sector_weight": risk_max_sector_weight,
+        "risk_min_position_notional": risk_min_position_notional,
+        "risk_score_weight": risk_score_weight,
+        "risk_prediction_weight": risk_prediction_weight,
+        "risk_correlation_threshold": risk_correlation_threshold,
+        "risk_correlation_lookback_days": risk_correlation_lookback_days,
+        "risk_enable_kelly": risk_enable_kelly,
+        "risk_dry_run": risk_dry_run,
+        "risk_payoff_ratio": risk_payoff_ratio,
+        "risk_kelly_fraction_multiplier": risk_kelly_fraction_multiplier,
+        "risk_correlation_min_overlap": risk_correlation_min_overlap,
+        "risk_log_level": risk_log_level,
+    }
+
+
+def _render_selector_block() -> dict[str, Any]:
+    """Sous-bloc « Paramètres Alpha Scanner » de ``_build_launch_options``.
+
+    Inclut le rappel de profil partagé strict, l'éditeur de seuils de
+    dépendance (:func:`_render_alpha_scanner_dependency_threshold_editor`),
+    puis l'ensemble des paramètres opérationnels exposés par
+    ``selector.alpha_scanner``.
+
+    Retourne un ``dict`` contenant les 19 valeurs ``selector_*``
+    consommées par :class:`PipelineLaunchOptions`.
+    """
+    st.caption(
+        "Alpha Scanner part du profil partagé strict (`STRICT_SWING_CASH_FILTERS`) depuis l'IHM. "
+        "Les paramètres ci-dessous permettent de reproduire explicitement — et si besoin de surcharger — les seuils backend réellement supportés par `selector.alpha_scanner`."
+    )
+    _render_alpha_scanner_dependency_threshold_editor()
+
+    st.markdown(ALPHA_SCANNER_PARAMS_TITLE)
+    st.caption(ALPHA_SCANNER_PARAMS_CAPTION)
+    st.caption(
+        "Ces réglages reflètent les options opérationnelles réellement disponibles côté `selector.alpha_scanner`. "
+        "`0` sur `max workers` signifie : auto. Le preset strict reste la base implicite côté backend."
+    )
+
+    selector_col1, selector_col2, selector_col3, selector_col4 = st.columns(4)
+    with selector_col1:
+        selector_chunk_size = int(
+            st.number_input(
+                "Alpha Scanner — taille de chunk",
+                min_value=1,
+                value=int(st.session_state.get("pipeline_selector_chunk_size", DEFAULT_SELECTOR_CHUNK_SIZE)),
+                step=50,
+                key="pipeline_selector_chunk_size",
+            )
+        )
+        selector_selection_size = int(
+            st.number_input(
+                "Alpha Scanner — taille de sélection finale",
+                min_value=1,
+                value=int(st.session_state.get("pipeline_selector_selection_size", DEFAULT_SELECTOR_SELECTION_SIZE)),
+                step=5,
+                key="pipeline_selector_selection_size",
+            )
+        )
+        selector_max_workers = int(
+            st.number_input(
+                "Alpha Scanner — max workers (0 = auto)",
+                min_value=0,
+                value=int(st.session_state.get("pipeline_selector_max_workers", 0)),
+                step=1,
+                key="pipeline_selector_max_workers",
+            )
+        )
+        selector_log_level = cast(
+            str,
+            st.selectbox(
+                "Alpha Scanner — niveau de log",
+                options=["DEBUG", "INFO", "WARNING", "ERROR"],
+                index=["DEBUG", "INFO", "WARNING", "ERROR"].index(
+                    cast(str, st.session_state.get("pipeline_selector_log_level", DEFAULT_SELECTOR_LOG_LEVEL)).upper()
+                    if str(st.session_state.get("pipeline_selector_log_level", DEFAULT_SELECTOR_LOG_LEVEL)).upper() in {"DEBUG", "INFO", "WARNING", "ERROR"}
+                    else DEFAULT_SELECTOR_LOG_LEVEL
+                ),
+                key="pipeline_selector_log_level",
+            ),
+        )
+    with selector_col2:
+        selector_liquidity_threshold = float(
+            st.number_input(
+                "Alpha Scanner — liquidité mini",
+                min_value=0.0,
+                value=float(st.session_state.get("pipeline_selector_liquidity_threshold", DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD)),
+                step=1_000_000.0,
+                format="%.2f",
+                key="pipeline_selector_liquidity_threshold",
+            )
+        )
+        selector_min_close = float(
+            st.number_input(
+                "Alpha Scanner — prix mini",
+                min_value=0.01,
+                value=float(st.session_state.get("pipeline_selector_min_close", DEFAULT_SELECTOR_MIN_CLOSE)),
+                step=1.0,
+                format="%.2f",
+                key="pipeline_selector_min_close",
+            )
+        )
+        selector_max_volatility_ratio = float(
+            st.number_input(
+                "Alpha Scanner — volatilité relative max",
+                min_value=0.01,
+                value=float(st.session_state.get("pipeline_selector_max_volatility_ratio", DEFAULT_SELECTOR_MAX_VOLATILITY_RATIO)),
+                step=0.05,
+                format="%.2f",
+                key="pipeline_selector_max_volatility_ratio",
+            )
+        )
+        selector_min_relative_strength_index = float(
+            st.number_input(
+                "Alpha Scanner — RS mini",
+                min_value=0.01,
+                value=float(st.session_state.get("pipeline_selector_min_relative_strength_index", DEFAULT_SELECTOR_MIN_RELATIVE_STRENGTH_INDEX)),
+                step=1.0,
+                format="%.2f",
+                key="pipeline_selector_min_relative_strength_index",
+            )
+        )
+    with selector_col3:
+        selector_min_high_52w_proximity = float(
+            st.number_input(
+                "Alpha Scanner — proximité min du high 52w",
+                min_value=0.01,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_selector_min_high_52w_proximity", DEFAULT_SELECTOR_MIN_HIGH_52W_PROXIMITY)),
+                step=0.01,
+                format="%.2f",
+                key="pipeline_selector_min_high_52w_proximity",
+            )
+        )
+        selector_min_weekly_trend_score = float(
+            st.number_input(
+                "Alpha Scanner — weekly trend mini",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_selector_min_weekly_trend_score", DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE)),
+                step=0.05,
+                format="%.2f",
+                key="pipeline_selector_min_weekly_trend_score",
+            )
+        )
+        selector_min_atr_pct_20 = float(
+            st.number_input(
+                "Alpha Scanner — ATR%20 min",
+                min_value=0.0,
+                value=float(st.session_state.get("pipeline_selector_min_atr_pct_20", DEFAULT_SELECTOR_MIN_ATR_PCT_20)),
+                step=0.005,
+                format="%.4f",
+                key="pipeline_selector_min_atr_pct_20",
+            )
+        )
+        selector_max_atr_pct_20 = float(
+            st.number_input(
+                "Alpha Scanner — ATR%20 max",
+                min_value=0.0,
+                value=float(st.session_state.get("pipeline_selector_max_atr_pct_20", DEFAULT_SELECTOR_MAX_ATR_PCT_20)),
+                step=0.005,
+                format="%.4f",
+                key="pipeline_selector_max_atr_pct_20",
+            )
+        )
+    with selector_col4:
+        selector_min_market_cap = float(
+            st.number_input(
+                "Alpha Scanner — market cap mini",
+                min_value=0.0,
+                value=float(st.session_state.get("pipeline_selector_min_market_cap", DEFAULT_SELECTOR_MIN_MARKET_CAP)),
+                step=100_000_000.0,
+                format="%.2f",
+                key="pipeline_selector_min_market_cap",
+            )
+        )
+        selector_min_beta_126 = float(
+            st.number_input(
+                "Alpha Scanner — beta 126 mini",
+                min_value=0.0,
+                value=float(st.session_state.get("pipeline_selector_min_beta_126", DEFAULT_SELECTOR_MIN_BETA_126)),
+                step=0.1,
+                format="%.2f",
+                key="pipeline_selector_min_beta_126",
+            )
+        )
+        selector_max_spread_bps = float(
+            st.number_input(
+                "Alpha Scanner — spread max (bps)",
+                min_value=0.0,
+                value=float(st.session_state.get("pipeline_selector_max_spread_bps", DEFAULT_SELECTOR_MAX_SPREAD_BPS)),
+                step=1.0,
+                format="%.2f",
+                key="pipeline_selector_max_spread_bps",
+            )
+        )
+        selector_earnings_blackout_days = int(
+            st.number_input(
+                "Alpha Scanner — earnings blackout (jours)",
+                min_value=0,
+                value=int(st.session_state.get("pipeline_selector_earnings_blackout_days", DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS)),
+                step=1,
+                key="pipeline_selector_earnings_blackout_days",
+            )
+        )
+
+    selector_adv_col1, selector_adv_col2 = st.columns(2)
+    with selector_adv_col1:
+        selector_max_anomaly_count = int(
+            st.number_input(
+                "Alpha Scanner — anomalies max",
+                min_value=0,
+                value=int(st.session_state.get("pipeline_selector_max_anomaly_count", DEFAULT_SELECTOR_MAX_ANOMALY_COUNT)),
+                step=1,
+                key="pipeline_selector_max_anomaly_count",
+            )
+        )
+        selector_require_above_ma200 = st.checkbox(
+            "Alpha Scanner — exiger close > MA200 (Minervini stage 2)",
+            value=bool(st.session_state.get("pipeline_selector_require_above_ma200", DEFAULT_SELECTOR_REQUIRE_ABOVE_MA200)),
+            key="pipeline_selector_require_above_ma200",
+            help="Défaut swing : True. Filtre anti-baissière standard trend-following.",
+        )
+    with selector_adv_col2:
+        selector_sector_cap_ratio = float(
+            st.number_input(
+                "Alpha Scanner — cap sectoriel",
+                min_value=0.01,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_selector_sector_cap_ratio", DEFAULT_SELECTOR_SECTOR_CAP_RATIO)),
+                step=0.01,
+                format="%.2f",
+                key="pipeline_selector_sector_cap_ratio",
+            )
+        )
+
+    return {
+        "selector_chunk_size": selector_chunk_size,
+        "selector_selection_size": selector_selection_size,
+        "selector_max_workers": selector_max_workers,
+        "selector_log_level": selector_log_level,
+        "selector_liquidity_threshold": selector_liquidity_threshold,
+        "selector_min_close": selector_min_close,
+        "selector_max_volatility_ratio": selector_max_volatility_ratio,
+        "selector_min_relative_strength_index": selector_min_relative_strength_index,
+        "selector_min_high_52w_proximity": selector_min_high_52w_proximity,
+        "selector_min_weekly_trend_score": selector_min_weekly_trend_score,
+        "selector_min_atr_pct_20": selector_min_atr_pct_20,
+        "selector_max_atr_pct_20": selector_max_atr_pct_20,
+        "selector_min_market_cap": selector_min_market_cap,
+        "selector_min_beta_126": selector_min_beta_126,
+        "selector_max_spread_bps": selector_max_spread_bps,
+        "selector_earnings_blackout_days": selector_earnings_blackout_days,
+        "selector_max_anomaly_count": selector_max_anomaly_count,
+        "selector_require_above_ma200": selector_require_above_ma200,
+        "selector_sector_cap_ratio": selector_sector_cap_ratio,
+    }
+
+
+def _render_data_integrity_block() -> dict[str, Any]:
+    """Sous-bloc « Paramètres Data Integrity » de ``_build_launch_options``.
+
+    Couvre les options ``dataIntegrityEngine`` quotes / earnings /
+    fondamentaux / EODHD write + la fenêtre custom earnings optionnelle.
+    Retourne les valeurs ``data_integrity_*``, ``eodhd_*`` et
+    ``effective_earnings_from_date`` / ``effective_earnings_to_date``.
+    """
+    st.markdown("#### Paramètres Data Integrity")
+    st.caption(
+        "Ces réglages reflètent les options réellement disponibles côté `dataIntegrityEngine` pour les étapes quotes, earnings et fondamentaux. "
+        "`0` sur un champ `limit` signifie : univers complet éligible."
+    )
+
+    di_col1, di_col2, di_col3 = st.columns(3)
+    with di_col1:
+        data_integrity_quotes_limit = int(
+            st.number_input(
+                "Latest Quotes — limite optionnelle",
+                min_value=0,
+                value=int(st.session_state.get("pipeline_data_integrity_quotes_limit", 0)),
+                step=50,
+                key="pipeline_data_integrity_quotes_limit",
+            )
+        )
+        data_integrity_quotes_batch_size = int(
+            st.number_input(
+                "Latest Quotes — taille de batch",
+                min_value=1,
+                value=int(st.session_state.get("pipeline_data_integrity_quotes_batch_size", DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE)),
+                step=25,
+                key="pipeline_data_integrity_quotes_batch_size",
+            )
+        )
+        data_integrity_earnings_limit = int(
+            st.number_input(
+                "Earnings — limite optionnelle",
+                min_value=0,
+                value=int(st.session_state.get("pipeline_data_integrity_earnings_limit", 0)),
+                step=25,
+                key="pipeline_data_integrity_earnings_limit",
+            )
+        )
+        data_integrity_earnings_batch_size = int(
+            st.number_input(
+                "Earnings — taille de batch (symboles)",
+                min_value=25,
+                max_value=100,
+                value=int(st.session_state.get("pipeline_data_integrity_earnings_batch_size", DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE)),
+                step=25,
+                key="pipeline_data_integrity_earnings_batch_size",
+                help="Chaque batch est fetch + upsert + commit avant de passer au suivant. Intervalle supporté : 25 à 100 symboles.",
+            )
+        )
+    with di_col2:
+        data_integrity_earnings_sleep_seconds = float(
+            st.number_input(
+                "Earnings — pause Finnhub (s)",
+                min_value=0.0,
+                value=float(st.session_state.get("pipeline_data_integrity_earnings_sleep_seconds", DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS)),
+                step=0.1,
+                format="%.2f",
+                key="pipeline_data_integrity_earnings_sleep_seconds",
+            )
+        )
+        data_integrity_earnings_log_every = int(
+            st.number_input(
+                "Earnings — journaliser tous les N symboles",
+                min_value=0,
+                value=int(st.session_state.get("pipeline_data_integrity_earnings_log_every", DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY)),
+                step=5,
+                key="pipeline_data_integrity_earnings_log_every",
+                help="0 désactive les logs de progression Finnhub. Défaut : 25, soit environ un log toutes les ~30s avec la pause par défaut.",
+            )
+        )
+        data_integrity_fundamentals_limit = int(
+            st.number_input(
+                "Fondamentaux — limite optionnelle",
+                min_value=0,
+                value=int(st.session_state.get("pipeline_data_integrity_fundamentals_limit", 0)),
+                step=25,
+                key="pipeline_data_integrity_fundamentals_limit",
+            )
+        )
+        data_integrity_fundamentals_sleep_seconds = float(
+            st.number_input(
+                "Fondamentaux — pause Finnhub (s)",
+                min_value=0.0,
+                value=float(st.session_state.get("pipeline_data_integrity_fundamentals_sleep_seconds", DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS)),
+                step=0.1,
+                format="%.2f",
+                key="pipeline_data_integrity_fundamentals_sleep_seconds",
+            )
+        )
+    with di_col3:
+        eodhd_write_commit_every_symbols = int(
+            st.number_input(
+                "Import Bars EODHD — commit intermédiaire tous les N symboles",
+                min_value=0,
+                value=int(st.session_state.get("pipeline_eodhd_write_commit_every_symbols", DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS)),
+                step=25,
+                key="pipeline_eodhd_write_commit_every_symbols",
+                help="0 = commit final unique en fin de run. Toute valeur > 0 active des sauvegardes intermédiaires par batch de symboles quand `bars_provider=eodhd`.",
+            )
+        )
+        eodhd_enable_stooq_cross_check = st.checkbox(
+            "Import Bars EODHD — activer le cross-check Stooq après import",
+            value=bool(st.session_state.get("pipeline_eodhd_enable_stooq_cross_check", DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK)),
+            key="pipeline_eodhd_enable_stooq_cross_check",
+            help=(
+                "Décoché par défaut pour éviter qu'un workflow quotidien reste bloqué longtemps après le `final_flush`. "
+                "Si coché, l'étape 1 lance aussi l'audit best-effort Stooq pour comparer EODHD à une source indépendante."
+            ),
+        )
+        data_integrity_fundamentals_log_every = int(
+            st.number_input(
+                "Fondamentaux — journaliser tous les N symboles",
+                min_value=1,
+                value=int(st.session_state.get("pipeline_data_integrity_fundamentals_log_every", DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY)),
+                step=5,
+                key="pipeline_data_integrity_fundamentals_log_every",
+            )
+        )
+        data_integrity_earnings_resume = st.checkbox(
+            "Earnings — reprendre depuis le bookmark local",
+            value=bool(st.session_state.get("pipeline_data_integrity_earnings_resume", DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME)),
+            key="pipeline_data_integrity_earnings_resume",
+            help="Si activé, les symboles déjà commités sont sautés au redémarrage ; sinon le run repart du début et ignore le bookmark existant.",
+        )
+        data_integrity_earnings_custom_window = st.checkbox(
+            "Earnings — utiliser une fenêtre de dates personnalisée",
+            value=bool(st.session_state.get(EARNINGS_CUSTOM_WINDOW_KEY, False)),
+            key=EARNINGS_CUSTOM_WINDOW_KEY,
+        )
+
+    effective_earnings_from_date: str | None = None
+    effective_earnings_to_date: str | None = None
+    if data_integrity_earnings_custom_window:
+        earnings_date_col1, earnings_date_col2 = st.columns(2)
+        with earnings_date_col1:
+            earnings_from_date_value = cast(
+                date,
+                st.date_input(
+                    "Earnings — date de début",
+                    value=cast(date, st.session_state.get("pipeline_data_integrity_earnings_from_date", date.today() - timedelta(days=7))),
+                    key="pipeline_data_integrity_earnings_from_date",
+                    format="YYYY-MM-DD",
+                ),
+            )
+        with earnings_date_col2:
+            earnings_to_date_value = cast(
+                date,
+                st.date_input(
+                    "Earnings — date de fin",
+                    value=cast(date, st.session_state.get("pipeline_data_integrity_earnings_to_date", date.today() + timedelta(days=30))),
+                    key="pipeline_data_integrity_earnings_to_date",
+                    format="YYYY-MM-DD",
+                ),
+            )
+        if earnings_from_date_value <= earnings_to_date_value:
+            effective_earnings_from_date = earnings_from_date_value.isoformat()
+            effective_earnings_to_date = earnings_to_date_value.isoformat()
+        else:
+            st.error("Fenêtre earnings invalide : la date de début doit être antérieure ou égale à la date de fin. La fenêtre custom sera ignorée.")
+    else:
+        st.caption("Sans fenêtre personnalisée, `sync_earnings_calendar` conserve sa plage backend par défaut : J-7 → J+30.")
+
+    return {
+        "data_integrity_quotes_limit": data_integrity_quotes_limit,
+        "data_integrity_quotes_batch_size": data_integrity_quotes_batch_size,
+        "data_integrity_earnings_limit": data_integrity_earnings_limit,
+        "data_integrity_earnings_batch_size": data_integrity_earnings_batch_size,
+        "data_integrity_earnings_sleep_seconds": data_integrity_earnings_sleep_seconds,
+        "data_integrity_earnings_log_every": data_integrity_earnings_log_every,
+        "data_integrity_fundamentals_limit": data_integrity_fundamentals_limit,
+        "data_integrity_fundamentals_sleep_seconds": data_integrity_fundamentals_sleep_seconds,
+        "eodhd_write_commit_every_symbols": eodhd_write_commit_every_symbols,
+        "eodhd_enable_stooq_cross_check": eodhd_enable_stooq_cross_check,
+        "data_integrity_fundamentals_log_every": data_integrity_fundamentals_log_every,
+        "data_integrity_earnings_resume": data_integrity_earnings_resume,
+        "effective_earnings_from_date": effective_earnings_from_date,
+        "effective_earnings_to_date": effective_earnings_to_date,
+    }
+
+
+def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
+    """Sous-bloc « Paramètres Corporate Actions + Backfill EODHD » de
+    ``_build_launch_options``.
+
+    Le paramètre ``trade_date`` (string ISO) sert à pré-calculer la
+    fenêtre custom CA (`J-N → trade_date`). Retourne les valeurs
+    ``corporate_actions_*`` + ``eodhd_backfill_*``.
+    """
+    st.markdown("#### Paramètres Corporate Actions")
+    ca_col1, ca_col2, ca_col3 = st.columns([1, 1, 3])
+    with ca_col1:
+        corporate_actions_skip_existing = st.checkbox(
+            "CA Sync — skip existing",
+            value=bool(st.session_state.get("pipeline_corporate_actions_skip_existing", DEFAULT_CA_SKIP_EXISTING)),
+            key="pipeline_corporate_actions_skip_existing",
+            help="Si coché, ignore les symboles déjà présents dans corporate_actions_events (perf, mais peut rater de nouveaux events).",
+        )
+    with ca_col2:
+        corporate_actions_batch_size = int(
+            st.number_input(
+                "CA Sync — batch size",
+                min_value=1,
+                max_value=200,
+                value=int(st.session_state.get("pipeline_corporate_actions_batch_size", DEFAULT_CA_BATCH_SIZE)),
+                step=5,
+                key="pipeline_corporate_actions_batch_size",
+                help="Taille des lots de symboles par appel provider (`--batch-size`). Défaut 25.",
+            )
+        )
+    with ca_col3:
+        st.caption(
+            "`apply` utilise `as-of = trade_date` global. Sans `skip-existing` (défaut), tous les symboles du portefeuille sont re-interrogés "
+            "à chaque sync — recommandé en quotidien pour ne rien manquer."
+        )
+
+    # Fenêtre custom CA — défaut : J-7 → trade_date (vs défaut backend −10 ans)
+    ca_use_custom_window = st.checkbox(
+        "CA Sync — restreindre la fenêtre temporelle",
+        value=bool(st.session_state.get("pipeline_corporate_actions_use_custom_window", DEFAULT_CA_USE_CUSTOM_WINDOW)),
+        key="pipeline_corporate_actions_use_custom_window",
+        help="Si coché, envoie `--start` / `--end` au lieu du défaut backend (−10 ans). Recommandé en swing quotidien : J-7 → J.",
+    )
+    ca_start_date_value: str | None = None
+    ca_end_date_value: str | None = None
+    if ca_use_custom_window:
+        try:
+            effective_trade_date_obj = date.fromisoformat(trade_date) if trade_date else date.today()
+        except ValueError:
+            effective_trade_date_obj = date.today()
+        ca_default_start = effective_trade_date_obj - timedelta(days=DEFAULT_CA_WINDOW_LOOKBACK_DAYS)
+        ca_default_end = effective_trade_date_obj
+        ca_win_col1, ca_win_col2 = st.columns(2)
+        with ca_win_col1:
+            ca_start_picker = cast(
+                date,
+                st.date_input(
+                    "CA Sync — date début",
+                    value=cast(date, st.session_state.get("pipeline_corporate_actions_start_date", ca_default_start)),
+                    key="pipeline_corporate_actions_start_date",
+                    format="YYYY-MM-DD",
+                ),
+            )
+        with ca_win_col2:
+            ca_end_picker = cast(
+                date,
+                st.date_input(
+                    "CA Sync — date fin",
+                    value=cast(date, st.session_state.get("pipeline_corporate_actions_end_date", ca_default_end)),
+                    key="pipeline_corporate_actions_end_date",
+                    format="YYYY-MM-DD",
+                ),
+            )
+        if ca_start_picker <= ca_end_picker:
+            ca_start_date_value = ca_start_picker.isoformat()
+            ca_end_date_value = ca_end_picker.isoformat()
+        else:
+            st.error("Fenêtre CA invalide : la date de début doit être antérieure ou égale à la date de fin. La fenêtre custom sera ignorée.")
+    else:
+        st.caption(
+            "Sans fenêtre custom, `corporate_actions sync` conserve le défaut backend `−10 ans → aujourd'hui`. "
+            "À activer après le 1er sync pour éviter de re-balayer un long historique chaque jour."
+        )
+
+    st.markdown("#### Paramètres Backfill historique EODHD (B3)")
+    st.caption(
+        "Ces réglages pilotent `python -m dataIntegrityEngine.backfill_eodhd_history`. "
+        "Par défaut, l'IHM lance B3 en `write` pour persister dans `stock_bars` / `stock_bars_daily`. "
+        "Si tu décoches le mode écriture, le script reste en `dry-run` : il interroge EODHD pour estimer le volume attendu, "
+        "mais n'insère aucune ligne en base."
+    )
+    st.caption(
+        "Mode write : la DB prime sur le bookmark ; symboles déjà frais (J-7) sautés automatiquement."
+    )
+    bf_col1, bf_col2, bf_col3 = st.columns([1, 2, 2])
+    with bf_col1:
+        eodhd_backfill_years = int(
+            st.number_input(
+                "B3 — profondeur historique (années)",
+                min_value=1,
+                max_value=30,
+                value=int(st.session_state.get("pipeline_eodhd_backfill_years", 30)),
+                step=1,
+                key="pipeline_eodhd_backfill_years",
+                help="30 ans par défaut (profondeur historique maximale EODHD pour robustesse ML/backtest). Coût quota EODHD identique quelle que soit la profondeur (1 appel par symbole).",
+            )
+        )
+        eodhd_backfill_resume = st.checkbox(
+            "B3 — reprendre via bookmark",
+            value=bool(st.session_state.get("pipeline_eodhd_backfill_resume", True)),
+            key="pipeline_eodhd_backfill_resume",
+            help="Si coché, relit `artifacts/eodhd_cache/backfill_state.json` et saute les symboles déjà terminés.",
+        )
+    with bf_col2:
+        eodhd_backfill_symbols = str(
+            st.text_input(
+                "B3 — symboles (CSV, optionnel)",
+                value=str(st.session_state.get("pipeline_eodhd_backfill_symbols", "")),
+                key="pipeline_eodhd_backfill_symbols",
+                help="Laisser vide = univers complet éligible depuis `stock_metadata`. Exemple : AAPL,MSFT,NVDA",
+            )
+        ).strip().upper()
+    with bf_col3:
+        eodhd_backfill_write = st.checkbox(
+            "B3 — mode écriture (insère en base)",
+            value=bool(st.session_state.get("pipeline_eodhd_backfill_write", True)),
+            key="pipeline_eodhd_backfill_write",
+            help="Coché par défaut = ajoute `--write` et persiste dans `stock_bars` / `stock_bars_daily`. Décoché = dry-run sans insert DB.",
+        )
+        if eodhd_backfill_write:
+            st.success("B3 sera lancé en mode `write` et insérera dans les tables.")
+        else:
+            st.warning("B3 sera lancé en mode `dry-run` : appels API réels, mais 0 insert DB.")
+
+    return {
+        "corporate_actions_skip_existing": corporate_actions_skip_existing,
+        "corporate_actions_batch_size": corporate_actions_batch_size,
+        "ca_use_custom_window": ca_use_custom_window,
+        "ca_start_date_value": ca_start_date_value,
+        "ca_end_date_value": ca_end_date_value,
+        "eodhd_backfill_years": eodhd_backfill_years,
+        "eodhd_backfill_resume": eodhd_backfill_resume,
+        "eodhd_backfill_symbols": eodhd_backfill_symbols,
+        "eodhd_backfill_write": eodhd_backfill_write,
+    }
+
+
 def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
     selected_account_id = cast(str | None, st.session_state.get("selected_account_id"))
     execution_defaults = _apply_execution_prefills(selected_account_id)
 
     with st.expander("⚙️ Paramètres d'exécution", expanded=False):
+        # === BLOCK 1/9 : Execution (capital preset, dates, equity, mode, RTH, account/PDT/swing, fenêtre + trailing + debug) — inline (extraction prévue S6.1) ===
         st.caption(
             "Les pipelines sont lancés en arrière-plan depuis l'IHM. Ils héritent de la configuration DB active et, "
             "pour les étapes concernées, du compte Alpaca sélectionné dans la sidebar."
@@ -812,181 +1922,25 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         # ──────────────────────────────────────────────────────────────────
         # Paramètres Risk Management — P1 cf. audit_ihm_pipeline_options.md
         # ──────────────────────────────────────────────────────────────────
-        st.markdown("#### Paramètres Risk Management (`python -m risk_management`)")
-        st.caption(
-            "Pilote le sizing et les contraintes du portefeuille cible. "
-            "Défauts swing : 1 % risque/trade, 15 positions max, 8 % max/ligne, conviction = 40 % score + 60 % ML."
-        )
-        if selected_capital_preset is not None:
-            st.caption(f"Panier capital actif pour Risk / Execution / Selector : `{selected_capital_preset.label}`.")
-        risk_col1, risk_col2, risk_col3, risk_col4 = st.columns(4)
-        with risk_col1:
-            risk_per_trade_pct = float(
-                st.number_input(
-                    "Risk — risque par trade (fraction)",
-                    min_value=0.001,
-                    max_value=0.10,
-                    value=float(st.session_state.get("pipeline_risk_per_trade_pct", DEFAULT_RISK_PER_TRADE_PCT)),
-                    step=0.001,
-                    format="%.4f",
-                    key="pipeline_risk_per_trade_pct",
-                    help="Ex. 0.01 = 1 % du capital risqué par trade (distance prix → stop).",
-                )
-            )
-            risk_max_positions = int(
-                st.number_input(
-                    "Risk — positions max",
-                    min_value=1,
-                    max_value=100,
-                    value=int(st.session_state.get("pipeline_risk_max_positions", DEFAULT_RISK_MAX_POSITIONS)),
-                    step=1,
-                    key="pipeline_risk_max_positions",
-                )
-            )
-        with risk_col2:
-            risk_max_position_weight = float(
-                st.number_input(
-                    "Risk — poids max par position",
-                    min_value=0.01,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_risk_max_position_weight", DEFAULT_RISK_MAX_POSITION_WEIGHT)),
-                    step=0.01,
-                    format="%.2f",
-                    key="pipeline_risk_max_position_weight",
-                )
-            )
-            risk_max_sector_weight = float(
-                st.number_input(
-                    "Risk — poids max par secteur",
-                    min_value=0.05,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_risk_max_sector_weight", DEFAULT_RISK_MAX_SECTOR_WEIGHT)),
-                    step=0.05,
-                    format="%.2f",
-                    key="pipeline_risk_max_sector_weight",
-                )
-            )
-            risk_min_position_notional = float(
-                st.number_input(
-                    "Risk — ticket minimum ($)",
-                    min_value=0.0,
-                    value=float(st.session_state.get("pipeline_risk_min_position_notional", DEFAULT_RISK_MIN_POSITION_NOTIONAL)),
-                    step=10.0,
-                    format="%.2f",
-                    key="pipeline_risk_min_position_notional",
-                    help="Montant notionnel minimum par position. Pour un petit compte, réduis cette valeur pour éviter les rejets systématiques.",
-                )
-            )
-        with risk_col3:
-            risk_score_weight = float(
-                st.number_input(
-                    "Risk — poids score (conviction)",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_risk_score_weight", DEFAULT_RISK_SCORE_WEIGHT)),
-                    step=0.05,
-                    format="%.2f",
-                    key="pipeline_risk_score_weight",
-                )
-            )
-            risk_prediction_weight = float(
-                st.number_input(
-                    "Risk — poids ML predict (conviction)",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_risk_prediction_weight", DEFAULT_RISK_PREDICTION_WEIGHT)),
-                    step=0.05,
-                    format="%.2f",
-                    key="pipeline_risk_prediction_weight",
-                )
-            )
-        with risk_col4:
-            risk_correlation_threshold = float(
-                st.number_input(
-                    "Risk — corrélation max",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_risk_correlation_threshold", DEFAULT_RISK_CORRELATION_THRESHOLD)),
-                    step=0.05,
-                    format="%.2f",
-                    key="pipeline_risk_correlation_threshold",
-                )
-            )
-            risk_correlation_lookback_days = int(
-                st.number_input(
-                    "Risk — lookback corrélation (jours)",
-                    min_value=10,
-                    max_value=252,
-                    value=int(st.session_state.get("pipeline_risk_correlation_lookback_days", DEFAULT_RISK_CORRELATION_LOOKBACK_DAYS)),
-                    step=10,
-                    key="pipeline_risk_correlation_lookback_days",
-                )
-            )
+        # === BLOCK 2/9 : Risk Management + Kelly sizing (extrait — _render_risk_block) ===
+        _risk_vars = _render_risk_block(selected_capital_preset)
+        risk_per_trade_pct = _risk_vars["risk_per_trade_pct"]
+        risk_max_positions = _risk_vars["risk_max_positions"]
+        risk_max_position_weight = _risk_vars["risk_max_position_weight"]
+        risk_max_sector_weight = _risk_vars["risk_max_sector_weight"]
+        risk_min_position_notional = _risk_vars["risk_min_position_notional"]
+        risk_score_weight = _risk_vars["risk_score_weight"]
+        risk_prediction_weight = _risk_vars["risk_prediction_weight"]
+        risk_correlation_threshold = _risk_vars["risk_correlation_threshold"]
+        risk_correlation_lookback_days = _risk_vars["risk_correlation_lookback_days"]
+        risk_enable_kelly = _risk_vars["risk_enable_kelly"]
+        risk_dry_run = _risk_vars["risk_dry_run"]
+        risk_payoff_ratio = _risk_vars["risk_payoff_ratio"]
+        risk_kelly_fraction_multiplier = _risk_vars["risk_kelly_fraction_multiplier"]
+        risk_correlation_min_overlap = _risk_vars["risk_correlation_min_overlap"]
+        risk_log_level = _risk_vars["risk_log_level"]
 
-        with st.expander("Risk — Kelly sizing & options avancées", expanded=False):
-            risk_adv_col1, risk_adv_col2, risk_adv_col3 = st.columns(3)
-            with risk_adv_col1:
-                risk_enable_kelly = st.checkbox(
-                    "Activer Kelly sizing",
-                    value=bool(st.session_state.get("pipeline_risk_enable_kelly", DEFAULT_RISK_ENABLE_KELLY)),
-                    key="pipeline_risk_enable_kelly",
-                )
-                risk_dry_run = st.checkbox(
-                    "Dry run (n'écrit pas en DB)",
-                    value=bool(st.session_state.get("pipeline_risk_dry_run", False)),
-                    key="pipeline_risk_dry_run",
-                )
-            with risk_adv_col2:
-                risk_payoff_ratio = float(
-                    st.number_input(
-                        "Risk — payoff ratio assumé",
-                        min_value=0.5,
-                        value=float(st.session_state.get("pipeline_risk_payoff_ratio", DEFAULT_RISK_PAYOFF_RATIO)),
-                        step=0.1,
-                        format="%.2f",
-                        key="pipeline_risk_payoff_ratio",
-                    )
-                )
-                risk_kelly_fraction_multiplier = float(
-                    st.number_input(
-                        "Risk — multiplicateur Kelly fraction",
-                        min_value=0.05,
-                        max_value=1.0,
-                        value=float(st.session_state.get("pipeline_risk_kelly_fraction_multiplier", DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER)),
-                        step=0.05,
-                        format="%.2f",
-                        key="pipeline_risk_kelly_fraction_multiplier",
-                    )
-                )
-            with risk_adv_col3:
-                risk_correlation_min_overlap = int(
-                    st.number_input(
-                        "Risk — min overlap corrélation",
-                        min_value=10,
-                        max_value=200,
-                        value=int(st.session_state.get("pipeline_risk_correlation_min_overlap", DEFAULT_RISK_CORRELATION_MIN_OVERLAP)),
-                        step=5,
-                        key="pipeline_risk_correlation_min_overlap",
-                    )
-                )
-                risk_log_level = cast(
-                    str,
-                    st.selectbox(
-                        "Risk — niveau de log",
-                        options=["DEBUG", "INFO", "WARNING", "ERROR"],
-                        index=["DEBUG", "INFO", "WARNING", "ERROR"].index(
-                            cast(str, st.session_state.get("pipeline_risk_log_level", DEFAULT_RISK_LOG_LEVEL)).upper()
-                            if str(st.session_state.get("pipeline_risk_log_level", DEFAULT_RISK_LOG_LEVEL)).upper() in {"DEBUG", "INFO", "WARNING", "ERROR"}
-                            else DEFAULT_RISK_LOG_LEVEL
-                        ),
-                        key="pipeline_risk_log_level",
-                    ),
-                )
-
-        conviction_total = round(risk_score_weight + risk_prediction_weight, 4)
-        if abs(conviction_total - 1.0) > 0.001:
-            st.warning(f"⚠️ Risk : poids score + poids ML = {conviction_total} (≠ 1.0). Le backend pourrait normaliser.")
-
+        # === BLOCK 3/9 : Model Factory (preset + cible swing + walk-forward + hyperparams + grilles candidate) — inline (extraction prévue S6.1) ===
         st.markdown("#### Paramètres Model Factory")
         st.caption(
             "Ces options pilotent directement `python -m modelFactory --mode train`. "
@@ -1684,725 +2638,87 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     ),
                 )
 
-        st.caption(
-            "Alpha Scanner part du profil partagé strict (`STRICT_SWING_CASH_FILTERS`) depuis l'IHM. "
-            "Les paramètres ci-dessous permettent de reproduire explicitement — et si besoin de surcharger — les seuils backend réellement supportés par `selector.alpha_scanner`."
-        )
-        _render_alpha_scanner_dependency_threshold_editor()
+        # === BLOCK 4/9 : Selector / Alpha Scanner (extrait — _render_selector_block) ===
+        _selector_vars = _render_selector_block()
+        selector_chunk_size = _selector_vars["selector_chunk_size"]
+        selector_selection_size = _selector_vars["selector_selection_size"]
+        selector_max_workers = _selector_vars["selector_max_workers"]
+        selector_log_level = _selector_vars["selector_log_level"]
+        selector_liquidity_threshold = _selector_vars["selector_liquidity_threshold"]
+        selector_min_close = _selector_vars["selector_min_close"]
+        selector_max_volatility_ratio = _selector_vars["selector_max_volatility_ratio"]
+        selector_min_relative_strength_index = _selector_vars["selector_min_relative_strength_index"]
+        selector_min_high_52w_proximity = _selector_vars["selector_min_high_52w_proximity"]
+        selector_min_weekly_trend_score = _selector_vars["selector_min_weekly_trend_score"]
+        selector_min_atr_pct_20 = _selector_vars["selector_min_atr_pct_20"]
+        selector_max_atr_pct_20 = _selector_vars["selector_max_atr_pct_20"]
+        selector_min_market_cap = _selector_vars["selector_min_market_cap"]
+        selector_min_beta_126 = _selector_vars["selector_min_beta_126"]
+        selector_max_spread_bps = _selector_vars["selector_max_spread_bps"]
+        selector_earnings_blackout_days = _selector_vars["selector_earnings_blackout_days"]
+        selector_max_anomaly_count = _selector_vars["selector_max_anomaly_count"]
+        selector_require_above_ma200 = _selector_vars["selector_require_above_ma200"]
+        selector_sector_cap_ratio = _selector_vars["selector_sector_cap_ratio"]
 
-        st.markdown(ALPHA_SCANNER_PARAMS_TITLE)
-        st.caption(ALPHA_SCANNER_PARAMS_CAPTION)
-        st.caption(
-            "Ces réglages reflètent les options opérationnelles réellement disponibles côté `selector.alpha_scanner`. "
-            "`0` sur `max workers` signifie : auto. Le preset strict reste la base implicite côté backend."
-        )
+        # === BLOCK 5/9 : Event Sentiment (extrait — _render_event_sentiment_block) ===
+        _sentiment_vars = _render_event_sentiment_block()
+        sentiment_start_utc = _sentiment_vars["sentiment_start_utc"]
+        sentiment_end_utc = _sentiment_vars["sentiment_end_utc"]
+        sentiment_symbols = _sentiment_vars["sentiment_symbols"]
 
-        selector_col1, selector_col2, selector_col3, selector_col4 = st.columns(4)
-        with selector_col1:
-            selector_chunk_size = int(
-                st.number_input(
-                    "Alpha Scanner — taille de chunk",
-                    min_value=1,
-                    value=int(st.session_state.get("pipeline_selector_chunk_size", DEFAULT_SELECTOR_CHUNK_SIZE)),
-                    step=50,
-                    key="pipeline_selector_chunk_size",
-                )
-            )
-            selector_selection_size = int(
-                st.number_input(
-                    "Alpha Scanner — taille de sélection finale",
-                    min_value=1,
-                    value=int(st.session_state.get("pipeline_selector_selection_size", DEFAULT_SELECTOR_SELECTION_SIZE)),
-                    step=5,
-                    key="pipeline_selector_selection_size",
-                )
-            )
-            selector_max_workers = int(
-                st.number_input(
-                    "Alpha Scanner — max workers (0 = auto)",
-                    min_value=0,
-                    value=int(st.session_state.get("pipeline_selector_max_workers", 0)),
-                    step=1,
-                    key="pipeline_selector_max_workers",
-                )
-            )
-            selector_log_level = cast(
-                str,
-                st.selectbox(
-                    "Alpha Scanner — niveau de log",
-                    options=["DEBUG", "INFO", "WARNING", "ERROR"],
-                    index=["DEBUG", "INFO", "WARNING", "ERROR"].index(
-                        cast(str, st.session_state.get("pipeline_selector_log_level", DEFAULT_SELECTOR_LOG_LEVEL)).upper()
-                        if str(st.session_state.get("pipeline_selector_log_level", DEFAULT_SELECTOR_LOG_LEVEL)).upper() in {"DEBUG", "INFO", "WARNING", "ERROR"}
-                        else DEFAULT_SELECTOR_LOG_LEVEL
-                    ),
-                    key="pipeline_selector_log_level",
-                ),
-            )
-        with selector_col2:
-            selector_liquidity_threshold = float(
-                st.number_input(
-                    "Alpha Scanner — liquidité mini",
-                    min_value=0.0,
-                    value=float(st.session_state.get("pipeline_selector_liquidity_threshold", DEFAULT_SELECTOR_LIQUIDITY_THRESHOLD)),
-                    step=1_000_000.0,
-                    format="%.2f",
-                    key="pipeline_selector_liquidity_threshold",
-                )
-            )
-            selector_min_close = float(
-                st.number_input(
-                    "Alpha Scanner — prix mini",
-                    min_value=0.01,
-                    value=float(st.session_state.get("pipeline_selector_min_close", DEFAULT_SELECTOR_MIN_CLOSE)),
-                    step=1.0,
-                    format="%.2f",
-                    key="pipeline_selector_min_close",
-                )
-            )
-            selector_max_volatility_ratio = float(
-                st.number_input(
-                    "Alpha Scanner — volatilité relative max",
-                    min_value=0.01,
-                    value=float(st.session_state.get("pipeline_selector_max_volatility_ratio", DEFAULT_SELECTOR_MAX_VOLATILITY_RATIO)),
-                    step=0.05,
-                    format="%.2f",
-                    key="pipeline_selector_max_volatility_ratio",
-                )
-            )
-            selector_min_relative_strength_index = float(
-                st.number_input(
-                    "Alpha Scanner — RS mini",
-                    min_value=0.01,
-                    value=float(st.session_state.get("pipeline_selector_min_relative_strength_index", DEFAULT_SELECTOR_MIN_RELATIVE_STRENGTH_INDEX)),
-                    step=1.0,
-                    format="%.2f",
-                    key="pipeline_selector_min_relative_strength_index",
-                )
-            )
-        with selector_col3:
-            selector_min_high_52w_proximity = float(
-                st.number_input(
-                    "Alpha Scanner — proximité min du high 52w",
-                    min_value=0.01,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_selector_min_high_52w_proximity", DEFAULT_SELECTOR_MIN_HIGH_52W_PROXIMITY)),
-                    step=0.01,
-                    format="%.2f",
-                    key="pipeline_selector_min_high_52w_proximity",
-                )
-            )
-            selector_min_weekly_trend_score = float(
-                st.number_input(
-                    "Alpha Scanner — weekly trend mini",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_selector_min_weekly_trend_score", DEFAULT_SELECTOR_MIN_WEEKLY_TREND_SCORE)),
-                    step=0.05,
-                    format="%.2f",
-                    key="pipeline_selector_min_weekly_trend_score",
-                )
-            )
-            selector_min_atr_pct_20 = float(
-                st.number_input(
-                    "Alpha Scanner — ATR%20 min",
-                    min_value=0.0,
-                    value=float(st.session_state.get("pipeline_selector_min_atr_pct_20", DEFAULT_SELECTOR_MIN_ATR_PCT_20)),
-                    step=0.005,
-                    format="%.4f",
-                    key="pipeline_selector_min_atr_pct_20",
-                )
-            )
-            selector_max_atr_pct_20 = float(
-                st.number_input(
-                    "Alpha Scanner — ATR%20 max",
-                    min_value=0.0,
-                    value=float(st.session_state.get("pipeline_selector_max_atr_pct_20", DEFAULT_SELECTOR_MAX_ATR_PCT_20)),
-                    step=0.005,
-                    format="%.4f",
-                    key="pipeline_selector_max_atr_pct_20",
-                )
-            )
-        with selector_col4:
-            selector_min_market_cap = float(
-                st.number_input(
-                    "Alpha Scanner — market cap mini",
-                    min_value=0.0,
-                    value=float(st.session_state.get("pipeline_selector_min_market_cap", DEFAULT_SELECTOR_MIN_MARKET_CAP)),
-                    step=100_000_000.0,
-                    format="%.2f",
-                    key="pipeline_selector_min_market_cap",
-                )
-            )
-            selector_min_beta_126 = float(
-                st.number_input(
-                    "Alpha Scanner — beta 126 mini",
-                    min_value=0.0,
-                    value=float(st.session_state.get("pipeline_selector_min_beta_126", DEFAULT_SELECTOR_MIN_BETA_126)),
-                    step=0.1,
-                    format="%.2f",
-                    key="pipeline_selector_min_beta_126",
-                )
-            )
-            selector_max_spread_bps = float(
-                st.number_input(
-                    "Alpha Scanner — spread max (bps)",
-                    min_value=0.0,
-                    value=float(st.session_state.get("pipeline_selector_max_spread_bps", DEFAULT_SELECTOR_MAX_SPREAD_BPS)),
-                    step=1.0,
-                    format="%.2f",
-                    key="pipeline_selector_max_spread_bps",
-                )
-            )
-            selector_earnings_blackout_days = int(
-                st.number_input(
-                    "Alpha Scanner — earnings blackout (jours)",
-                    min_value=0,
-                    value=int(st.session_state.get("pipeline_selector_earnings_blackout_days", DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS)),
-                    step=1,
-                    key="pipeline_selector_earnings_blackout_days",
-                )
-            )
+        # === BLOCK 6/9 : Signal Aggregator (extrait — _render_signal_aggregator_block) ===
+        _signal_agg_vars = _render_signal_aggregator_block()
+        signal_aggregator_all_symbols = _signal_agg_vars["signal_aggregator_all_symbols"]
+        signal_aggregator_log_level = _signal_agg_vars["signal_aggregator_log_level"]
+        signal_aggregator_sentiment_weight = _signal_agg_vars["signal_aggregator_sentiment_weight"]
+        signal_aggregator_macro_weight = _signal_agg_vars["signal_aggregator_macro_weight"]
+        signal_aggregator_lookback_days = _signal_agg_vars["signal_aggregator_lookback_days"]
+        signal_aggregator_min_news_count = _signal_agg_vars["signal_aggregator_min_news_count"]
+        signal_aggregator_time_decay_half_life_days = _signal_agg_vars["signal_aggregator_time_decay_half_life_days"]
 
-        selector_adv_col1, selector_adv_col2 = st.columns(2)
-        with selector_adv_col1:
-            selector_max_anomaly_count = int(
-                st.number_input(
-                    "Alpha Scanner — anomalies max",
-                    min_value=0,
-                    value=int(st.session_state.get("pipeline_selector_max_anomaly_count", DEFAULT_SELECTOR_MAX_ANOMALY_COUNT)),
-                    step=1,
-                    key="pipeline_selector_max_anomaly_count",
-                )
-            )
-            selector_require_above_ma200 = st.checkbox(
-                "Alpha Scanner — exiger close > MA200 (Minervini stage 2)",
-                value=bool(st.session_state.get("pipeline_selector_require_above_ma200", DEFAULT_SELECTOR_REQUIRE_ABOVE_MA200)),
-                key="pipeline_selector_require_above_ma200",
-                help="Défaut swing : True. Filtre anti-baissière standard trend-following.",
-            )
-        with selector_adv_col2:
-            selector_sector_cap_ratio = float(
-                st.number_input(
-                    "Alpha Scanner — cap sectoriel",
-                    min_value=0.01,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_selector_sector_cap_ratio", DEFAULT_SELECTOR_SECTOR_CAP_RATIO)),
-                    step=0.01,
-                    format="%.2f",
-                    key="pipeline_selector_sector_cap_ratio",
-                )
-            )
+        # === BLOCK 7/9 : Screener (extrait — _render_screener_block) ===
+        _screener_vars = _render_screener_block()
+        screener_chunk_size = _screener_vars["screener_chunk_size"]
+        screener_max_workers = _screener_vars["screener_max_workers"]
+        screener_benchmark_symbol = _screener_vars["screener_benchmark_symbol"]
+        screener_liquidity_threshold_usd = _screener_vars["screener_liquidity_threshold_usd"]
+        screener_min_relative_strength_index = _screener_vars["screener_min_relative_strength_index"]
+        screener_enable_two_pass_loading = _screener_vars["screener_enable_two_pass_loading"]
+        screener_historical_range_lookback_days = _screener_vars["screener_historical_range_lookback_days"]
+        screener_min_historical_range_score = _screener_vars["screener_min_historical_range_score"]
+        screener_first_pass_window_days = _screener_vars["screener_first_pass_window_days"]
 
-        st.markdown("#### Paramètres Event Sentiment")
-        st.caption(
-            "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment`. "
-            "Si les symboles sont laissés vides, le backend consomme automatiquement les candidats `stock_scores.is_candidate=1`."
-        )
+        # === BLOCK 8/9 : Data Integrity (extrait — _render_data_integrity_block) ===
+        _di_vars = _render_data_integrity_block()
+        data_integrity_quotes_limit = _di_vars["data_integrity_quotes_limit"]
+        data_integrity_quotes_batch_size = _di_vars["data_integrity_quotes_batch_size"]
+        data_integrity_earnings_limit = _di_vars["data_integrity_earnings_limit"]
+        data_integrity_earnings_batch_size = _di_vars["data_integrity_earnings_batch_size"]
+        data_integrity_earnings_sleep_seconds = _di_vars["data_integrity_earnings_sleep_seconds"]
+        data_integrity_earnings_log_every = _di_vars["data_integrity_earnings_log_every"]
+        data_integrity_fundamentals_limit = _di_vars["data_integrity_fundamentals_limit"]
+        data_integrity_fundamentals_sleep_seconds = _di_vars["data_integrity_fundamentals_sleep_seconds"]
+        eodhd_write_commit_every_symbols = _di_vars["eodhd_write_commit_every_symbols"]
+        eodhd_enable_stooq_cross_check = _di_vars["eodhd_enable_stooq_cross_check"]
+        data_integrity_fundamentals_log_every = _di_vars["data_integrity_fundamentals_log_every"]
+        data_integrity_earnings_resume = _di_vars["data_integrity_earnings_resume"]
+        effective_earnings_from_date = _di_vars["effective_earnings_from_date"]
+        effective_earnings_to_date = _di_vars["effective_earnings_to_date"]
 
-        sentiment_col1, sentiment_col2, sentiment_col3 = st.columns(3)
-        with sentiment_col1:
-            sentiment_start_utc = str(
-                st.text_input(
-                    "Event Sentiment — start UTC",
-                    value=str(st.session_state.get("pipeline_sentiment_start_utc", "")),
-                    key="pipeline_sentiment_start_utc",
-                    help="Exemple : 2026-01-01T00:00:00Z",
-                )
-            ).strip()
-        with sentiment_col2:
-            sentiment_end_utc = str(
-                st.text_input(
-                    "Event Sentiment — end UTC",
-                    value=str(st.session_state.get("pipeline_sentiment_end_utc", "")),
-                    key="pipeline_sentiment_end_utc",
-                    help="Exemple : 2026-01-31T23:59:59Z",
-                )
-            ).strip()
-        with sentiment_col3:
-            sentiment_symbols = str(
-                st.text_input(
-                    "Event Sentiment — symboles (CSV)",
-                    value=str(st.session_state.get("pipeline_sentiment_symbols", "")),
-                    key="pipeline_sentiment_symbols",
-                    help="Exemple : AAPL,MSFT,NVDA",
-                )
-            ).strip().upper()
+        # === BLOCK 8b/9 : Corporate Actions + Backfill EODHD historique (extrait — _render_corporate_actions_block) ===
+        _ca_vars = _render_corporate_actions_block(trade_date)
+        corporate_actions_skip_existing = _ca_vars["corporate_actions_skip_existing"]
+        corporate_actions_batch_size = _ca_vars["corporate_actions_batch_size"]
+        ca_use_custom_window = _ca_vars["ca_use_custom_window"]
+        ca_start_date_value = _ca_vars["ca_start_date_value"]
+        ca_end_date_value = _ca_vars["ca_end_date_value"]
+        eodhd_backfill_years = _ca_vars["eodhd_backfill_years"]
+        eodhd_backfill_resume = _ca_vars["eodhd_backfill_resume"]
+        eodhd_backfill_symbols = _ca_vars["eodhd_backfill_symbols"]
+        eodhd_backfill_write = _ca_vars["eodhd_backfill_write"]
 
-        st.markdown("#### Paramètres Signal Aggregator")
-        st.caption(
-            "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment.signal_aggregator`. "
-            "La `trade date` réutilise le champ global situé en haut du formulaire quand il est renseigné."
-        )
-
-        signal_agg_col1, signal_agg_col2, signal_agg_col3 = st.columns(3)
-        with signal_agg_col1:
-            signal_aggregator_all_symbols = st.checkbox(
-                "Signal Aggregator — traiter tous les symboles",
-                value=bool(st.session_state.get("pipeline_signal_aggregator_all_symbols", False)),
-                key="pipeline_signal_aggregator_all_symbols",
-            )
-            signal_aggregator_log_level = cast(
-                str,
-                st.selectbox(
-                    "Signal Aggregator — niveau de log",
-                    options=["DEBUG", "INFO", "WARNING", "ERROR"],
-                    index=["DEBUG", "INFO", "WARNING", "ERROR"].index(
-                        cast(str, st.session_state.get("pipeline_signal_aggregator_log_level", DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL)).upper()
-                        if str(st.session_state.get("pipeline_signal_aggregator_log_level", DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL)).upper() in {"DEBUG", "INFO", "WARNING", "ERROR"}
-                        else DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
-                    ),
-                    key="pipeline_signal_aggregator_log_level",
-                ),
-            )
-        with signal_agg_col2:
-            signal_aggregator_sentiment_weight = float(
-                st.number_input(
-                    "Signal Aggregator — poids sentiment",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_signal_aggregator_sentiment_weight", DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT)),
-                    step=0.01,
-                    format="%.2f",
-                    key="pipeline_signal_aggregator_sentiment_weight",
-                )
-            )
-            signal_aggregator_macro_weight = float(
-                st.number_input(
-                    "Signal Aggregator — poids macro sectoriel",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_signal_aggregator_macro_weight", DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT)),
-                    step=0.01,
-                    format="%.2f",
-                    key="pipeline_signal_aggregator_macro_weight",
-                )
-            )
-        with signal_agg_col3:
-            signal_aggregator_lookback_days = int(
-                st.number_input(
-                    "Signal Aggregator — lookback (jours)",
-                    min_value=1,
-                    value=int(st.session_state.get("pipeline_signal_aggregator_lookback_days", DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS)),
-                    step=1,
-                    key="pipeline_signal_aggregator_lookback_days",
-                )
-            )
-            signal_aggregator_min_news_count = int(
-                st.number_input(
-                    "Signal Aggregator — news mini",
-                    min_value=1,
-                    value=int(st.session_state.get("pipeline_signal_aggregator_min_news_count", DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT)),
-                    step=1,
-                    key="pipeline_signal_aggregator_min_news_count",
-                )
-            )
-
-        signal_agg_decay_col1, signal_agg_decay_col2 = st.columns(2)
-        with signal_agg_decay_col1:
-            signal_aggregator_time_decay_half_life_days = float(
-                st.number_input(
-                    "Signal Aggregator — demi-vie décroissance (jours)",
-                    min_value=0.1,
-                    value=float(st.session_state.get("pipeline_signal_aggregator_time_decay_half_life_days", DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS)),
-                    step=0.1,
-                    format="%.2f",
-                    key="pipeline_signal_aggregator_time_decay_half_life_days",
-                )
-            )
-        with signal_agg_decay_col2:
-            derived_quant_weight = round(1.0 - signal_aggregator_sentiment_weight - signal_aggregator_macro_weight, 4)
-            if derived_quant_weight < 0:
-                st.error(
-                    "Configuration invalide côté Signal Aggregator : `poids sentiment + poids macro > 1.0`. "
-                    "Le backend rejettera ce lancement."
-                )
-            else:
-                st.info(f"Poids quantitatif implicite côté backend : `{derived_quant_weight}`")
-
-        st.markdown(SCREENER_PARAMS_TITLE)
-        st.caption(SCREENER_PARAMS_CAPTION)
-        st.caption(
-            "Ces réglages reflètent les options réellement disponibles côté `screener.stock_screener`. "
-            "`0` sur `max workers` signifie : auto (`os.cpu_count()`)."
-        )
-
-        screener_col1, screener_col2, screener_col3 = st.columns(3)
-        with screener_col1:
-            screener_chunk_size = int(
-                st.number_input(
-                    "Screener — taille de chunk",
-                    min_value=1,
-                    value=int(st.session_state.get("pipeline_screener_chunk_size", DEFAULT_SCREENER_CHUNK_SIZE)),
-                    step=50,
-                    key="pipeline_screener_chunk_size",
-                )
-            )
-            screener_max_workers = int(
-                st.number_input(
-                    "Screener — max workers (0 = auto)",
-                    min_value=0,
-                    value=int(st.session_state.get("pipeline_screener_max_workers", 0)),
-                    step=1,
-                    key="pipeline_screener_max_workers",
-                )
-            )
-            screener_benchmark_symbol = str(
-                st.text_input(
-                    "Screener — benchmark",
-                    value=str(st.session_state.get("pipeline_screener_benchmark_symbol", DEFAULT_SCREENER_BENCHMARK_SYMBOL)),
-                    key="pipeline_screener_benchmark_symbol",
-                )
-            ).strip().upper()
-        with screener_col2:
-            screener_liquidity_threshold_usd = float(
-                st.number_input(
-                    "Screener — liquidité mini (USD)",
-                    min_value=0.0,
-                    value=float(st.session_state.get("pipeline_screener_liquidity_threshold_usd", DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD)),
-                    step=1_000_000.0,
-                    format="%.2f",
-                    key="pipeline_screener_liquidity_threshold_usd",
-                )
-            )
-            screener_min_relative_strength_index = float(
-                st.number_input(
-                    "Screener — RS mini vs benchmark",
-                    min_value=0.01,
-                    value=float(st.session_state.get("pipeline_screener_min_relative_strength_index", DEFAULT_SCREENER_MIN_RELATIVE_STRENGTH_INDEX)),
-                    step=1.0,
-                    format="%.2f",
-                    key="pipeline_screener_min_relative_strength_index",
-                )
-            )
-            screener_enable_two_pass_loading = st.checkbox(
-                "Screener — activer le chargement en 2 passes",
-                value=bool(st.session_state.get("pipeline_screener_enable_two_pass_loading", DEFAULT_SCREENER_ENABLE_TWO_PASS_LOADING)),
-                key="pipeline_screener_enable_two_pass_loading",
-            )
-        with screener_col3:
-            screener_historical_range_lookback_days = int(
-                st.number_input(
-                    "Screener — fenêtre range historique (jours)",
-                    min_value=2,
-                    value=int(st.session_state.get("pipeline_screener_historical_range_lookback_days", DEFAULT_SCREENER_HISTORICAL_RANGE_LOOKBACK_DAYS)),
-                    step=21,
-                    key="pipeline_screener_historical_range_lookback_days",
-                )
-            )
-            screener_min_historical_range_score = float(
-                st.number_input(
-                    "Screener — score mini range historique",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=float(st.session_state.get("pipeline_screener_min_historical_range_score", DEFAULT_SCREENER_MIN_HISTORICAL_RANGE_SCORE)),
-                    step=1.0,
-                    format="%.2f",
-                    key="pipeline_screener_min_historical_range_score",
-                )
-            )
-            screener_first_pass_window_days = int(
-                st.number_input(
-                    "Screener — fenêtre passe 1 (jours)",
-                    min_value=252,
-                    value=int(st.session_state.get("pipeline_screener_first_pass_window_days", DEFAULT_SCREENER_FIRST_PASS_WINDOW_DAYS)),
-                    step=21,
-                    key="pipeline_screener_first_pass_window_days",
-                )
-            )
-
-        st.markdown("#### Paramètres Data Integrity")
-        st.caption(
-            "Ces réglages reflètent les options réellement disponibles côté `dataIntegrityEngine` pour les étapes quotes, earnings et fondamentaux. "
-            "`0` sur un champ `limit` signifie : univers complet éligible."
-        )
-
-        di_col1, di_col2, di_col3 = st.columns(3)
-        with di_col1:
-            data_integrity_quotes_limit = int(
-                st.number_input(
-                    "Latest Quotes — limite optionnelle",
-                    min_value=0,
-                    value=int(st.session_state.get("pipeline_data_integrity_quotes_limit", 0)),
-                    step=50,
-                    key="pipeline_data_integrity_quotes_limit",
-                )
-            )
-            data_integrity_quotes_batch_size = int(
-                st.number_input(
-                    "Latest Quotes — taille de batch",
-                    min_value=1,
-                    value=int(st.session_state.get("pipeline_data_integrity_quotes_batch_size", DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE)),
-                    step=25,
-                    key="pipeline_data_integrity_quotes_batch_size",
-                )
-            )
-            data_integrity_earnings_limit = int(
-                st.number_input(
-                    "Earnings — limite optionnelle",
-                    min_value=0,
-                    value=int(st.session_state.get("pipeline_data_integrity_earnings_limit", 0)),
-                    step=25,
-                    key="pipeline_data_integrity_earnings_limit",
-                )
-            )
-            data_integrity_earnings_batch_size = int(
-                st.number_input(
-                    "Earnings — taille de batch (symboles)",
-                    min_value=25,
-                    max_value=100,
-                    value=int(st.session_state.get("pipeline_data_integrity_earnings_batch_size", DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE)),
-                    step=25,
-                    key="pipeline_data_integrity_earnings_batch_size",
-                    help="Chaque batch est fetch + upsert + commit avant de passer au suivant. Intervalle supporté : 25 à 100 symboles.",
-                )
-            )
-        with di_col2:
-            data_integrity_earnings_sleep_seconds = float(
-                st.number_input(
-                    "Earnings — pause Finnhub (s)",
-                    min_value=0.0,
-                    value=float(st.session_state.get("pipeline_data_integrity_earnings_sleep_seconds", DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS)),
-                    step=0.1,
-                    format="%.2f",
-                    key="pipeline_data_integrity_earnings_sleep_seconds",
-                )
-            )
-            data_integrity_earnings_log_every = int(
-                st.number_input(
-                    "Earnings — journaliser tous les N symboles",
-                    min_value=0,
-                    value=int(st.session_state.get("pipeline_data_integrity_earnings_log_every", DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY)),
-                    step=5,
-                    key="pipeline_data_integrity_earnings_log_every",
-                    help="0 désactive les logs de progression Finnhub. Défaut : 25, soit environ un log toutes les ~30s avec la pause par défaut.",
-                )
-            )
-            data_integrity_fundamentals_limit = int(
-                st.number_input(
-                    "Fondamentaux — limite optionnelle",
-                    min_value=0,
-                    value=int(st.session_state.get("pipeline_data_integrity_fundamentals_limit", 0)),
-                    step=25,
-                    key="pipeline_data_integrity_fundamentals_limit",
-                )
-            )
-            data_integrity_fundamentals_sleep_seconds = float(
-                st.number_input(
-                    "Fondamentaux — pause Finnhub (s)",
-                    min_value=0.0,
-                    value=float(st.session_state.get("pipeline_data_integrity_fundamentals_sleep_seconds", DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS)),
-                    step=0.1,
-                    format="%.2f",
-                    key="pipeline_data_integrity_fundamentals_sleep_seconds",
-                )
-            )
-        with di_col3:
-            eodhd_write_commit_every_symbols = int(
-                st.number_input(
-                    "Import Bars EODHD — commit intermédiaire tous les N symboles",
-                    min_value=0,
-                    value=int(st.session_state.get("pipeline_eodhd_write_commit_every_symbols", DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS)),
-                    step=25,
-                    key="pipeline_eodhd_write_commit_every_symbols",
-                    help="0 = commit final unique en fin de run. Toute valeur > 0 active des sauvegardes intermédiaires par batch de symboles quand `bars_provider=eodhd`.",
-                )
-            )
-            eodhd_enable_stooq_cross_check = st.checkbox(
-                "Import Bars EODHD — activer le cross-check Stooq après import",
-                value=bool(st.session_state.get("pipeline_eodhd_enable_stooq_cross_check", DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK)),
-                key="pipeline_eodhd_enable_stooq_cross_check",
-                help=(
-                    "Décoché par défaut pour éviter qu'un workflow quotidien reste bloqué longtemps après le `final_flush`. "
-                    "Si coché, l'étape 1 lance aussi l'audit best-effort Stooq pour comparer EODHD à une source indépendante."
-                ),
-            )
-            data_integrity_fundamentals_log_every = int(
-                st.number_input(
-                    "Fondamentaux — journaliser tous les N symboles",
-                    min_value=1,
-                    value=int(st.session_state.get("pipeline_data_integrity_fundamentals_log_every", DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY)),
-                    step=5,
-                    key="pipeline_data_integrity_fundamentals_log_every",
-                )
-            )
-            data_integrity_earnings_resume = st.checkbox(
-                "Earnings — reprendre depuis le bookmark local",
-                value=bool(st.session_state.get("pipeline_data_integrity_earnings_resume", DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME)),
-                key="pipeline_data_integrity_earnings_resume",
-                help="Si activé, les symboles déjà commités sont sautés au redémarrage ; sinon le run repart du début et ignore le bookmark existant.",
-            )
-            data_integrity_earnings_custom_window = st.checkbox(
-                "Earnings — utiliser une fenêtre de dates personnalisée",
-                value=bool(st.session_state.get(EARNINGS_CUSTOM_WINDOW_KEY, False)),
-                key=EARNINGS_CUSTOM_WINDOW_KEY,
-            )
-
-        effective_earnings_from_date: str | None = None
-        effective_earnings_to_date: str | None = None
-        if data_integrity_earnings_custom_window:
-            earnings_date_col1, earnings_date_col2 = st.columns(2)
-            with earnings_date_col1:
-                earnings_from_date_value = cast(
-                    date,
-                    st.date_input(
-                        "Earnings — date de début",
-                        value=cast(date, st.session_state.get("pipeline_data_integrity_earnings_from_date", date.today() - timedelta(days=7))),
-                        key="pipeline_data_integrity_earnings_from_date",
-                        format="YYYY-MM-DD",
-                    ),
-                )
-            with earnings_date_col2:
-                earnings_to_date_value = cast(
-                    date,
-                    st.date_input(
-                        "Earnings — date de fin",
-                        value=cast(date, st.session_state.get("pipeline_data_integrity_earnings_to_date", date.today() + timedelta(days=30))),
-                        key="pipeline_data_integrity_earnings_to_date",
-                        format="YYYY-MM-DD",
-                    ),
-                )
-            if earnings_from_date_value <= earnings_to_date_value:
-                effective_earnings_from_date = earnings_from_date_value.isoformat()
-                effective_earnings_to_date = earnings_to_date_value.isoformat()
-            else:
-                st.error("Fenêtre earnings invalide : la date de début doit être antérieure ou égale à la date de fin. La fenêtre custom sera ignorée.")
-        else:
-            st.caption("Sans fenêtre personnalisée, `sync_earnings_calendar` conserve sa plage backend par défaut : J-7 → J+30.")
-
-        st.markdown("#### Paramètres Corporate Actions")
-        ca_col1, ca_col2, ca_col3 = st.columns([1, 1, 3])
-        with ca_col1:
-            corporate_actions_skip_existing = st.checkbox(
-                "CA Sync — skip existing",
-                value=bool(st.session_state.get("pipeline_corporate_actions_skip_existing", DEFAULT_CA_SKIP_EXISTING)),
-                key="pipeline_corporate_actions_skip_existing",
-                help="Si coché, ignore les symboles déjà présents dans corporate_actions_events (perf, mais peut rater de nouveaux events).",
-            )
-        with ca_col2:
-            corporate_actions_batch_size = int(
-                st.number_input(
-                    "CA Sync — batch size",
-                    min_value=1,
-                    max_value=200,
-                    value=int(st.session_state.get("pipeline_corporate_actions_batch_size", DEFAULT_CA_BATCH_SIZE)),
-                    step=5,
-                    key="pipeline_corporate_actions_batch_size",
-                    help="Taille des lots de symboles par appel provider (`--batch-size`). Défaut 25.",
-                )
-            )
-        with ca_col3:
-            st.caption(
-                "`apply` utilise `as-of = trade_date` global. Sans `skip-existing` (défaut), tous les symboles du portefeuille sont re-interrogés "
-                "à chaque sync — recommandé en quotidien pour ne rien manquer."
-            )
-
-        # Fenêtre custom CA — défaut : J-7 → trade_date (vs défaut backend −10 ans)
-        ca_use_custom_window = st.checkbox(
-            "CA Sync — restreindre la fenêtre temporelle",
-            value=bool(st.session_state.get("pipeline_corporate_actions_use_custom_window", DEFAULT_CA_USE_CUSTOM_WINDOW)),
-            key="pipeline_corporate_actions_use_custom_window",
-            help="Si coché, envoie `--start` / `--end` au lieu du défaut backend (−10 ans). Recommandé en swing quotidien : J-7 → J.",
-        )
-        ca_start_date_value: str | None = None
-        ca_end_date_value: str | None = None
-        if ca_use_custom_window:
-            try:
-                effective_trade_date_obj = date.fromisoformat(trade_date) if trade_date else date.today()
-            except ValueError:
-                effective_trade_date_obj = date.today()
-            ca_default_start = effective_trade_date_obj - timedelta(days=DEFAULT_CA_WINDOW_LOOKBACK_DAYS)
-            ca_default_end = effective_trade_date_obj
-            ca_win_col1, ca_win_col2 = st.columns(2)
-            with ca_win_col1:
-                ca_start_picker = cast(
-                    date,
-                    st.date_input(
-                        "CA Sync — date début",
-                        value=cast(date, st.session_state.get("pipeline_corporate_actions_start_date", ca_default_start)),
-                        key="pipeline_corporate_actions_start_date",
-                        format="YYYY-MM-DD",
-                    ),
-                )
-            with ca_win_col2:
-                ca_end_picker = cast(
-                    date,
-                    st.date_input(
-                        "CA Sync — date fin",
-                        value=cast(date, st.session_state.get("pipeline_corporate_actions_end_date", ca_default_end)),
-                        key="pipeline_corporate_actions_end_date",
-                        format="YYYY-MM-DD",
-                    ),
-                )
-            if ca_start_picker <= ca_end_picker:
-                ca_start_date_value = ca_start_picker.isoformat()
-                ca_end_date_value = ca_end_picker.isoformat()
-            else:
-                st.error("Fenêtre CA invalide : la date de début doit être antérieure ou égale à la date de fin. La fenêtre custom sera ignorée.")
-        else:
-            st.caption(
-                "Sans fenêtre custom, `corporate_actions sync` conserve le défaut backend `−10 ans → aujourd'hui`. "
-                "À activer après le 1er sync pour éviter de re-balayer un long historique chaque jour."
-            )
-
-        st.markdown("#### Paramètres Backfill historique EODHD (B3)")
-        st.caption(
-            "Ces réglages pilotent `python -m dataIntegrityEngine.backfill_eodhd_history`. "
-            "Par défaut, l'IHM lance B3 en `write` pour persister dans `stock_bars` / `stock_bars_daily`. "
-            "Si tu décoches le mode écriture, le script reste en `dry-run` : il interroge EODHD pour estimer le volume attendu, "
-            "mais n'insère aucune ligne en base."
-        )
-        st.caption(
-            "Mode write : la DB prime sur le bookmark ; symboles déjà frais (J-7) sautés automatiquement."
-        )
-        bf_col1, bf_col2, bf_col3 = st.columns([1, 2, 2])
-        with bf_col1:
-            eodhd_backfill_years = int(
-                st.number_input(
-                    "B3 — profondeur historique (années)",
-                    min_value=1,
-                    max_value=30,
-                    value=int(st.session_state.get("pipeline_eodhd_backfill_years", 30)),
-                    step=1,
-                    key="pipeline_eodhd_backfill_years",
-                    help="30 ans par défaut (profondeur historique maximale EODHD pour robustesse ML/backtest). Coût quota EODHD identique quelle que soit la profondeur (1 appel par symbole).",
-                )
-            )
-            eodhd_backfill_resume = st.checkbox(
-                "B3 — reprendre via bookmark",
-                value=bool(st.session_state.get("pipeline_eodhd_backfill_resume", True)),
-                key="pipeline_eodhd_backfill_resume",
-                help="Si coché, relit `artifacts/eodhd_cache/backfill_state.json` et saute les symboles déjà terminés.",
-            )
-        with bf_col2:
-            eodhd_backfill_symbols = str(
-                st.text_input(
-                    "B3 — symboles (CSV, optionnel)",
-                    value=str(st.session_state.get("pipeline_eodhd_backfill_symbols", "")),
-                    key="pipeline_eodhd_backfill_symbols",
-                    help="Laisser vide = univers complet éligible depuis `stock_metadata`. Exemple : AAPL,MSFT,NVDA",
-                )
-            ).strip().upper()
-        with bf_col3:
-            eodhd_backfill_write = st.checkbox(
-                "B3 — mode écriture (insère en base)",
-                value=bool(st.session_state.get("pipeline_eodhd_backfill_write", True)),
-                key="pipeline_eodhd_backfill_write",
-                help="Coché par défaut = ajoute `--write` et persiste dans `stock_bars` / `stock_bars_daily`. Décoché = dry-run sans insert DB.",
-            )
-            if eodhd_backfill_write:
-                st.success("B3 sera lancé en mode `write` et insérera dans les tables.")
-            else:
-                st.warning("B3 sera lancé en mode `dry-run` : appels API réels, mais 0 insert DB.")
-
-        live_confirmed = True
-        if execution_mode == "live":
-            st.warning("Mode LIVE sélectionné : cette action peut envoyer de vrais ordres chez le broker.")
-            live_confirmed = st.checkbox(
-                "Je confirme explicitement le lancement en LIVE",
-                value=bool(st.session_state.get("pipeline_live_confirmed", False)),
-                key="pipeline_live_confirmed",
-            )
+        # === BLOCK 9/9 : Confirmation LIVE (extrait — _render_live_confirmation_block) ===
+        live_confirmed = _render_live_confirmation_block(execution_mode)
 
     return (
         PipelineLaunchOptions(

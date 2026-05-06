@@ -2,6 +2,16 @@
 
 > *Version : 0.3.0 — Python ≥ 3.12 — Dernière mise à jour : mai 2026*
 
+<!-- primary_provider: eodhd -->
+
+> ✅ **Provider OHLCV primaire actuel : `EODHD`** (cf.
+> `config.yaml › market_data.bars_provider`, défaut `eodhd`). Le mode
+> `alpaca` (Alpaca/IEX) reste supporté en rétrocompatibilité. Les quotes,
+> la metadata et l'exécution restent toujours sur Alpaca/Finnhub. Aucun
+> flag `eodhd.enabled` n'existe (audit S1 / A-002 — supprimé). Convention
+> de prix : `data_adjustment = 'split'` (canonique projet, identique pour
+> les deux providers).
+
 ---
 
 ## 1. Architecture Générale

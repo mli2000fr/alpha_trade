@@ -24,11 +24,15 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from datetime import date, datetime
+from pathlib import Path
 
 from common.utils import configure_root_logging
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
+
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 # active les sequences ANSI sur Windows
 os.system("")
@@ -57,9 +61,60 @@ BANNER = f"""
 # Verification des prerequis
 # ---------------------------------------------------------------------------
 
-def check_env() -> list[str]:
-    required = ["LOGIN_DB", "PASSWORD_DB", "ALPACA_API_KEY", "ALPACA_SECRET_KEY"]
-    return [v for v in required if not os.getenv(v)]
+def check_env(account_id: str | None = None, mode: str | None = None) -> list[str]:
+    """Vérifie les variables d'environnement requises selon le contexte.
+
+    Sprint S2 / A-008 :
+    - ``LOGIN_DB`` / ``PASSWORD_DB`` toujours requis.
+    - En mode ``simulate`` : credentials Alpaca optionnelles (dry-run pur).
+    - En mode ``paper`` / ``live`` : on tente de résoudre le compte via le
+      ``AccountRegistry`` (config.yaml + env vars). Si ``account_id`` fourni
+      mais introuvable -> erreur explicite.
+    """
+    missing: list[str] = []
+    for var in ("LOGIN_DB", "PASSWORD_DB"):
+        if not os.getenv(var):
+            missing.append(var)
+
+    if mode == "simulate":
+        return missing
+
+    # Modes paper/live (ou inconnu/check) : on s'appuie sur le registre.
+    try:
+        from service.alpaca.accounts import AccountRegistry
+
+        registry = AccountRegistry.get()
+        accounts = registry.list_accounts()
+    except Exception:
+        accounts = []
+
+    if not accounts:
+        # Fallback sur les variables historiques pour compatibilite.
+        for var in ("ALPACA_API_KEY", "ALPACA_SECRET_KEY"):
+            if not os.getenv(var):
+                missing.append(var)
+        return missing
+
+    if account_id:
+        try:
+            from service.alpaca.accounts import AccountRegistry
+
+            acct = AccountRegistry.get().resolve(account_id)
+        except Exception as exc:
+            missing.append(f"compte '{account_id}' introuvable ({exc})")
+            return missing
+        if mode == "live" and getattr(acct, "mode", "paper") != "live":
+            missing.append(
+                f"compte '{account_id}' configure en mode '{acct.mode}', "
+                "incompatible avec --mode live"
+            )
+        return missing
+
+    if mode == "live":
+        live_accounts = [a for a in accounts if getattr(a, "mode", "") == "live"]
+        if not live_accounts:
+            missing.append("aucun compte mode='live' configure (config.yaml/env)")
+    return missing
 
 
 def print_env_status() -> bool:
@@ -84,13 +139,25 @@ def print_env_status() -> bool:
     return len(missing) == 0
 
 
-def abort_missing_env() -> None:
-    missing = check_env()
+def abort_missing_env(account_id: str | None = None, mode: str | None = None) -> None:
+    """Avorte le run si une dépendance critique manque pour le contexte donné.
+
+    Sprint S2 / A-008 : message d'erreur clair indiquant le compte/mode
+    concerné, exit code 1 — supprime le fail silencieux ALPACA_API_KEY générique.
+    """
+    missing = check_env(account_id=account_id, mode=mode)
     if missing:
-        print(f"\n{RED}{BOLD}Erreur : variables manquantes : {', '.join(missing)}{RESET}")
-        print("\nDefinis-les dans PowerShell avec :")
+        ctx = f"compte={account_id or '(defaut)'} mode={mode or '(?)'}"
+        print(
+            f"\n{RED}{BOLD}[FATAL] credentials/configuration manquantes pour {ctx} : "
+            f"{', '.join(missing)}{RESET}",
+            file=sys.stderr,
+        )
+        print("\nDefinis-les dans PowerShell avec :", file=sys.stderr)
         for v in missing:
-            print(f'  $env:{v} = "ta_valeur"')
+            if v.startswith("compte ") or v.startswith("aucun compte"):
+                continue
+            print(f'  $env:{v} = "ta_valeur"', file=sys.stderr)
         sys.exit(1)
 
 
@@ -284,6 +351,47 @@ PRESETS: dict[str, dict] = {
 # Lancement
 # ---------------------------------------------------------------------------
 
+def _launch_post_watcher(
+    *,
+    summary: dict,
+    preset: dict,
+    account_id: str | None,
+    broker_mode: str,
+) -> int:
+    """Démarre ``run_execution_protection_watch.py --mode once`` en arrière-plan.
+
+    Sprint S2 / A-018. Ne bloque pas le shell : utilise ``subprocess.Popen``
+    détaché. Retourne le PID du watcher.
+    """
+    script = PROJECT_ROOT / "run_execution_protection_watch.py"
+    if not script.exists():
+        raise FileNotFoundError(f"watcher introuvable : {script}")
+    cmd: list[str] = [
+        sys.executable,
+        str(script),
+        "--mode", "once",
+        "--broker-mode", str(broker_mode or "paper"),
+        "--trailing-stop-pct", str(float(preset.get("trailing_stop_pct", 0.05))),
+        "--trailing-activation-trigger", str(preset.get("trailing_activation_trigger", "multiple_r")),
+        "--trailing-activation-r-multiple", str(float(preset.get("trailing_activation_r_multiple", 1.0))),
+        "--trailing-activation-profit-pct", str(float(preset.get("trailing_activation_profit_pct", 0.03))),
+    ]
+    exec_run_id = str(summary.get("run_id") or "").strip()
+    if exec_run_id:
+        cmd += ["--exec-run-id", exec_run_id]
+    if account_id:
+        cmd += ["--account", str(account_id)]
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(PROJECT_ROOT),
+        creationflags=creationflags,
+    )
+    return int(proc.pid)
+
+
 def run(
     mode: str,
     run_id: str | None,
@@ -296,6 +404,8 @@ def run(
     pdt_rule: str = "auto",
     swing_only: bool = False,
     submission_window: str = "both",
+    auto_watcher: bool = False,
+    skip_preflight: bool = False,
 ) -> None:
     level = logging.DEBUG if debug else logging.INFO
     configure_root_logging(
@@ -355,6 +465,58 @@ def run(
         print(f"{RED}Erreur d'import : {exc}{RESET}")
         print("-> Verifie que le projet est installe : pip install -e .")
         sys.exit(1)
+
+    # Sprint S11 / S11.4 — preflight obligatoire en mode live.
+    # Refus de boot si un check critique échoue, à moins que --skip-preflight
+    # soit explicitement passé (réservé aux tests / dev local).
+    if mode == "live" and not skip_preflight:
+        try:
+            from execution_engine.preflight import run_preflight
+        except ImportError as exc:
+            print(f"{RED}{BOLD}[FATAL] Impossible d'importer le module preflight : {exc}{RESET}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            preflight_report = run_preflight(
+                account_id=account_id or "default",
+                broker_mode="live",
+            )
+        except Exception as exc:  # pragma: no cover - filet
+            print(
+                f"{RED}{BOLD}[FATAL] preflight a levé une exception : {exc}{RESET}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        # Persistance du rapport pour audit (best-effort).
+        try:
+            import json as _json
+            reports_dir = PROJECT_ROOT / "artifacts" / "preflight_reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+            (reports_dir / f"preflight_{stamp}_{account_id or 'default'}.json").write_text(
+                _json.dumps(preflight_report.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            logging.getLogger(__name__).debug("Persistance preflight_reports indisponible.", exc_info=True)
+        if not preflight_report.passed:
+            print(f"\n{RED}{BOLD}[FATAL] Preflight live a échoué — boot refusé.{RESET}", file=sys.stderr)
+            for check in preflight_report.checks:
+                if check.status == "fail":
+                    print(f"  {RED}[FAIL]{RESET} {check.name}: {check.message}", file=sys.stderr)
+            print(
+                f"\n{YELLOW}    -> corriger les checks ci-dessus puis relancer, "
+                f"ou lancer manuellement : python -m execution_engine.preflight "
+                f"--account {account_id or 'default'} --broker-mode live{RESET}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        print(f"{GREEN}[OK] Preflight live: tous les checks critiques sont verts.{RESET}\n")
+    elif mode == "live" and skip_preflight:
+        print(
+            f"{YELLOW}{BOLD}[!!] --skip-preflight actif : les checks live sont contournés. "
+            f"À utiliser exclusivement en dev/test.{RESET}\n",
+            file=sys.stderr,
+        )
 
     config   = ExecutionConfig(**preset, account_id=account_id)
     repo     = ExecutionRepository()
@@ -439,6 +601,23 @@ def run(
     except Exception:
         logging.getLogger(__name__).debug("Persistance run_business_summaries indisponible pour execution.", exc_info=True)
     emit_run_summary(summary)
+
+    # Sprint S2 / A-018 — option ``--auto-watcher`` : lance le watcher de
+    # protection en post-run (mode once) sans bloquer le shell.
+    if auto_watcher:
+        try:
+            watcher_pid = _launch_post_watcher(
+                summary=summary,
+                preset=preset,
+                account_id=config.resolved_account_id,
+                broker_mode=config.broker_mode,
+            )
+            print(f"{GREEN}[OK] watcher post-run lance (pid={watcher_pid}).{RESET}")
+        except Exception as exc:
+            print(
+                f"{YELLOW}[!] echec lancement watcher post-run : {exc}{RESET}",
+                file=sys.stderr,
+            )
 
     print(f"\n{BOLD}{SEP}{RESET}")
     print(f"{BOLD}  Resultats{RESET}")
@@ -529,12 +708,54 @@ Exemples :
     p.add_argument("--trailing-activation-profit-pct", dest="trailing_activation_profit_pct", type=float, default=None, help="Profit pct pour activer le trailing dynamique")
     p.add_argument("--protection-transition-timeout-seconds", dest="protection_transition_timeout_seconds", type=int, default=None, help="Fenêtre de surveillance du trigger de trailing dynamique")
     p.add_argument("--protection-transition-poll-interval-seconds", dest="protection_transition_poll_interval_seconds", type=float, default=None, help="Intervalle de polling du trigger de trailing dynamique")
+    p.add_argument(
+        "--auto-watcher",
+        dest="auto_watcher",
+        action="store_true",
+        help="Lance run_execution_protection_watch.py --mode once en post-run (Sprint S2 / A-018).",
+    )
+    p.add_argument(
+        "--skip-preflight",
+        dest="skip_preflight",
+        action="store_true",
+        help="Sprint S11 / S11.4 — DANGER: contourne les checks preflight live. Réservé dev/test.",
+    )
+    p.add_argument(
+        "--disable-sentiment",
+        dest="disable_sentiment",
+        action="store_true",
+        help="Sprint S8 — désactive la fusion sentiment (positionne ALPHA_TRADE_DISABLE_SENTIMENT=1).",
+    )
+    p.add_argument(
+        "--disable-ml",
+        dest="disable_ml",
+        action="store_true",
+        help="Sprint S8 — désactive la consommation des prédictions ML (positionne ALPHA_TRADE_DISABLE_ML=1).",
+    )
     return p
+
+
+def _apply_feature_flags(args) -> None:
+    """Sprint S8 — propage --disable-sentiment / --disable-ml dans os.environ."""
+    from core.feature_flags import FeatureFlags
+    flags = FeatureFlags(
+        disable_sentiment=bool(getattr(args, "disable_sentiment", False)),
+        disable_ml=bool(getattr(args, "disable_ml", False)),
+    )
+    flags.export_env()
+    if flags.disable_sentiment or flags.disable_ml:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "[feature_flags] disable_sentiment=%s disable_ml=%s (Sprint S8)",
+            flags.disable_sentiment, flags.disable_ml,
+        )
 
 
 def main() -> None:
     parser = build_parser()
     args   = parser.parse_args()
+
+    _apply_feature_flags(args)
 
     if args.mode == "check":
         print(BANNER)
@@ -543,6 +764,8 @@ def main() -> None:
 
     if args.mode is None:
         mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window = interactive_menu()
+        auto_watcher = False
+        skip_preflight = False
     else:
         mode              = args.mode
         run_id            = args.run_id
@@ -555,6 +778,8 @@ def main() -> None:
         pdt_rule          = args.pdt_rule
         swing_only        = args.swing_only
         submission_window = args.submission_window or PRESETS[mode].get("submission_window", "both")
+        auto_watcher      = bool(getattr(args, "auto_watcher", False))
+        skip_preflight    = bool(getattr(args, "skip_preflight", False))
         if args.trailing_activation_trigger is not None:
             PRESETS[mode]["trailing_activation_trigger"] = args.trailing_activation_trigger
         if args.trailing_activation_r_multiple is not None:
@@ -566,8 +791,8 @@ def main() -> None:
         if args.protection_transition_poll_interval_seconds is not None:
             PRESETS[mode]["protection_transition_poll_interval_seconds"] = args.protection_transition_poll_interval_seconds
 
-    abort_missing_env()
-    run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window)
+    abort_missing_env(account_id=account_id, mode=mode)
+    run(mode, run_id, trade_date, debug, allow_outside_rth, auto_rebalance, account_id, account_type, pdt_rule, swing_only, submission_window, auto_watcher=auto_watcher, skip_preflight=skip_preflight)
 
 
 if __name__ == "__main__":

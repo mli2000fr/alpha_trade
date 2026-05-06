@@ -20,6 +20,12 @@ plotly
 kaleido
 matplotlib
 
+[async-db]
+aiosqlite>=0.20
+
+[cache]
+redis>=5
+
 [cross-check]
 yfinance>=0.2
 
@@ -37,8 +43,24 @@ types-python-dateutil
 sqlalchemy[mypy]
 import-linter>=2.0
 
+[formal]
+z3-solver>=4.13
+
+[lineage]
+neo4j>=5
+
 [ml-challengers]
 catboost
 
+[mutation]
+mutmut>=2.5
+
 [observability]
 prometheus-client>=0.20
+
+[reporting]
+reportlab>=4
+
+[security]
+cyclonedx-bom>=4
+pip-audit>=2.7

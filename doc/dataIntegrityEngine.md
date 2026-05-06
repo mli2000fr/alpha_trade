@@ -1,28 +1,34 @@
 # Data Integrity Engine — documentation détaillée de reprise
 
-> ⚠️ **Limites IEX et impact concret** (Phase 1 refactor — `audit_global.md` §4).
+<!-- primary_provider: eodhd -->
+
+> ✅ **Provider OHLCV primaire actuel : `EODHD` (bulk EOD consolidé).**
+> Source de vérité : `config.yaml › market_data.bars_provider` (défaut
+> `eodhd`). Le mode `alpaca` (Alpaca / IEX) reste supporté en
+> rétrocompatibilité ; le bandeau IEX ci-dessous documente ses limites
+> propres et ne s'applique **que si** `bars_provider == 'alpaca'`.
 >
-> Toutes les barres (`stock_bars`, `stock_bars_daily`) et quotes
-> (`stock_quote_snapshots`) ingérées par défaut viennent du feed Alpaca **gratuit
-> IEX**, qui couvre ~2-3 % du volume consolidé US. Conséquences :
->
-> | Donnée | Impact IEX |
-> |---|---|
-> | `volume` | sous-évalué x30-50 |
-> | `vwap` | peu fiable |
-> | spreads `stock_quote_snapshots` | ~50 bps NBBO ⇒ exclusions abusives par le selector |
-> | OHLC large caps | OK |
-> | OHLC small caps | ±1-3 % |
+> | Aspect | `bars_provider=eodhd` (défaut) | `bars_provider=alpaca` (rétrocompat IEX) |
+> |---|---|---|
+> | `volume` | proxy consolidé US (~OK) | sous-évalué x30-50 |
+> | `vwap` | proxy consolidé | peu fiable |
+> | spreads `stock_quote_snapshots` | toujours Alpaca IEX (~50 bps NBBO) | idem |
+> | OHLC large caps | OK | OK |
+> | OHLC small caps | OK | ±1-3 % |
 >
 > Les compteurs IEX (`symbols_zero_volume_30d`, `stale_quote_pct`,
-> `stale_market_cap_pct`) sont propagés dans tous les `run_summary` (helper
-> `core.run_summary.merge_iex_bias_counters`).
+> `stale_market_cap_pct`) restent propagés dans tous les `run_summary`
+> (helper `core.run_summary.merge_iex_bias_counters`) car les **quotes** et
+> la **metadata** restent toujours servies par Alpaca/Finnhub quel que soit
+> le `bars_provider` (seules les barres OHLCV daily basculent vers EODHD).
 >
-> La colonne `stock_bars(_daily).data_source` (Phase 1) trace explicitement
-> l'origine (`alpaca_iex` par défaut, futur `alpaca_sip` / `stooq` / `yahoo`).
+> La colonne `stock_bars(_daily).data_source` trace explicitement l'origine :
+> `eodhd_eod` (mode défaut), `alpaca_iex` (mode rétrocompat), futur
+> `alpaca_sip` / `stooq` / `yahoo`.
 >
-> **Convention de prix** : `data_adjustment = 'split'` (canonique projet) — voir
-> `doc/database.md` §9 et `doc/corporate_actions.md`.
+> **Convention de prix** : `data_adjustment = 'split'` (canonique projet,
+> identique pour les deux providers) — voir `doc/database.md` §9 et
+> `doc/corporate_actions.md`.
 
 ## 1. Objet de ce document
 

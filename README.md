@@ -135,10 +135,25 @@ Ces commandes permettent notamment de :
 
 ## 6. Pipeline quotidien recommandé
 
+> ⚠️ **Choix du provider OHLCV — étape 1 conditionnelle.**
+> Le provider primaire des barres (`stock_bars`, `stock_bars_daily`) est
+> piloté par `config.yaml › market_data.bars_provider`.
+> - `bars_provider: eodhd` (**défaut recommandé actuel**) → étape 1 =
+>   `python -m dataIntegrityEngine.import_eodhd_bar`. Lancer
+>   `import_alpaca_bar` dans ce mode est un **no-op** (rien ingéré).
+> - `bars_provider: alpaca` → étape 1 =
+>   `python -m dataIntegrityEngine.import_alpaca_bar` (mode rétrocompat IEX).
+>
+> Les autres étapes (quotes, metadata, exécution) restent toujours sur
+> Alpaca quel que soit ce flag.
+
 ### Ordre d'exécution
 
 ```powershell
-# 1. Import des barres OHLCV depuis Alpaca
+# 1. Import des barres OHLCV — choisir UNE seule commande selon bars_provider :
+#    a) bars_provider = eodhd  (défaut recommandé)
+python -m dataIntegrityEngine.import_eodhd_bar
+#    b) bars_provider = alpaca (rétrocompat IEX)
 python -m dataIntegrityEngine.import_alpaca_bar
 
 # 2. Nettoyage et alignement des données daily
@@ -189,7 +204,7 @@ python -m corporate_actions apply
 
 | # | Commande | Rôle |
 |---|---|---|
-| 1 | `import_alpaca_bar` | Import barres OHLCV journalières Alpaca |
+| 1 | `import_eodhd_bar` *ou* `import_alpaca_bar` | Import barres OHLCV journalières (provider piloté par `market_data.bars_provider`) |
 | 2 | `data_sanitizer_daily` | Nettoyage, alignement calendrier, détection anomalies |
 | 3 | `stock_screener` | Scores liquidité / force relative / range |
 | 4 | `sync_latest_quotes` | Snapshot bid/ask pour le filtre de spread aval |
@@ -426,31 +441,68 @@ python run_execution.py check
 
 ```text
 alpha_trade/
-├── run.py                  ← point d'entrée IHM (python run.py)
-├── run_execution.py        ← point d'entrée exécution ordres
+├── run.py                      ← point d'entrée IHM (python run.py)
+├── run_execution.py            ← point d'entrée exécution ordres
+├── run_execution_protection_watch.py
 ├── config.yaml
+├── config/
+│   └── capital_presets.yaml    ← presets risk/selector/execution par tranche d'equity
 ├── pyproject.toml
+├── requirements.txt
 ├── README.md
+├── alembic/                    ← migrations DB
 ├── doc/
 │   ├── DOC_FONCTIONNELLE.md
-│   └── DOC_TECHNIQUE.md
+│   ├── DOC_TECHNIQUE.md
+│   └── …                       ← docs par module
+├── common/                     ← utilitaires transverses (config, logging, calendar)
+├── core/                       ← types, interfaces, conviction, run_summary
+├── database/                   ← repositories SQL + schémas
+├── service/                    ← clients providers externes (eodhd, alpaca, finnhub)
 ├── dataIntegrityEngine/
+├── corporate_actions/
 ├── screener/
 ├── selector/
 ├── event_sentiment/
+├── modelFactory/
 ├── risk_management/
 ├── execution_engine/
-├── corporate_actions/
-├── modelFactory/
+├── backtesting/
 ├── ihm/
 └── tests/
 ```
+
+> **Rétention `artifacts/`** : voir
+> [`doc/artifacts_retention_policy.md`](doc/artifacts_retention_policy.md)
+> et le script `scripts/prune_artifacts.py` (Sprint S4 / A-023).
 
 ---
 
 ## 12. Configuration multi-comptes
 
 Alpha Trade supporte **plusieurs comptes Alpaca** en parallèle (paper et/ou live).
+
+### Sécurité — secrets (Sprint S5 / A-013)
+
+> **Aucune clé API en clair n'est tolérée dans `config.yaml`**. Le scanner
+> [`core.secrets.scan_yaml_for_literal_secrets`](core/secrets.py) bloque
+> `PK…`, `AK…`, `sk-…` et secrets base64 ≥ 36 chars. Test garde-fou :
+> `tests/test_config_no_literal_secrets.py`.
+
+Les credentials par compte vivent **uniquement** sous `alpaca.accounts[*]`
+avec des placeholders `${VAR}` résolus depuis l'environnement par
+`service.alpaca.accounts.AccountRegistry`. Les credentials DB
+(`LOGIN_DB`/`PASSWORD_DB`) sont également lus exclusivement depuis l'env.
+
+Avant toute bascule live, exécuter la **recette pré-live** :
+
+```powershell
+python -m execution_engine.preflight --account <id> --broker-mode live
+# ou (avec archivage du rapport):
+python scripts/run_pre_live_checklist.py --account <id>
+```
+
+Détail : [`doc/pre_live_checklist.md`](doc/pre_live_checklist.md).
 
 ### Déclaration dans `config.yaml`
 
@@ -525,6 +577,8 @@ Migration : `database/sql/migration_add_account_id.sql` ou Alembic `alembic upgr
 
 ## 14. Documentation complémentaire
 
+- 📚 **[`doc/INDEX.md`](doc/INDEX.md)** — index cherchable de toute la
+  documentation (généré par `scripts/generate_doc_index.py`, Sprint S25.5).
 - `doc/DOC_FONCTIONNELLE.md` : vision métier et flux fonctionnels
 - `doc/DOC_TECHNIQUE.md` : architecture, composants, dette technique, recommandations
 - `ihm/README.md` : documentation dédiée à l'interface opérateur

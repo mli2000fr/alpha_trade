@@ -1,0 +1,66 @@
+# ihm/help/screener.yaml (Sprint S20.3)
+overview:
+  title: "Screening"
+  description: "Filtres techniques et fondamentaux sur l'univers."
+  impact: "Module : `screener/`."
+  example: "Minervini VCP : tendance, RS, contraction."
+  default: "—"
+  range: "—"
+  doc_ref: "doc/screener.md"
+
+min_dollar_volume:
+  title: "Volume $ minimum"
+  description: "Filtre liquidité : (volume × prix moyen 20 j)."
+  impact: "Exclut les small caps illiquides."
+  example: "5 000 000 $"
+  default: 5000000
+  range: "[100000, 1000000000]"
+  doc_ref: "doc/screener.md#liquidity"
+
+min_price:
+  title: "Prix minimum"
+  description: "Plancher de prix par action (anti penny stocks)."
+  impact: "Réduit le risque opérationnel."
+  example: "5 $"
+  default: 5.0
+  range: "[0.10, 10000]"
+  doc_ref: "doc/screener.md#price"
+
+max_price:
+  title: "Prix maximum"
+  description: "Plafond de prix par action."
+  impact: "Évite les titres trop chers à fractionner."
+  example: "1 000 $"
+  default: 1000.0
+  range: "[10, 100000]"
+  doc_ref: "doc/screener.md#price"
+
+min_atr_pct:
+  title: "ATR % minimum"
+  description: "ATR rapporté au prix (volatilité relative)."
+  impact: "Exclut les titres sans amplitude exploitable."
+  example: "1.5 %"
+  default: 1.5
+  range: "[0.1, 20.0]"
+  doc_ref: "doc/screener.md#volatility"
+
+rs_threshold:
+  title: "Seuil Relative Strength (IBD)"
+  description: "Score IBD (1-99) ; minimum requis."
+  impact: "Filtre tendance haussière."
+  example: "80 ⇒ top quintile."
+  default: 80
+  range: "[1, 99]"
+  doc_ref: "doc/screener.md#rs"
+
+range_compression:
+  title: "Range compression (VCP)"
+  description: |
+    Mesure de la contraction du range (volatility contraction
+    pattern, Minervini).
+  impact: "Détection de bases serrées avant breakout."
+  example: "Compression > 0.7 ⇒ base apte."
+  default: 0.7
+  range: "[0.0, 1.0]"
+  doc_ref: "doc/screener.md#vcp"
+

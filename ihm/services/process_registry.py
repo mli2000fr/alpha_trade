@@ -1368,8 +1368,22 @@ def start_pipeline_workflow(
     if list_active_pipeline_runs():
         raise RuntimeError("Un run pipeline est déjà actif. Attendez sa fin ou arrêtez-le avant de lancer le workflow complet.")
 
+    # Sprint S2 / A-014 — verrou cross-process : refuse si un backtesting
+    # tourne en parallèle (conflits stock_scores / artefacts ML).
+    from ihm.services.pipeline_lock import (
+        PipelineLockBusy,
+        acquire_lock as _acquire_lock,
+    )
+
     _ensure_storage()
     run_id = f"{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+    try:
+        workflow_lock = _acquire_lock("pipeline", owner="pipeline_workflow", run_id=run_id)
+    except PipelineLockBusy as exc:
+        raise RuntimeError(
+            f"Verrou pipeline actif : {exc}. "
+            "Attendez la fin du run concurrent (pipeline ou backtesting) avant de relancer."
+        ) from exc
     run_dir = _run_dir_for("pipeline_workflow", run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = run_dir / "stdout.log"
@@ -1427,17 +1441,22 @@ def start_pipeline_workflow(
     managed: _ManagedWorkflow
 
     def _workflow_target() -> None:
-        _run_pipeline_workflow(
-            managed,
-            options,
-            db_config=db_config,
-            timeout_seconds=timeout_seconds,
-            start_step=start_step,
-            include_ml_train=include_ml_train,
-            include_corporate_actions_sync=include_sync,
-            include_corporate_actions_apply=include_corporate_actions_apply,
-            selected_step_keys=selected_step_keys,
-        )
+        from ihm.services.pipeline_lock import release_lock as _release_lock
+
+        try:
+            _run_pipeline_workflow(
+                managed,
+                options,
+                db_config=db_config,
+                timeout_seconds=timeout_seconds,
+                start_step=start_step,
+                include_ml_train=include_ml_train,
+                include_corporate_actions_sync=include_sync,
+                include_corporate_actions_apply=include_corporate_actions_apply,
+                selected_step_keys=selected_step_keys,
+            )
+        finally:
+            _release_lock(workflow_lock)
 
     thread = threading.Thread(target=_workflow_target, daemon=True, name=f"pipeline-workflow-{run_id}")
     managed = _ManagedWorkflow(

@@ -1,0 +1,5 @@
+# Sprint S24.3 — Répertoire dédié aux preuves TLAPS livrées par le
+# consultant TLA+ (5-10 j/h). Chaque preuve doit suivre le pattern :
+#   <SpecName>_proof.tla
+# et être référencée dans doc/tlaps_proofs.md.
+

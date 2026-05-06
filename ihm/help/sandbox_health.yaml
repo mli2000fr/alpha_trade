@@ -1,0 +1,60 @@
+# ihm/help/sandbox_health.yaml (Sprint S24.2)
+overview:
+  title: "Sandbox health (30 j)"
+  description: |
+    Stabilité du pipeline complet (paper) exécuté chaque nuit
+    (workflow `sandbox_nightly.yml`). Affiche la streak verte glissante
+    sur 30 jours et le détail par run.
+  impact: |
+    - Source : `artifacts/sandbox_runs/_rollup.json`
+    - Objectif Phase G : streak verte ≥ 30 j consécutifs
+  example: "Streak 27/30 — dernier échec 2026-04-12."
+  default: "—"
+  range: "[0, 30]"
+  doc_ref: "doc/sandbox_health_runbook.md"
+
+streak_green:
+  title: "Streak verte (jours)"
+  description: "Nombre de runs success consécutifs depuis aujourd'hui."
+  impact: "Validation 10/10 nécessite ≥ 30 j (cf. plan §7)."
+  example: "30"
+  default: "0"
+  range: "[0, 30]"
+  doc_ref: "doc/sandbox_health_runbook.md"
+
+n_failure:
+  title: "Échecs sur 30 j"
+  description: "Nombre de runs en failure dans la fenêtre."
+  impact: "Tout échec déclenche le runbook sandbox."
+  example: "0"
+  default: "0"
+  range: ">= 0"
+  doc_ref: "doc/sandbox_health_runbook.md"
+
+n_success:
+  title: "Succès sur 30 j"
+  description: "Nombre de runs success."
+  impact: "Indicateur de fiabilité opérationnelle."
+  example: "27"
+  default: "0"
+  range: "[0, 30]"
+  doc_ref: "—"
+
+n_days_observed:
+  title: "Jours observés"
+  description: "Jours avec health.json présent (success/failure/cancelled)."
+  impact: "< 30 ⇒ jours manquants à investiguer."
+  example: "27"
+  default: "0"
+  range: "[0, 30]"
+  doc_ref: "—"
+
+select_day:
+  title: "Sélection jour"
+  description: "Charge le détail health.json du jour sélectionné."
+  impact: "Diagnostic post-mortem."
+  example: "2026-05-06"
+  default: "—"
+  range: "dates calendrier"
+  doc_ref: "—"
+

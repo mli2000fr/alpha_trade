@@ -11,6 +11,9 @@ presets:
       risk_max_position_weight: 0.20
       risk_max_sector_weight: 0.40
       risk_min_position_notional: 150.0
+      # Sprint S3 / A-011 — petit compte : seuils circuit breaker plus stricts.
+      risk_max_drawdown_pct: 0.08
+      risk_max_daily_loss_pct: 0.03
       risk_correlation_threshold: 0.90
       risk_correlation_lookback_days: 40
       risk_correlation_min_overlap: 25
@@ -57,6 +60,9 @@ presets:
       risk_max_position_weight: 0.18
       risk_max_sector_weight: 0.35
       risk_min_position_notional: 200.0
+      # Sprint S3 / A-011 — tranche 5–10k : seuils encore stricts.
+      risk_max_drawdown_pct: 0.10
+      risk_max_daily_loss_pct: 0.035
       risk_correlation_threshold: 0.88
       risk_correlation_lookback_days: 45
       risk_correlation_min_overlap: 30
@@ -103,6 +109,9 @@ presets:
       risk_max_position_weight: 0.15
       risk_max_sector_weight: 0.30
       risk_min_position_notional: 300.0
+      # Sprint S3 / A-011 — tranche 10–25k : convergence vers le standard.
+      risk_max_drawdown_pct: 0.12
+      risk_max_daily_loss_pct: 0.04
       risk_correlation_threshold: 0.85
       risk_correlation_lookback_days: 50
       risk_correlation_min_overlap: 35
@@ -149,6 +158,9 @@ presets:
       risk_max_position_weight: 0.12
       risk_max_sector_weight: 0.30
       risk_min_position_notional: 400.0
+      # Sprint S3 / A-011 — tranche 25–50k : seuils swing standard.
+      risk_max_drawdown_pct: 0.14
+      risk_max_daily_loss_pct: 0.045
       risk_correlation_threshold: 0.82
       risk_correlation_lookback_days: 60
       risk_correlation_min_overlap: 40
@@ -195,6 +207,9 @@ presets:
       risk_max_position_weight: 0.10
       risk_max_sector_weight: 0.28
       risk_min_position_notional: 500.0
+      # Sprint S3 / A-011 — tranche 50–100k : seuils standards config.yaml.
+      risk_max_drawdown_pct: 0.15
+      risk_max_daily_loss_pct: 0.05
       risk_correlation_threshold: 0.80
       risk_correlation_lookback_days: 60
       risk_correlation_min_overlap: 40
@@ -219,7 +234,7 @@ presets:
       selector_max_volatility_ratio: 0.90
       selector_min_relative_strength_index: 100.0
       selector_min_high_52w_proximity: 0.75
-      selector_min_weekly_trend_score: 1.0
+      selector_min_weekly_trend_score: 0.95
       selector_min_atr_pct_20: 0.015
       selector_max_atr_pct_20: 0.06
       selector_min_market_cap: 2000000000.0
@@ -241,6 +256,9 @@ presets:
       risk_max_position_weight: 0.08
       risk_max_sector_weight: 0.25
       risk_min_position_notional: 750.0
+      # Sprint S3 / A-011 — gros compte : tolérance maximale (drawdown plus large).
+      risk_max_drawdown_pct: 0.18
+      risk_max_daily_loss_pct: 0.05
       risk_correlation_threshold: 0.78
       risk_correlation_lookback_days: 90
       risk_correlation_min_overlap: 50
@@ -265,7 +283,7 @@ presets:
       selector_max_volatility_ratio: 0.85
       selector_min_relative_strength_index: 102.0
       selector_min_high_52w_proximity: 0.78
-      selector_min_weekly_trend_score: 1.0
+      selector_min_weekly_trend_score: 0.95
       selector_min_atr_pct_20: 0.015
       selector_max_atr_pct_20: 0.055
       selector_min_market_cap: 3000000000.0
@@ -274,5 +292,3 @@ presets:
       selector_earnings_blackout_days: 4
       selector_max_anomaly_count: 18
       selector_require_above_ma200: true
-
-

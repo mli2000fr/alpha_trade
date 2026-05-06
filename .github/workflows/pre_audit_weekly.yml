@@ -1,0 +1,54 @@
+# =============================================================================
+# Pre-Audit Weekly — Alpha Trade (Sprint S25.1)
+# =============================================================================
+# Joue chaque lundi 06:00 UTC la checklist de pré-audit interne
+# (`scripts/run_pre_audit_checklist.py`) et archive le rapport.
+# Alerte Slack si le score tombe sous le seuil paramétré.
+# =============================================================================
+
+name: Pre-Audit Weekly
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # lundi 06:00 UTC
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.12"
+  MIN_SCORE: "45"
+
+jobs:
+  pre-audit:
+    name: Pre-audit checklist (interne)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run pre-audit checklist
+        id: run
+        run: |
+          python scripts/run_pre_audit_checklist.py \
+            --min-score ${{ env.MIN_SCORE }} || echo "below_threshold=true" >> "$GITHUB_OUTPUT"
+      - name: Upload pre-audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pre-audit-${{ github.run_id }}
+          path: artifacts/pre_audit/
+          retention-days: 90
+      - name: Slack alert (score < seuil)
+        if: steps.run.outputs.below_threshold == 'true' && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\":warning: Pre-audit weekly score < ${{ env.MIN_SCORE }} (run ${{ github.run_id }})\"}" \
+            "$SLACK_WEBHOOK_URL"
+

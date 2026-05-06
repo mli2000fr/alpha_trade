@@ -2,6 +2,20 @@
 
 > *Version : 0.3.0 — Dernière mise à jour : mai 2026*
 
+<!-- primary_provider: eodhd -->
+
+> ✅ **Convention provider OHLCV (audit S1)**.
+> Le provider primaire des barres journalières (`stock_bars`,
+> `stock_bars_daily`) est désormais **EODHD** (bulk EOD consolidé), piloté
+> par `config.yaml › market_data.bars_provider` (défaut `eodhd`). Le mode
+> `alpaca` (Alpaca/IEX) reste supporté en rétrocompatibilité. Les
+> **quotes** (`stock_quote_snapshots`), la **metadata sectorielle**
+> (Finnhub) et l'**exécution** restent sur Alpaca/Finnhub quel que soit ce
+> flag. Convention de prix unique pour les deux providers :
+> `data_adjustment = 'split'` (dividendes via `portfolio_cash_ledger`).
+> Cf. `doc/dataIntegrityEngine.md`, `doc/data_lineage_matrix.md`,
+> `doc/corporate_actions.md`.
+
 ---
 
 ## 1. Présentation Générale du Projet

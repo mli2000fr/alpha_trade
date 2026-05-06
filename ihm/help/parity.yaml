@@ -1,0 +1,38 @@
+# ihm/help/parity.yaml (Sprint S20.3)
+overview:
+  title: "Parité Backtest ↔ Live"
+  description: |
+    Compare les KPI d'un run backtest avec son équivalent live.
+  impact: "Détection de drift exécution."
+  example: "Score 0.08 ⇒ divergence faible."
+  default: "—"
+  range: "—"
+  doc_ref: "doc/parity.md"
+
+tolerance_pct:
+  title: "Tolérance (%)"
+  description: "Écart maximal toléré sur les KPI."
+  impact: "Seuil d'alerte parity."
+  example: "10 %"
+  default: 10
+  range: "[1, 50]"
+  doc_ref: "doc/parity.md#tolerance"
+
+lookback_days:
+  title: "Lookback (jours)"
+  description: "Profondeur de comparaison."
+  impact: "Volume d'historique chargé."
+  example: "30 jours."
+  default: 30
+  range: "[7, 365]"
+  doc_ref: "doc/parity.md#lookback"
+
+top_n_divergent:
+  title: "Top N divergents"
+  description: "Nombre de symboles les plus divergents affichés."
+  impact: "Focus diagnostic."
+  example: "Top 20."
+  default: 20
+  range: "[5, 100]"
+  doc_ref: "doc/parity.md#top-n"
+

@@ -50,3 +50,17 @@ plotly
 kaleido
 matplotlib
 
+# --- Sprint S12 / S13 — dépendances optionnelles ---
+# Vault HashiCorp (S12.5) — fallback EnvFallbackVault si absent.
+# hvac
+# Adapter Interactive Brokers (S13.2, read-only) — TWS / IB Gateway requis.
+# ib_insync
+
+# --- Sprint S28.4 / Phase G-bis — Async DB réelle (opt-in via ALPHA_TRADE_ASYNC_DB=1) ---
+# Activé par défaut depuis S28.4 ; le code retombe gracieusement sur sync
+# si l'opérateur n'active pas le toggle. Cible perf : ≥ 30 % sur 3 loaders
+# read-only chauds (cf. doc/async_db_benchmark.md).
+aiosqlite>=0.19
+asyncpg>=0.29 ; python_version >= "3.11"
+sqlalchemy[asyncio]>=2.0
+

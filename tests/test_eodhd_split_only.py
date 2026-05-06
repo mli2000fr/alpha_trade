@@ -166,3 +166,30 @@ def test_infer_splits_no_split_returns_empty():
     ]
     assert adapters.infer_splits_from_adjusted_close(history) == []
 
+
+# ---------------------------------------------------------------------------
+# Sprint S1 / Anomalie A-001 — Convention `data_adjustment = 'split'`.
+# ---------------------------------------------------------------------------
+
+
+def test_eodhd_adapter_constant_data_adjustment_is_split():
+    """La constante DATA_ADJUSTMENT_SPLIT exposée par l'adapter doit valoir
+    'split' (audit S1 / A-001 : convention canonique projet, identique au
+    côté Alpaca via `dataIntegrityEngine.import_alpaca_bar.DATA_ADJUSTMENT`).
+    """
+    assert adapters.DATA_ADJUSTMENT_SPLIT == "split"
+
+
+def test_corporate_action_engine_docstring_aligned_with_split_convention():
+    """La docstring de `CorporateActionEngine` ne doit plus mentionner
+    l'ancienne convention `adjustment="all"` (audit S1 / A-001)."""
+    import inspect
+
+    from corporate_actions.engine import CorporateActionEngine
+
+    doc = inspect.getdoc(CorporateActionEngine) or ""
+    assert "'split'" in doc or '"split"' in doc
+    assert 'adjustment="all"' not in doc
+    assert "adjustment='all'" not in doc
+
+

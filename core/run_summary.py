@@ -9,7 +9,8 @@ Phase 1 du refactor (`prompt/refactor/plan.md`).
 """
 from __future__ import annotations
 
-from typing import Any, Mapping, MutableMapping
+from collections import Counter
+from typing import Any, Iterable, Mapping, MutableMapping
 
 #: Version courante du schéma ``run_summary`` (à incrémenter à chaque
 #: modification incompatible du payload).
@@ -95,3 +96,82 @@ def attach_live_progress(
     return payload
 
 
+# ---------------------------------------------------------------------------
+# Sprint S2 (A-017, A-023) — télémétrie ``data_source`` mixte.
+# ---------------------------------------------------------------------------
+
+#: Ratio minimal par défaut de la source dominante. Sous ce seuil, le check
+#: :func:`build_data_source_mix_check` retourne ``status="warning"``.
+DEFAULT_DATA_SOURCE_MIN_DOMINANT_RATIO: float = 0.95
+
+
+def aggregate_data_source_mix(
+    counts: Mapping[str, Any] | Iterable[tuple[str, Any]] | None,
+) -> dict[str, Any]:
+    """Agrège un mapping ``{data_source: rows}`` en payload normalisé.
+
+    Retourne ``{"counts": {...}, "ratios": {...}, "rows_total": N,
+    "dominant_source": str | None, "dominant_ratio": float}`` — toutes
+    les valeurs sont JSON-sérialisables. Les sources NULL/vides sont
+    fusionnées sous la clé ``"unknown"``.
+    """
+    bag: Counter[str] = Counter()
+    if counts is None:
+        items: Iterable[tuple[str, Any]] = ()
+    elif isinstance(counts, Mapping):
+        items = counts.items()
+    else:
+        items = counts
+    for src, value in items:
+        try:
+            n = int(value or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if n <= 0:
+            continue
+        key = (str(src).strip() if src is not None else "") or "unknown"
+        bag[key] += n
+    rows_total = int(sum(bag.values()))
+    ratios: dict[str, float] = {}
+    if rows_total > 0:
+        ratios = {k: round(v / rows_total, 6) for k, v in bag.items()}
+    if bag:
+        dominant_source, dominant_count = bag.most_common(1)[0]
+        dominant_ratio = round(dominant_count / rows_total, 6) if rows_total else 0.0
+    else:
+        dominant_source = None
+        dominant_ratio = 0.0
+    return {
+        "counts": dict(bag),
+        "ratios": ratios,
+        "rows_total": rows_total,
+        "dominant_source": dominant_source,
+        "dominant_ratio": dominant_ratio,
+    }
+
+
+def build_data_source_mix_check(
+    counts: Mapping[str, Any] | Iterable[tuple[str, Any]] | None,
+    *,
+    min_dominant_ratio: float = DEFAULT_DATA_SOURCE_MIN_DOMINANT_RATIO,
+) -> dict[str, Any]:
+    """Construit la clé ``data_source_mix_check`` du run_summary.
+
+    Statut :
+    - ``"empty"``   si aucune ligne lue.
+    - ``"warning"`` si ``dominant_ratio < min_dominant_ratio``.
+    - ``"ok"``      sinon.
+    """
+    mix = aggregate_data_source_mix(counts)
+    threshold = float(min_dominant_ratio)
+    if mix["rows_total"] == 0:
+        status = "empty"
+    elif mix["dominant_ratio"] < threshold:
+        status = "warning"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "min_dominant_ratio": threshold,
+        **mix,
+    }

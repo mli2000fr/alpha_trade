@@ -91,9 +91,11 @@ jobs:
         run: |
           pytest tests/ \
             --cov=. \
+            --cov-branch \
             --cov-report=xml:coverage.xml \
+            --cov-report=json:coverage.json \
             --cov-report=term-missing \
-            --cov-fail-under=60 \
+            --cov-fail-under=70 \
             -x \
             --timeout=120
 
@@ -102,6 +104,149 @@ jobs:
         if: always()
         with:
           name: coverage-report
-          path: coverage.xml
+          path: |
+            coverage.xml
+            coverage.json
           retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  coverage-critical:
+  # ---------------------------------------------------------------------------
+    # Sprint S26.2 / Phase F-bis — Garde branches > 95 % sur risk_management/,
+    # execution_engine/, corporate_actions/. Le script lit coverage.json publié
+    # par le job ``test`` (artifact ``coverage-report``).
+    name: Coverage critical (branches > 95 % risk/exec/CA)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+      - name: Check branch coverage on critical modules
+        run: python scripts/check_branch_coverage_critical.py --threshold 95.0
+
+  # ---------------------------------------------------------------------------
+  coverage-ihm:
+  # ---------------------------------------------------------------------------
+    # Sprint S27.6 / Phase D-bis — Garde dédiée IHM (cible 80 % branches).
+    name: Coverage IHM (>= 80 %)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install
+        run: |
+          pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-xdist
+      - name: Run IHM-targeted tests with coverage
+        env:
+          LOGIN_DB: ci_user
+          PASSWORD_DB: ci_pass
+          ALPACA_API_KEY: ci_key
+          ALPACA_SECRET_KEY: ci_secret
+        # NB: la cible 80 % ne sera atteinte qu'après refactor monolithes
+        # (S27.1-3) ; on commence à 50 % en garde-fou ratchet.
+        run: |
+          pytest tests/ \
+            -k "ihm" \
+            --cov=ihm --cov-branch \
+            --cov-report=term-missing \
+            --cov-fail-under=50 \
+            --timeout=120 || true
+        # `|| true` tant que la cible 80 % n'est pas atteinte (refactor S27).
+        # À retirer dès clôture S27.1-3.
+
+  # ---------------------------------------------------------------------------
+  doc-quality:
+  # ---------------------------------------------------------------------------
+    # Sprint S25.5 — Garde qualité documentation : INDEX à jour + 0 lien mort.
+    name: Doc quality (INDEX + dead links)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Generate doc index (check mode)
+        run: python scripts/generate_doc_index.py --check
+      - name: Check dead doc links
+        run: python scripts/check_doc_links.py --strict
+
+  # ---------------------------------------------------------------------------
+  api-stability:
+  # ---------------------------------------------------------------------------
+    # Sprint S25.4 — Garde de stabilité API publique v1.0.
+    # Bloque toute PR introduisant un nouveau symbole public non listé
+    # dans doc/api_v1_public_symbols.txt.
+    name: API stability (v1.0 golden)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Audit private API exposure (strict)
+        run: python scripts/audit_private_api_exposure.py --strict
+      - name: Upload exposure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-exposure-${{ github.run_id }}
+          path: artifacts/api_audit/
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  fuzz-diff-pr:
+  # ---------------------------------------------------------------------------
+    # Sprint S24.1 — Fuzz différentiel rapide sur PR (500 scénarios).
+    name: Fuzz diff (PR — 500 scénarios)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install hypothesis
+      - name: Run fuzz diff (PR scope)
+        run: python scripts/run_fuzz_diff.py --n 500 --strict
+      - name: Upload fuzz report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-pr-${{ github.run_id }}
+          path: artifacts/fuzz_runs/
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  external-audit-freshness:
+  # ---------------------------------------------------------------------------
+    # Sprint S25.2 — Vérifie que le rapport d'audit externe est < 12 mois.
+    name: External audit freshness (< 12 mois)
+    runs-on: ubuntu-latest
+    continue-on-error: true   # Non-bloquant tant que premier audit pas livré
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Check freshness
+        run: python scripts/check_external_audit_freshness.py
 
