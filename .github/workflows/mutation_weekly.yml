@@ -4,15 +4,20 @@ on:
     - cron: "0 6 * * 0"  # dimanche 06h UTC
   workflow_dispatch:
     inputs:
-      module:
-        description: "Module à muter (corporate_actions|risk_management|execution_engine)"
+      threshold:
+        description: "Seuil score minimum (cible Phase F : 70)"
         required: false
-        default: "corporate_actions"
+        default: "70"
 
 jobs:
   mutation:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # Phase F / S22.3 — exécution sur les 3 modules critiques (cible >= 70 %).
+        module: [corporate_actions, risk_management, execution_engine]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,15 +26,19 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,mutation]" || (pip install -e ".[dev]" && pip install mutmut>=2.5)
+          pip install -e ".[dev,mutation]" || (pip install -e ".[dev]" && pip install "mutmut>=2.5")
       - name: Run mutation testing
         run: |
-          MODULE="${{ github.event.inputs.module || 'corporate_actions' }}"
-          python scripts/run_mutation_testing.py --module "$MODULE" --threshold 50
+          THRESHOLD="${{ github.event.inputs.threshold || '70' }}"
+          python scripts/run_mutation_testing.py --module "${{ matrix.module }}" --threshold "$THRESHOLD"
+      - name: List survivors (best effort)
+        if: always()
+        run: |
+          python scripts/list_mutation_survivors.py --module "${{ matrix.module }}" || true
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mutation-${{ github.run_id }}
+          name: mutation-${{ matrix.module }}-${{ github.run_id }}
           path: artifacts/mutation_runs
 
