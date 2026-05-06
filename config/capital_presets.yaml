@@ -1,7 +1,63 @@
 presets:
-  - key: capital_0_5000
-    label: "0 → 5 000 $"
+  # ------------------------------------------------------------------
+  # Sprint S26 — micro-compte (~2 000 EUR ≈ 2 150 USD)
+  # Cible : utilisateur débutant qui démarre avec ~2 000 €.
+  # Toutes les valeurs sont en USD (le moteur ne gère pas l'EUR natif).
+  # Voir doc/audit/preset_petit_capital_2000eur.md pour la justification.
+  # ------------------------------------------------------------------
+  - key: capital_0_2000_eur
+    label: "0 → 2 000 € (micro-compte)"
     min_equity: 0
+    max_equity: 2000
+    description: "Micro-compte cash (~2 000 EUR / 2 150 USD). Concentration assumée (3 lignes), ticket minimum bas, filtres selector relâchés pour ne pas vider l'univers, frais de transaction à monter manuellement à 25 bps en backtest pour refléter le coût des petits ordres."
+    values:
+      risk_account_equity: "__DETECTED_EQUITY__"
+      risk_per_trade_pct: 0.015                # 1.5 % = ~30 € risqués / trade
+      risk_max_positions: 3                    # 3 lignes ≈ 600-700 € chacune
+      risk_max_position_weight: 0.35           # 35 % par ligne (concentration assumée)
+      risk_max_sector_weight: 0.55             # 1 secteur peut héberger 2 lignes /3
+      risk_min_position_notional: 200.0        # ticket mini USD (sinon frais > alpha)
+      # Monotonie respectée : DD plus strict que les tranches supérieures
+      # (ordre attendu par tests/test_capital_preset_risk_overrides.py).
+      risk_max_drawdown_pct: 0.07
+      risk_max_daily_loss_pct: 0.025
+      risk_correlation_threshold: 0.92
+      risk_correlation_lookback_days: 40
+      risk_correlation_min_overlap: 25
+      risk_enable_kelly: false
+      risk_score_weight: 0.45
+      risk_prediction_weight: 0.55
+      execution_account_type: cash             # PDT rule désactivable car cash
+      execution_pdt_rule: "off"
+      execution_swing_only: true               # interdit toute logique day-trade
+      execution_submission_window: both
+      execution_trailing_trigger: multiple_r
+      execution_trailing_r_multiple: 1.0
+      screener_liquidity_threshold_usd: 2000000.0   # relâché vs 5M$ pour 0_5000
+      screener_min_relative_strength_index: 90.0
+      screener_historical_range_lookback_days: 252
+      screener_min_historical_range_score: 55.0
+      screener_first_pass_window_days: 252
+      selector_selection_size: 15
+      selector_sector_cap_ratio: 0.55
+      selector_liquidity_threshold: 5000000.0
+      selector_min_close: 10.0                 # min 10$ : limite l'impact des frais fixes
+      selector_max_volatility_ratio: 1.0
+      selector_min_relative_strength_index: 90.0
+      selector_min_high_52w_proximity: 0.55
+      selector_min_weekly_trend_score: 0.65
+      selector_min_atr_pct_20: 0.01
+      selector_max_atr_pct_20: 0.09            # tolère un peu plus de vol pour micro-cap
+      selector_min_market_cap: 500000000.0     # mid-cap accessibles (vs 1Md$ pour 0_5000)
+      selector_min_beta_126: 0.65
+      selector_max_spread_bps: 80.0            # spreads plus larges acceptés
+      selector_earnings_blackout_days: 2
+      selector_max_anomaly_count: 28
+      selector_require_above_ma200: true
+
+  - key: capital_0_5000
+    label: "2 001 → 5 000 $"
+    min_equity: 2000.01
     max_equity: 5000
     description: "Petit compte swing cash : lignes concentrées, ticket minimum réduit et filtres selector légèrement relâchés pour conserver quelques opportunités exécutables."
     values:
@@ -11,6 +67,9 @@ presets:
       risk_max_position_weight: 0.20
       risk_max_sector_weight: 0.40
       risk_min_position_notional: 150.0
+      # Sprint S3 / A-011 — petit compte : seuils circuit breaker plus stricts.
+      risk_max_drawdown_pct: 0.08
+      risk_max_daily_loss_pct: 0.03
       risk_correlation_threshold: 0.90
       risk_correlation_lookback_days: 40
       risk_correlation_min_overlap: 25
@@ -57,6 +116,9 @@ presets:
       risk_max_position_weight: 0.18
       risk_max_sector_weight: 0.35
       risk_min_position_notional: 200.0
+      # Sprint S3 / A-011 — tranche 5–10k : seuils encore stricts.
+      risk_max_drawdown_pct: 0.10
+      risk_max_daily_loss_pct: 0.035
       risk_correlation_threshold: 0.88
       risk_correlation_lookback_days: 45
       risk_correlation_min_overlap: 30
@@ -103,6 +165,9 @@ presets:
       risk_max_position_weight: 0.15
       risk_max_sector_weight: 0.30
       risk_min_position_notional: 300.0
+      # Sprint S3 / A-011 — tranche 10–25k : convergence vers le standard.
+      risk_max_drawdown_pct: 0.12
+      risk_max_daily_loss_pct: 0.04
       risk_correlation_threshold: 0.85
       risk_correlation_lookback_days: 50
       risk_correlation_min_overlap: 35
@@ -149,6 +214,9 @@ presets:
       risk_max_position_weight: 0.12
       risk_max_sector_weight: 0.30
       risk_min_position_notional: 400.0
+      # Sprint S3 / A-011 — tranche 25–50k : seuils swing standard.
+      risk_max_drawdown_pct: 0.14
+      risk_max_daily_loss_pct: 0.045
       risk_correlation_threshold: 0.82
       risk_correlation_lookback_days: 60
       risk_correlation_min_overlap: 40
@@ -195,6 +263,9 @@ presets:
       risk_max_position_weight: 0.10
       risk_max_sector_weight: 0.28
       risk_min_position_notional: 500.0
+      # Sprint S3 / A-011 — tranche 50–100k : seuils standards config.yaml.
+      risk_max_drawdown_pct: 0.15
+      risk_max_daily_loss_pct: 0.05
       risk_correlation_threshold: 0.80
       risk_correlation_lookback_days: 60
       risk_correlation_min_overlap: 40
@@ -219,7 +290,7 @@ presets:
       selector_max_volatility_ratio: 0.90
       selector_min_relative_strength_index: 100.0
       selector_min_high_52w_proximity: 0.75
-      selector_min_weekly_trend_score: 1.0
+      selector_min_weekly_trend_score: 0.95
       selector_min_atr_pct_20: 0.015
       selector_max_atr_pct_20: 0.06
       selector_min_market_cap: 2000000000.0
@@ -241,6 +312,9 @@ presets:
       risk_max_position_weight: 0.08
       risk_max_sector_weight: 0.25
       risk_min_position_notional: 750.0
+      # Sprint S3 / A-011 — gros compte : tolérance maximale (drawdown plus large).
+      risk_max_drawdown_pct: 0.18
+      risk_max_daily_loss_pct: 0.05
       risk_correlation_threshold: 0.78
       risk_correlation_lookback_days: 90
       risk_correlation_min_overlap: 50
@@ -265,7 +339,7 @@ presets:
       selector_max_volatility_ratio: 0.85
       selector_min_relative_strength_index: 102.0
       selector_min_high_52w_proximity: 0.78
-      selector_min_weekly_trend_score: 1.0
+      selector_min_weekly_trend_score: 0.95
       selector_min_atr_pct_20: 0.015
       selector_max_atr_pct_20: 0.055
       selector_min_market_cap: 3000000000.0
@@ -274,5 +348,3 @@ presets:
       selector_earnings_blackout_days: 4
       selector_max_anomaly_count: 18
       selector_require_above_ma200: true
-
-

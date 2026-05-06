@@ -1,0 +1,73 @@
+# ihm/help/settings.yaml (Sprint S20.3)
+overview:
+  title: "Paramètres / Santé"
+  description: "Compte, capital, alerting, presets opérateur."
+  impact: "Configuration globale du runtime IHM."
+  example: "—"
+  default: "—"
+  range: "—"
+  doc_ref: "doc/operator_handbook.md"
+
+capital_initial:
+  title: "Capital initial ($)"
+  description: "Capital de référence utilisé pour le sizing."
+  impact: "Toutes les positions futures."
+  example: "100 000 $"
+  default: 100000
+  range: "[1000, 100000000]"
+  doc_ref: "doc/operator_handbook.md#capital"
+
+mode_broker:
+  title: "Mode broker"
+  description: "Paper sandbox ou live argent réel."
+  impact: "Routage des ordres."
+  example: "paper"
+  default: "paper"
+  range: "{paper, live}"
+  doc_ref: "doc/operator_handbook.md#mode-broker"
+
+account_id:
+  title: "Identifiant de compte"
+  description: "Compte broker actif."
+  impact: "Scope des opérations."
+  example: "live-prop-01"
+  default: "default"
+  range: "enum"
+  doc_ref: "doc/multi_account.md"
+
+alerting_slack:
+  title: "Webhook Slack"
+  description: "URL webhook Slack pour alertes critiques."
+  impact: "Canal de notification opérateur."
+  example: "https://hooks.slack.com/services/…"
+  default: "(secret env)"
+  range: "URL"
+  doc_ref: "doc/alerting.md#slack"
+
+alerting_email:
+  title: "Email d'alerte"
+  description: "Destinataire des alertes critiques."
+  impact: "Canal de notification."
+  example: "ops@alpha-trade.io"
+  default: "(secret env)"
+  range: "email"
+  doc_ref: "doc/alerting.md#email"
+
+capital_preset:
+  title: "Preset capital"
+  description: "Profil capital prédéfini (config/capital_presets.yaml)."
+  impact: "Sizing + plafonds."
+  example: "preset_100k_swing"
+  default: "default"
+  range: "enum"
+  doc_ref: "doc/operator_handbook.md#presets"
+
+conviction_threshold:
+  title: "Seuil de conviction"
+  description: "Score minimal pour passer en sélection."
+  impact: "Filtre amont du selector."
+  example: "0.65"
+  default: 0.5
+  range: "[0.0, 1.0]"
+  doc_ref: "doc/conviction.md"
+

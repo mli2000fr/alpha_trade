@@ -1,0 +1,105 @@
+name: mutation_weekly
+on:
+  schedule:
+    - cron: "0 6 * * 0"  # dimanche 06h UTC
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: "Seuil score minimum (cible Phase F : 70)"
+        required: false
+        default: "70"
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # Phase F / S22.3 — exécution sur les 3 modules critiques (cible >= 70 %).
+        module: [corporate_actions, risk_management, execution_engine]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,mutation]" || (pip install -e ".[dev]" && pip install "mutmut>=2.5")
+      - name: Run mutation testing
+        run: |
+          THRESHOLD="${{ github.event.inputs.threshold || '70' }}"
+          python scripts/run_mutation_testing.py --module "${{ matrix.module }}" --threshold "$THRESHOLD"
+      - name: List survivors (best effort)
+        if: always()
+        run: |
+          python scripts/list_mutation_survivors.py --module "${{ matrix.module }}" || true
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-${{ matrix.module }}-${{ github.run_id }}
+          path: artifacts/mutation_runs
+
+  # Sprint S26.4 — agrégation + commit auto de l'historique mutation.
+  publish:
+    runs-on: ubuntu-latest
+    needs: mutation
+    if: always()
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download all mutation artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/mutation_runs/
+          pattern: mutation-*
+          merge-multiple: true
+      - name: Append weekly entry to doc/mutation_history.md
+        run: |
+          python - <<'PY'
+          from datetime import date
+          from pathlib import Path
+          import json
+
+          root = Path("artifacts/mutation_runs")
+          today = date.today().isoformat()
+          rows = []
+          for module_dir in sorted(root.glob("*")):
+              score_file = module_dir / "score.json"
+              if not score_file.exists():
+                  continue
+              try:
+                  payload = json.loads(score_file.read_text(encoding="utf-8"))
+              except Exception:
+                  continue
+              rows.append((module_dir.name, payload.get("score") or payload.get("mutation_score_pct"),
+                           payload.get("killed"), payload.get("survived")))
+
+          if not rows:
+              print("Aucun score.json publié — skip historique.")
+              raise SystemExit(0)
+
+          history = Path("doc/mutation_history.md")
+          history.parent.mkdir(exist_ok=True)
+          if not history.exists():
+              history.write_text("# Mutation history (auto)\n\n| Date | Module | Score | Killed | Survived |\n|---|---|---:|---:|---:|\n", encoding="utf-8")
+          with history.open("a", encoding="utf-8") as fh:
+              for mod, score, killed, survived in rows:
+                  fh.write(f"| {today} | {mod} | {score} | {killed} | {survived} |\n")
+          PY
+      - name: Commit history (if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add doc/mutation_history.md
+          git diff --cached --quiet || git commit -m "chore(mutation): publish weekly score [skip ci]"
+          git push || true
+

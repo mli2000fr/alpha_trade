@@ -58,6 +58,29 @@ cross-check = [
     # Phase 5.3.c — provider Yahoo Finance opt-in pour cross-check dividendes.
     "yfinance>=0.2",
 ]
+# Phase C — dépendances optionnelles (S15-S18)
+formal = [
+    "z3-solver>=4.13",
+]
+reporting = [
+    "reportlab>=4",
+]
+lineage = [
+    "neo4j>=5",
+]
+cache = [
+    "redis>=5",
+]
+async-db = [
+    "aiosqlite>=0.20",
+]
+security = [
+    "cyclonedx-bom>=4",
+    "pip-audit>=2.7",
+]
+mutation = [
+    "mutmut>=2.5",
+]
 
 # ---------------------------------------------------------------------------
 # setuptools : déclare tous les packages pour que pip install -e . fonctionne
@@ -80,7 +103,20 @@ include = [
     "corporate_actions*",
     "backtesting*",
     "ihm*",
+    # Phase C — packages institutionnels
+    "formal*",
+    "reporting*",
+    "tax*",
+    "lineage*",
 ]
+
+# ---------------------------------------------------------------------------
+# Phase C / S14 — mutation testing scope (mutmut)
+# ---------------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = "risk_management/,execution_engine/,corporate_actions/"
+runner = "pytest -x -q --no-cov"
+backup = false
 
 # ---------------------------------------------------------------------------
 # ruff — linter rapide (remplace flake8 + isort + pyupgrade)

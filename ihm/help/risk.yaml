@@ -1,0 +1,54 @@
+# ihm/help/risk.yaml (Sprint S20.3)
+risk_per_trade_pct:
+  title: "Risque par trade (% du capital)"
+  description: |
+    Pourcentage maximum du capital total perdable sur une seule
+    position si le stop-loss est touché. Détermine la taille via
+    sizing ATR : `position_size = (capital × risk%) / (entry - stop)`.
+  impact: |
+    - Module : `risk_management/position_sizer.py`
+    - Décision : taille de toute nouvelle position
+  example: "Capital 100 000 $, risk 0.5 %, entry 50, stop 48 ⇒ 250 actions."
+  default: 0.5
+  range: "[0.1, 5.0] (%)"
+  doc_ref: "doc/risk_management.md#sizing-atr"
+
+max_concurrent_positions:
+  title: "Positions concurrentes max"
+  description: "Plafonne le nombre de positions ouvertes simultanées."
+  impact: "Module : `risk_management/exposure.py`."
+  example: "10 positions max ⇒ refus de toute nouvelle entrée au-delà."
+  default: 10
+  range: "[1, 50]"
+  doc_ref: "doc/risk_management.md#exposure"
+
+max_sector_exposure:
+  title: "Exposition max par secteur (%)"
+  description: |
+    Plafond d'exposition agrégée d'un même secteur GICS L1.
+  impact: "Bloque les nouvelles entrées si dépassé."
+  example: "Plafond 25 % ⇒ pas plus d'1/4 du portefeuille en techno."
+  default: 25
+  range: "[5, 100]"
+  doc_ref: "doc/risk_management.md#sector-cap"
+
+circuit_breaker_dd_threshold_pct:
+  title: "Circuit breaker — drawdown max (%)"
+  description: |
+    Seuil de drawdown intraday au-delà duquel le circuit breaker
+    suspend les entrées et déclenche le mode flatten.
+  impact: "Module : `risk_management/circuit_breaker.py`."
+  example: "Capital 100 k$, seuil 3 % ⇒ flatten sous 97 k$."
+  default: 3.0
+  range: "[1.0, 10.0]"
+  doc_ref: "doc/risk_management.md#circuit-breaker"
+
+sizing_method:
+  title: "Méthode de sizing"
+  description: "Algorithme de calcul de la taille de position."
+  impact: "Décision sur sizing (ATR, fixed-$, % capital, Kelly fract.)"
+  example: "ATR-based recommandé pour swing trading."
+  default: "atr"
+  range: "{atr, fixed_dollar, fixed_pct, kelly_fractional}"
+  doc_ref: "doc/risk_management.md#sizing-methods"
+

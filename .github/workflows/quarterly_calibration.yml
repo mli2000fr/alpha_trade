@@ -1,0 +1,80 @@
+name: Quarterly Weights Calibration (Sprint S11 / S11.1)
+
+# Cron : 1er jour de chaque trimestre (janv/avril/juil/oct) à 07:00 UTC.
+# Lance le walk-forward backtest sentiment et alerte si dérive > 5 %.
+on:
+  schedule:
+    - cron: "0 7 1 1,4,7,10 *"
+  workflow_dispatch:
+    inputs:
+      end_date:
+        description: "Date de fin (YYYY-MM-DD). Défaut : aujourd'hui."
+        required: false
+        default: ""
+
+jobs:
+  calibration:
+    name: Quarterly sentiment-weights calibration
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    env:
+      LOGIN_DB: ${{ secrets.PARITY_DB_USER }}
+      PASSWORD_DB: ${{ secrets.PARITY_DB_PASSWORD }}
+      DB_HOST: ${{ secrets.PARITY_DB_HOST }}
+      ALPHA_TRADE_SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements-dev.txt
+
+      - name: Run quarterly calibration
+        id: calib
+        shell: bash
+        continue-on-error: true
+        run: |
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then
+            python -m scripts.run_quarterly_weights_calibration \
+              --end "${{ github.event.inputs.end_date }}"
+          else
+            python -m scripts.run_quarterly_weights_calibration
+          fi
+
+      - name: Upload calibration artifacts (rétention 730 j)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weights-calibration-${{ github.run_id }}
+          path: artifacts/weights_calibration_runs/**
+          retention-days: 730
+          if-no-files-found: warn
+
+      - name: Notify Slack on drift / failure
+        if: steps.calib.outcome == 'failure' && env.ALPHA_TRADE_SLACK_WEBHOOK != ''
+        shell: bash
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\":warning: Quarterly weights calibration drift/failure — voir https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "$ALPHA_TRADE_SLACK_WEBHOOK"
+
+      - name: Fail job if calibration exited non-zero
+        if: steps.calib.outcome == 'failure'
+        run: |
+          echo "Quarterly calibration returned non-zero exit code (drift or error)." >&2
+          exit 1
+

@@ -1,0 +1,115 @@
+name: DR drill (monthly)
+
+# Sprint S12.1 — Vérifie la procédure de restauration mensuellement.
+# Le job échoue si RTO > 1800s ou si une vérification post-restore échoue.
+
+on:
+  schedule:
+    - cron: "0 2 1 * *"   # 02:00 UTC, 1er du mois
+  workflow_dispatch:
+
+jobs:
+  dr-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: alpha_trade
+          MYSQL_USER: alpha
+          MYSQL_PASSWORD: alpha_pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -prootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      LOGIN_DB: alpha
+      PASSWORD_DB: alpha_pass
+      DB_HOST: 127.0.0.1
+      DB_NAME: alpha_trade
+      ALPHA_TRADE_AUDIT_HMAC_KEY: dr-drill-key-do-not-use-in-prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          sudo apt-get update && sudo apt-get install -y mysql-client
+
+      - name: Wait for MySQL
+        run: |
+          for i in {1..30}; do
+            mysqladmin ping -h 127.0.0.1 -ualpha -palpha_pass && break
+            sleep 2
+          done
+
+      - name: Apply schema (alembic upgrade head)
+        run: python -m alembic upgrade head
+
+      - name: Seed minimal dataset
+        run: |
+          mysql -h 127.0.0.1 -ualpha -palpha_pass alpha_trade <<'SQL'
+          INSERT INTO assets (symbol, exchange, asset_type, is_active)
+            VALUES ('AAPL','NASDAQ','equity',1),('MSFT','NASDAQ','equity',1)
+            ON DUPLICATE KEY UPDATE is_active=VALUES(is_active);
+          SQL
+
+      - name: Dump database
+        run: |
+          mkdir -p artifacts/dr_drill_runs/${{ github.run_id }}
+          mysqldump -h 127.0.0.1 -ualpha -palpha_pass \
+            --single-transaction --routines --triggers \
+            --hex-blob --default-character-set=utf8mb4 \
+            alpha_trade | gzip -9 \
+            > artifacts/dr_drill_runs/${{ github.run_id }}/dump.sql.gz
+
+      - name: Drop database
+        run: |
+          mysql -h 127.0.0.1 -uroot -prootpass -e \
+            "DROP DATABASE alpha_trade; CREATE DATABASE alpha_trade CHARACTER SET utf8mb4;"
+          mysql -h 127.0.0.1 -uroot -prootpass -e \
+            "GRANT ALL ON alpha_trade.* TO 'alpha'@'%'; FLUSH PRIVILEGES;"
+
+      - name: Restore from dump
+        run: |
+          python scripts/restore_from_backup.py \
+            --dump-path artifacts/dr_drill_runs/${{ github.run_id }}/dump.sql.gz \
+            --target-host 127.0.0.1 \
+            --target-db alpha_trade \
+            --report-out artifacts/dr_drill_runs/${{ github.run_id }}/report.json
+
+      - name: Enforce RTO budget (30 min)
+        run: |
+          python - <<'PY'
+          import json, sys
+          rep = json.loads(open('artifacts/dr_drill_runs/${{ github.run_id }}/report.json').read())
+          if rep['rto_seconds'] > 1800:
+              print(f"RTO breach: {rep['rto_seconds']}s > 1800s")
+              sys.exit(1)
+          if rep['errors']:
+              print('Errors:', rep['errors'])
+              sys.exit(1)
+          PY
+
+      - name: Upload drill report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dr-drill-${{ github.run_id }}
+          path: artifacts/dr_drill_runs/${{ github.run_id }}/
+          retention-days: 365
+

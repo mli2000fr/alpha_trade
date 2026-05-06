@@ -1,14 +1,20 @@
 database:
   host: localhost
   port: 3306
-  user: user
-  password: pass
+  # Sprint S5 / A-013 — credentials lus exclusivement depuis l'environnement
+  # (LOGIN_DB / PASSWORD_DB) par database/connection.py. Les clés ci-dessous
+  # ne sont **plus** consommées en code mais conservent le placeholder à
+  # titre documentaire pour le scanner secrets.
+  user: "${LOGIN_DB}"
+  password: "${PASSWORD_DB}"
   name: alpha_trade
 
 alpaca:
-  # Compte par défaut (rétrocompatibilité)
-  api_key: "PK..."
-  secret_key: "..."
+  # Sprint S5 / A-013 — plus aucune clé en clair acceptée à la racine.
+  # Les credentials par compte vivent exclusivement sous `accounts:` ci-dessous,
+  # via placeholders ${VAR} résolus par `service.alpaca.accounts.AccountRegistry`.
+  # (Ancien bloc `api_key: "PK..."` / `secret_key: "..."` retiré ; le scanner
+  # `core.secrets.scan_yaml_for_literal_secrets` échouerait sinon.)
 
   # Multi-comptes : liste de comptes broker Alpaca
   # Chaque compte est identifié par un 'id' unique.
@@ -52,7 +58,8 @@ market_data:
   fallback_on_failure: true
 
 eodhd:
-  enabled: false                          # Phase 1 : désactivé par défaut.
+  # NB : l'activation runtime se pilote via market_data.bars_provider.
+  # Aucun flag `enabled` ici (cf. audit S1 / A-002 : clé fantôme supprimée).
   api_token_env: EODHD_API_TOKEN          # Variable d'env contenant le token.
   exchange: US                            # NYSE + NASDAQ + AMEX consolidés.
   cache_dir: artifacts/eodhd_cache
@@ -64,3 +71,10 @@ eodhd:
     consecutive_failures: 5
     cooldown_minutes: 30
 
+
+# Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)
+conviction:
+  # Poids de fusion sentiment (somme = 1.0). Defauts historiques : 0.75 / 0.15 / 0.10.
+  quant_weight: 0.75
+  sentiment_weight: 0.15
+  macro_weight: 0.10

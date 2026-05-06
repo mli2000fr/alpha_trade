@@ -33,9 +33,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Optional, cast
 from uuid import uuid4
 
@@ -50,6 +52,43 @@ from core.run_summary import attach_live_progress
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+
+#: Répertoire des verrous d'idempotence (audit S1 / A-022).
+#: Une exécution réussie de signal_aggregator pour un trade_date donné
+#: dépose un fichier ``{trade_date}.lock`` ; un re-lancement le même jour
+#: sur le même périmètre (--all-symbols ou non) est rejeté en sortie 0
+#: avec un WARNING, sauf si --allow-rerun est passé.
+SIGNAL_AGGREGATOR_LOCK_DIR_ENV = "SIGNAL_AGGREGATOR_LOCK_DIR"
+SIGNAL_AGGREGATOR_LOCK_DEFAULT = Path("artifacts") / "signal_aggregator_runs"
+
+
+def _resolve_lock_dir() -> Path:
+    raw = os.environ.get(SIGNAL_AGGREGATOR_LOCK_DIR_ENV)
+    return Path(raw) if raw else SIGNAL_AGGREGATOR_LOCK_DEFAULT
+
+
+def _lock_path(trade_date: date, all_symbols: bool) -> Path:
+    scope = "all" if all_symbols else "candidates"
+    return _resolve_lock_dir() / f"{trade_date.isoformat()}_{scope}.lock"
+
+
+def _is_already_run(trade_date: date, all_symbols: bool) -> bool:
+    return _lock_path(trade_date, all_symbols).exists()
+
+
+def _mark_run_done(trade_date: date, all_symbols: bool) -> None:
+    lock = _lock_path(trade_date, all_symbols)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(
+        json.dumps(
+            {
+                "trade_date": trade_date.isoformat(),
+                "all_symbols": all_symbols,
+                "completed_at": _utc_now_naive().isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _utc_now_naive() -> datetime:
@@ -178,6 +217,41 @@ class SentimentBoostConfig:
             raise ValueError(f"{name} doit être trié et sans doublons.")
         if all(float(weight) <= 0 for _, weight in weights):
             raise ValueError(f"{name} doit contenir au moins un poids positif.")
+
+    @classmethod
+    def from_global_config(
+        cls,
+        config: dict | None = None,
+        **overrides,
+    ) -> "SentimentBoostConfig":
+        """Sprint S8 — construit la config en lisant la section ``conviction:``.
+
+        Si ``config`` est ``None``, on charge ``config.yaml`` via
+        :func:`common.config_loader.load_config`. Les ``overrides`` (kwargs)
+        priment sur les valeurs YAML, qui priment sur les défauts dataclass.
+
+        Permet la calibration formelle des poids 75/15/10 (cf. plan §S8) sans
+        toucher au code applicatif.
+        """
+        if config is None:
+            try:
+                from common.config_loader import load_config
+                config = load_config() or {}
+            except Exception:
+                config = {}
+        conviction_cfg = (config.get("conviction") or {}) if isinstance(config, dict) else {}
+        kwargs: dict = {}
+        if "quant_weight" in conviction_cfg:
+            kwargs["quant_weight"] = float(conviction_cfg["quant_weight"])
+        if "sentiment_weight" in conviction_cfg:
+            kwargs["sentiment_weight"] = float(conviction_cfg["sentiment_weight"])
+        if "macro_weight" in conviction_cfg:
+            kwargs["macro_sector_weight"] = float(conviction_cfg["macro_weight"])
+        # macro_sector_weight prime sur macro_weight si fourni explicitement
+        if "macro_sector_weight" in conviction_cfg:
+            kwargs["macro_sector_weight"] = float(conviction_cfg["macro_sector_weight"])
+        kwargs.update(overrides)
+        return cls(**kwargs)
 
     def to_fusion_weights(self) -> SentimentFusionWeights:
         """Convertit en :class:`core.conviction.SentimentFusionWeights`."""
@@ -776,9 +850,35 @@ class SentimentSignalAggregator:
                  - sector_impact_agg       : impact macro sectoriel moyen
                  - final_score             : score quantitatif AlphaScanner (inchangé)
                  - final_score_sentiment   : score fusionné quant + sentiment (nouveau champ)
+
+        Sprint S8 — feature flag ``ALPHA_TRADE_DISABLE_SENTIMENT`` (CLI
+        ``--disable-sentiment``) : si actif, on retourne le DataFrame avec
+        ``final_score_sentiment = final_score`` (skip complet de la fusion,
+        utile pour mesurer l'apport empirique du sentiment dans
+        ``backtesting/attribution.py``).
         """
         if scores_df.empty:
             return scores_df.copy()
+
+        from core.feature_flags import is_sentiment_disabled
+
+        if is_sentiment_disabled():
+            LOGGER.warning(
+                "[signal_aggregator] feature flag ALPHA_TRADE_DISABLE_SENTIMENT actif → fusion sentiment SKIPPÉE"
+            )
+            disabled = scores_df.copy()
+            if "symbol" in disabled.columns:
+                disabled["symbol"] = [self._normalize_identifier(value) for value in disabled["symbol"].tolist()]
+                disabled = disabled[disabled["symbol"].notna()].copy()
+            quant = pd.Series(
+                pd.to_numeric(disabled.get("final_score"), errors="coerce"),
+                index=disabled.index,
+                dtype=float,
+            ).fillna(0.0).clip(0.0, 1.0)
+            disabled["final_score"] = quant
+            disabled["final_score_sentiment"] = quant
+            disabled["sentiment_disabled"] = True
+            return disabled
 
         required = {"symbol", "final_score"}
         missing = required - set(scores_df.columns)
@@ -1322,6 +1422,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--allow-rerun",
+        action="store_true",
+        default=False,
+        help=(
+            "Autorise un re-lancement pour un trade_date déjà traité (audit "
+            "S1 / A-022). Par défaut, le module refuse une seconde "
+            "application le même jour pour éviter une double fusion sentiment."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -1353,6 +1463,27 @@ def main(argv: list[str] | None = None) -> int:
         "=== SentimentSignalAggregator standalone | trade_date=%s all_symbols=%s ===",
         ref_date, args.all_symbols,
     )
+
+    # Garde-fou idempotence (audit S1 / A-022).
+    if _is_already_run(ref_date, bool(args.all_symbols)) and not args.allow_rerun:
+        LOGGER.warning(
+            "signal_aggregator deja execute pour trade_date=%s scope=%s "
+            "(verrou=%s). Re-lancement refuse pour eviter une double fusion "
+            "sentiment. Utiliser --allow-rerun pour forcer.",
+            ref_date,
+            "all" if args.all_symbols else "candidates",
+            _lock_path(ref_date, bool(args.all_symbols)),
+        )
+        _emit_run_summary(
+            {
+                "module": "signal_aggregator",
+                "trade_date": ref_date.isoformat(),
+                "all_symbols": bool(args.all_symbols),
+                "status": "skipped",
+                "skipped_reason": "already_applied_today",
+            }
+        )
+        return 0
 
     # Validation des poids
     quant_weight = round(1.0 - args.sentiment_weight - args.macro_weight, 6)
@@ -1480,6 +1611,7 @@ def main(argv: list[str] | None = None) -> int:
     LOGGER.info(
         "=== Termine | %d symboles mis a jour dans stock_scores ===", saved
     )
+    _mark_run_done(ref_date, bool(args.all_symbols))
     return 0
 
 

@@ -18,9 +18,11 @@ from ihm.services.backtesting_runner import (
     BackfillScoresHistoryOptions,
     BacktestRunOptions,
     BacktestingCommandKind,
+    CalibrateSentimentWeightsOptions,
     DiagnoseScreenerOptions,
     PROJECT_ROOT,
     RecommendScreenerOptions,
+    WalkForwardSentimentOptions,
     build_backtesting_command,
     build_subprocess_env,
     format_command_for_display,
@@ -70,6 +72,8 @@ class _ManagedRun:
     timed_out: bool = False
     stdout_tail: list[str] | None = None
     stderr_tail: list[str] | None = None
+    # Sprint S2 / A-014 — verrou pipeline associé au run, libéré à la fin.
+    pipeline_lock: object | None = None
 
     def __post_init__(self) -> None:
         if self.stdout_tail is None:
@@ -234,6 +238,14 @@ def _finalize_if_needed(managed: _ManagedRun) -> BacktestingRunRecord:
             screener_artifact_summary=build_screener_artifact_summary(managed.record.screener_artifacts_dir),
         )
     _persist_record(managed.record)
+    # Sprint S2 / A-014 — libération du verrou cross-process en fin de run.
+    if managed.pipeline_lock is not None:
+        try:
+            from ihm.services.pipeline_lock import release_lock as _release_lock
+
+            _release_lock(managed.pipeline_lock)  # type: ignore[arg-type]
+        finally:
+            managed.pipeline_lock = None
     return managed.record
 
 
@@ -268,7 +280,12 @@ def list_active_backtesting_runs_by_kind(run_kind: BacktestingCommandKind) -> li
 def start_backtesting_run(
     run_kind: BacktestingCommandKind,
     run_label: str,
-    options: BacktestRunOptions | BackfillScoresHistoryOptions | DiagnoseScreenerOptions | RecommendScreenerOptions,
+    options: BacktestRunOptions
+    | BackfillScoresHistoryOptions
+    | DiagnoseScreenerOptions
+    | RecommendScreenerOptions
+    | CalibrateSentimentWeightsOptions
+    | WalkForwardSentimentOptions,
     *,
     db_config: dict[str, str | None] | None = None,
     timeout_seconds: int | None = None,
@@ -281,9 +298,23 @@ def start_backtesting_run(
         raise RuntimeError(
             f"Un run `{run_kind}` est déjà en cours ({active_run_id}). Attendez sa fin ou arrêtez-le avant de relancer."
         )
-    env = build_subprocess_env(db_config=db_config)
+
+    # Sprint S2 / A-014 — exclusion mutuelle avec les workflows pipeline.
+    from ihm.services.pipeline_lock import (
+        PipelineLockBusy,
+        acquire_lock as _acquire_lock,
+    )
 
     run_id = f"{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+    try:
+        backtest_lock = _acquire_lock("backtesting", owner=f"backtesting:{run_kind}", run_id=run_id)
+    except PipelineLockBusy as exc:
+        raise RuntimeError(
+            f"Verrou pipeline actif : {exc}. "
+            "Attendez la fin du workflow pipeline avant de lancer un backtesting."
+        ) from exc
+    env = build_subprocess_env(db_config=db_config)
+
     run_dir = _run_dir_for(run_kind, run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     artifacts_dir = run_dir / "artifacts"
@@ -341,6 +372,7 @@ def start_backtesting_run(
         stdout_thread=stdout_thread,
         stderr_thread=stderr_thread,
         started_perf=time.perf_counter(),
+        pipeline_lock=backtest_lock,
     )
 
     with _REGISTRY_LOCK:

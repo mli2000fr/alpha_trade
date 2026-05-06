@@ -4,9 +4,52 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 import ihm.services.process_registry as registry
+from ihm.services import pipeline_lock
 from ihm.services.pipeline_runner import PipelineLaunchOptions, PipelineStepDefinition
 
+
+
+# ---------------------------------------------------------------------------
+# Sprint S26.5 / Phase F-bis — fixture autouse de cleanup pour résoudre la
+# flakiness de ``test_pipeline_workflow_stops_on_failed_step`` : le verrou
+# fichier ``artifacts/ihm_pipeline_runs/.locks/<scope>.lock`` (cross-process,
+# cf. ``ihm.services.pipeline_lock``) pouvait fuir entre tests si un test
+# précédent s'arrêtait sur une assertion avant son propre teardown explicite.
+#
+# Cette fixture :
+#   1. Redirige les locks vers un dossier ``tmp_path`` isolé par test
+#      (via ``set_locks_dir_for_tests``) ⇒ aucun héritage entre tests.
+#   2. Clear les caches ``_ACTIVE_RUNS`` / ``_ACTIVE_WORKFLOWS`` du registry.
+#   3. En teardown, stop tout run vivant et purge le dossier de locks pour
+#      éviter qu'une assertion précoce laisse un lock fichier orphelin.
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _reset_process_registry_state(tmp_path):
+    """Garantit l'état initial du registry + lock dir avant ET après chaque test."""
+    locks_dir = tmp_path / ".locks"
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    pipeline_lock.set_locks_dir_for_tests(locks_dir)
+    registry._ACTIVE_RUNS.clear()
+    registry._ACTIVE_WORKFLOWS.clear()
+    yield
+    # Stop tout run/workflow encore vivant pour libérer threads/processus.
+    for run_id in list(registry._ACTIVE_RUNS.keys()):
+        try:
+            registry.stop_pipeline_run(run_id)
+        except Exception:
+            pass
+    registry._ACTIVE_RUNS.clear()
+    registry._ACTIVE_WORKFLOWS.clear()
+    # Purge fichiers .lock résiduels (ceintures + bretelles).
+    for lock_file in locks_dir.glob("*.lock"):
+        try:
+            lock_file.unlink()
+        except OSError:
+            pass
+    pipeline_lock.set_locks_dir_for_tests(None)
 
 
 def _configure_tmp_storage(monkeypatch, tmp_path: Path) -> None:

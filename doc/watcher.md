@@ -73,13 +73,18 @@ Il faut distinguer deux choses :
 
 #### Ce qui protège d'abord les ordres
 
-L'étape `12 Execution` soumet déjà les ordres d'entrée puis leurs enfants broker-side :
+L'étape `12 Execution` soumet l'ordre d'entrée puis, **dès qu'il est rempli**, ses enfants broker-side :
 
 - un **take-profit** ;
 - un **stop initial broker-side** dans le cas nominal ;
 - et, en cas d'échec sur ce stop initial, un **trailing fallback** peut être soumis directement par `Execution`.
 
-Autrement dit : la première couche de protection ne dépend pas du watcher, elle dépend du moteur `Execution` et des ordres enfants envoyés au broker.
+> ⚠️ **Cas marché fermé (overnight cash swing)** — Si l'entrée est soumise hors RTH (profil `overnight_cash_swing` utilisé par les presets `paper`/`live`), elle ne sera remplie qu'à la prochaine ouverture. Historiquement, les enfants TP/SL n'étaient alors jamais armés (gap S26). Depuis le sprint S26, deux **filets de sécurité** comblent ce trou :
+>
+> 1. **Phase 7b dans `executor.py`** — après `BrokerStateSynchronizer.sync`, l'executor recherche les parents `FILLED` sans enfants ouverts (`db_io.load_unprotected_filled_parents`) et arme TP/SL via `_submit_children`. Métriques : `children_armed_post_sync`, `children_armed_post_sync_failed`.
+> 2. **Filet watcher (`_arm_missing_protections`)** — à chaque tick, le watcher rejoue la même requête et arme TP/SL pour les positions oubliées (entrée remplie après terminaison de l'executor). Métriques : `armed_missing_protections`, `armed_missing_protections_failed`. Événement audit : `CHILDREN_SUBMITTED` avec `trigger="watcher_safety_net"`.
+
+Autrement dit : la première couche de protection est portée par `Execution`, mais **le watcher en est désormais le filet de rattrapage obligatoire** dès que l'entrée est soumise hors marché.
 
 #### Ce que fait ensuite le watcher
 
@@ -89,24 +94,28 @@ Le watcher prend le relais **après** `Execution` pour :
 - vérifier si le trigger métier de transition est atteint ;
 - annuler le stop initial ;
 - promouvoir ce stop vers un **trailing stop dynamique** ;
+- **armer TP/SL manquants** pour les parents `FILLED` sans enfants (filet de sécurité S26) ;
 - journaliser et superviser cet état dans l'IHM / Windows.
 
-Le watcher ne sert donc pas à "faire partir" l'ordre d'entrée. Il sert à **gérer intelligemment la vie de la protection après exécution**.
+Le watcher ne sert donc pas à "faire partir" l'ordre d'entrée. Il sert à **gérer intelligemment la vie de la protection après exécution** et à **garantir que toute position remplie a bien TP + SL**.
 
 ### 2.3 Si je ne lance pas le watcher, les ordres seront-ils exécutés ?
 
-**Oui.**
+**Oui pour les entrées, mais attention pour les protections.**
 
-Les ordres d'entrée et leurs protections initiales sont soumis par `Execution`, pas par le watcher.
+Les ordres d'entrée sont soumis par `Execution`, pas par le watcher. Mais les enfants TP/SL **ne sont armés que lorsque l'entrée est remplie** :
+
+- **Marché ouvert pendant le run** : `Execution` poll les fills puis arme TP/SL immédiatement → watcher non requis pour ce cas.
+- **Marché fermé (overnight cash swing)** : l'entrée est remplie à la prochaine ouverture, **après** la terminaison de l'executor. Sans watcher, **TP/SL ne seraient jamais armés** côté broker. Le filet S26 de l'executor (Phase 7b) ne couvre que la fenêtre où le marché ouvre pendant le run lui-même.
 
 Donc, si `Execution` réussit :
 
 - l'ordre principal peut être exécuté ;
-- le take-profit peut être armé ;
-- le stop initial broker-side peut être armé ;
+- le take-profit peut être armé (Phase 7b ou watcher) ;
+- le stop initial broker-side peut être armé (Phase 7b ou watcher) ;
 - un trailing fallback peut parfois exister dès `Execution` si le stop initial n'a pas pu être soumis.
 
-Le watcher n'est donc **pas requis pour que les ordres d'entrée soient exécutés**.
+Le watcher est donc **fortement recommandé en exploitation overnight** : c'est lui qui garantit l'armement TP/SL après ouverture.
 
 ### 2.4 Quelle conséquence si je ne lance pas le watcher ?
 
@@ -142,7 +151,8 @@ En résumé :
 | Cas | Sans watcher ? | Commentaire |
 |---|---|---|
 | Achat exécuté | **Oui** | Si `Execution` a bien soumis l'ordre d'entrée. |
-| Stop initial exécuté | **Oui** | S'il a bien été posé broker-side par `Execution`. |
+| Stop initial / TP armés (marché ouvert pendant le run) | **Oui** | `Execution` poll fills + Phase 7b. |
+| Stop initial / TP armés (entrée hors RTH, fill à l'ouverture suivante) | **Non** | Sans watcher, TP/SL ne sont jamais armés (gap S26). |
 | Trailing dynamique automatique | **Non** | Cette promotion post-exécution dépend du watcher. |
 
 ---

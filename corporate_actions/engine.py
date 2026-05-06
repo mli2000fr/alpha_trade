@@ -31,11 +31,28 @@ class CorporateActionEngine:
     2. apply() — Appliquer les événements pending sur les positions, de manière
                  idempotente et transactionnelle, avec audit trail complet.
 
-    Stratégie données de marché :
-        Les barres OHLCV sont ingérées avec Alpaca adjustment="all".
-        Les prix historiques sont DÉJÀ ajustés pour splits et dividendes.
-        Ce module NE TOUCHE PAS aux tables stock_bars / stock_bars_daily.
-        Il gère uniquement la comptabilité portefeuille (qty, cost basis, cash).
+    Stratégie données de marché (convention canonique projet) :
+        Les barres OHLCV (`stock_bars`, `stock_bars_daily`) sont ingérées
+        avec ``data_adjustment = 'split'`` quel que soit le provider primaire
+        (Alpaca ``adjustment="split"`` ou EODHD reconstruction split-only —
+        cf. ``dataIntegrityEngine/import_alpaca_bar.py:DATA_ADJUSTMENT`` et
+        ``service/eodhd/adapters.py:DATA_ADJUSTMENT_SPLIT``). Cette convention
+        est matérialisée par les contraintes SQL ``chk_bars_adj`` /
+        ``chk_daily_adj`` (cf. ``doc/database.md`` §9).
+
+        Conséquence : les **splits** sont déjà neutralisés dans les prix.
+        Les **dividendes** ne sont PAS injectés dans les prix ; ils sont
+        comptabilisés séparément par ce module via le ledger
+        ``portfolio_cash_ledger``. La performance totale d'un portefeuille
+        s'obtient donc par :
+
+            MTM(positions, stock_bars_daily.close)
+              + cumulative(portfolio_cash_ledger)
+
+        Ce module NE TOUCHE PAS aux tables ``stock_bars`` /
+        ``stock_bars_daily`` (les splits sont déjà appliqués upstream). Il
+        gère uniquement la comptabilité portefeuille : qty (splits), cost
+        basis (splits), cash (dividendes).
     """
 
     def __init__(

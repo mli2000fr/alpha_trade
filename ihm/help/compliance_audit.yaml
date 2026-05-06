@@ -1,0 +1,117 @@
+# ihm/help/compliance_audit.yaml (Sprint S19/S24)
+overview:
+  title: "Compliance & Audit"
+  description: |
+    Centralise les indicateurs de conformité : intégrité de la chaîne
+    HMAC, dernier DR drill, statut CVE, couverture branches et score
+    mutation.
+  impact: |
+    - Sources : `service/audit_chain.py`, `artifacts/*`, CI workflows
+    - Décision impactée : Go / No-Go opérationnel
+  example: "Vue tableau de bord lue à chaque astreinte."
+  default: "—"
+  range: "—"
+  doc_ref: "doc/compliance_audit.md"
+
+hmac_chain_status:
+  title: "Statut chaîne HMAC"
+  description: "Dernier sceau vérifié OK / KO."
+  impact: "Bloque les exports auditables si KO."
+  example: "OK depuis 47 j."
+  default: "OK"
+  range: "{OK, KO}"
+  doc_ref: "doc/audit_chain.md"
+
+dr_drill_last:
+  title: "Dernier DR drill"
+  description: |
+    Date et résultat du dernier exercice de restauration mensuel.
+  impact: "Mesure RPO/RTO ; hard-fail si > 35 jours."
+  example: "OK le J-7 (RTO 28 min)."
+  default: "—"
+  range: "{OK, KO, jamais}"
+  doc_ref: "doc/disaster_recovery.md"
+
+cve_open:
+  title: "CVE critiques ouvertes"
+  description: |
+    Nombre de CVE critiques non patchées dans le SBOM courant.
+    Politique : 0 CVE critique > 24 h.
+  impact: "Bloque les déploiements production."
+  example: "0 CVE critique."
+  default: "0"
+  range: ">= 0"
+  doc_ref: "doc/sbom.md"
+
+coverage_branches:
+  title: "Couverture branches (%)"
+  description: "Couverture mesurée par `pytest --cov-branch`."
+  impact: "Gate CI bloquant à 90 % global / 95 % critique."
+  example: "92.4 %"
+  default: "60"
+  range: "[0, 100]"
+  doc_ref: "doc/test_strategy.md#coverage"
+
+mutation_score:
+  title: "Score mutation (%)"
+  description: "Mutation testing (mutmut/cosmic-ray)."
+  impact: "Gate CI bloquant à 70 % sur 3 modules critiques."
+  example: "73.1 %"
+  default: "50"
+  range: "[0, 100]"
+  doc_ref: "doc/test_strategy.md#mutation"
+
+export_pdf:
+  title: "Export PDF auditeur"
+  description: |
+    Active la génération d'un PDF synthétique destiné à un auditeur
+    externe (livraison S25.2).
+  impact: "Sortie : fichier PDF horodaté + signé HMAC."
+  example: "compliance_audit_2026-05-06.pdf"
+  default: "false"
+  range: "{true, false}"
+  doc_ref: "doc/external_audit_checklist.md"
+
+tlaps_proofs:
+  title: "Preuves TLAPS"
+  description: |
+    Nombre de spécifications TLA+ prouvées par TLAPS (ou model-checkées
+    par TLC en fallback). Cible Phase G : 3/3 OK.
+  impact: "Validation 10/10 nécessite 3/3 (cf. plan §7 condition 4-bis)."
+  example: "3/3"
+  default: "0/3"
+  range: "[0, 3]"
+  doc_ref: "doc/tlaps_proofs.md"
+
+fuzz_diff_rate:
+  title: "Taux divergence fuzz"
+  description: |
+    Pourcentage de scénarios de fuzzing différentiel divergents entre
+    backtest replay et live execution. Cible : 0 %.
+  impact: "Toute divergence > tolérance déclenche un blocage prod."
+  example: "0.0000"
+  default: "—"
+  range: "[0.0, 1.0]"
+  doc_ref: "doc/fuzz_diff.md"
+
+sandbox_streak:
+  title: "Streak sandbox verte"
+  description: "Nombre de runs sandbox nightly success consécutifs."
+  impact: "Validation 10/10 nécessite ≥ 30 j (condition 6)."
+  example: "30"
+  default: "0"
+  range: "[0, 30]"
+  doc_ref: "doc/sandbox_health_runbook.md"
+
+snapshot_download:
+  title: "Snapshot auditeur (JSON)"
+  description: |
+    Télécharge un snapshot agrégé de tous les indicateurs de conformité
+    (HMAC + DR + CVE + Cov + Mut + TLAPS + Fuzz + Sandbox) prêt à
+    transmettre à un auditeur externe.
+  impact: "Trace horodatée — à signer HMAC pour intégrité."
+  example: "compliance_snapshot_2026-05-06.json"
+  default: "—"
+  range: "—"
+  doc_ref: "doc/external_audit_checklist.md"
+

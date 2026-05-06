@@ -535,6 +535,17 @@ class CorporateActionRepository:
                 run_id,
                 exc_info=True,
             )
+        # Sprint S12.2 — chaîne d'audit HMAC SOX-like (best-effort).
+        try:
+            from database.audit_chain import AuditChainRepository
+
+            AuditChainRepository(self.engine).append(
+                "corporate_action_runs",
+                run_id,
+                {k: v for k, v in params.items() if k != "summary_json"},
+            )
+        except Exception:  # noqa: BLE001
+            LOGGER.debug("audit_chain append (CA) indisponible run_id=%s", run_id, exc_info=True)
 
     # ------------------------------------------------------------------
     # Phase 5.3.c — Cross-check Yahoo : chargement events dividendes

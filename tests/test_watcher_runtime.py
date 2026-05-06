@@ -27,6 +27,24 @@ def test_build_watcher_command_supports_once_and_service_modes() -> None:
     assert "90.0" in service_command
 
 
+def test_build_watcher_command_propagates_tp_and_trailing_configuration() -> None:
+    command = watcher_runtime.build_watcher_command(
+        mode="once",
+        account_id="acct-1",
+        profit_taker_pct=0.065,
+        trailing_stop_pct=0.04,
+        trailing_activation_trigger="profit_pct",
+        trailing_activation_profit_pct=0.025,
+    )
+
+    assert "--profit-taker-pct" in command
+    assert command[command.index("--profit-taker-pct") + 1] == "0.065"
+    assert "--trailing-stop-pct" in command
+    assert command[command.index("--trailing-stop-pct") + 1] == "0.04"
+    assert "--trailing-activation-trigger" in command
+    assert command[command.index("--trailing-activation-trigger") + 1] == "profit_pct"
+
+
 def test_launch_watcher_once_uses_managed_run(monkeypatch) -> None:
     captured = {}
 

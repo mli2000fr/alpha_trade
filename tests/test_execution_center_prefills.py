@@ -109,8 +109,8 @@ def test_apply_execution_prefills_sets_risk_equity_from_broker_equity_on_account
     assert session_state["pipeline_risk_account_equity"] == 2_000.0
     assert session_state[execution_center.DETECTED_ACCOUNT_TYPE_KEY] == "cash"
     assert session_state[execution_center.DETECTED_PDT_RULE_KEY] == "off"
-    assert session_state[execution_center.CAPITAL_PRESET_KEY] == "capital_0_5000"
-    assert session_state[execution_center.DETECTED_CAPITAL_PRESET_KEY] == "capital_0_5000"
+    assert session_state[execution_center.CAPITAL_PRESET_KEY] == "capital_0_2000_eur"
+    assert session_state[execution_center.DETECTED_CAPITAL_PRESET_KEY] == "capital_0_2000_eur"
 
 
 def test_apply_execution_prefills_preserves_manual_risk_equity_for_same_account(monkeypatch) -> None:

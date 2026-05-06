@@ -7,6 +7,7 @@ import streamlit as st
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
+from ihm.components.ops_command_panel import render_ops_command_panel
 from ihm.components.run_summary import render_persistent_business_summary
 from ihm.components.status_badges import heartbeat_badge, run_status_badge
 from ihm.components.tables import show_dataframe
@@ -73,6 +74,50 @@ def render() -> None:
         return
 
     account_id = st.session_state.get("selected_account_id")
+
+    # --- Kill switch (Sprint S26 — gap P1) ---
+    # Toujours accessible, MEME si aucun run d'exécution n'existe encore.
+    with st.expander("🛑 Kill switch — annuler tous les ordres ouverts", expanded=False):
+        st.warning(
+            "Cette action **annule immédiatement tous les ordres OPEN** du compte sélectionné "
+            "via `python -m execution_engine cancel-all`. À utiliser uniquement en cas d'urgence."
+        )
+        kill_col1, kill_col2 = st.columns([1, 1])
+        with kill_col1:
+            kill_broker_mode = st.selectbox(
+                "Broker mode",
+                options=["paper", "live"],
+                index=0,
+                key="execution_kill_switch_broker_mode",
+                help="`paper` = compte simulation Alpaca, `live` = argent réel.",
+            )
+        with kill_col2:
+            kill_dry_run = st.checkbox(
+                "Dry-run (lister sans annuler)",
+                value=True,
+                key="execution_kill_switch_dry_run",
+            )
+        kill_reason = st.text_input(
+            "Raison (consignée dans `execution_kill_switch_runs.reason`)",
+            value="manual kill switch from IHM",
+            key="execution_kill_switch_reason",
+        )
+        if not account_id:
+            st.error("Aucun compte sélectionné dans la sidebar — impossible de lancer le kill switch.")
+        else:
+            confirm_phrase = "CONFIRMER" if kill_broker_mode == "live" and not kill_dry_run else None
+            render_ops_command_panel(
+                "execution_kill_switch",
+                account_id=str(account_id),
+                confirm_phrase=confirm_phrase,
+                command_kwargs={
+                    "broker_mode": kill_broker_mode,
+                    "confirm_account": str(account_id),
+                    "reason": kill_reason,
+                    "dry_run": kill_dry_run,
+                },
+            )
+
     runs = get_execution_runs(account_id=account_id)
     if runs.empty:
         render_query_diagnostic("Aucun run d'exécution trouvé.")

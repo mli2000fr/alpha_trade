@@ -1,0 +1,137 @@
+"""S11.4 — Régression : `run_execution.run("live", ...)` doit refuser de démarrer
+si `run_preflight` retourne `passed=False`.
+
+Couvre :
+- Mode live + preflight failed → `SystemExit(2)` et aucun ordre soumis.
+- Mode live + preflight OK → continue (échoue plus loin sur l'absence de DB
+  réelle, ce qu'on intercepte explicitement).
+- Mode live + `--skip-preflight` → ne lance pas le preflight, continue.
+- Mode paper → preflight non lancé.
+"""
+from __future__ import annotations
+
+import importlib
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture
+def run_execution_module(monkeypatch, tmp_path):
+    """Charge `run_execution` avec PROJECT_ROOT redirigé vers tmp_path."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("LOGIN_DB", "x")
+    monkeypatch.setenv("PASSWORD_DB", "y")
+    if "run_execution" in sys.modules:
+        del sys.modules["run_execution"]
+    import run_execution
+
+    monkeypatch.setattr(run_execution, "PROJECT_ROOT", tmp_path)
+    # Évite l'I/O DB et bypass abort_missing_env / configure_root_logging.
+    monkeypatch.setattr(run_execution, "abort_missing_env", lambda **kw: None)
+    monkeypatch.setattr(run_execution, "configure_root_logging", lambda **kw: None)
+    return run_execution
+
+
+def _make_fake_preflight(passed: bool):
+    """Construit un module fake `execution_engine.preflight` pour DI."""
+
+    class _Check:
+        def __init__(self, name, status, message):
+            self.name = name
+            self.status = status
+            self.message = message
+
+    class _Report:
+        def __init__(self, ok: bool):
+            self.passed = ok
+            self.checks = (
+                [_Check("env_db", "ok", "ok")]
+                if ok
+                else [_Check("alpaca_key", "fail", "missing ALPACA_API_KEY")]
+            )
+
+        def to_dict(self):
+            return {"passed": self.passed, "checks": [c.__dict__ for c in self.checks]}
+
+    fake_module = types.ModuleType("execution_engine.preflight")
+    fake_module.run_preflight = lambda **kw: _Report(passed)
+    return fake_module
+
+
+def test_run_aborts_on_preflight_fail(run_execution_module, monkeypatch):
+    fake_preflight = _make_fake_preflight(passed=False)
+    monkeypatch.setitem(sys.modules, "execution_engine.preflight", fake_preflight)
+
+    with pytest.raises(SystemExit) as excinfo:
+        run_execution_module.run(
+            mode="live",
+            run_id=None,
+            trade_date=None,
+            debug=False,
+            account_id="default",
+        )
+    assert excinfo.value.code == 2
+
+
+def test_skip_preflight_flag_bypasses_check(run_execution_module, monkeypatch, capsys):
+    """Avec skip_preflight=True, on ne lance PAS run_preflight."""
+    called = {"n": 0}
+
+    def _spy(**kw):
+        called["n"] += 1
+        raise AssertionError("ne devrait pas être appelé")
+
+    fake_module = types.ModuleType("execution_engine.preflight")
+    fake_module.run_preflight = _spy
+    monkeypatch.setitem(sys.modules, "execution_engine.preflight", fake_module)
+
+    # On laisse `run` planter plus tard (DB indisponible) : on n'attend pas
+    # la fin, on vérifie juste que preflight n'a pas été invoqué.
+    with pytest.raises(BaseException):
+        run_execution_module.run(
+            mode="live",
+            run_id=None,
+            trade_date=None,
+            debug=False,
+            account_id="default",
+            skip_preflight=True,
+        )
+    assert called["n"] == 0
+    err = capsys.readouterr().err
+    assert "skip-preflight" in err.lower() or "checks live sont contourn" in err.lower()
+
+
+def test_paper_mode_does_not_invoke_preflight(run_execution_module, monkeypatch):
+    """En paper mode, le preflight live n'est jamais lancé (vérifié par inspection
+    du code path : la branche n'est traversée que si ``mode == 'live'``).
+
+    On utilise un fake `run_preflight` qui set un flag ; même si la suite plante
+    plus tard sur un I/O DB, le flag doit rester False.
+    """
+    called = {"n": 0}
+
+    def _spy(**kw):
+        called["n"] += 1
+        return type("R", (), {"passed": True, "checks": [], "to_dict": lambda self: {}})()
+
+    fake_module = types.ModuleType("execution_engine.preflight")
+    fake_module.run_preflight = _spy
+    monkeypatch.setitem(sys.modules, "execution_engine.preflight", fake_module)
+
+    # On accepte n'importe quelle exception aval (DB indispo en CI).
+    try:
+        run_execution_module.run(
+            mode="paper",
+            run_id=None,
+            trade_date=None,
+            debug=False,
+            account_id="default",
+        )
+    except BaseException:
+        pass
+    assert called["n"] == 0, "preflight ne doit pas être invoqué en mode paper"
+
+

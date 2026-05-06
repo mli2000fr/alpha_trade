@@ -1,0 +1,32 @@
+name: security_scan
+on:
+  schedule:
+    - cron: "17 4 * * *"  # quotidien 04:17 UTC
+  workflow_dispatch:
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,security]" || pip install -e ".[dev]"
+          pip install cyclonedx-bom pip-audit
+      - name: Generate SBOM
+        run: python scripts/generate_sbom.py
+      - name: Scan CVEs
+        run: python scripts/scan_cves.py --fail-on critical
+      - name: Check no TODO/FIXME/XXX in app code
+        run: python scripts/check_no_todo.py
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-${{ github.run_id }}
+          path: artifacts/sbom artifacts/cve
+

@@ -596,8 +596,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Phase 4 EODHD : provider switch symétrique.
     provider = _resolve_bars_provider()
     if provider == "eodhd":
-        LOGGER.info(
-            "import_alpaca_bar no-op | bars_provider=%s (Phase 4 plan_eodhd.md §5.6)",
+        # Sprint S2 / A-003 : no-op silencieux supprimé. On loggue désormais
+        # un WARNING explicite et on enrichit le run_summary d'une clé
+        # ``warning`` pour que l'IHM/CI puissent détecter l'absence d'import.
+        LOGGER.warning(
+            "import_alpaca_bar no-op silencieux supprime | "
+            "bars_provider=%s skipped_reason=bars_provider!=alpaca "
+            "(Phase 4 plan_eodhd.md §5.6 ; Sprint S2 A-003)",
             provider,
         )
         noop_summary = {
@@ -605,7 +610,12 @@ def main(argv: Optional[list[str]] = None) -> int:
             "timeframe": TimeFrame.ONE_DAY.db_value,
             "provider": "alpaca",
             "mode": "noop",
-            "skipped_reason": f"bars_provider={provider}",
+            "warning": "import_alpaca_bar_skipped_due_to_provider",
+            # Sprint S2 / A-003 : valeur canonique attendue par les tests audit
+            # (cf. prompt/tod/03_anomalies_register.md). On expose aussi le
+            # provider effectif pour le diagnostic.
+            "skipped_reason": "wrong_provider",
+            "bars_provider_active": provider,
             "started_at": _utc_now_naive().isoformat(timespec="seconds"),
             "finished_at": _utc_now_naive().isoformat(timespec="seconds"),
             "duration_seconds": 0.0,

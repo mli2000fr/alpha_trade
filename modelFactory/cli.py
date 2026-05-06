@@ -383,10 +383,41 @@ def main(args: list[str] | None = None) -> None:
     elif opts.mode == "predict":
         from modelFactory.db_registry import load_candidate_symbols
         from modelFactory.predictor import predict_batch
+        from modelFactory.drift_monitor import compute_drift
+        from modelFactory.drift_policy import (
+            apply_kill_switch,
+            evaluate_drift_gate,
+            persist_kill_switch_event,
+            summary_fields as _drift_summary_fields,
+        )
         symbols = opts.symbols or load_candidate_symbols(engine)
         preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, accelerator=opts.accelerator)
+
+        # Sprint S4 (A-021) — drift gate / kill switch ML
+        drift_decision = None
+        try:
+            if not preds.empty and "predicted_proba" in preds.columns:
+                today_vals = preds["predicted_proba"].dropna().to_numpy()
+                baseline_vals = _load_drift_baseline(engine, days=30)
+                if today_vals.size >= 5 and baseline_vals.size >= 30:
+                    report = compute_drift(
+                        today_vals, baseline_vals,
+                        model_id=str(preds.get("model_id", ["batch"]).iloc[0]) if "model_id" in preds.columns else "batch",
+                    )
+                    drift_decision = evaluate_drift_gate(report)
+                    preds = apply_kill_switch(drift_decision, preds)
+                    persist_kill_switch_event(drift_decision, engine=engine)
+                    update_runtime_status(
+                        ml_drift_status=drift_decision.drift_status,
+                        ml_kill_switch_active=drift_decision.action == "kill_switch_ml",
+                    )
+        except Exception as exc:  # pragma: no cover - guarded
+            LOGGER.warning("ML drift gate evaluation failed: %s", exc)
+
         print(f"\n{'=' * 60}")
         print(f"  Model Factory — Predictions: {len(preds)} rows")
+        if drift_decision is not None:
+            print(f"  ML drift status: {drift_decision.drift_status}  gate: {drift_decision.gate}")
         print(f"{'=' * 60}")
         if not preds.empty:
             print(preds.to_string(index=False))
@@ -403,7 +434,30 @@ def main(args: list[str] | None = None) -> None:
             skipped=max(0, len(symbols) - int(len(preds))),
             failed=0,
             quarantined=0,
+            drift_decision=drift_decision,
         ))
+
+
+def _load_drift_baseline(engine, *, days: int = 30):
+    """Charge la baseline de prédictions pour le drift monitor (best-effort)."""
+    import numpy as np
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT predicted_proba FROM model_predictions
+                    WHERE prediction_date >= date('now', :days)
+                      AND predicted_proba IS NOT NULL
+                    """
+                ),
+                {"days": f"-{int(days)} day"},
+            ).fetchall()
+        return np.asarray([r[0] for r in rows if r[0] is not None], dtype=float)
+    except Exception:  # pragma: no cover - best effort
+        import numpy as np
+        return np.asarray([], dtype=float)
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +484,7 @@ def _build_run_summary(
     skipped: int,
     failed: int,
     quarantined: int,
+    drift_decision: object | None = None,
 ) -> dict[str, object]:
     from modelFactory.features import fingerprint as compute_feature_fingerprint
     runtime_status = snapshot_runtime_status()
@@ -476,4 +531,7 @@ def _build_run_summary(
         "symbols_failed": int(failed),
         "symbols_quarantined": int(quarantined),
     }
+    # Sprint S4 (A-021) — exposition policy gate ML drift
+    from modelFactory.drift_policy import summary_fields as _drift_summary_fields
+    payload.update(_drift_summary_fields(drift_decision))  # type: ignore[arg-type]
     return attach_schema_version(payload, version=1)

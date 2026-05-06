@@ -76,7 +76,28 @@ def persist_decisions(
         }
         for e in entries
     ]
-    return repo.write_risk_decisions(records, account_id=account_id)
+    written = repo.write_risk_decisions(records, account_id=account_id)
+    # Sprint S12.2 — chaîne d'audit HMAC SOX-like (best-effort).
+    try:
+        from database.audit_chain import AuditChainRepository
+
+        engine = getattr(repo, "engine", None)
+        if engine is not None:
+            AuditChainRepository(engine).append(
+                "risk_runs",
+                run_id,
+                {
+                    "run_id": run_id,
+                    "trade_date": str(trade_date),
+                    "account_id": account_id or "default",
+                    "decisions_count": len(records),
+                    "approved_count": sum(1 for r in records if (r.get("approved_shares") or 0) > 0),
+                    "event": "persist_decisions",
+                },
+            )
+    except Exception:  # noqa: BLE001
+        LOGGER.debug("audit_chain append (risk) indisponible run_id=%s", run_id, exc_info=True)
+    return written
 
 
 def persist_portfolio_targets(

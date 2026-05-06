@@ -398,6 +398,22 @@ def main() -> None:
         progress_callback=lambda payload: _emit_run_summary(payload),
     )
     payload = attach_schema_version(report.to_summary_dict())
+    # Sprint S2 (A-017, A-023) — télémétrie ``data_source`` mixée et check
+    # d'homogénéité en bord de pipeline. Best-effort : toute défaillance est
+    # absorbée dans ``check_data_source_homogeneity``.
+    try:
+        from dataIntegrityEngine.data_source_health import check_data_source_homogeneity
+
+        mix_check = check_data_source_homogeneity(get_engine())
+        payload["data_source_mix_check"] = mix_check
+        payload["data_source_mix"] = {
+            "counts": mix_check.get("counts", {}),
+            "ratios": mix_check.get("ratios", {}),
+            "rows_total": mix_check.get("rows_total", 0),
+            "dominant_source": mix_check.get("dominant_source"),
+        }
+    except Exception:
+        LOGGER.debug("data_source_mix_check indisponible.", exc_info=True)
     # Phase 3.2.b — alerte si trop de chunks ont échoué.
     ratio = float(payload.get("chunk_failure_ratio") or 0.0)
     if ratio > CHUNK_FAILURE_RATIO_WARNING_THRESHOLD:

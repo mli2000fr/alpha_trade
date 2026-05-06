@@ -8,7 +8,14 @@ from typing import Literal
 
 from ihm.services.pipeline_runner import PROJECT_ROOT, build_subprocess_env
 
-BacktestingCommandKind = Literal["run", "backfill-scores-history", "diagnose-screener", "recommend-screener"]
+BacktestingCommandKind = Literal[
+    "run",
+    "backfill-scores-history",
+    "diagnose-screener",
+    "recommend-screener",
+    "calibrate-sentiment-weights",
+    "walk-forward-sentiment",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,9 +118,46 @@ class RecommendScreenerOptions:
     target_horizon: int = 20
 
 
+@dataclass(frozen=True, slots=True)
+class CalibrateSentimentWeightsOptions:
+    """Options de `python -m backtesting calibrate-sentiment-weights` (Sprint S26)."""
+
+    start: str
+    end: str
+    top_n: int = 20
+    horizons: str = "5,10,20"
+    output_dir: str = "artifacts/sentiment_calibration"
+    all_symbols: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class WalkForwardSentimentOptions:
+    """Options de `python -m backtesting walk-forward-sentiment` (Sprint S26)."""
+
+    start: str
+    end: str
+    top_n: int = 20
+    horizons: str = "5,10,20"
+    min_train_days: int = 252
+    test_days: int = 63
+    step_days: int | None = None
+    max_positions: int = 20
+    equity: float = 100_000.0
+    tp: float = 0.08
+    ts: float = 0.05
+    fees: float = 0.001
+    output_dir: str = "artifacts/sentiment_walk_forward"
+    all_symbols: bool = False
+
+
 def build_backtesting_command(
     kind: BacktestingCommandKind,
-    options: BacktestRunOptions | BackfillScoresHistoryOptions | DiagnoseScreenerOptions | RecommendScreenerOptions,
+    options: BacktestRunOptions
+    | BackfillScoresHistoryOptions
+    | DiagnoseScreenerOptions
+    | RecommendScreenerOptions
+    | CalibrateSentimentWeightsOptions
+    | WalkForwardSentimentOptions,
 ) -> list[str]:
     """Construit la commande subprocess correspondant au backtesting."""
     command = [sys.executable, "-u", "-m", "backtesting", kind]
@@ -259,6 +303,47 @@ def build_backtesting_command(
         command.extend(["--target-horizon", str(options.target_horizon)])
         return command
 
+    if kind == "calibrate-sentiment-weights":
+        if not isinstance(options, CalibrateSentimentWeightsOptions):
+            raise TypeError(
+                "options doit être une instance de CalibrateSentimentWeightsOptions pour kind='calibrate-sentiment-weights'."
+            )
+        command.extend([
+            "--start", options.start,
+            "--end", options.end,
+            "--top-n", str(options.top_n),
+            "--horizons", options.horizons,
+            "--output-dir", options.output_dir,
+        ])
+        if options.all_symbols:
+            command.append("--all-symbols")
+        return command
+
+    if kind == "walk-forward-sentiment":
+        if not isinstance(options, WalkForwardSentimentOptions):
+            raise TypeError(
+                "options doit être une instance de WalkForwardSentimentOptions pour kind='walk-forward-sentiment'."
+            )
+        command.extend([
+            "--start", options.start,
+            "--end", options.end,
+            "--top-n", str(options.top_n),
+            "--horizons", options.horizons,
+            "--min-train-days", str(options.min_train_days),
+            "--test-days", str(options.test_days),
+            "--max-positions", str(options.max_positions),
+            "--equity", str(options.equity),
+            "--tp", str(options.tp),
+            "--ts", str(options.ts),
+            "--fees", str(options.fees),
+            "--output-dir", options.output_dir,
+        ])
+        if options.step_days is not None:
+            command.extend(["--step-days", str(options.step_days)])
+        if options.all_symbols:
+            command.append("--all-symbols")
+        return command
+
     raise KeyError(f"Commande backtesting inconnue : {kind}")
 
 
@@ -274,6 +359,8 @@ __all__ = [
     "BackfillScoresHistoryOptions",
     "DiagnoseScreenerOptions",
     "RecommendScreenerOptions",
+    "CalibrateSentimentWeightsOptions",
+    "WalkForwardSentimentOptions",
     "build_backtesting_command",
     "format_command_for_display",
 ]

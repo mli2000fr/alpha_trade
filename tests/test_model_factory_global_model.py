@@ -10,6 +10,36 @@ from modelFactory.config import DataConfig, GlobalModelConfig, ModelConfig, Trai
 from modelFactory.global_model import train_global_model
 
 
+class _FakeEngine:
+	"""Engine SQLAlchemy stub minimal pour les tests train_global_model.
+
+	S10.4 — remplace `engine=object()` qui ne supportait ni `.connect()`
+	(load_universe_latest_bar_date) ni les opérations ORM aval.
+	"""
+
+	def connect(self):
+		import contextlib
+
+		@contextlib.contextmanager
+		def _ctx():
+			yield self
+
+		return _ctx()
+
+	def execute(self, *args, **kwargs):
+		class _Result:
+			def scalar(self_inner):
+				return None
+
+			def fetchall(self_inner):
+				return []
+
+		return _Result()
+
+	def begin(self):
+		return self.connect()
+
+
 class PickleableFakeGlobalEstimator:
 	def fit(self, X, y):
 		return self
@@ -42,8 +72,12 @@ def test_train_global_model_returns_metrics_and_artifacts(monkeypatch, tmp_path:
 	universe = pd.concat([_bars("AAPL", 100.0), _bars("MSFT", 120.0), _bars("NVDA", 150.0)], ignore_index=True)
 	benchmark = _bars("SPY", 90.0)
 
-	monkeypatch.setattr("modelFactory.global_model.load_universe_bars", lambda engine, symbols: universe.copy())
-	monkeypatch.setattr("modelFactory.global_model.load_benchmark_bars", lambda engine, benchmark_symbol: benchmark.copy())
+	monkeypatch.setattr("modelFactory.global_model.load_universe_bars", lambda engine, symbols, **kwargs: universe.copy())
+	monkeypatch.setattr("modelFactory.global_model.load_benchmark_bars", lambda engine, benchmark_symbol, **kwargs: benchmark.copy())
+	monkeypatch.setattr(
+		"modelFactory.global_model.load_universe_latest_bar_date",
+		lambda engine, symbols: pd.Timestamp("2020-09-15"),
+	)
 	monkeypatch.setattr(
 		"modelFactory.global_model._import_lightgbm",
 		lambda: type("FakeLGB", (), {"LGBMClassifier": staticmethod(lambda **kwargs: PickleableFakeGlobalEstimator())})(),
@@ -57,7 +91,7 @@ def test_train_global_model_returns_metrics_and_artifacts(monkeypatch, tmp_path:
 		accelerator="cpu",
 	)
 
-	result = train_global_model(["AAPL", "MSFT", "NVDA"], cfg, artifacts_dir=tmp_path, engine=object())
+	result = train_global_model(["AAPL", "MSFT", "NVDA"], cfg, artifacts_dir=tmp_path, engine=_FakeEngine())
 
 	assert result["status"] == "completed"
 	assert result["backend_model_name"] == "lightgbm"

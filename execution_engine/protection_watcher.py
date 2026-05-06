@@ -22,7 +22,13 @@ from execution_engine.models import (
     OrderStatus,
     ProtectionWatchItem,
 )
-from execution_engine.order_intents import build_trailing_stop_intent, intent_to_alpaca_payload, resolve_trailing_activation_price
+from execution_engine.order_intents import (
+    build_initial_stop_intent,
+    build_take_profit_intent,
+    build_trailing_stop_intent,
+    intent_to_alpaca_payload,
+    resolve_trailing_activation_price,
+)
 from service.alpaca.trading_client import AlpacaTradingClient
 
 LOGGER = logging.getLogger(__name__)
@@ -52,6 +58,8 @@ def _build_summary(
         "cancel_failed_items": int(metrics.get("cancel_failed_items", 0) or 0),
         "trigger_check_count": int(metrics.get("trigger_check_count", 0) or 0),
         "submit_failed_items": int(metrics.get("submit_failed_items", 0) or 0),
+        "armed_missing_protections": int(metrics.get("armed_missing_protections", 0) or 0),
+        "armed_missing_protections_failed": int(metrics.get("armed_missing_protections_failed", 0) or 0),
         "broker_mode": metrics.get("broker_mode"),
         "account_id": metrics.get("account_id"),
     }
@@ -142,6 +150,8 @@ class ProtectionTransitionWatcher:
                 "cancel_failed_items": 0,
                 "trigger_check_count": 0,
                 "submit_failed_items": 0,
+                "armed_missing_protections": 0,
+                "armed_missing_protections_failed": 0,
             }
         )
 
@@ -153,6 +163,40 @@ class ProtectionTransitionWatcher:
             run_metrics["account_id"] = item.account_id
             run_metrics["watched_items"] += 1
             self._process_item(item, run_metrics)
+
+        # ------------------------------------------------------------------
+        # Sprint S26 (gap P3) — Filet de sécurité TP/SL.
+        # Détecte les ENTRÉES FILLED chez le broker qui n'ont AUCUN
+        # take-profit ni stop ouvert (cas overnight où Execution n'a pas pu
+        # appeler `_submit_children`). On arme les enfants manquants ici.
+        # ------------------------------------------------------------------
+        try:
+            unprotected_rows = self._repo.load_unprotected_filled_parents(
+                exec_run_id=exec_run_id,
+                account_id=account_id,
+                limit=max(limit, 200),
+            )
+        except Exception:
+            LOGGER.warning("load_unprotected_filled_parents failed", exc_info=True)
+            unprotected_rows = []
+
+        for row in unprotected_rows:
+            source_exec_run_id = str(row.get("exec_run_id") or "")
+            run_metrics = metrics_by_run[source_exec_run_id]
+            run_metrics.setdefault("source_exec_run_id", source_exec_run_id)
+            run_metrics.setdefault("trade_date", None)
+            run_metrics["broker_mode"] = str(row.get("broker_mode") or run_metrics.get("broker_mode") or "paper")
+            run_metrics["account_id"] = str(row.get("account_id") or run_metrics.get("account_id") or "default")
+            try:
+                self._arm_missing_protections(row, run_metrics)
+            except Exception:
+                LOGGER.warning(
+                    "Échec armement protections manquantes pour %s",
+                    row.get("symbol"), exc_info=True,
+                )
+                run_metrics["armed_missing_protections_failed"] = (
+                    int(run_metrics.get("armed_missing_protections_failed", 0) or 0) + 1
+                )
 
         summaries: list[dict[str, Any]] = []
         finished_at = datetime.now()
@@ -281,6 +325,102 @@ class ProtectionTransitionWatcher:
                 return False, latest_order
             time.sleep(config.poll_interval_seconds)
         return False, latest_order
+
+    # Sprint S26 (gap P3) — Filet de sécurité TP/SL : arme TP+STOP pour un parent FILLED nu.
+    def _arm_missing_protections(
+        self,
+        row: dict[str, Any],
+        metrics: dict[str, Any],
+    ) -> None:
+        symbol = str(row["symbol"]).strip().upper()
+        fill_qty = float(row.get("fill_qty") or 0.0)
+        fill_price = float(row.get("fill_price") or 0.0)
+        if fill_qty <= 0 or fill_price <= 0:
+            metrics["armed_missing_protections_failed"] = (
+                int(metrics.get("armed_missing_protections_failed", 0) or 0) + 1
+            )
+            return
+
+        broker_mode = str(row.get("broker_mode") or "paper")
+        account_id = str(row.get("account_id") or "default")
+        config = self._config_for(broker_mode, account_id)
+        broker = self._broker_for(broker_mode, account_id)
+
+        decision_price = float(row.get("decision_price") or fill_price)
+        target_qty = float(row.get("target_qty") or fill_qty)
+        order_type = str(row.get("order_type") or "market")
+        limit_price = row.get("limit_price")
+        parent_intent = OrderIntent(
+            intent_id=str(row["parent_intent_id"]),
+            risk_run_id=str(row.get("risk_run_id") or ""),
+            exec_run_id=str(row["exec_run_id"]),
+            symbol=symbol,
+            side=str(row.get("side") or "buy"),
+            qty=target_qty,
+            order_type=order_type,
+            limit_price=float(limit_price) if limit_price is not None else None,
+            trail_percent=None,
+            broker_mode=broker_mode,
+            parent_intent_id=None,
+            intent_role=IntentRole.ENTRY,
+            idempotency_key=str(row.get("business_key") or row.get("submission_key") or row["parent_intent_id"]),
+            decision_price=decision_price,
+            stop_price=None,
+            submission_key=str(row["submission_key"]) if row.get("submission_key") else None,
+        )
+
+        tp_intent = build_take_profit_intent(parent_intent, fill_qty, fill_price, config, target=None)
+        stop_intent = build_initial_stop_intent(parent_intent, fill_qty, fill_price, config, target=None)
+        protection_intent = stop_intent or build_trailing_stop_intent(
+            parent_intent, fill_qty, fill_price, config, target=None
+        )
+
+        armed_any = False
+        for child in [tp_intent, protection_intent]:
+            try:
+                child_order = broker.submit_intent(child)
+                self._persist_order_state(child, child_order, account_id=account_id)
+                armed_any = True
+            except Exception as exc:
+                LOGGER.warning(
+                    "Watcher : échec submit %s pour %s : %s",
+                    child.intent_role, symbol, exc,
+                )
+                if child.intent_role == IntentRole.INITIAL_STOP:
+                    fallback = build_trailing_stop_intent(
+                        parent_intent, fill_qty, fill_price, config, target=None
+                    )
+                    try:
+                        fallback_order = broker.submit_intent(fallback)
+                        self._persist_order_state(fallback, fallback_order, account_id=account_id)
+                        armed_any = True
+                    except Exception as fb_exc:
+                        LOGGER.warning(
+                            "Watcher : fallback trailing échoué pour %s : %s", symbol, fb_exc,
+                        )
+
+        if armed_any:
+            metrics["armed_missing_protections"] = (
+                int(metrics.get("armed_missing_protections", 0) or 0) + 1
+            )
+            self._persist_event(make_event(
+                str(row["exec_run_id"]),
+                EventType.CHILDREN_SUBMITTED,
+                f"Watcher : TP/SL armés (filet S26) pour {symbol}",
+                symbol=symbol,
+                intent_id=parent_intent.intent_id,
+                payload={
+                    "fill_qty": fill_qty,
+                    "fill_price": fill_price,
+                    "trigger": "watcher_safety_net",
+                    "take_profit_limit_price": tp_intent.limit_price,
+                    "initial_stop_price": stop_intent.stop_price if stop_intent is not None else None,
+                },
+            ))
+        else:
+            metrics["armed_missing_protections_failed"] = (
+                int(metrics.get("armed_missing_protections_failed", 0) or 0) + 1
+            )
 
     def _process_item(self, item: ProtectionWatchItem, metrics: dict[str, Any]) -> None:
         if not item.initial_stop_broker_order_id:
@@ -708,6 +848,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--account", type=str, default=None)
     parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--broker-mode", type=str, default="paper", choices=["paper", "live"])
+    parser.add_argument("--profit-taker-pct", type=float, default=0.08)
     parser.add_argument("--trailing-stop-pct", type=float, default=0.05)
     parser.add_argument("--trailing-activation-trigger", type=str, default="multiple_r", choices=["multiple_r", "profit_pct"])
     parser.add_argument("--trailing-activation-r-multiple", type=float, default=1.0)
@@ -734,6 +875,7 @@ def main(argv: list[str] | None = None) -> None:
         return ExecutionConfig(
             broker_mode=broker_mode,
             account_id=account_id,
+            profit_taker_pct=args.profit_taker_pct,
             trailing_stop_pct=args.trailing_stop_pct,
             trailing_activation_trigger=args.trailing_activation_trigger,
             trailing_activation_r_multiple=args.trailing_activation_r_multiple,

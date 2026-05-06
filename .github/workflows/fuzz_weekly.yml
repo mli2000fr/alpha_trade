@@ -1,0 +1,48 @@
+name: Fuzz weekly (backtest vs live diff)
+# Sprint S24.1 — Exécute 10 000 scénarios de fuzzing différentiel.
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"   # lundi 04:00 UTC
+  workflow_dispatch:
+    inputs:
+      n_scenarios:
+        description: "Nombre de scénarios"
+        default: "10000"
+
+jobs:
+  fuzz-diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Run fuzz diff
+        run: |
+          python scripts/run_fuzz_diff.py \
+            --n ${{ inputs.n_scenarios || 10000 }} \
+            --out artifacts/fuzz_runs/ \
+            --strict
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-runs-${{ github.run_id }}
+          path: artifacts/fuzz_runs/
+          retention-days: 90
+      - name: Slack alert on divergence
+        if: failure() && env.ALPHA_TRADE_SLACK_WEBHOOK != ''
+        env:
+          ALPHA_TRADE_SLACK_WEBHOOK: ${{ secrets.ALPHA_TRADE_SLACK_WEBHOOK }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":":rotating_light: fuzz_weekly diverged — see artifact fuzz-runs-${{ github.run_id }}"}' \
+            "$ALPHA_TRADE_SLACK_WEBHOOK"
+

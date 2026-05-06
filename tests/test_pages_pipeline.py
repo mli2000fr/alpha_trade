@@ -147,7 +147,7 @@ def test_build_capital_preset_banner_payload_marks_detected_bucket_as_applied() 
     severity, message = payload
     assert severity == "success"
     assert "panier capital appliqué" in message.lower()
-    assert "0 → 5 000 $" in message
+    assert "2 001 → 5 000 $" in message
 
 
 def test_build_capital_preset_banner_payload_marks_custom_with_recommended_bucket() -> None:
@@ -162,6 +162,26 @@ def test_build_capital_preset_banner_payload_marks_custom_with_recommended_bucke
     assert severity == "info"
     assert "personnalisé" in message.lower()
     assert "50 001 → 100 000 $" in message
+
+
+def test_build_execution_protection_banner_payload_exposes_tp_and_auto_initial_stop() -> None:
+    severity, message = pipeline._build_execution_protection_banner_payload(
+        pipeline.PipelineLaunchOptions(
+            execution_take_profit_pct=0.065,
+            execution_trailing_stop_pct=0.04,
+            execution_submission_window="pre_open",
+            execution_trailing_trigger="multiple_r",
+            execution_trailing_r_multiple=1.5,
+        )
+    )
+
+    assert severity == "info"
+    assert "+6.5 %" in message
+    assert "1.50r" in message.lower()
+    assert "-4.0 %" in message
+    assert "pre_open" in message
+    assert "stop initial" in message.lower()
+    assert "calculé automatiquement" in message.lower()
 
 
 def test_build_pipeline_scope_alert_lines_distinguishes_global_and_account_specific_steps() -> None:

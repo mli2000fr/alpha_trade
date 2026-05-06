@@ -6,9 +6,13 @@ dataIntegrityEngine
 database
 event_sentiment
 execution_engine
+formal
 ihm
+lineage
 modelFactory
+reporting
 risk_management
 screener
 selector
 service
+tax

@@ -1,0 +1,48 @@
+# ihm/help/ml.yaml (Sprint S20.3)
+overview:
+  title: "ML / Model factory"
+  description: "Champion / challenger, drift, rétrogradation auto."
+  impact: "Module : `modelFactory/`."
+  example: "Bascule challenger ⇒ champion sur AUC + 1 %."
+  default: "—"
+  range: "—"
+  doc_ref: "doc/model_factory.md"
+
+drift_gate_threshold:
+  title: "Seuil drift gate (PSI)"
+  description: |
+    Seuil de Population Stability Index au-delà duquel le modèle
+    champion est désactivé en faveur du challenger.
+  impact: "Module : `modelFactory/auto_rollback.py`."
+  example: "PSI > 0.25 ⇒ alerte ; > 0.40 ⇒ rollback auto."
+  default: 0.25
+  range: "[0.0, 1.0]"
+  doc_ref: "doc/ml_drift.md#psi"
+
+model_version:
+  title: "Version modèle"
+  description: "Version active du modèle champion."
+  impact: "Sélectionne le binaire de prédiction."
+  example: "v2026.04"
+  default: "latest"
+  range: "string"
+  doc_ref: "doc/model_factory.md#versioning"
+
+champion_strategy:
+  title: "Stratégie champion"
+  description: "Politique de sélection du champion."
+  impact: "Décision d'auto-rollback."
+  example: "auc_max ⇒ meilleur AUC sur fenêtre de validation."
+  default: "auc_max"
+  range: "{auc_max, sharpe_max, ic_max}"
+  doc_ref: "doc/model_factory.md#champion-strategy"
+
+challenger_validation_window:
+  title: "Fenêtre de validation challenger (jours)"
+  description: "Durée d'observation challenger avant promotion."
+  impact: "Patience anti-bruit."
+  example: "30 jours."
+  default: 30
+  range: "[7, 180]"
+  doc_ref: "doc/model_factory.md#validation-window"
+

@@ -99,5 +99,23 @@ def test_build_parser_defaults_to_overnight_cash_swing_inputs() -> None:
     assert args.pdt_rule == "off"
     assert args.swing_only is True
     assert args.submission_window is None
+    assert args.profit_taker_pct is None
+    assert args.trailing_stop_pct is None
+
+
+def test_build_parser_accepts_custom_profit_taker_pct() -> None:
+    parser = run_execution.build_parser()
+
+    args = parser.parse_args(["paper", "--profit-taker-pct", "0.065"])
+
+    assert args.profit_taker_pct == 0.065
+
+
+def test_build_parser_accepts_custom_trailing_stop_pct() -> None:
+    parser = run_execution.build_parser()
+
+    args = parser.parse_args(["paper", "--trailing-stop-pct", "0.04"])
+
+    assert args.trailing_stop_pct == 0.04
 
 

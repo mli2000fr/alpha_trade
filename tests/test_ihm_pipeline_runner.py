@@ -116,6 +116,8 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
         execution_account_type="cash",
         execution_pdt_rule="auto",
         execution_swing_only=True,
+        execution_take_profit_pct=0.065,
+        execution_trailing_stop_pct=0.04,
     )
 
     risk_command = build_pipeline_command("risk_management", options)
@@ -139,6 +141,10 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert "--pdt-rule" in execution_command
     assert execution_command[execution_command.index("--pdt-rule") + 1] == "auto"
     assert "--swing-only" in execution_command
+    assert "--profit-taker-pct" in execution_command
+    assert execution_command[execution_command.index("--profit-taker-pct") + 1] == "0.065"
+    assert "--trailing-stop-pct" in execution_command
+    assert execution_command[execution_command.index("--trailing-stop-pct") + 1] == "0.04"
     assert "risk-123" in execution_command
 
     assert ca_apply_command[-2:] == ["--account", "test1"]

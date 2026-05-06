@@ -43,3 +43,18 @@ Provides-Extra: ml-challengers
 Requires-Dist: catboost; extra == "ml-challengers"
 Provides-Extra: cross-check
 Requires-Dist: yfinance>=0.2; extra == "cross-check"
+Provides-Extra: formal
+Requires-Dist: z3-solver>=4.13; extra == "formal"
+Provides-Extra: reporting
+Requires-Dist: reportlab>=4; extra == "reporting"
+Provides-Extra: lineage
+Requires-Dist: neo4j>=5; extra == "lineage"
+Provides-Extra: cache
+Requires-Dist: redis>=5; extra == "cache"
+Provides-Extra: async-db
+Requires-Dist: aiosqlite>=0.20; extra == "async-db"
+Provides-Extra: security
+Requires-Dist: cyclonedx-bom>=4; extra == "security"
+Requires-Dist: pip-audit>=2.7; extra == "security"
+Provides-Extra: mutation
+Requires-Dist: mutmut>=2.5; extra == "mutation"
