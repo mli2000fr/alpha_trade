@@ -71,6 +71,8 @@ RETENTION_RULES: tuple[RetentionRule, ...] = (
                   "P1", "Checkpoints ML (champion ∞)"),
     RetentionRule("signal_aggregator_runs", "signal_aggregator_runs", 60, None, (), "P3",
                   "Runs sentiment"),
+    RetentionRule("pre_live_checks", "pre_live_checks", 365, None, (), "P1",
+                  "Rapports pre-live (audit, rétention 1 an minimum)"),
 )
 
 

@@ -1,14 +1,20 @@
 database:
   host: localhost
   port: 3306
-  user: user
-  password: pass
+  # Sprint S5 / A-013 — credentials lus exclusivement depuis l'environnement
+  # (LOGIN_DB / PASSWORD_DB) par database/connection.py. Les clés ci-dessous
+  # ne sont **plus** consommées en code mais conservent le placeholder à
+  # titre documentaire pour le scanner secrets.
+  user: "${LOGIN_DB}"
+  password: "${PASSWORD_DB}"
   name: alpha_trade
 
 alpaca:
-  # Compte par défaut (rétrocompatibilité)
-  api_key: "PK..."
-  secret_key: "..."
+  # Sprint S5 / A-013 — plus aucune clé en clair acceptée à la racine.
+  # Les credentials par compte vivent exclusivement sous `accounts:` ci-dessous,
+  # via placeholders ${VAR} résolus par `service.alpaca.accounts.AccountRegistry`.
+  # (Ancien bloc `api_key: "PK..."` / `secret_key: "..."` retiré ; le scanner
+  # `core.secrets.scan_yaml_for_literal_secrets` échouerait sinon.)
 
   # Multi-comptes : liste de comptes broker Alpaca
   # Chaque compte est identifié par un 'id' unique.

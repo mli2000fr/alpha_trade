@@ -22,6 +22,7 @@
 | `artifacts/ihm_preferences/` | Préférences utilisateur | illimité | jamais purgé | P3 |
 | `artifacts/models/` | Checkpoints ML | 365 j + champion ∞ | garder champion + N=3 challengers/symbole | **P1** |
 | `artifacts/signal_aggregator_runs/` | Runs sentiment | 60 j | rolling delete | P3 |
+| `artifacts/pre_live_checks/` | Rapports pre-live (audit) | **365 j** | rolling delete | **P1** |
 
 **Notation**
 

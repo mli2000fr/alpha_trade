@@ -482,6 +482,28 @@ alpha_trade/
 
 Alpha Trade supporte **plusieurs comptes Alpaca** en parallèle (paper et/ou live).
 
+### Sécurité — secrets (Sprint S5 / A-013)
+
+> **Aucune clé API en clair n'est tolérée dans `config.yaml`**. Le scanner
+> [`core.secrets.scan_yaml_for_literal_secrets`](core/secrets.py) bloque
+> `PK…`, `AK…`, `sk-…` et secrets base64 ≥ 36 chars. Test garde-fou :
+> `tests/test_config_no_literal_secrets.py`.
+
+Les credentials par compte vivent **uniquement** sous `alpaca.accounts[*]`
+avec des placeholders `${VAR}` résolus depuis l'environnement par
+`service.alpaca.accounts.AccountRegistry`. Les credentials DB
+(`LOGIN_DB`/`PASSWORD_DB`) sont également lus exclusivement depuis l'env.
+
+Avant toute bascule live, exécuter la **recette pré-live** :
+
+```powershell
+python -m execution_engine.preflight --account <id> --broker-mode live
+# ou (avec archivage du rapport):
+python scripts/run_pre_live_checklist.py --account <id>
+```
+
+Détail : [`doc/pre_live_checklist.md`](doc/pre_live_checklist.md).
+
 ### Déclaration dans `config.yaml`
 
 ```yaml
