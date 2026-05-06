@@ -577,6 +577,8 @@ Migration : `database/sql/migration_add_account_id.sql` ou Alembic `alembic upgr
 
 ## 14. Documentation complémentaire
 
+- 📚 **[`doc/INDEX.md`](doc/INDEX.md)** — index cherchable de toute la
+  documentation (généré par `scripts/generate_doc_index.py`, Sprint S25.5).
 - `doc/DOC_FONCTIONNELLE.md` : vision métier et flux fonctionnels
 - `doc/DOC_TECHNIQUE.md` : architecture, composants, dette technique, recommandations
 - `ihm/README.md` : documentation dédiée à l'interface opérateur

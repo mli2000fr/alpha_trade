@@ -68,6 +68,8 @@ SUPPORT_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
     # Sprint S19.4 / S19.5 — nouvelles pages institutionnelles
     NavigationPage("💰 Tax Compliance", "tax_compliance", "ihm.pages.tax_compliance", "support"),
     NavigationPage("📜 Compliance & Audit", "compliance_audit", "ihm.pages.compliance_audit", "support"),
+    # Sprint S24.2 — Phase G : sandbox health 30 j
+    NavigationPage("🟢 Sandbox health", "sandbox_health", "ihm.pages.sandbox_health", "support"),
     NavigationPage("📚 Glossaire", "glossary", "ihm.pages.glossary", "support"),
 )
 
@@ -149,6 +151,7 @@ def get_navigation_sections() -> tuple[NavigationSection, ...]:
             pages=(
                 _get_page("compliance_audit"),
                 _get_page("tax_compliance"),
+                _get_page("sandbox_health"),
                 _get_page("corporate_actions"),
                 _get_page("db_admin"),
                 _get_page("glossary"),

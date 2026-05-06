@@ -80,7 +80,23 @@ jobs:
             || echo "::warning::reconciliation diffs detected"
 
       - name: Verify audit chain
+        id: verify_audit
         run: python scripts/verify_audit_chain.py --strict
+
+      - name: Collect sandbox health
+        if: always()
+        run: |
+          python scripts/sandbox_health_collect.py \
+            --run-id ${{ github.run_id }} \
+            --status ${{ job.status }} \
+            --sha ${{ github.sha }} \
+            --reconciliation artifacts/sandbox_nightly/${{ github.run_id }}/reconciliation.json \
+            ${{ steps.verify_audit.outcome == 'success' && '--audit-ok' || '' }} \
+            --out artifacts/sandbox_runs/
+
+      - name: Rollup sandbox health (30 j)
+        if: always()
+        run: python scripts/sandbox_health_rollup.py --window 30
 
       - name: Upload artifacts
         if: always()
@@ -89,6 +105,7 @@ jobs:
           name: sandbox-nightly-${{ github.run_id }}
           path: |
             artifacts/sandbox_nightly/
+            artifacts/sandbox_runs/
             log/
           retention-days: 30
 

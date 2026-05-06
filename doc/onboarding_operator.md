@@ -3,6 +3,11 @@
 > Phase C / S18.1. Substitut textuel à la vidéo onboarding (cf.
 > `25_phase_C_execution_plan.md` — vidéo stubbée).
 
+> 🎥 **Vidéo (10-15 min)** : voir
+> [`onboarding_assets/README.md`](onboarding_assets/README.md) — script
+> détaillé : [`onboarding_video_script.md`](onboarding_video_script.md)
+> (Sprint S25.3 — Phase G).
+
 ## T+0 → T+10 : Installation
 
 ```bash

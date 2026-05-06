@@ -77,9 +77,28 @@
 
 ## Items justifiés (non bloquants)
 
-* L'audit externe humain reste à commissionner — non finançable
-  par l'équipe interne.
-* La vidéo onboarding est remplacée par `doc/onboarding_walkthrough.md`.
-* TLA+ TLAPS reste hors scope CI ; les 3 invariants sont garantis
-  par les preuves Z3 exécutables.
+* L'audit externe humain reste à commissionner — voir
+  `doc/external_audit_engagement.md` (lettre de mission template,
+  Sprint S25.2) et `scripts/check_external_audit_freshness.py`
+  pour la vérification CI de fraîcheur (< 12 mois).
+* La vidéo onboarding est livrée Sprint S25.3 — script complet
+  dans `doc/onboarding_video_script.md`, assets dans
+  `doc/onboarding_assets/`.
+* TLA+ TLAPS : Sprint S24.3 — wrapper `scripts/run_tlaps.py`,
+  doc engagement `doc/tlaps_proofs.md` ; les 3 invariants restent
+  garantis par les preuves Z3 exécutables tant que la mission
+  consultant n'est pas terminée.
+* Fuzzing différentiel backtest/live : Sprint S24.1 — workflow
+  hebdo `fuzz_weekly.yml`, doc `doc/fuzz_diff.md`.
+* Sandbox health 30 j : Sprint S24.2 — page IHM `🟢 Sandbox health`,
+  runbook `doc/sandbox_health_runbook.md`.
+* Pré-audit interne automatisé : Sprint S25.1 —
+  `scripts/run_pre_audit_checklist.py`, registre
+  `doc/pre_audit_findings.md`.
+* API publique v1.0 figée (247 symboles) : Sprint S25.4 —
+  `doc/api_v1_public_symbols.txt`, test
+  `tests/test_api_v1_stability.py`.
+* Index doc cherchable : Sprint S25.5 — `doc/INDEX.md` généré par
+  `scripts/generate_doc_index.py` ; check liens morts via
+  `scripts/check_doc_links.py`.
 

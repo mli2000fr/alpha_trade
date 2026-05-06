@@ -105,3 +105,86 @@ jobs:
           path: coverage.xml
           retention-days: 14
 
+  # ---------------------------------------------------------------------------
+  doc-quality:
+  # ---------------------------------------------------------------------------
+    # Sprint S25.5 — Garde qualité documentation : INDEX à jour + 0 lien mort.
+    name: Doc quality (INDEX + dead links)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Generate doc index (check mode)
+        run: python scripts/generate_doc_index.py --check
+      - name: Check dead doc links
+        run: python scripts/check_doc_links.py --strict
+
+  # ---------------------------------------------------------------------------
+  api-stability:
+  # ---------------------------------------------------------------------------
+    # Sprint S25.4 — Garde de stabilité API publique v1.0.
+    # Bloque toute PR introduisant un nouveau symbole public non listé
+    # dans doc/api_v1_public_symbols.txt.
+    name: API stability (v1.0 golden)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Audit private API exposure (strict)
+        run: python scripts/audit_private_api_exposure.py --strict
+      - name: Upload exposure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-exposure-${{ github.run_id }}
+          path: artifacts/api_audit/
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  fuzz-diff-pr:
+  # ---------------------------------------------------------------------------
+    # Sprint S24.1 — Fuzz différentiel rapide sur PR (500 scénarios).
+    name: Fuzz diff (PR — 500 scénarios)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install hypothesis
+      - name: Run fuzz diff (PR scope)
+        run: python scripts/run_fuzz_diff.py --n 500 --strict
+      - name: Upload fuzz report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-pr-${{ github.run_id }}
+          path: artifacts/fuzz_runs/
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  external-audit-freshness:
+  # ---------------------------------------------------------------------------
+    # Sprint S25.2 — Vérifie que le rapport d'audit externe est < 12 mois.
+    name: External audit freshness (< 12 mois)
+    runs-on: ubuntu-latest
+    continue-on-error: true   # Non-bloquant tant que premier audit pas livré
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Check freshness
+        run: python scripts/check_external_audit_freshness.py
+

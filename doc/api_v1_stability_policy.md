@@ -49,6 +49,20 @@ Tout module `_private` ou symbole avec un underscore initial est
 signatures publiques. Tout changement non-rétrocompatible casse ce
 test ⇒ revue obligatoire.
 
+## Liste figée v1.0
+
+La liste exhaustive des **247 symboles publics v1.0** est figée dans
+[`doc/api_v1_public_symbols.txt`](api_v1_public_symbols.txt) (sprint
+S25.4). Régénération :
+
+```bash
+python scripts/audit_private_api_exposure.py --update-golden
+```
+
+Tout ajout/retrait doit faire l'objet d'un commit explicite (revue
+obligatoire). Le test `test_api_v1_stability.py` enforce cette règle
+en CI.
+
 ## Politique de support
 
 | Version | Statut | Support |

@@ -33,3 +33,29 @@ jobs:
           name: formal-proofs-${{ github.run_id }}
           path: artifacts/formal_runs
 
+  tlaps:
+    # Sprint S24.3 — TLAPS sur les 3 invariants (non-bloquant tant que
+    # le consultant n'a pas livré les preuves complètes).
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Java (TLC fallback)
+        run: sudo apt-get install -y --no-install-recommends default-jre
+      - name: Install TLAPS (best effort)
+        continue-on-error: true
+        run: |
+          # Image Docker tlaps/tlaps si disponible — sinon fallback TLC.
+          which tlapm || true
+      - name: Run TLAPS / TLC
+        run: python scripts/run_tlaps.py --out artifacts/formal_runs/
+      - name: Upload tlaps artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlaps-${{ github.run_id }}
+          path: artifacts/formal_runs/
+
