@@ -6,6 +6,8 @@ Lancement :
 """
 from __future__ import annotations
 
+import logging
+
 import streamlit as st
 
 from ihm.components.db_controls import render_db_connection_form
@@ -22,6 +24,8 @@ from ihm.services.theme_manager import (
     get_current_theme,
     render_theme_toggle,
 )
+
+logger = logging.getLogger(__name__)
 
 st.set_page_config(
     page_title="Alpha Trade — Cockpit Opérateur",
@@ -69,17 +73,18 @@ NAVIGATION_RADIO_KEY = "ihm_sidebar_navigation"
 NAVIGATION_TARGET_PAGE_KEY = "ihm_navigation_target_page"
 
 
-def _on_section_radio_change(section_key: str) -> None:
-    """Callback : propage la sélection d'une section à la clé canonique.
+def _select_page(label: str) -> None:
+    """Callback bouton de navigation : fixe la page active.
 
-    Streamlit appelle ce callback **avant** la phase de rendu suivante,
-    permettant d'écrire dans ``st.session_state[NAVIGATION_RADIO_KEY]``
-    sans conflit avec un widget portant cette clé (lequel n'existe
-    plus depuis la suppression du radio « vue à plat »).
+    Fix anomalies (b) + (c) — l'ancien ``st.radio`` n'émettait
+    ``on_change`` **que si la valeur changeait**, donc cliquer sur la
+    page déjà sélectionnée (cas typique : « Vue d'ensemble » dans la
+    section *Accueil* qui ne contient qu'une seule page) n'avait aucun
+    effet. Avec ``st.button`` + ce callback, *chaque* clic positionne
+    explicitement la sélection canonique.
     """
-    new_label = st.session_state.get(f"ihm_nav_section_{section_key}")
-    if new_label and new_label in PAGE_LABELS:
-        st.session_state[NAVIGATION_RADIO_KEY] = new_label
+    if label in PAGE_LABELS:
+        st.session_state[NAVIGATION_RADIO_KEY] = label
 
 
 st.sidebar.title("📈 Alpha Trade")
@@ -95,7 +100,8 @@ with st.sidebar.expander("🎨 Thème", expanded=False):
     try:
         render_theme_toggle(st)
     except Exception:
-        pass
+        # Loggé pour debug ; ne doit jamais bloquer le rendu de la page.
+        logger.exception("Échec du rendu du toggle thème")
 
 with st.sidebar.expander("🗄️ Connexion DB", expanded=False):
     render_db_connection_form("sidebar_db_connection_form", show_host_fields=True)
@@ -130,36 +136,44 @@ if NAVIGATION_RADIO_KEY not in st.session_state:
 current_label: str = st.session_state[NAVIGATION_RADIO_KEY]
 
 # ---------------------------------------------------------------------------
-# Sprint S19.5 / fix anomalie #3 — Navigation hiérarchique en 5 sections.
-# Une SEULE radio par section (pas de doublon « vue à plat »). Chaque
-# radio a son propre key + un callback qui pousse la sélection vers
-# ``NAVIGATION_RADIO_KEY``. La section contenant la page active est
-# expandée par défaut ; les autres sont collapsées.
+# Sprint S20.6 / fix anomalies (b)+(c) — Navigation par **boutons**.
+#
+# Pourquoi des boutons et plus des radios :
+#   * un ``st.radio`` n'émet ``on_change`` que si la valeur change ⇒
+#     cliquer sur la page déjà active (typique de la section *Accueil*
+#     mono-page) ne déclenche aucun rerun ;
+#   * visuellement, une liste de radios fait « formulaire », pas
+#     « menu de navigation institutionnel ».
+#
+# Convention :
+#   * un bouton par page, libellé = label métier ;
+#   * la page active est rendue en ``type="primary"`` ;
+#   * ``use_container_width=True`` aligne tous les boutons à la largeur
+#     de la sidebar pour un rendu menu propre ;
+#   * la section contenant la page active est expandée par défaut.
 # ---------------------------------------------------------------------------
 sections = get_navigation_sections()
 st.sidebar.markdown("### 🧭 Navigation")
 for section in sections:
-    section_labels = [p.label for p in section.pages]
-    if not section_labels:
+    section_pages = section.pages
+    if not section_pages:
         continue
+    section_labels = [p.label for p in section_pages]
     is_active_section = current_label in section_labels
     with st.sidebar.expander(
         f"{section.icon} {section.label}", expanded=is_active_section
     ):
-        # ``index=`` pointe sur la page active si elle est dans la
-        # section ; sinon, on n'impose pas de sélection visuelle.
-        default_index = (
-            section_labels.index(current_label) if is_active_section else 0
-        )
-        st.radio(
-            label=f"Pages {section.label}",
-            options=section_labels,
-            index=default_index,
-            label_visibility="collapsed",
-            key=f"ihm_nav_section_{section.key}",
-            on_change=_on_section_radio_change,
-            args=(section.key,),
-        )
+        for page in section_pages:
+            is_active = (page.label == current_label)
+            st.button(
+                page.label,
+                key=f"ihm_nav_btn_{section.key}_{page.key}",
+                type=("primary" if is_active else "secondary"),
+                use_container_width=True,
+                on_click=_select_page,
+                args=(page.label,),
+                help=f"Aller à la page : {page.label}",
+            )
 
 # La sélection effective est lue APRÈS l'éventuelle propagation des
 # callbacks. NB : les callbacks Streamlit ont déjà tourné à ce stade.
@@ -184,5 +198,7 @@ if render is None:
 
 try:
     render()
-except Exception as exc:
+except Exception as exc:  # noqa: BLE001 — on veut TOUT capturer pour l'opérateur
+    logger.exception("Erreur lors du rendu de la page %s", page_key)
     st.error(f"Erreur lors du rendu de la page : {exc}")
+    st.exception(exc)

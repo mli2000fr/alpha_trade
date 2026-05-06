@@ -33,11 +33,16 @@ def test_navigation_captions_explain_pipeline_and_support_sections() -> None:
     assert "supervision ops" in navigation.build_support_navigation_caption().lower()
 
 
-def test_navigation_sections_expose_five_logical_groups() -> None:
-    """Sprint S19.5 — Refonte navigation hiérarchique (5 sections)."""
+def test_navigation_sections_expose_logical_groups() -> None:
+    """Sprint S19.5 + S20.6 — Refonte navigation hiérarchique.
+
+    L'anomalie utilisateur (d) impose de promouvoir Pipeline en section
+    propre *Workflow & Orchestration* (utilisée tous les jours), donc
+    on passe de 5 à 6 sections."""
     sections = navigation.get_navigation_sections()
     assert [s.key for s in sections] == [
         "home",
+        "workflow",
         "trading",
         "research",
         "config",
@@ -52,7 +57,14 @@ def test_navigation_sections_expose_five_logical_groups() -> None:
 
 def test_navigation_sections_caption_lists_all_sections() -> None:
     caption = navigation.build_section_navigation_caption()
-    for label in ("Accueil", "Trading", "Analyse", "Configuration", "Conformité"):
+    for label in (
+        "Accueil",
+        "Workflow",
+        "Trading",
+        "Analyse",
+        "Configuration",
+        "Conformité",
+    ):
         assert label in caption
 
 

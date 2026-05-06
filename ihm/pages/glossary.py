@@ -9,6 +9,7 @@ import streamlit as st
 
 from ihm.components.help_tooltip import _help
 from ihm.components.section_header import section_header
+from ihm.services.doc_links import render_doc_ref_inline
 from ihm.services.help_loader import load_help
 
 PAGE = "glossary"
@@ -62,7 +63,8 @@ def render() -> None:
         title = entry.get("title", key)
         with st.expander(f"📖 {title}"):
             st.markdown(entry.get("description", "—"))
-            doc_ref = entry.get("doc_ref")
-            if doc_ref and doc_ref != "—":
-                st.caption(f"📎 [{doc_ref}]({doc_ref})")
+            # Fix anomalie (e) — ne plus afficher un lien Markdown vers
+            # un chemin relatif (qui produit une page blanche), mais
+            # rendre le contenu doc inline ou un lien externe valide.
+            render_doc_ref_inline(st, entry.get("doc_ref"), key_suffix=key)
 

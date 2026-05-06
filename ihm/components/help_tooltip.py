@@ -44,7 +44,16 @@ def _help(page: str, key: str) -> str:
         parts += ["", f"**Exemple** : {example}"]
     parts += ["", f"**Défaut** : `{default}` — **Plage** : `{rng}`"]
     if doc_ref and doc_ref != "—":
-        parts += ["", f"[📖 Doc]({doc_ref})"]
+        # Fix anomalie (e) — un tooltip Streamlit ne peut PAS suivre un
+        # chemin relatif (page blanche). Sans ``IHM_DOC_BASE_URL``, on
+        # se contente d'afficher la référence sous forme de code.
+        import os as _os
+
+        base = _os.environ.get("IHM_DOC_BASE_URL", "").strip().rstrip("/")
+        if base:
+            parts += ["", f"[📖 Doc]({base}/{doc_ref})"]
+        else:
+            parts += ["", f"📖 Doc : `{doc_ref}`"]
     return "\n".join(parts)
 
 

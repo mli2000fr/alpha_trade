@@ -18,6 +18,7 @@ NavigationGroup = Literal[
     "trading",
     "research",
     "config",
+    "workflow",
     "compliance",
 ]
 
@@ -89,13 +90,28 @@ def _get_page(key: str) -> NavigationPage:
 
 
 def get_navigation_sections() -> tuple[NavigationSection, ...]:
-    """Retourne les 5 sections logiques (Sprint S19.5)."""
+    """Retourne les sections logiques de la sidebar (Sprint S19.5 + S20.6).
+
+    Évolution S20.6 — anomalie utilisateur (d) : la page **Pipeline**
+    (utilisée quotidiennement) a été promue dans une section dédiée
+    *Workflow & Orchestration* en tête, et n'apparaît plus dans
+    *Configuration* (qui ne devait recevoir que les réglages durables).
+    """
     return (
         NavigationSection(
             key="home",
             label="Accueil",
             icon="🏠",
             pages=(_get_page("overview"),),
+        ),
+        NavigationSection(
+            key="workflow",
+            label="Workflow & Orchestration",
+            icon="🔄",
+            pages=(
+                _get_page("pipeline"),
+                _get_page("supervision_ops"),
+            ),
         ),
         NavigationSection(
             key="trading",
@@ -124,7 +140,6 @@ def get_navigation_sections() -> tuple[NavigationSection, ...]:
             icon="⚙️",
             pages=(
                 _get_page("settings"),
-                _get_page("pipeline"),
             ),
         ),
         NavigationSection(
@@ -136,7 +151,6 @@ def get_navigation_sections() -> tuple[NavigationSection, ...]:
                 _get_page("tax_compliance"),
                 _get_page("corporate_actions"),
                 _get_page("db_admin"),
-                _get_page("supervision_ops"),
                 _get_page("glossary"),
             ),
         ),

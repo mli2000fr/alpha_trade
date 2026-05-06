@@ -42,25 +42,28 @@ def test_app_py_hides_streamlit_auto_sidebar_nav() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Anomalie #3 — une seule radio par section + clé canonique
+# Anomalie #3 / S20.6 — navigation par boutons (plus de radio par section)
 # ---------------------------------------------------------------------------
 
-def test_app_py_has_single_radio_per_section_with_callback() -> None:
+def test_app_py_uses_buttons_for_navigation_not_radios() -> None:
+    """S20.6 — anomalies (b)+(c) : la nav utilise ``st.button`` avec
+    callback ``_select_page``. Les radios par section ont été retirés
+    car ils n'émettaient pas ``on_change`` lorsqu'on cliquait sur la
+    page déjà active (cas des sections mono-page comme *Accueil*)."""
     src = APP_PATH.read_text(encoding="utf-8")
-    # Convention : un radio par section, clé "ihm_nav_section_<key>",
-    # callback ``_on_section_radio_change``.
-    assert "ihm_nav_section_" in src
-    assert "_on_section_radio_change" in src
-    # Clé canonique unique pour la sélection effective.
-    assert "ihm_sidebar_navigation" in src
+    assert "_select_page" in src
+    assert "st.button(" in src
+    assert "ihm_nav_btn_" in src
+    # Les anciens radios de section (clé ``ihm_nav_section_*``) ne
+    # doivent plus exister.
+    assert "ihm_nav_section_" not in src
+    assert "_on_section_radio_change" not in src
 
 
 def test_app_py_does_not_define_flat_navigation_radio() -> None:
-    """Le radio « vue à plat » historique (qui causait l'anomalie #3)
-    ne doit plus exister."""
+    """Anti-régression historique : pas de radio « vue à plat » qui
+    réécrasait la sélection à chaque rerun."""
     src = APP_PATH.read_text(encoding="utf-8")
-    # L'ancien radio plat utilisait directement ``key=NAVIGATION_RADIO_KEY``
-    # ce qui entrait en conflit avec l'écriture par callback.
     assert "key=NAVIGATION_RADIO_KEY" not in src
 
 
@@ -68,12 +71,30 @@ def test_app_py_does_not_define_flat_navigation_radio() -> None:
 # Sections hiérarchiques
 # ---------------------------------------------------------------------------
 
-EXPECTED_SECTION_KEYS = ("home", "trading", "research", "config", "compliance")
+EXPECTED_SECTION_KEYS = (
+    "home",
+    "workflow",
+    "trading",
+    "research",
+    "config",
+    "compliance",
+)
 
 
-def test_navigation_exposes_five_sections_in_correct_order() -> None:
+def test_navigation_exposes_expected_sections_in_correct_order() -> None:
     sections = get_navigation_sections()
     assert tuple(s.key for s in sections) == EXPECTED_SECTION_KEYS
+
+
+def test_pipeline_is_promoted_to_workflow_section_not_config() -> None:
+    """S20.6 — anomalie (d) : Pipeline est utilisé tous les jours, il
+    doit vivre dans la section *Workflow & Orchestration* en tête, pas
+    dans *Configuration*."""
+    sections = {s.key: s for s in get_navigation_sections()}
+    workflow_keys = {p.key for p in sections["workflow"].pages}
+    config_keys = {p.key for p in sections["config"].pages}
+    assert "pipeline" in workflow_keys
+    assert "pipeline" not in config_keys
 
 
 def test_each_section_is_non_empty_and_has_icon_label() -> None:
@@ -112,7 +133,7 @@ def test_navigation_page_mapping_keys_are_unique() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Simulation du callback de navigation (anomalie #3)
+# Callback ``_select_page`` — bouton de navigation (S20.6)
 # ---------------------------------------------------------------------------
 
 class _FakeSessionState(dict):
@@ -124,22 +145,25 @@ def fake_state() -> _FakeSessionState:
     return _FakeSessionState()
 
 
-def test_section_radio_callback_updates_canonical_key(fake_state) -> None:
-    """Le callback doit propager la sélection d'une section vers la
-    clé canonique ``ihm_sidebar_navigation``."""
-    sections = get_navigation_sections()
-    trading = next(s for s in sections if s.key == "trading")
-    target_label = trading.pages[0].label
-
-    # Simulation : Streamlit a écrit la valeur dans la clé du radio.
-    fake_state[f"ihm_nav_section_{trading.key}"] = target_label
-
-    # Réimplémentation locale du callback (identique à celui d'app.py)
-    # afin de vérifier le contrat sans avoir à instancier Streamlit.
+def test_select_page_callback_sets_canonical_key(fake_state) -> None:
+    """Le callback bouton doit positionner la clé canonique de
+    navigation, **même** si la page cliquée est déjà active (cas qui
+    cassait l'ancien radio mono-option de la section *Accueil*)."""
     page_labels = set(get_navigation_page_labels())
-    new_label = fake_state.get(f"ihm_nav_section_{trading.key}")
-    if new_label and new_label in page_labels:
-        fake_state["ihm_sidebar_navigation"] = new_label
+    target_label = next(iter(page_labels))
 
+    # Reproduction locale du callback ``_select_page`` d'``app.py`` :
+    # toute la valeur ajoutée tient dans la garde sur le label valide.
+    def _select_page(label: str) -> None:
+        if label in page_labels:
+            fake_state["ihm_sidebar_navigation"] = label
+
+    # Premier clic : sélection initiale.
+    _select_page(target_label)
+    assert fake_state["ihm_sidebar_navigation"] == target_label
+
+    # Re-clic sur la même page : doit rester valide (anti-régression
+    # du bug « cliquer sur Vue d'ensemble ne fait rien »).
+    _select_page(target_label)
     assert fake_state["ihm_sidebar_navigation"] == target_label
 

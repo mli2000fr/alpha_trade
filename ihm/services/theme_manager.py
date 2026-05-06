@@ -151,7 +151,12 @@ def render_theme_toggle(st_module) -> ThemeName:
     *Streamlit-agnostique* aux fins de tests unitaires.
     """
     previous = get_current_theme(st_module.session_state)
-    is_dark = st_module.sidebar.toggle(
+    # Fix anomalie (a) — utiliser ``st_module.toggle`` (pas
+    # ``st_module.sidebar.toggle``) afin que le widget se rende dans le
+    # *context manager* courant (typiquement un ``st.sidebar.expander``
+    # créé par l'appelant). Sinon le toggle s'affiche en haut de la
+    # sidebar et l'expander « 🎨 Thème » apparaît vide.
+    is_dark = st_module.toggle(
         "🌙 Thème sombre",
         value=(previous == "dark"),
         key="ihm_theme_toggle",

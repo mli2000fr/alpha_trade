@@ -82,3 +82,51 @@ def test_build_css_uses_important_to_override_streamlit_defaults() -> None:
     assert "!important" in css
 
 
+# ---------------------------------------------------------------------------
+# Anomalie (a) — le toggle doit se rendre dans le contexte courant,
+# pas via ``st.sidebar.toggle`` (sinon l'expander « 🎨 Thème » est vide).
+# ---------------------------------------------------------------------------
+
+class _FakeSidebar:
+    def __init__(self) -> None:
+        self.toggle_calls: list[tuple[tuple, dict]] = []
+
+    def toggle(self, *args, **kwargs) -> bool:  # pragma: no cover - garde-fou
+        self.toggle_calls.append((args, kwargs))
+        return False
+
+
+class _FakeStreamlit:
+    """Capture les appels critiques pour vérifier le rendu *contextuel*."""
+
+    def __init__(self) -> None:
+        self.session_state: dict = {}
+        self.sidebar = _FakeSidebar()
+        self.toggle_calls: list[tuple[tuple, dict]] = []
+        self.markdown_calls: list[str] = []
+
+    def toggle(self, *args, **kwargs) -> bool:
+        self.toggle_calls.append((args, kwargs))
+        return False  # par défaut : reste en light
+
+    def markdown(self, html: str, unsafe_allow_html: bool = False) -> None:
+        self.markdown_calls.append(html)
+
+    def rerun(self) -> None:  # pragma: no cover - non sollicité ici
+        pass
+
+
+def test_render_theme_toggle_uses_context_toggle_not_sidebar() -> None:
+    """Anti-régression anomalie (a) : ``render_theme_toggle`` doit
+    appeler ``st.toggle(...)`` (rendu dans le ``with expander``) et
+    NON ``st.sidebar.toggle(...)`` (rendu en haut de la sidebar
+    ⇒ expander vide visible par l'utilisateur)."""
+    fake = _FakeStreamlit()
+    theme_manager.render_theme_toggle(fake)
+    assert fake.toggle_calls, "Le toggle thème doit être créé via st.toggle()"
+    assert not fake.sidebar.toggle_calls, (
+        "Régression : le toggle est encore attaché à st.sidebar, ce qui "
+        "vide l'expander '🎨 Thème' (anomalie a)."
+    )
+
+
