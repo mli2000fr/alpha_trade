@@ -1,15 +1,32 @@
-"""ihm/pages/_execution_center.py — Phase 6.2 (Backlog L10).
+"""ihm/pages/_execution_center.py — Phase 6.2 (Backlog L10) + Sprint S6 (A-016).
 
 Préfill exécution (compte/PDT/swing) + ``_build_launch_options`` (tous les
 panneaux de paramètres pipeline : execution, risk, ML, screener, selector,
 signal aggregator, corporate actions, data integrity).
 
-Extrait de ``pipeline.py``. Le bloc ``_build_launch_options`` reste massif
-(~1760 lignes) ; un découpage plus fin par sous-bloc est laissé en TODO 2e
-passe (cf. backlog L10 — Further Considerations).
+Sprint S6 — refactor `_build_launch_options` (A-016) :
+    * Introduction de :class:`LaunchOptionsContext` (état partagé immuable
+      entre helpers).
+    * Extraction des sous-blocs auto-portants en helpers privés
+      ``_render_*_block`` :
+
+      - :func:`_render_event_sentiment_block`
+      - :func:`_render_signal_aggregator_block`
+      - :func:`_render_live_confirmation_block`
+
+    * Les sous-blocs restants (execution, risk, ML, selector, screener,
+      data integrity, corporate actions) sont **balisés** par des bannières
+      ``# === BLOCK <N> : <thème> ===`` permettant de les repérer/grep-er
+      pour une seconde passe d'extraction (S6.1) sans risquer de casser
+      l'ordre de rendu Streamlit (les widgets `st.session_state` dépendent
+      strictement de l'ordre de création).
+    * Tests E2E ajoutés via ``streamlit.testing.v1.AppTest`` (cf.
+      ``tests/test_ihm_pipeline_e2e.py`` et
+      ``tests/test_ihm_execution_e2e.py``).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, cast
 
@@ -492,11 +509,203 @@ def _build_execution_prefill_caption(defaults: PipelineExecutionDefaults | None)
     return " | ".join(notes)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Sprint S6 (A-016) — découpage thématique de `_build_launch_options`
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class LaunchOptionsContext:
+    """État partagé immuable entre les helpers ``_render_*_block``.
+
+    Exposé pour faciliter les tests E2E (cf.
+    ``tests/test_ihm_pipeline_e2e.py``) et la seconde passe d'extraction
+    (S6.1) des sous-blocs Execution / Risk / ML / Selector / Data Integrity
+    / Corporate Actions.
+    """
+
+    selected_account_id: str | None
+    execution_defaults: PipelineExecutionDefaults | None
+    selected_capital_preset: CapitalPreset | None
+    capital_preset_key: str
+
+
+def _render_event_sentiment_block() -> dict[str, Any]:
+    """Sous-bloc « Paramètres Event Sentiment » de ``_build_launch_options``.
+
+    Retourne les valeurs nettoyées (``start_utc``, ``end_utc``, ``symbols``)
+    qui seront passées à :class:`PipelineLaunchOptions`.
+    """
+    st.markdown("#### Paramètres Event Sentiment")
+    st.caption(
+        "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment`. "
+        "Si les symboles sont laissés vides, le backend consomme automatiquement les candidats `stock_scores.is_candidate=1`."
+    )
+
+    sentiment_col1, sentiment_col2, sentiment_col3 = st.columns(3)
+    with sentiment_col1:
+        sentiment_start_utc = str(
+            st.text_input(
+                "Event Sentiment — start UTC",
+                value=str(st.session_state.get("pipeline_sentiment_start_utc", "")),
+                key="pipeline_sentiment_start_utc",
+                help="Exemple : 2026-01-01T00:00:00Z",
+            )
+        ).strip()
+    with sentiment_col2:
+        sentiment_end_utc = str(
+            st.text_input(
+                "Event Sentiment — end UTC",
+                value=str(st.session_state.get("pipeline_sentiment_end_utc", "")),
+                key="pipeline_sentiment_end_utc",
+                help="Exemple : 2026-01-31T23:59:59Z",
+            )
+        ).strip()
+    with sentiment_col3:
+        sentiment_symbols = str(
+            st.text_input(
+                "Event Sentiment — symboles (CSV)",
+                value=str(st.session_state.get("pipeline_sentiment_symbols", "")),
+                key="pipeline_sentiment_symbols",
+                help="Exemple : AAPL,MSFT,NVDA",
+            )
+        ).strip().upper()
+    return {
+        "sentiment_start_utc": sentiment_start_utc,
+        "sentiment_end_utc": sentiment_end_utc,
+        "sentiment_symbols": sentiment_symbols,
+    }
+
+
+def _render_signal_aggregator_block() -> dict[str, Any]:
+    """Sous-bloc « Paramètres Signal Aggregator » de ``_build_launch_options``."""
+    st.markdown("#### Paramètres Signal Aggregator")
+    st.caption(
+        "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment.signal_aggregator`. "
+        "La `trade date` réutilise le champ global situé en haut du formulaire quand il est renseigné."
+    )
+
+    signal_agg_col1, signal_agg_col2, signal_agg_col3 = st.columns(3)
+    with signal_agg_col1:
+        signal_aggregator_all_symbols = st.checkbox(
+            "Signal Aggregator — traiter tous les symboles",
+            value=bool(st.session_state.get("pipeline_signal_aggregator_all_symbols", False)),
+            key="pipeline_signal_aggregator_all_symbols",
+        )
+        signal_aggregator_log_level = cast(
+            str,
+            st.selectbox(
+                "Signal Aggregator — niveau de log",
+                options=["DEBUG", "INFO", "WARNING", "ERROR"],
+                index=["DEBUG", "INFO", "WARNING", "ERROR"].index(
+                    cast(str, st.session_state.get("pipeline_signal_aggregator_log_level", DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL)).upper()
+                    if str(st.session_state.get("pipeline_signal_aggregator_log_level", DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL)).upper() in {"DEBUG", "INFO", "WARNING", "ERROR"}
+                    else DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
+                ),
+                key="pipeline_signal_aggregator_log_level",
+            ),
+        )
+    with signal_agg_col2:
+        signal_aggregator_sentiment_weight = float(
+            st.number_input(
+                "Signal Aggregator — poids sentiment",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_signal_aggregator_sentiment_weight", DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT)),
+                step=0.01,
+                format="%.2f",
+                key="pipeline_signal_aggregator_sentiment_weight",
+            )
+        )
+        signal_aggregator_macro_weight = float(
+            st.number_input(
+                "Signal Aggregator — poids macro sectoriel",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.get("pipeline_signal_aggregator_macro_weight", DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT)),
+                step=0.01,
+                format="%.2f",
+                key="pipeline_signal_aggregator_macro_weight",
+            )
+        )
+    with signal_agg_col3:
+        signal_aggregator_lookback_days = int(
+            st.number_input(
+                "Signal Aggregator — lookback (jours)",
+                min_value=1,
+                value=int(st.session_state.get("pipeline_signal_aggregator_lookback_days", DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS)),
+                step=1,
+                key="pipeline_signal_aggregator_lookback_days",
+            )
+        )
+        signal_aggregator_min_news_count = int(
+            st.number_input(
+                "Signal Aggregator — news mini",
+                min_value=1,
+                value=int(st.session_state.get("pipeline_signal_aggregator_min_news_count", DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT)),
+                step=1,
+                key="pipeline_signal_aggregator_min_news_count",
+            )
+        )
+
+    signal_agg_decay_col1, signal_agg_decay_col2 = st.columns(2)
+    with signal_agg_decay_col1:
+        signal_aggregator_time_decay_half_life_days = float(
+            st.number_input(
+                "Signal Aggregator — demi-vie décroissance (jours)",
+                min_value=0.1,
+                value=float(st.session_state.get("pipeline_signal_aggregator_time_decay_half_life_days", DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS)),
+                step=0.1,
+                format="%.2f",
+                key="pipeline_signal_aggregator_time_decay_half_life_days",
+            )
+        )
+    with signal_agg_decay_col2:
+        derived_quant_weight = round(1.0 - signal_aggregator_sentiment_weight - signal_aggregator_macro_weight, 4)
+        if derived_quant_weight < 0:
+            st.error(
+                "Configuration invalide côté Signal Aggregator : `poids sentiment + poids macro > 1.0`. "
+                "Le backend rejettera ce lancement."
+            )
+        else:
+            st.info(f"Poids quantitatif implicite côté backend : `{derived_quant_weight}`")
+
+    return {
+        "signal_aggregator_all_symbols": signal_aggregator_all_symbols,
+        "signal_aggregator_log_level": signal_aggregator_log_level,
+        "signal_aggregator_sentiment_weight": signal_aggregator_sentiment_weight,
+        "signal_aggregator_macro_weight": signal_aggregator_macro_weight,
+        "signal_aggregator_lookback_days": signal_aggregator_lookback_days,
+        "signal_aggregator_min_news_count": signal_aggregator_min_news_count,
+        "signal_aggregator_time_decay_half_life_days": signal_aggregator_time_decay_half_life_days,
+    }
+
+
+def _render_live_confirmation_block(execution_mode: str) -> bool:
+    """Sous-bloc « Confirmation LIVE » de ``_build_launch_options``.
+
+    Affiche le checkbox de confirmation LIVE quand
+    ``execution_mode == "live"`` et retourne ``True`` sinon (mode paper /
+    simulate ⇒ aucune confirmation requise).
+    """
+    if execution_mode != "live":
+        return True
+    st.warning("Mode LIVE sélectionné : cette action peut envoyer de vrais ordres chez le broker.")
+    return bool(
+        st.checkbox(
+            "Je confirme explicitement le lancement en LIVE",
+            value=bool(st.session_state.get("pipeline_live_confirmed", False)),
+            key="pipeline_live_confirmed",
+        )
+    )
+
+
 def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
     selected_account_id = cast(str | None, st.session_state.get("selected_account_id"))
     execution_defaults = _apply_execution_prefills(selected_account_id)
 
     with st.expander("⚙️ Paramètres d'exécution", expanded=False):
+        # === BLOCK 1/9 : Execution (capital preset, dates, equity, mode, RTH, account/PDT/swing, fenêtre + trailing + debug) — inline (extraction prévue S6.1) ===
         st.caption(
             "Les pipelines sont lancés en arrière-plan depuis l'IHM. Ils héritent de la configuration DB active et, "
             "pour les étapes concernées, du compte Alpaca sélectionné dans la sidebar."
@@ -812,6 +1021,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         # ──────────────────────────────────────────────────────────────────
         # Paramètres Risk Management — P1 cf. audit_ihm_pipeline_options.md
         # ──────────────────────────────────────────────────────────────────
+        # === BLOCK 2/9 : Risk Management + Kelly sizing — inline (extraction prévue S6.1) ===
         st.markdown("#### Paramètres Risk Management (`python -m risk_management`)")
         st.caption(
             "Pilote le sizing et les contraintes du portefeuille cible. "
@@ -987,6 +1197,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         if abs(conviction_total - 1.0) > 0.001:
             st.warning(f"⚠️ Risk : poids score + poids ML = {conviction_total} (≠ 1.0). Le backend pourrait normaliser.")
 
+        # === BLOCK 3/9 : Model Factory (preset + cible swing + walk-forward + hyperparams + grilles candidate) — inline (extraction prévue S6.1) ===
         st.markdown("#### Paramètres Model Factory")
         st.caption(
             "Ces options pilotent directement `python -m modelFactory --mode train`. "
@@ -1690,6 +1901,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         )
         _render_alpha_scanner_dependency_threshold_editor()
 
+        # === BLOCK 4/9 : Selector / Alpha Scanner (paramètres + dependency threshold editor) — inline (extraction prévue S6.1) ===
         st.markdown(ALPHA_SCANNER_PARAMS_TITLE)
         st.caption(ALPHA_SCANNER_PARAMS_CAPTION)
         st.caption(
@@ -1894,132 +2106,23 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 )
             )
 
-        st.markdown("#### Paramètres Event Sentiment")
-        st.caption(
-            "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment`. "
-            "Si les symboles sont laissés vides, le backend consomme automatiquement les candidats `stock_scores.is_candidate=1`."
-        )
+        # === BLOCK 5/9 : Event Sentiment (extrait — _render_event_sentiment_block) ===
+        _sentiment_vars = _render_event_sentiment_block()
+        sentiment_start_utc = _sentiment_vars["sentiment_start_utc"]
+        sentiment_end_utc = _sentiment_vars["sentiment_end_utc"]
+        sentiment_symbols = _sentiment_vars["sentiment_symbols"]
 
-        sentiment_col1, sentiment_col2, sentiment_col3 = st.columns(3)
-        with sentiment_col1:
-            sentiment_start_utc = str(
-                st.text_input(
-                    "Event Sentiment — start UTC",
-                    value=str(st.session_state.get("pipeline_sentiment_start_utc", "")),
-                    key="pipeline_sentiment_start_utc",
-                    help="Exemple : 2026-01-01T00:00:00Z",
-                )
-            ).strip()
-        with sentiment_col2:
-            sentiment_end_utc = str(
-                st.text_input(
-                    "Event Sentiment — end UTC",
-                    value=str(st.session_state.get("pipeline_sentiment_end_utc", "")),
-                    key="pipeline_sentiment_end_utc",
-                    help="Exemple : 2026-01-31T23:59:59Z",
-                )
-            ).strip()
-        with sentiment_col3:
-            sentiment_symbols = str(
-                st.text_input(
-                    "Event Sentiment — symboles (CSV)",
-                    value=str(st.session_state.get("pipeline_sentiment_symbols", "")),
-                    key="pipeline_sentiment_symbols",
-                    help="Exemple : AAPL,MSFT,NVDA",
-                )
-            ).strip().upper()
+        # === BLOCK 6/9 : Signal Aggregator (extrait — _render_signal_aggregator_block) ===
+        _signal_agg_vars = _render_signal_aggregator_block()
+        signal_aggregator_all_symbols = _signal_agg_vars["signal_aggregator_all_symbols"]
+        signal_aggregator_log_level = _signal_agg_vars["signal_aggregator_log_level"]
+        signal_aggregator_sentiment_weight = _signal_agg_vars["signal_aggregator_sentiment_weight"]
+        signal_aggregator_macro_weight = _signal_agg_vars["signal_aggregator_macro_weight"]
+        signal_aggregator_lookback_days = _signal_agg_vars["signal_aggregator_lookback_days"]
+        signal_aggregator_min_news_count = _signal_agg_vars["signal_aggregator_min_news_count"]
+        signal_aggregator_time_decay_half_life_days = _signal_agg_vars["signal_aggregator_time_decay_half_life_days"]
 
-        st.markdown("#### Paramètres Signal Aggregator")
-        st.caption(
-            "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment.signal_aggregator`. "
-            "La `trade date` réutilise le champ global situé en haut du formulaire quand il est renseigné."
-        )
-
-        signal_agg_col1, signal_agg_col2, signal_agg_col3 = st.columns(3)
-        with signal_agg_col1:
-            signal_aggregator_all_symbols = st.checkbox(
-                "Signal Aggregator — traiter tous les symboles",
-                value=bool(st.session_state.get("pipeline_signal_aggregator_all_symbols", False)),
-                key="pipeline_signal_aggregator_all_symbols",
-            )
-            signal_aggregator_log_level = cast(
-                str,
-                st.selectbox(
-                    "Signal Aggregator — niveau de log",
-                    options=["DEBUG", "INFO", "WARNING", "ERROR"],
-                    index=["DEBUG", "INFO", "WARNING", "ERROR"].index(
-                        cast(str, st.session_state.get("pipeline_signal_aggregator_log_level", DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL)).upper()
-                        if str(st.session_state.get("pipeline_signal_aggregator_log_level", DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL)).upper() in {"DEBUG", "INFO", "WARNING", "ERROR"}
-                        else DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
-                    ),
-                    key="pipeline_signal_aggregator_log_level",
-                ),
-            )
-        with signal_agg_col2:
-            signal_aggregator_sentiment_weight = float(
-                st.number_input(
-                    "Signal Aggregator — poids sentiment",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_signal_aggregator_sentiment_weight", DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT)),
-                    step=0.01,
-                    format="%.2f",
-                    key="pipeline_signal_aggregator_sentiment_weight",
-                )
-            )
-            signal_aggregator_macro_weight = float(
-                st.number_input(
-                    "Signal Aggregator — poids macro sectoriel",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=float(st.session_state.get("pipeline_signal_aggregator_macro_weight", DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT)),
-                    step=0.01,
-                    format="%.2f",
-                    key="pipeline_signal_aggregator_macro_weight",
-                )
-            )
-        with signal_agg_col3:
-            signal_aggregator_lookback_days = int(
-                st.number_input(
-                    "Signal Aggregator — lookback (jours)",
-                    min_value=1,
-                    value=int(st.session_state.get("pipeline_signal_aggregator_lookback_days", DEFAULT_SIGNAL_AGGREGATOR_LOOKBACK_DAYS)),
-                    step=1,
-                    key="pipeline_signal_aggregator_lookback_days",
-                )
-            )
-            signal_aggregator_min_news_count = int(
-                st.number_input(
-                    "Signal Aggregator — news mini",
-                    min_value=1,
-                    value=int(st.session_state.get("pipeline_signal_aggregator_min_news_count", DEFAULT_SIGNAL_AGGREGATOR_MIN_NEWS_COUNT)),
-                    step=1,
-                    key="pipeline_signal_aggregator_min_news_count",
-                )
-            )
-
-        signal_agg_decay_col1, signal_agg_decay_col2 = st.columns(2)
-        with signal_agg_decay_col1:
-            signal_aggregator_time_decay_half_life_days = float(
-                st.number_input(
-                    "Signal Aggregator — demi-vie décroissance (jours)",
-                    min_value=0.1,
-                    value=float(st.session_state.get("pipeline_signal_aggregator_time_decay_half_life_days", DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS)),
-                    step=0.1,
-                    format="%.2f",
-                    key="pipeline_signal_aggregator_time_decay_half_life_days",
-                )
-            )
-        with signal_agg_decay_col2:
-            derived_quant_weight = round(1.0 - signal_aggregator_sentiment_weight - signal_aggregator_macro_weight, 4)
-            if derived_quant_weight < 0:
-                st.error(
-                    "Configuration invalide côté Signal Aggregator : `poids sentiment + poids macro > 1.0`. "
-                    "Le backend rejettera ce lancement."
-                )
-            else:
-                st.info(f"Poids quantitatif implicite côté backend : `{derived_quant_weight}`")
-
+        # === BLOCK 7/9 : Screener (inline — extraction prévue S6.1) ===
         st.markdown(SCREENER_PARAMS_TITLE)
         st.caption(SCREENER_PARAMS_CAPTION)
         st.caption(
@@ -2111,6 +2214,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 )
             )
 
+        # === BLOCK 8/9 : Data Integrity (quotes / earnings / fundamentals / EODHD write) — inline (extraction prévue S6.1) ===
         st.markdown("#### Paramètres Data Integrity")
         st.caption(
             "Ces réglages reflètent les options réellement disponibles côté `dataIntegrityEngine` pour les étapes quotes, earnings et fondamentaux. "
@@ -2270,6 +2374,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         else:
             st.caption("Sans fenêtre personnalisée, `sync_earnings_calendar` conserve sa plage backend par défaut : J-7 → J+30.")
 
+        # === BLOCK 8b/9 : Corporate Actions + Backfill EODHD historique — inline (extraction prévue S6.1) ===
         st.markdown("#### Paramètres Corporate Actions")
         ca_col1, ca_col2, ca_col3 = st.columns([1, 1, 3])
         with ca_col1:
@@ -2395,14 +2500,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             else:
                 st.warning("B3 sera lancé en mode `dry-run` : appels API réels, mais 0 insert DB.")
 
-        live_confirmed = True
-        if execution_mode == "live":
-            st.warning("Mode LIVE sélectionné : cette action peut envoyer de vrais ordres chez le broker.")
-            live_confirmed = st.checkbox(
-                "Je confirme explicitement le lancement en LIVE",
-                value=bool(st.session_state.get("pipeline_live_confirmed", False)),
-                key="pipeline_live_confirmed",
-            )
+        # === BLOCK 9/9 : Confirmation LIVE (extrait — _render_live_confirmation_block) ===
+        live_confirmed = _render_live_confirmation_block(execution_mode)
 
     return (
         PipelineLaunchOptions(
