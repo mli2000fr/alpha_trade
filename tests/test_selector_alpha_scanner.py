@@ -127,6 +127,13 @@ def test_cli_without_preset_uses_strict_profile_implicitly() -> None:
     assert config.require_above_ma200 is True
 
 
+def test_cli_help_formats_percent_values_without_argparse_error() -> None:
+    help_text = _build_arg_parser().format_help()
+
+    assert "--sector-cap-ratio" in help_text
+    assert "0.30 = 30%" in help_text
+
+
 def test_merge_scores_combines_factor_and_aux_scores() -> None:
     scanner = _make_scanner()
     computed_df = pd.DataFrame(
