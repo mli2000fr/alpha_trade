@@ -1,0 +1,172 @@
+"""Sprint S7 - ``_AccountConstraintState`` + capacity helpers.
+
+Extracted from :mod:`execution_engine.executor` to slim the orchestrator.
+The helpers stay private (``_``-prefixed for state, free functions for
+behaviours) and are re-exported by :mod:`execution_engine.executor` for
+backwards compatibility (tests/test_execution_engine_executor.py).
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from execution_engine.audit import make_event
+from execution_engine.models import EventType, ExecutionEvent, OrderIntent
+
+if TYPE_CHECKING:  # pragma: no cover
+    from execution_engine.broker_adapter import BrokerAdapter
+    from execution_engine.config import ExecutionConfig
+
+LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _AccountConstraintState:
+    account_type: str
+    effective_pdt_rule: str
+    pdt_limited: bool
+    swing_only: bool
+    equity: float
+    buying_power_available: float
+    settled_cash_available: float
+    daytrade_count: int
+    remaining_day_trade_slots: int
+
+    @property
+    def pdt_active(self) -> bool:
+        return self.pdt_limited
+
+
+def safe_float(value: object, *, default: float = 0.0) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def estimate_intent_notional(intent: OrderIntent) -> float:
+    price = intent.limit_price if intent.limit_price is not None else intent.decision_price
+    return max(float(intent.qty) * max(float(price), 0.0), 0.0)
+
+
+def build_account_constraint_state(
+    cfg: "ExecutionConfig", broker: "BrokerAdapter"
+) -> _AccountConstraintState:
+    if cfg.dry_run:
+        equity = float(cfg.simulated_account_equity)
+        settled_cash = equity
+        buying_power = (
+            equity * cfg.simulated_margin_buying_power_multiplier
+            if cfg.account_type == "margin"
+            else settled_cash
+        )
+        daytrade_count = 0
+    else:
+        snapshot = broker.get_account_snapshot()
+        equity = safe_float(snapshot.get("equity") or snapshot.get("portfolio_value"), default=0.0)
+        settled_cash = safe_float(
+            snapshot.get("non_marginable_buying_power")
+            if cfg.account_type == "cash"
+            else snapshot.get("cash"),
+            default=0.0,
+        )
+        if settled_cash <= 0:
+            settled_cash = safe_float(snapshot.get("cash"), default=0.0)
+        buying_power = safe_float(
+            snapshot.get("buying_power")
+            if cfg.account_type == "margin"
+            else snapshot.get("non_marginable_buying_power"),
+            default=settled_cash if cfg.account_type == "cash" else equity,
+        )
+        if cfg.account_type == "cash":
+            buying_power = settled_cash
+        daytrade_count = int(safe_float(snapshot.get("daytrade_count"), default=0.0))
+
+    pdt_limited = cfg.applies_pdt_limit(equity)
+    remaining_slots = max(cfg.max_day_trades - daytrade_count, 0) if pdt_limited else 0
+    return _AccountConstraintState(
+        account_type=cfg.account_type,
+        effective_pdt_rule=cfg.effective_pdt_rule,
+        pdt_limited=pdt_limited,
+        swing_only=cfg.swing_only,
+        equity=equity,
+        buying_power_available=max(buying_power, 0.0),
+        settled_cash_available=max(settled_cash, 0.0),
+        daytrade_count=max(daytrade_count, 0),
+        remaining_day_trade_slots=remaining_slots,
+    )
+
+
+def reserve_account_capacity_for_intent(
+    intent: OrderIntent,
+    account_state: _AccountConstraintState,
+    exec_run_id: str,
+    events: list[ExecutionEvent],
+    metrics: dict[str, int],
+) -> bool:
+    if intent.side != "buy":
+        return True
+
+    estimated_notional = estimate_intent_notional(intent)
+    available_budget = (
+        account_state.settled_cash_available
+        if account_state.account_type == "cash"
+        else account_state.buying_power_available
+    )
+    if estimated_notional <= available_budget + 1e-9:
+        if account_state.account_type == "cash":
+            account_state.settled_cash_available = max(
+                account_state.settled_cash_available - estimated_notional, 0.0
+            )
+        account_state.buying_power_available = max(
+            account_state.buying_power_available - estimated_notional, 0.0
+        )
+        return True
+
+    metrics["skipped"] += 1
+    metrics["constraint_blocked"] += 1
+    events.append(
+        make_event(
+            exec_run_id,
+            EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT,
+            (
+                f"Blocked by account constraints: {intent.symbol} requires ~{estimated_notional:.2f}, "
+                f"available={available_budget:.2f} ({account_state.account_type})"
+            ),
+            symbol=intent.symbol,
+            intent_id=intent.intent_id,
+            payload={
+                "account_type": account_state.account_type,
+                "estimated_notional": estimated_notional,
+                "available_budget": available_budget,
+                "effective_pdt_rule": account_state.effective_pdt_rule,
+                "swing_only": account_state.swing_only,
+            },
+        )
+    )
+    return False
+
+
+def should_defer_children(
+    account_state: _AccountConstraintState,
+) -> tuple[bool, str | None]:
+    if account_state.swing_only:
+        return True, "swing_only"
+    if account_state.pdt_active:
+        if account_state.remaining_day_trade_slots <= 0:
+            return True, "pdt_limit"
+        account_state.remaining_day_trade_slots -= 1
+    return False, None
+
+
+__all__ = [
+    "_AccountConstraintState",
+    "safe_float",
+    "estimate_intent_notional",
+    "build_account_constraint_state",
+    "reserve_account_capacity_for_intent",
+    "should_defer_children",
+]
+

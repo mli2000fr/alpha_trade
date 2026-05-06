@@ -6,6 +6,8 @@ import sys
 import pandas as pd
 
 from selector import alpha_scanner
+from selector import cli as _selector_cli
+from selector import scanner as _selector_scanner
 
 
 def _payload_from_stdout(stdout: str, prefix: str) -> dict[str, object]:
@@ -40,8 +42,8 @@ class _FakeScanner:
 
 
 def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(alpha_scanner, "configure_root_logging", lambda **kwargs: None)
-    monkeypatch.setattr(alpha_scanner, "AlphaScanner", _FakeScanner)
+    monkeypatch.setattr(_selector_cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(_selector_cli, "AlphaScanner", _FakeScanner)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -148,8 +150,8 @@ def test_alpha_scanner_run_emits_live_progress(monkeypatch) -> None:
     )
     monkeypatch.setattr(scanner, "rank_and_select", lambda merged_df: merged_df.head(2).copy())
     monkeypatch.setattr(scanner, "update_database", lambda selected_df, scored_df=None: len(selected_df))
-    monkeypatch.setattr(alpha_scanner, "ThreadPoolExecutor", _FakeExecutor)
-    monkeypatch.setattr(alpha_scanner, "wait", lambda pending, return_when=None: (set(pending), set()))
+    monkeypatch.setattr(_selector_scanner, "ThreadPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(_selector_scanner, "wait", lambda pending, return_when=None: (set(pending), set()))
 
     result = scanner.run()
 
