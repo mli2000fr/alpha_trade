@@ -1,9 +1,9 @@
-presets:
+﻿presets:
   - key: capital_0_5000
-    label: "0 → 5 000 $"
+    label: "0 â†’ 5 000 $"
     min_equity: 0
     max_equity: 5000
-    description: "Petit compte swing cash : lignes concentrées, ticket minimum réduit et filtres selector légèrement relâchés pour conserver quelques opportunités exécutables."
+    description: "Petit compte swing cash : lignes concentrÃ©es, ticket minimum rÃ©duit et filtres selector lÃ©gÃ¨rement relÃ¢chÃ©s pour conserver quelques opportunitÃ©s exÃ©cutables."
     values:
       risk_account_equity: "__DETECTED_EQUITY__"
       risk_per_trade_pct: 0.02
@@ -11,6 +11,9 @@ presets:
       risk_max_position_weight: 0.20
       risk_max_sector_weight: 0.40
       risk_min_position_notional: 150.0
+      # Sprint S3 / A-011 — petit compte : seuils circuit breaker plus stricts.
+      risk_max_drawdown_pct: 0.08
+      risk_max_daily_loss_pct: 0.03
       risk_correlation_threshold: 0.90
       risk_correlation_lookback_days: 40
       risk_correlation_min_overlap: 25
@@ -46,10 +49,10 @@ presets:
       selector_require_above_ma200: true
 
   - key: capital_5001_10000
-    label: "5 001 → 10 000 $"
+    label: "5 001 â†’ 10 000 $"
     min_equity: 5000.01
     max_equity: 10000
-    description: "Petit/moyen compte swing cash : diversification modérée, ticket minimum toujours bas et filtres encore assez ouverts pour rester investissable."
+    description: "Petit/moyen compte swing cash : diversification modÃ©rÃ©e, ticket minimum toujours bas et filtres encore assez ouverts pour rester investissable."
     values:
       risk_account_equity: "__DETECTED_EQUITY__"
       risk_per_trade_pct: 0.0175
@@ -57,6 +60,9 @@ presets:
       risk_max_position_weight: 0.18
       risk_max_sector_weight: 0.35
       risk_min_position_notional: 200.0
+      # Sprint S3 / A-011 — tranche 5–10k : seuils encore stricts.
+      risk_max_drawdown_pct: 0.10
+      risk_max_daily_loss_pct: 0.035
       risk_correlation_threshold: 0.88
       risk_correlation_lookback_days: 45
       risk_correlation_min_overlap: 30
@@ -92,10 +98,10 @@ presets:
       selector_require_above_ma200: true
 
   - key: capital_10001_25000
-    label: "10 001 → 25 000 $"
+    label: "10 001 â†’ 25 000 $"
     min_equity: 10000.01
     max_equity: 25000
-    description: "Compte intermédiaire : diversification plus régulière, contraintes risk plus proches du swing standard tout en restant compatibles avec un compte encore modeste."
+    description: "Compte intermÃ©diaire : diversification plus rÃ©guliÃ¨re, contraintes risk plus proches du swing standard tout en restant compatibles avec un compte encore modeste."
     values:
       risk_account_equity: "__DETECTED_EQUITY__"
       risk_per_trade_pct: 0.015
@@ -103,6 +109,9 @@ presets:
       risk_max_position_weight: 0.15
       risk_max_sector_weight: 0.30
       risk_min_position_notional: 300.0
+      # Sprint S3 / A-011 — tranche 10–25k : convergence vers le standard.
+      risk_max_drawdown_pct: 0.12
+      risk_max_daily_loss_pct: 0.04
       risk_correlation_threshold: 0.85
       risk_correlation_lookback_days: 50
       risk_correlation_min_overlap: 35
@@ -138,10 +147,10 @@ presets:
       selector_require_above_ma200: true
 
   - key: capital_25001_50000
-    label: "25 001 → 50 000 $"
+    label: "25 001 â†’ 50 000 $"
     min_equity: 25000.01
     max_equity: 50000
-    description: "Compte swing déjà diversifiable : allocation plus équilibrée, davantage de lignes et retour vers des filtres selector proches du profil strict standard."
+    description: "Compte swing dÃ©jÃ  diversifiable : allocation plus Ã©quilibrÃ©e, davantage de lignes et retour vers des filtres selector proches du profil strict standard."
     values:
       risk_account_equity: "__DETECTED_EQUITY__"
       risk_per_trade_pct: 0.0125
@@ -149,6 +158,9 @@ presets:
       risk_max_position_weight: 0.12
       risk_max_sector_weight: 0.30
       risk_min_position_notional: 400.0
+      # Sprint S3 / A-011 — tranche 25–50k : seuils swing standard.
+      risk_max_drawdown_pct: 0.14
+      risk_max_daily_loss_pct: 0.045
       risk_correlation_threshold: 0.82
       risk_correlation_lookback_days: 60
       risk_correlation_min_overlap: 40
@@ -184,10 +196,10 @@ presets:
       selector_require_above_ma200: true
 
   - key: capital_50001_100000
-    label: "50 001 → 100 000 $"
+    label: "50 001 â†’ 100 000 $"
     min_equity: 50000.01
     max_equity: 100000
-    description: "Preset swing standard du projet : portefeuille plus diversifié, contraintes corrélation plus disciplinées et filtre selector strict quasi nominal."
+    description: "Preset swing standard du projet : portefeuille plus diversifiÃ©, contraintes corrÃ©lation plus disciplinÃ©es et filtre selector strict quasi nominal."
     values:
       risk_account_equity: "__DETECTED_EQUITY__"
       risk_per_trade_pct: 0.01
@@ -195,6 +207,9 @@ presets:
       risk_max_position_weight: 0.10
       risk_max_sector_weight: 0.28
       risk_min_position_notional: 500.0
+      # Sprint S3 / A-011 — tranche 50–100k : seuils standards config.yaml.
+      risk_max_drawdown_pct: 0.15
+      risk_max_daily_loss_pct: 0.05
       risk_correlation_threshold: 0.80
       risk_correlation_lookback_days: 60
       risk_correlation_min_overlap: 40
@@ -219,7 +234,7 @@ presets:
       selector_max_volatility_ratio: 0.90
       selector_min_relative_strength_index: 100.0
       selector_min_high_52w_proximity: 0.75
-      selector_min_weekly_trend_score: 1.0
+      selector_min_weekly_trend_score: 0.95
       selector_min_atr_pct_20: 0.015
       selector_max_atr_pct_20: 0.06
       selector_min_market_cap: 2000000000.0
@@ -233,7 +248,7 @@ presets:
     label: "100 001 $+"
     min_equity: 100000.01
     max_equity:
-    description: "Grand compte swing : diversification large, tickets plus importants et filtres selector les plus stricts pour privilégier la qualité moyenne du book cible."
+    description: "Grand compte swing : diversification large, tickets plus importants et filtres selector les plus stricts pour privilÃ©gier la qualitÃ© moyenne du book cible."
     values:
       risk_account_equity: "__DETECTED_EQUITY__"
       risk_per_trade_pct: 0.008
@@ -241,6 +256,9 @@ presets:
       risk_max_position_weight: 0.08
       risk_max_sector_weight: 0.25
       risk_min_position_notional: 750.0
+      # Sprint S3 / A-011 — gros compte : tolérance maximale (drawdown plus large).
+      risk_max_drawdown_pct: 0.18
+      risk_max_daily_loss_pct: 0.05
       risk_correlation_threshold: 0.78
       risk_correlation_lookback_days: 90
       risk_correlation_min_overlap: 50
@@ -265,7 +283,7 @@ presets:
       selector_max_volatility_ratio: 0.85
       selector_min_relative_strength_index: 102.0
       selector_min_high_52w_proximity: 0.78
-      selector_min_weekly_trend_score: 1.0
+      selector_min_weekly_trend_score: 0.95
       selector_min_atr_pct_20: 0.015
       selector_max_atr_pct_20: 0.055
       selector_min_market_cap: 3000000000.0

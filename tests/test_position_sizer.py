@@ -30,14 +30,15 @@ def test_missing_atr_is_rejected(sizer: PositionSizer) -> None:
     pi = PriceInfo(symbol="XYZ", last_close=50.0, atr_20=None)
     result = sizer.compute(pi)
     assert result.proposed_shares == 0
-    assert result.method == "rejected"
+    # Sprint S3 / A-010 — méthode désormais détaillée pour la télémétrie.
+    assert result.method == "rejected_atr_missing"
 
 
 def test_zero_price_rejected(sizer: PositionSizer) -> None:
     pi = PriceInfo(symbol="BAD", last_close=0.0, atr_20=1.0)
     result = sizer.compute(pi)
     assert result.proposed_shares == 0
-    assert result.method == "rejected"
+    assert result.method == "rejected_invalid_price"
 
 
 def test_negative_price_rejected(sizer: PositionSizer) -> None:
@@ -59,5 +60,5 @@ def test_below_min_position_notional_is_rejected(sizer: PositionSizer) -> None:
     result = sizer.compute(pi)
 
     assert result.proposed_shares == 0
-    assert result.method == "rejected"
+    assert result.method == "rejected_notional"
 

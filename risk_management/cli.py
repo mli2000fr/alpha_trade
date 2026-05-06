@@ -63,6 +63,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--score-weight", type=float, default=0.40)
     p.add_argument("--prediction-weight", type=float, default=0.60)
     p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes")
+    # Sprint S3 / A-011 — overrides des seuils circuit breaker par préset.
+    p.add_argument(
+        "--max-portfolio-drawdown-pct",
+        type=float,
+        default=None,
+        help="Override du seuil drawdown circuit breaker (ex: 0.08 = 8%%). Défaut config.yaml.",
+    )
+    p.add_argument(
+        "--max-daily-loss-pct",
+        type=float,
+        default=None,
+        help="Override du seuil perte journalière circuit breaker (ex: 0.03 = 3%%). Défaut config.yaml.",
+    )
     return p
 
 
@@ -196,6 +209,17 @@ def main(args: list[str] | None = None) -> None:
         kelly_fraction_multiplier=args.kelly_fraction_multiplier,
         score_weight=args.score_weight,
         prediction_weight=args.prediction_weight,
+        # Sprint S3 / A-011 — overrides des seuils circuit breaker par préset.
+        max_portfolio_drawdown_pct=(
+            float(args.max_portfolio_drawdown_pct)
+            if args.max_portfolio_drawdown_pct is not None
+            else RiskConfig.__dataclass_fields__["max_portfolio_drawdown_pct"].default
+        ),
+        max_daily_loss_pct=(
+            float(args.max_daily_loss_pct)
+            if args.max_daily_loss_pct is not None
+            else RiskConfig.__dataclass_fields__["max_daily_loss_pct"].default
+        ),
     )
 
     LOGGER.info("Chargement des candidats…")
@@ -313,6 +337,16 @@ def main(args: list[str] | None = None) -> None:
     atr_coverage_pct = (atr_available_symbols / len(entries)) if entries else 0.0
     prediction_coverage_pct = (prediction_available_symbols / len(entries)) if entries else 0.0
     rejection_reason_counts = dict(Counter(str(entry.decision_reason or "").strip() or "UNKNOWN" for entry in rejected_entries))
+    # Sprint S3 / A-010 — télémétrie sizing : on agrège par ``sizing_method``
+    # (tagué dans ``risk_management.position_sizer``) pour exposer combien de
+    # candidats ont été rejetés faute d'ATR ou faute de notional minimum.
+    sizing_method_counts: dict[str, int] = dict(
+        Counter(str(getattr(entry, "sizing_method", "") or "").strip() or "unknown" for entry in entries)
+    )
+    rejected_for_atr_missing = int(sizing_method_counts.get("rejected_atr_missing", 0))
+    rejected_for_notional = int(sizing_method_counts.get("rejected_notional", 0))
+    rejected_for_zero_shares = int(sizing_method_counts.get("rejected_zero_shares", 0))
+    rejected_for_invalid_price = int(sizing_method_counts.get("rejected_invalid_price", 0))
     finished_at = datetime.now()
     summary = {
         "run_id": run_id,
@@ -337,6 +371,17 @@ def main(args: list[str] | None = None) -> None:
         "atr_coverage_pct": round(atr_coverage_pct, 4),
         "prediction_coverage_pct": round(prediction_coverage_pct, 4),
         "rejection_reason_counts": rejection_reason_counts,
+        # Sprint S3 / A-010 — télémétrie sizing dédiée (visible IHM/CI).
+        "rejected_for_atr_missing": rejected_for_atr_missing,
+        "rejected_for_notional": rejected_for_notional,
+        "rejected_for_zero_shares": rejected_for_zero_shares,
+        "rejected_for_invalid_price": rejected_for_invalid_price,
+        "sizing_method_counts": sizing_method_counts,
+        # Sprint S3 / A-011 — visibilité des seuils circuit breaker effectifs.
+        "circuit_breaker_thresholds": {
+            "max_portfolio_drawdown_pct": float(config.max_portfolio_drawdown_pct),
+            "max_daily_loss_pct": float(config.max_daily_loss_pct),
+        },
         "dry_run": bool(config.dry_run),
         "effective_equity": round(float(effective_equity), 2),
         "account_equity": round(float(args.account_equity), 2),

@@ -23,6 +23,43 @@ LOGGER = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Sprint S3 / A-006 — Convention canonique : MTM(close) + cumulative(ledger).
+# ---------------------------------------------------------------------------
+
+
+def compute_total_return_with_dividends(
+    initial_equity: float,
+    final_value_mtm: float,
+    dividends_received: float,
+) -> dict[str, float]:
+    """Retourne ``{mtm_return_pct, dividend_yield_pct, total_return_pct}``.
+
+    Phase 6.1.c / A-006 : applique la convention canonique
+    ``MTM(stock_bars_daily.close) + cumulative(portfolio_cash_ledger)``
+    (cf. ``README.md:15-16``). ``final_value_mtm`` doit être l'equity
+    portefeuille **avant** crédit des dividendes (mark-to-market pur).
+    Le ``dividends_received`` provient de
+    :func:`backtesting.report.load_dividends_received` qui agrège
+    ``portfolio_cash_ledger.entry_type='dividend_credit'``.
+
+    Conformité parité backtest ↔ live : les analytics doivent toujours
+    additionner les flux cash dividendes pour correspondre à
+    ``broker_account_snapshots.equity`` côté live.
+    """
+    if initial_equity <= 0:
+        return {"mtm_return_pct": 0.0, "dividend_yield_pct": 0.0, "total_return_pct": 0.0}
+    initial = float(initial_equity)
+    mtm_return_pct = (float(final_value_mtm) / initial - 1.0) * 100.0
+    dividend_yield_pct = (float(dividends_received) / initial) * 100.0
+    total_return_pct = mtm_return_pct + dividend_yield_pct
+    return {
+        "mtm_return_pct": mtm_return_pct,
+        "dividend_yield_pct": dividend_yield_pct,
+        "total_return_pct": total_return_pct,
+    }
+
+
+# ---------------------------------------------------------------------------
 # D1 — Benchmark comparison
 # ---------------------------------------------------------------------------
 
@@ -243,6 +280,7 @@ __all__ = [
     "build_extended_report_payload",
     "compute_benchmark_analytics",
     "compute_tail_analytics",
+    "compute_total_return_with_dividends",
     "monthly_returns_table",
     "save_equity_curve_html",
     "sector_attribution",
