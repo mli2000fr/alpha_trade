@@ -2,7 +2,7 @@
 
 ## Objectif
 
-Implémenter un refactor **minimal** pour permettre au pipeline `event_sentiment` d'utiliser **Finnhub** comme source de news, tout en **conservant les schémas de tables existants** si possible.
+Implémenter un refactor pour permettre au pipeline `event_sentiment` d'utiliser **Finnhub** comme source de news, tout en **conservant les schémas de tables existants** si possible.
 
 Le résultat attendu est :
 
@@ -115,6 +115,51 @@ Important :
 - rester cohérent avec `_normalize_article()` dans `event_sentiment/ingestion.py`
 - ne pas modifier le modèle `NormalizedNewsArticle` sauf nécessité forte
 
+#### Addendum métier — limite actuelle article → symbole
+
+Le pipeline actuel est **centré sur l'article pour le scoring**, mais **centré sur le provider pour l'attribution des tickers**.
+
+Concrètement :
+- `FinBERTSentimentService` calcule **1 score de sentiment par article**
+- le lien entre un article et un ou plusieurs symboles vient du provider news (`payload["symbols"]` / `payload["tickers"]`)
+- ce score article est ensuite propagé aux symboles associés via `news_ticker_map`
+
+Conséquence métier à expliciter dans le refactor :
+- si le provider tagge incorrectement un article avec un symbole non pertinent, ce symbole héritera quand même du sentiment de l'article
+- ce comportement existe déjà avec Alpaca et resterait le même avec Finnhub dans un refactor minimal
+- le refactor Finnhub demandé **ne doit pas prétendre résoudre** la désambiguïsation sémantique article → entreprise ; il conserve le modèle actuel
+
+En d'autres termes, le pipeline cible reste :
+
+- `article -> 1 score FinBERT`
+- `provider -> liste des symboles concernés`
+- `article score -> propagation aux symboles fournis par le provider`
+
+#### Garde-fous recommandés dans le refactor minimal
+
+Sans casser l'architecture actuelle, prévoir au moins un garde-fou optionnel côté ingestion / mapping ticker.
+
+Ajouter si possible une option de configuration du style :
+
+- `provider_ticker_relevance_mode = "provider_default" | "strict"`
+
+Comportement recommandé :
+
+- `provider_default` : comportement actuel, on accepte tous les tickers fournis par le provider
+- `strict` : on applique un filtrage conservateur avant insertion dans `news_ticker_map`
+
+En complément, prévoir si possible un filtre simple du type :
+
+- ignorer les articles avec trop de tickers
+- ou ne conserver que le ticker principal si le provider fournit une notion de `primary ticker`
+
+Exemples de garde-fous acceptables dans ce refactor minimal :
+
+- ignorer un article si `len(symbols)` dépasse un seuil configurable
+- limiter aux `N` premiers tickers
+- conserver uniquement le premier ticker provider en mode `strict`
+- journaliser combien d'articles ont été filtrés par cette logique
+
 ---
 
 ### 3. Refactor minimal de `NewsIngestionService`
@@ -220,6 +265,38 @@ Point de vigilance :
 - ne pas refondre les tables ni l'agrégation aval
 - ne pas faire un gros redesign si un petit seam provider suffit
 - ne pas casser les imports ou tests existants Alpaca
+
+---
+
+## Si vous voulez améliorer ça plus tard
+
+Vous pouvez ajouter un filtre de pertinence sans casser toute l'architecture.
+
+### Niveau 1 — simple
+
+Avant de mapper un article à un ticker :
+
+- vérifier que le ticker demandé est bien dans `payload["symbols"]`
+- et éventuellement limiter au primary ticker si le provider l'indique
+
+### Niveau 2 — heuristique utile
+
+Ajouter un score de pertinence par symbole :
+
+- présence du nom société dans `headline`
+- présence du ticker dans le texte
+- nombre de tickers taggés
+- bonus si le symbole est le premier ticker
+- malus si l'article mentionne beaucoup de sociétés
+
+### Niveau 3 — plus avancé
+
+Faire :
+
+- `article + symbol -> score de pertinence`
+- voire `article + symbol -> sentiment spécifique`
+
+Ces pistes sont **hors périmètre du refactor minimal** demandé ici, mais doivent être documentées comme évolutions futures possibles si la qualité du mapping provider → ticker devient un point bloquant.
 
 ---
 
