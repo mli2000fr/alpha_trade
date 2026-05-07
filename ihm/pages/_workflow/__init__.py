@@ -162,6 +162,13 @@ def _build_workflow_scope_help_lines() -> tuple[str, str, str]:
     )
 
 
+def _build_workflow_scope_alert_lines() -> tuple[str, str]:
+    return (
+        "⚠️ Les étapes **3→10** recalculent des données globales partagées entre comptes.",
+        "✅ Les étapes **11→12** restent spécifiques au compte sélectionné.",
+    )
+
+
 def _workflow_mode_label(run: dict[str, object]) -> str:
     explicit_label = str(run.get("step_label") or "").strip()
     if explicit_label.startswith("Workflow personnalisé"):
@@ -586,6 +593,9 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
         st.subheader(" Workflow complet configurable")
         for help_line in _build_workflow_scope_help_lines():
             st.caption(help_line)
+        scope_alert_global, scope_alert_account = _build_workflow_scope_alert_lines()
+        st.warning(scope_alert_global)
+        st.success(scope_alert_account)
         workflow_range = st.selectbox(
             "Périmètre du workflow",
             options=WORKFLOW_RANGE_OPTIONS,

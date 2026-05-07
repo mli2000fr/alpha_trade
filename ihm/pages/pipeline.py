@@ -518,9 +518,6 @@ def render() -> None:
 
     _render_workflow_launcher(options, live_confirmed, db_config)
     _render_runtime_center()
-    scope_alert_global, scope_alert_account = _build_pipeline_scope_alert_lines()
-    st.warning(scope_alert_global)
-    st.success(scope_alert_account)
     _render_step_panels(options, live_confirmed, db_config)
 
 
