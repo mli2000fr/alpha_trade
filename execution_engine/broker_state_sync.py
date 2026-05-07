@@ -10,6 +10,7 @@ from typing import Any
 from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import ExecutionFill, ExecutionOrderRequest, OrderIntent
+from execution_engine.orphan_adoption import adopt_orphan_buy, adopt_orphan_sell
 from execution_engine.tca import compute_implementation_shortfall, compute_slippage_bps
 
 LOGGER = logging.getLogger(__name__)
@@ -41,6 +42,8 @@ class BrokerStateSynchronizer:
             "orders_synced": 0,
             "fills_synced": 0,
             "unmatched_orders": 0,
+            "orphan_sells_adopted": 0,
+            "orphan_buys_adopted": 0,
             "positions_projected": 0,
             "lots_projected": 0,
             "broker_positions": 0,
@@ -55,7 +58,22 @@ class BrokerStateSynchronizer:
         for raw_order in raw_orders:
             request = self._resolve_request(account_id=account_id, raw_order=raw_order)
             if request is None:
-                metrics["unmatched_orders"] += 1
+                # Sprint 2026-05 — adoption d'ordre orphelin (Q5/Q6 FAQ).
+                # Tout ordre filled / partiellement filled non rattaché à un
+                # OrderIntent est intégré au journal canonique.
+                adoption_result = self._maybe_adopt_orphan(
+                    account_id=account_id, raw_order=raw_order,
+                )
+                if adoption_result is not None:
+                    if adoption_result.intent.side == "sell":
+                        metrics["orphan_sells_adopted"] += 1
+                    else:
+                        metrics["orphan_buys_adopted"] += 1
+                    metrics["orders_synced"] += 1
+                    if adoption_result.fill is not None:
+                        metrics["fills_synced"] += 1
+                else:
+                    metrics["unmatched_orders"] += 1
                 continue
 
             broker_order = replace(
@@ -93,6 +111,44 @@ class BrokerStateSynchronizer:
         )
         metrics["lots_projected"] = self._repo.rebuild_execution_position_lots(account_id=account_id)
         return metrics
+
+    def _maybe_adopt_orphan(
+        self,
+        *,
+        account_id: str,
+        raw_order: dict[str, Any],
+    ):
+        """Adopte un ordre broker orphelin filled / partially_filled.
+
+        Retourne ``AdoptionResult`` ou ``None`` si l'ordre n'est pas filled
+        (rien à adopter — un ordre simplement vu hors lineage est légitime
+        s'il n'a jamais touché une position).
+        """
+        raw_status = str(raw_order.get("status") or "").strip().lower()
+        if raw_status not in {"filled", "partially_filled"}:
+            return None
+        side = str(raw_order.get("side") or "").strip().lower()
+        try:
+            if side == "sell":
+                return adopt_orphan_sell(
+                    self._repo,
+                    broker_mode=self._broker_mode,
+                    account_id=account_id,
+                    raw_order=raw_order,
+                )
+            if side == "buy":
+                return adopt_orphan_buy(
+                    self._repo,
+                    broker_mode=self._broker_mode,
+                    account_id=account_id,
+                    raw_order=raw_order,
+                )
+        except Exception:
+            LOGGER.warning(
+                "Échec adoption ordre orphelin (account=%s, broker_order_id=%s)",
+                account_id, raw_order.get("id"), exc_info=True,
+            )
+        return None
 
     def _resolve_request(
         self,

@@ -173,6 +173,49 @@ def build_initial_stop_intent(
     )
 
 
+def build_manual_buy_initial_stop_intent(
+    parent: OrderIntent,
+    fill_qty: float,
+    avg_fill_price: float,
+    config: ExecutionConfig,
+) -> OrderIntent | None:
+    """Construit un STOP `sell` pour un achat manuel orphelin adopté.
+
+    Contrairement à ``build_initial_stop_intent``, ce helper ne dépend pas
+    d'un ``ExecutionTarget`` (pas d'ATR / risk_per_share disponible pour un
+    achat passé hors Alpha Trade). Il applique simplement le pourcentage
+    ``config.manual_buy_stop_loss_pct`` sous le prix d'entrée moyen.
+    """
+    reference_price = avg_fill_price or parent.decision_price
+    if reference_price <= 0 or fill_qty <= 0:
+        return None
+    stop_price = round(reference_price * (1.0 - float(config.manual_buy_stop_loss_pct)), 2)
+    if stop_price <= 0 or stop_price >= reference_price:
+        return None
+
+    return OrderIntent(
+        intent_id=_make_id(),
+        risk_run_id=parent.risk_run_id,
+        exec_run_id=parent.exec_run_id,
+        symbol=parent.symbol,
+        side="sell",
+        qty=fill_qty,
+        order_type="stop",
+        limit_price=None,
+        trail_percent=None,
+        broker_mode=parent.broker_mode,
+        parent_intent_id=parent.intent_id,
+        intent_role=IntentRole.INITIAL_STOP,
+        idempotency_key=_idempotency_key(
+            parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP,
+            "sell", fill_qty, parent.broker_mode,
+        ),
+        decision_price=parent.decision_price,
+        stop_price=stop_price,
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, "sell", fill_qty),
+    )
+
+
 def build_trailing_stop_intent(
     parent: OrderIntent,
     fill_qty: float,

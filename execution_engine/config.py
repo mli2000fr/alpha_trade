@@ -31,6 +31,11 @@ class ExecutionConfig:
     # --- Bracket legs ---
     profit_taker_pct: float = 0.08
     trailing_stop_pct: float = 0.05
+    # Stop-loss appliqué EXCLUSIVEMENT aux achats manuels orphelins adoptés par
+    # le watcher (positions ouvertes hors Alpha Trade — site / app Alpaca).
+    # Pour les achats normaux, le stop initial reste calculé à partir de
+    # l'ATR / risk_per_share du selector.
+    manual_buy_stop_loss_pct: float = 0.05
     trailing_stop_type: str = "percent"
     enable_dynamic_trailing_transition: bool = True
     trailing_activation_trigger: Literal["multiple_r", "profit_pct"] = "multiple_r"
@@ -84,6 +89,8 @@ class ExecutionConfig:
             raise ValueError("profit_taker_pct doit être dans ]0, 1[.")
         if not (0 < self.trailing_stop_pct < 1):
             raise ValueError("trailing_stop_pct doit être dans ]0, 1[.")
+        if not (0 < self.manual_buy_stop_loss_pct < 1):
+            raise ValueError("manual_buy_stop_loss_pct doit être dans ]0, 1[.")
         if self.trailing_activation_trigger not in ("multiple_r", "profit_pct"):
             raise ValueError("trailing_activation_trigger doit être 'multiple_r' ou 'profit_pct'.")
         if self.trailing_activation_r_multiple <= 0:

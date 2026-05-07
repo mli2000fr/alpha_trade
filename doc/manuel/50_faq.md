@@ -298,7 +298,9 @@ soient invalidés.
   vente elle‑même n'a pas de ligne dans `execution_order_requests`.
 - Pour adopter formellement une vente manuelle dans l'audit canonique, il
   faudrait créer un mécanisme « adoption d'ordre orphelin » (non implémenté
-  à ce jour ; c'est un trou connu, voir aussi Q8).
+  à ce jour ; c'est un trou connu, voir aussi Q8). -- complément d'info: 
+  implémenté depuis mai 2026 : le watcher de protections peut désormais créer 
+  un `OrderIntent` parent fictif pour adopter une position filled sans lineage (cf. Q8).
 
 ### ❓ 7. Si je sélectionne le compte « live » (Alive) dans le dropdown Compte Alpaca, toutes les exécutions seront‑elles automatiquement en live ?
 
@@ -372,7 +374,9 @@ réunies.
 - 💡 **Évolution possible** (non implémentée) : ajouter une routine
   d'« adoption d'orphelin » qui crée automatiquement un `OrderIntent`
   parent à partir d'un fill broker sans lineage, avec des TP/SL par défaut
-  configurables.
+  configurables. (réalisé depuis mai 2026 : cf. `protection_watcher.py` ligne 370 : 
+  si un fill est détecté sans parent_intent_id, le watcher peut créer un intent 
+  parent fictif pour lui permettre d'armer les protections).
 
 **Règle d'or opérationnelle** : si vous lancez le pipeline avant l'ouverture,
 **lancez aussi le service local du watcher** (ou planifiez un Task Scheduler

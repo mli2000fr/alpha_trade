@@ -95,6 +95,8 @@ DEFAULT_RISK_LOG_LEVEL = "INFO"
 DEFAULT_EXEC_SUBMISSION_WINDOW = "both"      # post_close + pre_open (batch quotidien)
 DEFAULT_EXEC_TAKE_PROFIT_PCT = 0.08
 DEFAULT_EXEC_TRAILING_STOP_PCT = 0.05
+# Sprint 2026-05 — SL dédié aux achats manuels orphelins adoptés par le watcher.
+DEFAULT_EXEC_MANUAL_BUY_SL_PCT = 0.05
 DEFAULT_EXEC_TRAILING_TRIGGER = "multiple_r"
 DEFAULT_EXEC_TRAILING_R_MULTIPLE = 1.0
 DEFAULT_EXEC_TRAILING_PROFIT_PCT = 0.03
@@ -223,6 +225,9 @@ class PipelineLaunchOptions:
     execution_submission_window: ExecutionSubmissionWindow = "both"
     execution_take_profit_pct: float = DEFAULT_EXEC_TAKE_PROFIT_PCT
     execution_trailing_stop_pct: float = DEFAULT_EXEC_TRAILING_STOP_PCT
+    # SL dédié aux achats manuels orphelins (cf. watcher) — propagé uniquement
+    # à ``run_execution_protection_watch.py`` via ``build_watcher_command``.
+    execution_manual_buy_stop_loss_pct: float = DEFAULT_EXEC_MANUAL_BUY_SL_PCT
     execution_trailing_trigger: ExecutionTrailingTrigger = "multiple_r"
     execution_trailing_r_multiple: float = DEFAULT_EXEC_TRAILING_R_MULTIPLE
     execution_trailing_profit_pct: float = DEFAULT_EXEC_TRAILING_PROFIT_PCT

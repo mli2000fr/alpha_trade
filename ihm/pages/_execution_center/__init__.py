@@ -79,6 +79,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_CA_WINDOW_LOOKBACK_DAYS,
     DEFAULT_EXEC_DEBUG,
     DEFAULT_EXEC_TAKE_PROFIT_PCT,
+    DEFAULT_EXEC_MANUAL_BUY_SL_PCT,
     DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS,
     DEFAULT_EXEC_PROTECTION_TRANSITION_TIMEOUT_SECONDS,
     DEFAULT_EXEC_SUBMISSION_WINDOW,
@@ -1824,7 +1825,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "Le stop initial n'est pas saisi ici : il est calculé automatiquement par le step 11 Risk (`stop_price_initial` / `risk_per_share`, basé sur l'ATR). "
             "Défauts swing : TP `+8 %`, trailing stop `5 %`, fenêtre `both` (post_close + pre_open), trigger `multiple_r` à 1.0R."
         )
-        prot_col1, prot_col2, prot_col3, prot_col4, prot_col5 = st.columns(5)
+        prot_col1, prot_col2, prot_col_msl, prot_col3, prot_col4, prot_col5 = st.columns(6)
         with prot_col1:
             execution_take_profit_pct_percent_default = float(
                 st.session_state.get(
@@ -1869,6 +1870,43 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
             execution_trailing_stop_pct = float(execution_trailing_stop_pct_percent / 100.0)
             st.session_state["pipeline_execution_trailing_stop_pct"] = execution_trailing_stop_pct
+        with prot_col_msl:
+            # Sprint 2026-05 — SL dédié aux achats manuels orphelins (Q8 du
+            # FAQ opérateur). N'affecte PAS les achats Alpha Trade qui
+            # conservent leur stop ATR / risk-based.
+            execution_manual_buy_sl_pct_percent_default = float(
+                st.session_state.get(
+                    "pipeline_execution_manual_buy_stop_loss_pct_percent",
+                    float(st.session_state.get(
+                        "pipeline_execution_manual_buy_stop_loss_pct",
+                        DEFAULT_EXEC_MANUAL_BUY_SL_PCT,
+                    )) * 100.0,
+                )
+            )
+            execution_manual_buy_sl_pct_percent = float(
+                st.number_input(
+                    "Stop-loss achat manuel (%)",
+                    min_value=0.1,
+                    max_value=50.0,
+                    value=execution_manual_buy_sl_pct_percent_default,
+                    step=0.5,
+                    format="%.2f",
+                    key="pipeline_execution_manual_buy_stop_loss_pct_percent",
+                    help=(
+                        "⚠️ Ce SL est dédié à l'achat manuel UNIQUEMENT — c.-à-d. "
+                        "aux positions ouvertes hors Alpha Trade (site / app "
+                        "Alpaca, API tierce). Le watcher de protections les "
+                        "adopte (`adopted_entry`) puis arme automatiquement "
+                        "TP + SL avec ce pourcentage sous le prix d'entrée. "
+                        "Les achats normaux d'Alpha Trade gardent leur stop "
+                        "ATR / risk-based calculé par le selector."
+                    ),
+                )
+            )
+            execution_manual_buy_stop_loss_pct = float(
+                execution_manual_buy_sl_pct_percent / 100.0
+            )
+            st.session_state["pipeline_execution_manual_buy_stop_loss_pct"] = execution_manual_buy_stop_loss_pct
         with prot_col3:
             execution_submission_window = cast(
                 str,
@@ -2784,6 +2822,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             execution_submission_window=cast(Any, execution_submission_window),
             execution_take_profit_pct=float(execution_take_profit_pct),
             execution_trailing_stop_pct=float(execution_trailing_stop_pct),
+            execution_manual_buy_stop_loss_pct=float(execution_manual_buy_stop_loss_pct),
             execution_trailing_trigger=cast(Any, execution_trailing_trigger),
             execution_trailing_r_multiple=float(execution_trailing_r_multiple),
             execution_trailing_profit_pct=float(execution_trailing_profit_pct),

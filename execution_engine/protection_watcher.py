@@ -24,11 +24,13 @@ from execution_engine.models import (
 )
 from execution_engine.order_intents import (
     build_initial_stop_intent,
+    build_manual_buy_initial_stop_intent,
     build_take_profit_intent,
     build_trailing_stop_intent,
     intent_to_alpaca_payload,
     resolve_trailing_activation_price,
 )
+from execution_engine.orphan_adoption import adopt_orphan_buy
 from service.alpaca.trading_client import AlpacaTradingClient
 
 LOGGER = logging.getLogger(__name__)
@@ -60,6 +62,8 @@ def _build_summary(
         "submit_failed_items": int(metrics.get("submit_failed_items", 0) or 0),
         "armed_missing_protections": int(metrics.get("armed_missing_protections", 0) or 0),
         "armed_missing_protections_failed": int(metrics.get("armed_missing_protections_failed", 0) or 0),
+        "adopted_orphan_buys": int(metrics.get("adopted_orphan_buys", 0) or 0),
+        "adopted_orphan_buys_failed": int(metrics.get("adopted_orphan_buys_failed", 0) or 0),
         "broker_mode": metrics.get("broker_mode"),
         "account_id": metrics.get("account_id"),
     }
@@ -152,6 +156,8 @@ class ProtectionTransitionWatcher:
                 "submit_failed_items": 0,
                 "armed_missing_protections": 0,
                 "armed_missing_protections_failed": 0,
+                "adopted_orphan_buys": 0,
+                "adopted_orphan_buys_failed": 0,
             }
         )
 
@@ -196,6 +202,80 @@ class ProtectionTransitionWatcher:
                 )
                 run_metrics["armed_missing_protections_failed"] = (
                     int(run_metrics.get("armed_missing_protections_failed", 0) or 0) + 1
+                )
+
+        # ------------------------------------------------------------------
+        # Sprint 2026-05 — Adoption d'achats manuels orphelins (Q8 FAQ).
+        # Pour chaque position broker non rattachée à un OrderIntent ENTRY,
+        # on crée un parent ``adopted_entry`` puis on arme TP + STOP en
+        # utilisant le pourcentage `manual_buy_stop_loss_pct` dédié.
+        # ------------------------------------------------------------------
+        try:
+            orphan_positions = self._repo.load_orphan_filled_buy_positions(
+                account_id=account_id,
+                limit=max(limit, 200),
+            )
+        except Exception:
+            LOGGER.warning("load_orphan_filled_buy_positions failed", exc_info=True)
+            orphan_positions = []
+
+        for position_row in orphan_positions:
+            position_account_id = str(position_row.get("account_id") or account_id or "default")
+            broker_mode = str(position_row.get("broker_mode") or "paper")
+            try:
+                adoption = adopt_orphan_buy(
+                    self._repo,
+                    broker_mode=broker_mode,
+                    account_id=position_account_id,
+                    broker_position=position_row,
+                )
+            except Exception:
+                LOGGER.warning(
+                    "Échec adoption achat manuel orphelin pour %s",
+                    position_row.get("symbol"), exc_info=True,
+                )
+                continue
+            if adoption is None:
+                continue
+            run_metrics = metrics_by_run[adoption.intent.exec_run_id]
+            run_metrics.setdefault("source_exec_run_id", adoption.intent.exec_run_id)
+            run_metrics.setdefault("trade_date", None)
+            run_metrics["broker_mode"] = broker_mode
+            run_metrics["account_id"] = position_account_id
+            run_metrics["adopted_orphan_buys"] = int(run_metrics.get("adopted_orphan_buys", 0) or 0) + 1
+
+            # Construit la "row" attendue par _arm_missing_protections à partir
+            # du parent adopté + de la position broker.
+            synthetic_row: dict[str, Any] = {
+                "parent_intent_id": adoption.intent.intent_id,
+                "exec_run_id": adoption.intent.exec_run_id,
+                "risk_run_id": adoption.intent.risk_run_id,
+                "account_id": position_account_id,
+                "broker_mode": broker_mode,
+                "symbol": adoption.intent.symbol,
+                "side": "buy",
+                "target_qty": adoption.intent.qty,
+                "order_type": adoption.intent.order_type,
+                "limit_price": None,
+                "decision_price": adoption.intent.decision_price,
+                "business_key": adoption.intent.idempotency_key,
+                "submission_key": adoption.intent.submission_key,
+                "fill_qty": float(position_row.get("qty") or 0.0),
+                "fill_price": float(position_row.get("avg_entry_price") or 0.0),
+            }
+            try:
+                self._arm_missing_protections(
+                    synthetic_row,
+                    run_metrics,
+                    use_manual_buy_stop=True,
+                )
+            except Exception:
+                LOGGER.warning(
+                    "Échec armement TP/SL pour orphelin adopté %s",
+                    adoption.intent.symbol, exc_info=True,
+                )
+                run_metrics["adopted_orphan_buys_failed"] = (
+                    int(run_metrics.get("adopted_orphan_buys_failed", 0) or 0) + 1
                 )
 
         summaries: list[dict[str, Any]] = []
@@ -331,6 +411,8 @@ class ProtectionTransitionWatcher:
         self,
         row: dict[str, Any],
         metrics: dict[str, Any],
+        *,
+        use_manual_buy_stop: bool = False,
     ) -> None:
         symbol = str(row["symbol"]).strip().upper()
         fill_qty = float(row.get("fill_qty") or 0.0)
@@ -370,7 +452,14 @@ class ProtectionTransitionWatcher:
         )
 
         tp_intent = build_take_profit_intent(parent_intent, fill_qty, fill_price, config, target=None)
-        stop_intent = build_initial_stop_intent(parent_intent, fill_qty, fill_price, config, target=None)
+        if use_manual_buy_stop:
+            # Achat manuel orphelin : pas d'ATR / risk_per_share côté DB,
+            # on applique le pourcentage configurable dédié.
+            stop_intent = build_manual_buy_initial_stop_intent(
+                parent_intent, fill_qty, fill_price, config,
+            )
+        else:
+            stop_intent = build_initial_stop_intent(parent_intent, fill_qty, fill_price, config, target=None)
         protection_intent = stop_intent or build_trailing_stop_intent(
             parent_intent, fill_qty, fill_price, config, target=None
         )
@@ -412,9 +501,10 @@ class ProtectionTransitionWatcher:
                 payload={
                     "fill_qty": fill_qty,
                     "fill_price": fill_price,
-                    "trigger": "watcher_safety_net",
+                    "trigger": "watcher_orphan_buy_safety_net" if use_manual_buy_stop else "watcher_safety_net",
                     "take_profit_limit_price": tp_intent.limit_price,
                     "initial_stop_price": stop_intent.stop_price if stop_intent is not None else None,
+                    "manual_buy_stop_loss_pct": config.manual_buy_stop_loss_pct if use_manual_buy_stop else None,
                 },
             ))
         else:
@@ -850,6 +940,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--broker-mode", type=str, default="paper", choices=["paper", "live"])
     parser.add_argument("--profit-taker-pct", type=float, default=0.08)
     parser.add_argument("--trailing-stop-pct", type=float, default=0.05)
+    parser.add_argument(
+        "--manual-buy-stop-loss-pct",
+        type=float,
+        default=0.05,
+        help=(
+            "Stop-loss appliqué EXCLUSIVEMENT aux achats manuels orphelins "
+            "adoptés par le watcher (positions ouvertes hors Alpha Trade). "
+            "Pour les achats normaux, le stop reste calculé via ATR / "
+            "risk_per_share du selector."
+        ),
+    )
     parser.add_argument("--trailing-activation-trigger", type=str, default="multiple_r", choices=["multiple_r", "profit_pct"])
     parser.add_argument("--trailing-activation-r-multiple", type=float, default=1.0)
     parser.add_argument("--trailing-activation-profit-pct", type=float, default=0.03)
@@ -877,6 +978,7 @@ def main(argv: list[str] | None = None) -> None:
             account_id=account_id,
             profit_taker_pct=args.profit_taker_pct,
             trailing_stop_pct=args.trailing_stop_pct,
+            manual_buy_stop_loss_pct=args.manual_buy_stop_loss_pct,
             trailing_activation_trigger=args.trailing_activation_trigger,
             trailing_activation_r_multiple=args.trailing_activation_r_multiple,
             trailing_activation_profit_pct=args.trailing_activation_profit_pct,

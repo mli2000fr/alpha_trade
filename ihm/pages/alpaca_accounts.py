@@ -21,6 +21,7 @@ from ihm.services.alpaca_accounts import (
 	get_registered_accounts,
 	resolve_selected_account_id,
 )
+from ihm.services.orphan_adoption_service import adopt_after_close
 from ihm.services.db import db_available
 from ihm.services.queries import (
 	get_broker_account_snapshots_history,
@@ -197,11 +198,33 @@ def render() -> None:
 			else:
 				def _sell_all_callback(symbol: str, row: pd.Series) -> None:  # noqa: ARG001
 					try:
-						close_position_all(selected_account_id, symbol)
+						close_payload = close_position_all(selected_account_id, symbol)
 					except Exception as exc:  # noqa: BLE001
 						st.error(f"❌ Échec de la clôture de `{symbol}` : {exc}")
 						return
 					st.toast(f"Position {symbol} clôturée auprès du broker.", icon="✅")
+					# Sprint 2026-05 — adoption synchrone de la vente manuelle
+					# (Q5 / Q6 du FAQ opérateur). Crée immédiatement le
+					# ``OrderIntent`` ``adopted_exit`` correspondant dans le
+					# journal canonique sans attendre le prochain cycle de
+					# réconciliation broker.
+					try:
+						adopted = adopt_after_close(
+							account_id=selected_account_id,
+							symbol=symbol,
+							close_payload=close_payload,
+						)
+					except Exception as exc:  # noqa: BLE001
+						st.warning(
+							f"Vente {symbol} OK côté broker mais l'adoption canonique a échoué : {exc}. "
+							"La prochaine réconciliation rattrapera l'audit trail."
+						)
+					else:
+						if adopted:
+							st.toast(
+								f"Vente {symbol} adoptée dans le journal Alpha Trade.",
+								icon="📒",
+							)
 					# Invalide tous les caches dépendants pour rafraîchir simultanément :
 					# - tableau « Positions ouvertes (broker) » (le symbole peut disparaître),
 					# - tableau « Historique des ordres (broker) » (l'ordre de clôture y apparaît),

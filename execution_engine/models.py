@@ -56,6 +56,10 @@ class EventType:
     TCA_SUMMARY = "TCA_SUMMARY"
     BROKER_SYNC_COMPLETED = "BROKER_SYNC_COMPLETED"
     BROKER_SYNC_FAILED = "BROKER_SYNC_FAILED"
+    # Adoption d'un ordre orphelin (achat / vente manuel·le passé·e hors Alpha
+    # Trade — site Alpaca, app mobile, IHM "Vendre tout"). Émis lors de la
+    # création du synthétique ``OrderIntent`` parent dans le journal canonique.
+    ORPHAN_ADOPTED = "ORPHAN_ADOPTED"
     RUN_COMPLETED = "RUN_COMPLETED"
     RUN_FAILED = "RUN_FAILED"
     DRY_RUN_SIMULATED = "DRY_RUN_SIMULATED"
@@ -74,6 +78,10 @@ class IntentRole:
     TRAILING_STOP = "trailing_stop"
     EXIT = "exit"                    # vente de liquidation / reconciliation
     REBALANCE_BUY = "rebalance_buy"  # achat de reequilibrage / reconciliation
+    # Achat / vente passés directement chez le broker (hors Alpha Trade) puis
+    # adoptés par le journal canonique via execution_engine.orphan_adoption.
+    ADOPTED_ENTRY = "adopted_entry"
+    ADOPTED_EXIT = "adopted_exit"
 
 
 # ---------------------------------------------------------------------------

@@ -558,6 +558,58 @@ class ExecutionRepository:
             rows = conn.execute(query, params).mappings().all()
         return [dict(r) for r in rows]
 
+    # ------------------------------------------------------------------
+    # Sprint 2026-05 — Adoption d'orphelin (Q8 du FAQ opérateur).
+    # ------------------------------------------------------------------
+    # Retourne les positions broker (snapshot le plus récent) **sans aucun
+    # OrderIntent ``entry`` / ``adopted_entry``** rattaché côté DB. Ces lignes
+    # sont des achats manuels passés directement chez le broker (site Alpaca,
+    # app mobile) que le watcher doit adopter puis protéger via TP + SL
+    # (cf. ``execution_engine.protection_watcher``).
+    def load_orphan_filled_buy_positions(
+        self,
+        *,
+        account_id: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        query = text(f"""
+            SELECT
+                snap.account_id      AS account_id,
+                snap.broker_mode     AS broker_mode,
+                snap.symbol          AS symbol,
+                snap.qty             AS qty,
+                snap.avg_entry_price AS avg_entry_price,
+                snap.market_value    AS market_value,
+                snap.created_at      AS snapshot_at
+            FROM broker_positions_snapshots snap
+            INNER JOIN (
+                SELECT account_id, symbol, MAX(created_at) AS last_at
+                FROM broker_positions_snapshots
+                GROUP BY account_id, symbol
+            ) latest
+                    ON latest.account_id = snap.account_id
+                   AND latest.symbol     = snap.symbol
+                   AND latest.last_at    = snap.created_at
+            WHERE snap.qty > 0
+              AND snap.symbol IS NOT NULL
+              AND snap.symbol <> ''
+              AND snap.symbol <> '__FLAT__'
+              AND (:account_id IS NULL OR snap.account_id = :account_id)
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM execution_order_requests req
+                    WHERE req.account_id = snap.account_id
+                      AND req.symbol     = snap.symbol
+                      AND req.side       = 'buy'
+                      AND req.intent_role IN ('entry', 'adopted_entry', 'rebalance_buy')
+              )
+            ORDER BY snap.created_at DESC
+            LIMIT {int(limit)}
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(query, {"account_id": account_id}).mappings().all()
+        return [dict(r) for r in rows]
+
     def load_latest_broker_order_status(
         self,
         *,

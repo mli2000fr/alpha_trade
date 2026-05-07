@@ -55,6 +55,7 @@ def build_watcher_command(
     broker_mode: str = "paper",
     profit_taker_pct: float = 0.08,
     trailing_stop_pct: float = 0.05,
+    manual_buy_stop_loss_pct: float = 0.05,
     trailing_activation_trigger: str = "multiple_r",
     trailing_activation_r_multiple: float = 1.0,
     trailing_activation_profit_pct: float = 0.03,
@@ -77,6 +78,8 @@ def build_watcher_command(
         str(profit_taker_pct),
         "--trailing-stop-pct",
         str(trailing_stop_pct),
+        "--manual-buy-stop-loss-pct",
+        str(manual_buy_stop_loss_pct),
         "--trailing-activation-trigger",
         trailing_activation_trigger,
         "--trailing-activation-r-multiple",
@@ -204,6 +207,7 @@ def launch_watcher_once(
     exec_run_id: str | None = None,
     limit: int = DEFAULT_WATCHER_LIMIT,
     broker_mode: str = "paper",
+    manual_buy_stop_loss_pct: float = 0.05,
     log_level: str = "INFO",
 ) -> PipelineRunRecord:
     if get_active_local_watcher_service(account_id=account_id) is not None:
@@ -219,6 +223,7 @@ def launch_watcher_once(
             exec_run_id=exec_run_id,
             limit=limit,
             broker_mode=broker_mode,
+            manual_buy_stop_loss_pct=manual_buy_stop_loss_pct,
             log_level=log_level,
         ),
         account_id=account_id,
@@ -236,6 +241,7 @@ def start_local_watcher_service(
     service_interval_seconds: float = DEFAULT_SERVICE_INTERVAL_SECONDS,
     idle_interval_seconds: float = DEFAULT_IDLE_INTERVAL_SECONDS,
     heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    manual_buy_stop_loss_pct: float = 0.05,
     log_level: str = "INFO",
 ) -> PipelineRunRecord:
     if get_active_local_watcher_service(account_id=account_id) is not None:
@@ -254,6 +260,7 @@ def start_local_watcher_service(
             service_interval_seconds=service_interval_seconds,
             idle_interval_seconds=idle_interval_seconds,
             heartbeat_interval_seconds=heartbeat_interval_seconds,
+            manual_buy_stop_loss_pct=manual_buy_stop_loss_pct,
             log_level=log_level,
         ),
         account_id=account_id,
