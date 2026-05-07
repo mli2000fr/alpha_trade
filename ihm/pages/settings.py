@@ -61,8 +61,8 @@ NOTIFICATIONS_NOTIFY_ON_KEY = "settings_notifications_notify_on_input"
 NOTIFICATIONS_FLASH_KEY = "settings_notifications_flash"
 
 BARS_PROVIDER_LABELS: dict[str, str] = {
-    "eodhd": "🟢 EODHD (recommandé — bulk EOD, volume consolidé)",
-    "alpaca": "🟡 Alpaca / IEX (historique, biais volume IEX)",
+    "eodhd": " EODHD (recommandé — bulk EOD, volume consolidé)",
+    "alpaca": " Alpaca / IEX (historique, biais volume IEX)",
 }
 BARS_PROVIDER_HELP: dict[str, str] = {
     "eodhd": (
@@ -99,7 +99,7 @@ def _render_bars_provider_settings() -> None:
         getattr(st, kind, st.info)(message)
 
     current = get_bars_provider()
-    st.subheader("📡 Source primaire des barres OHLCV")
+    st.subheader(" Source primaire des barres OHLCV")
     st.caption(
         "Définit `market_data.bars_provider` dans `config.yaml`. Toutes les étapes pipeline IHM "
         "(`Import Bars`, `corporate_actions_sync`, backfill historique) routent automatiquement "
@@ -127,7 +127,7 @@ def _render_bars_provider_settings() -> None:
         with action_col1:
             disabled = (selected == current)
             if st.button(
-                "💾 Enregistrer le provider",
+                " Enregistrer le provider",
                 key="settings_save_bars_provider",
                 use_container_width=True,
                 disabled=disabled,
@@ -243,7 +243,7 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
     if isinstance(flash_message, str) and flash_message.strip():
         st.success(flash_message)
 
-    st.subheader("🩺 Seuils diagnostic Alpha Scanner")
+    st.subheader(" Seuils diagnostic Alpha Scanner")
     st.caption(
         "Ordre opératoire couvert ici : étape 4 `Sync Latest Quotes` → étape 5 `Sync Earnings Calendar` → étape 6 `Alpha Scanner`."
     )
@@ -273,9 +273,9 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
         )
         preset_col1, preset_col2, preset_col3 = st.columns(3)
         preset_buttons = (
-            (preset_col1, "swing_cash_pro", "🛡️ Appliquer preset Swing Cash Pro"),
+            (preset_col1, "swing_cash_pro", "️ Appliquer preset Swing Cash Pro"),
             (preset_col2, "aggressive", "⚡ Appliquer preset Agressif"),
-            (preset_col3, "tolerant", "🟨 Appliquer preset Tolérant"),
+            (preset_col3, "tolerant", " Appliquer preset Tolérant"),
         )
         for column, style_key, label in preset_buttons:
             with column:
@@ -369,7 +369,7 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
         st.markdown("**Validation opérateur**")
         action_col1, action_col2 = st.columns([2, 1])
         with action_col1:
-            if st.button("💾 Enregistrer les seuils Alpha Scanner", key="settings_save_alpha_scanner_thresholds", use_container_width=True):
+            if st.button(" Enregistrer les seuils Alpha Scanner", key="settings_save_alpha_scanner_thresholds", use_container_width=True):
                 normalized = save_persisted_alpha_scanner_dependency_thresholds(
                     _collect_alpha_scanner_dependency_threshold_inputs(),
                     defaults=ALPHA_SCANNER_DEPENDENCY_THRESHOLDS,
@@ -421,7 +421,7 @@ def _render_notifications_settings() -> None:
     prefs = load_persisted_notification_preferences()
     smtp_cfg = load_smtp_config()
 
-    st.subheader("📧 Notifications email — fin de workflow pipeline")
+    st.subheader(" Notifications email — fin de workflow pipeline")
     st.caption(
         "À chaque fin de run pipeline (succès, échec, timeout, arrêt), un email est "
         "envoyé aux destinataires configurés. En cas d'échec, l'email contient le nom "
@@ -458,18 +458,18 @@ def _render_notifications_settings() -> None:
             ),
         )
 
-        smtp_state = "🟢 SMTP configuré" if smtp_cfg.is_configured else "🔴 SMTP non configuré"
+        smtp_state = " SMTP configuré" if smtp_cfg.is_configured else " SMTP non configuré"
         st.caption(
             f"{smtp_state} — host=`{smtp_cfg.host or '—'}` port=`{smtp_cfg.port}` "
             f"from=`{smtp_cfg.sender or '—'}` TLS=`{smtp_cfg.use_tls}` SSL=`{smtp_cfg.use_ssl}`. "
-            "Variables d'env prioritaires : `ALPHA_TRADE_SMTP_HOST/_PORT/_USER/_PASSWORD/_FROM/_USE_TLS/_USE_SSL`."
+            "Variables d'env prioritaires : `ALPHA_TRADE_SMTP_HOST/_PORT/_USER/_PASSWORD/_FROM/_USE_TLS/_USE_SSL/_CA_FILE`."
         )
         st.caption(f"Préférences persistées dans `{NOTIFICATIONS_PREFERENCES_PATH}`.")
 
         save_col, test_col = st.columns([2, 1])
         with save_col:
             if st.button(
-                "💾 Enregistrer les préférences",
+                " Enregistrer les préférences",
                 key="settings_notifications_save",
                 use_container_width=True,
             ):
@@ -533,9 +533,9 @@ def _render_notifications_settings() -> None:
 def _check_import(name: str) -> str:
     try:
         __import__(name)
-        return f"🟢 `{name}` — OK"
+        return f" `{name}` — OK"
     except ImportError:
-        return f"🔴 `{name}` — **MANQUANT**"
+        return f" `{name}` — **MANQUANT**"
 
 
 def render() -> None:
@@ -547,37 +547,37 @@ def render() -> None:
     prereq_col1, prereq_col2 = st.columns(2)
     with prereq_col1:
         with st.container(border=True):
-            st.subheader("🔑 Variables d'environnement")
+            st.subheader(" Variables d'environnement")
             for var in ("LOGIN_DB", "PASSWORD_DB", "ALPACA_API_KEY", "ALPACA_SECRET_KEY", "FINNHUB_API_KEY"):
                 st.markdown(env_badge(var, os.getenv(var)))
     with prereq_col2:
         with st.container(border=True):
-            st.subheader("🗄️ Connexion DB")
+            st.subheader("️ Connexion DB")
             render_db_connection_form("settings_db_connection_form", show_host_fields=True)
             status = get_db_status()
             if db_available():
-                st.success("🟢 Connexion MySQL OK")
+                st.success(" Connexion MySQL OK")
             else:
-                st.error("🔴 Connexion MySQL échouée. Vérifiez LOGIN_DB, PASSWORD_DB et que MySQL est démarré.")
+                st.error(" Connexion MySQL échouée. Vérifiez LOGIN_DB, PASSWORD_DB et que MySQL est démarré.")
             st.caption(
                 f"Source active : `{status.get('source')}` — cible : `{status.get('host')}/{status.get('name')}`"
             )
             if status.get("last_query_error"):
                 st.warning(str(status.get("last_query_error")))
 
-    st.subheader("🧭 Paramétrage pipeline")
+    st.subheader(" Paramétrage pipeline")
     _render_bars_provider_settings()
     _render_alpha_scanner_dependency_threshold_settings()
     _render_notifications_settings()
 
     # ---- Sprint S26 (gap P3) — Maintenance & sécurité ops ------------
-    st.subheader("🧹 Maintenance & sécurité ops")
+    st.subheader(" Maintenance & sécurité ops")
     st.caption(
         "Lancement direct des scripts ops `prune_artifacts` et "
         "`verify_vault_rotation`. Chaque run est tracé dans "
         "`artifacts/ihm_pipeline_runs/` (préfixe `ops:`)."
     )
-    ops_tabs = st.tabs(["🧹 Nettoyage artefacts", "🗝️ Rotation des secrets"])
+    ops_tabs = st.tabs([" Nettoyage artefacts", "️ Rotation des secrets"])
     with ops_tabs[0]:
         apply_changes = st.checkbox(
             "Appliquer les suppressions (sinon dry-run)",
@@ -592,15 +592,15 @@ def render() -> None:
     with ops_tabs[1]:
         render_ops_command_panel("verify_vault_rotation")
 
-    with st.expander("🖥️ Diagnostic environnement Python", expanded=False):
+    with st.expander("️ Diagnostic environnement Python", expanded=False):
         st.text(f"Python : {sys.version}")
         st.text(f"Répertoire : {os.getcwd()}")
 
-        st.markdown("**📦 Dépendances critiques**")
+        st.markdown("** Dépendances critiques**")
         for pkg in ("streamlit", "sqlalchemy", "pandas", "pymysql", "numpy", "torch", "transformers"):
             st.markdown(_check_import(pkg))
 
-        st.markdown("**🚀 Commande de lancement**")
+        st.markdown("** Commande de lancement**")
         st.code("python -m streamlit run ihm/app.py", language="powershell")
 
 

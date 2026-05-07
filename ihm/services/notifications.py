@@ -12,7 +12,7 @@ le dossier du run. Si l'envoi échoue, le marqueur N'est pas posé, ce qui
 permet une nouvelle tentative au prochain appel.
 
 Configuration SMTP : variables d'environnement prioritaires
-``ALPHA_TRADE_SMTP_HOST/_PORT/_USER/_PASSWORD/_FROM/_USE_TLS/_USE_SSL``.
+``ALPHA_TRADE_SMTP_HOST/_PORT/_USER/_PASSWORD/_FROM/_USE_TLS/_USE_SSL/_CA_FILE``.
 Fallback sur la section ``notifications.smtp`` de ``config.yaml``
 (mot de passe via placeholder ``${vault:smtp_password}``).
 """
@@ -59,6 +59,7 @@ class SmtpConfig:
     sender: str
     use_tls: bool = True
     use_ssl: bool = False
+    ca_file: str | None = None
 
     @property
     def is_configured(self) -> bool:
@@ -102,6 +103,7 @@ def load_smtp_config() -> SmtpConfig:
     use_tls = _truthy(use_tls_env) if use_tls_env is not None else bool(cfg_section.get("use_tls", True))
     use_ssl_env = os.getenv("ALPHA_TRADE_SMTP_USE_SSL")
     use_ssl = _truthy(use_ssl_env) if use_ssl_env is not None else bool(cfg_section.get("use_ssl", False))
+    ca_file = os.getenv("ALPHA_TRADE_SMTP_CA_FILE") or (str(cfg_section.get("ca_file") or "").strip() or None)
 
     # Si placeholder vault non résolu (laissé tel quel par config_loader).
     if password and password.startswith("${"):
@@ -115,6 +117,7 @@ def load_smtp_config() -> SmtpConfig:
         sender=sender,
         use_tls=use_tls,
         use_ssl=use_ssl,
+        ca_file=ca_file,
     )
 
 
@@ -379,6 +382,8 @@ def _write_smtp_test_failure_log(
                 f"username={smtp_config.username or '—'}",
                 f"use_tls={smtp_config.use_tls}",
                 f"use_ssl={smtp_config.use_ssl}",
+                f"ca_file={smtp_config.ca_file or '—'}",
+                f"resolved_ca_file={_resolve_smtp_ca_file(smtp_config) or '—'}",
                 f"recipients={', '.join(recipients) or '—'}",
                 f"error_type={type(error).__name__}",
                 f"error_message={error}",
@@ -401,8 +406,8 @@ def _send_email_or_raise(message: EmailMessage, smtp_config: SmtpConfig) -> None
             "send_email: SMTP non configuré (host/port/from manquants) — notification ignorée."
         )
         raise ValueError("SMTP non configuré (host/port/from manquants)")
+    context = _build_smtp_ssl_context(smtp_config)
     if smtp_config.use_ssl:
-        context = ssl.create_default_context()
         with smtplib.SMTP_SSL(smtp_config.host, smtp_config.port, context=context, timeout=30) as smtp:
             if smtp_config.username and smtp_config.password:
                 smtp.login(smtp_config.username, smtp_config.password)
@@ -411,11 +416,38 @@ def _send_email_or_raise(message: EmailMessage, smtp_config: SmtpConfig) -> None
         with smtplib.SMTP(smtp_config.host, smtp_config.port, timeout=30) as smtp:
             smtp.ehlo()
             if smtp_config.use_tls:
-                smtp.starttls(context=ssl.create_default_context())
+                smtp.starttls(context=context)
                 smtp.ehlo()
             if smtp_config.username and smtp_config.password:
                 smtp.login(smtp_config.username, smtp_config.password)
             smtp.send_message(message)
+
+
+def _detect_default_smtp_ca_file() -> str | None:
+    try:
+        import certifi
+    except Exception:
+        return None
+    try:
+        return str(certifi.where())
+    except Exception:
+        return None
+
+
+def _resolve_smtp_ca_file(smtp_config: SmtpConfig) -> str | None:
+    configured = str(smtp_config.ca_file or "").strip()
+    if configured:
+        return configured
+    return _detect_default_smtp_ca_file()
+
+
+def _build_smtp_ssl_context(smtp_config: SmtpConfig) -> ssl.SSLContext:
+    resolved_ca_file = _resolve_smtp_ca_file(smtp_config)
+    if resolved_ca_file:
+        LOGGER.debug("SMTP SSL context initialisé avec cafile=%s", resolved_ca_file)
+        return ssl.create_default_context(cafile=resolved_ca_file)
+    LOGGER.debug("SMTP SSL context initialisé avec le trust store OpenSSL par défaut")
+    return ssl.create_default_context()
 
 
 def send_email(message: EmailMessage, smtp_config: SmtpConfig) -> bool:

@@ -11,9 +11,11 @@ from ihm.services import notifications as notif_mod
 from ihm.services import notifications_preferences as np_mod
 from ihm.services.notifications import (
     SmtpConfig,
+    _build_smtp_ssl_context,
     build_workflow_email,
     clear_smtp_test_failure_log,
     collect_failed_step_context,
+    load_smtp_config,
     notify_run_finished,
     read_smtp_test_failure_log,
     send_email,
@@ -189,6 +191,35 @@ def test_send_email_returns_false_when_unconfigured() -> None:
     assert send_email(msg, cfg) is False
 
 
+def test_load_smtp_config_reads_ca_file_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("ALPHA_TRADE_SMTP_HOST", "smtp.gmail.com")
+    monkeypatch.setenv("ALPHA_TRADE_SMTP_PORT", "587")
+    monkeypatch.setenv("ALPHA_TRADE_SMTP_FROM", "bot@example.com")
+    monkeypatch.setenv("ALPHA_TRADE_SMTP_CA_FILE", "C:/certs/custom.pem")
+
+    cfg = load_smtp_config()
+
+    assert cfg.ca_file == "C:/certs/custom.pem"
+
+
+def test_build_smtp_ssl_context_uses_resolved_ca_file(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_create_default_context(*, cafile: str | None = None) -> object:
+        captured["cafile"] = cafile
+        return object()
+
+    monkeypatch.setattr(notif_mod, "_detect_default_smtp_ca_file", lambda: "C:/bundle/cacert.pem")
+    monkeypatch.setattr(notif_mod.ssl, "create_default_context", fake_create_default_context)
+
+    context = _build_smtp_ssl_context(
+        SmtpConfig(host="smtp.x.io", port=587, username=None, password=None, sender="f@x.io", use_tls=True)
+    )
+
+    assert captured["cafile"] == "C:/bundle/cacert.pem"
+    assert context is not None
+
+
 def test_notify_run_finished_anti_doublon(monkeypatch, tmp_path: Path) -> None:
     record = _make_step_record(tmp_path, status="completed", run_id="r1")
     prefs = NotificationPreferences(recipients=["a@b.com"], enabled=True, notify_on=["completed"])
@@ -259,7 +290,7 @@ def test_send_test_email_persists_failure_log(monkeypatch) -> None:
 
     class BrokenSMTP:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            return None
+            pass
 
         def __enter__(self) -> "BrokenSMTP":
             raise OSError("connexion refusée")
@@ -285,7 +316,7 @@ def test_send_test_email_success_clears_previous_failure_log(monkeypatch) -> Non
 
     class FakeSMTP:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            return None
+            pass
 
         def __enter__(self) -> "FakeSMTP":
             return self

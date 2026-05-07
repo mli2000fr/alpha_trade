@@ -13,6 +13,7 @@ sqlalchemy
 
 # --- HTTP / API ---
 requests
+certifi
 python-dotenv
 
 # --- Data science ---
