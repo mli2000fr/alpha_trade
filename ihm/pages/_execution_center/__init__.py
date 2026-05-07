@@ -1726,6 +1726,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 ),
             )
 
+            # === BLOCK 9/9 : Confirmation LIVE (extrait — _render_live_confirmation_block) ===
+            live_confirmed = _render_live_confirmation_block(execution_mode)
+
         col4, col5, col6 = st.columns(3)
         with col4:
             execution_run_id = st.text_input(
@@ -2764,8 +2767,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         eodhd_backfill_symbols = _ca_vars["eodhd_backfill_symbols"]
         eodhd_backfill_write = _ca_vars["eodhd_backfill_write"]
 
-        # === BLOCK 9/9 : Confirmation LIVE (extrait — _render_live_confirmation_block) ===
-        live_confirmed = _render_live_confirmation_block(execution_mode)
 
     return (
         PipelineLaunchOptions(
