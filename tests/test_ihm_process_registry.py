@@ -179,6 +179,26 @@ def test_background_run_can_be_stopped(monkeypatch, tmp_path: Path) -> None:
     assert registry.build_log_download_name(record.run_id, "all").endswith("_all.log")
 
 
+def test_pipeline_log_available_reflects_existing_and_missing_artifacts(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    command = [sys.executable, "-c", "print('only-stdout', flush=True)"]
+    monkeypatch.setattr(registry, "build_pipeline_command", lambda step_key, options: command)
+
+    record = registry.start_pipeline_run("log_step", "Log Step", PipelineLaunchOptions())
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=40)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert registry.pipeline_log_available(record.run_id, "stdout") is True
+    assert registry.pipeline_log_available(record.run_id, "all") is True
+
+    Path(str(snapshot["combined_path"])).unlink()
+
+    assert registry.pipeline_log_available(record.run_id, "all") is False
+    assert registry.read_pipeline_logs(record.run_id, "all") == ""
+
+
 def test_pipeline_workflow_runs_steps_in_order_and_aggregates_logs(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
 

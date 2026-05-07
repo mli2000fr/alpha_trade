@@ -52,6 +52,61 @@ def test_build_history_rows_uses_public_run_summary_caption_helper() -> None:
     assert "étapes résumées=2" in str(row["résumé métier"])
 
 
+def test_resolve_history_selected_run_id_returns_run_id_from_dataframe_selection(monkeypatch) -> None:
+    history_df = pipeline._build_history_rows(
+        [
+            {
+                "run_id": "wf-1",
+                "run_kind": "workflow",
+                "step_key": "pipeline_workflow",
+                "step_label": "Workflow complet",
+                "status": "completed",
+            },
+            {
+                "run_id": "step-2",
+                "run_kind": "step",
+                "step_key": "risk_management",
+                "step_label": "11. Risk",
+                "status": "failed",
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        workflow_page.st,
+        "session_state",
+        {
+            workflow_page.WORKFLOW_HISTORY_TABLE_KEY: {
+                "selection": {"rows": [1]},
+            }
+        },
+        raising=False,
+    )
+
+    assert workflow_page._resolve_history_selected_run_id(history_df) == "step-2"
+
+
+def test_resolve_history_selected_run_id_returns_none_without_valid_selection(monkeypatch) -> None:
+    history_df = pipeline._build_history_rows(
+        [
+            {
+                "run_id": "wf-1",
+                "run_kind": "workflow",
+                "step_key": "pipeline_workflow",
+                "step_label": "Workflow complet",
+                "status": "completed",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        workflow_page.st,
+        "session_state",
+        {workflow_page.WORKFLOW_HISTORY_TABLE_KEY: {"selection": {"rows": [5]}}},
+        raising=False,
+    )
+
+    assert workflow_page._resolve_history_selected_run_id(history_df) is None
+
+
 def test_alpha_scanner_dependency_block_reason_requires_both_dependencies_red() -> None:
     diagnostic = {
         "all_red": True,

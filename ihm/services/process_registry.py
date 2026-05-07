@@ -1709,19 +1709,34 @@ def get_pipeline_run_record(run_id: str) -> dict[str, object] | None:
         return normalized_payload
 
 
-def read_pipeline_logs(run_id: str, stream: Literal["stdout", "stderr", "all"] = "all") -> str:
-    """Retourne les logs complets d'un run selon le flux demandé."""
-    record = get_pipeline_run_record(run_id)
+def _resolve_pipeline_log_path(
+    record: dict[str, object] | None,
+    stream: Literal["stdout", "stderr", "all"] = "all",
+) -> Path | None:
     if record is None:
-        return ""
+        return None
 
     path_key = {
         "stdout": "stdout_path",
         "stderr": "stderr_path",
         "all": "combined_path",
     }[stream]
-    path = Path(str(record.get(path_key, "")))
-    if not path.exists():
+    raw_path = str(record.get(path_key) or "").strip()
+    if not raw_path:
+        return None
+    return Path(raw_path)
+
+
+def pipeline_log_available(run_id: str, stream: Literal["stdout", "stderr", "all"] = "all") -> bool:
+    """Indique si le fichier de log demandé existe encore pour ce run."""
+    path = _resolve_pipeline_log_path(get_pipeline_run_record(run_id), stream)
+    return bool(path is not None and path.exists())
+
+
+def read_pipeline_logs(run_id: str, stream: Literal["stdout", "stderr", "all"] = "all") -> str:
+    """Retourne les logs complets d'un run selon le flux demandé."""
+    path = _resolve_pipeline_log_path(get_pipeline_run_record(run_id), stream)
+    if path is None or not path.exists():
         return ""
     return path.read_text(encoding="utf-8", errors="replace")
 

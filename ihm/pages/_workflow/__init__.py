@@ -37,6 +37,7 @@ from ihm.services.process_registry import (
     get_pipeline_run_record,
     list_active_pipeline_runs,
     load_pipeline_history,
+    pipeline_log_available,
     read_pipeline_logs,
     start_pipeline_workflow,
     stop_pipeline_run,
@@ -72,6 +73,7 @@ WORKFLOW_CHILD_PENDING_SELECT_KEY_PREFIX = "workflow_child_run_pending_select_"
 WORKFLOW_CHILD_PENDING_AUTOFOLLOW_KEY_PREFIX = "workflow_child_run_pending_autofollow_"
 WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY = "pipeline_workflow_runtime_auto_selected_run_id"
 WORKFLOW_RUNTIME_LAST_ACTIVE_COUNT_KEY = "pipeline_workflow_runtime_last_active_count"
+WORKFLOW_HISTORY_TABLE_KEY = "pipeline_workflow_runtime_history_table"
 WORKFLOW_CUSTOM_STEP_KEY_PREFIX = "pipeline_workflow_custom_step_"
 WORKFLOW_RANGE_OPTIONS: tuple[str, ...] = ("1", "3")
 _GENERIC_PROGRESS_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -442,7 +444,7 @@ def _build_history_rows(all_runs: list[dict[str, object]]) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "run_id": run.get("run_id"),
+                "run_id": str(run.get("run_id") or ""),
                 "type": "workflow" if _is_workflow_run(run) else "étape",
                 "étape": str(run.get("step_label") or run.get("step_key") or ""),
                 "progression": (
@@ -451,9 +453,9 @@ def _build_history_rows(all_runs: list[dict[str, object]]) -> pd.DataFrame:
                     else "—"
                 ),
                 "statut": _status_badge(str(run.get("status", ""))),
-                "compte": run.get("account_id") or "global",
-                "début": run.get("executed_at"),
-                "fin": run.get("finished_at") or "—",
+                "compte": str(run.get("account_id") or "global"),
+                "début": str(run.get("executed_at") or "—"),
+                "fin": str(run.get("finished_at") or "—"),
                 "durée": format_duration_hhmmss(run.get("duration_seconds", 0.0)),
                 "stdout": to_int(run.get("stdout_lines", 0)),
                 "stderr": to_int(run.get("stderr_lines", 0)),
@@ -542,6 +544,36 @@ def _prime_runtime_center_state(all_runs: list[dict[str, object]], run_ids: list
         st.session_state[COMPARE_RUNS_KEY] = compare_defaults
 
     return compare_defaults
+
+
+def _selected_dataframe_row_index(table_key: str) -> int | None:
+    state = st.session_state.get(table_key)
+    if state is None:
+        return None
+    selection = getattr(state, "selection", None) or (state.get("selection") if isinstance(state, dict) else None)
+    if not selection:
+        return None
+    rows = getattr(selection, "rows", None) or (selection.get("rows") if isinstance(selection, dict) else None)
+    if not rows:
+        return None
+    try:
+        return int(rows[0])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _resolve_history_selected_run_id(
+    history_df: pd.DataFrame,
+    *,
+    table_key: str = WORKFLOW_HISTORY_TABLE_KEY,
+) -> str | None:
+    if history_df.empty or "run_id" not in history_df.columns:
+        return None
+    row_index = _selected_dataframe_row_index(table_key)
+    if row_index is None or row_index < 0 or row_index >= len(history_df):
+        return None
+    run_id = str(history_df.iloc[row_index].get("run_id") or "").strip()
+    return run_id or None
 
 
 def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bool, db_config: dict[str, str | None]) -> None:
@@ -1048,4 +1080,48 @@ def _render_runtime_center() -> None:
 
     history_df = _build_history_rows(all_runs)
     with st.expander("🗃️ Historique centralisé des exécutions IHM", expanded=False):
-        st.dataframe(history_df, use_container_width=True, hide_index=True)
+        st.caption("Sélectionnez une ligne pour télécharger immédiatement les logs du run correspondant.")
+        st.dataframe(
+            history_df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=WORKFLOW_HISTORY_TABLE_KEY,
+        )
+
+        selected_history_run_id = _resolve_history_selected_run_id(history_df)
+        if selected_history_run_id is None:
+            st.caption("ℹ️ Aucune ligne sélectionnée dans l’historique pour le moment.")
+            return
+
+        selected_history_run = get_pipeline_run_record(selected_history_run_id)
+        selected_history_status = _status_badge(str(selected_history_run.get("status") or "")) if isinstance(selected_history_run, dict) else "—"
+        st.caption(f"Run historique sélectionné : `{selected_history_run_id}` | {selected_history_status}")
+
+        history_download_specs: list[tuple[str, str, str, bool]] = []
+        for label, stream in (
+            ("⬇️ Log consolidé", "all"),
+            ("⬇️ Stdout", "stdout"),
+            ("⬇️ Stderr", "stderr"),
+        ):
+            available = pipeline_log_available(selected_history_run_id, stream=cast(Any, stream))
+            data = read_pipeline_logs(selected_history_run_id, stream=cast(Any, stream)) if available else ""
+            history_download_specs.append((label, stream, data, available))
+
+        download_cols = st.columns(4)
+        for index, (label, stream, data, available) in enumerate(history_download_specs):
+            download_cols[index].download_button(
+                label=label,
+                data=data,
+                file_name=build_log_download_name(selected_history_run_id, stream=cast(Any, stream)),
+                mime="text/plain",
+                key=f"history_download_{selected_history_run_id}_{stream}",
+                use_container_width=True,
+                disabled=not available,
+            )
+
+        # Suppression du bouton "Inspecter ce run" (inutile pour l'utilisateur)
+
+        if not any(spec[3] for spec in history_download_specs):
+            st.caption("⚠️ Les artefacts de logs de ce run sont indisponibles (rotation, purge ou run incomplet).")
