@@ -1504,6 +1504,15 @@ def start_pipeline_workflow(
                     duration_seconds=0.0,
                 )
 
+            # Sprint S2 / A-014.1 — re-vérification du stop juste avant
+            # l'acquisition du verrou (évite d'acquérir/libérer pour rien et
+            # supprime la fenêtre de course entre la fin du sleep planifié et
+            # l'acquisition du lock).
+            if stop_event.is_set():
+                _append_workflow_event(managed, "Workflow arrêté avant l'acquisition du verrou pipeline.", is_error=True)
+                _finalize_workflow_record(managed, status="stopped", returncode=-3, workflow_completed_steps=0)
+                return
+
             try:
                 workflow_lock = _acquire_lock("pipeline", owner="pipeline_workflow", run_id=run_id)
             except PipelineLockBusy as exc:
@@ -1513,6 +1522,14 @@ def start_pipeline_workflow(
                     is_error=True,
                 )
                 _finalize_workflow_record(managed, status="failed", returncode=-2, workflow_completed_steps=0)
+                return
+            except Exception as exc:  # pragma: no cover — défense en profondeur
+                _append_workflow_event(
+                    managed,
+                    f"Erreur inattendue lors de l'acquisition du verrou pipeline : {exc}.",
+                    is_error=True,
+                )
+                _finalize_workflow_record(managed, status="failed", returncode=-1, workflow_completed_steps=0)
                 return
 
             _run_pipeline_workflow(
@@ -1526,9 +1543,27 @@ def start_pipeline_workflow(
                 include_corporate_actions_apply=include_corporate_actions_apply,
                 selected_step_keys=selected_step_keys,
             )
+        except Exception as exc:  # pragma: no cover — garde-fou ultime
+            # Sans cette branche, une exception non gérée tuerait le thread
+            # sans finaliser le record, laissant le workflow "starting"/"running"
+            # dans ``_ACTIVE_WORKFLOWS`` indéfiniment et bloquant tout nouveau
+            # lancement (``list_active_pipeline_runs`` resterait non-vide).
+            try:
+                _append_workflow_event(managed, f"Erreur fatale du workflow_target : {exc}", is_error=True)
+                _finalize_workflow_record(
+                    managed,
+                    status="failed",
+                    returncode=-1,
+                    workflow_completed_steps=managed.record.workflow_completed_steps,
+                )
+            except Exception:
+                LOGGER.exception("workflow_target: échec finalisation après exception fatale")
         finally:
             if workflow_lock is not None:
-                _release_lock(workflow_lock)
+                try:
+                    _release_lock(workflow_lock)
+                except Exception:
+                    LOGGER.exception("workflow_target: échec release_lock pour run_id=%s", run_id)
 
     thread = threading.Thread(target=_workflow_target, daemon=True, name=f"pipeline-workflow-{run_id}")
     managed = _ManagedWorkflow(

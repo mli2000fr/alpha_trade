@@ -140,3 +140,37 @@ def test_same_run_id_is_idempotent():
     finally:
         release_lock(h1)
 
+
+def test_stale_lock_same_pid_no_handle_is_reclaimed(tmp_path: Path):
+    """Sprint S2 / A-014.1 — un fichier-lock écrit par notre propre PID mais
+    sans handle actif en mémoire (cas du finally interrompu / unlink échoué
+    par AV Windows) doit être considéré orphelin et réclamable.
+
+    Reproduit le bug observé en production : après l'arrêt manuel d'un
+    workflow planifié, le ``pipeline.lock`` restait sur disque avec le PID du
+    process IHM Streamlit (toujours vivant), bloquant tout nouveau lancement
+    jusqu'au redémarrage de l'IHM.
+    """
+    fake_payload = {
+        "scope": "pipeline",
+        "owner": "pipeline_workflow",
+        "run_id": "20260507_001341_da7ac7da",
+        "pid": os.getpid(),
+        "acquired_at": "2026-05-07T02:00:00",
+        "process_started_at": None,
+    }
+    (tmp_path / "pipeline.lock").write_text(json.dumps(fake_payload), encoding="utf-8")
+
+    # Aucun handle en mémoire pour ce scope -> détecté comme orphelin.
+    assert list_active_locks() == []
+
+    # Une nouvelle acquisition doit réussir et réclamer le lock obsolète.
+    handle = acquire_lock("pipeline", owner="pipeline_workflow", run_id="new_run", pid=os.getpid())
+    try:
+        active = list_active_locks()
+        assert any(entry.get("run_id") == "new_run" for entry in active)
+        assert not any(entry.get("run_id") == "20260507_001341_da7ac7da" for entry in active)
+    finally:
+        release_lock(handle)
+
+

@@ -39,12 +39,24 @@ def _default_locks_dir() -> Path:
 
 _LOCKS_DIR_OVERRIDE: Path | None = None
 _LOCAL_MUTEX = threading.Lock()
+# Sprint S2 / A-014.1 — table en mémoire des verrous réellement détenus par
+# CE process. Permet de détecter qu'un fichier-lock écrit par notre propre PID
+# est orphelin (le thread qui l'avait acquis n'existe plus, ex : crash silencieux
+# du finally, échec transitoire d'``unlink`` sur Windows à cause d'un AV...).
+# Sans ce garde-fou, le verrou serait considéré actif tant que le process IHM
+# Streamlit reste up, bloquant tout nouveau workflow/backtesting jusqu'au
+# redémarrage manuel de l'IHM.
+_HELD_LOCKS: dict[str, "LockHandle"] = {}
 
 
 def set_locks_dir_for_tests(path: Path | None) -> None:
     """Override le dossier de locks (réservé aux tests)."""
     global _LOCKS_DIR_OVERRIDE
     _LOCKS_DIR_OVERRIDE = Path(path) if path is not None else None
+    # Reset de la table en mémoire pour éviter qu'un test précédent ne fuite
+    # un handle considéré "détenu" sur le nouveau dossier isolé.
+    with _LOCAL_MUTEX:
+        _HELD_LOCKS.clear()
 
 
 def _locks_dir() -> Path:
@@ -170,6 +182,28 @@ def _is_lock_active(payload: dict[str, object] | None) -> bool:
     if not _is_pid_alive(pid):
         return False
 
+    # Sprint S2 / A-014.1 — détection des locks orphelins de CE process.
+    # Si le PID enregistré est celui du process courant mais qu'aucun handle
+    # n'est référencé dans ``_HELD_LOCKS`` (ou que le run_id ne correspond
+    # plus), le fichier est forcément un résidu : le thread qui l'avait
+    # acquis a terminé sans réussir à supprimer le fichier (race avec un AV
+    # Windows, finally interrompu, etc.). On le déclare obsolète pour qu'il
+    # soit réclamé par le prochain ``acquire_lock``.
+    if pid == os.getpid():
+        scope = str(payload.get("scope") or "")
+        held = _HELD_LOCKS.get(scope)
+        run_id = str(payload.get("run_id") or "")
+        if held is None or held.run_id != run_id:
+            LOGGER.info(
+                "Lock '%s' orphelin detecte (meme PID=%s mais aucun handle actif "
+                "en memoire pour run_id=%s) -> sera reclame.",
+                scope,
+                pid,
+                run_id,
+            )
+            return False
+        return True
+
     process_started_at = _get_process_started_at(pid)
     expected_started_at = _parse_lock_datetime(payload.get("process_started_at"))
     if process_started_at is None:
@@ -255,9 +289,14 @@ def acquire_lock(
             "process_started_at": process_started_at.isoformat(timespec="seconds") if process_started_at is not None else None,
         }
         target.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+        handle = LockHandle(scope=scope, owner=str(owner), run_id=str(run_id), pid=pid_int, path=target)
+        # Sprint S2 / A-014.1 — enregistrement en mémoire pour permettre la
+        # détection de locks orphelins (cf. ``_is_lock_active``).
+        if pid_int == os.getpid():
+            _HELD_LOCKS[scope] = handle
 
     LOGGER.info("Lock '%s' acquis | owner=%s run_id=%s pid=%s", scope, owner, run_id, pid_int)
-    return LockHandle(scope=scope, owner=str(owner), run_id=str(run_id), pid=pid_int, path=target)
+    return handle
 
 
 def release_lock(handle: LockHandle | None) -> None:
@@ -265,6 +304,13 @@ def release_lock(handle: LockHandle | None) -> None:
     if handle is None:
         return
     with _LOCAL_MUTEX:
+        # Toujours retirer la table en mémoire d'abord : même si la
+        # suppression du fichier échoue (AV Windows, droits…), le prochain
+        # ``acquire_lock`` détectera l'orphelin via ``_is_lock_active``.
+        held = _HELD_LOCKS.get(handle.scope)
+        if held is not None and held.run_id == handle.run_id:
+            _HELD_LOCKS.pop(handle.scope, None)
+
         payload = _read_lock(handle.path)
         if payload and str(payload.get("run_id")) == handle.run_id:
             try:
