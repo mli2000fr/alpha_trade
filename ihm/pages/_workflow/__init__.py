@@ -84,15 +84,15 @@ _GENERIC_PROGRESS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"Traitement (?P<current>\d+)/(?:\s*)?(?P<total>\d+)\s*:\s*(?P<symbol>[A-Za-z0-9._-]+)", re.IGNORECASE),
 )
 _RUN_PROGRESS_SUMMARY_SPECS: dict[str, tuple[tuple[str, ...], tuple[str, ...], str]] = {
-    "import_alpaca_bar": (("current_symbol_total", "targeted_symbols"), ("current_symbol_index",), "📍 Progression live import bars"),
-    "data_sanitizer_daily": (("targeted_symbols",), ("successful_symbols", "skipped_symbols", "failed_symbols"), "🧹 Progression sanitizeur"),
-    "sync_earnings_calendar": (("symbols",), ("completed_symbols", "failed_symbols"), "📅 Progression earnings"),
-    "update_sector": (("total",), ("updated", "skipped", "failed"), "🏷️ Progression mise à jour fondamentaux"),
-    "risk_management": (("targeted_symbols",), ("accepted_symbols", "reduced_symbols", "rejected_symbols"), "🛡️ Progression risk management"),
-    "execution": (("targeted_symbols",), ("filled_orders", "failed_orders", "skipped_orders"), "💼 Progression execution"),
-    "signal_aggregator": (("loaded_symbols",), ("updated_symbols",), "📰 Progression signal aggregator"),
-    "ml_train": (("symbols_total",), ("symbols_completed", "symbols_skipped", "symbols_failed"), "🧠 Progression ML Train"),
-    "ml_predict": (("symbols_total",), ("symbols_completed", "symbols_skipped", "symbols_failed"), "🤖 Progression ML Predict"),
+    "import_alpaca_bar": (("current_symbol_total", "targeted_symbols"), ("current_symbol_index",), " Progression live import bars"),
+    "data_sanitizer_daily": (("targeted_symbols",), ("successful_symbols", "skipped_symbols", "failed_symbols"), " Progression sanitizeur"),
+    "sync_earnings_calendar": (("symbols",), ("completed_symbols", "failed_symbols"), " Progression earnings"),
+    "update_sector": (("total",), ("updated", "skipped", "failed"), "️ Progression mise à jour fondamentaux"),
+    "risk_management": (("targeted_symbols",), ("accepted_symbols", "reduced_symbols", "rejected_symbols"), "️ Progression risk management"),
+    "execution": (("targeted_symbols",), ("filled_orders", "failed_orders", "skipped_orders"), " Progression execution"),
+    "signal_aggregator": (("loaded_symbols",), ("updated_symbols",), " Progression signal aggregator"),
+    "ml_train": (("symbols_total",), ("symbols_completed", "symbols_skipped", "symbols_failed"), " Progression ML Train"),
+    "ml_predict": (("symbols_total",), ("symbols_completed", "symbols_skipped", "symbols_failed"), " Progression ML Predict"),
 }
 
 
@@ -151,7 +151,7 @@ def _build_actual_start_caption(run: dict[str, object]) -> str | None:
         return None
     if str(run.get("status") or "") == "scheduled":
         return None
-    return f"🚀 Démarrage réel à `{actual_started_at.strftime('%Y-%m-%d %H:%M:%S')}` (planifié pour `{scheduled_at.strftime('%Y-%m-%d %H:%M:%S')}`)."
+    return f" Démarrage réel à `{actual_started_at.strftime('%Y-%m-%d %H:%M:%S')}` (planifié pour `{scheduled_at.strftime('%Y-%m-%d %H:%M:%S')}`)."
 
 
 def _build_workflow_scope_help_lines() -> tuple[str, str, str]:
@@ -246,7 +246,7 @@ def _build_run_symbol_progress_payload(run: dict[str, object] | None) -> tuple[f
         if isinstance(current_index, int) and isinstance(total_symbols, int) and current_index > 0 and total_symbols > 0:
             percent = min(max((current_index / total_symbols) * 100.0, 0.0), 100.0)
             symbol_suffix = f" — symbole courant `{current_symbol}`" if current_symbol else ""
-            return (percent / 100.0, f"📍 Progression live import bars : {current_index}/{total_symbols} ({percent:.1f} %){symbol_suffix}")
+            return (percent / 100.0, f" Progression live import bars : {current_index}/{total_symbols} ({percent:.1f} %){symbol_suffix}")
 
         step_key = str(run.get("step_key") or "").strip()
         progress_from_summary = _build_run_progress_payload_from_summary(step_key, summary)
@@ -274,7 +274,7 @@ def _build_run_progress_payload_from_explicit_summary(summary: dict[str, object]
 
     clamped_current = min(max(current, 0), total)
     percent = min(max((clamped_current / total) * 100.0, 0.0), 100.0)
-    label = str(summary.get("progress_label") or "📍 Progression live").strip()
+    label = str(summary.get("progress_label") or " Progression live").strip()
     item = str(summary.get("progress_item") or summary.get("current_symbol") or "").strip()
     item_suffix = f" — élément courant `{item}`" if item else ""
     return (percent / 100.0, f"{label} : {clamped_current}/{total} ({percent:.1f} %){item_suffix}")
@@ -315,10 +315,10 @@ def _build_run_progress_payload_from_logs(run: dict[str, object]) -> tuple[float
 
     step_key = str(run.get("step_key") or "").strip()
     title = {
-        "data_sanitizer_daily": "🧹 Progression sanitizeur",
-        "sync_earnings_calendar": "📅 Progression earnings",
-        "update_sector": "🏷️ Progression mise à jour fondamentaux",
-    }.get(step_key, "📍 Progression live")
+        "data_sanitizer_daily": " Progression sanitizeur",
+        "sync_earnings_calendar": " Progression earnings",
+        "update_sector": "️ Progression mise à jour fondamentaux",
+    }.get(step_key, " Progression live")
 
     for line in reversed("\n".join(tail_parts).splitlines()):
         cleaned = line.strip()
@@ -583,7 +583,7 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
     execution_locked = options.execution_mode == "live" and not live_confirmed
 
     with st.container(border=True):
-        st.subheader("🚀 Workflow complet configurable")
+        st.subheader(" Workflow complet configurable")
         for help_line in _build_workflow_scope_help_lines():
             st.caption(help_line)
         workflow_range = st.selectbox(
@@ -792,13 +792,13 @@ def _render_runtime_center() -> None:
         if _is_workflow_run(run)
     }
 
-    st.subheader("🖥️ Centre d'exécution & d'investigation")
+    st.subheader("️ Centre d'exécution & d'investigation")
     st.caption(
         "Rafraîchissement automatique toutes les 2 secondes pour les runs actifs. "
         "Vous pouvez changer de page : les pipelines continuent à tourner en arrière-plan."
     )
 
-    if st.button("🔄 Rafraîchir maintenant", key="pipeline_manual_refresh", use_container_width=False):
+    if st.button(" Rafraîchir maintenant", key="pipeline_manual_refresh", use_container_width=False):
         _rerun_app()
 
     if active_runs:
@@ -810,7 +810,7 @@ def _render_runtime_center() -> None:
                 cols[0].markdown(f"`{run.get('step_label', run.get('step_key', ''))}`  \\n`{run_id}`")
                 cols[1].markdown(_status_badge(str(run.get("status", "running"))))
                 cols[2].markdown(f"⏱️ {format_duration_hhmmss(run.get('duration_seconds', 0.0))}")
-                cols[3].markdown(f"🏦 `{run.get('account_id') or 'global'}`")
+                cols[3].markdown(f" `{run.get('account_id') or 'global'}`")
                 if cols[4].button("⏹️ Arrêter", key=f"stop_run_{run_id}", use_container_width=True):
                     stop_pipeline_run(run_id)
                     _rerun_app()
@@ -823,9 +823,9 @@ def _render_runtime_center() -> None:
                 provider_badge = _build_run_provider_badge(run)
                 stooq_badge = _build_run_stooq_badge(run)
                 if provider_badge:
-                    st.caption(f"🏷️ `{provider_badge}`")
+                    st.caption(f"️ `{provider_badge}`")
                 if stooq_badge:
-                    st.caption(f"🔎 `{stooq_badge}`")
+                    st.caption(f" `{stooq_badge}`")
                 if _should_render_active_run_live_progress(run, active_workflow_run_ids=active_workflow_run_ids):
                     symbol_progress_payload = _build_run_symbol_progress_payload(run)
                     if symbol_progress_payload is not None:
@@ -989,9 +989,9 @@ def _render_runtime_center() -> None:
                     stooq_badge = _build_run_stooq_badge(selected_child_run)
                     symbol_progress_payload = _build_run_symbol_progress_payload(selected_child_run)
                     if provider_badge:
-                        st.caption(f"🏷️ `{provider_badge}`")
+                        st.caption(f"️ `{provider_badge}`")
                     if stooq_badge:
-                        st.caption(f"🔎 `{stooq_badge}`")
+                        st.caption(f" `{stooq_badge}`")
                     _render_watchdog_status(selected_child_run)
                     if symbol_progress_payload is not None:
                         progress_fraction, symbol_progress_caption = symbol_progress_payload
@@ -1029,9 +1029,9 @@ def _render_runtime_center() -> None:
         selected_run_stooq_badge = _build_run_stooq_badge(selected_run)
         selected_run_progress_payload = _build_run_symbol_progress_payload(selected_run)
         if selected_run_provider_badge:
-            st.caption(f"🏷️ `{selected_run_provider_badge}`")
+            st.caption(f"️ `{selected_run_provider_badge}`")
         if selected_run_stooq_badge:
-            st.caption(f"🔎 `{selected_run_stooq_badge}`")
+            st.caption(f" `{selected_run_stooq_badge}`")
         if selected_run_progress_payload is not None:
             progress_fraction, selected_run_progress_caption = selected_run_progress_payload
             st.progress(progress_fraction)
@@ -1079,7 +1079,7 @@ def _render_runtime_center() -> None:
                 )
 
     history_df = _build_history_rows(all_runs)
-    with st.expander("🗃️ Historique centralisé des exécutions IHM", expanded=False):
+    with st.expander("️ Historique centralisé des exécutions IHM", expanded=False):
         st.caption("Sélectionnez une ligne pour télécharger immédiatement les logs du run correspondant.")
         st.dataframe(
             history_df,
@@ -1121,7 +1121,13 @@ def _render_runtime_center() -> None:
                 disabled=not available,
             )
 
-        # Suppression du bouton "Inspecter ce run" (inutile pour l'utilisateur)
+        if download_cols[3].button(
+            " Inspecter ce run",
+            key=f"history_open_run_{selected_history_run_id}",
+            use_container_width=True,
+        ):
+            st.session_state[PENDING_SELECTED_RUN_KEY] = selected_history_run_id
+            _rerun_app()
 
         if not any(spec[3] for spec in history_download_specs):
             st.caption("⚠️ Les artefacts de logs de ce run sont indisponibles (rotation, purge ou run incomplet).")

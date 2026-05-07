@@ -44,7 +44,7 @@ from ihm.services.notifications_preferences import (
     parse_recipients,
     save_persisted_notification_preferences,
 )
-from ihm.services.notifications import load_smtp_config, send_test_email
+from ihm.services.notifications import load_smtp_config, read_smtp_test_failure_log, send_test_email
 
 ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY = "settings_alpha_scanner_dependency_thresholds_flash"
 ALPHA_SCANNER_SELECTED_STYLE_KEY = "settings_alpha_scanner_selected_style"
@@ -394,12 +394,29 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
                 st.rerun()
 
 
+def _get_notifications_failure_log_download_payload() -> tuple[str, str] | None:
+    payload = read_smtp_test_failure_log()
+    if not payload.strip():
+        return None
+    return ("smtp_test_email_failure.log", payload)
+
+
 def _render_notifications_settings() -> None:
     """Sprint S27 — Notifications email fin de workflow pipeline."""
     flash = st.session_state.pop(NOTIFICATIONS_FLASH_KEY, None)
+    failure_log_payload = _get_notifications_failure_log_download_payload()
     if isinstance(flash, tuple) and len(flash) == 2:
         kind, message = flash
         getattr(st, kind, st.info)(message)
+        if kind == "error" and failure_log_payload is not None:
+            st.download_button(
+                "⬇️ Télécharger les logs IHM de l'échec SMTP",
+                data=failure_log_payload[1],
+                file_name=failure_log_payload[0],
+                mime="text/plain",
+                key="settings_notifications_download_failure_log_flash",
+                use_container_width=False,
+            )
 
     prefs = load_persisted_notification_preferences()
     smtp_cfg = load_smtp_config()
@@ -500,6 +517,17 @@ def _render_notifications_settings() -> None:
                     message,
                 )
                 st.rerun()
+
+        if failure_log_payload is not None:
+            st.caption("Dernier échec SMTP disponible au téléchargement pour diagnostic.")
+            st.download_button(
+                "⬇️ Télécharger le journal du dernier échec SMTP",
+                data=failure_log_payload[1],
+                file_name=failure_log_payload[0],
+                mime="text/plain",
+                key="settings_notifications_download_failure_log",
+                use_container_width=True,
+            )
 
 
 def _check_import(name: str) -> str:

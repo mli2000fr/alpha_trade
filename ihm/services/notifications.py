@@ -22,6 +22,7 @@ import logging
 import os
 import smtplib
 import ssl
+import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from email.message import EmailMessage
@@ -32,12 +33,15 @@ from ihm.services.notifications_preferences import (
     NotificationPreferences,
     load_persisted_notification_preferences,
 )
+from ihm.services.pipeline_runner import PROJECT_ROOT
 
 LOGGER = logging.getLogger(__name__)
 
 NOTIFICATION_FLAG_FILENAME = "notification_sent.flag"
 LOG_TAIL_LINES = 200
 ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024  # 5 Mo
+SMTP_TEST_LOG_DIR = PROJECT_ROOT / "artifacts" / "ihm_notifications"
+SMTP_TEST_FAILURE_LOG_PATH = SMTP_TEST_LOG_DIR / "smtp_test_email_failure.log"
 
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "timeout", "stopped"})
 
@@ -334,28 +338,89 @@ def build_workflow_email(
 # Envoi SMTP
 # ---------------------------------------------------------------------------
 
-def send_email(message: EmailMessage, smtp_config: SmtpConfig) -> bool:
+def get_smtp_test_failure_log_path() -> Path:
+    return SMTP_TEST_FAILURE_LOG_PATH
+
+
+def read_smtp_test_failure_log() -> str:
+    path = get_smtp_test_failure_log_path()
+    if not path.exists() or not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def clear_smtp_test_failure_log() -> None:
+    path = get_smtp_test_failure_log_path()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        LOGGER.debug("clear_smtp_test_failure_log: suppression impossible de %s", path, exc_info=True)
+
+
+def _write_smtp_test_failure_log(
+    *,
+    smtp_config: SmtpConfig,
+    recipients: list[str],
+    error: BaseException,
+) -> Path | None:
+    path = get_smtp_test_failure_log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = "\n".join(
+            [
+                "AlphaTrade IHM — Dernier échec d'envoi email de test SMTP",
+                f"generated_at={datetime.now().astimezone().isoformat(timespec='seconds')}",
+                f"host={smtp_config.host or '—'}",
+                f"port={smtp_config.port}",
+                f"sender={smtp_config.sender or '—'}",
+                f"username={smtp_config.username or '—'}",
+                f"use_tls={smtp_config.use_tls}",
+                f"use_ssl={smtp_config.use_ssl}",
+                f"recipients={', '.join(recipients) or '—'}",
+                f"error_type={type(error).__name__}",
+                f"error_message={error}",
+                "",
+                "--- traceback ---",
+                traceback.format_exc().rstrip(),
+                "",
+            ]
+        )
+        path.write_text(payload, encoding="utf-8")
+        return path
+    except OSError:
+        LOGGER.debug("_write_smtp_test_failure_log: écriture impossible de %s", path, exc_info=True)
+        return None
+
+
+def _send_email_or_raise(message: EmailMessage, smtp_config: SmtpConfig) -> None:
     if not smtp_config.is_configured:
         LOGGER.warning(
             "send_email: SMTP non configuré (host/port/from manquants) — notification ignorée."
         )
-        return False
-    try:
-        if smtp_config.use_ssl:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(smtp_config.host, smtp_config.port, context=context, timeout=30) as smtp:
-                if smtp_config.username and smtp_config.password:
-                    smtp.login(smtp_config.username, smtp_config.password)
-                smtp.send_message(message)
-        else:
-            with smtplib.SMTP(smtp_config.host, smtp_config.port, timeout=30) as smtp:
+        raise ValueError("SMTP non configuré (host/port/from manquants)")
+    if smtp_config.use_ssl:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(smtp_config.host, smtp_config.port, context=context, timeout=30) as smtp:
+            if smtp_config.username and smtp_config.password:
+                smtp.login(smtp_config.username, smtp_config.password)
+            smtp.send_message(message)
+    else:
+        with smtplib.SMTP(smtp_config.host, smtp_config.port, timeout=30) as smtp:
+            smtp.ehlo()
+            if smtp_config.use_tls:
+                smtp.starttls(context=ssl.create_default_context())
                 smtp.ehlo()
-                if smtp_config.use_tls:
-                    smtp.starttls(context=ssl.create_default_context())
-                    smtp.ehlo()
-                if smtp_config.username and smtp_config.password:
-                    smtp.login(smtp_config.username, smtp_config.password)
-                smtp.send_message(message)
+            if smtp_config.username and smtp_config.password:
+                smtp.login(smtp_config.username, smtp_config.password)
+            smtp.send_message(message)
+
+
+def send_email(message: EmailMessage, smtp_config: SmtpConfig) -> bool:
+    try:
+        _send_email_or_raise(message, smtp_config)
         return True
     except Exception:
         LOGGER.exception("send_email: échec d'envoi SMTP host=%s port=%s", smtp_config.host, smtp_config.port)
@@ -465,20 +530,34 @@ def send_test_email(
         f"Statuts déclencheurs : {', '.join(prefs.notify_on)}\n"
         f"Envoi : {datetime.now().isoformat(timespec='seconds')}\n"
     )
-    if send_email(msg, active_smtp):
-        return True, f"Email de test envoyé à {', '.join(recipients)}."
-    return False, "Échec d'envoi (voir logs ihm)."
+    try:
+        _send_email_or_raise(msg, active_smtp)
+    except Exception as exc:
+        _write_smtp_test_failure_log(smtp_config=active_smtp, recipients=recipients, error=exc)
+        LOGGER.exception(
+            "send_test_email: échec d'envoi SMTP host=%s port=%s",
+            active_smtp.host,
+            active_smtp.port,
+        )
+        return False, "Échec d'envoi (voir logs ihm)."
+    clear_smtp_test_failure_log()
+    return True, f"Email de test envoyé à {', '.join(recipients)}."
 
 
 __all__ = [
     "ATTACHMENT_MAX_BYTES",
     "LOG_TAIL_LINES",
     "NOTIFICATION_FLAG_FILENAME",
+    "SMTP_TEST_FAILURE_LOG_PATH",
+    "SMTP_TEST_LOG_DIR",
     "SmtpConfig",
     "build_workflow_email",
+    "clear_smtp_test_failure_log",
     "collect_failed_step_context",
+    "get_smtp_test_failure_log_path",
     "load_smtp_config",
     "notify_run_finished",
+    "read_smtp_test_failure_log",
     "send_email",
     "send_test_email",
 ]

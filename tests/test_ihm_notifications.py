@@ -12,9 +12,12 @@ from ihm.services import notifications_preferences as np_mod
 from ihm.services.notifications import (
     SmtpConfig,
     build_workflow_email,
+    clear_smtp_test_failure_log,
     collect_failed_step_context,
     notify_run_finished,
+    read_smtp_test_failure_log,
     send_email,
+    send_test_email,
 )
 from ihm.services.notifications_preferences import NotificationPreferences
 
@@ -24,6 +27,10 @@ def _isolate_preferences(monkeypatch, tmp_path: Path) -> None:
     target = tmp_path / "notifications.json"
     monkeypatch.setattr(np_mod, "PREFERENCES_DIR", tmp_path)
     monkeypatch.setattr(np_mod, "NOTIFICATIONS_PREFERENCES_PATH", target)
+    smtp_log_dir = tmp_path / "ihm_notifications"
+    smtp_log_path = smtp_log_dir / "smtp_test_email_failure.log"
+    monkeypatch.setattr(notif_mod, "SMTP_TEST_LOG_DIR", smtp_log_dir)
+    monkeypatch.setattr(notif_mod, "SMTP_TEST_FAILURE_LOG_PATH", smtp_log_path)
 
 
 def _make_step_record(tmp_path: Path, *, status: str = "completed", run_id: str = "step-1") -> dict[str, Any]:
@@ -244,6 +251,64 @@ def test_notify_run_finished_does_not_raise_on_failure(monkeypatch, tmp_path: Pa
     assert notify_run_finished(record, prefs=prefs, smtp_config=cfg) is False
     flag = Path(record["combined_path"]).parent / "notification_sent.flag"
     assert not flag.exists()  # pas de marqueur si échec → permet retry
+
+
+def test_send_test_email_persists_failure_log(monkeypatch) -> None:
+    prefs = NotificationPreferences(recipients=["ops@example.com"], enabled=True, notify_on=["failed"])
+    cfg = SmtpConfig(host="smtp.x", port=587, username="u", password="p", sender="bot@x.io", use_tls=True)
+
+    class BrokenSMTP:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        def __enter__(self) -> "BrokenSMTP":
+            raise OSError("connexion refusée")
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+    monkeypatch.setattr(notif_mod.smtplib, "SMTP", BrokenSMTP)
+
+    ok, message = send_test_email(prefs, smtp_config=cfg)
+
+    assert ok is False
+    assert message == "Échec d'envoi (voir logs ihm)."
+    log_payload = read_smtp_test_failure_log()
+    assert "connexion refusée" in log_payload
+    assert "host=smtp.x" in log_payload
+    assert "recipients=ops@example.com" in log_payload
+
+
+def test_send_test_email_success_clears_previous_failure_log(monkeypatch) -> None:
+    prefs = NotificationPreferences(recipients=["ops@example.com"], enabled=True, notify_on=["failed"])
+    cfg = SmtpConfig(host="smtp.x", port=587, username=None, password=None, sender="bot@x.io", use_tls=False)
+
+    class FakeSMTP:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        def __enter__(self) -> "FakeSMTP":
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def ehlo(self) -> None:
+            return None
+
+        def send_message(self, msg: EmailMessage) -> None:
+            return None
+
+    monkeypatch.setattr(notif_mod.smtplib, "SMTP", FakeSMTP)
+    clear_smtp_test_failure_log()
+    notif_mod.SMTP_TEST_FAILURE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    notif_mod.SMTP_TEST_FAILURE_LOG_PATH.write_text("ancienne erreur", encoding="utf-8")
+
+    ok, message = send_test_email(prefs, smtp_config=cfg)
+
+    assert ok is True
+    assert "Email de test envoyé" in message
+    assert read_smtp_test_failure_log() == ""
 
 
 

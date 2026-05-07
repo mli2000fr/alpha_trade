@@ -62,3 +62,17 @@ def test_prime_alpha_scanner_dependency_threshold_state_consumes_pending_values_
     assert settings.ALPHA_SCANNER_PENDING_MARKET_REGIME_KEY not in session_state
 
 
+def test_notifications_failure_log_download_payload_returns_none_when_empty(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "read_smtp_test_failure_log", lambda: "")
+
+    assert settings._get_notifications_failure_log_download_payload() is None
+
+
+def test_notifications_failure_log_download_payload_returns_filename_and_text(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "read_smtp_test_failure_log", lambda: "smtp boom")
+
+    payload = settings._get_notifications_failure_log_download_payload()
+
+    assert payload == ("smtp_test_email_failure.log", "smtp boom")
+
+
