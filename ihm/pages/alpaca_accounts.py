@@ -8,10 +8,12 @@ import streamlit as st
 
 from ihm.components.db_controls import render_db_connection_form
 from ihm.components.metrics import metric_row
+from ihm.components.symbol_table import ActionSpec, render_symbol_table
 from ihm.components.tables import show_dataframe
 from ihm.pages import run_page_if_standalone
 from ihm.services.alpaca_accounts import (
 	build_account_label,
+	close_position_all,
 	get_live_account,
 	get_live_orders,
 	get_live_portfolio_history,
@@ -193,7 +195,42 @@ def render() -> None:
 			except Exception as exc:  # noqa: BLE001
 				st.warning(f"Impossible de lire les positions live : {exc}")
 			else:
-				show_dataframe(positions_df, title="📦 Positions ouvertes (broker)", height=320)
+				def _sell_all_callback(symbol: str, row: pd.Series) -> None:  # noqa: ARG001
+					try:
+						close_position_all(selected_account_id, symbol)
+					except Exception as exc:  # noqa: BLE001
+						st.error(f"❌ Échec de la clôture de `{symbol}` : {exc}")
+						return
+					st.toast(f"Position {symbol} clôturée auprès du broker.", icon="✅")
+					# Invalide tous les caches dépendants pour rafraîchir simultanément :
+					# - tableau « Positions ouvertes (broker) » (le symbole peut disparaître),
+					# - tableau « Historique des ordres (broker) » (l'ordre de clôture y apparaît),
+					# - état du compte (cash / buying power impactés).
+					get_live_positions.clear()
+					get_live_orders.clear()
+					get_live_account.clear()
+					get_execution_orders.clear()
+					# Réinitialise la sélection pour que la barre d'actions ne reste pas
+					# affichée sur une ligne potentiellement disparue après le rerun.
+					st.session_state.pop("alpaca_live_positions", None)
+					st.rerun()
+
+				render_symbol_table(
+					positions_df,
+					key="alpaca_live_positions",
+					symbol_col="symbol",
+					title="📦 Positions ouvertes (broker)",
+					height=320,
+					extra_actions=[
+						ActionSpec(
+							label="🔴 Vendre tout",
+							callback=_sell_all_callback,
+							key="sell_all",
+							confirm=True,
+							confirm_label="✅ Confirmer la vente totale",
+						),
+					],
+				)
 
 	with right_col:
 		with st.container(border=True):
@@ -202,7 +239,13 @@ def render() -> None:
 			except Exception as exc:  # noqa: BLE001
 				st.warning(f"Impossible de lire l'historique live des ordres : {exc}")
 			else:
-				show_dataframe(orders_df, title="🧾 Historique des ordres (broker)", height=320)
+				render_symbol_table(
+					orders_df,
+					key="alpaca_live_orders",
+					symbol_col="symbol",
+					title="🧾 Historique des ordres (broker)",
+					height=320,
+				)
 
 	snapshot_history_df = pd.DataFrame()
 	if db_available():
@@ -251,7 +294,13 @@ def render() -> None:
 					title="🧮 Snapshots broker persistés",
 					height=240,
 				)
-			show_dataframe(canonical_orders_df, title="📋 Ordres canoniques d'exécution (DB)", height=260)
+			render_symbol_table(
+				canonical_orders_df,
+				key="alpaca_canonical_orders",
+				symbol_col="symbol",
+				title="📋 Ordres canoniques d'exécution (DB)",
+				height=260,
+			)
 			show_dataframe(execution_runs_df, title="🚀 Runs d'exécution récents (DB)", height=240)
 
 

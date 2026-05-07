@@ -45,6 +45,19 @@ def get_live_account(account_id: str) -> dict[str, Any]:
     return dict(payload) if isinstance(payload, dict) else {}
 
 
+def close_position_all(account_id: str, symbol: str) -> dict[str, Any]:
+    """Ferme l'intégralité de la position ``symbol`` pour ``account_id``.
+
+    Délègue à ``DELETE /v2/positions/{symbol}`` côté Alpaca, qui crée un
+    ordre de clôture à hauteur de ``qty_available`` (cf. doc Alpaca).
+    Retourne le payload broker (typiquement le request d'ordre généré).
+    """
+    if not symbol or not str(symbol).strip():
+        raise ValueError("symbol vide")
+    payload = _build_client(account_id).close_position(str(symbol).strip().upper())
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_live_positions(account_id: str) -> pd.DataFrame:
     records = _build_client(account_id).get_positions()

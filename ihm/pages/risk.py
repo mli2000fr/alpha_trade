@@ -7,6 +7,7 @@ from ihm.components.run_summary import render_persistent_business_summary
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.tables import show_dataframe
+from ihm.components.symbol_table import render_symbol_table
 from ihm.services.db import db_available, get_last_query_error
 from ihm.services.queries import get_latest_run_business_summary, get_portfolio_targets, get_risk_decisions, get_risk_run_ids
 
@@ -71,7 +72,12 @@ def render() -> None:
             "prediction_asof_date", "ml_metrics_asof_date",
             "conviction_score", "predicted_proba", "historical_win_rate", "sizing_method",
         ] if c in decisions.columns]
-        show_dataframe(decisions[cols_show] if cols_show else decisions, height=400)
+        render_symbol_table(
+            decisions[cols_show] if cols_show else decisions,
+            key="risk_decisions",
+            symbol_col="symbol",
+            height=400,
+        )
     else:
         render_query_diagnostic("Aucune décision pour ce run.")
 
@@ -85,11 +91,15 @@ def render() -> None:
             "target_weight", "sector", "price_asof_date", "atr_asof_date",
             "conviction_score", "sizing_method", "kelly_fraction", "score_used", "score_source",
         ] if c in targets.columns]
-        show_dataframe(targets[cols_show] if cols_show else targets, height=400)
+        render_symbol_table(
+            targets[cols_show] if cols_show else targets,
+            key="risk_portfolio_targets",
+            symbol_col="symbol",
+            height=400,
+        )
     else:
         render_query_diagnostic("Aucun portefeuille cible pour ce run.")
 
 
 run_page_if_standalone(__name__, render)
-
 

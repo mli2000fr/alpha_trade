@@ -14,6 +14,7 @@ from ihm.pages._shared import ML_PENDING_SELECTED_SYMBOL_KEY, ML_SELECTED_SYMBOL
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_connection_form, render_query_diagnostic
 from ihm.components.tables import show_dataframe
+from ihm.components.symbol_table import render_symbol_table
 from ihm.services.db import db_available
 from ihm.services.ml_artifacts import get_model_artifacts_dir, list_ml_artifact_symbols, load_ml_artifact_report
 from ihm.services.queries import (
@@ -480,7 +481,7 @@ def render() -> None:
     if runs.empty:
         render_query_diagnostic("Aucun run d'entraînement ML trouvé.")
     else:
-        show_dataframe(runs, height=300)
+        render_symbol_table(runs, key="ml_training_runs", symbol_col="symbol", height=300)
 
     # --- Métriques ---
     st.subheader("📈 Métriques par symbole")
@@ -489,7 +490,7 @@ def render() -> None:
     if metrics.empty:
         render_query_diagnostic("Aucune métrique ML disponible.")
     else:
-        show_dataframe(metrics, height=400)
+        render_symbol_table(metrics, key="ml_metrics_per_symbol", symbol_col="symbol", height=400)
 
     # --- Gouvernance challengers / champion ---
     st.subheader("🏆 Gouvernance challengers / champion")

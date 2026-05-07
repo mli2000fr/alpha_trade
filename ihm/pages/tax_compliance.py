@@ -15,6 +15,7 @@ import streamlit as st
 from ihm.components.help_tooltip import _help
 from ihm.components.kpi_card import kpi_card
 from ihm.components.section_header import section_header
+from ihm.components.symbol_table import render_symbol_table
 from ihm.services import tax_data
 from ihm.theme.badges import status_badge
 
@@ -103,7 +104,7 @@ def render() -> None:
         st.info(f"Aucun lot pour le compte « {account} » sur la période choisie.")
         return
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    render_symbol_table(df, key="tax_lots_table", symbol_col="symbol", height=400)
 
     # --- Export CSV -------------------------------------------------------
     buffer = io.StringIO()
@@ -133,7 +134,7 @@ def render() -> None:
                 for a in report.adjustments
             ]
         )
-        st.dataframe(adj_df, use_container_width=True, hide_index=True)
+        render_symbol_table(adj_df, key="tax_wash_sale_adjustments", symbol_col="symbol", height=320)
     else:
         st.success("Aucune wash sale détectée sur la période.")
 

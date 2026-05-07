@@ -18,6 +18,7 @@ from ihm.components.run_summary import render_run_summary_block
 from ihm.components.metrics import metric_row
 from ihm.components.status_badges import env_badge, run_status_badge
 from ihm.components.tables import show_dataframe
+from ihm.components.symbol_table import render_symbol_table
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
 from ihm.services.pipeline_runner import get_pipeline_steps
 from ihm.services.screener_recommendations import load_screener_recommendation_report
@@ -206,9 +207,14 @@ def render() -> None:
     with st.container(border=True):
         st.subheader("4. Top candidats")
         st.caption("Vue courte des meilleurs scores sentiment déjà passés par le flux amont.")
-        show_dataframe(get_top_candidates(10), "Top 10 candidats par score sentiment")
+        render_symbol_table(
+            get_top_candidates(10),
+            key="overview_top_candidates",
+            symbol_col="symbol",
+            title="Top 10 candidats par score sentiment",
+            height=320,
+        )
 
 
 run_page_if_standalone(__name__, render)
-
 

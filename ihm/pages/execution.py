@@ -313,7 +313,13 @@ def render() -> None:
     with st.expander("📚 Contexte compte — hors scope strict du run", expanded=False):
         broker_positions = get_broker_positions(account_id=account_id)
         if not broker_positions.empty:
-            show_dataframe(broker_positions, title="📦 Positions broker — dernier snapshot compte", height=240)
+            render_symbol_table(
+                broker_positions,
+                key="exec_broker_positions_account",
+                symbol_col="symbol",
+                title="📦 Positions broker — dernier snapshot compte",
+                height=240,
+            )
 
         account_positions = get_execution_positions(account_id=account_id)
         if not account_positions.empty:
@@ -326,7 +332,7 @@ def render() -> None:
     # --- Événements ---
     st.subheader("📝 Événements")
     events = get_execution_events(selected)
-    show_dataframe(events, height=300)
+    render_symbol_table(events, key="exec_events", symbol_col="symbol", height=300)
 
     # --- Runs récents ---
     with st.expander("Historique des runs", expanded=False):

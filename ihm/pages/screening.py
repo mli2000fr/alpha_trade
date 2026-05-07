@@ -15,6 +15,7 @@ from ihm.components.screener_artifacts import (
     render_shared_screener_artifact_selector,
 )
 from ihm.components.tables import show_dataframe
+from ihm.components.symbol_table import render_symbol_table
 from ihm.services.screener_recommendations import (
     list_screener_csv_files,
     load_screener_csv_preview,
@@ -342,9 +343,14 @@ def render() -> None:
     with st.container(border=True):
         st.subheader("4. Résultats filtrés")
         st.caption(f"{len(filtered)} ligne(s) après filtrage sur {total} symbole(s) chargés.")
-        show_dataframe(filtered, f"Résultats ({len(filtered)} lignes)", height=500)
+        render_symbol_table(
+            filtered,
+            key="screening_filtered_results",
+            symbol_col="symbol",
+            title=f"Résultats ({len(filtered)} lignes)",
+            height=500,
+        )
 
 
 run_page_if_standalone(__name__, render)
-
 
