@@ -34,6 +34,17 @@ from ihm.services.screener_preferences import (
     reset_persisted_alpha_scanner_dependency_thresholds,
     save_persisted_alpha_scanner_dependency_thresholds,
 )
+from ihm.services.notifications_preferences import (
+    ALLOWED_STATUSES,
+    DEFAULT_NOTIFY_ON,
+    NOTIFICATIONS_PREFERENCES_PATH,
+    NotificationPreferences,
+    format_recipients,
+    load_persisted_notification_preferences,
+    parse_recipients,
+    save_persisted_notification_preferences,
+)
+from ihm.services.notifications import load_smtp_config, send_test_email
 
 ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY = "settings_alpha_scanner_dependency_thresholds_flash"
 ALPHA_SCANNER_SELECTED_STYLE_KEY = "settings_alpha_scanner_selected_style"
@@ -43,6 +54,11 @@ ALPHA_SCANNER_PENDING_MARKET_REGIME_KEY = "settings_alpha_scanner_pending_market
 BARS_PROVIDER_FLASH_KEY = "settings_bars_provider_flash"
 BARS_PROVIDER_WIDGET_KEY = "settings_bars_provider_radio"
 BARS_PROVIDER_PENDING_SYNC_KEY = "settings_bars_provider_pending_sync"
+
+NOTIFICATIONS_RECIPIENTS_KEY = "settings_notifications_recipients_input"
+NOTIFICATIONS_ENABLED_KEY = "settings_notifications_enabled_input"
+NOTIFICATIONS_NOTIFY_ON_KEY = "settings_notifications_notify_on_input"
+NOTIFICATIONS_FLASH_KEY = "settings_notifications_flash"
 
 BARS_PROVIDER_LABELS: dict[str, str] = {
     "eodhd": "🟢 EODHD (recommandé — bulk EOD, volume consolidé)",
@@ -378,6 +394,114 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
                 st.rerun()
 
 
+def _render_notifications_settings() -> None:
+    """Sprint S27 — Notifications email fin de workflow pipeline."""
+    flash = st.session_state.pop(NOTIFICATIONS_FLASH_KEY, None)
+    if isinstance(flash, tuple) and len(flash) == 2:
+        kind, message = flash
+        getattr(st, kind, st.info)(message)
+
+    prefs = load_persisted_notification_preferences()
+    smtp_cfg = load_smtp_config()
+
+    st.subheader("📧 Notifications email — fin de workflow pipeline")
+    st.caption(
+        "À chaque fin de run pipeline (succès, échec, timeout, arrêt), un email est "
+        "envoyé aux destinataires configurés. En cas d'échec, l'email contient le nom "
+        "de l'étape fautive, un extrait des logs et joint le `combined.log` complet."
+    )
+
+    if NOTIFICATIONS_RECIPIENTS_KEY not in st.session_state:
+        st.session_state[NOTIFICATIONS_RECIPIENTS_KEY] = format_recipients(prefs.recipients)
+    if NOTIFICATIONS_ENABLED_KEY not in st.session_state:
+        st.session_state[NOTIFICATIONS_ENABLED_KEY] = bool(prefs.enabled)
+    if NOTIFICATIONS_NOTIFY_ON_KEY not in st.session_state:
+        st.session_state[NOTIFICATIONS_NOTIFY_ON_KEY] = list(prefs.notify_on)
+
+    with st.container(border=True):
+        st.checkbox(
+            "Activer les notifications email",
+            key=NOTIFICATIONS_ENABLED_KEY,
+            help="Décochez pour suspendre les envois sans perdre la configuration.",
+        )
+        st.text_input(
+            "Destinataires",
+            key=NOTIFICATIONS_RECIPIENTS_KEY,
+            help="Plusieurs adresses peuvent être saisies, séparées par un point-virgule (;).",
+            placeholder="exemple@gmail.com;autre@domaine.fr",
+        )
+        st.multiselect(
+            "Statuts déclencheurs",
+            options=sorted(ALLOWED_STATUSES),
+            key=NOTIFICATIONS_NOTIFY_ON_KEY,
+            default=None,
+            help=(
+                "Statuts pour lesquels une notification est envoyée. Par défaut : "
+                f"{', '.join(DEFAULT_NOTIFY_ON)}."
+            ),
+        )
+
+        smtp_state = "🟢 SMTP configuré" if smtp_cfg.is_configured else "🔴 SMTP non configuré"
+        st.caption(
+            f"{smtp_state} — host=`{smtp_cfg.host or '—'}` port=`{smtp_cfg.port}` "
+            f"from=`{smtp_cfg.sender or '—'}` TLS=`{smtp_cfg.use_tls}` SSL=`{smtp_cfg.use_ssl}`. "
+            "Variables d'env prioritaires : `ALPHA_TRADE_SMTP_HOST/_PORT/_USER/_PASSWORD/_FROM/_USE_TLS/_USE_SSL`."
+        )
+        st.caption(f"Préférences persistées dans `{NOTIFICATIONS_PREFERENCES_PATH}`.")
+
+        save_col, test_col = st.columns([2, 1])
+        with save_col:
+            if st.button(
+                "💾 Enregistrer les préférences",
+                key="settings_notifications_save",
+                use_container_width=True,
+            ):
+                raw_recipients = str(st.session_state.get(NOTIFICATIONS_RECIPIENTS_KEY, ""))
+                parsed = parse_recipients(raw_recipients)
+                if not parsed:
+                    st.session_state[NOTIFICATIONS_FLASH_KEY] = (
+                        "error",
+                        "Aucune adresse email valide saisie. Format attendu : `nom@domaine.tld` "
+                        "(plusieurs adresses séparées par `;`).",
+                    )
+                else:
+                    notify_on_raw = st.session_state.get(NOTIFICATIONS_NOTIFY_ON_KEY) or list(DEFAULT_NOTIFY_ON)
+                    new_prefs = NotificationPreferences(
+                        recipients=parsed,
+                        enabled=bool(st.session_state.get(NOTIFICATIONS_ENABLED_KEY, True)),
+                        notify_on=list(notify_on_raw),
+                    )
+                    saved = save_persisted_notification_preferences(new_prefs)
+                    st.session_state[NOTIFICATIONS_RECIPIENTS_KEY] = format_recipients(saved.recipients)
+                    st.session_state[NOTIFICATIONS_NOTIFY_ON_KEY] = list(saved.notify_on)
+                    st.session_state[NOTIFICATIONS_FLASH_KEY] = (
+                        "success",
+                        f"Préférences enregistrées ({len(saved.recipients)} destinataire(s)).",
+                    )
+                st.rerun()
+        with test_col:
+            if st.button(
+                "✉️ Envoyer un email de test",
+                key="settings_notifications_test",
+                use_container_width=True,
+                disabled=not smtp_cfg.is_configured,
+                help=None if smtp_cfg.is_configured else "Configurez d'abord les variables SMTP.",
+            ):
+                raw_recipients = str(st.session_state.get(NOTIFICATIONS_RECIPIENTS_KEY, ""))
+                parsed = parse_recipients(raw_recipients) or list(prefs.recipients)
+                test_prefs = NotificationPreferences(
+                    recipients=parsed,
+                    enabled=True,
+                    notify_on=list(st.session_state.get(NOTIFICATIONS_NOTIFY_ON_KEY) or DEFAULT_NOTIFY_ON),
+                )
+                ok, message = send_test_email(test_prefs, smtp_config=smtp_cfg)
+                st.session_state[NOTIFICATIONS_FLASH_KEY] = (
+                    "success" if ok else "error",
+                    message,
+                )
+                st.rerun()
+
+
 def _check_import(name: str) -> str:
     try:
         __import__(name)
@@ -416,6 +540,7 @@ def render() -> None:
     st.subheader("🧭 Paramétrage pipeline")
     _render_bars_provider_settings()
     _render_alpha_scanner_dependency_threshold_settings()
+    _render_notifications_settings()
 
     # ---- Sprint S26 (gap P3) — Maintenance & sécurité ops ------------
     st.subheader("🧹 Maintenance & sécurité ops")

@@ -144,6 +144,21 @@ _ACTIVE_RUNS: dict[str, _ManagedRun] = {}
 _ACTIVE_WORKFLOWS: dict[str, _ManagedWorkflow] = {}
 
 
+def _dispatch_finished_notification(record: PipelineRunRecord) -> None:
+    """Hook fin de run — envoie la notification email (best-effort, jamais bloquant).
+
+    Sprint S27 — Notifications pipeline. Importé en lazy pour éviter tout cycle.
+    """
+    try:
+        from ihm.services.notifications import notify_run_finished
+
+        notify_run_finished(record.to_state())
+    except Exception:
+        LOGGER.exception(
+            "_dispatch_finished_notification: échec ignoré (run_id=%s)", record.run_id
+        )
+
+
 def _resolve_workflow_steps(
     *,
     start_step: WorkflowStartStep,
@@ -948,6 +963,7 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
     except Exception:
         pass
     _persist_record(managed.record)
+    _dispatch_finished_notification(managed.record)
     return managed.record
 
 
@@ -1052,6 +1068,7 @@ def _finalize_workflow_record(
         persist_pipeline_run_record_summary(record.to_state())
     except Exception:
         pass
+    _dispatch_finished_notification(record)
     return record
 
 

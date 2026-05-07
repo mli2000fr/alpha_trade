@@ -78,3 +78,26 @@ conviction:
   quant_weight: 0.75
   sentiment_weight: 0.15
   macro_weight: 0.10
+
+# ---------------------------------------------------------------------------
+# Sprint S27 — Notifications email fin de workflow pipeline
+# Les destinataires + statuts déclencheurs sont configurables depuis l'IHM
+# (page Paramètres / Santé) et persistés dans
+# ``artifacts/ihm_preferences/notifications.json`` (défaut : gamer.2000.fr@gmail.com).
+#
+# La configuration SMTP ci-dessous est OPTIONNELLE : les variables d'env
+# ``ALPHA_TRADE_SMTP_HOST/_PORT/_USER/_PASSWORD/_FROM/_USE_TLS/_USE_SSL`` sont
+# prioritaires. Le mot de passe peut être stocké via le vault
+# (``${vault:smtp_password}``) si ALPHA_TRADE_VAULT_ADDR est défini.
+# ---------------------------------------------------------------------------
+# notifications:
+#   smtp:
+#     host: smtp.gmail.com
+#     port: 587
+#     use_tls: true
+#     use_ssl: false
+#     username: "alphatrade.notify@gmail.com"
+#     password: "${vault:smtp_password}"
+#     from: "AlphaTrade IHM <alphatrade.notify@gmail.com>"
+
+

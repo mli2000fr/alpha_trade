@@ -32,6 +32,8 @@ Ce document résume le fonctionnement du module `ihm/` et les commandes utiles p
 | `ihm/services/pipeline_runner.py` | Construction et pilotage des sous-processus pipeline |
 | `ihm/services/backtesting_runner.py` | Lancement et suivi des runs backtesting |
 | `ihm/services/process_registry.py` | Registre des processus et historique IHM |
+| `ihm/services/notifications.py` | Notifications email fin de workflow (Sprint S27) |
+| `ihm/services/notifications_preferences.py` | Préférences destinataires email (Sprint S27) |
 | `ihm/services/db.py` | Accès DB côté IHM |
 | `run.py` | Lanceur racine recommandé : `python run.py` |
 
@@ -607,3 +609,102 @@ python -m pytest `
   tests/test_ihm_security.py `
   tests/test_ihm_process_registry_rotation.py --no-cov -q
 ```
+
+---
+
+## 11. Notifications email — fin de workflow pipeline (Sprint S27)
+
+À chaque fois qu'un run pipeline (step top-level ou workflow complet) atteint
+un statut terminal (`completed`, `failed`, `timeout`, `stopped`), un email est
+envoyé automatiquement aux destinataires configurés.
+
+### 11.1 Comportement
+
+- Hook branché côté backend dans
+  [`ihm/services/process_registry.py`](../ihm/services/process_registry.py)
+  via `_dispatch_finished_notification(...)`, appelé après
+  `_finalize_if_needed` (steps) et `_finalize_workflow_record` (workflows).
+- Les **sous-runs** d'un workflow (`parent_run_id != None`) sont **ignorés** :
+  seul le workflow parent envoie un email récapitulatif (évite le spam).
+- **Anti-doublon** : un marqueur `notification_sent.flag` est posé dans le
+  dossier du run après envoi réussi. Si l'envoi SMTP échoue, le marqueur
+  n'est pas posé → un nouveau passage retentera.
+- Aucune dépendance Streamlit dans le service : utilisable depuis les
+  threads de fond (workflow, polling).
+- Les exceptions sont **toujours** capturées : la notification ne peut pas
+  bloquer la finalisation d'un run.
+
+### 11.2 Contenu de l'email
+
+- Sujet : `[AlphaTrade] {emoji} {STEP|WORKFLOW} {STATUT} — {label} — {run_id}`
+- Corps texte : statut, label, run_id, compte, dates début/fin, durée,
+  code retour, progression workflow.
+- En cas d'échec : bloc `--- Étape fautive ---` avec label, run_id enfant,
+  statut, code retour, message watchdog.
+- Extrait des **200 dernières lignes** du log pertinent (stderr ou combined
+  de l'étape fautive, sinon du workflow lui-même).
+- Pièces jointes : `combined.log` complet de l'étape fautive **et** du
+  workflow (tronquées à 5 Mo max — tail binaire si dépassement).
+
+### 11.3 Configuration depuis l'IHM
+
+Page **⚙️ Paramètres / Santé** → section **📧 Notifications email — fin de
+workflow pipeline** :
+
+- **Activer / désactiver** les notifications (sans perdre la config).
+- **Destinataires** : champ texte, plusieurs adresses séparées par `;`
+  (ex : `gamer.2000.fr@gmail.com;ops@autre.fr`). Validation regex côté UI.
+- **Statuts déclencheurs** : multiselect parmi
+  `completed`, `failed`, `timeout`, `stopped` (tous par défaut).
+- **Bouton « ✉️ Envoyer un email de test »** pour valider la config SMTP.
+
+Préférences persistées dans
+`artifacts/ihm_preferences/notifications.json` (gérées par
+[`ihm/services/notifications_preferences.py`](../ihm/services/notifications_preferences.py)).
+**Destinataire par défaut** si aucun fichier n'existe : `gamer.2000.fr@gmail.com`.
+
+### 11.4 Configuration SMTP
+
+**Variables d'environnement prioritaires** (recommandé pour la production) :
+
+| Variable | Rôle | Défaut |
+|---|---|---|
+| `ALPHA_TRADE_SMTP_HOST` | Hôte SMTP | — (obligatoire) |
+| `ALPHA_TRADE_SMTP_PORT` | Port | `587` |
+| `ALPHA_TRADE_SMTP_USER` | Username (login) | `None` |
+| `ALPHA_TRADE_SMTP_PASSWORD` | Password | `None` |
+| `ALPHA_TRADE_SMTP_FROM` | Adresse `From:` | fallback sur `_USER` |
+| `ALPHA_TRADE_SMTP_USE_TLS` | STARTTLS | `true` |
+| `ALPHA_TRADE_SMTP_USE_SSL` | SMTPS direct | `false` |
+
+**Fallback `config.yaml`** (section commentée à dé-commenter) :
+
+```yaml
+notifications:
+  smtp:
+    host: smtp.gmail.com
+    port: 587
+    use_tls: true
+    use_ssl: false
+    username: "alphatrade.notify@gmail.com"
+    password: "${vault:smtp_password}"   # via ALPHA_TRADE_VAULT_ADDR
+    from: "AlphaTrade IHM <alphatrade.notify@gmail.com>"
+```
+
+Le mot de passe peut être stocké via le vault (`${vault:smtp_password}`)
+si `ALPHA_TRADE_VAULT_ADDR` est défini. Aucun mot de passe n'est jamais
+loggé ni affiché dans l'IHM.
+
+### 11.5 Tests
+
+```powershell
+python -m pytest `
+  tests/test_ihm_notifications_preferences.py `
+  tests/test_ihm_notifications.py --no-cov -q
+```
+
+Couvre : parsing `;`, validation email, persistance JSON, défaut
+`gamer.2000.fr@gmail.com`, construction email succès/échec, anti-doublon,
+filtrage statuts, exclusion sous-runs, robustesse aux erreurs SMTP.
+
+
