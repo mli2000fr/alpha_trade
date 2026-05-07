@@ -10,6 +10,7 @@ from ihm.components.metrics import metric_row
 from ihm.components.ops_command_panel import render_ops_command_panel
 from ihm.components.run_summary import render_persistent_business_summary
 from ihm.components.status_badges import heartbeat_badge, run_status_badge
+from ihm.components.symbol_table import render_symbol_table
 from ihm.components.tables import show_dataframe
 from ihm.services.db import db_available
 from ihm.services.queries import get_broker_positions
@@ -211,7 +212,12 @@ def render() -> None:
             ]
             if column in snapshot_targets.columns
         ]
-        show_dataframe(snapshot_targets[target_columns], height=260)
+        render_symbol_table(
+            snapshot_targets[target_columns],
+            key="exec_targets_snapshot",
+            symbol_col="symbol",
+            height=260,
+        )
     else:
         detail = f" (risk_run_id={risk_run_id})" if risk_run_id else ""
         st.info(
@@ -223,7 +229,12 @@ def render() -> None:
     orders = get_execution_orders(selected)
     if not orders.empty:
         st.subheader("📋 Requests et ordres broker")
-        show_dataframe(orders, height=260)
+        render_symbol_table(
+            orders,
+            key="exec_orders",
+            symbol_col="symbol",
+            height=260,
+        )
 
         if "parent_intent_id" in orders.columns:
             child_orders = orders[orders["parent_intent_id"].notna()].copy()
@@ -260,7 +271,13 @@ def render() -> None:
         allow_account_fallback=False,
     )
     if not projected_positions.empty:
-        show_dataframe(projected_positions, title="🧮 Positions projetées — scope run", height=260)
+        render_symbol_table(
+            projected_positions,
+            key="exec_projected_positions_run",
+            symbol_col="symbol",
+            title="🧮 Positions projetées — scope run",
+            height=260,
+        )
     else:
         st.info("Aucune position projetée scoppée run n’a été reconstruite pour ce run.")
 
@@ -288,14 +305,23 @@ def render() -> None:
             ("Actions", int((reconciliation["action"] != "none").sum()) if "action" in reconciliation.columns else 0, None),
         ])
         if "reason_code" in reconciliation.columns:
-            reason_counts = (
-                reconciliation.assign(reason_code=reconciliation["reason_code"].fillna("aucune"))
-                .groupby(["reconciliation_status", "reason_code"], dropna=False)
+            reason_counts_by_symbol = (
+                reconciliation.assign(
+                    symbol=reconciliation.get("symbol", pd.Series(index=reconciliation.index, dtype="object")).fillna("—"),
+                    reason_code=reconciliation["reason_code"].fillna("aucune"),
+                )
+                .groupby(["symbol", "reconciliation_status", "reason_code"], dropna=False)
                 .size()
                 .reset_index(name="count")
             )
-            if not reason_counts.empty:
-                show_dataframe(reason_counts, title="🧩 Motifs de réconciliation", height=180)
+            if not reason_counts_by_symbol.empty:
+                render_symbol_table(
+                    reason_counts_by_symbol,
+                    key="exec_reconciliation_reason_counts",
+                    symbol_col="symbol",
+                    title="🧩 Motifs de réconciliation",
+                    height=180,
+                )
         reconciliation_display = _prepare_reconciliation_display(reconciliation)
         reconciliation_columns = [
             column for column in [
@@ -306,7 +332,12 @@ def render() -> None:
             ]
             if column in reconciliation_display.columns
         ]
-        show_dataframe(reconciliation_display[reconciliation_columns], height=280)
+        render_symbol_table(
+            reconciliation_display[reconciliation_columns],
+            key="exec_reconciliation_actionable",
+            symbol_col="symbol",
+            height=280,
+        )
     else:
         st.info("Aucun résultat de réconciliation persisté n’a été trouvé pour ce run.")
 
