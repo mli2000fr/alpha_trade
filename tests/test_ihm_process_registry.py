@@ -758,6 +758,143 @@ def test_load_pipeline_history_marks_orphan_scheduled_workflow_as_stopped_after_
     assert record["status"] == "stopped"
 
 
+def test_load_pipeline_history_marks_orphan_running_step_as_stopped_after_restart(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    run_id = "20260507_231500_feedface"
+    step_dir = registry.RUNS_DIR / "import_news_pending_loop" / run_id
+    step_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = step_dir / "stdout.log"
+    stderr_path = step_dir / "stderr.log"
+    combined_path = step_dir / "combined.log"
+    stdout_path.write_text("", encoding="utf-8")
+    stderr_path.write_text("", encoding="utf-8")
+    combined_path.write_text("", encoding="utf-8")
+
+    registry.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    registry.HISTORY_INDEX_PATH.write_text(
+        registry.json.dumps(
+            {
+                run_id: {
+                    "run_id": run_id,
+                    "step_key": "import_news_pending_loop",
+                    "step_label": "7.bis Import News + scoring + backfill auto",
+                    "command": ["powershell.exe", "-File", "import_news_and_score_pending.ps1"],
+                    "command_display": "powershell.exe -File import_news_and_score_pending.ps1",
+                    "account_id": "acct-1",
+                    "status": "running",
+                    "executed_at": "2026-05-07T23:15:00",
+                    "scheduled_for": None,
+                    "actual_started_at": "2026-05-07T23:15:00",
+                    "finished_at": None,
+                    "returncode": None,
+                    "duration_seconds": 0.0,
+                    "stdout_path": str(stdout_path),
+                    "stderr_path": str(stderr_path),
+                    "combined_path": str(combined_path),
+                    "stdout_lines": 0,
+                    "stderr_lines": 0,
+                    "timeout_seconds": None,
+                    "stop_requested": False,
+                    "run_kind": "step",
+                    "parent_run_id": None,
+                    "workflow_total_steps": 0,
+                    "workflow_completed_steps": 0,
+                    "workflow_current_step_key": None,
+                    "workflow_current_step_label": None,
+                    "workflow_current_child_run_id": None,
+                    "workflow_child_run_ids": [],
+                    "run_summary": {},
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    history = registry.load_pipeline_history()
+
+    by_run_id = {str(item["run_id"]): item for item in history}
+    assert by_run_id[run_id]["status"] == "stopped"
+    assert by_run_id[run_id]["stop_requested"] is True
+    assert by_run_id[run_id]["finished_at"] is not None
+    assert "non repris" in str(by_run_id[run_id]["watchdog_message"]).lower()
+
+    record = registry.get_pipeline_run_record(run_id)
+    assert record is not None
+    assert record["status"] == "stopped"
+
+
+def test_load_pipeline_history_marks_orphan_running_workflow_as_stopped_after_restart(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    run_id = "20260507_232000_cafebabe"
+    workflow_dir = registry.RUNS_DIR / "pipeline_workflow" / run_id
+    workflow_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = workflow_dir / "stdout.log"
+    stderr_path = workflow_dir / "stderr.log"
+    combined_path = workflow_dir / "combined.log"
+    stdout_path.write_text("Démarrage du workflow complet\n", encoding="utf-8")
+    stderr_path.write_text("", encoding="utf-8")
+    combined_path.write_text("[workflow] === [1/2] Démarrage 7.bis Import News + scoring + backfill auto ===\n", encoding="utf-8")
+
+    registry.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    registry.HISTORY_INDEX_PATH.write_text(
+        registry.json.dumps(
+            {
+                run_id: {
+                    "run_id": run_id,
+                    "step_key": "pipeline_workflow",
+                    "step_label": "Workflow personnalisé — étapes 7 → 8",
+                    "command": ["import_news_pending_loop", "signal_aggregator"],
+                    "command_display": "Workflow séquentiel Pipeline personnalisé étapes 7 → 8 | 2 étape(s) exécutée(s)",
+                    "account_id": "acct-1",
+                    "status": "running",
+                    "executed_at": "2026-05-07T23:20:00",
+                    "scheduled_for": None,
+                    "actual_started_at": "2026-05-07T23:20:00",
+                    "finished_at": None,
+                    "returncode": None,
+                    "duration_seconds": 0.0,
+                    "stdout_path": str(stdout_path),
+                    "stderr_path": str(stderr_path),
+                    "combined_path": str(combined_path),
+                    "stdout_lines": 1,
+                    "stderr_lines": 0,
+                    "timeout_seconds": None,
+                    "stop_requested": False,
+                    "run_kind": "workflow",
+                    "parent_run_id": None,
+                    "workflow_total_steps": 2,
+                    "workflow_completed_steps": 0,
+                    "workflow_current_step_key": "import_news_pending_loop",
+                    "workflow_current_step_label": "7.bis Import News + scoring + backfill auto",
+                    "workflow_current_child_run_id": "20260507_232001_deadbeef",
+                    "workflow_child_run_ids": ["20260507_232001_deadbeef"],
+                    "run_summary": {},
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    history = registry.load_pipeline_history()
+
+    by_run_id = {str(item["run_id"]): item for item in history}
+    assert by_run_id[run_id]["status"] == "stopped"
+    assert by_run_id[run_id]["stop_requested"] is True
+    assert by_run_id[run_id]["workflow_current_step_label"] is None
+    assert by_run_id[run_id]["workflow_current_child_run_id"] is None
+    assert "non repris" in str(by_run_id[run_id]["watchdog_message"]).lower()
+
+    record = registry.get_pipeline_run_record(run_id)
+    assert record is not None
+    assert record["status"] == "stopped"
+
+
 def test_should_override_failed_status_for_ml_train_windows_post_success_crash() -> None:
     record = registry.PipelineRunRecord(
         run_id="run-1",

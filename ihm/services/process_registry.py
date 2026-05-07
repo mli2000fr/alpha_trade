@@ -606,6 +606,76 @@ def _normalize_inactive_scheduled_workflow_record(
     return normalized, True
 
 
+def _infer_finished_at_from_record(record: dict[str, object]) -> str:
+    try:
+        run_dir = _record_artifact_path_from_record(record).parent
+    except Exception:
+        run_dir = None
+
+    if run_dir is not None and run_dir.exists():
+        inferred = _infer_finished_at(run_dir)
+        if inferred:
+            return inferred
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _normalize_inactive_orphan_active_record(
+    record: dict[str, object],
+    *,
+    active_step_run_ids: set[str],
+    active_workflow_run_ids: set[str],
+) -> tuple[dict[str, object], bool]:
+    run_id = str(record.get("run_id") or "").strip()
+    if not run_id:
+        return record, False
+
+    status = str(record.get("status") or "")
+    if status not in {"starting", "running"}:
+        return record, False
+
+    run_kind = str(record.get("run_kind") or "step")
+    active_run_ids = active_workflow_run_ids if run_kind == "workflow" else active_step_run_ids
+    if run_id in active_run_ids:
+        return record, False
+
+    normalized = dict(record)
+    normalized["status"] = "stopped"
+    normalized["stop_requested"] = True
+    normalized["finished_at"] = str(record.get("finished_at") or _infer_finished_at_from_record(record))
+    normalized["watchdog_state"] = "inactive"
+    if run_kind == "workflow":
+        normalized["workflow_current_step_key"] = None
+        normalized["workflow_current_step_label"] = None
+        normalized["workflow_current_child_run_id"] = None
+        normalized["watchdog_message"] = (
+            "Workflow non repris après arrêt/redémarrage de l'IHM — marqué arrêté pour éviter un faux statut « en cours »."
+        )
+    else:
+        normalized["watchdog_message"] = (
+            "Run IHM non repris après arrêt/redémarrage de l'IHM — marqué arrêté pour éviter un faux statut « en cours »."
+        )
+    return normalized, True
+
+
+def _normalize_inactive_record(
+    record: dict[str, object],
+    *,
+    active_step_run_ids: set[str],
+    active_workflow_run_ids: set[str],
+) -> tuple[dict[str, object], bool]:
+    normalized_record, changed = _normalize_inactive_scheduled_workflow_record(
+        record,
+        active_workflow_run_ids=active_workflow_run_ids,
+    )
+    if changed:
+        return normalized_record, True
+    return _normalize_inactive_orphan_active_record(
+        normalized_record,
+        active_step_run_ids=active_step_run_ids,
+        active_workflow_run_ids=active_workflow_run_ids,
+    )
+
+
 def _reader(stream: subprocess.PIPE | None, stream_name: str, events: queue.Queue[tuple[str, str]]) -> None:  # type: ignore[type-arg]
     if stream is None:
         return
@@ -1669,12 +1739,14 @@ def load_pipeline_history() -> list[dict[str, object]]:
         recovered = _recover_history_index_entries(index)
         if recovered:
             index.update(recovered)
+        active_step_run_ids = set(_ACTIVE_RUNS.keys())
         active_workflow_run_ids = set(_ACTIVE_WORKFLOWS.keys())
         normalized_index: dict[str, dict[str, object]] = {}
         mutated = bool(recovered)
         for run_id, payload in index.items():
-            normalized_payload, changed = _normalize_inactive_scheduled_workflow_record(
+            normalized_payload, changed = _normalize_inactive_record(
                 payload,
+                active_step_run_ids=active_step_run_ids,
                 active_workflow_run_ids=active_workflow_run_ids,
             )
             normalized_index[run_id] = normalized_payload
@@ -1699,8 +1771,9 @@ def get_pipeline_run_record(run_id: str) -> dict[str, object] | None:
         payload = history.get(run_id)
         if payload is None:
             return None
-        normalized_payload, changed = _normalize_inactive_scheduled_workflow_record(
+        normalized_payload, changed = _normalize_inactive_record(
             payload,
+            active_step_run_ids=set(_ACTIVE_RUNS.keys()),
             active_workflow_run_ids=set(_ACTIVE_WORKFLOWS.keys()),
         )
         if changed:
