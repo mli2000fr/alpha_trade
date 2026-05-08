@@ -63,7 +63,8 @@ def _render_import_news_panel(
             "Le second bouton exécute un script PowerShell Windows qui enchaîne l'import brut puis relance "
             "`python -m event_sentiment` jusqu'à ce qu'il n'y ait plus d'articles pending dans `news_raw`/`news_sentiment`, "
             "puis lance automatiquement `python -m event_sentiment.history_backfill` sur la même fenêtre ; "
-            "c'est ce bouton qui reprend aussi le re-scoring FinBERT contextualisé (Niveau 4) quand il est activé."
+            "c'est ce bouton qui reprend aussi le re-scoring FinBERT contextualisé (Niveau 4) quand il est activé. "
+            "Il ne lance pas `event_sentiment.relevance_backfill` : cette étape reste distincte (`7bis`) et fait désormais partie du workflow pipeline principal juste après l'étape 7."
         )
 
         date_col1, date_col2 = st.columns(2)

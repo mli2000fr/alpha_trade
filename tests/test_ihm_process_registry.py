@@ -207,7 +207,7 @@ def test_format_workflow_core_step_ranges_ignores_non_canonical_step_numbers() -
         PipelineStepDefinition("step_b1", "B1", "Step B1", "", "", "—"),
     )
 
-    assert registry._format_workflow_core_step_ranges(steps) == "1, 8"
+    assert registry._format_workflow_core_step_ranges(steps) == "1, 7bis, 8"
 
 
 def test_pipeline_workflow_runs_steps_in_order_and_aggregates_logs(monkeypatch, tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ from ihm.services.pipeline_runner import (
     get_pipeline_steps,
     get_pipeline_workflow_steps,
     is_canonical_pipeline_step_number,
+    is_workflow_core_step_number,
     parse_pipeline_step_number,
     run_pipeline_step,
 )
@@ -49,9 +50,10 @@ def test_pipeline_step_number_helpers_handle_main_suffixes_and_auxiliary_prefixe
     assert is_canonical_pipeline_step_number("12") is True
     assert is_canonical_pipeline_step_number("7bis") is False
     assert is_canonical_pipeline_step_number("B1") is False
+    assert is_workflow_core_step_number("7bis") is True
 
 
-def test_get_pipeline_workflow_steps_excludes_non_canonical_step_even_if_explicitly_selected() -> None:
+def test_get_pipeline_workflow_steps_includes_7bis_when_explicitly_selected() -> None:
     keys = [
         step.key
         for step in get_pipeline_workflow_steps(
@@ -59,7 +61,7 @@ def test_get_pipeline_workflow_steps_excludes_non_canonical_step_even_if_explici
         )
     ]
 
-    assert keys == ["signal_aggregator", "execution"]
+    assert keys == ["relevance_backfill", "signal_aggregator", "execution"]
 
 
 def test_get_pipeline_auxiliary_steps_contains_expected_keys() -> None:
@@ -78,6 +80,7 @@ def test_get_pipeline_workflow_steps_defaults_to_1_to_12_with_ml_train() -> None
         "sync_earnings_calendar",
         "alpha_scanner",
         "sentiment_pipeline",
+        "relevance_backfill",
         "signal_aggregator",
         "ml_train",
         "ml_predict",
@@ -103,6 +106,7 @@ def test_get_pipeline_workflow_steps_can_start_at_3_and_append_corporate_actions
         "sync_earnings_calendar",
         "alpha_scanner",
         "sentiment_pipeline",
+        "relevance_backfill",
         "signal_aggregator",
         "ml_predict",
         "risk_management",
@@ -116,13 +120,14 @@ def test_get_pipeline_workflow_steps_can_use_explicit_selected_step_keys_in_cano
     keys = [
         step.key
         for step in get_pipeline_workflow_steps(
-            selected_step_keys=("execution", "stock_screener", "import_alpaca_bar", "ml_predict"),
+            selected_step_keys=("execution", "stock_screener", "import_alpaca_bar", "relevance_backfill", "ml_predict"),
         )
     ]
 
     assert keys == [
         "import_alpaca_bar",
         "stock_screener",
+        "relevance_backfill",
         "ml_predict",
         "execution",
     ]

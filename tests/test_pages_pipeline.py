@@ -646,6 +646,40 @@ def test_workflow_launcher_can_launch_explicit_selected_pipelines_in_order(monke
     )
 
 
+def test_workflow_launcher_custom_selection_displays_7bis_between_7_and_8(monkeypatch) -> None:
+    checkbox_labels: list[str] = []
+
+    monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
+    monkeypatch.setattr(workflow_page.st, "session_state", {}, raising=False)
+    monkeypatch.setattr(workflow_page.st, "container", lambda **kwargs: _DummyContainer())
+    monkeypatch.setattr(workflow_page.st, "subheader", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "caption", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "info", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "warning", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "progress", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "success", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "markdown", lambda value: None)
+    monkeypatch.setattr(workflow_page.st, "divider", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(workflow_page.st, "columns", lambda n: [_DummyContainer() for _ in range(n)])
+    monkeypatch.setattr(workflow_page.st, "selectbox", lambda *args, **kwargs: kwargs["options"][0])
+
+    def _fake_checkbox(label, *args, **kwargs):
+        checkbox_labels.append(str(label))
+        return kwargs.get("value", False)
+
+    monkeypatch.setattr(workflow_page.st, "checkbox", _fake_checkbox)
+    monkeypatch.setattr(workflow_page.st, "button", lambda *args, **kwargs: False)
+
+    workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
+
+    custom_labels = [label for label in checkbox_labels if label[:1].isdigit()]
+    assert "7. Sentiment Pipeline" in custom_labels
+    assert "7bis. Relevance Backfill" in custom_labels
+    assert "8. Signal Aggregator" in custom_labels
+    assert custom_labels.index("7. Sentiment Pipeline") < custom_labels.index("7bis. Relevance Backfill") < custom_labels.index("8. Signal Aggregator")
+
+
 def test_build_workflow_child_run_payload_returns_latest_runs_first_with_labels(monkeypatch) -> None:
     child_runs = {
         "run-step-1": {

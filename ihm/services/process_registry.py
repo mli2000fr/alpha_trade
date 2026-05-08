@@ -44,6 +44,7 @@ from ihm.services.pipeline_runner import (
     format_command_for_display,
     get_pipeline_workflow_steps,
     is_canonical_pipeline_step_number,
+    is_workflow_core_step_number,
 )
 from ihm.services.run_summary import aggregate_workflow_run_summary
 from database.run_business_summaries import persist_pipeline_run_record_summary
@@ -181,19 +182,41 @@ def _resolve_workflow_steps(
 
 
 def _format_workflow_core_step_ranges(steps: tuple[PipelineStepDefinition, ...]) -> str:
-    core_numbers = [int(step.num) for step in steps if is_canonical_pipeline_step_number(step.num)]
-    if not core_numbers:
+    core_labels = [str(step.num).strip() for step in steps if is_workflow_core_step_number(step.num)]
+    if not core_labels:
         return "aucune"
 
     ranges: list[str] = []
-    start = end = core_numbers[0]
-    for current in core_numbers[1:]:
-        if current == end + 1:
-            end = current
+    numeric_start: int | None = None
+    numeric_end: int | None = None
+
+    def _flush_numeric_range() -> None:
+        nonlocal numeric_start, numeric_end
+        if numeric_start is None or numeric_end is None:
+            return
+        ranges.append(
+            f"{numeric_start}" if numeric_start == numeric_end else f"{numeric_start} → {numeric_end}"
+        )
+        numeric_start = None
+        numeric_end = None
+
+    for label in core_labels:
+        if is_canonical_pipeline_step_number(label):
+            value = int(label)
+            if numeric_start is None:
+                numeric_start = numeric_end = value
+                continue
+            if value == numeric_end + 1:
+                numeric_end = value
+                continue
+            _flush_numeric_range()
+            numeric_start = numeric_end = value
             continue
-        ranges.append(f"{start}" if start == end else f"{start} → {end}")
-        start = end = current
-    ranges.append(f"{start}" if start == end else f"{start} → {end}")
+
+        _flush_numeric_range()
+        ranges.append(label)
+
+    _flush_numeric_range()
     return ", ".join(ranges)
 
 

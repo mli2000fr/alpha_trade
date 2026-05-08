@@ -45,7 +45,7 @@ from ihm.services.process_registry import (
 from ihm.services.pipeline_runner import (
     get_pipeline_steps,
     get_pipeline_workflow_steps,
-    is_canonical_pipeline_step_number,
+    is_workflow_core_step_number,
 )
 
 __all__ = [
@@ -733,7 +733,7 @@ def _render_workflow_launcher(options: PipelineLaunchOptions, live_confirmed: bo
         selectable_steps = tuple(
             step
             for step in get_pipeline_steps()
-            if is_canonical_pipeline_step_number(step.num)
+            if is_workflow_core_step_number(step.num)
         )
         selection_columns = st.columns(3)
         selected_step_keys: list[str] = []

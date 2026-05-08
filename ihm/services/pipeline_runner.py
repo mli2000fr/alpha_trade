@@ -427,6 +427,21 @@ def is_canonical_pipeline_step_number(step_num: str, *, min_step: int = 1, max_s
     return min_step <= value <= max_step
 
 
+def is_workflow_core_step_number(step_num: str, *, min_step: int = 1, max_step: int = 12) -> bool:
+    """Retourne ``True`` pour les étapes coeur du workflow quotidien.
+
+    Inclut les étapes strictement numériques ``1`` → ``12`` ainsi que les
+    étapes intermédiaires métier comme ``7bis`` qui doivent apparaître dans le
+    workflow complet et la sélection personnalisée, sans changer la sémantique
+    de :func:`is_canonical_pipeline_step_number` utilisée ailleurs.
+    """
+
+    normalized = str(step_num).strip().lower()
+    if normalized == "7bis":
+        return min_step <= 7 <= max_step
+    return is_canonical_pipeline_step_number(normalized, min_step=min_step, max_step=max_step)
+
+
 @dataclass(frozen=True, slots=True)
 class PipelineRunResult:
     """Résultat d'exécution d'une étape lancée depuis l'IHM."""
@@ -651,14 +666,14 @@ def get_pipeline_workflow_steps(
 
     selected_steps: list[PipelineStepDefinition] = []
     for step in PIPELINE_STEPS:
-        if not is_canonical_pipeline_step_number(step.num):
+        if not is_workflow_core_step_number(step.num):
             continue
-        step_num = int(step.num)
+        step_num = parse_pipeline_step_number(step.num)
         if normalized_selected_step_keys is not None:
             if step.key not in normalized_selected_step_keys:
                 continue
         else:
-            if step_num < int(normalized_start):
+            if step_num is None or step_num < int(normalized_start):
                 continue
             if step.key == "ml_train" and not include_ml_train:
                 continue
