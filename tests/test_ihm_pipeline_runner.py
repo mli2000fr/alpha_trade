@@ -12,6 +12,8 @@ from ihm.services.pipeline_runner import (
     get_pipeline_auxiliary_steps,
     get_pipeline_steps,
     get_pipeline_workflow_steps,
+    is_canonical_pipeline_step_number,
+    parse_pipeline_step_number,
     run_pipeline_step,
 )
 
@@ -26,6 +28,7 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
         "sync_earnings_calendar",
         "alpha_scanner",
         "sentiment_pipeline",
+        "relevance_backfill",
         "signal_aggregator",
         "ml_train",
         "ml_predict",
@@ -34,6 +37,29 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
         "corporate_actions_sync",
         "corporate_actions_apply",
     ]
+
+
+def test_pipeline_step_number_helpers_handle_main_suffixes_and_auxiliary_prefixes() -> None:
+    assert parse_pipeline_step_number("7") == 7
+    assert parse_pipeline_step_number("7bis") == 7
+    assert parse_pipeline_step_number(" 10-ter ") == 10
+    assert parse_pipeline_step_number("B1") is None
+
+    assert is_canonical_pipeline_step_number("1") is True
+    assert is_canonical_pipeline_step_number("12") is True
+    assert is_canonical_pipeline_step_number("7bis") is False
+    assert is_canonical_pipeline_step_number("B1") is False
+
+
+def test_get_pipeline_workflow_steps_excludes_non_canonical_step_even_if_explicitly_selected() -> None:
+    keys = [
+        step.key
+        for step in get_pipeline_workflow_steps(
+            selected_step_keys=("relevance_backfill", "signal_aggregator", "execution"),
+        )
+    ]
+
+    assert keys == ["signal_aggregator", "execution"]
 
 
 def test_get_pipeline_auxiliary_steps_contains_expected_keys() -> None:
@@ -568,7 +594,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[:6] == [train_cmd[0], "-u", "-m", "modelFactory", "--mode", "train"]
     assert "--accelerator" in train_cmd
     assert train_cmd[train_cmd.index("--accelerator") + 1] == "gpu"
-    assert train_cmd[train_cmd.index("--ml-mode") + 1] == "rebuild-all"
+    assert train_cmd[train_cmd.index("--ml-mode") + 1] == pipeline_runner.DEFAULT_ML_MODE
     assert train_cmd[train_cmd.index("--history-window") + 1] == "10"
     assert train_cmd[train_cmd.index("--symbol-source") + 1] == "candidates"
 
@@ -687,18 +713,34 @@ def test_build_pipeline_command_import_news() -> None:
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",
         news_import_end_date="2026-04-15",
+        sentiment_news_provider="finnhub",
+        sentiment_ticker_relevance_mode="scored",
+        sentiment_min_relevance_score=0.35,
     )
 
     command = build_pipeline_command("import_news", options)
 
     assert command[:3] == [command[0], "-u", str(PROJECT_ROOT / "event_sentiment" / "importe_news.py")]
-    assert command[-4:] == ["--start-date", "2026-04-01", "--end-date", "2026-04-15"]
+    assert "--start-date" in command
+    assert command[command.index("--start-date") + 1] == "2026-04-01"
+    assert "--end-date" in command
+    assert command[command.index("--end-date") + 1] == "2026-04-15"
+    assert command[command.index("--news-provider") + 1] == "finnhub"
+    assert command[command.index("--ticker-relevance-mode") + 1] == "scored"
+    assert command[command.index("--min-relevance-score") + 1] == "0.35"
+    assert "--enable-contextual-scoring" not in command
 
 
 def test_build_pipeline_command_import_news_pending_loop() -> None:
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",
         news_import_end_date="2026-04-15",
+        sentiment_news_provider="finnhub",
+        sentiment_ticker_relevance_mode="scored",
+        sentiment_min_relevance_score=0.35,
+        sentiment_enable_contextual_scoring=True,
+        sentiment_contextual_min_relevance=0.3,
+        sentiment_contextual_max_pairs=5000,
     )
 
     command = build_pipeline_command("import_news_pending_loop", options)
@@ -715,7 +757,14 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
     assert command[command.index("-ProjectRoot") + 1] == str(PROJECT_ROOT)
     assert "-PythonExe" in command
     assert command[command.index("-PythonExe") + 1] == sys.executable
-    assert command[-4:] == ["-StartDate", "2026-04-01", "-EndDate", "2026-04-15"]
+    assert command[command.index("-StartDate") + 1] == "2026-04-01"
+    assert command[command.index("-EndDate") + 1] == "2026-04-15"
+    assert command[command.index("-NewsProvider") + 1] == "finnhub"
+    assert command[command.index("-TickerRelevanceMode") + 1] == "scored"
+    assert command[command.index("-MinRelevanceScore") + 1] == "0.35"
+    assert "-EnableContextualScoring" in command
+    assert command[command.index("-ContextualMinRelevance") + 1] == "0.3"
+    assert command[command.index("-ContextualMaxPairs") + 1] == "5000"
 
 
 def test_build_pipeline_command_import_bars_eodhd_disables_stooq_cross_check_by_default(monkeypatch) -> None:

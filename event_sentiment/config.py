@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Literal
 
 NewsProvider = Literal["alpaca", "finnhub"]
-TickerRelevanceMode = Literal["provider_default", "strict"]
+TickerRelevanceMode = Literal["provider_default", "strict", "scored"]
 
 #: Mapping centralisé ``news_provider`` → (``source_name``, ``provider_name``).
 #: Permet de garantir des valeurs cohérentes entre l'identifiant de checkpoint
@@ -47,6 +47,27 @@ class EventSentimentConfig:
     # Garde-fous mapping article → ticker (cf. addendum métier add_Finnhub.md).
     provider_ticker_relevance_mode: TickerRelevanceMode = "provider_default"
     max_tickers_per_article: int = 25
+    #: Seuil minimum de pertinence (mode ``"scored"`` uniquement). Les
+    #: paires (article, symbole) sous ce seuil sont **filtrées** avant
+    #: insertion dans ``news_ticker_map`` (compteur ``relevance_filtered``).
+    #: Borne stricte : ``0.0 <= min_relevance_score <= 1.0``. ``0.0`` =
+    #: pas de filtrage (les scores restent stockés pour audit + pondération
+    #: downstream).
+    min_relevance_score: float = 0.0
+
+    # Niveau 4 — re-scoring FinBERT contextualisé par couple (article, symbol).
+    # Désactivé par défaut (opt-in via CLI/IHM). Quand activé, le pipeline
+    # produit une ligne dans ``news_ticker_sentiment`` pour chaque paire
+    # ``(article, symbol)`` issue de ``news_ticker_map`` qui n'a pas encore
+    # de score contextualisé. Garde-fous perf :
+    #
+    # * ``contextual_scoring_min_relevance`` : skip les paires dont
+    #   ``relevance_score < seuil`` (réutilise le Niveau 2/3).
+    # * ``contextual_scoring_max_pairs_per_run`` : cap dur sur le nombre de
+    #   paires scorées par run (évite l'explosion N×M tokenisations).
+    enable_contextual_scoring: bool = False
+    contextual_scoring_min_relevance: float = 0.0
+    contextual_scoring_max_pairs_per_run: int = 5000
 
     def __post_init__(self) -> None:
         if self.page_limit < 1:
@@ -81,12 +102,18 @@ class EventSentimentConfig:
             raise ValueError(
                 f"news_provider doit être l'un de {sorted(PROVIDER_REGISTRY)} (reçu: {self.news_provider!r})."
             )
-        if self.provider_ticker_relevance_mode not in {"provider_default", "strict"}:
+        if self.provider_ticker_relevance_mode not in {"provider_default", "strict", "scored"}:
             raise ValueError(
-                "provider_ticker_relevance_mode doit valoir 'provider_default' ou 'strict'."
+                "provider_ticker_relevance_mode doit valoir 'provider_default', 'strict' ou 'scored'."
             )
         if self.max_tickers_per_article < 1:
             raise ValueError("max_tickers_per_article doit être >= 1.")
+        if not 0.0 <= self.min_relevance_score <= 1.0:
+            raise ValueError("min_relevance_score doit être dans [0.0, 1.0].")
+        if not 0.0 <= self.contextual_scoring_min_relevance <= 1.0:
+            raise ValueError("contextual_scoring_min_relevance doit être dans [0.0, 1.0].")
+        if self.contextual_scoring_max_pairs_per_run < 1:
+            raise ValueError("contextual_scoring_max_pairs_per_run doit être >= 1.")
 
     @classmethod
     def for_provider(cls, news_provider: NewsProvider, **overrides: object) -> "EventSentimentConfig":

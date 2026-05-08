@@ -166,10 +166,191 @@ class EventSentimentRepository:
         return self._upsert("news_raw", serializable, key_columns={"article_id"})
 
     def upsert_news_ticker_map(self, records: list[dict[str, Any]]) -> int:
-        return self._upsert("news_ticker_map", records, key_columns={"article_id", "symbol"})
+        # ``relevance_components`` est un dict côté ingestion (mode
+        # ``scored``) ; MySQL JSON attend une chaîne JSON.
+        serializable: list[dict[str, Any]] = []
+        for row in records:
+            payload = dict(row)
+            components = payload.get("relevance_components")
+            if isinstance(components, (dict, list)):
+                payload["relevance_components"] = json.dumps(components, ensure_ascii=False)
+            serializable.append(payload)
+        return self._upsert("news_ticker_map", serializable, key_columns={"article_id", "symbol"})
 
     def upsert_news_sentiment(self, records: list[dict[str, Any]]) -> int:
         return self._upsert("news_sentiment", records, key_columns={"article_id"})
+
+    def upsert_news_ticker_sentiment(self, records: list[dict[str, Any]]) -> int:
+        """Niveau 4 — persistance des scores FinBERT contextualisés."""
+        return self._upsert(
+            "news_ticker_sentiment",
+            records,
+            key_columns={"article_id", "symbol"},
+        )
+
+    def load_pending_contextual_pairs(
+        self,
+        limit: int = 5000,
+        min_relevance: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """Liste les couples ``(article, symbol)`` à scorer en contextuel.
+
+        Retourne les paires présentes dans ``news_ticker_map`` mais absentes
+        de ``news_ticker_sentiment``. Filtre optionnel par ``relevance_score``
+        (perf : ne tokenise pas les paires dont le Niveau 2/3 a déjà jugé la
+        pertinence trop faible). Le ``company_name`` est résolu via
+        ``stock_metadata`` (jointure LEFT, NULLable).
+        """
+        query = text(
+            """
+            SELECT
+                nr.article_id,
+                ntm.symbol,
+                nr.headline,
+                nr.summary,
+                nr.content,
+                nr.source,
+                nr.published_at_utc,
+                nr.event_timestamp_utc,
+                nr.event_timestamp_ny,
+                nr.effective_trade_date,
+                nr.market_session_tag,
+                nr.is_major_event,
+                COALESCE(ntm.relevance_score, 1.0) AS relevance_score,
+                sm.company_name AS company_name
+            FROM news_ticker_map ntm
+            JOIN news_raw nr ON nr.article_id = ntm.article_id
+            LEFT JOIN news_ticker_sentiment nts
+                ON nts.article_id = ntm.article_id AND nts.symbol = ntm.symbol
+            LEFT JOIN stock_metadata sm ON sm.symbol = ntm.symbol
+            WHERE nts.article_id IS NULL
+              AND COALESCE(ntm.relevance_score, 1.0) >= :min_relevance
+            ORDER BY nr.effective_trade_date ASC, nr.published_at_utc ASC,
+                     ntm.article_id ASC, ntm.symbol ASC
+            LIMIT :limit_rows
+            """
+        )
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                query,
+                {"limit_rows": int(limit), "min_relevance": float(min_relevance)},
+            ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def iter_ticker_map_for_relevance_backfill(
+        self,
+        batch_size: int = 500,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        symbols: list[str] | None = None,
+        rescore_all: bool = False,
+    ):
+        """Itère par batch les lignes ``news_ticker_map`` candidates au
+        backfill du ``relevance_score`` (mode Niveau 2/3).
+
+        Joint ``news_raw`` (headline/summary/content/...) + ``stock_metadata``
+        (``company_name``). Filtre par date d'effet et liste de symboles
+        optionnels. Par défaut : uniquement les lignes ``relevance_score IS NULL``.
+        """
+        filters: list[str] = []
+        params: dict[str, Any] = {}
+        if not rescore_all:
+            filters.append("ntm.relevance_score IS NULL")
+        if start_date is not None:
+            filters.append("nr.effective_trade_date >= :start_date")
+            params["start_date"] = start_date
+        if end_date is not None:
+            filters.append("nr.effective_trade_date <= :end_date")
+            params["end_date"] = end_date
+        if symbols:
+            filters.append("ntm.symbol IN :symbols")
+            params["symbols"] = list(symbols)
+        where_clause = (" WHERE " + " AND ".join(filters)) if filters else ""
+        query_sql = (
+            """
+            SELECT
+                ntm.article_id,
+                ntm.symbol,
+                ntm.is_primary_ticker,
+                nr.headline,
+                nr.summary,
+                nr.content,
+                sm.company_name AS company_name,
+                (
+                    SELECT COUNT(*) FROM news_ticker_map ntm2
+                    WHERE ntm2.article_id = ntm.article_id
+                ) AS ticker_count
+            FROM news_ticker_map ntm
+            JOIN news_raw nr ON nr.article_id = ntm.article_id
+            LEFT JOIN stock_metadata sm ON sm.symbol = ntm.symbol
+            """
+            + where_clause
+            + """
+            ORDER BY ntm.article_id ASC, ntm.symbol ASC
+            LIMIT :limit_rows OFFSET :offset_rows
+            """
+        )
+        stmt = text(query_sql)
+        if symbols:
+            stmt = stmt.bindparams(bindparam("symbols", expanding=True))
+
+        offset = 0
+        while True:
+            with self.engine.connect() as conn:
+                rows = conn.execute(
+                    stmt,
+                    {**params, "limit_rows": int(batch_size), "offset_rows": int(offset)},
+                ).mappings().all()
+            if not rows:
+                return
+            yield [dict(row) for row in rows]
+            if len(rows) < batch_size:
+                return
+            offset += len(rows)
+
+    def delete_ticker_map_below_score(
+        self,
+        threshold: float,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        symbols: list[str] | None = None,
+    ) -> int:
+        """Purge optionnelle des lignes ``news_ticker_map.relevance_score < seuil``.
+
+        Utilisé par le script de backfill quand l'opérateur souhaite réduire
+        le bruit historique. La FK CASCADE supprime aussi les lignes
+        ``news_ticker_sentiment`` associées.
+        """
+        filters = ["relevance_score IS NOT NULL", "relevance_score < :threshold"]
+        params: dict[str, Any] = {"threshold": float(threshold)}
+        if start_date is not None or end_date is not None or symbols:
+            # On a besoin d'un sous-select sur news_raw pour les bornes de date.
+            join_clause = "JOIN news_raw nr ON nr.article_id = ntm.article_id"
+            if start_date is not None:
+                filters.append("nr.effective_trade_date >= :start_date")
+                params["start_date"] = start_date
+            if end_date is not None:
+                filters.append("nr.effective_trade_date <= :end_date")
+                params["end_date"] = end_date
+            if symbols:
+                filters.append("ntm.symbol IN :symbols")
+                params["symbols"] = list(symbols)
+            stmt = text(
+                f"""
+                DELETE ntm FROM news_ticker_map ntm
+                {join_clause}
+                WHERE {' AND '.join(filters)}
+                """
+            )
+            if symbols:
+                stmt = stmt.bindparams(bindparam("symbols", expanding=True))
+        else:
+            stmt = text(
+                f"DELETE FROM news_ticker_map WHERE {' AND '.join(filters)}"
+            )
+        with self.engine.begin() as conn:
+            result = conn.execute(stmt, params)
+        return int(result.rowcount or 0)
 
     def get_active_finbert_fingerprints(self, trade_date: date) -> list[str]:
         """Phase 4.1.c — fingerprints FinBERT actifs pour `trade_date`.
@@ -264,15 +445,18 @@ class EventSentimentRepository:
                     nr.is_major_event,
                     ntm.symbol,
                     COALESCE(ntm.sector, 'UNKNOWN') AS sector,
-                    ns.sentiment_label,
-                    ns.positive_score,
-                    ns.neutral_score,
-                    ns.negative_score,
-                    ns.sentiment_confidence,
-                    ns.sentiment_net_score
+                    COALESCE(ntm.relevance_score, 1.0) AS relevance_score,
+                    COALESCE(nts.sentiment_label, ns.sentiment_label) AS sentiment_label,
+                    COALESCE(nts.positive_score, ns.positive_score) AS positive_score,
+                    COALESCE(nts.neutral_score, ns.neutral_score) AS neutral_score,
+                    COALESCE(nts.negative_score, ns.negative_score) AS negative_score,
+                    COALESCE(nts.sentiment_confidence, ns.sentiment_confidence) AS sentiment_confidence,
+                    COALESCE(nts.sentiment_net_score, ns.sentiment_net_score) AS sentiment_net_score
                 FROM news_raw nr
                 JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
                 JOIN news_sentiment ns ON ns.article_id = nr.article_id
+                LEFT JOIN news_ticker_sentiment nts
+                    ON nts.article_id = nr.article_id AND nts.symbol = ntm.symbol
                 WHERE nr.effective_trade_date IN :trade_dates
                 """
             ).bindparams(bindparam("trade_dates", expanding=True))
@@ -317,15 +501,18 @@ class EventSentimentRepository:
                     nr.is_major_event,
                     ntm.symbol,
                     COALESCE(ntm.sector, 'UNKNOWN') AS sector,
-                    ns.sentiment_label,
-                    ns.positive_score,
-                    ns.neutral_score,
-                    ns.negative_score,
-                    ns.sentiment_confidence,
-                    ns.sentiment_net_score
+                    COALESCE(ntm.relevance_score, 1.0) AS relevance_score,
+                    COALESCE(nts.sentiment_label, ns.sentiment_label) AS sentiment_label,
+                    COALESCE(nts.positive_score, ns.positive_score) AS positive_score,
+                    COALESCE(nts.neutral_score, ns.neutral_score) AS neutral_score,
+                    COALESCE(nts.negative_score, ns.negative_score) AS negative_score,
+                    COALESCE(nts.sentiment_confidence, ns.sentiment_confidence) AS sentiment_confidence,
+                    COALESCE(nts.sentiment_net_score, ns.sentiment_net_score) AS sentiment_net_score
                 FROM news_raw nr
                 JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
                 JOIN news_sentiment ns ON ns.article_id = nr.article_id
+                LEFT JOIN news_ticker_sentiment nts
+                    ON nts.article_id = nr.article_id AND nts.symbol = ntm.symbol
                 WHERE nr.effective_trade_date BETWEEN :start_date AND :end_date
                 """
             )

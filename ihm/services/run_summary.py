@@ -4,7 +4,11 @@ from __future__ import annotations
 from collections.abc import Sequence as SequenceABC
 from typing import Any, Iterable, Mapping, Sequence, cast
 
-from ihm.services.pipeline_runner import get_pipeline_auxiliary_steps, get_pipeline_steps
+from ihm.services.pipeline_runner import (
+    get_pipeline_auxiliary_steps,
+    get_pipeline_steps,
+    parse_pipeline_step_number,
+)
 
 
 RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
@@ -342,7 +346,9 @@ def build_ordered_pipeline_step_scopes(
             for step in get_pipeline_auxiliary_steps()
         )
     for step in get_pipeline_steps():
-        step_number = int(step.num)
+        step_number = parse_pipeline_step_number(step.num)
+        if step_number is None:
+            continue
         if max_main_step is not None and step_number > max_main_step:
             break
         scopes.append({"label": f"{step.num}. {step.name}", "step_keys": [step.key]})

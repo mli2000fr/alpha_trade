@@ -8,6 +8,11 @@ import requests
 from event_sentiment.trading_calendar import TradingCalendarAligner
 from event_sentiment.mapping import EntitySectorMapper
 from event_sentiment.models import NormalizedNewsArticle
+from event_sentiment.relevance import (
+    DEFAULT_WEIGHTS,
+    RelevanceWeights,
+    score_article_symbol,
+)
 from service.alpaca.clientNewsAlpaca import iter_news_pages as _alpaca_iter_news_pages
 from service.finnhub.news_client import iter_news_pages as _finnhub_iter_news_pages
 LOGGER = logging.getLogger(__name__)
@@ -52,6 +57,18 @@ class NewsIngestionService:
         self._max_tickers_per_article = int(
             getattr(config, "max_tickers_per_article", 25)
         )
+        self._min_relevance_score = float(
+            getattr(config, "min_relevance_score", 0.0)
+        )
+        # ``relevance_weights`` peut être surchargé pour tests / tuning ;
+        # par défaut on utilise les poids documentés dans relevance.py.
+        custom_weights = getattr(config, "relevance_weights", None)
+        if isinstance(custom_weights, RelevanceWeights):
+            self._relevance_weights: RelevanceWeights = custom_weights
+        elif isinstance(custom_weights, dict):
+            self._relevance_weights = RelevanceWeights(**custom_weights)
+        else:
+            self._relevance_weights = DEFAULT_WEIGHTS
     def _normalize_article(self, payload: dict[str, Any]) -> NormalizedNewsArticle:
         raw_id = str(payload.get("id") or payload.get("article_id") or "").strip()
         if not raw_id:
@@ -120,6 +137,8 @@ class NewsIngestionService:
             "ticker_maps": 0,
             "filtered_too_many_tickers": 0,
             "strict_dropped_tickers": 0,
+            "relevance_filtered": 0,
+            "relevance_scored": 0,
         }
         checkpoint = self.repository.get_checkpoint(self.config.source_name, symbol)
         page_token = checkpoint["next_page_token"] if checkpoint and resume_checkpoint else None
@@ -212,14 +231,44 @@ class NewsIngestionService:
                                 summary["strict_dropped_tickers"] += 1
                                 continue
                             sector_info = sector_lookup.get(article_symbol, {})
-                            ticker_rows.append({
+                            row: dict[str, Any] = {
                                 "article_id": article.article_id,
                                 "symbol": article_symbol,
                                 "sector": sector_info.get("sector"),
                                 "sector_source": sector_info.get("sector_source"),
                                 "sector_updated_at": sector_info.get("sector_updated_at"),
                                 "is_primary_ticker": int(idx == 0),
-                            })
+                            }
+                            # Mode ``scored`` : calcule un poids de
+                            # pertinence article→symbol et l'ajoute à la
+                            # ligne. Filtrage optionnel via
+                            # ``min_relevance_score``.
+                            if self._ticker_relevance_mode == "scored":
+                                relevance = score_article_symbol(
+                                    symbol=article_symbol,
+                                    headline=article.headline,
+                                    summary=article.summary,
+                                    content=article.content,
+                                    is_primary=(idx == 0),
+                                    company_name=sector_info.get("company_name"),
+                                    ticker_count=len(article.tickers),
+                                    weights=self._relevance_weights,
+                                )
+                                summary["relevance_scored"] += 1
+                                if relevance.score < self._min_relevance_score:
+                                    summary["relevance_filtered"] += 1
+                                    LOGGER.info(
+                                        "Mapping article->ticker filtré (relevance) | "
+                                        "article_id=%s symbol=%s score=%.3f seuil=%.3f",
+                                        article.article_id,
+                                        article_symbol,
+                                        relevance.score,
+                                        self._min_relevance_score,
+                                    )
+                                    continue
+                                row["relevance_score"] = relevance.score
+                                row["relevance_components"] = relevance.components
+                            ticker_rows.append(row)
                     summary["landed"] += self.repository.upsert_news_raw(raw_rows)
                     summary["ticker_maps"] += self.repository.upsert_news_ticker_map(ticker_rows)
                     watermark = max(article.published_at_utc for article in normalized).replace(tzinfo=None)
@@ -273,6 +322,8 @@ class NewsIngestionService:
             "ticker_maps": 0,
             "filtered_too_many_tickers": 0,
             "strict_dropped_tickers": 0,
+            "relevance_filtered": 0,
+            "relevance_scored": 0,
         }
         normalized_symbols = self._normalize_symbol_list(symbols)
         total_symbols = len(normalized_symbols)

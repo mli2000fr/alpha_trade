@@ -199,6 +199,17 @@ def test_pipeline_log_available_reflects_existing_and_missing_artifacts(monkeypa
     assert registry.read_pipeline_logs(record.run_id, "all") == ""
 
 
+def test_format_workflow_core_step_ranges_ignores_non_canonical_step_numbers() -> None:
+    steps = (
+        PipelineStepDefinition("step_1", "1", "Step 1", "", "", "—"),
+        PipelineStepDefinition("step_7bis", "7bis", "Step 7bis", "", "", "step_7"),
+        PipelineStepDefinition("step_8", "8", "Step 8", "", "", "step_7bis"),
+        PipelineStepDefinition("step_b1", "B1", "Step B1", "", "", "—"),
+    )
+
+    assert registry._format_workflow_core_step_ranges(steps) == "1, 8"
+
+
 def test_pipeline_workflow_runs_steps_in_order_and_aggregates_logs(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
 
@@ -669,7 +680,9 @@ def test_pipeline_workflow_scheduled_keeps_duration_at_zero_until_effective_star
     final_snapshot = _wait_for_final_snapshot(record.run_id, attempts=160)
     assert final_snapshot is not None
     assert final_snapshot["status"] == "completed"
-    assert float(final_snapshot["duration_seconds"]) >= 0.2
+    duration_seconds = final_snapshot["duration_seconds"]
+    assert isinstance(duration_seconds, (int, float))
+    assert duration_seconds >= 0.2
 
 
 def test_pipeline_workflow_scheduled_can_be_stopped_before_start(monkeypatch, tmp_path: Path) -> None:

@@ -304,13 +304,20 @@ Le bridge Python impose plusieurs garde-fous :
 ### 4.4 Tables SQL (`database/sql/`)
 
 - **stock/** : `stock_metadata`, `stock_bars`, `stock_bars_daily`, `stock_scores`, `stock_scores_history`, `stock_quote_snapshots`, `stock_earnings_calendar`, `cleaning_audit_latest`, `cleaning_audit_runs`
-- **news/** : `news_raw`, `news_sentiment`, `news_ticker_map`, `macro_event_audit`, `ticker_daily_sentiment_features`, `sector_daily_sentiment_features`, `news_ingestion_checkpoint`
+- **news/** : `news_raw`, `news_sentiment`, `news_ticker_map`, `news_ticker_sentiment`, `macro_event_audit`, `ticker_daily_sentiment_features`, `sector_daily_sentiment_features`, `news_ingestion_checkpoint`
 - **ml/** : `model_registry`, `model_training_run`, `model_metrics`, `model_predictions`
 - **risk/** : `risk_decisions` ★, `portfolio_targets` ★
 - **execution/** : `execution_runs` ★, `execution_targets_snapshot` ★, `execution_order_requests` ★, `execution_broker_orders`, `execution_broker_fills`, `execution_positions` ★, `execution_position_lots` ★, `execution_reconciliation_results` ★, `execution_locks` ★, `execution_events`, `broker_account_snapshots` ★, `broker_positions_snapshots` ★
 - **corporate_actions/** : `corporate_actions_events`, `corporate_actions_applications` ★, `portfolio_cash_ledger` ★
 
 > ★ = tables avec colonne `account_id VARCHAR(32)` pour le support multi-comptes. Migration : `database/sql/migration_add_account_id.sql` ou Alembic `0002_add_account_id`.
+
+#### Focus `event_sentiment` — migrations `0027` / `0028`
+
+- **`0027_news_ticker_map_relevance`** : ajoute `news_ticker_map.relevance_score FLOAT NULL`, `relevance_components JSON NULL` et l'index `idx_news_ticker_map_relevance`.
+- **`0028_news_ticker_sentiment`** : ajoute la table additive `news_ticker_sentiment` (PK `(article_id, symbol)`, FK vers `news_raw` et `news_ticker_map`, indexes `idx_nts_*`).
+- **Contrat de rétro-compatibilité** : `event_sentiment.db_io.load_feature_frames()` joint `news_ticker_sentiment` en `LEFT JOIN` puis applique `COALESCE(nts.X, ns.X)` sur les champs sentiment ; un run historique sans Niveau 4 continue donc à fonctionner.
+- **Agrégation ticker** : `build_ticker_daily_features()` pondère désormais `sentiment_net_*` par `COALESCE(relevance_score, 1.0)` ; l'absence de backfill reste tolérée.
 
 ---
 
@@ -503,6 +510,69 @@ $env:LOGIN_DB = "user"; $env:PASSWORD_DB = "pass"
 $env:ALPACA_API_KEY = "PK..."; $env:ALPACA_SECRET_KEY = "..."
 $env:FINNHUB_API_KEY = "..."   # optionnel
 ```
+
+### Lancer les migrations Alembic ciblées `0027` et `0028`
+
+`alembic.ini` contient une URL factice (`driver://user:pass@localhost/dbname`). Dans ce projet, il faut injecter l'URL réelle fournie par `database.connection.get_database_url()` avant d'appeler Alembic.
+
+Depuis la racine du workspace (`F:\projets`) :
+
+```powershell
+$env:LOGIN_DB = "user"
+$env:PASSWORD_DB = "pass"
+```
+
+#### Appliquer uniquement `0027_news_ticker_map_relevance`
+
+```powershell
+$code = @"
+from alembic.config import Config
+from alembic import command
+from database.connection import get_database_url
+
+cfg = Config('alembic.ini')
+cfg.set_main_option('sqlalchemy.url', get_database_url())
+command.upgrade(cfg, '0027_news_ticker_map_relevance')
+"@
+python -c $code
+```
+
+#### Puis appliquer `0028_news_ticker_sentiment`
+
+```powershell
+$code = @"
+from alembic.config import Config
+from alembic import command
+from database.connection import get_database_url
+
+cfg = Config('alembic.ini')
+cfg.set_main_option('sqlalchemy.url', get_database_url())
+command.upgrade(cfg, '0028_news_ticker_sentiment')
+"@
+python -c $code
+```
+
+#### Variante : converger directement jusqu'à `head`
+
+```powershell
+$code = @"
+from alembic.config import Config
+from alembic import command
+from database.connection import get_database_url
+
+cfg = Config('alembic.ini')
+cfg.set_main_option('sqlalchemy.url', get_database_url())
+command.upgrade(cfg, 'head')
+"@
+python -c $code
+```
+
+Points d'attention :
+
+- ne pas exécuter directement `alembic/versions/0027_news_ticker_map_relevance.py` ou `0028_news_ticker_sentiment.py` avec `python ...` ; on cible la **révision Alembic** via `command.upgrade(...)` ;
+- `0028` dépend de `0027` (`down_revision = "0027_news_ticker_map_relevance"`) ;
+- si `from alembic.config import Config` échoue, activer l'environnement du projet puis installer les dépendances dev (`pip install -e ".[dev]"`) ou au minimum `alembic` ;
+- sur une base créée from-scratch via `database/sql/news/init_event_sentiment.sql`, ces structures existent déjà, mais les révisions Alembic restent la voie canonique pour une base déjà en service.
 
 ### Créer les tables
 

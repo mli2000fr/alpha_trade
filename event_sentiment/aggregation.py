@@ -40,6 +40,23 @@ def build_ticker_daily_features(
     df.loc[:, "after_close_flag"] = (df["market_session_tag"] == "post_market").astype(int)
     df.loc[:, "pre_market_flag"] = (df["market_session_tag"] == "pre_market").astype(int)
 
+    # Relevance scoring (Niveau 2/3) : pondération article→symbole pour
+    # les agrégats de sentiment. Rétro-compat : colonne absente ou NULL ⇒
+    # poids 1.0 (les anciennes lignes / le mode ``provider_default``
+    # retombent sur la moyenne arithmétique d'origine).
+    if "relevance_score" not in df.columns:
+        df.loc[:, "relevance_score"] = 1.0
+    df.loc[:, "relevance_score"] = (
+        pd.to_numeric(df["relevance_score"], errors="coerce")
+        .fillna(1.0)
+        .clip(lower=0.0, upper=1.0)
+    )
+    df.loc[:, "_w_net"] = df["sentiment_net_score"] * df["relevance_score"]
+    df.loc[:, "_w_pos"] = df["positive_score"] * df["relevance_score"]
+    df.loc[:, "_w_neg"] = df["negative_score"] * df["relevance_score"]
+    df.loc[:, "_w_neu"] = df["neutral_score"] * df["relevance_score"]
+    df.loc[:, "_w_conf"] = df["sentiment_confidence"] * df["relevance_score"]
+
     inferred_major = (
         (df["is_major_event"].fillna(0).astype(int) == 1)
         | (
@@ -53,12 +70,12 @@ def build_ticker_daily_features(
         .groupby(["symbol", "trade_date"], as_index=False)
         .agg(
             news_count_1d=("article_id", "nunique"),
-            sentiment_pos_mean_1d=("positive_score", "mean"),
-            sentiment_neg_mean_1d=("negative_score", "mean"),
-            sentiment_neu_mean_1d=("neutral_score", "mean"),
-            sentiment_net_mean_1d=("sentiment_net_score", "mean"),
-            sentiment_net_sum_1d=("sentiment_net_score", "sum"),
-            sentiment_confidence_mean_1d=("sentiment_confidence", "mean"),
+            relevance_weight_sum_1d=("relevance_score", "sum"),
+            _w_net_sum_1d=("_w_net", "sum"),
+            _w_pos_sum_1d=("_w_pos", "sum"),
+            _w_neg_sum_1d=("_w_neg", "sum"),
+            _w_neu_sum_1d=("_w_neu", "sum"),
+            _w_conf_sum_1d=("_w_conf", "sum"),
             major_event_flag=("inferred_major_event", "max"),
             source_diversity_count=("source", "nunique"),
             after_close_news_count=("after_close_flag", "sum"),
@@ -69,35 +86,54 @@ def build_ticker_daily_features(
         .reset_index(drop=True)
     )
 
-    grouped["_sentiment_confidence_sum_1d"] = grouped["sentiment_confidence_mean_1d"] * grouped["news_count_1d"]
+    # Moyennes pondérées par relevance_score (avec fallback w=1.0,
+    # rétro-compat : produit la moyenne arithmétique).
+    weight_sum = grouped["relevance_weight_sum_1d"]
+    grouped["sentiment_net_mean_1d"] = _safe_series_divide(grouped["_w_net_sum_1d"], weight_sum)
+    grouped["sentiment_pos_mean_1d"] = _safe_series_divide(grouped["_w_pos_sum_1d"], weight_sum)
+    grouped["sentiment_neg_mean_1d"] = _safe_series_divide(grouped["_w_neg_sum_1d"], weight_sum)
+    grouped["sentiment_neu_mean_1d"] = _safe_series_divide(grouped["_w_neu_sum_1d"], weight_sum)
+    grouped["sentiment_confidence_mean_1d"] = _safe_series_divide(grouped["_w_conf_sum_1d"], weight_sum)
+    grouped["sentiment_net_sum_1d"] = grouped["_w_net_sum_1d"]
+
     grouped["_major_event_day_count_1d"] = grouped["major_event_flag"].astype(int)
 
     for window in rolling_windows:
         grouped[f"news_count_{window}d"] = (
             grouped.groupby("symbol", group_keys=False)["news_count_1d"].transform(lambda series: _rolling_sum(series, window)).round().astype(int)
         )
-        grouped[f"sentiment_net_sum_{window}d"] = grouped.groupby("symbol", group_keys=False)["sentiment_net_sum_1d"].transform(
+        grouped[f"relevance_weight_sum_{window}d"] = grouped.groupby("symbol", group_keys=False)["relevance_weight_sum_1d"].transform(
+            lambda series: _rolling_sum(series, window)
+        )
+        grouped[f"sentiment_net_sum_{window}d"] = grouped.groupby("symbol", group_keys=False)["_w_net_sum_1d"].transform(
             lambda series: _rolling_sum(series, window)
         )
         grouped[f"sentiment_net_mean_{window}d"] = _safe_series_divide(
             grouped[f"sentiment_net_sum_{window}d"],
-            grouped[f"news_count_{window}d"],
+            grouped[f"relevance_weight_sum_{window}d"],
         )
-        confidence_sum_col = f"_sentiment_confidence_sum_{window}d"
-        grouped[confidence_sum_col] = grouped.groupby("symbol", group_keys=False)["_sentiment_confidence_sum_1d"].transform(
+        confidence_sum_col = f"_w_conf_sum_{window}d"
+        grouped[confidence_sum_col] = grouped.groupby("symbol", group_keys=False)["_w_conf_sum_1d"].transform(
             lambda series: _rolling_sum(series, window)
         )
         grouped[f"sentiment_confidence_mean_{window}d"] = _safe_series_divide(
             grouped[confidence_sum_col],
-            grouped[f"news_count_{window}d"],
+            grouped[f"relevance_weight_sum_{window}d"],
         )
         grouped[f"major_event_day_count_{window}d"] = (
             grouped.groupby("symbol", group_keys=False)["_major_event_day_count_1d"].transform(lambda series: _rolling_sum(series, window)).round().astype(int)
         )
 
     grouped = grouped.drop(
-        columns=["_sentiment_confidence_sum_1d", "_major_event_day_count_1d"]
-        + [f"_sentiment_confidence_sum_{window}d" for window in rolling_windows]
+        columns=[
+            "_w_net_sum_1d",
+            "_w_pos_sum_1d",
+            "_w_neg_sum_1d",
+            "_w_neu_sum_1d",
+            "_w_conf_sum_1d",
+            "_major_event_day_count_1d",
+        ]
+        + [f"_w_conf_sum_{window}d" for window in rolling_windows]
     )
     grouped["feature_version"] = feature_version
     return grouped

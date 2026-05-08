@@ -10,7 +10,7 @@ from event_sentiment.aggregation import build_sector_daily_features, build_ticke
 from event_sentiment.ingestion import NewsIngestionService
 from event_sentiment.macro_rules import MacroRuleEngine
 from event_sentiment.models import NormalizedNewsArticle
-from event_sentiment.scoring import FinBERTSentimentService
+from event_sentiment.scoring import ContextualFinBERTScorer, FinBERTSentimentService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +29,12 @@ class EventSentimentPipeline:
             model_revision=getattr(config, "finbert_model_revision", None),
         )
         self.macro_engine = MacroRuleEngine(rule_version=config.macro_rule_version)
+
+        # Niveau 4 — scorer contextualisé partagé avec FinBERT (réutilise la
+        # même config modèle / batch). Instancié paresseusement uniquement
+        # si ``enable_contextual_scoring`` est True (économise mémoire en
+        # mode legacy).
+        self._contextual_scorer: ContextualFinBERTScorer | None = None
 
     @staticmethod
     def _coerce_utc(value: datetime | None) -> datetime | None:
@@ -242,6 +248,19 @@ class EventSentimentPipeline:
             label="📰 Progression sentiment pipeline — scoring FinBERT",
             phase="finbert_scoring",
         )
+
+        # Niveau 4 — re-scoring FinBERT contextualisé par couple (article, symbol).
+        # Étape opt-in via config.enable_contextual_scoring. Garde-fous perf :
+        # filtre par relevance_score + cap dur sur le nombre de paires.
+        if getattr(self.config, "enable_contextual_scoring", False):
+            stats.update(self._run_contextual_scoring())
+            self._emit_progress(
+                stats,
+                current=max(len(articles), 1),
+                total=max(len(articles), 1),
+                label="📰 Progression sentiment pipeline — scoring contextuel",
+                phase="contextual_scoring",
+            )
         sentiment_map = {record.article_id: record for record in sentiment_records}
         impacted_trade_dates = sorted(
             {
@@ -306,6 +325,73 @@ class EventSentimentPipeline:
         )
         LOGGER.info("Event sentiment pipeline summary | stats=%s", stats)
         return stats
+
+    def _ensure_contextual_scorer(self) -> ContextualFinBERTScorer:
+        if self._contextual_scorer is None:
+            self._contextual_scorer = ContextualFinBERTScorer(
+                model_name=self.config.finbert_model_name,
+                model_version=self.config.finbert_model_version,
+                batch_size=self.config.finbert_batch_size,
+                max_length=self.config.finbert_max_length,
+                model_revision=getattr(self.config, "finbert_model_revision", None),
+            )
+        return self._contextual_scorer
+
+    def _run_contextual_scoring(self) -> dict[str, object]:
+        """Niveau 4 — pipeline scoring contextualisé (article, symbol).
+
+        Charge les paires en attente via ``load_pending_contextual_pairs``
+        (cap par ``contextual_scoring_max_pairs_per_run`` et seuil
+        ``contextual_scoring_min_relevance``), invoque le scorer contextuel
+        FinBERT, persiste dans ``news_ticker_sentiment`` et retourne les
+        compteurs pour le summary.
+        """
+        cap = int(getattr(self.config, "contextual_scoring_max_pairs_per_run", 5000))
+        min_relevance = float(getattr(self.config, "contextual_scoring_min_relevance", 0.0))
+        pending = self.repository.load_pending_contextual_pairs(
+            limit=cap,
+            min_relevance=min_relevance,
+        )
+        if not pending:
+            return {
+                "contextual_pairs_loaded": 0,
+                "contextual_scored": 0,
+                "contextual_min_relevance": min_relevance,
+                "contextual_cap": cap,
+            }
+
+        pairs: list[tuple[NormalizedNewsArticle, str, str | None]] = []
+        for row in pending:
+            article = NormalizedNewsArticle(
+                article_id=row["article_id"],
+                headline=row.get("headline") or "",
+                summary=row.get("summary"),
+                content=row.get("content"),
+                source=row.get("source") or "",
+                author=None,
+                url=None,
+                published_at_utc=row["published_at_utc"],
+                event_timestamp_utc=row["event_timestamp_utc"],
+                event_timestamp_ny=row["event_timestamp_ny"],
+                effective_trade_date=row["effective_trade_date"],
+                market_session_tag=row.get("market_session_tag") or "regular",
+                tickers=[],
+                raw_payload={},
+                is_major_event=int(row.get("is_major_event") or 0),
+            )
+            pairs.append((article, str(row["symbol"]), row.get("company_name")))
+
+        scorer = self._ensure_contextual_scorer()
+        records = scorer.score_pairs(pairs)
+        scored = self.repository.upsert_news_ticker_sentiment(
+            [asdict(record) for record in records]
+        )
+        return {
+            "contextual_pairs_loaded": len(pending),
+            "contextual_scored": int(scored),
+            "contextual_min_relevance": min_relevance,
+            "contextual_cap": cap,
+        }
 
     def _emit_ingestion_progress(self, stats: dict[str, object], payload: dict[str, object]) -> None:
         ingestion = payload.get("ingestion") if isinstance(payload.get("ingestion"), dict) else {}

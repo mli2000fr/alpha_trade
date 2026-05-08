@@ -42,6 +42,13 @@ def test_build_quality_summary_rows_exposes_recent_pipeline_context() -> None:
             "run_summary": {"resolved_symbols": 2, "fetched_articles": 12},
         },
         {
+            "run_id": "rel-1",
+            "run_kind": "step",
+            "step_key": "relevance_backfill",
+            "status": "completed",
+            "run_summary": {"targeted_articles": 12, "rescored_pairs": 4},
+        },
+        {
             "run_id": "agg-1",
             "run_kind": "step",
             "step_key": "signal_aggregator",
@@ -57,6 +64,7 @@ def test_build_quality_summary_rows_exposes_recent_pipeline_context() -> None:
         "Stock Screener",
         "Alpha Scanner",
         "Sentiment Pipeline",
+        "Relevance Backfill",
         "Signal Aggregator",
         "Workflow complet",
     ]

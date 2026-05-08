@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date as DateValue, timedelta
-from typing import cast
 
 import streamlit as st
 
@@ -60,9 +59,11 @@ def _render_import_news_panel(
         st.markdown("**7.bis Import des news brutes**")
         st.caption(
             "Lance `event_sentiment/importe_news.py` avec une date de début et une date de fin. "
+            "Le bouton import brut réutilise la source news et le mode de mapping ticker configurés dans l'étape 7. "
             "Le second bouton exécute un script PowerShell Windows qui enchaîne l'import brut puis relance "
             "`python -m event_sentiment` jusqu'à ce qu'il n'y ait plus d'articles pending dans `news_raw`/`news_sentiment`, "
-            "puis lance automatiquement `python -m event_sentiment.history_backfill` sur la même fenêtre."
+            "puis lance automatiquement `python -m event_sentiment.history_backfill` sur la même fenêtre ; "
+            "c'est ce bouton qui reprend aussi le re-scoring FinBERT contextualisé (Niveau 4) quand il est activé."
         )
 
         date_col1, date_col2 = st.columns(2)
@@ -92,9 +93,9 @@ def _render_import_news_panel(
         auto_score_command_preview = format_command_for_display(
             build_pipeline_command("import_news_pending_loop", import_options)
         )
-        st.caption("Commande import brut seule")
+        st.caption("Commande import brut seule (source news + mapping ticker, sans scoring contextuel)")
         st.code(import_command_preview, language="powershell")
-        st.caption("Commande PowerShell import + scoring auto jusqu'à `pending=0`, puis history backfill")
+        st.caption("Commande PowerShell import + scoring auto jusqu'à `pending=0`, puis history backfill (reprend aussi le scoring contextuel si activé)")
         st.code(auto_score_command_preview, language="powershell")
 
         import_active_runs = active_by_step.get("import_news", [])

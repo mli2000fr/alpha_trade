@@ -26,6 +26,26 @@ param(
     [Parameter()]
     [int]$HistoryBackfillBatchDays = 63,
 
+    [Parameter()]
+    [ValidateSet('alpaca', 'finnhub')]
+    [string]$NewsProvider = 'finnhub',
+
+    [Parameter()]
+    [ValidateSet('provider_default', 'strict', 'scored')]
+    [string]$TickerRelevanceMode = 'provider_default',
+
+    [Parameter()]
+    [double]$MinRelevanceScore = 0.0,
+
+    [Parameter()]
+    [switch]$EnableContextualScoring,
+
+    [Parameter()]
+    [double]$ContextualMinRelevance = 0.0,
+
+    [Parameter()]
+    [int]$ContextualMaxPairs = 5000,
+
     [switch]$SkipHistoryBackfill,
 
     [switch]$DryRun
@@ -57,6 +77,12 @@ $summary = [ordered]@{
     history_backfill_enabled = -not [bool]$SkipHistoryBackfill
     history_backfill_batch_days = $HistoryBackfillBatchDays
     history_backfill_completed = $false
+    news_provider = $NewsProvider
+    ticker_relevance_mode = $TickerRelevanceMode
+    min_relevance_score = $MinRelevanceScore
+    enable_contextual_scoring = [bool]$EnableContextualScoring
+    contextual_min_relevance = $ContextualMinRelevance
+    contextual_max_pairs = $ContextualMaxPairs
     status = 'running'
 }
 
@@ -140,14 +166,24 @@ with engine.connect() as conn:
 
 Push-Location $ProjectRoot
 try {
-    Invoke-PythonStep -Label 'Import news brutes historiques' -Arguments @(
+    $importNewsArguments = @(
         '-u',
         (Join-Path $ProjectRoot 'event_sentiment\importe_news.py'),
         '--start-date',
         $StartDate,
         '--end-date',
-        $EndDate
+        $EndDate,
+        '--news-provider',
+        $NewsProvider
     )
+    if ($TickerRelevanceMode -ne 'provider_default') {
+        $importNewsArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)
+    }
+    if ($TickerRelevanceMode -eq 'scored' -and $MinRelevanceScore -gt 0) {
+        $importNewsArguments += @('--min-relevance-score', ([string]$MinRelevanceScore))
+    }
+
+    Invoke-PythonStep -Label 'Import news brutes historiques' -Arguments @($importNewsArguments)
     $summary.import_completed = $true
 
     $pendingCount = Get-PendingArticleCount
@@ -162,7 +198,29 @@ try {
 
         $runIndex = [int]$summary.scoring_runs_executed + 1
         Write-Host ("=== Scoring auto #{0} | pending avant run : {1} ===" -f $runIndex, $pendingCount)
-        Invoke-PythonStep -Label ("Sentiment pipeline auto #{0}" -f $runIndex) -Arguments @('-u', '-m', 'event_sentiment')
+        $scoringArguments = @(
+            '-u',
+            '-m',
+            'event_sentiment',
+            '--news-provider',
+            $NewsProvider
+        )
+        if ($TickerRelevanceMode -ne 'provider_default') {
+            $scoringArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)
+        }
+        if ($TickerRelevanceMode -eq 'scored' -and $MinRelevanceScore -gt 0) {
+            $scoringArguments += @('--min-relevance-score', ([string]$MinRelevanceScore))
+        }
+        if ($EnableContextualScoring) {
+            $scoringArguments += '--enable-contextual-scoring'
+            if ($ContextualMinRelevance -gt 0) {
+                $scoringArguments += @('--contextual-min-relevance', ([string]$ContextualMinRelevance))
+            }
+            if ($ContextualMaxPairs -gt 0) {
+                $scoringArguments += @('--contextual-max-pairs', ([string]$ContextualMaxPairs))
+            }
+        }
+        Invoke-PythonStep -Label ("Sentiment pipeline auto #{0}" -f $runIndex) -Arguments @($scoringArguments)
         $summary.scoring_runs_executed = $runIndex
 
         $remaining = Get-PendingArticleCount

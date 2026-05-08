@@ -108,6 +108,7 @@ def test_render_event_sentiment_block_returns_expected_keys() -> None:
             "sentiment_symbols",
             "sentiment_news_provider",
             "sentiment_ticker_relevance_mode",
+            "sentiment_min_relevance_score",
         }
 
     at = AppTest.from_function(_runner).run(timeout=10)

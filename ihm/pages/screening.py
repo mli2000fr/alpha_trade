@@ -22,7 +22,7 @@ from ihm.services.screener_recommendations import (
     load_screener_recommendation_report,
 )
 from ihm.services.db import db_available
-from ihm.services.pipeline_runner import get_pipeline_steps
+from ihm.services.pipeline_runner import get_pipeline_steps, parse_pipeline_step_number
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
 from ihm.services.run_summary import (
     build_latest_run_summary_rows,
@@ -58,7 +58,7 @@ def _build_quality_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
     scopes = [
         {"label": _quality_summary_label(step), "step_keys": [step.key]}
         for step in get_pipeline_steps()
-        if int(step.num) <= 8
+        if (step_number := parse_pipeline_step_number(step.num)) is not None and step_number <= 8
     ]
     scopes.append({"label": "Workflow complet", "run_kind": "workflow", "step_keys": ["pipeline_workflow"]})
     return pd.DataFrame(

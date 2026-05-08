@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -315,7 +316,19 @@ class PipelineLaunchOptions:
     sentiment_end_utc: str | None = None
     sentiment_symbols: str | None = None
     sentiment_news_provider: Literal["finnhub", "alpaca"] = "finnhub"
-    sentiment_ticker_relevance_mode: Literal["provider_default", "strict"] = "provider_default"
+    sentiment_ticker_relevance_mode: Literal["provider_default", "strict", "scored"] = "provider_default"
+    sentiment_min_relevance_score: float | None = None
+    sentiment_enable_contextual_scoring: bool = False
+    sentiment_contextual_min_relevance: float | None = None
+    sentiment_contextual_max_pairs: int | None = None
+    # === Relevance backfill (step 7bis) ==================================
+    backfill_relevance_dry_run: bool = False
+    backfill_relevance_rescore_all: bool = False
+    backfill_relevance_rescore_contextual: bool = False
+    backfill_relevance_purge_below: float | None = None
+    backfill_relevance_batch_size: int = 500
+    backfill_relevance_contextual_min_relevance: float = 0.0
+    backfill_relevance_contextual_max_pairs: int | None = None
     screener_chunk_size: int = DEFAULT_SCREENER_CHUNK_SIZE
     screener_max_workers: int | None = None
     screener_benchmark_symbol: str = DEFAULT_SCREENER_BENCHMARK_SYMBOL
@@ -389,6 +402,29 @@ class PipelineStepDefinition:
     tables: str
     deps: str
     account_usage: AccountUsage = "none"
+
+
+def parse_pipeline_step_number(step_num: str) -> int | None:
+    """Extrait la composante numérique principale d'un identifiant d'étape.
+
+    Exemples : ``"7" -> 7``, ``"7bis" -> 7``, ``"B1" -> None``.
+    """
+
+    normalized = str(step_num).strip()
+    match = re.match(r"^(\d+)", normalized)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def is_canonical_pipeline_step_number(step_num: str, *, min_step: int = 1, max_step: int = 12) -> bool:
+    """Retourne ``True`` pour les étapes coeur strictement numériques du workflow."""
+
+    normalized = str(step_num).strip()
+    if not normalized.isdigit():
+        return False
+    value = int(normalized)
+    return min_step <= value <= max_step
 
 
 @dataclass(frozen=True, slots=True)
@@ -485,6 +521,18 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         desc="Ingestion news → scoring FinBERT → features ticker/secteur journalières.",
         tables="ticker_daily_sentiment_features, sector_daily_sentiment_features",
         deps="alpha_scanner",
+    ),
+    PipelineStepDefinition(
+        key="relevance_backfill",
+        num="7bis",
+        name="Relevance Backfill",
+        desc=(
+            "Backfill batch des scores de pertinence article→symbole "
+            "(Niveau 2/3) et, si activé, du re-scoring FinBERT contextualisé "
+            "(Niveau 4) sur les lignes news_ticker_map historiques."
+        ),
+        tables="news_ticker_map (update relevance_*), news_ticker_sentiment (insert)",
+        deps="sentiment_pipeline",
     ),
     PipelineStepDefinition(
         key="signal_aggregator",
@@ -603,9 +651,9 @@ def get_pipeline_workflow_steps(
 
     selected_steps: list[PipelineStepDefinition] = []
     for step in PIPELINE_STEPS:
-        step_num = int(step.num)
-        if step_num > 12:
+        if not is_canonical_pipeline_step_number(step.num):
             continue
+        step_num = int(step.num)
         if normalized_selected_step_keys is not None:
             if step.key not in normalized_selected_step_keys:
                 continue
@@ -663,6 +711,106 @@ def _build_powershell_file_command(script_path: Path, arguments: list[str] | Non
         str(script_path),
         *(arguments or []),
     ]
+
+
+def _extend_event_sentiment_cli_args(
+    command: list[str],
+    options: PipelineLaunchOptions,
+    *,
+    include_contextual_scoring: bool,
+) -> None:
+    """Ajoute les flags supportés par les CLIs Python Event Sentiment."""
+
+    news_provider = options.sentiment_news_provider or "finnhub"
+    command.extend(["--news-provider", news_provider])
+
+    if (
+        options.sentiment_ticker_relevance_mode
+        and options.sentiment_ticker_relevance_mode != "provider_default"
+    ):
+        command.extend([
+            "--ticker-relevance-mode",
+            options.sentiment_ticker_relevance_mode,
+        ])
+
+    if (
+        options.sentiment_ticker_relevance_mode == "scored"
+        and options.sentiment_min_relevance_score is not None
+        and options.sentiment_min_relevance_score > 0.0
+    ):
+        command.extend([
+            "--min-relevance-score",
+            f"{float(options.sentiment_min_relevance_score):g}",
+        ])
+
+    if include_contextual_scoring and options.sentiment_enable_contextual_scoring:
+        command.append("--enable-contextual-scoring")
+        if (
+            options.sentiment_contextual_min_relevance is not None
+            and options.sentiment_contextual_min_relevance > 0.0
+        ):
+            command.extend([
+                "--contextual-min-relevance",
+                f"{float(options.sentiment_contextual_min_relevance):g}",
+            ])
+        if (
+            options.sentiment_contextual_max_pairs is not None
+            and options.sentiment_contextual_max_pairs > 0
+        ):
+            command.extend([
+                "--contextual-max-pairs",
+                str(int(options.sentiment_contextual_max_pairs)),
+            ])
+
+
+def _extend_event_sentiment_powershell_args(
+    command_args: list[str],
+    options: PipelineLaunchOptions,
+    *,
+    include_contextual_scoring: bool,
+) -> None:
+    """Ajoute les paramètres Event Sentiment pour les wrappers PowerShell."""
+
+    news_provider = options.sentiment_news_provider or "finnhub"
+    command_args.extend(["-NewsProvider", news_provider])
+
+    if (
+        options.sentiment_ticker_relevance_mode
+        and options.sentiment_ticker_relevance_mode != "provider_default"
+    ):
+        command_args.extend([
+            "-TickerRelevanceMode",
+            options.sentiment_ticker_relevance_mode,
+        ])
+
+    if (
+        options.sentiment_ticker_relevance_mode == "scored"
+        and options.sentiment_min_relevance_score is not None
+        and options.sentiment_min_relevance_score > 0.0
+    ):
+        command_args.extend([
+            "-MinRelevanceScore",
+            f"{float(options.sentiment_min_relevance_score):g}",
+        ])
+
+    if include_contextual_scoring and options.sentiment_enable_contextual_scoring:
+        command_args.append("-EnableContextualScoring")
+        if (
+            options.sentiment_contextual_min_relevance is not None
+            and options.sentiment_contextual_min_relevance > 0.0
+        ):
+            command_args.extend([
+                "-ContextualMinRelevance",
+                f"{float(options.sentiment_contextual_min_relevance):g}",
+            ])
+        if (
+            options.sentiment_contextual_max_pairs is not None
+            and options.sentiment_contextual_max_pairs > 0
+        ):
+            command_args.extend([
+                "-ContextualMaxPairs",
+                str(int(options.sentiment_contextual_max_pairs)),
+            ])
 
 
 def is_gpu_available() -> bool:
@@ -887,18 +1035,62 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
 
     if step_key == "sentiment_pipeline":
         command = [sys.executable, "-u", "-m", "event_sentiment"]
-        # IHM force toujours un provider explicite (défaut produit ``finnhub``)
-        # afin que le preview de commande reflète clairement la source choisie.
-        news_provider = options.sentiment_news_provider or "finnhub"
-        command.extend(["--news-provider", news_provider])
-        if options.sentiment_ticker_relevance_mode and options.sentiment_ticker_relevance_mode != "provider_default":
-            command.extend(["--ticker-relevance-mode", options.sentiment_ticker_relevance_mode])
+        _extend_event_sentiment_cli_args(
+            command,
+            options,
+            include_contextual_scoring=True,
+        )
         if sentiment_start_utc:
             command.extend(["--start-utc", sentiment_start_utc])
         if sentiment_end_utc:
             command.extend(["--end-utc", sentiment_end_utc])
         if sentiment_symbols:
             command.extend(["--symbols", sentiment_symbols])
+        return command
+
+    if step_key == "relevance_backfill":
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "event_sentiment.relevance_backfill",
+            "--batch-size",
+            str(int(options.backfill_relevance_batch_size or 500)),
+        ]
+        if sentiment_start_utc:
+            # Réutilise la date d'effet : on extrait la date ISO sans heure.
+            command.extend(["--start-date", str(sentiment_start_utc)[:10]])
+        if sentiment_end_utc:
+            command.extend(["--end-date", str(sentiment_end_utc)[:10]])
+        if sentiment_symbols:
+            command.extend(["--symbols", sentiment_symbols])
+        if options.backfill_relevance_dry_run:
+            command.append("--dry-run")
+        if options.backfill_relevance_rescore_all:
+            command.append("--rescore-all")
+        if (
+            options.backfill_relevance_purge_below is not None
+            and options.backfill_relevance_purge_below > 0.0
+        ):
+            command.extend([
+                "--purge-below",
+                f"{float(options.backfill_relevance_purge_below):g}",
+            ])
+        if options.backfill_relevance_rescore_contextual:
+            command.append("--rescore-contextual")
+            if options.backfill_relevance_contextual_min_relevance > 0.0:
+                command.extend([
+                    "--contextual-min-relevance",
+                    f"{float(options.backfill_relevance_contextual_min_relevance):g}",
+                ])
+            if (
+                options.backfill_relevance_contextual_max_pairs is not None
+                and options.backfill_relevance_contextual_max_pairs > 0
+            ):
+                command.extend([
+                    "--contextual-max-pairs",
+                    str(int(options.backfill_relevance_contextual_max_pairs)),
+                ])
         return command
 
     if step_key == "import_news":
@@ -913,6 +1105,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         ]
         if news_import_end_date:
             command.extend(["--end-date", news_import_end_date])
+        _extend_event_sentiment_cli_args(
+            command,
+            options,
+            include_contextual_scoring=False,
+        )
         return command
 
     if step_key == "import_news_pending_loop":
@@ -929,6 +1126,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         ]
         if news_import_end_date:
             command_args.extend(["-EndDate", news_import_end_date])
+        _extend_event_sentiment_powershell_args(
+            command_args,
+            options,
+            include_contextual_scoring=True,
+        )
         return _build_powershell_file_command(script_path, command_args)
 
     if step_key == "signal_aggregator":

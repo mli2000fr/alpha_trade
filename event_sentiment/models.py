@@ -43,6 +43,36 @@ class SentimentRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextualSentimentRecord:
+    """Score FinBERT contextualisé par couple ``(article, symbol)`` (Niveau 4).
+
+    Mêmes champs que :class:`SentimentRecord` + ``symbol`` + ``scoring_version``.
+    Persisté dans :class:`news_ticker_sentiment` (clé composite). Le consommateur
+    downstream applique ``COALESCE(nts.X, ns.X)`` pour rester rétro-compatible
+    avec les runs antérieurs au Niveau 4.
+    """
+
+    article_id: str
+    symbol: str
+    model_name: str
+    model_version: str
+    text_strategy: str
+    text_hash: str
+    truncated: int
+    max_length_tokens: int
+    sentiment_label: str
+    positive_score: float
+    neutral_score: float
+    negative_score: float
+    sentiment_confidence: float
+    sentiment_net_score: float
+    inference_status: str = "success"
+    error_message: str | None = None
+    model_fingerprint: str = ""
+    scoring_version: str = "contextual_v1"
+
+
+@dataclass(frozen=True, slots=True)
 class MacroImpactRecord:
     article_id: str
     trade_date: date

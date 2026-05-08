@@ -2,7 +2,7 @@ import hashlib
 import logging
 from typing import Iterable
 
-from event_sentiment.models import NormalizedNewsArticle, SentimentRecord
+from event_sentiment.models import ContextualSentimentRecord, NormalizedNewsArticle, SentimentRecord
 
 LOGGER = logging.getLogger(__name__)
 
@@ -216,4 +216,124 @@ class FinBERTSentimentService:
 
         LOGGER.info("FinBERT scoring | articles=%s", len(records))
         return records
+
+
+#: Version du prompt contextuel (Niveau 4). Stocké dans
+#: ``news_ticker_sentiment.scoring_version`` pour invalider et re-scorer en
+#: cas d'évolution de la stratégie de prompt.
+CONTEXTUAL_SCORING_VERSION = "contextual_v1"
+
+
+def _choose_contextual_text(
+    article: NormalizedNewsArticle,
+    symbol: str,
+    company_name: str | None,
+) -> tuple[str, str]:
+    """Construit le prompt contextuel (article, symbole) injecté dans FinBERT.
+
+    Trois stratégies (par ordre décroissant d'information) :
+
+    * ``contextual_company`` : ``f"For {company_name} ({symbol}): {headline} [SEP] {summary}"``
+    * ``contextual_symbol_only`` : ``f"For {symbol}: {headline} [SEP] {summary}"``
+    * ``contextual_headline_only`` : fallback minimal headline + symbole.
+    """
+    headline = (article.headline or "").strip()
+    summary = (article.summary or "").strip()
+    body_parts = [part for part in [headline, summary] if part]
+    body = " [SEP] ".join(body_parts) if body_parts else headline
+    name = (company_name or "").strip()
+    sym = (symbol or "").strip().upper()
+    if name:
+        return f"For {name} ({sym}): {body}", "contextual_company"
+    if body:
+        return f"For {sym}: {body}", "contextual_symbol_only"
+    return f"For {sym}: {headline or sym}", "contextual_headline_only"
+
+
+class ContextualFinBERTScorer(FinBERTSentimentService):
+    """Variante de :class:`FinBERTSentimentService` qui produit un score
+    par couple ``(article, symbol)`` (Niveau 4).
+
+    Réutilise tout le pipeline batch + fallback CUDA→CPU de la classe parente
+    (``_infer_probabilities``). Seule la fabrique de texte change : on
+    injecte un préfixe contextualisant le ticker et son ``company_name``.
+    """
+
+    def score_pairs(
+        self,
+        pairs: Iterable[tuple[NormalizedNewsArticle, str, str | None]],
+    ) -> list[ContextualSentimentRecord]:
+        pair_list = list(pairs)
+        if not pair_list:
+            return []
+
+        self._ensure_model_loaded()
+        torch = self._get_torch_module()
+
+        assert self.tokenizer is not None
+        assert self.model is not None
+        assert self.device is not None
+
+        texts: list[str] = []
+        strategies: list[str] = []
+        for article, symbol, company_name in pair_list:
+            text, strategy = _choose_contextual_text(article, symbol, company_name)
+            texts.append(text)
+            strategies.append(strategy)
+
+        records: list[ContextualSentimentRecord] = []
+        for start in range(0, len(pair_list), self.batch_size):
+            end = start + self.batch_size
+            batch_pairs = pair_list[start:end]
+            batch_texts = texts[start:end]
+            batch_strategies = strategies[start:end]
+
+            try:
+                probs, batch_token_counts = self._infer_probabilities(batch_texts)
+            except RuntimeError as exc:
+                if self.device == "cuda" and self._is_cuda_runtime_error(exc):
+                    LOGGER.warning(
+                        "ContextualFinBERT CUDA failure | error=%s | fallback CPU",
+                        exc,
+                    )
+                    self._load_model_for_device("cpu", force_reload=True)
+                    probs, batch_token_counts = self._infer_probabilities(batch_texts)
+                else:
+                    raise
+
+            for idx, (article, symbol, _company_name) in enumerate(batch_pairs):
+                row = probs[idx].tolist()
+                label_map = {self.id2label.get(i, str(i)): row[i] for i in range(len(row))}
+                positive = float(label_map.get("positive", 0.0))
+                neutral = float(label_map.get("neutral", 0.0))
+                negative = float(label_map.get("negative", 0.0))
+                max_idx = int(torch.argmax(probs[idx]).item())
+                sentiment_label = self.id2label.get(max_idx, "neutral")
+                text_hash = hashlib.sha256(batch_texts[idx].encode("utf-8")).hexdigest()
+                token_count = int(batch_token_counts[idx])
+
+                records.append(
+                    ContextualSentimentRecord(
+                        article_id=article.article_id,
+                        symbol=str(symbol).strip().upper(),
+                        model_name=self.model_name,
+                        model_version=self.model_version,
+                        text_strategy=batch_strategies[idx],
+                        text_hash=text_hash,
+                        truncated=int(token_count >= self.max_length),
+                        max_length_tokens=self.max_length,
+                        sentiment_label=sentiment_label,
+                        positive_score=positive,
+                        neutral_score=neutral,
+                        negative_score=negative,
+                        sentiment_confidence=max(positive, neutral, negative),
+                        sentiment_net_score=positive - negative,
+                        model_fingerprint=self.model_fingerprint,
+                        scoring_version=CONTEXTUAL_SCORING_VERSION,
+                    )
+                )
+
+        LOGGER.info("ContextualFinBERT scoring | pairs=%s", len(records))
+        return records
+
 

@@ -614,7 +614,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 ),
             )
         )
-    _relevance_options = ("provider_default", "strict")
+    _relevance_options = ("provider_default", "strict", "scored")
     _current_relevance = str(
         st.session_state.get(
             "pipeline_sentiment_ticker_relevance_mode", "provider_default"
@@ -632,16 +632,175 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 help=(
                     "'provider_default' : conserve tous les tickers tagués par le "
                     "provider (comportement historique). 'strict' : ne propage "
-                    "le score qu'au 1er ticker (~= primary)."
+                    "le score qu'au 1er ticker (~= primary). "
+                    "'scored' : calcule un score [0,1] de pertinence par paire "
+                    "(article, ticker) et l'utilise comme poids dans les "
+                    "agrégats journaliers downstream."
                 ),
             )
         )
+
+    sentiment_min_relevance_score = float(
+        st.number_input(
+            "Event Sentiment — seuil min relevance (mode 'scored')",
+            min_value=0.0,
+            max_value=1.0,
+            step=0.05,
+            value=float(
+                st.session_state.get("pipeline_sentiment_min_relevance_score", 0.0)
+            ),
+            key="pipeline_sentiment_min_relevance_score",
+            help=(
+                "Seuil [0.0, 1.0] sous lequel une paire (article, ticker) est "
+                "écartée de news_ticker_map. 0.0 = aucun filtrage. Ignoré "
+                "hors mode 'scored'."
+            ),
+        )
+    )
+
+    # Niveau 4 — re-scoring FinBERT contextualisé par couple (article, symbol).
+    with st.expander("Niveau 4 — Re-scoring FinBERT contextualisé (opt-in)", expanded=False):
+        sentiment_enable_contextual_scoring = bool(
+            st.checkbox(
+                "Activer le scoring contextuel par couple (article, symbole)",
+                value=bool(
+                    st.session_state.get(
+                        "pipeline_sentiment_enable_contextual_scoring", False
+                    )
+                ),
+                key="pipeline_sentiment_enable_contextual_scoring",
+                help=(
+                    "Quand activé, le pipeline produit un score FinBERT distinct "
+                    "par couple (article, symbole) dans news_ticker_sentiment. "
+                    "Coût : N×M tokenisations FinBERT — utiliser le seuil "
+                    "min relevance + le cap pour limiter."
+                ),
+            )
+        )
+        ctx_col1, ctx_col2 = st.columns(2)
+        with ctx_col1:
+            sentiment_contextual_min_relevance = float(
+                st.number_input(
+                    "Seuil min relevance (skip si <)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    step=0.05,
+                    value=float(
+                        st.session_state.get(
+                            "pipeline_sentiment_contextual_min_relevance", 0.3
+                        )
+                    ),
+                    key="pipeline_sentiment_contextual_min_relevance",
+                    disabled=not sentiment_enable_contextual_scoring,
+                    help=(
+                        "Ne tokenise FinBERT contextuel que si "
+                        "relevance_score ≥ seuil (perf garde-fou)."
+                    ),
+                )
+            )
+        with ctx_col2:
+            sentiment_contextual_max_pairs = int(
+                st.number_input(
+                    "Cap dur paires/run",
+                    min_value=100,
+                    max_value=100_000,
+                    step=500,
+                    value=int(
+                        st.session_state.get(
+                            "pipeline_sentiment_contextual_max_pairs", 5000
+                        )
+                    ),
+                    key="pipeline_sentiment_contextual_max_pairs",
+                    disabled=not sentiment_enable_contextual_scoring,
+                )
+            )
+
+    # 7bis — Backfill batch des scores (Niveau 2/3 + Niveau 4 optionnel).
+    with st.expander("7bis — Backfill relevance / contextual (étape dédiée)", expanded=False):
+        st.caption(
+            "Cette section fournit les flags consommés par l'étape `relevance_backfill` "
+            "(`python -m event_sentiment.relevance_backfill`). Réutilise les dates et "
+            "symboles du bloc Sentiment ci-dessus."
+        )
+        bf_col1, bf_col2, bf_col3 = st.columns(3)
+        with bf_col1:
+            backfill_relevance_dry_run = bool(
+                st.checkbox(
+                    "Dry-run",
+                    value=bool(st.session_state.get("pipeline_backfill_relevance_dry_run", False)),
+                    key="pipeline_backfill_relevance_dry_run",
+                )
+            )
+        with bf_col2:
+            backfill_relevance_rescore_all = bool(
+                st.checkbox(
+                    "Re-scorer toutes les lignes",
+                    value=bool(st.session_state.get("pipeline_backfill_relevance_rescore_all", False)),
+                    key="pipeline_backfill_relevance_rescore_all",
+                    help="Recalcule même si relevance_score est déjà renseigné.",
+                )
+            )
+        with bf_col3:
+            backfill_relevance_rescore_contextual = bool(
+                st.checkbox(
+                    "Phase 2 — contextuel",
+                    value=bool(
+                        st.session_state.get(
+                            "pipeline_backfill_relevance_rescore_contextual", False
+                        )
+                    ),
+                    key="pipeline_backfill_relevance_rescore_contextual",
+                    help="Lance aussi le scoring FinBERT contextualisé.",
+                )
+            )
+        bf_col4, bf_col5 = st.columns(2)
+        with bf_col4:
+            backfill_relevance_batch_size = int(
+                st.number_input(
+                    "Batch size",
+                    min_value=50,
+                    max_value=10_000,
+                    step=50,
+                    value=int(
+                        st.session_state.get("pipeline_backfill_relevance_batch_size", 500)
+                    ),
+                    key="pipeline_backfill_relevance_batch_size",
+                )
+            )
+        with bf_col5:
+            backfill_relevance_purge_below = float(
+                st.number_input(
+                    "Purge below (0 = off)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    step=0.05,
+                    value=float(
+                        st.session_state.get("pipeline_backfill_relevance_purge_below", 0.0)
+                    ),
+                    key="pipeline_backfill_relevance_purge_below",
+                    help=(
+                        "Si > 0 : DELETE des lignes news_ticker_map avec "
+                        "relevance_score < seuil (FK CASCADE supprime aussi "
+                        "news_ticker_sentiment associé)."
+                    ),
+                )
+            )
+
     return {
         "sentiment_start_utc": sentiment_start_utc,
         "sentiment_end_utc": sentiment_end_utc,
         "sentiment_symbols": sentiment_symbols,
         "sentiment_news_provider": sentiment_news_provider,
         "sentiment_ticker_relevance_mode": sentiment_ticker_relevance_mode,
+        "sentiment_min_relevance_score": sentiment_min_relevance_score,
+        "sentiment_enable_contextual_scoring": sentiment_enable_contextual_scoring,
+        "sentiment_contextual_min_relevance": sentiment_contextual_min_relevance,
+        "sentiment_contextual_max_pairs": sentiment_contextual_max_pairs,
+        "backfill_relevance_dry_run": backfill_relevance_dry_run,
+        "backfill_relevance_rescore_all": backfill_relevance_rescore_all,
+        "backfill_relevance_rescore_contextual": backfill_relevance_rescore_contextual,
+        "backfill_relevance_batch_size": backfill_relevance_batch_size,
+        "backfill_relevance_purge_below": backfill_relevance_purge_below,
     }
 
 
@@ -2801,6 +2960,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         sentiment_symbols = _sentiment_vars["sentiment_symbols"]
         sentiment_news_provider = _sentiment_vars["sentiment_news_provider"]
         sentiment_ticker_relevance_mode = _sentiment_vars["sentiment_ticker_relevance_mode"]
+        sentiment_min_relevance_score = _sentiment_vars["sentiment_min_relevance_score"]
+        sentiment_enable_contextual_scoring = _sentiment_vars["sentiment_enable_contextual_scoring"]
+        sentiment_contextual_min_relevance = _sentiment_vars["sentiment_contextual_min_relevance"]
+        sentiment_contextual_max_pairs = _sentiment_vars["sentiment_contextual_max_pairs"]
+        backfill_relevance_dry_run = _sentiment_vars["backfill_relevance_dry_run"]
+        backfill_relevance_rescore_all = _sentiment_vars["backfill_relevance_rescore_all"]
+        backfill_relevance_rescore_contextual = _sentiment_vars["backfill_relevance_rescore_contextual"]
+        backfill_relevance_batch_size = _sentiment_vars["backfill_relevance_batch_size"]
+        backfill_relevance_purge_below = _sentiment_vars["backfill_relevance_purge_below"]
 
         # === BLOCK 6/9 : Signal Aggregator (extrait — _render_signal_aggregator_block) ===
         _signal_agg_vars = _render_signal_aggregator_block()
@@ -2952,6 +3120,27 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             sentiment_symbols=sentiment_symbols or None,
             sentiment_news_provider=sentiment_news_provider or "finnhub",
             sentiment_ticker_relevance_mode=sentiment_ticker_relevance_mode or "provider_default",
+            sentiment_min_relevance_score=float(sentiment_min_relevance_score) if sentiment_min_relevance_score else None,
+            sentiment_enable_contextual_scoring=bool(sentiment_enable_contextual_scoring),
+            sentiment_contextual_min_relevance=(
+                float(sentiment_contextual_min_relevance)
+                if sentiment_contextual_min_relevance is not None
+                else None
+            ),
+            sentiment_contextual_max_pairs=(
+                int(sentiment_contextual_max_pairs)
+                if sentiment_contextual_max_pairs
+                else None
+            ),
+            backfill_relevance_dry_run=bool(backfill_relevance_dry_run),
+            backfill_relevance_rescore_all=bool(backfill_relevance_rescore_all),
+            backfill_relevance_rescore_contextual=bool(backfill_relevance_rescore_contextual),
+            backfill_relevance_batch_size=int(backfill_relevance_batch_size or 500),
+            backfill_relevance_purge_below=(
+                float(backfill_relevance_purge_below)
+                if backfill_relevance_purge_below
+                else None
+            ),
             selector_chunk_size=int(selector_chunk_size),
             selector_selection_size=int(selector_selection_size),
             selector_max_workers=_to_optional_positive_int(selector_max_workers),

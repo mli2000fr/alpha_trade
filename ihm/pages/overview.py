@@ -20,7 +20,7 @@ from ihm.components.status_badges import env_badge, run_status_badge
 from ihm.components.tables import show_dataframe
 from ihm.components.symbol_table import render_symbol_table
 from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
-from ihm.services.pipeline_runner import get_pipeline_steps
+from ihm.services.pipeline_runner import get_pipeline_steps, parse_pipeline_step_number
 from ihm.services.screener_recommendations import load_screener_recommendation_report
 from ihm.services.run_summary import (
     build_pipeline_flow_caption,
@@ -63,7 +63,7 @@ def _build_pipeline_summary_rows(runs: list[dict[str, object]]) -> pd.DataFrame:
     scopes.extend(
         {"label": _pipeline_summary_label(step), "step_keys": [step.key]}
         for step in get_pipeline_steps()
-        if int(step.num) <= 8
+        if (step_number := parse_pipeline_step_number(step.num)) is not None and step_number <= 8
     )
     return pd.DataFrame(
         build_latest_run_summary_rows(

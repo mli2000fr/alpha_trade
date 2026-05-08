@@ -51,7 +51,11 @@ def _build_cli_run_summary(
         "ticker_maps": int(ingestion.get("ticker_maps") or 0),
         "filtered_too_many_tickers": int(ingestion.get("filtered_too_many_tickers") or 0),
         "strict_dropped_tickers": int(ingestion.get("strict_dropped_tickers") or 0),
+        "relevance_scored": int(ingestion.get("relevance_scored") or 0),
+        "relevance_filtered": int(ingestion.get("relevance_filtered") or 0),
         "sentiment_inferred": int(stats.get("sentiment_inferred") or 0),
+        "contextual_pairs_loaded": int(stats.get("contextual_pairs_loaded") or 0),
+        "contextual_scored": int(stats.get("contextual_scored") or 0),
         "macro_rows": int(stats.get("macro_rows") or 0),
         "ticker_day_rows": int(stats.get("ticker_day_rows") or 0),
         "sector_day_rows": int(stats.get("sector_day_rows") or 0),
@@ -62,6 +66,16 @@ def _build_cli_run_summary(
         summary["source_name"] = getattr(config, "source_name", None)
         summary["provider_ticker_relevance_mode"] = getattr(
             config, "provider_ticker_relevance_mode", None
+        )
+        summary["min_relevance_score"] = getattr(config, "min_relevance_score", None)
+        summary["enable_contextual_scoring"] = bool(
+            getattr(config, "enable_contextual_scoring", False)
+        )
+        summary["contextual_scoring_min_relevance"] = getattr(
+            config, "contextual_scoring_min_relevance", None
+        )
+        summary["contextual_scoring_max_pairs_per_run"] = getattr(
+            config, "contextual_scoring_max_pairs_per_run", None
         )
     return summary
 
@@ -90,12 +104,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ticker-relevance-mode",
         type=str,
-        choices=("provider_default", "strict"),
+        choices=("provider_default", "strict", "scored"),
         default="provider_default",
         help=(
             "Mode de mapping article → ticker. 'provider_default' garde le "
             "comportement historique (tous les tickers fournis par le "
-            "provider). 'strict' ne conserve que le 1er ticker (~= primary)."
+            "provider). 'strict' ne conserve que le 1er ticker (~= primary). "
+            "'scored' calcule un score de pertinence (Niveau 2/3) stocké "
+            "dans news_ticker_map.relevance_score et utilisé comme poids "
+            "downstream dans build_ticker_daily_features."
         ),
     )
     parser.add_argument(
@@ -105,6 +122,45 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Garde-fou : ignore les articles dont le provider tagge plus de N "
             "tickers (par défaut : valeur de EventSentimentConfig)."
+        ),
+    )
+    parser.add_argument(
+        "--min-relevance-score",
+        type=float,
+        default=None,
+        help=(
+            "Mode 'scored' : seuil [0,1] de pertinence en dessous duquel "
+            "une paire (article, symbole) est filtrée avant insertion dans "
+            "news_ticker_map. 0.0 = aucun filtrage (défaut)."
+        ),
+    )
+    parser.add_argument(
+        "--enable-contextual-scoring",
+        action="store_true",
+        default=False,
+        help=(
+            "Niveau 4 — active le re-scoring FinBERT contextualisé par couple "
+            "(article, symbole). Persisté dans news_ticker_sentiment. "
+            "Désactivé par défaut (rétro-compat)."
+        ),
+    )
+    parser.add_argument(
+        "--contextual-min-relevance",
+        type=float,
+        default=None,
+        help=(
+            "Niveau 4 — seuil [0,1] : ne tokenise FinBERT contextuel que pour "
+            "les paires (article, symbole) dont relevance_score >= seuil "
+            "(perf garde-fou)."
+        ),
+    )
+    parser.add_argument(
+        "--contextual-max-pairs",
+        type=int,
+        default=None,
+        help=(
+            "Niveau 4 — cap dur sur le nombre de paires (article, symbole) "
+            "scorées par run (défaut config : 5000)."
         ),
     )
     return parser
@@ -130,6 +186,14 @@ def main() -> None:
         config_overrides["provider_ticker_relevance_mode"] = args.ticker_relevance_mode
     if args.max_tickers_per_article is not None:
         config_overrides["max_tickers_per_article"] = int(args.max_tickers_per_article)
+    if args.min_relevance_score is not None:
+        config_overrides["min_relevance_score"] = float(args.min_relevance_score)
+    if args.enable_contextual_scoring:
+        config_overrides["enable_contextual_scoring"] = True
+    if args.contextual_min_relevance is not None:
+        config_overrides["contextual_scoring_min_relevance"] = float(args.contextual_min_relevance)
+    if args.contextual_max_pairs is not None:
+        config_overrides["contextual_scoring_max_pairs_per_run"] = int(args.contextual_max_pairs)
     config = EventSentimentConfig.for_provider(args.news_provider, **config_overrides)
     pipeline = EventSentimentPipeline(
         repository=repository,

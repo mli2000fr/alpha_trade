@@ -24,7 +24,15 @@ from event_sentiment import ingestion as ingestion_mod
 
 class _StubMapper:
     def resolve(self, symbols, allow_fallback: bool = True):  # type: ignore[no-untyped-def]
-        return {sym: {"sector": "Tech", "sector_source": "stub", "sector_updated_at": None} for sym in symbols}
+        return {
+            sym: {
+                "sector": "Tech",
+                "sector_source": "stub",
+                "sector_updated_at": None,
+                "company_name": "Apple" if sym == "AAPL" else None,
+            }
+            for sym in symbols
+        }
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +68,9 @@ def test_provider_registry_covers_supported_providers() -> None:
 
 
 class _StubRepo:
+    def __init__(self) -> None:
+        self.ticker_map_rows: list[dict[str, Any]] = []
+
     def get_checkpoint(self, source_name: str, symbol: str) -> dict[str, Any] | None:
         return None
 
@@ -73,6 +84,7 @@ class _StubRepo:
         return len(rows)
 
     def upsert_news_ticker_map(self, rows: list[dict[str, Any]]) -> int:
+        self.ticker_map_rows.extend(rows)
         return len(rows)
 
 
@@ -172,3 +184,52 @@ def test_ingestion_strict_mode_keeps_primary_ticker_only(monkeypatch: pytest.Mon
     assert summary["strict_dropped_tickers"] == 2
 
 
+def _make_payload_with_text(article_id: str, tickers: list[str], headline: str) -> dict[str, Any]:
+    payload = _make_payload(article_id, tickers)
+    payload["headline"] = headline
+    return payload
+
+
+def test_ingestion_scored_mode_writes_relevance_columns(monkeypatch: pytest.MonkeyPatch) -> None:
+    payloads = [_make_payload_with_text("a1", ["AAPL", "MSFT"], "Apple unveils new chip")]
+    _install_fake_provider(monkeypatch, "finnhub", payloads)
+
+    cfg = EventSentimentConfig.for_provider(
+        "finnhub", provider_ticker_relevance_mode="scored"
+    )
+    repo = _StubRepo()
+    service = ingestion_mod.NewsIngestionService(repo, cfg)
+    summary = service.run(
+        start_utc=datetime(2026, 4, 15, tzinfo=timezone.utc),
+        end_utc=datetime(2026, 4, 16, tzinfo=timezone.utc),
+        symbols=["AAPL"],
+    )
+    assert summary["relevance_scored"] == 2
+    assert summary["relevance_filtered"] == 0
+    assert summary["ticker_maps"] == 2
+
+    rows_by_symbol = {row["symbol"]: row for row in repo.ticker_map_rows}
+    assert "relevance_score" in rows_by_symbol["AAPL"]
+    assert "relevance_components" in rows_by_symbol["AAPL"]
+    assert rows_by_symbol["AAPL"]["relevance_score"] > rows_by_symbol["MSFT"]["relevance_score"]
+
+
+def test_ingestion_scored_mode_filters_below_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    payloads = [_make_payload_with_text("a1", ["AAPL", "MSFT"], "Apple unveils new chip")]
+    _install_fake_provider(monkeypatch, "finnhub", payloads)
+
+    cfg = EventSentimentConfig.for_provider(
+        "finnhub",
+        provider_ticker_relevance_mode="scored",
+        min_relevance_score=0.5,
+    )
+    repo = _StubRepo()
+    service = ingestion_mod.NewsIngestionService(repo, cfg)
+    summary = service.run(
+        start_utc=datetime(2026, 4, 15, tzinfo=timezone.utc),
+        end_utc=datetime(2026, 4, 16, tzinfo=timezone.utc),
+        symbols=["AAPL"],
+    )
+    assert summary["relevance_filtered"] == 1
+    assert summary["ticker_maps"] == 1
+    assert all(row["symbol"] == "AAPL" for row in repo.ticker_map_rows)

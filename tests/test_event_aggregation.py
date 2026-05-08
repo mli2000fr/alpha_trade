@@ -163,3 +163,94 @@ def test_sector_aggregation_builds_multi_horizon_windows() -> None:
     assert last_row["macro_event_day_count_3d"] == 1
 
 
+def test_ticker_aggregation_uses_relevance_score_as_weight() -> None:
+    """Niveau 2/3 : moyenne pondérée par ``relevance_score``."""
+    ticker_df = pd.DataFrame([
+        {
+            "article_id": "a1",
+            "effective_trade_date": "2026-01-02",
+            "event_timestamp_ny": "2026-01-02 10:00:00",
+            "market_session_tag": "regular",
+            "source": "Reuters",
+            "is_major_event": 0,
+            "symbol": "AAPL",
+            "sector": "Technology",
+            "relevance_score": 0.9,
+            "positive_score": 0.7,
+            "neutral_score": 0.2,
+            "negative_score": 0.1,
+            "sentiment_confidence": 0.8,
+            "sentiment_net_score": 1.0,
+        },
+        {
+            "article_id": "a2",
+            "effective_trade_date": "2026-01-02",
+            "event_timestamp_ny": "2026-01-02 11:00:00",
+            "market_session_tag": "regular",
+            "source": "Reuters",
+            "is_major_event": 0,
+            "symbol": "AAPL",
+            "sector": "Technology",
+            "relevance_score": 0.1,
+            "positive_score": 0.1,
+            "neutral_score": 0.2,
+            "negative_score": 0.7,
+            "sentiment_confidence": 0.8,
+            "sentiment_net_score": -1.0,
+        },
+    ])
+
+    result = build_ticker_daily_features(ticker_df)
+
+    row = result.iloc[0]
+    # Moyenne pondérée : (1.0 * 0.9 + (-1.0) * 0.1) / (0.9 + 0.1) = 0.8
+    assert row["sentiment_net_mean_1d"] == pytest.approx(0.8, rel=1e-6)
+    # Compte d'articles brut conservé
+    assert row["news_count_1d"] == 2
+    # Somme pondérée
+    assert row["sentiment_net_sum_1d"] == pytest.approx(0.8, rel=1e-6)
+    # Poids cumulé
+    assert row["relevance_weight_sum_1d"] == pytest.approx(1.0, rel=1e-6)
+
+
+def test_ticker_aggregation_backward_compatible_without_relevance_column() -> None:
+    """Rétro-compat : pas de colonne ``relevance_score`` ⇒ moyenne arithmétique."""
+    ticker_df = pd.DataFrame([
+        {
+            "article_id": "a1",
+            "effective_trade_date": "2026-01-02",
+            "event_timestamp_ny": "2026-01-02 10:00:00",
+            "market_session_tag": "regular",
+            "source": "Reuters",
+            "is_major_event": 0,
+            "symbol": "AAPL",
+            "sector": "Technology",
+            "positive_score": 0.7,
+            "neutral_score": 0.2,
+            "negative_score": 0.1,
+            "sentiment_confidence": 0.8,
+            "sentiment_net_score": 1.0,
+        },
+        {
+            "article_id": "a2",
+            "effective_trade_date": "2026-01-02",
+            "event_timestamp_ny": "2026-01-02 11:00:00",
+            "market_session_tag": "regular",
+            "source": "Reuters",
+            "is_major_event": 0,
+            "symbol": "AAPL",
+            "sector": "Technology",
+            "positive_score": 0.1,
+            "neutral_score": 0.2,
+            "negative_score": 0.7,
+            "sentiment_confidence": 0.8,
+            "sentiment_net_score": -1.0,
+        },
+    ])
+
+    result = build_ticker_daily_features(ticker_df)
+    row = result.iloc[0]
+    # Sans poids, moyenne classique = 0.0
+    assert row["sentiment_net_mean_1d"] == pytest.approx(0.0, abs=1e-6)
+    assert row["news_count_1d"] == 2
+    assert row["relevance_weight_sum_1d"] == pytest.approx(2.0, rel=1e-6)

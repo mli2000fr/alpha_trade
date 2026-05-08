@@ -132,6 +132,10 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 
 #### Analyse de sentiment (FinBERT)
 - Ingestion des news Alpaca, scoring via le modèle pré-entraîné `ProsusAI/finbert`
+- Mapping article → ticker en 3 modes : `provider_default` (hérité), `strict` (ticker principal seul) et `scored` (score de pertinence `relevance_score` par couple `(article, symbole)`)
+- La migration Alembic `0027_news_ticker_map_relevance` ajoute `news_ticker_map.relevance_score` et `relevance_components` pour filtrer/pondérer les articles trop bruités sans casser l'historique (`NULL` reste accepté)
+- Le Niveau 4 optionnel produit un score FinBERT contextualisé par couple `(article, symbole)` dans `news_ticker_sentiment` ; la migration `0028_news_ticker_sentiment` l'ajoute sans modifier `news_sentiment`
+- En consommation downstream, le pipeline reste rétro-compatible : poids de pertinence par défaut à `1.0` et fallback `COALESCE(news_ticker_sentiment.*, news_sentiment.*)` tant que le re-scoring contextuel n'est pas activé
 - Fusion : `75% quant + 15% sentiment ticker + 10% macro sectoriel` (poids configurables)
 - Fenêtre glissante de 5 jours, pondérée par le nombre d'articles
 
@@ -438,6 +442,11 @@ Le `final_score_sentiment` résultant détermine le classement final des candida
 | `macro_sector_weight` | 10% | Poids du signal macro sectoriel |
 | `lookback_days` | 5 | Fenêtre de sentiment |
 | `min_news_count` | 2 | Articles minimum pour activer le boost |
+| `ticker_relevance_mode` | `provider_default` | Mode de mapping article → ticker (`provider_default`, `strict`, `scored`) |
+| `min_relevance_score` | `0.0` | En mode `scored`, filtre les paires `(article, symbole)` sous le seuil avant insertion dans `news_ticker_map` |
+| `enable_contextual_scoring` | `False` | Active le re-scoring FinBERT contextualisé par couple `(article, symbole)` |
+| `contextual_min_relevance` | `0.0` | Seuil minimal de pertinence pour autoriser le scoring contextuel |
+| `contextual_max_pairs_per_run` | `5000` | Cap opérateur pour éviter une explosion de tokenisations FinBERT |
 
 ### 4.4 Horaires
 

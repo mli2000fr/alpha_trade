@@ -43,6 +43,7 @@ from ihm.services.pipeline_runner import (
     build_subprocess_env,
     format_command_for_display,
     get_pipeline_workflow_steps,
+    is_canonical_pipeline_step_number,
 )
 from ihm.services.run_summary import aggregate_workflow_run_summary
 from database.run_business_summaries import persist_pipeline_run_record_summary
@@ -180,7 +181,7 @@ def _resolve_workflow_steps(
 
 
 def _format_workflow_core_step_ranges(steps: tuple[PipelineStepDefinition, ...]) -> str:
-    core_numbers = [int(step.num) for step in steps if step.num.isdigit() and 1 <= int(step.num) <= 12]
+    core_numbers = [int(step.num) for step in steps if is_canonical_pipeline_step_number(step.num)]
     if not core_numbers:
         return "aucune"
 

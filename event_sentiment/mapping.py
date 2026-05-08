@@ -20,21 +20,34 @@ class EntitySectorMapper:
         if not symbol_list:
             return {}
 
-        stmt = (
-            select(self.stock_metadata.c.symbol, self.stock_metadata.c.sector, self.stock_metadata.c.last_updated)
-            .where(self.stock_metadata.c.symbol.in_(symbol_list))
-        )
+        # ``company_name`` est utilisé par :mod:`event_sentiment.relevance`
+        # pour l'heuristique « nom société dans headline ». La colonne est
+        # NULL-able dans ``stock_metadata`` ; on tolère son absence.
+        columns = [
+            self.stock_metadata.c.symbol,
+            self.stock_metadata.c.sector,
+            self.stock_metadata.c.last_updated,
+        ]
+        company_col = getattr(self.stock_metadata.c, "company_name", None)
+        if company_col is not None:
+            columns.append(company_col)
+        stmt = select(*columns).where(self.stock_metadata.c.symbol.in_(symbol_list))
         with self.engine.connect() as conn:
             rows = conn.execute(stmt).all()
 
         result: dict[str, dict] = {}
-        for symbol, sector, last_updated in rows:
+        for row in rows:
+            symbol = row[0]
+            sector = row[1]
+            last_updated = row[2]
+            company_name = row[3] if company_col is not None and len(row) > 3 else None
             normalized_sector = str(sector).strip() if sector is not None else ""
             if normalized_sector:
                 result[str(symbol)] = {
                     "sector": normalized_sector,
                     "sector_source": "stock_metadata",
                     "sector_updated_at": last_updated if isinstance(last_updated, datetime) else None,
+                    "company_name": str(company_name).strip() if company_name else None,
                 }
         return result
 

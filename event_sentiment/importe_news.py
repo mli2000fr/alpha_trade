@@ -19,12 +19,38 @@ def get_all_symbols_from_stock_bars_daily():
 
 # python ./event_sentiment/importe_news.py --start-date 2025-01-01 --end-date 2025-04-20
 
-def main():
-
-    parser = argparse.ArgumentParser(description="Importe les news pour tous les symbols présents dans stock_bars_daily sur une période donnée.")
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Importe les news pour tous les symbols présents dans stock_bars_daily sur une période donnée."
+    )
     parser.add_argument("--start-date", type=str, required=True, help="Date de début au format YYYY-MM-DD (ex: 2024-05-06)")
     parser.add_argument("--end-date", type=str, required=False, help="Date de fin au format YYYY-MM-DD (ex: 2024-05-10). Par défaut: aujourd'hui.")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--news-provider",
+        type=str,
+        choices=("alpaca", "finnhub"),
+        default="alpaca",
+        help="Source de news utilisée pour l'ingestion brute.",
+    )
+    parser.add_argument(
+        "--ticker-relevance-mode",
+        type=str,
+        choices=("provider_default", "strict", "scored"),
+        default="provider_default",
+        help="Mode de mapping article → ticker réutilisé lors de l'import brut.",
+    )
+    parser.add_argument(
+        "--min-relevance-score",
+        type=float,
+        default=None,
+        help="Seuil minimum de pertinence [0,1] quand le mode 'scored' est actif.",
+    )
+    return parser
+
+
+def main():
+
+    args = build_arg_parser().parse_args()
 
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     if args.end_date:
@@ -44,7 +70,12 @@ def main():
     logger.info(f"{len(symbols)} symbols trouvés.")
 
     repository = EventSentimentRepository()
-    config = EventSentimentConfig()
+    config_overrides: dict[str, object] = {
+        "provider_ticker_relevance_mode": args.ticker_relevance_mode,
+    }
+    if args.min_relevance_score is not None:
+        config_overrides["min_relevance_score"] = float(args.min_relevance_score)
+    config = EventSentimentConfig.for_provider(args.news_provider, **config_overrides)
     ingestion = NewsIngestionService(repository=repository, config=config)
 
     batch_size = 20
