@@ -16,6 +16,8 @@
 > Cf. `doc/dataIntegrityEngine.md`, `doc/data_lineage_matrix.md`,
 > `doc/corporate_actions.md`.
 
+> \➡️ **Provider NEWS par défaut : `Alpaca`** (import et scoring des news, paramètre `--news-provider` par défaut à `alpaca` dans les scripts).
+
 ---
 
 ## 1. Présentation Générale du Projet
@@ -518,4 +520,3 @@ Concernant l'exécution réelle/paper :
 8. ~~**Gestion des dividendes et splits**~~ → ✅ **Implémenté** : module `corporate_actions`
 9. **Optimisation des poids** : calibration automatique IC-weighted des facteurs via backtest glissant
 10. **Audit trail enrichi** : export PDF/CSV des rapports TCA et des décisions de risque
-

@@ -11,6 +11,8 @@
 > flag `eodhd.enabled` n'existe (audit S1 / A-002 — supprimé). Convention
 > de prix : `data_adjustment = 'split'` (canonique projet, identique pour
 > les deux providers).
+>
+> \➡️ **Provider NEWS par défaut : `Alpaca`** (cf. scripts d'import et scoring, paramètre `--news-provider` par défaut à `alpaca`).
 
 ---
 
@@ -649,7 +651,7 @@ Le bloc de paramètres Pipeline expose en plus les options `Data Integrity` rée
 - `sync_earnings_calendar` : `from-date`, `to-date`, `limit`, `sleep-seconds` ;
 - `update_sector` : `limit`, `sleep-seconds`, `log-every`.
 
-`ML Predict` n'expose pas de choix de backend manuel : il réutilise le `selected_model` trouvé dans les artefacts du symbole.
+`ML Predict` n'expose plus de choix de backend manuel : il réutilise le `selected_model` trouvé dans les artefacts du symbole.
 
 Le workflow complet IHM insère `python -m dataIntegrityEngine.sync_latest_quotes` puis `python -m dataIntegrityEngine.sync_earnings_calendar` avant `Alpha Scanner`, afin d'alimenter automatiquement `stock_quote_snapshots` et `stock_earnings_calendar`.
 
