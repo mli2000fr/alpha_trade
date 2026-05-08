@@ -314,6 +314,8 @@ class PipelineLaunchOptions:
     sentiment_start_utc: str | None = None
     sentiment_end_utc: str | None = None
     sentiment_symbols: str | None = None
+    sentiment_news_provider: Literal["finnhub", "alpaca"] = "finnhub"
+    sentiment_ticker_relevance_mode: Literal["provider_default", "strict"] = "provider_default"
     screener_chunk_size: int = DEFAULT_SCREENER_CHUNK_SIZE
     screener_max_workers: int | None = None
     screener_benchmark_symbol: str = DEFAULT_SCREENER_BENCHMARK_SYMBOL
@@ -885,6 +887,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
 
     if step_key == "sentiment_pipeline":
         command = [sys.executable, "-u", "-m", "event_sentiment"]
+        # IHM force toujours un provider explicite (défaut produit ``finnhub``)
+        # afin que le preview de commande reflète clairement la source choisie.
+        news_provider = options.sentiment_news_provider or "finnhub"
+        command.extend(["--news-provider", news_provider])
+        if options.sentiment_ticker_relevance_mode and options.sentiment_ticker_relevance_mode != "provider_default":
+            command.extend(["--ticker-relevance-mode", options.sentiment_ticker_relevance_mode])
         if sentiment_start_utc:
             command.extend(["--start-utc", sentiment_start_utc])
         if sentiment_end_utc:

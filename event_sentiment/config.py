@@ -1,11 +1,25 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
+
+NewsProvider = Literal["alpaca", "finnhub"]
+TickerRelevanceMode = Literal["provider_default", "strict"]
+
+#: Mapping centralisé ``news_provider`` → (``source_name``, ``provider_name``).
+#: Permet de garantir des valeurs cohérentes entre l'identifiant de checkpoint
+#: (``source_name`` dans ``news_ingestion_checkpoint``) et le préfixe d'article
+#: (``provider_name:<id>`` stocké dans ``news_raw.ingestion_source``).
+PROVIDER_REGISTRY: dict[str, tuple[str, str]] = {
+    "alpaca": ("alpaca_news", "alpaca"),
+    "finnhub": ("finnhub_news", "finnhub"),
+}
 
 
 @dataclass(frozen=True, slots=True)
 class EventSentimentConfig:
     source_name: str = "alpaca_news"
     provider_name: str = "alpaca"
+    news_provider: NewsProvider = "alpaca"
     start_utc: datetime | None = None
     end_utc: datetime | None = None
     page_limit: int = 50
@@ -29,6 +43,10 @@ class EventSentimentConfig:
     feature_history_buffer_days: int = 45
     bootstrap_default_years: int = 10
     bootstrap_batch_days: int = 63
+
+    # Garde-fous mapping article → ticker (cf. addendum métier add_Finnhub.md).
+    provider_ticker_relevance_mode: TickerRelevanceMode = "provider_default"
+    max_tickers_per_article: int = 25
 
     def __post_init__(self) -> None:
         if self.page_limit < 1:
@@ -59,4 +77,35 @@ class EventSentimentConfig:
             raise ValueError("bootstrap_default_years doit être >= 1.")
         if self.bootstrap_batch_days < 1:
             raise ValueError("bootstrap_batch_days doit être >= 1.")
+        if self.news_provider not in PROVIDER_REGISTRY:
+            raise ValueError(
+                f"news_provider doit être l'un de {sorted(PROVIDER_REGISTRY)} (reçu: {self.news_provider!r})."
+            )
+        if self.provider_ticker_relevance_mode not in {"provider_default", "strict"}:
+            raise ValueError(
+                "provider_ticker_relevance_mode doit valoir 'provider_default' ou 'strict'."
+            )
+        if self.max_tickers_per_article < 1:
+            raise ValueError("max_tickers_per_article doit être >= 1.")
+
+    @classmethod
+    def for_provider(cls, news_provider: NewsProvider, **overrides: object) -> "EventSentimentConfig":
+        """Fabrique une config avec ``source_name``/``provider_name`` cohérents.
+
+        Les ``overrides`` explicites priment sur le mapping par défaut, ce qui
+        permet aux tests de forcer un alias particulier si besoin.
+        """
+        if news_provider not in PROVIDER_REGISTRY:
+            raise ValueError(
+                f"news_provider inconnu: {news_provider!r} (attendu: {sorted(PROVIDER_REGISTRY)})."
+            )
+        source_name, provider_name = PROVIDER_REGISTRY[news_provider]
+        kwargs: dict[str, object] = {
+            "news_provider": news_provider,
+            "source_name": source_name,
+            "provider_name": provider_name,
+        }
+        kwargs.update(overrides)
+        return cls(**kwargs)  # type: ignore[arg-type]
+
 

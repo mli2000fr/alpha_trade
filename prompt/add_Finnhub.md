@@ -1,4 +1,4 @@
-# Ajouter Finnhub comme source news pour `event_sentiment` — refactor minimal
+# Ajouter Finnhub comme source news pour `event_sentiment` — refactor 
 
 ## Objectif
 

@@ -343,7 +343,14 @@ def test_build_pipeline_command_alpha_scanner_exposes_supported_backend_options(
 def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -> None:
     command = build_pipeline_command("sentiment_pipeline", PipelineLaunchOptions())
 
-    assert command == [command[0], "-u", "-m", "event_sentiment"]
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment",
+        "--news-provider",
+        "finnhub",
+    ]
 
 
 def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_options() -> None:
@@ -353,6 +360,8 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
             sentiment_start_utc="2026-04-01T00:00:00Z",
             sentiment_end_utc="2026-04-30T23:59:59Z",
             sentiment_symbols="msft, aapl,MSFT,nvda",
+            sentiment_news_provider="alpaca",
+            sentiment_ticker_relevance_mode="strict",
         ),
     )
 
@@ -361,6 +370,10 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
         "-u",
         "-m",
         "event_sentiment",
+        "--news-provider",
+        "alpaca",
+        "--ticker-relevance-mode",
+        "strict",
         "--start-utc",
         "2026-04-01T00:00:00Z",
         "--end-utc",

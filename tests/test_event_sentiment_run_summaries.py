@@ -72,7 +72,21 @@ class _FakeSignalAggregator:
 def test_event_sentiment_cli_main_emits_structured_summary(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
     monkeypatch.setattr(cli, "EventSentimentRepository", lambda: object())
-    monkeypatch.setattr(cli, "EventSentimentConfig", lambda: object())
+
+    class _FakeConfig:
+        def __init__(self, **_: object) -> None:
+            self.news_provider = "alpaca"
+            self.source_name = "alpaca_news"
+            self.provider_ticker_relevance_mode = "provider_default"
+
+        @classmethod
+        def for_provider(cls, news_provider: str, **overrides: object) -> "_FakeConfig":
+            cfg = cls(**overrides)
+            cfg.news_provider = news_provider
+            cfg.source_name = f"{news_provider}_news"
+            return cfg
+
+    monkeypatch.setattr(cli, "EventSentimentConfig", _FakeConfig)
     monkeypatch.setattr(cli, "EventSentimentPipeline", _FakeEventSentimentPipeline)
     monkeypatch.setattr(
         sys,
@@ -98,6 +112,8 @@ def test_event_sentiment_cli_main_emits_structured_summary(monkeypatch, capsys) 
     assert payload["sentiment_inferred"] == 17
     assert payload["ticker_day_rows"] == 6
     assert payload["sector_day_rows"] == 2
+    assert payload["news_provider"] == "alpaca"
+    assert payload["source_name"] == "alpaca_news"
 
 
 def test_event_sentiment_pipeline_emits_live_progress(monkeypatch) -> None:

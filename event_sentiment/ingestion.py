@@ -8,8 +8,31 @@ import requests
 from event_sentiment.trading_calendar import TradingCalendarAligner
 from event_sentiment.mapping import EntitySectorMapper
 from event_sentiment.models import NormalizedNewsArticle
-from service.alpaca.clientNewsAlpaca import iter_news_pages
+from service.alpaca.clientNewsAlpaca import iter_news_pages as _alpaca_iter_news_pages
+from service.finnhub.news_client import iter_news_pages as _finnhub_iter_news_pages
 LOGGER = logging.getLogger(__name__)
+
+#: Dispatch provider news → callable ``iter_news_pages`` (contrat Alpaca).
+#:
+#: Tout nouveau provider doit exposer la même signature
+#: ``iter_news_pages(start_utc, end_utc, symbols=, limit=, page_token=, session=)``
+#: et yield des tuples ``(articles, next_token)`` consommables par
+#: :meth:`NewsIngestionService._normalize_article`.
+NEWS_PROVIDERS: dict[str, Callable[..., Any]] = {
+    "alpaca": _alpaca_iter_news_pages,
+    "finnhub": _finnhub_iter_news_pages,
+}
+
+
+def _resolve_iter_news_pages(provider: str) -> Callable[..., Any]:
+    try:
+        return NEWS_PROVIDERS[provider]
+    except KeyError as exc:
+        raise ValueError(
+            f"news_provider inconnu: {provider!r} (attendu: {sorted(NEWS_PROVIDERS)})."
+        ) from exc
+
+
 class NewsIngestionService:
     def __init__(self, repository, config) -> None:
         self.repository = repository
@@ -18,6 +41,17 @@ class NewsIngestionService:
             regular_session_maps_to_same_day=config.regular_session_maps_to_same_day
         )
         self.mapper = EntitySectorMapper()
+        # Dispatch provider news : on accepte qu'un ``DummyConfig`` de test
+        # ne porte pas ``news_provider`` et on retombe alors sur Alpaca
+        # (comportement historique).
+        provider = getattr(config, "news_provider", "alpaca")
+        self._iter_news_pages: Callable[..., Any] = _resolve_iter_news_pages(provider)
+        self._ticker_relevance_mode = getattr(
+            config, "provider_ticker_relevance_mode", "provider_default"
+        )
+        self._max_tickers_per_article = int(
+            getattr(config, "max_tickers_per_article", 25)
+        )
     def _normalize_article(self, payload: dict[str, Any]) -> NormalizedNewsArticle:
         raw_id = str(payload.get("id") or payload.get("article_id") or "").strip()
         if not raw_id:
@@ -79,7 +113,14 @@ class NewsIngestionService:
         end_utc: datetime,
         resume_checkpoint: bool,
     ) -> dict[str, int]:
-        summary = {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
+        summary = {
+            "fetched": 0,
+            "deduped": 0,
+            "landed": 0,
+            "ticker_maps": 0,
+            "filtered_too_many_tickers": 0,
+            "strict_dropped_tickers": 0,
+        }
         checkpoint = self.repository.get_checkpoint(self.config.source_name, symbol)
         page_token = checkpoint["next_page_token"] if checkpoint and resume_checkpoint else None
         previous_watermark = checkpoint["watermark_published_at_utc"] if checkpoint else None
@@ -94,7 +135,7 @@ class NewsIngestionService:
 
         try:
             with requests.Session() as session:
-                for articles, next_token in iter_news_pages(
+                for articles, next_token in self._iter_news_pages(
                     start_utc=start_utc,
                     end_utc=end_utc,
                     symbols=[symbol],
@@ -106,6 +147,28 @@ class NewsIngestionService:
                         break
                     normalized = [self._normalize_article(payload) for payload in articles]
                     summary["fetched"] += len(normalized)
+                    # Garde-fou Niveau 1 : on filtre les articles « bruyants »
+                    # (provider qui tagge trop de tickers) avant tout autre
+                    # traitement, pour rester conservateur sur le mapping
+                    # article → ticker. Voir prompt/add_Finnhub.md addendum.
+                    filtered: list[NormalizedNewsArticle] = []
+                    for article in normalized:
+                        if len(article.tickers) > self._max_tickers_per_article:
+                            summary["filtered_too_many_tickers"] += 1
+                            LOGGER.info(
+                                "Article ignoré (trop de tickers) | id=%s tickers=%s seuil=%s",
+                                article.article_id,
+                                len(article.tickers),
+                                self._max_tickers_per_article,
+                            )
+                            continue
+                        filtered.append(article)
+                    normalized = filtered
+                    if not normalized:
+                        page_token = next_token
+                        if not next_token:
+                            break
+                        continue
                     existing = self.repository.get_existing_article_ids([article.article_id for article in normalized])
                     summary["deduped"] += len(existing)
                     raw_rows: list[dict[str, Any]] = []
@@ -139,6 +202,15 @@ class NewsIngestionService:
                             "raw_payload": article.raw_payload,
                         })
                         for idx, article_symbol in enumerate(article.tickers):
+                            # Mode ``strict`` : on ne conserve que le 1er
+                            # ticker fourni par le provider (~= primary
+                            # ticker). Le score article reste calculé une
+                            # fois côté FinBERT, mais on ne le propage qu'au
+                            # ticker principal pour limiter les faux
+                            # positifs en cas de tag provider bruyant.
+                            if self._ticker_relevance_mode == "strict" and idx > 0:
+                                summary["strict_dropped_tickers"] += 1
+                                continue
                             sector_info = sector_lookup.get(article_symbol, {})
                             ticker_rows.append({
                                 "article_id": article.article_id,
@@ -194,7 +266,14 @@ class NewsIngestionService:
         resume_checkpoints: bool = True,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> dict[str, int]:
-        summary = {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
+        summary = {
+            "fetched": 0,
+            "deduped": 0,
+            "landed": 0,
+            "ticker_maps": 0,
+            "filtered_too_many_tickers": 0,
+            "strict_dropped_tickers": 0,
+        }
         normalized_symbols = self._normalize_symbol_list(symbols)
         total_symbols = len(normalized_symbols)
         for index, symbol in enumerate(normalized_symbols, start=1):

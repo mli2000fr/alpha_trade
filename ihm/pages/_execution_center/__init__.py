@@ -592,10 +592,56 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 help="Exemple : AAPL,MSFT,NVDA",
             )
         ).strip().upper()
+
+    provider_col, mode_col = st.columns(2)
+    _provider_options = ("finnhub", "alpaca")
+    _current_provider = str(
+        st.session_state.get("pipeline_sentiment_news_provider", "finnhub")
+    ).strip().lower()
+    if _current_provider not in _provider_options:
+        _current_provider = "finnhub"
+    with provider_col:
+        sentiment_news_provider = str(
+            st.selectbox(
+                "Event Sentiment — source news",
+                options=_provider_options,
+                index=_provider_options.index(_current_provider),
+                key="pipeline_sentiment_news_provider",
+                help=(
+                    "Provider news utilisé par `python -m event_sentiment`. "
+                    "Défaut produit : Finnhub. Bascule possible vers Alpaca "
+                    "sans migration DB (les checkpoints sont séparés par source)."
+                ),
+            )
+        )
+    _relevance_options = ("provider_default", "strict")
+    _current_relevance = str(
+        st.session_state.get(
+            "pipeline_sentiment_ticker_relevance_mode", "provider_default"
+        )
+    ).strip().lower()
+    if _current_relevance not in _relevance_options:
+        _current_relevance = "provider_default"
+    with mode_col:
+        sentiment_ticker_relevance_mode = str(
+            st.selectbox(
+                "Event Sentiment — mapping ticker",
+                options=_relevance_options,
+                index=_relevance_options.index(_current_relevance),
+                key="pipeline_sentiment_ticker_relevance_mode",
+                help=(
+                    "'provider_default' : conserve tous les tickers tagués par le "
+                    "provider (comportement historique). 'strict' : ne propage "
+                    "le score qu'au 1er ticker (~= primary)."
+                ),
+            )
+        )
     return {
         "sentiment_start_utc": sentiment_start_utc,
         "sentiment_end_utc": sentiment_end_utc,
         "sentiment_symbols": sentiment_symbols,
+        "sentiment_news_provider": sentiment_news_provider,
+        "sentiment_ticker_relevance_mode": sentiment_ticker_relevance_mode,
     }
 
 
@@ -2753,6 +2799,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         sentiment_start_utc = _sentiment_vars["sentiment_start_utc"]
         sentiment_end_utc = _sentiment_vars["sentiment_end_utc"]
         sentiment_symbols = _sentiment_vars["sentiment_symbols"]
+        sentiment_news_provider = _sentiment_vars["sentiment_news_provider"]
+        sentiment_ticker_relevance_mode = _sentiment_vars["sentiment_ticker_relevance_mode"]
 
         # === BLOCK 6/9 : Signal Aggregator (extrait — _render_signal_aggregator_block) ===
         _signal_agg_vars = _render_signal_aggregator_block()
@@ -2902,6 +2950,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             sentiment_start_utc=sentiment_start_utc or None,
             sentiment_end_utc=sentiment_end_utc or None,
             sentiment_symbols=sentiment_symbols or None,
+            sentiment_news_provider=sentiment_news_provider or "finnhub",
+            sentiment_ticker_relevance_mode=sentiment_ticker_relevance_mode or "provider_default",
             selector_chunk_size=int(selector_chunk_size),
             selector_selection_size=int(selector_selection_size),
             selector_max_workers=_to_optional_positive_int(selector_max_workers),

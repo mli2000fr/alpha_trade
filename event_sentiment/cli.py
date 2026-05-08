@@ -34,9 +34,10 @@ def _build_cli_run_summary(
     stats: dict[str, object],
     started_at: datetime,
     finished_at: datetime,
+    config: EventSentimentConfig | None = None,
 ) -> dict[str, object]:
     ingestion = stats.get("ingestion") if isinstance(stats.get("ingestion"), dict) else {}
-    return {
+    summary: dict[str, object] = {
         "run_id": _build_run_id("event-sentiment"),
         "started_at": started_at.isoformat(timespec="seconds"),
         "finished_at": finished_at.isoformat(timespec="seconds"),
@@ -48,12 +49,21 @@ def _build_cli_run_summary(
         "deduped_articles": int(ingestion.get("deduped") or 0),
         "landed_articles": int(ingestion.get("landed") or 0),
         "ticker_maps": int(ingestion.get("ticker_maps") or 0),
+        "filtered_too_many_tickers": int(ingestion.get("filtered_too_many_tickers") or 0),
+        "strict_dropped_tickers": int(ingestion.get("strict_dropped_tickers") or 0),
         "sentiment_inferred": int(stats.get("sentiment_inferred") or 0),
         "macro_rows": int(stats.get("macro_rows") or 0),
         "ticker_day_rows": int(stats.get("ticker_day_rows") or 0),
         "sector_day_rows": int(stats.get("sector_day_rows") or 0),
         "finbert_model_fingerprint": stats.get("finbert_model_fingerprint"),
     }
+    if config is not None:
+        summary["news_provider"] = getattr(config, "news_provider", None)
+        summary["source_name"] = getattr(config, "source_name", None)
+        summary["provider_ticker_relevance_mode"] = getattr(
+            config, "provider_ticker_relevance_mode", None
+        )
+    return summary
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -66,6 +76,36 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Revision Hugging Face épinglée (commit SHA / tag) pour FinBERT (Phase 4.1.c)",
+    )
+    parser.add_argument(
+        "--news-provider",
+        type=str,
+        choices=("alpaca", "finnhub"),
+        default="alpaca",
+        help=(
+            "Source de news utilisée pour l'ingestion. Par défaut 'alpaca' "
+            "(rétro-compatibilité). L'IHM force explicitement 'finnhub'."
+        ),
+    )
+    parser.add_argument(
+        "--ticker-relevance-mode",
+        type=str,
+        choices=("provider_default", "strict"),
+        default="provider_default",
+        help=(
+            "Mode de mapping article → ticker. 'provider_default' garde le "
+            "comportement historique (tous les tickers fournis par le "
+            "provider). 'strict' ne conserve que le 1er ticker (~= primary)."
+        ),
+    )
+    parser.add_argument(
+        "--max-tickers-per-article",
+        type=int,
+        default=None,
+        help=(
+            "Garde-fou : ignore les articles dont le provider tagge plus de N "
+            "tickers (par défaut : valeur de EventSentimentConfig)."
+        ),
     )
     return parser
 
@@ -83,10 +123,14 @@ def main() -> None:
     symbols = [symbol.strip().upper() for symbol in args.symbols.split(",")] if args.symbols else None
 
     repository = EventSentimentRepository()
-    config_kwargs: dict[str, object] = {}
+    config_overrides: dict[str, object] = {}
     if args.finbert_revision:
-        config_kwargs["finbert_model_revision"] = args.finbert_revision
-    config = EventSentimentConfig(**config_kwargs)
+        config_overrides["finbert_model_revision"] = args.finbert_revision
+    if args.ticker_relevance_mode:
+        config_overrides["provider_ticker_relevance_mode"] = args.ticker_relevance_mode
+    if args.max_tickers_per_article is not None:
+        config_overrides["max_tickers_per_article"] = int(args.max_tickers_per_article)
+    config = EventSentimentConfig.for_provider(args.news_provider, **config_overrides)
     pipeline = EventSentimentPipeline(
         repository=repository,
         config=config,
@@ -100,5 +144,6 @@ def main() -> None:
             stats=stats,
             started_at=started_at,
             finished_at=finished_at,
+            config=config,
         )
     )
