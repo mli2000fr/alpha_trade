@@ -22,6 +22,7 @@ from service.finnhub import news_client
 @pytest.fixture(autouse=True)
 def _fake_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(news_client, "get_finnhub_token", lambda: "test-token")
+    news_client._reset_company_news_rate_limit_state()
 
 
 def _patch_request(monkeypatch: pytest.MonkeyPatch, payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -146,4 +147,51 @@ def test_iter_news_pages_returns_empty_for_no_symbol(monkeypatch: pytest.MonkeyP
     articles, next_token = pages[0]
     assert articles == []
     assert next_token is None
+
+
+def test_iter_news_pages_throttles_consecutive_calls_across_invocations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = [
+        {
+            "id": 1,
+            "datetime": int(datetime(2026, 4, 15, 12, tzinfo=timezone.utc).timestamp()),
+            "headline": "AAPL headline",
+            "url": "https://example.test/aapl",
+            "related": "AAPL",
+        }
+    ]
+    captured = _patch_request(monkeypatch, raw)
+    clock = {"now": 100.0}
+    sleep_calls: list[float] = []
+
+    def _fake_monotonic() -> float:
+        return clock["now"]
+
+    def _fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(news_client.time, "monotonic", _fake_monotonic)
+    monkeypatch.setattr(news_client.time, "sleep", _fake_sleep)
+
+    list(
+        news_client.iter_news_pages(
+            start_utc=datetime(2026, 4, 15, tzinfo=timezone.utc),
+            end_utc=datetime(2026, 4, 16, tzinfo=timezone.utc),
+            symbols=["AAPL"],
+        )
+    )
+    list(
+        news_client.iter_news_pages(
+            start_utc=datetime(2026, 4, 15, tzinfo=timezone.utc),
+            end_utc=datetime(2026, 4, 16, tzinfo=timezone.utc),
+            symbols=["MSFT"],
+        )
+    )
+
+    assert [call["params"]["symbol"] for call in captured] == ["AAPL", "MSFT"]
+    assert sleep_calls == [pytest.approx(news_client.FINNHUB_COMPANY_NEWS_MIN_REQUEST_INTERVAL_SECONDS)]
+    assert news_client.FINNHUB_COMPANY_NEWS_MAX_CALLS_PER_MINUTE == 55
+
 

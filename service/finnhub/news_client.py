@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
@@ -33,11 +35,19 @@ from service._telemetry import bump as _telemetry_bump
 from service.finnhub.clientFinnhub import (
     _FINNHUB_RETRY_POLICY,
     get_finnhub_token,
+    MIN_REQUEST_INTERVAL_SECONDS,
 )
 
 FINNHUB_COMPANY_NEWS_ENDPOINT = "https://finnhub.io/api/v1/company-news"
+FINNHUB_COMPANY_NEWS_MIN_REQUEST_INTERVAL_SECONDS = MIN_REQUEST_INTERVAL_SECONDS
+FINNHUB_COMPANY_NEWS_MAX_CALLS_PER_MINUTE = round(
+    60.0 / FINNHUB_COMPANY_NEWS_MIN_REQUEST_INTERVAL_SECONDS
+)
 
 LOGGER = logging.getLogger(__name__)
+
+_COMPANY_NEWS_RATE_LIMIT_LOCK = threading.Lock()
+_COMPANY_NEWS_LAST_REQUEST_AT_MONOTONIC: float | None = None
 
 
 def _to_utc(value: datetime) -> datetime:
@@ -48,6 +58,38 @@ def _to_utc(value: datetime) -> datetime:
 
 def _fmt_date(value: datetime) -> str:
     return _to_utc(value).strftime("%Y-%m-%d")
+
+
+def _throttle_company_news_requests() -> float:
+    """Sérialise les appels Finnhub ``company-news`` pour rester < 60/min.
+
+    On réutilise ``MIN_REQUEST_INTERVAL_SECONDS`` (= 1.1s aujourd'hui), soit
+    ~55 appels/minute maximum. La réservation est process-wide et protège aussi
+    les appels successifs émis par des instances distinctes du pipeline.
+    """
+    global _COMPANY_NEWS_LAST_REQUEST_AT_MONOTONIC
+
+    min_interval = float(FINNHUB_COMPANY_NEWS_MIN_REQUEST_INTERVAL_SECONDS)
+    if min_interval <= 0:
+        return 0.0
+
+    with _COMPANY_NEWS_RATE_LIMIT_LOCK:
+        now = time.monotonic()
+        scheduled_at = now
+        if _COMPANY_NEWS_LAST_REQUEST_AT_MONOTONIC is not None:
+            scheduled_at = max(now, _COMPANY_NEWS_LAST_REQUEST_AT_MONOTONIC + min_interval)
+        sleep_seconds = max(0.0, scheduled_at - now)
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+        _COMPANY_NEWS_LAST_REQUEST_AT_MONOTONIC = scheduled_at
+        return sleep_seconds
+
+
+def _reset_company_news_rate_limit_state() -> None:
+    """Reset interne pour les tests unitaires."""
+    global _COMPANY_NEWS_LAST_REQUEST_AT_MONOTONIC
+    with _COMPANY_NEWS_RATE_LIMIT_LOCK:
+        _COMPANY_NEWS_LAST_REQUEST_AT_MONOTONIC = None
 
 
 def _stable_article_id(symbol: str, raw: dict[str, Any]) -> str:
@@ -75,7 +117,7 @@ def _normalize_payload(symbol: str, raw: dict[str, Any]) -> dict[str, Any]:
 
     epoch = raw.get("datetime")
     try:
-        published_at = datetime.fromtimestamp(int(epoch), tz=timezone.utc) if epoch else None
+        published_at = datetime.fromtimestamp(int(epoch), tz=timezone.utc) if epoch is not None else None
     except (TypeError, ValueError, OSError):
         published_at = None
 
@@ -133,6 +175,14 @@ def fetch_news_page(
         }
         owned_session = session is None
         client = session or requests.Session()
+        throttled_for = _throttle_company_news_requests()
+        if throttled_for > 0:
+            LOGGER.debug(
+                "Finnhub company-news throttle | symbol=%s sleep=%.2fs cap=%s calls/min",
+                normalized_symbol,
+                throttled_for,
+                FINNHUB_COMPANY_NEWS_MAX_CALLS_PER_MINUTE,
+            )
         _telemetry_bump("finnhub", "requests_total")
         try:
             response = request_with_retry(
@@ -145,7 +195,8 @@ def fetch_news_page(
             data = response.json()
             _telemetry_bump("finnhub", "success_total")
         except requests.exceptions.HTTPError as exc:
-            status = getattr(exc.response, "status_code", None)
+            status_raw = getattr(exc.response, "status_code", None)
+            status = int(status_raw) if isinstance(status_raw, int) else None
             if status == 429:
                 _telemetry_bump("finnhub", "429_total")
             elif status and 500 <= status < 600:
@@ -173,10 +224,10 @@ def fetch_news_page(
         for raw in items_raw:
             if not isinstance(raw, dict):
                 continue
-            epoch = raw.get("datetime")
-            if epoch is not None:
+            epoch_value = raw.get("datetime")
+            if epoch_value is not None:
                 try:
-                    ts = datetime.fromtimestamp(int(epoch), tz=timezone.utc)
+                    ts = datetime.fromtimestamp(int(epoch_value), tz=timezone.utc)
                 except (TypeError, ValueError, OSError):
                     continue
                 if ts < start or ts > end:
