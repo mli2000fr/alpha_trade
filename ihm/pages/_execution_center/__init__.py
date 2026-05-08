@@ -3141,6 +3141,16 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 if backfill_relevance_purge_below
                 else None
             ),
+            backfill_relevance_contextual_min_relevance=(
+                float(sentiment_contextual_min_relevance)
+                if sentiment_contextual_min_relevance is not None
+                else 0.0
+            ),
+            backfill_relevance_contextual_max_pairs=(
+                int(sentiment_contextual_max_pairs)
+                if sentiment_contextual_max_pairs
+                else None
+            ),
             selector_chunk_size=int(selector_chunk_size),
             selector_selection_size=int(selector_selection_size),
             selector_max_workers=_to_optional_positive_int(selector_max_workers),

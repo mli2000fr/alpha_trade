@@ -62,9 +62,9 @@ def _render_import_news_panel(
             "Le bouton import brut réutilise la source news et le mode de mapping ticker configurés dans l'étape 7. "
             "Le second bouton exécute un script PowerShell Windows qui enchaîne l'import brut puis relance "
             "`python -m event_sentiment` jusqu'à ce qu'il n'y ait plus d'articles pending dans `news_raw`/`news_sentiment`, "
-            "puis lance automatiquement `python -m event_sentiment.history_backfill` sur la même fenêtre ; "
-            "c'est ce bouton qui reprend aussi le re-scoring FinBERT contextualisé (Niveau 4) quand il est activé. "
-            "Il ne lance pas `event_sentiment.relevance_backfill` : cette étape reste distincte (`7bis`) et fait désormais partie du workflow pipeline principal juste après l'étape 7."
+            "puis lance automatiquement `python -m event_sentiment.history_backfill` sur la même fenêtre, suivi de "
+            "`python -m event_sentiment.relevance_backfill` juste après ; "
+            "c'est ce bouton qui reprend aussi le re-scoring FinBERT contextualisé (Niveau 4) quand il est activé."
         )
 
         date_col1, date_col2 = st.columns(2)
@@ -96,7 +96,7 @@ def _render_import_news_panel(
         )
         st.caption("Commande import brut seule (source news + mapping ticker, sans scoring contextuel)")
         st.code(import_command_preview, language="powershell")
-        st.caption("Commande PowerShell import + scoring auto jusqu'à `pending=0`, puis history backfill (reprend aussi le scoring contextuel si activé)")
+        st.caption("Commande PowerShell import + scoring auto jusqu'à `pending=0`, puis history backfill suivi de relevance backfill (reprend aussi le scoring contextuel si activé)")
         st.code(auto_score_command_preview, language="powershell")
 
         import_active_runs = active_by_step.get("import_news", [])
@@ -158,7 +158,7 @@ def _render_import_news_panel(
                     st.rerun()
             with auto_col:
                 auto_clicked = st.button(
-                    "⚙️ Importer + scorer + backfill auto",
+                    "⚙️ Import + score + history_backfill + relevance_backfill auto",
                     key="run_pipeline_import_news_pending_loop",
                     use_container_width=True,
                     disabled=auto_score_locked or start_value > end_value,

@@ -46,6 +46,27 @@ param(
     [Parameter()]
     [int]$ContextualMaxPairs = 5000,
 
+    [Parameter()]
+    [switch]$RelevanceBackfillDryRun,
+
+    [Parameter()]
+    [switch]$RelevanceBackfillRescoreAll,
+
+    [Parameter()]
+    [switch]$RelevanceBackfillRescoreContextual,
+
+    [Parameter()]
+    [double]$RelevanceBackfillPurgeBelow = 0.0,
+
+    [Parameter()]
+    [int]$RelevanceBackfillBatchSize = 500,
+
+    [Parameter()]
+    [double]$RelevanceBackfillContextualMinRelevance = 0.0,
+
+    [Parameter()]
+    [int]$RelevanceBackfillContextualMaxPairs = 0,
+
     [switch]$SkipHistoryBackfill,
 
     [switch]$DryRun
@@ -62,7 +83,7 @@ if ([string]::IsNullOrWhiteSpace($PythonExe)) {
 }
 
 $summary = [ordered]@{
-    mode = 'import_news_score_pending_and_history_backfill'
+    mode = 'import_news_score_pending_history_and_relevance_backfill'
     start_date = $StartDate
     end_date = $EndDate
     project_root = $ProjectRoot
@@ -77,12 +98,21 @@ $summary = [ordered]@{
     history_backfill_enabled = -not [bool]$SkipHistoryBackfill
     history_backfill_batch_days = $HistoryBackfillBatchDays
     history_backfill_completed = $false
+    relevance_backfill_enabled = $true
+    relevance_backfill_batch_size = $RelevanceBackfillBatchSize
+    relevance_backfill_completed = $false
     news_provider = $NewsProvider
     ticker_relevance_mode = $TickerRelevanceMode
     min_relevance_score = $MinRelevanceScore
     enable_contextual_scoring = [bool]$EnableContextualScoring
     contextual_min_relevance = $ContextualMinRelevance
     contextual_max_pairs = $ContextualMaxPairs
+    relevance_backfill_dry_run = [bool]$RelevanceBackfillDryRun
+    relevance_backfill_rescore_all = [bool]$RelevanceBackfillRescoreAll
+    relevance_backfill_rescore_contextual = [bool]$RelevanceBackfillRescoreContextual
+    relevance_backfill_purge_below = $RelevanceBackfillPurgeBelow
+    relevance_backfill_contextual_min_relevance = $RelevanceBackfillContextualMinRelevance
+    relevance_backfill_contextual_max_pairs = $RelevanceBackfillContextualMaxPairs
     status = 'running'
 }
 
@@ -270,6 +300,39 @@ try {
     else {
         Write-Host 'History backfill auto ignoré (SkipHistoryBackfill actif).'
     }
+
+    $relevanceBackfillArguments = @(
+        '-u',
+        '-m',
+        'event_sentiment.relevance_backfill',
+        '--start-date',
+        $StartDate,
+        '--end-date',
+        $EndDate,
+        '--batch-size',
+        [string]$RelevanceBackfillBatchSize
+    )
+    if ($RelevanceBackfillDryRun) {
+        $relevanceBackfillArguments += '--dry-run'
+    }
+    if ($RelevanceBackfillRescoreAll) {
+        $relevanceBackfillArguments += '--rescore-all'
+    }
+    if ($RelevanceBackfillPurgeBelow -gt 0) {
+        $relevanceBackfillArguments += @('--purge-below', ([string]$RelevanceBackfillPurgeBelow))
+    }
+    if ($RelevanceBackfillRescoreContextual) {
+        $relevanceBackfillArguments += '--rescore-contextual'
+        if ($RelevanceBackfillContextualMinRelevance -gt 0) {
+            $relevanceBackfillArguments += @('--contextual-min-relevance', ([string]$RelevanceBackfillContextualMinRelevance))
+        }
+        if ($RelevanceBackfillContextualMaxPairs -gt 0) {
+            $relevanceBackfillArguments += @('--contextual-max-pairs', ([string]$RelevanceBackfillContextualMaxPairs))
+        }
+    }
+    Invoke-PythonStep -Label 'Relevance backfill auto' -Arguments @($relevanceBackfillArguments)
+    $summary.relevance_backfill_completed = $true
+    Write-Host 'Relevance backfill auto terminé.'
 
     $summary.status = 'completed'
     Write-RunSummary -Payload $summary

@@ -83,6 +83,34 @@ def test_iter_news_pages_normalises_finnhub_payload(monkeypatch: pytest.MonkeyPa
     assert captured[0]["params"]["token"] == "test-token"
 
 
+def test_iter_news_pages_preserves_optional_content_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    epoch = int(datetime(2026, 4, 15, 12, 30, tzinfo=timezone.utc).timestamp())
+    raw = [
+        {
+            "id": 999_112,
+            "datetime": epoch,
+            "headline": "AAPL launches new product",
+            "summary": "Short summary",
+            "body": "Longer provider body if available.",
+            "source": "Reuters",
+            "url": "https://example.test/body",
+            "related": "AAPL",
+        }
+    ]
+    _patch_request(monkeypatch, raw)
+
+    pages = list(
+        news_client.iter_news_pages(
+            start_utc=datetime(2026, 4, 15, tzinfo=timezone.utc),
+            end_utc=datetime(2026, 4, 16, tzinfo=timezone.utc),
+            symbols=["AAPL"],
+        )
+    )
+
+    articles, _ = pages[0]
+    assert articles[0]["content"] == "Longer provider body if available."
+
+
 def test_iter_news_pages_filters_outside_window(monkeypatch: pytest.MonkeyPatch) -> None:
     inside = int(datetime(2026, 4, 15, 12, tzinfo=timezone.utc).timestamp())
     before = int(datetime(2026, 4, 14, 23, tzinfo=timezone.utc).timestamp())

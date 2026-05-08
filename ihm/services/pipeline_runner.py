@@ -828,6 +828,49 @@ def _extend_event_sentiment_powershell_args(
             ])
 
 
+def _extend_relevance_backfill_powershell_args(
+    command_args: list[str],
+    options: PipelineLaunchOptions,
+) -> None:
+    """Ajoute les paramètres ``relevance_backfill`` pour le wrapper PowerShell auto."""
+
+    command_args.extend([
+        "-RelevanceBackfillBatchSize",
+        str(int(options.backfill_relevance_batch_size or 500)),
+    ])
+
+    if options.backfill_relevance_dry_run:
+        command_args.append("-RelevanceBackfillDryRun")
+
+    if options.backfill_relevance_rescore_all:
+        command_args.append("-RelevanceBackfillRescoreAll")
+
+    if (
+        options.backfill_relevance_purge_below is not None
+        and options.backfill_relevance_purge_below > 0.0
+    ):
+        command_args.extend([
+            "-RelevanceBackfillPurgeBelow",
+            f"{float(options.backfill_relevance_purge_below):g}",
+        ])
+
+    if options.backfill_relevance_rescore_contextual:
+        command_args.append("-RelevanceBackfillRescoreContextual")
+        if options.backfill_relevance_contextual_min_relevance > 0.0:
+            command_args.extend([
+                "-RelevanceBackfillContextualMinRelevance",
+                f"{float(options.backfill_relevance_contextual_min_relevance):g}",
+            ])
+        if (
+            options.backfill_relevance_contextual_max_pairs is not None
+            and options.backfill_relevance_contextual_max_pairs > 0
+        ):
+            command_args.extend([
+                "-RelevanceBackfillContextualMaxPairs",
+                str(int(options.backfill_relevance_contextual_max_pairs)),
+            ])
+
+
 def is_gpu_available() -> bool:
     try:
         import torch
@@ -1146,6 +1189,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             options,
             include_contextual_scoring=True,
         )
+        _extend_relevance_backfill_powershell_args(command_args, options)
         return _build_powershell_file_command(script_path, command_args)
 
     if step_key == "signal_aggregator":

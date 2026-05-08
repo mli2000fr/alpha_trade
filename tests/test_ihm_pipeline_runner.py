@@ -746,6 +746,13 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
         sentiment_enable_contextual_scoring=True,
         sentiment_contextual_min_relevance=0.3,
         sentiment_contextual_max_pairs=5000,
+        backfill_relevance_dry_run=True,
+        backfill_relevance_rescore_all=True,
+        backfill_relevance_rescore_contextual=True,
+        backfill_relevance_batch_size=750,
+        backfill_relevance_purge_below=0.2,
+        backfill_relevance_contextual_min_relevance=0.4,
+        backfill_relevance_contextual_max_pairs=2500,
     )
 
     command = build_pipeline_command("import_news_pending_loop", options)
@@ -770,6 +777,55 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
     assert "-EnableContextualScoring" in command
     assert command[command.index("-ContextualMinRelevance") + 1] == "0.3"
     assert command[command.index("-ContextualMaxPairs") + 1] == "5000"
+    assert command[command.index("-RelevanceBackfillBatchSize") + 1] == "750"
+    assert "-RelevanceBackfillDryRun" in command
+    assert "-RelevanceBackfillRescoreAll" in command
+    assert "-RelevanceBackfillRescoreContextual" in command
+    assert command[command.index("-RelevanceBackfillPurgeBelow") + 1] == "0.2"
+    assert command[command.index("-RelevanceBackfillContextualMinRelevance") + 1] == "0.4"
+    assert command[command.index("-RelevanceBackfillContextualMaxPairs") + 1] == "2500"
+
+
+def test_build_pipeline_command_relevance_backfill_exposes_contextual_options() -> None:
+    command = build_pipeline_command(
+        "relevance_backfill",
+        PipelineLaunchOptions(
+            sentiment_start_utc="2026-04-01T00:00:00Z",
+            sentiment_end_utc="2026-04-15T23:59:59Z",
+            sentiment_symbols="msft, aapl,MSFT,nvda",
+            backfill_relevance_dry_run=True,
+            backfill_relevance_rescore_all=True,
+            backfill_relevance_rescore_contextual=True,
+            backfill_relevance_batch_size=750,
+            backfill_relevance_purge_below=0.2,
+            backfill_relevance_contextual_min_relevance=0.4,
+            backfill_relevance_contextual_max_pairs=2500,
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment.relevance_backfill",
+        "--batch-size",
+        "750",
+        "--start-date",
+        "2026-04-01",
+        "--end-date",
+        "2026-04-15",
+        "--symbols",
+        "AAPL,MSFT,NVDA",
+        "--dry-run",
+        "--rescore-all",
+        "--purge-below",
+        "0.2",
+        "--rescore-contextual",
+        "--contextual-min-relevance",
+        "0.4",
+        "--contextual-max-pairs",
+        "2500",
+    ]
 
 
 def test_build_pipeline_command_import_bars_eodhd_disables_stooq_cross_check_by_default(monkeypatch) -> None:

@@ -11,7 +11,8 @@ Différences de fond avec Alpaca :
   ``next_token=None``. ``page_token`` est ignoré côté entrée.
 * La fenêtre est exprimée en dates (``YYYY-MM-DD``). On filtre ensuite
   côté client pour respecter la fenêtre UTC fine demandée.
-* Finnhub n'expose pas le ``content`` complet : on laisse ce champ vide,
+* Finnhub ``company-news`` n'expose généralement pas le ``content`` complet :
+  on laisse ce champ vide si aucun corps n'est présent dans le payload brut,
   ``_normalize_article`` accepte ``content=None``.
 * L'identifiant ``id`` Finnhub est numérique et stable la majorité du
   temps. En fallback on construit un hash déterministe sur des champs
@@ -128,12 +129,22 @@ def _normalize_payload(symbol: str, raw: dict[str, Any]) -> dict[str, Any]:
         # retourner ``related=""`` ou un sous-ensemble inattendu).
         related_symbols = [symbol.upper(), *related_symbols]
 
+    # ``company-news`` expose en pratique surtout ``headline`` + ``summary``.
+    # On reste toutefois tolérant si un tenant / proxy amont ajoute un champ
+    # texte plus riche : ne pas l'écraser inutilement par ``None``.
+    content = None
+    for key in ("content", "body", "text", "article"):
+        value = str(raw.get(key) or "").strip()
+        if value:
+            content = value
+            break
+
     return {
         "id": article_id,
         "created_at": published_at.isoformat() if published_at else None,
         "headline": str(raw.get("headline") or "").strip(),
         "summary": str(raw.get("summary") or "").strip() or None,
-        "content": None,  # Finnhub n'expose pas le full text
+        "content": content,
         "source": str(raw.get("source") or "finnhub").strip(),
         "url": str(raw.get("url") or "").strip() or None,
         "symbols": related_symbols,
