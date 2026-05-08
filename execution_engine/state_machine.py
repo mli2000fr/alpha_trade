@@ -26,6 +26,7 @@ _TRANSITIONS: dict[str, frozenset[str]] = {
 # Mapping statuts Alpaca → statuts internes
 _ALPACA_MAP: dict[str, str] = {
     "new": OrderStatus.NEW,
+    "held": OrderStatus.HELD,
     "accepted": OrderStatus.SUBMITTED,
     "pending_new": OrderStatus.SUBMITTED,
     "partially_filled": OrderStatus.PARTIALLY_FILLED,

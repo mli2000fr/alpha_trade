@@ -51,6 +51,7 @@ presets:
       selector_min_market_cap: 500000000.0     # mid-cap accessibles (vs 1Md$ pour 0_5000)
       selector_min_beta_126: 0.65
       selector_max_spread_bps: 80.0            # spreads plus larges acceptés
+      selector_max_spread_bps_iex: 100.0       # relâchement IEX >= max_spread_bps
       selector_earnings_blackout_days: 2
       selector_max_anomaly_count: 28
       selector_require_above_ma200: true
@@ -100,6 +101,7 @@ presets:
       selector_min_market_cap: 1000000000.0
       selector_min_beta_126: 0.70
       selector_max_spread_bps: 60.0
+      selector_max_spread_bps_iex: 80.0
       selector_earnings_blackout_days: 2
       selector_max_anomaly_count: 25
       selector_require_above_ma200: true
@@ -149,6 +151,7 @@ presets:
       selector_min_market_cap: 1500000000.0
       selector_min_beta_126: 0.75
       selector_max_spread_bps: 55.0
+      selector_max_spread_bps_iex: 75.0
       selector_earnings_blackout_days: 3
       selector_max_anomaly_count: 24
       selector_require_above_ma200: true
@@ -198,6 +201,7 @@ presets:
       selector_min_market_cap: 2000000000.0
       selector_min_beta_126: 0.80
       selector_max_spread_bps: 50.0
+      selector_max_spread_bps_iex: 70.0
       selector_earnings_blackout_days: 3
       selector_max_anomaly_count: 22
       selector_require_above_ma200: true
@@ -247,6 +251,7 @@ presets:
       selector_min_market_cap: 2000000000.0
       selector_min_beta_126: 0.80
       selector_max_spread_bps: 45.0
+      selector_max_spread_bps_iex: 65.0
       selector_earnings_blackout_days: 3
       selector_max_anomaly_count: 20
       selector_require_above_ma200: true
@@ -296,6 +301,7 @@ presets:
       selector_min_market_cap: 2000000000.0
       selector_min_beta_126: 0.80
       selector_max_spread_bps: 40.0
+      selector_max_spread_bps_iex: 60.0
       selector_earnings_blackout_days: 3
       selector_max_anomaly_count: 20
       selector_require_above_ma200: true
@@ -345,6 +351,7 @@ presets:
       selector_min_market_cap: 3000000000.0
       selector_min_beta_126: 0.90
       selector_max_spread_bps: 35.0
+      selector_max_spread_bps_iex: 55.0
       selector_earnings_blackout_days: 4
       selector_max_anomaly_count: 18
       selector_require_above_ma200: true

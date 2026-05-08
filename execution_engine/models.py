@@ -11,6 +11,7 @@ from datetime import date, datetime
 
 class OrderStatus:
     NEW = "NEW"
+    HELD = "HELD"
     SIMULATED = "SIMULATED"
     SUBMITTED = "SUBMITTED"
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
