@@ -150,27 +150,26 @@ class ProtectionTransitionWatcher:
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         started_at = datetime.now()
+        # Issue 2 (2026-05) — Refresh systématique de l'état broker en début
+        # de cycle, plus uniquement quand toutes les listes sont vides. Cela
+        # garantit la détection des achats / ventes manuels effectués hors
+        # Alpha Trade depuis le dernier cycle, quel que soit le mode de
+        # lancement (Run watcher once / service local IHM).
+        refresh_metrics = self._refresh_broker_state_if_needed(
+            exec_run_id=exec_run_id,
+            account_id=account_id,
+            limit=limit,
+        )
+        if refresh_metrics:
+            LOGGER.info(
+                "Protection watcher refresh broker terminé en début de cycle: %s",
+                refresh_metrics,
+            )
         items, unprotected_rows, orphan_positions = self._load_watch_inputs(
             exec_run_id=exec_run_id,
             account_id=account_id,
             limit=limit,
         )
-        if not items and not unprotected_rows and not orphan_positions:
-            refresh_metrics = self._refresh_broker_state_if_needed(
-                exec_run_id=exec_run_id,
-                account_id=account_id,
-                limit=limit,
-            )
-            if refresh_metrics:
-                LOGGER.info(
-                    "Protection watcher refresh broker terminé avant scan: %s",
-                    refresh_metrics,
-                )
-                items, unprotected_rows, orphan_positions = self._load_watch_inputs(
-                    exec_run_id=exec_run_id,
-                    account_id=account_id,
-                    limit=limit,
-                )
         metrics_by_run: dict[str, dict[str, Any]] = defaultdict(
             lambda: {
                 "status": "COMPLETED",
@@ -476,6 +475,119 @@ class ProtectionTransitionWatcher:
         message = str(exc).lower()
         return any(token in message for token in ("403", "forbidden", "insufficient", "available", "oversell", "wash"))
 
+    def _reconcile_position_closed(
+        self,
+        parent_intent: OrderIntent,
+        broker: BrokerAdapter,
+        *,
+        broker_mode: str,
+        account_id: str,
+        exec_run_id: str,
+        symbol: str,
+    ) -> bool:
+        """Issue 3 (2026-05) — Vérifie qu'une position vendue hors application
+        a bien disparu côté Alpaca, annule les enfants orphelins, et rafraîchit
+        l'état broker pour que la requête ``load_unprotected_filled_parents``
+        cesse de remonter le parent (la qty broker tombe à 0).
+        Retourne ``True`` si la position a effectivement été reconciliée
+        comme fermée (pas de retry à programmer)."""
+        position = broker.get_position(symbol)
+        # Stricte : ne reconcilie en "fermé" que si Alpaca a explicitement
+        # retourné None (404) ou un dict avec qty <= 0. Un objet inattendu
+        # est traité comme "présent" (safe default) afin de ne pas annuler
+        # des protections valides sur un retour mal formé.
+        if position is None:
+            position_qty = 0.0
+        elif isinstance(position, dict):
+            try:
+                position_qty = float(position.get("qty", 0) or 0)
+            except (TypeError, ValueError):
+                position_qty = 0.0
+            if position_qty > 0:
+                return False
+        else:
+            return False
+
+        # Position absente / soldée chez Alpaca : annulons les enfants encore
+        # ouverts puis resynchronisons les snapshots pour que le watcher arrête
+        # de cibler ce parent au prochain cycle.
+        try:
+            open_children = self._repo.load_open_child_orders(parent_intent.intent_id)
+        except Exception:
+            LOGGER.debug(
+                "load_open_child_orders échoué pour %s lors de la reconciliation",
+                parent_intent.intent_id, exc_info=True,
+            )
+            open_children = []
+        canceled = 0
+        for child_order in open_children:
+            if not child_order.broker_order_id:
+                continue
+            try:
+                role = (
+                    IntentRole.TAKE_PROFIT
+                    if child_order.order_type == "limit"
+                    else IntentRole.INITIAL_STOP
+                )
+                child_intent = self._build_existing_child_intent(parent_intent, child_order, role)
+                if broker.cancel_broker_order(child_order.broker_order_id):
+                    try:
+                        latest_order = broker.poll_order_status(
+                            child_order.broker_order_id, child_order.intent_id,
+                        )
+                    except Exception:
+                        latest_order = replace(
+                            child_order, status=OrderStatus.CANCELED, updated_at=datetime.now(),
+                        )
+                    if latest_order.status != OrderStatus.CANCELED:
+                        latest_order = replace(
+                            latest_order, status=OrderStatus.CANCELED, updated_at=datetime.now(),
+                        )
+                    self._persist_order_state(child_intent, latest_order, account_id=account_id)
+                    canceled += 1
+            except Exception:
+                LOGGER.debug(
+                    "Annulation enfant orphelin échouée pour %s/%s",
+                    symbol, child_order.broker_order_id, exc_info=True,
+                )
+
+        # Resynchronise l'état broker : snapshot positions + lots → la qty
+        # broker repassera à 0 et la requête `load_unprotected_filled_parents`
+        # exclura le parent au prochain cycle.
+        sync_run_id = f"watcher-reconcile-{build_run_id()}"
+        try:
+            BrokerStateSynchronizer(
+                self._repo, broker, broker_mode=broker_mode,
+            ).sync(
+                exec_run_id=sync_run_id,
+                account_id=account_id,
+                order_limit=200,
+            )
+        except Exception:
+            LOGGER.debug(
+                "Resynchro broker post-reconciliation échouée pour %s",
+                account_id, exc_info=True,
+            )
+
+        self._persist_event(make_event(
+            exec_run_id,
+            EventType.PROTECTION_TRANSITION_FAILED,
+            f"Watcher : position {symbol} clôturée hors application — armement TP/SL annulé.",
+            symbol=symbol,
+            intent_id=parent_intent.intent_id,
+            payload={
+                "trigger": "watcher_position_closed_reconciliation",
+                "canceled_children": canceled,
+                "broker_position_qty": position_qty,
+                "sync_exec_run_id": sync_run_id,
+            },
+        ))
+        LOGGER.info(
+            "Watcher : reconciliation %s — position absente côté Alpaca, %s enfant(s) annulé(s).",
+            symbol, canceled,
+        )
+        return True
+
     @staticmethod
     def _build_existing_child_intent(parent: OrderIntent, child_order: BrokerOrder, role: str) -> OrderIntent:
         return OrderIntent(
@@ -663,11 +775,37 @@ class ProtectionTransitionWatcher:
 
         submitted_any = False
         protection_available = has_open_protection
+        take_profit_available = has_open_take_profit
         submit_failures = 0
         last_submit_error: Exception | None = None
+        reconciled_closed = False
+
+        def _maybe_reconcile_position_closed(exc: Exception) -> bool:
+            nonlocal reconciled_closed
+            if reconciled_closed:
+                return True
+            if not self._is_protection_rejection_likely_due_to_open_exit(exc):
+                return False
+            try:
+                if self._reconcile_position_closed(
+                    parent_intent,
+                    broker,
+                    broker_mode=broker_mode,
+                    account_id=account_id,
+                    exec_run_id=str(row["exec_run_id"]),
+                    symbol=symbol,
+                ):
+                    reconciled_closed = True
+                    return True
+            except Exception:
+                LOGGER.debug(
+                    "Reconciliation position fermée échouée pour %s", symbol, exc_info=True,
+                )
+            return False
 
         def _submit_child(child: OrderIntent) -> bool:
-            nonlocal submitted_any, protection_available, submit_failures, last_submit_error
+            nonlocal submitted_any, protection_available, take_profit_available
+            nonlocal submit_failures, last_submit_error
             try:
                 child_order = broker.submit_intent(child)
                 self._persist_order_state(child, child_order, account_id=account_id)
@@ -675,6 +813,8 @@ class ProtectionTransitionWatcher:
                 last_submit_error = None
                 if child.intent_role in {IntentRole.INITIAL_STOP, IntentRole.TRAILING_STOP}:
                     protection_available = True
+                if child.intent_role == IntentRole.TAKE_PROFIT:
+                    take_profit_available = True
                 return True
             except Exception as exc:
                 submit_failures += 1
@@ -686,10 +826,49 @@ class ProtectionTransitionWatcher:
                 )
                 return False
 
-        if not has_open_protection:
-            protection_error: Exception | None = None
+        # Issue 1 (2026-05) — Si TP et SL sont tous deux à armer ET que le
+        # stop est broker-side (type "stop", pas trailing_stop), on les pose
+        # en une seule commande Alpaca OCO. Une soumission séquentielle
+        # déclenchait sinon un 403 ``insufficient qty`` sur le second ordre
+        # (chaque leg essayait de réserver la même qty de la position).
+        if (
+            not has_open_take_profit
+            and not has_open_protection
+            and stop_intent is not None
+            and stop_intent.order_type == "stop"
+            and stop_intent.stop_price is not None
+            and tp_intent.limit_price is not None
+        ):
+            try:
+                tp_order, stop_order = broker.submit_oco_protection(
+                    parent_intent, tp_intent, stop_intent,
+                )
+                self._persist_order_state(tp_intent, tp_order, account_id=account_id)
+                self._persist_order_state(stop_intent, stop_order, account_id=account_id)
+                submitted_any = True
+                take_profit_available = True
+                protection_available = True
+            except Exception as exc:
+                submit_failures += 1
+                last_submit_error = exc
+                LOGGER.warning(
+                    "Watcher : échec submit OCO TP+SL pour %s : %s — fallback sur soumissions séparées.",
+                    symbol, exc,
+                )
+                # Issue 3 — si la position n'existe plus côté Alpaca (vente
+                # manuelle), on reconcilie et on sort proprement. Sinon on
+                # tombe dans la branche séquentielle ci-dessous (qui persistera
+                # éventuellement le rejet sur chaque intent individuel).
+                if _maybe_reconcile_position_closed(exc):
+                    return
+
+        if not has_open_protection and not protection_available:
+            protection_error: Exception | None = last_submit_error
             if not _submit_child(protection_intent):
                 protection_error = last_submit_error
+                # Issue 3 — vente manuelle hors app : reconcilie et sort.
+                if protection_error is not None and _maybe_reconcile_position_closed(protection_error):
+                    return
                 if protection_intent.intent_role == IntentRole.INITIAL_STOP:
                     fallback = build_trailing_stop_intent(
                         parent_intent, fill_qty, fill_price, config, target=None
@@ -704,6 +883,8 @@ class ProtectionTransitionWatcher:
                         protection_error = fb_exc
                         self._persist_order_request_failure(fallback, fb_exc, account_id=account_id)
                         LOGGER.warning("Watcher : fallback trailing échoué pour %s : %s", symbol, fb_exc)
+                        if _maybe_reconcile_position_closed(fb_exc):
+                            return
 
             if not protection_available and has_open_take_profit and protection_error is not None:
                 canceled_tps = 0
@@ -731,6 +912,9 @@ class ProtectionTransitionWatcher:
                             self._persist_order_request_failure(fallback, fb_exc, account_id=account_id)
                             LOGGER.warning("Watcher : fallback trailing après annulation TP échoué pour %s : %s", symbol, fb_exc)
 
+        if reconciled_closed:
+            return
+
         if not protection_available:
             metrics["armed_missing_protections_failed"] = (
                 int(metrics.get("armed_missing_protections_failed", 0) or 0) + 1
@@ -751,8 +935,11 @@ class ProtectionTransitionWatcher:
             ))
             return
 
-        if not has_open_take_profit:
-            _submit_child(tp_intent)
+        if not has_open_take_profit and not take_profit_available:
+            if not _submit_child(tp_intent):
+                # Issue 3 — la position peut avoir été soldée pendant l'arming
+                if last_submit_error is not None:
+                    _maybe_reconcile_position_closed(last_submit_error)
 
         if submitted_any:
             metrics["armed_missing_protections"] = (

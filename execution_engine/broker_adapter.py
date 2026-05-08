@@ -8,7 +8,7 @@ from typing import Any
 
 from execution_engine.config import ExecutionConfig
 from execution_engine.models import BrokerOrder, OrderIntent
-from execution_engine.order_intents import intent_to_alpaca_payload
+from execution_engine.order_intents import build_oco_protection_payload, intent_to_alpaca_payload
 from execution_engine.state_machine import map_alpaca_status
 from service.alpaca.clientAlpaca import fetch_latest_quotes
 from service.alpaca.trading_client import AlpacaTradingClient, BrokerApiError
@@ -37,6 +37,51 @@ class BrokerAdapter:
         payload = intent_to_alpaca_payload(intent)
         resp = self._client.submit_order(payload)
         return self._resp_to_broker_order(resp, intent.intent_id)
+
+    def submit_oco_protection(
+        self,
+        parent_intent: OrderIntent,
+        tp_intent: OrderIntent,
+        stop_intent: OrderIntent,
+    ) -> tuple[BrokerOrder, BrokerOrder]:
+        """Soumet TP + SL en une seule commande Alpaca OCO.
+
+        Évite l'erreur 403 ``insufficient qty`` provoquée par deux soumissions
+        séquentielles (le premier ordre verrouille la quantité, le second se
+        voit refuser la même qty). Retourne ``(tp_order, stop_order)`` —
+        l'ordre TP est porté par la réponse principale et le SL par la
+        première leg.
+        """
+        payload = build_oco_protection_payload(parent_intent, tp_intent, stop_intent)
+        resp = self._client.submit_order(payload)  # type: ignore[arg-type]
+        tp_order = self._resp_to_broker_order(resp, tp_intent.intent_id)
+        legs = resp.get("legs") if isinstance(resp, dict) else None
+        stop_leg: dict[str, Any] | None = None
+        if isinstance(legs, list):
+            for leg in legs:
+                if isinstance(leg, dict) and str(leg.get("type", "")).startswith("stop"):
+                    stop_leg = leg
+                    break
+            if stop_leg is None and legs:
+                first = legs[0]
+                if isinstance(first, dict):
+                    stop_leg = first
+        if stop_leg is None:
+            raise BrokerApiError(
+                500,
+                "OCO submission did not return a stop_loss leg",
+                str(resp)[:500],
+            )
+        stop_order = self._resp_to_broker_order(stop_leg, stop_intent.intent_id)
+        return tp_order, stop_order
+
+    def get_position(self, symbol: str) -> dict[str, Any] | None:
+        """Retourne la position broker pour ``symbol`` ou ``None`` si absente."""
+        try:
+            return self._client.get_position(symbol)  # type: ignore[return-value]
+        except Exception:
+            LOGGER.debug("get_position failed for %s", symbol, exc_info=True)
+            return None
 
     def poll_order_status(self, broker_order_id: str, intent_id: str = "") -> BrokerOrder:
         resp = self._client.get_order(broker_order_id)

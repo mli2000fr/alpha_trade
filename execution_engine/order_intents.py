@@ -339,3 +339,47 @@ def intent_to_alpaca_payload(intent: OrderIntent) -> dict[str, str]:
         payload["trail_percent"] = str(intent.trail_percent)
     return payload
 
+
+def build_oco_protection_payload(
+    parent: OrderIntent,
+    tp_intent: OrderIntent,
+    stop_intent: OrderIntent,
+) -> dict[str, str | dict[str, str]]:
+    """Construit un payload Alpaca OCO (TP limit + SL stop) lié à une position.
+
+    Pose les deux protections de manière atomique côté broker : si l'une est
+    exécutée, l'autre est annulée automatiquement. Évite l'erreur 403
+    "insufficient qty" obtenue lors d'une soumission séquentielle de TP puis
+    SL sur la même position (les deux essayaient de réserver la même qty).
+    """
+    if tp_intent.limit_price is None:
+        raise ValueError("OCO take_profit requires limit_price on tp_intent")
+    if stop_intent.stop_price is None:
+        raise ValueError("OCO stop_loss requires stop_price on stop_intent")
+
+    qty = tp_intent.qty if tp_intent.qty == stop_intent.qty else min(tp_intent.qty, stop_intent.qty)
+    qty_str = str(int(qty)) if qty == int(qty) else str(qty)
+
+    # client_order_id stable et unique par exec_run_id + symbol pour idempotence
+    client_order_id = f"oco-{_alpaca_client_order_id(parent.exec_run_id, parent.symbol, 'oco_protection', 'sell', qty)}"
+
+    take_profit: dict[str, str] = {"limit_price": str(tp_intent.limit_price)}
+    stop_loss: dict[str, str] = {"stop_price": str(stop_intent.stop_price)}
+    if stop_intent.limit_price is not None:
+        stop_loss["limit_price"] = str(stop_intent.limit_price)
+
+    payload: dict[str, str | dict[str, str]] = {
+        "symbol": parent.symbol,
+        "qty": qty_str,
+        "side": "sell",
+        "type": "limit",
+        "time_in_force": "gtc",
+        "order_class": "oco",
+        "client_order_id": client_order_id,
+        "limit_price": str(tp_intent.limit_price),
+        "take_profit": take_profit,
+        "stop_loss": stop_loss,
+    }
+    return payload
+
+

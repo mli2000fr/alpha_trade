@@ -149,10 +149,13 @@ def test_watcher_retries_adopted_entry_with_manual_default_stop() -> None:
     repo.load_orphan_filled_buy_positions.return_value = []
 
     broker = MagicMock()
-    broker.submit_intent.side_effect = [
-        _order("sl-1", "broker-sl-1", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=95.0),
+    # Issue 1 (2026-05) — TP + SL sont posés en OCO atomique : on mocke
+    # ``submit_oco_protection`` et on vérifie que ``submit_intent`` n'est
+    # pas appelé pour les enfants.
+    broker.submit_oco_protection.return_value = (
         _order("tp-1", "broker-tp-1", status=OrderStatus.SUBMITTED, order_type="limit"),
-    ]
+        _order("sl-1", "broker-sl-1", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=95.0),
+    )
 
     watcher = ProtectionTransitionWatcher(
         repo,
@@ -172,12 +175,13 @@ def test_watcher_retries_adopted_entry_with_manual_default_stop() -> None:
     assert summaries[0]["armed_missing_protections"] == 1
     assert summaries[0]["armed_missing_protections_failed"] == 0
 
-    submitted_roles = [call.args[0].intent_role for call in broker.submit_intent.call_args_list]
-    assert submitted_roles == ["initial_stop", "take_profit"]
-
-    stop_intent = broker.submit_intent.call_args_list[0].args[0]
-    assert stop_intent.stop_price == 95.0
-    assert stop_intent.order_type == "stop"
+    broker.submit_oco_protection.assert_called_once()
+    parent_arg, tp_arg, stop_arg = broker.submit_oco_protection.call_args.args
+    assert tp_arg.intent_role == "take_profit"
+    assert stop_arg.intent_role == "initial_stop"
+    assert stop_arg.stop_price == 95.0
+    assert stop_arg.order_type == "stop"
+    broker.submit_intent.assert_not_called()
 
 
 def test_watcher_completes_only_missing_leg_for_adopted_entry() -> None:
@@ -240,33 +244,30 @@ def test_watcher_completes_only_missing_leg_for_adopted_entry() -> None:
 
 def test_watcher_refreshes_broker_state_when_initial_scan_is_empty(monkeypatch) -> None:
     repo = MagicMock()
-    repo.load_pending_protection_watch_items.side_effect = [[], []]
-    repo.load_unprotected_filled_parents.side_effect = [
-        [],
-        [
-            {
-                "parent_intent_id": "parent-refresh-1",
-                "exec_run_id": "exec-refresh-1",
-                "risk_run_id": "risk-refresh-1",
-                "account_id": "acct-1",
-                "broker_mode": "paper",
-                "symbol": "MSFT",
-                "side": "buy",
-                "parent_intent_role": "adopted_entry",
-                "has_open_take_profit": 0,
-                "has_open_protection": 0,
-                "target_qty": 5.0,
-                "order_type": "market",
-                "limit_price": None,
-                "decision_price": 300.0,
-                "business_key": "bk-parent-refresh-1",
-                "submission_key": "sub-parent-refresh-1",
-                "fill_qty": 5.0,
-                "fill_price": 301.0,
-            }
-        ],
+    repo.load_pending_protection_watch_items.return_value = []
+    repo.load_unprotected_filled_parents.return_value = [
+        {
+            "parent_intent_id": "parent-refresh-1",
+            "exec_run_id": "exec-refresh-1",
+            "risk_run_id": "risk-refresh-1",
+            "account_id": "acct-1",
+            "broker_mode": "paper",
+            "symbol": "MSFT",
+            "side": "buy",
+            "parent_intent_role": "adopted_entry",
+            "has_open_take_profit": 0,
+            "has_open_protection": 0,
+            "target_qty": 5.0,
+            "order_type": "market",
+            "limit_price": None,
+            "decision_price": 300.0,
+            "business_key": "bk-parent-refresh-1",
+            "submission_key": "sub-parent-refresh-1",
+            "fill_qty": 5.0,
+            "fill_price": 301.0,
+        }
     ]
-    repo.load_orphan_filled_buy_positions.side_effect = [[], []]
+    repo.load_orphan_filled_buy_positions.return_value = []
     repo.load_execution_run_context.return_value = {
         "exec_run_id": "exec-refresh-1",
         "account_id": "acct-1",
@@ -274,10 +275,11 @@ def test_watcher_refreshes_broker_state_when_initial_scan_is_empty(monkeypatch) 
     }
 
     broker = MagicMock()
-    broker.submit_intent.side_effect = [
-        _order("sl-refresh-1", "broker-sl-refresh-1", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=285.95),
+    # Issue 1 (2026-05) : pose OCO atomique TP+SL.
+    broker.submit_oco_protection.return_value = (
         _order("tp-refresh-1", "broker-tp-refresh-1", status=OrderStatus.SUBMITTED, order_type="limit"),
-    ]
+        _order("sl-refresh-1", "broker-sl-refresh-1", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=285.95),
+    )
 
     sync_calls: list[dict[str, object]] = []
 
@@ -324,8 +326,8 @@ def test_watcher_refreshes_broker_state_when_initial_scan_is_empty(monkeypatch) 
     assert sync_calls == [{"exec_run_id": "exec-refresh-1", "account_id": "acct-1", "order_limit": 200}]
     assert len(summaries) == 1
     assert summaries[0]["armed_missing_protections"] == 1
-    submitted_roles = [call.args[0].intent_role for call in broker.submit_intent.call_args_list]
-    assert submitted_roles == ["initial_stop", "take_profit"]
+    broker.submit_oco_protection.assert_called_once()
+    broker.submit_intent.assert_not_called()
 
 
 def test_watcher_does_not_count_tp_only_as_protected_when_stop_rejected() -> None:
@@ -356,7 +358,14 @@ def test_watcher_does_not_count_tp_only_as_protected_when_stop_rejected() -> Non
     repo.load_orphan_filled_buy_positions.return_value = []
 
     broker = MagicMock()
+    # Issue 1 (2026-05) : OCO atomique tenté en premier — refusé par Alpaca
+    # (403). Le watcher retombe alors sur les soumissions séparées
+    # ``submit_intent`` (initial_stop puis fallback trailing_stop), elles
+    # aussi rejetées dans ce scénario.
+    broker.submit_oco_protection.side_effect = RuntimeError("[403] Forbidden")
     broker.submit_intent.side_effect = [RuntimeError("[403] Forbidden"), RuntimeError("[403] Forbidden")]
+    # Position toujours présente côté Alpaca → pas de reconciliation closed.
+    broker.get_position.return_value = {"qty": "2", "symbol": "META"}
 
     watcher = ProtectionTransitionWatcher(
         repo,
@@ -419,6 +428,10 @@ def test_watcher_cancels_existing_take_profit_that_blocks_missing_stop() -> None
         _order("sl-retry", "broker-sl-retry", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=190.0),
     ]
     broker.cancel_broker_order.return_value = True
+    # Position toujours présente côté Alpaca → la reconciliation post-403
+    # ne doit PAS marquer la position comme fermée et doit laisser le
+    # watcher annuler le TP existant pour réarmer le SL.
+    broker.get_position.return_value = {"qty": "4", "symbol": "AAPL"}
     broker.poll_order_status.return_value = _order(
         "tp-existing",
         "broker-tp-existing",
@@ -650,3 +663,80 @@ def test_service_health_summary_uses_account_scope_when_exec_run_not_provided(mo
     assert persisted[-1]["entity_run_id"] == "watcher-service:acct-1"
 
 
+# --------------------------------------------------------------------------
+# Issue 3 (2026-05) — quand le watcher reçoit un 403 mais que la position
+# n'existe plus côté Alpaca (vente manuelle hors application), il doit
+# annuler les enfants orphelins, resynchroniser l'état broker et NE PAS
+# incrémenter ``armed_missing_protections_failed`` (cas attendu, pas erreur).
+# --------------------------------------------------------------------------
+def test_watcher_reconciles_when_position_closed_outside_app(monkeypatch) -> None:
+    repo = MagicMock()
+    repo.load_pending_protection_watch_items.return_value = []
+    repo.load_unprotected_filled_parents.return_value = [
+        {
+            "parent_intent_id": "parent-sold-outside",
+            "exec_run_id": "exec-sold-1",
+            "risk_run_id": "risk-sold-1",
+            "account_id": "acct-1",
+            "broker_mode": "paper",
+            "symbol": "NVDA",
+            "side": "buy",
+            "parent_intent_role": "adopted_entry",
+            "has_open_take_profit": 0,
+            "has_open_protection": 0,
+            "target_qty": 2.0,
+            "order_type": "market",
+            "limit_price": None,
+            "decision_price": 800.0,
+            "business_key": "bk-sold-1",
+            "submission_key": "sub-sold-1",
+            "fill_qty": 2.0,
+            "fill_price": 800.0,
+        }
+    ]
+    repo.load_orphan_filled_buy_positions.return_value = []
+    repo.load_open_child_orders.return_value = []
+
+    broker = MagicMock()
+    # OCO refusé avec 403 : Alpaca refuse car la position n'existe plus.
+    broker.submit_oco_protection.side_effect = RuntimeError("[403] insufficient qty available")
+    # Vérification : Alpaca renvoie 404 sur get_position → position absente.
+    broker.get_position.return_value = None
+
+    sync_calls: list[dict[str, object]] = []
+
+    class _FakeSynchronizer:
+        def __init__(self, repo_arg, broker_arg, *, broker_mode):
+            assert broker_mode == "paper"
+
+        def sync(self, *, exec_run_id, account_id, order_limit):
+            sync_calls.append({"account_id": account_id, "order_limit": order_limit})
+            return {
+                "orders_synced": 0, "fills_synced": 0, "unmatched_orders": 0,
+                "orphan_sells_adopted": 0, "orphan_buys_adopted": 0,
+                "positions_projected": 0, "lots_projected": 0, "broker_positions": 0,
+            }
+
+    monkeypatch.setattr(protection_watcher_module, "BrokerStateSynchronizer", _FakeSynchronizer)
+
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=lambda broker_mode, account_id: broker,
+        config_factory=lambda broker_mode, account_id: ExecutionConfig(
+            broker_mode=broker_mode,
+            account_id=account_id,
+            profit_taker_pct=0.08,
+            manual_buy_stop_loss_pct=0.05,
+            trailing_stop_pct=0.05,
+        ),
+    )
+
+    summaries = watcher.run(account_id="acct-1")
+
+    # Reconciliation silencieuse : pas de rejet comptabilisé.
+    assert len(summaries) == 0 or summaries[0].get("armed_missing_protections_failed", 0) == 0
+    broker.get_position.assert_called_with("NVDA")
+    # Au moins un sync de reconciliation a été déclenché.
+    assert any(call["account_id"] == "acct-1" for call in sync_calls)
+    # Aucune retry ``submit_intent`` : on a abandonné proprement.
+    broker.submit_intent.assert_not_called()
