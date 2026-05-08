@@ -6,6 +6,7 @@ accidentellement le packaging Windows d'exploitation.
 """
 from __future__ import annotations
 
+import logging
 import sys
 from typing import Any
 
@@ -35,6 +36,27 @@ DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 300.0
 DEFAULT_WATCHER_TASK_NAME = "AlphaTrade-ProtectionWatcher"
 DEFAULT_WATCHER_SERVICE_NAME = "AlphaTradeProtectionWatcher"
 WATCHER_DOC_PATH = PROJECT_ROOT / "doc" / "watcher.md"
+LOGGER = logging.getLogger(__name__)
+
+
+def _watcher_leader_lock_account(account_id: str | None = None) -> str:
+    return f"watcher:{account_id or 'default'}"
+
+
+def _force_release_local_watcher_leader_lock(account_id: str | None = None) -> None:
+    try:
+        from execution_engine.db_io import ExecutionRepository
+
+        released = ExecutionRepository().force_release_execution_lock(
+            account_id=_watcher_leader_lock_account(account_id),
+        )
+        if released:
+            LOGGER.info(
+                "Verrou leader watcher local IHM nettoyé après arrêt forcé: %s",
+                _watcher_leader_lock_account(account_id),
+            )
+    except Exception:
+        LOGGER.debug("Nettoyage verrou leader watcher local IHM impossible", exc_info=True)
 
 
 def build_watcher_doc_reference() -> dict[str, str]:
@@ -294,7 +316,10 @@ def stop_local_watcher_service(run_id: str) -> bool:
         return False
     if str(record.get("step_key", "") or "") != WATCHER_SERVICE_STEP_KEY:
         raise RuntimeError("Seuls les services watcher lancés depuis l'IHM peuvent être arrêtés ici.")
-    return stop_pipeline_run(run_id)
+    stopped = stop_pipeline_run(run_id)
+    if stopped:
+        _force_release_local_watcher_leader_lock(str(record.get("account_id") or "") or None)
+    return stopped
 
 
 def restart_local_watcher_service(

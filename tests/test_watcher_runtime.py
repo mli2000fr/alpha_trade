@@ -98,6 +98,28 @@ def test_stop_local_watcher_service_rejects_non_local_service_run(monkeypatch) -
         raise AssertionError("RuntimeError attendu")
 
 
+def test_stop_local_watcher_service_releases_local_leader_lock(monkeypatch) -> None:
+    released: list[str | None] = []
+
+    monkeypatch.setattr(
+        watcher_runtime,
+        "get_pipeline_run_record",
+        lambda run_id: {
+            "step_key": watcher_runtime.WATCHER_SERVICE_STEP_KEY,
+            "account_id": "acct-1",
+        },
+    )
+    monkeypatch.setattr(watcher_runtime, "stop_pipeline_run", lambda run_id: True)
+    monkeypatch.setattr(
+        watcher_runtime,
+        "_force_release_local_watcher_leader_lock",
+        lambda account_id=None: released.append(account_id),
+    )
+
+    assert watcher_runtime.stop_local_watcher_service("run-1") is True
+    assert released == ["acct-1"]
+
+
 def test_list_watcher_run_history_filters_step_keys(monkeypatch) -> None:
     monkeypatch.setattr(
         watcher_runtime,

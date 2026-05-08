@@ -56,6 +56,10 @@ def test_watcher_service_acquires_leader_lock_with_watcher_prefix() -> None:
     assert call.kwargs["ttl_seconds"] >= 60
     # Le summary final expose l'account du lock pour observabilité.
     assert summary["leader_lock_account"] == "watcher:paper_main"
+    assert repo.refresh_execution_lock.called
+    refresh_call = repo.refresh_execution_lock.call_args
+    assert refresh_call.kwargs["account_id"] == "watcher:paper_main"
+    assert refresh_call.kwargs["exec_run_id"] == summary["run_id"]
     # Et libère le lock à la sortie.
     assert repo.release_execution_lock.called
     release_call = repo.release_execution_lock.call_args

@@ -912,9 +912,14 @@ class ProtectionWatcherService:
 
         # Phase 6.3 — leader election best-effort via execution_locks.
         # Préfixe `watcher:` pour distinguer du lock executor (Phase 1.2).
-        # ttl = 4× heartbeat_interval pour absorber GC pauses sans relâcher le lock.
+        # ttl = 2× le plus grand intervalle de boucle pour absorber les pauses.
+        # Le lock est renouvelé à chaque cycle ; ne pas dépendre du heartbeat
+        # long (300s par défaut) évite de laisser un verrou orphelin 10–20 min.
         leader_lock_account = f"watcher:{account_id or 'default'}"
-        leader_ttl_seconds = max(int(self._cfg.heartbeat_interval_seconds * 4), 60)
+        leader_ttl_seconds = max(int(max(
+            self._cfg.interval_seconds,
+            self._cfg.idle_interval_seconds,
+        ) * 2), 60)
         leader_acquired = False
         try:
             leader_acquired = self._watcher._repo.acquire_execution_lock(
@@ -1005,6 +1010,9 @@ class ProtectionWatcherService:
                         metrics,
                         account_id=account_id,
                         exec_run_id=exec_run_id,
+                        service_run_id=service_run_id,
+                        leader_lock_account=leader_lock_account,
+                        leader_ttl_seconds=leader_ttl_seconds,
                         last_heartbeat=last_heartbeat,
                     )
                     if heartbeat_logged:
@@ -1048,6 +1056,9 @@ class ProtectionWatcherService:
                     metrics,
                     account_id=account_id,
                     exec_run_id=exec_run_id,
+                    service_run_id=service_run_id,
+                    leader_lock_account=leader_lock_account,
+                    leader_ttl_seconds=leader_ttl_seconds,
                     last_heartbeat=last_heartbeat,
                 )
                 self._persist_service_summary(
@@ -1133,9 +1144,26 @@ class ProtectionWatcherService:
         *,
         account_id: str | None,
         exec_run_id: str | None,
+        service_run_id: str,
+        leader_lock_account: str,
+        leader_ttl_seconds: int,
         last_heartbeat: float,
     ) -> tuple[bool, float]:
         now = self._monotonic()
+        try:
+            refreshed = self._watcher._repo.refresh_execution_lock(
+                account_id=leader_lock_account,
+                exec_run_id=service_run_id,
+                ttl_seconds=leader_ttl_seconds,
+            )
+            if not refreshed:
+                LOGGER.warning(
+                    "Cycle watcher protections: leader lock non renouvelé pour %s (run=%s).",
+                    leader_lock_account,
+                    service_run_id,
+                )
+        except Exception:
+            LOGGER.debug("refresh_execution_lock watcher: erreur ignorée", exc_info=True)
         if metrics["iterations"] == 1 or (now - last_heartbeat) >= self._cfg.heartbeat_interval_seconds:
             metrics["heartbeat_count"] = int(metrics.get("heartbeat_count", 0) or 0) + 1
             metrics["last_heartbeat_at"] = datetime.now().isoformat(timespec="seconds")

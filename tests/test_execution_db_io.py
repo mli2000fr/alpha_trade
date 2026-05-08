@@ -474,6 +474,19 @@ class TestExecutionDbIo:
 
         assert repo.acquire_execution_lock(account_id="default", exec_run_id="exec-3") is True
 
+    def test_execution_lock_refresh_and_force_release(self, engine, repo) -> None:
+        assert repo.acquire_execution_lock(account_id="watcher:default", exec_run_id="svc-1", ttl_seconds=60) is True
+
+        assert repo.refresh_execution_lock(account_id="watcher:default", exec_run_id="svc-1", ttl_seconds=120) is True
+        assert repo.refresh_execution_lock(account_id="watcher:default", exec_run_id="svc-2", ttl_seconds=120) is False
+
+        released = repo.force_release_execution_lock(account_id="watcher:default")
+
+        assert released == 1
+        with engine.connect() as conn:
+            remaining = conn.execute(text("SELECT COUNT(*) FROM execution_locks WHERE account_id = 'watcher:default'")).scalar_one()
+        assert remaining == 0
+
     def test_snapshot_execution_targets(self, engine, repo) -> None:
         with engine.begin() as conn:
             conn.execute(text("""

@@ -907,6 +907,41 @@ class ExecutionRepository:
         with self.engine.begin() as conn:
             conn.execute(stmt, {"account_id": resolved_account_id, "locked_by_run_id": exec_run_id})
 
+    def refresh_execution_lock(
+        self,
+        *,
+        account_id: str | None,
+        exec_run_id: str,
+        ttl_seconds: int = 3600,
+    ) -> bool:
+        """Prolonge le TTL d'un verrou encore détenu par ``exec_run_id``."""
+        resolved_account_id = account_id or "default"
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=max(ttl_seconds, 1))
+        stmt = text("""
+            UPDATE execution_locks
+            SET expires_at = :expires_at
+            WHERE account_id = :account_id
+              AND locked_by_run_id = :locked_by_run_id
+        """)
+        with self.engine.begin() as conn:
+            result = conn.execute(stmt, {
+                "account_id": resolved_account_id,
+                "locked_by_run_id": exec_run_id,
+                "expires_at": expires_at,
+            })
+        return bool(result.rowcount)
+
+    def force_release_execution_lock(self, *, account_id: str | None) -> int:
+        """Supprime un verrou par scope, utilisé seulement pour nettoyer un service local IHM tué."""
+        resolved_account_id = account_id or "default"
+        stmt = text("""
+            DELETE FROM execution_locks
+            WHERE account_id = :account_id
+        """)
+        with self.engine.begin() as conn:
+            result = conn.execute(stmt, {"account_id": resolved_account_id})
+        return int(result.rowcount or 0)
+
     # ------------------------------------------------------------------
     # Watcher heartbeat (Phase 1 refactor — audit_watcher.md, audit_global.md §6.8)
     # ------------------------------------------------------------------
