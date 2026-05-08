@@ -36,3 +36,6 @@ alembic>=1.13.0
 testcontainers[mysql]>=4.0  # tests d'intgration MySQL en CI
 testcontainers[redis]>=4.0  # Sprint S21.6 — tests live Redis cache
 redis>=5.0                  # client Redis (utilisé par service/cache/redis_cache.py)
+
+# triton (S28.4 / Phase G-bis — accélération GPU optionnelle du backtesting) :
+#   pip install triton==2.0.0 --index-url https://download.pytorch.org/whl/triton
