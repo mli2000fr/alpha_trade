@@ -123,6 +123,330 @@ def test_watcher_keeps_item_pending_when_trigger_not_reached() -> None:
     broker.submit_intent.assert_not_called()
 
 
+def test_watcher_retries_adopted_entry_with_manual_default_stop() -> None:
+    repo = MagicMock()
+    repo.load_pending_protection_watch_items.return_value = []
+    repo.load_unprotected_filled_parents.return_value = [
+        {
+            "parent_intent_id": "adopt-parent-1",
+            "exec_run_id": "adopt-run-1",
+            "risk_run_id": "adopt-run-1",
+            "account_id": "acct-1",
+            "broker_mode": "paper",
+            "symbol": "TSLA",
+            "side": "buy",
+            "parent_intent_role": "adopted_entry",
+            "target_qty": 3.0,
+            "order_type": "market",
+            "limit_price": None,
+            "decision_price": 100.0,
+            "business_key": "adopt-buy|acct-1|broker-order-1",
+            "submission_key": "adopt-submission-1",
+            "fill_qty": 3.0,
+            "fill_price": 100.0,
+        }
+    ]
+    repo.load_orphan_filled_buy_positions.return_value = []
+
+    broker = MagicMock()
+    broker.submit_intent.side_effect = [
+        _order("sl-1", "broker-sl-1", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=95.0),
+        _order("tp-1", "broker-tp-1", status=OrderStatus.SUBMITTED, order_type="limit"),
+    ]
+
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=lambda broker_mode, account_id: broker,
+        config_factory=lambda broker_mode, account_id: ExecutionConfig(
+            broker_mode=broker_mode,
+            account_id=account_id,
+            profit_taker_pct=0.08,
+            manual_buy_stop_loss_pct=0.05,
+            trailing_stop_pct=0.05,
+        ),
+    )
+
+    summaries = watcher.run(account_id="acct-1")
+
+    assert len(summaries) == 1
+    assert summaries[0]["armed_missing_protections"] == 1
+    assert summaries[0]["armed_missing_protections_failed"] == 0
+
+    submitted_roles = [call.args[0].intent_role for call in broker.submit_intent.call_args_list]
+    assert submitted_roles == ["initial_stop", "take_profit"]
+
+    stop_intent = broker.submit_intent.call_args_list[0].args[0]
+    assert stop_intent.stop_price == 95.0
+    assert stop_intent.order_type == "stop"
+
+
+def test_watcher_completes_only_missing_leg_for_adopted_entry() -> None:
+    repo = MagicMock()
+    repo.load_pending_protection_watch_items.return_value = []
+    repo.load_unprotected_filled_parents.return_value = [
+        {
+            "parent_intent_id": "adopt-parent-2",
+            "exec_run_id": "adopt-run-2",
+            "risk_run_id": "adopt-run-2",
+            "account_id": "acct-1",
+            "broker_mode": "paper",
+            "symbol": "TSLA",
+            "side": "buy",
+            "parent_intent_role": "adopted_entry",
+            "has_open_take_profit": 1,
+            "has_open_protection": 0,
+            "target_qty": 3.0,
+            "order_type": "market",
+            "limit_price": None,
+            "decision_price": 100.0,
+            "business_key": "adopt-buy|acct-1|broker-order-2",
+            "submission_key": "adopt-submission-2",
+            "fill_qty": 3.0,
+            "fill_price": 100.0,
+        }
+    ]
+    repo.load_orphan_filled_buy_positions.return_value = []
+
+    broker = MagicMock()
+    broker.submit_intent.return_value = _order(
+        "sl-2",
+        "broker-sl-2",
+        status=OrderStatus.SUBMITTED,
+        order_type="stop",
+        stop_price=95.0,
+    )
+
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=lambda broker_mode, account_id: broker,
+        config_factory=lambda broker_mode, account_id: ExecutionConfig(
+            broker_mode=broker_mode,
+            account_id=account_id,
+            profit_taker_pct=0.08,
+            manual_buy_stop_loss_pct=0.05,
+            trailing_stop_pct=0.05,
+        ),
+    )
+
+    summaries = watcher.run(account_id="acct-1")
+
+    assert len(summaries) == 1
+    assert summaries[0]["armed_missing_protections"] == 1
+    broker.submit_intent.assert_called_once()
+    submitted_intent = broker.submit_intent.call_args.args[0]
+    assert submitted_intent.intent_role == "initial_stop"
+    assert submitted_intent.stop_price == 95.0
+
+
+def test_watcher_refreshes_broker_state_when_initial_scan_is_empty(monkeypatch) -> None:
+    repo = MagicMock()
+    repo.load_pending_protection_watch_items.side_effect = [[], []]
+    repo.load_unprotected_filled_parents.side_effect = [
+        [],
+        [
+            {
+                "parent_intent_id": "parent-refresh-1",
+                "exec_run_id": "exec-refresh-1",
+                "risk_run_id": "risk-refresh-1",
+                "account_id": "acct-1",
+                "broker_mode": "paper",
+                "symbol": "MSFT",
+                "side": "buy",
+                "parent_intent_role": "adopted_entry",
+                "has_open_take_profit": 0,
+                "has_open_protection": 0,
+                "target_qty": 5.0,
+                "order_type": "market",
+                "limit_price": None,
+                "decision_price": 300.0,
+                "business_key": "bk-parent-refresh-1",
+                "submission_key": "sub-parent-refresh-1",
+                "fill_qty": 5.0,
+                "fill_price": 301.0,
+            }
+        ],
+    ]
+    repo.load_orphan_filled_buy_positions.side_effect = [[], []]
+    repo.load_execution_run_context.return_value = {
+        "exec_run_id": "exec-refresh-1",
+        "account_id": "acct-1",
+        "broker_mode": "paper",
+    }
+
+    broker = MagicMock()
+    broker.submit_intent.side_effect = [
+        _order("sl-refresh-1", "broker-sl-refresh-1", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=285.95),
+        _order("tp-refresh-1", "broker-tp-refresh-1", status=OrderStatus.SUBMITTED, order_type="limit"),
+    ]
+
+    sync_calls: list[dict[str, object]] = []
+
+    class _FakeSynchronizer:
+        def __init__(self, repo_arg, broker_arg, *, broker_mode):
+            assert repo_arg is repo
+            assert broker_arg is broker
+            assert broker_mode == "paper"
+
+        def sync(self, *, exec_run_id, account_id, order_limit):
+            sync_calls.append({
+                "exec_run_id": exec_run_id,
+                "account_id": account_id,
+                "order_limit": order_limit,
+            })
+            return {
+                "orders_synced": 1,
+                "fills_synced": 1,
+                "unmatched_orders": 0,
+                "orphan_sells_adopted": 0,
+                "orphan_buys_adopted": 0,
+                "positions_projected": 1,
+                "lots_projected": 1,
+                "broker_positions": 1,
+            }
+
+    monkeypatch.setattr(protection_watcher_module, "BrokerStateSynchronizer", _FakeSynchronizer)
+
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=lambda broker_mode, account_id: broker,
+        config_factory=lambda broker_mode, account_id: ExecutionConfig(
+            broker_mode=broker_mode,
+            account_id=account_id,
+            profit_taker_pct=0.08,
+            manual_buy_stop_loss_pct=0.05,
+            trailing_stop_pct=0.05,
+        ),
+        default_broker_mode="paper",
+    )
+
+    summaries = watcher.run(exec_run_id="exec-refresh-1")
+
+    assert sync_calls == [{"exec_run_id": "exec-refresh-1", "account_id": "acct-1", "order_limit": 200}]
+    assert len(summaries) == 1
+    assert summaries[0]["armed_missing_protections"] == 1
+    submitted_roles = [call.args[0].intent_role for call in broker.submit_intent.call_args_list]
+    assert submitted_roles == ["initial_stop", "take_profit"]
+
+
+def test_watcher_does_not_count_tp_only_as_protected_when_stop_rejected() -> None:
+    repo = MagicMock()
+    repo.load_pending_protection_watch_items.return_value = []
+    repo.load_unprotected_filled_parents.return_value = [
+        {
+            "parent_intent_id": "adopt-parent-403",
+            "exec_run_id": "adopt-run-403",
+            "risk_run_id": "adopt-run-403",
+            "account_id": "acct-1",
+            "broker_mode": "paper",
+            "symbol": "META",
+            "side": "buy",
+            "parent_intent_role": "adopted_entry",
+            "has_open_take_profit": 0,
+            "has_open_protection": 0,
+            "target_qty": 2.0,
+            "order_type": "market",
+            "limit_price": None,
+            "decision_price": 500.0,
+            "business_key": "adopt-buy|acct-1|broker-order-403",
+            "submission_key": "adopt-submission-403",
+            "fill_qty": 2.0,
+            "fill_price": 500.0,
+        }
+    ]
+    repo.load_orphan_filled_buy_positions.return_value = []
+
+    broker = MagicMock()
+    broker.submit_intent.side_effect = [RuntimeError("[403] Forbidden"), RuntimeError("[403] Forbidden")]
+
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=lambda broker_mode, account_id: broker,
+        config_factory=lambda broker_mode, account_id: ExecutionConfig(
+            broker_mode=broker_mode,
+            account_id=account_id,
+            profit_taker_pct=0.08,
+            manual_buy_stop_loss_pct=0.05,
+            trailing_stop_pct=0.05,
+        ),
+    )
+
+    summaries = watcher.run(account_id="acct-1")
+
+    assert len(summaries) == 1
+    assert summaries[0]["armed_missing_protections"] == 0
+    assert summaries[0]["armed_missing_protections_failed"] == 1
+    submitted_roles = [call.args[0].intent_role for call in broker.submit_intent.call_args_list]
+    assert submitted_roles == ["initial_stop", "trailing_stop"]
+    assert all(role != "take_profit" for role in submitted_roles)
+    failure_statuses = [call.kwargs["status"] for call in repo.upsert_execution_order_request_from_intent.call_args_list]
+    assert failure_statuses == [OrderStatus.REJECTED, OrderStatus.REJECTED]
+
+
+def test_watcher_cancels_existing_take_profit_that_blocks_missing_stop() -> None:
+    repo = MagicMock()
+    repo.load_pending_protection_watch_items.return_value = []
+    repo.load_unprotected_filled_parents.return_value = [
+        {
+            "parent_intent_id": "adopt-parent-tp-blocks-sl",
+            "exec_run_id": "adopt-run-tp-blocks-sl",
+            "risk_run_id": "adopt-run-tp-blocks-sl",
+            "account_id": "acct-1",
+            "broker_mode": "paper",
+            "symbol": "AAPL",
+            "side": "buy",
+            "parent_intent_role": "adopted_entry",
+            "has_open_take_profit": 1,
+            "has_open_protection": 0,
+            "target_qty": 4.0,
+            "order_type": "market",
+            "limit_price": None,
+            "decision_price": 200.0,
+            "business_key": "adopt-buy|acct-1|broker-order-tp-blocks-sl",
+            "submission_key": "adopt-submission-tp-blocks-sl",
+            "fill_qty": 4.0,
+            "fill_price": 200.0,
+        }
+    ]
+    repo.load_orphan_filled_buy_positions.return_value = []
+    repo.load_open_child_orders.return_value = [
+        _order("tp-existing", "broker-tp-existing", status=OrderStatus.SUBMITTED, order_type="limit"),
+    ]
+
+    broker = MagicMock()
+    broker.submit_intent.side_effect = [
+        RuntimeError("[403] Forbidden"),
+        RuntimeError("[403] Forbidden"),
+        _order("sl-retry", "broker-sl-retry", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=190.0),
+    ]
+    broker.cancel_broker_order.return_value = True
+    broker.poll_order_status.return_value = _order(
+        "tp-existing",
+        "broker-tp-existing",
+        status=OrderStatus.CANCELED,
+        order_type="limit",
+    )
+
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=lambda broker_mode, account_id: broker,
+        config_factory=lambda broker_mode, account_id: ExecutionConfig(
+            broker_mode=broker_mode,
+            account_id=account_id,
+            profit_taker_pct=0.08,
+            manual_buy_stop_loss_pct=0.05,
+            trailing_stop_pct=0.05,
+        ),
+    )
+
+    summaries = watcher.run(account_id="acct-1")
+
+    assert summaries[0]["armed_missing_protections"] == 1
+    assert summaries[0]["armed_missing_protections_failed"] == 0
+    broker.cancel_broker_order.assert_called_once_with("broker-tp-existing")
+    submitted_roles = [call.args[0].intent_role for call in broker.submit_intent.call_args_list]
+    assert submitted_roles == ["initial_stop", "trailing_stop", "initial_stop"]
+
+
 def test_service_stops_cleanly_when_idle_mode_requested() -> None:
     watcher = MagicMock()
     watcher.run.return_value = []
@@ -175,6 +499,49 @@ def test_service_stops_after_max_consecutive_failures() -> None:
     assert summary["iterations"] == 2
     assert summary["consecutive_failures"] == 2
     assert sleep_calls == [0.2]
+
+
+def test_service_treats_armed_missing_protections_as_work_for_local_ihm() -> None:
+    watcher = MagicMock()
+    watcher.run.return_value = [
+        {
+            "watched_items": 0,
+            "transitioned_items": 0,
+            "pending_items": 0,
+            "triggered_items": 0,
+            "terminal_items": 0,
+            "skipped_existing_trailing": 0,
+            "cancel_failed_items": 0,
+            "submit_failed_items": 0,
+            "armed_missing_protections": 2,
+            "armed_missing_protections_failed": 1,
+            "adopted_orphan_buys": 0,
+            "adopted_orphan_buys_failed": 0,
+        }
+    ]
+    watcher._repo = MagicMock()
+
+    service = ProtectionWatcherService(
+        watcher,
+        ProtectionWatcherServiceConfig(
+            interval_seconds=0.1,
+            idle_interval_seconds=0.2,
+            heartbeat_interval_seconds=60.0,
+            max_iterations=1,
+            stop_when_idle=True,
+        ),
+        sleep_fn=lambda seconds: None,
+        monotonic_fn=lambda: 0.0,
+    )
+
+    summary = service.run(account_id="acct-1", limit=10)
+
+    assert summary["status"] == "COMPLETED"
+    assert summary["cycles_with_work"] == 1
+    assert summary["idle_cycles"] == 0
+    assert summary["last_cycle_had_work"] is True
+    assert summary["armed_missing_protections"] == 2
+    assert summary["armed_missing_protections_failed"] == 1
 
 
 def test_parse_args_accepts_service_mode_options() -> None:

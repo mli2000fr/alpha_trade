@@ -194,7 +194,12 @@ def _render_watcher_launch_controls(options: PipelineLaunchOptions) -> None:
                 db_config=db_config,
                 account_id=account_id,
                 broker_mode=broker_mode,
+                profit_taker_pct=float(getattr(options, "execution_take_profit_pct", 0.08) or 0.08),
+                trailing_stop_pct=float(getattr(options, "execution_trailing_stop_pct", 0.05) or 0.05),
                 manual_buy_stop_loss_pct=float(getattr(options, "execution_manual_buy_stop_loss_pct", 0.05) or 0.05),
+                trailing_activation_trigger=str(getattr(options, "execution_trailing_trigger", "multiple_r") or "multiple_r"),
+                trailing_activation_r_multiple=float(getattr(options, "execution_trailing_r_multiple", 1.0) or 1.0),
+                trailing_activation_profit_pct=float(getattr(options, "execution_trailing_profit_pct", 0.03) or 0.03),
             )
         except RuntimeError as exc:
             st.warning(str(exc))
@@ -208,7 +213,12 @@ def _render_watcher_launch_controls(options: PipelineLaunchOptions) -> None:
                 db_config=db_config,
                 account_id=account_id,
                 broker_mode=broker_mode,
+                profit_taker_pct=float(getattr(options, "execution_take_profit_pct", 0.08) or 0.08),
+                trailing_stop_pct=float(getattr(options, "execution_trailing_stop_pct", 0.05) or 0.05),
                 manual_buy_stop_loss_pct=float(getattr(options, "execution_manual_buy_stop_loss_pct", 0.05) or 0.05),
+                trailing_activation_trigger=str(getattr(options, "execution_trailing_trigger", "multiple_r") or "multiple_r"),
+                trailing_activation_r_multiple=float(getattr(options, "execution_trailing_r_multiple", 1.0) or 1.0),
+                trailing_activation_profit_pct=float(getattr(options, "execution_trailing_profit_pct", 0.03) or 0.03),
             )
         except RuntimeError as exc:
             st.warning(str(exc))

@@ -5,6 +5,7 @@ import argparse
 import logging
 import time
 from collections import defaultdict
+from dataclasses import replace
 from datetime import datetime
 from typing import Any, Callable
 
@@ -12,6 +13,7 @@ from common.utils import configure_root_logging
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from execution_engine.audit import build_run_id, make_event
 from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.broker_state_sync import BrokerStateSynchronizer
 from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import (
@@ -110,6 +112,10 @@ def _build_service_summary(
         "skipped_existing_trailing": int(metrics.get("skipped_existing_trailing", 0) or 0),
         "cancel_failed_items": int(metrics.get("cancel_failed_items", 0) or 0),
         "submit_failed_items": int(metrics.get("submit_failed_items", 0) or 0),
+        "armed_missing_protections": int(metrics.get("armed_missing_protections", 0) or 0),
+        "armed_missing_protections_failed": int(metrics.get("armed_missing_protections_failed", 0) or 0),
+        "adopted_orphan_buys": int(metrics.get("adopted_orphan_buys", 0) or 0),
+        "adopted_orphan_buys_failed": int(metrics.get("adopted_orphan_buys_failed", 0) or 0),
         "last_heartbeat_at": metrics.get("last_heartbeat_at"),
         "last_cycle_at": metrics.get("last_cycle_at"),
         "last_cycle_had_work": bool(metrics.get("last_cycle_had_work", False)),
@@ -126,10 +132,13 @@ class ProtectionTransitionWatcher:
         repo: ExecutionRepository,
         broker_factory: Callable[[str, str | None], BrokerAdapter],
         config_factory: Callable[[str, str | None], ExecutionConfig],
+        *,
+        default_broker_mode: str = "paper",
     ) -> None:
         self._repo = repo
         self._broker_factory = broker_factory
         self._config_factory = config_factory
+        self._default_broker_mode = default_broker_mode
         self._broker_cache: dict[tuple[str, str | None], BrokerAdapter] = {}
         self._config_cache: dict[tuple[str, str | None], ExecutionConfig] = {}
 
@@ -141,7 +150,27 @@ class ProtectionTransitionWatcher:
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         started_at = datetime.now()
-        items = self._repo.load_pending_protection_watch_items(exec_run_id=exec_run_id, account_id=account_id, limit=limit)
+        items, unprotected_rows, orphan_positions = self._load_watch_inputs(
+            exec_run_id=exec_run_id,
+            account_id=account_id,
+            limit=limit,
+        )
+        if not items and not unprotected_rows and not orphan_positions:
+            refresh_metrics = self._refresh_broker_state_if_needed(
+                exec_run_id=exec_run_id,
+                account_id=account_id,
+                limit=limit,
+            )
+            if refresh_metrics:
+                LOGGER.info(
+                    "Protection watcher refresh broker terminé avant scan: %s",
+                    refresh_metrics,
+                )
+                items, unprotected_rows, orphan_positions = self._load_watch_inputs(
+                    exec_run_id=exec_run_id,
+                    account_id=account_id,
+                    limit=limit,
+                )
         metrics_by_run: dict[str, dict[str, Any]] = defaultdict(
             lambda: {
                 "status": "COMPLETED",
@@ -176,16 +205,6 @@ class ProtectionTransitionWatcher:
         # take-profit ni stop ouvert (cas overnight où Execution n'a pas pu
         # appeler `_submit_children`). On arme les enfants manquants ici.
         # ------------------------------------------------------------------
-        try:
-            unprotected_rows = self._repo.load_unprotected_filled_parents(
-                exec_run_id=exec_run_id,
-                account_id=account_id,
-                limit=max(limit, 200),
-            )
-        except Exception:
-            LOGGER.warning("load_unprotected_filled_parents failed", exc_info=True)
-            unprotected_rows = []
-
         for row in unprotected_rows:
             source_exec_run_id = str(row.get("exec_run_id") or "")
             run_metrics = metrics_by_run[source_exec_run_id]
@@ -193,8 +212,13 @@ class ProtectionTransitionWatcher:
             run_metrics.setdefault("trade_date", None)
             run_metrics["broker_mode"] = str(row.get("broker_mode") or run_metrics.get("broker_mode") or "paper")
             run_metrics["account_id"] = str(row.get("account_id") or run_metrics.get("account_id") or "default")
+            use_manual_buy_stop = str(row.get("parent_intent_role") or "") == IntentRole.ADOPTED_ENTRY
             try:
-                self._arm_missing_protections(row, run_metrics)
+                self._arm_missing_protections(
+                    row,
+                    run_metrics,
+                    use_manual_buy_stop=use_manual_buy_stop,
+                )
             except Exception:
                 LOGGER.warning(
                     "Échec armement protections manquantes pour %s",
@@ -210,15 +234,6 @@ class ProtectionTransitionWatcher:
         # on crée un parent ``adopted_entry`` puis on arme TP + STOP en
         # utilisant le pourcentage `manual_buy_stop_loss_pct` dédié.
         # ------------------------------------------------------------------
-        try:
-            orphan_positions = self._repo.load_orphan_filled_buy_positions(
-                account_id=account_id,
-                limit=max(limit, 200),
-            )
-        except Exception:
-            LOGGER.warning("load_orphan_filled_buy_positions failed", exc_info=True)
-            orphan_positions = []
-
         for position_row in orphan_positions:
             position_account_id = str(position_row.get("account_id") or account_id or "default")
             broker_mode = str(position_row.get("broker_mode") or "paper")
@@ -280,6 +295,15 @@ class ProtectionTransitionWatcher:
 
         summaries: list[dict[str, Any]] = []
         finished_at = datetime.now()
+        if not metrics_by_run:
+            LOGGER.info(
+                "Protection watcher: aucun candidat après scan (pending=%s, unprotected=%s, orphan_positions=%s, account=%s, exec_run_id=%s)",
+                len(items),
+                len(unprotected_rows),
+                len(orphan_positions),
+                account_id or "*",
+                exec_run_id or "*",
+            )
         for source_exec_run_id, run_metrics in metrics_by_run.items():
             watch_run_id = f"watch-{build_run_id()}"
             summary = _build_summary(run_metrics, watch_run_id=watch_run_id, started_at=started_at, finished_at=finished_at)
@@ -304,6 +328,96 @@ class ProtectionTransitionWatcher:
                 LOGGER.debug("Persistance run_business_summaries indisponible pour le watcher protections.", exc_info=True)
             emit_run_summary(summary)
         return summaries
+
+    def _load_watch_inputs(
+        self,
+        *,
+        exec_run_id: str | None,
+        account_id: str | None,
+        limit: int,
+    ) -> tuple[list[ProtectionWatchItem], list[dict[str, Any]], list[dict[str, Any]]]:
+        items = self._repo.load_pending_protection_watch_items(
+            exec_run_id=exec_run_id,
+            account_id=account_id,
+            limit=limit,
+        )
+        try:
+            unprotected_rows = self._repo.load_unprotected_filled_parents(
+                exec_run_id=exec_run_id,
+                account_id=account_id,
+                limit=max(limit, 200),
+            )
+        except Exception:
+            LOGGER.warning("load_unprotected_filled_parents failed", exc_info=True)
+            unprotected_rows = []
+        try:
+            orphan_positions = self._repo.load_orphan_filled_buy_positions(
+                account_id=account_id,
+                limit=max(limit, 200),
+            )
+        except Exception:
+            LOGGER.warning("load_orphan_filled_buy_positions failed", exc_info=True)
+            orphan_positions = []
+        return items, unprotected_rows, orphan_positions
+
+    def _resolve_refresh_context(
+        self,
+        *,
+        exec_run_id: str | None,
+        account_id: str | None,
+    ) -> tuple[str, str] | None:
+        if exec_run_id:
+            try:
+                run_context = self._repo.load_execution_run_context(exec_run_id=exec_run_id)
+            except Exception:
+                LOGGER.debug("load_execution_run_context failed for %s", exec_run_id, exc_info=True)
+                run_context = None
+            if isinstance(run_context, dict):
+                resolved_account_id = str(run_context.get("account_id") or account_id or "").strip()
+                resolved_broker_mode = str(run_context.get("broker_mode") or self._default_broker_mode).strip() or self._default_broker_mode
+                if resolved_account_id:
+                    return resolved_broker_mode, resolved_account_id
+        if account_id:
+            return self._default_broker_mode, account_id
+        return None
+
+    def _refresh_broker_state_if_needed(
+        self,
+        *,
+        exec_run_id: str | None,
+        account_id: str | None,
+        limit: int,
+    ) -> dict[str, Any] | None:
+        refresh_context = self._resolve_refresh_context(exec_run_id=exec_run_id, account_id=account_id)
+        if refresh_context is None:
+            return None
+        broker_mode, resolved_account_id = refresh_context
+        sync_exec_run_id = exec_run_id or f"watcher-sync-{build_run_id()}"
+        try:
+            sync_metrics = BrokerStateSynchronizer(
+                self._repo,
+                self._broker_for(broker_mode, resolved_account_id),
+                broker_mode=broker_mode,
+            ).sync(
+                exec_run_id=sync_exec_run_id,
+                account_id=resolved_account_id,
+                order_limit=max(limit, 200),
+            )
+        except Exception:
+            LOGGER.warning(
+                "Protection watcher: refresh broker préalable échoué (account=%s, broker_mode=%s, exec_run_id=%s)",
+                resolved_account_id,
+                broker_mode,
+                sync_exec_run_id,
+                exc_info=True,
+            )
+            return None
+        return {
+            "account_id": resolved_account_id,
+            "broker_mode": broker_mode,
+            "sync_exec_run_id": sync_exec_run_id,
+            **sync_metrics,
+        }
 
     def _config_for(self, broker_mode: str, account_id: str | None) -> ExecutionConfig:
         key = (broker_mode, account_id)
@@ -344,6 +458,84 @@ class ProtectionTransitionWatcher:
             )
         except Exception:
             LOGGER.debug("Persistance broker order watcher impossible pour %s", intent.intent_id, exc_info=True)
+
+    def _persist_order_request_failure(self, intent: OrderIntent, exc: Exception, *, account_id: str | None = None) -> None:
+        resolved_account_id = account_id or "default"
+        try:
+            self._repo.upsert_execution_order_request_from_intent(
+                intent,
+                account_id=resolved_account_id,
+                status=OrderStatus.REJECTED,
+                failure_reason=str(exc)[:500],
+            )
+        except Exception:
+            LOGGER.debug("Persistance rejet request watcher impossible pour %s", intent.intent_id, exc_info=True)
+
+    @staticmethod
+    def _is_protection_rejection_likely_due_to_open_exit(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return any(token in message for token in ("403", "forbidden", "insufficient", "available", "oversell", "wash"))
+
+    @staticmethod
+    def _build_existing_child_intent(parent: OrderIntent, child_order: BrokerOrder, role: str) -> OrderIntent:
+        return OrderIntent(
+            intent_id=child_order.intent_id,
+            risk_run_id=parent.risk_run_id,
+            exec_run_id=parent.exec_run_id,
+            symbol=child_order.symbol or parent.symbol,
+            side=child_order.side or "sell",
+            qty=child_order.qty,
+            order_type=child_order.order_type,
+            limit_price=child_order.limit_price,
+            trail_percent=child_order.trail_percent,
+            broker_mode=parent.broker_mode,
+            parent_intent_id=parent.intent_id,
+            intent_role=role,
+            idempotency_key=f"watch-existing-child-{child_order.intent_id}",
+            decision_price=parent.decision_price,
+            stop_price=child_order.stop_price,
+            submission_key=child_order.client_order_id or None,
+        )
+
+    def _cancel_existing_take_profit_children(
+        self,
+        parent_intent: OrderIntent,
+        broker: BrokerAdapter,
+        *,
+        account_id: str | None,
+    ) -> int:
+        try:
+            open_children = self._repo.load_open_child_orders(parent_intent.intent_id)
+        except Exception:
+            LOGGER.debug("Lecture TP existants impossible pour %s", parent_intent.intent_id, exc_info=True)
+            return 0
+
+        canceled_count = 0
+        for child_order in open_children:
+            if child_order.order_type != "limit":
+                continue
+            if not child_order.broker_order_id:
+                continue
+            child_intent = self._build_existing_child_intent(parent_intent, child_order, IntentRole.TAKE_PROFIT)
+            try:
+                if not broker.cancel_broker_order(child_order.broker_order_id):
+                    continue
+                try:
+                    latest_order = broker.poll_order_status(child_order.broker_order_id, child_order.intent_id)
+                except Exception:
+                    latest_order = replace(child_order, status=OrderStatus.CANCELED, updated_at=datetime.now())
+                if latest_order.status != OrderStatus.CANCELED:
+                    latest_order = replace(latest_order, status=OrderStatus.CANCELED, updated_at=datetime.now())
+                self._persist_order_state(child_intent, latest_order, account_id=account_id)
+                canceled_count += 1
+            except Exception:
+                LOGGER.warning(
+                    "Watcher : annulation TP existant échouée pour %s (%s)",
+                    parent_intent.symbol,
+                    child_order.broker_order_id,
+                    exc_info=True,
+                )
+        return canceled_count
 
     @staticmethod
     def _build_parent_intent(item: ProtectionWatchItem, stop_order: BrokerOrder) -> OrderIntent:
@@ -464,38 +656,112 @@ class ProtectionTransitionWatcher:
             parent_intent, fill_qty, fill_price, config, target=None
         )
 
-        armed_any = False
-        for child in [tp_intent, protection_intent]:
+        has_open_take_profit = bool(row.get("has_open_take_profit"))
+        has_open_protection = bool(row.get("has_open_protection"))
+        if has_open_take_profit and has_open_protection:
+            return
+
+        submitted_any = False
+        protection_available = has_open_protection
+        submit_failures = 0
+        last_submit_error: Exception | None = None
+
+        def _submit_child(child: OrderIntent) -> bool:
+            nonlocal submitted_any, protection_available, submit_failures, last_submit_error
             try:
                 child_order = broker.submit_intent(child)
                 self._persist_order_state(child, child_order, account_id=account_id)
-                armed_any = True
+                submitted_any = True
+                last_submit_error = None
+                if child.intent_role in {IntentRole.INITIAL_STOP, IntentRole.TRAILING_STOP}:
+                    protection_available = True
+                return True
             except Exception as exc:
+                submit_failures += 1
+                last_submit_error = exc
+                self._persist_order_request_failure(child, exc, account_id=account_id)
                 LOGGER.warning(
                     "Watcher : échec submit %s pour %s : %s",
                     child.intent_role, symbol, exc,
                 )
-                if child.intent_role == IntentRole.INITIAL_STOP:
+                return False
+
+        if not has_open_protection:
+            protection_error: Exception | None = None
+            if not _submit_child(protection_intent):
+                protection_error = last_submit_error
+                if protection_intent.intent_role == IntentRole.INITIAL_STOP:
                     fallback = build_trailing_stop_intent(
                         parent_intent, fill_qty, fill_price, config, target=None
                     )
                     try:
                         fallback_order = broker.submit_intent(fallback)
                         self._persist_order_state(fallback, fallback_order, account_id=account_id)
-                        armed_any = True
+                        submitted_any = True
+                        protection_available = True
                     except Exception as fb_exc:
-                        LOGGER.warning(
-                            "Watcher : fallback trailing échoué pour %s : %s", symbol, fb_exc,
-                        )
+                        submit_failures += 1
+                        protection_error = fb_exc
+                        self._persist_order_request_failure(fallback, fb_exc, account_id=account_id)
+                        LOGGER.warning("Watcher : fallback trailing échoué pour %s : %s", symbol, fb_exc)
 
-        if armed_any:
+            if not protection_available and has_open_take_profit and protection_error is not None:
+                canceled_tps = 0
+                if self._is_protection_rejection_likely_due_to_open_exit(protection_error):
+                    canceled_tps = self._cancel_existing_take_profit_children(
+                        parent_intent,
+                        broker,
+                        account_id=account_id,
+                    )
+                if canceled_tps > 0:
+                    LOGGER.warning(
+                        "Watcher : %s TP existant(s) annulé(s) pour prioriser le SL sur %s ; nouvelle tentative protection.",
+                        canceled_tps,
+                        symbol,
+                    )
+                    if not _submit_child(protection_intent) and protection_intent.intent_role == IntentRole.INITIAL_STOP:
+                        fallback = build_trailing_stop_intent(parent_intent, fill_qty, fill_price, config, target=None)
+                        try:
+                            fallback_order = broker.submit_intent(fallback)
+                            self._persist_order_state(fallback, fallback_order, account_id=account_id)
+                            submitted_any = True
+                            protection_available = True
+                        except Exception as fb_exc:
+                            submit_failures += 1
+                            self._persist_order_request_failure(fallback, fb_exc, account_id=account_id)
+                            LOGGER.warning("Watcher : fallback trailing après annulation TP échoué pour %s : %s", symbol, fb_exc)
+
+        if not protection_available:
+            metrics["armed_missing_protections_failed"] = (
+                int(metrics.get("armed_missing_protections_failed", 0) or 0) + 1
+            )
+            self._persist_event(make_event(
+                str(row["exec_run_id"]),
+                EventType.PROTECTION_TRANSITION_FAILED,
+                f"Watcher : protection manquante non armée pour {symbol}",
+                symbol=symbol,
+                intent_id=parent_intent.intent_id,
+                payload={
+                    "fill_qty": fill_qty,
+                    "fill_price": fill_price,
+                    "submit_failures": submit_failures,
+                    "has_open_take_profit": has_open_take_profit,
+                    "trigger": "watcher_orphan_buy_safety_net" if use_manual_buy_stop else "watcher_safety_net",
+                },
+            ))
+            return
+
+        if not has_open_take_profit:
+            _submit_child(tp_intent)
+
+        if submitted_any:
             metrics["armed_missing_protections"] = (
                 int(metrics.get("armed_missing_protections", 0) or 0) + 1
             )
             self._persist_event(make_event(
                 str(row["exec_run_id"]),
                 EventType.CHILDREN_SUBMITTED,
-                f"Watcher : TP/SL armés (filet S26) pour {symbol}",
+                f"Watcher : protection armée (filet S26) pour {symbol}",
                 symbol=symbol,
                 intent_id=parent_intent.intent_id,
                 payload={
@@ -505,6 +771,8 @@ class ProtectionTransitionWatcher:
                     "take_profit_limit_price": tp_intent.limit_price,
                     "initial_stop_price": stop_intent.stop_price if stop_intent is not None else None,
                     "manual_buy_stop_loss_pct": config.manual_buy_stop_loss_pct if use_manual_buy_stop else None,
+                    "submit_failures": submit_failures,
+                    "protection_available": protection_available,
                 },
             ))
         else:
@@ -691,6 +959,10 @@ class ProtectionWatcherService:
             "skipped_existing_trailing": 0,
             "cancel_failed_items": 0,
             "submit_failed_items": 0,
+            "armed_missing_protections": 0,
+            "armed_missing_protections_failed": 0,
+            "adopted_orphan_buys": 0,
+            "adopted_orphan_buys_failed": 0,
             "last_heartbeat_at": started_at.isoformat(timespec="seconds"),
             "last_cycle_at": None,
             "last_cycle_had_work": False,
@@ -749,7 +1021,7 @@ class ProtectionWatcherService:
                     continue
 
                 cycle_metrics = self._aggregate_cycle_summaries(summaries)
-                has_work = cycle_metrics["watched_items"] > 0
+                has_work = any(value > 0 for value in cycle_metrics.values())
                 cycle_finished_at = datetime.now()
                 if has_work:
                     metrics["cycles_with_work"] += 1
@@ -845,6 +1117,10 @@ class ProtectionWatcherService:
             "skipped_existing_trailing": 0,
             "cancel_failed_items": 0,
             "submit_failed_items": 0,
+            "armed_missing_protections": 0,
+            "armed_missing_protections_failed": 0,
+            "adopted_orphan_buys": 0,
+            "adopted_orphan_buys_failed": 0,
         }
         for summary in summaries:
             for key in aggregate:
@@ -990,7 +1266,12 @@ def main(argv: list[str] | None = None) -> None:
         return BrokerAdapter(client, config)
 
     repo = ExecutionRepository()
-    watcher = ProtectionTransitionWatcher(repo, broker_factory=broker_factory, config_factory=config_factory)
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=broker_factory,
+        config_factory=config_factory,
+        default_broker_mode=args.broker_mode,
+    )
     if args.mode == "service":
         service = ProtectionWatcherService(
             watcher,

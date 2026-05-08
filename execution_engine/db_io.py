@@ -435,6 +435,18 @@ class ExecutionRepository:
             row = conn.execute(stmt, {"account_id": account_id, "snapshot_kind": snapshot_kind}).mappings().first()
         return dict(row) if row is not None else None
 
+    def load_execution_run_context(self, *, exec_run_id: str) -> dict[str, Any] | None:
+        stmt = text("""
+            SELECT exec_run_id, risk_run_id, trade_date, broker_mode, status, account_id,
+                   execution_profile, submission_window, started_at, completed_at
+            FROM execution_runs
+            WHERE exec_run_id = :exec_run_id
+            LIMIT 1
+        """)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt, {"exec_run_id": exec_run_id}).mappings().first()
+        return dict(row) if row is not None else None
+
     def load_open_child_orders(self, parent_intent_id: str) -> list[BrokerOrder]:
         v2_query = text("""
             SELECT COALESCE(bo.broker_order_id, '') AS broker_order_id,
@@ -473,6 +485,9 @@ class ExecutionRepository:
     # PARTIALLY_FILLED) qui n'ont AUCUN take-profit ni AUCUN stop encore
     # ouvert chez le broker. L'executor + le watcher consomment cette liste
     # pour armer les enfants manquants ("synthetic bracket post-fill").
+    # Inclut aussi les ``adopted_entry`` issus d'achats manuels adoptés : si
+    # le premier armement TP/SL échoue, le watcher doit pouvoir réessayer au
+    # tick suivant / au run suivant.
     def load_unprotected_filled_parents(
         self,
         *,
@@ -486,9 +501,34 @@ class ExecutionRepository:
                 parent_req.exec_run_id         AS exec_run_id,
                 parent_req.risk_run_id         AS risk_run_id,
                 parent_req.account_id          AS account_id,
-                er.broker_mode                 AS broker_mode,
+                COALESCE(er.broker_mode, 'paper') AS broker_mode,
                 parent_req.symbol              AS symbol,
                 parent_req.side                AS side,
+                parent_req.intent_role         AS parent_intent_role,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM execution_order_requests c
+                        LEFT JOIN execution_broker_orders co
+                               ON co.request_id = c.request_id
+                        WHERE c.parent_request_id = parent_req.request_id
+                          AND c.intent_role = 'take_profit'
+                          AND COALESCE(co.normalized_status, c.status)
+                              NOT IN ('CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+                    ) THEN 1 ELSE 0
+                END AS has_open_take_profit,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM execution_order_requests c
+                        LEFT JOIN execution_broker_orders co
+                               ON co.request_id = c.request_id
+                        WHERE c.parent_request_id = parent_req.request_id
+                          AND c.intent_role IN ('initial_stop', 'trailing_stop')
+                          AND COALESCE(co.normalized_status, c.status)
+                              NOT IN ('CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+                    ) THEN 1 ELSE 0
+                END AS has_open_protection,
                 parent_req.target_qty          AS target_qty,
                 parent_req.order_type          AS order_type,
                 parent_req.limit_price         AS limit_price,
@@ -497,18 +537,22 @@ class ExecutionRepository:
                 parent_req.submission_key      AS submission_key,
                 parent_obs.broker_order_id     AS parent_broker_order_id,
                 COALESCE(
+                    current_pos.qty,
+                    parent_open_lots.open_remaining_qty,
                     parent_fill.total_filled_qty,
                     parent_obs.filled_qty,
                     0
                 ) AS fill_qty,
                 COALESCE(
+                    current_pos.avg_entry_price,
+                    parent_open_lots.open_avg_entry_price,
                     parent_fill.weighted_avg_fill_price,
                     parent_obs.avg_fill_price,
                     parent_req.decision_price
                 ) AS fill_price
             FROM execution_order_requests parent_req
-            INNER JOIN execution_runs er
-                    ON er.exec_run_id = parent_req.exec_run_id
+            LEFT JOIN execution_runs er
+                   ON er.exec_run_id = parent_req.exec_run_id
             LEFT JOIN execution_broker_orders parent_obs
                    ON parent_obs.request_id = parent_req.request_id
             LEFT JOIN (
@@ -523,30 +567,73 @@ class ExecutionRepository:
                 GROUP BY request_id
             ) parent_fill
                    ON parent_fill.request_id = parent_req.request_id
-            WHERE parent_req.intent_role = 'entry'
+            LEFT JOIN (
+                SELECT
+                    account_id,
+                    open_request_id AS request_id,
+                    SUM(CASE WHEN lot_status = 'OPEN' THEN remaining_qty ELSE 0 END) AS open_remaining_qty,
+                    CASE
+                        WHEN SUM(CASE WHEN lot_status = 'OPEN' THEN remaining_qty ELSE 0 END) > 0
+                            THEN SUM(CASE WHEN lot_status = 'OPEN' THEN remaining_qty * entry_price ELSE 0 END)
+                                 / SUM(CASE WHEN lot_status = 'OPEN' THEN remaining_qty ELSE 0 END)
+                        ELSE NULL
+                    END AS open_avg_entry_price,
+                    COUNT(*) AS total_lot_count
+                FROM execution_position_lots
+                GROUP BY account_id, open_request_id
+            ) parent_open_lots
+                   ON parent_open_lots.account_id = parent_req.account_id
+                  AND parent_open_lots.request_id = parent_req.request_id
+            LEFT JOIN (
+                SELECT account_id, MAX(created_at) AS latest_at
+                FROM broker_positions_snapshots
+                GROUP BY account_id
+            ) latest_account_snapshot
+                   ON latest_account_snapshot.account_id = parent_req.account_id
+            LEFT JOIN broker_positions_snapshots current_pos
+                   ON current_pos.account_id = parent_req.account_id
+                  AND current_pos.symbol = parent_req.symbol
+                  AND current_pos.created_at = latest_account_snapshot.latest_at
+            WHERE parent_req.intent_role IN ('entry', 'adopted_entry')
               AND parent_req.side = 'buy'
               AND COALESCE(parent_obs.normalized_status, parent_req.status)
                   IN ('FILLED', 'PARTIALLY_FILLED')
-              AND COALESCE(parent_fill.total_filled_qty, parent_obs.filled_qty, 0) > 0
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM execution_order_requests c
-                  LEFT JOIN execution_broker_orders co
-                         ON co.request_id = c.request_id
-                  WHERE c.parent_request_id = parent_req.request_id
-                    AND c.intent_role = 'take_profit'
-                    AND COALESCE(co.normalized_status, c.status)
-                        NOT IN ('CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+              AND COALESCE(
+                    current_pos.qty,
+                    parent_open_lots.open_remaining_qty,
+                    parent_fill.total_filled_qty,
+                    parent_obs.filled_qty,
+                    0
+                  ) > 0
+              AND (
+                    latest_account_snapshot.latest_at IS NULL
+                 OR COALESCE(current_pos.qty, 0) > 0
               )
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM execution_order_requests c
-                  LEFT JOIN execution_broker_orders co
-                         ON co.request_id = c.request_id
-                  WHERE c.parent_request_id = parent_req.request_id
-                    AND c.intent_role IN ('initial_stop', 'trailing_stop')
-                    AND COALESCE(co.normalized_status, c.status)
-                        NOT IN ('CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+              AND (
+                    COALESCE(parent_open_lots.total_lot_count, 0) = 0
+                 OR COALESCE(parent_open_lots.open_remaining_qty, 0) > 0
+              )
+              AND (
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM execution_order_requests c
+                        LEFT JOIN execution_broker_orders co
+                               ON co.request_id = c.request_id
+                        WHERE c.parent_request_id = parent_req.request_id
+                          AND c.intent_role = 'take_profit'
+                          AND COALESCE(co.normalized_status, c.status)
+                              NOT IN ('CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+                    )
+                 OR NOT EXISTS (
+                        SELECT 1
+                        FROM execution_order_requests c
+                        LEFT JOIN execution_broker_orders co
+                               ON co.request_id = c.request_id
+                        WHERE c.parent_request_id = parent_req.request_id
+                          AND c.intent_role IN ('initial_stop', 'trailing_stop')
+                          AND COALESCE(co.normalized_status, c.status)
+                              NOT IN ('CANCELED', 'REJECTED', 'FAILED', 'EXPIRED')
+                    )
               )
               AND (:exec_run_id IS NULL OR parent_req.exec_run_id = :exec_run_id)
               AND (:account_id IS NULL OR parent_req.account_id = :account_id)

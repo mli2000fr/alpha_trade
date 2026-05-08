@@ -57,12 +57,23 @@ def test_launch_watcher_once_uses_managed_run(monkeypatch) -> None:
 
     monkeypatch.setattr(watcher_runtime, "start_managed_run", fake_start_managed_run)
 
-    record = watcher_runtime.launch_watcher_once(db_config={"host": "localhost"}, account_id="acct-1", limit=12)
+    record = watcher_runtime.launch_watcher_once(
+        db_config={"host": "localhost"},
+        account_id="acct-1",
+        limit=12,
+        profit_taker_pct=0.07,
+        trailing_stop_pct=0.04,
+        trailing_activation_trigger="profit_pct",
+        trailing_activation_profit_pct=0.02,
+    )
 
     assert record.run_id == "watch-once-1"
     assert captured["step_key"] == watcher_runtime.WATCHER_ONCE_STEP_KEY
     assert captured["account_id"] == "acct-1"
     assert "once" in captured["command"]
+    assert captured["command"][captured["command"].index("--profit-taker-pct") + 1] == "0.07"
+    assert captured["command"][captured["command"].index("--trailing-stop-pct") + 1] == "0.04"
+    assert captured["command"][captured["command"].index("--trailing-activation-trigger") + 1] == "profit_pct"
 
 
 def test_start_local_watcher_service_rejects_existing_local_service(monkeypatch) -> None:
@@ -125,14 +136,20 @@ def test_restart_local_watcher_service_stops_then_starts(monkeypatch) -> None:
 
     def fake_start_local_watcher_service(**kwargs):
         calls.append(("start", kwargs["account_id"]))
+        calls.append(("manual_sl", kwargs["manual_buy_stop_loss_pct"]))
+        calls.append(("profit_taker", kwargs["profit_taker_pct"]))
         return _Record("svc-2")
 
     monkeypatch.setattr(watcher_runtime, "start_local_watcher_service", fake_start_local_watcher_service)
 
-    record = watcher_runtime.restart_local_watcher_service(account_id="acct-1")
+    record = watcher_runtime.restart_local_watcher_service(
+        account_id="acct-1",
+        manual_buy_stop_loss_pct=0.06,
+        profit_taker_pct=0.09,
+    )
 
     assert record.run_id == "svc-2"
-    assert calls == [("stop", "svc-1"), ("start", "acct-1")]
+    assert calls == [("stop", "svc-1"), ("start", "acct-1"), ("manual_sl", 0.06), ("profit_taker", 0.09)]
 
 
 
