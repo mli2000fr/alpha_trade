@@ -28,7 +28,7 @@ param(
 
     [Parameter()]
     [ValidateSet('alpaca', 'finnhub')]
-    [string]$NewsProvider = 'finnhub',
+    [string]$NewsProvider = 'alpaca',
 
     [Parameter()]
     [ValidateSet('provider_default', 'strict', 'scored')]

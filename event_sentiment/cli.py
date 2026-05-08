@@ -98,7 +98,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="alpaca",
         help=(
             "Source de news utilisée pour l'ingestion. Par défaut 'alpaca' "
-            "(rétro-compatibilité). L'IHM force explicitement 'finnhub'."
+            "(rétro-compatibilité), y compris côté IHM."
         ),
     )
     parser.add_argument(

@@ -26,7 +26,6 @@ import pytest
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 
 from ihm.pages import _execution_center
-from ihm.pages._shared import PipelineLaunchOptions
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -99,9 +98,12 @@ def test_render_event_sentiment_block_returns_expected_keys() -> None:
     """Smoke : helper Event Sentiment renvoie le dict attendu sous AppTest."""
 
     def _runner() -> None:
+        import streamlit as st
+
         from ihm.pages._execution_center import _render_event_sentiment_block
 
         result = _render_event_sentiment_block()
+        st.session_state["__test_sentiment_news_provider"] = result["sentiment_news_provider"]
         assert set(result) == {
             "sentiment_start_utc",
             "sentiment_end_utc",
@@ -109,10 +111,19 @@ def test_render_event_sentiment_block_returns_expected_keys() -> None:
             "sentiment_news_provider",
             "sentiment_ticker_relevance_mode",
             "sentiment_min_relevance_score",
+            "sentiment_enable_contextual_scoring",
+            "sentiment_contextual_min_relevance",
+            "sentiment_contextual_max_pairs",
+            "backfill_relevance_dry_run",
+            "backfill_relevance_rescore_all",
+            "backfill_relevance_rescore_contextual",
+            "backfill_relevance_batch_size",
+            "backfill_relevance_purge_below",
         }
 
     at = AppTest.from_function(_runner).run(timeout=10)
     assert not at.exception, f"Exception remontée par AppTest : {at.exception}"
+    assert at.session_state["__test_sentiment_news_provider"] == "alpaca"
 
 
 @pytest.mark.e2e
@@ -209,6 +220,7 @@ def test_build_launch_options_returns_default_swing_options_under_apptest() -> N
         st.session_state["__test_options_account_type"] = options.execution_account_type
         st.session_state["__test_options_pdt_rule"] = options.execution_pdt_rule
         st.session_state["__test_options_swing_only"] = bool(options.execution_swing_only)
+        st.session_state["__test_options_sentiment_news_provider"] = options.sentiment_news_provider
         st.session_state["__test_live_confirmed"] = bool(live_confirmed)
 
     at = AppTest.from_function(_runner).run(timeout=20)
@@ -219,6 +231,7 @@ def test_build_launch_options_returns_default_swing_options_under_apptest() -> N
     assert at.session_state["__test_options_account_type"] == "cash"
     assert at.session_state["__test_options_pdt_rule"] == "off"
     assert at.session_state["__test_options_swing_only"] is True
+    assert at.session_state["__test_options_sentiment_news_provider"] == "alpaca"
     # Live confirmation court-circuit en non-live ⇒ True.
     assert at.session_state["__test_live_confirmed"] is True
 

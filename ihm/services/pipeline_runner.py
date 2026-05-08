@@ -315,7 +315,7 @@ class PipelineLaunchOptions:
     sentiment_start_utc: str | None = None
     sentiment_end_utc: str | None = None
     sentiment_symbols: str | None = None
-    sentiment_news_provider: Literal["finnhub", "alpaca"] = "finnhub"
+    sentiment_news_provider: Literal["alpaca", "finnhub"] = "alpaca"
     sentiment_ticker_relevance_mode: Literal["provider_default", "strict", "scored"] = "provider_default"
     sentiment_min_relevance_score: float | None = None
     sentiment_enable_contextual_scoring: bool = False
@@ -736,7 +736,7 @@ def _extend_event_sentiment_cli_args(
 ) -> None:
     """Ajoute les flags supportés par les CLIs Python Event Sentiment."""
 
-    news_provider = options.sentiment_news_provider or "finnhub"
+    news_provider = options.sentiment_news_provider or "alpaca"
     command.extend(["--news-provider", news_provider])
 
     if (
@@ -786,7 +786,7 @@ def _extend_event_sentiment_powershell_args(
 ) -> None:
     """Ajoute les paramètres Event Sentiment pour les wrappers PowerShell."""
 
-    news_provider = options.sentiment_news_provider or "finnhub"
+    news_provider = options.sentiment_news_provider or "alpaca"
     command_args.extend(["-NewsProvider", news_provider])
 
     if (

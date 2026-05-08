@@ -594,12 +594,12 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         ).strip().upper()
 
     provider_col, mode_col = st.columns(2)
-    _provider_options = ("finnhub", "alpaca")
+    _provider_options = ("alpaca", "finnhub")
     _current_provider = str(
-        st.session_state.get("pipeline_sentiment_news_provider", "finnhub")
+        st.session_state.get("pipeline_sentiment_news_provider", "alpaca")
     ).strip().lower()
     if _current_provider not in _provider_options:
-        _current_provider = "finnhub"
+        _current_provider = "alpaca"
     with provider_col:
         sentiment_news_provider = str(
             st.selectbox(
@@ -609,7 +609,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 key="pipeline_sentiment_news_provider",
                 help=(
                     "Provider news utilisé par `python -m event_sentiment`. "
-                    "Défaut produit : Finnhub. Bascule possible vers Alpaca "
+                    "Défaut produit : Alpaca. Bascule possible vers Finnhub "
                     "sans migration DB (les checkpoints sont séparés par source)."
                 ),
             )
@@ -665,7 +665,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 "Activer le scoring contextuel par couple (article, symbole)",
                 value=bool(
                     st.session_state.get(
-                        "pipeline_sentiment_enable_contextual_scoring", False
+                        "pipeline_sentiment_enable_contextual_scoring", True
                     )
                 ),
                 key="pipeline_sentiment_enable_contextual_scoring",
@@ -3118,7 +3118,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             sentiment_start_utc=sentiment_start_utc or None,
             sentiment_end_utc=sentiment_end_utc or None,
             sentiment_symbols=sentiment_symbols or None,
-            sentiment_news_provider=sentiment_news_provider or "finnhub",
+            sentiment_news_provider=sentiment_news_provider or "alpaca",
             sentiment_ticker_relevance_mode=sentiment_ticker_relevance_mode or "provider_default",
             sentiment_min_relevance_score=float(sentiment_min_relevance_score) if sentiment_min_relevance_score else None,
             sentiment_enable_contextual_scoring=bool(sentiment_enable_contextual_scoring),
