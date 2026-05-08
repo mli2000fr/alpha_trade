@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
+from typing import Any
 
 from ihm.components.watcher_documentation import render_watcher_documentation_panel
 from ihm.services.pipeline_runner import (
@@ -17,8 +18,12 @@ from ihm.services.watcher_runtime import (
     build_watcher_command,
     build_windows_integration_rows,
     launch_watcher_once,
+    launch_watcher_once_for_all_accounts,
+    list_alpaca_account_ids,
+    serialize_all_accounts_watcher_control_state,
     serialize_local_watcher_control_state,
     start_local_watcher_service,
+    start_local_watcher_service_for_all_accounts,
     stop_local_watcher_service,
 )
 
@@ -159,21 +164,83 @@ def _render_watcher_launch_controls(options: PipelineLaunchOptions) -> None:
     if status_bits:
         st.info(" · ".join(status_bits))
 
+    # Issue 1 (2026-05) — Option « Tous les comptes Alpaca » : si cochée, le
+    # bouton « Run watcher once » et « Démarrer service local IHM » bouclent
+    # sur tous les comptes déclarés (config.yaml + env vars) et lancent un
+    # processus watcher par compte. Chaque compte conserve son verrou leader
+    # propre et ses propres logs (Supervision Ops).
+    available_account_ids: list[str] = []
+    try:
+        available_account_ids = list_alpaca_account_ids()
+    except Exception:  # pragma: no cover - défense IHM
+        available_account_ids = []
+    multi_account_supported = len(available_account_ids) > 1
+    multi_account_enabled = False
+    multi_account_state: dict[str, Any] = {}
+    if multi_account_supported:
+        multi_account_enabled = st.checkbox(
+            f"🌐 Tous les comptes Alpaca ({len(available_account_ids)} : "
+            f"{', '.join(available_account_ids)})",
+            value=False,
+            key="pipeline_watcher_multi_account_toggle",
+            help=(
+                "Quand cochée, lance un processus watcher par compte Alpaca déclaré. "
+                "Chaque compte garde son propre verrou leader et ses propres logs. "
+                "Les comptes ayant déjà un watcher actif sont ignorés."
+            ),
+        )
+        if multi_account_enabled:
+            try:
+                multi_account_state = serialize_all_accounts_watcher_control_state()
+            except Exception as exc:  # pragma: no cover - défense IHM
+                st.warning(f"État multi-comptes indisponible : {exc}")
+                multi_account_state = {}
+            any_active = bool(
+                multi_account_state.get("any_service_active")
+                or multi_account_state.get("any_once_active")
+            )
+            if any_active:
+                active_lines: list[str] = []
+                for aid, st_account in (multi_account_state.get("accounts") or {}).items():
+                    if st_account.get("local_service_active"):
+                        active_lines.append(
+                            f"• `{aid}` : service local actif "
+                            f"(`{st_account.get('local_service_run_id', '?')}`)"
+                        )
+                    elif st_account.get("local_once_active"):
+                        active_lines.append(
+                            f"• `{aid}` : run once en cours "
+                            f"(`{st_account.get('local_once_run_id', '?')}`)"
+                        )
+                if active_lines:
+                    st.caption(
+                        "Comptes déjà couverts (ils seront ignorés au prochain lancement) :\n"
+                        + "\n".join(active_lines)
+                    )
+
     action_cols = st.columns(3)
     run_once_clicked = action_cols[0].button(
         "▶️ Run watcher once",
         type="primary",
         use_container_width=True,
-        disabled=once_busy or service_active,
+        disabled=(once_busy or service_active) and not multi_account_enabled,
         key="pipeline_watcher_run_once_btn",
-        help="Exécute un scan unique du watcher de protections pour le compte sélectionné.",
+        help=(
+            "Exécute un scan unique du watcher de protections "
+            + ("pour tous les comptes Alpaca déclarés." if multi_account_enabled
+               else "pour le compte sélectionné.")
+        ),
     )
     service_clicked = action_cols[1].button(
         "🔁 Démarrer service local",
         use_container_width=True,
-        disabled=once_busy or service_active,
+        disabled=(once_busy or service_active) and not multi_account_enabled,
         key="pipeline_watcher_service_start_btn",
-        help="Démarre un service local IHM (boucle continue) pour surveiller les protections.",
+        help=(
+            "Démarre un service local IHM (boucle continue) "
+            + ("par compte Alpaca déclaré." if multi_account_enabled
+               else "pour le compte sélectionné.")
+        ),
     )
     stop_clicked = action_cols[2].button(
         "⏹️ Stop service local",
@@ -188,42 +255,60 @@ def _render_watcher_launch_controls(options: PipelineLaunchOptions) -> None:
     if broker_mode not in {"paper", "live"}:
         broker_mode = "paper"
 
+    common_watcher_kwargs: dict[str, Any] = dict(
+        broker_mode=broker_mode,
+        profit_taker_pct=float(getattr(options, "execution_take_profit_pct", 0.08) or 0.08),
+        trailing_stop_pct=float(getattr(options, "execution_trailing_stop_pct", 0.05) or 0.05),
+        manual_buy_stop_loss_pct=float(getattr(options, "execution_manual_buy_stop_loss_pct", 0.05) or 0.05),
+        trailing_activation_trigger=str(getattr(options, "execution_trailing_trigger", "multiple_r") or "multiple_r"),
+        trailing_activation_r_multiple=float(getattr(options, "execution_trailing_r_multiple", 1.0) or 1.0),
+        trailing_activation_profit_pct=float(getattr(options, "execution_trailing_profit_pct", 0.03) or 0.03),
+    )
+
     if run_once_clicked:
         try:
-            record = launch_watcher_once(
-                db_config=db_config,
-                account_id=account_id,
-                broker_mode=broker_mode,
-                profit_taker_pct=float(getattr(options, "execution_take_profit_pct", 0.08) or 0.08),
-                trailing_stop_pct=float(getattr(options, "execution_trailing_stop_pct", 0.05) or 0.05),
-                manual_buy_stop_loss_pct=float(getattr(options, "execution_manual_buy_stop_loss_pct", 0.05) or 0.05),
-                trailing_activation_trigger=str(getattr(options, "execution_trailing_trigger", "multiple_r") or "multiple_r"),
-                trailing_activation_r_multiple=float(getattr(options, "execution_trailing_r_multiple", 1.0) or 1.0),
-                trailing_activation_profit_pct=float(getattr(options, "execution_trailing_profit_pct", 0.03) or 0.03),
-            )
+            if multi_account_enabled:
+                records = launch_watcher_once_for_all_accounts(
+                    db_config=db_config, **common_watcher_kwargs,
+                )
+            else:
+                records = [launch_watcher_once(
+                    db_config=db_config, account_id=account_id, **common_watcher_kwargs,
+                )]
         except RuntimeError as exc:
             st.warning(str(exc))
         else:
-            st.success(f"Watcher once lancé en arrière-plan : `{record.run_id}`")
+            if multi_account_enabled:
+                st.success(
+                    "Watcher once lancé pour "
+                    f"{len(records)} compte(s) : "
+                    + ", ".join(f"`{r.account_id or '?'}`→`{r.run_id}`" for r in records)
+                )
+            else:
+                st.success(f"Watcher once lancé en arrière-plan : `{records[0].run_id}`")
             st.rerun()
 
     if service_clicked:
         try:
-            record = start_local_watcher_service(
-                db_config=db_config,
-                account_id=account_id,
-                broker_mode=broker_mode,
-                profit_taker_pct=float(getattr(options, "execution_take_profit_pct", 0.08) or 0.08),
-                trailing_stop_pct=float(getattr(options, "execution_trailing_stop_pct", 0.05) or 0.05),
-                manual_buy_stop_loss_pct=float(getattr(options, "execution_manual_buy_stop_loss_pct", 0.05) or 0.05),
-                trailing_activation_trigger=str(getattr(options, "execution_trailing_trigger", "multiple_r") or "multiple_r"),
-                trailing_activation_r_multiple=float(getattr(options, "execution_trailing_r_multiple", 1.0) or 1.0),
-                trailing_activation_profit_pct=float(getattr(options, "execution_trailing_profit_pct", 0.03) or 0.03),
-            )
+            if multi_account_enabled:
+                records = start_local_watcher_service_for_all_accounts(
+                    db_config=db_config, **common_watcher_kwargs,
+                )
+            else:
+                records = [start_local_watcher_service(
+                    db_config=db_config, account_id=account_id, **common_watcher_kwargs,
+                )]
         except RuntimeError as exc:
             st.warning(str(exc))
         else:
-            st.success(f"Service watcher local IHM lancé : `{record.run_id}`")
+            if multi_account_enabled:
+                st.success(
+                    "Service watcher local IHM démarré pour "
+                    f"{len(records)} compte(s) : "
+                    + ", ".join(f"`{r.account_id or '?'}`→`{r.run_id}`" for r in records)
+                )
+            else:
+                st.success(f"Service watcher local IHM lancé : `{records[0].run_id}`")
             st.rerun()
 
     if stop_clicked:

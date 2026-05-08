@@ -99,6 +99,40 @@ Le watcher prend le relais **après** `Execution` pour :
 
 Le watcher ne sert donc pas à "faire partir" l'ordre d'entrée. Il sert à **gérer intelligemment la vie de la protection après exécution** et à **garantir que toute position remplie a bien TP + SL**.
 
+#### 2.2.bis Sémantique de l'armement des protections (sprint 2026-05)
+
+À chaque cycle, pour chaque position FILLED côté broker, le watcher décide
+selon **l'état réel chez Alpaca** :
+
+| TP ouvert | SL ouvert | Action du watcher |
+|-----------|-----------|-------------------|
+| ✅ oui    | ✅ oui    | **Aucune** — le watcher ne touche à rien (Issue 2). Cas typique : position achetée hors application avec TP/SL déjà posés manuellement. |
+| ✅ oui    | ❌ non    | **Annule le TP existant**, puis pose les **deux** jambes via un ordre OCO atomique (Issue 3). Garantit qty cohérente et lien OCO. |
+| ❌ non    | ✅ oui    | **Annule le SL existant**, puis pose les **deux** jambes via un ordre OCO atomique (Issue 3). |
+| ❌ non    | ❌ non    | Pose les **deux** jambes via un ordre OCO atomique (cas natif post-`Execution`). |
+
+Notes :
+
+- **Pourquoi annuler+OCO plutôt que compléter la jambe manquante ?** Un
+  submit séquentiel d'un seul leg (`stop` ou `limit`) déclenche fréquemment
+  un `403 insufficient qty` chez Alpaca car le leg existant a déjà réservé
+  la qty de la position. L'OCO repose les deux jambes en une seule
+  commande, atomiquement, sur la qty exacte de la position broker.
+- **Si l'annulation de la jambe existante échoue**, le watcher **n'envoie
+  pas d'OCO concurrent** (qui se ferait rejeter en 422) et retentera au
+  prochain cycle — pas de boucle bruyante.
+- **Si l'OCO est rejeté en 422 `Unprocessable Entity`** (cas typique : prix
+  TP devenu inférieur au cours courant ou SL devenu supérieur au cours
+  courant), le watcher logge l'événement `PROTECTION_TRANSITION_FAILED`
+  avec `reason="unprocessable_oco"` et **n'enchaîne pas** un fallback
+  séquentiel (qui serait rejeté pour la même raison). Le marché peut
+  bouger d'ici le prochain cycle ; si le rejet persiste, il faut intervenir
+  manuellement (ex. ajuster `profit_taker_pct` ou `manual_buy_stop_loss_pct`).
+- **Si la position a été soldée hors application** entre deux cycles, le
+  watcher détecte un `403 forbidden / insufficient` lors du submit, vérifie
+  que la position est bien à 0 chez Alpaca et reconcilie en annulant les
+  enfants orphelins (`reconciliation_position_closed`).
+
 ### 2.3 Si je ne lance pas le watcher, les ordres seront-ils exécutés ?
 
 **Oui pour les entrées, mais attention pour les protections.**
@@ -199,6 +233,28 @@ Dans `Supervision Ops`, l'opérateur peut :
 - démarrer / arrêter / relancer un service local IHM ;
 - suivre les logs live et l'historique ;
 - consulter le statut Windows réel read-only.
+
+#### 4.1.bis Mode multi-comptes (Issue 1, sprint 2026-05)
+
+Sur la page `Pipeline` (panneau **12.bis Watcher post-exécution**) et sur
+`Supervision Ops`, une case à cocher **🌐 Tous les comptes Alpaca** est
+disponible si plusieurs comptes sont déclarés (config.yaml + variables
+d'environnement). Quand elle est cochée :
+
+- les boutons **▶️ Run watcher once** et **🔁 Démarrer service local** lancent
+  **un processus watcher par compte Alpaca** au lieu d'un seul ;
+- chaque compte conserve son propre verrou leader (`watcher:<account_id>`),
+  ses propres logs et son propre statut Supervision Ops ;
+- les comptes ayant déjà un `once` ou un service local actif sont
+  **ignorés** (loggués, pas d'erreur bloquante) ;
+- l'arrêt d'un compte n'arrête pas les autres ; pour tous les arrêter, il
+  faut cliquer Stop pour chaque compte (ou via Supervision Ops).
+
+Implémentation : `ihm.services.watcher_runtime.launch_watcher_once_for_all_accounts`
+et `start_local_watcher_service_for_all_accounts` itèrent sur
+`AccountRegistry.list_account_ids()`. Le packaging Windows (Task Scheduler /
+NSSM) reste agnostique : pour le multi-comptes en exploitation, déployer
+une tâche / un service par compte.
 
 ### 4.2 Task Scheduler
 

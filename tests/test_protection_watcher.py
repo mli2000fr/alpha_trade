@@ -30,7 +30,7 @@ def _item() -> ProtectionWatchItem:
     )
 
 
-def _order(intent_id: str, broker_order_id: str, *, status: str, order_type: str, stop_price: float | None = None, trail_percent: float | None = None) -> BrokerOrder:
+def _order(intent_id: str, broker_order_id: str, *, status: str, order_type: str, stop_price: float | None = None, trail_percent: float | None = None, limit_price: float | None = None) -> BrokerOrder:
     now = datetime.now(timezone.utc)
     return BrokerOrder(
         broker_order_id=broker_order_id,
@@ -43,7 +43,7 @@ def _order(intent_id: str, broker_order_id: str, *, status: str, order_type: str
         avg_fill_price=None,
         status=status,
         order_type=order_type,
-        limit_price=None,
+        limit_price=limit_price,
         stop_price=stop_price,
         trail_percent=trail_percent,
         created_at=now,
@@ -185,6 +185,9 @@ def test_watcher_retries_adopted_entry_with_manual_default_stop() -> None:
 
 
 def test_watcher_completes_only_missing_leg_for_adopted_entry() -> None:
+    """Issue 3 (2026-05) — Quand une **seule** des deux protections est posée,
+    le watcher annule la jambe existante et repose les deux via OCO (TP + SL)
+    pour garantir la cohérence atomique côté broker."""
     repo = MagicMock()
     repo.load_pending_protection_watch_items.return_value = []
     repo.load_unprotected_filled_parents.return_value = [
@@ -210,15 +213,32 @@ def test_watcher_completes_only_missing_leg_for_adopted_entry() -> None:
         }
     ]
     repo.load_orphan_filled_buy_positions.return_value = []
+    # Le TP existant qui doit être annulé avant la repose OCO.
+    existing_tp = _order(
+        "existing-tp-2",
+        "broker-tp-existing-2",
+        status=OrderStatus.SUBMITTED,
+        order_type="limit",
+        limit_price=108.0,
+    )
+    repo.load_open_child_orders.return_value = [existing_tp]
 
     broker = MagicMock()
-    broker.submit_intent.return_value = _order(
-        "sl-2",
-        "broker-sl-2",
-        status=OrderStatus.SUBMITTED,
-        order_type="stop",
-        stop_price=95.0,
+    broker.cancel_broker_order.return_value = True
+    broker.poll_order_status.return_value = _order(
+        "existing-tp-2",
+        "broker-tp-existing-2",
+        status=OrderStatus.CANCELED,
+        order_type="limit",
+        limit_price=108.0,
     )
+    tp_order = _order(
+        "tp-2", "broker-tp-2", status=OrderStatus.SUBMITTED, order_type="limit", limit_price=108.0,
+    )
+    sl_order = _order(
+        "sl-2", "broker-sl-2", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=95.0,
+    )
+    broker.submit_oco_protection.return_value = (tp_order, sl_order)
 
     watcher = ProtectionTransitionWatcher(
         repo,
@@ -236,10 +256,64 @@ def test_watcher_completes_only_missing_leg_for_adopted_entry() -> None:
 
     assert len(summaries) == 1
     assert summaries[0]["armed_missing_protections"] == 1
-    broker.submit_intent.assert_called_once()
-    submitted_intent = broker.submit_intent.call_args.args[0]
-    assert submitted_intent.intent_role == "initial_stop"
-    assert submitted_intent.stop_price == 95.0
+    # La jambe TP existante doit avoir été annulée puis OCO posé pour les deux.
+    broker.cancel_broker_order.assert_called_once_with("broker-tp-existing-2")
+    broker.submit_oco_protection.assert_called_once()
+    _, tp_arg, stop_arg = broker.submit_oco_protection.call_args.args
+    assert tp_arg.intent_role == "take_profit"
+    assert stop_arg.intent_role == "initial_stop"
+    assert stop_arg.stop_price == 95.0
+    # Aucun submit séquentiel ne doit avoir été tenté.
+    broker.submit_intent.assert_not_called()
+
+
+def test_watcher_skips_when_both_protections_already_present() -> None:
+    """Issue 2 (2026-05) — Si TP et SL sont déjà posés, le watcher ne touche
+    à rien (pas d'annulation, pas de soumission)."""
+    repo = MagicMock()
+    repo.load_pending_protection_watch_items.return_value = []
+    repo.load_unprotected_filled_parents.return_value = [
+        {
+            "parent_intent_id": "both-protected-1",
+            "exec_run_id": "exec-both-1",
+            "risk_run_id": "risk-both-1",
+            "account_id": "acct-1",
+            "broker_mode": "paper",
+            "symbol": "AMD",
+            "side": "buy",
+            "parent_intent_role": "adopted_entry",
+            "has_open_take_profit": 1,
+            "has_open_protection": 1,
+            "target_qty": 2.0,
+            "order_type": "market",
+            "limit_price": None,
+            "decision_price": 120.0,
+            "business_key": "both-bk",
+            "submission_key": "both-sub",
+            "fill_qty": 2.0,
+            "fill_price": 120.0,
+        }
+    ]
+    repo.load_orphan_filled_buy_positions.return_value = []
+    broker = MagicMock()
+
+    watcher = ProtectionTransitionWatcher(
+        repo,
+        broker_factory=lambda broker_mode, account_id: broker,
+        config_factory=lambda broker_mode, account_id: ExecutionConfig(
+            broker_mode=broker_mode,
+            account_id=account_id,
+            profit_taker_pct=0.08,
+            manual_buy_stop_loss_pct=0.05,
+            trailing_stop_pct=0.05,
+        ),
+    )
+
+    watcher.run(account_id="acct-1")
+
+    broker.submit_intent.assert_not_called()
+    broker.submit_oco_protection.assert_not_called()
+    broker.cancel_broker_order.assert_not_called()
 
 
 def test_watcher_refreshes_broker_state_when_initial_scan_is_empty(monkeypatch) -> None:
@@ -392,6 +466,9 @@ def test_watcher_does_not_count_tp_only_as_protected_when_stop_rejected() -> Non
 
 
 def test_watcher_cancels_existing_take_profit_that_blocks_missing_stop() -> None:
+    """Issue 3 (2026-05) — Quand le SL manque mais qu'un TP existe déjà,
+    on annule le TP puis on repose **les deux** jambes via un OCO atomique
+    (au lieu de l'ancien comportement « SL seul »)."""
     repo = MagicMock()
     repo.load_pending_protection_watch_items.return_value = []
     repo.load_unprotected_filled_parents.return_value = [
@@ -418,25 +495,21 @@ def test_watcher_cancels_existing_take_profit_that_blocks_missing_stop() -> None
     ]
     repo.load_orphan_filled_buy_positions.return_value = []
     repo.load_open_child_orders.return_value = [
-        _order("tp-existing", "broker-tp-existing", status=OrderStatus.SUBMITTED, order_type="limit"),
+        _order("tp-existing", "broker-tp-existing", status=OrderStatus.SUBMITTED, order_type="limit", limit_price=216.0),
     ]
 
     broker = MagicMock()
-    broker.submit_intent.side_effect = [
-        RuntimeError("[403] Forbidden"),
-        RuntimeError("[403] Forbidden"),
-        _order("sl-retry", "broker-sl-retry", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=190.0),
-    ]
     broker.cancel_broker_order.return_value = True
-    # Position toujours présente côté Alpaca → la reconciliation post-403
-    # ne doit PAS marquer la position comme fermée et doit laisser le
-    # watcher annuler le TP existant pour réarmer le SL.
-    broker.get_position.return_value = {"qty": "4", "symbol": "AAPL"}
     broker.poll_order_status.return_value = _order(
         "tp-existing",
         "broker-tp-existing",
         status=OrderStatus.CANCELED,
         order_type="limit",
+        limit_price=216.0,
+    )
+    broker.submit_oco_protection.return_value = (
+        _order("tp-new", "broker-tp-new", status=OrderStatus.SUBMITTED, order_type="limit", limit_price=216.0),
+        _order("sl-new", "broker-sl-new", status=OrderStatus.SUBMITTED, order_type="stop", stop_price=190.0),
     )
 
     watcher = ProtectionTransitionWatcher(
@@ -456,8 +529,9 @@ def test_watcher_cancels_existing_take_profit_that_blocks_missing_stop() -> None
     assert summaries[0]["armed_missing_protections"] == 1
     assert summaries[0]["armed_missing_protections_failed"] == 0
     broker.cancel_broker_order.assert_called_once_with("broker-tp-existing")
-    submitted_roles = [call.args[0].intent_role for call in broker.submit_intent.call_args_list]
-    assert submitted_roles == ["initial_stop", "trailing_stop", "initial_stop"]
+    broker.submit_oco_protection.assert_called_once()
+    # Aucun submit séquentiel ne doit avoir été tenté.
+    broker.submit_intent.assert_not_called()
 
 
 def test_service_stops_cleanly_when_idle_mode_requested() -> None:

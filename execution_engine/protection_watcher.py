@@ -475,6 +475,15 @@ class ProtectionTransitionWatcher:
         message = str(exc).lower()
         return any(token in message for token in ("403", "forbidden", "insufficient", "available", "oversell", "wash"))
 
+    @staticmethod
+    def _is_unprocessable_protection_error(exc: Exception) -> bool:
+        """Issue 4 (2026-05) — Détecte un rejet broker 422 (prix incohérents
+        avec le marché courant : TP <= last ou SL >= last). On évite alors
+        d'enchaîner un fallback séquentiel qui échouerait pour la même
+        raison et on attend le prochain cycle (le marché peut bouger)."""
+        message = str(exc).lower()
+        return "422" in message or "unprocessable" in message
+
     def _reconcile_position_closed(
         self,
         parent_intent: OrderIntent,
@@ -609,26 +618,55 @@ class ProtectionTransitionWatcher:
             submission_key=child_order.client_order_id or None,
         )
 
-    def _cancel_existing_take_profit_children(
+    # Mapping order_type → IntentRole pour la persistance des annulations.
+    _PROTECTION_CANCEL_ROLE_BY_TYPE: dict[str, IntentRole] = {
+        "limit": IntentRole.TAKE_PROFIT,
+        "stop": IntentRole.INITIAL_STOP,
+        "stop_limit": IntentRole.INITIAL_STOP,
+        "trailing_stop": IntentRole.TRAILING_STOP,
+    }
+
+    def _cancel_existing_protection_children(
         self,
         parent_intent: OrderIntent,
         broker: BrokerAdapter,
         *,
         account_id: str | None,
+        leg: str,
     ) -> int:
+        """Annule les enfants ouverts d'un parent pour un type de jambe donné.
+
+        ``leg`` :
+        - ``"take_profit"`` : annule les ordres ``limit`` (TP)
+        - ``"protection"``  : annule les ordres ``stop`` / ``stop_limit`` /
+          ``trailing_stop`` (SL initial ou trailing).
+        """
+        if leg == "take_profit":
+            allowed_types = {"limit"}
+        elif leg == "protection":
+            allowed_types = {"stop", "stop_limit", "trailing_stop"}
+        else:  # pragma: no cover - garde-fou
+            raise ValueError(f"leg invalide : {leg!r}")
+
         try:
             open_children = self._repo.load_open_child_orders(parent_intent.intent_id)
         except Exception:
-            LOGGER.debug("Lecture TP existants impossible pour %s", parent_intent.intent_id, exc_info=True)
+            LOGGER.debug(
+                "Lecture enfants existants impossible pour %s", parent_intent.intent_id, exc_info=True,
+            )
             return 0
 
         canceled_count = 0
         for child_order in open_children:
-            if child_order.order_type != "limit":
+            if child_order.order_type not in allowed_types:
                 continue
             if not child_order.broker_order_id:
                 continue
-            child_intent = self._build_existing_child_intent(parent_intent, child_order, IntentRole.TAKE_PROFIT)
+            role = self._PROTECTION_CANCEL_ROLE_BY_TYPE.get(
+                child_order.order_type or "",
+                IntentRole.TAKE_PROFIT if leg == "take_profit" else IntentRole.INITIAL_STOP,
+            )
+            child_intent = self._build_existing_child_intent(parent_intent, child_order, role)
             try:
                 if not broker.cancel_broker_order(child_order.broker_order_id):
                     continue
@@ -642,12 +680,25 @@ class ProtectionTransitionWatcher:
                 canceled_count += 1
             except Exception:
                 LOGGER.warning(
-                    "Watcher : annulation TP existant échouée pour %s (%s)",
+                    "Watcher : annulation %s existant échouée pour %s (%s)",
+                    leg,
                     parent_intent.symbol,
                     child_order.broker_order_id,
                     exc_info=True,
                 )
         return canceled_count
+
+    # Rétro-compat (call sites externes) — délègue au helper généralisé.
+    def _cancel_existing_take_profit_children(
+        self,
+        parent_intent: OrderIntent,
+        broker: BrokerAdapter,
+        *,
+        account_id: str | None,
+    ) -> int:
+        return self._cancel_existing_protection_children(
+            parent_intent, broker, account_id=account_id, leg="take_profit",
+        )
 
     @staticmethod
     def _build_parent_intent(item: ProtectionWatchItem, stop_order: BrokerOrder) -> OrderIntent:
@@ -770,8 +821,50 @@ class ProtectionTransitionWatcher:
 
         has_open_take_profit = bool(row.get("has_open_take_profit"))
         has_open_protection = bool(row.get("has_open_protection"))
+        # Issue 2 (2026-05) — Si TP **et** SL sont déjà posés côté broker,
+        # le watcher ne doit toucher à rien (notamment pour des positions
+        # achetées hors application qui ont déjà leurs deux protections).
+        # La requête `load_unprotected_filled_parents` filtre déjà ce cas,
+        # mais on garde une garde-fou défensif au cas où la lecture est
+        # désynchronisée d'un cycle.
         if has_open_take_profit and has_open_protection:
             return
+
+        # Issue 3 (2026-05) — Si **une seule** des deux protections est posée,
+        # on annule l'existante puis on repose les deux via OCO. Cela garantit
+        # la cohérence (mêmes qty, mêmes refs, OCO atomique côté Alpaca).
+        canceled_existing_leg = 0
+        if has_open_take_profit ^ has_open_protection:
+            leg = "take_profit" if has_open_take_profit else "protection"
+            try:
+                canceled_existing_leg = self._cancel_existing_protection_children(
+                    parent_intent, broker, account_id=account_id, leg=leg,
+                )
+            except Exception:
+                LOGGER.debug(
+                    "Watcher : annulation jambe existante %s pour %s a échoué",
+                    leg, symbol, exc_info=True,
+                )
+                canceled_existing_leg = 0
+            if canceled_existing_leg > 0:
+                LOGGER.info(
+                    "Watcher : %s jambe(s) %s annulée(s) pour repose OCO TP+SL sur %s.",
+                    canceled_existing_leg, leg, symbol,
+                )
+                # Après annulation, l'OCO doit reposer **les deux** jambes
+                # → on traite désormais le parent comme totalement non protégé.
+                has_open_take_profit = False
+                has_open_protection = False
+            else:
+                # Si on n'a pas réussi à annuler la jambe existante, on évite
+                # de poser un OCO concurrent qui se ferait rejeter en 422
+                # (insufficient qty, conflict). On sort silencieusement et on
+                # ré-essaiera au prochain cycle.
+                LOGGER.warning(
+                    "Watcher : jambe %s existante non annulée pour %s — repose OCO différée.",
+                    leg, symbol,
+                )
+                return
 
         submitted_any = False
         protection_available = has_open_protection
@@ -826,19 +919,18 @@ class ProtectionTransitionWatcher:
                 )
                 return False
 
-        # Issue 1 (2026-05) — Si TP et SL sont tous deux à armer ET que le
-        # stop est broker-side (type "stop", pas trailing_stop), on les pose
-        # en une seule commande Alpaca OCO. Une soumission séquentielle
-        # déclenchait sinon un 403 ``insufficient qty`` sur le second ordre
-        # (chaque leg essayait de réserver la même qty de la position).
-        if (
+        # Issue 1/2/3 — Quand TP et SL sont à armer (cas natif ou après
+        # annulation d'une jambe existante), on les pose en une seule
+        # commande Alpaca OCO (sinon 403 ``insufficient qty`` sur le 2e leg).
+        oco_eligible = (
             not has_open_take_profit
             and not has_open_protection
             and stop_intent is not None
             and stop_intent.order_type == "stop"
             and stop_intent.stop_price is not None
             and tp_intent.limit_price is not None
-        ):
+        )
+        if oco_eligible:
             try:
                 tp_order, stop_order = broker.submit_oco_protection(
                     parent_intent, tp_intent, stop_intent,
@@ -852,22 +944,40 @@ class ProtectionTransitionWatcher:
                 submit_failures += 1
                 last_submit_error = exc
                 LOGGER.warning(
-                    "Watcher : échec submit OCO TP+SL pour %s : %s — fallback sur soumissions séparées.",
+                    "Watcher : échec submit OCO TP+SL pour %s : %s.",
                     symbol, exc,
                 )
-                # Issue 3 — si la position n'existe plus côté Alpaca (vente
-                # manuelle), on reconcilie et on sort proprement. Sinon on
-                # tombe dans la branche séquentielle ci-dessous (qui persistera
-                # éventuellement le rejet sur chaque intent individuel).
                 if _maybe_reconcile_position_closed(exc):
+                    return
+                # Issue 4 (2026-05) — Sur 422 ``Unprocessable Entity`` (prix
+                # incohérents avec le marché courant : TP <= last ou SL >= last),
+                # on n'enchaîne pas un fallback séquentiel (qui se ferait
+                # rejeter de la même manière en boucle). On sort proprement et
+                # on re-tentera au prochain cycle, le marché ayant pu bouger.
+                if self._is_unprocessable_protection_error(exc):
+                    metrics["armed_missing_protections_failed"] = (
+                        int(metrics.get("armed_missing_protections_failed", 0) or 0) + 1
+                    )
+                    self._persist_event(make_event(
+                        str(row["exec_run_id"]),
+                        EventType.PROTECTION_TRANSITION_FAILED,
+                        f"Watcher : OCO TP+SL refusé (422) pour {symbol}",
+                        symbol=symbol,
+                        intent_id=parent_intent.intent_id,
+                        payload={
+                            "fill_qty": fill_qty,
+                            "fill_price": fill_price,
+                            "tp_limit_price": tp_intent.limit_price,
+                            "stop_price": stop_intent.stop_price,
+                            "reason": "unprocessable_oco",
+                            "trigger": "watcher_orphan_buy_safety_net" if use_manual_buy_stop else "watcher_safety_net",
+                        },
+                    ))
                     return
 
         if not has_open_protection and not protection_available:
-            protection_error: Exception | None = last_submit_error
             if not _submit_child(protection_intent):
-                protection_error = last_submit_error
-                # Issue 3 — vente manuelle hors app : reconcilie et sort.
-                if protection_error is not None and _maybe_reconcile_position_closed(protection_error):
+                if last_submit_error is not None and _maybe_reconcile_position_closed(last_submit_error):
                     return
                 if protection_intent.intent_role == IntentRole.INITIAL_STOP:
                     fallback = build_trailing_stop_intent(
@@ -880,37 +990,11 @@ class ProtectionTransitionWatcher:
                         protection_available = True
                     except Exception as fb_exc:
                         submit_failures += 1
-                        protection_error = fb_exc
+                        last_submit_error = fb_exc
                         self._persist_order_request_failure(fallback, fb_exc, account_id=account_id)
                         LOGGER.warning("Watcher : fallback trailing échoué pour %s : %s", symbol, fb_exc)
                         if _maybe_reconcile_position_closed(fb_exc):
                             return
-
-            if not protection_available and has_open_take_profit and protection_error is not None:
-                canceled_tps = 0
-                if self._is_protection_rejection_likely_due_to_open_exit(protection_error):
-                    canceled_tps = self._cancel_existing_take_profit_children(
-                        parent_intent,
-                        broker,
-                        account_id=account_id,
-                    )
-                if canceled_tps > 0:
-                    LOGGER.warning(
-                        "Watcher : %s TP existant(s) annulé(s) pour prioriser le SL sur %s ; nouvelle tentative protection.",
-                        canceled_tps,
-                        symbol,
-                    )
-                    if not _submit_child(protection_intent) and protection_intent.intent_role == IntentRole.INITIAL_STOP:
-                        fallback = build_trailing_stop_intent(parent_intent, fill_qty, fill_price, config, target=None)
-                        try:
-                            fallback_order = broker.submit_intent(fallback)
-                            self._persist_order_state(fallback, fallback_order, account_id=account_id)
-                            submitted_any = True
-                            protection_available = True
-                        except Exception as fb_exc:
-                            submit_failures += 1
-                            self._persist_order_request_failure(fallback, fb_exc, account_id=account_id)
-                            LOGGER.warning("Watcher : fallback trailing après annulation TP échoué pour %s : %s", symbol, fb_exc)
 
         if reconciled_closed:
             return
@@ -930,6 +1014,7 @@ class ProtectionTransitionWatcher:
                     "fill_price": fill_price,
                     "submit_failures": submit_failures,
                     "has_open_take_profit": has_open_take_profit,
+                    "canceled_existing_leg": canceled_existing_leg,
                     "trigger": "watcher_orphan_buy_safety_net" if use_manual_buy_stop else "watcher_safety_net",
                 },
             ))

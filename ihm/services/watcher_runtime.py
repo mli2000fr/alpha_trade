@@ -373,3 +373,117 @@ def serialize_local_watcher_control_state(*, account_id: str | None = None) -> d
     }
 
 
+# ---------------------------------------------------------------------------
+# Multi-comptes (Issue 1, 2026-05) — boucle sur tous les comptes Alpaca pour
+# poser les TP/SL si besoin via le watcher. Côté IHM, on **spawn un processus
+# par compte** (plutôt qu'un seul processus qui itère) afin que :
+#   - chaque compte conserve son propre verrou leader (pas de conflit) ;
+#   - les logs et le statut Supervision Ops restent ségrégués par compte ;
+#   - l'arrêt d'un compte n'arrête pas les autres ;
+#   - le packaging Windows (Task Scheduler / NSSM) reste agnostique.
+# ---------------------------------------------------------------------------
+
+ALL_ACCOUNTS_SENTINEL = "__all__"
+
+
+def list_alpaca_account_ids() -> list[str]:
+    """Liste tous les comptes Alpaca déclarés (config.yaml + env vars)."""
+    try:
+        from service.alpaca.accounts import AccountRegistry
+    except Exception:
+        LOGGER.debug("AccountRegistry indisponible", exc_info=True)
+        return []
+    try:
+        return list(AccountRegistry.get().list_account_ids())
+    except Exception:
+        LOGGER.debug("AccountRegistry.list_account_ids échoué", exc_info=True)
+        return []
+
+
+def _resolve_target_account_ids(account_id: str | None) -> list[str | None]:
+    """Si ``account_id`` vaut ``ALL_ACCOUNTS_SENTINEL``, retourne tous les
+    comptes Alpaca déclarés ; sinon retourne ``[account_id]``."""
+    if account_id == ALL_ACCOUNTS_SENTINEL:
+        ids = list_alpaca_account_ids()
+        if not ids:
+            raise RuntimeError(
+                "Aucun compte Alpaca déclaré : impossible de lancer le watcher pour 'tous les comptes'.",
+            )
+        return list(ids)  # already list[str]
+    return [account_id]
+
+
+def launch_watcher_once_for_all_accounts(
+    *,
+    db_config: dict[str, str | None] | None = None,
+    **kwargs: Any,
+) -> list[PipelineRunRecord]:
+    """Lance un ``run once`` du watcher pour chaque compte Alpaca déclaré.
+
+    Boucle sur ``AccountRegistry.list_account_ids()`` et délègue à
+    :func:`launch_watcher_once`. Les comptes qui ont déjà un service / once
+    actif sont **ignorés** (loggués) plutôt que de faire échouer toute la
+    chaîne.
+    """
+    records: list[PipelineRunRecord] = []
+    errors: list[str] = []
+    for aid in list_alpaca_account_ids():
+        try:
+            records.append(launch_watcher_once(db_config=db_config, account_id=aid, **kwargs))
+        except RuntimeError as exc:
+            errors.append(f"{aid}: {exc}")
+            LOGGER.info("Watcher once ignoré pour compte %s : %s", aid, exc)
+        except Exception as exc:  # pragma: no cover - défense IHM
+            errors.append(f"{aid}: {exc}")
+            LOGGER.warning("Watcher once a échoué pour compte %s", aid, exc_info=True)
+    if not records and errors:
+        raise RuntimeError(
+            "Aucun watcher once n'a pu être lancé pour les comptes Alpaca : " + " | ".join(errors)
+        )
+    return records
+
+
+def start_local_watcher_service_for_all_accounts(
+    *,
+    db_config: dict[str, str | None] | None = None,
+    **kwargs: Any,
+) -> list[PipelineRunRecord]:
+    """Démarre un service watcher local IHM par compte Alpaca déclaré.
+
+    Idempotent par compte : un compte déjà couvert par un service local est
+    ignoré (log info) ; les autres sont démarrés.
+    """
+    records: list[PipelineRunRecord] = []
+    errors: list[str] = []
+    for aid in list_alpaca_account_ids():
+        try:
+            records.append(start_local_watcher_service(db_config=db_config, account_id=aid, **kwargs))
+        except RuntimeError as exc:
+            errors.append(f"{aid}: {exc}")
+            LOGGER.info("Service watcher local ignoré pour compte %s : %s", aid, exc)
+        except Exception as exc:  # pragma: no cover - défense IHM
+            errors.append(f"{aid}: {exc}")
+            LOGGER.warning("Service watcher local a échoué pour compte %s", aid, exc_info=True)
+    if not records and errors:
+        raise RuntimeError(
+            "Aucun service watcher local n'a pu être démarré pour les comptes Alpaca : " + " | ".join(errors)
+        )
+    return records
+
+
+def serialize_all_accounts_watcher_control_state() -> dict[str, Any]:
+    """Vue agrégée multi-comptes pour décider de l'activation des boutons
+    « tous les comptes »."""
+    per_account: dict[str, dict[str, Any]] = {}
+    for aid in list_alpaca_account_ids():
+        per_account[aid] = serialize_local_watcher_control_state(account_id=aid)
+    return {
+        "accounts": per_account,
+        "any_service_active": any(state.get("local_service_active") for state in per_account.values()),
+        "any_once_active": any(state.get("local_once_active") for state in per_account.values()),
+        "all_service_active": bool(per_account) and all(
+            state.get("local_service_active") for state in per_account.values()
+        ),
+    }
+
+

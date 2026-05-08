@@ -174,4 +174,100 @@ def test_restart_local_watcher_service_stops_then_starts(monkeypatch) -> None:
     assert calls == [("stop", "svc-1"), ("start", "acct-1"), ("manual_sl", 0.06), ("profit_taker", 0.09)]
 
 
+def test_launch_watcher_once_for_all_accounts_iterates_over_all(monkeypatch) -> None:
+    """Issue 1 (2026-05) — Boucle sur tous les comptes Alpaca déclarés."""
+    monkeypatch.setattr(watcher_runtime, "list_alpaca_account_ids", lambda: ["acct-1", "acct-2", "acct-3"])
+    monkeypatch.setattr(watcher_runtime, "get_active_local_watcher_service", lambda account_id=None: None)
+    monkeypatch.setattr(watcher_runtime, "get_active_watcher_once_run", lambda account_id=None: None)
 
+    started: list[str] = []
+
+    def fake_start_managed_run(**kwargs):
+        started.append(kwargs["account_id"])
+        return _Record(f"watch-once-{kwargs['account_id']}")
+
+    monkeypatch.setattr(watcher_runtime, "start_managed_run", fake_start_managed_run)
+
+    records = watcher_runtime.launch_watcher_once_for_all_accounts(broker_mode="paper")
+
+    assert started == ["acct-1", "acct-2", "acct-3"]
+    assert [r.run_id for r in records] == ["watch-once-acct-1", "watch-once-acct-2", "watch-once-acct-3"]
+
+
+def test_launch_watcher_once_for_all_accounts_skips_already_active(monkeypatch) -> None:
+    """Issue 1 — Comptes déjà couverts par un service / once sont ignorés sans bloquer les autres."""
+    monkeypatch.setattr(watcher_runtime, "list_alpaca_account_ids", lambda: ["acct-1", "acct-2"])
+
+    def fake_active_service(account_id=None):
+        return {"run_id": "svc-existing"} if account_id == "acct-1" else None
+
+    monkeypatch.setattr(watcher_runtime, "get_active_local_watcher_service", fake_active_service)
+    monkeypatch.setattr(watcher_runtime, "get_active_watcher_once_run", lambda account_id=None: None)
+
+    started: list[str] = []
+
+    def fake_start_managed_run(**kwargs):
+        started.append(kwargs["account_id"])
+        return _Record(f"watch-{kwargs['account_id']}")
+
+    monkeypatch.setattr(watcher_runtime, "start_managed_run", fake_start_managed_run)
+
+    records = watcher_runtime.launch_watcher_once_for_all_accounts(broker_mode="paper")
+
+    assert started == ["acct-2"]
+    assert len(records) == 1
+
+
+def test_start_local_watcher_service_for_all_accounts_iterates(monkeypatch) -> None:
+    """Issue 1 — Démarre un service par compte Alpaca."""
+    monkeypatch.setattr(watcher_runtime, "list_alpaca_account_ids", lambda: ["a", "b"])
+    monkeypatch.setattr(watcher_runtime, "get_active_local_watcher_service", lambda account_id=None: None)
+    monkeypatch.setattr(watcher_runtime, "get_active_watcher_once_run", lambda account_id=None: None)
+
+    started: list[str] = []
+
+    def fake_start_managed_run(**kwargs):
+        started.append(kwargs["account_id"])
+        return _Record(f"svc-{kwargs['account_id']}")
+
+    monkeypatch.setattr(watcher_runtime, "start_managed_run", fake_start_managed_run)
+
+    records = watcher_runtime.start_local_watcher_service_for_all_accounts(broker_mode="paper")
+
+    assert started == ["a", "b"]
+    assert {r.run_id for r in records} == {"svc-a", "svc-b"}
+
+
+def test_serialize_all_accounts_watcher_control_state_aggregates(monkeypatch) -> None:
+    monkeypatch.setattr(watcher_runtime, "list_alpaca_account_ids", lambda: ["a", "b"])
+
+    def fake_state(account_id=None):
+        if account_id == "a":
+            return {"local_service_active": True, "local_service_run_id": "svc-a", "local_once_active": False, "local_once_run_id": ""}
+        return {"local_service_active": False, "local_service_run_id": "", "local_once_active": True, "local_once_run_id": "once-b"}
+
+    monkeypatch.setattr(watcher_runtime, "serialize_local_watcher_control_state", fake_state)
+
+    state = watcher_runtime.serialize_all_accounts_watcher_control_state()
+
+    assert state["any_service_active"] is True
+    assert state["any_once_active"] is True
+    assert state["all_service_active"] is False
+    assert set(state["accounts"].keys()) == {"a", "b"}
+
+
+def test_launch_watcher_once_for_all_accounts_raises_when_no_account(monkeypatch) -> None:
+    """Issue 1 — Si aucun compte n'a pu être lancé, on remonte clairement l'erreur."""
+    monkeypatch.setattr(watcher_runtime, "list_alpaca_account_ids", lambda: ["a"])
+    monkeypatch.setattr(
+        watcher_runtime, "get_active_local_watcher_service",
+        lambda account_id=None: {"run_id": "svc-existing"},
+    )
+    monkeypatch.setattr(watcher_runtime, "get_active_watcher_once_run", lambda account_id=None: None)
+
+    try:
+        watcher_runtime.launch_watcher_once_for_all_accounts(broker_mode="paper")
+    except RuntimeError as exc:
+        assert "Aucun watcher once" in str(exc)
+    else:
+        raise AssertionError("RuntimeError attendu")
