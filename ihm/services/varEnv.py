@@ -2,6 +2,7 @@ import io
 import os
 import csv
 import json
+import winreg
 from pathlib import Path
 
 import streamlit as st  # À commenter si utilisé hors Streamlit
@@ -105,15 +106,33 @@ def set_var_env(csv_bytes: bytes, apply: bool = True) -> dict:
         applied[var_name] = var_value
         print(var_name)
         if apply:
-            try:
-                os.environ[var_name] = var_value
-            except Exception:
-                # ignore failures to set env
-                pass
+            set_env_registry(var_name, var_value)
 
     return {"applied": applied, "skipped": skipped}
 
-# Exemple d'utilisation :
-if __name__ == "__main__":
-    chemin = get_var_env()
-    print(f"Variables d'environnement exportées dans {chemin}")
+
+def set_env_registry(name, value):
+    # Pour une variable UTILISATEUR :
+    key_path = r'Environment'
+    # Pour une variable SYSTÈME (nécessite droits admin) :
+    # key_path = r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+
+    try:
+        # Ouverture de la clé registre de l'utilisateur
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+
+        # Modification de la valeur
+        winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+        winreg.CloseKey(key)
+
+        print(f"Variable {name} enregistrée dans le registre.")
+
+        # Optionnel : Notifier Windows du changement (pour éviter de redémarrer)
+        import ctypes
+        SendMessageTimeout = ctypes.windll.user32.SendMessageTimeoutW
+        WM_SETTINGCHANGE = 0x1A
+        SendMessageTimeout(0xFFFF, WM_SETTINGCHANGE, 0, 'Environment', 0x02, 1000, None)
+
+    except Exception as e:
+        print(f"Erreur : {e}")
+
