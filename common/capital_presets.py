@@ -13,7 +13,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CAPITAL_PRESETS_CONFIG_PATH = PROJECT_ROOT / "config" / "capital_presets.yaml"
 DETECTED_EQUITY_PLACEHOLDER = "__DETECTED_EQUITY__"
-DEFAULT_CAPITAL_PRESET_KEY = "capital_50001_100000"
+DEFAULT_CAPITAL_PRESET_KEY = "capital_0_2000_eur"
 
 
 @dataclass(frozen=True, slots=True)

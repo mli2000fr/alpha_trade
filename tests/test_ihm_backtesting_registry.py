@@ -66,3 +66,20 @@ def test_recommend_screener_run_persists_structured_artifact_summary(tmp_path: P
     assert snapshot["screener_artifacts_dir"] == str(output_dir)
     assert snapshot["screener_artifact_summary"]["available"] is True
     assert snapshot["screener_artifact_summary"]["artifacts_dir"] == str(output_dir)
+
+
+def test_backtesting_log_available_checks_existing_file(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import backtesting_registry
+
+    combined_path = tmp_path / "combined.log"
+    combined_path.write_text("hello", encoding="utf-8")
+
+    monkeypatch.setattr(
+        backtesting_registry,
+        "get_backtesting_run_record",
+        lambda run_id: {"combined_path": str(combined_path), "stdout_path": "", "stderr_path": ""},
+    )
+
+    assert backtesting_registry.backtesting_log_available("run-1", stream="all") is True
+    assert backtesting_registry.read_backtesting_logs("run-1", stream="all") == "hello"
+

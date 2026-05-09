@@ -108,7 +108,7 @@ def test_get_backtesting_pit_history_diagnostic_reports_available_history(monkey
         if "COUNT(DISTINCT snapshot_date)" in query:
             return 7
         if "SELECT MIN(snapshot_date)" in query:
-            return "2025-04-21"
+            return "2024-01-01"
         if "SELECT MAX(snapshot_date)" in query:
             return "2025-04-29"
         raise AssertionError(query)
@@ -117,7 +117,7 @@ def test_get_backtesting_pit_history_diagnostic_reports_available_history(monkey
     monkeypatch.setattr(queries, "get_last_query_error", lambda: None)
 
     payload = queries.get_backtesting_pit_history_diagnostic(
-        start="2025-04-21",
+        start="2024-01-01",
         end="2025-04-29",
         capital_preset_key="capital_50001_100000",
     )
@@ -126,7 +126,7 @@ def test_get_backtesting_pit_history_diagnostic_reports_available_history(monkey
     assert payload["capital_preset_filtered"] is True
     assert payload["rows"] == 42
     assert payload["snapshot_days"] == 7
-    assert payload["first_snapshot_date"] == "2025-04-21"
+    assert payload["first_snapshot_date"] == "2024-01-01"
     assert payload["last_snapshot_date"] == "2025-04-29"
 
 
@@ -150,8 +150,8 @@ def test_get_backtesting_pit_history_diagnostic_reports_missing_history(monkeypa
     monkeypatch.setattr(queries, "get_last_query_error", lambda: None)
 
     payload = queries.get_backtesting_pit_history_diagnostic(
-        start="2025-04-21",
-        end="2026-04-20",
+        start="2024-01-01",
+        end="2024-01-31",
         capital_preset_key="capital_50001_100000",
     )
 

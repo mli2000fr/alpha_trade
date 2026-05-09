@@ -33,7 +33,7 @@ from execution_engine.order_intents import (
     resolve_trailing_activation_price,
 )
 from execution_engine.orphan_adoption import adopt_orphan_buy
-from service.alpaca.trading_client import AlpacaTradingClient
+from service.alpaca.trading_client import AlpacaTradingClient, BrokerApiError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -484,6 +484,17 @@ class ProtectionTransitionWatcher:
         message = str(exc).lower()
         return "422" in message or "unprocessable" in message
 
+    @staticmethod
+    def _get_error_message(exc: Exception) -> str:
+        """Extrait le message détaillé de l'exception, notamment pour 422.
+        
+        Si c'est un BrokerApiError avec un body (message détaillé du broker),
+        on retourne le body en priorité. Sinon, on retourne str(exc).
+        """
+        if isinstance(exc, BrokerApiError) and exc.body:
+            return exc.body
+        return str(exc)
+
     def _reconcile_position_closed(
         self,
         parent_intent: OrderIntent,
@@ -821,6 +832,13 @@ class ProtectionTransitionWatcher:
 
         has_open_take_profit = bool(row.get("has_open_take_profit"))
         has_open_protection = bool(row.get("has_open_protection"))
+
+        # mm-todo
+        LOGGER.info(
+            "Watcher has_open_take_profit & has_open_protection: %s & %s pour %s.",
+            has_open_take_profit, has_open_protection, symbol,
+        )
+
         # Issue 2 (2026-05) — Si TP **et** SL sont déjà posés côté broker,
         # le watcher ne doit toucher à rien (notamment pour des positions
         # achetées hors application qui ont déjà leurs deux protections).
@@ -915,7 +933,7 @@ class ProtectionTransitionWatcher:
                 self._persist_order_request_failure(child, exc, account_id=account_id)
                 LOGGER.warning(
                     "Watcher : échec submit %s pour %s : %s",
-                    child.intent_role, symbol, exc,
+                    child.intent_role, symbol, self._get_error_message(exc),
                 )
                 return False
 
@@ -926,11 +944,19 @@ class ProtectionTransitionWatcher:
             not has_open_take_profit
             and not has_open_protection
             and stop_intent is not None
+            and tp_intent is not None
             and stop_intent.order_type == "stop"
             and stop_intent.stop_price is not None
             and tp_intent.limit_price is not None
         )
         if oco_eligible:
+            # Sécurité : on doit toujours persister les deux jambes (TP et SL)
+            if tp_intent is None or stop_intent is None:
+                LOGGER.error(
+                    "Watcher : OCO TP+SL demandé mais une des intentions est absente (TP: %s, SL: %s) pour %s. Abandon.",
+                    tp_intent, stop_intent, symbol
+                )
+                return
             try:
                 tp_order, stop_order = broker.submit_oco_protection(
                     parent_intent, tp_intent, stop_intent,
@@ -945,7 +971,7 @@ class ProtectionTransitionWatcher:
                 last_submit_error = exc
                 LOGGER.warning(
                     "Watcher : échec submit OCO TP+SL pour %s : %s.",
-                    symbol, exc,
+                    symbol, self._get_error_message(exc),
                 )
                 if _maybe_reconcile_position_closed(exc):
                     return
@@ -967,8 +993,8 @@ class ProtectionTransitionWatcher:
                         payload={
                             "fill_qty": fill_qty,
                             "fill_price": fill_price,
-                            "tp_limit_price": tp_intent.limit_price,
-                            "stop_price": stop_intent.stop_price,
+                            "tp_limit_price": tp_intent.limit_price if tp_intent else None,
+                            "stop_price": stop_intent.stop_price if stop_intent else None,
                             "reason": "unprocessable_oco",
                             "trigger": "watcher_orphan_buy_safety_net" if use_manual_buy_stop else "watcher_safety_net",
                         },
@@ -992,7 +1018,7 @@ class ProtectionTransitionWatcher:
                         submit_failures += 1
                         last_submit_error = fb_exc
                         self._persist_order_request_failure(fallback, fb_exc, account_id=account_id)
-                        LOGGER.warning("Watcher : fallback trailing échoué pour %s : %s", symbol, fb_exc)
+                        LOGGER.warning("Watcher : fallback trailing échoué pour %s : %s", symbol, self._get_error_message(fb_exc))
                         if _maybe_reconcile_position_closed(fb_exc):
                             return
 

@@ -438,14 +438,32 @@ def get_backtesting_run_record(run_id: str) -> dict[str, object] | None:
     return _read_history_index().get(run_id)
 
 
-def read_backtesting_logs(run_id: str, stream: Literal["stdout", "stderr", "all"] = "all") -> str:
-    record = get_backtesting_run_record(run_id)
-    if record is None:
-        return ""
+def _resolve_backtesting_log_path(
+    record: dict[str, object] | None,
+    stream: Literal["stdout", "stderr", "all"] = "all",
+) -> Path | None:
+    if not isinstance(record, dict):
+        return None
+    path_key = {
+        "stdout": "stdout_path",
+        "stderr": "stderr_path",
+        "all": "combined_path",
+    }[stream]
+    raw_path = str(record.get(path_key) or "").strip()
+    if not raw_path:
+        return None
+    return Path(raw_path)
 
-    path_key = {"stdout": "stdout_path", "stderr": "stderr_path", "all": "combined_path"}[stream]
-    path = Path(str(record.get(path_key, "")))
-    if not path.exists():
+
+def backtesting_log_available(run_id: str, stream: Literal["stdout", "stderr", "all"] = "all") -> bool:
+    """Indique si le fichier de log demandé existe encore pour ce run."""
+    path = _resolve_backtesting_log_path(get_backtesting_run_record(run_id), stream)
+    return bool(path is not None and path.exists())
+
+
+def read_backtesting_logs(run_id: str, stream: Literal["stdout", "stderr", "all"] = "all") -> str:
+    path = _resolve_backtesting_log_path(get_backtesting_run_record(run_id), stream)
+    if path is None or not path.exists():
         return ""
     return path.read_text(encoding="utf-8", errors="replace")
 

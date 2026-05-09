@@ -1,8 +1,14 @@
+import io
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from ihm.pages import settings
 from ihm.services import queries
+
+AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 
 def test_pages_settings_importable():
     assert hasattr(settings, "__doc__")
@@ -11,6 +17,7 @@ def test_pages_settings_importable():
 def test_settings_page_exposes_alpha_scanner_threshold_editor_helper() -> None:
     assert hasattr(settings, "_render_alpha_scanner_dependency_threshold_settings")
     assert hasattr(settings, "_apply_alpha_scanner_threshold_preset")
+    assert hasattr(settings, "_render_environment_variable_settings")
 
 
 def test_alpha_scanner_dependency_default_thresholds_match_recommended_swing_cash_profile() -> None:
@@ -74,5 +81,78 @@ def test_notifications_failure_log_download_payload_returns_filename_and_text(mo
     payload = settings._get_notifications_failure_log_download_payload()
 
     assert payload == ("smtp_test_email_failure.log", "smtp boom")
+
+
+def test_prepare_var_env_export_reads_csv_only_on_explicit_call(monkeypatch, tmp_path: Path) -> None:
+    sample_csv = b"Variable,Valeur\nLOGIN_DB,demo\n"
+
+    from ihm.services import varEnv
+
+    monkeypatch.setattr(varEnv, "get_var_env_streamlit", lambda: io.BytesIO(sample_csv))
+
+    payload = settings._prepare_var_env_export()
+
+    assert payload["file_name"] == "var_env.csv"
+    assert payload["data"] == sample_csv
+
+
+@pytest.mark.e2e
+def test_environment_variable_settings_panel_renders(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("LOGIN_DB", "demo")
+    monkeypatch.setenv("PASSWORD_DB", "secret")
+    monkeypatch.setenv("ALPACA_API_KEY", "alpaca-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "alpaca-secret")
+    monkeypatch.setenv("FINNHUB_API_KEY", "finnhub-key")
+
+    def _runner() -> None:
+        from ihm.services import varEnv
+
+        varEnv.get_conf_var_env = lambda: ["LOGIN_DB", "PASSWORD_DB"]  # type: ignore[assignment]
+        def _unexpected_call():
+            raise AssertionError("get_var_env_streamlit ne doit pas être appelé au rendu initial")
+
+        varEnv.get_var_env_streamlit = _unexpected_call  # type: ignore[assignment]
+        from ihm.pages import settings as settings_page
+
+        settings_page._render_environment_variable_settings()
+
+    at = AppTest.from_function(_runner).run(timeout=15)
+
+    assert not at.exception, f"Exception : {at.exception}"
+    assert any("Variables d'environnement" in str(subheader.value) for subheader in at.subheader)
+    assert len(at.file_uploader) == 1
+
+
+@pytest.mark.e2e
+def test_environment_variable_settings_panel_prepares_native_download_once(monkeypatch) -> None:
+    monkeypatch.setenv("LOGIN_DB", "demo")
+
+    def _runner() -> None:
+        import io
+
+        from ihm.services import varEnv
+
+        varEnv.get_conf_var_env = lambda: ["LOGIN_DB"]  # type: ignore[assignment]
+        varEnv.set_var_env = lambda csv_bytes, apply=True: {"applied": {}}  # type: ignore[assignment]
+
+        def _fake_export_stream() -> io.BytesIO:
+            return io.BytesIO(b"Variable,Valeur\nLOGIN_DB,demo\n")
+
+        varEnv.get_var_env_streamlit = _fake_export_stream  # type: ignore[assignment]
+
+        from ihm.pages import settings as settings_page
+
+        settings_page._render_environment_variable_settings()
+
+    at = AppTest.from_function(_runner).run(timeout=15)
+
+    assert not at.exception, f"Exception : {at.exception}"
+    assert len(at.button) == 1
+    assert len(at.get("download_button")) == 0
+
+    at.button[0].click().run(timeout=15)
+
+    assert not at.exception, f"Exception après clic : {at.exception}"
+    assert len(at.get("download_button")) == 1
 
 

@@ -136,7 +136,7 @@ def test_load_predictions_returns_latest() -> None:
             INSERT INTO model_predictions (symbol, predicted_proba, predicted_class, run_id, prediction_date)
             VALUES ('AAPL', 0.72, 1, 'run1', '2026-04-15'),
                    ('AAPL', 0.65, 1, 'run0', '2026-04-10'),
-                   ('AAPL', 0.91, 1, 'future-run', '2026-04-20')
+                   ('AAPL', 0.91, 1, 'future-run', '2024-01-31')
         """))
     repo = RiskRepository(engine=engine)
     preds = repo.load_predictions_asof(["AAPL"], date(2026, 4, 18))
@@ -275,7 +275,7 @@ def test_load_return_matrix() -> None:
             """))
         conn.execute(text("""
             INSERT INTO stock_bars_daily (symbol, "date", "close", "high", "low")
-            VALUES ('AAPL', '2026-04-20', 999, 1000, 998)
+            VALUES ('AAPL', '2024-01-31', 999, 1000, 998)
         """))
     repo = RiskRepository(engine=engine)
     mat = repo.load_return_matrix_asof(["AAPL"], date(2026, 4, 14), lookback_days=10)

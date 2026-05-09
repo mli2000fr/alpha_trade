@@ -18,15 +18,17 @@ def _idempotency_key(run_id: str, symbol: str, role: str, side: str, qty: float,
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _submission_key(exec_run_id: str, symbol: str, role: str, side: str, qty: float) -> str:
+def _submission_key(exec_run_id: str, symbol: str, role: str, side: str, qty: float, unique_id: str | None = None) -> str:
     """
-    client_order_id unique par execution run envoye a Alpaca.
-    Inclut exec_run_id pour eviter le 403 'client_order_id already in use'
-    lors d'une re-soumission apres echec ou relance manuelle.
-    NOTE: different de idempotency_key (base sur risk_run_id) pour permettre
-    plusieurs execution runs sur le meme portefeuille cible.
+    client_order_id unique par execution run envoyé à Alpaca.
+    Inclut exec_run_id pour éviter le 403 'client_order_id already in use'.
+    Ajoute un composant unique (intent_id) pour garantir l'unicité même si on repose un stop identique après annulation.
+    Si unique_id n'est pas fourni, le hash reste identique à l'ancien comportement.
     """
-    raw = f"{exec_run_id}|{symbol}|{role}|{side}|{qty}"
+    if unique_id is not None:
+        raw = f"{exec_run_id}|{symbol}|{role}|{side}|{qty}|{unique_id}"
+    else:
+        raw = f"{exec_run_id}|{symbol}|{role}|{side}|{qty}"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
@@ -80,8 +82,9 @@ def build_entry_intents(
         if config.entry_order_type == "limit":
             limit_price = round(t.entry_price * (1 + config.limit_price_buffer_bps / 10_000), 2)
 
+        intent_id = _make_id()
         intents.append(OrderIntent(
-            intent_id=_make_id(),
+            intent_id=intent_id,
             risk_run_id=t.risk_run_id,
             exec_run_id=exec_run_id,
             symbol=t.symbol,
@@ -98,7 +101,7 @@ def build_entry_intents(
             ),
             decision_price=t.entry_price,
             stop_price=None,
-            submission_key=_submission_key(exec_run_id, t.symbol, IntentRole.ENTRY, "buy", qty),
+            submission_key=_submission_key(exec_run_id, t.symbol, IntentRole.ENTRY, "buy", qty, intent_id),
         ))
     return intents
 
@@ -115,8 +118,9 @@ def build_take_profit_intent(
     if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
         risk_based_target = avg_fill_price + (2.0 * target.risk_per_share)
     limit_price = round(max(percent_target, risk_based_target or percent_target), 2)
+    intent_id = _make_id()
     return OrderIntent(
-        intent_id=_make_id(),
+        intent_id=intent_id,
         risk_run_id=parent.risk_run_id,
         exec_run_id=parent.exec_run_id,
         symbol=parent.symbol,
@@ -134,7 +138,7 @@ def build_take_profit_intent(
         ),
         decision_price=parent.decision_price,
         stop_price=None,
-        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TAKE_PROFIT, "sell", fill_qty),
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TAKE_PROFIT, "sell", fill_qty, intent_id),
     )
 
 
@@ -150,8 +154,9 @@ def build_initial_stop_intent(
     if stop_price is None:
         return None
 
+    intent_id = _make_id()
     return OrderIntent(
-        intent_id=_make_id(),
+        intent_id=intent_id,
         risk_run_id=parent.risk_run_id,
         exec_run_id=parent.exec_run_id,
         symbol=parent.symbol,
@@ -169,7 +174,7 @@ def build_initial_stop_intent(
         ),
         decision_price=parent.decision_price,
         stop_price=stop_price,
-        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, "sell", fill_qty),
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, "sell", fill_qty, intent_id),
     )
 
 
@@ -193,8 +198,9 @@ def build_manual_buy_initial_stop_intent(
     if stop_price <= 0 or stop_price >= reference_price:
         return None
 
+    intent_id = _make_id()
     return OrderIntent(
-        intent_id=_make_id(),
+        intent_id=intent_id,
         risk_run_id=parent.risk_run_id,
         exec_run_id=parent.exec_run_id,
         symbol=parent.symbol,
@@ -212,7 +218,7 @@ def build_manual_buy_initial_stop_intent(
         ),
         decision_price=parent.decision_price,
         stop_price=stop_price,
-        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, "sell", fill_qty),
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.INITIAL_STOP, "sell", fill_qty, intent_id),
     )
 
 
@@ -231,8 +237,9 @@ def build_trailing_stop_intent(
         elif target.risk_per_share is not None and target.risk_per_share > 0 and reference_price > 0:
             risk_based_trail_pct = target.risk_per_share / reference_price
     trail_pct = round((risk_based_trail_pct if risk_based_trail_pct is not None else config.trailing_stop_pct) * 100, 2)
+    intent_id = _make_id()
     return OrderIntent(
-        intent_id=_make_id(),
+        intent_id=intent_id,
         risk_run_id=parent.risk_run_id,
         exec_run_id=parent.exec_run_id,
         symbol=parent.symbol,
@@ -250,7 +257,7 @@ def build_trailing_stop_intent(
         ),
         decision_price=parent.decision_price,
         stop_price=None,
-        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TRAILING_STOP, "sell", fill_qty),
+        submission_key=_submission_key(parent.exec_run_id, parent.symbol, IntentRole.TRAILING_STOP, "sell", fill_qty, intent_id),
     )
 
 
@@ -264,8 +271,9 @@ def build_rebalance_sell_intent(
 ) -> OrderIntent:
     """Ordre de vente marche pour liquider un excedent detecte en reconciliation."""
     qty = float(int(qty)) if qty == int(qty) else qty
+    intent_id = _make_id()
     return OrderIntent(
-        intent_id=_make_id(),
+        intent_id=intent_id,
         risk_run_id=risk_run_id,
         exec_run_id=exec_run_id,
         symbol=symbol,
@@ -280,7 +288,7 @@ def build_rebalance_sell_intent(
         idempotency_key=_idempotency_key(exec_run_id, symbol, IntentRole.EXIT, "sell", qty, broker_mode),
         decision_price=current_price,
         stop_price=None,
-        submission_key=_submission_key(exec_run_id, symbol, IntentRole.EXIT, "sell", qty),
+        submission_key=_submission_key(exec_run_id, symbol, IntentRole.EXIT, "sell", qty, intent_id),
     )
 
 
@@ -294,8 +302,9 @@ def build_rebalance_buy_intent(
 ) -> OrderIntent:
     """Ordre d'achat marche pour completer une position insuffisante detectee en reconciliation."""
     qty = float(int(qty)) if qty == int(qty) else qty
+    intent_id = _make_id()
     return OrderIntent(
-        intent_id=_make_id(),
+        intent_id=intent_id,
         risk_run_id=risk_run_id,
         exec_run_id=exec_run_id,
         symbol=symbol,
@@ -310,7 +319,7 @@ def build_rebalance_buy_intent(
         idempotency_key=_idempotency_key(exec_run_id, symbol, IntentRole.REBALANCE_BUY, "buy", qty, broker_mode),
         decision_price=current_price,
         stop_price=None,
-        submission_key=_submission_key(exec_run_id, symbol, IntentRole.REBALANCE_BUY, "buy", qty),
+        submission_key=_submission_key(exec_run_id, symbol, IntentRole.REBALANCE_BUY, "buy", qty, intent_id),
     )
 
 
@@ -344,6 +353,7 @@ def build_oco_protection_payload(
     parent: OrderIntent,
     tp_intent: OrderIntent,
     stop_intent: OrderIntent,
+    oco_id: str | None = None,
 ) -> dict[str, str | dict[str, str]]:
     """Construit un payload Alpaca OCO (TP limit + SL stop) lié à une position.
 
@@ -360,8 +370,11 @@ def build_oco_protection_payload(
     qty = tp_intent.qty if tp_intent.qty == stop_intent.qty else min(tp_intent.qty, stop_intent.qty)
     qty_str = str(int(qty)) if qty == int(qty) else str(qty)
 
-    # client_order_id stable et unique par exec_run_id + symbol pour idempotence
-    client_order_id = f"oco-{_alpaca_client_order_id(parent.exec_run_id, parent.symbol, 'oco_protection', 'sell', qty)}"
+    # Génération ou utilisation d'un identifiant unique pour l'OCO
+    if oco_id is None:
+        oco_id = _make_id()
+    # client_order_id stable et unique par exec_run_id + symbol + oco_id pour idempotence et traçabilité
+    client_order_id = f"oco-{_alpaca_client_order_id(parent.exec_run_id, parent.symbol, 'oco_protection', 'sell', qty)}-{oco_id}"
 
     take_profit: dict[str, str] = {"limit_price": str(tp_intent.limit_price)}
     stop_loss: dict[str, str] = {"stop_price": str(stop_intent.stop_price)}

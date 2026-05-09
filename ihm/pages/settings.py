@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import hashlib
 
 import streamlit as st
 
@@ -59,6 +60,52 @@ NOTIFICATIONS_RECIPIENTS_KEY = "settings_notifications_recipients_input"
 NOTIFICATIONS_ENABLED_KEY = "settings_notifications_enabled_input"
 NOTIFICATIONS_NOTIFY_ON_KEY = "settings_notifications_notify_on_input"
 NOTIFICATIONS_FLASH_KEY = "settings_notifications_flash"
+VAR_ENV_UPLOAD_SIGNATURE_KEY = "settings_var_env_upload_signature"
+VAR_ENV_UPLOAD_RESULT_KEY = "settings_var_env_upload_result"
+VAR_ENV_EXPORT_DATA_KEY = "settings_var_env_export_data"
+VAR_ENV_EXPORT_FILENAME_KEY = "settings_var_env_export_filename"
+
+VAR_ENV_UPLOAD_WIDGET_CSS = """
+<style>
+div[data-testid="stFileUploader"] {
+    width: 100%;
+}
+
+div[data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"] {
+    min-height: 3rem;
+    padding: 0.35rem 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(49, 51, 63, 0.2);
+    border-radius: 0.5rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(240,242,246,0.08));
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    cursor: pointer;
+}
+
+div[data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"]:hover {
+    border-color: rgba(255, 75, 75, 0.45);
+    box-shadow: 0 0 0 0.08rem rgba(255, 75, 75, 0.12);
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(240,242,246,0.14));
+}
+
+div[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzoneInstructions"] > div,
+div[data-testid="stFileUploader"] small,
+div[data-testid="stFileUploader"] button {
+    display: none;
+}
+
+div[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzoneInstructions"]::after {
+    content: "⬆️ Charger les variables d'environnement";
+    display: block;
+    text-align: center;
+    font-size: 0.95rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+</style>
+"""
 
 BARS_PROVIDER_LABELS: dict[str, str] = {
     "eodhd": " EODHD (recommandé — bulk EOD, volume consolidé)",
@@ -92,7 +139,7 @@ def _prime_bars_provider_widget_state(current: str) -> str:
     return str(selected)
 
 
-def _render_bars_provider_settings() -> None:
+def _render_bars_provider_settings():
     flash = st.session_state.pop(BARS_PROVIDER_FLASH_KEY, None)
     if isinstance(flash, tuple) and len(flash) == 2:
         kind, message = flash
@@ -171,13 +218,13 @@ def _threshold_widget_key(step_key: str, metric_key: str) -> str:
     return f"settings_alpha_scanner_threshold_{step_key}_{metric_key}"
 
 
-def _apply_alpha_scanner_dependency_threshold_state_to_session(thresholds: dict[str, dict[str, float]]) -> None:
+def _apply_alpha_scanner_dependency_threshold_state_to_session(thresholds):
     for step_key, metrics in thresholds.items():
         for metric_key, metric_value in metrics.items():
             st.session_state[_threshold_widget_key(step_key, metric_key)] = float(metric_value)
 
 
-def _prime_alpha_scanner_dependency_threshold_state() -> dict[str, dict[str, float]]:
+def _prime_alpha_scanner_dependency_threshold_state():
     thresholds = get_alpha_scanner_dependency_thresholds()
     metadata = load_persisted_alpha_scanner_dependency_preset_metadata()
     pending_market_regime = st.session_state.pop(ALPHA_SCANNER_PENDING_MARKET_REGIME_KEY, None)
@@ -199,8 +246,8 @@ def _prime_alpha_scanner_dependency_threshold_state() -> dict[str, dict[str, flo
     return thresholds
 
 
-def _collect_alpha_scanner_dependency_threshold_inputs() -> dict[str, dict[str, float]]:
-    payload: dict[str, dict[str, float]] = {}
+def _collect_alpha_scanner_dependency_threshold_inputs():
+    payload = {}
     for step_key, metrics in ALPHA_SCANNER_DEPENDENCY_THRESHOLDS.items():
         payload[step_key] = {}
         for metric_key, default_value in metrics.items():
@@ -209,11 +256,11 @@ def _collect_alpha_scanner_dependency_threshold_inputs() -> dict[str, dict[str, 
     return payload
 
 
-def _set_alpha_scanner_dependency_threshold_state(thresholds: dict[str, dict[str, float]]) -> None:
+def _set_alpha_scanner_dependency_threshold_state(thresholds):
     _apply_alpha_scanner_dependency_threshold_state_to_session(thresholds)
 
 
-def _apply_alpha_scanner_threshold_preset(style: str, market_regime: str) -> None:
+def _apply_alpha_scanner_threshold_preset(style: str, market_regime: str):
     normalized = get_alpha_scanner_threshold_preset(
         style=style,  # type: ignore[arg-type]
         market_regime=market_regime,  # type: ignore[arg-type]
@@ -236,7 +283,7 @@ def _apply_alpha_scanner_threshold_preset(style: str, market_regime: str) -> Non
     st.rerun()
 
 
-def _render_alpha_scanner_dependency_threshold_settings() -> None:
+def _render_alpha_scanner_dependency_threshold_settings():
     current_thresholds = _prime_alpha_scanner_dependency_threshold_state()
     preset_metadata = load_persisted_alpha_scanner_dependency_preset_metadata()
     flash_message = st.session_state.pop(ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY, None)
@@ -394,14 +441,141 @@ def _render_alpha_scanner_dependency_threshold_settings() -> None:
                 st.rerun()
 
 
-def _get_notifications_failure_log_download_payload() -> tuple[str, str] | None:
+def _get_notifications_failure_log_download_payload():
     payload = read_smtp_test_failure_log()
     if not payload.strip():
         return None
     return ("smtp_test_email_failure.log", payload)
 
 
-def _render_notifications_settings() -> None:
+def _build_var_env_upload_signature(file_name: str, file_bytes: bytes) -> str:
+    digest = hashlib.sha256(file_bytes).hexdigest()
+    return f"{file_name}:{len(file_bytes)}:{digest}"
+
+
+def _prepare_var_env_export():
+    from ihm.services.varEnv import get_var_env_streamlit
+
+    # Génère le CSV en mémoire (BytesIO)
+    csv_bytesio = get_var_env_streamlit()
+    csv_bytesio.seek(0)
+    csv_data = csv_bytesio.read()
+    return {"file_name": "var_env.csv", "data": csv_data}
+
+
+def _render_environment_variable_settings():
+    st.subheader(" Variables d'environnement")
+    for var in ("LOGIN_DB", "PASSWORD_DB", "ALPACA_API_KEY", "ALPACA_SECRET_KEY", "FINNHUB_API_KEY"):
+        st.markdown(env_badge(var, os.getenv(var)))
+
+    try:
+        from ihm.services.varEnv import get_conf_var_env, set_var_env
+    except Exception:
+        st.error("Module `ihm.services.varEnv` introuvable. Vérifiez le nom du fichier et le path.")
+        return
+
+    try:
+        allowed_env_names = get_conf_var_env()
+    except Exception as exc:
+        allowed_env_names = []
+        st.warning(f"Impossible de lire `conf/var_env.json` : {exc}")
+
+    if allowed_env_names:
+        st.caption(
+            f"Export / import filtrés via `conf/var_env.json` — {len(allowed_env_names)} clé(s) autorisée(s)."
+        )
+    else:
+        st.caption(
+            "Aucun filtre détecté dans `conf/var_env.json` : export complet et import sans liste blanche explicite."
+        )
+
+    st.markdown(VAR_ENV_UPLOAD_WIDGET_CSS, unsafe_allow_html=True)
+
+    col_env1, col_env2 = st.columns(2)
+    with col_env1:
+        with st.container(border=True):
+            st.caption("Télécharge le CSV des variables d'environnement autorisées.")
+            if st.button(
+                "Préparer le téléchargement",
+                key="prepare_recuperer_var_env",
+                use_container_width=True,
+                help="Génère le fichier CSV filtré par `conf/var_env.json`.",
+            ):
+                try:
+                    export_payload = _prepare_var_env_export()
+                except Exception as exc:
+                    st.session_state.pop(VAR_ENV_EXPORT_DATA_KEY, None)
+                    st.session_state.pop(VAR_ENV_EXPORT_FILENAME_KEY, None)
+                    st.error(f"Échec génération du CSV : {exc}")
+                else:
+                    st.session_state[VAR_ENV_EXPORT_DATA_KEY] = export_payload["data"]
+                    st.session_state[VAR_ENV_EXPORT_FILENAME_KEY] = export_payload["file_name"]
+
+            export_data = st.session_state.get(VAR_ENV_EXPORT_DATA_KEY)
+            export_file_name = st.session_state.get(VAR_ENV_EXPORT_FILENAME_KEY, "var_env.csv")
+            if export_data is not None:
+                st.download_button(
+                    label="Télécharger les variables d'environnement",
+                    data=export_data,
+                    file_name=export_file_name,
+                    mime="text/csv",
+                    key="download_recuperer_var_env",
+                    use_container_width=True,
+                    help="Télécharge le dernier CSV préparé.",
+                )
+            else:
+                st.caption(
+                    "Cliquez d'abord sur **Préparer le téléchargement** pour générer le CSV."
+                )
+
+    with col_env2:
+        with st.container(border=True):
+            st.caption("Importe un CSV `Variable,Valeur` puis applique les clés autorisées.")
+            uploaded = st.file_uploader(
+                "Charger les variables d'environnement",
+                type="csv",
+                key="upload_var_env",
+                accept_multiple_files=False,
+                label_visibility="collapsed",
+                help="Sélectionnez un CSV au format `Variable,Valeur`.",
+            )
+
+            current_result = None
+            if uploaded is not None:
+                try:
+                    file_bytes = uploaded.getvalue()
+                except Exception as exc:
+                    st.error(f"Échec lecture du fichier uploadé : {exc}")
+                    file_bytes = b""
+
+                if not file_bytes:
+                    st.warning("Le fichier sélectionné est vide.")
+                else:
+                    signature = _build_var_env_upload_signature(uploaded.name or "var_env.csv", file_bytes)
+                    if st.session_state.get(VAR_ENV_UPLOAD_SIGNATURE_KEY) != signature:
+                        try:
+                            current_result = set_var_env(file_bytes, apply=True)
+                        except Exception as exc:
+                            current_result = {"error": str(exc)}
+                        st.session_state[VAR_ENV_UPLOAD_SIGNATURE_KEY] = signature
+                        st.session_state[VAR_ENV_UPLOAD_RESULT_KEY] = current_result
+
+            upload_result = current_result or st.session_state.get(VAR_ENV_UPLOAD_RESULT_KEY)
+            if isinstance(upload_result, dict):
+                error_message = upload_result.get("error")
+                if error_message:
+                    st.error(f"Échec traitement du fichier CSV : {error_message}")
+                else:
+                    applied = upload_result.get("applied", {})
+                    if applied:
+                        st.info(
+                            "Import réussi."
+                        )
+                    elif uploaded is not None:
+                        st.info("Aucune variable autorisée n'a été appliquée depuis le fichier importé.")
+
+
+def _render_notifications_settings():
     """Sprint S27 — Notifications email fin de workflow pipeline."""
     flash = st.session_state.pop(NOTIFICATIONS_FLASH_KEY, None)
     failure_log_payload = _get_notifications_failure_log_download_payload()
@@ -538,7 +712,7 @@ def _check_import(name: str) -> str:
         return f" `{name}` — **MANQUANT**"
 
 
-def render() -> None:
+def render():
     st.header("⚙️ Paramètres / Santé")
     st.caption(
         "Page recentrée sur les prérequis opérateur puis sur les paramètres réellement utilisés par le flux `quotes → earnings → alpha scanner`."
@@ -547,9 +721,7 @@ def render() -> None:
     prereq_col1, prereq_col2 = st.columns(2)
     with prereq_col1:
         with st.container(border=True):
-            st.subheader(" Variables d'environnement")
-            for var in ("LOGIN_DB", "PASSWORD_DB", "ALPACA_API_KEY", "ALPACA_SECRET_KEY", "FINNHUB_API_KEY"):
-                st.markdown(env_badge(var, os.getenv(var)))
+            _render_environment_variable_settings()
     with prereq_col2:
         with st.container(border=True):
             st.subheader("️ Connexion DB")
@@ -605,5 +777,4 @@ def render() -> None:
 
 
 run_page_if_standalone(__name__, render)
-
 

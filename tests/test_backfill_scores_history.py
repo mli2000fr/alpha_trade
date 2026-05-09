@@ -16,7 +16,7 @@ def _build_sqlite_engine():
         conn.execute(text("CREATE TABLE stock_bars_daily (symbol TEXT, `date` DATE, data_source TEXT DEFAULT 'eodhd_eod')"))
         conn.execute(
             text(
-                "CREATE TABLE stock_scores_history (snapshot_date DATE, capital_preset_key TEXT DEFAULT 'capital_50001_100000', symbol TEXT)"
+                "CREATE TABLE stock_scores_history (snapshot_date DATE, capital_preset_key TEXT DEFAULT 'capital_0_2000_eur', symbol TEXT)"
             )
         )
     return engine

@@ -1,3 +1,5 @@
+import pandas as pd
+
 from ihm.pages import backtesting
 
 
@@ -49,8 +51,8 @@ def test_build_pipeline_pit_status_message_warns_when_history_is_missing() -> No
     level, message = backtesting._build_pipeline_pit_status_message(
         {
             "status": "missing",
-            "start": "2025-04-21",
-            "end": "2026-04-20",
+            "start": "2024-01-01",
+            "end": "2024-01-31",
             "capital_preset_key": "capital_50001_100000",
             "capital_preset_filtered": True,
             "rows": 0,
@@ -68,13 +70,13 @@ def test_build_pipeline_pit_status_message_confirms_when_history_is_available() 
     level, message = backtesting._build_pipeline_pit_status_message(
         {
             "status": "available",
-            "start": "2025-04-21",
+            "start": "2024-01-01",
             "end": "2025-04-29",
             "capital_preset_key": "capital_50001_100000",
             "capital_preset_filtered": True,
             "rows": 42,
             "snapshot_days": 7,
-            "first_snapshot_date": "2025-04-21",
+            "first_snapshot_date": "2024-01-01",
             "last_snapshot_date": "2025-04-29",
         }
     )
@@ -163,5 +165,26 @@ def test_build_global_screener_history_dataframe_exposes_transverse_inventory() 
 
     assert history_df.iloc[0]["Répertoire"] == "artifacts/screener_a"
     assert history_df.iloc[0]["Disponible"] == "oui"
+
+
+def test_resolve_history_selected_run_id_returns_selected_run(monkeypatch) -> None:
+    history_df = pd.DataFrame(
+        [
+            {"run_id": "run_a", "libellé": "A"},
+            {"run_id": "run_b", "libellé": "B"},
+        ]
+    )
+
+    monkeypatch.setattr(backtesting, "_selected_dataframe_row_index", lambda table_key: 1)
+
+    assert backtesting._resolve_history_selected_run_id(history_df) == "run_b"
+
+
+def test_resolve_history_selected_run_id_returns_none_when_selection_is_invalid(monkeypatch) -> None:
+    history_df = pd.DataFrame([{"run_id": "run_a"}])
+
+    monkeypatch.setattr(backtesting, "_selected_dataframe_row_index", lambda table_key: 3)
+
+    assert backtesting._resolve_history_selected_run_id(history_df) is None
 
 

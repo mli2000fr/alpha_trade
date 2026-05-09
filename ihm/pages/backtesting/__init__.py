@@ -50,6 +50,7 @@ from ihm.services.screener_recommendations import build_screener_artifact_summar
 SELECTED_RUN_KEY = "ihm_backtesting_selected_run_id"
 LOG_FILTER_KEY = "ihm_backtesting_log_filter"
 PENDING_SELECTED_RUN_KEY = "ihm_backtesting_pending_selected_run_id"
+BACKTESTING_HISTORY_TABLE_KEY = "ihm_backtesting_runtime_history_table"
 TAIL_LINES = 250
 CAPITAL_PRESET_CUSTOM = "custom"
 BT_RUN_CAPITAL_PRESET_KEY = "bt_run_capital_preset"
@@ -59,22 +60,6 @@ BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature
 BT_RUN_CONFIGURATION_PRESET_KEY = "bt_run_configuration_preset"
 
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
-    "standard_research": {
-        "label": "Backtest standard (research)",
-        "description": (
-            "Réinitialise les options de fidélité opt-in sur le comportement standard : "
-            "`research`, stratégie ML PIT `auto`, phases 2/3/4/5/7 désactivées."
-        ),
-        "state_updates": {
-            "bt_run_engine_mode": "research",
-            "bt_run_ml_pit_strategy": "auto",
-            "bt_run_phase2_mode": "off",
-            "bt_run_phase3_mode": "off",
-            "bt_run_phase4_mode": "off",
-            "bt_run_phase5_mode": "off",
-            "bt_run_phase7_mode": "off",
-        },
-    },
     "pipeline_live_like": {
         "label": "Replay le plus proche du pipeline live aujourd'hui",
         "description": (
@@ -89,6 +74,22 @@ RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
             "bt_run_phase4_mode": "protection_replay",
             "bt_run_phase5_mode": "watcher_replay",
             "bt_run_phase7_mode": "exit_lifecycle_replay",
+        },
+    },
+    "standard_research": {
+        "label": "Backtest standard (research)",
+        "description": (
+            "Réinitialise les options de fidélité opt-in sur le comportement standard : "
+            "`research`, stratégie ML PIT `auto`, phases 2/3/4/5/7 désactivées."
+        ),
+        "state_updates": {
+            "bt_run_engine_mode": "research",
+            "bt_run_ml_pit_strategy": "auto",
+            "bt_run_phase2_mode": "off",
+            "bt_run_phase3_mode": "off",
+            "bt_run_phase4_mode": "off",
+            "bt_run_phase5_mode": "off",
+            "bt_run_phase7_mode": "off",
         },
     },
 }
@@ -141,9 +142,9 @@ def _get_run_configuration_preset(preset_key: str) -> dict[str, object] | None:
 
 def _ensure_run_configuration_preset_session_key() -> str:
     options = list(RUN_CONFIGURATION_PRESETS)
-    current = str(st.session_state.get(BT_RUN_CONFIGURATION_PRESET_KEY, "standard_research") or "standard_research")
+    current = str(st.session_state.get(BT_RUN_CONFIGURATION_PRESET_KEY, "pipeline_live_like") or "pipeline_live_like")
     if current not in options:
-        current = "standard_research"
+        current = "pipeline_live_like"
         st.session_state[BT_RUN_CONFIGURATION_PRESET_KEY] = current
     return current
 
@@ -277,6 +278,36 @@ def _prime_runtime_center_state(run_ids: list[str], labels: dict[str, str]) -> N
     default_selected = st.session_state.get(SELECTED_RUN_KEY)
     if default_selected not in labels and run_ids:
         st.session_state[SELECTED_RUN_KEY] = run_ids[0]
+
+
+def _selected_dataframe_row_index(table_key: str) -> int | None:
+    state = st.session_state.get(table_key)
+    if state is None:
+        return None
+    selection = getattr(state, "selection", None) or (state.get("selection") if isinstance(state, dict) else None)
+    if not selection:
+        return None
+    rows = getattr(selection, "rows", None) or (selection.get("rows") if isinstance(selection, dict) else None)
+    if not rows:
+        return None
+    try:
+        return int(rows[0])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _resolve_history_selected_run_id(
+    history_df: pd.DataFrame,
+    *,
+    table_key: str = BACKTESTING_HISTORY_TABLE_KEY,
+) -> str | None:
+    if history_df.empty or "run_id" not in history_df.columns:
+        return None
+    row_index = _selected_dataframe_row_index(table_key)
+    if row_index is None or row_index < 0 or row_index >= len(history_df):
+        return None
+    run_id = str(history_df.iloc[row_index].get("run_id") or "").strip()
+    return run_id or None
 
 
 def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
@@ -749,14 +780,14 @@ def _build_run_options() -> BacktestRunOptions:
     with col1:
         start = st.text_input(
             "Date de début",
-            value=cast(str, st.session_state.get("bt_run_start", "2025-04-21")),
+            value=cast(str, st.session_state.get("bt_run_start", "2024-01-01")),
             key="bt_run_start",
             help="Format YYYY-MM-DD. C'est la borne basse du backtest.",
         )
     with col2:
         end = st.text_input(
             "Date de fin",
-            value=cast(str, st.session_state.get("bt_run_end", "2026-04-20")),
+            value=cast(str, st.session_state.get("bt_run_end", "2024-01-31")),
             key="bt_run_end",
             help="Format YYYY-MM-DD. Laissez une date future si vous voulez aller jusqu'au dernier bar dispo.",
         )
@@ -764,7 +795,7 @@ def _build_run_options() -> BacktestRunOptions:
         equity = st.number_input(
             "Capital initial ($)",
             min_value=1_000.0,
-            value=float(st.session_state.get("bt_run_equity", 100_000.0)),
+            value=float(st.session_state.get("bt_run_equity", 2_000.0)),
             step=1_000.0,
             key="bt_run_equity",
             help="Capital de départ simulé du portefeuille.",
@@ -1133,14 +1164,14 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
     with col1:
         start = st.text_input(
             "Date de début du backfill",
-            value=cast(str, st.session_state.get("bt_backfill_start", "2025-04-21")),
+            value=cast(str, st.session_state.get("bt_backfill_start", "2024-01-01")),
             key="bt_backfill_start",
             help="Première séance à reconstruire au format YYYY-MM-DD.",
         )
     with col2:
         end = st.text_input(
             "Date de fin du backfill",
-            value=cast(str, st.session_state.get("bt_backfill_end", "2026-04-16")),
+            value=cast(str, st.session_state.get("bt_backfill_end", "2024-01-31")),
             key="bt_backfill_end",
             help="Laissez vide pour laisser le service résoudre la borne utile automatiquement.",
         )
@@ -1255,13 +1286,13 @@ def _build_diagnose_screener_options() -> DiagnoseScreenerOptions:
     with col1:
         start = st.text_input(
             "Date de début diagnostic",
-            value=cast(str, st.session_state.get("bt_diag_start", "2025-04-21")),
+            value=cast(str, st.session_state.get("bt_diag_start", "2024-01-01")),
             key="bt_diag_start",
         )
     with col2:
         end = st.text_input(
             "Date de fin diagnostic",
-            value=cast(str, st.session_state.get("bt_diag_end", "2026-04-20")),
+            value=cast(str, st.session_state.get("bt_diag_end", "2024-01-31")),
             key="bt_diag_end",
         )
     with col3:
@@ -2152,7 +2183,56 @@ def _render_runtime_center() -> None:
         ]
     )
     with st.expander("🗃️ Historique des exécutions backtesting", expanded=False):
-        st.dataframe(history_df, use_container_width=True, hide_index=True)
+        st.caption("Sélectionnez une ligne pour faire apparaître les boutons de téléchargement des logs du run historique.")
+        st.dataframe(
+            history_df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=BACKTESTING_HISTORY_TABLE_KEY,
+        )
+
+        selected_history_run_id = _resolve_history_selected_run_id(history_df)
+        if selected_history_run_id is None:
+            st.caption("ℹ️ Aucune ligne sélectionnée dans l'historique pour le moment.")
+        else:
+            selected_history_run = get_backtesting_run_record(selected_history_run_id)
+            selected_history_status = _status_badge(str(selected_history_run.get("status") or "")) if isinstance(selected_history_run, dict) else "—"
+            st.caption(f"Run historique sélectionné : `{selected_history_run_id}` | {selected_history_status}")
+
+            history_download_specs: list[tuple[str, str, str, bool]] = []
+            for label, stream in (
+                ("⬇️ Log consolidé", "all"),
+                ("⬇️ Stdout", "stdout"),
+                ("⬇️ Stderr", "stderr"),
+            ):
+                data = read_backtesting_logs(selected_history_run_id, stream=cast(Any, stream))
+                available = bool(data)
+                history_download_specs.append((label, stream, data, available))
+
+            download_cols = st.columns(4)
+            for index, (label, stream, data, available) in enumerate(history_download_specs):
+                download_cols[index].download_button(
+                    label=label,
+                    data=data,
+                    file_name=build_backtesting_log_download_name(selected_history_run_id, stream=cast(Any, stream)),
+                    mime="text/plain",
+                    key=f"history_backtesting_download_{selected_history_run_id}_{stream}",
+                    use_container_width=True,
+                    disabled=not available,
+                )
+
+            if download_cols[3].button(
+                "🔍 Inspecter ce run",
+                key=f"history_backtesting_open_run_{selected_history_run_id}",
+                use_container_width=True,
+            ):
+                st.session_state[PENDING_SELECTED_RUN_KEY] = selected_history_run_id
+                st.rerun()
+
+            if not any(spec[3] for spec in history_download_specs):
+                st.caption("⚠️ Les artefacts de logs de ce run sont indisponibles (rotation, purge ou run incomplet).")
 
     screener_history_df = _build_global_screener_history_dataframe(build_global_screener_artifact_history())
     if not screener_history_df.empty:

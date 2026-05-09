@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS execution_order_requests (
     order_type         VARCHAR(20) NOT NULL,
     business_key       VARCHAR(64) NOT NULL,
     submission_key     VARCHAR(64) NULL,
-    attempt_no         INT NOT NULL,
+    attempt_no         INT NOT NULL, -- numéro de la tentative pour ce business_key (peut être accompagné d'un timestamp si besoin de granularité)
     parent_request_id  VARCHAR(32) NULL,
     intent_role        VARCHAR(20) NOT NULL,
     decision_price     DOUBLE NULL,
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS execution_order_requests (
     failure_reason     VARCHAR(255) NULL,
     created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_eor_account_business_attempt (account_id, business_key, attempt_no),
+    UNIQUE KEY uq_eor_account_business_attempt (account_id, business_key, attempt_no), -- unicité par tentative pour un ordre logique
     UNIQUE KEY uq_eor_submission_key (submission_key),
     KEY idx_eor_exec_run (exec_run_id),
     KEY idx_eor_business_key (business_key),

@@ -15,7 +15,7 @@ down_revision = "0022_shadow_drift_runs"
 branch_labels = None
 depends_on = None
 
-DEFAULT_PRESET_KEY = "capital_50001_100000"
+DEFAULT_PRESET_KEY = "capital_0_2000_eur"
 
 
 def _has_column(bind, table: str, column: str) -> bool:

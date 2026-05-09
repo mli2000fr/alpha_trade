@@ -29,8 +29,8 @@ from backtesting.trading_constraints import TradingConstraintConfig
 from database.connection import get_sqlalchemy_engine
 from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS
 
-START = pd.Timestamp("2025-04-21").date()
-END = pd.Timestamp("2026-04-20").date()
+START = pd.Timestamp("2024-01-01").date()
+END = pd.Timestamp("2024-01-31").date()
 LOOKBACK_START = pd.Timestamp("2024-12-20").date()
 OUTPUT_DIR = Path("prompt/fix_swing/cash_eq2000_mp2_filtered_f2")
 FILTERS = STRICT_SWING_CASH_FILTERS.to_backtest_filter_dict()

@@ -233,12 +233,65 @@ def _restart_button_label(control_state: dict[str, object]) -> str:
 
 
 def _render_watcher_ops_controls(*, account_id: str | None, snapshot: dict[str, object]) -> None:
+    from ihm.services.watcher_runtime import (
+        list_alpaca_account_ids,
+        serialize_all_accounts_watcher_control_state,
+        launch_watcher_once_for_all_accounts,
+        start_local_watcher_service_for_all_accounts,
+    )
     control_state = dict(snapshot.get("watcher_control", {}))
     metric_row([
         ("Service local IHM", "actif" if bool(control_state.get("local_service_active")) else "inactif", None),
         ("Run service local", str(control_state.get("local_service_run_id", "—") or "—"), None),
         ("Run once local", str(control_state.get("local_once_run_id", "—") or "—"), None),
     ])
+
+    # Multi-comptes Alpaca : détection et case à cocher
+    available_account_ids = []
+    try:
+        available_account_ids = list_alpaca_account_ids()
+    except Exception:
+        available_account_ids = []
+    multi_account_supported = len(available_account_ids) > 1
+    multi_account_enabled = False
+    multi_account_state = {}
+    if multi_account_supported:
+        multi_account_enabled = st.checkbox(
+            f"🌐 Tous les comptes Alpaca ({len(available_account_ids)} : {', '.join(available_account_ids)})",
+            value=False,
+            key="ops_watcher_multi_account_toggle",
+            help=(
+                "Quand cochée, lance un processus watcher par compte Alpaca déclaré. "
+                "Chaque compte garde son propre verrou leader et ses propres logs. "
+                "Les comptes ayant déjà un watcher actif sont ignorés."
+            ),
+        )
+        if multi_account_enabled:
+            try:
+                multi_account_state = serialize_all_accounts_watcher_control_state()
+            except Exception as exc:
+                st.warning(f"État multi-comptes indisponible : {exc}")
+                multi_account_state = {}
+            any_active = bool(
+                multi_account_state.get("any_service_active")
+                or multi_account_state.get("any_once_active")
+            )
+            if any_active:
+                active_lines = []
+                for aid, st_account in (multi_account_state.get("accounts") or {}).items():
+                    if st_account.get("local_service_active"):
+                        active_lines.append(
+                            f"• `{aid}` : service local actif (`{st_account.get('local_service_run_id', '?')}`)"
+                        )
+                    elif st_account.get("local_once_active"):
+                        active_lines.append(
+                            f"• `{aid}` : run once en cours (`{st_account.get('local_once_run_id', '?')}`)"
+                        )
+                if active_lines:
+                    st.caption(
+                        "Comptes déjà couverts (ils seront ignorés au prochain lancement) :\n"
+                        + "\n".join(active_lines)
+                    )
 
     if bool(control_state.get("external_fresh_service_detected")):
         scope = str(control_state.get("fresh_service_scope", "") or "global")
@@ -291,44 +344,84 @@ def _render_watcher_ops_controls(*, account_id: str | None, snapshot: dict[str, 
         "▶️ Run watcher once",
         type="primary",
         use_container_width=True,
-        disabled=(not acknowledged) or blocked_by_external_guardrail or once_busy or service_active,
+        disabled=(not acknowledged) or blocked_by_external_guardrail or (once_busy or service_active) and not multi_account_enabled,
+        key="ops_watcher_run_once_btn",
+        help=(
+            "Exécute un scan unique du watcher de protections "
+            + ("pour tous les comptes Alpaca déclarés." if multi_account_enabled else "pour le compte sélectionné.")
+        ),
     )
     restart_clicked = action_cols[1].button(
         _restart_button_label(control_state),
         use_container_width=True,
-        disabled=(not acknowledged) or blocked_by_external_guardrail or once_busy,
+        disabled=(not acknowledged) or blocked_by_external_guardrail or (once_busy and not multi_account_enabled),
+        key="ops_watcher_service_start_btn",
+        help=(
+            "Démarre un service local IHM (boucle continue) "
+            + ("par compte Alpaca déclaré." if multi_account_enabled else "pour le compte sélectionné.")
+        ),
     )
     stop_clicked = action_cols[2].button(
         "⏹️ Stop service local IHM",
         use_container_width=True,
         disabled=(not acknowledged) or not service_active,
+        key="ops_watcher_service_stop_btn",
+        help="Arrête le service local IHM (n'agit pas sur Task Scheduler ni NSSM).",
     )
 
     db_config = get_runtime_db_config()
 
     if run_once_clicked:
         try:
-            record = launch_watcher_once(db_config=db_config, account_id=account_id, limit=limit)
+            if multi_account_enabled:
+                records = launch_watcher_once_for_all_accounts(db_config=db_config, limit=limit)
+            else:
+                record = launch_watcher_once(db_config=db_config, account_id=account_id, limit=limit)
+                records = [record]
         except RuntimeError as exc:
             st.warning(str(exc))
         else:
-            st.success(f"Watcher once lancé en arrière-plan : `{record.run_id}`")
+            if multi_account_enabled:
+                st.success(
+                    "Watcher once lancé pour "
+                    f"{len(records)} compte(s) : "
+                    + ", ".join(f"`{getattr(r, 'account_id', '?')}`→`{getattr(r, 'run_id', '?')}`" for r in records)
+                )
+            else:
+                st.success(f"Watcher once lancé en arrière-plan : `{records[0].run_id}`")
             st.rerun()
 
     if restart_clicked:
         try:
-            record = restart_local_watcher_service(
-                db_config=db_config,
-                account_id=account_id,
-                limit=limit,
-                service_interval_seconds=service_interval,
-                idle_interval_seconds=idle_interval,
-                heartbeat_interval_seconds=heartbeat_interval,
-            )
+            if multi_account_enabled:
+                records = start_local_watcher_service_for_all_accounts(
+                    db_config=db_config,
+                    limit=limit,
+                    service_interval_seconds=service_interval,
+                    idle_interval_seconds=idle_interval,
+                    heartbeat_interval_seconds=heartbeat_interval,
+                )
+            else:
+                record = restart_local_watcher_service(
+                    db_config=db_config,
+                    account_id=account_id,
+                    limit=limit,
+                    service_interval_seconds=service_interval,
+                    idle_interval_seconds=idle_interval,
+                    heartbeat_interval_seconds=heartbeat_interval,
+                )
+                records = [record]
         except RuntimeError as exc:
             st.warning(str(exc))
         else:
-            st.success(f"Service watcher local IHM lancé : `{record.run_id}`")
+            if multi_account_enabled:
+                st.success(
+                    "Service watcher local IHM démarré pour "
+                    f"{len(records)} compte(s) : "
+                    + ", ".join(f"`{getattr(r, 'account_id', '?')}`→`{getattr(r, 'run_id', '?')}`" for r in records)
+                )
+            else:
+                st.success(f"Service watcher local IHM lancé : `{records[0].run_id}`")
             st.rerun()
 
     if stop_clicked:
