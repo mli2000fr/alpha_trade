@@ -474,21 +474,6 @@ def _render_environment_variable_settings():
         st.error("Module `ihm.services.varEnv` introuvable. Vérifiez le nom du fichier et le path.")
         return
 
-    try:
-        allowed_env_names = get_conf_var_env()
-    except Exception as exc:
-        allowed_env_names = []
-        st.warning(f"Impossible de lire `conf/var_env.json` : {exc}")
-
-    if allowed_env_names:
-        st.caption(
-            f"Export / import filtrés via `conf/var_env.json` — {len(allowed_env_names)} clé(s) autorisée(s)."
-        )
-    else:
-        st.caption(
-            "Aucun filtre détecté dans `conf/var_env.json` : export complet et import sans liste blanche explicite."
-        )
-
     st.markdown(VAR_ENV_UPLOAD_WIDGET_CSS, unsafe_allow_html=True)
 
     col_env1, col_env2 = st.columns(2)

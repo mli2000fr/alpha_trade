@@ -1,4 +1,9 @@
 import io
+import os
+import csv
+import json
+from pathlib import Path
+
 import streamlit as st  # À commenter si utilisé hors Streamlit
 # --- Version Streamlit-friendly ---
 def get_var_env_streamlit() -> io.BytesIO:
@@ -20,85 +25,6 @@ def get_var_env_streamlit() -> io.BytesIO:
             writer.writerow([nom, valeur])
     # Encodage en bytes pour Streamlit.download_button
     return io.BytesIO(output.getvalue().encode("utf-8"))
-
-def set_var_env_streamlit(csv_bytes: bytes) -> dict:
-    """
-    Parse le CSV uploadé (bytes), valide les variables selon la conf, et retourne le résultat.
-    N'applique PAS à os.environ globalement (Streamlit relance le script à chaque interaction).
-    Affiche le résultat dans l'interface Streamlit.
-    """
-    try:
-        text = csv_bytes.decode("utf-8") if isinstance(csv_bytes, (bytes, bytearray)) else str(csv_bytes)
-    except Exception:
-        text = str(csv_bytes)
-    reader = csv.reader(text.splitlines())
-    applied: dict[str, str] = {}
-    skipped: list[str] = []
-    allowed = set(get_conf_var_env() or [])
-    for i, row in enumerate(reader):
-        if i == 0:
-            continue
-        if not row:
-            continue
-        var_name = row[0].strip()
-        var_value = row[1].strip() if len(row) > 1 else ""
-        if not var_name:
-            continue
-        if allowed and var_name not in allowed:
-            skipped.append(var_name)
-            continue
-        applied[var_name] = var_value
-    # Affichage Streamlit (ou print si hors Streamlit)
-    if applied:
-        st.success(f"Variables valides : {', '.join(applied.keys())}")
-    if skipped:
-        st.warning(f"Variables ignorées : {', '.join(skipped)}")
-    return {"applied": applied, "skipped": skipped}
-
-# --- Exemple d'intégration Streamlit ---
-# def page_var_env():
-#     st.header("Export/Import variables d'environnement")
-#     # Export
-#     st.download_button(
-#         label="Télécharger les variables d'environnement",
-#         data=get_var_env_streamlit(),
-#         file_name="var_env.csv",
-#         mime="text/csv"
-#     )
-#     # Import
-#     uploaded = st.file_uploader("Importer un CSV de variables d'environnement", type=["csv"])
-#     if uploaded:
-#         set_var_env_streamlit(uploaded.read())
-import os
-import csv
-import json
-from pathlib import Path
-
-def get_var_env():
-    """
-    Récupère toutes les variables d'environnement sous Windows 11,
-    les écrit dans un fichier var_env.csv et retourne le chemin du fichier.
-    """
-    variables = dict(os.environ)
-
-    # Récupère la liste autorisée depuis conf/var_env.json via get_conf_var_env()
-    conf_list = get_conf_var_env()
-
-    chemin_fichier = "var_env.csv"
-    with open(chemin_fichier, mode="w", newline='', encoding="utf-8") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["Variable", "Valeur"])
-
-        if isinstance(conf_list, list) and conf_list:
-            # Écrire uniquement les variables listées dans la configuration.
-            for nom in conf_list:
-                valeur = variables.get(nom, "")
-                writer.writerow([nom, valeur])
-        else:
-            # Si aucune configuration fournie, conserver le comportement précédent
-            for nom, valeur in variables.items():
-                writer.writerow([nom, valeur])
-    return chemin_fichier
 
 
 def get_conf_var_env() -> list:
