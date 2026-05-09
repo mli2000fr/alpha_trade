@@ -18,6 +18,7 @@ from typing import cast
 
 from common.capital_presets import (
     apply_backtest_defaults_from_preset,
+    build_risk_config_kwargs_from_preset,
     build_screener_config_kwargs_from_preset,
     build_selector_config_kwargs_from_preset,
     capital_preset_fingerprint,
@@ -589,10 +590,16 @@ def _run_backtest(args: argparse.Namespace) -> None:
     if phase2_mode != "off":
         from risk_management.config import RiskConfig
 
-        phase2_risk_config = RiskConfig(
-            account_equity=float(args.equity),
-            max_positions=int(args.max_positions),
-        )
+        # Sprint S4 — propager les overrides du preset capital à la phase 2 risk
+        # (sinon ``min_position_notional``, drawdown, corrélation… retombent sur
+        # les défauts ``RiskConfig`` et ignorent silencieusement le preset).
+        risk_kwargs = build_risk_config_kwargs_from_preset(effective_preset)
+        risk_kwargs["account_equity"] = float(args.equity)
+        # ``args.max_positions`` peut déjà refléter le preset via
+        # ``apply_backtest_defaults_from_preset`` ; on conserve la valeur CLI/preset
+        # finale ici pour rester source unique de vérité côté simulateur.
+        risk_kwargs["max_positions"] = int(args.max_positions)
+        phase2_risk_config = RiskConfig(**risk_kwargs)
 
     if phase3_mode != "off" and phase2_mode != "risk_execution":
         _safe_print(

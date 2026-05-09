@@ -222,6 +222,51 @@ def build_selector_config_kwargs_from_preset(preset: CapitalPreset) -> dict[str,
     }
 
 
+_RISK_CONFIG_PRESET_MAPPING: tuple[tuple[str, str, type], ...] = (
+    # (preset_key, RiskConfig field, cast)
+    ("risk_per_trade_pct", "risk_per_trade_pct", float),
+    ("risk_max_positions", "max_positions", int),
+    ("risk_max_position_weight", "max_position_weight", float),
+    ("risk_max_sector_weight", "max_sector_weight", float),
+    ("risk_min_position_notional", "min_position_notional", float),
+    ("risk_max_drawdown_pct", "max_portfolio_drawdown_pct", float),
+    ("risk_max_daily_loss_pct", "max_daily_loss_pct", float),
+    ("risk_correlation_threshold", "correlation_threshold", float),
+    ("risk_correlation_lookback_days", "correlation_lookback_days", int),
+    ("risk_correlation_min_overlap", "correlation_min_overlap", int),
+    ("risk_enable_kelly", "enable_kelly_sizing", bool),
+    ("risk_score_weight", "score_weight", float),
+    ("risk_prediction_weight", "prediction_weight", float),
+)
+
+
+def build_risk_config_kwargs_from_preset(preset: CapitalPreset) -> dict[str, Any]:
+    """Construit les kwargs ``RiskConfig`` à partir des valeurs d'un preset.
+
+    Sprint S4 / fix backtest : les phases qui instancient ``RiskConfig`` (notamment
+    la phase 2 du backtesting) doivent honorer les overrides définis dans le
+    preset capital (tickets minimum, corrélation, drawdown, etc.). Sans cela,
+    les valeurs par défaut de ``RiskConfig`` (ex. ``min_position_notional=500``)
+    masquent silencieusement le preset choisi.
+    """
+    kwargs: dict[str, Any] = {}
+    for preset_key, field_name, cast_fn in _RISK_CONFIG_PRESET_MAPPING:
+        if preset_key not in preset.values:
+            continue
+        raw_value = preset.values[preset_key]
+        if raw_value == DETECTED_EQUITY_PLACEHOLDER:
+            # Le placeholder est résolu côté appelant (account_equity vient de l'equity réelle).
+            continue
+        if cast_fn is bool:
+            if isinstance(raw_value, bool):
+                kwargs[field_name] = raw_value
+            else:
+                kwargs[field_name] = str(raw_value).strip().lower() in {"true", "1", "yes", "on"}
+        else:
+            kwargs[field_name] = cast_fn(raw_value)
+    return kwargs
+
+
 def apply_backtest_defaults_from_preset(
     values: dict[str, Any],
     preset: CapitalPreset,
@@ -251,6 +296,7 @@ __all__ = [
     "DETECTED_EQUITY_PLACEHOLDER",
     "CapitalPreset",
     "apply_backtest_defaults_from_preset",
+    "build_risk_config_kwargs_from_preset",
     "build_screener_config_kwargs_from_preset",
     "build_selector_config_kwargs_from_preset",
     "capital_preset_fingerprint",
