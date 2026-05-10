@@ -25,6 +25,7 @@ from common.capital_presets import (
     resolve_capital_preset_for_equity,
     resolve_effective_capital_preset,
 )
+from common.market_calendar import nyse_session_dates
 from common.utils import configure_root_logging
 
 LOGGER = logging.getLogger(__name__)
@@ -751,6 +752,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     # 2. Pivoter OHLCV
     pivoted = pivot_ohlcv(ohlcv_df)
+    nyse_sessions = pd.DatetimeIndex(nyse_session_dates(ohlcv_start, end))
+    if len(nyse_sessions) > 0:
+        original_session_count = len(pivoted["close"].index)
+        pivoted = {
+            key: frame.loc[frame.index.intersection(nyse_sessions)].copy()
+            for key, frame in pivoted.items()
+        }
+        filtered_session_count = len(pivoted["close"].index)
+        if filtered_session_count != original_session_count:
+            LOGGER.info(
+                "Calendrier NYSE appliqué : %d date(s) OHLCV hors séance retirée(s).",
+                original_session_count - filtered_session_count,
+            )
     backtest_start_ts = pd.Timestamp(start)
     backtest_end_ts = pd.Timestamp(end)
     execution_pivoted = {

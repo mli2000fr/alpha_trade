@@ -1,0 +1,16 @@
+{
+"blocked_same_day_exits":4
+"blocked_pdt_day_trades":0
+"blocked_cash_entries":24
+"executed_day_trades":0
+"blocked_entry_gap":0
+"initial_stop_exits":2
+"take_profit_exits":2
+"trailing_stop_exits":3
+"blocked_by_regime":0
+"blocked_by_sectoral_cap":0
+"blocked_by_drawdown_breaker":0
+"protection_replay_activations":5
+"watcher_replay_transitions":5
+"exit_lifecycle_replayed":7
+}

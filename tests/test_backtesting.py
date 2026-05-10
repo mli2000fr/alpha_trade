@@ -1228,8 +1228,44 @@ class TestBacktestConfig:
         assert float(swing.closed_trades_df.iloc[0]["entry_price"]) == 105.0
         assert standard.closed_trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
         assert swing.closed_trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
-        assert standard.closed_trades_df.iloc[0]["exit_date"] == pd.Timestamp("2025-01-02")
+        assert standard.closed_trades_df.iloc[0]["exit_date"] == pd.Timestamp("372025-01-02")
         assert swing.closed_trades_df.iloc[0]["exit_date"] == pd.Timestamp("2025-01-03")
+
+    def test_backtest_engine_carries_forward_last_close_for_mark_to_market_when_current_close_missing(self):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+        from backtesting.trading_constraints import TradingConstraintConfig
+
+        idx = pd.to_datetime(["2024-11-26", "2024-11-27", "2024-11-28", "2024-11-29"])
+        open_ = pd.DataFrame({"AAPL": [10.0, 10.0, 10.0, 10.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [10.0, 10.5, None, 10.4]}, index=idx)
+        high = pd.DataFrame({"AAPL": [10.0, 10.6, None, 10.5]}, index=idx)
+        low = pd.DataFrame({"AAPL": [10.0, 10.0, None, 10.2]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2024-11-26"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+            }
+        )
+
+        result = BacktestEngine(
+            BacktestConfig(
+                start_date=date(2024, 11, 26),
+                end_date=date(2024, 11, 29),
+                initial_equity=1_000,
+                max_positions=1,
+                fees_pct=0.0,
+                profit_taker_pct=1.0,
+                trailing_stop_pct=0.99,
+                trading_constraints=TradingConstraintConfig(account_type="cash", pdt_rule="off", swing_only=True),
+            )
+        ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        assert result.closed_trades_df.empty
+        assert result.equity_curve.loc[pd.Timestamp("2024-11-27")] == pytest.approx(1050.0)
+        assert result.equity_curve.loc[pd.Timestamp("2024-11-28")] == pytest.approx(1050.0)
+        assert result.equity_curve.loc[pd.Timestamp("2024-11-29")] == pytest.approx(1040.0)
 
     def test_backtest_engine_ignores_signal_without_next_session_open(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
@@ -1824,10 +1860,8 @@ class TestCLI:
         assert captured["ohlcv_end"] == requested_end
         assert cast(date, captured["ohlcv_start"]) < requested_start
         assert min(cast(list[pd.Timestamp], captured["risk_close_index"])) < pd.Timestamp(requested_start)
-        assert cast(list[pd.Timestamp], captured["engine_open_index"]) == [
-            pd.Timestamp("2020-01-01"),
-            pd.Timestamp("2020-01-02"),
-        ]
+        assert pd.Timestamp("2020-01-01") not in cast(list[pd.Timestamp], captured["risk_close_index"])
+        assert cast(list[pd.Timestamp], captured["engine_open_index"]) == [pd.Timestamp("2020-01-02")]
         assert cast(pd.DataFrame, captured["signals_df"]).equals(phase2_signals_df)
 
     def test_run_backtest_propagates_walk_forward_options(self, monkeypatch, tmp_path):

@@ -423,6 +423,7 @@ class BacktestEngine:
 
         # Phase B.1 — ADV pré-calculé pour le slippage volume-aware.
         adv_usd_df = compute_adv_usd(close, volume, window=20) if volume is not None else None
+        mtm_close = close.ffill()
 
         state = _RunState(
             settled_cash=float(cfg.initial_equity),
@@ -434,7 +435,7 @@ class BacktestEngine:
             self._apply_settlements(state, day_idx)
 
             # Phase E.4 — single mark-to-market précoce pour Phase C.5.
-            current_market_value = self._mark_to_market(state.positions, close, trade_day)
+            current_market_value = self._mark_to_market(state.positions, mtm_close, trade_day)
             current_equity = state.settled_cash + state.unsettled_cash + current_market_value
             state.peak_equity = max(state.peak_equity, current_equity)
             entries_allowed_by_breaker = cfg.risk_overlay.drawdown_breaker.update(
@@ -483,7 +484,7 @@ class BacktestEngine:
             )
 
             # Phase E.4 — single mark-to-market final pour equity du jour.
-            market_value = self._mark_to_market(state.positions, close, trade_day)
+            market_value = self._mark_to_market(state.positions, mtm_close, trade_day)
             state.equity_points.append(state.settled_cash + state.unsettled_cash + market_value)
 
         equity_curve = pd.Series(
