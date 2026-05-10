@@ -49,3 +49,4 @@ Sont exclus du périmètre mutation testing :
 - CLIs (`__main__`, scripts one-shot) ;
 - code défensif `# pragma: no cover` justifié.
 
+| 2026-05-10 | 2026-05-10 | None | None | None |
