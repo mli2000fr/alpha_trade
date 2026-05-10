@@ -446,6 +446,9 @@ class RiskRepository:
         if "snapshot_kind" in broker_columns:
             where_clauses.append("snapshot_kind = :snapshot_kind")
             params["snapshot_kind"] = "preflight"
+        # Hardening live : ignorer les snapshots dont l'equity est manquante ou ≤ 0
+        # (cf. execution_engine.db_io.snapshot_broker_account & InvalidBrokerSnapshotError).
+        where_clauses.append("equity IS NOT NULL AND equity > 0")
         order_by = "created_at DESC"
         if "id" in broker_columns:
             order_by += ", id DESC"
@@ -469,6 +472,11 @@ class RiskRepository:
         with self.engine.connect() as conn:
             row = conn.execute(latest_stmt, params).mappings().first()
             if row is None:
+                LOGGER.warning(
+                    "Aucun broker_account_snapshot exploitable (equity > 0) | account=%s trade_date=%s",
+                    account_id,
+                    trade_date,
+                )
                 return None
             high_watermark_row = conn.execute(high_watermark_stmt, params).mappings().first()
 

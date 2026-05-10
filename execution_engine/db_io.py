@@ -1376,7 +1376,23 @@ class ExecutionRepository:
         broker_mode: str,
         snapshot: dict[str, Any],
         snapshot_kind: str = "preflight",
+        allow_zero_equity: bool = False,
     ) -> None:
+        equity_value = float(snapshot.get("equity", 0.0) or 0.0)
+        if equity_value <= 0.0 and not allow_zero_equity:
+            # Hardening live : un snapshot avec equity ≤ 0 corrompt les analyses risque
+            # (high_watermark, fallback PnLSnapshot, etc.). On refuse l'insert et on trace.
+            LOGGER.warning(
+                "snapshot_broker_account refusé — equity invalide=%.4f | exec_run_id=%s "
+                "account=%s broker_mode=%s snapshot_kind=%s raw_keys=%s",
+                equity_value,
+                exec_run_id,
+                account_id,
+                broker_mode,
+                snapshot_kind,
+                sorted(snapshot.keys()) if isinstance(snapshot, dict) else type(snapshot).__name__,
+            )
+            return
         stmt = text("""
             INSERT INTO broker_account_snapshots (
                 exec_run_id, account_id, broker_mode, snapshot_kind,

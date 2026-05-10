@@ -20,6 +20,7 @@ from typing import Any, Callable, Optional
 from core.run_summary import attach_live_progress
 from execution_engine.account_state import (
     _AccountConstraintState,
+    InvalidBrokerSnapshotError,
     build_account_constraint_state as _build_account_constraint_state_impl,
     estimate_intent_notional as _estimate_intent_notional_impl,
     reserve_account_capacity_for_intent as _reserve_account_capacity_for_intent_impl,
@@ -290,7 +291,36 @@ class ProductionExecutor:
                     payload={"stale_price_targets": metrics["stale_price_targets"]},
                 ))
 
-            account_state = self._build_account_constraint_state()
+            try:
+                account_state = self._build_account_constraint_state()
+            except InvalidBrokerSnapshotError as exc:
+                LOGGER.error(
+                    "Préflight execution avorté — snapshot broker invalide | account=%s broker_mode=%s : %s",
+                    self._cfg.resolved_account_id,
+                    self._cfg.broker_mode,
+                    exc,
+                )
+                events.append(make_event(
+                    exec_run_id,
+                    EventType.PRECHECK_FAILED,
+                    f"Snapshot broker rejeté: {exc}",
+                    payload={
+                        "reason": "invalid_broker_snapshot",
+                        "account_id": self._cfg.resolved_account_id,
+                        "broker_mode": self._cfg.broker_mode,
+                    },
+                ))
+                self._repo.update_execution_run_status(exec_run_id, "ABORTED")
+                metrics["status"] = "ABORTED"
+                self._emit_progress(
+                    metrics,
+                    current=1,
+                    total=1,
+                    label="⚙️ Progression execution — snapshot broker invalide",
+                    phase="precheck",
+                    unit="étapes",
+                )
+                return metrics
             events.append(make_event(
                 exec_run_id,
                 EventType.ACCOUNT_CONSTRAINT_APPLIED,
@@ -880,6 +910,16 @@ class ProductionExecutor:
         )
 
     def _snapshot_account_constraints(self, exec_run_id: str, account_state: _AccountConstraintState) -> None:
+        if account_state.equity <= 0.0:
+            # Hardening live : ne jamais persister un snapshot 0/négatif (cf. InvalidBrokerSnapshotError).
+            LOGGER.warning(
+                "Snapshot broker non persisté — equity invalide=%.4f | account=%s broker_mode=%s exec_run_id=%s",
+                account_state.equity,
+                self._cfg.resolved_account_id,
+                self._cfg.broker_mode,
+                exec_run_id,
+            )
+            return
         try:
             self._repo.snapshot_broker_account(
                 exec_run_id,

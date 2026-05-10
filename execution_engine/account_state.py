@@ -22,6 +22,17 @@ if TYPE_CHECKING:  # pragma: no cover
 LOGGER = logging.getLogger(__name__)
 
 
+class InvalidBrokerSnapshotError(RuntimeError):
+    """Hardening live — levée lorsqu'un snapshot broker ne contient pas d'equity exploitable.
+
+    Un snapshot avec ``equity <= 0`` (ou champ manquant) signale soit une erreur
+    transitoire de l'API broker, soit un compte non provisionné. Dans tous les
+    cas il est dangereux de :
+      * dimensionner les ordres sur cette base ;
+      * persister ce snapshot et polluer les analyses risque downstream.
+    """
+
+
 @dataclass(slots=True)
 class _AccountConstraintState:
     account_type: str
@@ -65,7 +76,20 @@ def build_account_constraint_state(
         daytrade_count = 0
     else:
         snapshot = broker.get_account_snapshot()
-        equity = safe_float(snapshot.get("equity") or snapshot.get("portfolio_value"), default=0.0)
+        raw_equity = snapshot.get("equity") or snapshot.get("portfolio_value")
+        equity = safe_float(raw_equity, default=0.0)
+        if equity <= 0.0:
+            LOGGER.error(
+                "Snapshot broker rejeté — equity invalide | account=%s broker_mode=%s "
+                "raw_equity=%r snapshot_keys=%s",
+                getattr(cfg, "resolved_account_id", "?"),
+                getattr(cfg, "broker_mode", "?"),
+                raw_equity,
+                sorted(snapshot.keys()) if isinstance(snapshot, dict) else type(snapshot).__name__,
+            )
+            raise InvalidBrokerSnapshotError(
+                f"Broker snapshot equity invalide ({raw_equity!r}) — refus de poursuivre l'exécution"
+            )
         settled_cash = safe_float(
             snapshot.get("non_marginable_buying_power")
             if cfg.account_type == "cash"
@@ -163,6 +187,7 @@ def should_defer_children(
 
 __all__ = [
     "_AccountConstraintState",
+    "InvalidBrokerSnapshotError",
     "safe_float",
     "estimate_intent_notional",
     "build_account_constraint_state",
