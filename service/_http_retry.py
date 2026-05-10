@@ -35,7 +35,7 @@ class RetryPolicy:
 
     max_attempts: int = 5
     base_delay_seconds: float = 0.5
-    max_delay_seconds: float = 30.0
+    max_delay_seconds: float = 70.0
     jitter: bool = True
     timeout_seconds: float = 10.0
 
