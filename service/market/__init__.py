@@ -23,6 +23,12 @@ from service.market.models import (
     neutral_snapshot,
 )
 from service.market.regime_manager import build_snapshot, reset_cache
+from service.market.macro_providers import (
+    CompositeMacroProvider,
+    EodhdMacroProvider,
+    StooqMacroProvider,
+    build_default_macro_provider,
+)
 
 __all__ = [
     "MarketRegimeSnapshot",
@@ -35,5 +41,9 @@ __all__ = [
     "reset_cache",
     "parse_market_regimes",
     "parse_trailing_stop",
+    "StooqMacroProvider",
+    "EodhdMacroProvider",
+    "CompositeMacroProvider",
+    "build_default_macro_provider",
 ]
 

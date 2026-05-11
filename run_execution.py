@@ -588,17 +588,20 @@ def run(
         )
         from service.market import (
             build_snapshot as _build_regime_snapshot,
+            build_default_macro_provider as _build_macro_provider,
             parse_market_regimes as _parse_market_regimes,
         )
 
         _yaml_cfg = _load_config_yaml()
         _mr_cfg = _parse_market_regimes(_yaml_cfg.get("market_regimes"))
+        _macro_provider = _build_macro_provider(_yaml_cfg)
         _trade_date_for_regime = trade_date_val or date.today()
         _snapshot = _build_regime_snapshot(
             _trade_date_for_regime,
             config=_mr_cfg,
             equity=float(equity) if equity else None,
             execution_context="live",
+            macro_provider=_macro_provider,
         )
         _snap_dict = _snapshot.to_dict() if hasattr(_snapshot, "to_dict") else {
             "trade_date": str(_trade_date_for_regime),

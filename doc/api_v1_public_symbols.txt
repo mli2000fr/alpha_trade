@@ -271,6 +271,11 @@ service.market.earnings_shield.EarningsShieldResult
 service.market.earnings_shield.LOGGER
 service.market.earnings_shield.compute_earnings_shield
 service.market.earnings_shield.default_db_lookup
+service.market.macro_providers.CompositeMacroProvider
+service.market.macro_providers.EodhdMacroProvider
+service.market.macro_providers.LOGGER
+service.market.macro_providers.StooqMacroProvider
+service.market.macro_providers.build_default_macro_provider
 service.market.macro_signals.MacroDataProvider
 service.market.macro_signals.MacroEvaluation
 service.market.macro_signals.evaluate_vix

@@ -70,6 +70,13 @@ def _show_position_lots_table(df: pd.DataFrame, *, title: str, height: int = 260
 def render() -> None:
     st.header("🚀 Execution Engine")
 
+    # --- Bannière régime marché (Axe C plan/prompt/parttern/plan.md) ---
+    try:
+        from ihm.components.market_regime_banner import render_market_regime_banner
+        render_market_regime_banner(compact=False)
+    except Exception:  # pragma: no cover - jamais bloquant
+        pass
+
     if not db_available():
         render_db_unavailable("Execution Engine", form_key="execution_db_form")
         return

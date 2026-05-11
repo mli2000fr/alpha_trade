@@ -548,3 +548,35 @@ Pilote par `risk_management.trailing_stop` dans `config.yaml` :
 - `apply_to_manual_orphan_buys: true` -> applique a chaque achat orphelin adopte.
 ### 8.4 Petit capital
 Le preset `capital_0_5000` impose `risk_max_positions = 4` et `risk_min_position_notional = 150`. Combine avec `allowed_slots = floor(equity / enforce_min_notional)`, aucun ordre sous ~150 USD ne peut plus etre soumis.
+
+### 8.5 Sources macro VIX / 10Y (production)
+La couche est desormais branchee sur deux fournisseurs production via
+`service.market.macro_providers.build_default_macro_provider` :
+
+- **Stooq** (gratuit, pas de cle) — symboles `^vix`, `^vix9d`, `^tnx` ;
+- **EODHD** (cle requise) — symboles `VIX.INDX`, `VXN.INDX`, `US10Y.INDX`.
+
+Selection via `config.yaml > market_regimes.macro_provider` :
+`stooq` / `eodhd` / `composite` (defaut, Stooq d'abord puis EODHD si cle
+disponible) / `none`. Les overrides de symboles sont supportes
+(`market_regimes.vix.symbol`, `market_regimes.yields.symbol_10y`, etc.).
+Les reponses sont cachees par instance et par cycle pour ne pas consommer
+le quota EODHD inutilement. Tout echec reseau retombe sur `None` →
+fallback neutre documente dans `data_quality`.
+
+### 8.6 Restitution IHM (Streamlit)
+Trois points d'entree IHM exposent la couche Market-Aware :
+
+- Page dediee **Régime Marché** (`ihm/pages/market_regime.py`, menu
+  *Trading*) : snapshot a la volee + historique persiste, configuration
+  active, rendu des earnings shielded / buyback blackout.
+- **Bannière compacte** `ihm/components/market_regime_banner.py`,
+  embarquee en haut des pages **Vue d'ensemble**, **Execution Engine** et
+  **Risk Management**. Lit le dernier `snapshot_*.json` produit par
+  `run_execution.run()` dans `artifacts/market_regime/` et bascule en
+  `st.warning` (capital_preservation) ou `st.error` (close_only /
+  cash_only) selon le mode courant.
+- Persistance JSON best-effort dans `artifacts/market_regime/` →
+  reutilisable par tout outil tiers (audit, supervision).
+
+

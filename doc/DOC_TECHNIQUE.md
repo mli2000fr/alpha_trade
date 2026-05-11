@@ -764,6 +764,7 @@ python run_execution.py check   # vérif environnement
 | Config YAML | `service/market/config.py` | `parse_market_regimes` + `parse_trailing_stop`. |
 | Patterns | `service/market/calendar_patterns.py` | Tax Day, Sept. Slump, Santa, January, OpEx, Month-End. |
 | Macro | `service/market/macro_signals.py` | VIX, courbe VIX, 10Y yield (5j). |
+| Macro providers | `service/market/macro_providers.py` | Implementations Stooq + EODHD + composite + factory `build_default_macro_provider`. |
 | Sentiment | `service/market/sentiment_regime.py` | Circuit breaker warning / critique. |
 | Earnings | `service/market/earnings_shield.py` | Fenetre J-2/J+2, mode strict_block ou negative_score. |
 | Volatilite | `service/market/volatility.py` | ATR(n) + utilitaires partages avec le watcher. |
@@ -789,4 +790,29 @@ Le snapshot est calcule par le **meme orchestrateur** (`build_snapshot`) cote li
 - `tests/test_risk_regime_apply.py` + `tests/test_risk_regime_sizing_constraints.py`
 - `tests/test_phase2_risk_bridge_regime.py`
 - `tests/test_orphan_adoption.py`, `tests/test_trailing_stop_atr.py`, `tests/test_protection_break_even.py`
+- `tests/test_macro_providers.py` (Stooq / EODHD / composite / factory)
+- `tests/test_ihm_market_regime_banner.py` (composant + integrations Overview/Execution/Risk)
 Tous verts (74 tests sur la session reprise).
+
+### 11.5 Macro providers (production)
+`service.market.macro_providers.build_default_macro_provider(yaml_cfg)`
+choisit le fournisseur selon `config.yaml > market_regimes.macro_provider` :
+
+- `stooq` → `StooqMacroProvider` (CSV public, sans cle, symboles `^vix`, `^vix9d`, `^tnx`).
+- `eodhd` → `EodhdMacroProvider` (token requis, symboles `VIX.INDX`, `VXN.INDX`, `US10Y.INDX`).
+- `composite` (defaut) → `CompositeMacroProvider([Stooq, Eodhd?])` : Stooq d'abord, EODHD en secours uniquement si `EODHD_API_TOKEN` est present.
+- `none` → couche desactivee, snapshot neutre.
+
+Les overrides de symboles passent par `market_regimes.vix.symbol`,
+`market_regimes.vix.short_symbol`, `market_regimes.yields.symbol_10y`.
+Cache par instance et par cycle ; aucun raise n'est propage (toujours
+`None` en cas d'echec → fallback neutre cote `regime_manager`).
+
+### 11.6 Restitution IHM
+- Page **Régime Marché** : `ihm/pages/market_regime.py` (snapshot a la
+  volee + historique persiste, configuration active).
+- Composant **bannière** : `ihm/components/market_regime_banner.py`
+  (lit `artifacts/market_regime/snapshot_*.json`, badge couleur selon
+  mode, embarque dans `overview.py`, `execution.py`, `risk.py`).
+- Test : `tests/test_ihm_market_regime_banner.py`.
+

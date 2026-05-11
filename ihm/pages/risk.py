@@ -15,6 +15,13 @@ from ihm.services.queries import get_latest_run_business_summary, get_portfolio_
 def render() -> None:
     st.header("⚖️ Risk Management")
 
+    # --- Bannière régime marché (impact direct sur sizing & slots) ---
+    try:
+        from ihm.components.market_regime_banner import render_market_regime_banner
+        render_market_regime_banner(compact=True)
+    except Exception:  # pragma: no cover - jamais bloquant
+        pass
+
     if not db_available():
         render_db_unavailable("Risk Management", form_key="risk_db_form")
         return
