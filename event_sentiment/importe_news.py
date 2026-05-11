@@ -50,23 +50,38 @@ def get_all_symbols_from_stock_scores(*, candidates_only: bool = False) -> list[
         return _normalize_symbols([row[0] for row in result])
 
 
+def resolve_symbols_from_inputs(
+    *,
+    symbols_csv: str | None,
+    symbol_source: str,
+    repository: EventSentimentRepository,
+    logger: logging.Logger | None = None,
+) -> tuple[list[str], str]:
+    if symbols_csv:
+        return _normalize_symbols(symbols_csv.split(",")), "explicit"
+
+    if symbol_source == "candidates":
+        return _normalize_symbols(repository.load_candidate_symbols()), "candidates"
+
+    if symbol_source == "stock_bars_daily":
+        return get_all_symbols_from_stock_bars_daily(), "stock_bars_daily"
+
+    if symbol_source != "stock_scores" and logger is not None:
+        logger.warning("Source de symboles inconnue '%s' ; fallback stock_scores.", symbol_source)
+    return get_all_symbols_from_stock_scores(candidates_only=False), "stock_scores"
+
+
 def resolve_symbols(
     args: argparse.Namespace,
     repository: EventSentimentRepository,
     logger: logging.Logger,
 ) -> tuple[list[str], str]:
-    if args.symbols:
-        return _normalize_symbols(args.symbols.split(",")), "explicit"
-
-    if args.symbol_source == "candidates":
-        return _normalize_symbols(repository.load_candidate_symbols()), "candidates"
-
-    if args.symbol_source == "stock_bars_daily":
-        return get_all_symbols_from_stock_bars_daily(), "stock_bars_daily"
-
-    if args.symbol_source != "stock_scores":
-        logger.warning("Source de symboles inconnue '%s' ; fallback stock_scores.", args.symbol_source)
-    return get_all_symbols_from_stock_scores(candidates_only=False), "stock_scores"
+    return resolve_symbols_from_inputs(
+        symbols_csv=args.symbols,
+        symbol_source=str(args.symbol_source),
+        repository=repository,
+        logger=logger,
+    )
 
 
 def _apply_symbol_guardrails(

@@ -274,11 +274,17 @@ python -u -m event_sentiment.signal_aggregator --all-symbols --trade-date 2026-0
      - l’univers de symboles (`stock_scores` / `candidates` / `stock_bars_daily`),
      - une shortlist CSV explicite,
      - un cap sécurité `max-symbols` ;
+   - l'IHM affiche maintenant un **résumé live du scope réellement résolu avant lancement** :
+     - source effective,
+     - nombre de symboles,
+     - extrait des premiers symboles,
+     - alerte si `max-symbols` bloquerait le run ;
    - le wrapper Windows `scripts/windows/import_news_and_score_pending.ps1` propage maintenant ces options à :
      - `importe_news.py`,
      - `python -m event_sentiment --skip-ingestion`,
      - `event_sentiment.relevance_backfill`.
-6. Mesure DB ayant motivé cette optimisation :
+6. Le wrapper 7.bis résout aussi désormais le **scope réel de symboles** quand l'utilisateur choisit `stock_scores` ou `candidates`, afin que le comptage `pending`, le scoring backlog-only et le `relevance_backfill` restent alignés avec l'univers importé.
+7. Mesure DB ayant motivé cette optimisation :
    - `stock_bars_daily_distinct_symbols = 12244`
    - `stock_scores_total = 1281`
    - `stock_scores_candidates = 0`

@@ -9,6 +9,11 @@ import pytest
 import event_sentiment.importe_news as importe_news
 
 
+class _FakeRepository:
+    def load_candidate_symbols(self) -> list[str]:
+        return ["MSFT", "AAPL", "MSFT"]
+
+
 class _FakeService:
     def __init__(self, repository, config) -> None:  # type: ignore[no-untyped-def]
         self.repository = repository
@@ -201,5 +206,30 @@ def test_importe_news_main_blocks_when_max_symbols_is_exceeded(monkeypatch) -> N
         importe_news.main()
 
     assert exc_info.value.code == 2
+
+
+def test_resolve_symbols_from_inputs_uses_explicit_csv_first() -> None:
+    symbols, source = importe_news.resolve_symbols_from_inputs(
+        symbols_csv="msft, aapl,MSFT,nvda",
+        symbol_source="stock_bars_daily",
+        repository=_FakeRepository(),
+    )
+
+    assert source == "explicit"
+    assert symbols == ["MSFT", "AAPL", "NVDA"]
+
+
+def test_resolve_symbols_from_inputs_uses_candidates_repository(monkeypatch) -> None:
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["ZZZZ"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_bars_daily", lambda: ["YYYY"])
+
+    symbols, source = importe_news.resolve_symbols_from_inputs(
+        symbols_csv=None,
+        symbol_source="candidates",
+        repository=_FakeRepository(),
+    )
+
+    assert source == "candidates"
+    assert symbols == ["MSFT", "AAPL"]
 
 

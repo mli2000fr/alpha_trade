@@ -10,6 +10,11 @@ from datetime import date as DateValue, timedelta
 from typing import Literal, cast
 
 import streamlit as st
+from event_sentiment.db_io import EventSentimentRepository
+from event_sentiment.importe_news import (
+    STOCK_BARS_DAILY_WARNING_THRESHOLD,
+    resolve_symbols_from_inputs,
+)
 
 from ihm.pages._shared import (
     COMPARE_RUNS_KEY,
@@ -41,6 +46,24 @@ def _register_new_run(record: PipelineRunRecord, all_runs: list[dict[str, object
     )
     if record.run_id not in compare_ids:
         st.session_state[PENDING_COMPARE_RUNS_KEY] = [record.run_id, *compare_ids][:2]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _resolve_import_news_scope_preview(
+    symbols_csv: str,
+    symbol_source: str,
+) -> dict[str, object]:
+    repository = EventSentimentRepository()
+    symbols, effective_source = resolve_symbols_from_inputs(
+        symbols_csv=symbols_csv or None,
+        symbol_source=symbol_source,
+        repository=repository,
+    )
+    return {
+        "effective_source": effective_source,
+        "symbol_count": len(symbols),
+        "sample_symbols": symbols[:10],
+    }
 
 
 def _render_import_news_panel(
@@ -133,6 +156,56 @@ def _render_import_news_panel(
                 "Mode large activé : `stock_bars_daily` peut déclencher un import très volumineux. "
                 "Utilisez de préférence `stock_scores`, une shortlist `CSV` ou un cap sécurité."
             )
+
+        try:
+            scope_preview = _resolve_import_news_scope_preview(
+                news_import_symbols,
+                news_import_symbol_source,
+            )
+        except Exception as exc:
+            st.warning(f"Impossible de résoudre l'univers de symboles en live : {exc}")
+            scope_preview = None
+
+        if isinstance(scope_preview, dict):
+            effective_source = str(scope_preview.get("effective_source") or news_import_symbol_source)
+            resolved_count = int(scope_preview.get("symbol_count") or 0)
+            sample_symbols = [str(value) for value in (scope_preview.get("sample_symbols") or [])]
+
+            metric_col1, metric_col2 = st.columns(2)
+            with metric_col1:
+                st.metric("Symboles réellement résolus", resolved_count)
+            with metric_col2:
+                st.metric("Source effective", effective_source)
+
+            if news_import_max_symbols and resolved_count > news_import_max_symbols:
+                st.error(
+                    "Le cap sécurité empêchera le lancement : "
+                    f"{resolved_count} symbole(s) résolus pour `max-symbols={news_import_max_symbols}`."
+                )
+            elif resolved_count == 0:
+                st.warning("Aucun symbole ne serait importé avec les paramètres actuels.")
+            elif (
+                effective_source == "stock_bars_daily"
+                and resolved_count > STOCK_BARS_DAILY_WARNING_THRESHOLD
+            ):
+                st.warning(
+                    "Univers très large détecté avant lancement : "
+                    f"{resolved_count} symbole(s) pour `stock_bars_daily` "
+                    f"(seuil d'alerte={STOCK_BARS_DAILY_WARNING_THRESHOLD})."
+                )
+            else:
+                st.caption(
+                    f"Prévisualisation live : {resolved_count} symbole(s) seront ciblés si vous lancez maintenant."
+                )
+
+            if sample_symbols:
+                preview_suffix = " …" if resolved_count > len(sample_symbols) else ""
+                st.caption(
+                    "Extrait des premiers symboles résolus : `"
+                    + ", ".join(sample_symbols)
+                    + preview_suffix
+                    + "`"
+                )
 
         import_options = replace(
             options,

@@ -218,6 +218,9 @@ ne fait que déléguer :
 
 ```python
 from core.conviction import fuse_sentiment
+from event_sentiment.signal_aggregator import SentimentBoostConfig
+
+config = SentimentBoostConfig()
 final = fuse_sentiment(
     quant_score=...,
     sentiment_signal_norm=...,
@@ -392,6 +395,26 @@ Ces résumés sont consommés côté IHM pour enrichir le centre d'exécution, `
 ---
 
 ## 6. Vérifications utiles
+
+### Import brut borné avec `importe_news.py`
+
+Le script `event_sentiment/importe_news.py` n'importe plus implicitement tout `stock_bars_daily`.
+
+Options utiles :
+
+- `--symbol-source stock_scores` : défaut, recommandé ;
+- `--symbol-source candidates` : univers `stock_scores.is_candidate=1` ;
+- `--symbol-source stock_bars_daily` : ancien comportement large ;
+- `--symbols AAPL,MSFT,NVDA` : shortlist explicite prioritaire ;
+- `--max-symbols 500` : garde-fou qui refuse un univers trop volumineux.
+
+Exemples :
+
+```powershell
+python event_sentiment/importe_news.py --start-date 2026-05-05 --end-date 2026-05-12
+python event_sentiment/importe_news.py --start-date 2026-05-05 --end-date 2026-05-12 --symbol-source candidates --max-symbols 250
+python event_sentiment/importe_news.py --start-date 2026-05-05 --end-date 2026-05-12 --symbols AAPL,MSFT,NVDA
+```
 
 ### Vérifier le backfill `relevance_score`
 

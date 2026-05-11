@@ -48,11 +48,19 @@ La stratégie la plus simple et la plus sûre pour réinjecter sur le PC princip
 
 Le bouton se trouve dans `ihm/pages/_data_integrity.py` et construit un preview de commande via `build_pipeline_command("import_news_pending_loop", ...)`.
 
+Depuis les derniers correctifs, ce panneau affiche aussi un **résumé live du scope réellement résolu** avant lancement (source effective + nombre de symboles + aperçu), sans appeler le provider de news.
+
 Dans `ihm/services/pipeline_runner.py`, la clé `import_news_pending_loop` fabrique un appel PowerShell vers :
 
 - `scripts/windows/import_news_and_score_pending.ps1`
 
 avec les arguments IHM (`StartDate`, `EndDate`, `NewsProvider`, options de scoring contextuel, batch size du relevance backfill, etc.).
+
+Le bouton propage maintenant aussi :
+
+- `symbol_source` (`stock_scores` par défaut, `candidates`, `stock_bars_daily`) ;
+- `symbols` en CSV si une shortlist explicite est saisie ;
+- `max_symbols` comme garde-fou dur.
 
 ### Ce que fait réellement le script PowerShell
 
@@ -73,7 +81,8 @@ Important : **la boucle `python -m event_sentiment` ne fait pas que scorer**. El
 
 ### Tables lues
 
-- `stock_bars_daily` : sert à récupérer la liste des symboles (`SELECT DISTINCT symbol FROM stock_bars_daily`)
+- `stock_scores` : univers d'import par défaut (`SELECT DISTINCT symbol FROM stock_scores`)
+- `stock_bars_daily` : uniquement si l'utilisateur choisit explicitement `--symbol-source stock_bars_daily`
 - `stock_metadata` : résolution secteur / company name via `EntitySectorMapper`
 - `news_ingestion_checkpoint` : lecture éventuelle d'état par symbole
 - `news_raw` : déduplication des articles existants
@@ -87,6 +96,8 @@ Important : **la boucle `python -m event_sentiment` ne fait pas que scorer**. El
 ### Effet métier
 
 Cette étape peuple la matière première : article brut + mapping article → ticker + checkpoint d'avancement par source et par symbole.
+
+Par défaut, l'univers est maintenant **borné à `stock_scores`**. Une shortlist explicite ou un cap `max-symbols` permet d'encadrer encore davantage la volumétrie.
 
 ---
 

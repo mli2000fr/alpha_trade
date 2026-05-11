@@ -1,14 +1,14 @@
 # Index de la documentation Alpha Trade
 
 > Généré automatiquement par `scripts/generate_doc_index.py` le 2026-05-11.
-> 76 documents indexés.
+> 78 documents indexés.
 
 ## Sommaire
 
 * [API & Stabilité](#api-stabilité) (4)
 * [Architecture](#architecture) (3)
 * [Conformité & Audit](#conformité-audit) (4)
-* [Divers](#divers) (48)
+* [Divers](#divers) (50)
 * [Documentation utilisateur](#documentation-utilisateur) (3)
 * [Performance](#performance) (4)
 * [Runbooks & Ops](#runbooks-ops) (3)
@@ -79,6 +79,7 @@
 | [`ibkr_setup.md`](ibkr_setup.md) | Configuration TWS / IB Gateway pour Alpha Trade — Sprint S21.3 | Ce document décrit la qualification d'un environnement Interactive Brokers |
 | [`ihm.md`](ihm.md) | IHM — Guide d'usage | Ce document résume le fonctionnement du module `ihm/` et les commandes utiles pour : |
 | [`audit/matrice_ihm_cli.md`](audit/matrice_ihm_cli.md) | Matrice IHM ↔ CLI — couverture des fonctionnalités | **Sprint S26 — gaps comblés (2026-05-06)** : tous les gaps P1, P2 et P3 |
+| [`mode_regime.md`](mode_regime.md) | FAQ et Explications — Mode régime Market-Aware | Avec la config corrigée, le comportement normal est : |
 | [`modelFactory.md`](modelFactory.md) | Model Factory — Référence complète | `modelFactory/` est le module ML opérationnel du projet. Il ne se limite plus à un simple entraînement LSTM par symbole. |
 | [`observability.md`](observability.md) | Observabilité — Endpoint `/metrics` Prometheus (Phase 7.5) | **Audience** : opérateurs Alpha Trade. |
 | [`phase_f_implementation.md`](phase_f_implementation.md) | Phase F — Mesures effectives (Sprints S22 + S23) — Récap d'implémentation | Statut : **infrastructure livrée et fonctionnelle** ; les itérations |
@@ -88,6 +89,7 @@
 | [`sandbox_health_runbook.md`](sandbox_health_runbook.md) | Runbook — Sandbox health (régression nightly) | Sprint S24.2 — Phase G. |
 | [`screener.md`](screener.md) | Screener — Guide d'usage | Ce document résume le fonctionnement du module `screener/` et les commandes utiles pour : |
 | [`selector.md`](selector.md) | Selector — Guide d'usage | Ce document résume le fonctionnement du module `selector/` et les commandes utiles pour : |
+| [`sentiment_issue.md`](sentiment_issue.md) | Diagnostic et reprise — pipeline `event_sentiment` | Ce document trace le diagnostic, les corrections apportées et la reprise opératoire effectuée pour le pipeline sentiment, avec priorité sur  |
 | [`sentiments_migration.md`](sentiments_migration.md) | Migration des résultats du pipeline « Import + score + history_backfill + relevance_backfill auto » | Date d'analyse : 2026-05-10 |
 | [`service.md`](service.md) | Service — Guide d'usage | Ce document résume le rôle du dossier `service/` et les usages utiles pour : |
 | [`tlaps_proofs.md`](tlaps_proofs.md) | Preuves TLAPS — Phase G / S24.3 | Sprint S24.3 — Engagement consultant TLA+ + livrables CI. |
