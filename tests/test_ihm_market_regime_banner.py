@@ -1,4 +1,4 @@
-"""Tests pour ``ihm/components/market_regime_banner.py`` et son intégration.
+"""Tests pour la restitution IHM du régime marché.
 
 Couvre :
 
@@ -6,12 +6,13 @@ Couvre :
 * bannière neutre quand aucun snapshot n'existe ;
 * bannière complète avec mode défensif → ``st.error`` ;
 * présence du composant dans Overview / Execution / Risk.
+* sérialisation robuste de ``MarketRegimeSnapshot`` côté page dédiée.
 """
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -160,4 +161,47 @@ def test_execution_imports_banner_component():
 def test_risk_imports_banner_component():
     src = Path("ihm/pages/risk.py").read_text(encoding="utf-8")
     assert "market_regime_banner" in src
+
+
+def test_market_regime_snapshot_exposes_to_dict_alias():
+    from service.market.models import MarketRegimeSnapshot
+
+    snap = MarketRegimeSnapshot(trade_date=date(2025, 4, 15), mode="capital_preservation")
+    payload = snap.to_dict()
+
+    assert payload["trade_date"] == "2025-04-15"
+    assert payload["mode"] == "capital_preservation"
+    assert isinstance(payload["active_patterns"], list)
+
+
+def test_compute_live_snapshot_serializes_slots_dataclass(monkeypatch):
+    import ihm.pages.market_regime as mod
+    import service.market as market
+    from service.market.models import MarketRegimeSnapshot
+
+    monkeypatch.setattr(mod, "_load_yaml", lambda: {"market_regimes": {"enabled": True}})
+    monkeypatch.setattr(market, "parse_market_regimes", lambda cfg: object())
+    monkeypatch.setattr(market, "build_default_macro_provider", lambda cfg: None)
+    monkeypatch.setattr(
+        market,
+        "build_snapshot",
+        lambda *args, **kwargs: MarketRegimeSnapshot(
+            trade_date=date(2025, 4, 15),
+            mode="capital_preservation",
+            risk_multiplier=0.7,
+            active_patterns=("tax_day",),
+            blocked_sectors=("Technology",),
+            macro={"vix": 28.0},
+        ),
+    )
+
+    result = mod._compute_live_snapshot(date(2025, 4, 15), 2000.0)
+
+    assert result["trade_date"] == "2025-04-15"
+    assert result["mode"] == "capital_preservation"
+    assert result["risk_multiplier"] == pytest.approx(0.7)
+    assert result["active_patterns"] == ["tax_day"]
+    assert result["blocked_sectors"] == ["Technology"]
+    assert result["macro"] == {"vix": 28.0}
+
 

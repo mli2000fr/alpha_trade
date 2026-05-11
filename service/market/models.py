@@ -107,6 +107,14 @@ class MarketRegimeSnapshot:
             "data_quality": dict(self.data_quality),
         }
 
+    def to_dict(self) -> dict:
+        """Alias de compatibilité pour les consommateurs IHM / JSON.
+
+        ``MarketRegimeSnapshot`` est un dataclass `slots=True`, donc il ne faut
+        jamais compter sur ``__dict__`` pour sa sérialisation.
+        """
+        return self.to_summary_dict()
+
 
 def neutral_snapshot(trade_date: date) -> MarketRegimeSnapshot:
     """Snapshot neutre — utilisé en fallback quand `market_regimes.enabled=false`."""

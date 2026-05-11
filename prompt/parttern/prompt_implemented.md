@@ -64,6 +64,15 @@ suivants déjà présents dans le dépôt :
    documents techniques).
 6. **Création du placeholder** `artifacts/benchmarks/baseline.json` documenté
    dans `doc/phase_f_implementation.md` (élimine le faux dead link).
+7. **Hotfix IHM — sérialisation `MarketRegimeSnapshot`** sur la page
+   `ihm/pages/market_regime.py` :
+   - suppression du fallback fragile `dict(snap.__dict__)` incompatible avec
+     `@dataclass(slots=True)` ;
+   - utilisation explicite de `to_dict()` / `to_summary_dict()` pour obtenir
+     une représentation JSON-safe ;
+   - ajout de l'alias `MarketRegimeSnapshot.to_dict()` dans
+     `service/market/models.py` pour compatibilité descendante ;
+   - tests de non-régression dans `tests/test_ihm_market_regime_banner.py`.
 
 ## Couverture matrice C01–C32
 

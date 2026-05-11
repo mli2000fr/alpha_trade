@@ -88,7 +88,11 @@ def _compute_live_snapshot(trade_date: _date, equity: float | None) -> dict[str,
         macro_provider=provider,
         use_cache=False,
     )
-    return snap.to_dict() if hasattr(snap, "to_dict") else dict(snap.__dict__)
+    if hasattr(snap, "to_dict"):
+        return snap.to_dict()
+    if hasattr(snap, "to_summary_dict"):
+        return snap.to_summary_dict()
+    return {"error": f"Snapshot non sérialisable : {type(snap).__name__}"}
 
 
 # ---------------------------------------------------------------------------
