@@ -1,0 +1,1 @@
+1. importe et traitemnt news: table news_raw incréement mais il a déjà insérer sur checkpoint, il revient sur les symbole déjà terminé avec les nouvzux news ?
