@@ -93,6 +93,8 @@ $summary = [ordered]@{
     scoring_runs_executed = 0
     initial_pending = $null
     final_pending = $null
+    initial_pending_global = $null
+    final_pending_global = $null
     max_iterations = $MaxIterations
     max_stagnant_iterations = $MaxStagnantIterations
     history_backfill_enabled = -not [bool]$SkipHistoryBackfill
@@ -113,6 +115,9 @@ $summary = [ordered]@{
     relevance_backfill_purge_below = $RelevanceBackfillPurgeBelow
     relevance_backfill_contextual_min_relevance = $RelevanceBackfillContextualMinRelevance
     relevance_backfill_contextual_max_pairs = $RelevanceBackfillContextualMaxPairs
+    pending_scope_start_date = $StartDate
+    pending_scope_end_date = $EndDate
+    pending_scope_ingestion_source = $NewsProvider
     status = 'running'
 }
 
@@ -158,25 +163,49 @@ function Invoke-PythonStep {
 }
 
 function Get-PendingArticleCount {
+    param(
+        [string]$PendingStartDate = '',
+        [string]$PendingEndDate = '',
+        [string]$IngestionSource = ''
+    )
+
     if ($DryRun) {
         return 0
     }
 
-    $pythonCode = @"
-from database.connection import get_sqlalchemy_engine
-from sqlalchemy import text
+    $pendingStartDateLiteral = if ([string]::IsNullOrWhiteSpace($PendingStartDate)) {
+        'None'
+    }
+    else {
+        "'" + $PendingStartDate.Replace("'", "\\'") + "'"
+    }
+    $pendingEndDateLiteral = if ([string]::IsNullOrWhiteSpace($PendingEndDate)) {
+        'None'
+    }
+    else {
+        "'" + $PendingEndDate.Replace("'", "\\'") + "'"
+    }
+    $ingestionSourceLiteral = if ([string]::IsNullOrWhiteSpace($IngestionSource)) {
+        'None'
+    }
+    else {
+        "'" + $IngestionSource.Replace("'", "\\'") + "'"
+    }
 
-engine = get_sqlalchemy_engine()
-query = text(
-    """
-    SELECT COUNT(*)
-    FROM news_raw nr
-    LEFT JOIN news_sentiment ns ON ns.article_id = nr.article_id
-    WHERE ns.article_id IS NULL
-    """
-)
-with engine.connect() as conn:
-    print(int(conn.execute(query).scalar_one() or 0))
+    $pythonCode = @"
+from datetime import date
+
+from event_sentiment.db_io import EventSentimentRepository
+
+start_date = date.fromisoformat($pendingStartDateLiteral) if $pendingStartDateLiteral != None else None
+end_date = date.fromisoformat($pendingEndDateLiteral) if $pendingEndDateLiteral != None else None
+ingestion_source = $ingestionSourceLiteral
+repository = EventSentimentRepository()
+print(repository.count_pending_articles(
+    start_date=start_date,
+    end_date=end_date,
+    ingestion_source=ingestion_source,
+))
 "@
 
     $output = & $PythonExe -u -c $pythonCode 2>&1
@@ -192,6 +221,13 @@ with engine.connect() as conn:
         throw ("Sortie pending inattendue.`n{0}" -f $details)
     }
     return [int]$lastLine
+}
+
+function Get-RunWindowUtcBounds {
+    return @{
+        StartUtc = ("{0}T00:00:00Z" -f $StartDate)
+        EndUtc = ("{0}T23:59:59Z" -f $EndDate)
+    }
 }
 
 Push-Location $ProjectRoot
@@ -216,11 +252,19 @@ try {
     Invoke-PythonStep -Label 'Import news brutes historiques' -Arguments @($importNewsArguments)
     $summary.import_completed = $true
 
-    $pendingCount = Get-PendingArticleCount
+    $pendingCount = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider
     $summary.initial_pending = $pendingCount
-    Write-Host ("Articles pending après import : {0}" -f $pendingCount)
+    $summary.initial_pending_global = Get-PendingArticleCount
+    Write-Host ("Articles pending après import (scope {0} → {1}, provider={2}) : {3}" -f $StartDate, $EndDate, $NewsProvider, $pendingCount)
+    if ($summary.initial_pending_global -ne $summary.initial_pending) {
+        Write-Warning (
+            "Backlog pending global détecté hors scope 7.bis (global={0}, scope={1}). Le wrapper va traiter uniquement le scope demandé." -f
+            $summary.initial_pending_global, $summary.initial_pending
+        )
+    }
 
     $stagnantIterations = 0
+    $runWindow = Get-RunWindowUtcBounds
     while ($pendingCount -gt 0) {
         if ($summary.scoring_runs_executed -ge $MaxIterations) {
             throw ("Boucle arrêtée : MaxIterations={0} atteint alors qu'il reste {1} article(s) pending." -f $MaxIterations, $pendingCount)
@@ -232,8 +276,13 @@ try {
             '-u',
             '-m',
             'event_sentiment',
+            '--skip-ingestion',
             '--news-provider',
-            $NewsProvider
+            $NewsProvider,
+            '--start-utc',
+            $runWindow.StartUtc,
+            '--end-utc',
+            $runWindow.EndUtc
         )
         if ($TickerRelevanceMode -ne 'provider_default') {
             $scoringArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)
@@ -253,7 +302,7 @@ try {
         Invoke-PythonStep -Label ("Sentiment pipeline auto #{0}" -f $runIndex) -Arguments @($scoringArguments)
         $summary.scoring_runs_executed = $runIndex
 
-        $remaining = Get-PendingArticleCount
+        $remaining = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider
         Write-Host ("Articles pending après scoring #{0} : {1}" -f $runIndex, $remaining)
 
         if ($remaining -lt $pendingCount) {
@@ -280,7 +329,14 @@ try {
     }
 
     $summary.final_pending = $pendingCount
-    Write-Host 'Import + scoring auto terminés : plus aucun article pending.'
+    $summary.final_pending_global = Get-PendingArticleCount
+    Write-Host 'Import + scoring auto terminés : plus aucun article pending dans le scope demandé.'
+    if ($summary.final_pending_global -gt 0) {
+        Write-Warning (
+            "Il reste {0} article(s) pending hors scope ({1} → {2}, provider={3})." -f
+            $summary.final_pending_global, $StartDate, $EndDate, $NewsProvider
+        )
+    }
 
     if (-not $SkipHistoryBackfill) {
         Invoke-PythonStep -Label 'History backfill auto' -Arguments @(
@@ -340,11 +396,15 @@ try {
 catch {
     $summary.status = 'failed'
     try {
-        $summary.final_pending = Get-PendingArticleCount
+        $summary.final_pending = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider
+        $summary.final_pending_global = Get-PendingArticleCount
     }
     catch {
         if ($null -eq $summary.final_pending) {
             $summary.final_pending = -1
+        }
+        if ($null -eq $summary.final_pending_global) {
+            $summary.final_pending_global = -1
         }
     }
     $summary.error = $_.Exception.Message

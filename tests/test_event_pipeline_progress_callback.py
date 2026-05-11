@@ -62,7 +62,7 @@ class _Repo:
     def get_checkpoints(self, source, symbols):
         return {}
 
-    def load_pending_articles(self, limit):
+    def load_pending_articles(self, limit, **kwargs):
         return []
 
     def upsert_news_sentiment(self, records):

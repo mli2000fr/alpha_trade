@@ -128,3 +128,43 @@ def test_upsert_macro_event_audit_uses_macro_event_type_in_unique_key(monkeypatc
     assert captured["key_columns"] == {"article_id", "sector", "macro_event_type"}
 
 
+def test_upsert_drops_unknown_columns_not_present_in_table(monkeypatch) -> None:
+    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    repository.engine = _FakeEngine()
+    repository.metadata = None
+    repository._tables = {}
+
+    class _TickerTable:
+        def __init__(self) -> None:
+            self.c = {
+                "symbol": _FakeColumn("symbol"),
+                "trade_date": _FakeColumn("trade_date"),
+                "news_count_1d": _FakeColumn("news_count_1d"),
+                "updated_at": _FakeColumn("updated_at"),
+            }
+
+    monkeypatch.setattr(repository, "_table", lambda table_name: _TickerTable())
+    monkeypatch.setattr("event_sentiment.db_io.mysql_insert", lambda table: _FakeInsert())
+
+    rowcount = EventSentimentRepository._upsert(
+        repository,
+        "ticker_daily_sentiment_features",
+        [{
+            "symbol": "AAPL",
+            "trade_date": date(2026, 4, 16),
+            "news_count_1d": 3,
+            "relevance_weight_sum_1d": 1.5,
+        }],
+        key_columns={"symbol", "trade_date"},
+    )
+
+    assert rowcount == 1
+    statement, _ = repository.engine.connection.executed[0]
+    inserted_record = statement[1][0]
+    assert inserted_record == {
+        "symbol": "AAPL",
+        "trade_date": date(2026, 4, 16),
+        "news_count_1d": 3,
+    }
+
+

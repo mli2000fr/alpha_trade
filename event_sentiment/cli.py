@@ -163,6 +163,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "scorées par run (défaut config : 5000)."
         ),
     )
+    parser.add_argument(
+        "--skip-ingestion",
+        action="store_true",
+        default=False,
+        help=(
+            "N'exécute pas l'ingestion news : score uniquement le backlog pending "
+            "déjà présent dans news_raw, borné par la fenêtre/provider du run."
+        ),
+    )
     return parser
 
 
@@ -201,7 +210,12 @@ def main() -> None:
         progress_callback=lambda payload: _emit_run_summary(payload),
     )
     started_at = _utc_now_naive()
-    stats = pipeline.run(start_utc=start_utc, end_utc=end_utc, symbols=symbols)
+    stats = pipeline.run(
+        start_utc=start_utc,
+        end_utc=end_utc,
+        symbols=symbols,
+        skip_ingestion=bool(args.skip_ingestion),
+    )
     finished_at = _utc_now_naive()
     _emit_run_summary(
         _build_cli_run_summary(

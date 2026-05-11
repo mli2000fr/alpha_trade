@@ -89,6 +89,25 @@ class EventSentimentPipeline:
 
         return resolved_start, resolved_end
 
+    def _build_pending_scope(
+        self,
+        *,
+        start_utc: datetime | None,
+        end_utc: datetime | None,
+        symbols: list[str] | None,
+        skip_ingestion: bool,
+    ) -> dict[str, object]:
+        scope: dict[str, object] = {
+            "ingestion_source": getattr(self.config, "provider_name", getattr(self.config, "news_provider", None)),
+        }
+        if start_utc is not None:
+            scope["start_date"] = start_utc.date()
+        if end_utc is not None:
+            scope["end_date"] = end_utc.date()
+        if symbols is not None:
+            scope["symbols"] = list(symbols)
+        return scope
+
     def _resolve_symbol_windows(
         self,
         start_utc: datetime | None,
@@ -162,18 +181,31 @@ class EventSentimentPipeline:
             windows[symbol] = resolved_start
         return windows, resume_by_symbol, resolved_end
 
-    def run(self, start_utc: datetime | None = None, end_utc: datetime | None = None, symbols: list[str] | None = None) -> dict:
-        resolved_symbols = self._resolve_symbols(symbols)
-        symbol_windows, symbol_resume_modes, end_utc = self._resolve_symbol_windows(
-            start_utc=start_utc,
-            end_utc=end_utc,
-            symbols=resolved_symbols,
-        )
-        aggregation_start = (
-            min(symbol_windows.values())
-            if symbol_windows
-            else self._coerce_utc(start_utc) or self._resolve_time_window(start_utc=start_utc, end_utc=end_utc)[0]
-        )
+    def run(
+        self,
+        start_utc: datetime | None = None,
+        end_utc: datetime | None = None,
+        symbols: list[str] | None = None,
+        *,
+        skip_ingestion: bool = False,
+    ) -> dict:
+        if skip_ingestion:
+            resolved_symbols = sorted({symbol.strip().upper() for symbol in (symbols or []) if symbol and symbol.strip()})
+            symbol_windows: dict[str, datetime] = {}
+            symbol_resume_modes: dict[str, bool] = {}
+            aggregation_start, end_utc = self._resolve_time_window(start_utc=start_utc, end_utc=end_utc)
+        else:
+            resolved_symbols = self._resolve_symbols(symbols)
+            symbol_windows, symbol_resume_modes, end_utc = self._resolve_symbol_windows(
+                start_utc=start_utc,
+                end_utc=end_utc,
+                symbols=resolved_symbols,
+            )
+            aggregation_start = (
+                min(symbol_windows.values())
+                if symbol_windows
+                else self._coerce_utc(start_utc) or self._resolve_time_window(start_utc=start_utc, end_utc=end_utc)[0]
+            )
         LOGGER.info(
             "Début event sentiment run | start_utc=%s end_utc=%s symbol_count=%s",
             aggregation_start,
@@ -187,6 +219,7 @@ class EventSentimentPipeline:
             "end_utc": end_utc.isoformat(),
             "symbol_source": "explicit" if symbols is not None else "candidates",
             "resume_from_checkpoints": start_utc is None,
+            "ingestion_skipped": bool(skip_ingestion),
         }
         self._emit_progress(
             stats,
@@ -195,7 +228,9 @@ class EventSentimentPipeline:
             label="📰 Progression sentiment pipeline — ingestion news",
             phase="ingestion",
         )
-        if resolved_symbols:
+        if skip_ingestion:
+            stats["ingestion"] = {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
+        elif resolved_symbols:
             ingestion_kwargs: dict[str, object] = {
                 "start_utc": None,
                 "end_utc": end_utc,
@@ -216,7 +251,24 @@ class EventSentimentPipeline:
         else:
             stats["ingestion"] = {"fetched": 0, "deduped": 0, "landed": 0, "ticker_maps": 0}
 
-        pending_rows = self.repository.load_pending_articles(limit=self.config.sentiment_pending_limit)
+        pending_scope = self._build_pending_scope(
+            start_utc=self._coerce_utc(start_utc) if (start_utc is not None or skip_ingestion) else None,
+            end_utc=end_utc if (end_utc is not None or skip_ingestion) else None,
+            symbols=resolved_symbols if symbols is not None else None,
+            skip_ingestion=skip_ingestion,
+        )
+        stats["pending_scope"] = {
+            key: (value if not isinstance(value, list) else list(value))
+            for key, value in pending_scope.items()
+            if value not in (None, [])
+        }
+        pending_rows = self.repository.load_pending_articles(
+            limit=self.config.sentiment_pending_limit,
+            start_date=pending_scope.get("start_date"),
+            end_date=pending_scope.get("end_date"),
+            ingestion_source=pending_scope.get("ingestion_source"),
+            symbols=pending_scope.get("symbols"),
+        )
         articles = [
             NormalizedNewsArticle(
                 article_id=row["article_id"],

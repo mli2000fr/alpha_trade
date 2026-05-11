@@ -24,7 +24,7 @@ class _FakeEventSentimentPipeline:
         self.config = config
         self.progress_callback = progress_callback
 
-    def run(self, start_utc=None, end_utc=None, symbols=None) -> dict[str, object]:
+    def run(self, start_utc=None, end_utc=None, symbols=None, skip_ingestion=False) -> dict[str, object]:
         return {
             "resolved_symbols": len(symbols or []),
             "start_utc": "2026-04-01T00:00:00+00:00",
@@ -121,7 +121,7 @@ def test_event_sentiment_pipeline_emits_live_progress(monkeypatch) -> None:
         def load_candidate_symbols(self):
             return ["AAPL", "MSFT"]
 
-        def load_pending_articles(self, limit=None):
+        def load_pending_articles(self, limit=None, **kwargs):
             return []
 
         def upsert_news_sentiment(self, rows):

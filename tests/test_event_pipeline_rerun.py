@@ -38,7 +38,15 @@ class _InMemoryRepository:
             self.news_ticker_map[(record["article_id"], record["symbol"])] = dict(record)
         return len(records)
 
-    def load_pending_articles(self, limit: int = 1000):
+    def load_pending_articles(
+        self,
+        limit: int = 1000,
+        *,
+        start_date=None,
+        end_date=None,
+        ingestion_source=None,
+        symbols=None,
+    ):
         pending = [
             row for article_id, row in sorted(self.news_raw.items())
             if article_id not in self.news_sentiment
