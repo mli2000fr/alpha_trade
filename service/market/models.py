@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from typing import Literal, Mapping
+from typing import Any, Literal, Mapping
 
 RegimeMode = Literal[
     "normal",              # comportement nominal
@@ -59,7 +59,10 @@ class MarketRegimeSnapshot:
     active_patterns: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
 
-    macro: Mapping[str, float | None] = field(default_factory=dict)
+    macro: Mapping[str, Any] = field(default_factory=dict)
+    sentiment: Mapping[str, Any] = field(default_factory=dict)
+    mode_why: Mapping[str, Any] = field(default_factory=dict)
+    decision_trace: tuple[Mapping[str, Any], ...] = ()
     data_quality: Mapping[str, str] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
@@ -104,6 +107,9 @@ class MarketRegimeSnapshot:
             "active_patterns": list(self.active_patterns),
             "reasons": list(self.reasons),
             "macro": dict(self.macro),
+            "sentiment": dict(self.sentiment),
+            "mode_why": dict(self.mode_why),
+            "decision_trace": [dict(item) for item in self.decision_trace],
             "data_quality": dict(self.data_quality),
         }
 

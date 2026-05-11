@@ -52,22 +52,23 @@ risk:
 # Cf. ``service/market/`` et ``risk_management/regime_apply.py``.
 # ---------------------------------------------------------------------------
 market_regimes:
-  enabled: false                             # bascule globale (off par défaut)
+  enabled: true                             # bascule globale (off par défaut)
   cache_ttl_seconds: 300
   enforce_min_notional: 155                  # cf. plan §C16, compatible Alpaca
   allow_neutral_fallback_on_missing_macro_data: true
   # Source des donnees macro (VIX, 10Y) : `stooq` (gratuit, sans cle),
   # `eodhd` (consomme du quota EODHD), `composite` (Stooq dabord, EODHD
   # en secours si EODHD_API_TOKEN est defini), ou `none` pour desactiver.
-  macro_provider: composite
+  macro_provider: eodhd
 
   sentinel:
     enabled: true
     preflight_summary: true
 
   vix:
-    enabled: false
-    symbol: "VIX"
+    enabled: true
+    symbol: "VIX.INDX"
+    short_symbol: "VIX9D.INDX"
     high_threshold: 25.0
     inverted_curve_mode: capital_preservation
 
@@ -82,7 +83,7 @@ market_regimes:
     risk_mult: 0.6
 
   sentiment_circuit_breaker:
-    enabled: false
+    enabled: true
     lookback_days: 7
     warning_threshold: -0.15
     critical_threshold: -0.30

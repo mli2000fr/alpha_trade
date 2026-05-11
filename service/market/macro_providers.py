@@ -31,7 +31,7 @@ _DEFAULT_STOOQ_SYMBOLS = {
 }
 _DEFAULT_EODHD_SYMBOLS = {
     "vix": "VIX.INDX",
-    "vix_short": "VXN.INDX",
+    "vix_short": "VIX9D.INDX",
     "us10y": "US10Y.INDX",
 }
 

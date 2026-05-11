@@ -29,6 +29,11 @@ from service.market.macro_providers import (
     StooqMacroProvider,
     build_default_macro_provider,
 )
+from service.market.sentiment_provider import (
+    DbSentimentScoreProvider,
+    MarketSentimentReading,
+    load_market_sentiment_reading,
+)
 
 __all__ = [
     "MarketRegimeSnapshot",
@@ -45,5 +50,8 @@ __all__ = [
     "EodhdMacroProvider",
     "CompositeMacroProvider",
     "build_default_macro_provider",
+    "DbSentimentScoreProvider",
+    "MarketSentimentReading",
+    "load_market_sentiment_reading",
 ]
 

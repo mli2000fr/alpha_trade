@@ -25,6 +25,12 @@ from ihm.pages import run_page_if_standalone
 
 ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "artifacts" / "market_regime"
 
+DEMO_SCENARIOS: dict[str, str] = {
+    "sentiment_warning": "Sentiment warning → capital_preservation",
+    "sentiment_critical_live": "Sentiment critique live → close_only",
+    "vix_high": "VIX élevé → capital_preservation",
+}
+
 
 def _load_yaml() -> dict[str, Any]:
     try:
@@ -72,6 +78,7 @@ def _compute_live_snapshot(trade_date: _date, equity: float | None) -> dict[str,
     yaml_cfg = _load_yaml()
     try:
         from service.market import (
+            DbSentimentScoreProvider,
             build_default_macro_provider,
             build_snapshot,
             parse_market_regimes,
@@ -80,12 +87,14 @@ def _compute_live_snapshot(trade_date: _date, equity: float | None) -> dict[str,
         return {"error": f"Import service.market impossible : {exc}"}
     cfg = parse_market_regimes(yaml_cfg.get("market_regimes"))
     provider = build_default_macro_provider(yaml_cfg)
+    sentiment_provider = DbSentimentScoreProvider(trade_date)
     snap = build_snapshot(
         trade_date,
         config=cfg,
         equity=float(equity) if equity else None,
         execution_context="live",
         macro_provider=provider,
+        sentiment_score_provider=sentiment_provider,
         use_cache=False,
     )
     if hasattr(snap, "to_dict"):
@@ -93,6 +102,78 @@ def _compute_live_snapshot(trade_date: _date, equity: float | None) -> dict[str,
     if hasattr(snap, "to_summary_dict"):
         return snap.to_summary_dict()
     return {"error": f"Snapshot non sérialisable : {type(snap).__name__}"}
+
+
+def _compute_demo_snapshot(scenario: str, trade_date: _date, equity: float | None) -> dict[str, Any]:
+    """Construit un snapshot déterministe pour validation IHM / métier.
+
+    Utile quand `config.yaml` laisse `market_regimes.enabled = false` ou quand
+    les providers externes ne permettent pas de démontrer facilement un mode
+    non-`normal` depuis l'interface.
+    """
+    try:
+        from service.market import build_snapshot, parse_market_regimes
+    except Exception as exc:  # pragma: no cover - import-time
+        return {"error": f"Import service.market impossible : {exc}"}
+
+    mr_cfg: dict[str, Any] = {"enabled": True}
+    kwargs: dict[str, Any] = {
+        "equity": float(equity) if equity else None,
+        "execution_context": "live",
+        "use_cache": False,
+    }
+
+    if scenario == "sentiment_warning":
+        mr_cfg["sentiment_circuit_breaker"] = {
+            "enabled": True,
+            "warning_threshold": -0.15,
+            "critical_threshold": -0.30,
+            "warning_max_positions": 2,
+            "critical_mode_live": "close_only",
+            "critical_mode_backtest": "cash_only",
+        }
+        kwargs["sentiment_score_provider"] = lambda _days: -0.20
+    elif scenario == "sentiment_critical_live":
+        mr_cfg["sentiment_circuit_breaker"] = {
+            "enabled": True,
+            "warning_threshold": -0.15,
+            "critical_threshold": -0.30,
+            "warning_max_positions": 2,
+            "critical_mode_live": "close_only",
+            "critical_mode_backtest": "cash_only",
+        }
+        kwargs["sentiment_score_provider"] = lambda _days: -0.50
+    elif scenario == "vix_high":
+        mr_cfg["vix"] = {
+            "enabled": True,
+            "high_threshold": 25.0,
+            "inverted_curve_mode": "capital_preservation",
+        }
+
+        class _DemoMacroProvider:
+            def get_vix_close(self, _trade_date: _date) -> float | None:
+                return 30.0
+
+            def get_vix_short_term_close(self, _trade_date: _date) -> float | None:
+                return 24.0
+
+            def get_us10y_history(self, _trade_date: _date, lookback_days: int) -> list[float] | None:
+                return [4.0] * max(lookback_days, 2)
+
+        kwargs["macro_provider"] = _DemoMacroProvider()
+    else:
+        return {"error": f"Scénario de démo inconnu : {scenario}"}
+
+    snap = build_snapshot(trade_date, config=parse_market_regimes(mr_cfg), **kwargs)
+    if hasattr(snap, "to_dict"):
+        payload = snap.to_dict()
+    elif hasattr(snap, "to_summary_dict"):
+        payload = snap.to_summary_dict()
+    else:
+        return {"error": f"Snapshot de démo non sérialisable : {type(snap).__name__}"}
+    payload.setdefault("reasons", [])
+    payload["reasons"] = list(payload.get("reasons") or []) + [f"demo_scenario:{scenario}"]
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +201,7 @@ def _render_summary(snap: dict[str, Any]) -> None:
     col4.metric("Allow new entries", "✅" if snap.get("allow_new_entries") else "🛑")
 
     macro = snap.get("macro") or {}
+    sentiment = snap.get("sentiment") or {}
     col5, col6, col7 = st.columns(3)
     col5.metric("VIX", f"{macro.get('vix'):.2f}" if macro.get("vix") is not None else "n/a")
     col6.metric("VIX inversion", "oui" if macro.get("vix_curve_inverted") else "non")
@@ -127,6 +209,46 @@ def _render_summary(snap: dict[str, Any]) -> None:
         "Δ 10Y (5j, %)",
         f"{macro.get('yield_10y_5d_pct') * 100:.2f}%" if isinstance(macro.get("yield_10y_5d_pct"), (int, float)) else "n/a",
     )
+
+    col8, col9, col10 = st.columns(3)
+    col8.metric("Sentiment score", f"{float(sentiment.get('score')):.3f}" if isinstance(sentiment.get("score"), (int, float)) else "n/a")
+    col9.metric("Sentiment level", str(sentiment.get("level") or "n/a"))
+    col10.metric("Source sentiment", str(sentiment.get("source") or "n/a"))
+
+    st.markdown("**Pourquoi ce mode ?**")
+    mode_why = snap.get("mode_why") or {}
+    summary = str(mode_why.get("summary") or "Explication indisponible.")
+    triggered = [item for item in (snap.get("decision_trace") or []) if item.get("triggered")]
+    if mode == "normal":
+        st.success(summary)
+    elif mode in {"close_only", "cash_only"}:
+        st.error(summary)
+    else:
+        st.warning(summary)
+
+    if triggered:
+        st.caption("Sources déclenchantes :")
+        for item in triggered:
+            label = str(item.get("label") or item.get("source") or "source")
+            message = str(item.get("message") or "")
+            resulting_mode = str(item.get("resulting_mode") or "normal")
+            st.markdown(f"- **{label}** → `{resulting_mode}` — {message}")
+    else:
+        st.caption("Aucune source défensive active ; détails d'observation ci-dessous.")
+
+    trace_rows = []
+    for item in snap.get("decision_trace") or []:
+        trace_rows.append({
+            "source": item.get("source"),
+            "label": item.get("label"),
+            "déclenché": "oui" if item.get("triggered") else "non",
+            "sévérité": item.get("severity"),
+            "mode suggéré": item.get("resulting_mode"),
+            "message": item.get("message"),
+        })
+    if trace_rows:
+        with st.expander("Voir toute la trace de décision", expanded=False):
+            st.dataframe(pd.DataFrame(trace_rows), use_container_width=True, hide_index=True)
 
     if snap.get("active_patterns"):
         st.markdown("**Patterns calendaires actifs :**")
@@ -188,6 +310,25 @@ def render() -> None:
         with st.spinner("Calcul du snapshot…"):
             snap = _compute_live_snapshot(sel_date, sel_equity if sel_equity > 0 else None)
         st.session_state["market_regime_last_snap"] = snap
+
+    with st.expander("🧪 Scénarios de validation (démo non destructive)", expanded=False):
+        st.caption(
+            "Permet de vérifier visuellement les modes non-`normal` sans dépendre "
+            "de la config active ni des providers externes."
+        )
+        scenario_key = st.selectbox(
+            "Scénario de démonstration",
+            options=list(DEMO_SCENARIOS.keys()),
+            format_func=lambda key: DEMO_SCENARIOS.get(key, key),
+            key="market_regime_demo_scenario",
+        )
+        if st.button("🧪 Charger ce scénario", use_container_width=True, key="market_regime_demo_button"):
+            with st.spinner("Calcul du scénario de démonstration…"):
+                st.session_state["market_regime_last_snap"] = _compute_demo_snapshot(
+                    scenario_key,
+                    sel_date,
+                    sel_equity if sel_equity > 0 else None,
+                )
 
     snap = st.session_state.get("market_regime_last_snap")
     if snap:

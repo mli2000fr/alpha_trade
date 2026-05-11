@@ -73,6 +73,31 @@ suivants déjà présents dans le dépôt :
    - ajout de l'alias `MarketRegimeSnapshot.to_dict()` dans
      `service/market/models.py` pour compatibilité descendante ;
    - tests de non-régression dans `tests/test_ihm_market_regime_banner.py`.
+8. **Scénarios de validation IHM** sur `ihm/pages/market_regime.py` :
+   - ajout d'un expander *Scénarios de validation (démo non destructive)* ;
+   - trois snapshots déterministes accessibles depuis l'IHM sans dépendre de
+     la config active ni des providers externes :
+     `sentiment_warning -> capital_preservation`,
+     `sentiment_critical_live -> close_only`,
+     `vix_high -> capital_preservation` ;
+   - utile pour démontrer visuellement que la page gère bien des modes
+     non-`normal` même quand `config.yaml` garde `market_regimes.enabled: false`.
+9. **Diagnostic + correctifs providers macro réels** :
+   - `service/eodhd/symbols.py::to_eodhd()` préserve désormais les symboles
+     EODHD déjà natifs (`VIX.INDX`, `US10Y.INDX`, `AAPL.US`, `SAP.DE`) au lieu
+     de les remapper à tort en `.US` ;
+   - `service/stooq/clientStooq.py::_stooq_symbol()` préserve désormais les
+     symboles index Stooq commençant par `^` (`^vix`, `^tnx`) ;
+   - ajout d'un support best-effort de `STOOQ_API_KEY` / `STOOQ_APIKEY` et
+     détection explicite de la réponse HTML/texte `Get your apikey` ;
+   - correction du symbole court-terme VIX par défaut côté EODHD :
+     `VIX9D.INDX` remplace `VXN.INDX` (qui représente la volatilité Nasdaq-100
+     et provoquait des `vix_curve_inverted` quasi permanents) ;
+   - `config.yaml > market_regimes.vix.short_symbol` explicite désormais
+     `VIX9D.INDX` ;
+   - validation runtime : `fetch_eod('VIX.INDX', 2025-04-01..2025-04-15)`
+     retourne bien 11 points et permet un snapshot réel
+     `mode=capital_preservation` au 2025-04-15 (VIX=30.12).
 
 ## Couverture matrice C01–C32
 

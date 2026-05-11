@@ -260,6 +260,55 @@ def test_neutral_snapshot_helper():
     assert s.risk_multiplier == 1.0
 
 
+def test_snapshot_exposes_structured_why_mode_and_sentiment_payload():
+    class _Provider:
+        def __init__(self):
+            self.last_reading = None
+
+        def __call__(self, lookback_days: int):
+            class _Reading:
+                def to_dict(self_nonlocal):
+                    return {
+                        "source": "ticker_daily_sentiment_features",
+                        "lookback_days": lookback_days,
+                        "total_news_count": 42,
+                        "covered_days": 6,
+                        "data_quality": "ok",
+                    }
+
+            self.last_reading = _Reading()
+            return -0.20
+
+    cfg = MarketRegimesConfig(
+        enabled=True,
+        vix=VixConfig(enabled=True, high_threshold=25.0),
+        sentiment_circuit_breaker=SentimentBreakerConfig(
+            enabled=True,
+            warning_threshold=-0.15,
+            critical_threshold=-0.30,
+            warning_max_positions=2,
+        ),
+    )
+    reset_cache()
+    snap = build_snapshot(
+        date(2025, 5, 1),
+        config=cfg,
+        equity=2000.0,
+        macro_provider=_StubMacroProvider(vix=30.0, vix_short=31.0),
+        sentiment_score_provider=_Provider(),
+        earnings_lookup=lambda *_: {},
+    )
+
+    assert snap.mode == "capital_preservation"
+    assert snap.sentiment["level"] == "warning"
+    assert snap.sentiment["source"] == "ticker_daily_sentiment_features"
+    assert snap.macro["vix_curve_inverted"] is True
+    assert snap.mode_why["final_mode"] == "capital_preservation"
+    assert snap.mode_why["triggered_count"] >= 1
+    assert any(item["source"] == "vix_high" and item["triggered"] for item in snap.decision_trace)
+    assert any(item["source"] == "sentiment_warning" and item["triggered"] for item in snap.decision_trace)
+
+
 # ---------------------------------------------------------------------------
 # YAML parser (C30)
 # ---------------------------------------------------------------------------

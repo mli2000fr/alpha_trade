@@ -553,8 +553,10 @@ Le preset `capital_0_5000` impose `risk_max_positions = 4` et `risk_min_position
 La couche est desormais branchee sur deux fournisseurs production via
 `service.market.macro_providers.build_default_macro_provider` :
 
-- **Stooq** (gratuit, pas de cle) — symboles `^vix`, `^vix9d`, `^tnx` ;
-- **EODHD** (cle requise) — symboles `VIX.INDX`, `VXN.INDX`, `US10Y.INDX`.
+- **Stooq** — symboles `^vix`, `^vix9d`, `^tnx` ; le client preserve les
+  symboles index `^...` et supporte `STOOQ_API_KEY` / `STOOQ_APIKEY` si le
+  endpoint CSV demande un `apikey` ;
+- **EODHD** (cle requise) — symboles `VIX.INDX`, `VIX9D.INDX`, `US10Y.INDX`.
 
 Selection via `config.yaml > market_regimes.macro_provider` :
 `stooq` / `eodhd` / `composite` (defaut, Stooq d'abord puis EODHD si cle
@@ -562,7 +564,10 @@ disponible) / `none`. Les overrides de symboles sont supportes
 (`market_regimes.vix.symbol`, `market_regimes.yields.symbol_10y`, etc.).
 Les reponses sont cachees par instance et par cycle pour ne pas consommer
 le quota EODHD inutilement. Tout echec reseau retombe sur `None` →
-fallback neutre documente dans `data_quality`.
+fallback neutre documente dans `data_quality`. En pratique, pour obtenir un
+mode non-`normal` de facon fiable en production sans mode de demo, le chemin
+minimal recommande est aujourd'hui `market_regimes.enabled: true` +
+`macro_provider: eodhd` + `vix.enabled: true`.
 
 ### 8.6 Restitution IHM (Streamlit)
 Trois points d'entree IHM exposent la couche Market-Aware :

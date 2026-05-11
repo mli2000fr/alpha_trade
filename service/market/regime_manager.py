@@ -15,7 +15,7 @@ import math
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Callable, Literal
+from typing import Any, Callable, Literal, cast
 
 from service.market.calendar_patterns import (
     CalendarPatternHit,
@@ -61,6 +61,67 @@ def _escalate(current: RegimeMode, candidate: str) -> RegimeMode:
     return cand if _mode_strength(cand) > _mode_strength(current) else current
 
 
+def _push_trace(
+    trace: list[dict[str, Any]],
+    *,
+    source: str,
+    label: str,
+    triggered: bool,
+    severity: str,
+    message: str,
+    resulting_mode: str = "normal",
+    value: Any = None,
+    threshold: Any = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "source": source,
+        "label": label,
+        "triggered": bool(triggered),
+        "severity": severity,
+        "message": message,
+        "resulting_mode": resulting_mode,
+    }
+    if value is not None:
+        payload["value"] = value
+    if threshold is not None:
+        payload["threshold"] = threshold
+    if details:
+        payload.update(details)
+    trace.append(payload)
+
+
+def _build_mode_why(mode: RegimeMode, reasons: list[str], trace: list[dict[str, Any]]) -> dict[str, Any]:
+    triggered = [item for item in trace if item.get("triggered")]
+    primary: dict[str, Any] | None = None
+    for item in triggered:
+        item_mode = str(item.get("resulting_mode") or "normal")
+        if primary is None:
+            primary = item
+            continue
+        primary_mode = str(primary.get("resulting_mode") or "normal")
+        if _mode_strength(cast(RegimeMode, item_mode)) > _mode_strength(cast(RegimeMode, primary_mode)):
+            primary = item
+
+    if primary is not None:
+        summary = str(primary.get("message") or f"Source déclenchante : {primary.get('label')}")
+    elif mode == "normal":
+        summary = "Aucun déclencheur défensif actif : le mode reste normal."
+    elif reasons:
+        summary = f"Mode {mode} activé par : {', '.join(reasons)}"
+    else:
+        summary = f"Mode {mode} actif sans raison structurée disponible."
+
+    return {
+        "final_mode": mode,
+        "summary": summary,
+        "primary_source": primary.get("source") if primary else None,
+        "primary_label": primary.get("label") if primary else None,
+        "triggered_sources": [str(item.get("source")) for item in triggered],
+        "triggered_count": len(triggered),
+    }
+
+
 def build_snapshot(
     trade_date: date,
     *,
@@ -101,8 +162,10 @@ def build_snapshot(
     allow_new_entries = True
     mode: RegimeMode = "normal"
     effective_max_positions: int | None = None
-    macro_metrics: dict[str, float | None] = {}
+    macro_metrics: dict[str, Any] = {}
+    sentiment_payload: dict[str, Any] = {}
     data_quality: dict[str, str] = {}
+    decision_trace: list[dict[str, Any]] = []
 
     # 1. Calendrier
     hits: list[CalendarPatternHit] = evaluate_calendar_patterns(config, trade_date)
@@ -114,20 +177,89 @@ def build_snapshot(
         if hit.block_new_entries:
             allow_new_entries = False
             reasons.append(f"calendar_block:{hit.name}")
+        _push_trace(
+            decision_trace,
+            source=f"calendar:{hit.name}",
+            label=f"Pattern calendaire `{hit.name}`",
+            triggered=True,
+            severity="warning" if hit.block_new_entries else "info",
+            resulting_mode="normal",
+            message=(
+                f"Pattern `{hit.name}` actif"
+                f" · risk×{hit.risk_mult:.2f}"
+                f" · sentiment+={hit.sentiment_threshold_addon:.2f}"
+                f" · screener+={hit.screener_expansion_pct:.0%}"
+                + (" · blocage nouvelles entrées" if hit.block_new_entries else "")
+            ),
+            details={
+                "pattern": hit.name,
+                "risk_multiplier": hit.risk_mult,
+                "sentiment_threshold_addon": hit.sentiment_threshold_addon,
+                "screener_expansion_pct": hit.screener_expansion_pct,
+                "block_new_entries": hit.block_new_entries,
+            },
+        )
 
     # 2. Macro VIX
     if config.vix.enabled:
         vix_value, vix_high, curve_inverted, dq = evaluate_vix(
             macro_provider, trade_date, high_threshold=config.vix.high_threshold
         )
+        vix_short_value: float | None = None
+        if macro_provider is not None:
+            try:
+                vix_short_value = macro_provider.get_vix_short_term_close(trade_date)
+            except Exception:
+                vix_short_value = None
         macro_metrics["vix"] = vix_value
+        macro_metrics["vix_short"] = vix_short_value
+        macro_metrics["vix_curve_inverted"] = curve_inverted
         data_quality.update(dq)
         if vix_high:
             mode = _escalate(mode, "capital_preservation")
             reasons.append(f"vix_high:{vix_value:.1f}")
+        _push_trace(
+            decision_trace,
+            source="vix_high",
+            label="VIX élevé",
+            triggered=vix_high,
+            severity="warning" if vix_high else "info",
+            resulting_mode="capital_preservation" if vix_high else "normal",
+            value=vix_value,
+            threshold=config.vix.high_threshold,
+            message=(
+                f"VIX élevé ({vix_value:.2f} ≥ {config.vix.high_threshold:.2f}) ⇒ capital_preservation"
+                if vix_high and vix_value is not None
+                else (
+                    f"VIX sous seuil ({vix_value:.2f} < {config.vix.high_threshold:.2f})"
+                    if vix_value is not None
+                    else "VIX indisponible"
+                )
+            ),
+        )
         if curve_inverted:
             mode = _escalate(mode, config.vix.inverted_curve_mode)
             reasons.append("vix_curve_inverted")
+        _push_trace(
+            decision_trace,
+            source="vix_curve_inverted",
+            label="Courbe VIX inversée",
+            triggered=curve_inverted,
+            severity="warning" if curve_inverted else "info",
+            resulting_mode=config.vix.inverted_curve_mode if curve_inverted else "normal",
+            value=vix_short_value,
+            threshold=vix_value,
+            message=(
+                f"Courbe VIX inversée ({vix_short_value:.2f} > {vix_value:.2f}) ⇒ {config.vix.inverted_curve_mode}"
+                if curve_inverted and vix_short_value is not None and vix_value is not None
+                else (
+                    f"Courbe VIX non inversée ({vix_short_value:.2f} ≤ {vix_value:.2f})"
+                    if vix_short_value is not None and vix_value is not None
+                    else "Courbe VIX indisponible"
+                )
+            ),
+            details={"vix": vix_value, "vix_short": vix_short_value},
+        )
 
     # 3. Macro Yield 10Y
     if config.yields.enabled:
@@ -145,6 +277,30 @@ def build_snapshot(
             high_beta_threshold = config.yields.high_beta_threshold
             risk_multiplier *= config.yields.risk_mult
             reasons.append(f"yield_spike_10y:{rel:.3%}")
+        _push_trace(
+            decision_trace,
+            source="yield_spike_10y",
+            label="Spike taux US 10Y",
+            triggered=spike,
+            severity="warning" if spike else "info",
+            resulting_mode="normal",
+            value=rel,
+            threshold=config.yields.relative_spike_threshold,
+            message=(
+                f"Hausse 10Y sur {config.yields.lookback_days}j ({rel:.2%}) ≥ {config.yields.relative_spike_threshold:.2%}"
+                if spike and rel is not None
+                else (
+                    f"10Y sous seuil ({rel:.2%} < {config.yields.relative_spike_threshold:.2%})"
+                    if rel is not None
+                    else "10Y indisponible"
+                )
+            ),
+            details={
+                "blocked_sectors": list(config.yields.block_sectors),
+                "block_high_beta": config.yields.block_high_beta,
+                "risk_multiplier": config.yields.risk_mult,
+            },
+        )
 
     # 4. Sentiment circuit breaker
     if config.sentiment_circuit_breaker.enabled:
@@ -153,8 +309,18 @@ def build_snapshot(
             score_provider=sentiment_score_provider,
             execution_context=execution_context,
         )
+        reading = getattr(sentiment_score_provider, "last_reading", None)
         macro_metrics["sentiment_score"] = sent.score
         data_quality["sentiment"] = sent.data_quality
+        sentiment_payload = {
+            "score": sent.score,
+            "level": sent.level,
+            "suggested_mode": sent.suggested_mode,
+            "suggested_max_positions": sent.suggested_max_positions,
+            "data_quality": sent.data_quality,
+        }
+        if reading is not None and hasattr(reading, "to_dict"):
+            sentiment_payload.update(reading.to_dict())
         if sent.suggested_mode != "normal":
             mode = _escalate(mode, sent.suggested_mode)
         if sent.suggested_max_positions is not None:
@@ -164,6 +330,43 @@ def build_snapshot(
                 else min(effective_max_positions, sent.suggested_max_positions)
             )
         reasons.extend(sent.reasons)
+        sentiment_message = {
+            "critical": (
+                f"Sentiment critique ({sent.score:.3f} ≤ {config.sentiment_circuit_breaker.critical_threshold:.3f}) ⇒ {sent.suggested_mode}"
+                if sent.score is not None else "Sentiment critique"
+            ),
+            "warning": (
+                f"Sentiment warning ({sent.score:.3f} ≤ {config.sentiment_circuit_breaker.warning_threshold:.3f}) ⇒ capital_preservation"
+                if sent.score is not None else "Sentiment warning"
+            ),
+            "normal": (
+                f"Sentiment neutre ({sent.score:.3f})"
+                if sent.score is not None else f"Sentiment indisponible ({sent.data_quality})"
+            ),
+        }[sent.level]
+        _push_trace(
+            decision_trace,
+            source=f"sentiment_{sent.level}",
+            label="Sentiment agrégé marché",
+            triggered=sent.level in {"warning", "critical"},
+            severity="critical" if sent.level == "critical" else ("warning" if sent.level == "warning" else "info"),
+            resulting_mode=sent.suggested_mode,
+            value=sent.score,
+            threshold=(
+                config.sentiment_circuit_breaker.critical_threshold if sent.level == "critical"
+                else config.sentiment_circuit_breaker.warning_threshold
+            ),
+            message=sentiment_message,
+            details={
+                "level": sent.level,
+                "lookback_days": config.sentiment_circuit_breaker.lookback_days,
+                "suggested_max_positions": sent.suggested_max_positions,
+                "data_quality": sent.data_quality,
+                "source_table": sentiment_payload.get("source"),
+                "total_news_count": sentiment_payload.get("total_news_count"),
+                "covered_days": sentiment_payload.get("covered_days"),
+            },
+        )
 
     # 5. Earnings shield + buyback blackout
     earnings = compute_earnings_shield(
@@ -181,10 +384,26 @@ def build_snapshot(
         if effective_max_positions is None:
             effective_max_positions = allowed_slots
         else:
-            effective_max_positions = min(effective_max_positions, allowed_slots)
+            effective_max_positions = min(int(effective_max_positions), allowed_slots)
         if allowed_slots == 0:
             allow_new_entries = False
             reasons.append("equity_too_low_for_min_notional")
+        _push_trace(
+            decision_trace,
+            source="min_notional_guard",
+            label="Garde-fou min notional",
+            triggered=allowed_slots == 0,
+            severity="warning" if allowed_slots == 0 else "info",
+            resulting_mode="normal",
+            value=allowed_slots,
+            threshold=enforce_min_notional,
+            message=(
+                f"Equity insuffisante pour le min notional ({equity:.2f}$ / min {enforce_min_notional:.2f}$)"
+                if allowed_slots == 0
+                else f"Capital compatible : {allowed_slots} slot(s) autorisé(s)"
+            ),
+            details={"equity": equity, "enforce_min_notional": enforce_min_notional},
+        )
 
     # 7. Modes restrictifs : ajustement allow_new_entries
     if mode in ("close_only", "cash_only"):
@@ -213,13 +432,16 @@ def build_snapshot(
         blocked_sectors=tuple(dict.fromkeys(blocked_sectors)),
         block_high_beta=block_high_beta,
         high_beta_threshold=high_beta_threshold,
-        earnings_shielded_symbols=dict(earnings.shielded),
+        earnings_shielded_symbols=cast(dict[str, Any], dict(earnings.shielded)),
         buyback_blackout_symbols=dict(earnings.buyback_blackout),
         earnings_negative_score_value=earnings.negative_score_value,
         allow_new_entries=allow_new_entries,
         active_patterns=tuple(active_patterns),
         reasons=tuple(reasons),
         macro=dict(macro_metrics),
+        sentiment=dict(sentiment_payload),
+        mode_why=_build_mode_why(mode, reasons, decision_trace),
+        decision_trace=tuple(dict(item) for item in decision_trace),
         data_quality=dict(data_quality),
     )
 

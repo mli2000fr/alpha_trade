@@ -111,6 +111,7 @@ def test_banner_uses_error_for_close_only(fake_streamlit):
         "effective_max_positions": 4,
         "allowed_slots": 4,
         "allow_new_entries": False,
+        "mode_why": {"summary": "Sentiment critique (-0.500 ≤ -0.300) ⇒ close_only"},
     }
     render_market_regime_banner(snapshot=snap, compact=True, show_link_hint=False)
     error_calls = [c for c in fake_streamlit.calls if c[0] == "error"]
@@ -118,6 +119,8 @@ def test_banner_uses_error_for_close_only(fake_streamlit):
     headline = str(error_calls[0][1][0])
     assert "close_only" in headline
     assert "🛑" in headline
+    captions = [str(c[1][0]) for c in fake_streamlit.calls if c[0] == "caption"]
+    assert any("Pourquoi ce mode" in s for s in captions)
 
 
 def test_banner_full_mode_shows_macro_and_patterns(fake_streamlit):
@@ -132,7 +135,13 @@ def test_banner_full_mode_shows_macro_and_patterns(fake_streamlit):
         "active_patterns": ["tax_day", "opex"],
         "blocked_sectors": ["Technology"],
         "macro": {"vix": 27.5, "yield_10y_5d_pct": 0.06},
+        "sentiment": {"level": "warning", "score": -0.2},
         "reasons": ["VIX>25"],
+        "mode_why": {"summary": "VIX élevé (27.50 ≥ 25.00) ⇒ capital_preservation"},
+        "decision_trace": [
+            {"triggered": True, "message": "VIX élevé (27.50 ≥ 25.00) ⇒ capital_preservation"},
+            {"triggered": False, "message": "Courbe VIX non inversée"},
+        ],
     }
     render_market_regime_banner(snapshot=snap, compact=False, show_link_hint=False)
     warnings = [c for c in fake_streamlit.calls if c[0] == "warning"]
@@ -141,6 +150,8 @@ def test_banner_full_mode_shows_macro_and_patterns(fake_streamlit):
     assert any("Patterns actifs" in s for s in captions)
     assert any("Secteurs bloqués" in s for s in captions)
     assert any("VIX>25" in s for s in captions)
+    assert any("Pourquoi ce mode" in s for s in captions)
+    assert any("Sources déclenchantes" in s for s in captions)
 
 
 # ---------------------------------------------------------------------------
@@ -179,20 +190,28 @@ def test_compute_live_snapshot_serializes_slots_dataclass(monkeypatch):
     import service.market as market
     from service.market.models import MarketRegimeSnapshot
 
+    captured = {}
+
     monkeypatch.setattr(mod, "_load_yaml", lambda: {"market_regimes": {"enabled": True}})
     monkeypatch.setattr(market, "parse_market_regimes", lambda cfg: object())
     monkeypatch.setattr(market, "build_default_macro_provider", lambda cfg: None)
-    monkeypatch.setattr(
-        market,
-        "build_snapshot",
-        lambda *args, **kwargs: MarketRegimeSnapshot(
+    monkeypatch.setattr(market, "DbSentimentScoreProvider", lambda trade_date: {"trade_date": trade_date})
+
+    def _fake_build_snapshot(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return MarketRegimeSnapshot(
             trade_date=date(2025, 4, 15),
             mode="capital_preservation",
             risk_multiplier=0.7,
             active_patterns=("tax_day",),
             blocked_sectors=("Technology",),
             macro={"vix": 28.0},
-        ),
+        )
+
+    monkeypatch.setattr(
+        market,
+        "build_snapshot",
+        _fake_build_snapshot,
     )
 
     result = mod._compute_live_snapshot(date(2025, 4, 15), 2000.0)
@@ -203,5 +222,24 @@ def test_compute_live_snapshot_serializes_slots_dataclass(monkeypatch):
     assert result["active_patterns"] == ["tax_day"]
     assert result["blocked_sectors"] == ["Technology"]
     assert result["macro"] == {"vix": 28.0}
+    assert captured["kwargs"]["sentiment_score_provider"] == {"trade_date": date(2025, 4, 15)}
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_mode", "expected_allow_new_entries"),
+    [
+        ("sentiment_warning", "capital_preservation", True),
+        ("sentiment_critical_live", "close_only", False),
+        ("vix_high", "capital_preservation", True),
+    ],
+)
+def test_compute_demo_snapshot_exposes_non_normal_modes(scenario, expected_mode, expected_allow_new_entries):
+    import ihm.pages.market_regime as mod
+
+    payload = mod._compute_demo_snapshot(scenario, date(2025, 5, 1), 2000.0)
+
+    assert payload["mode"] == expected_mode
+    assert payload["allow_new_entries"] is expected_allow_new_entries
+    assert f"demo_scenario:{scenario}" in payload["reasons"]
 
 

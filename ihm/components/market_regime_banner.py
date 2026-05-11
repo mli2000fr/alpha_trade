@@ -107,8 +107,13 @@ def render_market_regime_banner(
     else:
         st.info(headline)
 
+    mode_why = snap.get("mode_why") or {}
+    if mode_why.get("summary"):
+        st.caption("Pourquoi ce mode : " + str(mode_why.get("summary")))
+
     if not compact:
         macro = snap.get("macro") or {}
+        sentiment = snap.get("sentiment") or {}
         col1, col2, col3 = st.columns(3)
         col1.metric(
             "VIX",
@@ -121,8 +126,13 @@ def render_market_regime_banner(
         )
         col3.metric(
             "Sentiment",
-            (snap.get("sentiment") or {}).get("level", "neutral"),
+            sentiment.get("level", "neutral"),
         )
+
+        triggered = [item for item in (snap.get("decision_trace") or []) if item.get("triggered")]
+        if triggered:
+            formatted = [str(item.get("message") or item.get("label") or item.get("source")) for item in triggered]
+            st.caption("Sources déclenchantes : " + " · ".join(formatted))
 
         active = snap.get("active_patterns") or []
         if active:

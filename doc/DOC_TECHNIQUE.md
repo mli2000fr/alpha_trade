@@ -798,8 +798,10 @@ Tous verts (74 tests sur la session reprise).
 `service.market.macro_providers.build_default_macro_provider(yaml_cfg)`
 choisit le fournisseur selon `config.yaml > market_regimes.macro_provider` :
 
-- `stooq` → `StooqMacroProvider` (CSV public, sans cle, symboles `^vix`, `^vix9d`, `^tnx`).
-- `eodhd` → `EodhdMacroProvider` (token requis, symboles `VIX.INDX`, `VXN.INDX`, `US10Y.INDX`).
+- `stooq` → `StooqMacroProvider` (symboles `^vix`, `^vix9d`, `^tnx`) ;
+  `service/stooq/clientStooq.py` preserve les symboles index `^...` et
+  ajoute `apikey` si `STOOQ_API_KEY` / `STOOQ_APIKEY` est present.
+- `eodhd` → `EodhdMacroProvider` (token requis, symboles `VIX.INDX`, `VIX9D.INDX`, `US10Y.INDX`).
 - `composite` (defaut) → `CompositeMacroProvider([Stooq, Eodhd?])` : Stooq d'abord, EODHD en secours uniquement si `EODHD_API_TOKEN` est present.
 - `none` → couche desactivee, snapshot neutre.
 
@@ -807,6 +809,9 @@ Les overrides de symboles passent par `market_regimes.vix.symbol`,
 `market_regimes.vix.short_symbol`, `market_regimes.yields.symbol_10y`.
 Cache par instance et par cycle ; aucun raise n'est propage (toujours
 `None` en cas d'echec → fallback neutre cote `regime_manager`).
+`service/eodhd/symbols.py::to_eodhd()` preserve en outre les symboles deja
+natifs (`AAPL.US`, `VIX.INDX`, `US10Y.INDX`, `SAP.DE`) pour eviter tout
+remapping errone vers `.US`.
 
 ### 11.6 Restitution IHM
 - Page **Régime Marché** : `ihm/pages/market_regime.py` (snapshot a la

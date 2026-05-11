@@ -152,3 +152,9 @@ def test_factory_explicit_eodhd_overrides_symbol():
     assert p._symbols["vix"] == "VIX.INDX"
     assert p._symbols["us10y"] == "US10Y.INDX"
 
+
+def test_eodhd_default_short_vix_symbol_is_vix9d():
+    p = EodhdMacroProvider()
+    assert p._symbols["vix_short"] == "VIX9D.INDX"
+
+
