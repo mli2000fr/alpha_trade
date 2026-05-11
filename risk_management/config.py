@@ -46,6 +46,18 @@ class RiskConfig:
     prediction_confidence_weight: float = 0.60
     historical_win_rate_weight: float = 0.40
 
+    # --- Market-aware regime (Axe B du plan ``prompt/parttern/plan.md``) ---
+    # Multiplicateur de risque appliqué au sizing ATR (1.0 = nominal).
+    risk_multiplier: float = 1.0
+    # Si défini, remplace ``min_position_notional`` lors du contrôle de notional
+    # (typiquement 155 USD pour rester compatible Alpaca + petit capital).
+    enforce_min_notional: float | None = None
+    # Plafond optionnel "max_positions" calculé dynamiquement à partir de
+    # l'equity et/ou du régime (None => ``max_positions`` standard utilisé).
+    effective_max_positions_override: int | None = None
+    # Maximum 2 tickers par secteur (en complément de ``max_sector_weight``).
+    max_tickers_per_sector: int | None = None
+
     def __post_init__(self) -> None:
         if self.account_equity <= 0:
             raise ValueError("account_equity doit être > 0.")
@@ -76,6 +88,29 @@ class RiskConfig:
             raise ValueError("score_weight + prediction_weight doit == 1.0.")
         if abs((self.prediction_confidence_weight + self.historical_win_rate_weight) - 1.0) > 1e-6:
             raise ValueError("prediction_confidence_weight + historical_win_rate_weight doit == 1.0.")
+        # --- Market-aware validations ---
+        if self.risk_multiplier < 0:
+            raise ValueError("risk_multiplier doit être >= 0.")
+        if self.enforce_min_notional is not None and self.enforce_min_notional < 0:
+            raise ValueError("enforce_min_notional doit être >= 0 quand renseigné.")
+        if self.effective_max_positions_override is not None and self.effective_max_positions_override < 0:
+            raise ValueError("effective_max_positions_override doit être >= 0 quand renseigné.")
+        if self.max_tickers_per_sector is not None and self.max_tickers_per_sector < 1:
+            raise ValueError("max_tickers_per_sector doit être >= 1 quand renseigné.")
+
+    @property
+    def effective_min_notional(self) -> float:
+        """Notional minimum effectif (``enforce_min_notional`` prioritaire)."""
+        if self.enforce_min_notional is not None:
+            return float(self.enforce_min_notional)
+        return float(self.min_position_notional)
+
+    @property
+    def effective_max_positions(self) -> int:
+        """Max positions effectif (``effective_max_positions_override`` prioritaire)."""
+        if self.effective_max_positions_override is not None:
+            return max(0, int(self.effective_max_positions_override))
+        return int(self.max_positions)
 
     def to_conviction_weights(self) -> "ConvictionWeights":
         """Phase 5.1.b — Adapte les pondérations risk vers ``core.conviction.ConvictionWeights``.

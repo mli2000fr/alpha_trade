@@ -365,6 +365,20 @@ class ProductionExecutor:
 
             # Phase 3 — Build intents, filter duplicates
             entry_intents = build_entry_intents(targets, self._cfg, exec_run_id)
+            # Axe C — court-circuit des nouvelles entrées si entry_mode bloque
+            if self._cfg.blocks_new_entries and entry_intents:
+                LOGGER.warning(
+                    "execution_engine: entry_mode=%s -> %d entry intents court-circuitées.",
+                    self._cfg.entry_mode, len(entry_intents),
+                )
+                for intent in entry_intents:
+                    events.append(make_event(
+                        exec_run_id, EventType.INTENT_SKIPPED_DUPLICATE,
+                        f"SkippedByRegime[{self._cfg.entry_mode}]: {intent.symbol}",
+                        symbol=intent.symbol, intent_id=intent.intent_id,
+                    ))
+                metrics["skipped_by_regime"] = len(entry_intents)
+                entry_intents = []
             existing_keys: set[str] = set()
             if not self._cfg.dry_run:
                 try:

@@ -90,6 +90,31 @@ class BrokerAdapter:
     def cancel_broker_order(self, broker_order_id: str) -> bool:
         return self._client.cancel_order(broker_order_id)
 
+    def replace_stop_order(
+        self,
+        existing_broker_order_id: str,
+        new_stop_intent: OrderIntent,
+    ) -> BrokerOrder:
+        """Remplace un stop existant par un nouveau (Axe F — C26).
+
+        Implémentation portable : ``cancel`` + ``submit`` du nouveau stop. Si le
+        cancel échoue, on lève ``BrokerApiError`` sans soumettre le nouvel ordre
+        (évite la double-protection sur le compte).
+        """
+        try:
+            ok = self._client.cancel_order(existing_broker_order_id)
+        except BrokerApiError:
+            raise
+        if not ok:
+            raise BrokerApiError(
+                f"replace_stop_order: cancel refusé pour broker_order_id={existing_broker_order_id}"
+            )
+        LOGGER.info(
+            "replace_stop_order: cancel OK broker_order_id=%s — submit new stop=%s",
+            existing_broker_order_id, new_stop_intent.stop_price,
+        )
+        return self.submit_intent(new_stop_intent)
+
     def cancel_all_open_orders(self, *, dry_run: bool = False) -> list[CancelResult]:
         """Phase 5.2.c — Kill switch global : annule tous les ordres open du compte.
 

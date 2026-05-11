@@ -753,3 +753,40 @@ ruff check .                    # lint
 mypy .                          # types
 python run_execution.py check   # vérif environnement
 ```
+---
+## 11. Architecture Market-Aware (Axes A-F du plan)
+> Cf. `todo/plan.md` et `todo/prompt_implemented.md`.
+### 11.1 Cartographie des modules
+| Couche | Module | Role |
+|---|---|---|
+| Snapshot | `service/market/regime_manager.py` | Orchestrateur `build_snapshot()`, cache TTL, fallback neutre. |
+| Modele | `service/market/models.py` | `MarketRegimeSnapshot`, `RegimeMode`, `EarningsShieldMode`. |
+| Config YAML | `service/market/config.py` | `parse_market_regimes` + `parse_trailing_stop`. |
+| Patterns | `service/market/calendar_patterns.py` | Tax Day, Sept. Slump, Santa, January, OpEx, Month-End. |
+| Macro | `service/market/macro_signals.py` | VIX, courbe VIX, 10Y yield (5j). |
+| Sentiment | `service/market/sentiment_regime.py` | Circuit breaker warning / critique. |
+| Earnings | `service/market/earnings_shield.py` | Fenetre J-2/J+2, mode strict_block ou negative_score. |
+| Volatilite | `service/market/volatility.py` | ATR(n) + utilitaires partages avec le watcher. |
+| Selector | `selector/regime_filters.py` | Application du snapshot sur les candidats (earnings, blackout, sectors). |
+| Risk live | `risk_management/regime_apply.py` + `constraints.py` + `position_sizer.py` | risk_multiplier, allowed_slots, max_tickers_per_sector. |
+| Execution | `execution_engine/market_regime_preflight.py` + `run_execution.run()` | Pre-flight summary + propagation entry_mode (frozen via dataclasses.replace). |
+| Trailing ATR | `execution_engine/protection_break_even.py` + `protection_watcher.py` + `orphan_adoption.py` | Stop ATR dynamique, break-even, EOD check. |
+| Backtest | `backtesting/risk_bridge.py` | Phase 2 `risk_execution` recoit `market_regimes_config`. |
+### 11.2 Sequence live (run_execution.run)
+1. Resolution du compte / equity broker (hard-fail si echec).
+2. Construction de `ExecutionConfig` (frozen).
+3. **Pre-flight Market-Aware** : `parse_market_regimes(config.yaml) -> build_snapshot(...) -> emit_preflight(...)`.
+4. Si `derive_entry_mode(snapshot) != entry_mode` -> `dataclasses.replace` + reconstruction `BrokerAdapter` / `OcoManager` / `ProductionExecutor`.
+5. Persistance JSON best-effort dans `artifacts/market_regime/snapshot_<ts>_<account>.json`.
+6. Execution normale.
+Tout echec du pre-flight est traite en fallback neutre (jamais bloquant).
+### 11.3 Parite live / backtest
+Le snapshot est calcule par le **meme orchestrateur** (`build_snapshot`) cote live et cote `backtesting/risk_bridge.py::run_phase2_risk_bridge` (parametre `market_regimes_config`). Les memes patterns, seuils et modes sont donc rejoues a l'identique.
+### 11.4 Tests
+- `tests/test_market_regime.py` (parser YAML, calendar, macro, earnings, buyback)
+- `tests/test_market_regime_preflight.py` (rendu console + derive_entry_mode)
+- `tests/test_selector_regime_filters.py`
+- `tests/test_risk_regime_apply.py` + `tests/test_risk_regime_sizing_constraints.py`
+- `tests/test_phase2_risk_bridge_regime.py`
+- `tests/test_orphan_adoption.py`, `tests/test_trailing_stop_atr.py`, `tests/test_protection_break_even.py`
+Tous verts (74 tests sur la session reprise).
