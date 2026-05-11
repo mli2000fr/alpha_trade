@@ -6,7 +6,7 @@ Tu es un ingénieur expert en trading algorithmique et Python. L'objectif est d'
 ## ANALYSE DES DOCUMENTS FOURNIS
 1. **DOC_FONCTIONNELLE.md** : Architecture Swing Trade sur actions US, exécution via Alpaca, scoring multi-facteurs (Sentiment + ML).
 2. **DOC_TECHNIQUE.md** : Pipeline de backtesting, gestion des phases de fidélité, et structure des scripts (`run_execution.py`, `backfill-scores-history`).
-3. **LOGS/EXPORT** : Détection d'un drawdown majeur en avril-mai 2025 lié aux taux US, à la fiscalité (Tax Day) et à des rejets de "notional" (positions < 150$).
+3. **LOGS/EXPORT** : Détection d'un drawdown majeur en avril-mai 2025 lié aux taux US (détails voir répertoire pattern), à la fiscalité (Tax Day) et à des rejets de "notional" (positions < 150$).
 
 ## TÂCHES À ACCOMPLIR
 
