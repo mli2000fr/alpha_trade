@@ -412,6 +412,7 @@ class TestAdoptOrphanBuy:
             a="acct-3",
         )
         assert len(request_rows) == 1
+        assert request_rows[0]["attempt_no"] == 1
 
     def test_adopted_entry_is_returned_by_unprotected_filled_parents(self, repo) -> None:
         result = adopt_orphan_buy(
