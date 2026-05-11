@@ -195,6 +195,7 @@ MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_mo
 MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
 MLHistoryWindow = Literal["5", "10", "all"]
 MLTrainSymbolSource = Literal["candidates", "stock_bars_daily"]
+NewsImportSymbolSource = Literal["stock_scores", "candidates", "stock_bars_daily"]
 ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
 ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
@@ -312,6 +313,9 @@ class PipelineLaunchOptions:
     risk_log_level: str = DEFAULT_RISK_LOG_LEVEL
     news_import_start_date: str | None = None
     news_import_end_date: str | None = None
+    news_import_symbols: str | None = None
+    news_import_symbol_source: NewsImportSymbolSource = "stock_scores"
+    news_import_max_symbols: int | None = None
     sentiment_start_utc: str | None = None
     sentiment_end_utc: str | None = None
     sentiment_symbols: str | None = None
@@ -828,6 +832,38 @@ def _extend_event_sentiment_powershell_args(
             ])
 
 
+def _extend_import_news_cli_args(
+    command: list[str],
+    *,
+    symbols: str | None,
+    symbol_source: str,
+    max_symbols: int | None,
+) -> None:
+    if symbols:
+        command.extend(["--symbols", symbols])
+    elif symbol_source and symbol_source != "stock_scores":
+        command.extend(["--symbol-source", symbol_source])
+
+    if max_symbols is not None and max_symbols > 0:
+        command.extend(["--max-symbols", str(int(max_symbols))])
+
+
+def _extend_import_news_powershell_args(
+    command_args: list[str],
+    *,
+    symbols: str | None,
+    symbol_source: str,
+    max_symbols: int | None,
+) -> None:
+    if symbols:
+        command_args.extend(["-Symbols", symbols])
+    elif symbol_source and symbol_source != "stock_scores":
+        command_args.extend(["-SymbolSource", symbol_source])
+
+    if max_symbols is not None and max_symbols > 0:
+        command_args.extend(["-MaxSymbols", str(int(max_symbols))])
+
+
 def _extend_relevance_backfill_powershell_args(
     command_args: list[str],
     options: PipelineLaunchOptions,
@@ -887,6 +923,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     account_id = (options.account_id or "").strip() or None
     news_import_start_date = _normalize_optional_date(options.news_import_start_date)
     news_import_end_date = _normalize_optional_date(options.news_import_end_date)
+    news_import_symbols = _normalize_symbol_list(options.news_import_symbols)
+    news_import_symbol_source = (
+        options.news_import_symbol_source
+        if options.news_import_symbol_source in {"stock_scores", "candidates", "stock_bars_daily"}
+        else "stock_scores"
+    )
+    news_import_max_symbols = (
+        int(options.news_import_max_symbols)
+        if options.news_import_max_symbols is not None and int(options.news_import_max_symbols) > 0
+        else None
+    )
     sentiment_start_utc = _normalize_optional_date(options.sentiment_start_utc)
     sentiment_end_utc = _normalize_optional_date(options.sentiment_end_utc)
     sentiment_symbols = _normalize_symbol_list(options.sentiment_symbols)
@@ -1168,6 +1215,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             options,
             include_contextual_scoring=False,
         )
+        _extend_import_news_cli_args(
+            command,
+            symbols=news_import_symbols,
+            symbol_source=news_import_symbol_source,
+            max_symbols=news_import_max_symbols,
+        )
         return command
 
     if step_key == "import_news_pending_loop":
@@ -1188,6 +1241,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command_args,
             options,
             include_contextual_scoring=True,
+        )
+        _extend_import_news_powershell_args(
+            command_args,
+            symbols=news_import_symbols,
+            symbol_source=news_import_symbol_source,
+            max_symbols=news_import_max_symbols,
         )
         _extend_relevance_backfill_powershell_args(command_args, options)
         return _build_powershell_file_command(script_path, command_args)

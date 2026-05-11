@@ -35,6 +35,16 @@ param(
     [string]$TickerRelevanceMode = 'provider_default',
 
     [Parameter()]
+    [string]$Symbols = '',
+
+    [Parameter()]
+    [ValidateSet('stock_scores', 'candidates', 'stock_bars_daily')]
+    [string]$SymbolSource = 'stock_scores',
+
+    [Parameter()]
+    [int]$MaxSymbols = 0,
+
+    [Parameter()]
     [double]$MinRelevanceScore = 0.0,
 
     [Parameter()]
@@ -82,6 +92,22 @@ if ([string]::IsNullOrWhiteSpace($PythonExe)) {
     $PythonExe = (Get-Command python -ErrorAction Stop).Source
 }
 
+$NormalizedImportSymbols = @()
+if (-not [string]::IsNullOrWhiteSpace($Symbols)) {
+    $NormalizedImportSymbols = @(
+        $Symbols -split ',' |
+        ForEach-Object { $_.Trim().ToUpperInvariant() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+    )
+}
+$NormalizedImportSymbolsCsv = if ($NormalizedImportSymbols.Count -gt 0) {
+    $NormalizedImportSymbols -join ','
+}
+else {
+    ''
+}
+
 $summary = [ordered]@{
     mode = 'import_news_score_pending_history_and_relevance_backfill'
     start_date = $StartDate
@@ -105,6 +131,9 @@ $summary = [ordered]@{
     relevance_backfill_completed = $false
     news_provider = $NewsProvider
     ticker_relevance_mode = $TickerRelevanceMode
+    import_symbols = if ($NormalizedImportSymbols.Count -gt 0) { @($NormalizedImportSymbols) } else { @() }
+    import_symbol_source = $SymbolSource
+    import_max_symbols = $MaxSymbols
     min_relevance_score = $MinRelevanceScore
     enable_contextual_scoring = [bool]$EnableContextualScoring
     contextual_min_relevance = $ContextualMinRelevance
@@ -118,6 +147,7 @@ $summary = [ordered]@{
     pending_scope_start_date = $StartDate
     pending_scope_end_date = $EndDate
     pending_scope_ingestion_source = $NewsProvider
+    pending_scope_symbols = if ($NormalizedImportSymbols.Count -gt 0) { @($NormalizedImportSymbols) } else { @() }
     status = 'running'
 }
 
@@ -166,7 +196,8 @@ function Get-PendingArticleCount {
     param(
         [string]$PendingStartDate = '',
         [string]$PendingEndDate = '',
-        [string]$IngestionSource = ''
+        [string]$IngestionSource = '',
+        [string]$SymbolsCsv = ''
     )
 
     if ($DryRun) {
@@ -191,6 +222,21 @@ function Get-PendingArticleCount {
     else {
         "'" + $IngestionSource.Replace("'", "\\'") + "'"
     }
+    $normalizedSymbols = @()
+    if (-not [string]::IsNullOrWhiteSpace($SymbolsCsv)) {
+        $normalizedSymbols = @(
+            $SymbolsCsv -split ',' |
+            ForEach-Object { $_.Trim().ToUpperInvariant() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+        )
+    }
+    $symbolsLiteral = if ($normalizedSymbols.Count -eq 0) {
+        'None'
+    }
+    else {
+        '[' + (($normalizedSymbols | ForEach-Object { "'" + $_.Replace("'", "\\'") + "'" }) -join ', ') + ']'
+    }
 
     $pythonCode = @"
 from datetime import date
@@ -200,11 +246,13 @@ from event_sentiment.db_io import EventSentimentRepository
 start_date = date.fromisoformat($pendingStartDateLiteral) if $pendingStartDateLiteral != None else None
 end_date = date.fromisoformat($pendingEndDateLiteral) if $pendingEndDateLiteral != None else None
 ingestion_source = $ingestionSourceLiteral
+symbols = $symbolsLiteral
 repository = EventSentimentRepository()
 print(repository.count_pending_articles(
     start_date=start_date,
     end_date=end_date,
     ingestion_source=ingestion_source,
+    symbols=symbols,
 ))
 "@
 
@@ -230,8 +278,67 @@ function Get-RunWindowUtcBounds {
     }
 }
 
+function Resolve-ScopedSymbols {
+    param(
+        [string]$ExplicitSymbolsCsv = '',
+        [string]$SelectedSymbolSource = 'stock_scores'
+    )
+
+    $explicitSymbols = @()
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitSymbolsCsv)) {
+        $explicitSymbols = @(
+            $ExplicitSymbolsCsv -split ',' |
+            ForEach-Object { $_.Trim().ToUpperInvariant() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+        )
+    }
+    if ($explicitSymbols.Count -gt 0) {
+        return $explicitSymbols
+    }
+    if ($SelectedSymbolSource -eq 'stock_bars_daily' -or $DryRun) {
+        return @()
+    }
+
+    $pythonCode = switch ($SelectedSymbolSource) {
+        'candidates' {
+@"
+from event_sentiment.db_io import EventSentimentRepository
+
+for symbol in EventSentimentRepository().load_candidate_symbols():
+    print(str(symbol).strip().upper())
+"@
+        }
+        default {
+@"
+from event_sentiment.importe_news import get_all_symbols_from_stock_scores
+
+for symbol in get_all_symbols_from_stock_scores(candidates_only=False):
+    print(str(symbol).strip().upper())
+"@
+        }
+    }
+
+    $output = & $PythonExe -u -c $pythonCode 2>&1
+    $exitCode = if ($null -ne $LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }
+    if ($exitCode -ne 0) {
+        $details = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+        throw ("Impossible de résoudre le scope de symboles (source={0}, exit={1}).`n{2}" -f $SelectedSymbolSource, $exitCode, $details)
+    }
+    return @(
+        $output |
+        ForEach-Object { $_.ToString().Trim().ToUpperInvariant() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+    )
+}
+
 Push-Location $ProjectRoot
 try {
+    $ScopedSymbols = @(Resolve-ScopedSymbols -ExplicitSymbolsCsv $NormalizedImportSymbolsCsv -SelectedSymbolSource $SymbolSource)
+    $ScopedSymbolsCsv = if ($ScopedSymbols.Count -gt 0) { $ScopedSymbols -join ',' } else { '' }
+    $summary.pending_scope_symbols = if ($ScopedSymbols.Count -gt 0) { @($ScopedSymbols) } else { @() }
+
     $importNewsArguments = @(
         '-u',
         (Join-Path $ProjectRoot 'event_sentiment\importe_news.py'),
@@ -242,6 +349,15 @@ try {
         '--news-provider',
         $NewsProvider
     )
+    if ($NormalizedImportSymbols.Count -gt 0) {
+        $importNewsArguments += @('--symbols', $NormalizedImportSymbolsCsv)
+    }
+    elseif ($SymbolSource -ne 'stock_scores') {
+        $importNewsArguments += @('--symbol-source', $SymbolSource)
+    }
+    if ($MaxSymbols -gt 0) {
+        $importNewsArguments += @('--max-symbols', ([string]$MaxSymbols))
+    }
     if ($TickerRelevanceMode -ne 'provider_default') {
         $importNewsArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)
     }
@@ -252,7 +368,7 @@ try {
     Invoke-PythonStep -Label 'Import news brutes historiques' -Arguments @($importNewsArguments)
     $summary.import_completed = $true
 
-    $pendingCount = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider
+    $pendingCount = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider -SymbolsCsv $ScopedSymbolsCsv
     $summary.initial_pending = $pendingCount
     $summary.initial_pending_global = Get-PendingArticleCount
     Write-Host ("Articles pending après import (scope {0} → {1}, provider={2}) : {3}" -f $StartDate, $EndDate, $NewsProvider, $pendingCount)
@@ -284,6 +400,9 @@ try {
             '--end-utc',
             $runWindow.EndUtc
         )
+        if ($ScopedSymbols.Count -gt 0) {
+            $scoringArguments += @('--symbols', $ScopedSymbolsCsv)
+        }
         if ($TickerRelevanceMode -ne 'provider_default') {
             $scoringArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)
         }
@@ -302,7 +421,7 @@ try {
         Invoke-PythonStep -Label ("Sentiment pipeline auto #{0}" -f $runIndex) -Arguments @($scoringArguments)
         $summary.scoring_runs_executed = $runIndex
 
-        $remaining = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider
+        $remaining = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider -SymbolsCsv $ScopedSymbolsCsv
         Write-Host ("Articles pending après scoring #{0} : {1}" -f $runIndex, $remaining)
 
         if ($remaining -lt $pendingCount) {
@@ -377,6 +496,9 @@ try {
     if ($RelevanceBackfillPurgeBelow -gt 0) {
         $relevanceBackfillArguments += @('--purge-below', ([string]$RelevanceBackfillPurgeBelow))
     }
+    if ($ScopedSymbols.Count -gt 0) {
+        $relevanceBackfillArguments += @('--symbols', $ScopedSymbolsCsv)
+    }
     if ($RelevanceBackfillRescoreContextual) {
         $relevanceBackfillArguments += '--rescore-contextual'
         if ($RelevanceBackfillContextualMinRelevance -gt 0) {
@@ -396,7 +518,7 @@ try {
 catch {
     $summary.status = 'failed'
     try {
-        $summary.final_pending = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider
+        $summary.final_pending = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider -SymbolsCsv $ScopedSymbolsCsv
         $summary.final_pending_global = Get-PendingArticleCount
     }
     catch {

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date as DateValue, timedelta
+from typing import Literal, cast
 
 import streamlit as st
 
@@ -85,10 +86,61 @@ def _render_import_news_panel(
             )
             end_value = _coerce_date(end_value_raw, default_end)
 
+        source_col, cap_col = st.columns(2)
+        symbol_source_options = ("stock_scores", "candidates", "stock_bars_daily")
+        current_max_symbols = options.news_import_max_symbols if options.news_import_max_symbols is not None else 0
+        current_symbol_source = str(
+            st.session_state.get("pipeline_import_news_symbol_source", getattr(options, "news_import_symbol_source", "stock_scores"))
+        ).strip().lower()
+        if current_symbol_source not in symbol_source_options:
+            current_symbol_source = "stock_scores"
+        with source_col:
+            news_import_symbol_source = str(
+                st.selectbox(
+                    "Univers de symboles pour l'import",
+                    options=symbol_source_options,
+                    index=symbol_source_options.index(current_symbol_source),
+                    key="pipeline_import_news_symbol_source",
+                    help=(
+                        "`stock_scores` (défaut) limite l'import aux symboles suivis par le screener ; "
+                        "`candidates` aux seuls candidats ; `stock_bars_daily` réactive l'ancien comportement large."
+                    ),
+                )
+            )
+        with cap_col:
+            news_import_max_symbols = int(
+                st.number_input(
+                    "Cap sécurité symboles (0 = off)",
+                    min_value=0,
+                    max_value=100_000,
+                    step=50,
+                    value=int(current_max_symbols),
+                    key="pipeline_import_news_max_symbols",
+                    help="Si > 0, le CLI refuse l'import si l'univers résolu dépasse cette limite.",
+                )
+            )
+
+        news_import_symbols = str(
+            st.text_input(
+                "Liste explicite de symboles (CSV, prioritaire)",
+                value=str(st.session_state.get("pipeline_import_news_symbols", getattr(options, "news_import_symbols", "") or "")),
+                key="pipeline_import_news_symbols",
+                help="Exemple : AAPL,MSFT,NVDA. Si renseigné, cette liste prime sur l'univers choisi ci-dessus.",
+            )
+        ).strip().upper()
+        if news_import_symbol_source == "stock_bars_daily":
+            st.warning(
+                "Mode large activé : `stock_bars_daily` peut déclencher un import très volumineux. "
+                "Utilisez de préférence `stock_scores`, une shortlist `CSV` ou un cap sécurité."
+            )
+
         import_options = replace(
             options,
             news_import_start_date=start_value.isoformat(),
             news_import_end_date=end_value.isoformat(),
+            news_import_symbols=news_import_symbols or None,
+            news_import_symbol_source=cast(Literal["stock_scores", "candidates", "stock_bars_daily"], news_import_symbol_source),
+            news_import_max_symbols=news_import_max_symbols or None,
         )
         import_command_preview = format_command_for_display(build_pipeline_command("import_news", import_options))
         auto_score_command_preview = format_command_for_display(

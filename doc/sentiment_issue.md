@@ -259,14 +259,104 @@ python -u -m event_sentiment.signal_aggregator --all-symbols --trade-date 2026-0
 1. Le correctif 7.bis est opérationnel côté **scoring backlog scoped**.
 2. Le backlog pending observé lors de cette reprise est désormais **vidé**.
 3. Le point de coût principal reste l’**ingestion brute** quand elle repart sur un univers trop large de symboles.
-4. Si l’objectif futur est d’accélérer 7.bis, la prochaine optimisation à envisager est côté `event_sentiment/importe_news.py` :
-   - shortlist de symboles,
-   - scope provider/date plus strict,
-   - ou stratégie de reprise basée sur les seuls symboles réellement utiles.
+4. Pour réduire ce coût, `event_sentiment/importe_news.py` a ensuite été **optimisé** :
+   - l’univers par défaut n’est plus `stock_bars_daily`, mais `stock_scores` ;
+   - un nouveau paramètre `--symbol-source` permet de choisir explicitement entre :
+     - `stock_scores` (défaut, recommandé),
+     - `candidates`,
+     - `stock_bars_daily` (ancien comportement large) ;
+   - un paramètre `--symbols` permet de borner manuellement l’import à une shortlist ;
+   - un paramètre `--batch-size` permet d’ajuster la granularité des batchs ;
+   - un garde-fou `--max-symbols` permet de refuser explicitement un run trop large ;
+   - un warning fort est émis quand `--symbol-source stock_bars_daily` dépasse un seuil de volumétrie.
+5. Cette optimisation a aussi été **propagée dans l’IHM** :
+   - le panneau `7.bis Import des news brutes` expose désormais :
+     - l’univers de symboles (`stock_scores` / `candidates` / `stock_bars_daily`),
+     - une shortlist CSV explicite,
+     - un cap sécurité `max-symbols` ;
+   - le wrapper Windows `scripts/windows/import_news_and_score_pending.ps1` propage maintenant ces options à :
+     - `importe_news.py`,
+     - `python -m event_sentiment --skip-ingestion`,
+     - `event_sentiment.relevance_backfill`.
+6. Mesure DB ayant motivé cette optimisation :
+   - `stock_bars_daily_distinct_symbols = 12244`
+   - `stock_scores_total = 1281`
+   - `stock_scores_candidates = 0`
 
 ---
 
-## 9. Conclusion
+## 9. Audit final — échantillon de lignes réelles
+
+### 9.1 `ticker_daily_sentiment_features`
+
+Exemples relevés sur `trade_date = 2026-05-12` :
+
+- `NVDA`
+  - `news_count_1d = 6`
+  - `relevance_weight_sum_1d = 6.0`
+  - `sentiment_net_mean_1d = 0.1335`
+  - `sentiment_net_sum_1d = 0.8012`
+  - `major_event_flag = 1`
+- `AMZN`
+  - `news_count_1d = 5`
+  - `relevance_weight_sum_1d = 5.0`
+  - `sentiment_net_mean_1d = -0.1092`
+  - `sentiment_net_sum_1d = -0.5461`
+  - `major_event_flag = 1`
+- `MSFT`
+  - `news_count_1d = 4`
+  - `relevance_weight_sum_1d = 4.0`
+  - `sentiment_net_mean_1d = 0.0856`
+  - `sentiment_confidence_mean_1d = 0.8196`
+
+Lecture audit : les colonnes `relevance_weight_sum_*` sont bien présentes et alimentées ; les valeurs sont cohérentes avec un mapping `provider_default` (pondération ~= nombre d’articles quand `relevance_score` est implicite à 1).
+
+### 9.2 `sector_daily_sentiment_features`
+
+Exemples relevés sur `trade_date = 2026-05-12` :
+
+- `Technology`
+  - `sector_news_count_1d = 9`
+  - `sector_sentiment_net_mean_1d = 0.3460`
+  - `sector_impact_score = 0.1709`
+  - `macro_event_flag = 1`
+- `Semiconductors`
+  - `sector_news_count_1d = 8`
+  - `sector_sentiment_net_mean_1d = 0.1820`
+  - `sector_impact_score = 0.0`
+  - `macro_event_flag = 0`
+- `Biotechnology`
+  - `sector_news_count_1d = 6`
+  - `sector_sentiment_net_sum_1d = 3.6744`
+  - `sector_impact_score = 0.0`
+
+Lecture audit : la table sectorielle contient bien à la fois les signaux agrégés de news et les drapeaux / intensités macro.
+
+### 9.3 `stock_scores`
+
+Exemples relevés après `signal_aggregator --all-symbols --trade-date 2026-05-12` :
+
+- `AKAM`
+  - `total_score = 80.15625`
+  - `final_score_sentiment = 0.2015`
+  - `signal_active = 1`
+  - `total_news = 20`
+  - `sentiment_net_agg = 0.7652`
+  - `sector_impact_agg = 0.3826`
+- `APLD`
+  - `final_score_sentiment = 0.1978`
+  - `signal_active = 1`
+  - `total_news = 3`
+- `XAR`
+  - `sector = NULL`
+  - `final_score_sentiment = 0.1941`
+  - `signal_active = 1`
+
+Lecture audit : l’enrichissement `stock_scores` est bien matérialisé, y compris pour des symboles sans secteur renseigné (macro agrégé à 0.0 dans ce cas).
+
+---
+
+## 10. Conclusion
 
 Les objectifs prioritaires ont été couverts :
 

@@ -742,6 +742,22 @@ def test_build_pipeline_command_import_news() -> None:
     assert "--enable-contextual-scoring" not in command
 
 
+def test_build_pipeline_command_import_news_exposes_symbol_scope_options() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_symbol_source="stock_bars_daily",
+        news_import_symbols="msft, aapl,MSFT,nvda",
+        news_import_max_symbols=250,
+    )
+
+    command = build_pipeline_command("import_news", options)
+
+    assert command[command.index("--symbols") + 1] == "AAPL,MSFT,NVDA"
+    assert "--symbol-source" not in command
+    assert command[command.index("--max-symbols") + 1] == "250"
+
+
 def test_build_pipeline_command_import_news_pending_loop() -> None:
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",
@@ -790,6 +806,21 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
     assert command[command.index("-RelevanceBackfillPurgeBelow") + 1] == "0.2"
     assert command[command.index("-RelevanceBackfillContextualMinRelevance") + 1] == "0.4"
     assert command[command.index("-RelevanceBackfillContextualMaxPairs") + 1] == "2500"
+
+
+def test_build_pipeline_command_import_news_pending_loop_exposes_symbol_scope_options() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_symbol_source="candidates",
+        news_import_max_symbols=500,
+    )
+
+    command = build_pipeline_command("import_news_pending_loop", options)
+
+    assert command[command.index("-SymbolSource") + 1] == "candidates"
+    assert command[command.index("-MaxSymbols") + 1] == "500"
+    assert "-Symbols" not in command
 
 
 def test_build_pipeline_command_relevance_backfill_exposes_contextual_options() -> None:

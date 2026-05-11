@@ -9,22 +9,120 @@ from event_sentiment.ingestion import NewsIngestionService
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.db_io import EventSentimentRepository
 
+STOCK_BARS_DAILY_WARNING_THRESHOLD = 2000
+
+
+def _normalize_symbols(symbols: list[str]) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for value in symbols:
+        symbol = str(value).strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        normalized.append(symbol)
+    return normalized
+
 
 def get_all_symbols_from_stock_bars_daily():
     """Retourne tous les symboles distincts présents dans stock_bars_daily."""
     engine = get_sqlalchemy_engine()
     with engine.connect() as conn:
-        result = conn.execute(text("SELECT DISTINCT symbol FROM stock_bars_daily")).fetchall()
-        return [row[0] for row in result]
+        result = conn.execute(text("SELECT DISTINCT symbol FROM stock_bars_daily ORDER BY symbol ASC")).fetchall()
+        return _normalize_symbols([row[0] for row in result])
+
+
+def get_all_symbols_from_stock_scores(*, candidates_only: bool = False) -> list[str]:
+    """Retourne les symboles distincts présents dans stock_scores."""
+    engine = get_sqlalchemy_engine()
+    where_clause = "WHERE is_candidate = 1" if candidates_only else ""
+    with engine.connect() as conn:
+        result = conn.execute(
+            text(
+                f"""
+                SELECT DISTINCT symbol
+                FROM stock_scores
+                {where_clause}
+                ORDER BY symbol ASC
+                """
+            )
+        ).fetchall()
+        return _normalize_symbols([row[0] for row in result])
+
+
+def resolve_symbols(
+    args: argparse.Namespace,
+    repository: EventSentimentRepository,
+    logger: logging.Logger,
+) -> tuple[list[str], str]:
+    if args.symbols:
+        return _normalize_symbols(args.symbols.split(",")), "explicit"
+
+    if args.symbol_source == "candidates":
+        return _normalize_symbols(repository.load_candidate_symbols()), "candidates"
+
+    if args.symbol_source == "stock_bars_daily":
+        return get_all_symbols_from_stock_bars_daily(), "stock_bars_daily"
+
+    if args.symbol_source != "stock_scores":
+        logger.warning("Source de symboles inconnue '%s' ; fallback stock_scores.", args.symbol_source)
+    return get_all_symbols_from_stock_scores(candidates_only=False), "stock_scores"
+
+
+def _apply_symbol_guardrails(
+    *,
+    symbol_source: str,
+    symbols: list[str],
+    max_symbols: int | None,
+    logger: logging.Logger,
+    parser: argparse.ArgumentParser,
+) -> None:
+    symbol_count = len(symbols)
+    if symbol_source == "stock_bars_daily" and symbol_count > STOCK_BARS_DAILY_WARNING_THRESHOLD:
+        logger.warning(
+            "Univers d'import très large détecté | source=%s symbol_count=%s threshold=%s. "
+            "Préférez --symbol-source stock_scores / candidates, une shortlist --symbols ou un cap --max-symbols.",
+            symbol_source,
+            symbol_count,
+            STOCK_BARS_DAILY_WARNING_THRESHOLD,
+        )
+    if max_symbols is not None and max_symbols > 0 and symbol_count > max_symbols:
+        parser.error(
+            "Le nombre de symboles résolus ({0}) dépasse --max-symbols={1}. "
+            "Réduisez l'univers (--symbol-source / --symbols) ou augmentez explicitement la limite.".format(
+                symbol_count,
+                max_symbols,
+            )
+        )
 
 # python ./event_sentiment/importe_news.py --start-date 2025-01-01 --end-date 2025-04-20
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Importe les news pour tous les symbols présents dans stock_bars_daily sur une période donnée."
+        description=(
+            "Importe les news sur une période donnée pour un univers de symboles ciblé. "
+            "Par défaut, l'univers provient de stock_scores pour éviter les imports trop larges."
+        )
     )
     parser.add_argument("--start-date", type=str, required=True, help="Date de début au format YYYY-MM-DD (ex: 2024-05-06)")
     parser.add_argument("--end-date", type=str, required=False, help="Date de fin au format YYYY-MM-DD (ex: 2024-05-10). Par défaut: aujourd'hui.")
+    parser.add_argument(
+        "--symbols",
+        type=str,
+        default=None,
+        help="Liste explicite de symboles séparés par des virgules. Prioritaire sur --symbol-source.",
+    )
+    parser.add_argument(
+        "--symbol-source",
+        type=str,
+        choices=("stock_scores", "candidates", "stock_bars_daily"),
+        default="stock_scores",
+        help=(
+            "Source des symboles à importer. 'stock_scores' (défaut) limite l'univers aux symboles suivis "
+            "par le screener ; 'candidates' limite à stock_scores.is_candidate=1 ; 'stock_bars_daily' "
+            "conserve l'ancien comportement large."
+        ),
+    )
     parser.add_argument(
         "--news-provider",
         type=str,
@@ -37,7 +135,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         choices=("provider_default", "strict", "scored"),
         default="provider_default",
-        help="Mode de mapping article → ticker réutilisé lors de l'import brut.",
+        help="Mode de mapping article -> ticker réutilisé lors de l'import brut.",
     )
     parser.add_argument(
         "--min-relevance-score",
@@ -45,12 +143,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Seuil minimum de pertinence [0,1] quand le mode 'scored' est actif.",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=20,
+        help="Nombre de symboles par batch d'import. Défaut 20.",
+    )
+    parser.add_argument(
+        "--max-symbols",
+        type=int,
+        default=None,
+        help=(
+            "Garde-fou sécurité : si > 0, refuse l'exécution quand l'univers résolu dépasse cette limite. "
+            "Exemple : 500."
+        ),
+    )
     return parser
 
 
 def main():
-
-    args = build_arg_parser().parse_args()
+    parser = build_arg_parser()
+    args = parser.parse_args()
 
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     if args.end_date:
@@ -65,11 +178,21 @@ def main():
     )
     logger = logging.getLogger("importe_news")
 
-    logger.info(f"Récupération des symbols depuis stock_bars_daily ...")
-    symbols = get_all_symbols_from_stock_bars_daily()
-    logger.info(f"{len(symbols)} symbols trouvés.")
-
     repository = EventSentimentRepository()
+    symbols, symbol_source = resolve_symbols(args, repository, logger)
+    _apply_symbol_guardrails(
+        symbol_source=symbol_source,
+        symbols=symbols,
+        max_symbols=(int(args.max_symbols) if args.max_symbols is not None else None),
+        logger=logger,
+        parser=parser,
+    )
+    logger.info("Source de symboles retenue: %s", symbol_source)
+    logger.info("%s symbols trouvés.", len(symbols))
+    if not symbols:
+        logger.warning("Aucun symbole à importer ; exécution terminée sans appel provider.")
+        return
+
     config_overrides: dict[str, object] = {
         "provider_ticker_relevance_mode": args.ticker_relevance_mode,
     }
@@ -78,7 +201,7 @@ def main():
     config = EventSentimentConfig.for_provider(args.news_provider, **config_overrides)
     ingestion = NewsIngestionService(repository=repository, config=config)
 
-    batch_size = 20
+    batch_size = max(1, int(args.batch_size))
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i:i+batch_size]
         logger.info(f"Traitement batch {i//batch_size+1} ({len(batch)} symbols): {batch}")
