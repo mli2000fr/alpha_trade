@@ -23,6 +23,15 @@ LOGGER = logging.getLogger(__name__)
 BACKTEST_REQUIRED_BARS_DATA_SOURCE = "eodhd_eod"
 
 
+def _build_table_access_error(table_name: str, exc: Exception) -> RuntimeError:
+    message = (
+        f"Impossible d'inspecter la table {table_name}. "
+        "Vérifiez la base ciblée (DB_HOST/DB_NAME), les droits SQL et les dépendances d'authentification MySQL du runtime. "
+        f"Cause initiale: {exc}"
+    )
+    return RuntimeError(message)
+
+
 def _table_exists(engine: Engine, table_name: str) -> bool:
     """Retourne True si la table existe."""
     try:
@@ -32,12 +41,14 @@ def _table_exists(engine: Engine, table_name: str) -> bool:
         return False
 
 
-def _get_table_columns(engine: Engine, table_name: str) -> set[str]:
+def _get_table_columns(engine: Engine, table_name: str, *, required: bool = False) -> set[str]:
     """Retourne l'ensemble des colonnes d'une table."""
     try:
         return {str(col["name"]) for col in inspect(engine).get_columns(table_name)}
-    except Exception:
+    except Exception as exc:
         LOGGER.debug("Impossible d'inspecter les colonnes de %s.", table_name, exc_info=True)
+        if required:
+            raise _build_table_access_error(table_name, exc) from exc
         return set()
 
 
@@ -52,7 +63,7 @@ def get_required_bars_source_filter(
     Le backtesting doit désormais s'exécuter uniquement sur les barres issues
     d'EODHD, même si la table contient un mélange de providers historiques.
     """
-    columns = _get_table_columns(engine, table_name)
+    columns = _get_table_columns(engine, table_name, required=True)
     if not columns:
         raise RuntimeError(f"La table {table_name} est introuvable ou inaccessible.")
     if "data_source" not in columns:
@@ -71,7 +82,7 @@ def load_ohlcv(engine: Engine, start: date, end: date) -> pd.DataFrame:
     -------
     DataFrame avec colonnes : symbol, trade_date, open, high, low, close, volume
     """
-    columns = _get_table_columns(engine, "stock_bars_daily")
+    columns = _get_table_columns(engine, "stock_bars_daily", required=True)
     if not columns:
         raise RuntimeError("La table stock_bars_daily est introuvable ou inaccessible.")
 
