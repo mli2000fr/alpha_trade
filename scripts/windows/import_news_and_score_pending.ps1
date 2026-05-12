@@ -38,7 +38,7 @@ param(
     [string]$Symbols = '',
 
     [Parameter()]
-    [ValidateSet('stock_scores', 'candidates', 'stock_bars_daily')]
+    [ValidateSet('stock_scores', 'stock_scores_history', 'stock_scores_all', 'candidates', 'stock_bars_daily')]
     [string]$SymbolSource = 'stock_scores',
 
     [Parameter()]
@@ -77,6 +77,8 @@ param(
     [Parameter()]
     [int]$RelevanceBackfillContextualMaxPairs = 0,
 
+    [switch]$SkipImport,
+
     [switch]$SkipHistoryBackfill,
 
     [switch]$DryRun
@@ -109,7 +111,12 @@ else {
 }
 
 $summary = [ordered]@{
-    mode = 'import_news_score_pending_history_and_relevance_backfill'
+    mode = if ($SkipImport) {
+        'score_pending_history_and_relevance_backfill'
+    }
+    else {
+        'import_news_score_pending_history_and_relevance_backfill'
+    }
     start_date = $StartDate
     end_date = $EndDate
     project_root = $ProjectRoot
@@ -148,6 +155,7 @@ $summary = [ordered]@{
     pending_scope_end_date = $EndDate
     pending_scope_ingestion_source = $NewsProvider
     pending_scope_symbols = if ($NormalizedImportSymbols.Count -gt 0) { @($NormalizedImportSymbols) } else { @() }
+    skip_import = [bool]$SkipImport
     status = 'running'
 }
 
@@ -309,6 +317,22 @@ for symbol in EventSentimentRepository().load_candidate_symbols():
     print(str(symbol).strip().upper())
 "@
         }
+        'stock_scores_history' {
+@"
+from event_sentiment.importe_news import get_all_symbols_from_stock_scores_history
+
+for symbol in get_all_symbols_from_stock_scores_history():
+    print(str(symbol).strip().upper())
+"@
+        }
+        'stock_scores_all' {
+@"
+from event_sentiment.importe_news import get_all_symbols_from_stock_scores_all
+
+for symbol in get_all_symbols_from_stock_scores_all():
+    print(str(symbol).strip().upper())
+"@
+        }
         default {
 @"
 from event_sentiment.importe_news import get_all_symbols_from_stock_scores
@@ -365,8 +389,13 @@ try {
         $importNewsArguments += @('--min-relevance-score', ([string]$MinRelevanceScore))
     }
 
-    Invoke-PythonStep -Label 'Import news brutes historiques' -Arguments @($importNewsArguments)
-    $summary.import_completed = $true
+    if (-not $SkipImport) {
+        Invoke-PythonStep -Label 'Import news brutes historiques' -Arguments @($importNewsArguments)
+        $summary.import_completed = $true
+    }
+    else {
+        Write-Host 'Import news brutes historiques ignoré (SkipImport actif).'
+    }
 
     $pendingCount = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider -SymbolsCsv $ScopedSymbolsCsv
     $summary.initial_pending = $pendingCount

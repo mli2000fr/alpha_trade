@@ -195,7 +195,13 @@ MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_mo
 MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
 MLHistoryWindow = Literal["5", "10", "all"]
 MLTrainSymbolSource = Literal["candidates", "stock_bars_daily"]
-NewsImportSymbolSource = Literal["stock_scores", "candidates", "stock_bars_daily"]
+NewsImportSymbolSource = Literal[
+    "stock_scores",
+    "stock_scores_history",
+    "stock_scores_all",
+    "candidates",
+    "stock_bars_daily",
+]
 ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
 ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
@@ -907,6 +913,46 @@ def _extend_relevance_backfill_powershell_args(
             ])
 
 
+def _build_import_news_pending_loop_command(
+    options: PipelineLaunchOptions,
+    *,
+    news_import_start_date: str | None,
+    news_import_end_date: str | None,
+    news_import_symbols: str | None,
+    news_import_symbol_source: str,
+    news_import_max_symbols: int | None,
+    skip_import: bool = False,
+) -> list[str]:
+    if news_import_start_date is None:
+        raise ValueError("La date de début est obligatoire pour le pipeline auto news.")
+    script_path = PROJECT_ROOT / "scripts" / "windows" / "import_news_and_score_pending.ps1"
+    command_args = [
+        "-ProjectRoot",
+        str(PROJECT_ROOT),
+        "-PythonExe",
+        sys.executable,
+        "-StartDate",
+        news_import_start_date,
+    ]
+    if news_import_end_date:
+        command_args.extend(["-EndDate", news_import_end_date])
+    _extend_event_sentiment_powershell_args(
+        command_args,
+        options,
+        include_contextual_scoring=True,
+    )
+    _extend_import_news_powershell_args(
+        command_args,
+        symbols=news_import_symbols,
+        symbol_source=news_import_symbol_source,
+        max_symbols=news_import_max_symbols,
+    )
+    _extend_relevance_backfill_powershell_args(command_args, options)
+    if skip_import:
+        command_args.append("-SkipImport")
+    return _build_powershell_file_command(script_path, command_args)
+
+
 def is_gpu_available() -> bool:
     try:
         import torch
@@ -926,7 +972,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     news_import_symbols = _normalize_symbol_list(options.news_import_symbols)
     news_import_symbol_source = (
         options.news_import_symbol_source
-        if options.news_import_symbol_source in {"stock_scores", "candidates", "stock_bars_daily"}
+        if options.news_import_symbol_source in {
+            "stock_scores",
+            "stock_scores_history",
+            "stock_scores_all",
+            "candidates",
+            "stock_bars_daily",
+        }
         else "stock_scores"
     )
     news_import_max_symbols = (
@@ -1224,32 +1276,25 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "import_news_pending_loop":
-        if news_import_start_date is None:
-            raise ValueError("La date de début est obligatoire pour l'import + scoring auto des news.")
-        script_path = PROJECT_ROOT / "scripts" / "windows" / "import_news_and_score_pending.ps1"
-        command_args = [
-            "-ProjectRoot",
-            str(PROJECT_ROOT),
-            "-PythonExe",
-            sys.executable,
-            "-StartDate",
-            news_import_start_date,
-        ]
-        if news_import_end_date:
-            command_args.extend(["-EndDate", news_import_end_date])
-        _extend_event_sentiment_powershell_args(
-            command_args,
+        return _build_import_news_pending_loop_command(
             options,
-            include_contextual_scoring=True,
+            news_import_start_date=news_import_start_date,
+            news_import_end_date=news_import_end_date,
+            news_import_symbols=news_import_symbols,
+            news_import_symbol_source=news_import_symbol_source,
+            news_import_max_symbols=news_import_max_symbols,
         )
-        _extend_import_news_powershell_args(
-            command_args,
-            symbols=news_import_symbols,
-            symbol_source=news_import_symbol_source,
-            max_symbols=news_import_max_symbols,
+
+    if step_key == "score_history_relevance_backfill_auto":
+        return _build_import_news_pending_loop_command(
+            options,
+            news_import_start_date=news_import_start_date,
+            news_import_end_date=news_import_end_date,
+            news_import_symbols=news_import_symbols,
+            news_import_symbol_source=news_import_symbol_source,
+            news_import_max_symbols=news_import_max_symbols,
+            skip_import=True,
         )
-        _extend_relevance_backfill_powershell_args(command_args, options)
-        return _build_powershell_file_command(script_path, command_args)
 
     if step_key == "signal_aggregator":
         command = [

@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 import sys
 from datetime import datetime, timezone
+from typing import cast
 
 import pytest
+from event_sentiment.db_io import EventSentimentRepository
 
 import event_sentiment.importe_news as importe_news
 
@@ -212,7 +214,7 @@ def test_resolve_symbols_from_inputs_uses_explicit_csv_first() -> None:
     symbols, source = importe_news.resolve_symbols_from_inputs(
         symbols_csv="msft, aapl,MSFT,nvda",
         symbol_source="stock_bars_daily",
-        repository=_FakeRepository(),
+        repository=cast(EventSentimentRepository, cast(object, _FakeRepository())),
     )
 
     assert source == "explicit"
@@ -226,10 +228,54 @@ def test_resolve_symbols_from_inputs_uses_candidates_repository(monkeypatch) -> 
     symbols, source = importe_news.resolve_symbols_from_inputs(
         symbols_csv=None,
         symbol_source="candidates",
-        repository=_FakeRepository(),
+        repository=cast(EventSentimentRepository, cast(object, _FakeRepository())),
     )
 
     assert source == "candidates"
     assert symbols == ["MSFT", "AAPL"]
+
+
+def test_resolve_symbols_from_inputs_uses_stock_scores_history_source(monkeypatch) -> None:
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_history", lambda: ["msft", "AAPL", "MSFT"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["ZZZZ"])
+
+    symbols, source = importe_news.resolve_symbols_from_inputs(
+        symbols_csv=None,
+        symbol_source="stock_scores_history",
+        repository=cast(EventSentimentRepository, cast(object, _FakeRepository())),
+    )
+
+    assert source == "stock_scores_history"
+    assert symbols == ["MSFT", "AAPL"]
+
+
+def test_resolve_symbols_from_inputs_uses_stock_scores_all_source(monkeypatch) -> None:
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_all", lambda: ["nvda", "AAPL", "NVDA"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["ZZZZ"])
+
+    symbols, source = importe_news.resolve_symbols_from_inputs(
+        symbols_csv=None,
+        symbol_source="stock_scores_all",
+        repository=cast(EventSentimentRepository, cast(object, _FakeRepository())),
+    )
+
+    assert source == "stock_scores_all"
+    assert symbols == ["NVDA", "AAPL"]
+
+
+def test_get_all_symbols_from_stock_scores_all_uses_union_query(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def _fake_load_distinct_symbols(query: str) -> list[str]:
+        captured["query"] = query
+        return ["AAPL", "MSFT", "NVDA"]
+
+    monkeypatch.setattr(importe_news, "_load_distinct_symbols", _fake_load_distinct_symbols)
+
+    symbols = importe_news.get_all_symbols_from_stock_scores_all()
+
+    assert symbols == ["AAPL", "MSFT", "NVDA"]
+    assert "UNION" in captured["query"]
+    assert "INNER JOIN" not in captured["query"]
 
 

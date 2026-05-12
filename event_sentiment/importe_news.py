@@ -24,30 +24,55 @@ def _normalize_symbols(symbols: list[str]) -> list[str]:
     return normalized
 
 
-def get_all_symbols_from_stock_bars_daily():
-    """Retourne tous les symboles distincts présents dans stock_bars_daily."""
+def _load_distinct_symbols(query: str) -> list[str]:
     engine = get_sqlalchemy_engine()
     with engine.connect() as conn:
-        result = conn.execute(text("SELECT DISTINCT symbol FROM stock_bars_daily ORDER BY symbol ASC")).fetchall()
-        return _normalize_symbols([row[0] for row in result])
+        result = conn.execute(text(query)).fetchall()
+    return _normalize_symbols([row[0] for row in result])
+
+
+def get_all_symbols_from_stock_bars_daily():
+    """Retourne tous les symboles distincts présents dans stock_bars_daily."""
+    return _load_distinct_symbols("SELECT DISTINCT symbol FROM stock_bars_daily ORDER BY symbol ASC")
 
 
 def get_all_symbols_from_stock_scores(*, candidates_only: bool = False) -> list[str]:
     """Retourne les symboles distincts présents dans stock_scores."""
-    engine = get_sqlalchemy_engine()
     where_clause = "WHERE is_candidate = 1" if candidates_only else ""
-    with engine.connect() as conn:
-        result = conn.execute(
-            text(
-                f"""
-                SELECT DISTINCT symbol
-                FROM stock_scores
-                {where_clause}
-                ORDER BY symbol ASC
-                """
-            )
-        ).fetchall()
-        return _normalize_symbols([row[0] for row in result])
+    return _load_distinct_symbols(
+        f"""
+        SELECT DISTINCT symbol
+        FROM stock_scores
+        {where_clause}
+        ORDER BY symbol ASC
+        """
+    )
+
+
+def get_all_symbols_from_stock_scores_history() -> list[str]:
+    """Retourne les symboles distincts présents dans stock_scores_history."""
+    return _load_distinct_symbols(
+        """
+        SELECT DISTINCT symbol
+        FROM stock_scores_history
+        ORDER BY symbol ASC
+        """
+    )
+
+
+def get_all_symbols_from_stock_scores_all() -> list[str]:
+    """Retourne l'union dédupliquée des symboles présents dans stock_scores ou stock_scores_history."""
+    return _load_distinct_symbols(
+        """
+        SELECT DISTINCT symbol
+        FROM (
+            SELECT symbol FROM stock_scores
+            UNION
+            SELECT symbol FROM stock_scores_history
+        ) AS combined_symbols
+        ORDER BY symbol ASC
+        """
+    )
 
 
 def resolve_symbols_from_inputs(
@@ -64,11 +89,17 @@ def resolve_symbols_from_inputs(
         return _normalize_symbols(repository.load_candidate_symbols()), "candidates"
 
     if symbol_source == "stock_bars_daily":
-        return get_all_symbols_from_stock_bars_daily(), "stock_bars_daily"
+        return _normalize_symbols(get_all_symbols_from_stock_bars_daily()), "stock_bars_daily"
+
+    if symbol_source == "stock_scores_history":
+        return _normalize_symbols(get_all_symbols_from_stock_scores_history()), "stock_scores_history"
+
+    if symbol_source == "stock_scores_all":
+        return _normalize_symbols(get_all_symbols_from_stock_scores_all()), "stock_scores_all"
 
     if symbol_source != "stock_scores" and logger is not None:
         logger.warning("Source de symboles inconnue '%s' ; fallback stock_scores.", symbol_source)
-    return get_all_symbols_from_stock_scores(candidates_only=False), "stock_scores"
+    return _normalize_symbols(get_all_symbols_from_stock_scores(candidates_only=False)), "stock_scores"
 
 
 def resolve_symbols(
@@ -130,12 +161,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--symbol-source",
         type=str,
-        choices=("stock_scores", "candidates", "stock_bars_daily"),
+        choices=("stock_scores", "stock_scores_history", "stock_scores_all", "candidates", "stock_bars_daily"),
         default="stock_scores",
         help=(
             "Source des symboles à importer. 'stock_scores' (défaut) limite l'univers aux symboles suivis "
-            "par le screener ; 'candidates' limite à stock_scores.is_candidate=1 ; 'stock_bars_daily' "
-            "conserve l'ancien comportement large."
+            "par le screener ; 'stock_scores_history' cible les symboles déjà présents dans l'historique PIT ; "
+            "'stock_scores_all' cible l'union dédupliquée des symboles présents dans stock_scores ou stock_scores_history ; "
+            "'candidates' limite à stock_scores.is_candidate=1 ; 'stock_bars_daily' conserve l'ancien comportement large."
         ),
     )
     parser.add_argument(
