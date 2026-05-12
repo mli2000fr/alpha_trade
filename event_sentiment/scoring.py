@@ -119,7 +119,11 @@ class FinBERTSentimentService:
         else:
             # Fake tensor de tests / objets minimalistes
             attention_values = getattr(attention, "values", attention)
-            token_counts = [int(sum(row)) for row in attention_values]
+            token_counts = [
+                int(sum(row))
+                for row in (attention_values or [])
+                if isinstance(row, (list, tuple))
+            ]
 
         encoded = {key: value.to(self.device) for key, value in encoded.items()}
 
@@ -239,7 +243,12 @@ def _choose_contextual_text(
     """
     headline = (article.headline or "").strip()
     summary = (article.summary or "").strip()
-    body_parts = [part for part in [headline, summary] if part]
+    content = (article.content or "").strip()
+    # EODHD ne fournit pas de ``summary`` distinct ; dans ce cas on retombe
+    # sur ``content`` pour ne pas perdre l'essentiel du texte côté scoring
+    # contextuel.
+    secondary_text = summary or content
+    body_parts = [part for part in [headline, secondary_text] if part]
     body = " [SEP] ".join(body_parts) if body_parts else headline
     name = (company_name or "").strip()
     sym = (symbol or "").strip().upper()

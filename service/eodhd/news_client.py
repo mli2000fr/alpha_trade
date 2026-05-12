@@ -18,9 +18,11 @@ Spécificités EODHD :
   hash déterministe sur ``url|date|title|symbole_interrogé`` (cf.
   pattern ``_stable_article_id`` de Finnhub) afin de préserver
   l'unicité ``(ingestion_source, dedupe_hash)`` de ``news_raw``.
-* Symboles EODHD ``AAPL.US`` → projet ``AAPL`` via
-  :func:`service.eodhd.symbols.from_eodhd`. On garantit que le symbole
-  interrogé reste présent dans la liste retournée.
+* Les requêtes acceptent indifféremment un symbole projet ``AAPL`` ou déjà
+  natif provider ``AAPL.US``. Pour l'appel HTTP, on conserve le format
+  provider natif ; pour le downstream `event_sentiment`, on normalise quand
+  même vers le symbole projet canonique ``AAPL`` afin de rester compatible
+  avec `stock_scores`, `stock_metadata` et `news_ticker_map`.
 * Les champs ``tags`` et ``sentiment`` (déjà calculé côté provider)
   sont **conservés tels quels** dans ``raw_provider_payload`` (donc
   recopiés dans ``news_raw.raw_payload``). FinBERT reste la source de
@@ -32,7 +34,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import time
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
@@ -97,15 +98,30 @@ def _get_base_url() -> str:
 
 def _stable_article_id(symbol: str, raw: dict[str, Any]) -> str:
     """Identifiant déterministe — EODHD n'expose pas d'``id`` stable."""
+    try:
+        stable_symbol = to_eodhd(str(symbol or "").strip().upper())
+    except ValueError:
+        stable_symbol = str(symbol or "").strip().upper()
     parts = "|".join(
         [
-            str(symbol or ""),
+            stable_symbol,
             str(raw.get("link") or raw.get("url") or ""),
             str(raw.get("title") or raw.get("headline") or ""),
             str(raw.get("date") or ""),
         ]
     )
     return hashlib.sha1(parts.encode("utf-8")).hexdigest()[:24]
+
+
+def _to_project_symbol(symbol: str) -> str:
+    raw = str(symbol or "").strip().upper()
+    if not raw:
+        return ""
+    try:
+        project_symbol, _exchange = from_eodhd(raw)
+        return project_symbol
+    except ValueError:
+        return raw
 
 
 def _normalize_symbol_list(symbol_query: str, raw_symbols: Any) -> list[str]:
@@ -137,12 +153,12 @@ def _normalize_symbol_list(symbol_query: str, raw_symbols: Any) -> list[str]:
                 project = text.upper()
             _add(project)
 
-    # Garantit la présence du symbole interrogé en tête.
-    query_upper = (symbol_query or "").strip().upper()
-    if query_upper:
-        if query_upper not in seen:
-            project_symbols.insert(0, query_upper)
-            seen.add(query_upper)
+    # Garantit la présence du symbole interrogé en tête, au format projet
+    # canonique (ex. ``AAPL.US`` -> ``AAPL``).
+    query_symbol = _to_project_symbol(symbol_query)
+    if query_symbol and query_symbol not in seen:
+        project_symbols.insert(0, query_symbol)
+        seen.add(query_symbol)
     return project_symbols
 
 
@@ -161,8 +177,9 @@ def _normalize_payload(symbol: str, raw: dict[str, Any]) -> dict[str, Any]:
         "id": article_id,
         "created_at": str(published_at_raw) if published_at_raw else None,
         "headline": headline,
-        # EODHD n'expose pas de ``summary`` distinct du ``content`` ;
-        # ``_normalize_article`` accepte ``summary=None``.
+        # EODHD n'expose pas de ``summary`` distinct du ``content`` ; le
+        # scoring FinBERT retombe donc sur ``content`` quand ``summary`` est
+        # absent.
         "summary": None,
         "content": content,
         "source": str(raw.get("source") or "eodhd").strip() or "eodhd",
@@ -207,11 +224,11 @@ def fetch_news_page(
     """
     if not symbols:
         return [], None
-    raw_symbol = (symbols[0] or "").strip().upper()
-    if not raw_symbol:
+    request_symbol = (symbols[0] or "").strip().upper()
+    if not request_symbol:
         return [], None
 
-    eodhd_symbol = to_eodhd(raw_symbol)
+    eodhd_symbol = to_eodhd(request_symbol)
     start = _to_utc(start_utc)
     end = _to_utc(end_utc)
     base_url = _get_base_url()
@@ -260,7 +277,7 @@ def fetch_news_page(
             client.close()
 
     if not isinstance(data, list):
-        # Certaines variantes wrappent dans ``{"data": [...]}``.
+        # Certaines variantes wrappent dans ``{\"data\": [...]}``.
         if isinstance(data, dict) and isinstance(data.get("data"), list):
             data = data["data"]
         else:
@@ -274,7 +291,7 @@ def fetch_news_page(
         published = _parse_published_ts(raw.get("date"))
         if published is not None and (published < start or published > end):
             continue
-        collected.append(_normalize_payload(raw_symbol, raw))
+        collected.append(_normalize_payload(request_symbol, raw))
 
     # Pagination par offset : tant que la page brute fait ``limit`` items
     # on suppose qu'il y a peut-être une page suivante. Sinon on s'arrête.
@@ -333,10 +350,6 @@ def iter_news_pages(
             offset = int(next_token)
         except (TypeError, ValueError):
             return
-        # Petit garde-fou anti-rafale, le pipeline gère son propre
-        # ``sleep_between_requests`` mais on évite un thrash si
-        # l'appelant boucle directement.
-        time.sleep(0.05)
 
 
 __all__ = [

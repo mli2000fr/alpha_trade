@@ -24,7 +24,7 @@ class EventSentimentConfig:
     start_utc: datetime | None = None
     end_utc: datetime | None = None
     page_limit: int = 50
-    sleep_between_requests: float = 0.35
+    sleep_between_requests: float = 0.0
     regular_session_maps_to_same_day: bool = False
     checkpoint_overlap_minutes: int = 60
     initial_backfill_days: int = 365

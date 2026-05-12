@@ -65,6 +65,28 @@ def test_finbert_uses_headline_summary_when_content_missing() -> None:
     assert "Apple beats estimates" in text
 
 
+def test_finbert_uses_content_when_summary_missing() -> None:
+    svc = FinBERTSentimentService(batch_size=1, max_length=64)
+    article = NormalizedNewsArticle(
+        article_id="eodhd:1",
+        headline="Apple beats estimates",
+        summary=None,
+        content="Full article body from EODHD",
+        source="EODHD",
+        author=None,
+        url=None,
+        published_at_utc=datetime(2026, 1, 1),
+        event_timestamp_utc=datetime(2026, 1, 1),
+        event_timestamp_ny=datetime(2026, 1, 1),
+        effective_trade_date=date(2026, 1, 2),
+        market_session_tag="post_market",
+    )
+    text, strategy = svc._choose_text(article)
+    assert strategy == "content_full"
+    assert "Apple beats estimates" in text
+    assert "Full article body from EODHD" in text
+
+
 def test_finbert_falls_back_to_cpu_after_cuda_failure(monkeypatch, caplog) -> None:
     svc = FinBERTSentimentService(batch_size=1, max_length=64)
     svc.tokenizer = _FakeTokenizer()

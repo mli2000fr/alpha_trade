@@ -2,8 +2,9 @@
 
 Couvre :
 - normalisation des payloads EODHD (mapping ``date→created_at``,
-  ``title→headline``, ``link→url``, ``symbols AAPL.US→AAPL``,
-  conservation ``tags`` / ``sentiment`` dans ``raw_provider_payload``) ;
+  ``title→headline``, ``link→url``, requêtes acceptant `AAPL.US` mais
+  symboles downstream canoniques `AAPL`, conservation ``tags`` /
+  ``sentiment`` dans ``raw_provider_payload``) ;
 - pagination par offset encapsulée derrière ``next_token`` ;
 - filtrage de la fenêtre UTC côté client ;
 - garantie que le symbole interrogé est toujours présent ;
@@ -99,6 +100,20 @@ def test_normalize_payload_maps_eodhd_fields_and_preserves_provider_payload() ->
     assert len(payload["id"]) == 24
 
 
+def test_normalize_payload_accepts_native_query_symbol_without_leaking_exchange_suffix() -> None:
+    raw = _raw_article(
+        title="Apple native symbol",
+        date_iso="2026-04-15T14:00:00+00:00",
+        link="https://news.test/apple-native",
+        symbols=["AAPL.US"],
+    )
+
+    payload = news_client._normalize_payload("AAPL.US", raw)
+
+    assert payload["symbols"] == ["AAPL"]
+    assert "AAPL.US" not in payload["symbols"]
+
+
 def test_normalize_payload_guarantees_query_symbol_is_present() -> None:
     raw = _raw_article(
         title="Generic note",
@@ -109,6 +124,15 @@ def test_normalize_payload_guarantees_query_symbol_is_present() -> None:
     payload = news_client._normalize_payload("AAPL", raw)
     assert payload["symbols"][0] == "AAPL"
     assert "MSFT" in payload["symbols"]
+
+
+def test_stable_article_id_is_identical_for_project_and_native_provider_symbol() -> None:
+    raw = _raw_article(
+        title="same article",
+        date_iso="2026-04-15T14:00:00+00:00",
+        link="https://x/same",
+    )
+    assert news_client._stable_article_id("AAPL", raw) == news_client._stable_article_id("AAPL.US", raw)
 
 
 def test_stable_article_id_is_deterministic() -> None:
@@ -161,6 +185,24 @@ def test_fetch_news_page_filters_outside_window(monkeypatch: pytest.MonkeyPatch)
     assert captured["calls"][0]["params"]["to"] == "2026-04-16"
 
 
+def test_fetch_news_page_accepts_native_provider_symbol(monkeypatch: pytest.MonkeyPatch) -> None:
+    pages = [[_raw_article(title="Native query", date_iso="2026-04-15T12:00:00+00:00", link="https://x/native")]]
+    fake, captured = _fake_request_factory(pages)
+    monkeypatch.setattr(news_client, "request_with_retry", fake)
+
+    articles, next_token = news_client.fetch_news_page(
+        start_utc=datetime(2026, 4, 15, tzinfo=timezone.utc),
+        end_utc=datetime(2026, 4, 16, tzinfo=timezone.utc),
+        symbols=["AAPL.US"],
+        limit=50,
+        offset=0,
+    )
+
+    assert next_token is None
+    assert captured["calls"][0]["params"]["s"] == "AAPL.US"
+    assert articles[0]["symbols"] == ["AAPL"]
+
+
 def test_iter_news_pages_paginates_with_offset(monkeypatch: pytest.MonkeyPatch) -> None:
     # 2 pages "pleines" (limit=2) puis page courte → arrêt.
     pages = [
@@ -190,7 +232,6 @@ def test_iter_news_pages_paginates_with_offset(monkeypatch: pytest.MonkeyPatch) 
     ]
     fake, captured = _fake_request_factory(pages)
     monkeypatch.setattr(news_client, "request_with_retry", fake)
-    monkeypatch.setattr(news_client.time, "sleep", lambda _s: None)
 
     collected: list[tuple[list[dict[str, Any]], str | None]] = []
     for batch, token in news_client.iter_news_pages(
