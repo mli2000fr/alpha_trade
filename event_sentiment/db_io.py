@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import date, datetime
 from typing import Any
 
@@ -8,6 +9,8 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from database.connection import get_sqlalchemy_engine
 from database.stock_scores import list_candidate_symbols
+
+LOGGER = logging.getLogger(__name__)
 
 
 class EventSentimentRepository:
@@ -45,8 +48,22 @@ class EventSentimentRepository:
     def _upsert(self, table_name: str, records: list[dict[str, Any]], key_columns: set[str]) -> int:
         if not records:
             return 0
-        records = self._normalize_mysql_records(records)
         table = self._table(table_name)
+        table_columns = {column.name for column in table.c.values()}
+        dropped_columns = sorted({key for record in records for key in record if key not in table_columns})
+        if dropped_columns:
+            LOGGER.warning(
+                "Colonnes absentes du schéma ignorées lors de l'upsert | table=%s dropped_columns=%s",
+                table_name,
+                dropped_columns,
+            )
+        records = self._normalize_mysql_records([
+            {key: value for key, value in record.items() if key in table_columns}
+            for record in records
+        ])
+        for key_column in key_columns:
+            if key_column not in records[0]:
+                raise KeyError(f"Clé d'upsert absente pour {table_name}: {key_column}")
         stmt = mysql_insert(table).values(records)
         update_cols = {
             column.name: stmt.inserted[column.name]
@@ -65,6 +82,62 @@ class EventSentimentRepository:
         if not normalized:
             raise ValueError("symbol checkpoint vide.")
         return normalized
+
+    def _build_pending_article_query(
+        self,
+        *,
+        count_only: bool,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        ingestion_source: str | None = None,
+        symbols: list[str] | None = None,
+    ):
+        joins: list[str] = []
+        filters = ["ns.article_id IS NULL"]
+        params: dict[str, Any] = {}
+        normalized_symbols = [self._normalize_symbol(symbol) for symbol in (symbols or []) if str(symbol).strip()]
+        if ingestion_source:
+            filters.append("nr.ingestion_source = :ingestion_source")
+            params["ingestion_source"] = str(ingestion_source).strip().lower()
+        if start_date is not None:
+            filters.append("nr.effective_trade_date >= :start_date")
+            params["start_date"] = start_date
+        if end_date is not None:
+            filters.append("nr.effective_trade_date <= :end_date")
+            params["end_date"] = end_date
+        if normalized_symbols:
+            joins.append("JOIN news_ticker_map ntm_pending ON ntm_pending.article_id = nr.article_id")
+            filters.append("ntm_pending.symbol IN :symbols")
+            params["symbols"] = normalized_symbols
+
+        select_sql = "COUNT(DISTINCT nr.article_id)" if count_only else """
+            DISTINCT nr.article_id,
+            nr.headline,
+            nr.summary,
+            nr.content,
+            nr.source,
+            nr.author,
+            nr.url,
+            nr.published_at_utc,
+            nr.event_timestamp_utc,
+            nr.event_timestamp_ny,
+            nr.effective_trade_date,
+            nr.market_session_tag,
+            nr.is_major_event
+        """
+        query = text(
+            f"""
+            SELECT {select_sql}
+            FROM news_raw nr
+            LEFT JOIN news_sentiment ns ON ns.article_id = nr.article_id
+            {' '.join(joins)}
+            WHERE {' AND '.join(filters)}
+            {'' if count_only else 'ORDER BY nr.effective_trade_date ASC, nr.published_at_utc ASC, nr.article_id ASC LIMIT :limit_rows'}
+            """
+        )
+        if normalized_symbols:
+            query = query.bindparams(bindparam("symbols", expanding=True))
+        return query, params
 
     def get_checkpoint(self, source_name: str, symbol: str) -> dict[str, Any] | None:
         stmt = text(
@@ -156,6 +229,36 @@ class EventSentimentRepository:
         with self.engine.connect() as conn:
             rows = conn.execute(stmt, {"article_ids": article_ids}).fetchall()
         return {str(row[0]) for row in rows}
+
+    def get_article_ids_by_dedupe_hashes(
+        self,
+        ingestion_source: str,
+        dedupe_hashes: list[str],
+    ) -> dict[str, str]:
+        normalized_hashes = sorted({str(value).strip() for value in dedupe_hashes if str(value).strip()})
+        if not normalized_hashes:
+            return {}
+        stmt = text(
+            """
+            SELECT dedupe_hash, article_id
+            FROM news_raw
+            WHERE ingestion_source = :ingestion_source
+              AND dedupe_hash IN :dedupe_hashes
+            """
+        ).bindparams(bindparam("dedupe_hashes", expanding=True))
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                stmt,
+                {
+                    "ingestion_source": str(ingestion_source).strip().lower(),
+                    "dedupe_hashes": normalized_hashes,
+                },
+            ).mappings().all()
+        return {
+            str(row["dedupe_hash"]): str(row["article_id"])
+            for row in rows
+            if row.get("dedupe_hash") and row.get("article_id")
+        }
 
     def upsert_news_raw(self, records: list[dict[str, Any]]) -> int:
         serializable: list[dict[str, Any]] = []
@@ -399,31 +502,41 @@ class EventSentimentRepository:
     def upsert_sector_daily_features(self, records: list[dict[str, Any]]) -> int:
         return self._upsert("sector_daily_sentiment_features", records, key_columns={"sector", "trade_date"})
 
-    def load_pending_articles(self, limit: int = 1000) -> list[dict[str, Any]]:
-        query = text(
-            """
-            SELECT
-                nr.article_id,
-                nr.headline,
-                nr.summary,
-                nr.content,
-                nr.source,
-                nr.author,
-                nr.url,
-                nr.published_at_utc,
-                nr.event_timestamp_utc,
-                nr.event_timestamp_ny,
-                nr.effective_trade_date,
-                nr.market_session_tag,
-                nr.is_major_event
-            FROM news_raw nr
-            LEFT JOIN news_sentiment ns ON ns.article_id = nr.article_id
-            WHERE ns.article_id IS NULL
-            ORDER BY nr.effective_trade_date ASC, nr.published_at_utc ASC, nr.article_id ASC
-            LIMIT :limit_rows
-            """
+    def count_pending_articles(
+        self,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        ingestion_source: str | None = None,
+        symbols: list[str] | None = None,
+    ) -> int:
+        query, params = self._build_pending_article_query(
+            count_only=True,
+            start_date=start_date,
+            end_date=end_date,
+            ingestion_source=ingestion_source,
+            symbols=symbols,
         )
-        frame = pd.read_sql_query(query, self.engine, params={"limit_rows": limit})
+        with self.engine.connect() as conn:
+            return int(conn.execute(query, params).scalar_one() or 0)
+
+    def load_pending_articles(
+        self,
+        limit: int = 1000,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        ingestion_source: str | None = None,
+        symbols: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        query, params = self._build_pending_article_query(
+            count_only=False,
+            start_date=start_date,
+            end_date=end_date,
+            ingestion_source=ingestion_source,
+            symbols=symbols,
+        )
+        frame = pd.read_sql_query(query, self.engine, params={**params, "limit_rows": limit})
         return [dict(row) for row in frame.to_dict(orient="records")]
 
     def load_feature_frames(

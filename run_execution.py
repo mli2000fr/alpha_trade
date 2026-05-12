@@ -572,6 +572,97 @@ def run(
             print(f"{RED}Format de date invalide : {trade_date}. Utilise YYYY-MM-DD.{RESET}")
             sys.exit(1)
 
+    # ----- Market-Aware regime pre-flight (Axe C plan/prompt/parttern/plan.md) ---------
+    # Calcul UNE FOIS par cycle d'un ``MarketRegimeSnapshot`` puis :
+    #  - rendu d'un résumé console + log ;
+    #  - persistance JSON best-effort dans ``artifacts/market_regime/`` ;
+    #  - propagation du mode dérivé (``close_only``/``cash_only``/...) dans
+    #    ``ExecutionConfig.entry_mode`` afin que l'executor bloque les
+    #    nouvelles entrées si le régime l'exige.
+    # Tout échec reste non-bloquant (fallback neutre).
+    try:
+        from common.config_loader import load_config as _load_config_yaml
+        from execution_engine.market_regime_preflight import (
+            derive_entry_mode as _derive_entry_mode,
+            emit_preflight as _emit_preflight,
+        )
+        from service.market import (
+            DbSentimentScoreProvider as _DbSentimentScoreProvider,
+            build_snapshot as _build_regime_snapshot,
+            build_default_macro_provider as _build_macro_provider,
+            parse_market_regimes as _parse_market_regimes,
+        )
+
+        _yaml_cfg = _load_config_yaml()
+        _mr_cfg = _parse_market_regimes(_yaml_cfg.get("market_regimes"))
+        _macro_provider = _build_macro_provider(_yaml_cfg)
+        _trade_date_for_regime = trade_date_val or date.today()
+        _sentiment_provider = _DbSentimentScoreProvider(_trade_date_for_regime)
+        _snapshot = _build_regime_snapshot(
+            _trade_date_for_regime,
+            config=_mr_cfg,
+            equity=float(equity) if equity else None,
+            execution_context="live",
+            macro_provider=_macro_provider,
+            sentiment_score_provider=_sentiment_provider,
+        )
+        _snap_dict = _snapshot.to_dict() if hasattr(_snapshot, "to_dict") else {
+            "trade_date": str(_trade_date_for_regime),
+            "mode": getattr(_snapshot, "mode", "normal"),
+            "risk_multiplier": getattr(_snapshot, "risk_multiplier", 1.0),
+            "effective_max_positions": getattr(_snapshot, "effective_max_positions", None),
+            "enforced_min_notional": getattr(_snapshot, "enforced_min_notional", None),
+            "allowed_slots": getattr(_snapshot, "allowed_slots", None),
+            "allow_new_entries": getattr(_snapshot, "allow_new_entries", True),
+            "active_patterns": getattr(_snapshot, "active_patterns", []),
+            "blocked_sectors": getattr(_snapshot, "blocked_sectors", []),
+            "earnings_shielded_symbols": getattr(_snapshot, "earnings_shielded_symbols", {}),
+            "buyback_blackout_symbols": getattr(_snapshot, "buyback_blackout_symbols", {}),
+            "macro": getattr(_snapshot, "macro", {}),
+            "reasons": getattr(_snapshot, "reasons", []),
+        }
+        if _mr_cfg.enabled and _mr_cfg.sentinel.preflight_summary:
+            print(_emit_preflight(_snap_dict))
+        # Propagation du mode régime → ExecutionConfig.entry_mode
+        # (ExecutionConfig est frozen → on reconstruit via dataclasses.replace)
+        _new_mode = _derive_entry_mode(_snap_dict)
+        if _new_mode != config.entry_mode:
+            from dataclasses import replace as _dc_replace
+            _reasons_list = _snap_dict.get("reasons") or []
+            _reasons_str = ", ".join(str(r) for r in _reasons_list) if _reasons_list else "régime"
+            print(
+                f"{YELLOW}[market_regime] entry_mode={config.entry_mode!r} → {_new_mode!r} "
+                f"(motif: {_reasons_str}){RESET}"
+            )
+            config = _dc_replace(config, entry_mode=_new_mode)
+            # Reconstruire executor avec la nouvelle config (frozen).
+            broker = BrokerAdapter(client, config)
+            oco = OcoManager(broker, repo)
+            executor = ProductionExecutor(
+                config,
+                repo,
+                broker,
+                oco,
+                circuit_breaker=cb,
+                progress_callback=lambda summary: emit_run_summary(summary),
+            )
+        # Persistance best-effort
+        try:
+            import json as _json_regime
+            _regime_dir = PROJECT_ROOT / "artifacts" / "market_regime"
+            _regime_dir.mkdir(parents=True, exist_ok=True)
+            _stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+            (_regime_dir / f"snapshot_{_stamp}_{config.resolved_account_id or 'default'}.json").write_text(
+                _json_regime.dumps(_snap_dict, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+        except Exception:
+            logging.getLogger(__name__).debug("Persistance market_regime indisponible.", exc_info=True)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "market_regime preflight indisponible — fallback neutre.", exc_info=True
+        )
+
     print(f"{BOLD}Execution en cours...{RESET}\n")
     t0 = datetime.now()
     metrics = executor.execute_run(risk_run_id=run_id, trade_date=trade_date_val)

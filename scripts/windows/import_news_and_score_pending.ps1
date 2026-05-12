@@ -27,12 +27,22 @@ param(
     [int]$HistoryBackfillBatchDays = 63,
 
     [Parameter()]
-    [ValidateSet('alpaca', 'finnhub')]
-    [string]$NewsProvider = 'alpaca',
+    [ValidateSet('alpaca', 'finnhub', 'eodhd')]
+    [string]$NewsProvider = 'eodhd',
 
     [Parameter()]
     [ValidateSet('provider_default', 'strict', 'scored')]
     [string]$TickerRelevanceMode = 'provider_default',
+
+    [Parameter()]
+    [string]$Symbols = '',
+
+    [Parameter()]
+    [ValidateSet('stock_scores', 'stock_scores_history', 'stock_scores_all', 'candidates', 'stock_bars_daily')]
+    [string]$SymbolSource = 'stock_scores',
+
+    [Parameter()]
+    [int]$MaxSymbols = 0,
 
     [Parameter()]
     [double]$MinRelevanceScore = 0.0,
@@ -67,6 +77,8 @@ param(
     [Parameter()]
     [int]$RelevanceBackfillContextualMaxPairs = 0,
 
+    [switch]$SkipImport,
+
     [switch]$SkipHistoryBackfill,
 
     [switch]$DryRun
@@ -82,8 +94,29 @@ if ([string]::IsNullOrWhiteSpace($PythonExe)) {
     $PythonExe = (Get-Command python -ErrorAction Stop).Source
 }
 
+$NormalizedImportSymbols = @()
+if (-not [string]::IsNullOrWhiteSpace($Symbols)) {
+    $NormalizedImportSymbols = @(
+        $Symbols -split ',' |
+        ForEach-Object { $_.Trim().ToUpperInvariant() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+    )
+}
+$NormalizedImportSymbolsCsv = if ($NormalizedImportSymbols.Count -gt 0) {
+    $NormalizedImportSymbols -join ','
+}
+else {
+    ''
+}
+
 $summary = [ordered]@{
-    mode = 'import_news_score_pending_history_and_relevance_backfill'
+    mode = if ($SkipImport) {
+        'score_pending_history_and_relevance_backfill'
+    }
+    else {
+        'import_news_score_pending_history_and_relevance_backfill'
+    }
     start_date = $StartDate
     end_date = $EndDate
     project_root = $ProjectRoot
@@ -93,6 +126,8 @@ $summary = [ordered]@{
     scoring_runs_executed = 0
     initial_pending = $null
     final_pending = $null
+    initial_pending_global = $null
+    final_pending_global = $null
     max_iterations = $MaxIterations
     max_stagnant_iterations = $MaxStagnantIterations
     history_backfill_enabled = -not [bool]$SkipHistoryBackfill
@@ -103,6 +138,9 @@ $summary = [ordered]@{
     relevance_backfill_completed = $false
     news_provider = $NewsProvider
     ticker_relevance_mode = $TickerRelevanceMode
+    import_symbols = if ($NormalizedImportSymbols.Count -gt 0) { @($NormalizedImportSymbols) } else { @() }
+    import_symbol_source = $SymbolSource
+    import_max_symbols = $MaxSymbols
     min_relevance_score = $MinRelevanceScore
     enable_contextual_scoring = [bool]$EnableContextualScoring
     contextual_min_relevance = $ContextualMinRelevance
@@ -113,6 +151,11 @@ $summary = [ordered]@{
     relevance_backfill_purge_below = $RelevanceBackfillPurgeBelow
     relevance_backfill_contextual_min_relevance = $RelevanceBackfillContextualMinRelevance
     relevance_backfill_contextual_max_pairs = $RelevanceBackfillContextualMaxPairs
+    pending_scope_start_date = $StartDate
+    pending_scope_end_date = $EndDate
+    pending_scope_ingestion_source = $NewsProvider
+    pending_scope_symbols = if ($NormalizedImportSymbols.Count -gt 0) { @($NormalizedImportSymbols) } else { @() }
+    skip_import = [bool]$SkipImport
     status = 'running'
 }
 
@@ -158,25 +201,67 @@ function Invoke-PythonStep {
 }
 
 function Get-PendingArticleCount {
+    param(
+        [string]$PendingStartDate = '',
+        [string]$PendingEndDate = '',
+        [string]$IngestionSource = '',
+        [string]$SymbolsCsv = ''
+    )
+
     if ($DryRun) {
         return 0
     }
 
-    $pythonCode = @"
-from database.connection import get_sqlalchemy_engine
-from sqlalchemy import text
+    $pendingStartDateLiteral = if ([string]::IsNullOrWhiteSpace($PendingStartDate)) {
+        'None'
+    }
+    else {
+        "'" + $PendingStartDate.Replace("'", "\\'") + "'"
+    }
+    $pendingEndDateLiteral = if ([string]::IsNullOrWhiteSpace($PendingEndDate)) {
+        'None'
+    }
+    else {
+        "'" + $PendingEndDate.Replace("'", "\\'") + "'"
+    }
+    $ingestionSourceLiteral = if ([string]::IsNullOrWhiteSpace($IngestionSource)) {
+        'None'
+    }
+    else {
+        "'" + $IngestionSource.Replace("'", "\\'") + "'"
+    }
+    $normalizedSymbols = @()
+    if (-not [string]::IsNullOrWhiteSpace($SymbolsCsv)) {
+        $normalizedSymbols = @(
+            $SymbolsCsv -split ',' |
+            ForEach-Object { $_.Trim().ToUpperInvariant() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+        )
+    }
+    $symbolsLiteral = if ($normalizedSymbols.Count -eq 0) {
+        'None'
+    }
+    else {
+        '[' + (($normalizedSymbols | ForEach-Object { "'" + $_.Replace("'", "\\'") + "'" }) -join ', ') + ']'
+    }
 
-engine = get_sqlalchemy_engine()
-query = text(
-    """
-    SELECT COUNT(*)
-    FROM news_raw nr
-    LEFT JOIN news_sentiment ns ON ns.article_id = nr.article_id
-    WHERE ns.article_id IS NULL
-    """
-)
-with engine.connect() as conn:
-    print(int(conn.execute(query).scalar_one() or 0))
+    $pythonCode = @"
+from datetime import date
+
+from event_sentiment.db_io import EventSentimentRepository
+
+start_date = date.fromisoformat($pendingStartDateLiteral) if $pendingStartDateLiteral != None else None
+end_date = date.fromisoformat($pendingEndDateLiteral) if $pendingEndDateLiteral != None else None
+ingestion_source = $ingestionSourceLiteral
+symbols = $symbolsLiteral
+repository = EventSentimentRepository()
+print(repository.count_pending_articles(
+    start_date=start_date,
+    end_date=end_date,
+    ingestion_source=ingestion_source,
+    symbols=symbols,
+))
 "@
 
     $output = & $PythonExe -u -c $pythonCode 2>&1
@@ -194,8 +279,90 @@ with engine.connect() as conn:
     return [int]$lastLine
 }
 
+function Get-RunWindowUtcBounds {
+    return @{
+        StartUtc = ("{0}T00:00:00Z" -f $StartDate)
+        EndUtc = ("{0}T23:59:59Z" -f $EndDate)
+    }
+}
+
+function Resolve-ScopedSymbols {
+    param(
+        [string]$ExplicitSymbolsCsv = '',
+        [string]$SelectedSymbolSource = 'stock_scores'
+    )
+
+    $explicitSymbols = @()
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitSymbolsCsv)) {
+        $explicitSymbols = @(
+            $ExplicitSymbolsCsv -split ',' |
+            ForEach-Object { $_.Trim().ToUpperInvariant() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+        )
+    }
+    if ($explicitSymbols.Count -gt 0) {
+        return $explicitSymbols
+    }
+    if ($SelectedSymbolSource -eq 'stock_bars_daily' -or $DryRun) {
+        return @()
+    }
+
+    $pythonCode = switch ($SelectedSymbolSource) {
+        'candidates' {
+@"
+from event_sentiment.db_io import EventSentimentRepository
+
+for symbol in EventSentimentRepository().load_candidate_symbols():
+    print(str(symbol).strip().upper())
+"@
+        }
+        'stock_scores_history' {
+@"
+from event_sentiment.importe_news import get_all_symbols_from_stock_scores_history
+
+for symbol in get_all_symbols_from_stock_scores_history():
+    print(str(symbol).strip().upper())
+"@
+        }
+        'stock_scores_all' {
+@"
+from event_sentiment.importe_news import get_all_symbols_from_stock_scores_all
+
+for symbol in get_all_symbols_from_stock_scores_all():
+    print(str(symbol).strip().upper())
+"@
+        }
+        default {
+@"
+from event_sentiment.importe_news import get_all_symbols_from_stock_scores
+
+for symbol in get_all_symbols_from_stock_scores(candidates_only=False):
+    print(str(symbol).strip().upper())
+"@
+        }
+    }
+
+    $output = & $PythonExe -u -c $pythonCode 2>&1
+    $exitCode = if ($null -ne $LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }
+    if ($exitCode -ne 0) {
+        $details = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+        throw ("Impossible de résoudre le scope de symboles (source={0}, exit={1}).`n{2}" -f $SelectedSymbolSource, $exitCode, $details)
+    }
+    return @(
+        $output |
+        ForEach-Object { $_.ToString().Trim().ToUpperInvariant() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+    )
+}
+
 Push-Location $ProjectRoot
 try {
+    $ScopedSymbols = @(Resolve-ScopedSymbols -ExplicitSymbolsCsv $NormalizedImportSymbolsCsv -SelectedSymbolSource $SymbolSource)
+    $ScopedSymbolsCsv = if ($ScopedSymbols.Count -gt 0) { $ScopedSymbols -join ',' } else { '' }
+    $summary.pending_scope_symbols = if ($ScopedSymbols.Count -gt 0) { @($ScopedSymbols) } else { @() }
+
     $importNewsArguments = @(
         '-u',
         (Join-Path $ProjectRoot 'event_sentiment\importe_news.py'),
@@ -206,6 +373,15 @@ try {
         '--news-provider',
         $NewsProvider
     )
+    if ($NormalizedImportSymbols.Count -gt 0) {
+        $importNewsArguments += @('--symbols', $NormalizedImportSymbolsCsv)
+    }
+    elseif ($SymbolSource -ne 'stock_scores') {
+        $importNewsArguments += @('--symbol-source', $SymbolSource)
+    }
+    if ($MaxSymbols -gt 0) {
+        $importNewsArguments += @('--max-symbols', ([string]$MaxSymbols))
+    }
     if ($TickerRelevanceMode -ne 'provider_default') {
         $importNewsArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)
     }
@@ -213,14 +389,27 @@ try {
         $importNewsArguments += @('--min-relevance-score', ([string]$MinRelevanceScore))
     }
 
-    Invoke-PythonStep -Label 'Import news brutes historiques' -Arguments @($importNewsArguments)
-    $summary.import_completed = $true
+    if (-not $SkipImport) {
+        Invoke-PythonStep -Label 'Import news brutes historiques' -Arguments @($importNewsArguments)
+        $summary.import_completed = $true
+    }
+    else {
+        Write-Host 'Import news brutes historiques ignoré (SkipImport actif).'
+    }
 
-    $pendingCount = Get-PendingArticleCount
+    $pendingCount = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider -SymbolsCsv $ScopedSymbolsCsv
     $summary.initial_pending = $pendingCount
-    Write-Host ("Articles pending après import : {0}" -f $pendingCount)
+    $summary.initial_pending_global = Get-PendingArticleCount
+    Write-Host ("Articles pending après import (scope {0} → {1}, provider={2}) : {3}" -f $StartDate, $EndDate, $NewsProvider, $pendingCount)
+    if ($summary.initial_pending_global -ne $summary.initial_pending) {
+        Write-Warning (
+            "Backlog pending global détecté hors scope 7.bis (global={0}, scope={1}). Le wrapper va traiter uniquement le scope demandé." -f
+            $summary.initial_pending_global, $summary.initial_pending
+        )
+    }
 
     $stagnantIterations = 0
+    $runWindow = Get-RunWindowUtcBounds
     while ($pendingCount -gt 0) {
         if ($summary.scoring_runs_executed -ge $MaxIterations) {
             throw ("Boucle arrêtée : MaxIterations={0} atteint alors qu'il reste {1} article(s) pending." -f $MaxIterations, $pendingCount)
@@ -232,9 +421,17 @@ try {
             '-u',
             '-m',
             'event_sentiment',
+            '--skip-ingestion',
             '--news-provider',
-            $NewsProvider
+            $NewsProvider,
+            '--start-utc',
+            $runWindow.StartUtc,
+            '--end-utc',
+            $runWindow.EndUtc
         )
+        if ($ScopedSymbols.Count -gt 0) {
+            $scoringArguments += @('--symbols', $ScopedSymbolsCsv)
+        }
         if ($TickerRelevanceMode -ne 'provider_default') {
             $scoringArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)
         }
@@ -253,7 +450,7 @@ try {
         Invoke-PythonStep -Label ("Sentiment pipeline auto #{0}" -f $runIndex) -Arguments @($scoringArguments)
         $summary.scoring_runs_executed = $runIndex
 
-        $remaining = Get-PendingArticleCount
+        $remaining = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider -SymbolsCsv $ScopedSymbolsCsv
         Write-Host ("Articles pending après scoring #{0} : {1}" -f $runIndex, $remaining)
 
         if ($remaining -lt $pendingCount) {
@@ -280,7 +477,14 @@ try {
     }
 
     $summary.final_pending = $pendingCount
-    Write-Host 'Import + scoring auto terminés : plus aucun article pending.'
+    $summary.final_pending_global = Get-PendingArticleCount
+    Write-Host 'Import + scoring auto terminés : plus aucun article pending dans le scope demandé.'
+    if ($summary.final_pending_global -gt 0) {
+        Write-Warning (
+            "Il reste {0} article(s) pending hors scope ({1} → {2}, provider={3})." -f
+            $summary.final_pending_global, $StartDate, $EndDate, $NewsProvider
+        )
+    }
 
     if (-not $SkipHistoryBackfill) {
         Invoke-PythonStep -Label 'History backfill auto' -Arguments @(
@@ -321,6 +525,9 @@ try {
     if ($RelevanceBackfillPurgeBelow -gt 0) {
         $relevanceBackfillArguments += @('--purge-below', ([string]$RelevanceBackfillPurgeBelow))
     }
+    if ($ScopedSymbols.Count -gt 0) {
+        $relevanceBackfillArguments += @('--symbols', $ScopedSymbolsCsv)
+    }
     if ($RelevanceBackfillRescoreContextual) {
         $relevanceBackfillArguments += '--rescore-contextual'
         if ($RelevanceBackfillContextualMinRelevance -gt 0) {
@@ -340,11 +547,15 @@ try {
 catch {
     $summary.status = 'failed'
     try {
-        $summary.final_pending = Get-PendingArticleCount
+        $summary.final_pending = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider -SymbolsCsv $ScopedSymbolsCsv
+        $summary.final_pending_global = Get-PendingArticleCount
     }
     catch {
         if ($null -eq $summary.final_pending) {
             $summary.final_pending = -1
+        }
+        if ($null -eq $summary.final_pending_global) {
+            $summary.final_pending_global = -1
         }
     }
     $summary.error = $_.Exception.Message

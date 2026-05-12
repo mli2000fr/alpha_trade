@@ -119,6 +119,29 @@ Sous l'onglet « **Centre d'exécution avancé** » :
 | **B2 — Sync Earnings Calendar** | 1×/semaine (résultats trimestriels) |
 | **B3 — Backfill EODHD** | 1× au tout début (5-10 ans d'historique) |
 
+## Sous-panneau `7.bis Import des news brutes`
+
+Dans le bloc pipeline, l'étape `7.bis` permet maintenant de piloter finement l'import news avant relance du scoring sentiment.
+
+Vous pouvez régler :
+
+- la **date de début** / **date de fin** ;
+- l'**univers de symboles** :
+  - `stock_scores` (défaut recommandé),
+  - `candidates`,
+  - `stock_bars_daily` (mode large historique) ;
+- une **liste explicite de symboles** (`CSV`) si vous voulez cibler quelques valeurs ;
+- un **cap sécurité** `max-symbols` pour empêcher un lancement trop large.
+
+Avant même de cliquer sur le bouton, la page affiche désormais un **résumé live** :
+
+- nombre de symboles réellement résolus ;
+- source effective retenue ;
+- extrait des premiers symboles ;
+- erreur visible si le cap `max-symbols` bloquerait le lancement.
+
+👉 Conseil pratique : laissez `stock_scores` par défaut, ou renseignez une shortlist `CSV` si vous ne voulez retraiter que quelques titres. N'utilisez `stock_bars_daily` que si vous savez pourquoi vous acceptez un univers potentiellement très large.
+
 ## Paramétrer TP / SL depuis la page Pipeline
 
 Dans **Centre d'exécution avancé** → bloc **Execution** → section

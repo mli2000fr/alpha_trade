@@ -64,7 +64,9 @@ presets:
     values:
       risk_account_equity: "__DETECTED_EQUITY__"
       risk_per_trade_pct: 0.02
-      risk_max_positions: 10
+      # Sprint Market-Aware — petit compte : ``allowed_slots = floor(equity / 500)``
+      # garantit qu'aucun ordre <150–155 USD ne sera proposé en cash (cf. plan §5.2).
+      risk_max_positions: 4
       risk_max_position_weight: 0.20
       risk_max_sector_weight: 0.40
       risk_min_position_notional: 150.0

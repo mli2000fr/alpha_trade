@@ -234,6 +234,12 @@ def list_active_locks() -> list[dict[str, object]]:
         payload = _read_lock(entry)
         if _is_lock_active(payload) and payload is not None:
             out.append(dict(payload))
+        elif payload is not None:
+            try:
+                entry.unlink(missing_ok=True)
+                LOGGER.info("Lock obsolete supprime lors du listing | path=%s pid=%s", entry, payload.get("pid"))
+            except Exception:
+                LOGGER.warning("Echec suppression lock obsolete %s", entry, exc_info=True)
     return out
 
 
@@ -320,12 +326,63 @@ def release_lock(handle: LockHandle | None) -> None:
                 LOGGER.warning("Echec suppression lock %s", handle.path, exc_info=True)
 
 
+def rebind_lock_pid(handle: LockHandle | None, *, pid: int) -> LockHandle | None:
+    """Réécrit le PID d'un verrou déjà acquis sans changer ``run_id``.
+
+    Usage principal : un process parent (IHM) acquiert d'abord un pré-lock pour
+    éviter toute course, puis après ``subprocess.Popen`` transfère ce lock vers
+    le PID réel du sous-processus enfant. Cela permet qu'un redémarrage IHM ou
+    un PID parent mort ne laisse pas un verrou faussement actif.
+    """
+    if handle is None:
+        return None
+    pid_int = int(pid)
+    if pid_int <= 0:
+        raise ValueError(f"pid invalide : {pid!r}")
+
+    process_started_at = _get_process_started_at(pid_int)
+    with _LOCAL_MUTEX:
+        payload = _read_lock(handle.path)
+        if not payload or str(payload.get("run_id")) != handle.run_id:
+            raise FileNotFoundError(f"Lock introuvable ou run_id mismatch pour {handle.path}")
+
+        payload["pid"] = pid_int
+        payload["process_started_at"] = (
+            process_started_at.isoformat(timespec="seconds") if process_started_at is not None else None
+        )
+        handle.path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        held = _HELD_LOCKS.get(handle.scope)
+        if held is not None and held.run_id == handle.run_id:
+            if pid_int == os.getpid():
+                _HELD_LOCKS[handle.scope] = LockHandle(
+                    scope=handle.scope,
+                    owner=handle.owner,
+                    run_id=handle.run_id,
+                    pid=pid_int,
+                    path=handle.path,
+                )
+            else:
+                _HELD_LOCKS.pop(handle.scope, None)
+
+    rebound = LockHandle(
+        scope=handle.scope,
+        owner=handle.owner,
+        run_id=handle.run_id,
+        pid=pid_int,
+        path=handle.path,
+    )
+    LOGGER.info("Lock '%s' rebinde | owner=%s run_id=%s pid=%s", handle.scope, handle.owner, handle.run_id, pid_int)
+    return rebound
+
+
 __all__ = [
     "LockHandle",
     "LockScope",
     "PipelineLockBusy",
     "acquire_lock",
     "list_active_locks",
+    "rebind_lock_pid",
     "release_lock",
     "set_locks_dir_for_tests",
 ]

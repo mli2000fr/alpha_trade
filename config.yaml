@@ -46,6 +46,126 @@ risk:
   max_daily_loss: 0.05
 
 # ---------------------------------------------------------------------------
+# Sprint S30 — Couche centralisée Market-Aware (Axe A du plan ``prompt/parttern/plan.md``).
+# Quand ``market_regimes.enabled = false`` la couche reste désactivée et le
+# comportement historique du dépôt est strictement préservé.
+# Cf. ``service/market/`` et ``risk_management/regime_apply.py``.
+# ---------------------------------------------------------------------------
+market_regimes:
+  enabled: true                             # bascule globale (off par défaut)
+  cache_ttl_seconds: 300
+  enforce_min_notional: 155                  # cf. plan §C16, compatible Alpaca
+  allow_neutral_fallback_on_missing_macro_data: true
+  # Source des donnees macro (VIX, 10Y) : `stooq` (gratuit, sans cle),
+  # `eodhd` (consomme du quota EODHD), `composite` (Stooq dabord, EODHD
+  # en secours si EODHD_API_TOKEN est defini), ou `none` pour desactiver.
+  macro_provider: eodhd
+
+  sentinel:
+    enabled: true
+    preflight_summary: true
+
+  vix:
+    enabled: true
+    symbol: "VIX.INDX"
+    short_symbol: "VIX9D.INDX"
+    high_threshold: 25.0
+    inverted_curve_mode: capital_preservation
+
+  yields:
+    enabled: false
+    symbol_10y: "US10Y"
+    lookback_days: 5
+    relative_spike_threshold: 0.05
+    block_sectors: ["Technology", "Tech", "Growth"]
+    block_high_beta: true
+    high_beta_threshold: 1.2
+    risk_mult: 0.6
+
+  sentiment_circuit_breaker:
+    enabled: true
+    lookback_days: 7
+    warning_threshold: -0.15
+    critical_threshold: -0.30
+    warning_max_positions: 2
+    critical_mode_live: close_only
+    critical_mode_backtest: cash_only
+
+  sector_limits:
+    enabled: false
+    max_tickers_per_sector: 2
+
+  earnings_shield:
+    enabled: false
+    days_before: 2
+    days_after: 2
+    mode: strict_block         # strict_block | negative_score
+    negative_score_value: -1.0
+
+  buyback_blackout:
+    enabled: false
+    days_before_earnings: 14
+    ml_score_multiplier: 0.70
+
+  patterns:
+    tax_day:
+      enabled: false
+      start: "04-10"
+      end: "04-20"
+      risk_mult: 0.4
+    sept_slump:
+      enabled: false
+      start: "09-15"
+      end: "10-15"
+      risk_mult: 0.4
+    santa_rally:
+      enabled: false
+      start: "12-20"
+      end: "12-31"
+      risk_mult: 1.15
+      screener_expansion_pct: 0.10
+    january_effect:
+      enabled: false
+      start: "01-02"
+      end: "01-15"
+      risk_mult: 1.10
+      screener_expansion_pct: 0.10
+    institutional_opex:
+      enabled: false
+      rule: "3rd_friday"
+      mode: sentiment_hardening   # sentiment_hardening | block_entries
+      sentiment_threshold_addon: 0.20
+    month_end:
+      enabled: false
+      business_days_from_month_end: 2
+      sentiment_threshold_addon: 0.10
+
+# ---------------------------------------------------------------------------
+# Sprint S30 — Trailing stop ATR dynamique pour les achats manuels orphelins
+# (Axe F du plan ``prompt/parttern/plan.md``). Lu par ``execution_engine/config.py``
+# (TrailingStopConfig) via ``service.market.parse_trailing_stop``.
+# ---------------------------------------------------------------------------
+risk_management:
+  trailing_stop:
+    enabled: false
+    mode: dynamic_atr            # fixed | dynamic_atr
+    atr_period: 14
+    atr_multiplier: 2.5
+    fallback_fixed_pct: 5.0
+    break_even_after_atr_multiple: 2.0
+    eod_check_time_est: "15:50"
+    apply_to_manual_orphan_buys: true
+
+# ---------------------------------------------------------------------------
+# Modes d'exécution (Axe C du plan). Pris en compte par ``execution_engine``
+# via ``ExecutionConfig.entry_mode``.
+# ---------------------------------------------------------------------------
+execution:
+  modes:
+    close_only_allows_position_management: true
+    cash_only_allows_new_entries: false
+
+# ---------------------------------------------------------------------------
 # Source primaire des barres OHLCV (`stock_bars` + `stock_bars_daily`).
 # Voir prompt/iex/plan_eodhd.md.
 # - alpaca : comportement historique (Alpaca/IEX, biais volume IEX).

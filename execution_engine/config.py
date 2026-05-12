@@ -1,8 +1,39 @@
 """Configuration immutable du module execution_engine."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
+
+
+@dataclass(frozen=True, slots=True)
+class TrailingStopConfig:
+    """Configuration trailing stop ATR (Axe F du plan ``prompt/parttern/plan.md``).
+
+    Le bloc YAML correspondant est ``risk_management.trailing_stop`` (cf.
+    ``service.market.config.TrailingStopYAMLConfig``). On le remonte ici car
+    le watcher / order_intents en sont les vrais consommateurs.
+    """
+
+    enabled: bool = False
+    mode: Literal["fixed", "dynamic_atr"] = "fixed"
+    atr_period: int = 14
+    atr_multiplier: float = 2.5
+    fallback_fixed_pct: float = 5.0
+    break_even_after_atr_multiple: float = 2.0
+    eod_check_time_est: str = "15:50"
+    apply_to_manual_orphan_buys: bool = True
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("fixed", "dynamic_atr"):
+            raise ValueError("trailing_stop.mode doit être 'fixed' ou 'dynamic_atr'.")
+        if self.atr_period < 1:
+            raise ValueError("trailing_stop.atr_period doit être >= 1.")
+        if self.atr_multiplier <= 0:
+            raise ValueError("trailing_stop.atr_multiplier doit être > 0.")
+        if not (0 < self.fallback_fixed_pct < 100):
+            raise ValueError("trailing_stop.fallback_fixed_pct doit être dans ]0, 100[.")
+        if self.break_even_after_atr_multiple <= 0:
+            raise ValueError("trailing_stop.break_even_after_atr_multiple doit être > 0.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +103,13 @@ class ExecutionConfig:
     # --- TCA ---
     enable_tca: bool = True
 
+    # --- Market-aware regime (Axe C du plan ``prompt/parttern/plan.md``) ---
+    # Mode d'entrée global pour le cycle (ajusté par le snapshot régime).
+    entry_mode: Literal["normal", "close_only", "cash_only", "capital_preservation"] = "normal"
+
+    # --- Trailing stop ATR dynamique (Axe F) ---
+    trailing_stop: TrailingStopConfig = field(default_factory=TrailingStopConfig)
+
     def __post_init__(self) -> None:
         if self.broker_mode not in ("paper", "live"):
             raise ValueError("broker_mode doit être 'paper' ou 'live'.")
@@ -129,6 +167,8 @@ class ExecutionConfig:
             raise ValueError("simulated_account_equity doit être > 0.")
         if self.simulated_margin_buying_power_multiplier < 1:
             raise ValueError("simulated_margin_buying_power_multiplier doit être >= 1.")
+        if self.entry_mode not in ("normal", "close_only", "cash_only", "capital_preservation"):
+            raise ValueError("entry_mode invalide.")
 
     @property
     def effective_pdt_rule(self) -> Literal["auto", "off"]:
@@ -152,6 +192,11 @@ class ExecutionConfig:
 
     def is_live(self) -> bool:
         return self.broker_mode == "live"
+
+    @property
+    def blocks_new_entries(self) -> bool:
+        """True si le mode courant interdit l'ouverture de nouvelles positions."""
+        return self.entry_mode in ("close_only", "cash_only")
 
 
 @dataclass(frozen=True, slots=True)

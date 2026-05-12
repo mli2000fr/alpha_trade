@@ -374,7 +374,7 @@ def test_build_pipeline_command_alpha_scanner_exposes_supported_backend_options(
 def test_pipeline_launch_options_defaults_to_alpaca_for_sentiment_news_provider() -> None:
     options = PipelineLaunchOptions()
 
-    assert options.sentiment_news_provider == "alpaca"
+    assert options.sentiment_news_provider == "eodhd"
 
 
 def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -> None:
@@ -386,7 +386,7 @@ def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -
         "-m",
         "event_sentiment",
         "--news-provider",
-        "alpaca",
+        "eodhd",
     ]
 
 
@@ -742,6 +742,36 @@ def test_build_pipeline_command_import_news() -> None:
     assert "--enable-contextual-scoring" not in command
 
 
+def test_build_pipeline_command_import_news_exposes_symbol_scope_options() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_symbol_source="stock_bars_daily",
+        news_import_symbols="msft, aapl,MSFT,nvda",
+        news_import_max_symbols=250,
+    )
+
+    command = build_pipeline_command("import_news", options)
+
+    assert command[command.index("--symbols") + 1] == "AAPL,MSFT,NVDA"
+    assert "--symbol-source" not in command
+    assert command[command.index("--max-symbols") + 1] == "250"
+
+
+def test_build_pipeline_command_import_news_accepts_stock_scores_all_symbol_source() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_symbol_source="stock_scores_all",
+        news_import_max_symbols=300,
+    )
+
+    command = build_pipeline_command("import_news", options)
+
+    assert command[command.index("--symbol-source") + 1] == "stock_scores_all"
+    assert command[command.index("--max-symbols") + 1] == "300"
+
+
 def test_build_pipeline_command_import_news_pending_loop() -> None:
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",
@@ -790,6 +820,38 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
     assert command[command.index("-RelevanceBackfillPurgeBelow") + 1] == "0.2"
     assert command[command.index("-RelevanceBackfillContextualMinRelevance") + 1] == "0.4"
     assert command[command.index("-RelevanceBackfillContextualMaxPairs") + 1] == "2500"
+
+
+def test_build_pipeline_command_import_news_pending_loop_exposes_symbol_scope_options() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_symbol_source="candidates",
+        news_import_max_symbols=500,
+    )
+
+    command = build_pipeline_command("import_news_pending_loop", options)
+
+    assert command[command.index("-SymbolSource") + 1] == "candidates"
+    assert command[command.index("-MaxSymbols") + 1] == "500"
+    assert "-Symbols" not in command
+
+
+def test_build_pipeline_command_score_history_relevance_backfill_auto_skips_import() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_symbol_source="stock_scores_history",
+        news_import_max_symbols=500,
+        sentiment_enable_contextual_scoring=True,
+    )
+
+    command = build_pipeline_command("score_history_relevance_backfill_auto", options)
+
+    assert command[5] == str(PROJECT_ROOT / "scripts" / "windows" / "import_news_and_score_pending.ps1")
+    assert command[command.index("-SymbolSource") + 1] == "stock_scores_history"
+    assert command[command.index("-MaxSymbols") + 1] == "500"
+    assert "-SkipImport" in command
 
 
 def test_build_pipeline_command_relevance_backfill_exposes_contextual_options() -> None:

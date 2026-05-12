@@ -55,3 +55,5 @@ class RiskCheckerImpl:
         self._state.total_notional += notional
         assert self._state.sector_notional is not None
         self._state.sector_notional[sector] = self._state.sector_notional.get(sector, 0.0) + notional
+        assert self._state.sector_ticker_count is not None
+        self._state.sector_ticker_count[sector] = self._state.sector_ticker_count.get(sector, 0) + 1

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import time
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -1164,7 +1163,6 @@ class ExecutionRepository:
         attempt_no = self._load_request_attempt_no(intent.intent_id)
         if attempt_no is None:
             attempt_no = self._next_request_attempt_no(account_id, intent.idempotency_key)
-        attempt_no = f"{attempt_no}_{time.time()}"
         row = {
             "request_id": intent.intent_id,
             "exec_run_id": intent.exec_run_id,

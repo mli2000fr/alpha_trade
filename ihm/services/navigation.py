@@ -53,6 +53,7 @@ PIPELINE_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
     NavigationPage("📊 Screening", "screening", "ihm.pages.screening", "pipeline"),
     NavigationPage("🤖 ML / Prédictions", "ml", "ihm.pages.ml", "pipeline"),
     NavigationPage("⚖️ Risk", "risk", "ihm.pages.risk", "pipeline"),
+    NavigationPage("📊 Régime Marché", "market_regime", "ihm.pages.market_regime", "pipeline"),
     NavigationPage("🚀 Execution", "execution", "ihm.pages.execution", "pipeline"),
     NavigationPage("🏦 Comptes Alpaca", "alpaca_accounts", "ihm.pages.alpaca_accounts", "pipeline"),
     NavigationPage("📑 Corporate Actions", "corporate_actions", "ihm.pages.corporate_actions", "pipeline"),
@@ -122,6 +123,7 @@ def get_navigation_sections() -> tuple[NavigationSection, ...]:
             pages=(
                 _get_page("execution"),
                 _get_page("risk"),
+                _get_page("market_regime"),
                 _get_page("alpaca_accounts"),
             ),
         ),

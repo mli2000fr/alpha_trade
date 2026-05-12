@@ -40,6 +40,12 @@ def test_to_eodhd_custom_exchange() -> None:
     assert sym.to_eodhd("SAP", exchange="DE") == "SAP.DE"
 
 
+def test_to_eodhd_preserves_native_provider_symbols() -> None:
+    assert sym.to_eodhd("AAPL.US") == "AAPL.US"
+    assert sym.to_eodhd("VIX.INDX") == "VIX.INDX"
+    assert sym.to_eodhd("US10Y.INDX") == "US10Y.INDX"
+
+
 def test_to_eodhd_empty_raises() -> None:
     with pytest.raises(ValueError):
         sym.to_eodhd("")

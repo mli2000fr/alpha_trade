@@ -14,6 +14,7 @@ class _FakeRepository:
         self.macro_rows = []
         self.ticker_rows = []
         self.sector_rows = []
+        self.pending_load_calls = []
 
     def get_checkpoint(self, source_name: str, symbol: str):
         return self.checkpoints.get(symbol)
@@ -24,7 +25,24 @@ class _FakeRepository:
     def load_candidate_symbols(self) -> list[str]:
         return list(self.candidates)
 
-    def load_pending_articles(self, limit: int = 1000):
+    def load_pending_articles(
+        self,
+        limit: int = 1000,
+        *,
+        start_date=None,
+        end_date=None,
+        ingestion_source=None,
+        symbols=None,
+    ):
+        self.pending_load_calls.append(
+            {
+                "limit": limit,
+                "start_date": start_date,
+                "end_date": end_date,
+                "ingestion_source": ingestion_source,
+                "symbols": symbols,
+            }
+        )
         return []
 
     def upsert_news_sentiment(self, records):
@@ -223,5 +241,39 @@ def test_pipeline_logs_resolved_run_window_and_symbol_count(monkeypatch, caplog)
     assert "start_utc=2026-01-01 00:00:00+00:00" in caplog.text
     assert "end_utc=2026-01-02 00:00:00+00:00" in caplog.text
     assert "symbol_count=2" in caplog.text
+
+
+def test_pipeline_skip_ingestion_scopes_pending_backlog_to_window_and_provider(monkeypatch) -> None:
+    repository = _FakeRepository(candidates=["AAPL"])
+
+    monkeypatch.setattr(
+        "event_sentiment.pipeline.NewsIngestionService",
+        lambda repository, config: _FakeIngestionService(repository, config),
+    )
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", _FakeFinBERTSentimentService)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", _FakeMacroRuleEngine)
+
+    pipeline = EventSentimentPipeline(
+        repository=repository,
+        config=EventSentimentConfig(provider_name="alpaca", news_provider="alpaca"),
+    )
+    stats = pipeline.run(
+        start_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        end_utc=datetime(2026, 1, 2, tzinfo=UTC),
+        symbols=None,
+        skip_ingestion=True,
+    )
+
+    assert stats["ingestion_skipped"] is True
+    assert pipeline.ingestion.calls == []
+    assert repository.pending_load_calls == [
+        {
+            "limit": 1000,
+            "start_date": datetime(2026, 1, 1, tzinfo=UTC).date(),
+            "end_date": datetime(2026, 1, 2, tzinfo=UTC).date(),
+            "ingestion_source": "alpaca",
+            "symbols": None,
+        }
+    ]
 
 

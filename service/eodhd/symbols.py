@@ -72,6 +72,11 @@ def to_eodhd(symbol: str, exchange: str = DEFAULT_EXCHANGE) -> str:
         return exceptions[sym]
 
     if "." in sym:
+        base, _, suffix = sym.rpartition(".")
+        if base and suffix.isalpha() and len(suffix) >= 2:
+            # Déjà au format provider natif : ``AAPL.US``, ``VIX.INDX``,
+            # ``US10Y.INDX``, ``SAP.DE``… On le laisse intact.
+            return sym
         prefix, _, suffix = sym.partition(".")
         if prefix in _DOT_PRESERVED_PREFIXES:
             # Alphabet : le ``.`` est conservé mais ne doit pas créer un .US redondant

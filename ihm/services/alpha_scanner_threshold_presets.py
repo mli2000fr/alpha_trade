@@ -1,4 +1,12 @@
-"""Presets de seuils de diagnostic Alpha Scanner selon style opératoire et régime de marché."""
+"""Presets de seuils de diagnostic Alpha Scanner selon style opératoire et contexte marché.
+
+Ici, ``market_regime`` signifie seulement un **niveau de sélectivité des presets
+de diagnostic** (marché normal / faible / très sélectif) utilisé pour ajuster
+les seuils de fraîcheur et de couverture des dépendances de l'Alpha Scanner.
+
+Ce n'est pas le même concept que les modes de régime market-aware d'exécution :
+``normal`` / ``capital_preservation`` / ``close_only`` / ``cash_only``.
+"""
 from __future__ import annotations
 
 from copy import deepcopy

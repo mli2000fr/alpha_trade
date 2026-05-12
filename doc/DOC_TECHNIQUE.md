@@ -753,3 +753,71 @@ ruff check .                    # lint
 mypy .                          # types
 python run_execution.py check   # vérif environnement
 ```
+---
+## 11. Architecture Market-Aware (Axes A-F du plan)
+> Cf. `todo/plan.md` et `todo/prompt_implemented.md`.
+### 11.1 Cartographie des modules
+| Couche | Module | Role |
+|---|---|---|
+| Snapshot | `service/market/regime_manager.py` | Orchestrateur `build_snapshot()`, cache TTL, fallback neutre. |
+| Modele | `service/market/models.py` | `MarketRegimeSnapshot`, `RegimeMode`, `EarningsShieldMode`. |
+| Config YAML | `service/market/config.py` | `parse_market_regimes` + `parse_trailing_stop`. |
+| Patterns | `service/market/calendar_patterns.py` | Tax Day, Sept. Slump, Santa, January, OpEx, Month-End. |
+| Macro | `service/market/macro_signals.py` | VIX, courbe VIX, 10Y yield (5j). |
+| Macro providers | `service/market/macro_providers.py` | Implementations Stooq + EODHD + composite + factory `build_default_macro_provider`. |
+| Sentiment | `service/market/sentiment_regime.py` | Circuit breaker warning / critique. |
+| Earnings | `service/market/earnings_shield.py` | Fenetre J-2/J+2, mode strict_block ou negative_score. |
+| Volatilite | `service/market/volatility.py` | ATR(n) + utilitaires partages avec le watcher. |
+| Selector | `selector/regime_filters.py` | Application du snapshot sur les candidats (earnings, blackout, sectors). |
+| Risk live | `risk_management/regime_apply.py` + `constraints.py` + `position_sizer.py` | risk_multiplier, allowed_slots, max_tickers_per_sector. |
+| Execution | `execution_engine/market_regime_preflight.py` + `run_execution.run()` | Pre-flight summary + propagation entry_mode (frozen via dataclasses.replace). |
+| Trailing ATR | `execution_engine/protection_break_even.py` + `protection_watcher.py` + `orphan_adoption.py` | Stop ATR dynamique, break-even, EOD check. |
+| Backtest | `backtesting/risk_bridge.py` | Phase 2 `risk_execution` recoit `market_regimes_config`. |
+### 11.2 Sequence live (run_execution.run)
+1. Resolution du compte / equity broker (hard-fail si echec).
+2. Construction de `ExecutionConfig` (frozen).
+3. **Pre-flight Market-Aware** : `parse_market_regimes(config.yaml) -> build_snapshot(...) -> emit_preflight(...)`.
+4. Si `derive_entry_mode(snapshot) != entry_mode` -> `dataclasses.replace` + reconstruction `BrokerAdapter` / `OcoManager` / `ProductionExecutor`.
+5. Persistance JSON best-effort dans `artifacts/market_regime/snapshot_<ts>_<account>.json`.
+6. Execution normale.
+Tout echec du pre-flight est traite en fallback neutre (jamais bloquant).
+### 11.3 Parite live / backtest
+Le snapshot est calcule par le **meme orchestrateur** (`build_snapshot`) cote live et cote `backtesting/risk_bridge.py::run_phase2_risk_bridge` (parametre `market_regimes_config`). Les memes patterns, seuils et modes sont donc rejoues a l'identique.
+### 11.4 Tests
+- `tests/test_market_regime.py` (parser YAML, calendar, macro, earnings, buyback)
+- `tests/test_market_regime_preflight.py` (rendu console + derive_entry_mode)
+- `tests/test_selector_regime_filters.py`
+- `tests/test_risk_regime_apply.py` + `tests/test_risk_regime_sizing_constraints.py`
+- `tests/test_phase2_risk_bridge_regime.py`
+- `tests/test_orphan_adoption.py`, `tests/test_trailing_stop_atr.py`, `tests/test_protection_break_even.py`
+- `tests/test_macro_providers.py` (Stooq / EODHD / composite / factory)
+- `tests/test_ihm_market_regime_banner.py` (composant + integrations Overview/Execution/Risk)
+Tous verts (74 tests sur la session reprise).
+
+### 11.5 Macro providers (production)
+`service.market.macro_providers.build_default_macro_provider(yaml_cfg)`
+choisit le fournisseur selon `config.yaml > market_regimes.macro_provider` :
+
+- `stooq` → `StooqMacroProvider` (symboles `^vix`, `^vix9d`, `^tnx`) ;
+  `service/stooq/clientStooq.py` preserve les symboles index `^...` et
+  ajoute `apikey` si `STOOQ_API_KEY` / `STOOQ_APIKEY` est present.
+- `eodhd` → `EodhdMacroProvider` (token requis, symboles `VIX.INDX`, `VIX9D.INDX`, `US10Y.INDX`).
+- `composite` (defaut) → `CompositeMacroProvider([Stooq, Eodhd?])` : Stooq d'abord, EODHD en secours uniquement si `EODHD_API_TOKEN` est present.
+- `none` → couche desactivee, snapshot neutre.
+
+Les overrides de symboles passent par `market_regimes.vix.symbol`,
+`market_regimes.vix.short_symbol`, `market_regimes.yields.symbol_10y`.
+Cache par instance et par cycle ; aucun raise n'est propage (toujours
+`None` en cas d'echec → fallback neutre cote `regime_manager`).
+`service/eodhd/symbols.py::to_eodhd()` preserve en outre les symboles deja
+natifs (`AAPL.US`, `VIX.INDX`, `US10Y.INDX`, `SAP.DE`) pour eviter tout
+remapping errone vers `.US`.
+
+### 11.6 Restitution IHM
+- Page **Régime Marché** : `ihm/pages/market_regime.py` (snapshot a la
+  volee + historique persiste, configuration active).
+- Composant **bannière** : `ihm/components/market_regime_banner.py`
+  (lit `artifacts/market_regime/snapshot_*.json`, badge couleur selon
+  mode, embarque dans `overview.py`, `execution.py`, `risk.py`).
+- Test : `tests/test_ihm_market_regime_banner.py`.
+

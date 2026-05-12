@@ -76,6 +76,28 @@ def test_choose_contextual_text_handles_empty_body() -> None:
     assert text == "For MSFT: MSFT"
 
 
+def test_choose_contextual_text_falls_back_to_content_when_summary_missing() -> None:
+    now = datetime(2026, 1, 2, 13, 0, tzinfo=timezone.utc)
+    article = NormalizedNewsArticle(
+        article_id="x2",
+        headline="Apple extends rally",
+        summary=None,
+        content="Full body from EODHD provider",
+        source="EODHD",
+        author=None,
+        url=None,
+        published_at_utc=now,
+        event_timestamp_utc=now,
+        event_timestamp_ny=now,
+        effective_trade_date=date(2026, 1, 2),
+        market_session_tag="regular",
+    )
+    text, strategy = _choose_contextual_text(article, "AAPL", None)
+    assert strategy == "contextual_symbol_only"
+    assert text.startswith("For AAPL:")
+    assert "Full body from EODHD provider" in text
+
+
 class _StubProbabilities:
     """Mime un tenseur `(batch, 3)` minimal : .tolist() + indexation + argmax."""
 

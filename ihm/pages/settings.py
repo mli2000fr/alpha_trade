@@ -297,9 +297,14 @@ def _render_alpha_scanner_dependency_threshold_settings():
     st.info(
         "Le bon réglage est en pratique le croisement de **2 axes** : le style opératoire (`swing cash pro`, `agressif`, `tolérant`) ET le régime de marché (`normal`, `faible`, `très sélectif`)."
     )
+    st.caption(
+        "⚠️ Ce bloc concerne **uniquement les presets de seuils du diagnostic Alpha Scanner** "
+        "(fraîcheur / couverture quotes + earnings). Ce n'est **pas** le même mécanisme que le "
+        "mode régime market-aware d'exécution (`normal` / `capital_preservation` / `close_only` / `cash_only`)."
+    )
 
     selected_market_regime = st.radio(
-        "Régime de marché pour les presets",
+        "Contexte marché pour les presets Alpha Scanner",
         options=list(MARKET_REGIME_LABELS.keys()),
         index=list(MARKET_REGIME_LABELS.keys()).index(
             str(st.session_state.get(ALPHA_SCANNER_SELECTED_MARKET_REGIME_KEY, DEFAULT_MARKET_REGIME))

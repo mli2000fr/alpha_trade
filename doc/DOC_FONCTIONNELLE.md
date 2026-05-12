@@ -520,3 +520,68 @@ Concernant l'exécution réelle/paper :
 8. ~~**Gestion des dividendes et splits**~~ → ✅ **Implémenté** : module `corporate_actions`
 9. **Optimisation des poids** : calibration automatique IC-weighted des facteurs via backtest glissant
 10. **Audit trail enrichi** : export PDF/CSV des rapports TCA et des décisions de risque
+---
+## 8. Couche Market-Aware (regime marche centralise)
+> Source : 	prompt/parttern/plan.md, axes A-F. Statut : implementee (cf. 	prompt/parttern/prompt_implemented.md).
+### 8.1 But fonctionnel
+Decider en debut de chaque cycle (live ou backtest) d'un `MarketRegimeSnapshot` qui pilote :
+- l'agressivite du sizing (`risk_multiplier`),
+- le nombre maximal effectif de positions (`effective_max_positions`, `allowed_slots = floor(equity / enforce_min_notional)`),
+- les patterns calendaires actifs (Tax Day, Sept. Slump, Santa Rally, January Effect, OpEx, Month-End),
+- le mode marche (`normal` / `capital_preservation` / `close_only` / `cash_only`),
+- les filtres macro (VIX > 25, hausse rapide du 10Y, blacklist Tech / Growth / high beta),
+- le sentiment circuit breaker,
+- l'earnings shield J-2 / J+2 (blocage strict ou score negatif force),
+- le buyback blackout (penalisation -30 % sur le score ML).
+### 8.2 Regles cles
+- Calcul **une seule fois par cycle** (cache court par defaut 300 s).
+- En l'absence de donnee macro, fallback **neutre** documente dans `data_quality`.
+- Configuration centralisee dans `config.yaml > market_regimes` (cf. `service.market.config.parse_market_regimes`).
+- En live, le snapshot est imprime via `execution_engine.market_regime_preflight.emit_preflight` puis persiste dans `artifacts/market_regime/`.
+- Le mode derive (`derive_entry_mode`) peut basculer `ExecutionConfig.entry_mode` vers `close_only` / `cash_only` avant l'execution.
+### 8.3 Trailing stop ATR dynamique (Axe F)
+Pilote par `risk_management.trailing_stop` dans `config.yaml` :
+- `mode: dynamic_atr` -> stop initial = ATR(14) x `atr_multiplier` (defaut 2.5),
+- `fallback_fixed_pct` si ATR indisponible (defaut 5 %),
+- `break_even_after_atr_multiple` (defaut 2.0) -> remontee automatique du stop au prix d'entree,
+- `eod_check_time_est` (defaut 15:50) -> revalidation des protections en fin de seance,
+- `apply_to_manual_orphan_buys: true` -> applique a chaque achat orphelin adopte.
+### 8.4 Petit capital
+Le preset `capital_0_5000` impose `risk_max_positions = 4` et `risk_min_position_notional = 150`. Combine avec `allowed_slots = floor(equity / enforce_min_notional)`, aucun ordre sous ~150 USD ne peut plus etre soumis.
+
+### 8.5 Sources macro VIX / 10Y (production)
+La couche est desormais branchee sur deux fournisseurs production via
+`service.market.macro_providers.build_default_macro_provider` :
+
+- **Stooq** — symboles `^vix`, `^vix9d`, `^tnx` ; le client preserve les
+  symboles index `^...` et supporte `STOOQ_API_KEY` / `STOOQ_APIKEY` si le
+  endpoint CSV demande un `apikey` ;
+- **EODHD** (cle requise) — symboles `VIX.INDX`, `VIX9D.INDX`, `US10Y.INDX`.
+
+Selection via `config.yaml > market_regimes.macro_provider` :
+`stooq` / `eodhd` / `composite` (defaut, Stooq d'abord puis EODHD si cle
+disponible) / `none`. Les overrides de symboles sont supportes
+(`market_regimes.vix.symbol`, `market_regimes.yields.symbol_10y`, etc.).
+Les reponses sont cachees par instance et par cycle pour ne pas consommer
+le quota EODHD inutilement. Tout echec reseau retombe sur `None` →
+fallback neutre documente dans `data_quality`. En pratique, pour obtenir un
+mode non-`normal` de facon fiable en production sans mode de demo, le chemin
+minimal recommande est aujourd'hui `market_regimes.enabled: true` +
+`macro_provider: eodhd` + `vix.enabled: true`.
+
+### 8.6 Restitution IHM (Streamlit)
+Trois points d'entree IHM exposent la couche Market-Aware :
+
+- Page dediee **Régime Marché** (`ihm/pages/market_regime.py`, menu
+  *Trading*) : snapshot a la volee + historique persiste, configuration
+  active, rendu des earnings shielded / buyback blackout.
+- **Bannière compacte** `ihm/components/market_regime_banner.py`,
+  embarquee en haut des pages **Vue d'ensemble**, **Execution Engine** et
+  **Risk Management**. Lit le dernier `snapshot_*.json` produit par
+  `run_execution.run()` dans `artifacts/market_regime/` et bascule en
+  `st.warning` (capital_preservation) ou `st.error` (close_only /
+  cash_only) selon le mode courant.
+- Persistance JSON best-effort dans `artifacts/market_regime/` →
+  reutilisable par tout outil tiers (audit, supervision).
+
+

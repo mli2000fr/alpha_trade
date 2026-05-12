@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-NewsProvider = Literal["alpaca", "finnhub"]
+NewsProvider = Literal["alpaca", "finnhub", "eodhd"]
 TickerRelevanceMode = Literal["provider_default", "strict", "scored"]
 
 #: Mapping centralisé ``news_provider`` → (``source_name``, ``provider_name``).
@@ -12,18 +12,19 @@ TickerRelevanceMode = Literal["provider_default", "strict", "scored"]
 PROVIDER_REGISTRY: dict[str, tuple[str, str]] = {
     "alpaca": ("alpaca_news", "alpaca"),
     "finnhub": ("finnhub_news", "finnhub"),
+    "eodhd": ("eodhd_news", "eodhd"),
 }
 
 
 @dataclass(frozen=True, slots=True)
 class EventSentimentConfig:
-    source_name: str = "alpaca_news"
-    provider_name: str = "alpaca"
-    news_provider: NewsProvider = "alpaca"
+    source_name: str = "eodhd_news"
+    provider_name: str = "eodhd"
+    news_provider: NewsProvider = "eodhd"
     start_utc: datetime | None = None
     end_utc: datetime | None = None
     page_limit: int = 50
-    sleep_between_requests: float = 0.35
+    sleep_between_requests: float = 0.0
     regular_session_maps_to_same_day: bool = False
     checkpoint_overlap_minutes: int = 60
     initial_backfill_days: int = 365
@@ -35,7 +36,10 @@ class EventSentimentConfig:
     finbert_batch_size: int = 16
     finbert_max_length: int = 256
 
-    allow_sector_fallback: bool = True
+    # Enrichissement secteur optionnel via fallback réseau (actuellement Finnhub).
+    # Par défaut on le laisse désactivé pour EODHD afin d'éviter des appels
+    # externes implicites hors provider news choisi.
+    allow_sector_fallback: bool = False
     sentiment_pending_limit: int = 1000
     feature_version: str = "v2"
     macro_rule_version: str = "macro_rules_v1"
@@ -132,6 +136,8 @@ class EventSentimentConfig:
             "source_name": source_name,
             "provider_name": provider_name,
         }
+        if "allow_sector_fallback" not in overrides:
+            kwargs["allow_sector_fallback"] = news_provider != "eodhd"
         kwargs.update(overrides)
         return cls(**kwargs)  # type: ignore[arg-type]
 

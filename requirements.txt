@@ -10,6 +10,7 @@
 # --- Base de données ---
 pymysql
 sqlalchemy
+cryptography
 
 # --- HTTP / API ---
 requests

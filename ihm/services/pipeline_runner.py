@@ -195,6 +195,13 @@ MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_mo
 MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
 MLHistoryWindow = Literal["5", "10", "all"]
 MLTrainSymbolSource = Literal["candidates", "stock_bars_daily"]
+NewsImportSymbolSource = Literal[
+    "stock_scores",
+    "stock_scores_history",
+    "stock_scores_all",
+    "candidates",
+    "stock_bars_daily",
+]
 ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
 ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
@@ -312,10 +319,13 @@ class PipelineLaunchOptions:
     risk_log_level: str = DEFAULT_RISK_LOG_LEVEL
     news_import_start_date: str | None = None
     news_import_end_date: str | None = None
+    news_import_symbols: str | None = None
+    news_import_symbol_source: NewsImportSymbolSource = "stock_scores"
+    news_import_max_symbols: int | None = None
     sentiment_start_utc: str | None = None
     sentiment_end_utc: str | None = None
     sentiment_symbols: str | None = None
-    sentiment_news_provider: Literal["alpaca", "finnhub"] = "alpaca"
+    sentiment_news_provider: Literal["alpaca", "finnhub", "eodhd"] = "eodhd"
     sentiment_ticker_relevance_mode: Literal["provider_default", "strict", "scored"] = "provider_default"
     sentiment_min_relevance_score: float | None = None
     sentiment_enable_contextual_scoring: bool = False
@@ -736,7 +746,7 @@ def _extend_event_sentiment_cli_args(
 ) -> None:
     """Ajoute les flags supportés par les CLIs Python Event Sentiment."""
 
-    news_provider = options.sentiment_news_provider or "alpaca"
+    news_provider = options.sentiment_news_provider or "eodhd"
     command.extend(["--news-provider", news_provider])
 
     if (
@@ -786,7 +796,7 @@ def _extend_event_sentiment_powershell_args(
 ) -> None:
     """Ajoute les paramètres Event Sentiment pour les wrappers PowerShell."""
 
-    news_provider = options.sentiment_news_provider or "alpaca"
+    news_provider = options.sentiment_news_provider or "eodhd"
     command_args.extend(["-NewsProvider", news_provider])
 
     if (
@@ -826,6 +836,38 @@ def _extend_event_sentiment_powershell_args(
                 "-ContextualMaxPairs",
                 str(int(options.sentiment_contextual_max_pairs)),
             ])
+
+
+def _extend_import_news_cli_args(
+    command: list[str],
+    *,
+    symbols: str | None,
+    symbol_source: str,
+    max_symbols: int | None,
+) -> None:
+    if symbols:
+        command.extend(["--symbols", symbols])
+    elif symbol_source and symbol_source != "stock_scores":
+        command.extend(["--symbol-source", symbol_source])
+
+    if max_symbols is not None and max_symbols > 0:
+        command.extend(["--max-symbols", str(int(max_symbols))])
+
+
+def _extend_import_news_powershell_args(
+    command_args: list[str],
+    *,
+    symbols: str | None,
+    symbol_source: str,
+    max_symbols: int | None,
+) -> None:
+    if symbols:
+        command_args.extend(["-Symbols", symbols])
+    elif symbol_source and symbol_source != "stock_scores":
+        command_args.extend(["-SymbolSource", symbol_source])
+
+    if max_symbols is not None and max_symbols > 0:
+        command_args.extend(["-MaxSymbols", str(int(max_symbols))])
 
 
 def _extend_relevance_backfill_powershell_args(
@@ -871,6 +913,46 @@ def _extend_relevance_backfill_powershell_args(
             ])
 
 
+def _build_import_news_pending_loop_command(
+    options: PipelineLaunchOptions,
+    *,
+    news_import_start_date: str | None,
+    news_import_end_date: str | None,
+    news_import_symbols: str | None,
+    news_import_symbol_source: str,
+    news_import_max_symbols: int | None,
+    skip_import: bool = False,
+) -> list[str]:
+    if news_import_start_date is None:
+        raise ValueError("La date de début est obligatoire pour le pipeline auto news.")
+    script_path = PROJECT_ROOT / "scripts" / "windows" / "import_news_and_score_pending.ps1"
+    command_args = [
+        "-ProjectRoot",
+        str(PROJECT_ROOT),
+        "-PythonExe",
+        sys.executable,
+        "-StartDate",
+        news_import_start_date,
+    ]
+    if news_import_end_date:
+        command_args.extend(["-EndDate", news_import_end_date])
+    _extend_event_sentiment_powershell_args(
+        command_args,
+        options,
+        include_contextual_scoring=True,
+    )
+    _extend_import_news_powershell_args(
+        command_args,
+        symbols=news_import_symbols,
+        symbol_source=news_import_symbol_source,
+        max_symbols=news_import_max_symbols,
+    )
+    _extend_relevance_backfill_powershell_args(command_args, options)
+    if skip_import:
+        command_args.append("-SkipImport")
+    return _build_powershell_file_command(script_path, command_args)
+
+
 def is_gpu_available() -> bool:
     try:
         import torch
@@ -887,6 +969,23 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     account_id = (options.account_id or "").strip() or None
     news_import_start_date = _normalize_optional_date(options.news_import_start_date)
     news_import_end_date = _normalize_optional_date(options.news_import_end_date)
+    news_import_symbols = _normalize_symbol_list(options.news_import_symbols)
+    news_import_symbol_source = (
+        options.news_import_symbol_source
+        if options.news_import_symbol_source in {
+            "stock_scores",
+            "stock_scores_history",
+            "stock_scores_all",
+            "candidates",
+            "stock_bars_daily",
+        }
+        else "stock_scores"
+    )
+    news_import_max_symbols = (
+        int(options.news_import_max_symbols)
+        if options.news_import_max_symbols is not None and int(options.news_import_max_symbols) > 0
+        else None
+    )
     sentiment_start_utc = _normalize_optional_date(options.sentiment_start_utc)
     sentiment_end_utc = _normalize_optional_date(options.sentiment_end_utc)
     sentiment_symbols = _normalize_symbol_list(options.sentiment_symbols)
@@ -1168,29 +1267,34 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             options,
             include_contextual_scoring=False,
         )
+        _extend_import_news_cli_args(
+            command,
+            symbols=news_import_symbols,
+            symbol_source=news_import_symbol_source,
+            max_symbols=news_import_max_symbols,
+        )
         return command
 
     if step_key == "import_news_pending_loop":
-        if news_import_start_date is None:
-            raise ValueError("La date de début est obligatoire pour l'import + scoring auto des news.")
-        script_path = PROJECT_ROOT / "scripts" / "windows" / "import_news_and_score_pending.ps1"
-        command_args = [
-            "-ProjectRoot",
-            str(PROJECT_ROOT),
-            "-PythonExe",
-            sys.executable,
-            "-StartDate",
-            news_import_start_date,
-        ]
-        if news_import_end_date:
-            command_args.extend(["-EndDate", news_import_end_date])
-        _extend_event_sentiment_powershell_args(
-            command_args,
+        return _build_import_news_pending_loop_command(
             options,
-            include_contextual_scoring=True,
+            news_import_start_date=news_import_start_date,
+            news_import_end_date=news_import_end_date,
+            news_import_symbols=news_import_symbols,
+            news_import_symbol_source=news_import_symbol_source,
+            news_import_max_symbols=news_import_max_symbols,
         )
-        _extend_relevance_backfill_powershell_args(command_args, options)
-        return _build_powershell_file_command(script_path, command_args)
+
+    if step_key == "score_history_relevance_backfill_auto":
+        return _build_import_news_pending_loop_command(
+            options,
+            news_import_start_date=news_import_start_date,
+            news_import_end_date=news_import_end_date,
+            news_import_symbols=news_import_symbols,
+            news_import_symbol_source=news_import_symbol_source,
+            news_import_max_symbols=news_import_max_symbols,
+            skip_import=True,
+        )
 
     if step_key == "signal_aggregator":
         command = [

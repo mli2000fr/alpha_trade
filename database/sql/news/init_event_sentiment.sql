@@ -42,11 +42,14 @@ CREATE TABLE IF NOT EXISTS alpha_trade.news_sentiment (
     sentiment_net_score DOUBLE NOT NULL,
     inference_status ENUM('success', 'failed') NOT NULL DEFAULT 'success',
     error_message TEXT NULL,
+    model_fingerprint VARCHAR(32) NULL
+        COMMENT 'SHA256[:16] de model_name + revision + config FinBERT',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (article_id),
     KEY idx_news_sentiment_label (sentiment_label),
     KEY idx_news_sentiment_net (sentiment_net_score),
+    KEY idx_news_sentiment_model_fingerprint (model_fingerprint),
     CONSTRAINT fk_news_sentiment_article
         FOREIGN KEY (article_id) REFERENCES alpha_trade.news_raw(article_id)
         ON DELETE CASCADE
@@ -140,6 +143,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.ticker_daily_sentiment_features (
     symbol VARCHAR(100) NOT NULL,
     trade_date DATE NOT NULL,
     news_count_1d INT NOT NULL DEFAULT 0,
+    relevance_weight_sum_1d DOUBLE NOT NULL DEFAULT 0,
     sentiment_pos_mean_1d DOUBLE NOT NULL DEFAULT 0,
     sentiment_neg_mean_1d DOUBLE NOT NULL DEFAULT 0,
     sentiment_neu_mean_1d DOUBLE NOT NULL DEFAULT 0,
@@ -151,6 +155,10 @@ CREATE TABLE IF NOT EXISTS alpha_trade.ticker_daily_sentiment_features (
     news_count_5d INT NOT NULL DEFAULT 0,
     news_count_10d INT NOT NULL DEFAULT 0,
     news_count_20d INT NOT NULL DEFAULT 0,
+    relevance_weight_sum_3d DOUBLE NOT NULL DEFAULT 0,
+    relevance_weight_sum_5d DOUBLE NOT NULL DEFAULT 0,
+    relevance_weight_sum_10d DOUBLE NOT NULL DEFAULT 0,
+    relevance_weight_sum_20d DOUBLE NOT NULL DEFAULT 0,
     sentiment_net_mean_3d DOUBLE NOT NULL DEFAULT 0,
     sentiment_net_mean_5d DOUBLE NOT NULL DEFAULT 0,
     sentiment_net_mean_10d DOUBLE NOT NULL DEFAULT 0,

@@ -790,6 +790,25 @@ def _run_backtest(args: argparse.Namespace) -> None:
     else:
         from backtesting.risk_bridge import build_phase2_risk_result
 
+        # Sprint Market-Aware — parite live/backtest : on charge ``market_regimes``
+        # depuis ``config.yaml`` et on branche un MacroDataProvider EODHD/Stooq
+        # pour rejouer fidelement les decisions de regime (Axes A+D du plan).
+        _mr_cfg_for_bt = None
+        _macro_provider_for_bt = None
+        try:
+            from common.config_loader import load_config as _load_yaml_bt
+            from service.market import (
+                build_default_macro_provider as _build_macro_bt,
+                parse_market_regimes as _parse_mr_bt,
+            )
+            _yaml_bt = _load_yaml_bt()
+            _mr_cfg_for_bt = _parse_mr_bt(_yaml_bt.get("market_regimes"))
+            if getattr(_mr_cfg_for_bt, "enabled", False):
+                _macro_provider_for_bt = _build_macro_bt(_yaml_bt)
+        except Exception:
+            _mr_cfg_for_bt = None
+            _macro_provider_for_bt = None
+
         phase2_risk_result = build_phase2_risk_result(
             scores_df=scores_df,
             predictions_df=preds_df if isinstance(preds_df, pd.DataFrame) else pd.DataFrame(),
@@ -797,6 +816,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
             high_df=pivoted["high"],
             low_df=pivoted["low"],
             risk_config=phase2_risk_config,
+            market_regimes_config=_mr_cfg_for_bt,
+            macro_provider=_macro_provider_for_bt,
         )
         signals_df = phase2_risk_result.signals_df
         _safe_print(

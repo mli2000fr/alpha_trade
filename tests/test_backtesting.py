@@ -82,6 +82,19 @@ class TestDataLoader:
         result = pivot_ohlcv(df)
         assert result["close"].empty
 
+    def test_get_required_bars_source_filter_surfaces_inspection_cause(self, monkeypatch):
+        from backtesting import data_loader
+
+        def fake_inspect(_engine):
+            raise RuntimeError("'cryptography' package is required for sha256_password auth methods")
+
+        monkeypatch.setattr(data_loader, "inspect", fake_inspect)
+
+        with pytest.raises(RuntimeError, match="cryptography") as exc_info:
+            data_loader.get_required_bars_source_filter(cast(Engine, self._FakeEngine()), table_name="stock_bars_daily")
+
+        assert "DB_HOST/DB_NAME" in str(exc_info.value)
+
     def test_load_ohlcv_supports_real_stock_bars_daily_schema(self, monkeypatch):
         from backtesting import data_loader
 

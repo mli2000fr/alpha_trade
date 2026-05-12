@@ -73,6 +73,7 @@ Le pipeline couvre les besoins suivants :
 - MySQL disponible localement ou à distance
 - Accès API Alpaca
 - Token Finnhub pour l'enrichissement secteur
+- Token EODHD pour les barres OHLCV et le feed news `Financial News Feed`
 
 ### Variables d'environnement
 
@@ -92,6 +93,9 @@ $env:ALPACA_LIVE1_MODE = "live"
 
 # --- Finnhub (optionnel) ---
 $env:FINNHUB_API_KEY = "..."
+
+# --- EODHD (recommandé pour OHLCV + Event Sentiment) ---
+$env:EODHD_API_TOKEN = "..."
 ```
 
 Les comptes peuvent aussi être déclarés dans `config.yaml` (voir section 12).
@@ -323,10 +327,17 @@ python -m selector.alpha_scanner
 
 ```powershell
 python -m event_sentiment
+python -m event_sentiment --news-provider eodhd
+python -m event_sentiment --news-provider eodhd --start-utc 2026-01-01T00:00:00Z --end-utc 2026-01-31T23:59:59Z --symbols AAPL,MSFT,NVDA
+python event_sentiment/importe_news.py --start-date 2026-05-05 --end-date 2026-05-12 --news-provider eodhd
 python -m event_sentiment --start-utc 2026-01-01T00:00:00Z --end-utc 2026-01-31T23:59:59Z --symbols AAPL,MSFT,NVDA
 python -m event_sentiment.signal_aggregator
 python -m event_sentiment.signal_aggregator --all-symbols --trade-date 2026-04-17
 ```
+
+> `event_sentiment` utilise désormais `eodhd` comme provider news par défaut.
+> Les providers `alpaca` et `finnhub` restent disponibles via `--news-provider`.
+> Les checkpoints d'ingestion restent isolés par `source_name` (`eodhd_news`, `alpaca_news`, `finnhub_news`).
 
 > Si `signal_aggregator.py` est exécuté séparément, éviter une double application éventuelle du sentiment côté scanner.
 

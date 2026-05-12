@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS execution_order_requests (
     order_type         VARCHAR(20) NOT NULL,
     business_key       VARCHAR(64) NOT NULL,
     submission_key     VARCHAR(64) NULL,
-    attempt_no         INT NOT NULL, -- numéro de la tentative pour ce business_key (peut être accompagné d'un timestamp si besoin de granularité)
+    attempt_no         INT NOT NULL, -- numéro entier de tentative pour ce business_key (contrat applicatif strict)
     parent_request_id  VARCHAR(32) NULL,
     intent_role        VARCHAR(20) NOT NULL,
     decision_price     DOUBLE NULL,

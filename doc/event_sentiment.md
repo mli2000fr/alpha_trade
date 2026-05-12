@@ -4,7 +4,7 @@
 
 Ce document résume le fonctionnement du module `event_sentiment/` et les commandes utiles pour :
 
-- ingérer des news financières depuis Alpaca News ou Finnhub,
+- ingérer des news financières depuis EODHD Financial News Feed, Alpaca News ou Finnhub,
 - scorer les articles avec FinBERT,
 - produire des features journalières par ticker et par secteur,
 - fusionner le signal sentiment avec les scores quantitatifs dans `stock_scores`.
@@ -21,7 +21,7 @@ Ce document résume le fonctionnement du module `event_sentiment/` et les comman
 | `event_sentiment/__main__.py` | Point d'entrée `python -m event_sentiment` |
 | `event_sentiment/cli.py` | CLI du pipeline principal |
 | `event_sentiment/pipeline.py` | Orchestrateur `EventSentimentPipeline` |
-| `event_sentiment/ingestion.py` | Ingestion et normalisation des news provider (`Alpaca` / `Finnhub`) |
+| `event_sentiment/ingestion.py` | Ingestion et normalisation des news provider (`EODHD` / `Alpaca` / `Finnhub`) |
 | `event_sentiment/scoring.py` | Scoring FinBERT |
 | `event_sentiment/macro_rules.py` | Détection de règles macro / événements majeurs |
 | `event_sentiment/aggregation.py` | Agrégations journalières ticker / secteur |
@@ -51,7 +51,8 @@ Le `run_summary` du pipeline expose `finbert_model_fingerprint`. Le
 `run_summary` de `signal_aggregator` expose `finbert_model_fingerprints`
 (liste agrégée sur la fenêtre de 30 jours précédant la `trade_date`).
 
-> **Providers supportés** : `alpaca` et `finnhub`.
+> **Providers supportés** : `eodhd`, `alpaca`, `finnhub`.
+> **Défaut actuel** : `eodhd` (`source_name = eodhd_news`, `provider_name = eodhd`).
 > Backlog : SEC EDGAR 8-K (cf. `audit_global.md` Long terme).
 
 #### Obligatoires
@@ -92,9 +93,15 @@ $env:ALPACA_SECRET_KEY = "..."
 $env:FINNHUB_API_KEY = "..."
 ```
 
+- mode `--news-provider eodhd` *(défaut recommandé)* :
+
+```powershell
+$env:EODHD_API_TOKEN = "..."
+```
+
 #### Dépendances externes utiles
 
-- accès réseau au provider de news utilisé (`Alpaca News` ou `Finnhub`)
+- accès réseau au provider de news utilisé (`EODHD`, `Alpaca News` ou `Finnhub`)
 - téléchargement du modèle HuggingFace `ProsusAI/finbert`
 
 ### 2.2 Pour exécuter seulement la fusion `signal_aggregator`
@@ -122,6 +129,7 @@ Le module est tolérant :
 
 ```powershell
 python -m event_sentiment
+python -m event_sentiment --news-provider eodhd
 ```
 
 ### Pipeline borné sur une fenêtre UTC
@@ -134,6 +142,14 @@ python -m event_sentiment --start-utc 2026-01-01T00:00:00Z --end-utc 2026-01-31T
 
 ```powershell
 python -m event_sentiment --symbols AAPL,MSFT,NVDA
+```
+
+### Basculer explicitement de provider news
+
+```powershell
+python -m event_sentiment --news-provider eodhd
+python -m event_sentiment --news-provider alpaca
+python -m event_sentiment --news-provider finnhub
 ```
 
 ### Fusion quant + sentiment sur les seuls candidats
@@ -157,13 +173,13 @@ python -m event_sentiment.signal_aggregator --sentiment-weight 0.20 --macro-weig
 ### Activer le scoring de pertinence article → ticker (Niveau 2/3)
 
 ```powershell
-python -m event_sentiment --news-provider finnhub --ticker-relevance-mode scored --min-relevance-score 0.30
+python -m event_sentiment --news-provider eodhd --ticker-relevance-mode scored --min-relevance-score 0.30
 ```
 
 ### Activer le re-scoring FinBERT contextualisé `(article, symbole)` (Niveau 4)
 
 ```powershell
-python -m event_sentiment --news-provider finnhub --ticker-relevance-mode scored --min-relevance-score 0.30 --enable-contextual-scoring --contextual-min-relevance 0.30 --contextual-max-pairs 5000
+python -m event_sentiment --news-provider eodhd --ticker-relevance-mode scored --min-relevance-score 0.30 --enable-contextual-scoring --contextual-min-relevance 0.30 --contextual-max-pairs 5000
 ```
 
 ### Backfill historique `relevance_score` / `news_ticker_sentiment`
@@ -218,6 +234,9 @@ ne fait que déléguer :
 
 ```python
 from core.conviction import fuse_sentiment
+from event_sentiment.signal_aggregator import SentimentBoostConfig
+
+config = SentimentBoostConfig()
 final = fuse_sentiment(
     quant_score=...,
     sentiment_signal_norm=...,
@@ -295,11 +314,27 @@ Le pipeline utilise `news_ingestion_checkpoint` pour :
 
 `NewsIngestionService` :
 
-1. appelle le provider de news configuré (`Alpaca` ou `Finnhub`) ;
+1. appelle le provider de news configuré (`EODHD`, `Alpaca` ou `Finnhub`) ;
 2. normalise les payloads ;
 3. aligne l'article sur une séance de trading effective ;
 4. construit les lignes `news_raw` et `news_ticker_map` ;
 5. en mode `scored`, calcule `relevance_score` / `relevance_components` par couple `(article, symbole)` avant insertion.
+
+### 4.3.1 Spécificités EODHD
+
+- endpoint utilisé : `GET /news` côté EODHD ;
+- pagination encapsulée via un `next_token` synthétique basé sur `offset` ;
+- symboles provider normalisés via `service.eodhd.symbols.from_eodhd`, qui retourne bien un tuple `(project_symbol, exchange)` ;
+- exemple : `AAPL.US -> ("AAPL", "US")`, `BRK-B.US -> ("BRK.B", "US")` ;
+- les métadonnées provider `tags` et `sentiment` sont conservées dans `news_raw.raw_payload` pour audit ;
+- le sentiment EODHD reste **audit-only** : FinBERT demeure la source de vérité pour `news_sentiment`.
+
+### 4.3.2 Politique de persistance
+
+- pas de migration DB spécifique requise pour EODHD ;
+- le mapping canonique article → symbole reste `news_ticker_map` ;
+- `news_raw` ne matérialise pas de colonnes dédiées `symbols` / `tags` ;
+- ces données restent disponibles dans `raw_payload`.
 
 ### 4.4 Scoring et macro
 
@@ -359,7 +394,7 @@ Causes probables :
 
 Causes probables :
 
-1. credentials du provider de news manquants (`ALPACA_*` ou `FINNHUB_API_KEY` selon le mode) ;
+1. credentials du provider de news manquants (`EODHD_API_TOKEN`, `ALPACA_*` ou `FINNHUB_API_KEY` selon le mode) ;
 2. fenêtre trop courte ;
 3. checkpoints déjà avancés ;
 4. symboles trop restrictifs.
@@ -392,6 +427,27 @@ Ces résumés sont consommés côté IHM pour enrichir le centre d'exécution, `
 ---
 
 ## 6. Vérifications utiles
+
+### Import brut borné avec `importe_news.py`
+
+Le script `event_sentiment/importe_news.py` n'importe plus implicitement tout `stock_bars_daily`.
+
+Options utiles :
+
+- `--symbol-source stock_scores` : défaut, recommandé ;
+- `--symbol-source candidates` : univers `stock_scores.is_candidate=1` ;
+- `--symbol-source stock_bars_daily` : ancien comportement large ;
+- `--symbols AAPL,MSFT,NVDA` : shortlist explicite prioritaire ;
+- `--max-symbols 500` : garde-fou qui refuse un univers trop volumineux.
+
+Exemples :
+
+```powershell
+python event_sentiment/importe_news.py --start-date 2026-05-05 --end-date 2026-05-12
+python event_sentiment/importe_news.py --start-date 2026-05-05 --end-date 2026-05-12 --news-provider eodhd
+python event_sentiment/importe_news.py --start-date 2026-05-05 --end-date 2026-05-12 --symbol-source candidates --max-symbols 250
+python event_sentiment/importe_news.py --start-date 2026-05-05 --end-date 2026-05-12 --symbols AAPL,MSFT,NVDA
+```
 
 ### Vérifier le backfill `relevance_score`
 
@@ -445,13 +501,13 @@ with engine.connect() as conn:
 ### Tests ciblés ingestion / scoring / agrégation
 
 ```powershell
-python -m pytest tests/test_ingestion.py tests/test_scoring.py tests/test_event_aggregation.py tests/test_event_macro_rules.py tests/test_event_temporal_alignment.py -q -o addopts=""
+python -m pytest tests/test_eodhd_symbols.py tests/test_eodhd_news_client.py tests/test_event_sentiment_news_provider.py tests/test_ingestion.py tests/test_scoring.py tests/test_event_aggregation.py tests/test_event_macro_rules.py tests/test_event_temporal_alignment.py -q -o addopts=""
 ```
 
 ### Tests ciblés pipeline et fusion
 
 ```powershell
-python -m pytest tests/test_event_sentiment_pipeline.py tests/test_event_sentiment_main.py tests/test_signal_aggregator.py tests/test_sentiment_pipeline.py tests/test_importe_news.py tests/test_event_sentiment_run_summaries.py -q -o addopts=""
+python -m pytest tests/test_event_sentiment_importe_news.py tests/test_event_sentiment_run_summaries.py tests/test_ihm_pipeline_runner.py tests/test_ihm_pipeline_e2e.py -q -o addopts=""
 ```
 
 ---
@@ -468,6 +524,6 @@ Ordre conseillé :
 ### Séquence recommandée
 
 ```powershell
-python -m event_sentiment --start-utc 2026-01-01T00:00:00Z --end-utc 2026-01-31T23:59:59Z
+python -m event_sentiment --news-provider eodhd --start-utc 2026-01-01T00:00:00Z --end-utc 2026-01-31T23:59:59Z
 python -m event_sentiment.signal_aggregator --trade-date 2026-04-17
 ```

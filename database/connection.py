@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 DEFAULT_DB_HOST = "localhost"
 DEFAULT_DB_NAME = "alpha_trade"
+DB_HOST_ENV = "DB_HOST"
+DB_NAME_ENV = "DB_NAME"
 DEFAULT_DB_USER_ENV = "LOGIN_DB"
 DEFAULT_DB_PASSWORD_ENV = "PASSWORD_DB"
 
@@ -28,6 +30,32 @@ _FORBIDDEN_PLAINTEXT = frozenset({
     "changeme", "change-me", "todo", "your_password", "your_user",
     "replaceme", "replace-me", "xxxxx", "xxx", "secret123",
 })
+
+
+def _read_optional_env(name: str) -> str | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    value = raw.strip()
+    return value or None
+
+
+def _resolve_database_location(db_host: str, db_name: str) -> tuple[str, str]:
+    """Résout host/base en honorant les overrides d'environnement historiques.
+
+    Les sous-processus déclenchés depuis l'IHM propagent `DB_HOST` / `DB_NAME`.
+    Le cœur runtime doit donc les prendre en compte lorsqu'aucun override
+    explicite n'est fourni à `get_database_url()` / `get_sqlalchemy_engine()`.
+    """
+    resolved_host = db_host
+    resolved_name = db_name
+    env_host = _read_optional_env(DB_HOST_ENV)
+    env_name = _read_optional_env(DB_NAME_ENV)
+    if db_host == DEFAULT_DB_HOST and env_host:
+        resolved_host = env_host
+    if db_name == DEFAULT_DB_NAME and env_name:
+        resolved_name = env_name
+    return resolved_host, resolved_name
 
 
 def _read_database_credentials(
@@ -90,6 +118,7 @@ def get_database_url(
     db_user_env: str = DEFAULT_DB_USER_ENV,
     db_password_env: str = DEFAULT_DB_PASSWORD_ENV,
 ) -> str:
+    db_host, db_name = _resolve_database_location(db_host, db_name)
     db_user, db_password = _read_database_credentials(db_user_env=db_user_env, db_password_env=db_password_env)
     return f"mysql+pymysql://{db_user}:{db_password}@{db_host}/{db_name}?charset=utf8mb4"
 

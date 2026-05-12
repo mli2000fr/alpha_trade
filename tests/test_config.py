@@ -19,7 +19,7 @@ def test_load_config_handles_error(monkeypatch):
 
 def test_event_sentiment_config_defaults():
     cfg = config.EventSentimentConfig()
-    assert cfg.source_name == "alpaca_news"
+    assert cfg.source_name == "eodhd_news"
     assert cfg.page_limit == 50
     assert cfg.finbert_model_name == "ProsusAI/finbert"
 

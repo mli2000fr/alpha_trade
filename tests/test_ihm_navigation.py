@@ -10,6 +10,7 @@ def test_navigation_sidebar_order_matches_pipeline_then_support_pages() -> None:
         "screening",
         "ml",
         "risk",
+        "market_regime",
         "execution",
         "alpaca_accounts",
         "corporate_actions",
@@ -21,6 +22,8 @@ def test_navigation_sidebar_order_matches_pipeline_then_support_pages() -> None:
         # Sprint S19.4 / S19.5 — nouvelles pages institutionnelles
         "tax_compliance",
         "compliance_audit",
+        # Sprint S24.2 — Phase G : sandbox health 30 j
+        "sandbox_health",
         "glossary",
     ]
 

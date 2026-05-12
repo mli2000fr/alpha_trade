@@ -111,6 +111,13 @@ def render() -> None:
         "Lecture opérateur alignée sur le flux pipeline : santé amont, artefacts screener partagés, calibration et candidats finaux."
     )
 
+    # --- Bannière régime marché (Axe C plan/prompt/parttern/plan.md) ---
+    try:
+        from ihm.components.market_regime_banner import render_market_regime_banner
+        render_market_regime_banner(compact=True)
+    except Exception:  # pragma: no cover - jamais bloquant
+        pass
+
     # --- Environnement ---
     with st.expander("Variables d'environnement", expanded=False):
         for var in ("LOGIN_DB", "PASSWORD_DB", "ALPACA_API_KEY", "ALPACA_SECRET_KEY", "FINNHUB_API_KEY"):

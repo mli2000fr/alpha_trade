@@ -9,6 +9,7 @@ description = "Enterprise-grade US Swing Trade system"
 requires-python = ">=3.12"
 dependencies = [
     "pymysql",
+    "cryptography",
     "requests",
     "certifi",
     "python-dotenv",

@@ -15,6 +15,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import os
 from datetime import date, datetime
 from typing import Any
 from urllib import error, parse, request
@@ -28,6 +29,8 @@ DEFAULT_TIMEOUT_SECONDS = 10
 def _stooq_symbol(symbol: str) -> str:
     """Stooq utilise un suffixe ``.us`` pour les actions US."""
     s = symbol.lower().strip()
+    if s.startswith("^"):
+        return s
     if "." in s:
         return s
     return f"{s}.us"
@@ -46,6 +49,9 @@ def fetch_daily_bars(
     propagée).
     """
     params = {"s": _stooq_symbol(symbol), "i": "d"}
+    api_key = (os.getenv("STOOQ_API_KEY") or os.getenv("STOOQ_APIKEY") or "").strip()
+    if api_key:
+        params["apikey"] = api_key
     if start:
         params["d1"] = start.strftime("%Y%m%d")
     if end:
@@ -57,6 +63,9 @@ def fetch_daily_bars(
             raw = resp.read().decode("utf-8", errors="replace")
     except (error.URLError, TimeoutError, OSError) as exc:
         LOGGER.warning("Stooq fetch failed for %s : %s", symbol, exc)
+        return []
+    if "get your apikey" in raw.lower():
+        LOGGER.warning("Stooq fetch returned an API key challenge for %s (STOOQ_API_KEY absent ou invalide).", symbol)
         return []
     return _parse_csv(raw)
 

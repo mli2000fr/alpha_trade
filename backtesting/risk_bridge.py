@@ -1,16 +1,20 @@
 """Bridge opt-in entre le backtesting et le moteur réel de risk management."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable, Optional, TYPE_CHECKING
 
 import pandas as pd
 
 from risk_management.config import RiskConfig
 from risk_management.models import CandidateScore, PortfolioEntry, PredictionInfo, PriceInfo
 from risk_management.portfolio_builder import PortfolioBuilder
+from risk_management.regime_apply import apply_snapshot
+
+if TYPE_CHECKING:
+    from service.market import MarketRegimesConfig, MarketRegimeSnapshot
 
 
 RISK_SIGNAL_COLUMNS = [
@@ -33,6 +37,7 @@ class RiskBridgeResult:
     entries: list[PortfolioEntry]
     signals_df: pd.DataFrame
     diagnostics: dict[str, object]
+    regime_snapshots: dict[date, dict] = field(default_factory=dict)
 
 
 def _normalize_trade_dates(df: pd.DataFrame) -> pd.DataFrame:
@@ -200,13 +205,40 @@ def build_phase2_risk_result(
     low_df: pd.DataFrame,
     risk_config: RiskConfig,
     correlation_lookback_days: int | None = None,
+    market_regimes_config: "MarketRegimesConfig | None" = None,
+    equity_provider: Callable[[date], float] | None = None,
+    macro_provider: object | None = None,
+    sentiment_score_provider: Callable[[int], float | None] | None = None,
+    earnings_lookup: Callable[[date, int, int], dict[str, date]] | None = None,
 ) -> RiskBridgeResult:
+    """Construit les résultats phase 2 ``risk_execution``.
+
+    Si ``market_regimes_config`` est fourni et activé, un ``MarketRegimeSnapshot``
+    est calculé pour chaque ``snapshot_date`` puis appliqué à ``risk_config`` via
+    :func:`risk_management.regime_apply.apply_snapshot`. Cela garantit la parité
+    avec le live (``run_execution.py``).
+    """
     normalized_scores = _normalize_trade_dates(scores_df)
     snapshot_dates = sorted({pd.Timestamp(value).date() for value in normalized_scores["trade_date"].dropna().tolist()})
     all_entries: list[PortfolioEntry] = []
     signal_frames: list[pd.DataFrame] = []
+    regime_snapshots_dump: dict[date, dict] = {}
 
     lookback = int(correlation_lookback_days or risk_config.correlation_lookback_days)
+
+    # Diagnostics dédiés régime (Axe D du plan).
+    regime_modes_count: dict[str, int] = {}
+    entries_blocked_by_regime = 0
+    slots_rejected_avoided = 0
+
+    use_regime = (
+        market_regimes_config is not None
+        and getattr(market_regimes_config, "enabled", False)
+    )
+    build_snapshot_fn = None
+    if use_regime:
+        from service.market import build_snapshot as _bs  # local import (parité)
+        build_snapshot_fn = _bs
 
     for snapshot_date in snapshot_dates:
         candidates = _build_candidates(normalized_scores, snapshot_date)
@@ -222,7 +254,36 @@ def build_phase2_risk_result(
         )
         predictions = _build_predictions(predictions_df, snapshot_date)
         return_matrix = _build_return_matrix(close_df, snapshot_date, symbols, lookback)
-        builder = PortfolioBuilder(risk_config)
+
+        cfg_for_day = risk_config
+        snap = None
+        if use_regime and build_snapshot_fn is not None:
+            equity = (
+                equity_provider(snapshot_date)
+                if equity_provider is not None
+                else risk_config.account_equity
+            )
+            snap = build_snapshot_fn(
+                snapshot_date,
+                config=market_regimes_config,
+                equity=equity,
+                execution_context="backtest",
+                macro_provider=macro_provider,
+                sentiment_score_provider=sentiment_score_provider,
+                earnings_lookup=earnings_lookup,
+            )
+            regime_modes_count[snap.mode] = regime_modes_count.get(snap.mode, 0) + 1
+            regime_snapshots_dump[snapshot_date] = snap.to_summary_dict()
+            cfg_for_day = apply_snapshot(risk_config, snap)
+            if not snap.allow_new_entries:
+                entries_blocked_by_regime += len(candidates)
+                # On ignore les entrées de ce jour (cash_only / close_only / equity_too_low)
+                continue
+            # Compteur "ordres trop petits évités" : candidats > effective_max_positions
+            if cfg_for_day.effective_max_positions < len(candidates):
+                slots_rejected_avoided += max(0, len(candidates) - cfg_for_day.effective_max_positions)
+
+        builder = PortfolioBuilder(cfg_for_day)
         entries = builder.build(candidates, prices, predictions=predictions, return_matrix=return_matrix)
         all_entries.extend(entries)
         signal_frames.append(portfolio_entries_to_signals(entries, snapshot_date))
@@ -236,8 +297,17 @@ def build_phase2_risk_result(
         "entries_rejected": sum(1 for entry in all_entries if entry.approved_shares <= 0),
         "signals_generated": len(signals_df),
         "bridge": "risk_management.portfolio_builder",
+        "regime_enabled": bool(use_regime),
+        "regime_mode_distribution": regime_modes_count,
+        "entries_blocked_by_regime": entries_blocked_by_regime,
+        "slots_rejected_avoided": slots_rejected_avoided,
     }
-    return RiskBridgeResult(entries=all_entries, signals_df=signals_df, diagnostics=diagnostics)
+    return RiskBridgeResult(
+        entries=all_entries,
+        signals_df=signals_df,
+        diagnostics=diagnostics,
+        regime_snapshots=regime_snapshots_dump,
+    )
 
 
 def entries_to_dataframe(entries: list[PortfolioEntry]) -> pd.DataFrame:

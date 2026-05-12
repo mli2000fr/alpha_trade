@@ -381,10 +381,27 @@ Les steps Data Integrity qui publient maintenant ce résumé structuré sont not
 Sous l'étape `Sentiment Pipeline`, l'IHM expose un sous-panneau `Import des news brutes` permettant de lancer :
 
 ```powershell
-python event_sentiment/importe_news.py --start-date ... --end-date ...
+python event_sentiment/importe_news.py --start-date ... --end-date ... --symbol-source stock_scores
 ```
 
 Ce sous-run est utile pour réinjecter une plage de news spécifique avant de relancer le pipeline de sentiment.
+
+Le panneau expose maintenant aussi :
+
+- une **source d'univers** (`stock_scores`, `candidates`, `stock_bars_daily`) ;
+- une **liste explicite de symboles CSV** (prioritaire sur la source d'univers) ;
+- un **cap sécurité** `max-symbols` pour empêcher un lancement trop large ;
+- un **résumé live** du scope réellement résolu avant lancement :
+  - source effective,
+  - nombre de symboles,
+  - extrait des premiers symboles,
+  - alerte visuelle si `max-symbols` serait dépassé.
+
+Important :
+
+- `stock_scores` est désormais le **défaut recommandé** ;
+- `stock_bars_daily` conserve l'ancien comportement large mais affiche un warning fort ;
+- le script PowerShell `7.bis` réutilise le même scope pour l'import, le scoring backlog-only et le `relevance_backfill`, afin d'éviter les dérives de backlog global.
 
 #### 4.3.7 Bloc watcher post-exécution dans `Pipeline`
 

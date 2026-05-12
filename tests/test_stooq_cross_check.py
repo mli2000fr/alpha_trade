@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
+from urllib import parse
 
 import pytest
 
@@ -63,4 +64,51 @@ def test_compare_with_stooq_missing(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_stooq_symbol_normalisation() -> None:
     assert clientStooq._stooq_symbol("AAPL") == "aapl.us"
     assert clientStooq._stooq_symbol("aapl.us") == "aapl.us"
+    assert clientStooq._stooq_symbol("^VIX") == "^vix"
+    assert clientStooq._stooq_symbol("^TNX") == "^tnx"
+
+
+def test_fetch_daily_bars_adds_optional_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, str] = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b"Date,Open,High,Low,Close,Volume\n2025-04-15,1,1,1,1,0\n"
+
+    def _fake_urlopen(req, timeout=10):
+        captured["url"] = req.full_url
+        return _Resp()
+
+    monkeypatch.setenv("STOOQ_API_KEY", "demo-key")
+    monkeypatch.setattr(clientStooq.request, "urlopen", _fake_urlopen)
+
+    bars = clientStooq.fetch_daily_bars("^vix", start=date(2025, 4, 1), end=date(2025, 4, 15))
+
+    assert len(bars) == 1
+    qs = parse.parse_qs(parse.urlparse(captured["url"]).query)
+    assert qs["apikey"] == ["demo-key"]
+
+
+def test_fetch_daily_bars_returns_empty_on_api_key_challenge(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b"Get your apikey"
+
+    monkeypatch.delenv("STOOQ_API_KEY", raising=False)
+    monkeypatch.delenv("STOOQ_APIKEY", raising=False)
+    monkeypatch.setattr(clientStooq.request, "urlopen", lambda req, timeout=10: _Resp())
+
+    assert clientStooq.fetch_daily_bars("^vix", start=date(2025, 4, 1), end=date(2025, 4, 15)) == []
 

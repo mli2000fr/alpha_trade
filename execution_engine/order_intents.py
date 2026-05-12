@@ -183,18 +183,41 @@ def build_manual_buy_initial_stop_intent(
     fill_qty: float,
     avg_fill_price: float,
     config: ExecutionConfig,
+    *,
+    atr_value: float | None = None,
 ) -> OrderIntent | None:
     """Construit un STOP `sell` pour un achat manuel orphelin adopté.
 
     Contrairement à ``build_initial_stop_intent``, ce helper ne dépend pas
     d'un ``ExecutionTarget`` (pas d'ATR / risk_per_share disponible pour un
-    achat passé hors Alpha Trade). Il applique simplement le pourcentage
-    ``config.manual_buy_stop_loss_pct`` sous le prix d'entrée moyen.
+    achat passé hors Alpha Trade).
+
+    Mode ``trailing_stop.mode == "dynamic_atr"`` (Axe F du plan ``prompt/parttern/plan.md``) :
+    si ``atr_value`` est fourni et > 0, le stop = ``avg_fill_price - atr × multiplier``.
+    Sinon fallback sur ``trailing_stop.fallback_fixed_pct`` si trailing_stop activé,
+    ou sur ``config.manual_buy_stop_loss_pct`` (rétrocompat historique).
     """
     reference_price = avg_fill_price or parent.decision_price
     if reference_price <= 0 or fill_qty <= 0:
         return None
-    stop_price = round(reference_price * (1.0 - float(config.manual_buy_stop_loss_pct)), 2)
+
+    ts = config.trailing_stop
+    use_dynamic_atr = (
+        ts.enabled
+        and ts.mode == "dynamic_atr"
+        and ts.apply_to_manual_orphan_buys
+        and atr_value is not None
+        and atr_value > 0
+    )
+    if use_dynamic_atr:
+        stop_price = round(reference_price - float(atr_value) * float(ts.atr_multiplier), 2)
+    elif ts.enabled and ts.apply_to_manual_orphan_buys:
+        # fallback fixe configuré dans trailing_stop
+        stop_price = round(reference_price * (1.0 - float(ts.fallback_fixed_pct) / 100.0), 2)
+    else:
+        # comportement historique inchangé
+        stop_price = round(reference_price * (1.0 - float(config.manual_buy_stop_loss_pct)), 2)
+
     if stop_price <= 0 or stop_price >= reference_price:
         return None
 

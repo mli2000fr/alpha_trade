@@ -390,7 +390,14 @@ def _render_launchable_step_panel(
                 _alpha_scanner_dependency_block_reason(dependency_diagnostic) if step.key == "alpha_scanner" else None
             )
             active_for_step = active_by_step.get(step.key, [])
-            companion_active_runs = active_by_step.get("import_news_pending_loop", []) if step.key == "sentiment_pipeline" else []
+            companion_active_runs = (
+                [
+                    *active_by_step.get("import_news_pending_loop", []),
+                    *active_by_step.get("score_history_relevance_backfill_auto", []),
+                ]
+                if step.key == "sentiment_pipeline"
+                else []
+            )
             if active_for_step:
                 st.info(f"{len(active_for_step)} run(s) actif(s) pour cette étape.")
                 for run in active_for_step:
@@ -419,7 +426,8 @@ def _render_launchable_step_panel(
                     run_ids = ", ".join(f"`{run.get('run_id', '')}`" for run in companion_active_runs)
                     st.warning(
                         "Le lancement manuel du Sentiment Pipeline est temporairement désactivé : "
-                        f"un run `Import News + scoring + backfill auto` est déjà actif ({run_ids})."
+                        "un run auto 7.bis (avec ou sans import) est déjà actif "
+                        f"({run_ids})."
                     )
 
                 if run_clicked:

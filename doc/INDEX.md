@@ -1,24 +1,27 @@
 # Index de la documentation Alpha Trade
 
-> Généré automatiquement par `scripts/generate_doc_index.py` le 2026-05-06.
-> 49 documents indexés.
+> Généré automatiquement par `scripts/generate_doc_index.py` le 2026-05-11.
+> 78 documents indexés.
 
 ## Sommaire
 
-* [API & Stabilité](#api-stabilité) (1)
+* [API & Stabilité](#api-stabilité) (4)
 * [Architecture](#architecture) (3)
 * [Conformité & Audit](#conformité-audit) (4)
-* [Divers](#divers) (26)
+* [Divers](#divers) (50)
 * [Documentation utilisateur](#documentation-utilisateur) (3)
-* [Performance](#performance) (3)
+* [Performance](#performance) (4)
 * [Runbooks & Ops](#runbooks-ops) (3)
-* [Tests & Vérification](#tests-vérification) (6)
+* [Tests & Vérification](#tests-vérification) (7)
 
 ## API & Stabilité
 
 | Document | Titre | Description |
 |---|---|---|
+| [`manuel/01_demarrage_rapide.md`](manuel/01_demarrage_rapide.md) | 1. Démarrage rapide — installer et lancer l'IHM | Objectif : à la fin de ce manuel vous voyez la page d'accueil de l'IHM |
+| [`manuel/20_gestion_petit_capital_2000eur.md`](manuel/20_gestion_petit_capital_2000eur.md) | 20. Guide micro-compte ~2 000 € — paramétrage et bonnes pratiques | Ce manuel est **incontournable** si vous démarrez avec ~2 000 € (~2 150 USD). |
 | [`api_v1_stability_policy.md`](api_v1_stability_policy.md) | Politique de stabilité API v1.0 | Phase C / S18.2. |
+| [`audit/preset_petit_capital_2000eur.md`](audit/preset_petit_capital_2000eur.md) | Preset micro-compte (~2 000 €) — analyse & justification | **Sprint S26** — adaptation du paramétrage swing trade pour un capital initial |
 
 ## Architecture
 
@@ -41,8 +44,28 @@
 
 | Document | Titre | Description |
 |---|---|---|
+| [`manuel/00_README.md`](manuel/00_README.md) | 📖 Manuels utilisateur — Alpha Trade IHM | **Public visé** : utilisateur débutant, n'ayant **jamais** utilisé |
+| [`manuel/02_premiers_pas_ihm.md`](manuel/02_premiers_pas_ihm.md) | 2. Premiers pas dans l'IHM — visite guidée | Objectif : comprendre la structure de l'interface. **Aucun lancement** ici, |
+| [`manuel/03_workflow_quotidien.md`](manuel/03_workflow_quotidien.md) | 3. Workflow quotidien — comprendre le cycle complet | Objectif : comprendre **dans quel ordre** les choses doivent être lancées |
+| [`manuel/04_page_pipeline.md`](manuel/04_page_pipeline.md) | 4. Page 🔄 Pipeline — orchestrer le cycle quotidien | C'est la page la plus utilisée. Elle permet de : |
+| [`manuel/05_page_screening.md`](manuel/05_page_screening.md) | 5. Page 📊 Screening — l'univers des candidats | Consulter la table `stock_scores` produite par les étapes Screener + |
+| [`manuel/06_page_ml_predictions.md`](manuel/06_page_ml_predictions.md) | 6. Page 🤖 ML / Prédictions — comprendre le modèle d'IA | Voir et gérer les **modèles de Machine Learning** qui prédisent la |
+| [`manuel/07_page_risk.md`](manuel/07_page_risk.md) | 7. Page ⚖️ Risk — gestion du risque | Voir les **décisions de risque** : combien acheter de chaque ligne, où |
+| [`manuel/08_page_execution.md`](manuel/08_page_execution.md) | 8. Page 🚀 Execution — envoyer les ordres au broker | Voir et superviser les **runs d'exécution** : quels ordres ont été envoyés |
+| [`manuel/09_page_corporate_actions.md`](manuel/09_page_corporate_actions.md) | 9. Page 📑 Corporate Actions — dividendes, splits, etc. | Voir les **événements corporate** (dividendes, splits, fusions, spin-offs) |
+| [`manuel/11_page_parity.md`](manuel/11_page_parity.md) | 11. Page 🔀 Parité Backtest ↔ Live | Comparer les décisions **simulées** (backtest) aux décisions **réelles** |
+| [`manuel/12_page_supervision_ops.md`](manuel/12_page_supervision_ops.md) | 12. Page 🛟 Supervision Ops | Surveiller les **processus en arrière-plan** : pipeline qui tournent encore, |
+| [`manuel/17_page_settings.md`](manuel/17_page_settings.md) | 17. Page ⚙️ Paramètres / Santé | ML, Sentiment, Execution). |
+| [`manuel/30_glossaire_financier.md`](manuel/30_glossaire_financier.md) | 30. Glossaire financier | Définitions volontairement simples, en français, illustrées. |
+| [`manuel/31_glossaire_application.md`](manuel/31_glossaire_application.md) | 31. Glossaire technique de l'application | Termes spécifiques au code, à la base de données et aux artefacts. |
+| [`manuel/40_workflow_type_swing_2000eur.md`](manuel/40_workflow_type_swing_2000eur.md) | 40. Workflow type swing trader débutant ~2 000 € | Journée type, heure par heure, pour une routine **swing trade discipline |
+| [`manuel/50_faq.md`](manuel/50_faq.md) | 50. FAQ — questions fréquentes des débutants | Comptez **6 mois minimum** : 2 mois en simulate + 3 mois en paper + |
+| [`manuel/51_depannage.md`](manuel/51_depannage.md) | 51. Dépannage | ```powershell |
+| [`manuel/52_securite_et_argent_reel.md`](manuel/52_securite_et_argent_reel.md) | 52. Sécurité & passage en argent réel — checklist obligatoire | ⚠️ **Lisez ce document en entier avant tout passage en mode `live`.** |
+| [`manuel/99_pour_aller_plus_loin.md`](manuel/99_pour_aller_plus_loin.md) | 99. Pour aller plus loin | Vous maîtrisez l'IHM. Voici la documentation **avancée** pour comprendre |
 | [`DOC_FONCTIONNELLE.md`](DOC_FONCTIONNELLE.md) | Alpha Trade — Documentation Fonctionnelle | *Version : 0.3.0 — Dernière mise à jour : mai 2026* |
 | [`DOC_TECHNIQUE.md`](DOC_TECHNIQUE.md) | Init (une fois) — correspond dans l'IHM aux steps auxiliaires Data Integrity hors workflow quotidien : | python -m dataIntegrityEngine.import_alpaca_assets |
+| [`EODHD_vs_Alpaca.md`](EODHD_vs_Alpaca.md) | EODHD vs Alpaca (IEX) — usage réel du volume dans l'application | Date d'analyse : 2026-05-10 |
 | [`onboarding_assets/README.md`](onboarding_assets/README.md) | Assets vidéo onboarding | Sprint S25.3 — Phase G. |
 | [`artifacts_retention_policy.md`](artifacts_retention_policy.md) | Politique de rétention `artifacts/` (Sprint S4 — A-023) | **Audience** : opérateurs / DevOps. |
 | [`core_common.md`](core_common.md) | `core/` + `common/` — Modules de socle | Documentation Phase 2.1 du refactor (`prompt/refactor/plan.md`). |
@@ -55,6 +78,8 @@
 | [`execution_engine.md`](execution_engine.md) | Execution Engine — Guide d'usage | Ce document résume le fonctionnement du module `execution_engine/` et les commandes utiles pour : |
 | [`ibkr_setup.md`](ibkr_setup.md) | Configuration TWS / IB Gateway pour Alpha Trade — Sprint S21.3 | Ce document décrit la qualification d'un environnement Interactive Brokers |
 | [`ihm.md`](ihm.md) | IHM — Guide d'usage | Ce document résume le fonctionnement du module `ihm/` et les commandes utiles pour : |
+| [`audit/matrice_ihm_cli.md`](audit/matrice_ihm_cli.md) | Matrice IHM ↔ CLI — couverture des fonctionnalités | **Sprint S26 — gaps comblés (2026-05-06)** : tous les gaps P1, P2 et P3 |
+| [`mode_regime.md`](mode_regime.md) | FAQ et Explications — Mode régime Market-Aware | Avec la config corrigée, le comportement normal est : |
 | [`modelFactory.md`](modelFactory.md) | Model Factory — Référence complète | `modelFactory/` est le module ML opérationnel du projet. Il ne se limite plus à un simple entraînement LSTM par symbole. |
 | [`observability.md`](observability.md) | Observabilité — Endpoint `/metrics` Prometheus (Phase 7.5) | **Audience** : opérateurs Alpha Trade. |
 | [`phase_f_implementation.md`](phase_f_implementation.md) | Phase F — Mesures effectives (Sprints S22 + S23) — Récap d'implémentation | Statut : **infrastructure livrée et fonctionnelle** ; les itérations |
@@ -64,6 +89,8 @@
 | [`sandbox_health_runbook.md`](sandbox_health_runbook.md) | Runbook — Sandbox health (régression nightly) | Sprint S24.2 — Phase G. |
 | [`screener.md`](screener.md) | Screener — Guide d'usage | Ce document résume le fonctionnement du module `screener/` et les commandes utiles pour : |
 | [`selector.md`](selector.md) | Selector — Guide d'usage | Ce document résume le fonctionnement du module `selector/` et les commandes utiles pour : |
+| [`sentiment_issue.md`](sentiment_issue.md) | Diagnostic et reprise — pipeline `event_sentiment` | Ce document trace le diagnostic, les corrections apportées et la reprise opératoire effectuée pour le pipeline sentiment, avec priorité sur  |
+| [`sentiments_migration.md`](sentiments_migration.md) | Migration des résultats du pipeline « Import + score + history_backfill + relevance_backfill auto » | Date d'analyse : 2026-05-10 |
 | [`service.md`](service.md) | Service — Guide d'usage | Ce document résume le rôle du dossier `service/` et les usages utiles pour : |
 | [`tlaps_proofs.md`](tlaps_proofs.md) | Preuves TLAPS — Phase G / S24.3 | Sprint S24.3 — Engagement consultant TLA+ + livrables CI. |
 | [`watcher.md`](watcher.md) | Watcher de protections — guide dédié | Ce document décrit le rôle, le positionnement et l'exploitation du watcher de protections post-exécution. |
@@ -80,6 +107,7 @@
 
 | Document | Titre | Description |
 |---|---|---|
+| [`async_db_benchmark.md`](async_db_benchmark.md) | Async DB benchmark — Sprint S28.4 / A10 | Méthodologie : sqlite in-memory (CI), même schéma seedé sur les 2 engines. |
 | [`async_db_poc.md`](async_db_poc.md) | POC async DB I/O — asyncpg / aiosqlite (Phase F / S23.3) | Cible : 3 loaders read-only chauds portés en async, parité résultat |
 | [`perf_hotspots.md`](perf_hotspots.md) | Profiling des 3 hotspots (Phase F / S23.2) | Outil : [`scripts/profile_hotspot.py`](../scripts/profile_hotspot.py) |
 | [`perf_pipeline.md`](perf_pipeline.md) | Pipeline complet — performance < 3 min sur 5 000 symboles (Phase F / S23.4) | Cible : `screener → selector → risk → execution(dry-run)` en **< 180 s** |
@@ -96,6 +124,7 @@
 
 | Document | Titre | Description |
 |---|---|---|
+| [`manuel/10_page_backtesting.md`](manuel/10_page_backtesting.md) | 10. Page 🧪 Backtesting — tester sur l'historique | Simuler la stratégie sur **plusieurs années passées** pour mesurer ses |
 | [`backtesting.md`](backtesting.md) | Backtesting & Backfill — guide d’usage | Mise à jour : mai 2026 |
 | [`backtesting_report_schema.md`](backtesting_report_schema.md) | Glossaire `report.json` — module `backtesting` | Référence des champs publiés dans `<output_dir>/report.json` après chaque |
 | [`formal_verification.md`](formal_verification.md) | Vérification formelle — Phase C / S15 | Établir, par modélisation logique exécutable et par spécifications |

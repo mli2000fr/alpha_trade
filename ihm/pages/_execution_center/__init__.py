@@ -594,12 +594,12 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         ).strip().upper()
 
     provider_col, mode_col = st.columns(2)
-    _provider_options = ("alpaca", "finnhub")
+    _provider_options = ("eodhd", "alpaca", "finnhub")
     _current_provider = str(
-        st.session_state.get("pipeline_sentiment_news_provider", "alpaca")
+        st.session_state.get("pipeline_sentiment_news_provider", "eodhd")
     ).strip().lower()
     if _current_provider not in _provider_options:
-        _current_provider = "alpaca"
+        _current_provider = "eodhd"
     with provider_col:
         sentiment_news_provider = str(
             st.selectbox(
@@ -609,8 +609,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 key="pipeline_sentiment_news_provider",
                 help=(
                     "Provider news utilisé par `python -m event_sentiment`. "
-                    "Défaut produit : Alpaca. Bascule possible vers Finnhub "
-                    "sans migration DB (les checkpoints sont séparés par source)."
+                    "Défaut produit : EODHD (Financial News Feed). "
+                    "Bascule possible vers Alpaca ou Finnhub sans migration "
+                    "DB (les checkpoints sont séparés par source_name)."
                 ),
             )
         )
@@ -3118,7 +3119,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             sentiment_start_utc=sentiment_start_utc or None,
             sentiment_end_utc=sentiment_end_utc or None,
             sentiment_symbols=sentiment_symbols or None,
-            sentiment_news_provider=sentiment_news_provider or "alpaca",
+            sentiment_news_provider=sentiment_news_provider or "eodhd",
             sentiment_ticker_relevance_mode=sentiment_ticker_relevance_mode or "provider_default",
             sentiment_min_relevance_score=float(sentiment_min_relevance_score) if sentiment_min_relevance_score else None,
             sentiment_enable_contextual_scoring=bool(sentiment_enable_contextual_scoring),
