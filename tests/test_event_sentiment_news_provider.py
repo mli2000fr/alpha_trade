@@ -46,6 +46,7 @@ def test_config_for_provider_finnhub_sets_source_name() -> None:
     assert cfg.news_provider == "finnhub"
     assert cfg.source_name == "finnhub_news"
     assert cfg.provider_name == "finnhub"
+    assert cfg.allow_sector_fallback is True
 
 
 def test_config_for_provider_alpaca_keeps_legacy_names() -> None:
@@ -53,6 +54,7 @@ def test_config_for_provider_alpaca_keeps_legacy_names() -> None:
     assert cfg.news_provider == "alpaca"
     assert cfg.source_name == "alpaca_news"
     assert cfg.provider_name == "alpaca"
+    assert cfg.allow_sector_fallback is True
 
 
 def test_config_rejects_unknown_provider() -> None:
@@ -69,6 +71,7 @@ def test_config_for_provider_eodhd_sets_source_name() -> None:
     assert cfg.news_provider == "eodhd"
     assert cfg.source_name == "eodhd_news"
     assert cfg.provider_name == "eodhd"
+    assert cfg.allow_sector_fallback is False
 
 
 def test_event_sentiment_config_default_provider_is_eodhd() -> None:
@@ -76,6 +79,12 @@ def test_event_sentiment_config_default_provider_is_eodhd() -> None:
     assert cfg.news_provider == "eodhd"
     assert cfg.source_name == "eodhd_news"
     assert cfg.provider_name == "eodhd"
+    assert cfg.allow_sector_fallback is False
+
+
+def test_config_for_provider_eodhd_keeps_explicit_sector_fallback_override() -> None:
+    cfg = EventSentimentConfig.for_provider("eodhd", allow_sector_fallback=True)
+    assert cfg.allow_sector_fallback is True
 
 
 # --- Dispatch dans NewsIngestionService ----------------------------------
@@ -184,6 +193,58 @@ def test_ingestion_routes_to_eodhd_provider(monkeypatch: pytest.MonkeyPatch) -> 
     assert summary["fetched"] == 1
     assert summary["landed"] == 1
     assert summary["ticker_maps"] == 1
+
+
+def test_ingestion_disables_sector_fallback_for_eodhd_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payloads = [_make_payload("eodhd-1", ["KAMUX"])]
+    _install_fake_provider(monkeypatch, "eodhd", payloads)
+
+    captured: dict[str, Any] = {"allow_fallback": None}
+
+    class _CapturingMapper:
+        def resolve(self, symbols, allow_fallback: bool = True):  # type: ignore[no-untyped-def]
+            captured["allow_fallback"] = allow_fallback
+            return {}
+
+    monkeypatch.setattr(ingestion_mod, "EntitySectorMapper", _CapturingMapper)
+
+    cfg = EventSentimentConfig.for_provider("eodhd")
+    service = ingestion_mod.NewsIngestionService(_StubRepo(), cfg)
+    service.run(
+        start_utc=datetime(2026, 4, 15, tzinfo=timezone.utc),
+        end_utc=datetime(2026, 4, 16, tzinfo=timezone.utc),
+        symbols=["KAMUX"],
+    )
+
+    assert captured["allow_fallback"] is False
+
+
+def test_ingestion_allows_explicit_sector_fallback_override_for_eodhd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payloads = [_make_payload("eodhd-1", ["KAMUX"])]
+    _install_fake_provider(monkeypatch, "eodhd", payloads)
+
+    captured: dict[str, Any] = {"allow_fallback": None}
+
+    class _CapturingMapper:
+        def resolve(self, symbols, allow_fallback: bool = True):  # type: ignore[no-untyped-def]
+            captured["allow_fallback"] = allow_fallback
+            return {}
+
+    monkeypatch.setattr(ingestion_mod, "EntitySectorMapper", _CapturingMapper)
+
+    cfg = EventSentimentConfig.for_provider("eodhd", allow_sector_fallback=True)
+    service = ingestion_mod.NewsIngestionService(_StubRepo(), cfg)
+    service.run(
+        start_utc=datetime(2026, 4, 15, tzinfo=timezone.utc),
+        end_utc=datetime(2026, 4, 16, tzinfo=timezone.utc),
+        symbols=["KAMUX"],
+    )
+
+    assert captured["allow_fallback"] is True
 
 
 def test_ingestion_filters_articles_with_too_many_tickers(monkeypatch: pytest.MonkeyPatch) -> None:

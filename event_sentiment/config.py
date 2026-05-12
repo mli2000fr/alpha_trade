@@ -36,7 +36,10 @@ class EventSentimentConfig:
     finbert_batch_size: int = 16
     finbert_max_length: int = 256
 
-    allow_sector_fallback: bool = True
+    # Enrichissement secteur optionnel via fallback réseau (actuellement Finnhub).
+    # Par défaut on le laisse désactivé pour EODHD afin d'éviter des appels
+    # externes implicites hors provider news choisi.
+    allow_sector_fallback: bool = False
     sentiment_pending_limit: int = 1000
     feature_version: str = "v2"
     macro_rule_version: str = "macro_rules_v1"
@@ -133,6 +136,8 @@ class EventSentimentConfig:
             "source_name": source_name,
             "provider_name": provider_name,
         }
+        if "allow_sector_fallback" not in overrides:
+            kwargs["allow_sector_fallback"] = news_provider != "eodhd"
         kwargs.update(overrides)
         return cls(**kwargs)  # type: ignore[arg-type]
 
