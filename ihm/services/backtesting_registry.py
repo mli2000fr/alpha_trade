@@ -303,6 +303,7 @@ def start_backtesting_run(
     from ihm.services.pipeline_lock import (
         PipelineLockBusy,
         acquire_lock as _acquire_lock,
+        rebind_lock_pid as _rebind_lock_pid,
     )
 
     run_id = f"{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
@@ -344,6 +345,7 @@ def start_backtesting_run(
         bufsize=1,
         creationflags=_creation_flags(),
     )
+    backtest_lock = _rebind_lock_pid(backtest_lock, pid=process.pid)
 
     events: queue.Queue[tuple[str, str]] = queue.Queue()
     stdout_thread = threading.Thread(target=_reader, args=(process.stdout, "stdout", events), daemon=True)

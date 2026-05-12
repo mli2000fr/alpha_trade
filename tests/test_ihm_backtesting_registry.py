@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 
@@ -82,4 +83,36 @@ def test_backtesting_log_available_checks_existing_file(tmp_path: Path, monkeypa
 
     assert backtesting_registry.backtesting_log_available("run-1", stream="all") is True
     assert backtesting_registry.read_backtesting_logs("run-1", stream="all") == "hello"
+
+
+def test_start_backtesting_run_rebinds_pipeline_lock_to_child_pid(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import backtesting_registry, pipeline_lock
+    from ihm.services.backtesting_runner import BacktestRunOptions
+
+    runs_dir = tmp_path / "ihm_runs"
+    locks_dir = tmp_path / "locks"
+
+    monkeypatch.setattr(backtesting_registry, "RUNS_DIR", runs_dir)
+    monkeypatch.setattr(backtesting_registry, "HISTORY_INDEX_PATH", runs_dir / "history_index.json")
+    monkeypatch.setattr(backtesting_registry, "_ACTIVE_RUNS", {})
+    monkeypatch.setattr(backtesting_registry, "build_subprocess_env", lambda db_config=None: {})
+    monkeypatch.setattr(backtesting_registry.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(backtesting_registry.threading, "Thread", _FakeThread)
+    pipeline_lock.set_locks_dir_for_tests(locks_dir)
+
+    try:
+        record = backtesting_registry.start_backtesting_run(
+            "run",
+            "Backtesting run",
+            BacktestRunOptions(start="2026-01-01"),
+        )
+
+        lock_path = locks_dir / "backtesting.lock"
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        assert record.run_id == payload["run_id"]
+        assert payload["owner"] == "backtesting:run"
+        assert payload["pid"] == 4242
+    finally:
+        pipeline_lock.set_locks_dir_for_tests(None)
+
 

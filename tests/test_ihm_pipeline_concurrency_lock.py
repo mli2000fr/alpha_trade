@@ -88,6 +88,21 @@ def test_stale_lock_dead_pid_is_reclaimed(tmp_path: Path):
         release_lock(handle)
 
 
+def test_list_active_locks_purges_stale_file(tmp_path: Path):
+    fake_payload = {
+        "scope": "backtesting",
+        "owner": "ghost",
+        "run_id": "stale-cleanup",
+        "pid": 999999999,
+        "acquired_at": "2026-01-01T00:00:00",
+    }
+    lock_path = tmp_path / "backtesting.lock"
+    lock_path.write_text(json.dumps(fake_payload), encoding="utf-8")
+
+    assert list_active_locks() == []
+    assert not lock_path.exists()
+
+
 def test_stale_lock_live_reused_pid_is_reclaimed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     fake_payload = {
         "scope": "pipeline",
