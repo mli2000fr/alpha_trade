@@ -230,6 +230,36 @@ class EventSentimentRepository:
             rows = conn.execute(stmt, {"article_ids": article_ids}).fetchall()
         return {str(row[0]) for row in rows}
 
+    def get_article_ids_by_dedupe_hashes(
+        self,
+        ingestion_source: str,
+        dedupe_hashes: list[str],
+    ) -> dict[str, str]:
+        normalized_hashes = sorted({str(value).strip() for value in dedupe_hashes if str(value).strip()})
+        if not normalized_hashes:
+            return {}
+        stmt = text(
+            """
+            SELECT dedupe_hash, article_id
+            FROM news_raw
+            WHERE ingestion_source = :ingestion_source
+              AND dedupe_hash IN :dedupe_hashes
+            """
+        ).bindparams(bindparam("dedupe_hashes", expanding=True))
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                stmt,
+                {
+                    "ingestion_source": str(ingestion_source).strip().lower(),
+                    "dedupe_hashes": normalized_hashes,
+                },
+            ).mappings().all()
+        return {
+            str(row["dedupe_hash"]): str(row["article_id"])
+            for row in rows
+            if row.get("dedupe_hash") and row.get("article_id")
+        }
+
     def upsert_news_raw(self, records: list[dict[str, Any]]) -> int:
         serializable: list[dict[str, Any]] = []
         for row in records:

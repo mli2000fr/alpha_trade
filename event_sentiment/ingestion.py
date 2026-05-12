@@ -125,6 +125,26 @@ class NewsIngestionService:
             return watermark.replace(tzinfo=timezone.utc) - timedelta(minutes=self.config.checkpoint_overlap_minutes)
         return end_utc - timedelta(days=self.config.initial_backfill_days)
 
+    def _resolve_persisted_article_ids(
+        self,
+        raw_rows: list[dict[str, Any]],
+    ) -> dict[str, str]:
+        resolver = getattr(self.repository, "get_article_ids_by_dedupe_hashes", None)
+        if not callable(resolver) or not raw_rows:
+            return {
+                str(row["article_id"]): str(row["article_id"])
+                for row in raw_rows
+                if row.get("article_id")
+            }
+        dedupe_hashes = [str(row["dedupe_hash"]) for row in raw_rows if row.get("dedupe_hash")]
+        canonical_by_hash = resolver(self.config.provider_name, dedupe_hashes)
+        resolved: dict[str, str] = {}
+        for row in raw_rows:
+            article_id = str(row["article_id"])
+            dedupe_hash = str(row.get("dedupe_hash") or "")
+            resolved[article_id] = canonical_by_hash.get(dedupe_hash, article_id)
+        return resolved
+
     def _run_symbol(
         self,
         symbol: str,
@@ -272,7 +292,24 @@ class NewsIngestionService:
                                 row["relevance_components"] = relevance.components
                             ticker_rows.append(row)
                     summary["landed"] += self.repository.upsert_news_raw(raw_rows)
-                    summary["ticker_maps"] += self.repository.upsert_news_ticker_map(ticker_rows)
+                    persisted_article_ids = self._resolve_persisted_article_ids(raw_rows)
+                    remapped_ticker_rows: list[dict[str, Any]] = []
+                    remapped_pairs = 0
+                    for row in ticker_rows:
+                        payload = dict(row)
+                        canonical_article_id = persisted_article_ids.get(payload["article_id"], payload["article_id"])
+                        if canonical_article_id != payload["article_id"]:
+                            remapped_pairs += 1
+                            payload["article_id"] = canonical_article_id
+                        remapped_ticker_rows.append(payload)
+                    if remapped_pairs:
+                        LOGGER.info(
+                            "Remap article_id appliqué avant news_ticker_map | provider=%s symbol=%s remapped_pairs=%s",
+                            self.config.provider_name,
+                            symbol,
+                            remapped_pairs,
+                        )
+                    summary["ticker_maps"] += self.repository.upsert_news_ticker_map(remapped_ticker_rows)
                     watermark = max(article.published_at_utc for article in normalized).replace(tzinfo=None)
                     self.repository.upsert_checkpoint(self.config.source_name, symbol, watermark, next_token, "running")
                     page_token = next_token

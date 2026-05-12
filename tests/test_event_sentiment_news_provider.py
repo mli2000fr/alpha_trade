@@ -94,6 +94,9 @@ class _StubRepo:
     def get_existing_article_ids(self, ids: list[str]) -> list[str]:
         return []
 
+    def get_article_ids_by_dedupe_hashes(self, ingestion_source: str, dedupe_hashes: list[str]) -> dict[str, str]:
+        return {}
+
     def upsert_news_raw(self, rows: list[dict[str, Any]]) -> int:
         return len(rows)
 
@@ -265,3 +268,84 @@ def test_ingestion_scored_mode_filters_below_threshold(monkeypatch: pytest.Monke
     assert summary["relevance_filtered"] == 1
     assert summary["ticker_maps"] == 1
     assert all(row["symbol"] == "AAPL" for row in repo.ticker_map_rows)
+
+
+def test_ingestion_remaps_ticker_rows_to_persisted_article_id_on_dedupe_collision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _DedupingRepo:
+        def __init__(self) -> None:
+            self.checkpoints: dict[str, dict[str, Any]] = {}
+            self.news_raw: dict[str, dict[str, Any]] = {}
+            self.article_id_by_hash: dict[tuple[str, str], str] = {}
+            self.ticker_map_rows: list[dict[str, Any]] = []
+
+        def get_checkpoint(self, source_name: str, symbol: str) -> dict[str, Any] | None:
+            return self.checkpoints.get(symbol)
+
+        def upsert_checkpoint(self, source_name: str, symbol: str, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            self.checkpoints[symbol] = {"source_name": source_name, "symbol": symbol}
+
+        def get_existing_article_ids(self, ids: list[str]) -> list[str]:
+            return [article_id for article_id in ids if article_id in self.news_raw]
+
+        def upsert_news_raw(self, rows: list[dict[str, Any]]) -> int:
+            for row in rows:
+                dedupe_key = (str(row["ingestion_source"]), str(row["dedupe_hash"]))
+                if dedupe_key in self.article_id_by_hash:
+                    canonical_article_id = self.article_id_by_hash[dedupe_key]
+                    self.news_raw[canonical_article_id].update(dict(row))
+                    self.news_raw[canonical_article_id]["article_id"] = canonical_article_id
+                else:
+                    canonical_article_id = str(row["article_id"])
+                    self.article_id_by_hash[dedupe_key] = canonical_article_id
+                    self.news_raw[canonical_article_id] = dict(row)
+            return len(rows)
+
+        def get_article_ids_by_dedupe_hashes(self, ingestion_source: str, dedupe_hashes: list[str]) -> dict[str, str]:
+            return {
+                dedupe_hash: article_id
+                for dedupe_hash in dedupe_hashes
+                if (article_id := self.article_id_by_hash.get((ingestion_source, dedupe_hash))) is not None
+            }
+
+        def upsert_news_ticker_map(self, rows: list[dict[str, Any]]) -> int:
+            for row in rows:
+                assert row["article_id"] in self.news_raw
+                self.ticker_map_rows.append(dict(row))
+            return len(rows)
+
+    def _fake_iter(start_utc, end_utc, symbols=None, limit=50, page_token=None, session=None):  # type: ignore[no-untyped-def]
+        requested_symbol = str((symbols or [""])[0]).upper()
+        yield [
+            {
+                "id": f"story-{requested_symbol}",
+                "created_at": datetime(2026, 4, 15, 12, tzinfo=timezone.utc).isoformat(),
+                "headline": "Shared market story",
+                "summary": "Same provider article returned for multiple symbols",
+                "source": "Reuters",
+                "url": "https://example.test/shared-story",
+                "symbols": [requested_symbol],
+            }
+        ], None
+
+    monkeypatch.setitem(ingestion_mod.NEWS_PROVIDERS, "eodhd", _fake_iter)
+
+    repo = _DedupingRepo()
+    cfg = EventSentimentConfig.for_provider("eodhd")
+    service = ingestion_mod.NewsIngestionService(repo, cfg)
+
+    summary = service.run(
+        start_utc=datetime(2026, 4, 15, tzinfo=timezone.utc),
+        end_utc=datetime(2026, 4, 16, tzinfo=timezone.utc),
+        symbols=["AAPL", "MSFT"],
+    )
+
+    assert summary["landed"] == 2
+    assert summary["ticker_maps"] == 2
+    assert len(repo.news_raw) == 1
+    assert len(repo.ticker_map_rows) == 2
+    canonical_article_ids = {row["article_id"] for row in repo.ticker_map_rows}
+    assert canonical_article_ids == {next(iter(repo.news_raw))}
+    assert {row["symbol"] for row in repo.ticker_map_rows} == {"AAPL", "MSFT"}
+

@@ -15,9 +15,10 @@ Spécificités EODHD :
 * La fenêtre est exprimée en dates calendaires : on filtre côté client
   pour respecter la fenêtre UTC fine demandée.
 * EODHD ne fournit pas d'identifiant article stable : on construit un
-  hash déterministe sur ``url|date|title|symbole_interrogé`` (cf.
-  pattern ``_stable_article_id`` de Finnhub) afin de préserver
-  l'unicité ``(ingestion_source, dedupe_hash)`` de ``news_raw``.
+  hash déterministe sur ``url|date|title`` indépendant du symbole
+  interrogé, afin qu'un même article multi-tickers retombe sur un
+  ``article_id`` canonique cohérent avec l'unicité
+  ``(ingestion_source, dedupe_hash)`` de ``news_raw``.
 * Les requêtes acceptent indifféremment un symbole projet ``AAPL`` ou déjà
   natif provider ``AAPL.US``. Pour l'appel HTTP, on conserve le format
   provider natif ; pour le downstream `event_sentiment`, on normalise quand
@@ -98,13 +99,8 @@ def _get_base_url() -> str:
 
 def _stable_article_id(symbol: str, raw: dict[str, Any]) -> str:
     """Identifiant déterministe — EODHD n'expose pas d'``id`` stable."""
-    try:
-        stable_symbol = to_eodhd(str(symbol or "").strip().upper())
-    except ValueError:
-        stable_symbol = str(symbol or "").strip().upper()
     parts = "|".join(
         [
-            stable_symbol,
             str(raw.get("link") or raw.get("url") or ""),
             str(raw.get("title") or raw.get("headline") or ""),
             str(raw.get("date") or ""),

@@ -16,8 +16,9 @@ Différences de fond avec Alpaca :
   ``_normalize_article`` accepte ``content=None``.
 * L'identifiant ``id`` Finnhub est numérique et stable la majorité du
   temps. En fallback on construit un hash déterministe sur des champs
-  stables (``url`` / ``headline`` / ``datetime``) pour préserver
-  l'unicité ``(ingestion_source, dedupe_hash)`` de ``news_raw``.
+  stables (``url`` / ``headline`` / ``datetime``) indépendant du symbole
+  interrogé, pour rester cohérent avec l'unicité
+  ``(ingestion_source, dedupe_hash)`` de ``news_raw``.
 """
 
 from __future__ import annotations
@@ -97,7 +98,6 @@ def _stable_article_id(symbol: str, raw: dict[str, Any]) -> str:
     """Identifiant déterministe quand ``id`` Finnhub est manquant / instable."""
     parts = "|".join(
         [
-            symbol,
             str(raw.get("url") or ""),
             str(raw.get("headline") or ""),
             str(raw.get("datetime") or ""),

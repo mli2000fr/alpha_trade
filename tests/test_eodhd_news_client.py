@@ -143,7 +143,18 @@ def test_stable_article_id_is_deterministic() -> None:
     aid2 = news_client._stable_article_id("AAPL", raw)
     aid3 = news_client._stable_article_id("MSFT", raw)
     assert aid1 == aid2
-    assert aid1 != aid3
+    assert aid1 == aid3
+
+
+def test_stable_article_id_changes_when_article_content_changes() -> None:
+    raw1 = _raw_article(
+        title="t", date_iso="2026-04-15T14:00:00+00:00", link="https://x/1"
+    )
+    raw2 = _raw_article(
+        title="t", date_iso="2026-04-15T14:00:00+00:00", link="https://x/2"
+    )
+
+    assert news_client._stable_article_id("AAPL", raw1) != news_client._stable_article_id("AAPL", raw2)
 
 
 def test_fetch_news_page_filters_outside_window(monkeypatch: pytest.MonkeyPatch) -> None:
