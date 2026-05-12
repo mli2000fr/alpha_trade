@@ -497,6 +497,8 @@ Points de vigilance :
 - si le sentiment provider EODHD est pris en compte au-delà du simple audit, couvrir les tests garantissant qu’on ne casse pas le scoring FinBERT existant
 - si aucun changement downstream n’est nécessaire, le démontrer dans l’analyse / tests
 
+9. si la modification des schéma des tables de la base de données est nécessaire, je suis partant et pas besoin réfléchir la rétrocompatibilié des données car je vais tous importer à nouveau (mais n'oubliez pas de mettre à jour les sql ainsi .
+
 ### Validation à exécuter
 
 Après implémentation, exécuter au minimum les tests pertinents ciblés, puis élargir si possible.
