@@ -97,9 +97,9 @@ def resolve_symbols_from_inputs(
     if symbol_source == "stock_scores_all":
         return _normalize_symbols(get_all_symbols_from_stock_scores_all()), "stock_scores_all"
 
-    if symbol_source != "stock_scores" and logger is not None:
-        logger.warning("Source de symboles inconnue '%s' ; fallback stock_scores.", symbol_source)
-    return _normalize_symbols(get_all_symbols_from_stock_scores(candidates_only=False)), "stock_scores"
+    if symbol_source != "stock_scores_all" and logger is not None:
+        logger.warning("Source de symboles inconnue '%s' ; fallback stock_scores_all.", symbol_source)
+    return _normalize_symbols(get_all_symbols_from_stock_scores_all()), "stock_scores_all"
 
 
 def resolve_symbols(
@@ -147,7 +147,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Importe les news sur une période donnée pour un univers de symboles ciblé. "
-            "Par défaut, l'univers provient de stock_scores pour éviter les imports trop larges."
+            "Par défaut, l'univers provient de stock_scores_all pour couvrir l'union du snapshot courant et de l'historique PIT."
         )
     )
     parser.add_argument("--start-date", type=str, required=True, help="Date de début au format YYYY-MM-DD (ex: 2024-05-06)")
@@ -162,11 +162,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--symbol-source",
         type=str,
         choices=("stock_scores", "stock_scores_history", "stock_scores_all", "candidates", "stock_bars_daily"),
-        default="stock_scores",
+        default="stock_scores_all",
         help=(
-            "Source des symboles à importer. 'stock_scores' (défaut) limite l'univers aux symboles suivis "
-            "par le screener ; 'stock_scores_history' cible les symboles déjà présents dans l'historique PIT ; "
-            "'stock_scores_all' cible l'union dédupliquée des symboles présents dans stock_scores ou stock_scores_history ; "
+            "Source des symboles à importer. 'stock_scores_all' (défaut) cible l'union dédupliquée des symboles présents "
+            "dans stock_scores ou stock_scores_history ; 'stock_scores' limite l'univers aux symboles suivis par le screener ; "
+            "'stock_scores_history' cible les symboles déjà présents dans l'historique PIT ; "
             "'candidates' limite à stock_scores.is_candidate=1 ; 'stock_bars_daily' conserve l'ancien comportement large."
         ),
     )

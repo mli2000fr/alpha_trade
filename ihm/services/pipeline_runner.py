@@ -320,7 +320,7 @@ class PipelineLaunchOptions:
     news_import_start_date: str | None = None
     news_import_end_date: str | None = None
     news_import_symbols: str | None = None
-    news_import_symbol_source: NewsImportSymbolSource = "stock_scores"
+    news_import_symbol_source: NewsImportSymbolSource = "stock_scores_all"
     news_import_max_symbols: int | None = None
     sentiment_start_utc: str | None = None
     sentiment_end_utc: str | None = None
@@ -847,7 +847,7 @@ def _extend_import_news_cli_args(
 ) -> None:
     if symbols:
         command.extend(["--symbols", symbols])
-    elif symbol_source and symbol_source != "stock_scores":
+    elif symbol_source and symbol_source != "stock_scores_all":
         command.extend(["--symbol-source", symbol_source])
 
     if max_symbols is not None and max_symbols > 0:
@@ -863,7 +863,7 @@ def _extend_import_news_powershell_args(
 ) -> None:
     if symbols:
         command_args.extend(["-Symbols", symbols])
-    elif symbol_source and symbol_source != "stock_scores":
+    elif symbol_source and symbol_source != "stock_scores_all":
         command_args.extend(["-SymbolSource", symbol_source])
 
     if max_symbols is not None and max_symbols > 0:
@@ -979,7 +979,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "candidates",
             "stock_bars_daily",
         }
-        else "stock_scores"
+        else "stock_scores_all"
     )
     news_import_max_symbols = (
         int(options.news_import_max_symbols)

@@ -122,10 +122,10 @@ def _render_import_news_panel(
         source_col, cap_col = st.columns(2)
         current_max_symbols = int(options.news_import_max_symbols or 0)
         current_symbol_source = str(
-            st.session_state.get("pipeline_import_news_symbol_source", getattr(options, "news_import_symbol_source", "stock_scores"))
+            st.session_state.get("pipeline_import_news_symbol_source", getattr(options, "news_import_symbol_source", "stock_scores_all"))
         ).strip().lower()
         if current_symbol_source not in NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS:
-            current_symbol_source = "stock_scores"
+            current_symbol_source = "stock_scores_all"
         with source_col:
             news_import_symbol_source = str(
                 st.selectbox(
@@ -134,17 +134,18 @@ def _render_import_news_panel(
                     index=NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS.index(current_symbol_source),
                     key="pipeline_import_news_symbol_source",
                     help=(
-                        "`stock_scores` (défaut) limite l'import aux symboles du snapshot courant `stock_scores` ; "
+                        "`stock_scores_all` (défaut) cible l'union dédupliquée des symboles présents dans `stock_scores` ou `stock_scores_history` ; "
+                        "`stock_scores` limite l'import aux symboles du snapshot courant `stock_scores` ; "
                         "`stock_scores_history` cible les symboles déjà présents dans `stock_scores_history` ; "
-                        "`stock_scores_all` cible l'union dédupliquée des symboles présents dans `stock_scores` ou `stock_scores_history` ; "
                         "`candidates` limite aux seuls candidats ; `stock_bars_daily` réactive l'ancien comportement large."
                     ),
                 )
             )
             st.caption(
-                "Aide rapide : `stock_scores` = snapshot screener courant ; "
+                "Aide rapide : `stock_scores_all` = union `stock_scores` + `stock_scores_history` ; "
+                "`stock_scores` = snapshot screener courant ; "
                 "`stock_scores_history` = historique PIT ; "
-                "`stock_scores_all` = union des deux (un symbole présent dans l'une ou l'autre table est retenu)."
+                "un symbole présent dans l'une ou l'autre table est retenu avec `stock_scores_all`."
             )
         with cap_col:
             news_import_max_symbols_raw = st.number_input(
@@ -169,7 +170,7 @@ def _render_import_news_panel(
         if news_import_symbol_source == "stock_bars_daily":
             st.warning(
                 "Mode large activé : `stock_bars_daily` peut déclencher un import très volumineux. "
-                "Utilisez de préférence `stock_scores`, une shortlist `CSV` ou un cap sécurité."
+                "Utilisez de préférence `stock_scores_all`, `stock_scores`, une shortlist `CSV` ou un cap sécurité."
             )
 
         try:

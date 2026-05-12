@@ -39,7 +39,7 @@ param(
 
     [Parameter()]
     [ValidateSet('stock_scores', 'stock_scores_history', 'stock_scores_all', 'candidates', 'stock_bars_daily')]
-    [string]$SymbolSource = 'stock_scores',
+    [string]$SymbolSource = 'stock_scores_all',
 
     [Parameter()]
     [int]$MaxSymbols = 0,
@@ -289,7 +289,7 @@ function Get-RunWindowUtcBounds {
 function Resolve-ScopedSymbols {
     param(
         [string]$ExplicitSymbolsCsv = '',
-        [string]$SelectedSymbolSource = 'stock_scores'
+        [string]$SelectedSymbolSource = 'stock_scores_all'
     )
 
     $explicitSymbols = @()
@@ -333,11 +333,19 @@ for symbol in get_all_symbols_from_stock_scores_all():
     print(str(symbol).strip().upper())
 "@
         }
-        default {
+        'stock_scores' {
 @"
 from event_sentiment.importe_news import get_all_symbols_from_stock_scores
 
 for symbol in get_all_symbols_from_stock_scores(candidates_only=False):
+    print(str(symbol).strip().upper())
+"@
+        }
+        default {
+@"
+from event_sentiment.importe_news import get_all_symbols_from_stock_scores_all
+
+for symbol in get_all_symbols_from_stock_scores_all():
     print(str(symbol).strip().upper())
 "@
         }
@@ -376,7 +384,7 @@ try {
     if ($NormalizedImportSymbols.Count -gt 0) {
         $importNewsArguments += @('--symbols', $NormalizedImportSymbolsCsv)
     }
-    elseif ($SymbolSource -ne 'stock_scores') {
+    elseif ($SymbolSource -ne 'stock_scores_all') {
         $importNewsArguments += @('--symbol-source', $SymbolSource)
     }
     if ($MaxSymbols -gt 0) {
