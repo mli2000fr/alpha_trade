@@ -27,8 +27,8 @@ param(
     [int]$HistoryBackfillBatchDays = 63,
 
     [Parameter()]
-    [ValidateSet('alpaca', 'finnhub')]
-    [string]$NewsProvider = 'alpaca',
+    [ValidateSet('alpaca', 'finnhub', 'eodhd')]
+    [string]$NewsProvider = 'eodhd',
 
     [Parameter()]
     [ValidateSet('provider_default', 'strict', 'scored')]
