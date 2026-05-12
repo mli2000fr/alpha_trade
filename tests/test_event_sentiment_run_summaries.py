@@ -75,8 +75,8 @@ def test_event_sentiment_cli_main_emits_structured_summary(monkeypatch, capsys) 
 
     class _FakeConfig:
         def __init__(self, **_: object) -> None:
-            self.news_provider = "alpaca"
-            self.source_name = "alpaca_news"
+            self.news_provider = "eodhd"
+            self.source_name = "eodhd_news"
             self.provider_ticker_relevance_mode = "provider_default"
 
         @classmethod
@@ -112,8 +112,8 @@ def test_event_sentiment_cli_main_emits_structured_summary(monkeypatch, capsys) 
     assert payload["sentiment_inferred"] == 17
     assert payload["ticker_day_rows"] == 6
     assert payload["sector_day_rows"] == 2
-    assert payload["news_provider"] == "alpaca"
-    assert payload["source_name"] == "alpaca_news"
+    assert payload["news_provider"] == "eodhd"
+    assert payload["source_name"] == "eodhd_news"
 
 
 def test_event_sentiment_pipeline_emits_live_progress(monkeypatch) -> None:
@@ -215,6 +215,7 @@ def test_signal_aggregator_main_emits_structured_summary(monkeypatch, capsys) ->
             "--trade-date",
             "2026-04-19",
             "--all-symbols",
+            "--allow-rerun",
             "--sentiment-weight",
             "0.2",
             "--macro-weight",

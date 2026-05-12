@@ -41,7 +41,8 @@ def test_import_alpaca_bar_main_noop_when_provider_eodhd(monkeypatch, capsys):
     payload = json.loads(payload_line.split("::alpha_trade_run_summary::", 1)[1])
     assert payload["mode"] == "noop"
     assert payload["provider"] == "alpaca"
-    assert payload["skipped_reason"] == "bars_provider=eodhd"
+    assert payload["skipped_reason"] == "wrong_provider"
+    assert payload["bars_provider_active"] == "eodhd"
 
 
 def test_import_alpaca_bar_main_runs_when_provider_alpaca(monkeypatch, capsys):

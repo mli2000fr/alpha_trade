@@ -73,7 +73,7 @@ La page **🔄 Pipeline** permet désormais :
 Le bloc de paramètres expose aussi les options réellement supportées côté backend pour :
 
 - `Alpha Scanner` (`chunk-size`, `selection-size`, `max-workers`, seuils stricts de liquidité/prix/RS/ATR/spread/earnings, `sector-cap-ratio`, `log-level`) ;
-- `event_sentiment` (`start-utc`, `end-utc`, `symbols`) ;
+- `event_sentiment` (`start-utc`, `end-utc`, `symbols`, `news-provider`, `ticker-relevance-mode`, `min-relevance-score`, `enable-contextual-scoring`, `contextual-min-relevance`, `contextual-max-pairs`) ;
 - `signal_aggregator` (`trade-date`, `all-symbols`, `sentiment-weight`, `macro-weight`, `lookback-days`, `min-news-count`, `time-decay-half-life-days`, `log-level`) ;
 - `sync_latest_quotes` (`limit`, `batch-size`) ;
 - `sync_earnings_calendar` (`from-date`, `to-date`, `limit`, `sleep-seconds`) ;
@@ -81,7 +81,9 @@ Le bloc de paramètres expose aussi les options réellement supportées côté b
 
 Pour `Alpha Scanner`, l'IHM transmet explicitement les valeurs affichées au launcher `python -m selector.alpha_scanner ...` afin de reproduire le profil partagé strict `STRICT_SWING_CASH_FILTERS` ou de le surcharger proprement. Dans cette UI, `0` sur `max workers` signifie **auto**.
 
-Pour `event_sentiment`, laisser les symboles vides signifie : reprendre automatiquement l'univers candidat `stock_scores.is_candidate = 1`. Pour `signal_aggregator`, la page réutilise le champ global `trade date` quand il est renseigné et calcule le poids quantitatif implicite `1 - sentiment_weight - macro_weight` comme le backend.
+Pour `event_sentiment`, laisser les symboles vides signifie : reprendre automatiquement l'univers candidat `stock_scores.is_candidate = 1`. Le sélecteur **Event Sentiment — source news** propose désormais `eodhd`, `alpaca`, `finnhub`, avec **`eodhd` par défaut**. L'IHM transmet explicitement `--news-provider eodhd` au backend si l'utilisateur ne change rien, et les checkpoints restent isolés par `source_name`.
+
+Pour `signal_aggregator`, la page réutilise le champ global `trade date` quand il est renseigné et calcule le poids quantitatif implicite `1 - sentiment_weight - macro_weight` comme le backend.
 
 La carte `Alpha Scanner` inclut également un diagnostic de dépendances métier pour `stock_quote_snapshots` et `stock_earnings_calendar` :
 
