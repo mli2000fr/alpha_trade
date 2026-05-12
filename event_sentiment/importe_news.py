@@ -173,9 +173,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--news-provider",
         type=str,
-        choices=("alpaca", "finnhub"),
-        default="alpaca",
-        help="Source de news utilisée pour l'ingestion brute.",
+        choices=("alpaca", "finnhub", "eodhd"),
+        default="eodhd",
+        help="Source de news utilisée pour l'ingestion brute (défaut : eodhd).",
     )
     parser.add_argument(
         "--ticker-relevance-mode",

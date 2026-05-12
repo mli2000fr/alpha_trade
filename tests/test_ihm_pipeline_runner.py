@@ -374,7 +374,7 @@ def test_build_pipeline_command_alpha_scanner_exposes_supported_backend_options(
 def test_pipeline_launch_options_defaults_to_alpaca_for_sentiment_news_provider() -> None:
     options = PipelineLaunchOptions()
 
-    assert options.sentiment_news_provider == "alpaca"
+    assert options.sentiment_news_provider == "eodhd"
 
 
 def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -> None:
@@ -386,7 +386,7 @@ def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -
         "-m",
         "event_sentiment",
         "--news-provider",
-        "alpaca",
+        "eodhd",
     ]
 
 

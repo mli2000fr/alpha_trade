@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-NewsProvider = Literal["alpaca", "finnhub"]
+NewsProvider = Literal["alpaca", "finnhub", "eodhd"]
 TickerRelevanceMode = Literal["provider_default", "strict", "scored"]
 
 #: Mapping centralisé ``news_provider`` → (``source_name``, ``provider_name``).
@@ -12,14 +12,15 @@ TickerRelevanceMode = Literal["provider_default", "strict", "scored"]
 PROVIDER_REGISTRY: dict[str, tuple[str, str]] = {
     "alpaca": ("alpaca_news", "alpaca"),
     "finnhub": ("finnhub_news", "finnhub"),
+    "eodhd": ("eodhd_news", "eodhd"),
 }
 
 
 @dataclass(frozen=True, slots=True)
 class EventSentimentConfig:
-    source_name: str = "alpaca_news"
-    provider_name: str = "alpaca"
-    news_provider: NewsProvider = "alpaca"
+    source_name: str = "eodhd_news"
+    provider_name: str = "eodhd"
+    news_provider: NewsProvider = "eodhd"
     start_utc: datetime | None = None
     end_utc: datetime | None = None
     page_limit: int = 50

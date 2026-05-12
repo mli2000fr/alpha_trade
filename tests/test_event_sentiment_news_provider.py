@@ -61,7 +61,21 @@ def test_config_rejects_unknown_provider() -> None:
 
 
 def test_provider_registry_covers_supported_providers() -> None:
-    assert set(PROVIDER_REGISTRY) == {"alpaca", "finnhub"}
+    assert set(PROVIDER_REGISTRY) == {"alpaca", "finnhub", "eodhd"}
+
+
+def test_config_for_provider_eodhd_sets_source_name() -> None:
+    cfg = EventSentimentConfig.for_provider("eodhd")
+    assert cfg.news_provider == "eodhd"
+    assert cfg.source_name == "eodhd_news"
+    assert cfg.provider_name == "eodhd"
+
+
+def test_event_sentiment_config_default_provider_is_eodhd() -> None:
+    cfg = EventSentimentConfig()
+    assert cfg.news_provider == "eodhd"
+    assert cfg.source_name == "eodhd_news"
+    assert cfg.provider_name == "eodhd"
 
 
 # --- Dispatch dans NewsIngestionService ----------------------------------
@@ -146,6 +160,24 @@ def test_ingestion_routes_to_alpaca_by_default(monkeypatch: pytest.MonkeyPatch) 
         symbols=["MSFT"],
     )
     assert captured["calls"] == 1
+
+
+def test_ingestion_routes_to_eodhd_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    payloads = [_make_payload("eodhd-1", ["AAPL"])]
+    captured = _install_fake_provider(monkeypatch, "eodhd", payloads)
+
+    cfg = EventSentimentConfig.for_provider("eodhd")
+    service = ingestion_mod.NewsIngestionService(_StubRepo(), cfg)
+    summary = service.run(
+        start_utc=datetime(2026, 4, 15, tzinfo=timezone.utc),
+        end_utc=datetime(2026, 4, 16, tzinfo=timezone.utc),
+        symbols=["AAPL"],
+    )
+    assert captured["calls"] == 1
+    assert captured["last_symbols"] == ["AAPL"]
+    assert summary["fetched"] == 1
+    assert summary["landed"] == 1
+    assert summary["ticker_maps"] == 1
 
 
 def test_ingestion_filters_articles_with_too_many_tickers(monkeypatch: pytest.MonkeyPatch) -> None:

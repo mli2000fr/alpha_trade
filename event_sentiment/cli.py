@@ -94,11 +94,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--news-provider",
         type=str,
-        choices=("alpaca", "finnhub"),
-        default="alpaca",
+        choices=("alpaca", "finnhub", "eodhd"),
+        default="eodhd",
         help=(
-            "Source de news utilisée pour l'ingestion. Par défaut 'alpaca' "
-            "(rétro-compatibilité), y compris côté IHM."
+            "Source de news utilisée pour l'ingestion. Par défaut 'eodhd' "
+            "(EODHD Financial News Feed — provider recommandé). Bascule "
+            "possible vers 'alpaca' ou 'finnhub' sans migration DB ; les "
+            "checkpoints sont séparés par source_name."
         ),
     )
     parser.add_argument(

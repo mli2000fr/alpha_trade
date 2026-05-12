@@ -123,7 +123,7 @@ def test_render_event_sentiment_block_returns_expected_keys() -> None:
 
     at = AppTest.from_function(_runner).run(timeout=10)
     assert not at.exception, f"Exception remontée par AppTest : {at.exception}"
-    assert at.session_state["__test_sentiment_news_provider"] == "alpaca"
+    assert at.session_state["__test_sentiment_news_provider"] == "eodhd"
 
 
 @pytest.mark.e2e
@@ -231,7 +231,7 @@ def test_build_launch_options_returns_default_swing_options_under_apptest() -> N
     assert at.session_state["__test_options_account_type"] == "cash"
     assert at.session_state["__test_options_pdt_rule"] == "off"
     assert at.session_state["__test_options_swing_only"] is True
-    assert at.session_state["__test_options_sentiment_news_provider"] == "alpaca"
+    assert at.session_state["__test_options_sentiment_news_provider"] == "eodhd"
     # Live confirmation court-circuit en non-live ⇒ True.
     assert at.session_state["__test_live_confirmed"] is True
 

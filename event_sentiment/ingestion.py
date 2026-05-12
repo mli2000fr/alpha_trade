@@ -14,6 +14,7 @@ from event_sentiment.relevance import (
     score_article_symbol,
 )
 from service.alpaca.clientNewsAlpaca import iter_news_pages as _alpaca_iter_news_pages
+from service.eodhd.news_client import iter_news_pages as _eodhd_iter_news_pages
 from service.finnhub.news_client import iter_news_pages as _finnhub_iter_news_pages
 LOGGER = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ LOGGER = logging.getLogger(__name__)
 NEWS_PROVIDERS: dict[str, Callable[..., Any]] = {
     "alpaca": _alpaca_iter_news_pages,
     "finnhub": _finnhub_iter_news_pages,
+    "eodhd": _eodhd_iter_news_pages,
 }
 
 
