@@ -137,7 +137,8 @@ class NewsIngestionService:
                 if row.get("article_id")
             }
         dedupe_hashes = [str(row["dedupe_hash"]) for row in raw_rows if row.get("dedupe_hash")]
-        canonical_by_hash = resolver(self.config.provider_name, dedupe_hashes)
+        raw_canonical_by_hash = resolver(self.config.provider_name, dedupe_hashes)
+        canonical_by_hash = raw_canonical_by_hash if isinstance(raw_canonical_by_hash, dict) else {}
         resolved: dict[str, str] = {}
         for row in raw_rows:
             article_id = str(row["article_id"])
@@ -309,7 +310,41 @@ class NewsIngestionService:
                             symbol,
                             remapped_pairs,
                         )
-                    summary["ticker_maps"] += self.repository.upsert_news_ticker_map(remapped_ticker_rows)
+                    existing_parent_ids: set[str] = set()
+                    if remapped_ticker_rows:
+                        existing_parent_ids = set(
+                            self.repository.get_existing_article_ids(
+                                sorted(
+                                    {
+                                        str(row["article_id"])
+                                        for row in remapped_ticker_rows
+                                        if row.get("article_id")
+                                    }
+                                )
+                            )
+                        )
+                    persistable_ticker_rows = [
+                        row
+                        for row in remapped_ticker_rows
+                        if str(row.get("article_id") or "") in existing_parent_ids
+                    ]
+                    orphan_ticker_rows = len(remapped_ticker_rows) - len(persistable_ticker_rows)
+                    if orphan_ticker_rows:
+                        missing_article_ids = sorted(
+                            {
+                                str(row["article_id"])
+                                for row in remapped_ticker_rows
+                                if str(row.get("article_id") or "") not in existing_parent_ids
+                            }
+                        )
+                        LOGGER.warning(
+                            "Lignes news_ticker_map ignorées faute de parent news_raw | provider=%s symbol=%s orphan_rows=%s missing_article_ids=%s",
+                            self.config.provider_name,
+                            symbol,
+                            orphan_ticker_rows,
+                            missing_article_ids[:5],
+                        )
+                    summary["ticker_maps"] += self.repository.upsert_news_ticker_map(persistable_ticker_rows)
                     watermark = max(article.published_at_utc for article in normalized).replace(tzinfo=None)
                     self.repository.upsert_checkpoint(self.config.source_name, symbol, watermark, next_token, "running")
                     page_token = next_token
@@ -319,7 +354,7 @@ class NewsIngestionService:
                         len(normalized),
                         len(existing),
                         len(raw_rows),
-                        len(ticker_rows),
+                        len(persistable_ticker_rows),
                         next_token,
                     )
                     if not next_token:
