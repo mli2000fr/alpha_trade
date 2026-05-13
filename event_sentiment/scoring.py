@@ -7,6 +7,11 @@ from event_sentiment.models import ContextualSentimentRecord, NormalizedNewsArti
 
 LOGGER = logging.getLogger(__name__)
 HF_TOKEN_ENV_VAR = "HUHHING_FACE_TOKEN"
+HF_TOKEN_ENV_VARS = (
+    HF_TOKEN_ENV_VAR,
+    "HF_TOKEN",
+    "HUGGINGFACE_HUB_TOKEN",
+)
 
 
 class FinBERTSentimentService:
@@ -67,8 +72,18 @@ class FinBERTSentimentService:
 
     @staticmethod
     def _resolve_hf_token() -> str | None:
-        token = os.environ.get(HF_TOKEN_ENV_VAR)
-        return token.strip() if token and token.strip() else None
+        for env_var in HF_TOKEN_ENV_VARS:
+            token = os.environ.get(env_var)
+            if token and token.strip():
+                return token.strip()
+        return None
+
+    @staticmethod
+    def _export_hf_token_aliases(token: str | None) -> None:
+        if token is None:
+            return
+        for env_var in HF_TOKEN_ENV_VARS:
+            os.environ[env_var] = token
 
     def _load_model_for_device(self, device: str, force_reload: bool = False) -> None:
         if not force_reload and self.model is not None and self.tokenizer is not None and self.device == device:
@@ -82,6 +97,7 @@ class FinBERTSentimentService:
         if self.model_revision:
             load_kwargs["revision"] = self.model_revision
         token = self._resolve_hf_token()
+        self._export_hf_token_aliases(token)
         if token is not None:
             load_kwargs["token"] = token
         self.tokenizer = auto_tokenizer_cls.from_pretrained(self.model_name, **load_kwargs)

@@ -1,4 +1,5 @@
 ﻿import logging
+import os
 from datetime import date, datetime
 
 import torch
@@ -235,6 +236,8 @@ def test_load_model_for_device_omits_hf_token_when_env_missing(monkeypatch) -> N
             return _RecordingModel()
 
     monkeypatch.delenv(HF_TOKEN_ENV_VAR, raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_HUB_TOKEN", raising=False)
 
     svc = FinBERTSentimentService(batch_size=1, max_length=64)
     monkeypatch.setattr(svc, "_get_transformers_classes", lambda: (_RecordingModel, _RecordingTokenizer))
@@ -244,4 +247,58 @@ def test_load_model_for_device_omits_hf_token_when_env_missing(monkeypatch) -> N
     assert len(captured_calls) == 2
     assert "token" not in captured_calls[0][2]
     assert "token" not in captured_calls[1][2]
+
+
+def test_load_model_for_device_accepts_standard_hf_token_env(monkeypatch) -> None:
+    captured_calls: list[tuple[str, str, dict[str, object]]] = []
+
+    class _RecordingTokenizer:
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs):
+            captured_calls.append(("tokenizer", model_name, dict(kwargs)))
+            return _FakeTokenizer()
+
+    class _RecordingModel(_FakeModel):
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs):
+            captured_calls.append(("model", model_name, dict(kwargs)))
+            return _RecordingModel()
+
+    monkeypatch.delenv(HF_TOKEN_ENV_VAR, raising=False)
+    monkeypatch.setenv("HF_TOKEN", "hf_standard_token")
+    monkeypatch.delenv("HUGGINGFACE_HUB_TOKEN", raising=False)
+
+    svc = FinBERTSentimentService(batch_size=1, max_length=64)
+    monkeypatch.setattr(svc, "_get_transformers_classes", lambda: (_RecordingModel, _RecordingTokenizer))
+
+    svc._load_model_for_device("cpu")
+
+    assert len(captured_calls) == 2
+    assert captured_calls[0][2]["token"] == "hf_standard_token"
+    assert captured_calls[1][2]["token"] == "hf_standard_token"
+
+
+def test_load_model_for_device_exports_hf_aliases(monkeypatch) -> None:
+    class _RecordingTokenizer:
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs):
+            return _FakeTokenizer()
+
+    class _RecordingModel(_FakeModel):
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs):
+            return _RecordingModel()
+
+    monkeypatch.setenv(HF_TOKEN_ENV_VAR, "hf_alias_token")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_HUB_TOKEN", raising=False)
+
+    svc = FinBERTSentimentService(batch_size=1, max_length=64)
+    monkeypatch.setattr(svc, "_get_transformers_classes", lambda: (_RecordingModel, _RecordingTokenizer))
+
+    svc._load_model_for_device("cpu")
+
+    assert os.environ["HF_TOKEN"] == "hf_alias_token"
+    assert os.environ["HUGGINGFACE_HUB_TOKEN"] == "hf_alias_token"
+
 
