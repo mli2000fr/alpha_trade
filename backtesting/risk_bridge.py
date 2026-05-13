@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Callable, Iterable, Optional, TYPE_CHECKING
+from typing import Callable, Iterable, TYPE_CHECKING
 
 import pandas as pd
 
@@ -14,7 +14,7 @@ from risk_management.portfolio_builder import PortfolioBuilder
 from risk_management.regime_apply import apply_snapshot
 
 if TYPE_CHECKING:
-    from service.market import MarketRegimesConfig, MarketRegimeSnapshot
+    from service.market import MarketRegimesConfig
 
 
 RISK_SIGNAL_COLUMNS = [
@@ -166,7 +166,7 @@ def _build_return_matrix(close_df: pd.DataFrame, snapshot_date: date, symbols: l
     hist = close_df.loc[close_df.index <= snapshot_ts, [symbol for symbol in symbols if symbol in close_df.columns]].dropna(how="all")
     if hist.empty:
         return None
-    returns = hist.pct_change().dropna(how="all")
+    returns = hist.pct_change(fill_method=None).dropna(how="all")
     if returns.empty:
         return None
     tail = returns.tail(lookback_days)

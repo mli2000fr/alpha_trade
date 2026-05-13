@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from datetime import date
 from pathlib import Path
 
@@ -124,6 +125,37 @@ def test_build_phase2_risk_result_preserves_empty_signal_schema_when_all_entries
         "decision",
         "decision_reason",
     ]
+
+
+def test_build_return_matrix_uses_explicit_no_fill_on_price_gaps() -> None:
+    from backtesting.risk_bridge import _build_return_matrix
+
+    trade_dates = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04"])
+    close_df = pd.DataFrame(
+        {
+            "AAPL": [100.0, None, 110.0, 121.0],
+            "MSFT": [50.0, 55.0, 60.0, 66.0],
+        },
+        index=trade_dates,
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", FutureWarning)
+        returns = _build_return_matrix(
+            close_df,
+            date(2025, 1, 4),
+            ["AAPL", "MSFT"],
+            lookback_days=10,
+        )
+
+    assert returns is not None
+    assert not any(issubclass(w.category, FutureWarning) for w in caught)
+    aapl_returns = returns["AAPL"]
+    msft_returns = returns["MSFT"]
+    assert pd.isna(aapl_returns.at[pd.Timestamp("2025-01-02")])
+    assert pd.isna(aapl_returns.at[pd.Timestamp("2025-01-03")])
+    assert aapl_returns.at[pd.Timestamp("2025-01-04")] == pytest.approx(0.1)
+    assert msft_returns.at[pd.Timestamp("2025-01-02")] == pytest.approx(0.1)
 
 
 def test_simulate_phase2_execution_generates_targets_intents_and_fills() -> None:
