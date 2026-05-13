@@ -236,6 +236,20 @@ def test_resolve_symbols_from_inputs_uses_candidates_repository(monkeypatch) -> 
     assert symbols == ["MSFT", "AAPL"]
 
 
+def test_resolve_symbols_from_inputs_uses_stock_scores_source(monkeypatch) -> None:
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["nvda", "AAPL", "NVDA"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_all", lambda: ["ZZZZ"])
+
+    symbols, source = importe_news.resolve_symbols_from_inputs(
+        symbols_csv=None,
+        symbol_source="stock_scores",
+        repository=cast(EventSentimentRepository, cast(object, _FakeRepository())),
+    )
+
+    assert source == "stock_scores"
+    assert symbols == ["NVDA", "AAPL"]
+
+
 def test_resolve_symbols_from_inputs_uses_stock_scores_history_source(monkeypatch) -> None:
     monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_history", lambda: ["msft", "AAPL", "MSFT"])
     monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["ZZZZ"])

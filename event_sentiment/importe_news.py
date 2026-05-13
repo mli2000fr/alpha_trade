@@ -91,6 +91,9 @@ def resolve_symbols_from_inputs(
     if symbol_source == "stock_bars_daily":
         return _normalize_symbols(get_all_symbols_from_stock_bars_daily()), "stock_bars_daily"
 
+    if symbol_source == "stock_scores":
+        return _normalize_symbols(get_all_symbols_from_stock_scores()), "stock_scores"
+
     if symbol_source == "stock_scores_history":
         return _normalize_symbols(get_all_symbols_from_stock_scores_history()), "stock_scores_history"
 
