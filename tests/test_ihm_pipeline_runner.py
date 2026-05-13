@@ -768,7 +768,21 @@ def test_build_pipeline_command_import_news_accepts_stock_scores_all_symbol_sour
 
     command = build_pipeline_command("import_news", options)
 
-    assert command[command.index("--symbol-source") + 1] == "stock_scores_all"
+    assert "--symbol-source" not in command
+    assert command[command.index("--max-symbols") + 1] == "300"
+
+
+def test_build_pipeline_command_import_news_emits_stock_scores_when_explicitly_requested() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_symbol_source="stock_scores",
+        news_import_max_symbols=300,
+    )
+
+    command = build_pipeline_command("import_news", options)
+
+    assert command[command.index("--symbol-source") + 1] == "stock_scores"
     assert command[command.index("--max-symbols") + 1] == "300"
 
 

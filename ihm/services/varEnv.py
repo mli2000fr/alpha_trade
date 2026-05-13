@@ -5,7 +5,6 @@ import json
 import winreg
 from pathlib import Path
 
-import streamlit as st  # À commenter si utilisé hors Streamlit
 # --- Version Streamlit-friendly ---
 def get_var_env_streamlit() -> io.BytesIO:
     """
@@ -26,6 +25,13 @@ def get_var_env_streamlit() -> io.BytesIO:
             writer.writerow([nom, valeur])
     # Encodage en bytes pour Streamlit.download_button
     return io.BytesIO(output.getvalue().encode("utf-8"))
+
+
+def get_var_env() -> str:
+    """Exporte les variables autorisées dans un CSV local et retourne son chemin."""
+    export_path = Path.cwd() / "var_env_export.csv"
+    export_path.write_bytes(get_var_env_streamlit().getvalue())
+    return str(export_path)
 
 
 def get_conf_var_env() -> list:
@@ -106,6 +112,7 @@ def set_var_env(csv_bytes: bytes, apply: bool = True) -> dict:
         applied[var_name] = var_value
         print(var_name)
         if apply:
+            os.environ[var_name] = var_value
             set_env_registry(var_name, var_value)
 
     return {"applied": applied, "skipped": skipped}

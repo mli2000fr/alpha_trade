@@ -38,7 +38,8 @@ def test_importe_news_main_propagates_provider_and_relevance_options(monkeypatch
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(importe_news, "configure_root_logging", lambda **kwargs: None)
-    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["AAPL", "MSFT"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_all", lambda: ["AAPL", "MSFT"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["ZZZZ"])
     monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_bars_daily", lambda: ["ZZZZ"])
     monkeypatch.setattr(importe_news, "EventSentimentRepository", lambda: object())
 
@@ -190,7 +191,7 @@ def test_importe_news_main_warns_for_large_stock_bars_daily_universe(monkeypatch
 def test_importe_news_main_blocks_when_max_symbols_is_exceeded(monkeypatch) -> None:
     monkeypatch.setattr(importe_news, "configure_root_logging", lambda **kwargs: None)
     monkeypatch.setattr(importe_news, "EventSentimentRepository", lambda: object())
-    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["AAPL", "MSFT", "NVDA"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_all", lambda: ["AAPL", "MSFT", "NVDA"])
 
     monkeypatch.setattr(
         sys,
@@ -233,6 +234,20 @@ def test_resolve_symbols_from_inputs_uses_candidates_repository(monkeypatch) -> 
 
     assert source == "candidates"
     assert symbols == ["MSFT", "AAPL"]
+
+
+def test_resolve_symbols_from_inputs_uses_stock_scores_source(monkeypatch) -> None:
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores", lambda **kwargs: ["nvda", "AAPL", "NVDA"])
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_all", lambda: ["ZZZZ"])
+
+    symbols, source = importe_news.resolve_symbols_from_inputs(
+        symbols_csv=None,
+        symbol_source="stock_scores",
+        repository=cast(EventSentimentRepository, cast(object, _FakeRepository())),
+    )
+
+    assert source == "stock_scores"
+    assert symbols == ["NVDA", "AAPL"]
 
 
 def test_resolve_symbols_from_inputs_uses_stock_scores_history_source(monkeypatch) -> None:

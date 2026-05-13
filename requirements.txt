@@ -68,3 +68,5 @@ sqlalchemy[asyncio]>=2.0
 
 # triton (S28.4 / Phase G-bis — accélération GPU optionnelle du backtesting) :
 #   pip install triton==2.0.0 --index-url https://download.pytorch.org/whl/triton
+
+pytest
