@@ -152,6 +152,29 @@ def test_start_managed_run_supports_non_pipeline_commands(monkeypatch, tmp_path:
     assert "watcher-local-ok" in registry.read_pipeline_logs(record.run_id, "stdout")
 
 
+def test_start_managed_run_sanitizes_filesystem_directory_for_ops_step_keys(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+
+    record = registry.start_managed_run(
+        step_key="ops:execution_kill_switch",
+        step_label="Kill switch",
+        command=[sys.executable, "-c", "print('kill-switch-ok', flush=True)"],
+        account_id="acct-1",
+    )
+
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=40)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+    assert snapshot["step_key"] == "ops:execution_kill_switch"
+    stdout_path = Path(str(snapshot["stdout_path"]))
+    assert stdout_path.parent.parent.name == "ops__execution_kill_switch"
+    assert registry.read_pipeline_logs(record.run_id, "stdout").strip().endswith("kill-switch-ok")
+
+    history = {str(item["run_id"]): item for item in registry.load_pipeline_history()}
+    assert history[record.run_id]["step_key"] == "ops:execution_kill_switch"
+
+
 
 def test_background_run_can_be_stopped(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)

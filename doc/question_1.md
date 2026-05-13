@@ -4,6 +4,18 @@
 > 
 > Sources principales vérifiées : `backtesting/data_loader.py`, `backtesting/resilience.py`, `modelFactory/predictor.py`, `modelFactory/features.py`, `modelFactory/champion_selection.py`, `event_sentiment/history_backfill.py`, `event_sentiment/signal_aggregator.py`, `ihm/pages/*.py`, `ihm/services/*.py`, `execution_engine/*.py`, `risk_management/cli.py`, `config.yaml`, ainsi que les docs `doc/*.md`.
 
+## Comment lire ce document
+
+- **Si tu débutes** : lis d'abord chaque **"Réponse courte"**, puis les exemples.
+- **Si tu veux comprendre le pourquoi** : lis la partie **"Réponse détaillée"** ou **"Pipeline réel"**.
+- **Si tu veux vérifier dans le code** : les chemins de fichiers cités sont ceux qui ont été relus.
+
+### Convention utilisée
+
+- **PIT** = *point-in-time*, donc "tel que connu à cette date".
+- **RTH** = *Regular Trading Hours*, donc les heures normales de marché.
+- Quand j'écris **"plus sûr"**, cela veut dire **"plus fidèle historiquement"**, pas forcément **"garanti parfait"**.
+
 ---
 
 ## 1. Questions transverses
@@ -45,6 +57,10 @@ Donc :
 Alors le risque de fuite est fortement réduit :
 - le backtest relit simplement `model_predictions` par date,
 - et ne réentraîne pas un modèle moderne pour le passé.
+
+⚠️ Point pédagogique important : **"persisté" ne veut pas automatiquement dire "historique propre"**.
+Si tu as persisté en 2026 des prédictions reconstruites pour 2023 avec le champion actuel,
+elles sont bien "persistées", mais **pas vraiment PIT**.
 
 ##### Cas B — tu utilises `rebuild-missing` avec les artefacts actuels de 2026
 Alors **oui**, tu peux introduire une fuite du futur :
@@ -999,20 +1015,40 @@ Il sert à :
 4. lancer
 
 ### Le message WinError 123 est-il normal ?
-**Non, ce n’est pas normal côté application.**
+**Non.**
+C’était un **bug local de l’IHM sous Windows**, pas un comportement normal du broker.
 
-Le message :
+### Cause simple
+Le message du type :
 
 `F:\projets\artifacts\ihm_pipeline_runs\ops:execution_kill_switch\...`
 
-montre très probablement un **bug Windows de nom de dossier** :
-- le `step_key` contient `ops:execution_kill_switch`
-- et ce `:` est invalide dans un nom de dossier Windows
-- `process_registry.py` construit le chemin directement avec `RUNS_DIR / step_key / run_id`
+révèle que l’IHM essayait de créer un dossier à partir du `step_key` brut.
 
-Donc :
-- le kill switch lui-même a du sens,
-- mais ton erreur vient très probablement du **nom de répertoire IHM**, pas d’un refus broker.
+Or sous Windows :
+- `:` est **interdit** dans un nom de dossier,
+- donc `ops:execution_kill_switch` cassait la création du répertoire,
+- et l’erreur remontait avant même la vraie logique métier du kill switch.
+
+### Ce que ça voulait dire en pratique
+- **le bouton avait du sens** fonctionnellement ;
+- **le broker n’était pas forcément en faute** ;
+- le plantage venait d’abord du **stockage local des runs IHM**.
+
+### Correctif appliqué
+Le registre IHM conserve maintenant :
+- le **`step_key` métier inchangé** dans l’historique et les métadonnées ;
+- mais utilise un **alias filesystem compatible Windows** pour le nom du dossier de run.
+
+Exemple :
+- `step_key` logique : `ops:execution_kill_switch`
+- dossier créé sur disque : `ops__execution_kill_switch`
+
+### Conclusion simple
+Si tu revoyais ce `WinError 123`, il fallait l’interpréter comme :
+> "Le run IHM n’arrive même pas à créer son dossier local sous Windows."
+
+Ce n’était donc **ni un refus broker certain**, ni une preuve que le kill switch était conceptuellement mauvais.
 
 ---
 
@@ -1854,7 +1890,7 @@ Si tu devais retenir seulement 10 choses :
 6. **Execution hors RTH** : ordres en file avant l’ouverture, utile pour swing overnight.
 7. **Auto rebalance** : corrige automatiquement certains écarts broker ↔ cible.
 8. **Risk dry-run** : ne persiste ni `risk_decisions` ni `portfolio_targets`.
-9. **WinError 123 sur kill switch** : très probablement un bug Windows dû au `:` dans `ops:execution_kill_switch`.
+9. **WinError 123 sur kill switch** : c’était un bug Windows de nom de dossier côté IHM ; le stockage des runs utilise désormais un alias filesystem compatible tout en gardant le `step_key` métier brut.
 10. **Parité Backtest ↔ Live** : page d’audit de cohérence entre le replay et la vraie prod.
 
 ---

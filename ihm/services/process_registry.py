@@ -64,6 +64,7 @@ WORKFLOW_TOTAL_STEPS_RE = re.compile(r"workflow complet(?: [^()]*)? \((\d+) éta
 WORKFLOW_STEP_START_RE = re.compile(r"=== \[(\d+)/(\d+)] Démarrage (.+?) ===")
 WORKFLOW_STEP_DONE_RE = re.compile(r"=== \[(\d+)/(\d+)] Terminé (.+?) \(run `([^`]+)`\) ===")
 WORKFLOW_INTERRUPTED_RE = re.compile(r"Workflow interrompu sur (.+?) — statut `([^`]+)` \(run `([^`]+)`\)\.")
+INVALID_RUN_DIR_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 @dataclass(frozen=True, slots=True)
@@ -1373,7 +1374,20 @@ def _poll_workflow_run(run_id: str, managed: _ManagedWorkflow) -> dict[str, obje
 
 
 def _run_dir_for(step_key: str, run_id: str) -> Path:
-    return RUNS_DIR / step_key / run_id
+    return RUNS_DIR / _filesystem_safe_path_component(step_key) / _filesystem_safe_path_component(run_id)
+
+
+def _filesystem_safe_path_component(value: str) -> str:
+    """Normalise un segment de chemin sans toucher au `step_key` métier.
+
+    Windows interdit notamment `:` dans un nom de dossier, ce qui bloquait les
+    runs ops (`ops:execution_kill_switch`, `ops:scan_cves`, etc.). On ne
+    modifie ici que l'alias filesystem ; les métadonnées/historiques conservent
+    le `step_key` original.
+    """
+    cleaned = INVALID_RUN_DIR_CHARS_RE.sub("__", str(value or "").strip())
+    cleaned = cleaned.rstrip(" .")
+    return cleaned or "_"
 
 
 def start_managed_run(
