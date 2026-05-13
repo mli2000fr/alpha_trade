@@ -4,7 +4,7 @@ from datetime import date, datetime
 import torch
 
 from event_sentiment.models import NormalizedNewsArticle
-from event_sentiment.scoring import FinBERTSentimentService
+from event_sentiment.scoring import HF_TOKEN_ENV_VAR, FinBERTSentimentService
 
 
 class _FakeTensor:
@@ -184,3 +184,64 @@ def test_score_articles_propagates_fingerprint(monkeypatch) -> None:
     records = svc.score_articles([article])
     assert records[0].model_fingerprint == svc.model_fingerprint
     assert records[0].model_fingerprint != ""
+
+
+def test_load_model_for_device_passes_env_hf_token(monkeypatch) -> None:
+    captured_calls: list[tuple[str, str, dict[str, object]]] = []
+
+    class _RecordingTokenizer:
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs):
+            captured_calls.append(("tokenizer", model_name, dict(kwargs)))
+            return _FakeTokenizer()
+
+    class _RecordingModel(_FakeModel):
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs):
+            captured_calls.append(("model", model_name, dict(kwargs)))
+            return _RecordingModel()
+
+    monkeypatch.setenv(HF_TOKEN_ENV_VAR, "hf_test_token")
+
+    svc = FinBERTSentimentService(batch_size=1, max_length=64, model_revision="rev-1")
+    monkeypatch.setattr(svc, "_get_transformers_classes", lambda: (_RecordingModel, _RecordingTokenizer))
+
+    svc._load_model_for_device("cpu")
+
+    assert len(captured_calls) == 2
+    assert captured_calls[0][0] == "tokenizer"
+    assert captured_calls[1][0] == "model"
+    assert captured_calls[0][1] == "ProsusAI/finbert"
+    assert captured_calls[1][1] == "ProsusAI/finbert"
+    assert captured_calls[0][2]["token"] == "hf_test_token"
+    assert captured_calls[1][2]["token"] == "hf_test_token"
+    assert captured_calls[0][2]["revision"] == "rev-1"
+    assert captured_calls[1][2]["revision"] == "rev-1"
+
+
+def test_load_model_for_device_omits_hf_token_when_env_missing(monkeypatch) -> None:
+    captured_calls: list[tuple[str, str, dict[str, object]]] = []
+
+    class _RecordingTokenizer:
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs):
+            captured_calls.append(("tokenizer", model_name, dict(kwargs)))
+            return _FakeTokenizer()
+
+    class _RecordingModel(_FakeModel):
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs):
+            captured_calls.append(("model", model_name, dict(kwargs)))
+            return _RecordingModel()
+
+    monkeypatch.delenv(HF_TOKEN_ENV_VAR, raising=False)
+
+    svc = FinBERTSentimentService(batch_size=1, max_length=64)
+    monkeypatch.setattr(svc, "_get_transformers_classes", lambda: (_RecordingModel, _RecordingTokenizer))
+
+    svc._load_model_for_device("cpu")
+
+    assert len(captured_calls) == 2
+    assert "token" not in captured_calls[0][2]
+    assert "token" not in captured_calls[1][2]
+
