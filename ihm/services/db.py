@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -108,30 +109,93 @@ def _build_database_url(*, host: str, name: str, user: str, password: str) -> st
     return f"mysql+pymysql://{safe_user}:{safe_password}@{host}/{name}?charset=utf8mb4"
 
 
+def _engine_options() -> dict[str, object]:
+    return {
+        "echo": False,
+        "pool_pre_ping": True,
+        "pool_recycle": 3600,
+        "pool_size": 2,
+        "max_overflow": 3,
+    }
+
+
+def _format_db_connection_error(
+    exc: Exception,
+    *,
+    host: str,
+    name: str,
+    user: str,
+    source: str,
+) -> str:
+    message = str(exc)
+    lowered = message.lower()
+    target = f"`{host}/{name}`"
+    if "access denied" in lowered or "(1045" in lowered:
+        return (
+            f"Accès MySQL refusé pour l'utilisateur `{user}` sur {target} via `{source}`. "
+            "Vérifiez les identifiants `LOGIN_DB` / `PASSWORD_DB` actifs dans l'IHM ou les variables d'environnement, "
+            "puis les droits SQL de cet utilisateur."
+        )
+    if "unknown database" in lowered or "(1049" in lowered:
+        return (
+            f"Base MySQL introuvable sur {target} via `{source}`. "
+            "Vérifiez `DB_NAME` et la base effectivement ciblée."
+        )
+    if any(token in lowered for token in ("can't connect", "connection refused", "timed out", "timeout expired", "2003")):
+        return (
+            f"Serveur MySQL inaccessible sur `{host}` pour la base `{name}` via `{source}`. "
+            "Vérifiez `DB_HOST`, le port MySQL et que le service est démarré."
+        )
+    return f"Connexion MySQL impossible sur {target} avec la source `{source}` : {message}"
+
+
+def validate_db_connection_config(
+    config: Mapping[str, str | None],
+    *,
+    source: str | None = None,
+) -> str | None:
+    """Retourne un message d'erreur si la config DB est invalide ou inaccessible."""
+    host = str(config.get("host") or DEFAULT_DB_HOST)
+    name = str(config.get("name") or DEFAULT_DB_NAME)
+    user = str(config.get("user") or "").strip()
+    password = str(config.get("password") or "")
+    source_label = source or str(config.get("source") or "variables d'environnement")
+
+    if not user or not password:
+        return (
+            "Identifiants MySQL manquants. Renseignez `LOGIN_DB` / `PASSWORD_DB` "
+            "ou utilisez le formulaire de connexion dans l'IHM."
+        )
+
+    engine: Engine | None = None
+    try:
+        engine = create_engine(_build_database_url(host=host, name=name, user=user, password=password), **_engine_options())
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return None
+    except Exception as exc:
+        return _format_db_connection_error(exc, host=host, name=name, user=user, source=source_label)
+    finally:
+        if engine is not None:
+            engine.dispose()
+
+
 @st.cache_resource(show_spinner=False)
 def _get_cached_engine(db_url: str) -> Engine:
-    return create_engine(
-        db_url,
-        echo=False,
-        pool_pre_ping=True,
-        pool_recycle=3600,
-        pool_size=2,
-        max_overflow=3,
-    )
+    return create_engine(db_url, **_engine_options())
 
 
 def get_engine() -> Engine | None:
     """Retourne le SQLAlchemy engine, ou None si indisponible."""
     config = get_runtime_db_config()
-    user = config.get("user")
-    password = config.get("password")
+    user = str(config.get("user") or "")
+    password = str(config.get("password") or "")
     host = str(config.get("host") or DEFAULT_DB_HOST)
     name = str(config.get("name") or DEFAULT_DB_NAME)
 
-    if not user or not password:
-        _set_last_db_error(
-            "Identifiants MySQL manquants. Renseignez `LOGIN_DB` / `PASSWORD_DB` ou utilisez le formulaire de connexion dans l'IHM."
-        )
+    validation_error = validate_db_connection_config(config, source=str(config.get("source") or "variables d'environnement"))
+    if validation_error:
+        _set_last_db_error(validation_error)
         return None
 
     try:
@@ -141,7 +205,13 @@ def get_engine() -> Engine | None:
         _set_last_db_error(None)
         return engine
     except Exception as exc:
-        message = f"Connexion MySQL impossible sur `{host}/{name}` avec la source `{config['source']}` : {exc}"
+        message = _format_db_connection_error(
+            exc,
+            host=host,
+            name=name,
+            user=user,
+            source=str(config.get("source") or "variables d'environnement"),
+        )
         LOGGER.warning("DB indisponible : %s", exc)
         _set_last_db_error(message)
         return None
