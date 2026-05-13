@@ -1,1 +1,0 @@
-- model factory, si les modles sont entrainné sur une historique de 5 ans par exemple jusqu'au à ce jour en 2026, quand je lance un backtest entre
