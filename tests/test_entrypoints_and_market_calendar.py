@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import date
+import importlib.util
 from pathlib import Path
 import runpy
 import subprocess
@@ -20,6 +21,7 @@ from backtesting import cli as backtesting_cli
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUN_PY_PATH = str(PROJECT_ROOT / "run.py")
+STREAMLIT_APP_PATH = str(PROJECT_ROOT / "ihm" / "app.py")
 
 
 def test_is_trading_day_falls_back_to_weekday_logic_when_calendar_missing(monkeypatch) -> None:
@@ -95,7 +97,7 @@ def test_risk_management_dunder_main_exits_with_cli_return_code(monkeypatch) -> 
 
 
 def test_run_py_launches_streamlit_app(monkeypatch) -> None:
-    calls: list[tuple[list[str], bool]] = []
+    calls: list[tuple[list[str], bool, str | None]] = []
     sleep_guard_calls: list[str] = []
 
     @contextmanager
@@ -106,10 +108,11 @@ def test_run_py_launches_streamlit_app(monkeypatch) -> None:
         finally:
             sleep_guard_calls.append("exit")
 
-    def _fake_run(command: list[str], check: bool) -> None:
-        calls.append((command, check))
+    def _fake_run(command: list[str], check: bool, cwd: str | None = None) -> None:
+        calls.append((command, check, cwd))
         return None
 
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object() if name == "streamlit" else None)
     monkeypatch.setattr("common.windows_sleep_guard.prevent_windows_sleep", _fake_prevent_windows_sleep)
     monkeypatch.setattr(subprocess, "run", _fake_run)
 
@@ -120,8 +123,8 @@ def test_run_py_launches_streamlit_app(monkeypatch) -> None:
         "-m",
         "streamlit",
         "run",
-        "ihm/app.py",
-    ], True)]
+        STREAMLIT_APP_PATH,
+    ], True, str(PROJECT_ROOT))]
     assert sleep_guard_calls == ["enter", "exit"]
 
 
@@ -130,17 +133,21 @@ def test_run_py_exits_with_clear_message_when_streamlit_is_missing(monkeypatch, 
     def _fake_prevent_windows_sleep():
         yield True
 
-    def _raise_missing(command: list[str], check: bool) -> None:
-        raise FileNotFoundError()
+    calls: list[str] = []
 
+    def _fake_run(command: list[str], check: bool, cwd: str | None = None) -> None:
+        calls.append("called")
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None if name == "streamlit" else None)
     monkeypatch.setattr("common.windows_sleep_guard.prevent_windows_sleep", _fake_prevent_windows_sleep)
-    monkeypatch.setattr(subprocess, "run", _raise_missing)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
 
     with pytest.raises(SystemExit) as exc_info:
         runpy.run_path(RUN_PY_PATH, run_name="__main__")
 
     assert exc_info.value.code == 1
     assert "Streamlit n'est pas installé" in capsys.readouterr().out
+    assert calls == []
 
 
 def test_run_py_propagates_streamlit_process_return_code(monkeypatch, capsys) -> None:
@@ -148,9 +155,10 @@ def test_run_py_propagates_streamlit_process_return_code(monkeypatch, capsys) ->
     def _fake_prevent_windows_sleep():
         yield True
 
-    def _raise_failure(command: list[str], check: bool) -> None:
+    def _raise_failure(command: list[str], check: bool, cwd: str | None = None) -> None:
         raise subprocess.CalledProcessError(returncode=3, cmd=command)
 
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object() if name == "streamlit" else None)
     monkeypatch.setattr("common.windows_sleep_guard.prevent_windows_sleep", _fake_prevent_windows_sleep)
     monkeypatch.setattr(subprocess, "run", _raise_failure)
 
