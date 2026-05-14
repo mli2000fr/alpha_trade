@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
+import logging
 from pathlib import Path
 import json
 import os
@@ -964,6 +965,48 @@ class TestBacktestConfig:
         assert trades_df.iloc[0]["exit_reason"] == "trailing_stop"
         assert result.diagnostics.watcher_replay_transitions == 1
 
+    def test_backtest_engine_trade_audit_logs_entries_and_exits_with_signal_context(self, caplog):
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03"])
+        open_ = pd.DataFrame({"AAPL": [100.0, 101.0, 104.0]}, index=idx)
+        close = pd.DataFrame({"AAPL": [100.0, 103.0, 104.0]}, index=idx)
+        high = pd.DataFrame({"AAPL": [100.0, 110.0, 104.0]}, index=idx)
+        low = pd.DataFrame({"AAPL": [99.0, 100.0, 103.0]}, index=idx)
+        signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01"]),
+                "symbol": ["AAPL"],
+                "selected": [True],
+                "rank": [1.0],
+                "score": [0.81],
+                "score_source": ["final_score_sentiment"],
+                "predicted_proba": [0.73],
+                "conviction": [0.762],
+                "decision_reason": ["top conviction daily basket"],
+            }
+        )
+
+        with caplog.at_level(logging.INFO):
+            result = BacktestEngine(
+                BacktestConfig(
+                    start_date=date(2025, 1, 1),
+                    end_date=date(2025, 1, 3),
+                    initial_equity=10_000,
+                    max_positions=1,
+                )
+            ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
+
+        assert not result.trade_events_df.empty
+        assert result.trade_events_df["event_type"].tolist() == ["entry_opened", "exit_closed"]
+        assert result.trade_events_df.iloc[0]["score"] == pytest.approx(0.81)
+        assert result.trade_events_df.iloc[0]["conviction"] == pytest.approx(0.762)
+        assert result.trade_events_df.iloc[0]["entry_reason"] == "top conviction daily basket"
+        assert result.closed_trades_df.iloc[0]["score_source"] == "final_score_sentiment"
+        assert result.closed_trades_df.iloc[0]["entry_reason"] == "top conviction daily basket"
+        assert any("event_type=entry_opened" in record.message for record in caplog.records)
+        assert any("event_type=exit_closed" in record.message for record in caplog.records)
+
     def test_to_scalar_supports_series_and_scalar(self):
         from backtesting.simulator import BacktestEngine, BacktestConfig
 
@@ -1396,7 +1439,6 @@ class TestReport:
     def test_generate_report_with_vectorbt_portfolio(self):
         import vectorbt as vbt
         from backtesting.report import generate_report
-
         idx = pd.to_datetime(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06"])
         close = pd.DataFrame({"AAPL": [100.0, 103.0, 104.0, 106.0]}, index=idx)
         entries = pd.DataFrame({"AAPL": [True, False, False, False]}, index=idx)
@@ -1416,6 +1458,35 @@ class TestReport:
         report = generate_report(pf, 10_000)
         assert report.final_value > 0.0
         assert isinstance(report.total_trades, int)
+
+    def test_save_trade_audit_csv_exports_event_log(self, tmp_path: Path):
+        from backtesting.report import save_trade_audit_csv
+
+        pf = SimpleNamespace(
+            trade_events_df=pd.DataFrame(
+                [
+                    {
+                        "event_type": "entry_opened",
+                        "symbol": "AAPL",
+                        "score": 0.81,
+                        "entry_reason": "top conviction daily basket",
+                    },
+                    {
+                        "event_type": "exit_closed",
+                        "symbol": "AAPL",
+                        "exit_reason": "take_profit",
+                        "pnl": 42.0,
+                    },
+                ]
+            )
+        )
+
+        out = save_trade_audit_csv(pf, output_dir=tmp_path)
+
+        exported = pd.read_csv(out)
+        assert out.name == "trade_audit_log.csv"
+        assert exported["event_type"].tolist() == ["entry_opened", "exit_closed"]
+        assert exported.iloc[0]["entry_reason"] == "top conviction daily basket"
 
     def test_generate_report_ignores_open_trades_and_reports_duration_in_days(self):
         import vectorbt as vbt

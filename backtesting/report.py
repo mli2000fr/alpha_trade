@@ -56,6 +56,10 @@ def _extract_closed_trades_df(pf) -> Optional[pd.DataFrame]:
     return getattr(pf, "closed_trades_df", None)
 
 
+def _extract_trade_events_df(pf) -> Optional[pd.DataFrame]:
+    return getattr(pf, "trade_events_df", None)
+
+
 def extract_diagnostics(pf) -> dict[str, object]:
     diagnostics = getattr(pf, "diagnostics", None)
     if diagnostics is None:
@@ -400,11 +404,34 @@ def save_trades_csv(pf, output_dir: Path | None = None) -> Path:
     filepath = out / "trades.csv"
     try:
         closed_trades_df = _extract_closed_trades_df(pf)
-        trades_df = pf.trades.records_readable if closed_trades_df is None else pf.trades.records_readable
+        trades_df = (
+            closed_trades_df.copy()
+            if closed_trades_df is not None
+            else pf.trades.records_readable
+        )
         trades_df.to_csv(str(filepath), index=False)
         LOGGER.info("Trades exportés : %s (%d trades)", filepath, len(trades_df))
     except Exception as exc:
         LOGGER.warning("Impossible d'exporter les trades : %s", exc)
+    return filepath
+
+
+def save_trade_audit_csv(pf, output_dir: Path | None = None) -> Path:
+    """Exporte le journal d'audit détaillé des événements de trade."""
+    out = output_dir or ARTIFACTS_DIR
+    out.mkdir(parents=True, exist_ok=True)
+    filepath = out / "trade_audit_log.csv"
+    try:
+        trade_events_df = _extract_trade_events_df(pf)
+        audit_df = (
+            trade_events_df.copy()
+            if trade_events_df is not None
+            else pd.DataFrame(columns=["event_type"])
+        )
+        audit_df.to_csv(str(filepath), index=False)
+        LOGGER.info("Audit trade exporté : %s (%d événements)", filepath, len(audit_df))
+    except Exception as exc:
+        LOGGER.warning("Impossible d'exporter l'audit trade : %s", exc)
     return filepath
 
 

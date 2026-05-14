@@ -165,6 +165,7 @@ class _OpenPosition:
     explicit_oco_sibling_canceled: bool = False
     # Phase D.2 — secteur pour attribution sectorielle.
     sector: str | None = None
+    signal_context: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -183,6 +184,7 @@ class _RunState:
     settlements_by_day: dict[int, float] = field(default_factory=lambda: defaultdict(float))
     positions: dict[str, _OpenPosition] = field(default_factory=dict)
     closed_trades: list[dict[str, object]] = field(default_factory=list)
+    trade_events: list[dict[str, object]] = field(default_factory=list)
     equity_points: list[float] = field(default_factory=list)
     day_trade_counts: dict[pd.Timestamp, int] = field(default_factory=lambda: defaultdict(int))
 
@@ -234,6 +236,7 @@ class BacktestResult:
 
     equity_curve: pd.Series
     closed_trades_df: pd.DataFrame
+    trade_events_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     diagnostics: BacktestDiagnostics = field(default_factory=BacktestDiagnostics)
     wrapper: SimpleNamespace = field(init=False)
     trades: _ReadableTradesAccessor = field(init=False)
@@ -251,6 +254,37 @@ class BacktestResult:
 
 class BacktestEngine:
     """Exécute le backtest à partir des signaux reconstruits."""
+
+    _SIGNAL_CONTEXT_FIELDS: tuple[tuple[str, str], ...] = (
+        ("signal_date", "signal_date"),
+        ("execution_date", "execution_date"),
+        ("score", "score"),
+        ("score_source", "score_source"),
+        ("predicted_proba", "predicted_proba"),
+        ("conviction", "conviction"),
+        ("rank", "rank"),
+        ("sector", "signal_sector"),
+        ("decision", "entry_decision"),
+        ("decision_reason", "entry_reason"),
+        ("target_weight", "signal_target_weight"),
+        ("target_notional", "signal_target_notional"),
+        ("approved_shares", "signal_approved_shares"),
+        ("filled_qty", "signal_filled_qty"),
+        ("fill_price", "signal_fill_price"),
+        ("watcher_transition_state", "watcher_transition_state"),
+        ("watcher_trigger_date", "watcher_trigger_date"),
+        ("watcher_transition_effective_date", "watcher_transition_effective_date"),
+        ("replay_take_profit_price", "replay_take_profit_price"),
+        ("replay_initial_stop_price", "replay_initial_stop_price"),
+        ("replay_trailing_stop_pct", "replay_trailing_stop_pct"),
+        ("replay_trailing_activation_price", "replay_trailing_activation_price"),
+        ("replay_trailing_activation_mode", "replay_trailing_activation_mode"),
+        ("replay_exit_date", "replay_exit_date"),
+        ("replay_exit_price", "replay_exit_price"),
+        ("replay_exit_reason", "replay_exit_reason"),
+        ("replay_exit_intent_role", "replay_exit_intent_role"),
+        ("replay_oco_sibling_canceled", "replay_oco_sibling_canceled"),
+    )
 
     def __init__(self, config: BacktestConfig) -> None:
         self.config = config
@@ -401,6 +435,66 @@ class BacktestEngine:
         scheduled["execution_date"] = trading_days.take(execution_indices[valid_mask]).values
         return scheduled
 
+    @staticmethod
+    def _normalize_event_value(value: object) -> object | None:
+        if value is None:
+            return None
+        if isinstance(value, (pd.Timestamp, np.datetime64)):
+            timestamp = pd.Timestamp(value)
+            return None if pd.isna(timestamp) else timestamp
+        if isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, float):
+            return value if np.isfinite(value) else None
+        if isinstance(value, (int, bool, str)):
+            return value
+        try:
+            if pd.isna(value):
+                return None
+        except TypeError:
+            return value
+        return value
+
+    def _build_signal_context(self, row: pd.Series) -> dict[str, object]:
+        context: dict[str, object] = {}
+        for source_name, target_name in self._SIGNAL_CONTEXT_FIELDS:
+            if source_name not in row.index:
+                continue
+            normalized_value = self._normalize_event_value(row.get(source_name))
+            if normalized_value is None:
+                continue
+            context[target_name] = normalized_value
+        context.setdefault("entry_reason", self._derive_entry_reason(row))
+        return context
+
+    def _derive_entry_reason(self, row: pd.Series) -> str:
+        explicit_reason = self._resolve_signal_text(row, "decision_reason")
+        if explicit_reason:
+            return explicit_reason
+        score_source = self._resolve_signal_text(row, "score_source")
+        if score_source:
+            return f"selected_from_{score_source}"
+        return "selected_signal"
+
+    @staticmethod
+    def _format_event_payload(payload: dict[str, object]) -> str:
+        return ", ".join(f"{key}={value}" for key, value in payload.items())
+
+    def _record_trade_event(
+        self,
+        state: _RunState,
+        event_type: str,
+        **payload: object,
+    ) -> None:
+        event_payload: dict[str, object] = {"event_type": event_type}
+        for key, raw_value in payload.items():
+            normalized_value = self._normalize_event_value(raw_value)
+            if normalized_value is None:
+                continue
+            event_payload[key] = normalized_value
+        state.trade_events.append(event_payload)
+        LOGGER.info("BT_EVENT %s", self._format_event_payload(event_payload))
+
     def _run_with_constraints(
         self,
         *,
@@ -450,6 +544,7 @@ class BacktestEngine:
             day_signals = signals_by_day.get(trade_day)
             candidate_rows = self._select_candidate_rows(
                 state=state,
+                trade_day=trade_day,
                 day_signals=day_signals,
                 close_columns=close.columns,
                 entries_allowed_by_breaker=entries_allowed_by_breaker,
@@ -491,11 +586,18 @@ class BacktestEngine:
             state.equity_points, index=trading_days, name="portfolio_value", dtype=float
         )
         trades_df = pd.DataFrame(state.closed_trades)
-        result = BacktestResult(equity_curve=equity_curve, closed_trades_df=trades_df, diagnostics=diagnostics)
+        trade_events_df = pd.DataFrame(state.trade_events)
+        result = BacktestResult(
+            equity_curve=equity_curve,
+            closed_trades_df=trades_df,
+            trade_events_df=trade_events_df,
+            diagnostics=diagnostics,
+        )
         LOGGER.info(
-            "Backtest contraint terminé — valeur finale : %.2f — diagnostics=%s",
+            "Backtest contraint terminé — valeur finale : %.2f — diagnostics=%s — événements=%d",
             result.final_value(),
             diagnostics.to_dict(),
+            len(trade_events_df),
         )
         return result
 
@@ -539,6 +641,7 @@ class BacktestEngine:
         self,
         *,
         state: _RunState,
+        trade_day: pd.Timestamp,
         day_signals: pd.DataFrame | None,
         close_columns: pd.Index,
         entries_allowed_by_breaker: bool,
@@ -549,22 +652,38 @@ class BacktestEngine:
         cfg = self.config
         if day_signals is None:
             return []
+        available_slots = max(cfg.max_positions - len(state.positions), 0)
+        filtered_rows = [
+            row
+            for _, row in day_signals.iterrows()
+            if str(row["symbol"]) not in state.positions and str(row["symbol"]) in close_columns
+        ]
         if not entries_allowed_by_breaker or not entries_allowed_by_regime:
             blocked_count = int(max(cfg.max_positions - len(state.positions), 0))
             if not entries_allowed_by_breaker:
                 diagnostics.blocked_by_drawdown_breaker += blocked_count
             if not entries_allowed_by_regime:
                 diagnostics.blocked_by_regime += blocked_count
+            for row in filtered_rows[:available_slots]:
+                self._record_trade_event(
+                    state,
+                    "entry_blocked_overlay",
+                    event_date=trade_day,
+                    symbol=str(row["symbol"]),
+                    rejection_reason=(
+                        "drawdown_breaker_and_regime_filter"
+                        if (not entries_allowed_by_breaker and not entries_allowed_by_regime)
+                        else "drawdown_breaker"
+                        if not entries_allowed_by_breaker
+                        else "regime_filter"
+                    ),
+                    **self._build_signal_context(row),
+                )
             return []
 
-        available_slots = max(cfg.max_positions - len(state.positions), 0)
         if available_slots <= 0:
             return []
-        return [
-            row
-            for _, row in day_signals.iterrows()
-            if str(row["symbol"]) not in state.positions and str(row["symbol"]) in close_columns
-        ][:available_slots]
+        return filtered_rows[:available_slots]
 
     def _try_open_entries(
         self,
@@ -606,8 +725,18 @@ class BacktestEngine:
 
         for candidate_pos, row in enumerate(candidate_rows):
             symbol = str(row["symbol"])
+            signal_context = self._build_signal_context(row)
             entry_price = float(open_df.at[trade_day, symbol])
             if not np.isfinite(entry_price) or entry_price <= 0:
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason="missing_entry_price",
+                    attempted_entry_price=entry_price,
+                    **signal_context,
+                )
                 continue
 
             quantity_override = (
@@ -624,10 +753,27 @@ class BacktestEngine:
                     previous_close = float(close.at[prev_day, symbol])
                 except (KeyError, ValueError):
                     previous_close = None
+            entry_gap_pct = (
+                ((entry_price / previous_close) - 1.0)
+                if previous_close is not None and previous_close > 0
+                else None
+            )
             if should_skip_entry_for_gap(
                 previous_close, entry_price, max_gap_pct=micro.max_entry_gap_pct
             ):
                 diagnostics.blocked_entry_gap += 1
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason="entry_gap_filter",
+                    attempted_entry_price=entry_price,
+                    previous_close=previous_close,
+                    entry_gap_pct=entry_gap_pct,
+                    max_entry_gap_pct=micro.max_entry_gap_pct,
+                    **signal_context,
+                )
                 continue
 
             signal_target_weight = self._resolve_signal_target_weight(row)
@@ -649,11 +795,24 @@ class BacktestEngine:
                 sector, sector_exposure_pct.get(sector, 0.0), target_weight_pct
             ):
                 diagnostics.blocked_by_sectoral_cap += 1
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason="sectoral_cap",
+                    sector=sector,
+                    sector_exposure_pct=sector_exposure_pct.get(sector, 0.0),
+                    target_weight_pct=target_weight_pct,
+                    max_sector_exposure_pct=risk.sectoral_cap.max_sector_exposure_pct,
+                    **signal_context,
+                )
                 continue
 
             remaining_candidates = max(len(candidate_rows) - candidate_pos, 1)
             per_position_cap = current_equity * target_weight_pct
             candidate_budget = min(per_position_cap, state.settled_cash / remaining_candidates)
+            settled_cash_before_entry = state.settled_cash
 
             preliminary_size_usd = max(
                 float(quantity_override) * entry_price if quantity_override is not None else candidate_budget,
@@ -671,12 +830,38 @@ class BacktestEngine:
             if quantity <= 0:
                 if constraints.use_settled_cash_only:
                     diagnostics.blocked_cash_entries += 1
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason="insufficient_cash_for_quantity",
+                    settled_cash_before=settled_cash_before_entry,
+                    candidate_budget=candidate_budget,
+                    target_weight_pct=target_weight_pct,
+                    quantity_override=quantity_override,
+                    effective_unit_cost=effective_unit_cost,
+                    **signal_context,
+                )
                 continue
 
             entry_cost = quantity * effective_unit_cost
             if entry_cost > state.settled_cash:
                 if constraints.use_settled_cash_only:
                     diagnostics.blocked_cash_entries += 1
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason="entry_cost_exceeds_cash",
+                    settled_cash_before=settled_cash_before_entry,
+                    candidate_budget=candidate_budget,
+                    quantity=quantity,
+                    entry_cost=entry_cost,
+                    effective_unit_cost=effective_unit_cost,
+                    **signal_context,
+                )
                 continue
 
             state.settled_cash -= entry_cost
@@ -761,9 +946,29 @@ class BacktestEngine:
                     else False
                 ),
                 sector=sector,
+                signal_context=signal_context,
             )
             if risk.sectoral_cap.enabled:
                 sector_exposure_pct[sector] += target_weight_pct
+            self._record_trade_event(
+                state,
+                "entry_opened",
+                event_date=trade_day,
+                symbol=symbol,
+                sector=sector,
+                quantity=quantity,
+                entry_price=entry_price,
+                entry_cost=entry_cost,
+                effective_unit_cost=effective_unit_cost,
+                target_weight_pct=target_weight_pct,
+                candidate_budget=candidate_budget,
+                settled_cash_before=settled_cash_before_entry,
+                settled_cash_after=state.settled_cash,
+                quantity_override=quantity_override,
+                previous_close=previous_close,
+                entry_gap_pct=entry_gap_pct,
+                **signal_context,
+            )
 
     def _try_close_positions(
         self,
@@ -822,6 +1027,17 @@ class BacktestEngine:
                         position.replay_trailing_active = True
                         diagnostics.watcher_replay_transitions += 1
                         diagnostics.protection_replay_activations += 1
+                        self._record_trade_event(
+                            state,
+                            "watcher_transition",
+                            event_date=trade_day,
+                            symbol=symbol,
+                            trigger_date=position.watcher_trigger_date,
+                            effective_date=position.watcher_transition_effective_date,
+                            transition_state=position.watcher_transition_state or "transitioned",
+                            trailing_stop_pct=position.replay_trailing_stop_pct,
+                            **position.signal_context,
+                        )
                 else:
                     if (
                         not position.replay_trailing_active
@@ -830,6 +1046,16 @@ class BacktestEngine:
                     ):
                         position.replay_trailing_active = True
                         diagnostics.protection_replay_activations += 1
+                        self._record_trade_event(
+                            state,
+                            "protection_activated",
+                            event_date=trade_day,
+                            symbol=symbol,
+                            activation_reason="trailing_activation_price",
+                            trigger_price=position.replay_trailing_activation_price,
+                            trailing_stop_pct=position.replay_trailing_stop_pct,
+                            **position.signal_context,
+                        )
                 trailing_stop_pct = (
                     position.replay_trailing_stop_pct
                     if position.replay_trailing_active and position.replay_trailing_stop_pct is not None
@@ -933,8 +1159,35 @@ class BacktestEngine:
                     else 0.0,
                     "holding_days": holding_days,
                     "exit_reason": exit_reason,
+                    "exit_source": "explicit_replay" if explicit_resolution is not None else "intrabar_resolution",
+                    "exit_intent_role": position.explicit_exit_intent_role,
+                    "oco_sibling_canceled": (
+                        position.explicit_oco_sibling_canceled if explicit_resolution is not None else False
+                    ),
                     "is_day_trade": is_day_trade,
+                    **position.signal_context,
                 }
+            )
+            self._record_trade_event(
+                state,
+                "exit_closed",
+                event_date=trade_day,
+                symbol=symbol,
+                sector=position.sector,
+                entry_date=position.entry_date,
+                entry_price=position.entry_price,
+                quantity=position.quantity,
+                exit_price=exit_price,
+                exit_reason=exit_reason,
+                exit_source="explicit_replay" if explicit_resolution is not None else "intrabar_resolution",
+                proceeds=proceeds,
+                pnl=pnl,
+                return_pct=((proceeds / position.entry_cost) - 1.0) * 100.0 if position.entry_cost else 0.0,
+                holding_days=holding_days,
+                is_day_trade=is_day_trade,
+                settled_cash_after=state.settled_cash,
+                unsettled_cash_after=state.unsettled_cash,
+                **position.signal_context,
             )
             symbols_to_close.append(symbol)
 
