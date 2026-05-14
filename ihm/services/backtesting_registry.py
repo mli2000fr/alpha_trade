@@ -27,12 +27,20 @@ from ihm.services.backtesting_runner import (
     build_subprocess_env,
     format_command_for_display,
 )
+from ihm.services.db import validate_db_connection_config
 from ihm.services.screener_recommendations import build_screener_artifact_summary, get_screener_artifacts_dir
 
 RunStatus = Literal["starting", "running", "completed", "failed", "timeout", "stopped"]
 TAIL_MAX_LINES = 400
 RUNS_DIR = PROJECT_ROOT / "artifacts" / "ihm_backtesting_runs"
 HISTORY_INDEX_PATH = RUNS_DIR / "history_index.json"
+DB_REQUIRED_RUN_KINDS = frozenset({
+    "run",
+    "backfill-scores-history",
+    "diagnose-screener",
+    "calibrate-sentiment-weights",
+    "walk-forward-sentiment",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +280,17 @@ def _resolve_screener_artifacts_dir(
     return None
 
 
+def _ensure_db_ready_for_run(
+    run_kind: BacktestingCommandKind,
+    db_config: dict[str, str | None] | None,
+) -> None:
+    if run_kind not in DB_REQUIRED_RUN_KINDS or not db_config:
+        return
+    error = validate_db_connection_config(db_config)
+    if error:
+        raise RuntimeError(f"Pré-vérification DB échouée pour `{run_kind}` : {error}")
+
+
 def list_active_backtesting_runs_by_kind(run_kind: BacktestingCommandKind) -> list[dict[str, object]]:
     """Retourne les runs actifs pour un type de commande donné."""
     return [run for run in list_active_backtesting_runs() if str(run.get("run_kind", "")) == run_kind]
@@ -298,6 +317,7 @@ def start_backtesting_run(
         raise RuntimeError(
             f"Un run `{run_kind}` est déjà en cours ({active_run_id}). Attendez sa fin ou arrêtez-le avant de relancer."
         )
+    _ensure_db_ready_for_run(run_kind, db_config)
 
     # Sprint S2 / A-014 — exclusion mutuelle avec les workflows pipeline.
     from ihm.services.pipeline_lock import (

@@ -4,7 +4,9 @@ Version: 0.1.0
 Summary: Enterprise-grade US Swing Trade system
 Requires-Python: >=3.12
 Requires-Dist: pymysql
+Requires-Dist: cryptography
 Requires-Dist: requests
+Requires-Dist: certifi
 Requires-Dist: python-dotenv
 Requires-Dist: sqlalchemy
 Requires-Dist: pandas

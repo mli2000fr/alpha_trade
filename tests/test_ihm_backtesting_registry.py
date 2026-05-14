@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 
 class _FakeProcess:
     def __init__(self):
@@ -114,5 +116,47 @@ def test_start_backtesting_run_rebinds_pipeline_lock_to_child_pid(tmp_path: Path
         assert payload["pid"] == 4242
     finally:
         pipeline_lock.set_locks_dir_for_tests(None)
+
+
+def test_start_backtesting_run_fails_fast_when_db_preflight_fails(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import backtesting_registry
+    from ihm.services.backtesting_runner import BacktestRunOptions
+
+    runs_dir = tmp_path / "ihm_runs"
+
+    monkeypatch.setattr(backtesting_registry, "RUNS_DIR", runs_dir)
+    monkeypatch.setattr(backtesting_registry, "HISTORY_INDEX_PATH", runs_dir / "history_index.json")
+    monkeypatch.setattr(backtesting_registry, "_ACTIVE_RUNS", {})
+    monkeypatch.setattr(
+        backtesting_registry,
+        "validate_db_connection_config",
+        lambda db_config: "Accès MySQL refusé pour l'utilisateur `root` sur `localhost/alpha_trade`.",
+    )
+
+    popen_called = False
+
+    def _unexpected_popen(*args, **kwargs):
+        nonlocal popen_called
+        popen_called = True
+        raise AssertionError("Popen ne doit pas être appelé si la pré-vérification DB échoue")
+
+    monkeypatch.setattr(backtesting_registry.subprocess, "Popen", _unexpected_popen)
+
+    with pytest.raises(RuntimeError, match="Pré-vérification DB échouée") as exc_info:
+        backtesting_registry.start_backtesting_run(
+            "run",
+            "Backtesting run",
+            BacktestRunOptions(start="2026-01-01"),
+            db_config={
+                "host": "localhost",
+                "name": "alpha_trade",
+                "user": "root",
+                "password": "bad-secret",
+                "source": "variables d'environnement",
+            },
+        )
+
+    assert "Accès MySQL refusé" in str(exc_info.value)
+    assert popen_called is False
 
 

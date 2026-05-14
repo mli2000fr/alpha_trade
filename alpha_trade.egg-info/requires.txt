@@ -1,5 +1,7 @@
 pymysql
+cryptography
 requests
+certifi
 python-dotenv
 sqlalchemy
 pandas

@@ -10,7 +10,7 @@ from ihm.services import varEnv
 def test_get_var_env_filters_by_config(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(varEnv, "get_conf_var_env", lambda: ["LOGIN_DB", "PASSWORD_DB"])
-    monkeypatch.setenv("LOGIN_DB", "demo_user")
+    monkeypatch.setenv("LOGIN_DB", "root")
     monkeypatch.setenv("PASSWORD_DB", "demo_pass")
     monkeypatch.setenv("SHOULD_NOT_BE_EXPORTED", "hidden")
 
@@ -22,7 +22,7 @@ def test_get_var_env_filters_by_config(monkeypatch, tmp_path: Path) -> None:
 
     assert rows == [
         ["Variable", "Valeur"],
-        ["LOGIN_DB", "demo_user"],
+        ["LOGIN_DB", "root"],
         ["PASSWORD_DB", "demo_pass"],
     ]
 
@@ -33,15 +33,15 @@ def test_set_var_env_applies_only_allowed_keys(monkeypatch) -> None:
     monkeypatch.delenv("LOGIN_DB", raising=False)
     monkeypatch.delenv("PASSWORD_DB", raising=False)
 
-    payload = b"Variable,Valeur\nLOGIN_DB,demo_user\nPASSWORD_DB,secret\n"
+    payload = b"Variable,Valeur\nLOGIN_DB,root\nPASSWORD_DB,secret\n"
 
     result = varEnv.set_var_env(payload, apply=True)
 
     assert result == {
-        "applied": {"LOGIN_DB": "demo_user"},
+        "applied": {"LOGIN_DB": "root"},
         "skipped": ["PASSWORD_DB"],
     }
-    assert varEnv.os.environ["LOGIN_DB"] == "demo_user"
+    assert varEnv.os.environ["LOGIN_DB"] == "root"
     assert "PASSWORD_DB" not in result["applied"]
 
 
@@ -50,10 +50,10 @@ def test_set_var_env_does_not_apply_when_apply_is_false(monkeypatch) -> None:
     monkeypatch.setattr(varEnv, "get_conf_var_env", lambda: ["LOGIN_DB"])
     monkeypatch.delenv("LOGIN_DB", raising=False)
 
-    payload = b"Variable,Valeur\nLOGIN_DB,demo_user\n"
+    payload = b"Variable,Valeur\nLOGIN_DB,root\n"
 
     result = varEnv.set_var_env(payload, apply=False)
 
-    assert result == {"applied": {"LOGIN_DB": "demo_user"}, "skipped": []}
+    assert result == {"applied": {"LOGIN_DB": "root"}, "skipped": []}
     assert "LOGIN_DB" not in varEnv.os.environ
 

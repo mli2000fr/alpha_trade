@@ -537,6 +537,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         extract_diagnostics,
         generate_report,
         load_dividends_received,
+        save_trade_audit_csv,
         save_equity_curve,
         save_equity_curve_csv,
         save_report_json,
@@ -1147,7 +1148,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
     if output_dir is not None:
         _safe_print("📝 Sauvegarde du rapport structuré...")
         equity_curve_csv_path = save_equity_curve_csv(pf, output_dir=output_dir)
+        trade_audit_csv_path = save_trade_audit_csv(pf, output_dir=output_dir)
         artifact_paths["equity_curve_csv"] = str(equity_curve_csv_path)
+        artifact_paths["trade_audit_csv"] = str(trade_audit_csv_path)
         fidelity_manifest_path = save_fidelity_manifest(fidelity_manifest, output_dir)
         artifact_paths["fidelity_manifest_json"] = str(fidelity_manifest_path)
         if phase2_risk_result is not None:
@@ -1202,6 +1205,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         artifact_paths["report_json"] = str(report_json_path)
         _safe_print(f"   → {report_json_path}")
         _safe_print(f"   → {equity_curve_csv_path}")
+        _safe_print(f"   → {trade_audit_csv_path}")
         _safe_print(f"   → {fidelity_manifest_path}")
 
     # 6. Artefacts
