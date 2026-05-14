@@ -95,7 +95,7 @@ def render() -> None:
 		"Catalogue des tables groupées par fonctionnalité. Le bouton de purge vide uniquement les données des tables cochées ; aucune table n'est supprimée."
 	)
 	st.warning(
-		"⚠️ Les tables `stock_metadata`, `stock_bars` et `stock_bars_daily` sont explicitement protégées et ne peuvent pas être vidées depuis cette page."
+		"⚠️ Les tables `stock_metadata`, `stock_bars`, `stock_bars_daily` et `news_raw` sont explicitement protégées et ne peuvent pas être vidées depuis cette page."
 	)
 
 	with st.expander("🗄️ Connexion DB", expanded=False):
@@ -207,7 +207,7 @@ def render() -> None:
 			)
 			st.rerun()
 
-	protected_names = ", ".join(sorted(name for name in PROTECTED_TABLES if name.endswith("s") or name == "stock_metadata"))
+	protected_names = ", ".join(sorted(PROTECTED_TABLES))
 	st.caption(f"Tables protégées côté IHM : `{protected_names}`.")
 
 	# ---- Sprint S26 (gap P3) — Restauration depuis backup ------------

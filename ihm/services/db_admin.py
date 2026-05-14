@@ -19,6 +19,7 @@ PROTECTED_TABLES = frozenset({
     "stock_bars_daily",
     "stock_bar",
     "stock_bar_daily",
+    "news_raw",
 })
 
 FUNCTIONALITY_GROUP_ORDER: tuple[str, ...] = (
@@ -366,6 +367,16 @@ def build_table_purge_plan(
 
 
 def execute_table_purge(engine: Engine, plan: TablePurgePlan) -> TablePurgeResult:
+    protected_tables = tuple(
+        sorted(
+            {
+                *plan.protected_tables,
+                *(operation.table_name for operation in plan.operations if operation.table_name in PROTECTED_TABLES),
+            }
+        )
+    )
+    if protected_tables:
+        raise ValueError(f"Tables protégées : {', '.join(protected_tables)}")
     if plan.missing_tables:
         raise ValueError(f"Tables introuvables en base : {', '.join(plan.missing_tables)}")
     if plan.blocked_by_dependencies:
@@ -379,7 +390,8 @@ def execute_table_purge(engine: Engine, plan: TablePurgePlan) -> TablePurgeResul
             result = conn.execute(text(operation.statement))
             executed_tables.append(operation.table_name)
             executed_statements.append(operation.statement)
-            rowcount = result.rowcount if result.rowcount is not None and result.rowcount >= 0 else 0
+            rowcount_raw = getattr(result, "rowcount", None)
+            rowcount = int(rowcount_raw) if isinstance(rowcount_raw, int) and rowcount_raw >= 0 else 0
             total_rows_affected += int(rowcount)
 
     return TablePurgeResult(

@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+from sqlalchemy import create_engine
+
 from ihm.pages import db_admin as db_admin_page
 from ihm.services.db_admin import (
     DatabaseTableSnapshot,
@@ -7,7 +10,10 @@ from ihm.services.db_admin import (
     TableCatalogEntry,
     build_table_purge_plan,
     discover_tables_from_sql_directory,
+    execute_table_purge,
     list_grouped_tables,
+    TablePurgeOperation,
+    TablePurgePlan,
 )
 
 
@@ -97,6 +103,21 @@ def test_build_table_purge_plan_ignores_protected_tables() -> None:
 
 
 
+def test_build_table_purge_plan_ignores_news_raw_like_other_protected_tables() -> None:
+    snapshot = DatabaseTableSnapshot(
+        existing_tables=("news_raw", "news_sentiment"),
+        row_estimates={"news_raw": 100, "news_sentiment": 10},
+        foreign_key_pairs=(("news_sentiment", "news_raw"),),
+    )
+
+    plan = build_table_purge_plan(["news_raw", "news_sentiment"], snapshot)
+
+    assert "news_raw" in PROTECTED_TABLES
+    assert plan.protected_tables == ("news_raw",)
+    assert [operation.table_name for operation in plan.operations] == ["news_sentiment"]
+
+
+
 def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() -> None:
     snapshot = DatabaseTableSnapshot(
         existing_tables=(
@@ -124,7 +145,10 @@ def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() 
 
     grouped = list_grouped_tables(snapshot)
 
+    news_raw_entry = next(entry for entry in grouped["News / Sentiment"] if entry.table_name == "news_raw")
+
     assert any(entry.table_name == "news_raw" for entry in grouped["News / Sentiment"])
+    assert news_raw_entry.protected is True
     assert any(entry.table_name == "portfolio_targets" for entry in grouped["Risk / Portefeuille"])
     assert any(entry.table_name == "account_risk_snapshots" for entry in grouped["Risk / Portefeuille"])
     assert any(entry.table_name == "execution_broker_orders" for entry in grouped["Exécution broker"])
@@ -164,5 +188,27 @@ def test_apply_pending_widget_resets_clears_table_selection_and_confirmation(mon
     assert session_state[db_admin_page.CONFIRM_PURGE_KEY] is False
     assert db_admin_page.PENDING_RESET_TABLES_KEY not in session_state
     assert db_admin_page.PENDING_RESET_CONFIRM_KEY not in session_state
+
+
+def test_execute_table_purge_rejects_protected_tables_even_if_operation_is_injected() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    plan = TablePurgePlan(
+        selected_tables=("news_raw",),
+        operations=(
+            TablePurgeOperation(
+                table_name="news_raw",
+                statement="DELETE FROM news_raw;",
+                strategy="delete",
+                reason="test guard",
+            ),
+        ),
+        protected_tables=(),
+        missing_tables=(),
+        blocked_by_dependencies={},
+        cycle_tables=(),
+    )
+
+    with pytest.raises(ValueError, match="Tables protégées : news_raw"):
+        execute_table_purge(engine, plan)
 
 
