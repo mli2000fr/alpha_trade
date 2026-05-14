@@ -95,7 +95,7 @@ def render() -> None:
 		"Catalogue des tables groupées par fonctionnalité. Le bouton de purge vide uniquement les données des tables cochées ; aucune table n'est supprimée."
 	)
 	st.warning(
-		"⚠️ Les tables `stock_metadata`, `stock_bars`, `stock_bars_daily` et `news_raw` sont explicitement protégées et ne peuvent pas être vidées depuis cette page."
+		"⚠️ Les tables `stock_metadata`, `stock_bars`, `stock_bars_daily`, `news_raw`, `news_ticker_map` et `news_ingestion_checkpoint` sont explicitement protégées et ne peuvent pas être vidées depuis cette page."
 	)
 
 	with st.expander("🗄️ Connexion DB", expanded=False):

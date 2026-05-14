@@ -105,15 +105,25 @@ def test_build_table_purge_plan_ignores_protected_tables() -> None:
 
 def test_build_table_purge_plan_ignores_news_raw_like_other_protected_tables() -> None:
     snapshot = DatabaseTableSnapshot(
-        existing_tables=("news_raw", "news_sentiment"),
-        row_estimates={"news_raw": 100, "news_sentiment": 10},
+        existing_tables=("news_raw", "news_ticker_map", "news_ingestion_checkpoint", "news_sentiment"),
+        row_estimates={
+            "news_raw": 100,
+            "news_ticker_map": 50,
+            "news_ingestion_checkpoint": 5,
+            "news_sentiment": 10,
+        },
         foreign_key_pairs=(("news_sentiment", "news_raw"),),
     )
 
-    plan = build_table_purge_plan(["news_raw", "news_sentiment"], snapshot)
+    plan = build_table_purge_plan(
+        ["news_raw", "news_ticker_map", "news_ingestion_checkpoint", "news_sentiment"],
+        snapshot,
+    )
 
     assert "news_raw" in PROTECTED_TABLES
-    assert plan.protected_tables == ("news_raw",)
+    assert "news_ticker_map" in PROTECTED_TABLES
+    assert "news_ingestion_checkpoint" in PROTECTED_TABLES
+    assert plan.protected_tables == ("news_ingestion_checkpoint", "news_raw", "news_ticker_map")
     assert [operation.table_name for operation in plan.operations] == ["news_sentiment"]
 
 
@@ -122,6 +132,8 @@ def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() 
     snapshot = DatabaseTableSnapshot(
         existing_tables=(
             "news_raw",
+            "news_ticker_map",
+            "news_ingestion_checkpoint",
             "portfolio_targets",
             "execution_broker_orders",
             "custom_table",
@@ -132,6 +144,8 @@ def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() 
         ),
         row_estimates={
             "news_raw": 12,
+            "news_ticker_map": 18,
+            "news_ingestion_checkpoint": 2,
             "portfolio_targets": 3,
             "execution_broker_orders": 4,
             "custom_table": 0,
@@ -146,9 +160,13 @@ def test_list_grouped_tables_exposes_existing_tables_with_functionality_group() 
     grouped = list_grouped_tables(snapshot)
 
     news_raw_entry = next(entry for entry in grouped["News / Sentiment"] if entry.table_name == "news_raw")
+    news_ticker_map_entry = next(entry for entry in grouped["News / Sentiment"] if entry.table_name == "news_ticker_map")
+    checkpoint_entry = next(entry for entry in grouped["News / Sentiment"] if entry.table_name == "news_ingestion_checkpoint")
 
     assert any(entry.table_name == "news_raw" for entry in grouped["News / Sentiment"])
     assert news_raw_entry.protected is True
+    assert news_ticker_map_entry.protected is True
+    assert checkpoint_entry.protected is True
     assert any(entry.table_name == "portfolio_targets" for entry in grouped["Risk / Portefeuille"])
     assert any(entry.table_name == "account_risk_snapshots" for entry in grouped["Risk / Portefeuille"])
     assert any(entry.table_name == "execution_broker_orders" for entry in grouped["Exécution broker"])
@@ -193,11 +211,23 @@ def test_apply_pending_widget_resets_clears_table_selection_and_confirmation(mon
 def test_execute_table_purge_rejects_protected_tables_even_if_operation_is_injected() -> None:
     engine = create_engine("sqlite:///:memory:")
     plan = TablePurgePlan(
-        selected_tables=("news_raw",),
+        selected_tables=("news_raw", "news_ticker_map", "news_ingestion_checkpoint"),
         operations=(
             TablePurgeOperation(
                 table_name="news_raw",
                 statement="DELETE FROM news_raw;",
+                strategy="delete",
+                reason="test guard",
+            ),
+            TablePurgeOperation(
+                table_name="news_ticker_map",
+                statement="DELETE FROM news_ticker_map;",
+                strategy="delete",
+                reason="test guard",
+            ),
+            TablePurgeOperation(
+                table_name="news_ingestion_checkpoint",
+                statement="DELETE FROM news_ingestion_checkpoint;",
                 strategy="delete",
                 reason="test guard",
             ),
@@ -208,7 +238,10 @@ def test_execute_table_purge_rejects_protected_tables_even_if_operation_is_injec
         cycle_tables=(),
     )
 
-    with pytest.raises(ValueError, match="Tables protégées : news_raw"):
+    with pytest.raises(
+        ValueError,
+        match="Tables protégées : news_ingestion_checkpoint, news_raw, news_ticker_map",
+    ):
         execute_table_purge(engine, plan)
 
 

@@ -20,6 +20,8 @@ PROTECTED_TABLES = frozenset({
     "stock_bar",
     "stock_bar_daily",
     "news_raw",
+    "news_ticker_map",
+    "news_ingestion_checkpoint",
 })
 
 FUNCTIONALITY_GROUP_ORDER: tuple[str, ...] = (
