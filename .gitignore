@@ -8,6 +8,8 @@ test/
 ./*.ckpt
 ./*.log
 ./*.txt
+*.pyc
+__pycache__/
 .env
 .env.*
 scripts/windows/protection_watcher.env
