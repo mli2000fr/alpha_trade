@@ -83,6 +83,18 @@ Pour `Alpha Scanner`, l'IHM transmet explicitement les valeurs affichées au lau
 
 Pour `event_sentiment`, laisser les symboles vides signifie : reprendre automatiquement l'univers candidat `stock_scores.is_candidate = 1`. Le sélecteur **Event Sentiment — source news** propose désormais `eodhd`, `alpaca`, `finnhub`, avec **`eodhd` par défaut**. L'IHM transmet explicitement `--news-provider eodhd` au backend si l'utilisateur ne change rien, et les checkpoints restent isolés par `source_name`.
 
+Le formulaire `Event Sentiment` distingue maintenant trois modes de scoring :
+
+- `Standard only` : pour remplir ou rattraper `news_sentiment` ;
+- `Contextual only` : pour enrichir un corpus déjà scoré dans `news_ticker_sentiment` ;
+- `Standard + contextual` : pour faire les deux dans le même run.
+
+Le paramètre `Cap dur paires contextuelles / run` est un cap **par run** : `5000` signifie que le run traite au plus `5000` couples `(article, symbole)` en contextual, puis un run suivant reprend le reliquat grâce à l'absence/persistance dans `news_ticker_sentiment`. Nous ne mettons pas `illimité` par défaut : sur gros historiques cela allongerait fortement le run et chargerait trop de paires en mémoire.
+
+La case `Ajouter le contextual à ce backfill 7bis` du bloc `7bis — Backfill relevance / contextual` n'est pas un doublon : elle agit uniquement sur le step dédié `relevance_backfill`. En pratique, pour enrichir un historique existant, l'ordre conseillé est : `Contextual only` puis `Rebuild daily sentiment features only`, puis éventuellement `Signal Aggregator`.
+
+Le step `7bis — Backfill relevance / contextual` sert à **recalculer la pertinence article → symbole** dans `news_ticker_map` et, si demandé, à **ajouter le scoring FinBERT contextualisé** dans `news_ticker_sentiment` sur une fenêtre déjà importée. Il est utile quand vous voulez rejouer/affiner le signal sans relancer tout l'import news. Dans le workflow complet lancé depuis l'IHM, il est inclus automatiquement **entre `7. Sentiment Pipeline` et `8. Signal Aggregator`**.
+
 Pour `signal_aggregator`, la page réutilise le champ global `trade date` quand il est renseigné et calcule le poids quantitatif implicite `1 - sentiment_weight - macro_weight` comme le backend.
 
 La carte `Alpha Scanner` inclut également un diagnostic de dépendances métier pour `stock_quote_snapshots` et `stock_earnings_calendar` :

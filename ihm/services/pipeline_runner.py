@@ -60,6 +60,17 @@ DEFAULT_SELECTOR_MIN_BETA_126 = STRICT_SWING_CASH_FILTERS.min_beta_126
 DEFAULT_SELECTOR_MAX_SPREAD_BPS = STRICT_SWING_CASH_FILTERS.max_spread_bps
 DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS = STRICT_SWING_CASH_FILTERS.earnings_blackout_days
 DEFAULT_EVENT_SENTIMENT_CONFIG = EventSentimentConfig()
+DEFAULT_EVENT_SENTIMENT_PENDING_LIMIT = DEFAULT_EVENT_SENTIMENT_CONFIG.sentiment_pending_limit
+DEFAULT_EVENT_SENTIMENT_PENDING_MAX_BATCHES_PER_RUN = (
+    DEFAULT_EVENT_SENTIMENT_CONFIG.sentiment_pending_max_batches_per_run
+)
+DEFAULT_EVENT_SENTIMENT_FINBERT_BATCH_SIZE = DEFAULT_EVENT_SENTIMENT_CONFIG.finbert_batch_size
+DEFAULT_EVENT_SENTIMENT_FEATURE_FLUSH_EVERY_N_BATCHES = (
+    DEFAULT_EVENT_SENTIMENT_CONFIG.feature_flush_every_n_pending_batches
+)
+RECOMMENDED_EVENT_SENTIMENT_PENDING_LIMIT = 5000
+RECOMMENDED_EVENT_SENTIMENT_PENDING_MAX_BATCHES_PER_RUN = 10
+RECOMMENDED_EVENT_SENTIMENT_FINBERT_BATCH_SIZE = 32
 DEFAULT_SIGNAL_AGGREGATOR_CONFIG = SentimentBoostConfig()
 DEFAULT_SIGNAL_AGGREGATOR_SENTIMENT_WEIGHT = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.sentiment_weight
 DEFAULT_SIGNAL_AGGREGATOR_MACRO_WEIGHT = DEFAULT_SIGNAL_AGGREGATOR_CONFIG.macro_sector_weight
@@ -206,6 +217,8 @@ ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
 ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
 WorkflowStartStep = Literal["1", "3"]
+SentimentScoringMode = Literal["standard_only", "contextual_only", "standard_and_contextual"]
+FundamentalsProvider = Literal["eodhd", "finnhub"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,9 +341,14 @@ class PipelineLaunchOptions:
     sentiment_news_provider: Literal["alpaca", "finnhub", "eodhd"] = "eodhd"
     sentiment_ticker_relevance_mode: Literal["provider_default", "strict", "scored"] = "provider_default"
     sentiment_min_relevance_score: float | None = None
+    sentiment_scoring_mode: SentimentScoringMode = "standard_only"
     sentiment_enable_contextual_scoring: bool = False
     sentiment_contextual_min_relevance: float | None = None
     sentiment_contextual_max_pairs: int | None = None
+    sentiment_pending_limit: int | None = None
+    sentiment_pending_max_batches_per_run: int | None = None
+    sentiment_feature_flush_every_n_batches: int | None = None
+    sentiment_finbert_batch_size: int | None = None
     # === Relevance backfill (step 7bis) ==================================
     backfill_relevance_dry_run: bool = False
     backfill_relevance_rescore_all: bool = False
@@ -384,6 +402,8 @@ class PipelineLaunchOptions:
     data_integrity_earnings_batch_size: int = DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE
     data_integrity_earnings_resume: bool = DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME
     data_integrity_fundamentals_limit: int | None = None
+    data_integrity_fundamentals_provider: FundamentalsProvider = "eodhd"
+    data_integrity_fundamentals_overwrite_existing: bool = False
     data_integrity_fundamentals_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
     eodhd_write_commit_every_symbols: int = DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS
@@ -550,7 +570,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
     PipelineStepDefinition(
         key="relevance_backfill",
         num="7bis",
-        name="Relevance Backfill",
+        name="Recalcul relevance + contextual (7bis)",
         desc=(
             "Backfill batch des scores de pertinence article→symbole "
             "(Niveau 2/3) et, si activé, du re-scoring FinBERT contextualisé "
@@ -634,7 +654,7 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="update_sector",
         num="B2",
         name="Mise à jour fondamentaux",
-        desc="Enrichit `stock_metadata` avec `sector` et `market_cap` via Finnhub pour les symboles encore incomplets.",
+        desc="Enrichit `stock_metadata` avec `sector` et `market_cap` via EODHD ou Finnhub (défaut EODHD), avec option d'écrasement des valeurs existantes. Si l'endpoint fundamentals EODHD est refusé par le compte (401/403), le backend bascule automatiquement vers Finnhub pour terminer le run.",
         tables="stock_metadata",
         deps="import_alpaca_assets (recommandé) ou univers déjà chargé",
     ),
@@ -746,6 +766,8 @@ def _extend_event_sentiment_cli_args(
 ) -> None:
     """Ajoute les flags supportés par les CLIs Python Event Sentiment."""
 
+    scoring_mode = _resolve_event_sentiment_scoring_mode(options)
+
     news_provider = options.sentiment_news_provider or "eodhd"
     command.extend(["--news-provider", news_provider])
 
@@ -768,8 +790,12 @@ def _extend_event_sentiment_cli_args(
             f"{float(options.sentiment_min_relevance_score):g}",
         ])
 
-    if include_contextual_scoring and options.sentiment_enable_contextual_scoring:
+    if include_contextual_scoring and scoring_mode == "contextual_only":
+        command.extend(["--scoring-mode", "contextual_only"])
+    elif include_contextual_scoring and scoring_mode == "standard_and_contextual":
         command.append("--enable-contextual-scoring")
+
+    if include_contextual_scoring and scoring_mode != "standard_only":
         if (
             options.sentiment_contextual_min_relevance is not None
             and options.sentiment_contextual_min_relevance > 0.0
@@ -787,6 +813,33 @@ def _extend_event_sentiment_cli_args(
                 str(int(options.sentiment_contextual_max_pairs)),
             ])
 
+    if options.sentiment_pending_limit is not None and options.sentiment_pending_limit > 0:
+        command.extend([
+            "--sentiment-pending-limit",
+            str(int(options.sentiment_pending_limit)),
+        ])
+    if (
+        options.sentiment_pending_max_batches_per_run is not None
+        and options.sentiment_pending_max_batches_per_run > 0
+    ):
+        command.extend([
+            "--sentiment-pending-max-batches",
+            str(int(options.sentiment_pending_max_batches_per_run)),
+        ])
+    if (
+        options.sentiment_feature_flush_every_n_batches is not None
+        and options.sentiment_feature_flush_every_n_batches > 0
+    ):
+        command.extend([
+            "--feature-flush-every-n-batches",
+            str(int(options.sentiment_feature_flush_every_n_batches)),
+        ])
+    if options.sentiment_finbert_batch_size is not None and options.sentiment_finbert_batch_size > 0:
+        command.extend([
+            "--finbert-batch-size",
+            str(int(options.sentiment_finbert_batch_size)),
+        ])
+
 
 def _extend_event_sentiment_powershell_args(
     command_args: list[str],
@@ -795,6 +848,8 @@ def _extend_event_sentiment_powershell_args(
     include_contextual_scoring: bool,
 ) -> None:
     """Ajoute les paramètres Event Sentiment pour les wrappers PowerShell."""
+
+    scoring_mode = _resolve_event_sentiment_scoring_mode(options)
 
     news_provider = options.sentiment_news_provider or "eodhd"
     command_args.extend(["-NewsProvider", news_provider])
@@ -818,8 +873,12 @@ def _extend_event_sentiment_powershell_args(
             f"{float(options.sentiment_min_relevance_score):g}",
         ])
 
-    if include_contextual_scoring and options.sentiment_enable_contextual_scoring:
+    if include_contextual_scoring and scoring_mode == "contextual_only":
+        command_args.extend(["-ScoringMode", "contextual_only"])
+    elif include_contextual_scoring and scoring_mode == "standard_and_contextual":
         command_args.append("-EnableContextualScoring")
+
+    if include_contextual_scoring and scoring_mode != "standard_only":
         if (
             options.sentiment_contextual_min_relevance is not None
             and options.sentiment_contextual_min_relevance > 0.0
@@ -836,6 +895,43 @@ def _extend_event_sentiment_powershell_args(
                 "-ContextualMaxPairs",
                 str(int(options.sentiment_contextual_max_pairs)),
             ])
+
+    if options.sentiment_pending_limit is not None and options.sentiment_pending_limit > 0:
+        command_args.extend([
+            "-SentimentPendingLimit",
+            str(int(options.sentiment_pending_limit)),
+        ])
+    if (
+        options.sentiment_pending_max_batches_per_run is not None
+        and options.sentiment_pending_max_batches_per_run > 0
+    ):
+        command_args.extend([
+            "-SentimentPendingMaxBatches",
+            str(int(options.sentiment_pending_max_batches_per_run)),
+        ])
+    if (
+        options.sentiment_feature_flush_every_n_batches is not None
+        and options.sentiment_feature_flush_every_n_batches > 0
+    ):
+        command_args.extend([
+            "-FeatureFlushEveryNBatches",
+            str(int(options.sentiment_feature_flush_every_n_batches)),
+        ])
+    if options.sentiment_finbert_batch_size is not None and options.sentiment_finbert_batch_size > 0:
+        command_args.extend([
+            "-FinBertBatchSize",
+            str(int(options.sentiment_finbert_batch_size)),
+        ])
+
+
+def _resolve_event_sentiment_scoring_mode(options: PipelineLaunchOptions) -> SentimentScoringMode:
+    if options.sentiment_enable_contextual_scoring:
+        if options.sentiment_scoring_mode == "contextual_only":
+            return "contextual_only"
+        return "standard_and_contextual"
+    if options.sentiment_scoring_mode in {"standard_only", "contextual_only", "standard_and_contextual"}:
+        return options.sentiment_scoring_mode
+    return "standard_only"
 
 
 def _extend_import_news_cli_args(
@@ -1022,11 +1118,18 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
 
     if step_key == "update_sector":
+        fundamentals_provider = (
+            options.data_integrity_fundamentals_provider
+            if options.data_integrity_fundamentals_provider in {"eodhd", "finnhub"}
+            else "eodhd"
+        )
         command = [
             sys.executable,
             "-u",
             "-m",
             "dataIntegrityEngine.update_sector",
+            "--provider",
+            fundamentals_provider,
             "--sleep-seconds",
             str(options.data_integrity_fundamentals_sleep_seconds),
             "--log-every",
@@ -1034,6 +1137,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         ]
         if fundamentals_limit is not None:
             command.extend(["--limit", str(fundamentals_limit)])
+        if options.data_integrity_fundamentals_overwrite_existing:
+            command.append("--overwrite-existing")
         return command
 
     if step_key == "eodhd_backfill_history":
@@ -1248,6 +1353,23 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                     "--contextual-max-pairs",
                     str(int(options.backfill_relevance_contextual_max_pairs)),
                 ])
+        return command
+
+    if step_key == "rebuild_daily_sentiment_features_only":
+        rebuild_start_date = news_import_start_date or (str(sentiment_start_utc)[:10] if sentiment_start_utc else None)
+        rebuild_end_date = news_import_end_date or (str(sentiment_end_utc)[:10] if sentiment_end_utc else None)
+        if rebuild_start_date is None:
+            raise ValueError("La date de début est obligatoire pour reconstruire les features journalières sentiment.")
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "event_sentiment.history_backfill",
+            "--start-date",
+            rebuild_start_date,
+        ]
+        if rebuild_end_date:
+            command.extend(["--end-date", rebuild_end_date])
         return command
 
     if step_key == "import_news":

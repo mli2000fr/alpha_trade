@@ -51,10 +51,26 @@ param(
     [switch]$EnableContextualScoring,
 
     [Parameter()]
+    [ValidateSet('standard_only', 'contextual_only', 'standard_and_contextual')]
+    [string]$ScoringMode = 'standard_only',
+
+    [Parameter()]
     [double]$ContextualMinRelevance = 0.0,
 
     [Parameter()]
     [int]$ContextualMaxPairs = 5000,
+
+    [Parameter()]
+    [int]$SentimentPendingLimit = 5000,
+
+    [Parameter()]
+    [int]$SentimentPendingMaxBatches = 10,
+
+    [Parameter()]
+    [int]$FeatureFlushEveryNBatches = 0,
+
+    [Parameter()]
+    [int]$FinBertBatchSize = 32,
 
     [Parameter()]
     [switch]$RelevanceBackfillDryRun,
@@ -110,6 +126,18 @@ else {
     ''
 }
 
+$EffectiveScoringMode = if ($ScoringMode -ne 'standard_only') {
+    $ScoringMode
+}
+elseif ($EnableContextualScoring) {
+    'standard_and_contextual'
+}
+else {
+    'standard_only'
+}
+$StandardScoringEnabled = $EffectiveScoringMode -ne 'contextual_only'
+$ContextualScoringEnabled = $EffectiveScoringMode -ne 'standard_only'
+
 $summary = [ordered]@{
     mode = if ($SkipImport) {
         'score_pending_history_and_relevance_backfill'
@@ -138,13 +166,18 @@ $summary = [ordered]@{
     relevance_backfill_completed = $false
     news_provider = $NewsProvider
     ticker_relevance_mode = $TickerRelevanceMode
+    scoring_mode = $EffectiveScoringMode
     import_symbols = if ($NormalizedImportSymbols.Count -gt 0) { @($NormalizedImportSymbols) } else { @() }
     import_symbol_source = $SymbolSource
     import_max_symbols = $MaxSymbols
     min_relevance_score = $MinRelevanceScore
-    enable_contextual_scoring = [bool]$EnableContextualScoring
+    enable_contextual_scoring = $ContextualScoringEnabled
     contextual_min_relevance = $ContextualMinRelevance
     contextual_max_pairs = $ContextualMaxPairs
+    sentiment_pending_limit = $SentimentPendingLimit
+    sentiment_pending_max_batches = $SentimentPendingMaxBatches
+    feature_flush_every_n_batches = $FeatureFlushEveryNBatches
+    finbert_batch_size = $FinBertBatchSize
     relevance_backfill_dry_run = [bool]$RelevanceBackfillDryRun
     relevance_backfill_rescore_all = [bool]$RelevanceBackfillRescoreAll
     relevance_backfill_rescore_contextual = [bool]$RelevanceBackfillRescoreContextual
@@ -416,26 +449,107 @@ try {
         )
     }
 
-    $stagnantIterations = 0
     $runWindow = Get-RunWindowUtcBounds
-    while ($pendingCount -gt 0) {
-        if ($summary.scoring_runs_executed -ge $MaxIterations) {
-            throw ("Boucle arrêtée : MaxIterations={0} atteint alors qu'il reste {1} article(s) pending." -f $MaxIterations, $pendingCount)
-        }
+    if ($StandardScoringEnabled) {
+        $stagnantIterations = 0
+        while ($pendingCount -gt 0) {
+            if ($summary.scoring_runs_executed -ge $MaxIterations) {
+                throw ("Boucle arrêtée : MaxIterations={0} atteint alors qu'il reste {1} article(s) pending." -f $MaxIterations, $pendingCount)
+            }
 
-        $runIndex = [int]$summary.scoring_runs_executed + 1
-        Write-Host ("=== Scoring auto #{0} | pending avant run : {1} ===" -f $runIndex, $pendingCount)
+            $runIndex = [int]$summary.scoring_runs_executed + 1
+            Write-Host ("=== Scoring auto #{0} | pending avant run : {1} ===" -f $runIndex, $pendingCount)
+            $scoringArguments = @(
+                '-u',
+                '-m',
+                'event_sentiment',
+                '--skip-ingestion',
+                '--news-provider',
+                $NewsProvider,
+                '--start-utc',
+                $runWindow.StartUtc,
+                '--end-utc',
+                $runWindow.EndUtc,
+                '--sentiment-pending-limit',
+                ([string]$SentimentPendingLimit),
+                '--sentiment-pending-max-batches',
+                ([string]$SentimentPendingMaxBatches),
+                '--finbert-batch-size',
+                ([string]$FinBertBatchSize)
+            )
+            if ($ScopedSymbols.Count -gt 0) {
+                $scoringArguments += @('--symbols', $ScopedSymbolsCsv)
+            }
+            if ($TickerRelevanceMode -ne 'provider_default') {
+                $scoringArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)
+            }
+            if ($TickerRelevanceMode -eq 'scored' -and $MinRelevanceScore -gt 0) {
+                $scoringArguments += @('--min-relevance-score', ([string]$MinRelevanceScore))
+            }
+            if ($FeatureFlushEveryNBatches -gt 0) {
+                $scoringArguments += @('--feature-flush-every-n-batches', ([string]$FeatureFlushEveryNBatches))
+            }
+            if ($EffectiveScoringMode -eq 'standard_and_contextual') {
+                $scoringArguments += '--enable-contextual-scoring'
+            }
+            if ($ContextualScoringEnabled) {
+                if ($ContextualMinRelevance -gt 0) {
+                    $scoringArguments += @('--contextual-min-relevance', ([string]$ContextualMinRelevance))
+                }
+                if ($ContextualMaxPairs -gt 0) {
+                    $scoringArguments += @('--contextual-max-pairs', ([string]$ContextualMaxPairs))
+                }
+            }
+            Invoke-PythonStep -Label ("Sentiment pipeline auto #{0}" -f $runIndex) -Arguments @($scoringArguments)
+            $summary.scoring_runs_executed = $runIndex
+
+            $remaining = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider -SymbolsCsv $ScopedSymbolsCsv
+            Write-Host ("Articles pending après scoring #{0} : {1}" -f $runIndex, $remaining)
+
+            if ($remaining -lt $pendingCount) {
+                $stagnantIterations = 0
+            }
+            else {
+                $stagnantIterations += 1
+                Write-Warning (
+                    "Le nombre d'articles pending n'a pas diminué après le run #{0} (avant={1}, après={2}, stagnation={3}/{4})." -f
+                    $runIndex, $pendingCount, $remaining, $stagnantIterations, $MaxStagnantIterations
+                )
+                if ($remaining -gt 0 -and $stagnantIterations -ge $MaxStagnantIterations) {
+                    throw (
+                        "Boucle arrêtée : pending non décroissant après {0} run(s) consécutif(s). Reste {1} article(s) pending." -f
+                        $stagnantIterations, $remaining
+                    )
+                }
+            }
+
+            $pendingCount = $remaining
+            if ($pendingCount -gt 0 -and $SleepSecondsBetweenRuns -gt 0) {
+                Start-Sleep -Seconds $SleepSecondsBetweenRuns
+            }
+        }
+    }
+    elseif ($ContextualScoringEnabled) {
+        Write-Warning 'Mode contextual_only actif : le backlog pending standard ne sera pas drainé par ce wrapper.'
         $scoringArguments = @(
             '-u',
             '-m',
             'event_sentiment',
             '--skip-ingestion',
+            '--scoring-mode',
+            'contextual_only',
             '--news-provider',
             $NewsProvider,
             '--start-utc',
             $runWindow.StartUtc,
             '--end-utc',
-            $runWindow.EndUtc
+            $runWindow.EndUtc,
+            '--sentiment-pending-limit',
+            ([string]$SentimentPendingLimit),
+            '--sentiment-pending-max-batches',
+            ([string]$SentimentPendingMaxBatches),
+            '--finbert-batch-size',
+            ([string]$FinBertBatchSize)
         )
         if ($ScopedSymbols.Count -gt 0) {
             $scoringArguments += @('--symbols', $ScopedSymbolsCsv)
@@ -446,42 +560,17 @@ try {
         if ($TickerRelevanceMode -eq 'scored' -and $MinRelevanceScore -gt 0) {
             $scoringArguments += @('--min-relevance-score', ([string]$MinRelevanceScore))
         }
-        if ($EnableContextualScoring) {
-            $scoringArguments += '--enable-contextual-scoring'
-            if ($ContextualMinRelevance -gt 0) {
-                $scoringArguments += @('--contextual-min-relevance', ([string]$ContextualMinRelevance))
-            }
-            if ($ContextualMaxPairs -gt 0) {
-                $scoringArguments += @('--contextual-max-pairs', ([string]$ContextualMaxPairs))
-            }
+        if ($FeatureFlushEveryNBatches -gt 0) {
+            $scoringArguments += @('--feature-flush-every-n-batches', ([string]$FeatureFlushEveryNBatches))
         }
-        Invoke-PythonStep -Label ("Sentiment pipeline auto #{0}" -f $runIndex) -Arguments @($scoringArguments)
-        $summary.scoring_runs_executed = $runIndex
-
-        $remaining = Get-PendingArticleCount -PendingStartDate $StartDate -PendingEndDate $EndDate -IngestionSource $NewsProvider -SymbolsCsv $ScopedSymbolsCsv
-        Write-Host ("Articles pending après scoring #{0} : {1}" -f $runIndex, $remaining)
-
-        if ($remaining -lt $pendingCount) {
-            $stagnantIterations = 0
+        if ($ContextualMinRelevance -gt 0) {
+            $scoringArguments += @('--contextual-min-relevance', ([string]$ContextualMinRelevance))
         }
-        else {
-            $stagnantIterations += 1
-            Write-Warning (
-                "Le nombre d'articles pending n'a pas diminué après le run #{0} (avant={1}, après={2}, stagnation={3}/{4})." -f
-                $runIndex, $pendingCount, $remaining, $stagnantIterations, $MaxStagnantIterations
-            )
-            if ($remaining -gt 0 -and $stagnantIterations -ge $MaxStagnantIterations) {
-                throw (
-                    "Boucle arrêtée : pending non décroissant après {0} run(s) consécutif(s). Reste {1} article(s) pending." -f
-                    $stagnantIterations, $remaining
-                )
-            }
+        if ($ContextualMaxPairs -gt 0) {
+            $scoringArguments += @('--contextual-max-pairs', ([string]$ContextualMaxPairs))
         }
-
-        $pendingCount = $remaining
-        if ($pendingCount -gt 0 -and $SleepSecondsBetweenRuns -gt 0) {
-            Start-Sleep -Seconds $SleepSecondsBetweenRuns
-        }
+        Invoke-PythonStep -Label 'Sentiment pipeline contextual-only' -Arguments @($scoringArguments)
+        $summary.scoring_runs_executed = 1
     }
 
     $summary.final_pending = $pendingCount

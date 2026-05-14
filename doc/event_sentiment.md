@@ -270,16 +270,29 @@ Pour `sentiment_pipeline` (`python -m event_sentiment`) :
 - `--news-provider`
 - `--ticker-relevance-mode`
 - `--min-relevance-score`
+- `--scoring-mode contextual_only`
 - `--enable-contextual-scoring`
 - `--contextual-min-relevance`
 - `--contextual-max-pairs`
+- `--sentiment-pending-limit`
+- `--sentiment-pending-max-batches`
+- `--feature-flush-every-n-batches`
+- `--finbert-batch-size`
 
 Points importants :
 
 - si `symbols` est laissé vide dans l'IHM, le backend recharge automatiquement les candidats `stock_scores.is_candidate = 1` ;
 - les dates UTC restent optionnelles : sans fenêtre explicite, le backend retombe sur sa logique de checkpoints/backfill.
 - le mode de pertinence `scored` active le stockage de `relevance_score` / `relevance_components` dans `news_ticker_map` ;
-- le scoring contextuel reste opt-in : sans `--enable-contextual-scoring`, le pipeline continue de n'écrire que `news_sentiment`.
+- le `mode de scoring` IHM se traduit ainsi :
+  - `Standard only` = pas de flag contextuel, le pipeline continue de n'écrire que `news_sentiment` ;
+  - `Contextual only` = `--scoring-mode contextual_only`, utile pour enrichir un corpus déjà scoré standard ;
+  - `Standard + contextual` = `--enable-contextual-scoring`, le pipeline enchaîne standard puis contextuel ;
+- `contextual_scoring_max_pairs_per_run` est un cap **par run** : si vous laissez `5000`, le run score au plus `5000` paires contextuelles puis un run suivant reprend le lot suivant tant qu'il reste des couples absents de `news_ticker_sentiment` ;
+- la case `Ajouter le contextual à ce backfill 7bis` du bloc `7bis — Backfill relevance / contextual` n'est pas un doublon de ce mode : elle ajoute seulement `--rescore-contextual` au CLI dédié `python -m event_sentiment.relevance_backfill` ;
+- ordre recommandé en IHM pour enrichir un historique existant : `Contextual only` puis `Rebuild daily sentiment features only`, puis éventuellement `signal_aggregator`.
+
+Le workflow complet IHM inclut aussi ce step `7bis` automatiquement entre `7. Sentiment Pipeline` et `8. Signal Aggregator` : il sert à rejouer la pertinence article→symbole et, si activé, le contextual sur un historique déjà importé.
 
 Pour `signal_aggregator` (`python -m event_sentiment.signal_aggregator`) :
 

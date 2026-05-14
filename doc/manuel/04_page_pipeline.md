@@ -142,6 +142,48 @@ Avant même de cliquer sur le bouton, la page affiche désormais un **résumé l
 
 👉 Conseil pratique : laissez `stock_scores` par défaut, ou renseignez une shortlist `CSV` si vous ne voulez retraiter que quelques titres. N'utilisez `stock_bars_daily` que si vous savez pourquoi vous acceptez un univers potentiellement très large.
 
+## Event Sentiment — mini guide d'usage IHM
+
+Le bloc **Event Sentiment** expose maintenant trois modes de scoring :
+
+| Mode | À utiliser quand | Ce que fait le run |
+|---|---|---|
+| `Standard only` | vous avez un backlog d'articles à vider rapidement, ou de nouveaux imports bruts à scorer | remplit `news_sentiment` puis reconstruit les features journalières sentiment |
+| `Contextual only` | `news_sentiment` est déjà présent et vous voulez enrichir le niveau `(article, symbole)` | remplit `news_ticker_sentiment` sans refaire le scoring standard |
+| `Standard + contextual` | fenêtre courte/moyenne, ou vous voulez tout faire en une seule passe | exécute d'abord le standard puis le contextuel dans le même run |
+
+### Point important : pas de doublon avec `7bis — Backfill relevance / contextual`
+
+La case **`Ajouter le contextual à ce backfill 7bis`** du bloc `7bis` ne pilote **pas** le run principal `event_sentiment`.
+
+Elle sert uniquement au step dédié `python -m event_sentiment.relevance_backfill` pour rejouer le backfill relevance/contextuel sur une fenêtre déjà importée.
+
+En résumé :
+
+- **mode de scoring** = comportement du run principal **Event Sentiment** ;
+- **case 7bis contextuel** = comportement du **backfill dédié** `relevance_backfill`.
+
+Dans le workflow complet IHM, `7bis` est exécuté automatiquement **entre `7. Sentiment Pipeline` et `8. Signal Aggregator`**.
+
+### Ordre recommandé en pratique
+
+#### Cas 1 — gros backlog ou première passe
+
+1. Lancez **`Standard only`** pour remplir `news_sentiment`.
+2. Si vous voulez ensuite affiner ticker par ticker, relancez **`Contextual only`** sur la même fenêtre.
+3. Lancez **`Rebuild daily sentiment features only`** pour rematérialiser les agrégats journaliers downstream.
+4. Si besoin, relancez **Signal Aggregator** pour propager le nouveau signal vers `stock_scores`.
+
+#### Cas 2 — corpus déjà scoré standard, enrichissement seulement
+
+1. Lancez **`Contextual only`**.
+2. Lancez **`Rebuild daily sentiment features only`**.
+
+#### Cas 3 — petite fenêtre, tout en une fois
+
+1. Lancez **`Standard + contextual`**.
+2. Le rebuild dédié n'est généralement pas nécessaire juste après, sauf si vous voulez rejouer uniquement les agrégats sur une fenêtre spécifique.
+
 ## Paramétrer TP / SL depuis la page Pipeline
 
 Dans **Centre d'exécution avancé** → bloc **Execution** → section

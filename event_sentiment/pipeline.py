@@ -1,7 +1,7 @@
 ﻿import logging
 from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
-from typing import Callable
+from datetime import UTC, date, datetime, timedelta
+from typing import Callable, cast
 
 import pandas as pd
 
@@ -13,6 +13,14 @@ from event_sentiment.models import NormalizedNewsArticle
 from event_sentiment.scoring import ContextualFinBERTScorer, FinBERTSentimentService
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _coerce_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    return 0
 
 
 class EventSentimentPipeline:
@@ -181,6 +189,224 @@ class EventSentimentPipeline:
             windows[symbol] = resolved_start
         return windows, resume_by_symbol, resolved_end
 
+    @staticmethod
+    def _rows_to_articles(pending_rows: list[dict[str, object]]) -> list[NormalizedNewsArticle]:
+        return [
+            NormalizedNewsArticle(
+                article_id=str(row["article_id"]),
+                headline=str(row["headline"]),
+                summary=cast(str | None, row.get("summary")),
+                content=cast(str | None, row.get("content")),
+                source=str(row["source"]),
+                author=cast(str | None, row.get("author")),
+                url=cast(str | None, row.get("url")),
+                published_at_utc=cast(datetime, row["published_at_utc"]),
+                event_timestamp_utc=cast(datetime, row["event_timestamp_utc"]),
+                event_timestamp_ny=cast(datetime, row["event_timestamp_ny"]),
+                effective_trade_date=cast(date, row["effective_trade_date"]),
+                market_session_tag=str(row["market_session_tag"]),
+                tickers=[],
+                raw_payload={},
+                is_major_event=_coerce_int(row.get("is_major_event")),
+            )
+            for row in pending_rows
+        ]
+
+    def _capture_finbert_runtime_stats(self, stats: dict[str, object]) -> None:
+        stats["finbert_model_fingerprint"] = getattr(self.finbert, "model_fingerprint", None)
+        stats["finbert_effective_batch_size"] = int(getattr(self.finbert, "batch_size", 0) or 0)
+        stats["finbert_runtime_device"] = getattr(self.finbert, "device", None)
+        stats["finbert_gpu_oom_batch_fallbacks"] = list(
+            getattr(self.finbert, "gpu_oom_batch_fallbacks", []) or []
+        )
+
+    def _resolve_scoring_mode(self) -> str:
+        configured = str(getattr(self.config, "scoring_mode", "") or "").strip().lower()
+        if getattr(self.config, "enable_contextual_scoring", False):
+            if configured == "contextual_only":
+                return "contextual_only"
+            return "standard_and_contextual"
+        if configured in {"standard_only", "contextual_only", "standard_and_contextual"}:
+            return configured
+        return "standard_only"
+
+    def _score_pending_batches(
+        self,
+        pending_scope: dict[str, object],
+        stats: dict[str, object],
+        *,
+        resolved_symbols: list[str],
+    ) -> tuple[list[NormalizedNewsArticle], list[date], list[date]]:
+        max_batches = int(getattr(self.config, "sentiment_pending_max_batches_per_run", 1))
+        feature_flush_every_n_batches = int(getattr(self.config, "feature_flush_every_n_pending_batches", 0) or 0)
+        impacted_trade_dates: set[date] = set()
+        pending_feature_flush_dates: set[date] = set()
+        processed_articles: list[NormalizedNewsArticle] = []
+        batches_processed = 0
+        total_sentiment_inferred = 0
+        total_macro_rows = 0
+        feature_flushes_completed = 0
+
+        while batches_processed < max_batches:
+            pending_rows = self.repository.load_pending_articles(
+                limit=self.config.sentiment_pending_limit,
+                start_date=pending_scope.get("start_date"),
+                end_date=pending_scope.get("end_date"),
+                ingestion_source=pending_scope.get("ingestion_source"),
+                symbols=pending_scope.get("symbols"),
+            )
+            if not pending_rows:
+                break
+
+            articles = self._rows_to_articles(pending_rows)
+            sentiment_records = self.finbert.score_articles(articles)
+            sentiment_upserts = self.repository.upsert_news_sentiment([asdict(record) for record in sentiment_records])
+            if articles and sentiment_upserts <= 0:
+                raise RuntimeError(
+                    "Aucun score FinBERT persisté sur un batch pending non vide ; arrêt pour éviter une boucle stagnante."
+                )
+
+            sentiment_map = {record.article_id: record for record in sentiment_records}
+            batch_impacted_trade_dates = {
+                article.effective_trade_date
+                for article in articles
+                if article.article_id in sentiment_map
+            }
+            macro_records = []
+            for article in articles:
+                sentiment = sentiment_map.get(article.article_id)
+                if sentiment is None:
+                    continue
+                macro_records.extend(self.macro_engine.classify(article, sentiment))
+
+            total_sentiment_inferred += int(sentiment_upserts)
+            total_macro_rows += int(
+                self.repository.upsert_macro_event_audit([asdict(record) for record in macro_records])
+            )
+            impacted_trade_dates.update(batch_impacted_trade_dates)
+            pending_feature_flush_dates.update(batch_impacted_trade_dates)
+            processed_articles.extend(articles)
+            batches_processed += 1
+
+            stats["pending_articles_loaded"] = len(processed_articles)
+            stats["pending_batches_processed"] = batches_processed
+            stats["sentiment_inferred"] = total_sentiment_inferred
+            stats["macro_rows"] = total_macro_rows
+            self._capture_finbert_runtime_stats(stats)
+            self._emit_progress(
+                stats,
+                current=max(len(processed_articles), 1),
+                total=max(len(processed_articles), 1),
+                label="📰 Progression sentiment pipeline — scoring FinBERT",
+                phase="finbert_scoring",
+            )
+
+            if (
+                feature_flush_every_n_batches > 0
+                and pending_feature_flush_dates
+                and batches_processed % feature_flush_every_n_batches == 0
+            ):
+                feature_flushes_completed += 1
+                self._flush_feature_aggregation(
+                    impacted_trade_dates=sorted(pending_feature_flush_dates),
+                    resolved_symbols=resolved_symbols,
+                    stats=stats,
+                    is_final=False,
+                    flush_index=feature_flushes_completed,
+                )
+                pending_feature_flush_dates.clear()
+
+            if len(pending_rows) < int(self.config.sentiment_pending_limit):
+                break
+
+        stats.setdefault("pending_articles_loaded", 0)
+        stats.setdefault("pending_batches_processed", 0)
+        stats.setdefault("sentiment_inferred", 0)
+        stats.setdefault("macro_rows", 0)
+        stats["feature_flushes_completed"] = int(feature_flushes_completed)
+        self._capture_finbert_runtime_stats(stats)
+        return processed_articles, sorted(impacted_trade_dates), sorted(pending_feature_flush_dates)
+
+    def _flush_feature_aggregation(
+        self,
+        *,
+        impacted_trade_dates: list[date],
+        resolved_symbols: list[str],
+        stats: dict[str, object],
+        is_final: bool,
+        flush_index: int | None = None,
+    ) -> None:
+        if not impacted_trade_dates:
+            stats.setdefault("ticker_day_rows", 0)
+            stats.setdefault("sector_day_rows", 0)
+            return
+        pending_articles_loaded = _coerce_int(stats.get("pending_articles_loaded"))
+        self._emit_progress(
+            stats,
+            current=max(pending_articles_loaded, 1),
+            total=max(pending_articles_loaded, 1),
+            label=(
+                "📰 Progression sentiment pipeline — agrégation features"
+                if is_final
+                else f"📰 Progression sentiment pipeline — flush intermédiaire features #{int(flush_index or 0)}"
+            ),
+            phase="feature_aggregation" if is_final else "feature_aggregation_flush",
+        )
+        feature_window_start = min(impacted_trade_dates) - timedelta(days=self.config.feature_history_buffer_days)
+        feature_window_end = max(impacted_trade_dates)
+        stats["feature_window_start"] = feature_window_start.isoformat()
+        stats["feature_window_end"] = feature_window_end.isoformat()
+        ticker_df, sector_df, macro_df = self.repository.load_feature_frames(
+            start_date=feature_window_start,
+            end_date=feature_window_end,
+        )
+
+        ticker_features = build_ticker_daily_features(
+            ticker_df,
+            feature_version=self.config.feature_version,
+            rolling_windows=self.config.feature_rolling_windows,
+        )
+        sector_features = build_sector_daily_features(
+            sector_df,
+            macro_df,
+            feature_version=self.config.feature_version,
+            rolling_windows=self.config.feature_rolling_windows,
+        )
+        if impacted_trade_dates:
+            impacted_trade_dates_set = set(impacted_trade_dates)
+            ticker_features = ticker_features[ticker_features["trade_date"].isin(impacted_trade_dates_set)].copy()
+            sector_features = sector_features[sector_features["trade_date"].isin(impacted_trade_dates_set)].copy()
+        stats["ticker_day_rows"] = self.repository.upsert_ticker_daily_features(ticker_features.to_dict(orient="records"))
+        stats["sector_day_rows"] = self.repository.upsert_sector_daily_features(sector_features.to_dict(orient="records"))
+        stats["last_feature_flush_trade_dates"] = [trade_date.isoformat() for trade_date in impacted_trade_dates]
+        self._emit_progress(
+            stats,
+            current=max(len(resolved_symbols), 1),
+            total=max(len(resolved_symbols), 1),
+            label=(
+                "📰 Progression sentiment pipeline — persistance finale"
+                if is_final
+                else f"📰 Progression sentiment pipeline — persistance flush #{int(flush_index or 0)}"
+            ),
+            phase="persist_features" if is_final else "persist_features_flush",
+        )
+
+    def _finalize_feature_aggregation(
+        self,
+        *,
+        impacted_trade_dates: list[date],
+        remaining_impacted_trade_dates: list[date],
+        resolved_symbols: list[str],
+        stats: dict[str, object],
+    ) -> None:
+        stats["impacted_trade_dates"] = [trade_date.isoformat() for trade_date in impacted_trade_dates]
+        self._flush_feature_aggregation(
+            impacted_trade_dates=remaining_impacted_trade_dates,
+            resolved_symbols=resolved_symbols,
+            stats=stats,
+            is_final=True,
+        )
+
     def run(
         self,
         start_utc: datetime | None = None,
@@ -217,9 +443,13 @@ class EventSentimentPipeline:
             "resolved_symbols": len(resolved_symbols),
             "start_utc": aggregation_start.isoformat(),
             "end_utc": end_utc.isoformat(),
+            "scoring_mode": self._resolve_scoring_mode(),
             "symbol_source": "explicit" if symbols is not None else "candidates",
             "resume_from_checkpoints": start_utc is None,
             "ingestion_skipped": bool(skip_ingestion),
+            "feature_flush_every_n_pending_batches": int(
+                getattr(self.config, "feature_flush_every_n_pending_batches", 0) or 0
+            ),
         }
         self._emit_progress(
             stats,
@@ -262,118 +492,51 @@ class EventSentimentPipeline:
             for key, value in pending_scope.items()
             if value not in (None, [])
         }
-        pending_rows = self.repository.load_pending_articles(
-            limit=self.config.sentiment_pending_limit,
-            start_date=pending_scope.get("start_date"),
-            end_date=pending_scope.get("end_date"),
-            ingestion_source=pending_scope.get("ingestion_source"),
-            symbols=pending_scope.get("symbols"),
+        stats["pending_batch_limit"] = int(self.config.sentiment_pending_limit)
+        stats["pending_max_batches_per_run"] = int(
+            getattr(self.config, "sentiment_pending_max_batches_per_run", 1)
         )
-        articles = [
-            NormalizedNewsArticle(
-                article_id=row["article_id"],
-                headline=row["headline"],
-                summary=row["summary"],
-                content=row["content"],
-                source=row["source"],
-                author=row["author"],
-                url=row["url"],
-                published_at_utc=row["published_at_utc"],
-                event_timestamp_utc=row["event_timestamp_utc"],
-                event_timestamp_ny=row["event_timestamp_ny"],
-                effective_trade_date=row["effective_trade_date"],
-                market_session_tag=row["market_session_tag"],
-                tickers=[],
-                raw_payload={},
-                is_major_event=int(row["is_major_event"] or 0),
+        scoring_mode = self._resolve_scoring_mode()
+        if scoring_mode == "contextual_only":
+            articles = []
+            impacted_trade_dates = []
+            remaining_impacted_trade_dates = []
+            stats.setdefault("pending_articles_loaded", 0)
+            stats.setdefault("pending_batches_processed", 0)
+            stats.setdefault("sentiment_inferred", 0)
+            stats.setdefault("macro_rows", 0)
+            self._capture_finbert_runtime_stats(stats)
+        else:
+            articles, impacted_trade_dates, remaining_impacted_trade_dates = self._score_pending_batches(
+                pending_scope,
+                stats,
+                resolved_symbols=resolved_symbols,
             )
-            for row in pending_rows
-        ]
-
-        sentiment_records = self.finbert.score_articles(articles)
-        stats["sentiment_inferred"] = self.repository.upsert_news_sentiment([asdict(record) for record in sentiment_records])
-        stats["finbert_model_fingerprint"] = getattr(self.finbert, "model_fingerprint", None)
-        self._emit_progress(
-            stats,
-            current=max(len(articles), 1),
-            total=max(len(articles), 1),
-            label="📰 Progression sentiment pipeline — scoring FinBERT",
-            phase="finbert_scoring",
-        )
 
         # Niveau 4 — re-scoring FinBERT contextualisé par couple (article, symbol).
         # Étape opt-in via config.enable_contextual_scoring. Garde-fous perf :
         # filtre par relevance_score + cap dur sur le nombre de paires.
-        if getattr(self.config, "enable_contextual_scoring", False):
-            stats.update(self._run_contextual_scoring())
+        if scoring_mode in {"contextual_only", "standard_and_contextual"}:
+            contextual_stats, contextual_impacted_trade_dates = self._run_contextual_scoring()
+            stats.update(contextual_stats)
+            if contextual_impacted_trade_dates:
+                contextual_trade_dates_set = set(contextual_impacted_trade_dates)
+                impacted_trade_dates = sorted(set(impacted_trade_dates).union(contextual_trade_dates_set))
+                remaining_impacted_trade_dates = sorted(
+                    set(remaining_impacted_trade_dates).union(contextual_trade_dates_set)
+                )
             self._emit_progress(
                 stats,
-                current=max(len(articles), 1),
-                total=max(len(articles), 1),
+                current=max(_coerce_int(stats.get("contextual_pairs_loaded")), 1),
+                total=max(_coerce_int(stats.get("contextual_pairs_loaded")), 1),
                 label="📰 Progression sentiment pipeline — scoring contextuel",
                 phase="contextual_scoring",
             )
-        sentiment_map = {record.article_id: record for record in sentiment_records}
-        impacted_trade_dates = sorted(
-            {
-                article.effective_trade_date
-                for article in articles
-                if article.article_id in sentiment_map
-            }
-        )
-        stats["pending_articles_loaded"] = len(articles)
-        stats["impacted_trade_dates"] = [trade_date.isoformat() for trade_date in impacted_trade_dates]
-        macro_records = []
-        for article in articles:
-            sentiment = sentiment_map.get(article.article_id)
-            if sentiment is None:
-                continue
-            macro_records.extend(self.macro_engine.classify(article, sentiment))
-
-        stats["macro_rows"] = self.repository.upsert_macro_event_audit([asdict(record) for record in macro_records])
-        self._emit_progress(
-            stats,
-            current=max(len(articles), 1),
-            total=max(len(articles), 1),
-            label="📰 Progression sentiment pipeline — agrégation features",
-            phase="feature_aggregation",
-        )
-        if impacted_trade_dates:
-            feature_window_start = min(impacted_trade_dates) - timedelta(days=self.config.feature_history_buffer_days)
-            feature_window_end = max(impacted_trade_dates)
-            stats["feature_window_start"] = feature_window_start.isoformat()
-            stats["feature_window_end"] = feature_window_end.isoformat()
-            ticker_df, sector_df, macro_df = self.repository.load_feature_frames(
-                start_date=feature_window_start,
-                end_date=feature_window_end,
-            )
-        else:
-            ticker_df = pd.DataFrame()
-            sector_df = pd.DataFrame()
-            macro_df = pd.DataFrame()
-
-        ticker_features = build_ticker_daily_features(
-            ticker_df,
-            feature_version=self.config.feature_version,
-            rolling_windows=self.config.feature_rolling_windows,
-        )
-        sector_features = build_sector_daily_features(
-            sector_df,
-            macro_df,
-            feature_version=self.config.feature_version,
-            rolling_windows=self.config.feature_rolling_windows,
-        )
-        if impacted_trade_dates:
-            ticker_features = ticker_features[ticker_features["trade_date"].isin(set(impacted_trade_dates))].copy()
-            sector_features = sector_features[sector_features["trade_date"].isin(set(impacted_trade_dates))].copy()
-        stats["ticker_day_rows"] = self.repository.upsert_ticker_daily_features(ticker_features.to_dict(orient="records"))
-        stats["sector_day_rows"] = self.repository.upsert_sector_daily_features(sector_features.to_dict(orient="records"))
-        self._emit_progress(
-            stats,
-            current=max(len(resolved_symbols), 1),
-            total=max(len(resolved_symbols), 1),
-            label="📰 Progression sentiment pipeline — persistance finale",
-            phase="persist_features",
+        self._finalize_feature_aggregation(
+            impacted_trade_dates=impacted_trade_dates,
+            remaining_impacted_trade_dates=remaining_impacted_trade_dates,
+            resolved_symbols=resolved_symbols,
+            stats=stats,
         )
         LOGGER.info("Event sentiment pipeline summary | stats=%s", stats)
         return stats
@@ -387,9 +550,12 @@ class EventSentimentPipeline:
                 max_length=self.config.finbert_max_length,
                 model_revision=getattr(self.config, "finbert_model_revision", None),
             )
-        return self._contextual_scorer
+        self._contextual_scorer.adopt_runtime_from(self.finbert)
+        scorer = self._contextual_scorer
+        assert scorer is not None
+        return scorer
 
-    def _run_contextual_scoring(self) -> dict[str, object]:
+    def _run_contextual_scoring(self) -> tuple[dict[str, object], list[date]]:
         """Niveau 4 — pipeline scoring contextualisé (article, symbol).
 
         Charge les paires en attente via ``load_pending_contextual_pairs``
@@ -405,12 +571,15 @@ class EventSentimentPipeline:
             min_relevance=min_relevance,
         )
         if not pending:
-            return {
-                "contextual_pairs_loaded": 0,
-                "contextual_scored": 0,
-                "contextual_min_relevance": min_relevance,
-                "contextual_cap": cap,
-            }
+            return (
+                {
+                    "contextual_pairs_loaded": 0,
+                    "contextual_scored": 0,
+                    "contextual_min_relevance": min_relevance,
+                    "contextual_cap": cap,
+                },
+                [],
+            )
 
         pairs: list[tuple[NormalizedNewsArticle, str, str | None]] = []
         for row in pending:
@@ -438,22 +607,25 @@ class EventSentimentPipeline:
         scored = self.repository.upsert_news_ticker_sentiment(
             [asdict(record) for record in records]
         )
-        return {
-            "contextual_pairs_loaded": len(pending),
-            "contextual_scored": int(scored),
-            "contextual_min_relevance": min_relevance,
-            "contextual_cap": cap,
-        }
+        return (
+            {
+                "contextual_pairs_loaded": len(pending),
+                "contextual_scored": int(scored),
+                "contextual_min_relevance": min_relevance,
+                "contextual_cap": cap,
+            },
+            sorted({cast(date, row["effective_trade_date"]) for row in pending if row.get("effective_trade_date") is not None}),
+        )
 
     def _emit_ingestion_progress(self, stats: dict[str, object], payload: dict[str, object]) -> None:
         ingestion = payload.get("ingestion") if isinstance(payload.get("ingestion"), dict) else {}
         merged_stats = dict(stats)
         if ingestion:
-            merged_stats["ingestion"] = dict(ingestion)
+            merged_stats["ingestion"] = dict(cast(dict[str, object], ingestion))
         self._emit_progress(
             merged_stats,
-            current=int(payload.get("current_symbol_index") or 0),
-            total=max(int(payload.get("current_symbol_total") or 0), 1),
+            current=_coerce_int(payload.get("current_symbol_index")),
+            total=max(_coerce_int(payload.get("current_symbol_total")), 1),
             label="📰 Progression sentiment pipeline — ingestion news",
             phase="ingestion",
             item=str(payload.get("current_symbol") or "").strip() or None,

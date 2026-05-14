@@ -172,7 +172,7 @@ class RelevanceBackfillService:
         return {"relevance_purged": deleted, "relevance_purge_threshold": threshold}
 
     # ------------------------------------------------------------------
-    # Phase 2 — backfill FinBERT contextualisé (Niveau 4).
+    # Backfill contextualisé FinBERT (Niveau 4).
     # ------------------------------------------------------------------
     def backfill_contextual(
         self,

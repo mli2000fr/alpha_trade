@@ -340,6 +340,32 @@ class EventSentimentRepository:
             ).mappings().all()
         return [dict(row) for row in rows]
 
+    def count_pending_contextual_pairs(
+        self,
+        *,
+        min_relevance: float = 0.0,
+    ) -> int:
+        """Compte les couples ``(article, symbol)`` encore à scorer en contextuel.
+
+        Le compteur reflète le comportement actuel du pipeline contextuel :
+        paires présentes dans ``news_ticker_map`` mais absentes de
+        ``news_ticker_sentiment``, filtrées par ``relevance_score`` minimal.
+        """
+        query = text(
+            """
+            SELECT COUNT(*)
+            FROM news_ticker_map ntm
+            LEFT JOIN news_ticker_sentiment nts
+                ON nts.article_id = ntm.article_id AND nts.symbol = ntm.symbol
+            WHERE nts.article_id IS NULL
+              AND COALESCE(ntm.relevance_score, 1.0) >= :min_relevance
+            """
+        )
+        with self.engine.connect() as conn:
+            return int(
+                conn.execute(query, {"min_relevance": float(min_relevance)}).scalar_one() or 0
+            )
+
     def iter_ticker_map_for_relevance_backfill(
         self,
         batch_size: int = 500,

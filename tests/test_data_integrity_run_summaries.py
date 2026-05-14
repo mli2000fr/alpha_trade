@@ -155,7 +155,16 @@ def test_update_sector_main_emits_structured_summary(monkeypatch, capsys) -> Non
         lambda: type(
             "_Parser",
             (),
-            {"parse_args": lambda self: argparse.Namespace(limit=30, sleep_seconds=1.2, log_every=9, refresh_stale_days=0)},
+            {
+                "parse_args": lambda self: argparse.Namespace(
+                    limit=30,
+                    provider="eodhd",
+                    overwrite_existing=True,
+                    sleep_seconds=1.2,
+                    log_every=9,
+                    refresh_stale_days=0,
+                )
+            },
         )(),
     )
     monkeypatch.setattr(
@@ -168,6 +177,8 @@ def test_update_sector_main_emits_structured_summary(monkeypatch, capsys) -> Non
 
     payload = _payload_from_stdout(capsys.readouterr().out.strip(), update_sector.RUN_SUMMARY_PREFIX)
     assert payload["requested_limit"] == 30
+    assert payload["provider"] == "eodhd"
+    assert payload["overwrite_existing"] is True
     assert payload["sleep_seconds"] == 1.2
     assert payload["log_every"] == 9
     assert payload["updated"] == 12

@@ -4,6 +4,7 @@ from typing import Literal
 
 NewsProvider = Literal["alpaca", "finnhub", "eodhd"]
 TickerRelevanceMode = Literal["provider_default", "strict", "scored"]
+SentimentScoringMode = Literal["standard_only", "contextual_only", "standard_and_contextual"]
 
 #: Mapping centralisé ``news_provider`` → (``source_name``, ``provider_name``).
 #: Permet de garantir des valeurs cohérentes entre l'identifiant de checkpoint
@@ -41,6 +42,8 @@ class EventSentimentConfig:
     # externes implicites hors provider news choisi.
     allow_sector_fallback: bool = False
     sentiment_pending_limit: int = 1000
+    sentiment_pending_max_batches_per_run: int = 1
+    feature_flush_every_n_pending_batches: int = 0
     feature_version: str = "v2"
     macro_rule_version: str = "macro_rules_v1"
     feature_rolling_windows: tuple[int, ...] = (3, 5, 10, 20)
@@ -70,6 +73,7 @@ class EventSentimentConfig:
     # * ``contextual_scoring_max_pairs_per_run`` : cap dur sur le nombre de
     #   paires scorées par run (évite l'explosion N×M tokenisations).
     enable_contextual_scoring: bool = False
+    scoring_mode: SentimentScoringMode = "standard_only"
     contextual_scoring_min_relevance: float = 0.0
     contextual_scoring_max_pairs_per_run: int = 5000
 
@@ -90,6 +94,10 @@ class EventSentimentConfig:
             raise ValueError("finbert_max_length doit être >= 32.")
         if self.sentiment_pending_limit < 1:
             raise ValueError("sentiment_pending_limit doit être >= 1.")
+        if self.sentiment_pending_max_batches_per_run < 1:
+            raise ValueError("sentiment_pending_max_batches_per_run doit être >= 1.")
+        if self.feature_flush_every_n_pending_batches < 0:
+            raise ValueError("feature_flush_every_n_pending_batches doit être >= 0.")
         if not self.feature_rolling_windows:
             raise ValueError("feature_rolling_windows ne doit pas être vide.")
         if any(window < 2 for window in self.feature_rolling_windows):
@@ -114,6 +122,10 @@ class EventSentimentConfig:
             raise ValueError("max_tickers_per_article doit être >= 1.")
         if not 0.0 <= self.min_relevance_score <= 1.0:
             raise ValueError("min_relevance_score doit être dans [0.0, 1.0].")
+        if self.scoring_mode not in {"standard_only", "contextual_only", "standard_and_contextual"}:
+            raise ValueError(
+                "scoring_mode doit valoir 'standard_only', 'contextual_only' ou 'standard_and_contextual'."
+            )
         if not 0.0 <= self.contextual_scoring_min_relevance <= 1.0:
             raise ValueError("contextual_scoring_min_relevance doit être dans [0.0, 1.0].")
         if self.contextual_scoring_max_pairs_per_run < 1:

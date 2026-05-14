@@ -399,6 +399,9 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
             sentiment_symbols="msft, aapl,MSFT,nvda",
             sentiment_news_provider="alpaca",
             sentiment_ticker_relevance_mode="strict",
+            sentiment_pending_limit=5000,
+            sentiment_pending_max_batches_per_run=10,
+            sentiment_finbert_batch_size=32,
         ),
     )
 
@@ -411,12 +414,57 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
         "alpaca",
         "--ticker-relevance-mode",
         "strict",
+        "--sentiment-pending-limit",
+        "5000",
+        "--sentiment-pending-max-batches",
+        "10",
+        "--finbert-batch-size",
+        "32",
         "--start-utc",
         "2026-04-01T00:00:00Z",
         "--end-utc",
         "2026-04-30T23:59:59Z",
         "--symbols",
         "AAPL,MSFT,NVDA",
+    ]
+
+
+def test_build_pipeline_command_sentiment_pipeline_supports_contextual_only_and_feature_flush() -> None:
+    command = build_pipeline_command(
+        "sentiment_pipeline",
+        PipelineLaunchOptions(
+            sentiment_start_utc="2026-04-01T00:00:00Z",
+            sentiment_end_utc="2026-04-30T23:59:59Z",
+            sentiment_symbols="aapl",
+            sentiment_news_provider="eodhd",
+            sentiment_scoring_mode="contextual_only",
+            sentiment_contextual_min_relevance=0.25,
+            sentiment_contextual_max_pairs=2000,
+            sentiment_feature_flush_every_n_batches=3,
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment",
+        "--news-provider",
+        "eodhd",
+        "--scoring-mode",
+        "contextual_only",
+        "--contextual-min-relevance",
+        "0.25",
+        "--contextual-max-pairs",
+        "2000",
+        "--feature-flush-every-n-batches",
+        "3",
+        "--start-utc",
+        "2026-04-01T00:00:00Z",
+        "--end-utc",
+        "2026-04-30T23:59:59Z",
+        "--symbols",
+        "AAPL",
     ]
 
 
@@ -554,6 +602,8 @@ def test_build_pipeline_command_data_integrity_auxiliary_steps() -> None:
         "update_sector",
         PipelineLaunchOptions(
             data_integrity_fundamentals_limit=40,
+            data_integrity_fundamentals_provider="finnhub",
+            data_integrity_fundamentals_overwrite_existing=True,
             data_integrity_fundamentals_sleep_seconds=1.2,
             data_integrity_fundamentals_log_every=10,
         ),
@@ -565,12 +615,15 @@ def test_build_pipeline_command_data_integrity_auxiliary_steps() -> None:
         "-u",
         "-m",
         "dataIntegrityEngine.update_sector",
+        "--provider",
+        "finnhub",
         "--sleep-seconds",
         "1.2",
         "--log-every",
         "10",
         "--limit",
         "40",
+        "--overwrite-existing",
     ]
 
 
@@ -796,6 +849,9 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
         sentiment_enable_contextual_scoring=True,
         sentiment_contextual_min_relevance=0.3,
         sentiment_contextual_max_pairs=5000,
+        sentiment_pending_limit=5000,
+        sentiment_pending_max_batches_per_run=10,
+        sentiment_finbert_batch_size=32,
         backfill_relevance_dry_run=True,
         backfill_relevance_rescore_all=True,
         backfill_relevance_rescore_contextual=True,
@@ -827,6 +883,9 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
     assert "-EnableContextualScoring" in command
     assert command[command.index("-ContextualMinRelevance") + 1] == "0.3"
     assert command[command.index("-ContextualMaxPairs") + 1] == "5000"
+    assert command[command.index("-SentimentPendingLimit") + 1] == "5000"
+    assert command[command.index("-SentimentPendingMaxBatches") + 1] == "10"
+    assert command[command.index("-FinBertBatchSize") + 1] == "32"
     assert command[command.index("-RelevanceBackfillBatchSize") + 1] == "750"
     assert "-RelevanceBackfillDryRun" in command
     assert "-RelevanceBackfillRescoreAll" in command
@@ -834,6 +893,25 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
     assert command[command.index("-RelevanceBackfillPurgeBelow") + 1] == "0.2"
     assert command[command.index("-RelevanceBackfillContextualMinRelevance") + 1] == "0.4"
     assert command[command.index("-RelevanceBackfillContextualMaxPairs") + 1] == "2500"
+
+
+def test_build_pipeline_command_import_news_pending_loop_supports_contextual_only_mode() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        sentiment_scoring_mode="contextual_only",
+        sentiment_contextual_min_relevance=0.3,
+        sentiment_contextual_max_pairs=4000,
+        sentiment_feature_flush_every_n_batches=2,
+    )
+
+    command = build_pipeline_command("import_news_pending_loop", options)
+
+    assert command[command.index("-ScoringMode") + 1] == "contextual_only"
+    assert command[command.index("-ContextualMinRelevance") + 1] == "0.3"
+    assert command[command.index("-ContextualMaxPairs") + 1] == "4000"
+    assert command[command.index("-FeatureFlushEveryNBatches") + 1] == "2"
+    assert "-EnableContextualScoring" not in command
 
 
 def test_build_pipeline_command_import_news_pending_loop_exposes_symbol_scope_options() -> None:
@@ -907,6 +985,27 @@ def test_build_pipeline_command_relevance_backfill_exposes_contextual_options() 
         "0.4",
         "--contextual-max-pairs",
         "2500",
+    ]
+
+
+def test_build_pipeline_command_rebuild_daily_sentiment_features_only() -> None:
+    command = build_pipeline_command(
+        "rebuild_daily_sentiment_features_only",
+        PipelineLaunchOptions(
+            news_import_start_date="2026-04-01",
+            news_import_end_date="2026-04-15",
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment.history_backfill",
+        "--start-date",
+        "2026-04-01",
+        "--end-date",
+        "2026-04-15",
     ]
 
 

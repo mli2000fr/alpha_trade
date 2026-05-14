@@ -40,6 +40,8 @@ from typing import Any, cast
 
 import streamlit as st
 
+from event_sentiment.db_io import EventSentimentRepository
+
 from ihm.pages._alpha_scanner_diagnostics import (
     _render_alpha_scanner_dependency_threshold_editor,
 )
@@ -73,6 +75,10 @@ from ihm.services.pipeline_runner import (
     DEFAULT_DATA_INTEGRITY_QUOTES_BATCH_SIZE,
     DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK,
     DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS,
+    DEFAULT_EVENT_SENTIMENT_FINBERT_BATCH_SIZE,
+    DEFAULT_EVENT_SENTIMENT_FEATURE_FLUSH_EVERY_N_BATCHES,
+    DEFAULT_EVENT_SENTIMENT_PENDING_LIMIT,
+    DEFAULT_EVENT_SENTIMENT_PENDING_MAX_BATCHES_PER_RUN,
     DEFAULT_CA_SKIP_EXISTING,
     DEFAULT_CA_BATCH_SIZE,
     DEFAULT_CA_USE_CUSTOM_WINDOW,
@@ -194,6 +200,9 @@ from ihm.services.pipeline_runner import (
     RECOMMENDED_ML_DEBUG_GPU_MAX_WORKERS,
     RECOMMENDED_ML_DEBUG_GPU_WALKFORWARD,
     RECOMMENDED_ML_DEBUG_GPU_WATCHDOG_TIMEOUT_SECONDS,
+    RECOMMENDED_EVENT_SENTIMENT_FINBERT_BATCH_SIZE,
+    RECOMMENDED_EVENT_SENTIMENT_PENDING_LIMIT,
+    RECOMMENDED_EVENT_SENTIMENT_PENDING_MAX_BATCHES_PER_RUN,
     RECOMMENDED_ML_PROD_SWING_ACCELERATOR,
     RECOMMENDED_ML_PROD_SWING_DEBUG_TRAIN,
     RECOMMENDED_ML_PROD_SWING_HEARTBEAT_INTERVAL_SECONDS,
@@ -366,10 +375,10 @@ def _build_ml_train_preset_summary(preset_key: str) -> str:
     log_level = str(expected_values["pipeline_ml_log_level"])
     debug_train = "on" if bool(expected_values["pipeline_ml_debug_train"]) else "off"
     walkforward = "on" if bool(expected_values["pipeline_ml_walkforward"]) else "off"
-    max_workers = int(expected_values["pipeline_ml_max_workers"])
-    max_epochs = int(expected_values["pipeline_ml_max_epochs"])
-    heartbeat_seconds = float(expected_values["pipeline_ml_heartbeat_interval_seconds"])
-    watchdog_seconds = int(expected_values["pipeline_ml_watchdog_timeout_seconds"])
+    max_workers = int(cast(int, expected_values["pipeline_ml_max_workers"]))
+    max_epochs = int(cast(int, expected_values["pipeline_ml_max_epochs"]))
+    heartbeat_seconds = float(cast(float, expected_values["pipeline_ml_heartbeat_interval_seconds"]))
+    watchdog_seconds = int(cast(int, expected_values["pipeline_ml_watchdog_timeout_seconds"]))
     return (
         f"🧭 Preset ML actif : `{_format_ml_train_preset_label(normalized)}` · accélérateur `{accelerator}` · logs `{log_level}` "
         f"· debug `{debug_train}` · walk-forward `{walkforward}` · workers `{max_workers}` · epochs `{max_epochs}` "
@@ -552,6 +561,24 @@ class LaunchOptionsContext:
     capital_preset_key: str
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_contextual_backlog_preview(min_relevance: float) -> dict[str, object]:
+    """Retourne un aperçu du backlog contextuel restant.
+
+    Le compteur reflète le comportement actuel du backend contextuel : paires
+    présentes dans ``news_ticker_map`` mais absentes de
+    ``news_ticker_sentiment``, filtrées par ``relevance_score`` minimal.
+    """
+    try:
+        repository = EventSentimentRepository()
+        pending_pairs = repository.count_pending_contextual_pairs(
+            min_relevance=float(min_relevance)
+        )
+    except Exception as exc:  # noqa: BLE001 — best effort UI
+        return {"error": str(exc)}
+    return {"pending_pairs": int(pending_pairs)}
+
+
 def _render_event_sentiment_block() -> dict[str, Any]:
     """Sous-bloc « Paramètres Event Sentiment » de ``_build_launch_options``.
 
@@ -648,7 +675,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             max_value=1.0,
             step=0.05,
             value=float(
-                st.session_state.get("pipeline_sentiment_min_relevance_score", 0.0)
+                cast(float, st.session_state.get("pipeline_sentiment_min_relevance_score", 0.0))
             ),
             key="pipeline_sentiment_min_relevance_score",
             help=(
@@ -659,24 +686,159 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         )
     )
 
+    scoring_mode_options = (
+        ("standard_only", "Standard only"),
+        ("contextual_only", "Contextual only"),
+        ("standard_and_contextual", "Standard + contextual"),
+    )
+    scoring_mode_values = [value for value, _label in scoring_mode_options]
+    scoring_mode_labels = {value: label for value, label in scoring_mode_options}
+    current_scoring_mode = str(
+        st.session_state.get(
+            "pipeline_sentiment_scoring_mode",
+            "standard_and_contextual",
+        )
+    ).strip().lower()
+    if current_scoring_mode not in scoring_mode_values:
+        current_scoring_mode = "standard_and_contextual"
+    sentiment_scoring_mode = cast(
+        str,
+        st.selectbox(
+            "Event Sentiment — mode de scoring",
+            options=scoring_mode_values,
+            index=scoring_mode_values.index(current_scoring_mode),
+            key="pipeline_sentiment_scoring_mode",
+            format_func=lambda value: scoring_mode_labels.get(str(value), str(value)),
+            help=(
+                "`Standard only` = score article standard uniquement ; "
+                "`Contextual only` = re-score uniquement les couples (article, symbole) ; "
+                "`Standard + contextual` = exécute les deux passes dans le même run."
+            ),
+        ),
+    )
+    sentiment_enable_contextual_scoring = sentiment_scoring_mode in {"contextual_only", "standard_and_contextual"}
+    st.caption(
+        "Guide rapide : `Standard only` pour remplir ou rattraper `news_sentiment` ; "
+        "`Contextual only` pour enrichir un corpus déjà scoré standard dans `news_ticker_sentiment` ; "
+        "`Standard + contextual` pour faire les deux dans le même run quand la fenêtre reste raisonnable."
+    )
+    if sentiment_scoring_mode == "contextual_only":
+        st.info(
+            "Mode `Contextual only` : utile pour enrichir/rejouer `news_ticker_sentiment` sur un corpus déjà scoré. "
+            "Les nouveaux articles encore absents de `news_sentiment` nécessitent d'abord un run `Standard only` ou `Standard + contextual`. "
+            "Après un run purement contextuel sur une fenêtre existante, lancez `Rebuild daily sentiment features only` si vous voulez rematérialiser les agrégats journaliers downstream."
+        )
+
+    with st.expander("Performance FinBERT / backlog pending", expanded=False):
+        st.caption(
+            "Ces réglages pilotent le débit réel du backlog pending. "
+            f"Défauts backend : limit `{DEFAULT_EVENT_SENTIMENT_PENDING_LIMIT}`, "
+            f"batchs/process `{DEFAULT_EVENT_SENTIMENT_PENDING_MAX_BATCHES_PER_RUN}`, "
+            f"batch FinBERT `{DEFAULT_EVENT_SENTIMENT_FINBERT_BATCH_SIZE}`. "
+            f"Valeurs IHM recommandées : `{RECOMMENDED_EVENT_SENTIMENT_PENDING_LIMIT}` / "
+            f"`{RECOMMENDED_EVENT_SENTIMENT_PENDING_MAX_BATCHES_PER_RUN}` / "
+            f"`{RECOMMENDED_EVENT_SENTIMENT_FINBERT_BATCH_SIZE}`. En cas d'OOM GPU, le backend tente "
+            "automatiquement `64 -> 32 -> 16` avant fallback CPU."
+        )
+        perf_col1, perf_col2, perf_col3 = st.columns(3)
+        with perf_col1:
+            sentiment_pending_limit = int(
+                st.number_input(
+                    "Articles pending / batch",
+                    min_value=100,
+                    max_value=100_000,
+                    step=500,
+                    value=int(
+                        cast(int, st.session_state.get(
+                            "pipeline_sentiment_pending_limit",
+                            RECOMMENDED_EVENT_SENTIMENT_PENDING_LIMIT,
+                        ))
+                    ),
+                    key="pipeline_sentiment_pending_limit",
+                    help=(
+                        "Nombre max d'articles pending scorés par sous-batch. "
+                        "Plus haut = moins d'overhead, mais plus de RAM/VRAM consommée."
+                    ),
+                )
+            )
+        with perf_col2:
+            sentiment_pending_max_batches_per_run = int(
+                st.number_input(
+                    "Batchs pending / process Python",
+                    min_value=1,
+                    max_value=100,
+                    step=1,
+                    value=int(
+                        cast(int, st.session_state.get(
+                            "pipeline_sentiment_pending_max_batches_per_run",
+                            RECOMMENDED_EVENT_SENTIMENT_PENDING_MAX_BATCHES_PER_RUN,
+                        ))
+                    ),
+                    key="pipeline_sentiment_pending_max_batches_per_run",
+                    help=(
+                        "Nombre de sous-batchs pending successifs traités dans le même process Python. "
+                        "Augmenter pour réduire les redémarrages de process sur gros backlog."
+                    ),
+                )
+            )
+        with perf_col3:
+            sentiment_finbert_batch_size = int(
+                st.number_input(
+                    "Batch size FinBERT",
+                    min_value=1,
+                    max_value=256,
+                    step=8,
+                    value=int(
+                        cast(int, st.session_state.get(
+                            "pipeline_sentiment_finbert_batch_size",
+                            RECOMMENDED_EVENT_SENTIMENT_FINBERT_BATCH_SIZE,
+                        ))
+                    ),
+                    key="pipeline_sentiment_finbert_batch_size",
+                    help=(
+                        "Batch size GPU/CPU pour FinBERT standard et contextuel. "
+                        "Le backend réduit automatiquement à 32 puis 16 en cas d'OOM GPU."
+                    ),
+                )
+            )
+        flush_col1, flush_col2 = st.columns(2)
+        with flush_col1:
+            sentiment_feature_flush_every_n_batches = int(
+                st.number_input(
+                    "Flush features tous les N sous-batchs (0 = final only)",
+                    min_value=0,
+                    max_value=100,
+                    step=1,
+                    value=int(
+                        cast(
+                            int,
+                            st.session_state.get(
+                                "pipeline_sentiment_feature_flush_every_n_batches",
+                                DEFAULT_EVENT_SENTIMENT_FEATURE_FLUSH_EVERY_N_BATCHES,
+                            ),
+                        )
+                    ),
+                    key="pipeline_sentiment_feature_flush_every_n_batches",
+                    help=(
+                        "Si > 0, reconstruit et persiste les features ticker/secteur tous les N sous-batchs pending. "
+                        "Permet de matérialiser plus tôt les agrégats sur gros backlogs."
+                    ),
+                )
+            )
+        with flush_col2:
+            if sentiment_feature_flush_every_n_batches > 0:
+                st.info(
+                    f"Flush intermédiaire activé : persistance features toutes les `{sentiment_feature_flush_every_n_batches}` itérations pending."
+                )
+            else:
+                st.caption("Flush final unique conservé : comportement historique du pipeline.")
+
     # Niveau 4 — re-scoring FinBERT contextualisé par couple (article, symbol).
     with st.expander("Niveau 4 — Re-scoring FinBERT contextualisé (opt-in)", expanded=False):
-        sentiment_enable_contextual_scoring = bool(
-            st.checkbox(
-                "Activer le scoring contextuel par couple (article, symbole)",
-                value=bool(
-                    st.session_state.get(
-                        "pipeline_sentiment_enable_contextual_scoring", True
-                    )
-                ),
-                key="pipeline_sentiment_enable_contextual_scoring",
-                help=(
-                    "Quand activé, le pipeline produit un score FinBERT distinct "
-                    "par couple (article, symbole) dans news_ticker_sentiment. "
-                    "Coût : N×M tokenisations FinBERT — utiliser le seuil "
-                    "min relevance + le cap pour limiter."
-                ),
-            )
+        st.caption(
+            "Le mode de scoring sélectionné ci-dessus pilote l'activation du contextual. "
+            "Les paramètres ci-dessous ne sont pris en compte que pour `Contextual only` et `Standard + contextual`. "
+            "Le cap de paires contextuelles est un cap **par run** : si vous mettez `5000`, le run score au plus `5000` couples `(article, symbole)` puis le run suivant reprend le reliquat via `news_ticker_sentiment`."
         )
         ctx_col1, ctx_col2 = st.columns(2)
         with ctx_col1:
@@ -687,9 +849,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     max_value=1.0,
                     step=0.05,
                     value=float(
-                        st.session_state.get(
+                        cast(float, st.session_state.get(
                             "pipeline_sentiment_contextual_min_relevance", 0.3
-                        )
+                        ))
                     ),
                     key="pipeline_sentiment_contextual_min_relevance",
                     disabled=not sentiment_enable_contextual_scoring,
@@ -702,18 +864,58 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         with ctx_col2:
             sentiment_contextual_max_pairs = int(
                 st.number_input(
-                    "Cap dur paires/run",
+                    "Cap dur paires contextuelles / run",
                     min_value=100,
                     max_value=100_000,
                     step=500,
                     value=int(
-                        st.session_state.get(
+                        cast(int, st.session_state.get(
                             "pipeline_sentiment_contextual_max_pairs", 5000
-                        )
+                        ))
                     ),
                     key="pipeline_sentiment_contextual_max_pairs",
                     disabled=not sentiment_enable_contextual_scoring,
+                    help=(
+                        "Cap de paires `(article, symbole)` traitées en contextuel sur **ce run uniquement**. "
+                        "Si le backlog dépasse ce nombre, il faudra relancer pour traiter le lot suivant. "
+                        "Ne pas mettre 'illimité' par défaut : sur gros historique cela ferait des runs très longs et chargerait trop de paires en mémoire."
+                    ),
                 )
+            )
+        contextual_backlog_preview = _load_contextual_backlog_preview(
+            float(sentiment_contextual_min_relevance)
+        )
+        if contextual_backlog_preview.get("error"):
+            st.caption(
+                "Impossible d'estimer le backlog contextuel restant en live : "
+                f"{contextual_backlog_preview.get('error')}"
+            )
+        else:
+            pending_contextual_pairs = int(
+                contextual_backlog_preview.get("pending_pairs") or 0
+            )
+            estimated_runs_needed = (
+                (pending_contextual_pairs + max(int(sentiment_contextual_max_pairs), 1) - 1)
+                // max(int(sentiment_contextual_max_pairs), 1)
+                if pending_contextual_pairs > 0
+                else 0
+            )
+            estimated_relaunches_remaining = max(estimated_runs_needed - 1, 0)
+            backlog_col1, backlog_col2 = st.columns(2)
+            with backlog_col1:
+                st.metric(
+                    "Paires contextuelles encore à traiter",
+                    f"{pending_contextual_pairs:,}".replace(",", " "),
+                )
+            with backlog_col2:
+                st.metric(
+                    "Relances estimées après ce run",
+                    estimated_relaunches_remaining,
+                )
+            st.caption(
+                "Estimation live (TTL ~60s) alignée sur le backend contextuel actuel : backlog global des paires absentes de `news_ticker_sentiment`, "
+                f"filtré avec `min_relevance >= {float(sentiment_contextual_min_relevance):g}`. "
+                f"Avec un cap de `{int(sentiment_contextual_max_pairs)}` paires/run, cela représente ≈ `{estimated_runs_needed}` run(s) au total."
             )
 
     # 7bis — Backfill batch des scores (Niveau 2/3 + Niveau 4 optionnel).
@@ -722,6 +924,19 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             "Cette section fournit les flags consommés par l'étape `relevance_backfill` "
             "(`python -m event_sentiment.relevance_backfill`). Réutilise les dates et "
             "symboles du bloc Sentiment ci-dessus."
+        )
+        st.info(
+            "Ce n'est pas un doublon du `mode de scoring` ci-dessus : le sélecteur `Standard only / Contextual only / Standard + contextual` pilote `python -m event_sentiment`, "
+            "alors que ce bloc 7bis pilote uniquement `python -m event_sentiment.relevance_backfill` pour rejouer un backfill ciblé."
+        )
+        st.caption(
+            "Ordre conseillé en maintenance : 1) `Contextual only` sur la fenêtre voulue pour remplir `news_ticker_sentiment`, "
+            "2) `Rebuild daily sentiment features only` pour reconstruire `ticker_daily_sentiment_features` / `sector_daily_sentiment_features`, "
+            "3) relancer `signal_aggregator` si vous voulez refléter immédiatement ce nouveau signal dans `stock_scores`."
+        )
+        st.caption(
+            "Le cap contextuel utilisé par ce backfill 7bis réutilise le même réglage `Cap dur paires contextuelles / run` du bloc Niveau 4 ci-dessus. "
+            "Exemple : `5000` = le run traite jusqu'à `5000` paires contextuelles puis le run suivant reprendra le reliquat."
         )
         bf_col1, bf_col2, bf_col3 = st.columns(3)
         with bf_col1:
@@ -744,14 +959,17 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         with bf_col3:
             backfill_relevance_rescore_contextual = bool(
                 st.checkbox(
-                    "Phase 2 — contextuel",
+                    "Ajouter le contextual à ce backfill 7bis",
                     value=bool(
                         st.session_state.get(
                             "pipeline_backfill_relevance_rescore_contextual", False
                         )
                     ),
                     key="pipeline_backfill_relevance_rescore_contextual",
-                    help="Lance aussi le scoring FinBERT contextualisé.",
+                    help=(
+                        "Ajoute le scoring FinBERT contextualisé au backfill `relevance_backfill` uniquement. "
+                        "N'affecte pas le mode de scoring du run principal `event_sentiment`."
+                    ),
                 )
             )
         bf_col4, bf_col5 = st.columns(2)
@@ -763,7 +981,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     max_value=10_000,
                     step=50,
                     value=int(
-                        st.session_state.get("pipeline_backfill_relevance_batch_size", 500)
+                        cast(int, st.session_state.get("pipeline_backfill_relevance_batch_size", 500))
                     ),
                     key="pipeline_backfill_relevance_batch_size",
                 )
@@ -776,7 +994,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     max_value=1.0,
                     step=0.05,
                     value=float(
-                        st.session_state.get("pipeline_backfill_relevance_purge_below", 0.0)
+                        cast(float, st.session_state.get("pipeline_backfill_relevance_purge_below", 0.0))
                     ),
                     key="pipeline_backfill_relevance_purge_below",
                     help=(
@@ -794,9 +1012,14 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         "sentiment_news_provider": sentiment_news_provider,
         "sentiment_ticker_relevance_mode": sentiment_ticker_relevance_mode,
         "sentiment_min_relevance_score": sentiment_min_relevance_score,
+        "sentiment_scoring_mode": sentiment_scoring_mode,
         "sentiment_enable_contextual_scoring": sentiment_enable_contextual_scoring,
         "sentiment_contextual_min_relevance": sentiment_contextual_min_relevance,
         "sentiment_contextual_max_pairs": sentiment_contextual_max_pairs,
+        "sentiment_pending_limit": sentiment_pending_limit,
+        "sentiment_pending_max_batches_per_run": sentiment_pending_max_batches_per_run,
+        "sentiment_feature_flush_every_n_batches": sentiment_feature_flush_every_n_batches,
+        "sentiment_finbert_batch_size": sentiment_finbert_batch_size,
         "backfill_relevance_dry_run": backfill_relevance_dry_run,
         "backfill_relevance_rescore_all": backfill_relevance_rescore_all,
         "backfill_relevance_rescore_contextual": backfill_relevance_rescore_contextual,
@@ -1563,9 +1786,29 @@ def _render_data_integrity_block() -> dict[str, Any]:
                 key="pipeline_data_integrity_fundamentals_limit",
             )
         )
+        fundamentals_provider_options = ("eodhd", "finnhub")
+        current_fundamentals_provider = str(
+            st.session_state.get("pipeline_data_integrity_fundamentals_provider", "eodhd")
+        ).strip().lower()
+        if current_fundamentals_provider not in fundamentals_provider_options:
+            current_fundamentals_provider = "eodhd"
+        data_integrity_fundamentals_provider = cast(
+            str,
+            st.selectbox(
+                "Fondamentaux — source provider",
+                options=list(fundamentals_provider_options),
+                index=fundamentals_provider_options.index(current_fundamentals_provider),
+                key="pipeline_data_integrity_fundamentals_provider",
+                help=(
+                    "Provider utilisé par l'étape B2 pour récupérer `sector` et `market_cap`. "
+                    "Défaut recommandé : EODHD. Si l'endpoint `fundamentals` EODHD est refusé par le compte courant (401/403), "
+                    "le backend bascule automatiquement vers Finnhub pour éviter un run B2 en erreur sur tout l'univers."
+                ),
+            ),
+        )
         data_integrity_fundamentals_sleep_seconds = float(
             st.number_input(
-                "Fondamentaux — pause Finnhub (s)",
+	            "Fondamentaux — pause provider (s)",
                 min_value=0.0,
                 value=float(st.session_state.get("pipeline_data_integrity_fundamentals_sleep_seconds", DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS)),
                 step=0.1,
@@ -1601,6 +1844,15 @@ def _render_data_integrity_block() -> dict[str, Any]:
                 step=5,
                 key="pipeline_data_integrity_fundamentals_log_every",
             )
+        )
+        data_integrity_fundamentals_overwrite_existing = st.checkbox(
+            "Fondamentaux — écraser les valeurs existantes sector / market cap",
+            value=bool(st.session_state.get("pipeline_data_integrity_fundamentals_overwrite_existing", False)),
+            key="pipeline_data_integrity_fundamentals_overwrite_existing",
+            help=(
+                "Décoché par défaut : B2 complète seulement les champs manquants (et rafraîchit les market caps périmées côté backend). "
+                "Coché : B2 peut aussi remplacer les valeurs déjà présentes sur les symboles ciblés."
+            ),
         )
         data_integrity_earnings_resume = st.checkbox(
             "Earnings — reprendre depuis le bookmark local",
@@ -1654,6 +1906,8 @@ def _render_data_integrity_block() -> dict[str, Any]:
         "data_integrity_earnings_sleep_seconds": data_integrity_earnings_sleep_seconds,
         "data_integrity_earnings_log_every": data_integrity_earnings_log_every,
         "data_integrity_fundamentals_limit": data_integrity_fundamentals_limit,
+        "data_integrity_fundamentals_provider": data_integrity_fundamentals_provider,
+        "data_integrity_fundamentals_overwrite_existing": data_integrity_fundamentals_overwrite_existing,
         "data_integrity_fundamentals_sleep_seconds": data_integrity_fundamentals_sleep_seconds,
         "eodhd_write_commit_every_symbols": eodhd_write_commit_every_symbols,
         "eodhd_enable_stooq_cross_check": eodhd_enable_stooq_cross_check,
@@ -2962,9 +3216,18 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         sentiment_news_provider = _sentiment_vars["sentiment_news_provider"]
         sentiment_ticker_relevance_mode = _sentiment_vars["sentiment_ticker_relevance_mode"]
         sentiment_min_relevance_score = _sentiment_vars["sentiment_min_relevance_score"]
+        sentiment_scoring_mode = _sentiment_vars["sentiment_scoring_mode"]
         sentiment_enable_contextual_scoring = _sentiment_vars["sentiment_enable_contextual_scoring"]
         sentiment_contextual_min_relevance = _sentiment_vars["sentiment_contextual_min_relevance"]
         sentiment_contextual_max_pairs = _sentiment_vars["sentiment_contextual_max_pairs"]
+        sentiment_pending_limit = _sentiment_vars["sentiment_pending_limit"]
+        sentiment_pending_max_batches_per_run = _sentiment_vars[
+            "sentiment_pending_max_batches_per_run"
+        ]
+        sentiment_feature_flush_every_n_batches = _sentiment_vars[
+            "sentiment_feature_flush_every_n_batches"
+        ]
+        sentiment_finbert_batch_size = _sentiment_vars["sentiment_finbert_batch_size"]
         backfill_relevance_dry_run = _sentiment_vars["backfill_relevance_dry_run"]
         backfill_relevance_rescore_all = _sentiment_vars["backfill_relevance_rescore_all"]
         backfill_relevance_rescore_contextual = _sentiment_vars["backfill_relevance_rescore_contextual"]
@@ -3002,6 +3265,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         data_integrity_earnings_sleep_seconds = _di_vars["data_integrity_earnings_sleep_seconds"]
         data_integrity_earnings_log_every = _di_vars["data_integrity_earnings_log_every"]
         data_integrity_fundamentals_limit = _di_vars["data_integrity_fundamentals_limit"]
+        data_integrity_fundamentals_provider = _di_vars["data_integrity_fundamentals_provider"]
+        data_integrity_fundamentals_overwrite_existing = _di_vars["data_integrity_fundamentals_overwrite_existing"]
         data_integrity_fundamentals_sleep_seconds = _di_vars["data_integrity_fundamentals_sleep_seconds"]
         eodhd_write_commit_every_symbols = _di_vars["eodhd_write_commit_every_symbols"]
         eodhd_enable_stooq_cross_check = _di_vars["eodhd_enable_stooq_cross_check"]
@@ -3011,7 +3276,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         effective_earnings_to_date = _di_vars["effective_earnings_to_date"]
 
         # === BLOCK 8b/9 : Corporate Actions + Backfill EODHD historique (extrait — _render_corporate_actions_block) ===
-        _ca_vars = _render_corporate_actions_block(trade_date)
+        _ca_vars = _render_corporate_actions_block(trade_date or "")
         corporate_actions_skip_existing = _ca_vars["corporate_actions_skip_existing"]
         corporate_actions_batch_size = _ca_vars["corporate_actions_batch_size"]
         ca_use_custom_window = _ca_vars["ca_use_custom_window"]
@@ -3028,7 +3293,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             account_id=selected_account_id,
             trade_date=trade_date,
             force_trade_date_to_latest_snapshot=bool(force_trade_date_to_latest_snapshot),
-            risk_account_equity=float(risk_account_equity),
+            risk_account_equity=float(cast(float, risk_account_equity)),
             execution_mode=cast(Any, execution_mode),
             execution_run_id=execution_run_id,
             allow_outside_rth=bool(allow_outside_rth),
@@ -3119,9 +3384,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             sentiment_start_utc=sentiment_start_utc or None,
             sentiment_end_utc=sentiment_end_utc or None,
             sentiment_symbols=sentiment_symbols or None,
-            sentiment_news_provider=sentiment_news_provider or "eodhd",
-            sentiment_ticker_relevance_mode=sentiment_ticker_relevance_mode or "provider_default",
+            sentiment_news_provider=cast(Any, sentiment_news_provider or "eodhd"),
+            sentiment_ticker_relevance_mode=cast(Any, sentiment_ticker_relevance_mode or "provider_default"),
             sentiment_min_relevance_score=float(sentiment_min_relevance_score) if sentiment_min_relevance_score else None,
+            sentiment_scoring_mode=cast(Any, sentiment_scoring_mode or "standard_only"),
             sentiment_enable_contextual_scoring=bool(sentiment_enable_contextual_scoring),
             sentiment_contextual_min_relevance=(
                 float(sentiment_contextual_min_relevance)
@@ -3131,6 +3397,26 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             sentiment_contextual_max_pairs=(
                 int(sentiment_contextual_max_pairs)
                 if sentiment_contextual_max_pairs
+                else None
+            ),
+            sentiment_pending_limit=(
+                int(sentiment_pending_limit)
+                if sentiment_pending_limit
+                else None
+            ),
+            sentiment_pending_max_batches_per_run=(
+                int(sentiment_pending_max_batches_per_run)
+                if sentiment_pending_max_batches_per_run
+                else None
+            ),
+            sentiment_feature_flush_every_n_batches=(
+                int(sentiment_feature_flush_every_n_batches)
+                if sentiment_feature_flush_every_n_batches is not None
+                else None
+            ),
+            sentiment_finbert_batch_size=(
+                int(sentiment_finbert_batch_size)
+                if sentiment_finbert_batch_size
                 else None
             ),
             backfill_relevance_dry_run=bool(backfill_relevance_dry_run),
@@ -3197,6 +3483,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             data_integrity_earnings_batch_size=int(data_integrity_earnings_batch_size),
             data_integrity_earnings_resume=bool(data_integrity_earnings_resume),
             data_integrity_fundamentals_limit=_to_optional_positive_int(data_integrity_fundamentals_limit),
+            data_integrity_fundamentals_provider=cast(Any, data_integrity_fundamentals_provider or "eodhd"),
+            data_integrity_fundamentals_overwrite_existing=bool(data_integrity_fundamentals_overwrite_existing),
             data_integrity_fundamentals_sleep_seconds=float(data_integrity_fundamentals_sleep_seconds),
             data_integrity_fundamentals_log_every=int(data_integrity_fundamentals_log_every),
             eodhd_write_commit_every_symbols=int(eodhd_write_commit_every_symbols),

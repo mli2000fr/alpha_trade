@@ -31,6 +31,9 @@ class _FakeEngine:
     def begin(self) -> _FakeBeginContext:
         return _FakeBeginContext(self.connection)
 
+    def connect(self) -> _FakeBeginContext:
+        return _FakeBeginContext(self.connection)
+
 
 class _FakeInserted:
     def __getitem__(self, item):
@@ -63,6 +66,14 @@ class _FakeTable:
             "latest_event_timestamp_ny": _FakeColumn("latest_event_timestamp_ny"),
             "updated_at": _FakeColumn("updated_at"),
         }
+
+
+class _FakeScalarResult:
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def scalar_one(self) -> int:
+        return self._value
 
 
 def test_upsert_normalizes_pandas_nat_to_none(monkeypatch) -> None:
@@ -166,5 +177,28 @@ def test_upsert_drops_unknown_columns_not_present_in_table(monkeypatch) -> None:
         "trade_date": date(2026, 4, 16),
         "news_count_1d": 3,
     }
+
+
+def test_count_pending_contextual_pairs_uses_min_relevance_filter() -> None:
+    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    fake_engine = _FakeEngine()
+    repository.engine = fake_engine
+    repository.metadata = None
+    repository._tables = {}
+
+    def _fake_execute(statement, params=None):
+        fake_engine.connection.executed.append((statement, params))
+        return _FakeScalarResult(42)
+
+    fake_engine.connection.execute = _fake_execute  # type: ignore[method-assign]
+
+    count = EventSentimentRepository.count_pending_contextual_pairs(
+        repository,
+        min_relevance=0.35,
+    )
+
+    assert count == 42
+    _statement, params = fake_engine.connection.executed[0]
+    assert params == {"min_relevance": 0.35}
 
 

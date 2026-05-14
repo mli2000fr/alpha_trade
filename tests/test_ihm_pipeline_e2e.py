@@ -111,9 +111,14 @@ def test_render_event_sentiment_block_returns_expected_keys() -> None:
             "sentiment_news_provider",
             "sentiment_ticker_relevance_mode",
             "sentiment_min_relevance_score",
+            "sentiment_scoring_mode",
             "sentiment_enable_contextual_scoring",
             "sentiment_contextual_min_relevance",
             "sentiment_contextual_max_pairs",
+            "sentiment_pending_limit",
+            "sentiment_pending_max_batches_per_run",
+            "sentiment_feature_flush_every_n_batches",
+            "sentiment_finbert_batch_size",
             "backfill_relevance_dry_run",
             "backfill_relevance_rescore_all",
             "backfill_relevance_rescore_contextual",
@@ -221,6 +226,8 @@ def test_build_launch_options_returns_default_swing_options_under_apptest() -> N
         st.session_state["__test_options_pdt_rule"] = options.execution_pdt_rule
         st.session_state["__test_options_swing_only"] = bool(options.execution_swing_only)
         st.session_state["__test_options_sentiment_news_provider"] = options.sentiment_news_provider
+        st.session_state["__test_options_fundamentals_provider"] = options.data_integrity_fundamentals_provider
+        st.session_state["__test_options_fundamentals_overwrite"] = bool(options.data_integrity_fundamentals_overwrite_existing)
         st.session_state["__test_live_confirmed"] = bool(live_confirmed)
 
     at = AppTest.from_function(_runner).run(timeout=20)
@@ -232,6 +239,8 @@ def test_build_launch_options_returns_default_swing_options_under_apptest() -> N
     assert at.session_state["__test_options_pdt_rule"] == "off"
     assert at.session_state["__test_options_swing_only"] is True
     assert at.session_state["__test_options_sentiment_news_provider"] == "eodhd"
+    assert at.session_state["__test_options_fundamentals_provider"] == "eodhd"
+    assert at.session_state["__test_options_fundamentals_overwrite"] is False
     # Live confirmation court-circuit en non-live ⇒ True.
     assert at.session_state["__test_live_confirmed"] is True
 

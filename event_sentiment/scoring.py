@@ -28,6 +28,7 @@ class FinBERTSentimentService:
         self.model_revision = model_revision
         self.batch_size = batch_size
         self.max_length = max_length
+        self.gpu_oom_batch_fallbacks: list[int] = []
         self.device = None
         self.tokenizer = None
         self.model = None
@@ -71,6 +72,18 @@ class FinBERTSentimentService:
         return "cuda" in message or "cublas" in message or "cudnn" in message
 
     @staticmethod
+    def _is_cuda_oom_error(exc: RuntimeError) -> bool:
+        message = str(exc).lower()
+        return "out of memory" in message or "cuda out of memory" in message
+
+    @classmethod
+    def _next_smaller_gpu_batch_size(cls, current_batch_size: int) -> int | None:
+        for candidate in (64, 32, 16):
+            if candidate < int(current_batch_size):
+                return candidate
+        return None
+
+    @staticmethod
     def _resolve_hf_token() -> str | None:
         for env_var in HF_TOKEN_ENV_VARS:
             token = os.environ.get(env_var)
@@ -84,6 +97,14 @@ class FinBERTSentimentService:
             return
         for env_var in HF_TOKEN_ENV_VARS:
             os.environ[env_var] = token
+
+    def _clear_cuda_cache(self) -> None:
+        try:
+            torch = self._get_torch_module()
+            if hasattr(torch, "cuda") and hasattr(torch.cuda, "empty_cache"):
+                torch.cuda.empty_cache()
+        except Exception:
+            return
 
     def _load_model_for_device(self, device: str, force_reload: bool = False) -> None:
         if not force_reload and self.model is not None and self.tokenizer is not None and self.device == device:
@@ -116,6 +137,22 @@ class FinBERTSentimentService:
         initial_device = "cuda" if torch.cuda.is_available() else "cpu"
         self._load_model_for_device(initial_device)
 
+    def adopt_runtime_from(self, other: "FinBERTSentimentService") -> None:
+        """Réutilise un runtime FinBERT déjà chargé.
+
+        Permet d'éviter un second chargement du même modèle/tokenizer quand le
+        scoring contextuel est activé dans la même exécution du pipeline.
+        """
+        if other.model is None or other.tokenizer is None or other.device is None:
+            return
+        self.model = other.model
+        self.tokenizer = other.tokenizer
+        self.device = other.device
+        self.id2label = dict(other.id2label)
+        self._fingerprint_cache = other._fingerprint_cache
+        self.batch_size = int(getattr(other, "batch_size", self.batch_size) or self.batch_size)
+        self.gpu_oom_batch_fallbacks = list(getattr(other, "gpu_oom_batch_fallbacks", []) or [])
+
     def _infer_probabilities(self, batch_texts: list[str]):
         """
         Tokenise et infère les probabilités FinBERT pour un batch de textes.
@@ -145,9 +182,10 @@ class FinBERTSentimentService:
         else:
             # Fake tensor de tests / objets minimalistes
             attention_values = getattr(attention, "values", attention)
+            attention_rows = attention_values if isinstance(attention_values, (list, tuple)) else []
             token_counts = [
                 int(sum(row))
-                for row in (attention_values or [])
+                for row in attention_rows
                 if isinstance(row, (list, tuple))
             ]
 
@@ -171,6 +209,46 @@ class FinBERTSentimentService:
             return " [SEP] ".join(part for part in [headline, summary] if part), "headline_summary"
         return headline, "headline_only"
 
+    def _infer_next_batch(self, texts: list[str], start: int):
+        current_batch_size = max(int(self.batch_size), 1)
+        while True:
+            end = min(start + current_batch_size, len(texts))
+            batch_texts = texts[start:end]
+            try:
+                probs, token_counts = self._infer_probabilities(batch_texts)
+                self.batch_size = current_batch_size
+                return batch_texts, probs, token_counts, end
+            except RuntimeError as exc:
+                if self.device == "cuda" and self._is_cuda_oom_error(exc):
+                    next_batch_size = self._next_smaller_gpu_batch_size(current_batch_size)
+                    self._clear_cuda_cache()
+                    if next_batch_size is not None:
+                        LOGGER.warning(
+                            "FinBERT CUDA OOM | batch_size=%s -> retry batch_size=%s",
+                            current_batch_size,
+                            next_batch_size,
+                        )
+                        current_batch_size = next_batch_size
+                        self.batch_size = next_batch_size
+                        if next_batch_size not in self.gpu_oom_batch_fallbacks:
+                            self.gpu_oom_batch_fallbacks.append(next_batch_size)
+                        continue
+                    LOGGER.warning(
+                        "FinBERT CUDA OOM persistant | batch_size=%s | fallback CPU",
+                        current_batch_size,
+                    )
+                    self._load_model_for_device("cpu", force_reload=True)
+                    continue
+                if self.device == "cuda" and self._is_cuda_runtime_error(exc):
+                    self._clear_cuda_cache()
+                    LOGGER.warning(
+                        "FinBERT CUDA failure detected | error=%s | device=cpu (fallback after CUDA failure)",
+                        exc,
+                    )
+                    self._load_model_for_device("cpu", force_reload=True)
+                    continue
+                raise
+
     def score_articles(self, articles: Iterable[NormalizedNewsArticle]) -> list[SentimentRecord]:
         article_list = list(articles)
         if not article_list:
@@ -192,26 +270,11 @@ class FinBERTSentimentService:
             strategies.append(strategy)
 
         records: list[SentimentRecord] = []
-        for start in range(0, len(article_list), self.batch_size):
-            end = start + self.batch_size
+        start = 0
+        while start < len(article_list):
+            batch_texts, probs, batch_token_counts, end = self._infer_next_batch(texts, start)
             batch_articles = article_list[start:end]
-            batch_texts = texts[start:end]
             batch_strategies = strategies[start:end]
-
-            try:
-                # _infer_probabilities tokenise et retourne aussi les token_counts
-                # → une seule passe tokeniseur par batch (fix double tokenisation P1)
-                probs, batch_token_counts = self._infer_probabilities(batch_texts)
-            except RuntimeError as exc:
-                if self.device == "cuda" and self._is_cuda_runtime_error(exc):
-                    LOGGER.warning(
-                        "FinBERT CUDA failure detected | error=%s | device=cpu (fallback after CUDA failure)",
-                        exc,
-                    )
-                    self._load_model_for_device("cpu", force_reload=True)
-                    probs, batch_token_counts = self._infer_probabilities(batch_texts)
-                else:
-                    raise
 
             for idx, article in enumerate(batch_articles):
                 row = probs[idx].tolist()
@@ -243,6 +306,8 @@ class FinBERTSentimentService:
                         model_fingerprint=self.model_fingerprint,
                     )
                 )
+
+            start = end
 
         LOGGER.info("FinBERT scoring | articles=%s", len(records))
         return records
@@ -317,24 +382,11 @@ class ContextualFinBERTScorer(FinBERTSentimentService):
             strategies.append(strategy)
 
         records: list[ContextualSentimentRecord] = []
-        for start in range(0, len(pair_list), self.batch_size):
-            end = start + self.batch_size
+        start = 0
+        while start < len(pair_list):
+            batch_texts, probs, batch_token_counts, end = self._infer_next_batch(texts, start)
             batch_pairs = pair_list[start:end]
-            batch_texts = texts[start:end]
             batch_strategies = strategies[start:end]
-
-            try:
-                probs, batch_token_counts = self._infer_probabilities(batch_texts)
-            except RuntimeError as exc:
-                if self.device == "cuda" and self._is_cuda_runtime_error(exc):
-                    LOGGER.warning(
-                        "ContextualFinBERT CUDA failure | error=%s | fallback CPU",
-                        exc,
-                    )
-                    self._load_model_for_device("cpu", force_reload=True)
-                    probs, batch_token_counts = self._infer_probabilities(batch_texts)
-                else:
-                    raise
 
             for idx, (article, symbol, _company_name) in enumerate(batch_pairs):
                 row = probs[idx].tolist()
@@ -367,6 +419,8 @@ class ContextualFinBERTScorer(FinBERTSentimentService):
                         scoring_version=CONTEXTUAL_SCORING_VERSION,
                     )
                 )
+
+            start = end
 
         LOGGER.info("ContextualFinBERT scoring | pairs=%s", len(records))
         return records

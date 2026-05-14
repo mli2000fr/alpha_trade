@@ -810,8 +810,21 @@ Simule sans persister.
 #### `Re-scorer toutes les lignes`
 Recalcule même celles qui avaient déjà un score.
 
-#### `Phase 2 — contextuel`
-Ajoute le rescoring contextuel FinBERT.
+#### `Ajouter le contextual à ce backfill 7bis`
+Ajoute le rescoring contextuel FinBERT **au backfill 7bis uniquement**.
+
+Ce n'est **pas** un doublon du mode `Standard only / Contextual only / Standard + contextual` du bloc principal Event Sentiment :
+
+- le **mode de scoring** pilote `python -m event_sentiment` ;
+- la case **`Ajouter le contextual à ce backfill 7bis`** pilote `python -m event_sentiment.relevance_backfill`.
+
+Ordre recommandé pour enrichir un corpus déjà scoré standard :
+
+1. lancer `Contextual only` ;
+2. lancer `Rebuild daily sentiment features only` ;
+3. relancer éventuellement `signal_aggregator` si l'on veut refléter immédiatement ces nouvelles features dans `stock_scores`.
+
+Dans le workflow complet IHM, ce `7bis` est exécuté automatiquement entre `7. Sentiment Pipeline` et `8. Signal Aggregator`.
 
 #### `Batch size`
 Taille des lots de lignes traitées.

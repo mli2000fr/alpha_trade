@@ -3,6 +3,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Literal
 from typing import Any
 from uuid import uuid4
 
@@ -14,16 +15,27 @@ from core.run_summary import attach_schema_version, merge_iex_bias_counters
 from database.assets import (
 	count_eligible_symbols_with_stale_market_cap,
 	get_symbols_missing_fundamentals,
+	get_stock_metadata_fundamentals_map,
 	get_symbols_with_stale_market_cap,
+	list_eligible_stock_symbols,
 	update_stock_metadata_fundamentals,
 )
-from service.finnhub.clientFinnhub import MIN_REQUEST_INTERVAL_SECONDS, fetch_company_profile
+from service.eodhd.clientEodhd import (
+	EodhdPermissionError,
+	fetch_symbol_fundamentals_record as fetch_eodhd_fundamentals_record,
+)
+from service.finnhub.clientFinnhub import (
+	MIN_REQUEST_INTERVAL_SECONDS,
+	fetch_symbol_fundamentals_record as fetch_finnhub_fundamentals_record,
+)
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_LOG_EVERY = 50
 DEFAULT_REFRESH_STALE_DAYS = 30
 NOT_AVAILABLE = "N/A"
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+FundamentalsProvider = Literal["eodhd", "finnhub"]
+DEFAULT_PROVIDER_FALLBACK: FundamentalsProvider = "finnhub"
 
 
 def _utc_now_naive() -> datetime:
@@ -48,29 +60,31 @@ def update_stock_metadata_sector(symbol: str, sector: str) -> int:
 	return update_stock_metadata_fundamentals(symbol, sector=sector)
 
 
-def update_missing_sectors(
-	limit: int | None = None,
-	sleep_seconds: float = MIN_REQUEST_INTERVAL_SECONDS,
-	log_every: int = DEFAULT_LOG_EVERY,
-	*,
-	refresh_stale_days: int | None = None,
-) -> dict[str, Any]:
-	if sleep_seconds < 0:
-		raise ValueError("sleep_seconds doit être supérieur ou égal à 0.")
-	if log_every < 1:
-		raise ValueError("log_every doit être supérieur ou égal à 1.")
-	if refresh_stale_days is not None and refresh_stale_days < 0:
-		raise ValueError("refresh_stale_days doit être >= 0.")
+def _normalize_provider(provider: str) -> FundamentalsProvider:
+	normalized = str(provider or "eodhd").strip().lower()
+	if normalized not in {"eodhd", "finnhub"}:
+		raise ValueError("provider doit être 'eodhd' ou 'finnhub'.")
+	return normalized  # type: ignore[return-value]
 
+
+def _select_target_symbols(
+	*,
+	limit: int | None,
+	refresh_stale_days: int | None,
+	overwrite_existing: bool,
+) -> tuple[list[str], list[str], list[str]]:
 	missing_symbols = get_symbols_missing_sector(limit=limit)
-	# Phase 3.1.e : ajouter aussi les symboles dont market_cap_refreshed_at est périmé.
 	stale_symbols: list[str] = []
 	if refresh_stale_days is not None:
 		stale_symbols = get_symbols_with_stale_market_cap(
 			max_age_days=refresh_stale_days,
 			limit=limit,
 		)
-	# Fusion en préservant l'ordre, puis recoupe au limit s'il est défini.
+
+	if overwrite_existing:
+		eligible_symbols = list_eligible_stock_symbols(limit=limit)
+		return eligible_symbols, missing_symbols, stale_symbols
+
 	seen: set[str] = set()
 	combined: list[str] = []
 	for source in (missing_symbols, stale_symbols):
@@ -80,8 +94,79 @@ def update_missing_sectors(
 				combined.append(sym)
 	if limit is not None:
 		combined = combined[:limit]
-	symbols = combined
+	return combined, missing_symbols, stale_symbols
+
+
+def _fetch_fundamentals(
+	symbol: str,
+	*,
+	provider: FundamentalsProvider,
+	session: requests.Session,
+) -> dict[str, Any]:
+	if provider == "finnhub":
+		return fetch_finnhub_fundamentals_record(symbol, session=session)
+	return fetch_eodhd_fundamentals_record(symbol, session=session)
+
+
+def _normalize_sector(value: Any) -> str | None:
+	sector = str(value or "").strip()
+	if not sector or sector == NOT_AVAILABLE:
+		return None
+	return sector
+
+
+def _build_update_payload(
+	*,
+	symbol: str,
+	fetched_sector: str | None,
+	fetched_market_cap: float | None,
+	existing_row: dict[str, Any],
+	stale_symbols: set[str],
+	overwrite_existing: bool,
+) -> dict[str, Any]:
+	current_sector = _normalize_sector(existing_row.get("sector"))
+	current_market_cap = existing_row.get("market_cap")
+	payload: dict[str, Any] = {"symbol": symbol}
+
+	if overwrite_existing:
+		if fetched_sector is not None:
+			payload["sector"] = fetched_sector
+		if fetched_market_cap is not None:
+			payload["market_cap"] = fetched_market_cap
+		return payload
+
+	if current_sector is None and fetched_sector is not None:
+		payload["sector"] = fetched_sector
+	if (current_market_cap is None or symbol in stale_symbols) and fetched_market_cap is not None:
+		payload["market_cap"] = fetched_market_cap
+	return payload
+
+
+def update_missing_sectors(
+	limit: int | None = None,
+	sleep_seconds: float = MIN_REQUEST_INTERVAL_SECONDS,
+	log_every: int = DEFAULT_LOG_EVERY,
+	*,
+	refresh_stale_days: int | None = None,
+	provider: FundamentalsProvider = "eodhd",
+	overwrite_existing: bool = False,
+) -> dict[str, Any]:
+	provider = _normalize_provider(provider)
+	if sleep_seconds < 0:
+		raise ValueError("sleep_seconds doit être supérieur ou égal à 0.")
+	if log_every < 1:
+		raise ValueError("log_every doit être supérieur ou égal à 1.")
+	if refresh_stale_days is not None and refresh_stale_days < 0:
+		raise ValueError("refresh_stale_days doit être >= 0.")
+
+	symbols, missing_symbols, stale_symbols = _select_target_symbols(
+		limit=limit,
+		refresh_stale_days=refresh_stale_days,
+		overwrite_existing=overwrite_existing,
+	)
 	total = len(symbols)
+	stale_symbol_set = {str(symbol).strip().upper() for symbol in stale_symbols}
+	existing_rows = get_stock_metadata_fundamentals_map(symbols)
 	summary: dict[str, Any] = {
 		"total": total,
 		"updated": 0,
@@ -90,10 +175,17 @@ def update_missing_sectors(
 		"missing_fundamentals_targets": len(missing_symbols),
 		"stale_market_cap_targets": len(stale_symbols),
 		"refresh_stale_days": refresh_stale_days,
+		"provider": provider,
+		"provider_effective": provider,
+		"overwrite_existing": bool(overwrite_existing),
+		"provider_fallback_triggered": False,
+		"provider_fallback_count": 0,
 	}
 
 	LOGGER.info(
-		"Debut mise a jour fondamentaux stock_metadata | symboles_a_traiter=%s limit=%s",
+		"Debut mise a jour fondamentaux stock_metadata | provider=%s overwrite_existing=%s symboles_a_traiter=%s limit=%s",
+		provider,
+		overwrite_existing,
 		total,
 		limit,
 	)
@@ -102,40 +194,80 @@ def update_missing_sectors(
 		return summary
 
 	session = requests.Session()
+	effective_provider: FundamentalsProvider = provider
 	try:
 		for index, symbol in enumerate(symbols, start=1):
 			try:
-				profile = fetch_company_profile(symbol, session=session)
-				sector = str(profile.get("finnhubIndustry") or "").strip()
-				market_cap_raw = profile.get("marketCapitalization")
-				market_cap = float(market_cap_raw) * 1_000_000.0 if market_cap_raw not in (None, "") else None
+				try:
+					record = _fetch_fundamentals(symbol, provider=effective_provider, session=session)
+				except EodhdPermissionError as exc:
+					if effective_provider != "eodhd":
+						raise
+					fallback_provider = DEFAULT_PROVIDER_FALLBACK
+					effective_provider = fallback_provider
+					summary["provider_effective"] = fallback_provider
+					summary["provider_fallback_triggered"] = True
+					summary["provider_fallback_count"] = int(summary.get("provider_fallback_count", 0) or 0) + 1
+					summary["provider_fallback_from"] = provider
+					summary["provider_fallback_to"] = fallback_provider
+					summary["provider_fallback_reason"] = str(exc)
+					LOGGER.warning(
+						"Provider fundamentals indisponible, bascule globale vers %s | requested_provider=%s symbol=%s progress=%s/%s reason=%s",
+						fallback_provider,
+						provider,
+						symbol,
+						index,
+						total,
+						exc,
+					)
+					record = _fetch_fundamentals(symbol, provider=effective_provider, session=session)
+				normalized_sector = _normalize_sector(record.get("sector"))
+				market_cap_raw = record.get("market_cap")
+				market_cap = float(str(market_cap_raw)) if market_cap_raw not in (None, "") else None
+				existing_row = existing_rows.get(symbol, {})
+				payload = _build_update_payload(
+					symbol=symbol,
+					fetched_sector=normalized_sector,
+					fetched_market_cap=market_cap,
+					existing_row=existing_row,
+					stale_symbols=stale_symbol_set,
+					overwrite_existing=overwrite_existing,
+				)
 
-				if (not sector or sector == NOT_AVAILABLE) and market_cap is None:
+				if normalized_sector is None and market_cap is None:
 					summary["skipped"] += 1
 					LOGGER.warning(
-						"Fondamentaux introuvables | symbol=%s progress=%s/%s skipped=%s",
+						"Fondamentaux introuvables | provider=%s symbol=%s progress=%s/%s skipped=%s",
+						effective_provider,
+						symbol,
+						index,
+						total,
+						summary["skipped"],
+					)
+				elif set(payload) == {"symbol"}:
+					summary["skipped"] += 1
+					LOGGER.info(
+						"Fondamentaux deja presents, pas d'ecrasement | provider=%s symbol=%s progress=%s/%s skipped=%s",
+						effective_provider,
 						symbol,
 						index,
 						total,
 						summary["skipped"],
 					)
 				else:
-					normalized_sector = None if not sector or sector == NOT_AVAILABLE else sector
-					if market_cap is None and normalized_sector is not None:
-						rowcount = update_stock_metadata_sector(symbol, normalized_sector)
-					else:
-						rowcount = update_stock_metadata_fundamentals(
-							symbol,
-							sector=normalized_sector,
-							market_cap=market_cap,
-						)
+					rowcount = update_stock_metadata_fundamentals(
+						symbol,
+						sector=payload.get("sector"),
+						market_cap=payload.get("market_cap"),
+					)
 					if rowcount:
 						summary["updated"] += 1
 						LOGGER.info(
-							"Fondamentaux mis a jour | symbol=%s sector=%s market_cap=%s progress=%s/%s updated=%s",
+							"Fondamentaux mis a jour | provider=%s symbol=%s sector=%s market_cap=%s progress=%s/%s updated=%s",
+							effective_provider,
 							symbol,
-							normalized_sector,
-							market_cap,
+							payload.get("sector"),
+							payload.get("market_cap"),
 							index,
 							total,
 							summary["updated"],
@@ -143,7 +275,8 @@ def update_missing_sectors(
 					else:
 						summary["skipped"] += 1
 						LOGGER.warning(
-							"Aucune ligne mise a jour | symbol=%s progress=%s/%s skipped=%s",
+							"Aucune ligne mise a jour | provider=%s symbol=%s progress=%s/%s skipped=%s",
+							effective_provider,
 							symbol,
 							index,
 							total,
@@ -152,7 +285,8 @@ def update_missing_sectors(
 			except Exception:
 				summary["failed"] += 1
 				LOGGER.exception(
-					"Erreur mise a jour fondamentaux | symbol=%s progress=%s/%s failed=%s",
+					"Erreur mise a jour fondamentaux | provider=%s symbol=%s progress=%s/%s failed=%s",
+					effective_provider,
 					symbol,
 					index,
 					total,
@@ -194,13 +328,20 @@ def update_missing_sectors(
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-	parser = argparse.ArgumentParser(description="Met à jour stock_metadata.sector et market_cap depuis Finnhub")
+	parser = argparse.ArgumentParser(description="Met à jour stock_metadata.sector et market_cap depuis EODHD ou Finnhub")
 	parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles à traiter")
+	parser.add_argument(
+		"--provider",
+		type=str,
+		choices=("eodhd", "finnhub"),
+		default="eodhd",
+		help="Source fundamentals utilisée pour sector et market_cap.",
+	)
 	parser.add_argument(
 		"--sleep-seconds",
 		type=float,
 		default=MIN_REQUEST_INTERVAL_SECONDS,
-		help="Pause entre deux appels Finnhub",
+		help="Pause entre deux appels provider",
 	)
 	parser.add_argument(
 		"--log-every",
@@ -216,6 +357,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 			"Rafraîchir aussi les symboles dont market_cap_refreshed_at "
 			"est antérieur à N jours (Phase 3.1.e). 0 pour désactiver."
 		),
+	)
+	parser.add_argument(
+		"--overwrite-existing",
+		action="store_true",
+		default=False,
+		help="Écrase aussi les sector / market_cap déjà présents pour les symboles ciblés.",
 	)
 	return parser
 
@@ -234,6 +381,8 @@ def main() -> None:
 		sleep_seconds=args.sleep_seconds,
 		log_every=args.log_every,
 		refresh_stale_days=refresh_stale_days,
+		provider=args.provider,
+		overwrite_existing=bool(args.overwrite_existing),
 	)
 	finished_at = _utc_now_naive()
 	cli_summary: dict[str, Any] = {
@@ -242,6 +391,8 @@ def main() -> None:
 		"finished_at": finished_at.isoformat(timespec="seconds"),
 		"duration_seconds": round((finished_at - started_at).total_seconds(), 2),
 		"requested_limit": args.limit,
+		"provider": args.provider,
+		"overwrite_existing": bool(args.overwrite_existing),
 		"sleep_seconds": args.sleep_seconds,
 		"log_every": args.log_every,
 		**summary,
@@ -251,7 +402,7 @@ def main() -> None:
 	if refresh_stale_days is not None:
 		try:
 			stale_count, eligible_total = count_eligible_symbols_with_stale_market_cap(
-				max_age_days=refresh_stale_days,
+				max_age_days=int(refresh_stale_days),
 			)
 			pct = round(stale_count / eligible_total, 4) if eligible_total > 0 else 0.0
 			merge_iex_bias_counters(cli_summary, {"stale_market_cap_pct": pct})

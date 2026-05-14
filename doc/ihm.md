@@ -286,6 +286,13 @@ Pour `signal_aggregator`, l'IHM expose désormais :
 Points importants :
 
 - si `symbols` est laissé vide côté IHM, `event_sentiment` recharge automatiquement les candidats depuis `stock_scores.is_candidate = 1` ;
+- le mode `Event Sentiment — mode de scoring` ne sert pas au même usage selon le choix retenu :
+  - `Standard only` pour remplir ou rattraper `news_sentiment` ;
+  - `Contextual only` pour enrichir un corpus déjà scoré standard dans `news_ticker_sentiment` ;
+  - `Standard + contextual` pour enchaîner les deux dans le même run ;
+- la case `Ajouter le contextual à ce backfill 7bis` du bloc `7bis — Backfill relevance / contextual` n'est **pas un doublon** de ce mode : elle ajoute uniquement le rescoring contextuel au step dédié `python -m event_sentiment.relevance_backfill` ;
+- ordre recommandé pour enrichir un corpus existant : `Contextual only` puis `Rebuild daily sentiment features only`, puis éventuellement `signal_aggregator` si l'on veut refléter immédiatement les nouvelles features dans `stock_scores` ;
+- dans le workflow complet IHM, ce step `7bis` est exécuté automatiquement entre `7. Sentiment Pipeline` et `8. Signal Aggregator` ;
 - `signal_aggregator` réutilise le champ global `trade date` de la page quand il est renseigné ;
 - le poids quantitatif reste implicite et vaut `1 - sentiment_weight - macro_weight`, conformément au backend ;
 - l'IHM consomme aussi désormais les `run_summary` structurés de `sentiment_pipeline` et `signal_aggregator` pour afficher des métriques comme `resolved_symbols`, `fetched_articles`, `loaded_symbols`, `updated_symbols`, `signal_active_symbols` ou `avg_final_score_sentiment` dans `Pipeline`, `Overview` et `Screening`.

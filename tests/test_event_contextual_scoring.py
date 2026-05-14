@@ -16,6 +16,7 @@ from event_sentiment.models import ContextualSentimentRecord, NormalizedNewsArti
 from event_sentiment.scoring import (
     CONTEXTUAL_SCORING_VERSION,
     ContextualFinBERTScorer,
+    FinBERTSentimentService,
     _choose_contextual_text,
 )
 
@@ -179,4 +180,72 @@ def test_score_pairs_empty_returns_empty(monkeypatch: pytest.MonkeyPatch) -> Non
     scorer = ContextualFinBERTScorer()
     # Pas besoin de patch : le early-return doit court-circuiter.
     assert scorer.score_pairs([]) == []
+
+
+def test_contextual_scorer_can_adopt_loaded_runtime() -> None:
+    base = FinBERTSentimentService(batch_size=32, max_length=128)
+    base.model = object()  # type: ignore[assignment]
+    base.tokenizer = object()  # type: ignore[assignment]
+    base.device = "cuda"
+    base.id2label = {0: "positive", 1: "neutral", 2: "negative"}
+
+    contextual = ContextualFinBERTScorer(batch_size=32, max_length=128)
+    contextual.adopt_runtime_from(base)
+
+    assert contextual.model is base.model
+    assert contextual.tokenizer is base.tokenizer
+    assert contextual.device == "cuda"
+    assert contextual.id2label == base.id2label
+
+
+def test_finbert_gpu_oom_auto_reduces_batch_size_before_cpu_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scorer = FinBERTSentimentService(batch_size=64, max_length=64)
+    scorer.model = object()  # type: ignore[assignment]
+    scorer.tokenizer = object()  # type: ignore[assignment]
+    scorer.device = "cuda"
+    scorer.id2label = {0: "positive", 1: "neutral", 2: "negative"}
+
+    attempted_batch_sizes: list[int] = []
+    cpu_fallbacks: list[tuple[str, bool]] = []
+
+    def fake_ensure() -> None:
+        return None
+
+    def fake_torch() -> _StubTorchModule:
+        class _CudaModule:
+            @staticmethod
+            def empty_cache() -> None:
+                return None
+
+        torch_stub = _StubTorchModule()
+        torch_stub.cuda = _CudaModule()  # type: ignore[attr-defined]
+        return torch_stub
+
+    def fake_infer(batch_texts: list[str]):
+        attempted_batch_sizes.append(len(batch_texts))
+        if len(batch_texts) > 16:
+            raise RuntimeError("CUDA out of memory")
+        rows = [[0.8, 0.15, 0.05] for _ in batch_texts]
+        token_counts = [12 for _ in batch_texts]
+        return _StubProbabilities(rows), token_counts
+
+    def fake_load_model_for_device(device: str, force_reload: bool = False) -> None:
+        cpu_fallbacks.append((device, force_reload))
+        scorer.device = device
+
+    monkeypatch.setattr(scorer, "_ensure_model_loaded", fake_ensure)
+    monkeypatch.setattr(scorer, "_get_torch_module", fake_torch, raising=False)
+    monkeypatch.setattr(scorer, "_infer_probabilities", fake_infer)
+    monkeypatch.setattr(scorer, "_load_model_for_device", fake_load_model_for_device)
+
+    records = scorer.score_articles([_make_article(article_id=f"a{i}") for i in range(40)])
+
+    assert len(records) == 40
+    assert attempted_batch_sizes[:3] == [40, 32, 16]
+    assert scorer.batch_size == 16
+    assert scorer.gpu_oom_batch_fallbacks == [32, 16]
+    assert cpu_fallbacks == []
+
 

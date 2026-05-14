@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 import pandas as pd
 
 from event_sentiment.config import EventSentimentConfig
-from event_sentiment.models import MacroImpactRecord, SentimentRecord
+from event_sentiment.models import ContextualSentimentRecord, MacroImpactRecord, SentimentRecord
 from event_sentiment.pipeline import EventSentimentPipeline
 
 
@@ -14,6 +14,7 @@ class _InMemoryRepository:
         self.news_raw: dict[str, dict] = {}
         self.news_ticker_map: dict[tuple[str, str], dict] = {}
         self.news_sentiment: dict[str, dict] = {}
+        self.news_ticker_sentiment: dict[tuple[str, str], dict] = {}
         self.macro_event_audit: dict[tuple[str, str, str], dict] = {}
         self.ticker_daily_features: dict[tuple[str, object], dict] = {}
         self.sector_daily_features: dict[tuple[str, object], dict] = {}
@@ -57,6 +58,37 @@ class _InMemoryRepository:
         for record in records:
             self.news_sentiment[record["article_id"]] = dict(record)
         return len(records)
+
+    def upsert_news_ticker_sentiment(self, records):
+        for record in records:
+            self.news_ticker_sentiment[(record["article_id"], record["symbol"])] = dict(record)
+        return len(records)
+
+    def load_pending_contextual_pairs(self, limit=5000, min_relevance=0.0):
+        pending: list[dict] = []
+        for (article_id, symbol), mapping in sorted(self.news_ticker_map.items()):
+            if (article_id, symbol) in self.news_ticker_sentiment:
+                continue
+            raw = self.news_raw[article_id]
+            pending.append(
+                {
+                    "article_id": article_id,
+                    "symbol": symbol,
+                    "headline": raw["headline"],
+                    "summary": raw.get("summary"),
+                    "content": raw.get("content"),
+                    "source": raw["source"],
+                    "published_at_utc": raw["published_at_utc"],
+                    "event_timestamp_utc": raw["event_timestamp_utc"],
+                    "event_timestamp_ny": raw["event_timestamp_ny"],
+                    "effective_trade_date": raw["effective_trade_date"],
+                    "market_session_tag": raw["market_session_tag"],
+                    "is_major_event": raw["is_major_event"],
+                    "company_name": f"{symbol} Inc.",
+                    "relevance_score": mapping.get("relevance_score", 1.0),
+                }
+            )
+        return [row for row in pending if float(row["relevance_score"]) >= float(min_relevance)][:limit]
 
     def upsert_macro_event_audit(self, records):
         for record in records:
@@ -225,6 +257,187 @@ class _InMemoryMacroRuleEngine:
         ]
 
 
+class _InMemoryContextualScorer:
+    def __init__(self, *args, **kwargs) -> None:
+        self.calls: list[list[tuple[object, str, str | None]]] = []
+
+    def adopt_runtime_from(self, finbert) -> None:
+        return None
+
+    def score_pairs(self, pairs):
+        pair_list = list(pairs)
+        self.calls.append(pair_list)
+        return [
+            ContextualSentimentRecord(
+                article_id=article.article_id,
+                symbol=symbol,
+                model_name="ProsusAI/finbert",
+                model_version="finbert_contextual_v1",
+                text_strategy="contextual_company",
+                text_hash=f"ctx-{symbol.lower()}",
+                truncated=0,
+                max_length_tokens=256,
+                sentiment_label="positive",
+                positive_score=0.88,
+                neutral_score=0.10,
+                negative_score=0.02,
+                sentiment_confidence=0.88,
+                sentiment_net_score=0.86,
+                scoring_version="contextual_v1",
+            )
+            for article, symbol, _company_name in pair_list
+        ]
+
+
+def test_pipeline_can_drain_multiple_pending_batches_in_single_run(monkeypatch) -> None:
+    repository = _InMemoryRepository()
+    for idx, trade_date in enumerate((date(2026, 1, 2), date(2026, 1, 3), date(2026, 1, 4)), start=1):
+        article_id = f"alpaca:article-{idx}"
+        repository.upsert_news_raw([
+            {
+                "article_id": article_id,
+                "headline": f"Headline {idx}",
+                "summary": f"Summary {idx}",
+                "content": None,
+                "source": "Reuters",
+                "author": "Reporter",
+                "published_at_utc": datetime(2026, 1, idx, 22, 0, 0),
+                "event_timestamp_utc": datetime(2026, 1, idx, 22, 0, 0),
+                "event_timestamp_ny": datetime(2026, 1, idx, 17, 0, 0),
+                "effective_trade_date": trade_date,
+                "market_session_tag": "post_market",
+                "url": f"https://example.test/article-{idx}",
+                "ingestion_source": "alpaca",
+                "dedupe_hash": f"dedupe-{idx}",
+                "is_major_event": 0,
+                "raw_payload": {"id": article_id},
+            }
+        ])
+        repository.upsert_news_ticker_map([
+            {
+                "article_id": article_id,
+                "symbol": "AAPL",
+                "sector": "Technology",
+                "sector_source": "stock_metadata",
+                "sector_updated_at": datetime(2026, 1, 1, 0, 0, 0),
+                "is_primary_ticker": 1,
+            }
+        ])
+
+    config = EventSentimentConfig.for_provider(
+        "alpaca",
+        sentiment_pending_limit=1,
+        sentiment_pending_max_batches_per_run=3,
+    )
+    fake_finbert = _InMemoryFinBERTSentimentService()
+
+    class _NoOpMacroRuleEngine:
+        def classify(self, article, sentiment):
+            return []
+
+    monkeypatch.setattr(
+        "event_sentiment.pipeline.NewsIngestionService",
+        lambda repository, config: _InMemoryIngestionService(repository, config),
+    )
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", lambda *args, **kwargs: fake_finbert)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", lambda *args, **kwargs: _NoOpMacroRuleEngine())
+
+    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    stats = pipeline.run(
+        start_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        end_utc=datetime(2026, 1, 5, tzinfo=UTC),
+        symbols=["AAPL"],
+        skip_ingestion=True,
+    )
+
+    assert stats["pending_batches_processed"] == 3
+    assert stats["pending_articles_loaded"] == 3
+    assert stats["sentiment_inferred"] == 3
+    assert sorted(repository.news_sentiment) == [
+        "alpaca:article-1",
+        "alpaca:article-2",
+        "alpaca:article-3",
+    ]
+    assert len(fake_finbert.calls) == 3
+    assert all(len(call) == 1 for call in fake_finbert.calls)
+    assert len(repository.feature_frame_requests) == 1
+    assert repository.feature_frame_requests[0]["start_date"] == date(2025, 11, 18)
+    assert repository.feature_frame_requests[0]["end_date"] == date(2026, 1, 4)
+
+
+def test_pipeline_flushes_features_every_n_pending_batches(monkeypatch) -> None:
+    repository = _InMemoryRepository()
+    for idx, trade_date in enumerate((date(2026, 1, 2), date(2026, 1, 3), date(2026, 1, 4)), start=1):
+        article_id = f"alpaca:feature-flush-{idx}"
+        repository.upsert_news_raw([
+            {
+                "article_id": article_id,
+                "headline": f"Headline {idx}",
+                "summary": f"Summary {idx}",
+                "content": None,
+                "source": "Reuters",
+                "author": "Reporter",
+                "published_at_utc": datetime(2026, 1, idx, 22, 0, 0),
+                "event_timestamp_utc": datetime(2026, 1, idx, 22, 0, 0),
+                "event_timestamp_ny": datetime(2026, 1, idx, 17, 0, 0),
+                "effective_trade_date": trade_date,
+                "market_session_tag": "post_market",
+                "url": f"https://example.test/feature-flush-{idx}",
+                "ingestion_source": "alpaca",
+                "dedupe_hash": f"feature-flush-{idx}",
+                "is_major_event": 0,
+                "raw_payload": {"id": article_id},
+            }
+        ])
+        repository.upsert_news_ticker_map([
+            {
+                "article_id": article_id,
+                "symbol": "AAPL",
+                "sector": "Technology",
+                "sector_source": "stock_metadata",
+                "sector_updated_at": datetime(2026, 1, 1, 0, 0, 0),
+                "is_primary_ticker": 1,
+            }
+        ])
+
+    config = EventSentimentConfig.for_provider(
+        "alpaca",
+        sentiment_pending_limit=1,
+        sentiment_pending_max_batches_per_run=3,
+        feature_flush_every_n_pending_batches=2,
+    )
+    fake_finbert = _InMemoryFinBERTSentimentService()
+
+    class _NoOpMacroRuleEngine:
+        def classify(self, article, sentiment):
+            return []
+
+    monkeypatch.setattr(
+        "event_sentiment.pipeline.NewsIngestionService",
+        lambda repository, config: _InMemoryIngestionService(repository, config),
+    )
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", lambda *args, **kwargs: fake_finbert)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", lambda *args, **kwargs: _NoOpMacroRuleEngine())
+
+    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    stats = pipeline.run(
+        start_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        end_utc=datetime(2026, 1, 5, tzinfo=UTC),
+        symbols=["AAPL"],
+        skip_ingestion=True,
+    )
+
+    assert stats["feature_flushes_completed"] == 1
+    assert len(repository.feature_frame_requests) == 2
+    assert repository.feature_frame_requests[0]["end_date"] == date(2026, 1, 3)
+    assert repository.feature_frame_requests[1]["end_date"] == date(2026, 1, 4)
+    assert set(repository.ticker_daily_features) == {
+        ("AAPL", date(2026, 1, 2)),
+        ("AAPL", date(2026, 1, 3)),
+        ("AAPL", date(2026, 1, 4)),
+    }
+
+
 def test_pipeline_rerun_is_idempotent_end_to_end(monkeypatch) -> None:
     repository = _InMemoryRepository()
     config = EventSentimentConfig()
@@ -258,9 +471,8 @@ def test_pipeline_rerun_is_idempotent_end_to_end(monkeypatch) -> None:
     assert repository.feature_frame_requests[0]["start_date"] == date(2025, 11, 18)
     assert repository.feature_frame_requests[0]["end_date"] == date(2026, 1, 2)
     assert fake_ingestion.calls == 2
-    assert len(fake_finbert.calls) == 2
+    assert len(fake_finbert.calls) == 1
     assert len(fake_finbert.calls[0]) == 1
-    assert len(fake_finbert.calls[1]) == 0
 
 
 def test_pipeline_preserves_multiple_macro_event_types_for_same_article_and_sector(monkeypatch) -> None:
@@ -321,5 +533,94 @@ def test_pipeline_preserves_multiple_macro_event_types_for_same_article_and_sect
         "Technology",
         "inflation_employment",
     ) in repository.macro_event_audit
+
+
+def test_pipeline_contextual_only_rebuilds_features_without_standard_pending_scoring(monkeypatch) -> None:
+    repository = _InMemoryRepository()
+    article_id = "alpaca:contextual-only-1"
+    repository.upsert_news_raw([
+        {
+            "article_id": article_id,
+            "headline": "Apple suppliers rally",
+            "summary": "Contextual rerating",
+            "content": None,
+            "source": "Reuters",
+            "author": "Reporter",
+            "published_at_utc": datetime(2026, 1, 2, 22, 0, 0),
+            "event_timestamp_utc": datetime(2026, 1, 2, 22, 0, 0),
+            "event_timestamp_ny": datetime(2026, 1, 2, 17, 0, 0),
+            "effective_trade_date": date(2026, 1, 3),
+            "market_session_tag": "post_market",
+            "url": "https://example.test/contextual-only-1",
+            "ingestion_source": "alpaca",
+            "dedupe_hash": "contextual-only-1",
+            "is_major_event": 0,
+            "raw_payload": {"id": article_id},
+        }
+    ])
+    repository.upsert_news_ticker_map([
+        {
+            "article_id": article_id,
+            "symbol": "AAPL",
+            "sector": "Technology",
+            "sector_source": "stock_metadata",
+            "sector_updated_at": datetime(2026, 1, 1, 0, 0, 0),
+            "is_primary_ticker": 1,
+            "relevance_score": 0.9,
+        }
+    ])
+    repository.upsert_news_sentiment([
+        {
+            "article_id": article_id,
+            "model_name": "ProsusAI/finbert",
+            "model_version": "finbert_v1",
+            "text_strategy": "headline_summary",
+            "text_hash": "base-hash",
+            "truncated": 0,
+            "max_length_tokens": 256,
+            "sentiment_label": "positive",
+            "positive_score": 0.81,
+            "neutral_score": 0.15,
+            "negative_score": 0.04,
+            "sentiment_confidence": 0.81,
+            "sentiment_net_score": 0.77,
+        }
+    ])
+
+    config = EventSentimentConfig.for_provider(
+        "alpaca",
+        scoring_mode="contextual_only",
+        contextual_scoring_min_relevance=0.2,
+        contextual_scoring_max_pairs_per_run=100,
+    )
+    fake_finbert = _InMemoryFinBERTSentimentService()
+    fake_contextual = _InMemoryContextualScorer()
+
+    monkeypatch.setattr(
+        "event_sentiment.pipeline.NewsIngestionService",
+        lambda repository, config: _InMemoryIngestionService(repository, config),
+    )
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", lambda *args, **kwargs: fake_finbert)
+    monkeypatch.setattr("event_sentiment.pipeline.ContextualFinBERTScorer", lambda *args, **kwargs: fake_contextual)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", lambda *args, **kwargs: _InMemoryMacroRuleEngine())
+
+    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    stats = pipeline.run(
+        start_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        end_utc=datetime(2026, 1, 5, tzinfo=UTC),
+        symbols=["AAPL"],
+        skip_ingestion=True,
+    )
+
+    assert stats["scoring_mode"] == "contextual_only"
+    assert stats["pending_batches_processed"] == 0
+    assert stats["sentiment_inferred"] == 0
+    assert stats["contextual_pairs_loaded"] == 1
+    assert stats["contextual_scored"] == 1
+    assert len(fake_finbert.calls) == 0
+    assert len(fake_contextual.calls) == 1
+    assert repository.news_ticker_sentiment[(article_id, "AAPL")]["scoring_version"] == "contextual_v1"
+    assert len(repository.feature_frame_requests) == 1
+    assert repository.feature_frame_requests[0]["end_date"] == date(2026, 1, 3)
 
 

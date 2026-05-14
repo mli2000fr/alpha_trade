@@ -94,12 +94,25 @@ def _render_import_news_panel(
             "Lance `event_sentiment/importe_news.py` avec une date de début et une date de fin. "
             "Le bouton import brut réutilise la source news et le mode de mapping ticker configurés dans l'étape 7. "
             "Le bouton intermédiaire reprend uniquement le complément post-import (score + history backfill + relevance backfill). "
+            "Le bouton `Rebuild daily sentiment features only` reconstruit uniquement les features journalières sentiment sur la fenêtre choisie. "
             "Le dernier bouton exécute un script PowerShell Windows qui enchaîne l'import brut puis relance "
             "`python -m event_sentiment` jusqu'à ce qu'il n'y ait plus d'articles pending dans `news_raw`/`news_sentiment`, "
             "puis lance automatiquement `python -m event_sentiment.history_backfill` sur la même fenêtre, suivi de "
             "`python -m event_sentiment.relevance_backfill` juste après ; "
             "c'est ce bouton qui reprend aussi le re-scoring FinBERT contextualisé (Niveau 4) quand il est activé."
         )
+        with st.expander("Mini guide d'usage — quand lancer quoi ?", expanded=False):
+            st.markdown(
+                "- **`Standard only`** : premier passage recommandé pour vider un backlog article standard ou après un nouvel import massif.\n"
+                "- **`Contextual only`** : second passage ciblé quand `news_sentiment` est déjà rempli et que vous voulez enrichir `news_ticker_sentiment` sans rescoring standard complet.\n"
+                "- **`Standard + contextual`** : pratique sur une fenêtre courte/moyenne quand vous voulez tout faire en un seul run.\n"
+                "- **`Ajouter le contextual à ce backfill 7bis`** : option du backfill `relevance_backfill`, utile pour rejouer le contextual sur un périmètre déjà importé/scoré sans relancer tout `event_sentiment`.\n"
+                "- **`Rebuild daily sentiment features only`** : reconstruit uniquement les agrégats journaliers ticker/secteur ; aucun rescoring FinBERT n'est relancé."
+            )
+            st.info(
+                "Ordre recommandé pour une phase d'enrichissement : `Contextual only` d'abord, puis `Rebuild daily sentiment features only` sur la même fenêtre. "
+                "Ajoutez ensuite `signal_aggregator` si vous avez besoin de refléter immédiatement ces features dans `stock_scores`."
+            )
 
         date_col1, date_col2 = st.columns(2)
         with date_col1:
@@ -249,8 +262,13 @@ def _render_import_news_panel(
         auto_followup_command_preview = format_command_for_display(
             build_pipeline_command("score_history_relevance_backfill_auto", import_options)
         )
+        rebuild_features_command_preview = format_command_for_display(
+            build_pipeline_command("rebuild_daily_sentiment_features_only", import_options)
+        )
         st.caption("Commande import brut seule (source news + mapping ticker, sans scoring contextuel)")
         st.code(import_command_preview, language="powershell")
+        st.caption("Commande dédiée — reconstruction seule des features sentiment journalières")
+        st.code(rebuild_features_command_preview, language="powershell")
         st.caption(
             "Commande PowerShell score + history backfill + relevance backfill auto "
             "(sans import brut ; traite le backlog déjà importé dans la fenêtre)"
@@ -260,12 +278,14 @@ def _render_import_news_panel(
         st.code(auto_score_command_preview, language="powershell")
 
         import_active_runs = active_by_step.get("import_news", [])
+        rebuild_features_active_runs = active_by_step.get("rebuild_daily_sentiment_features_only", [])
         auto_followup_active_runs = active_by_step.get("score_history_relevance_backfill_auto", [])
         auto_score_active_runs = active_by_step.get("import_news_pending_loop", [])
         locked_by_sentiment = bool(active_by_step.get("sentiment_pipeline"))
-        import_locked = workflow_active or locked_by_sentiment or bool(auto_score_active_runs) or bool(auto_followup_active_runs)
-        auto_followup_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(auto_score_active_runs)
-        auto_score_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(auto_followup_active_runs)
+        import_locked = workflow_active or locked_by_sentiment or bool(auto_score_active_runs) or bool(auto_followup_active_runs) or bool(rebuild_features_active_runs)
+        rebuild_features_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(auto_followup_active_runs) or bool(auto_score_active_runs)
+        auto_followup_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(auto_score_active_runs) or bool(rebuild_features_active_runs)
+        auto_score_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(auto_followup_active_runs) or bool(rebuild_features_active_runs)
 
         if workflow_active:
             st.warning("Un workflow complet est en cours : l'import manuel de news est temporairement désactivé.")
@@ -275,6 +295,11 @@ def _render_import_news_panel(
             st.warning(
                 "Le script PowerShell score + history backfill + relevance backfill auto est déjà actif : "
                 "attendez sa fin avant de relancer un import brut ou le run auto complet."
+            )
+        elif rebuild_features_active_runs:
+            st.warning(
+                "Une reconstruction dédiée des features sentiment journalières est déjà active : "
+                "attendez sa fin avant de relancer un autre run 7.bis."
             )
         elif auto_score_active_runs:
             st.warning("Le script PowerShell import + scoring + backfill auto est déjà actif : attendez sa fin avant de relancer un import brut.")
@@ -303,6 +328,18 @@ def _render_import_news_panel(
                 ):
                     stop_pipeline_run(run_id)
                     st.rerun()
+        elif rebuild_features_active_runs:
+            st.info(f"{len(rebuild_features_active_runs)} reconstruction(s) de features déjà active(s).")
+            for run in rebuild_features_active_runs:
+                run_id = str(run.get("run_id", ""))
+                st.caption(f"Actif : `{run_id}`")
+                if st.button(
+                    "⏹️ Arrêter ce rebuild features",
+                    key=f"stop_rebuild_daily_sentiment_features_only_run_{run_id}",
+                    use_container_width=True,
+                ):
+                    stop_pipeline_run(run_id)
+                    st.rerun()
         elif auto_score_active_runs:
             st.info(f"{len(auto_score_active_runs)} run(s) auto import + scoring + backfill déjà actif(s).")
             for run in auto_score_active_runs:
@@ -316,7 +353,7 @@ def _render_import_news_panel(
                     stop_pipeline_run(run_id)
                     st.rerun()
         else:
-            import_col, followup_col, auto_col = st.columns(3)
+            import_col, rebuild_col, followup_col, auto_col = st.columns(4)
             with import_col:
                 run_clicked = st.button(
                     "📰 Importer les news sur la période",
@@ -334,6 +371,23 @@ def _render_import_news_panel(
                     )
                     _register_new_run(record, all_runs)
                     st.success(f"Import news démarré en arrière-plan : `{record.run_id}`")
+                    st.rerun()
+            with rebuild_col:
+                rebuild_clicked = st.button(
+                    "🧱 Rebuild daily sentiment features only",
+                    key="run_pipeline_rebuild_daily_sentiment_features_only",
+                    use_container_width=True,
+                    disabled=rebuild_features_locked or start_value > end_value,
+                )
+                if rebuild_clicked:
+                    record = start_pipeline_run(
+                        "rebuild_daily_sentiment_features_only",
+                        "7.bis Rebuild daily sentiment features only",
+                        import_options,
+                        db_config=db_config,
+                    )
+                    _register_new_run(record, all_runs)
+                    st.success(f"Rebuild des features sentiment démarré en arrière-plan : `{record.run_id}`")
                     st.rerun()
             with followup_col:
                 auto_followup_clicked = st.button(
@@ -372,6 +426,8 @@ def _render_import_news_panel(
 
         st.caption("Dernier run — import brut")
         _render_step_result(latest_by_step.get("import_news"))
+        st.caption("Dernier run — rebuild daily sentiment features only")
+        _render_step_result(latest_by_step.get("rebuild_daily_sentiment_features_only"))
         st.caption("Dernier run — score + history_backfill + relevance_backfill auto")
         _render_step_result(latest_by_step.get("score_history_relevance_backfill_auto"))
         st.caption("Dernier run — import + scoring + backfill auto")

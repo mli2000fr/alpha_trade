@@ -116,6 +116,57 @@ def test_event_sentiment_cli_main_emits_structured_summary(monkeypatch, capsys) 
     assert payload["source_name"] == "eodhd_news"
 
 
+def test_event_sentiment_cli_main_forwards_perf_overrides(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "EventSentimentRepository", lambda: object())
+
+    captured_overrides: dict[str, object] = {}
+
+    class _FakeConfig:
+        def __init__(self, **_: object) -> None:
+            self.news_provider = "eodhd"
+            self.source_name = "eodhd_news"
+            self.provider_ticker_relevance_mode = "provider_default"
+
+        @classmethod
+        def for_provider(cls, news_provider: str, **overrides: object) -> "_FakeConfig":
+            captured_overrides.update(overrides)
+            cfg = cls(**overrides)
+            cfg.news_provider = news_provider
+            cfg.source_name = f"{news_provider}_news"
+            return cfg
+
+    monkeypatch.setattr(cli, "EventSentimentConfig", _FakeConfig)
+    monkeypatch.setattr(cli, "EventSentimentPipeline", _FakeEventSentimentPipeline)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "event_sentiment.py",
+            "--skip-ingestion",
+            "--scoring-mode",
+            "contextual_only",
+            "--sentiment-pending-limit",
+            "6000",
+            "--sentiment-pending-max-batches",
+            "8",
+            "--feature-flush-every-n-batches",
+            "3",
+            "--finbert-batch-size",
+            "48",
+        ],
+    )
+
+    cli.main()
+
+    assert captured_overrides["scoring_mode"] == "contextual_only"
+    assert captured_overrides["enable_contextual_scoring"] is True
+    assert captured_overrides["sentiment_pending_limit"] == 6000
+    assert captured_overrides["sentiment_pending_max_batches_per_run"] == 8
+    assert captured_overrides["feature_flush_every_n_pending_batches"] == 3
+    assert captured_overrides["finbert_batch_size"] == 48
+
+
 def test_event_sentiment_pipeline_emits_live_progress(monkeypatch) -> None:
     class _DummyRepository:
         def load_candidate_symbols(self):
@@ -150,6 +201,7 @@ def test_event_sentiment_pipeline_emits_live_progress(monkeypatch) -> None:
         checkpoint_overlap_minutes = 60
         candidate_reactivation_backfill_days = 5
         sentiment_pending_limit = 100
+        sentiment_pending_max_batches_per_run = 1
         feature_history_buffer_days = 2
         feature_version = "v1"
         feature_rolling_windows = [3]

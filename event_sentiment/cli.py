@@ -29,6 +29,14 @@ def _emit_run_summary(summary: dict[str, object]) -> None:
     )
 
 
+def _coerce_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    return 0
+
+
 def _build_cli_run_summary(
     *,
     stats: dict[str, object],
@@ -42,7 +50,7 @@ def _build_cli_run_summary(
         "started_at": started_at.isoformat(timespec="seconds"),
         "finished_at": finished_at.isoformat(timespec="seconds"),
         "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
-        "resolved_symbols": int(stats.get("resolved_symbols") or 0),
+        "resolved_symbols": _coerce_int(stats.get("resolved_symbols")),
         "window_start_utc": stats.get("start_utc"),
         "window_end_utc": stats.get("end_utc"),
         "fetched_articles": int(ingestion.get("fetched") or 0),
@@ -53,12 +61,12 @@ def _build_cli_run_summary(
         "strict_dropped_tickers": int(ingestion.get("strict_dropped_tickers") or 0),
         "relevance_scored": int(ingestion.get("relevance_scored") or 0),
         "relevance_filtered": int(ingestion.get("relevance_filtered") or 0),
-        "sentiment_inferred": int(stats.get("sentiment_inferred") or 0),
-        "contextual_pairs_loaded": int(stats.get("contextual_pairs_loaded") or 0),
-        "contextual_scored": int(stats.get("contextual_scored") or 0),
-        "macro_rows": int(stats.get("macro_rows") or 0),
-        "ticker_day_rows": int(stats.get("ticker_day_rows") or 0),
-        "sector_day_rows": int(stats.get("sector_day_rows") or 0),
+        "sentiment_inferred": _coerce_int(stats.get("sentiment_inferred")),
+        "contextual_pairs_loaded": _coerce_int(stats.get("contextual_pairs_loaded")),
+        "contextual_scored": _coerce_int(stats.get("contextual_scored")),
+        "macro_rows": _coerce_int(stats.get("macro_rows")),
+        "ticker_day_rows": _coerce_int(stats.get("ticker_day_rows")),
+        "sector_day_rows": _coerce_int(stats.get("sector_day_rows")),
         "finbert_model_fingerprint": stats.get("finbert_model_fingerprint"),
     }
     if config is not None:
@@ -71,12 +79,29 @@ def _build_cli_run_summary(
         summary["enable_contextual_scoring"] = bool(
             getattr(config, "enable_contextual_scoring", False)
         )
+        summary["scoring_mode"] = getattr(config, "scoring_mode", None)
         summary["contextual_scoring_min_relevance"] = getattr(
             config, "contextual_scoring_min_relevance", None
         )
         summary["contextual_scoring_max_pairs_per_run"] = getattr(
             config, "contextual_scoring_max_pairs_per_run", None
         )
+        summary["sentiment_pending_limit"] = getattr(config, "sentiment_pending_limit", None)
+        summary["sentiment_pending_max_batches_per_run"] = getattr(
+            config, "sentiment_pending_max_batches_per_run", None
+        )
+        summary["feature_flush_every_n_pending_batches"] = getattr(
+            config, "feature_flush_every_n_pending_batches", None
+        )
+        summary["finbert_batch_size"] = getattr(config, "finbert_batch_size", None)
+    for key in (
+        "pending_batches_processed",
+        "finbert_effective_batch_size",
+        "finbert_runtime_device",
+        "finbert_gpu_oom_batch_fallbacks",
+    ):
+        if key in stats:
+            summary[key] = stats.get(key)
     return summary
 
 
@@ -137,6 +162,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--scoring-mode",
+        type=str,
+        choices=("standard_only", "contextual_only", "standard_and_contextual"),
+        default=None,
+        help=(
+            "Mode de scoring FinBERT du step sentiment. "
+            "'standard_only' = news_sentiment uniquement ; "
+            "'contextual_only' = news_ticker_sentiment uniquement ; "
+            "'standard_and_contextual' = exécute les deux. "
+            "Si absent, le legacy `--enable-contextual-scoring` reste supporté."
+        ),
+    )
+    parser.add_argument(
         "--enable-contextual-scoring",
         action="store_true",
         default=False,
@@ -174,6 +212,42 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "déjà présent dans news_raw, borné par la fenêtre/provider du run."
         ),
     )
+    parser.add_argument(
+        "--sentiment-pending-limit",
+        type=int,
+        default=None,
+        help=(
+            "Nombre max d'articles pending chargés/scorés par run. "
+            "Permet d'augmenter fortement le débit du wrapper auto."
+        ),
+    )
+    parser.add_argument(
+        "--sentiment-pending-max-batches",
+        type=int,
+        default=None,
+        help=(
+            "Nombre max de batchs pending successifs traités dans le même process Python. "
+            "Réduit fortement l'overhead de redémarrage quand le backlog est important."
+        ),
+    )
+    parser.add_argument(
+        "--feature-flush-every-n-batches",
+        type=int,
+        default=None,
+        help=(
+            "Flush intermédiaire des features ticker/secteur tous les N sous-batchs pending. "
+            "0 ou absent = flush final uniquement."
+        ),
+    )
+    parser.add_argument(
+        "--finbert-batch-size",
+        type=int,
+        default=None,
+        help=(
+            "Batch size FinBERT pour le scoring standard et contextuel. "
+            "Augmenter si la VRAM le permet pour mieux utiliser le GPU."
+        ),
+    )
     return parser
 
 
@@ -199,12 +273,27 @@ def main() -> None:
         config_overrides["max_tickers_per_article"] = int(args.max_tickers_per_article)
     if args.min_relevance_score is not None:
         config_overrides["min_relevance_score"] = float(args.min_relevance_score)
-    if args.enable_contextual_scoring:
+    scoring_mode = args.scoring_mode
+    if scoring_mode is not None:
+        config_overrides["scoring_mode"] = str(scoring_mode)
+        config_overrides["enable_contextual_scoring"] = str(scoring_mode) != "standard_only"
+    elif args.enable_contextual_scoring:
         config_overrides["enable_contextual_scoring"] = True
+        config_overrides["scoring_mode"] = "standard_and_contextual"
     if args.contextual_min_relevance is not None:
         config_overrides["contextual_scoring_min_relevance"] = float(args.contextual_min_relevance)
     if args.contextual_max_pairs is not None:
         config_overrides["contextual_scoring_max_pairs_per_run"] = int(args.contextual_max_pairs)
+    if args.sentiment_pending_limit is not None:
+        config_overrides["sentiment_pending_limit"] = int(args.sentiment_pending_limit)
+    if args.sentiment_pending_max_batches is not None:
+        config_overrides["sentiment_pending_max_batches_per_run"] = int(
+            args.sentiment_pending_max_batches
+        )
+    if args.feature_flush_every_n_batches is not None:
+        config_overrides["feature_flush_every_n_pending_batches"] = int(args.feature_flush_every_n_batches)
+    if args.finbert_batch_size is not None:
+        config_overrides["finbert_batch_size"] = int(args.finbert_batch_size)
     config = EventSentimentConfig.for_provider(args.news_provider, **config_overrides)
     pipeline = EventSentimentPipeline(
         repository=repository,

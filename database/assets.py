@@ -157,6 +157,38 @@ def get_symbols_missing_fundamentals(limit: int | None = None) -> list[str]:
         return [str(symbol) for symbol in conn.execute(stmt).scalars().all()]
 
 
+def get_stock_metadata_fundamentals_map(symbols: Iterable[str]) -> dict[str, dict[str, Any]]:
+    normalized_symbols = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
+    if not normalized_symbols:
+        return {}
+
+    stock_metadata = get_stock_metadata_table()
+    _require_sector_column(stock_metadata)
+    _require_market_cap_column(stock_metadata)
+    stmt = (
+        select(
+            stock_metadata.c.symbol,
+            stock_metadata.c.sector,
+            stock_metadata.c.market_cap,
+        )
+        .where(stock_metadata.c.symbol.in_(normalized_symbols))
+        .order_by(stock_metadata.c.symbol)
+    )
+
+    with get_sqlalchemy_engine().connect() as conn:
+        rows = conn.execute(stmt).all()
+
+    result: dict[str, dict[str, Any]] = {}
+    for symbol, sector, market_cap in rows:
+        normalized_symbol = str(symbol).strip().upper()
+        normalized_sector = str(sector).strip() if sector is not None and str(sector).strip() else None
+        result[normalized_symbol] = {
+            "sector": normalized_sector,
+            "market_cap": None if market_cap is None else float(market_cap),
+        }
+    return result
+
+
 def get_symbols_with_stale_market_cap(
     *,
     max_age_days: int,

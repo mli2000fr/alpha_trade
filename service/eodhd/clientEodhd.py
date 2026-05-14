@@ -45,6 +45,10 @@ class EodhdBarsFetchError(RuntimeError):
     """Erreur technique lors d'un fetch EODHD."""
 
 
+class EodhdPermissionError(EodhdBarsFetchError):
+    """Le compte / token EODHD n'est pas autorisé à appeler l'endpoint demandé."""
+
+
 class EodhdSymbolNotFound(EodhdBarsFetchError):
     """Le symbole demandé n'existe pas côté EODHD pour l'endpoint visé."""
 
@@ -115,7 +119,7 @@ def _do_request(
     except requests.exceptions.Timeout as exc:
         _telemetry_bump(TELEMETRY_CLIENT, "timeout_total")
         tracker.record_failure(endpoint, count_call=False)
-        raise EodhdBarsFetchError(f"timeout EODHD ({endpoint}): {_redact_sensitive_text(exc)}") from exc
+        raise EodhdBarsFetchError(f"timeout EODHD ({endpoint}): {_redact_sensitive_text(str(exc))}") from exc
     except requests.exceptions.HTTPError as exc:
         status = getattr(getattr(exc, "response", None), "status_code", None)
         if status == 401 or status == 403:
@@ -124,7 +128,7 @@ def _do_request(
             _telemetry_bump(TELEMETRY_CLIENT, "404_total")
         elif status == 429:
             _telemetry_bump(TELEMETRY_CLIENT, "429_total")
-        elif status and status >= 500:
+        elif isinstance(status, int) and status >= 500:
             _telemetry_bump(TELEMETRY_CLIENT, "5xx_total")
         tracker.record_failure(
             endpoint,
@@ -132,11 +136,15 @@ def _do_request(
             count_towards_circuit=(status != 404),
         )
         if status == 404:
-            raise EodhdSymbolNotFound(f"HTTP 404 sur {endpoint}: {_redact_sensitive_text(exc)}") from exc
-        raise EodhdBarsFetchError(f"HTTP {status} sur {endpoint}: {_redact_sensitive_text(exc)}") from exc
+            raise EodhdSymbolNotFound(f"HTTP 404 sur {endpoint}: {_redact_sensitive_text(str(exc))}") from exc
+        if status in (401, 403):
+            raise EodhdPermissionError(
+                f"HTTP {status} sur {endpoint}: {_redact_sensitive_text(str(exc))}"
+            ) from exc
+        raise EodhdBarsFetchError(f"HTTP {status} sur {endpoint}: {_redact_sensitive_text(str(exc))}") from exc
     except requests.exceptions.RequestException as exc:
         tracker.record_failure(endpoint, count_call=False)
-        raise EodhdBarsFetchError(f"erreur réseau EODHD ({endpoint}): {_redact_sensitive_text(exc)}") from exc
+        raise EodhdBarsFetchError(f"erreur réseau EODHD ({endpoint}): {_redact_sensitive_text(str(exc))}") from exc
 
     tracker.record_success(endpoint)
     _telemetry_bump(TELEMETRY_CLIENT, "success_total")
@@ -294,11 +302,80 @@ def fetch_dividends(
     return payload
 
 
+def fetch_fundamentals(
+    symbol: str,
+    *,
+    fmt: str = "json",
+    session: Optional[requests.Session] = None,
+    tracker: Optional[EodhdQuotaTracker] = None,
+) -> dict[str, Any]:
+    """Fondamentaux société pour un symbole projet — 1 call.
+
+    Champs exploités côté B2 :
+    - ``General.Sector``
+    - ``General.MarketCapitalization`` (fallback ``Highlights.MarketCapitalization``)
+    """
+    eodhd_symbol = to_eodhd(symbol)
+    base_url = _get_base_url()
+    params: dict[str, Any] = {
+        "api_token": _get_token(),
+        "fmt": fmt,
+    }
+    payload = _do_request(
+        endpoint="fundamentals",
+        url=f"{base_url}/fundamentals/{eodhd_symbol}",
+        params=params,
+        session=session,
+        tracker=tracker or get_default_tracker(),
+    )
+    if not isinstance(payload, dict):
+        raise EodhdBarsFetchError(f"fundamentals payload inattendu pour {symbol}")
+    return payload
+
+
+def fetch_symbol_fundamentals_record(
+    symbol: str,
+    session: Optional[requests.Session] = None,
+) -> dict[str, Any]:
+    """Retourne un enregistrement normalisé contenant le secteur et la market cap EODHD."""
+    normalized_symbol = str(symbol).strip().upper()
+    if not normalized_symbol:
+        raise ValueError("symbol ne peut pas être vide.")
+
+    payload = fetch_fundamentals(normalized_symbol, session=session)
+    general = payload.get("General") if isinstance(payload.get("General"), dict) else {}
+    highlights = payload.get("Highlights") if isinstance(payload.get("Highlights"), dict) else {}
+
+    sector_raw = general.get("Sector") or general.get("GicSector") or general.get("SectorDisp")
+    market_cap_raw = general.get("MarketCapitalization") or highlights.get("MarketCapitalization")
+    market_cap_mln_raw = highlights.get("MarketCapitalizationMln")
+
+    sector = str(sector_raw).strip() if sector_raw not in (None, "") and str(sector_raw).strip() else None
+    market_cap: float | None = None
+    if market_cap_raw not in (None, ""):
+        market_cap = float(str(market_cap_raw))
+        if market_cap <= 0:
+            market_cap = None
+    elif market_cap_mln_raw not in (None, ""):
+        market_cap = float(str(market_cap_mln_raw)) * 1_000_000.0
+        if market_cap <= 0:
+            market_cap = None
+
+    return {
+        "symbol": normalized_symbol,
+        "sector": sector,
+        "market_cap": market_cap,
+        "source": "EODHD",
+        "raw_profile": payload,
+    }
+
+
 __all__ = [
     "DEFAULT_BACKOFF_SECONDS",
     "DEFAULT_MAX_ATTEMPTS",
     "DEFAULT_TIMEOUT_SECONDS",
     "EodhdBarsFetchError",
+    "EodhdPermissionError",
     "EodhdCircuitOpen",
     "EodhdSymbolNotFound",
     "PeriodLiteral",
@@ -306,6 +383,8 @@ __all__ = [
     "fetch_dividends",
     "fetch_eod",
     "fetch_eod_bulk",
+    "fetch_fundamentals",
     "fetch_splits",
+    "fetch_symbol_fundamentals_record",
 ]
 
