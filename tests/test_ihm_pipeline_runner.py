@@ -627,6 +627,23 @@ def test_build_pipeline_command_data_integrity_auxiliary_steps() -> None:
     ]
 
 
+def test_build_pipeline_command_update_sector_uses_yahoo_finance_by_default() -> None:
+    command = build_pipeline_command("update_sector", PipelineLaunchOptions())
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "dataIntegrityEngine.update_sector",
+        "--provider",
+        "yahoo_finance",
+        "--sleep-seconds",
+        str(PipelineLaunchOptions().data_integrity_fundamentals_sleep_seconds),
+        "--log-every",
+        str(PipelineLaunchOptions().data_integrity_fundamentals_log_every),
+    ]
+
+
 
 def test_build_subprocess_env_propagates_db_config_and_pythonpath() -> None:
     env = build_subprocess_env(

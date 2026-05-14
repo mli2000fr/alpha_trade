@@ -218,7 +218,7 @@ ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
 WorkflowStartStep = Literal["1", "3"]
 SentimentScoringMode = Literal["standard_only", "contextual_only", "standard_and_contextual"]
-FundamentalsProvider = Literal["eodhd", "finnhub"]
+FundamentalsProvider = Literal["yahoo_finance", "eodhd", "finnhub"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,7 +402,7 @@ class PipelineLaunchOptions:
     data_integrity_earnings_batch_size: int = DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE
     data_integrity_earnings_resume: bool = DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME
     data_integrity_fundamentals_limit: int | None = None
-    data_integrity_fundamentals_provider: FundamentalsProvider = "eodhd"
+    data_integrity_fundamentals_provider: FundamentalsProvider = "yahoo_finance"
     data_integrity_fundamentals_overwrite_existing: bool = False
     data_integrity_fundamentals_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
@@ -654,7 +654,7 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="update_sector",
         num="B2",
         name="Mise à jour fondamentaux",
-        desc="Enrichit `stock_metadata` avec `sector` et `market_cap` via EODHD ou Finnhub (défaut EODHD), avec option d'écrasement des valeurs existantes. Si l'endpoint fundamentals EODHD est refusé par le compte (401/403), le backend bascule automatiquement vers Finnhub pour terminer le run.",
+        desc="Enrichit `stock_metadata` avec `sector` et `market_cap` via Yahoo Finance, EODHD ou Finnhub (défaut Yahoo Finance / `yfinance`), avec option d'écrasement des valeurs existantes. Si l'endpoint fundamentals EODHD est refusé par le compte (401/403), le backend bascule automatiquement vers Finnhub pour terminer le run.",
         tables="stock_metadata",
         deps="import_alpaca_assets (recommandé) ou univers déjà chargé",
     ),
@@ -1120,8 +1120,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     if step_key == "update_sector":
         fundamentals_provider = (
             options.data_integrity_fundamentals_provider
-            if options.data_integrity_fundamentals_provider in {"eodhd", "finnhub"}
-            else "eodhd"
+            if options.data_integrity_fundamentals_provider in {"yahoo_finance", "eodhd", "finnhub"}
+            else "yahoo_finance"
         )
         command = [
             sys.executable,

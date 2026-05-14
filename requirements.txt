@@ -16,6 +16,7 @@ cryptography
 requests
 certifi
 python-dotenv
+yfinance>=0.2
 
 # --- Data science ---
 pandas
