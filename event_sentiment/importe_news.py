@@ -144,6 +144,22 @@ def _apply_symbol_guardrails(
             )
         )
 
+
+def _warn_ignored_scoring_flags(args: argparse.Namespace, logger: logging.Logger) -> None:
+    ignored_flags: list[str] = []
+    if args.sentiment_pending_limit is not None:
+        ignored_flags.append("--sentiment-pending-limit")
+    if args.sentiment_pending_max_batches is not None:
+        ignored_flags.append("--sentiment-pending-max-batches")
+    if args.finbert_batch_size is not None:
+        ignored_flags.append("--finbert-batch-size")
+    if ignored_flags:
+        logger.warning(
+            "Flags de scoring ignorés par importe_news.py : %s. "
+            "Utilisez `python -m event_sentiment --skip-ingestion ...` ou le wrapper auto pour le scoring FinBERT.",
+            ", ".join(ignored_flags),
+        )
+
 # python ./event_sentiment/importe_news.py --start-date 2025-01-01 --end-date 2025-04-20
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -208,6 +224,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Exemple : 500."
         ),
     )
+    parser.add_argument(
+        "--sentiment-pending-limit",
+        type=int,
+        default=None,
+        help="Compatibilité CLI : ignoré par l'import brut ; réservé au scoring pending.",
+    )
+    parser.add_argument(
+        "--sentiment-pending-max-batches",
+        type=int,
+        default=None,
+        help="Compatibilité CLI : ignoré par l'import brut ; réservé au scoring pending.",
+    )
+    parser.add_argument(
+        "--finbert-batch-size",
+        type=int,
+        default=None,
+        help="Compatibilité CLI : ignoré par l'import brut ; réservé au scoring FinBERT.",
+    )
     return parser
 
 
@@ -237,6 +271,7 @@ def main():
         logger=logger,
         parser=parser,
     )
+    _warn_ignored_scoring_flags(args, logger)
     logger.info("Source de symboles retenue: %s", symbol_source)
     logger.info("%s symbols trouvés.", len(symbols))
     if not symbols:

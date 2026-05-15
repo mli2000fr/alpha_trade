@@ -188,6 +188,49 @@ def test_importe_news_main_warns_for_large_stock_bars_daily_universe(monkeypatch
     assert "Univers d'import très large détecté" in caplog.text
 
 
+def test_importe_news_main_accepts_scoring_flags_but_warns_they_are_ignored(monkeypatch, caplog) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(importe_news, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(importe_news, "get_all_symbols_from_stock_scores_all", lambda: ["AAPL", "MSFT"])
+    monkeypatch.setattr(importe_news, "EventSentimentRepository", lambda: object())
+
+    def _fake_service_factory(repository, config):  # type: ignore[no-untyped-def]
+        service = _FakeService(repository, config)
+        captured["service"] = service
+        return service
+
+    monkeypatch.setattr(importe_news, "NewsIngestionService", _fake_service_factory)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "importe_news.py",
+            "--start-date",
+            "2026-04-01",
+            "--end-date",
+            "2026-04-15",
+            "--sentiment-pending-limit",
+            "5000",
+            "--sentiment-pending-max-batches",
+            "10",
+            "--finbert-batch-size",
+            "32",
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="importe_news"):
+        importe_news.main()
+
+    service = captured["service"]
+    assert isinstance(service, _FakeService)
+    assert len(service.calls) == 1
+    assert "Flags de scoring ignorés par importe_news.py" in caplog.text
+    assert "--sentiment-pending-limit" in caplog.text
+    assert "--sentiment-pending-max-batches" in caplog.text
+    assert "--finbert-batch-size" in caplog.text
+
+
 def test_importe_news_main_blocks_when_max_symbols_is_exceeded(monkeypatch) -> None:
     monkeypatch.setattr(importe_news, "configure_root_logging", lambda **kwargs: None)
     monkeypatch.setattr(importe_news, "EventSentimentRepository", lambda: object())

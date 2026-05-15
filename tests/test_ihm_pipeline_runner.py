@@ -812,6 +812,33 @@ def test_build_pipeline_command_import_news() -> None:
     assert "--enable-contextual-scoring" not in command
 
 
+def test_build_pipeline_command_import_news_does_not_forward_scoring_only_flags() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        sentiment_news_provider="eodhd",
+        sentiment_enable_contextual_scoring=True,
+        sentiment_contextual_min_relevance=0.3,
+        sentiment_contextual_max_pairs=4000,
+        sentiment_pending_limit=5000,
+        sentiment_pending_max_batches_per_run=10,
+        sentiment_feature_flush_every_n_batches=2,
+        sentiment_finbert_batch_size=32,
+    )
+
+    command = build_pipeline_command("import_news", options)
+
+    assert "--news-provider" in command
+    assert "--enable-contextual-scoring" not in command
+    assert "--scoring-mode" not in command
+    assert "--contextual-min-relevance" not in command
+    assert "--contextual-max-pairs" not in command
+    assert "--sentiment-pending-limit" not in command
+    assert "--sentiment-pending-max-batches" not in command
+    assert "--feature-flush-every-n-batches" not in command
+    assert "--finbert-batch-size" not in command
+
+
 def test_build_pipeline_command_import_news_exposes_symbol_scope_options() -> None:
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",

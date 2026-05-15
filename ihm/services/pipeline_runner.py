@@ -758,7 +758,7 @@ def _build_powershell_file_command(script_path: Path, arguments: list[str] | Non
     ]
 
 
-def _extend_event_sentiment_cli_args(
+def _extend_event_sentiment_cli_common_args(
     command: list[str],
     options: PipelineLaunchOptions,
     *,
@@ -813,12 +813,14 @@ def _extend_event_sentiment_cli_args(
                 str(int(options.sentiment_contextual_max_pairs)),
             ])
 
-    if options.sentiment_pending_limit is not None and options.sentiment_pending_limit > 0:
+    if include_contextual_scoring and options.sentiment_pending_limit is not None and options.sentiment_pending_limit > 0:
         command.extend([
             "--sentiment-pending-limit",
             str(int(options.sentiment_pending_limit)),
         ])
     if (
+        include_contextual_scoring
+        and
         options.sentiment_pending_max_batches_per_run is not None
         and options.sentiment_pending_max_batches_per_run > 0
     ):
@@ -827,6 +829,8 @@ def _extend_event_sentiment_cli_args(
             str(int(options.sentiment_pending_max_batches_per_run)),
         ])
     if (
+        include_contextual_scoring
+        and
         options.sentiment_feature_flush_every_n_batches is not None
         and options.sentiment_feature_flush_every_n_batches > 0
     ):
@@ -834,7 +838,11 @@ def _extend_event_sentiment_cli_args(
             "--feature-flush-every-n-batches",
             str(int(options.sentiment_feature_flush_every_n_batches)),
         ])
-    if options.sentiment_finbert_batch_size is not None and options.sentiment_finbert_batch_size > 0:
+    if (
+        include_contextual_scoring
+        and options.sentiment_finbert_batch_size is not None
+        and options.sentiment_finbert_batch_size > 0
+    ):
         command.extend([
             "--finbert-batch-size",
             str(int(options.sentiment_finbert_batch_size)),
@@ -1297,7 +1305,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
 
     if step_key == "sentiment_pipeline":
         command = [sys.executable, "-u", "-m", "event_sentiment"]
-        _extend_event_sentiment_cli_args(
+        _extend_event_sentiment_cli_common_args(
             command,
             options,
             include_contextual_scoring=True,
@@ -1384,7 +1392,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         ]
         if news_import_end_date:
             command.extend(["--end-date", news_import_end_date])
-        _extend_event_sentiment_cli_args(
+        _extend_event_sentiment_cli_common_args(
             command,
             options,
             include_contextual_scoring=False,

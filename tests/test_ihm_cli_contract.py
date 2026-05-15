@@ -66,6 +66,10 @@ _PARSER_RESOLVERS: dict[str, tuple[str, tuple[str, ...]]] = {
         "selector.alpha_scanner",
         ("_build_arg_parser", "build_arg_parser", "_build_parser", "build_parser"),
     ),
+    "import_news": (
+        "event_sentiment.importe_news",
+        ("_build_arg_parser", "build_arg_parser", "_build_parser", "build_parser"),
+    ),
 }
 
 
