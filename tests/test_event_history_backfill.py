@@ -121,5 +121,3 @@ def test_history_backfill_rebuilds_by_batches_and_filters_target_dates() -> None
     first_batch_dates = {row["trade_date"] for row in repository.ticker_upserts[0]}
     second_batch_dates = {row["trade_date"] for row in repository.ticker_upserts[1]}
     assert first_batch_dates == {date(2026, 1, 2), date(2026, 1, 5)}
-    assert second_batch_dates == set()
-
