@@ -33,6 +33,13 @@ LOGGER = logging.getLogger(__name__)
 # Phase 6.2 — rétention configurable via env (défaut 30 jours).
 RUNS_RETENTION_ENV = "IHM_RUNS_RETENTION_DAYS"
 DEFAULT_RUNS_RETENTION_DAYS = 30
+RUN_LOG_MAX_BYTES_ENV = "IHM_RUN_LOG_MAX_BYTES"
+RUN_COMBINED_LOG_MAX_BYTES_ENV = "IHM_RUN_COMBINED_LOG_MAX_BYTES"
+RUN_LOG_MAX_LINE_CHARS_ENV = "IHM_RUN_LOG_MAX_LINE_CHARS"
+DEFAULT_RUN_LOG_MAX_BYTES = 8 * 1024 * 1024
+DEFAULT_RUN_COMBINED_LOG_MAX_BYTES = 8 * 1024 * 1024
+DEFAULT_RUN_LOG_MAX_LINE_CHARS = 12000
+LOG_FILE_TRUNCATION_NOTICE = "[... log IHM tronqué, conservation des dernières lignes ...]\n"
 
 from ihm.services.pipeline_runner import (
     PROJECT_ROOT,
@@ -396,6 +403,74 @@ def _safe_read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def _read_positive_int_env(name: str, default: int) -> int:
+    raw = str(os.getenv(name, "") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(value, 1)
+
+
+def _run_log_max_bytes(stream: Literal["stdout", "stderr", "all"]) -> int:
+    if stream == "all":
+        return _read_positive_int_env(RUN_COMBINED_LOG_MAX_BYTES_ENV, DEFAULT_RUN_COMBINED_LOG_MAX_BYTES)
+    return _read_positive_int_env(RUN_LOG_MAX_BYTES_ENV, DEFAULT_RUN_LOG_MAX_BYTES)
+
+
+def _run_log_max_line_chars() -> int:
+    return _read_positive_int_env(RUN_LOG_MAX_LINE_CHARS_ENV, DEFAULT_RUN_LOG_MAX_LINE_CHARS)
+
+
+def _truncate_log_line(line: str, max_chars: int) -> str:
+    if not line or len(line) <= max_chars:
+        return line
+    newline = ""
+    body = line
+    if line.endswith("\r\n"):
+        newline = "\r\n"
+        body = line[:-2]
+    elif line.endswith("\n"):
+        newline = "\n"
+        body = line[:-1]
+    omitted = max(len(body) - max_chars, 0)
+    marker = f" … [ligne tronquée, {omitted} caractères supprimés]"
+    return f"{body[:max_chars]}{marker}{newline or os.linesep}"
+
+
+def _sanitize_log_chunk(content: str) -> str:
+    if not content:
+        return ""
+    max_chars = _run_log_max_line_chars()
+    return "".join(_truncate_log_line(line, max_chars) for line in content.splitlines(keepends=True))
+
+
+def _trim_file_to_max_bytes(path: Path, max_bytes: int) -> None:
+    if max_bytes <= 0 or not path.exists():
+        return
+    try:
+        if path.stat().st_size <= max_bytes:
+            return
+        notice_bytes = LOG_FILE_TRUNCATION_NOTICE.encode("utf-8")
+        keep_bytes = max(max_bytes - len(notice_bytes), 0)
+        with path.open("rb") as fh:
+            if keep_bytes > 0:
+                fh.seek(-keep_bytes, os.SEEK_END)
+                tail = fh.read()
+            else:
+                tail = b""
+        if tail.startswith(notice_bytes):
+            tail = tail[len(notice_bytes):]
+        with path.open("wb") as fh:
+            fh.write(notice_bytes)
+            if tail:
+                fh.write(tail)
+    except OSError:
+        return
 
 
 def _infer_finished_at(run_dir: Path) -> str | None:
@@ -934,32 +1009,46 @@ def _drain_events(managed: _ManagedRun) -> bool:
             continue
         if stream_name == "stdout":
             stdout_chunk.append(line)
-            _append_tail(managed.stdout_tail or [], line)
         else:
             stderr_chunk.append(line)
-            _append_tail(managed.stderr_tail or [], line)
 
     if stdout_chunk:
         Path(managed.record.stdout_path).parent.mkdir(parents=True, exist_ok=True)
-        with Path(managed.record.stdout_path).open("a", encoding="utf-8") as fh:
-            fh.write("".join(stdout_chunk))
-        with Path(managed.record.combined_path).open("a", encoding="utf-8") as fh:
-            fh.write("".join(f"[stdout] {line}" for line in stdout_chunk))
+        sanitized_stdout = _append_bounded_text(
+            managed.record.stdout_path,
+            "".join(stdout_chunk),
+            stream="stdout",
+        )
+        _append_bounded_text(
+            managed.record.combined_path,
+            "".join(f"[stdout] {line}" for line in sanitized_stdout.splitlines(keepends=True)),
+            stream="all",
+        )
         managed.record = _with_updates(
             managed.record,
-            stdout_lines=managed.record.stdout_lines + len(stdout_chunk),
+            stdout_lines=managed.record.stdout_lines + _count_lines(sanitized_stdout),
         )
+        for line in sanitized_stdout.splitlines(keepends=True):
+            _append_tail(managed.stdout_tail or [], line)
 
     if stderr_chunk:
         Path(managed.record.stderr_path).parent.mkdir(parents=True, exist_ok=True)
-        with Path(managed.record.stderr_path).open("a", encoding="utf-8") as fh:
-            fh.write("".join(stderr_chunk))
-        with Path(managed.record.combined_path).open("a", encoding="utf-8") as fh:
-            fh.write("".join(f"[stderr] {line}" for line in stderr_chunk))
+        sanitized_stderr = _append_bounded_text(
+            managed.record.stderr_path,
+            "".join(stderr_chunk),
+            stream="stderr",
+        )
+        _append_bounded_text(
+            managed.record.combined_path,
+            "".join(f"[stderr] {line}" for line in sanitized_stderr.splitlines(keepends=True)),
+            stream="all",
+        )
         managed.record = _with_updates(
             managed.record,
-            stderr_lines=managed.record.stderr_lines + len(stderr_chunk),
+            stderr_lines=managed.record.stderr_lines + _count_lines(sanitized_stderr),
         )
+        for line in sanitized_stderr.splitlines(keepends=True):
+            _append_tail(managed.stderr_tail or [], line)
 
     if latest_summary is not None:
         merged_summary = dict(managed.record.run_summary) if isinstance(managed.record.run_summary, dict) else {}
@@ -979,10 +1068,8 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
         managed.timed_out = True
         Path(managed.record.stderr_path).parent.mkdir(parents=True, exist_ok=True)
         timeout_message = "\nTimeout d'exécution dépassé.\n"
-        with Path(managed.record.stderr_path).open("a", encoding="utf-8") as fh:
-            fh.write(timeout_message)
-        with Path(managed.record.combined_path).open("a", encoding="utf-8") as fh:
-            fh.write(f"[stderr] {timeout_message}")
+        _append_bounded_text(managed.record.stderr_path, timeout_message, stream="stderr")
+        _append_bounded_text(managed.record.combined_path, f"[stderr] {timeout_message}", stream="all")
         _append_tail(managed.stderr_tail or [], timeout_message)
         managed.record = _with_updates(
             managed.record,
@@ -998,10 +1085,8 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
         managed.timed_out = True
         Path(managed.record.stderr_path).parent.mkdir(parents=True, exist_ok=True)
         timeout_message = "\nWatchdog heartbeat timeout dépassé : le run n'émet plus de heartbeat structuré.\n"
-        with Path(managed.record.stderr_path).open("a", encoding="utf-8") as fh:
-            fh.write(timeout_message)
-        with Path(managed.record.combined_path).open("a", encoding="utf-8") as fh:
-            fh.write(f"[stderr] {timeout_message}")
+        _append_bounded_text(managed.record.stderr_path, timeout_message, stream="stderr")
+        _append_bounded_text(managed.record.combined_path, f"[stderr] {timeout_message}", stream="all")
         _append_tail(managed.stderr_tail or [], timeout_message)
         managed.record = _with_updates(
             managed.record,
@@ -1086,10 +1171,25 @@ def _append_text(path_value: str, content: str) -> None:
         fh.write(content)
 
 
+def _append_bounded_text(path_value: str, content: str, *, stream: Literal["stdout", "stderr", "all"]) -> str:
+    sanitized = _sanitize_log_chunk(content)
+    if not sanitized:
+        return ""
+    _append_text(path_value, sanitized)
+    _trim_file_to_max_bytes(Path(path_value), _run_log_max_bytes(stream))
+    return sanitized
+
+
 def _read_new_text(path_value: str, offset: int) -> tuple[str, int]:
     path = Path(path_value)
     if not path.exists():
         return "", offset
+    try:
+        current_size = path.stat().st_size
+    except OSError:
+        current_size = None
+    if current_size is not None and offset > current_size:
+        offset = 0
     with path.open("r", encoding="utf-8", errors="replace") as fh:
         fh.seek(offset)
         content = fh.read()
@@ -1108,17 +1208,18 @@ def _append_workflow_chunk(managed: _ManagedWorkflow, stream: Literal["stdout", 
 
     with managed.lock:
         record = managed.record
-        line_count = _count_lines(content)
+        sanitized_content = _sanitize_log_chunk(content)
+        line_count = _count_lines(sanitized_content)
         if stream == "stdout":
-            _append_text(record.stdout_path, content)
-            _append_text(record.combined_path, _prefix_chunk(content, prefix))
-            for line in content.splitlines(keepends=True):
+            _append_bounded_text(record.stdout_path, sanitized_content, stream="stdout")
+            _append_bounded_text(record.combined_path, _prefix_chunk(sanitized_content, prefix), stream="all")
+            for line in sanitized_content.splitlines(keepends=True):
                 _append_tail(managed.stdout_tail, line)
             managed.record = _with_updates(record, stdout_lines=record.stdout_lines + line_count)
         else:
-            _append_text(record.stderr_path, content)
-            _append_text(record.combined_path, _prefix_chunk(content, prefix))
-            for line in content.splitlines(keepends=True):
+            _append_bounded_text(record.stderr_path, sanitized_content, stream="stderr")
+            _append_bounded_text(record.combined_path, _prefix_chunk(sanitized_content, prefix), stream="all")
+            for line in sanitized_content.splitlines(keepends=True):
                 _append_tail(managed.stderr_tail, line)
             managed.record = _with_updates(record, stderr_lines=record.stderr_lines + line_count)
         _persist_record(managed.record)

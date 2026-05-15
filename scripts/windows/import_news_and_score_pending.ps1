@@ -138,6 +138,18 @@ else {
 $StandardScoringEnabled = $EffectiveScoringMode -ne 'contextual_only'
 $ContextualScoringEnabled = $EffectiveScoringMode -ne 'standard_only'
 
+function Get-SymbolPreview {
+    param(
+        [string[]]$Symbols,
+        [int]$Limit = 25
+    )
+
+    if ($null -eq $Symbols -or $Symbols.Count -eq 0) {
+        return @()
+    }
+    return @($Symbols | Select-Object -First $Limit)
+}
+
 $summary = [ordered]@{
     mode = if ($SkipImport) {
         'score_pending_history_and_relevance_backfill'
@@ -167,7 +179,9 @@ $summary = [ordered]@{
     news_provider = $NewsProvider
     ticker_relevance_mode = $TickerRelevanceMode
     scoring_mode = $EffectiveScoringMode
-    import_symbols = if ($NormalizedImportSymbols.Count -gt 0) { @($NormalizedImportSymbols) } else { @() }
+    import_symbols = Get-SymbolPreview -Symbols $NormalizedImportSymbols
+    import_symbols_count = $NormalizedImportSymbols.Count
+    import_symbols_truncated = ($NormalizedImportSymbols.Count -gt 25)
     import_symbol_source = $SymbolSource
     import_max_symbols = $MaxSymbols
     min_relevance_score = $MinRelevanceScore
@@ -187,7 +201,9 @@ $summary = [ordered]@{
     pending_scope_start_date = $StartDate
     pending_scope_end_date = $EndDate
     pending_scope_ingestion_source = $NewsProvider
-    pending_scope_symbols = if ($NormalizedImportSymbols.Count -gt 0) { @($NormalizedImportSymbols) } else { @() }
+    pending_scope_symbols = Get-SymbolPreview -Symbols $NormalizedImportSymbols
+    pending_scope_symbols_count = $NormalizedImportSymbols.Count
+    pending_scope_symbols_truncated = ($NormalizedImportSymbols.Count -gt 25)
     skip_import = [bool]$SkipImport
     status = 'running'
 }
@@ -402,7 +418,9 @@ Push-Location $ProjectRoot
 try {
     $ScopedSymbols = @(Resolve-ScopedSymbols -ExplicitSymbolsCsv $NormalizedImportSymbolsCsv -SelectedSymbolSource $SymbolSource)
     $ScopedSymbolsCsv = if ($ScopedSymbols.Count -gt 0) { $ScopedSymbols -join ',' } else { '' }
-    $summary.pending_scope_symbols = if ($ScopedSymbols.Count -gt 0) { @($ScopedSymbols) } else { @() }
+    $summary.pending_scope_symbols = Get-SymbolPreview -Symbols $ScopedSymbols
+    $summary.pending_scope_symbols_count = $ScopedSymbols.Count
+    $summary.pending_scope_symbols_truncated = ($ScopedSymbols.Count -gt 25)
 
     $importNewsArguments = @(
         '-u',

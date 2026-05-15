@@ -134,6 +134,39 @@ def test_background_run_captures_structured_run_summary(monkeypatch, tmp_path: P
     assert registry.RUN_SUMMARY_PREFIX not in logs
 
 
+def test_background_run_bounds_oversized_logs(monkeypatch, tmp_path: Path) -> None:
+    _configure_tmp_storage(monkeypatch, tmp_path)
+    monkeypatch.setenv("IHM_RUN_LOG_MAX_BYTES", "1024")
+    monkeypatch.setenv("IHM_RUN_COMBINED_LOG_MAX_BYTES", "1024")
+    monkeypatch.setenv("IHM_RUN_LOG_MAX_LINE_CHARS", "80")
+
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys; "
+            "[sys.stderr.write(f'tail-marker-{i:02d}: ' + 'X'*200 + '\\n') for i in range(40)]; "
+            "sys.stderr.flush()"
+        ),
+    ]
+    monkeypatch.setattr(registry, "build_pipeline_command", lambda step_key, options: command)
+
+    record = registry.start_pipeline_run("huge_log_step", "Huge Log Step", PipelineLaunchOptions())
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=60)
+
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+
+    stderr_path = Path(str(snapshot["stderr_path"]))
+    combined_path = Path(str(snapshot["combined_path"]))
+    assert stderr_path.stat().st_size <= 1024
+    assert combined_path.stat().st_size <= 1024
+
+    stderr_logs = registry.read_pipeline_logs(record.run_id, "stderr")
+    assert "tail-marker-39" in stderr_logs
+    assert "tronqué" in stderr_logs
+
+
 def test_start_managed_run_supports_non_pipeline_commands(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
 

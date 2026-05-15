@@ -1,16 +1,20 @@
 import json
 import logging
+import os
 from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
 from sqlalchemy import MetaData, Table, bindparam, func, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.exc import OperationalError
 
 from database.connection import get_sqlalchemy_engine
 from database.stock_scores import list_candidate_symbols
 
 LOGGER = logging.getLogger(__name__)
+UPSERT_BATCH_SIZE_ENV = "EVENT_SENTIMENT_UPSERT_BATCH_SIZE"
+DEFAULT_UPSERT_BATCH_SIZE = 1000
 
 
 class EventSentimentRepository:
@@ -45,6 +49,29 @@ class EventSentimentRepository:
             for record in records
         ]
 
+    @staticmethod
+    def _upsert_batch_size() -> int:
+        raw = str(os.getenv(UPSERT_BATCH_SIZE_ENV, "") or "").strip()
+        if not raw:
+            return DEFAULT_UPSERT_BATCH_SIZE
+        try:
+            value = int(raw)
+        except ValueError:
+            LOGGER.warning(
+                "%s invalide (%r) ; fallback=%s",
+                UPSERT_BATCH_SIZE_ENV,
+                raw,
+                DEFAULT_UPSERT_BATCH_SIZE,
+            )
+            return DEFAULT_UPSERT_BATCH_SIZE
+        return max(value, 1)
+
+    @staticmethod
+    def _chunk_records(records: list[dict[str, Any]], batch_size: int) -> list[list[dict[str, Any]]]:
+        if not records:
+            return []
+        return [records[index:index + batch_size] for index in range(0, len(records), batch_size)]
+
     def _upsert(self, table_name: str, records: list[dict[str, Any]], key_columns: set[str]) -> int:
         if not records:
             return 0
@@ -64,16 +91,37 @@ class EventSentimentRepository:
         for key_column in key_columns:
             if key_column not in records[0]:
                 raise KeyError(f"Clé d'upsert absente pour {table_name}: {key_column}")
-        stmt = mysql_insert(table).values(records)
-        update_cols = {
-            column.name: stmt.inserted[column.name]
-            for column in table.c.values()
-            if column.name in records[0] and column.name not in key_columns
-        }
-        if "updated_at" in table.c:
-            update_cols["updated_at"] = func.current_timestamp()
+        batch_size = self._upsert_batch_size()
+        record_batches = self._chunk_records(records, batch_size)
+        if len(record_batches) > 1:
+            LOGGER.info(
+                "Upsert MySQL découpé en lots | table=%s rows=%s batch_size=%s batches=%s",
+                table_name,
+                len(records),
+                batch_size,
+                len(record_batches),
+            )
         with self.engine.begin() as conn:
-            conn.execute(stmt.on_duplicate_key_update(**update_cols))
+            for batch_index, batch_records in enumerate(record_batches, start=1):
+                stmt = mysql_insert(table).values(batch_records)
+                update_cols = {
+                    column.name: stmt.inserted[column.name]
+                    for column in table.c.values()
+                    if column.name in batch_records[0] and column.name not in key_columns
+                }
+                if "updated_at" in table.c:
+                    update_cols["updated_at"] = func.current_timestamp()
+                try:
+                    conn.execute(stmt.on_duplicate_key_update(**update_cols))
+                except OperationalError as exc:
+                    LOGGER.exception(
+                        "Upsert MySQL échoué | table=%s batch=%s/%s rows_in_batch=%s",
+                        table_name,
+                        batch_index,
+                        len(record_batches),
+                        len(batch_records),
+                    )
+                    raise
         return len(records)
 
     @staticmethod

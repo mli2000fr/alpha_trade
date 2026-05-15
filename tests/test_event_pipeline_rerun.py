@@ -624,3 +624,84 @@ def test_pipeline_contextual_only_rebuilds_features_without_standard_pending_sco
     assert repository.feature_frame_requests[0]["end_date"] == date(2026, 1, 3)
 
 
+def test_pipeline_final_feature_aggregation_is_chunked_for_large_trade_date_ranges(monkeypatch) -> None:
+    repository = _InMemoryRepository()
+    for idx, trade_date in enumerate(
+        (date(2026, 1, 2), date(2026, 1, 3), date(2026, 1, 4), date(2026, 1, 5), date(2026, 1, 6)),
+        start=1,
+    ):
+        article_id = f"alpaca:chunked-feature-flush-{idx}"
+        repository.upsert_news_raw([
+            {
+                "article_id": article_id,
+                "headline": f"Headline {idx}",
+                "summary": f"Summary {idx}",
+                "content": None,
+                "source": "Reuters",
+                "author": "Reporter",
+                "published_at_utc": datetime(2026, 1, idx, 22, 0, 0),
+                "event_timestamp_utc": datetime(2026, 1, idx, 22, 0, 0),
+                "event_timestamp_ny": datetime(2026, 1, idx, 17, 0, 0),
+                "effective_trade_date": trade_date,
+                "market_session_tag": "post_market",
+                "url": f"https://example.test/chunked-feature-flush-{idx}",
+                "ingestion_source": "alpaca",
+                "dedupe_hash": f"chunked-feature-flush-{idx}",
+                "is_major_event": 0,
+                "raw_payload": {"id": article_id},
+            }
+        ])
+        repository.upsert_news_ticker_map([
+            {
+                "article_id": article_id,
+                "symbol": "AAPL",
+                "sector": "Technology",
+                "sector_source": "stock_metadata",
+                "sector_updated_at": datetime(2026, 1, 1, 0, 0, 0),
+                "is_primary_ticker": 1,
+            }
+        ])
+
+    config = EventSentimentConfig.for_provider(
+        "alpaca",
+        sentiment_pending_limit=1,
+        sentiment_pending_max_batches_per_run=5,
+        bootstrap_batch_days=2,
+    )
+    fake_finbert = _InMemoryFinBERTSentimentService()
+
+    class _NoOpMacroRuleEngine:
+        def classify(self, article, sentiment):
+            return []
+
+    monkeypatch.setattr(
+        "event_sentiment.pipeline.NewsIngestionService",
+        lambda repository, config: _InMemoryIngestionService(repository, config),
+    )
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", lambda *args, **kwargs: fake_finbert)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", lambda *args, **kwargs: _NoOpMacroRuleEngine())
+
+    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    stats = pipeline.run(
+        start_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        end_utc=datetime(2026, 1, 7, tzinfo=UTC),
+        symbols=["AAPL"],
+        skip_ingestion=True,
+    )
+
+    assert stats["pending_articles_loaded"] == 5
+    assert len(repository.feature_frame_requests) == 3
+    assert [request["end_date"] for request in repository.feature_frame_requests] == [
+        date(2026, 1, 3),
+        date(2026, 1, 5),
+        date(2026, 1, 6),
+    ]
+    assert set(repository.ticker_daily_features) == {
+        ("AAPL", date(2026, 1, 2)),
+        ("AAPL", date(2026, 1, 3)),
+        ("AAPL", date(2026, 1, 4)),
+        ("AAPL", date(2026, 1, 5)),
+        ("AAPL", date(2026, 1, 6)),
+    }
+
+

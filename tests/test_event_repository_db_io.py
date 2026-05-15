@@ -179,6 +179,44 @@ def test_upsert_drops_unknown_columns_not_present_in_table(monkeypatch) -> None:
     }
 
 
+def test_upsert_splits_large_payload_into_multiple_batches(monkeypatch) -> None:
+    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    repository.engine = _FakeEngine()
+    repository.metadata = None
+    repository._tables = {}
+
+    class _TickerTable:
+        def __init__(self) -> None:
+            self.c = {
+                "symbol": _FakeColumn("symbol"),
+                "trade_date": _FakeColumn("trade_date"),
+                "news_count_1d": _FakeColumn("news_count_1d"),
+                "updated_at": _FakeColumn("updated_at"),
+            }
+
+    monkeypatch.setattr(repository, "_table", lambda table_name: _TickerTable())
+    monkeypatch.setattr("event_sentiment.db_io.mysql_insert", lambda table: _FakeInsert())
+    monkeypatch.setattr(repository, "_upsert_batch_size", lambda: 2)
+
+    rowcount = EventSentimentRepository._upsert(
+        repository,
+        "ticker_daily_sentiment_features",
+        [
+            {"symbol": "AAPL", "trade_date": date(2026, 4, 16), "news_count_1d": 3},
+            {"symbol": "MSFT", "trade_date": date(2026, 4, 16), "news_count_1d": 4},
+            {"symbol": "NVDA", "trade_date": date(2026, 4, 16), "news_count_1d": 5},
+        ],
+        key_columns={"symbol", "trade_date"},
+    )
+
+    assert rowcount == 3
+    assert len(repository.engine.connection.executed) == 2
+    first_statement, _ = repository.engine.connection.executed[0]
+    second_statement, _ = repository.engine.connection.executed[1]
+    assert len(first_statement[1]) == 2
+    assert len(second_statement[1]) == 1
+
+
 def test_count_pending_contextual_pairs_uses_min_relevance_filter() -> None:
     repository = EventSentimentRepository.__new__(EventSentimentRepository)
     fake_engine = _FakeEngine()
