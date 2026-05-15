@@ -32,7 +32,7 @@ def test_update_missing_sectors_updates_symbols_and_logs_progress(monkeypatch, c
     monkeypatch.setattr(
         update_sector,
         "update_stock_metadata_fundamentals",
-        lambda symbol, **kwargs: updates.append((symbol, kwargs.get("sector"), kwargs.get("market_cap"))) or 1,
+        lambda symbol, **kwargs: updates.append((symbol, kwargs.get("provider_sector"), kwargs.get("market_cap"))) or 1,
     )
 
     caplog.set_level(logging.INFO)
@@ -49,9 +49,9 @@ def test_update_missing_sectors_updates_symbols_and_logs_progress(monkeypatch, c
     assert updates == [("AAPL", "Technology", None), ("JPM", "Banks", None)]
     assert sleep_calls == [0.25, 0.25]
     assert fake_session.closed is True
-    assert ("Debut mise a jour sector stock_metadata" in caplog.text or "Début mise à jour sector stock_metadata" in caplog.text)
-    assert "Progression sector | current=2/3 updated=1 skipped=1 failed=0" in caplog.text
-    assert ("Fin mise a jour sector stock_metadata" in caplog.text or "Fin mise à jour sector stock_metadata" in caplog.text)
+    assert "Debut mise a jour provider_sector stock_metadata" in caplog.text
+    assert "Progression provider_sector | current=2/3 updated=1 skipped=1 failed=0" in caplog.text
+    assert "Fin mise a jour provider_sector stock_metadata" in caplog.text
 
 
 def test_update_missing_sectors_continues_after_error(monkeypatch, caplog) -> None:
@@ -72,7 +72,7 @@ def test_update_missing_sectors_continues_after_error(monkeypatch, caplog) -> No
     monkeypatch.setattr(
         update_sector,
         "update_stock_metadata_fundamentals",
-        lambda symbol, **kwargs: updates.append((symbol, kwargs.get("sector"), kwargs.get("market_cap"))) or 1,
+        lambda symbol, **kwargs: updates.append((symbol, kwargs.get("provider_sector"), kwargs.get("market_cap"))) or 1,
     )
 
     caplog.set_level(logging.INFO)
@@ -152,7 +152,7 @@ def test_update_missing_sectors_does_not_overwrite_existing_values_by_default(mo
     monkeypatch.setattr(
         update_sector,
         "get_stock_metadata_fundamentals_map",
-        lambda symbols: {"AAA": {"sector": "Legacy", "market_cap": 10.0}},
+        lambda symbols: {"AAA": {"provider_sector": "Legacy", "market_cap": 10.0}},
     )
     monkeypatch.setattr(update_sector.requests, "Session", lambda: fake_session)
     monkeypatch.setattr(update_sector.time, "sleep", lambda seconds: None)
@@ -164,7 +164,7 @@ def test_update_missing_sectors_does_not_overwrite_existing_values_by_default(mo
     monkeypatch.setattr(
         update_sector,
         "update_stock_metadata_fundamentals",
-        lambda symbol, **kwargs: updates.append((symbol, kwargs.get("sector"), kwargs.get("market_cap"))) or 1,
+        lambda symbol, **kwargs: updates.append((symbol, kwargs.get("provider_sector"), kwargs.get("market_cap"))) or 1,
     )
 
     summary = update_sector.update_missing_sectors(sleep_seconds=0.0, provider="finnhub")
@@ -180,7 +180,7 @@ def test_update_missing_sectors_overwrite_existing_targets_all_eligible_symbols(
 
     monkeypatch.setattr(update_sector, "get_symbols_missing_sector", lambda limit=None: ["AAA"])
     monkeypatch.setattr(update_sector, "list_eligible_stock_symbols", lambda limit=None: ["AAA", "BBB"])
-    monkeypatch.setattr(update_sector, "get_stock_metadata_fundamentals_map", lambda symbols: {symbol: {"sector": "Legacy", "market_cap": 10.0} for symbol in symbols})
+    monkeypatch.setattr(update_sector, "get_stock_metadata_fundamentals_map", lambda symbols: {symbol: {"provider_sector": "Legacy", "market_cap": 10.0} for symbol in symbols})
     monkeypatch.setattr(update_sector.requests, "Session", lambda: fake_session)
     monkeypatch.setattr(update_sector.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(
@@ -191,7 +191,7 @@ def test_update_missing_sectors_overwrite_existing_targets_all_eligible_symbols(
     monkeypatch.setattr(
         update_sector,
         "update_stock_metadata_fundamentals",
-        lambda symbol, **kwargs: updates.append((symbol, kwargs.get("sector"), kwargs.get("market_cap"))) or 1,
+        lambda symbol, **kwargs: updates.append((symbol, kwargs.get("provider_sector"), kwargs.get("market_cap"))) or 1,
     )
 
     summary = update_sector.update_missing_sectors(sleep_seconds=0.0, overwrite_existing=True)
@@ -227,7 +227,7 @@ def test_update_missing_sectors_falls_back_to_finnhub_after_eodhd_permission_err
     monkeypatch.setattr(
         update_sector,
         "update_stock_metadata_fundamentals",
-        lambda symbol, **kwargs: updates.append((symbol, kwargs.get("sector"), kwargs.get("market_cap"))) or 1,
+        lambda symbol, **kwargs: updates.append((symbol, kwargs.get("provider_sector"), kwargs.get("market_cap"))) or 1,
     )
 
     summary = update_sector.update_missing_sectors(sleep_seconds=0.0, provider="eodhd")

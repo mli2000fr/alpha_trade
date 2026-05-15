@@ -32,6 +32,7 @@ def get_stock_metadata_table() -> Table:
         Column("bars_available", Boolean),
         Column("history_status", String(32)),
         Column("sector", String(50)),
+        Column("provider_sector", String(120)),
         Column("market_cap", Float),
         Column("last_updated", TIMESTAMP),
         autoload_with=get_sqlalchemy_engine(),
@@ -39,8 +40,22 @@ def get_stock_metadata_table() -> Table:
 
 
 def _require_sector_column(stock_metadata: Table) -> None:
-    if "sector" not in stock_metadata.c:
-        raise RuntimeError("La colonne stock_metadata.sector est absente du schéma SQL courant.")
+    if "provider_sector" not in stock_metadata.c and "sector" not in stock_metadata.c:
+        raise RuntimeError(
+            "Les colonnes stock_metadata.provider_sector / stock_metadata.sector sont absentes du schéma SQL courant."
+        )
+
+
+def _resolve_sector_storage_column(stock_metadata: Table):
+    _require_sector_column(stock_metadata)
+    if "provider_sector" in stock_metadata.c:
+        return stock_metadata.c.provider_sector
+    return stock_metadata.c.sector
+
+
+def _resolve_sector_storage_column_name(stock_metadata: Table) -> str:
+    _require_sector_column(stock_metadata)
+    return "provider_sector" if "provider_sector" in stock_metadata.c else "sector"
 
 
 def _require_market_cap_column(stock_metadata: Table) -> None:
@@ -108,15 +123,15 @@ def get_symbols_missing_sector(limit: int | None = None) -> list[str]:
         raise ValueError("limit doit être supérieur ou égal à 1.")
 
     stock_metadata = get_stock_metadata_table()
-    _require_sector_column(stock_metadata)
+    sector_column = _resolve_sector_storage_column(stock_metadata)
     stmt = (
         select(stock_metadata.c.symbol)
         .where(
             and_(
                 *build_eligible_stock_metadata_filters(stock_metadata),
                 or_(
-                    stock_metadata.c.sector.is_(None),
-                    func.trim(stock_metadata.c.sector) == "",
+                    sector_column.is_(None),
+                    func.trim(sector_column) == "",
                 ),
             )
         )
@@ -134,7 +149,7 @@ def get_symbols_missing_fundamentals(limit: int | None = None) -> list[str]:
         raise ValueError("limit doit être supérieur ou égal à 1.")
 
     stock_metadata = get_stock_metadata_table()
-    _require_sector_column(stock_metadata)
+    sector_column = _resolve_sector_storage_column(stock_metadata)
     _require_market_cap_column(stock_metadata)
     stmt = (
         select(stock_metadata.c.symbol)
@@ -142,8 +157,8 @@ def get_symbols_missing_fundamentals(limit: int | None = None) -> list[str]:
             and_(
                 *build_eligible_stock_metadata_filters(stock_metadata),
                 or_(
-                    stock_metadata.c.sector.is_(None),
-                    func.trim(stock_metadata.c.sector) == "",
+                    sector_column.is_(None),
+                    func.trim(sector_column) == "",
                     stock_metadata.c.market_cap.is_(None),
                 ),
             )
@@ -163,12 +178,12 @@ def get_stock_metadata_fundamentals_map(symbols: Iterable[str]) -> dict[str, dic
         return {}
 
     stock_metadata = get_stock_metadata_table()
-    _require_sector_column(stock_metadata)
+    sector_column = _resolve_sector_storage_column(stock_metadata)
     _require_market_cap_column(stock_metadata)
     stmt = (
         select(
             stock_metadata.c.symbol,
-            stock_metadata.c.sector,
+            sector_column.label("provider_sector"),
             stock_metadata.c.market_cap,
         )
         .where(stock_metadata.c.symbol.in_(normalized_symbols))
@@ -179,10 +194,15 @@ def get_stock_metadata_fundamentals_map(symbols: Iterable[str]) -> dict[str, dic
         rows = conn.execute(stmt).all()
 
     result: dict[str, dict[str, Any]] = {}
-    for symbol, sector, market_cap in rows:
+    for symbol, provider_sector, market_cap in rows:
         normalized_symbol = str(symbol).strip().upper()
-        normalized_sector = str(sector).strip() if sector is not None and str(sector).strip() else None
+        normalized_sector = (
+            str(provider_sector).strip()
+            if provider_sector is not None and str(provider_sector).strip()
+            else None
+        )
         result[normalized_symbol] = {
+            "provider_sector": normalized_sector,
             "sector": normalized_sector,
             "market_cap": None if market_cap is None else float(market_cap),
         }
@@ -268,30 +288,32 @@ def count_eligible_symbols_with_stale_market_cap(max_age_days: int) -> tuple[int
 
 
 def update_stock_metadata_sector(symbol: str, sector: str) -> int:
-    return update_stock_metadata_fundamentals(symbol, sector=sector)
+    return update_stock_metadata_fundamentals(symbol, provider_sector=sector)
 
 
 def update_stock_metadata_fundamentals(
     symbol: str,
     *,
+    provider_sector: str | None = None,
     sector: str | None = None,
     market_cap: float | None = None,
 ) -> int:
     normalized_symbol = (symbol or "").strip().upper()
     if not normalized_symbol:
         raise ValueError("symbol ne peut pas être vide.")
-    normalized_sector = (sector or "").strip() or None
+    sector_input = provider_sector if provider_sector is not None else sector
+    normalized_sector = (sector_input or "").strip() or None
     normalized_market_cap = None if market_cap is None else float(market_cap)
     if normalized_sector is None and normalized_market_cap is None:
-        raise ValueError("Au moins une valeur parmi sector ou market_cap doit être renseignée.")
+        raise ValueError("Au moins une valeur parmi provider_sector/sector ou market_cap doit être renseignée.")
 
     stock_metadata = get_stock_metadata_table()
     assignments: list[str] = []
     params: dict[str, object] = {"symbol": normalized_symbol}
     if normalized_sector is not None:
-        _require_sector_column(stock_metadata)
-        assignments.append("sector = :sector")
-        params["sector"] = normalized_sector
+        sector_column_name = _resolve_sector_storage_column_name(stock_metadata)
+        assignments.append(f"{sector_column_name} = :provider_sector")
+        params["provider_sector"] = normalized_sector
     if normalized_market_cap is not None:
         _require_market_cap_column(stock_metadata)
         assignments.append("market_cap = :market_cap")

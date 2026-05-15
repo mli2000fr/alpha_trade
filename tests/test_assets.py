@@ -14,18 +14,24 @@ class _FakeScalarResult:
 class _FakeExecuteResult:
     def __init__(self, values):
         self._values = values
+        self.rowcount = len(values) if hasattr(values, "__len__") else 1
 
     def scalars(self):
         return _FakeScalarResult(self._values)
+
+    def all(self):
+        return self._values
 
 
 class _FakeConnection:
     def __init__(self, values):
         self.values = values
         self.statement = None
+        self.params = None
 
-    def execute(self, statement):
+    def execute(self, statement, params=None):
         self.statement = statement
+        self.params = params
         return _FakeExecuteResult(self.values)
 
 
@@ -45,6 +51,9 @@ class _FakeEngine:
         self._connection = connection
 
     def connect(self):
+        return _FakeConnectContext(self._connection)
+
+    def begin(self):
         return _FakeConnectContext(self._connection)
 
 
@@ -103,6 +112,7 @@ def test_get_symbols_missing_sector_filters_active_tradable_and_bars_available(m
         Column("status", String(20)),
         Column("tradable", Boolean),
         Column("bars_available", Boolean),
+        Column("provider_sector", String(120)),
         Column("sector", String(50)),
     )
     fake_connection = _FakeConnection(["AAPL", "MSFT"])
@@ -117,8 +127,8 @@ def test_get_symbols_missing_sector_filters_active_tradable_and_bars_available(m
     assert "stock_metadata.status =" in statement_sql
     assert "stock_metadata.tradable is true" in statement_sql
     assert "stock_metadata.bars_available is true" in statement_sql
-    assert "stock_metadata.sector is null" in statement_sql
-    assert "trim(stock_metadata.sector) =" in statement_sql
+    assert "stock_metadata.provider_sector is null" in statement_sql
+    assert "trim(stock_metadata.provider_sector) =" in statement_sql
     assert "limit" in statement_sql
 
 
@@ -132,6 +142,7 @@ def test_get_symbols_missing_sector_includes_history_status_filter_when_column_e
         Column("tradable", Boolean),
         Column("bars_available", Boolean),
         Column("history_status", String(32)),
+        Column("provider_sector", String(120)),
         Column("sector", String(50)),
     )
     fake_connection = _FakeConnection(["AAPL"])
@@ -145,6 +156,30 @@ def test_get_symbols_missing_sector_includes_history_status_filter_when_column_e
     statement_sql = str(fake_connection.statement).lower()
     assert "history_status" in statement_sql
     assert "lower(trim(stock_metadata.history_status))" in statement_sql
+
+
+def test_get_symbols_missing_sector_falls_back_to_legacy_sector_column_when_provider_sector_is_absent(monkeypatch) -> None:
+    metadata = MetaData()
+    stock_metadata = Table(
+        "stock_metadata",
+        metadata,
+        Column("symbol", String(100), primary_key=True),
+        Column("status", String(20)),
+        Column("tradable", Boolean),
+        Column("bars_available", Boolean),
+        Column("sector", String(50)),
+    )
+    fake_connection = _FakeConnection(["AAPL"])
+
+    monkeypatch.setattr(assets, "get_stock_metadata_table", lambda: stock_metadata)
+    monkeypatch.setattr(assets, "get_sqlalchemy_engine", lambda: _FakeEngine(fake_connection))
+
+    symbols = assets.get_symbols_missing_sector()
+
+    assert symbols == ["AAPL"]
+    statement_sql = str(fake_connection.statement).lower()
+    assert "stock_metadata.sector is null" in statement_sql
+    assert "trim(stock_metadata.sector) =" in statement_sql
 
 
 def test_list_eligible_stock_symbols_uses_centralized_filters(monkeypatch) -> None:
@@ -246,5 +281,27 @@ def test_update_symbol_history_status_updates_history_status_and_bars_available(
     compiled = str(fake_session.statement)
     assert "history_status" in compiled
     assert "bars_available" in compiled
+
+
+def test_update_stock_metadata_fundamentals_updates_provider_sector_when_column_exists(monkeypatch) -> None:
+    metadata = MetaData()
+    stock_metadata = Table(
+        "stock_metadata",
+        metadata,
+        Column("symbol", String(100), primary_key=True),
+        Column("provider_sector", String(120)),
+        Column("sector", String(50)),
+        Column("market_cap", String(50)),
+    )
+    fake_connection = _FakeConnection([1])
+
+    monkeypatch.setattr(assets, "get_stock_metadata_table", lambda: stock_metadata)
+    monkeypatch.setattr(assets, "get_sqlalchemy_engine", lambda: _FakeEngine(fake_connection))
+
+    updated = assets.update_stock_metadata_fundamentals("aapl", provider_sector="Technology")
+
+    assert updated == 1
+    assert "provider_sector = :provider_sector" in str(fake_connection.statement)
+    assert fake_connection.params == {"symbol": "AAPL", "provider_sector": "Technology"}
 
 

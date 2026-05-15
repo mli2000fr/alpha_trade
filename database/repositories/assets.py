@@ -40,11 +40,15 @@ class AssetsRepository(Repository):
         self,
         symbol: str,
         *,
+        provider_sector: str | None = None,
         sector: str | None = None,
         market_cap: float | None = None,
     ) -> int:
         return _legacy.update_stock_metadata_fundamentals(
-            symbol, sector=sector, market_cap=market_cap
+            symbol,
+            provider_sector=provider_sector,
+            sector=sector,
+            market_cap=market_cap,
         )
 
     def insert_assets(self, assets: Iterable[Mapping[str, object]]) -> int:

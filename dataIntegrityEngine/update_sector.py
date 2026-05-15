@@ -60,7 +60,7 @@ get_symbols_missing_sector = get_symbols_missing_fundamentals
 
 
 def update_stock_metadata_sector(symbol: str, sector: str) -> int:
-	return update_stock_metadata_fundamentals(symbol, sector=sector)
+	return update_stock_metadata_fundamentals(symbol, provider_sector=sector)
 
 
 def _normalize_provider(provider: str) -> FundamentalsProvider:
@@ -137,19 +137,19 @@ def _build_update_payload(
 	stale_symbols: set[str],
 	overwrite_existing: bool,
 ) -> dict[str, Any]:
-	current_sector = _normalize_sector(existing_row.get("sector"))
+	current_sector = _normalize_sector(existing_row.get("provider_sector") or existing_row.get("sector"))
 	current_market_cap = existing_row.get("market_cap")
 	payload: dict[str, Any] = {"symbol": symbol}
 
 	if overwrite_existing:
 		if fetched_sector is not None:
-			payload["sector"] = fetched_sector
+			payload["provider_sector"] = fetched_sector
 		if fetched_market_cap is not None:
 			payload["market_cap"] = fetched_market_cap
 		return payload
 
 	if current_sector is None and fetched_sector is not None:
-		payload["sector"] = fetched_sector
+		payload["provider_sector"] = fetched_sector
 	if (current_market_cap is None or symbol in stale_symbols) and fetched_market_cap is not None:
 		payload["market_cap"] = fetched_market_cap
 	return payload
@@ -202,7 +202,7 @@ def update_missing_sectors(
 		total,
 		limit,
 	)
-	LOGGER.info("Debut mise a jour sector stock_metadata")
+	LOGGER.info("Debut mise a jour provider_sector stock_metadata")
 	if not symbols:
 		return summary
 
@@ -270,16 +270,16 @@ def update_missing_sectors(
 				else:
 					rowcount = update_stock_metadata_fundamentals(
 						symbol,
-						sector=payload.get("sector"),
+						provider_sector=payload.get("provider_sector"),
 						market_cap=payload.get("market_cap"),
 					)
 					if rowcount:
 						summary["updated"] += 1
 						LOGGER.info(
-							"Fondamentaux mis a jour | provider=%s symbol=%s sector=%s market_cap=%s progress=%s/%s updated=%s",
+							"Fondamentaux mis a jour | provider=%s symbol=%s provider_sector=%s market_cap=%s progress=%s/%s updated=%s",
 							effective_provider,
 							symbol,
-							payload.get("sector"),
+							payload.get("provider_sector"),
 							payload.get("market_cap"),
 							index,
 							total,
@@ -316,7 +316,7 @@ def update_missing_sectors(
 					summary["failed"],
 				)
 				LOGGER.info(
-					"Progression sector | current=%s/%s updated=%s skipped=%s failed=%s",
+					"Progression provider_sector | current=%s/%s updated=%s skipped=%s failed=%s",
 					index,
 					total,
 					summary["updated"],
@@ -336,19 +336,19 @@ def update_missing_sectors(
 		summary["skipped"],
 		summary["failed"],
 	)
-	LOGGER.info("Fin mise a jour sector stock_metadata")
+	LOGGER.info("Fin mise a jour provider_sector stock_metadata")
 	return summary
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-	parser = argparse.ArgumentParser(description="Met à jour stock_metadata.sector et market_cap depuis Yahoo Finance, EODHD ou Finnhub")
+	parser = argparse.ArgumentParser(description="Met à jour stock_metadata.provider_sector et market_cap depuis Yahoo Finance, EODHD ou Finnhub")
 	parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles à traiter")
 	parser.add_argument(
 		"--provider",
 		type=str,
 		choices=("yahoo_finance", "eodhd", "finnhub"),
 		default="yahoo_finance",
-		help="Source fundamentals utilisée pour sector et market_cap.",
+		help="Source fundamentals utilisée pour provider_sector et market_cap.",
 	)
 	parser.add_argument(
 		"--sleep-seconds",
@@ -375,7 +375,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 		"--overwrite-existing",
 		action="store_true",
 		default=False,
-		help="Écrase aussi les sector / market_cap déjà présents pour les symboles ciblés.",
+		help="Écrase aussi les provider_sector / market_cap déjà présents pour les symboles ciblés.",
 	)
 	return parser
 
