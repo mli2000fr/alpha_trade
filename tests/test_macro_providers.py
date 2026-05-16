@@ -158,3 +158,52 @@ def test_eodhd_default_short_vix_symbol_is_vix9d():
     assert p._symbols["vix_short"] == "VIX9D.INDX"
 
 
+# ---------------------------------------------------------------------------
+# Sprint S4 / A-019 — Stooq fonctionne sans clé API
+# ---------------------------------------------------------------------------
+
+
+def test_stooq_provider_works_without_api_key(monkeypatch):
+    """StooqMacroProvider doit retourner des données sans variable STOOQ_API_KEY (A-019).
+
+    Stooq est gratuit sans inscription ni clé. Ce test vérifie que le client
+    ne transmet PAS le paramètre 'apikey' quand la variable est absente, et
+    que le provider retourne les données mockées normalement.
+    """
+    import urllib.request
+
+    monkeypatch.delenv("STOOQ_API_KEY", raising=False)
+    monkeypatch.delenv("STOOQ_APIKEY", raising=False)
+
+    captured_urls: list[str] = []
+
+    class _FakeResponse:
+        def __init__(self, content: str) -> None:
+            self._content = content.encode("utf-8")
+
+        def read(self):
+            return self._content
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+    def fake_urlopen(req, timeout=10):
+        captured_urls.append(req.full_url)
+        csv_content = "Date,Open,High,Low,Close,Volume\n2025-04-15,17.0,18.5,16.5,22.5,0\n"
+        return _FakeResponse(csv_content)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    p = StooqMacroProvider()
+    result = p.get_vix_close(date(2025, 4, 15))
+
+    assert result == pytest.approx(22.5)
+    assert captured_urls, "Au moins une URL doit avoir été appelée"
+    assert "apikey" not in captured_urls[0], (
+        "Sans STOOQ_API_KEY, le paramètre 'apikey' ne doit PAS être transmis à Stooq (A-019)."
+    )
+
+

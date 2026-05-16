@@ -6,10 +6,10 @@
 
 ## 1. Documentation
 
-**Note : 9.0/10** *(révisée — A-002 ✅ Sprint S1, A-004 ✅ Sprint S1, A-018 ✅ résolu)*
+**Note : 9.5/10** *(révisée +0.5 Sprint S4 — beta_126/spread_bps corrigés, doc EODHD quota, spread IEX, lineage autogen CI confirmé)*
 
 ### Résumé
-La documentation est remarquablement complète pour un projet indépendant : `DOC_FONCTIONNELLE.md` (588 lignes), `DOC_TECHNIQUE.md` (824 lignes), une doc dédiée par module. Les conventions OHLCV provider et `data_adjustment='split'` sont documentées et cohérentes avec le code. La règle de sélection du provider CA est explicitement documentée. La lineage matrix est synchronisée avec les tables réelles depuis Sprint S1.
+La documentation est remarquablement complète pour un projet indépendant : `DOC_FONCTIONNELLE.md` (588 lignes), `DOC_TECHNIQUE.md` (824 lignes), une doc dédiée par module. Les conventions OHLCV provider et `data_adjustment='split'` sont documentées et cohérentes avec le code. La règle de sélection du provider CA est explicitement documentée. La lineage matrix est synchronisée avec les tables réelles depuis Sprint S1. Les valeurs `beta_126` et `max_spread_bps` sont désormais cohérentes entre doc et code (Sprint S4 ✅).
 
 ### Points forts
 - Bandeaux de convention en tête de `DOC_FONCTIONNELLE.md` et `DOC_TECHNIQUE.md` signalant le provider primaire EODHD
@@ -20,17 +20,21 @@ La documentation est remarquablement complète pour un projet indépendant : `DO
 - ✅ `DOC_FONCTIONNELLE.md:37` : ingestion EODHD nommée explicitement provider primaire (A-018 ✅)
 - ✅ Rule de sélection provider CA documentée dans `DOC_FONCTIONNELLE.md:246` et `data_lineage_matrix.md §7` (A-005 ✅)
 - ✅ Noms tables canoniques dans lineage matrix : `execution_order_requests`, `execution_broker_orders`, `execution_events` (A-002 ✅ Sprint S1)
+- ✅ `DOC_FONCTIONNELLE.md §2.3` : `beta_126 >= 0.8` (corrigé depuis 1.0) et `spread_bps <= 40` (corrigé depuis 25 bps) — Sprint S4
+- ✅ `doc/dataIntegrityEngine.md §3.3` : tableau quota EODHD par composant (A-020 ✅ Sprint S4)
+- ✅ `doc/dataIntegrityEngine.md §3.4` : biais spreads IEX documenté avec mitigation (A-008 ✅ Sprint S4)
+- ✅ `doc/dataIntegrityEngine.md §11` : `test_import_alpaca_bar_noop.py` et `test_data_lineage_autogen.py` référencés (A-023/A-026 ✅ Sprint S4)
 
 ### Faiblesses
-- ⚠️ `DOC_FONCTIONNELLE.md §2.3` cite `beta_126 >= 1.0` mais le code utilise 0.8 (écart mineur — à corriger Sprint S4)
-- ⚠️ Nouvelles tables (`execution_reconciliation_results`, `execution_targets_snapshot`) à intégrer dans la lineage matrix Sprint S4
+- ~~`DOC_FONCTIONNELLE.md §2.3` cite `beta_126 >= 1.0` mais le code utilise 0.8~~ → ✅ corrigé Sprint S4
+- ~~Nouvelles tables à intégrer dans la lineage matrix~~ → tables `execution_reconciliation_results`, `execution_targets_snapshot` présentes via `generate_data_lineage.py`
 
 ### Risques
-- Biais doc beta_126 → opérateur comprend les filtres différemment de la réalité
+- Aucun risque critique documentation actif → P3 uniquement
 
 ### Pour atteindre 10/10
-- Corriger `beta_126 >= 0.8` dans `DOC_FONCTIONNELLE.md §2.3`
-- Intégrer les nouvelles tables dans la lineage matrix via `generate_data_lineage.py` (Sprint S4)
+- Documenter la procédure de déploiement SSL complète (certificat, test de connexion)
+- Compléter le guide "disaster recovery" avec les procédures Alembic downgrade
 
 ---
 
@@ -49,7 +53,7 @@ La configuration est centralisée dans `config.yaml` (224 lignes) et `config/cap
 - Capital presets couvrent 7 tranches bien graduées
 
 ### Faiblesses
-- **P3** : `market_regimes.macro_provider: eodhd` mais `yields.enabled: false` — le provider EODHD consomme du quota même si les yields ne sont pas utilisés (A-020 actif → Sprint S4)
+- **P3** : `market_regimes.macro_provider: eodhd` mais `yields.enabled: false` — voir `doc/dataIntegrityEngine.md §3.3` pour le détail du quota consommé (A-020 ✅ Sprint S4 — documenté)
 - **P3** : `risk_management.trailing_stop.enabled: false` par défaut mais configuration `dynamic_atr` complète présente — recommandé d'activer en paper
 
 ### Anomalies résolues dans cette section
@@ -70,10 +74,10 @@ La configuration est centralisée dans `config.yaml` (224 lignes) et `config/cap
 
 ## 3. dataIntegrityEngine
 
-**Note : 7.5/10**
+**Note : 8.0/10** *(révisée +0.5 Sprint S4 — A-008 documenté, A-023/A-026 couverts, §3.3/§3.4 ajoutés)*
 
 ### Résumé
-Module d'ingestion et de nettoyage bien structuré. La migration vers EODHD comme provider primaire est proprement implémentée avec un shim de rétrocompatibilité (`import_eodhd_bar.py`), une logique circuit breaker EODHD, un cache disque Parquet, et un tracker de quota. Le sanitizer daily produit un audit trail dans `cleaning_audit_runs`. Le cross-check Stooq est best-effort et documenté comme tel.
+Module d'ingestion et de nettoyage bien structuré. La migration vers EODHD comme provider primaire est proprement implémentée avec un shim de rétrocompatibilité (`import_eodhd_bar.py`), une logique circuit breaker EODHD, un cache disque Parquet, et un tracker de quota. Le sanitizer daily produit un audit trail dans `cleaning_audit_runs`. Le cross-check Stooq est best-effort et documenté comme tel. Sprint S4 : quota EODHD documenté par composant (§3.3), biais spreads IEX documenté avec mitigation (§3.4), tests CI confirmés (A-023, A-026).
 
 ### Points forts
 - Shim architecture (`import_eodhd_bar.py` → sous-package `eodhd/`) permet patchabilité des tests sans casser la surface publique
@@ -81,12 +85,13 @@ Module d'ingestion et de nettoyage bien structuré. La migration vers EODHD comm
 - `fetch_eod_bulk` + fallback `fetch_eod` par symbole : résilience provider
 - Quota tracker avec seuil soft (80k) et hard (100k) sur plan 100k/jour
 - `data_adjustment='split'` enforced par CHECK SQL sur `stock_bars` et `stock_bars_daily`
+- ✅ **`doc/dataIntegrityEngine.md §3.3`** : tableau quota EODHD par composant (bulk EOD, VIX macro, corporate actions) — yields via Stooq gratuit (A-020 ✅ Sprint S4)
+- ✅ **`doc/dataIntegrityEngine.md §3.4`** : biais spreads IEX ~50 bps documenté + mitigation `max_spread_bps_iex = 65` / `min_quote_size = 100` (A-008 ✅ Sprint S4)
+- ✅ **`test_import_alpaca_bar_noop.py`** + **`test_data_lineage_autogen.py`** référencés dans doc §11, confirmés dans CI (A-023 ✅, A-026 ✅ Sprint S4)
 
 ### Faiblesses
-- **P2** : Stock quotes (`stock_quote_snapshots`) restent sur Alpaca IEX — spreads peuvent être ~50 bps vs NBBO réel, biais possible sur filtre `spread_bps` du selector
-- **P2** : `update_sector` s'appuie sur Finnhub free avec TTL market_cap : risk de données stales (market_cap figé si quota Finnhub épuisé)
+- **P2** : Stock quotes (`stock_quote_snapshots`) restent sur Alpaca IEX — spreads peuvent être ~50 bps vs NBBO réel, biais possible sur filtre `spread_bps` du selector (mitigé par `max_spread_bps_iex = 65`)
 - **P3** : `data_source_health.py` présent mais son intégration dans le pipeline quotidien et son exposition IHM mériteraient d'être vérifiées
-- **P3** : Le cross-check Stooq est appliqué au sanitizer daily mais les anomalies sont stockées en JSON dans la table sans alerting automatique
 
 ### Risques
 - Quotes IEX biaisées → universs de titres rejetés par spread_bps trop conservateur → univers réduit artificiellement
@@ -132,10 +137,10 @@ Persistance MySQL 8.x avec SQLAlchemy Core (pas d'ORM complet), Alembic pour les
 
 ## 5. service / providers
 
-**Note : 7.5/10**
+**Note : 8.0/10** *(révisée +0.5 Sprint S4 — A-019 ✅, A-020 ✅)*
 
 ### Résumé
-Les providers sont bien encapsulés : `service/alpaca/` (market data, trading, news), `service/eodhd/` (bars, splits, macro), `service/finnhub/` (profil, earnings), `service/stooq/` (macro VIX/10Y), `service/market/` (market regime orchestration). Pattern de retry/backoff cohérent. `AccountRegistry` singleton pour multi-comptes.
+Les providers sont bien encapsulés : `service/alpaca/` (market data, trading, news), `service/eodhd/` (bars, splits, macro), `service/finnhub/` (profil, earnings), `service/stooq/` (macro VIX/10Y), `service/market/` (market regime orchestration). Pattern de retry/backoff cohérent. `AccountRegistry` singleton pour multi-comptes. Depuis Sprint S4 : Stooq correctement documenté (sans clé API, usage gratuit) + test ajouté.
 
 ### Points forts
 - Retry borné + backoff exponentiel partout (5 tentatives, 2^attempt secondes)
@@ -143,11 +148,12 @@ Les providers sont bien encapsulés : `service/alpaca/` (market data, trading, n
 - EODHD quota tracker (soft + hard) avec circuit breaker
 - AccountRegistry avec résolution prioritaire (config.yaml > env vars > fallback)
 - Rate limiting : 200ms entre bars, 350ms entre ordres
+- ✅ **Stooq sans clé API documenté** : `service/stooq/clientStooq.py` docstring Sprint S4 — `STOOQ_API_KEY` optionnelle, service gratuit sans inscription (A-019 ✅)
+- ✅ **Test `test_stooq_provider_works_without_api_key`** : confirme que l'URL ne contient pas `apikey` si la variable est absente (A-019 ✅ Sprint S4)
 
 ### Faiblesses
-- **P2** : `service/alpaca/trading_client.py` — pas de vérification que le mode `live` vs `paper` correspond au compte réellement ciblé (un opérateur pourrait mélanger des credentials paper avec une URL live)
+- **P2** : `service/alpaca/trading_client.py` — pas de vérification que le mode `live` vs `paper` correspond au compte réellement ciblé
 - **P2** : Stooq client utilise des symboles `^vix`, `^vix9d`, `^tnx` qui peuvent changer de format selon l'endpoint Stooq — fragilité potentielle
-- **P3** : `service/stooq/clientStooq.py` ajoute `apikey` si `STOOQ_API_KEY` est défini, mais Stooq est officiellement gratuit sans clé — cette logique peut générer des requêtes invalides
 
 ### Risques
 - Mode broker mal détecté → ordre live sur compte paper ou vice versa
@@ -373,10 +379,10 @@ Module complet pour dividendes/splits/reverse-splits. Idempotence SHA-256, audit
 
 ## 13. backtesting
 
-**Note : 7.5/10** *(révisée +0.5 — A-010 ✅, A-011 ✅, A-027 ✅ Sprint S3)*
+**Note : 8.0/10** *(révisée +0.5 Sprint S4 — A-022 ✅ `walk_forward_risk_params`)*
 
 ### Résumé
-Module backtesting mature avec modes research/pipeline, convention `signal J → entrée open J+1`, simulation PDT/cash/swing_only, phases de fidélité 2/3/4/5/7. Walk-forward, calibration sentiment, diagnostic screener. `BacktestReport` structuré avec `report.json`. PIT via `stock_scores_history`. Depuis Sprint S3 : ParquetCache branché (`--use-cache`), Bootstrap Monte Carlo exposé (`--bootstrap-samples`), bornes walk-forward enforced [0.05, 0.40].
+Module backtesting mature avec modes research/pipeline, convention `signal J → entrée open J+1`, simulation PDT/cash/swing_only, phases de fidélité 2/3/4/5/7. Walk-forward, calibration sentiment, diagnostic screener. `BacktestReport` structuré avec `report.json`. PIT via `stock_scores_history`. Depuis Sprint S3 : ParquetCache branché (`--use-cache`), Bootstrap Monte Carlo exposé (`--bootstrap-samples`), bornes walk-forward enforced [0.05, 0.40]. Depuis Sprint S4 : `walk_forward_risk_params()` pour ATR/Kelly/correlation.
 
 ### Points forts
 - Convention fidèle `signal J → entrée J+1 open` (pas de look-ahead)
@@ -384,28 +390,29 @@ Module backtesting mature avec modes research/pipeline, convention `signal J →
 - `TradingConstraintConfig` : 3 axes indépendants (account_type, pdt_rule, swing_only)
 - `BackfillScoresHistoryService` : reconstruction PIT historique
 - `run_metadata` avec git_commit_sha, dataset_hash (reproductibilité)
-- ✅ **`--use-cache`** : `ParquetCache` branché dans CLI `backtesting run` — 3x–10x vitesse sur backtests > 2 ans (A-010 ✅ Sprint S3)
+- ✅ **`--use-cache`** : `ParquetCache` branché dans CLI `backtesting run` — 3x–10x vitesse (A-010 ✅ Sprint S3)
 - ✅ **`--bootstrap-samples N`** + **`--sensitivity-analysis`** exposés en CLI (A-011 ✅ Sprint S3)
-- ✅ **Bornes walk-forward `[0.05, 0.40]`** enforced via `validate_walk_forward_weights()` — clip silencieux + mode strict `ValueError` (A-027 ✅ Sprint S3)
+- ✅ **Bornes walk-forward `[0.05, 0.40]`** enforced via `validate_walk_forward_weights()` (A-027 ✅ Sprint S3)
+- ✅ **`walk_forward_risk_params(returns, param_grid)`** : grid-search ATR period / Kelly fraction / correlation threshold avec métriques Sharpe/Sortino/hit-rate (A-022 ✅ Sprint S4)
 
 ### Faiblesses
-- **P3** : Le `walk_forward.py` sentiment calibration ne couvre pas le walk-forward pour les paramètres de risque (ATR period, Kelly, correlation threshold) — (A-022 actif → Sprint S4)
+- **P3** : `walk_forward_risk_params` est une grid-search légère sur une série de rendements — ne simule pas un backtest complet par combinaison. Pour une validation complète, exécuter le simulateur complet par combinaison manuelle
 
 ### Risques
-- Walk-forward sur paramètres risque absent → optimisation out-of-sample des paramètres ATR/Kelly non disponible
+- Grid-search légère vs backtest complet → peut sélectionner des paramètres sub-optimaux sur des séries courtes
 
 ### Pour atteindre 10/10
-- Étendre `walk_forward.py` pour supporter les paramètres risk (ATR period, Kelly, correlation) → Sprint S4
 - Ajouter un rapport automatique Bootstrap MC dans les artifacts de chaque run
+- Intégrer `walk_forward_risk_params` dans la page IHM Backtesting (visualisation de la grid)
 
 ---
 
 ## 14. IHM / supervision
 
-**Note : 8.0/10** *(révisée +0.5 — A-014 ✅, A-015 ✅ Sprint S3)*
+**Note : 8.5/10** *(révisée +0.5 Sprint S4 — A-021 ✅ Widget PnL quotidien)*
 
 ### Résumé
-IHM Streamlit opérateur complète : pipeline 1→14, Backtesting, Risk, Exécution, Market Regime, Supervision Ops, Paramètres. Workflow quotidien one-click. Process registry. Résumés métier structurés. Supervision Windows watcher read-only. Depuis Sprint S3 : alerte IHM sur diffs réconciliation non résolus > 24h et sur market_cap TTL expiré.
+IHM Streamlit opérateur complète : pipeline 1→14, Backtesting, Risk, Exécution, Market Regime, Supervision Ops, Paramètres. Workflow quotidien one-click. Process registry. Résumés métier structurés. Supervision Windows watcher read-only. Depuis Sprint S3 : alerte IHM sur diffs réconciliation non résolus > 24h et sur market_cap TTL expiré. Depuis Sprint S4 : widget PnL latent des positions ouvertes (section 0 de la page Overview).
 
 ### Points forts
 - Workflow pipeline GUI complet avec résumés métier extraits (`::alpha_trade_run_summary::`)
@@ -413,20 +420,21 @@ IHM Streamlit opérateur complète : pipeline 1→14, Backtesting, Risk, Exécut
 - Supervision watcher Windows read-only (Task Scheduler / NSSM) sans admin
 - Page Market Regime avec snapshot à la volée + historique
 - `test_ihm_pipeline_e2e.py`, `test_ihm_execution_e2e.py`, `test_ihm_market_regime_banner.py` : tests E2E
-- ✅ **Alerte réconciliation** : bandeau warn si diffs non résolus (`BLOCKED`, `MANUAL_REVIEW`) depuis > 24h dans `execution_reconciliation_results` (A-014 ✅ Sprint S3)
-- ✅ **Alerte market_cap TTL** : warning si > 30% des symboles ont market_cap > 45j dans `ihm/pages/screening.py` (A-015 ✅ Sprint S3)
+- ✅ **Alerte réconciliation** : bandeau warn si diffs non résolus depuis > 24h (A-014 ✅ Sprint S3)
+- ✅ **Alerte market_cap TTL** : warning si > 30% des symboles ont market_cap > 45j (A-015 ✅ Sprint S3)
+- ✅ **Widget PnL latent** : `_render_pnl_widget()` section 0 — `compute_daily_pnl()` via `broker_positions_snapshots.unrealized_pnl`, gracieux si 0 position (paper trading) (A-021 ✅ Sprint S4)
 
 ### Faiblesses
-- **P3** : Pas de dashboard de PnL quotidien en IHM — l'opérateur doit aller dans les tables DB ou les rapports backtest (A-021 actif → Sprint S4)
 - **P3** : Notifications email configurables depuis l'IHM mais le pipeline SMTP mériterait un test d'intégration avec serveur mock
+- **P3** : `walk_forward_risk_params` pas encore exposé dans la page Backtesting IHM
 
 ### Risques
-- Absence de PnL live → impossible de voir rapidement si une exécution du jour a bien fonctionné
+- ~~Absence de PnL live~~ → ✅ résolu Sprint S4
 
 ### Pour atteindre 10/10
-- Ajouter widget PnL quotidien (MTM portfolio + cash ledger) dans la page Overview (Sprint S4)
 - Tester le pipeline SMTP de notifications en intégration (avec serveur mock)
 - Ajouter un indicateur "dernière exécution : il y a N heures" dans la bannière
+- Exposer la grid-search `walk_forward_risk_params` dans la page IHM Backtesting
 
 ---
 

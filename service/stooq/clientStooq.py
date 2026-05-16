@@ -9,6 +9,19 @@ ne pas casser le pipeline principal.
 Format de retour aligné sur :class:`core.interfaces.MarketDataPort.fetch_bars`
 (``list[dict]`` avec clés ``date``, ``open``, ``high``, ``low``, ``close``,
 ``volume``).
+
+.. note:: **Clé API Stooq (Sprint S4 / A-019)**
+
+    Stooq est un service **entièrement gratuit sans inscription ni clé API**.
+    La variable d'environnement ``STOOQ_API_KEY`` (ou ``STOOQ_APIKEY``) est
+    optionnelle et n'est **pas requise** pour l'usage standard (cross-check
+    VIX / ^TNX). Elle est transmise comme paramètre ``apikey`` uniquement si
+    elle est définie et non vide.
+
+    **Attention** : si une valeur invalide est renseignée (ex. token expiré
+    d'un ancien abonnement), Stooq répond « get your apikey » et le client
+    retourne ``[]`` avec un log WARNING. Ne pas définir la variable est la
+    configuration recommandée.
 """
 from __future__ import annotations
 

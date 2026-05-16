@@ -1122,7 +1122,9 @@ python -m pytest tests/test_ihm_pipeline_runner.py tests/test_pages_overview.py 
 - sync audit vers `stock_scores` ;
 - enrichissement fondamentaux Finnhub ;
 - émission des `run_summary` structurés sur les principales entrées CLI Data Integrity ;
-- exposition IHM des commandes/options backend pour `import_alpaca_assets`, `update_sector`, `sync_latest_quotes` et `sync_earnings_calendar`.
+- exposition IHM des commandes/options backend pour `import_alpaca_assets`, `update_sector`, `sync_latest_quotes` et `sync_earnings_calendar` ;
+- **no-op contrôlé** (`test_import_alpaca_bar_noop.py`, Sprint S2 / A-026) — quand `market_data.bars_provider != 'alpaca'`, `import_alpaca_bar.main` émet un WARNING + `run_summary{skipped_reason='wrong_provider'}` et retourne 0 sans appel Alpaca ;
+- **lineage autogénéré** (`test_data_lineage_autogen.py`, Sprint S4 / A-023) — valide que toutes les tables critiques (dont `execution_reconciliation_results`, `execution_targets_snapshot`) sont couvertes par `scripts/generate_data_lineage.py`.
 
 ### Ce qu’ils couvrent moins
 

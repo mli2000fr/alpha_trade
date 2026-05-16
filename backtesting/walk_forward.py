@@ -4,6 +4,10 @@ Sprint S3 / A-027 : ``validate_walk_forward_weights`` ajoute des bornes business
 ([0.05, 0.40] par défaut) sur les poids sentiment/macro/quant et **clip** les
 valeurs hors bornes avec un log WARNING plutôt qu'un assert fatal, afin de ne
 pas bloquer un run opérationnel.
+
+Sprint S4 / A-022 : ``walk_forward_risk_params`` étend le walk-forward aux
+paramètres risk (ATR, Kelly, ``correlation_threshold``) via une grid-search
+légère sur une série de rendements daily.
 """
 from __future__ import annotations
 
@@ -178,6 +182,142 @@ def resolve_latest_walk_forward_weights(search_roots: Iterable[Path] | None = No
         return None
     # Sprint S3 / A-027 — applique les bornes business (clippage + warning).
     return validate_walk_forward_weights(loaded)
+
+
+# ---------------------------------------------------------------------------
+# Sprint S4 / A-022 — Walk-forward sur paramètres risk
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RiskParamResult:
+    """Résultat d'un run walk-forward sur les paramètres risk.
+
+    Attributes:
+        best_params: dict des meilleurs paramètres (ex. ``{"atr_period": 14,
+            "correlation_threshold": 0.80}``).
+        best_score: score associé (ex. Sharpe ratio moyen out-of-sample).
+        metric_name: nom de la métrique utilisée pour l'optimisation.
+        param_grid: grille initiale passée à la fonction.
+        n_evaluated: nombre de combinaisons évaluées.
+    """
+
+    best_params: dict[str, Any]
+    best_score: float
+    metric_name: str
+    param_grid: dict[str, list[Any]]
+    n_evaluated: int
+
+
+def walk_forward_risk_params(
+    returns_series: "pd.Series[float]",
+    param_grid: dict[str, list[Any]],
+    *,
+    metric_name: str = "sharpe",
+    min_observations: int = 20,
+) -> RiskParamResult:
+    """Walk-forward grid-search sur les paramètres risk (Sprint S4 / A-022).
+
+    Évalue toutes les combinaisons de ``param_grid`` sur ``returns_series``
+    et retourne la combinaison maximisant ``metric_name``.
+
+    Cette implémentation est intentionnellement **légère** (pure Python /
+    NumPy) : elle n'exécute pas un backtest complet mais calcule des métriques
+    agrégées (Sharpe, Sortino, hit-rate) directement sur la série de
+    rendements fournie, paramétrée via les clés supportées :
+
+    - ``atr_period`` (int) : utilisé pour calculer une fenêtre glissante de
+      vol réalisée sur ``returns_series`` (proxy ATR).
+    - ``kelly_fraction`` (float) : fraction Kelly maximale (contrôle le
+      niveau de levier implicite dans le Sharpe half-Kelly).
+    - ``correlation_threshold`` (float) : seuil de corrélation appliqué comme
+      multiplicateur de diversification sur le Sharpe (proxy).
+
+    Pour chaque combinaison, un score scalaire est produit et la meilleure
+    combinaison est retournée.
+
+    Args:
+        returns_series: Série de rendements daily (float, index quelconque).
+        param_grid: Grille de paramètres, ex. ``{"atr_period": [14, 20],
+            "correlation_threshold": [0.75, 0.80, 0.85]}``.
+        metric_name: Métrique d'optimisation : ``"sharpe"`` (défaut),
+            ``"sortino"``, ``"hit_rate"``.
+        min_observations: Nombre minimum de rendements non-nuls requis.
+
+    Returns:
+        :class:`RiskParamResult` avec la meilleure combinaison.
+
+    Raises:
+        ValueError: Si ``returns_series`` a moins de ``min_observations``
+            valeurs non-nulles ou si ``metric_name`` est inconnu.
+    """
+    import itertools
+
+    import numpy as np
+
+    supported_metrics = ("sharpe", "sortino", "hit_rate")
+    if metric_name not in supported_metrics:
+        raise ValueError(
+            f"metric_name '{metric_name}' non supporté. Valeurs acceptées : {supported_metrics}"
+        )
+
+    rets = pd.to_numeric(pd.Series(returns_series), errors="coerce").dropna()
+    if len(rets) < min_observations:
+        raise ValueError(
+            f"walk_forward_risk_params requiert au moins {min_observations} observations non-nulles "
+            f"(reçu {len(rets)})."
+        )
+
+    arr = rets.to_numpy(dtype=float)
+
+    def _score(params: dict[str, Any]) -> float:
+        atr_period = int(params.get("atr_period", 14))
+        kelly_fraction = float(params.get("kelly_fraction", 0.25))
+        corr_threshold = float(params.get("correlation_threshold", 0.80))
+
+        # Proxy ATR : écart-type rolling fenêtré
+        window = min(atr_period, len(arr))
+        vol_rolling = np.array([np.std(arr[max(0, i - window):i + 1]) for i in range(len(arr))])
+        vol_rolling = np.where(vol_rolling == 0, 1e-8, vol_rolling)
+
+        # Normalisation Kelly : applique un plafond implicite sur les rendements
+        kelly_adj = np.clip(arr / vol_rolling, -kelly_fraction, kelly_fraction)
+
+        # Diversification proxy : amplitude réduite en zone corrélée
+        diversity_mult = 1.0 - max(0.0, corr_threshold - 0.5) * 0.5
+
+        if metric_name == "sharpe":
+            mu = np.mean(kelly_adj)
+            sigma = np.std(kelly_adj)
+            return float((mu / sigma) * diversity_mult) if sigma > 1e-8 else 0.0
+        if metric_name == "sortino":
+            mu = np.mean(kelly_adj)
+            downside = np.std(kelly_adj[kelly_adj < 0])
+            return float((mu / downside) * diversity_mult) if downside > 1e-8 else 0.0
+        # hit_rate
+        return float(np.mean(kelly_adj > 0) * diversity_mult)
+
+    keys = list(param_grid.keys())
+    values_product = list(itertools.product(*[param_grid[k] for k in keys]))
+    if not values_product:
+        raise ValueError("param_grid est vide ou ne contient aucune valeur.")
+
+    best_score = float("-inf")
+    best_params: dict[str, Any] = {}
+    for combo in values_product:
+        params = dict(zip(keys, combo))
+        s = _score(params)
+        if s > best_score:
+            best_score = s
+            best_params = params
+
+    return RiskParamResult(
+        best_params=best_params,
+        best_score=best_score,
+        metric_name=metric_name,
+        param_grid=param_grid,
+        n_evaluated=len(values_product),
+    )
 
 
 def apply_walk_forward_weights(scores_df: pd.DataFrame, weights: WalkForwardWeights | None) -> pd.DataFrame:

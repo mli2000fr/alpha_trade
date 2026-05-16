@@ -1,6 +1,7 @@
 """Tests Phase 7.2 — calibration empirique poids (audit_global §7.2).
 
 Sprint S3 / A-027 : bornes business [0.05, 0.40] sur poids walk-forward calibrés.
+Sprint S4 / A-022 : walk_forward_risk_params — grid-search sur paramètres risk.
 """
 from __future__ import annotations
 
@@ -147,4 +148,83 @@ def test_validate_walk_forward_weights_preserves_metadata() -> None:
     validated = validate_walk_forward_weights(w, strict=False)
     assert validated.calibration_run_id == "wf-99"
     assert validated.calibration_source == "test"
+
+
+# ---------------------------------------------------------------------------
+# Sprint S4 / A-022 — walk_forward_risk_params
+# ---------------------------------------------------------------------------
+
+
+def test_walk_forward_risk_params_returns_best_combo_sharpe() -> None:
+    """walk_forward_risk_params doit retourner le meilleur combo sur un dataset test."""
+    from backtesting.walk_forward import walk_forward_risk_params, RiskParamResult
+
+    rng = np.random.default_rng(42)
+    returns = rng.normal(0.001, 0.02, 60)
+    param_grid = {
+        "atr_period": [14, 20],
+        "correlation_threshold": [0.75, 0.80, 0.85],
+    }
+    result = walk_forward_risk_params(returns, param_grid, metric_name="sharpe")
+
+    assert isinstance(result, RiskParamResult)
+    assert result.metric_name == "sharpe"
+    assert "atr_period" in result.best_params
+    assert "correlation_threshold" in result.best_params
+    assert result.best_params["atr_period"] in [14, 20]
+    assert result.best_params["correlation_threshold"] in [0.75, 0.80, 0.85]
+    assert result.n_evaluated == 6  # 2 × 3
+    assert result.best_score > float("-inf")
+
+
+def test_walk_forward_risk_params_sortino_metric() -> None:
+    """Fonctionne avec metric_name='sortino'."""
+    from backtesting.walk_forward import walk_forward_risk_params
+
+    rng = np.random.default_rng(7)
+    returns = rng.normal(0.0005, 0.015, 50)
+    result = walk_forward_risk_params(
+        returns,
+        {"atr_period": [10, 14], "kelly_fraction": [0.20, 0.25]},
+        metric_name="sortino",
+    )
+    assert result.metric_name == "sortino"
+    assert result.n_evaluated == 4
+
+
+def test_walk_forward_risk_params_hit_rate_metric() -> None:
+    """Fonctionne avec metric_name='hit_rate'."""
+    from backtesting.walk_forward import walk_forward_risk_params
+
+    rng = np.random.default_rng(3)
+    returns = rng.normal(0.001, 0.02, 40)
+    result = walk_forward_risk_params(
+        returns,
+        {"correlation_threshold": [0.70, 0.80]},
+        metric_name="hit_rate",
+    )
+    assert 0.0 <= result.best_score <= 1.0
+
+
+def test_walk_forward_risk_params_raises_on_unknown_metric() -> None:
+    """Doit lever ValueError sur metric_name inconnu."""
+    from backtesting.walk_forward import walk_forward_risk_params
+
+    rng = np.random.default_rng(0)
+    returns = rng.normal(0.001, 0.02, 30)
+    with pytest.raises(ValueError, match="metric_name"):
+        walk_forward_risk_params(returns, {"atr_period": [14]}, metric_name="unknown")
+
+
+def test_walk_forward_risk_params_raises_on_too_few_observations() -> None:
+    """Doit lever ValueError si moins de min_observations rendements valides."""
+    from backtesting.walk_forward import walk_forward_risk_params
+
+    with pytest.raises(ValueError, match="observations"):
+        walk_forward_risk_params(
+            [0.01, 0.02, 0.03],
+            {"atr_period": [14]},
+            min_observations=20,
+        )
+
 

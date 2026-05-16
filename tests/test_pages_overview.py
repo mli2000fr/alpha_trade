@@ -4,6 +4,55 @@ def test_pages_overview_importable():
     assert hasattr(overview, "__doc__")
 
 
+# ---------------------------------------------------------------------------
+# Sprint S4 / A-021 — compute_daily_pnl
+# ---------------------------------------------------------------------------
+
+
+def test_compute_daily_pnl_with_positions() -> None:
+    """compute_daily_pnl retourne le PnL et le % depuis les données broker."""
+    pnl_data = {
+        "unrealized_pnl": 500.0,
+        "total_market_value": 10_500.0,
+        "open_positions": 3,
+        "available": True,
+        "snapshot_at": "2026-05-16 18:00:00",
+    }
+    pnl, pct = overview.compute_daily_pnl(pnl_data)
+    assert pnl == 500.0
+    # cost_basis = 10_500 - 500 = 10_000 → pnl_pct = 500/10_000 = 0.05
+    assert abs(pct - 0.05) < 1e-6
+
+
+def test_compute_daily_pnl_zero_positions() -> None:
+    """compute_daily_pnl retourne (0.0, 0.0) quand aucune position (paper trading)."""
+    pnl_data = {
+        "unrealized_pnl": 0.0,
+        "total_market_value": 0.0,
+        "open_positions": 0,
+        "available": False,
+        "snapshot_at": None,
+    }
+    pnl, pct = overview.compute_daily_pnl(pnl_data)
+    assert pnl == 0.0
+    assert pct == 0.0
+
+
+def test_compute_daily_pnl_negative_pnl() -> None:
+    """compute_daily_pnl gère le PnL négatif correctement."""
+    pnl_data = {
+        "unrealized_pnl": -200.0,
+        "total_market_value": 9_800.0,
+        "open_positions": 2,
+        "available": True,
+        "snapshot_at": None,
+    }
+    pnl, pct = overview.compute_daily_pnl(pnl_data)
+    assert pnl == -200.0
+    # cost_basis = 9_800 - (-200) = 10_000 → pnl_pct = -200/10_000 = -0.02
+    assert abs(pct - (-0.02)) < 1e-6
+
+
 def test_build_pipeline_summary_rows_exposes_latest_workflow_and_upstream_runs() -> None:
     runs = [
         {

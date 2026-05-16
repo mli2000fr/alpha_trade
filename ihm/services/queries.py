@@ -1305,3 +1305,56 @@ def get_stale_market_cap_stats(*, cutoff_days: int = 45) -> dict[str, int | floa
         "stale_pct": round((stale_count / total) * 100.0, 1) if total > 0 else 0.0,
         "cutoff_days": cutoff_days,
     }
+
+
+# ---------------------------------------------------------------------------
+# Sprint S4 / A-021 — PnL quotidien pour la page Overview
+# ---------------------------------------------------------------------------
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_daily_pnl_data() -> dict[str, object]:
+    """Retourne les données de PnL brut depuis le dernier snapshot de positions.
+
+    Utilise ``broker_positions_snapshots.unrealized_pnl`` (alimentation Alpaca)
+    et les dividendes de ``portfolio_cash_ledger`` pour produire un PnL *day*
+    approximatif sans tables supplémentaires.
+
+    Returns:
+        dict avec les clés :
+        - ``unrealized_pnl`` : float — PnL latent total des positions ouvertes
+        - ``total_market_value`` : float — valeur de marché totale
+        - ``open_positions`` : int — nombre de positions ouvertes
+        - ``available`` : bool — False si les tables sont absentes ou vides
+        - ``snapshot_at`` : str | None — timestamp du dernier snapshot
+    """
+    positions_df = safe_query("""
+        SELECT bps.unrealized_pnl, bps.market_value, bps.created_at
+        FROM broker_positions_snapshots bps
+        INNER JOIN (
+            SELECT MAX(created_at) AS mx FROM broker_positions_snapshots
+        ) t ON bps.created_at = t.mx
+    """)
+    if positions_df.empty:
+        return {
+            "unrealized_pnl": 0.0,
+            "total_market_value": 0.0,
+            "open_positions": 0,
+            "available": False,
+            "snapshot_at": None,
+        }
+    unrealized_pnl = float(
+        pd.to_numeric(positions_df.get("unrealized_pnl"), errors="coerce").fillna(0.0).sum()
+    )
+    total_market_value = float(
+        pd.to_numeric(positions_df.get("market_value"), errors="coerce").fillna(0.0).sum()
+    )
+    snapshot_at = str(positions_df["created_at"].iloc[0]) if "created_at" in positions_df.columns else None
+    return {
+        "unrealized_pnl": unrealized_pnl,
+        "total_market_value": total_market_value,
+        "open_positions": len(positions_df),
+        "available": True,
+        "snapshot_at": snapshot_at,
+    }
+

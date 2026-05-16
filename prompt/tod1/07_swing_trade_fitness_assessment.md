@@ -6,9 +6,9 @@
 
 ## 1. Évaluation globale de l'adéquation swing trade
 
-**Score fitness swing trade : 7.5/10** *(+0.5 post-Sprint S3 : alerting opérationnel, backtesting plus rapide et robuste)*
+**Score fitness swing trade : 8.0/10** *(+0.5 post-Sprint S4 : widget PnL quotidien IHM opérationnel, walk-forward risk params disponible)*
 
-L'application est conçue explicitement pour le swing trading US (NYSE/NASDAQ), horizon de quelques jours à quelques semaines, positions long uniquement. Elle couvre les contraintes critiques du style : PDT rule, cash/margin, swing_only, exécution end-of-day. L'alerting email automatique sur circuit_breaker est opérationnel depuis Sprint S3, ce qui améliore la surveillance en production réelle.
+L'application est conçue explicitement pour le swing trading US (NYSE/NASDAQ), horizon de quelques jours à quelques semaines, positions long uniquement. Elle couvre les contraintes critiques du style : PDT rule, cash/margin, swing_only, exécution end-of-day. L'alerting email automatique sur circuit_breaker est opérationnel depuis Sprint S3, ce qui améliore la surveillance en production réelle. Depuis Sprint S4, le PnL latent des positions ouvertes est visible directement dans la page Overview de l'IHM (A-021 ✅).
 
 ---
 
@@ -41,6 +41,7 @@ L'application est conçue explicitement pour le swing trading US (NYSE/NASDAQ), 
 - Walk-forward hors échantillon avec bornes business enforced [0.05, 0.40] ✅ Sprint S3
 - **ParquetCache** opérationnel (`--use-cache`) : backtests > 2 ans 3x–10x plus rapides ✅ Sprint S3
 - **Bootstrap Monte Carlo** accessible (`--bootstrap-samples 1000`) ✅ Sprint S3
+- **Walk-forward paramètres risk** : `walk_forward_risk_params()` — grid-search ATR/Kelly/correlation ✅ Sprint S4
 
 ---
 
@@ -58,11 +59,13 @@ Le pipeline est entièrement end-of-day. Sur un swing trade Minervini, l'entrée
 **b) Pas de short selling**  
 Le swing trade est naturellement long-only sur bull market, mais en rotation sectorielle ou en régime baissier, les shorts permettent de bénéficier des rotations. L'application est 100% long.
 
+
 **c) Pas de streaming de prix en temps réel**  
 Le polling (2s) pour les fills est correct pour des ordres quotidiens mais ne permet pas de gérer des ajustements intrajournaliers des stops. Le watcher post-exécution pallie partiellement ce manque.
 
-**d) Pas de PnL quotidien dans l'IHM** (A-021 actif → Sprint S4)  
-L'opérateur doit consulter les tables DB manuellement pour consulter le P&L du jour.
+**d) ~~Pas de PnL quotidien dans l'IHM~~** (A-021 **✅ RÉSOLU Sprint S4**)  
+~~L'opérateur doit consulter les tables DB manuellement pour consulter le P&L du jour.~~  
+Le widget PnL latent (section 0 de la page Overview) affiche `broker_positions_snapshots.unrealized_pnl` agrégé. Gracieux en l'absence de positions (paper trading).
 
 ### 3.2 Limites spécifiques aux petits comptes swing
 
@@ -117,6 +120,7 @@ Le modèle finbert a un léger biais positif sur les articles de presse d'entrep
 
 Le pipeline a de nombreux paramètres configurables (40+ par preset). Le risque de "curve fitting" sur les presets via backtest est réel. Pour mitiger :
 - Utiliser le walk-forward sentiment calibration déjà implémenté avec bornes enforced [0.05, 0.40] ✅ Sprint S3
+- **Utiliser `walk_forward_risk_params()` pour optimiser ATR/Kelly/correlation hors échantillon** ✅ Sprint S4
 - Valider chaque preset sur une période hors échantillon de 6+ mois
 - Utiliser le Bootstrap Monte Carlo (`--bootstrap-samples 1000`) pour quantifier la robustesse statistique ✅ Sprint S3
 - Ne pas modifier trop fréquemment les paramètres entre les runs
@@ -131,8 +135,10 @@ Le pipeline a de nombreux paramètres configurables (40+ par preset). Le risque 
 2. ✅ Lancer le pipeline après 18h00 EST (bulk EOD fiable)
 3. ✅ Exécuter toutes les 14 étapes dans l'ordre strict
 4. ✅ Surveiller régulièrement l'IHM pour détecter les alertes (+ alerting email automatique actif ✅ S3)
-5. ✅ Activer le trailing stop ATR avant de passer live
-6. ✅ Effectuer un backfill PIT complet avant tout backtest sérieux
-7. ✅ Valider la calibration sentiment au moins tous les trimestres
-8. ✅ Utiliser `--bootstrap-samples` pour valider la robustesse statistique avant tout changement de preset
-9. ⚠️ Le micro-compte preset est désormais cohérent (max_positions=3 ✅ S1) mais reste fragile sur l'univers
+5. ✅ Visualiser le PnL latent en temps réel depuis la page Overview ✅ S4
+6. ✅ Activer le trailing stop ATR avant de passer live
+7. ✅ Effectuer un backfill PIT complet avant tout backtest sérieux
+8. ✅ Valider la calibration sentiment au moins tous les trimestres
+9. ✅ Utiliser `--bootstrap-samples` pour valider la robustesse statistique avant tout changement de preset
+10. ✅ Utiliser `walk_forward_risk_params()` pour optimiser ATR/Kelly/correlation avant live ✅ S4
+11. ⚠️ Le micro-compte preset est désormais cohérent (max_positions=3 ✅ S1) mais reste fragile sur l'univers

@@ -31,6 +31,7 @@ from ihm.services.db import db_available, get_last_query_error
 from ihm.services.queries import (
     get_alpha_scanner_dependency_diagnostic,
     get_candidates_count,
+    get_daily_pnl_data,
     get_latest_exec_run,
     get_latest_risk_run_id,
     get_top_candidates,
@@ -45,6 +46,64 @@ _PIPELINE_SUMMARY_LABEL_OVERRIDES = {
 
 def _pipeline_summary_label(step) -> str:
     return _PIPELINE_SUMMARY_LABEL_OVERRIDES.get(step.key, step.name)
+
+
+# ---------------------------------------------------------------------------
+# Sprint S4 / A-021 — PnL quotidien
+# ---------------------------------------------------------------------------
+
+
+def compute_daily_pnl(pnl_data: dict[str, object]) -> tuple[float, float]:
+    """Retourne ``(unrealized_pnl, pnl_pct)`` depuis le dict ``get_daily_pnl_data()``.
+
+    Fonctionnel même si les positions sont à zéro (paper trading sans allocation).
+
+    Args:
+        pnl_data: dict retourné par :func:`ihm.services.queries.get_daily_pnl_data`.
+
+    Returns:
+        Tuple ``(unrealized_pnl, pnl_pct)`` où ``pnl_pct`` ∈ [-1, +inf] ou ``0.0``
+        si la valeur de marché est nulle.
+    """
+    unrealized_pnl = float(pnl_data.get("unrealized_pnl") or 0.0)
+    total_market_value = float(pnl_data.get("total_market_value") or 0.0)
+    cost_basis = total_market_value - unrealized_pnl
+    pnl_pct = (unrealized_pnl / cost_basis) if cost_basis > 0 else 0.0
+    return unrealized_pnl, pnl_pct
+
+
+def _render_pnl_widget(pnl_data: dict[str, object]) -> None:
+    """Affiche le widget PnL latent des positions ouvertes (section 0 overview).
+
+    Sprint S4 / A-021 — PnL today via ``broker_positions_snapshots.unrealized_pnl``.
+    Gracieux si les tables sont absentes ou vides (paper trading sans positions).
+    """
+    unrealized_pnl, pnl_pct = compute_daily_pnl(pnl_data)
+    available = bool(pnl_data.get("available", False))
+    open_positions = int(pnl_data.get("open_positions") or 0)
+    snapshot_at = pnl_data.get("snapshot_at")
+
+    with st.container(border=True):
+        st.subheader("0. PnL positions ouvertes")
+        if not available or open_positions == 0:
+            st.info(
+                "Aucune position ouverte détectée dans le dernier snapshot broker "
+                "(paper trading sans allocation ou snapshot absent)."
+            )
+        else:
+            delta_str = f"{pnl_pct:+.1%}" if pnl_pct != 0.0 else None
+            st.metric(
+                label=f"PnL latent ({open_positions} position(s))",
+                value=f"${unrealized_pnl:,.0f}",
+                delta=delta_str,
+                help=(
+                    "PnL non-réalisé agrégé des positions ouvertes "
+                    "depuis ``broker_positions_snapshots.unrealized_pnl`` (Alpaca). "
+                    "Sprint S4 / A-021."
+                ),
+            )
+            if snapshot_at:
+                st.caption(f"Snapshot broker : {snapshot_at}")
 
 
 def _merge_pipeline_runs() -> list[dict[str, object]]:
@@ -129,6 +188,9 @@ def render() -> None:
         return
 
     st.success("🟢 Connexion DB OK")
+
+    # --- PnL positions ouvertes (Sprint S4 / A-021) ---
+    _render_pnl_widget(get_daily_pnl_data())
 
     # --- KPI ---
     candidates = get_candidates_count()

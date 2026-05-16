@@ -115,8 +115,8 @@ Le scanner quotidien et les reruns/backtests "petit compte cash swing" utilisent
 - `weekly_trend_score >= 1.0`
 - `1.5 % <= atr_pct_20 <= 6 %`
 - `market_cap >= 2 Md$`
-  - `beta_126 >= 1.0` → seuil dans la documentation ; le profil strict canonique (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`) utilise **`min_beta_126 = 0.8`** (assouplissement prudent pour les régimes risk-off)
-  - `spread_bps <= 25` → seuil historique ; le profil strict canonique (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`) utilise **`max_spread_bps = 40`** (plus réaliste pour les snapshots EOD IEX)
+- `beta_126 >= 0.8` — profil strict canonique (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`) ; accepte les leaders moins directionnels en régime risk-off (valeur historique de doc : ≥ 1.0 — Sprint S4 / A-005-résidu corrigé)
+- `spread_bps <= 40` — profil strict canonique ; les snapshots EOD IEX avoisinent ~50 bps vs NBBO réel, 40 bps est réaliste (valeur historique de doc : ≤ 25 bps — Sprint S4 / A-008-doc corrigé) ; mode IEX relâché : `max_spread_bps_iex = 65` avec `min_quote_size = 100`
 - `earnings_blackout = 0`
 
 Cet ensemble de filtres vise à réduire les microcaps/penny stocks, améliorer l'exécutabilité réelle et éviter les entrées juste avant un événement binaire ou après une explosion de volatilité.
