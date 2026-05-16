@@ -52,3 +52,66 @@ class TestExecutionConfig:
         assert cfg.stop_when_idle is False
         assert cfg.max_consecutive_failures == 3
 
+
+# ---------------------------------------------------------------------------
+# Sprint S2 / A-006 — PDT rule auto sur compte margin avec drawdown
+# ---------------------------------------------------------------------------
+
+class TestPDTRuleMarginDrawdown:
+    """[A-006] Vérifie que applies_pdt_limit() bloque le 4e day-trade quand
+    l'equity chute sous 25 000 $ sur un compte margin avec pdt_rule='auto'."""
+
+    def test_pdt_auto_margin_equity_above_threshold_no_block(self) -> None:
+        """Equity > 25k$ → PDT non appliqué (compte en sécurité)."""
+        cfg = ExecutionConfig(account_type="margin", pdt_rule="auto")
+        assert cfg.applies_pdt_limit(30_000.0) is False
+
+    def test_pdt_auto_margin_equity_below_threshold_blocks(self) -> None:
+        """Equity < 25k$ → PDT appliqué automatiquement."""
+        cfg = ExecutionConfig(account_type="margin", pdt_rule="auto")
+        assert cfg.applies_pdt_limit(24_999.99) is True
+
+    def test_pdt_auto_margin_equity_at_threshold_no_block(self) -> None:
+        """Equity = 25k$ exactement → PDT non bloquant (limite exclusive)."""
+        cfg = ExecutionConfig(account_type="margin", pdt_rule="auto")
+        # applies_pdt_limit: equity < threshold (strict)
+        assert cfg.applies_pdt_limit(25_000.0) is False
+
+    def test_pdt_off_margin_never_blocks(self) -> None:
+        """pdt_rule='off' sur margin → jamais de blocage PDT, même sous 25k$."""
+        cfg = ExecutionConfig(account_type="margin", pdt_rule="off")
+        assert cfg.applies_pdt_limit(10_000.0) is False
+
+    def test_pdt_cash_account_never_blocks(self) -> None:
+        """Sur compte cash, effective_pdt_rule='off' quelle que soit la config."""
+        cfg = ExecutionConfig(account_type="cash", pdt_rule="auto")
+        assert cfg.effective_pdt_rule == "off"
+        assert cfg.applies_pdt_limit(5_000.0) is False
+
+
+# ---------------------------------------------------------------------------
+# Sprint S2 / A-017 — fill_timeout_seconds
+# ---------------------------------------------------------------------------
+
+class TestFillTimeout:
+    """[A-017] Vérifie la valeur par défaut et la configurabilité de fill_timeout."""
+
+    def test_fill_timeout_default_is_180_seconds(self) -> None:
+        """fill_timeout_seconds doit être 180s par défaut (paper mode)."""
+        cfg = ExecutionConfig()
+        assert cfg.fill_timeout_seconds == 180, (
+            f"fill_timeout_seconds={cfg.fill_timeout_seconds} — attendu 180s "
+            f"(réduit les ordres orphelins lors de gaps d'ouverture volatils)"
+        )
+
+    def test_fill_timeout_configurable_for_live(self) -> None:
+        """En live, l'opérateur peut configurer 300s via preset."""
+        cfg = ExecutionConfig(broker_mode="live", fill_timeout_seconds=300)
+        assert cfg.fill_timeout_seconds == 300
+
+    def test_fill_timeout_must_be_positive(self) -> None:
+        """fill_timeout_seconds doit être > 0."""
+        with pytest.raises(ValueError, match="fill_timeout_seconds"):
+            ExecutionConfig(fill_timeout_seconds=0)
+
+

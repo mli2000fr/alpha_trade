@@ -9,7 +9,7 @@
 | Sprint | Objectif principal | Priorité | Durée estimée | Modules | Statut |
 |---|---|---|---|---|---|
 | S1 | Corrections docs + config P1 (quick wins) | ✅ Immédiat | 1–2 jours | doc, config, tests | ✅ **LIVRÉ** |
-| S2 | Corrections techniques P2 | ✅ Critique | 2–3 jours | execution, config | 🔴 À faire |
+| S2 | Corrections techniques P2 | ✅ Critique | 2–3 jours | execution, config | ✅ **LIVRÉ** |
 | S3 | Améliorations opérationnelles P2 | 🔵 Important | 5–7 jours | backtesting, observabilité, sécurité | 🔴 À faire |
 | S4 | Qualité avancée + analytics P3 | 🟢 Perfectionnement | 5–7 jours | backtesting, IHM, ML, walk-forward | 🔴 À faire |
 | S5 | Pro-grade : monitoring + orchestration | 🟡 Long terme | 10–15 jours | infra, ops, ML governance | 🔴 À faire |
@@ -75,60 +75,60 @@ description="Backtest intégré Alpha Trade (simulateur custom PIT)"
 
 ---
 
-## Sprint S2 — Corrections techniques P1/P2
+## Sprint S2 — Corrections techniques P1/P2 ✅ **LIVRÉ**
 
 **Objectif** : Résoudre les problèmes techniques mineurs qui impactent la fiabilité en production.  
-**Durée estimée** : 2–3 jours *(réduit — plusieurs tâches déjà résolues)*  
+**Durée estimée** : 2–3 jours *(réduit — plusieurs tâches déjà résolues)* | **Durée réelle** : ~1 jour  
 **Modules impactés** : `config/`, `execution_engine/`  
-**Anomalies traitées** : A-006, A-007, A-017
+**Anomalies clôturées** : A-006 ✅, A-007 ✅, A-017 ✅
 
-> ✅ **Anomalies déjà résolues (S2 complet pour ces items)** :
-> - A-003 ✅ (gouvernance ML en DB — `selected_model`, `decision_threshold` déjà persistés)
-> - A-009 ✅ (unicité `model_predictions` — `UNIQUE KEY uq_symbol_date_run` déjà présent)
-> - A-012 ✅ (SSL MySQL — activable via `DB_SSL_CA_PATH` dans `database/connection.py`)
+> ✅ **Toutes les anomalies S2 résolues** :
+> - A-006 ✅ (`execution_pdt_rule: "auto"` sur 3 presets margin — capital_25001_50000, capital_50001_100000, capital_100001_plus)
+> - A-007 ✅ (`selector_min_close: 10.0` sur capital_0_5000, capital_5001_10000, capital_10001_25000)
+> - A-017 ✅ (`fill_timeout_seconds: 180` dans execution_engine/config.py)
 
-### Tâches détaillées
+### Tâches livrées
 
-**T2.1** — Corriger presets capital PDT rule (margin)
+**T2.1** ✅ — PDT rule `"auto"` sur presets margin (`config/capital_presets.yaml`)
 ```yaml
 # capital_25001_50000, capital_50001_100000, capital_100001_plus
-execution_pdt_rule: "auto"  # Corrigé : comptes margin avec suivi PDT auto si equity < 25k$
+execution_pdt_rule: "auto"  # A-006 fix : PDT auto sur compte margin — bloque le 4e day-trade si equity < 25k$
 ```
-**Fichiers** : `config/capital_presets.yaml:230`, `:280`, `:330`
 
-**T2.2** — Corriger `selector_min_close` preset `capital_0_5000`
+**T2.2** ✅ — `selector_min_close: 10.0` uniformisé sur tous les presets (`config/capital_presets.yaml`)
 ```yaml
-selector_min_close: 10.0  # Corrigé : aligné profil strict canonique (was 5.0)
+# capital_0_5000 (was 5.0), capital_5001_10000 (was 7.0), capital_10001_25000 (was 8.0)
+selector_min_close: 10.0  # A-007 fix : aligné STRICT_SWING_CASH_FILTERS.min_close=10.0
 ```
-**Fichiers** : `config/capital_presets.yaml:97`
 
-**T2.3** — Augmenter fill_timeout et documenter le comportement gap
+**T2.3** ✅ — `fill_timeout_seconds: 180` (`execution_engine/config.py:85`)
 ```python
-# execution_engine/config.py
-fill_timeout_seconds: int = 180  # paper (was 120)
-# live : 300 secondes — configurable via preset
+fill_timeout_seconds: int = 180  # A-017 fix : paper (was 120) — live recommandé 300s
 ```
-**Fichiers** : `execution_engine/config.py:85`
 
-### Tests à ajouter
+### Tests ajoutés et résultats
 
-| Test | Type | Priorité |
+| Test | Type | Résultat |
 |---|---|---|
-| `test_execution_config.py` — PDT auto sur margin quand equity < 25k$ | Unitaire | P2 |
-| `test_capital_preset_risk_overrides.py` — regression min_close ≥ 10.0 | Unitaire | P2 |
-| `test_execution_engine_executor.py` — fill_timeout gap scenario | Unitaire | P2 |
+| `test_margin_presets_have_pdt_auto` (nouveau) | Unitaire config | ✅ Pass |
+| `test_all_presets_selector_min_close_gte_10` (nouveau) | Unitaire config | ✅ Pass |
+| `test_pdt_auto_margin_equity_above_threshold_no_block` (nouveau) | Unitaire execution | ✅ Pass |
+| `test_pdt_auto_margin_equity_below_threshold_blocks` (nouveau) | Unitaire execution | ✅ Pass |
+| `test_pdt_auto_margin_equity_at_threshold_no_block` (nouveau) | Unitaire execution | ✅ Pass |
+| `test_pdt_off_margin_never_blocks` (nouveau) | Unitaire execution | ✅ Pass |
+| `test_pdt_cash_account_never_blocks` (nouveau) | Unitaire execution | ✅ Pass |
+| `test_fill_timeout_default_is_180_seconds` (nouveau) | Unitaire execution | ✅ Pass |
+| `test_fill_timeout_configurable_for_live` (nouveau) | Unitaire execution | ✅ Pass |
+| `test_fill_timeout_must_be_positive` (nouveau) | Unitaire execution | ✅ Pass |
+| Suite élargie S2 (86 tests) | Régression globale | ✅ 86 Pass, 0 Fail |
 
-### Critères d'acceptation
+### Gain réalisé sur les notes
 
-- ✅ `test_capital_preset_risk_overrides.py` vert avec PDT auto sur presets margin
-- ✅ `selector_min_close ≥ 10.0` pour tous les presets (ou exception documentée)
-- ✅ fill_timeout = 180s en paper, 300s en live
-
-### Gain attendu sur les notes
-
-| Module | Avant | Après |
+| Module | Avant S2 | Après S2 |
 |---|---|---|
-| Configuration | 7.5 | 8.0 |
+| Configuration | 7.5 | **8.0** |
+| execution_engine | 7.5 | **8.0** |
+| **Note globale** | 7.5 | **8.0** |
 
 ---
 

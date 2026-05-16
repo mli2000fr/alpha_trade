@@ -4,7 +4,7 @@
 
 ---
 
-## Note globale finale : **7,5 / 10** *(révisée après Sprint S1 livré — 10 anomalies résolues au total)*
+## Note globale finale : **8,0 / 10** *(révisée après Sprint S2 livré — 13 anomalies résolues au total)*
 
 ---
 
@@ -22,7 +22,7 @@ Elle manque encore les attributs qui définissent une application véritablement
 |---|---|---|
 | **Amateur sérieux** (2–4/10) | Scripts disconnectés, pas de DB propre, pas de tests | ❌ Très largement dépassé |
 | **Indépendant avancé** (5–6.5/10) | Architecture modulaire, DB, quelques tests, backtest simple | ✅ Dépassé |
-| **Quasi-pro / pre-institutional** (7–8/10) | Pipeline complet, audit trail, tests > 200, PIT, ML governance complète en DB | 🟡 **Ici (7.5 post-S1) → vise 8.0 après S2** |
+| **Quasi-pro / pre-institutional** (7–8/10) | Pipeline complet, audit trail, tests > 200, PIT, ML governance complète en DB | 🟢 **Ici (8.0 post-S2) → vise 8.5 après S3** |
 | **Pro-grade buy-side / prop desk** (8–9/10) | ML governance complète, monitoring live, orchestrateur, DR formel, SLA | ❌ Manque ~2 sprints |
 | **Institutionnel très mature** (9.5–10/10) | Containerisation, tests de charge, mutation testing, certification formelle | ❌ Manque 4–5 sprints |
 
@@ -34,12 +34,13 @@ Elle manque encore les attributs qui définissent une application véritablement
 - Toutes les documentations principales (DOC_FONCTIONNELLE, DOC_TECHNIQUE, data_lineage_matrix, dataIntegrityEngine.md)
 - La configuration complète (config.yaml, capital_presets.yaml)
 - Les fichiers sources clés de chaque module
-- Un inventaire complet des tests (250+ fichiers)
+- Un inventaire complet des tests (260+ fichiers)
 - Les conventions critiques OHLCV provider, data_adjustment, CA
 - **Vérification directe du code source** pour les 27 anomalies identifiées → 6 confirmées RÉSOLUES avant Sprint S1
-- **Sprint S1 livré** : 4 anomalies supplémentaires résolues + 5 nouveaux tests ajoutés → **10 anomalies résolues au total, 17 actives**
+- **Sprint S1 livré** : 4 anomalies supplémentaires résolues + 5 nouveaux tests ajoutés → **10 anomalies résolues**
+- **Sprint S2 livré** : 3 anomalies supplémentaires résolues + 12 nouveaux tests ajoutés → **13 anomalies résolues au total, 14 actives**
 
-La note de 7.5 intègre les corrections effectives Sprint S1 (A-001, A-002, A-004-résidu, A-016) et la base résolue avant Sprint S1 (A-003, A-004, A-005, A-009, A-012, A-018).
+La note de 8.0 intègre les corrections effectives Sprint S2 (A-006, A-007, A-017), Sprint S1 (A-001, A-002, A-004-résidu, A-016) et la base résolue avant Sprint S1 (A-003, A-004, A-005, A-009, A-012, A-018).
 
 ---
 
@@ -63,16 +64,16 @@ L'application a une **structure solide, une couverture de tests remarquable et u
 ## Synthèse des 5 principaux atouts
 
 1. ✅ **Architecture modulaire robuste** avec interfaces Protocol, injection de dépendances, code testable
-2. ✅ **Couverture de tests exceptionnelle** (250+ fichiers, 5 nouveaux tests ajoutés Sprint S1) couvrant unitaire, intégration, E2E, contrats
+2. ✅ **Couverture de tests exceptionnelle** (260+ fichiers, 12 nouveaux tests ajoutés S1+S2) couvrant unitaire, intégration, E2E, contrats
 3. ✅ **Auditabilité complète** : idempotence SHA-256, audit trail DB complet, manifestations PIT
 4. ✅ **Gouvernance ML en DB complète** : `selected_model`, `decision_threshold`, `calibration_method` persistés dans `model_predictions` (A-003 ✅)
-5. ✅ **Configuration cohérente après Sprint S1** : preset micro-compte corrigé (3 positions, 500 USD min), lineage matrix synchronisée avec le schéma DB (A-001 ✅, A-002 ✅)
+5. ✅ **Configuration cohérente après Sprint S2** : PDT rule auto sur margin (A-006 ✅), min_close 10$ uniformisé (A-007 ✅), fill_timeout 180s (A-017 ✅), preset micro-compte corrigé (A-001 ✅), lineage matrix synchronisée (A-002 ✅)
 
 ## Synthèse des 5 principales lacunes
 
 1. ❌ **Lineage matrix §4 partiellement mise à jour** → tables correctement nommées mais de nouvelles tables SQL existent (ex. `execution_reconciliation_results`, `execution_targets_snapshot`) à intégrer progressivement (sprint S3)
-2. ❌ **PDT rule off sur comptes margin** : presets `capital_25001_50000` et supérieurs devraient avoir `pdt_rule: "auto"` (A-006 actif → Sprint S2)
-3. ❌ **`selector_min_close: 5.0` sur `capital_0_5000`** : sous le profil strict canonique (10.0) — biais frais (A-007 actif → Sprint S2)
-4. ❌ **Pas d'alerting externe automatique** : pas d'email/Slack sur circuit breaker ni sur kill switch (A-013 actif → Sprint S3)
-5. ❌ **ParquetCache non branché + analytics CLI absents** : backtesting lent sur grands datasets, bootstrap Monte Carlo inaccessible (A-010, A-011 actifs → Sprint S3)
+2. ❌ **ParquetCache non branché + analytics CLI absents** : backtesting lent sur grands datasets, bootstrap Monte Carlo inaccessible (A-010, A-011 actifs → Sprint S3)
+3. ❌ **Pas d'alerting externe automatique** : pas d'email/Slack sur circuit breaker ni sur kill switch (A-013 actif → Sprint S3)
+4. ❌ **Walk-forward limité aux poids sentiment** : optimisation out-of-sample des paramètres ATR/Kelly non implémentée (A-022 actif → Sprint S4)
+5. ❌ **Pas de PnL quotidien dans l'IHM** : consultation des tables DB requise manuellement (A-021 actif → Sprint S4)
 

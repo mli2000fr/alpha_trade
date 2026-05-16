@@ -82,7 +82,7 @@ class ExecutionConfig:
     retry_base_delay_seconds: float = 1.0
     inter_order_delay_ms: int = 350
     poll_interval_seconds: float = 2.0
-    fill_timeout_seconds: int = 120
+    fill_timeout_seconds: int = 180  # A-017 fix : 180s paper (was 120s) — réduit les ordres orphelins lors de gaps d'ouverture volatils ; live recommandé 300s (configurable via preset)
     cancel_timeout_seconds: int = 30
 
     # --- Market hours ---

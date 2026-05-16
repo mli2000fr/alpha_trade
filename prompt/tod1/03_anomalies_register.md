@@ -10,9 +10,10 @@
 
 | Total initial | Résolues (code vérifié) | Actives | P0 | P1 | P2 | P3 |
 |---|---|---|---|---|---|---|
-| 27 | 10 | 17 | 0 | 0 | 9 | 8 |
+| 27 | 13 | 14 | 0 | 0 | 6 | 8 |
 
-> **Sprint S1 livré** — 4 anomalies supplémentaires résolues : A-001 ✅, A-002 ✅, A-004-résidu ✅, A-016 ✅
+> **Sprint S1 livré** — 4 anomalies supplémentaires résolues : A-001 ✅, A-002 ✅, A-004-résidu ✅, A-016 ✅  
+> **Sprint S2 livré** — 3 anomalies supplémentaires résolues : A-006 ✅, A-007 ✅, A-017 ✅
 
 ---
 
@@ -46,26 +47,36 @@
 
 ## Anomalies P2 (modérées) — actives
 
-### A-006 — PDT rule off sur comptes margin ≥ 25k$
-- **Sévérité** : P2
+### A-006 ✅ — PDT rule off sur comptes margin ≥ 25k$ — RÉSOLU (Sprint S2)
+- **Sévérité initiale** : P2
 - **Domaine** : Configuration / capital_presets / execution_engine
-- **Vérification code** : `config/capital_presets.yaml:232-233` (`capital_25001_50000`), `:282-283` (`capital_50001_100000`), `:332-333` (`capital_100001_plus`) — tous ont `execution_account_type: margin` ET `execution_pdt_rule: "off"`.
-- **Description** : Les presets `capital_25001_50000`, `capital_50001_100000`, `capital_100001_plus` ont tous `execution_pdt_rule: "off"`. Ces presets sont sur des comptes `margin`. Si l'equity chute temporairement sous 25 000 $ (drawdown), la règle PDT non activée ne bloquera pas le 4e day trade. Alpaca côté broker peut alors imposer des restrictions (minimum equity call, trading restriction 90 jours). Note : `execution_engine/config.py:187` contient `applies_pdt_limit(equity)` qui prend en compte `pdt_equity_threshold` — ce mécanisme est opérationnel si `pdt_rule="auto"`.
-- **Preuve** : `config/capital_presets.yaml:232-233`, `:282-283`, `:332-333`
-- **Impact métier** : PDT violation potentielle lors d'un drawdown → restriction de compte broker pendant 90 jours → arrêt forcé du trading
-- **Recommandation** : Passer `execution_pdt_rule: "auto"` pour les presets margin et documenter le comportement en cas de fluctuation autour de 25 000 $
-- **Test à ajouter** : `test_execution_config.py` — test que PDT rule auto est appliqué quand equity fluctue sous 25k$ sur compte margin
+- **Résolution** : `config/capital_presets.yaml` — les 3 presets margin passés en `execution_pdt_rule: "auto"` :
+  - `capital_25001_50000` (ligne 233)
+  - `capital_50001_100000` (ligne 283)
+  - `capital_100001_plus` (ligne 333)
+- **Tests ajoutés** : `test_capital_preset_risk_overrides.py` :
+  - `test_margin_presets_have_pdt_auto` — vérifie que tous les presets margin ont `pdt_rule='auto'`
+- `test_execution_config.py` (5 nouveaux tests) :
+  - `test_pdt_auto_margin_equity_above_threshold_no_block`
+  - `test_pdt_auto_margin_equity_below_threshold_blocks`
+  - `test_pdt_auto_margin_equity_at_threshold_no_block`
+  - `test_pdt_off_margin_never_blocks`
+  - `test_pdt_cash_account_never_blocks`
+- **Résultat test** : ✅ Pass
 
 ---
 
-### A-007 — `capital_0_5000.selector_min_close: 5.0` sous le profil strict canonique
-- **Sévérité** : P2
+### A-007 ✅ — `selector_min_close` sous le profil strict canonique — RÉSOLU (Sprint S2)
+- **Sévérité initiale** : P2
 - **Domaine** : Configuration / selector
-- **Vérification code** : `config/capital_presets.yaml:96` — `selector_min_close: 5.0`. Les presets `capital_0_2000_eur` (line 44), `capital_25001_50000` (line 246) et supérieurs ont tous `selector_min_close: 10.0`. `core/filter_profiles.py:241` (STRICT_SWING_CASH_FILTERS) a `min_close = 10.0`. Par cohérence de gamme, même le preset micro-compte a `selector_min_close: 10.0`.
-- **Description** : Le preset `capital_0_5000` a `selector_min_close: 5.0` alors que `STRICT_SWING_CASH_FILTERS.min_close = 10.0`. Les actions à 5–9 USD ont des frais relatifs disproportionnés sur Alpaca et des biais IEX plus forts.
-- **Preuve** : `config/capital_presets.yaml:96` vs `core/filter_profiles.py:241`
-- **Recommandation** : Uniformiser `selector_min_close: 10.0` sur `capital_0_5000` ou documenter explicitement la justification du relâchement
-- **Test à ajouter** : `test_strict_filter_profiles.py` — vérifier que aucun preset n'a `min_close < 10.0` sans justification documentée
+- **Résolution** : `config/capital_presets.yaml` — tous les presets ayant `selector_min_close < 10.0` corrigés à `10.0` :
+  - `capital_0_5000` : 5.0 → 10.0
+  - `capital_5001_10000` : 7.0 → 10.0
+  - `capital_10001_25000` : 8.0 → 10.0
+- Aligné avec `STRICT_SWING_CASH_FILTERS.min_close = 10.0` (`core/filter_profiles.py:241`)
+- **Tests ajoutés** : `test_capital_preset_risk_overrides.py` :
+  - `test_all_presets_selector_min_close_gte_10` — vérifie `selector_min_close ≥ 10.0` sur tous les presets
+- **Résultat test** : ✅ Pass
 
 ---
 
@@ -143,14 +154,17 @@
 
 ---
 
-### A-017 — `fill_timeout_seconds` insuffisant lors de gap down/up
-- **Sévérité** : P2
+### A-017 ✅ — `fill_timeout_seconds` insuffisant lors de gap down/up — RÉSOLU (Sprint S2)
+- **Sévérité initiale** : P2
 - **Domaine** : execution_engine
-- **Vérification code** : `execution_engine/config.py:85` — `fill_timeout_seconds: int = 120`
-- **Description** : `fill_timeout_seconds: 120` peut créer des ordres non fillés en état orphelin lors d'ouvertures volatiles avec gap important. Les positions orphelines nécessitent une intervention manuelle.
-- **Preuve** : `execution_engine/config.py:85`
-- **Recommandation** : Augmenter à 180/300 secondes et documenter la procédure de "cancel non-filled orders" à l'issue du timeout
-- **Test à ajouter** : `test_execution_engine_executor.py` — tester le comportement timeout avec mock broker delayed fill
+- **Résolution** : `execution_engine/config.py:85` — `fill_timeout_seconds: int = 180` (was 120)
+  - Paper mode : 180 secondes (augmenté de 50 %)
+  - Live mode : recommandé 300 secondes (configurable via preset ou config)
+- **Tests ajoutés** : `test_execution_config.py` (classe `TestFillTimeout`) :
+  - `test_fill_timeout_default_is_180_seconds`
+  - `test_fill_timeout_configurable_for_live`
+  - `test_fill_timeout_must_be_positive`
+- **Résultat test** : ✅ Pass
 
 ---
 
@@ -298,9 +312,9 @@
 | **2** | A-002 | Corriger noms de tables dans LINEAGE_SPEC + régénérer | `scripts/generate_data_lineage.py` | ✅ Sprint S1 |
 | **3** | A-016 | Ajouter commentaire PDT off cash | `config/capital_presets.yaml` | ✅ Sprint S1 |
 | **4** | A-004 résidu | Corriger description argparse "vectorbt" | `backtesting/cli/_impl.py:67` | ✅ Sprint S1 |
-| **5** | A-006 | Passer PDT rule `"auto"` sur presets margin ≥ 25k$ | `config/capital_presets.yaml` | 🔴 Sprint S2 |
-| **6** | A-007 | `selector_min_close: 10.0` sur `capital_0_5000` | `config/capital_presets.yaml` | 🔴 Sprint S2 |
-| **7** | A-017 | `fill_timeout_seconds` → 180 | `execution_engine/config.py` | 🔴 Sprint S2 |
+| **5** | A-006 | Passer PDT rule `"auto"` sur presets margin ≥ 25k$ | `config/capital_presets.yaml` | ✅ Sprint S2 |
+| **6** | A-007 | `selector_min_close: 10.0` sur tous les presets | `config/capital_presets.yaml` | ✅ Sprint S2 |
+| **7** | A-017 | `fill_timeout_seconds` → 180 | `execution_engine/config.py` | ✅ Sprint S2 |
 | **8** | A-010 | Brancher `ParquetCache` via `--use-cache` | `backtesting/cli/_impl.py` | 🔴 Sprint S3 |
 | **9** | A-011 | Brancher analytics/statistical_validation CLI | `backtesting/cli/_impl.py` | 🔴 Sprint S3 |
 | **10** | A-013 | Alerting externe circuit breaker | `execution_engine/` + notifications | 🔴 Sprint S3 |

@@ -13,8 +13,8 @@
 | A-003 | model_predictions absence governance ML | P1 | ✅ **RÉSOLU** | `selected_model`, `decision_threshold`, `calibration_method`, `signal_label` présents dans `model_predictions.sql:8-11` + persistés par `db_registry.py:336-363` | `test_model_factory_db_registry.py` | — |
 | A-004 | vectorbt mention obsolète DOC_TECHNIQUE | P1 | ✅ **RÉSOLU Sprint S1** (résidu argparse corrigé) | `backtesting/cli/_impl.py:67` description mise à jour | `test_doc_provider_alignment.py` | — |
 | A-005 | CA provider ambigu (Alpaca vs EODHD) | P1 | ✅ **RÉSOLU** | Règle documentée : `DOC_FONCTIONNELLE.md:246` + `data_lineage_matrix.md §7:109-111` + factory `corporate_actions/provider.py:402-432` | `test_corporate_actions.py` | — |
-| A-006 | PDT rule off sur comptes margin ≥ 25k$ | P2 | 🔴 Actif | Passer `pdt_rule: auto` sur presets margin | `test_execution_config.py` | S2 |
-| A-007 | min_close 5.0$ sous profil strict | P2 | 🔴 Actif | Uniformiser `min_close: 10.0` preset 0_5000 | `test_strict_filter_profiles.py` | S2 |
+| A-006 | PDT rule off sur comptes margin ≥ 25k$ | P2 | ✅ **RÉSOLU Sprint S2** | `pdt_rule: "auto"` sur 3 presets margin (`capital_25001_50000`, `capital_50001_100000`, `capital_100001_plus`) | `test_capital_preset_risk_overrides.py` + `test_execution_config.py` (6 nouveaux) | — |
+| A-007 | min_close < 10$ sur presets intermédiaires | P2 | ✅ **RÉSOLU Sprint S2** | `selector_min_close: 10.0` sur capital_0_5000 (was 5.0), capital_5001_10000 (was 7.0), capital_10001_25000 (was 8.0) | `test_capital_preset_risk_overrides.py` (1 nouveau) | — |
 | A-008 | Spreads IEX biaisés | P2 | 🟡 Atténué | Documenter + `max_spread_bps_iex` comme mitigation | `test_eodhd_phase4_volume_audit.py` | S3 |
 | A-009 | model_predictions pas d'unicité symbol/date | P2 | ✅ **RÉSOLU** | `UNIQUE KEY uq_symbol_date_run` présent (`model_predictions.sql:14`) + `ON DUPLICATE KEY UPDATE` | `test_model_factory_db_registry.py` | — |
 | A-010 | ParquetCache non branché | P2 | 🔴 Actif | Ajouter option `--use-cache` CLI | `test_backtesting.py` | S3 |
@@ -24,7 +24,7 @@
 | A-014 | auto_rebalance off → dérive silencieuse | P2 | 🔴 Actif | Alerting si diff réconciliation > seuil depuis > 24h | `test_execution_engine_reconciliation.py` | S3 |
 | A-015 | Market cap stale TTL non alerté | P2 | 🔴 Actif | Alerte IHM si TTL expiré sur N% symboles | `test_alpha_scanner.py` | S3 |
 | A-016 | PDT rule commentaire absent (cash comptes) | P2 | ✅ **RÉSOLU Sprint S1** | Commentaire ajouté sur 4 presets cash dans `config/capital_presets.yaml` | `test_cash_presets_have_pdt_off` (nouveau) | — |
-| A-017 | fill_timeout insuffisant lors de gap | P2 | 🔴 Actif | Augmenter à 180/300s + runbook | `test_execution_engine_executor.py` | S2 |
+| A-017 | fill_timeout insuffisant lors de gap | P2 | ✅ **RÉSOLU Sprint S2** | `fill_timeout_seconds: 180` (was 120) dans `execution_engine/config.py:85` | `test_execution_config.py` (3 nouveaux) | — |
 | A-018 | §1.3 DOC_FONCTIONNELLE step 1 = alpaca | P3 | ✅ **RÉSOLU** | `DOC_FONCTIONNELLE.md:37` nomme EODHD comme provider primaire | `test_doc_provider_alignment.py` | — |
 | A-019 | Stooq apikey conditionnelle non testée | P3 | 🔴 Actif | Documenter utilisation sans clé | `test_macro_providers.py` | S3 |
 | A-020 | yields désactivés avec provider eodhd | P3 | 🔴 Actif | Documenter quota consommé | Aucun test | S4 |
@@ -92,4 +92,43 @@ test_cash_presets_have_pdt_off()            # pdt_rule='off' sur tous les preset
 ### A-016 ✅ — `test_cash_presets_have_pdt_off` — RÉSOLU Sprint S1
 
 **Résolution** : 4 presets cash annotés avec commentaire explicatif. Test de régression ajouté dans `test_capital_preset_risk_overrides.py`.
+
+---
+
+### A-006 ✅ — `test_margin_presets_have_pdt_auto` — RÉSOLU Sprint S2
+
+**Résolution** : `execution_pdt_rule: "auto"` appliqué sur les 3 presets margin. Tests ajoutés :
+```python
+# test_capital_preset_risk_overrides.py
+test_margin_presets_have_pdt_auto()             # tous les presets margin ont pdt_rule='auto'
+
+# test_execution_config.py — classe TestPDTRuleMarginDrawdown
+test_pdt_auto_margin_equity_above_threshold_no_block()  # equity > 25k$ → pas de blocage
+test_pdt_auto_margin_equity_below_threshold_blocks()    # equity < 25k$ → blocage PDT
+test_pdt_auto_margin_equity_at_threshold_no_block()     # equity = 25k$ = seuil exclusif
+test_pdt_off_margin_never_blocks()              # pdt=off sur margin → jamais bloqué
+test_pdt_cash_account_never_blocks()            # cash account → effective_pdt='off'
+```
+
+---
+
+### A-007 ✅ — `test_all_presets_selector_min_close_gte_10` — RÉSOLU Sprint S2
+
+**Résolution** : `selector_min_close: 10.0` appliqué sur capital_0_5000 (was 5.0), capital_5001_10000 (was 7.0), capital_10001_25000 (was 8.0). Test ajouté :
+```python
+# test_capital_preset_risk_overrides.py
+test_all_presets_selector_min_close_gte_10()    # tous les presets ont min_close >= 10.0
+```
+
+---
+
+### A-017 ✅ — `test_fill_timeout_default_is_180_seconds` — RÉSOLU Sprint S2
+
+**Résolution** : `fill_timeout_seconds: 180` dans `execution_engine/config.py:85` (was 120). Tests ajoutés :
+```python
+# test_execution_config.py — classe TestFillTimeout
+test_fill_timeout_default_is_180_seconds()   # valeur par défaut 180s
+test_fill_timeout_configurable_for_live()    # configurable à 300s pour live
+test_fill_timeout_must_be_positive()         # validation > 0
+```
 
