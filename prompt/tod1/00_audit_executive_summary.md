@@ -12,22 +12,22 @@ L'application est **clairement plus avancée qu'un projet hobby** : elle dispose
 
 ---
 
-## Note globale : **7,2 / 10 — Niveau "Indépendant avancé / quasi-pro"**
+## Note globale : **7,4 / 10 — Niveau "Indépendant avancé / quasi-pro"** *(révisée après vérification code)*
 
 | Dimension | Note |
 |---|---|
 | Architecture générale | 8/10 |
 | Intégrité des données / OHLCV | 7.5/10 |
 | Screening / sélection | 7/10 |
-| Sentiment / ML | 6.5/10 |
+| Sentiment / ML | 7/10 |
 | Risk management | 7.5/10 |
 | Exécution | 7.5/10 |
-| Corporate actions | 7/10 |
+| Corporate actions | 7.5/10 |
 | Backtesting | 7/10 |
-| DB / lineage / auditabilité | 7/10 |
+| DB / lineage / auditabilité | 7.5/10 |
 | IHM / supervision | 7.5/10 |
-| Qualité logicielle | 8/10 |
-| Sécurité / readiness prod | 7/10 |
+| Qualité logicielle | 8.5/10 |
+| Sécurité / readiness prod | 7.5/10 |
 
 ---
 
@@ -47,24 +47,26 @@ L'application est **clairement plus avancée qu'un projet hobby** : elle dispose
 
 ## Vulnérabilités critiques identifiées
 
-1. **`capital_0_2000_eur` : `risk_max_positions: 10` incompatible avec la description "3 lignes"** et le capital de 2 000 €. Avec 10 positions à 150 $ minimum = 1 500 $, le budget est mathématiquement tenu mais chaque position est de 150 $ — non viable en pratique. **(P1)**
-2. **`data_lineage_matrix.md` ligne CA : mentionne EODHD comme provider primaire des CA**, mais `CorporateActionEngine` a pour provider par défaut `AlpacaCorporateActionProvider`. La factory `build_corporate_action_provider` est absente du code visible — cohérence à confirmer. **(P1)**
-3. **`data_lineage_matrix.md` nomme `execution_orders`** (ancienne table) alors que le schéma réel utilise `execution_order_requests` + `execution_broker_orders`. Écart doc ↔ code P1 sur un fichier généré.
-4. **`DOC_TECHNIQUE.md` §9 mentionne "vectorbt"** comme framework backtest alors que le module est 100% custom (aucun import vectorbt). **(P2 doc)**
-5. **`model_predictions` ne persiste pas `selected_model` / `decision_threshold`** : la gouvernance ML en DB est incomplète. Le champion servi n'est pas traçable en SQL, seulement dans les artefacts disque. **(P1)**
-6. **Tous les presets ≥ 25 001 $ ont `execution_pdt_rule: "off"`** alors qu'ils passent à `margin`. Un compte margin < 25 000 $ avec PDT off peut subir des conséquences réglementaires (trade restriction). Incohérence potentielle si l'equity fluctue. **(P2)**
-7. **`market_regimes.macro_provider: eodhd`** dans config.yaml, mais `yields.enabled: false` — la logique yield est donc toujours désactivée malgré une configuration potentiellement coûteuse en quota. **(P3)**
-8. **`config.yaml` mentionne un compte `test1` et `test2`** en paper mais sans doc sur leur cycle de vie et sans tests dédiés au comportement avec 3 comptes actifs simultanément. **(P3)**
+> ✅ = Confirmées RÉSOLUES après vérification directe du code source
+
+1. **`capital_0_2000_eur` : `risk_max_positions: 10` incompatible** avec la description "3 lignes" et le capital de 2 000 €. **(P1 actif — A-001)**
+2. ✅ ~~**`data_lineage_matrix.md` : provider CA ambigu**~~ — **RÉSOLU** : règle conditionnelle documentée (`EodhdCorporateActionProvider` si `bars_provider=eodhd`) dans `DOC_FONCTIONNELLE.md:246` et `data_lineage_matrix.md §7`. Factory `build_corporate_action_provider()` correctement implémentée. **(A-005 ✅)**
+3. **`data_lineage_matrix.md` nomme `execution_orders`** (ancienne table) alors que le schéma réel utilise `execution_order_requests` + `execution_broker_orders` + `execution_events`. **(P1 actif — A-002)**
+4. ✅ ~~**`DOC_TECHNIQUE.md §9` mentionne "vectorbt"**~~ — **RÉSOLU** : `DOC_TECHNIQUE.md:497` confirme "simulateur custom PIT — aucune dépendance vectorbt". Résidu cosmétique dans argparse (`backtesting/cli/_impl.py:67`). **(A-004 ✅)**
+5. ✅ ~~**`model_predictions` ne persiste pas `selected_model`**~~ — **RÉSOLU** : colonnes `selected_model`, `decision_threshold`, `calibration_method`, `signal_label` présentes (`database/sql/ml/model_predictions.sql:8-11`) et persistées par `modelFactory/db_registry.py`. **(A-003 ✅)**
+6. **Tous les presets ≥ 25 001 $ ont `execution_pdt_rule: "off"`** sur compte `margin`. Risque de violation PDT si l'equity chute sous 25 000 $. **(P2 actif — A-006)**
+7. **`market_regimes.macro_provider: eodhd`** dans config.yaml, mais `yields.enabled: false`. **(P3 — A-020)**
+8. ✅ ~~**SSL MySQL absent**~~ — **RÉSOLU** : `database/connection.py:97-111` active TLS si la variable `DB_SSL_CA_PATH` est définie. **(A-012 ✅)**
 
 ---
 
 ## Recommandations prioritaires (Top 5)
 
-1. **Corriger `capital_0_2000_eur.risk_max_positions`** à 3 et ajuster les seuils en conséquence.
-2. **Enrichir `model_predictions` DB** avec `selected_model`, `decision_threshold`, `calibration_method`.
-3. **Corriger `data_lineage_matrix.md`** : noms de tables, provider CA (Alpaca vs EODHD), régénération canonique.
-4. **Supprimer la mention "vectorbt"** dans `DOC_TECHNIQUE.md §9`.
-5. **Documenter et tester le comportement du switch PDT** quand equity passe autour de 25 000 $ avec `pdt_rule: "off"` sur un compte margin.
+1. **Corriger `capital_0_2000_eur.risk_max_positions`** à 3 et ajuster `risk_min_position_notional: 500`.
+2. **Corriger `data_lineage_matrix.md §4`** : remplacer `execution_orders` → `execution_order_requests` + `execution_broker_orders`, `execution_audit_events` → `execution_events`.
+3. **Passer `execution_pdt_rule: "auto"`** sur les 3 presets margin (capital_25001_50000, capital_50001_100000, capital_100001_plus).
+4. **Brancher `ParquetCache`** via `--use-cache` dans la CLI backtesting et exposer les analytics (bootstrap Monte Carlo).
+5. **Intégrer alerting email automatique** sur circuit_breaker + kill_switch (notifications partiellement implémentées dans `artifacts/ihm_notifications/`).
 
 ---
 
@@ -74,9 +76,8 @@ L'application est **clairement plus avancée qu'un projet hobby** : elle dispose
 |---|---|
 | Application amateur sérieuse | ✅ Largement dépassé |
 | Indépendant avancé | ✅ Atteint |
-| Quasi-pro (pre-institutional) | 🟡 Partiel — 70-75% du chemin |
-| Professionnel buy-side / prop desk | ❌ Non — manque : ordre par ordre audit trail complet, gouvernance ML en DB, notifications externes, orchestrateur pipeline, DR formalisé |
-| Institutionnel très mature | ❌ Non — nécessite containerisation, monitoring live, tests de charge, SLA formels |
+| Quasi-pro (pre-institutional) | 🟡 Partiel — 75-80% du chemin (score 7.4, vise 8.0) |
+| Professionnel buy-side / prop desk | ❌ Non — manque : alerting push, orchestrateur pipeline, monitoring live, DR formalisé |
+| Institutionnel très mature | ❌ Non — nécessite containerisation, tests de charge, SLA formels |
 
-**Verdict** : `quasi-pro en cours de finalisation` — exploitable en production swing discipliné avec les corrections P0/P1 appliquées.
-
+**Verdict** : `quasi-pro en cours de finalisation` — exploitable en swing trading réel discipliné à partir de la fin du Sprint S2 avec les corrections P1 appliquées.

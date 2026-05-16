@@ -174,7 +174,7 @@ execution_positions / execution_broker_fills
 | `stock_bars_daily` cohabitation IEX/EODHD | Documenté | Volume IEX sous-évalué sur historique |
 | `stock_quote_snapshots` toujours IEX | Documenté | Spread biais ~50 bps |
 | `stock_metadata.market_cap` TTL 45j | Documenté | Stale si update_sector non exécuté |
-| `model_predictions` sans `selected_model` | **Non résolu** | Gouvernance ML incomplète |
+| `model_predictions` sans `selected_model` | ✅ **RÉSOLU** (A-003) — `selected_model`, `decision_threshold`, `calibration_method`, `signal_label` présents en DB | Gouvernance ML complète |
 | `portfolio_cash_ledger` divergence si CA manqué | Risque faible | Sync portfolio-only chaque jour |
 
 ---

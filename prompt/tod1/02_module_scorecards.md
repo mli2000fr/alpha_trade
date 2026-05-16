@@ -6,31 +6,32 @@
 
 ## 1. Documentation
 
-**Note : 8/10**
+**Note : 8.5/10** *(révisée — A-004 ✅ résolu, A-018 ✅ résolu)*
 
 ### Résumé
-La documentation est remarquablement complète pour un projet indépendant : `DOC_FONCTIONNELLE.md` (588 lignes), `DOC_TECHNIQUE.md` (824 lignes), une doc dédiée par module (`screener.md`, `selector.md`, `risk_management.md`, `execution_engine.md`, `corporate_actions.md`, `backtesting.md`, `ihm.md`, `dataIntegrityEngine.md`, `data_lineage_matrix.md`, `watcher.md`…). Les conventions OHLCV provider et `data_adjustment='split'` sont documentées et cohérentes avec le code.
+La documentation est remarquablement complète pour un projet indépendant : `DOC_FONCTIONNELLE.md` (588 lignes), `DOC_TECHNIQUE.md` (824 lignes), une doc dédiée par module. Les conventions OHLCV provider et `data_adjustment='split'` sont documentées et cohérentes avec le code. La règle de sélection du provider CA est désormais explicitement documentée dans `DOC_FONCTIONNELLE.md:246`.
 
 ### Points forts
 - Bandeaux de convention en tête de `DOC_FONCTIONNELLE.md` et `DOC_TECHNIQUE.md` signalant le provider primaire EODHD
 - `data_lineage_matrix.md` avec producteur/consommateur par table
 - Runbooks opérateurs (`runbook_24_7.md`, `runbook_reconciliation.md`, etc.)
 - Det tech "cochée" maintenue dans `DOC_TECHNIQUE.md §8`
+- ✅ `DOC_TECHNIQUE.md:497` : "simulateur custom PIT — aucune dépendance vectorbt" (A-004 ✅)
+- ✅ `DOC_FONCTIONNELLE.md:37` : ingestion EODHD nommée explicitement provider primaire (A-018 ✅)
+- ✅ Rule de sélection provider CA documentée dans `DOC_FONCTIONNELLE.md:246` et `data_lineage_matrix.md §7` (A-005 ✅)
 
 ### Faiblesses
-- `DOC_TECHNIQUE.md §9` mentionne "vectorbt" comme framework backtest alors que le module est 100% custom (`backtesting/simulator.py`)
-- `data_lineage_matrix.md` utilise les anciens noms `execution_orders` / `execution_audit_events` au lieu de `execution_order_requests` / `execution_broker_orders` / `execution_events`
-- La colonne "provider CA" dans `data_lineage_matrix.md §5` mentionne "EODHD div/split, Alpaca CA, Yahoo (cross-check)" — formulation ambiguë, le provider par défaut dans `CorporateActionEngine` est `AlpacaCorporateActionProvider`
-- `DOC_FONCTIONNELLE.md §1.3` liste l'ordre pipeline 1→14 en disant "import_alpaca_bar" à l'étape 1, alors qu'avec `bars_provider=eodhd` c'est `import_eodhd_bar` qui est le provider primaire
+- `data_lineage_matrix.md §4` utilise encore les noms `execution_orders` / `execution_audit_events` au lieu de `execution_order_requests` / `execution_broker_orders` / `execution_events` (A-002 actif)
+- `backtesting/cli/_impl.py:67` : résidu cosmétique `description="Backtest intégré Alpha Trade (vectorbt)"` dans argparse (A-004 résidu)
+- `DOC_FONCTIONNELLE.md §2.3` cite `beta_126 >= 1.0` mais le code utilise 0.8 (écart mineur — A-005 résidu)
 
 ### Risques
-- Un opérateur qui lit section §1.3 de DOC_FONCTIONNELLE sans lire l'encart provider pourrait appeler le mauvais script d'ingestion
-- La mention "vectorbt" dans DOC_TECHNIQUE peut induire en erreur sur les dépendances réellement requises
+- Opérateur en incident cherche une table dans la lineage matrix → noms obsolètes → perte de temps
 
 ### Pour atteindre 10/10
-- Corriger les trois écarts identifiés (vectorbt, noms tables, ordre scripts provider-aware)
-- Automatiser la régénération de `data_lineage_matrix.md` en CI (commande déjà documentée)
-- Ajouter un changelog structuré par version
+- Régénérer `data_lineage_matrix.md` via `scripts/generate_data_lineage.py --check`
+- Corriger le résidu argparse vectorbt et le beta_126 dans §2.3
+- Automatiser la régénération de la lineage matrix en CI
 
 ---
 
@@ -102,34 +103,31 @@ Module d'ingestion et de nettoyage bien structuré. La migration vers EODHD comm
 
 ## 4. database / migrations
 
-**Note : 7/10**
+**Note : 7.5/10** *(révisée — A-009 ✅ résolu, A-012 ✅ résolu)*
 
 ### Résumé
-Persistance MySQL 8.x avec SQLAlchemy Core (pas d'ORM complet), Alembic pour les migrations, pool configuré (`pool_size=2, max_overflow=3`). Les migrations `0027` et `0028` (news relevance/sentiment) sont bien documentées. La DDL est dans `database/sql/` par sous-domaine.
+Persistance MySQL 8.x avec SQLAlchemy Core (pas d'ORM complet), Alembic pour les migrations, pool configuré (`pool_size=2, max_overflow=3`). Les migrations `0027` et `0028` (news relevance/sentiment) sont bien documentées. La DDL est dans `database/sql/` par sous-domaine. La contrainte d'unicité `model_predictions` est confirmée en place.
 
 ### Points forts
 - Alembic avec révisions numérotées (`0027_news_ticker_map_relevance`, `0028_news_ticker_sentiment`)
 - `CHECK` constraints SQL sur `data_adjustment` (convention projet enforced en DB)
 - `account_id` propagé sur 12+ tables pour multi-comptes
 - DDL organisé par domaine (stock/, news/, ml/, risk/, execution/, corporate_actions/)
+- ✅ `model_predictions.sql:14` — `UNIQUE KEY uq_symbol_date_run` présent + `ON DUPLICATE KEY UPDATE` (A-009 ✅)
+- ✅ SSL MySQL activable via `DB_SSL_CA_PATH` env var (`database/connection.py:97-111`) (A-012 ✅)
 
 ### Faiblesses
-- **P1** : `data_lineage_matrix.md` utilise `execution_orders` et `execution_audit_events` — noms obsolètes (ancienne table canonique remplacée par `execution_order_requests`, `execution_broker_orders`, `execution_events`)
-- **P2** : `model_predictions` ne contient pas `selected_model` / `decision_threshold` / `signal_label` — gouvernance ML en DB incomplète
-- **P2** : Pas de SSL MySQL documenté ou enforced (`doc/DOC_TECHNIQUE.md §6 : "pas de SSL DB par défaut"`)
-- **P3** : `alembic.ini` contient une URL factice — la procédure d'injection d'URL est manuelle (bien documentée mais risque d'erreur opérateur lors d'un upgrade)
+- **P1** : `data_lineage_matrix.md` utilise `execution_orders` et `execution_audit_events` — noms obsolètes (A-002 actif)
+- **P2** : `alembic.ini` contient une URL factice — la procédure d'injection d'URL est manuelle
 - **P3** : `database/sql/all_tables.py` n'est pas mentionné dans le pipeline de bootstrap IHM
 
 ### Risques
 - Incohérence noms tables dans la lineage matrix → confusion lors d'un incident, requêtes SQL incorrectes
-- ML governance incomplète → décisions d'exécution non traçables en DB si artefacts disque perdus
-- Pas de SSL → credentials MySQL en clair sur le réseau local
 
 ### Pour atteindre 10/10
-- Régénérer `data_lineage_matrix.md` pour corriger les noms de tables
-- Ajouter migration `0029_model_predictions_governance` avec `selected_model`, `decision_threshold`, `calibration_method`
-- Activer SSL MySQL avec certificats (même auto-signés pour usage local)
+- Régénérer `data_lineage_matrix.md` pour corriger les noms de tables (A-002)
 - Documenter la procédure d'upgrade Alembic dans le runbook opérateur
+- Activer SSL MySQL avec certificats et le documenter dans le `DOC_TECHNIQUE.md §4`
 
 ---
 
@@ -256,31 +254,29 @@ Pipeline NLP FinBERT complet : ingestion news (Alpaca), scoring par ticker, fusi
 
 ## 9. modelFactory
 
-**Note : 6.5/10**
+**Note : 7.0/10** *(révisée — A-003 ✅ résolu)*
 
 ### Résumé
-Gouvernance multi-modèles mature : LSTM+Attention, challengers LightGBM/CatBoost locaux, modèle global optionnel, champion selection, calibration Platt, optimisation seuil. Serving route vers backend sélectionné. GPU-aware.
+Gouvernance multi-modèles mature : LSTM+Attention, challengers LightGBM/CatBoost locaux, modèle global optionnel, champion selection, calibration Platt, optimisation seuil. Serving route vers backend sélectionné. GPU-aware. La gouvernance ML en DB est désormais complète avec `selected_model`, `decision_threshold`, `calibration_method` et `signal_label` persistés.
 
 ### Points forts
 - Champion selection uniquement si backend réellement inférable (artefacts présents)
 - Router `predictor.py` vers 4 backends
+- ✅ `model_predictions` : `selected_model`, `decision_threshold`, `calibration_method`, `signal_label` persistés (`database/sql/ml/model_predictions.sql:8-11` + `modelFactory/db_registry.py:336-363`) (A-003 ✅)
 - Manifeste d'artefacts + rapport de gouvernance (`config.json`, `metrics.json`)
 - ML drift monitor + gate (`ml_kill_switch_active` dans run_summary)
 - GPU force sequential sur machine single-GPU (protection correcte)
 
 ### Faiblesses
-- **P1** : `model_predictions` DB ne contient pas `selected_model`, `decision_threshold`, `calibration_method`, `signal_label` — si les artefacts disque sont perdus, la traçabilité de qui a décidé quoi est perdue
 - **P2** : Entraînement par symbole individuel (LSTM) peut être lent sur un univers de 50–100 symboles — pas de parallélisation GPU multi-symboles documentée
-- **P2** : Le champion par défaut (`fallback_default_champion`) n'est pas clairement documenté dans le code visible — si aucun backend n'est éligible, que se passe-t-il exactement ?
-- **P3** : L'overfitting risk sur des séries temporelles temporelles courtes (actions individuelles avec historique < 2 ans) n'est pas quantifié ni documenté
+- **P2** : Le champion par défaut (`fallback_default_champion`) n'est pas clairement documenté — si aucun backend n'est éligible, comportement à préciser
+- **P3** : L'overfitting risk sur des séries temporelles courtes (< 2 ans) n'est pas quantifié ni documenté
 
 ### Risques
-- Perte des artefacts disque → perte totale de la gouvernance ML (aucune récupération depuis DB)
 - LSTM sur séries courtes → overfitting probable → faux sentiment de robustesse ML
-- Absence de données de prediction servi dans DB → impossible d'auditer les décisions ML en production sans accès disque
+- Sauvegarde artefacts disque uniquement → pas de backup externe automatisé
 
 ### Pour atteindre 10/10
-- Migration DB `0029_model_predictions_governance` : ajouter `selected_model`, `decision_threshold`, `calibration_method`
 - Ajouter sauvegarde automatique des artefacts dans un stockage externe (S3 / backup réseau)
 - Documenter et tester le comportement quand 0 champions sont éligibles
 - Ajouter une métrique de robustesse out-of-sample (Sharpe hors échantillon, walk-forward) dans le rapport de gouvernance
@@ -350,28 +346,26 @@ Chaîne canonique complète et bien auditée : targets_snapshot → order_reques
 
 ## 12. corporate_actions
 
-**Note : 7/10**
+**Note : 7.5/10** *(révisée — A-005 ✅ résolu)*
 
 ### Résumé
-Module complet pour dividendes/splits/reverse-splits. Idempotence SHA-256, audit trail complet (`corporate_actions_events`, `corporate_actions_applications`, `portfolio_cash_ledger`). Convention `data_adjustment='split'` respectée. Provider abstrait extensible.
+Module complet pour dividendes/splits/reverse-splits. Idempotence SHA-256, audit trail complet (`corporate_actions_events`, `corporate_actions_applications`, `portfolio_cash_ledger`). Convention `data_adjustment='split'` respectée. Provider abstrait extensible. La règle de sélection du provider est maintenant explicitement documentée.
 
 ### Points forts
 - Idempotence robuste (clé SHA-256 déterministe provider+symbol+type+ex_date+montant)
 - `CorporateActionEngine` docstring explicite sur la stratégie : "ne touche pas stock_bars"
 - Reconciliation après CA (`corporate_actions/reconciliation.py`)
 - Rétrocompatibilité multi-provider (`AlpacaCorporateActionProvider` + `EodhdCorporateActionProvider`)
+- ✅ Règle de sélection provider CA documentée : `EodhdCorporateActionProvider` si `bars_provider=eodhd`, `AlpacaCorporateActionProvider` sinon. `DOC_FONCTIONNELLE.md:246` + `data_lineage_matrix.md §7:109-111` + `corporate_actions/provider.py:402-432` (A-005 ✅)
 
 ### Faiblesses
-- **P1** : `data_lineage_matrix.md §5` indique "EODHD (primaire)" pour `corporate_actions_events` mais dans le code visible, `CorporateActionEngine` prend un `provider: CorporateActionProvider` en injection. La factory `build_corporate_action_provider` sélectionne le provider selon `bars_provider`, mais cette dépendance n'est pas évidente à l'opérateur
-- **P2** : `sync --portfolio-only` ne synchronise que les symboles détenus — si un split est annoncé après la clôture mais avant la réouverture, sans position ouverte ce jour-là, il peut être manqué
-- **P3** : Le reverse split avec cash-in-lieu sur les fractions est implémenté mais non testé spécifiquement pour les cas de fractions < 0.001 part
+- **P2** : `sync --portfolio-only` ne synchronise que les symboles détenus — split annoncé hors fenêtre de détention peut être manqué
+- **P3** : Le reverse split avec cash-in-lieu sur les fractions < 0.001 part non testé spécifiquement
 
 ### Risques
-- Provider CA mal sélectionné (Alpaca vs EODHD) → données CA potentiellement différentes selon `bars_provider`
 - Split manqué si sync non exécuté le jour J du détachement
 
 ### Pour atteindre 10/10
-- Documenter explicitement la règle de sélection provider CA dans `DOC_FONCTIONNELLE.md`
 - Ajouter alerting si `corporate_actions_events.status != applied` après 24h
 - Tester les fractions très petites (< 0.001) sur reverse split
 
@@ -470,10 +464,10 @@ RotatingFileHandler présent, logs structurés par module, `run_summaries` DB + 
 
 ## 16. Sécurité / readiness production
 
-**Note : 7/10**
+**Note : 7.5/10** *(révisée — A-012 ✅ résolu)*
 
 ### Résumé
-Bonne base : credentials via env vars uniquement, scan literals YAML automatisé (`test_config_no_literal_secrets.py`), confirmation interactive live, vault optionnel (`${vault:...}`), secrets masqués à l'affichage. Reste à améliorer : SSL DB, rotation secrets, contraintes réseau.
+Bonne base : credentials via env vars uniquement, scan literals YAML automatisé (`test_config_no_literal_secrets.py`), confirmation interactive live, vault optionnel (`${vault:...}`), secrets masqués à l'affichage. SSL MySQL désormais activable via env var.
 
 ### Points forts
 - `scan_yaml_for_literal_secrets` enforced en test (P0 automatiquement bloquant)
@@ -481,18 +475,19 @@ Bonne base : credentials via env vars uniquement, scan literals YAML automatisé
 - Confirmation `oui` requise en mode live
 - Allowlist stricte PowerShell bridge (watcher read-only uniquement)
 - `__all__` audité pour éviter exposition API privée (`test_audit_private_api_exposure.py`)
+- ✅ SSL MySQL activable via `DB_SSL_CA_PATH` env var (`database/connection.py:97-111`) — ne casse pas le LAN dev sans certificat (A-012 ✅)
 
 ### Faiblesses
-- **P2** : Pas de SSL sur la connexion MySQL (`DOC_TECHNIQUE.md §6 : "pas de SSL DB par défaut"`) — credentials et données sensibles transitent en clair sur le réseau local
-- **P2** : La confirmation live est interactif (saisie `oui`) mais pas renforcé par une double confirmation ou un token out-of-band. Un script mal écrit peut passer outre
+- **P2** : La confirmation live est interactive (saisie `oui`) mais pas renforcé par une double confirmation ou un token out-of-band. Un script mal écrit peut passer outre
 - **P3** : Rotation automatique des secrets non implémentée — si une clé Alpaca est compromise, la procédure de rotation est manuelle
+- **P3** : SSL non activé par défaut — l'opérateur doit définir `DB_SSL_CA_PATH` explicitement
 
 ### Risques
-- Interception réseau local des credentials MySQL ou des données de position
 - Script automatisé bypasse la confirmation live → ordres réels non désirés
+- Rotation secrets manuelle → délai de réaction si compromission
 
 ### Pour atteindre 10/10
-- Activer SSL MySQL avec certificats (même auto-signés en interne)
+- Documenter la procédure de déploiement SSL (certificat, variable, test de connexion)
 - Implémenter rotation secrets Alpaca (script de validation post-rotation)
 - Ajouter confirm live via fichier `live_session_token` généré à chaque session (pas juste stdin)
 

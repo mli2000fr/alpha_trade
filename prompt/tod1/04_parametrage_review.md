@@ -18,7 +18,7 @@ database:
 ```
 
 **Verdict** : ✅ Cohérent — credentials via env, pas de plain text. Pool (2+3) raisonnable pour usage single-machine.  
-**Risque** : Pas de SSL. Ajout recommandé : `ssl_ca: "/path/to/ca.pem"` optionnel via `DB_SSL_CA` env var.
+**SSL** : ✅ Activable via `DB_SSL_CA_PATH` env var (`database/connection.py:97-111`). Non activé par défaut (LAN dev non cassé) — documenter la procédure dans le runbook opérateur.
 
 ---
 

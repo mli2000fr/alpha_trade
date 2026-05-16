@@ -21,7 +21,12 @@
 **Objectif** : Éliminer les incohérences P1 documentaires et de configuration sans toucher au code algorithme.  
 **Durée estimée** : 1–2 jours  
 **Modules impactés** : `doc/`, `config/`  
-**Anomalies traitées** : A-001, A-002, A-004, A-005, A-016, A-018, A-023, A-026
+**Anomalies traitées** : A-001, A-002, A-016, A-023
+
+> ✅ **Anomalies déjà résolues (S1 complet pour ces items)** :
+> - A-004 ✅ (vectorbt mention dans DOC_TECHNIQUE — sauf résidu argparse)
+> - A-005 ✅ (provider CA documenté dans DOC_FONCTIONNELLE + lineage matrix)
+> - A-018 ✅ (DOC_FONCTIONNELLE §1.3 étape 1 = EODHD)
 
 ### Tâches détaillées
 
@@ -41,41 +46,19 @@ risk_min_position_notional: 500.0
 - Vérifier que `execution_audit_events` → `execution_events`
 - Activer vérification en CI : `python scripts/generate_data_lineage.py --check`
 
-**T1.3** — Corriger `doc/DOC_TECHNIQUE.md §9 point 14`
-```markdown
+**T1.3** — Corriger le résidu argparse de vectorbt (A-004 résidu)
+```python
+# backtesting/cli/_impl.py:67
 # Avant :
-→ ✅ Implémenté : module `backtesting/` (vectorbt)
+description="Backtest intégré Alpha Trade (vectorbt)"
 # Après :
-→ ✅ Implémenté : module `backtesting/` (simulateur custom PIT — aucune dépendance vectorbt)
+description="Backtest intégré Alpha Trade (simulateur custom PIT)"
 ```
 
-**T1.4** — Corriger `doc/DOC_FONCTIONNELLE.md §1.3` étape 1
-```markdown
-# Avant :
-1. **Ingestion** des données de marché depuis Alpaca (barres OHLCV journalières)
-# Après :
-1. **Ingestion** des barres OHLCV journalières depuis EODHD (provider primaire, `bars_provider=eodhd`) 
-   ou Alpaca IEX (mode rétrocompatibilité, `bars_provider=alpaca`)
-```
-
-**T1.5** — Corriger `doc/DOC_FONCTIONNELLE.md §2.3` seuils AlphaScanner
-- `beta_126 >= 1.0` → `beta_126 >= 0.8` (valeur dans le profil strict canonique)
-- `max_spread_bps <= 25 bps` → `max_spread_bps <= 40 bps` (valeur dans le profil strict canonique)
-
-**T1.6** — Documenter le switch provider CA dans `doc/DOC_FONCTIONNELLE.md §2.9`
-```markdown
-**Provider corporate actions** : EODHD si `market_data.bars_provider = eodhd` 
-(factory `build_corporate_action_provider` sélectionne `EodhdCorporateActionProvider`), 
-Alpaca sinon. Cette cohérence garantit que les CA et les barres OHLCV sont issues 
-du même fournisseur.
-```
-
-**T1.7** — Ajouter commentaire YAML pour PDT rule sur comptes cash
+**T1.4** — Ajouter commentaire YAML pour PDT rule sur comptes cash (A-016)
 ```yaml
-execution_pdt_rule: "off"  # PDT rule N/A sur compte cash (règle margin uniquement)
+execution_pdt_rule: "off"  # PDT rule N/A sur compte cash (règle margin uniquement — cf. execution_engine/config.py effective_pdt_rule)
 ```
-
-**T1.8** — Documenter `test_import_alpaca_bar_noop.py` dans `doc/dataIntegrityEngine.md`
 
 ### Tests à ajouter/exécuter
 
@@ -83,95 +66,50 @@ execution_pdt_rule: "off"  # PDT rule N/A sur compte cash (règle margin uniquem
 |---|---|---|
 | `test_capital_preset_risk_overrides.py` — ajout assertion `max_positions × notional ≤ 0.95 × equity` | Unitaire config | P1 |
 | `test_data_lineage_autogen.py` — activer en CI | Non-régression doc | P1 |
-| `test_doc_provider_alignment.py` — ajout patterns "vectorbt", "beta_126 >= 1.0", "spread_bps <= 25" | Non-régression doc | P1 |
-| `test_strict_filter_profiles.py` — vérifier cohérence STRICT_SWING_CASH_FILTERS vs doc | Unitaire | P2 |
 
 ### Critères d'acceptation
 
 - ✅ `test_capital_preset_risk_overrides.py` passe sur `capital_0_2000_eur` avec max_positions=3
 - ✅ `test_data_lineage_autogen.py` vert en CI sans erreur de noms de tables
-- ✅ `test_doc_provider_alignment.py` vert (aucun pattern obsolète détecté)
-- ✅ Aucune mention "vectorbt" dans `DOC_TECHNIQUE.md`
+- ✅ Aucun résidu "vectorbt" dans `_impl.py` argparse
 
 ### Gain attendu sur les notes
 
 | Module | Avant | Après |
 |---|---|---|
-| Documentation | 8.0 | 8.5 |
 | Configuration | 7.0 | 7.5 |
-| corporate_actions | 7.0 | 7.5 |
+| Documentation | 8.5 (déjà révisé) | 9.0 (après T1.2) |
 
 ---
 
 ## Sprint S2 — Corrections techniques P1/P2
 
-**Objectif** : Résoudre les problèmes techniques maineurs qui impactent la fiabilité en production.  
-**Durée estimée** : 3–5 jours  
-**Modules impactés** : `database/`, `modelFactory/`, `execution_engine/`, `config/`  
-**Anomalies traitées** : A-003, A-006, A-007, A-009, A-012, A-017
+**Objectif** : Résoudre les problèmes techniques mineurs qui impactent la fiabilité en production.  
+**Durée estimée** : 2–3 jours *(réduit — plusieurs tâches déjà résolues)*  
+**Modules impactés** : `config/`, `execution_engine/`  
+**Anomalies traitées** : A-006, A-007, A-017
+
+> ✅ **Anomalies déjà résolues (S2 complet pour ces items)** :
+> - A-003 ✅ (gouvernance ML en DB — `selected_model`, `decision_threshold` déjà persistés)
+> - A-009 ✅ (unicité `model_predictions` — `UNIQUE KEY uq_symbol_date_run` déjà présent)
+> - A-012 ✅ (SSL MySQL — activable via `DB_SSL_CA_PATH` dans `database/connection.py`)
 
 ### Tâches détaillées
 
-**T2.1** — Migration Alembic `0029_model_predictions_governance`
-```sql
-ALTER TABLE model_predictions 
-  ADD COLUMN selected_model VARCHAR(32) NULL COMMENT 'Backend ML servi : lstm_attention | lightgbm | catboost | global_model',
-  ADD COLUMN decision_threshold FLOAT NULL COMMENT 'Seuil de décision optimisé',
-  ADD COLUMN calibration_method VARCHAR(16) NULL COMMENT 'Méthode de calibration : none | platt',
-  ADD COLUMN signal_label VARCHAR(16) NULL COMMENT 'Label textuel du signal ML';
-```
-**Fichiers** : `alembic/versions/0029_model_predictions_governance.py` (nouveau)
-
-**T2.2** — Persister `selected_model` dans `predictor.py`
-```python
-# modelFactory/predictor.py — après calcul de predicted_proba
-if persist:
-    repo.insert_prediction(
-        symbol=symbol,
-        prediction_date=prediction_date,
-        predicted_proba=predicted_proba,
-        predicted_class=predicted_class,
-        run_id=run_id,
-        selected_model=artifact_routes.selected_model,  # NEW
-        decision_threshold=decision_threshold,           # NEW
-        calibration_method=calibration_method,           # NEW
-    )
-```
-**Fichiers** : `modelFactory/predictor.py`, `database/ml_io.py`
-
-**T2.3** — Corriger presets capital PDT rule (margin)
+**T2.1** — Corriger presets capital PDT rule (margin)
 ```yaml
 # capital_25001_50000, capital_50001_100000, capital_100001_plus
 execution_pdt_rule: "auto"  # Corrigé : comptes margin avec suivi PDT auto si equity < 25k$
 ```
 **Fichiers** : `config/capital_presets.yaml:230`, `:280`, `:330`
 
-**T2.4** — Corriger `selector_min_close` preset `capital_0_5000`
+**T2.2** — Corriger `selector_min_close` preset `capital_0_5000`
 ```yaml
 selector_min_close: 10.0  # Corrigé : aligné profil strict canonique (was 5.0)
 ```
 **Fichiers** : `config/capital_presets.yaml:97`
 
-**T2.5** — Vérifier et ajouter contrainte unicité `model_predictions`
-```sql
--- Vérifier si la contrainte existe déjà
-SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS 
-WHERE TABLE_NAME='model_predictions' AND CONSTRAINT_TYPE='UNIQUE';
--- Si absente :
-ALTER TABLE model_predictions ADD UNIQUE INDEX uq_prediction_symbol_date (symbol, prediction_date);
-```
-
-**T2.6** — Activer SSL MySQL (optionnel via env var)
-```python
-# database/connection.py
-ssl_args = {}
-if os.getenv("DB_SSL_CA"):
-    ssl_args = {"ssl_ca": os.getenv("DB_SSL_CA")}
-engine = create_engine(url, connect_args=ssl_args, ...)
-```
-**Fichiers** : `database/connection.py`, `doc/DOC_TECHNIQUE.md §4.1`
-
-**T2.7** — Augmenter fill_timeout et documenter le comportement gap
+**T2.3** — Augmenter fill_timeout et documenter le comportement gap
 ```python
 # execution_engine/config.py
 fill_timeout_seconds: int = 180  # paper (was 120)
@@ -183,28 +121,21 @@ fill_timeout_seconds: int = 180  # paper (was 120)
 
 | Test | Type | Priorité |
 |---|---|---|
-| `test_model_factory_db_registry.py` — assertion `selected_model IS NOT NULL` | Intégration | P1 |
-| `test_model_factory_predictor.py` — passage des champs governance à insert | Unitaire | P1 |
 | `test_execution_config.py` — PDT auto sur margin quand equity < 25k$ | Unitaire | P2 |
 | `test_capital_preset_risk_overrides.py` — regression min_close ≥ 10.0 | Unitaire | P2 |
-| `test_connection.py` — SSL activé si DB_SSL_CA définie | Unitaire | P2 |
 | `test_execution_engine_executor.py` — fill_timeout gap scenario | Unitaire | P2 |
 
 ### Critères d'acceptation
 
-- ✅ `model_predictions.selected_model` non-NULL après un run de predict
 - ✅ `test_capital_preset_risk_overrides.py` vert avec PDT auto sur presets margin
 - ✅ `selector_min_close ≥ 10.0` pour tous les presets (ou exception documentée)
-- ✅ Migration 0029 appliquée sans erreur sur base de test SQLite
+- ✅ fill_timeout = 180s en paper, 300s en live
 
 ### Gain attendu sur les notes
 
 | Module | Avant | Après |
 |---|---|---|
-| modelFactory | 6.5 | 7.5 |
-| database | 7.0 | 7.5 |
 | Configuration | 7.5 | 8.0 |
-| Sécurité | 7.0 | 7.5 |
 
 ---
 

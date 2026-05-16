@@ -29,13 +29,12 @@
 
 ## 2. Corporate Actions — Provider
 
-| Point | DOC_FONCTIONNELLE §2.9 | data_lineage_matrix §5 | Code réel | Verdict |
+| Point | DOC_FONCTIONNELLE §2.9 | data_lineage_matrix §5/§7 | Code réel | Verdict |
 |---|---|---|---|---|
-| Provider CA primaire | "Détection via provider (Alpaca)" | "EODHD (primaire)" | Provider injecté — factory sélectionne parmi Alpaca/EODHD selon `bars_provider` | ❌ Contradiction entre les deux docs |
-| Switch provider CA | Non documenté | Mentionné uniquement | `build_corporate_action_provider` (non visible à lecture rapide) | ❿ Ambigu |
+| Provider CA primaire | ✅ `EodhdCorporateActionProvider` si `bars_provider=eodhd` (DOC_FONCTIONNELLE.md:246) | ✅ Règle de sélection documentée §7:109-111 | Factory conditionnelle (`corporate_actions/provider.py:402-432`) | ✅ **RÉSOLU** (A-005) |
+| Switch provider CA | ✅ Documenté dans §2.9 | ✅ Documenté dans §7 | `build_corporate_action_provider()` correctement implémentée | ✅ |
 | Yahoo cross-check | Non mentionné | Mentionné | `test_corporate_actions_cross_check_yahoo.py` suggère implémenté | ✅ (cohérent code ↔ lineage) |
 
-**Écart majeur** : `DOC_FONCTIONNELLE.md §2.9` dit "Alpaca" comme provider CA. `data_lineage_matrix.md` dit "EODHD (primaire)". La logique réelle est "EODHD si `bars_provider=eodhd`, Alpaca sinon". Les deux docs doivent être mises à jour pour refléter cette règle conditionnelle.
 
 ---
 
@@ -57,8 +56,9 @@
 
 | Point | DOC_TECHNIQUE §9 | Code réel | Verdict |
 |---|---|---|---|
-| Framework backtest | "vectorbt" ❌ | `backtesting/simulator.py` custom | ❌ |
+| Framework backtest | ✅ "simulateur custom PIT — aucune dépendance vectorbt" (`DOC_TECHNIQUE.md:497`) | `backtesting/simulator.py` custom | ✅ **RÉSOLU** (A-004) |
 | Moteur backtesting | "BacktestEngine" | `BacktestEngine` (`backtesting/simulator.py`) | ✅ |
+| Résidu argparse | `backtesting/cli/_impl.py:67` : `description="Backtest intégré Alpha Trade (vectorbt)"` | Non corrigé | ⚠️ Résidu cosmétique (A-004 résidu) |
 | ParquetCache branché | "pas encore branché par défaut" | Non branché dans CLI `run` | ✅ (doc exacte) |
 | Walk-forward | Documenté | `backtesting/walk_forward.py` | ✅ |
 
@@ -97,9 +97,11 @@
 
 | Point | DOC_TECHNIQUE §5.5 | Schéma DB réel | Verdict |
 |---|---|---|---|
-| `selected_model` | "présent dans artefacts, PAS en DB" | Absent de `model_predictions` | ✅ (doc exacte sur ce manque) |
-| `decision_threshold` | idem | Absent | ✅ (doc exacte) |
-| Idempotence `model_predictions` | Pas documentée | Non confirmée | ⚠️ À vérifier |
+| `selected_model` | ✅ Présent | `model_predictions.sql:8` — `selected_model VARCHAR(32)` | ✅ **RÉSOLU** (A-003) |
+| `decision_threshold` | ✅ Présent | `model_predictions.sql:9` — `decision_threshold DOUBLE` | ✅ **RÉSOLU** (A-003) |
+| `calibration_method` | ✅ Présent | `model_predictions.sql:10` — `calibration_method VARCHAR(32)` | ✅ **RÉSOLU** (A-003) |
+| `signal_label` | ✅ Présent | `model_predictions.sql:11` — `signal_label VARCHAR(32)` | ✅ **RÉSOLU** (A-003) |
+| Idempotence `model_predictions` | `ON DUPLICATE KEY UPDATE` dans `db_registry.py:342-348` | `UNIQUE KEY uq_symbol_date_run` présent | ✅ **RÉSOLU** (A-009) |
 
 ---
 
@@ -117,12 +119,13 @@
 
 ## 9. Matrice de résolution des contradictions
 
-| Contradiction | Version doc | Version code | Verdict (source de vérité) |
-|---|---|---|---|
-| Step 1 pipeline = `import_alpaca_bar` | DOC_FONCTIONNELLE §1.3 | `import_eodhd_bar.py` actif | **Code** — la doc doit être corrigée |
-| CA provider = Alpaca vs EODHD | DOC_FONCTIONNELLE §2.9 vs lineage matrix | Factory conditionnelle | **Code (factory)** — les deux docs doivent préciser la règle |
-| `max_spread_bps` = 25 bps | DOC_FONCTIONNELLE §2.3 | `STRICT_SWING_CASH_FILTERS.max_spread_bps = 40` | **Code (40 bps)** — doc à corriger |
-| `beta_126 >= 1.0` | DOC_FONCTIONNELLE §2.3 | `STRICT_SWING_CASH_FILTERS.min_beta_126 = 0.8` | **Code (0.8)** — doc à corriger |
-| Backtest framework = vectorbt | DOC_TECHNIQUE §9 | Simulateur custom | **Code** — supprimer la mention vectorbt |
-| Noms tables execution | data_lineage_matrix §4 | Schéma réel | **Code/schéma** — régénérer la lineage matrix |
+| Contradiction | Version doc | Version code | Verdict (source de vérité) | Statut |
+|---|---|---|---|---|
+| Step 1 pipeline = `import_alpaca_bar` | DOC_FONCTIONNELLE §1.3 | `import_eodhd_bar.py` actif | **Code** — la doc doit être corrigée | ✅ RÉSOLU (A-018) |
+| CA provider = Alpaca vs EODHD | DOC_FONCTIONNELLE §2.9 vs lineage matrix | Factory conditionnelle | **Code (factory)** — les deux docs doivent préciser la règle | ✅ RÉSOLU (A-005) |
+| `max_spread_bps` = 25 bps | DOC_FONCTIONNELLE §2.3 | `STRICT_SWING_CASH_FILTERS.max_spread_bps = 40` | **Code (40 bps)** — doc à corriger | 🔴 Actif |
+| `beta_126 >= 1.0` | DOC_FONCTIONNELLE §2.3 | `STRICT_SWING_CASH_FILTERS.min_beta_126 = 0.8` | **Code (0.8)** — doc à corriger | 🔴 Actif |
+| Backtest framework = vectorbt | DOC_TECHNIQUE §9 | Simulateur custom | **Code** — mention vectorbt supprimée dans §9 | ✅ RÉSOLU (A-004 principal) ; résidu argparse |
+| Noms tables execution | data_lineage_matrix §4 | Schéma réel | **Code/schéma** — régénérer la lineage matrix | 🔴 Actif (A-002) |
+| `model_predictions` sans gouvernance ML | DOC_TECHNIQUE §5.5 | Colonnes présentes dans SQL | **Code** — gouvernance ML en DB complète | ✅ RÉSOLU (A-003) |
 

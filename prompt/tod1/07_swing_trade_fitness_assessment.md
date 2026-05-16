@@ -86,8 +86,8 @@ Le modèle finbert a un léger biais positif sur les articles de presse d'entrep
 |---|---|---|
 | Compte paper, 10k–50k$, margin | ✅ Très bien | Pipeline complet exploitable |
 | Compte cash, 5k–25k$ | ✅ Bien | PDT évité, swing_only, univers parfois restreint |
-| Micro-compte ≤ 2k $ | 🟡 Fragile | Frais relatifs élevés, univers souvent vide |
-| Grand compte live ≥ 50k$ | ✅ Bi | Manque alerting push, monitoring live, SSL |
+| Micro-compte ≤ 2k $ | 🟡 Fragile | Frais relatifs élevés, univers souvent vide, max_positions à corriger (A-001) |
+| Grand compte live ≥ 50k$ | ✅ Bien | Alerting push manquant, monitoring live externe absent ; SSL activable ✅ (A-012 résolu) |
 | Multi-comptes paper + live | ✅ Supporté | Isolation par account_id, CLI `--account` |
 
 ---
