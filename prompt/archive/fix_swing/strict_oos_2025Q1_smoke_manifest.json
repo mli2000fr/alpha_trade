@@ -1,0 +1,37 @@
+{
+  "params": {
+    "backfill_start": "2025-01-02",
+    "backfill_end": "2025-01-02",
+    "oos_start": "2025-01-02",
+    "oos_end": "2025-01-02",
+    "lookback_start": "2024-10-01",
+    "output_dir": "prompt\\fix_swing\\cash_eq2000_mp2_filtered_f2_oos_2025Q1_strict_smoke",
+    "chunk_size": 10000,
+    "selection_size": 100,
+    "screener_workers": 8,
+    "skip_purge": false
+  },
+  "purge": {
+    "deleted_rows": 1649
+  },
+  "coverage_before_backfill": {
+    "days": 0,
+    "rows_n": 0,
+    "dmin": null,
+    "dmax": null
+  },
+  "backfill_result": {
+    "start_date": "2025-01-02",
+    "end_date": "2025-01-02",
+    "trading_days_requested": 1,
+    "trading_days_processed": 1,
+    "rows_inserted": 1649,
+    "trading_days_skipped_existing": 0
+  },
+  "coverage_after_backfill": {
+    "days": 1,
+    "rows_n": 1649,
+    "dmin": "2025-01-02",
+    "dmax": "2025-01-02"
+  }
+}

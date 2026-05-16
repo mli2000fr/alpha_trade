@@ -1,0 +1,23 @@
+{
+  "params": {
+    "backfill_start": "2025-01-01",
+    "backfill_end": "2025-03-31",
+    "oos_start": "2025-01-01",
+    "oos_end": "2025-03-31",
+    "lookback_start": "2024-10-01",
+    "output_dir": "prompt\\fix_swing\\cash_eq2000_mp2_filtered_f2_oos_2025Q1_strict",
+    "chunk_size": 10000,
+    "selection_size": 100,
+    "screener_workers": 8,
+    "skip_purge": false
+  },
+  "purge": {
+    "deleted_rows": 29396
+  },
+  "coverage_before_backfill": {
+    "days": 0,
+    "rows_n": 0,
+    "dmin": null,
+    "dmax": null
+  }
+}

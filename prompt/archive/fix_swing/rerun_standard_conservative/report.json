@@ -1,0 +1,47 @@
+{
+  "summary": {
+    "initial_equity": 100000.0,
+    "final_value": 62010.05279292556,
+    "total_return_pct": -37.98994720707444,
+    "cagr_pct": -38.22655841100132,
+    "sharpe_ratio": -2.085396962197093,
+    "sortino_ratio": -3.372852995108779,
+    "max_drawdown_pct": 44.264264797592354,
+    "total_trades": 408,
+    "win_rate_pct": 36.029411764705884,
+    "avg_trade_duration_days": 1.8284313725490196,
+    "profit_factor": 0.7549303291440327
+  },
+  "artifacts": {
+    "equity_curve_csv": "C:\\Users\\PC MLI\\PycharmProjects\\alpha_trade\\prompt\\fix_swing\\rerun_standard_conservative\\equity_curve.csv",
+    "report_json": "C:\\Users\\PC MLI\\PycharmProjects\\alpha_trade\\prompt\\fix_swing\\rerun_standard_conservative\\report.json",
+    "equity_curve_png": "C:\\Users\\PC MLI\\PycharmProjects\\alpha_trade\\prompt\\fix_swing\\rerun_standard_conservative\\equity_curve.png",
+    "trades_csv": "C:\\Users\\PC MLI\\PycharmProjects\\alpha_trade\\prompt\\fix_swing\\rerun_standard_conservative\\trades.csv"
+  },
+  "params": {
+    "start": "2025-04-21",
+    "end": "2026-04-20",
+    "equity": 100000.0,
+    "tp": 0.08,
+    "ts": 0.05,
+    "max_positions": 5,
+    "fees": 0.001,
+    "account_type": "margin",
+    "pdt_rule": "auto",
+    "effective_pdt_rule": "auto",
+    "swing_only": false,
+    "sentiment_lookback": 365,
+    "ml_mode": "auto",
+    "sentiment_mode": "auto",
+    "artifacts_dir": "artifacts/models",
+    "execution_timing": "next_open",
+    "entry_price_source": "next_session_open",
+    "no_save": false
+  },
+  "diagnostics": {
+    "blocked_same_day_exits": 0,
+    "blocked_pdt_day_trades": 0,
+    "blocked_cash_entries": 0,
+    "executed_day_trades": 206
+  }
+}
