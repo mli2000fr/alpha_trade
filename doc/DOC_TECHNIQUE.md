@@ -470,6 +470,7 @@ Référence dédiée : voir aussi `doc/watcher.md`.
 | `prompt/execution/` : historique audit → plan → sprints → cutover désormais structuré ; homogénéisation du reste de `prompt/` encore perfectible | P3 |
 | ~~`configure_optimizers()` sans type hint dans `model.py`~~ → ✅ Type hint `-> torch.optim.Optimizer` ajouté | ~~P3~~ |
 | ~~`corporate_actions*` absent de `pyproject.toml` packages.find.include~~ → ✅ Ajouté (`corporate_actions*`, `ihm*`) | ~~P1~~ |
+| `model_predictions` n'inclut pas `selected_model` / `decision_threshold` / `calibration_method` — gouvernance ML incomplète en DB | P1 → Sprint S2 |
 
 ---
 
@@ -493,7 +494,7 @@ Référence dédiée : voir aussi `doc/watcher.md`.
 11. Orchestrateur pipeline (Airflow/Prefect)
 12. Monitoring (Prometheus/Grafana)
 13. Containerisation Docker
-14. ~~Framework de backtest intégré~~ → ✅ Implémenté : module `backtesting/` (vectorbt)
+14. ~~Framework de backtest intégré~~ → ✅ Implémenté : module `backtesting/` (simulateur custom PIT — aucune dépendance vectorbt ; moteur `BacktestEngine` dans `backtesting/simulator.py`)
 
 ---
 
@@ -590,7 +591,8 @@ python -m dataIntegrityEngine.import_alpaca_assets
 python -m dataIntegrityEngine.update_sector
 
 # Quotidien — workflow IHM 1 → 14, dans cet ordre strict :
-python -m dataIntegrityEngine.import_alpaca_bar           # 1.  import bars
+python -m dataIntegrityEngine.import_eodhd_bar           # 1.  import bars (EODHD, provider primaire)
+# python -m dataIntegrityEngine.import_alpaca_bar         # 1.  import bars (Alpaca IEX, rétrocompat — décommenter si bars_provider=alpaca)
 python -m dataIntegrityEngine.data_sanitizer_daily        # 2.  sanitize bars
 python -m screener.stock_screener                         # 3.  screener
 python -m dataIntegrityEngine.sync_latest_quotes          # 4.  snapshot quotes pour filtre de spread

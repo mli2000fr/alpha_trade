@@ -34,7 +34,7 @@ Le système cible le **marché actions US (NYSE/NASDAQ)**, en stratégie **swing
 
 Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 
-1. **Ingestion** des données de marché depuis Alpaca (barres OHLCV journalières)
+1. **Ingestion** des barres OHLCV journalières depuis **EODHD** (provider primaire par défaut, `market_data.bars_provider=eodhd`) ou Alpaca IEX (mode rétrocompatibilité, `bars_provider=alpaca`). Voir `config.yaml › market_data.bars_provider`.
 2. **Nettoyage** des données (sanitizer, détection d'anomalies)
 3. **Screening** multi-facteurs pour identifier les meilleurs candidats
 4. **Sync Latest Quotes** — snapshot des dernières quotes Alpaca pour alimenter le filtre de spread
@@ -115,8 +115,8 @@ Le scanner quotidien et les reruns/backtests "petit compte cash swing" utilisent
 - `weekly_trend_score >= 1.0`
 - `1.5 % <= atr_pct_20 <= 6 %`
 - `market_cap >= 2 Md$`
-- `beta_126 >= 1.0`
-- `spread_bps <= 25`
+  - `beta_126 >= 1.0` → seuil dans la documentation ; le profil strict canonique (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`) utilise **`min_beta_126 = 0.8`** (assouplissement prudent pour les régimes risk-off)
+  - `spread_bps <= 25` → seuil historique ; le profil strict canonique (`core/filter_profiles.py:STRICT_SWING_CASH_FILTERS`) utilise **`max_spread_bps = 40`** (plus réaliste pour les snapshots EOD IEX)
 - `earnings_blackout = 0`
 
 Cet ensemble de filtres vise à réduire les microcaps/penny stocks, améliorer l'exécutabilité réelle et éviter les entrées juste avant un événement binaire ou après une explosion de volatilité.
@@ -243,7 +243,7 @@ Le module `corporate_actions` assure le suivi automatique des opérations sur ti
 
 | Fonctionnalité | Description |
 |---|---|
-| **Dividendes cash** | Détection via provider (Alpaca), calcul montant = qty × dividende/action, crédit cash dans un ledger dédié |
+| **Dividendes cash** | Détection via provider CA : `EodhdCorporateActionProvider` si `market_data.bars_provider=eodhd` (défaut), `AlpacaCorporateActionProvider` sinon (factory `build_corporate_action_provider`) |
 | **Splits** | Ajustement automatique : qty × ratio, cost basis / ratio, conservation de la valeur totale |
 | **Reverse splits** | Idem avec gestion des fractions (cash-in-lieu) |
 | **Idempotence** | Clé SHA-256 déterministe (provider + symbol + type + ex_date + montant/ratio), unicité DB |
