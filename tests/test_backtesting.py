@@ -559,7 +559,9 @@ class TestResilience:
             walk_forward_artifacts_dir=tmp_path,
         )
 
-        assert result.iloc[0]["final_score_walk_forward"] == 0.74
+        # A-027 : quant_weight=0.70 est clippé à WEIGHT_MAX=0.40 → score clippé.
+        assert result.iloc[0]["final_score_walk_forward"] == pytest.approx(0.53, abs=1e-6)
+        assert result.iloc[0]["walk_forward_quant_weight"] == pytest.approx(0.40, abs=1e-6)
         assert result.iloc[0]["score_source"] == "final_score_walk_forward"
         assert result.iloc[0]["calibration_run_id"] == "wf-123"
 
@@ -1284,7 +1286,7 @@ class TestBacktestConfig:
         assert float(swing.closed_trades_df.iloc[0]["entry_price"]) == 105.0
         assert standard.closed_trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
         assert swing.closed_trades_df.iloc[0]["entry_date"] == pd.Timestamp("2025-01-02")
-        assert standard.closed_trades_df.iloc[0]["exit_date"] == pd.Timestamp("372025-01-02")
+        assert standard.closed_trades_df.iloc[0]["exit_date"] == pd.Timestamp("2025-01-02")
         assert swing.closed_trades_df.iloc[0]["exit_date"] == pd.Timestamp("2025-01-03")
 
     def test_backtest_engine_carries_forward_last_close_for_mark_to_market_when_current_close_missing(self):
@@ -2357,7 +2359,9 @@ class TestCLI:
         selected = signals_df[signals_df["selected"]].iloc[0]
         assert selected["symbol"] == "BBB"
         assert selected["score_source"] == "final_score_walk_forward"
-        assert float(selected["score"]) == pytest.approx(0.95)
+        # A-027 : sentiment_weight=0.9 → clippé à 0.40, macro_weight=0.0 → clippé à 0.05
+        # score = 0.4*normalize(1.0) + 0.05*normalize(0.0) + 0.1*0.5 = 0.40 + 0.025 + 0.05 = 0.475
+        assert float(selected["score"]) == pytest.approx(0.475, abs=0.01)
         report_payload = cast(dict[str, object], captured["report_payload"])
         assert report_payload["params"]["walk_forward_artifacts_dir"] == str(tmp_path)
         assert report_payload["params"]["score_column"] == "auto"
@@ -3538,8 +3542,8 @@ class TestWalkForwardUtils:
         newer.mkdir()
         older_file = older / "latest_best_weights.json"
         newer_file = newer / "champion_weights.json"
-        older_file.write_text(json.dumps({"sentiment_weight": 0.1, "macro_weight": 0.1, "quant_weight": 0.8}), encoding="utf-8")
-        newer_file.write_text(json.dumps({"sentiment_weight": 0.2, "macro_weight": 0.1, "quant_weight": 0.7}), encoding="utf-8")
+        older_file.write_text(json.dumps({"sentiment_weight": 0.10, "macro_weight": 0.10, "quant_weight": 0.35}), encoding="utf-8")
+        newer_file.write_text(json.dumps({"sentiment_weight": 0.20, "macro_weight": 0.10, "quant_weight": 0.35}), encoding="utf-8")
         os.utime(older_file, (1, 1))
         os.utime(newer_file, (2, 2))
 
@@ -3547,7 +3551,7 @@ class TestWalkForwardUtils:
 
         assert weights is not None
         assert weights.sentiment_weight == 0.2
-        assert weights.quant_weight == 0.7
+        assert weights.quant_weight == pytest.approx(0.35)
 
 
 class TestBacktestingRegistry:

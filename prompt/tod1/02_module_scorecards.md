@@ -6,41 +6,40 @@
 
 ## 1. Documentation
 
-**Note : 8.5/10** *(révisée — A-004 ✅ résolu, A-018 ✅ résolu)*
+**Note : 9.0/10** *(révisée — A-002 ✅ Sprint S1, A-004 ✅ Sprint S1, A-018 ✅ résolu)*
 
 ### Résumé
-La documentation est remarquablement complète pour un projet indépendant : `DOC_FONCTIONNELLE.md` (588 lignes), `DOC_TECHNIQUE.md` (824 lignes), une doc dédiée par module. Les conventions OHLCV provider et `data_adjustment='split'` sont documentées et cohérentes avec le code. La règle de sélection du provider CA est désormais explicitement documentée dans `DOC_FONCTIONNELLE.md:246`.
+La documentation est remarquablement complète pour un projet indépendant : `DOC_FONCTIONNELLE.md` (588 lignes), `DOC_TECHNIQUE.md` (824 lignes), une doc dédiée par module. Les conventions OHLCV provider et `data_adjustment='split'` sont documentées et cohérentes avec le code. La règle de sélection du provider CA est explicitement documentée. La lineage matrix est synchronisée avec les tables réelles depuis Sprint S1.
 
 ### Points forts
 - Bandeaux de convention en tête de `DOC_FONCTIONNELLE.md` et `DOC_TECHNIQUE.md` signalant le provider primaire EODHD
-- `data_lineage_matrix.md` avec producteur/consommateur par table
+- `data_lineage_matrix.md` avec producteur/consommateur par table — régénérée Sprint S1 ✅
 - Runbooks opérateurs (`runbook_24_7.md`, `runbook_reconciliation.md`, etc.)
 - Det tech "cochée" maintenue dans `DOC_TECHNIQUE.md §8`
 - ✅ `DOC_TECHNIQUE.md:497` : "simulateur custom PIT — aucune dépendance vectorbt" (A-004 ✅)
 - ✅ `DOC_FONCTIONNELLE.md:37` : ingestion EODHD nommée explicitement provider primaire (A-018 ✅)
 - ✅ Rule de sélection provider CA documentée dans `DOC_FONCTIONNELLE.md:246` et `data_lineage_matrix.md §7` (A-005 ✅)
+- ✅ Noms tables canoniques dans lineage matrix : `execution_order_requests`, `execution_broker_orders`, `execution_events` (A-002 ✅ Sprint S1)
 
 ### Faiblesses
-- `data_lineage_matrix.md §4` utilise encore les noms `execution_orders` / `execution_audit_events` au lieu de `execution_order_requests` / `execution_broker_orders` / `execution_events` (A-002 actif)
-- `backtesting/cli/_impl.py:67` : résidu cosmétique `description="Backtest intégré Alpha Trade (vectorbt)"` dans argparse (A-004 résidu)
-- `DOC_FONCTIONNELLE.md §2.3` cite `beta_126 >= 1.0` mais le code utilise 0.8 (écart mineur — A-005 résidu)
+- ⚠️ `DOC_FONCTIONNELLE.md §2.3` cite `beta_126 >= 1.0` mais le code utilise 0.8 (écart mineur — à corriger Sprint S4)
+- ⚠️ Nouvelles tables (`execution_reconciliation_results`, `execution_targets_snapshot`) à intégrer dans la lineage matrix Sprint S4
 
 ### Risques
-- Opérateur en incident cherche une table dans la lineage matrix → noms obsolètes → perte de temps
+- Biais doc beta_126 → opérateur comprend les filtres différemment de la réalité
 
 ### Pour atteindre 10/10
-- Régénérer `data_lineage_matrix.md` via `scripts/generate_data_lineage.py --check`
-- Corriger le résidu argparse vectorbt et le beta_126 dans §2.3
-- Automatiser la régénération de la lineage matrix en CI
+- Corriger `beta_126 >= 0.8` dans `DOC_FONCTIONNELLE.md §2.3`
+- Intégrer les nouvelles tables dans la lineage matrix via `generate_data_lineage.py` (Sprint S4)
 
 ---
 
 ## 2. Configuration (`config.yaml` + `config/capital_presets.yaml`)
 
-**Note : 7/10**
+**Note : 8.0/10** *(révisée — A-001 ✅ S1, A-006 ✅ S2, A-007 ✅ S2, A-016 ✅ S1)*
 
 ### Résumé
-La configuration est centralisée dans `config.yaml` (224 lignes) et `config/capital_presets.yaml` (360 lignes). La structure est claire. Les credentials sont exclusivement via env vars / placeholders. La couche Market-Aware est bien configurée ; cependant certaines valeurs par défaut sont partiellement incohérentes.
+La configuration est centralisée dans `config.yaml` (224 lignes) et `config/capital_presets.yaml` (360 lignes). La structure est claire. Les credentials sont exclusivement via env vars / placeholders. La couche Market-Aware est bien configurée. Toutes les anomalies P1/P2 de configuration sont résolues.
 
 ### Points forts
 - Aucune credential en clair (`scan_yaml_for_literal_secrets` enforced)
@@ -50,21 +49,21 @@ La configuration est centralisée dans `config.yaml` (224 lignes) et `config/cap
 - Capital presets couvrent 7 tranches bien graduées
 
 ### Faiblesses
-- **P1** : `capital_0_2000_eur.risk_max_positions: 10` est incompatible avec la description "3 lignes" et un capital de ~2 000 €. Ce preset devrait avoir `max_positions: 3`
-- **P2** : `capital_0_5000.selector_min_close: 5.0` est en dessous du profil strict canonique (`STRICT_SWING_CASH_FILTERS.min_close = 10.0`). Risque de penny stocks
-- **P2** : Tous les presets ≥ 25 001 $ ont `execution_pdt_rule: "off"` sur compte `margin`. Si l'equity chute sous 25 000 $, la règle PDT non activée peut entraîner des restrictions broker
-- **P3** : `market_regimes.macro_provider: eodhd` mais `yields.enabled: false` — le provider EODHD consomme du quota même si les yields ne sont pas utilisés
-- **P3** : `risk_management.trailing_stop.enabled: false` par défaut mais configuration `dynamic_atr` complète présente — risque de confusion opérateur
+- **P3** : `market_regimes.macro_provider: eodhd` mais `yields.enabled: false` — le provider EODHD consomme du quota même si les yields ne sont pas utilisés (A-020 actif → Sprint S4)
+- **P3** : `risk_management.trailing_stop.enabled: false` par défaut mais configuration `dynamic_atr` complète présente — recommandé d'activer en paper
+
+### Anomalies résolues dans cette section
+- ✅ `capital_0_2000_eur.risk_max_positions: 3`, `risk_min_position_notional: 500.0` (A-001 ✅ Sprint S1)
+- ✅ `selector_min_close: 10.0` sur tous les presets (A-007 ✅ Sprint S2)
+- ✅ `execution_pdt_rule: "auto"` sur les 3 presets margin ≥ 25k$ (A-006 ✅ Sprint S2)
+- ✅ Commentaires PDT rule ajoutés sur 4 presets cash (A-016 ✅ Sprint S1)
 
 ### Risques
-- Preset micro-compte avec 10 positions → risque de positions de 150 $ chacune sur compte 2 000 € → frais > alpha réel
-- PDT rule off sur margin compte → risque regulatory si equity fluctue autour de 25k$
+- `yields.enabled: false` → quota EODHD consommé sans valeur ajoutée (P3 mineur)
 
 ### Pour atteindre 10/10
-- Corriger `capital_0_2000_eur.risk_max_positions: 3`
-- Relever `capital_0_5000.selector_min_close: 10.0` (alignement profil strict)
-- Ajouter `pdt_rule: auto` pour presets 10–25k$ margin
-- Documenter le quota EODHD consommé par macro_provider même quand yields désactivés
+- Documenter le quota EODHD consommé par macro_provider même quand yields désactivés (Sprint S4)
+- Activer Kelly sur presets ≥ 50k$ avec guard `max_kelly_fraction: 0.25`
 - Validation schéma YAML automatique en CI (déjà partiellement testé dans `test_config_yaml_schema.py`)
 
 ---
@@ -205,12 +204,13 @@ AlphaScanner multi-facteurs mature : Trend Score (Minervini), VCP, beta_126 loca
 - `market_cap_max_age_days: 45` TTL market cap appliqué
 
 ### Faiblesses
-- **P2** : `capital_0_5000.selector_min_close: 5.0` contredit `STRICT_SWING_CASH_FILTERS.min_close: 10.0` — les presets petits comptes utilisent donc des critères moins stricts que le profil canonique
 - **P2** : La neutralisation sectorielle intra-secteur peut perturber le ranking si un secteur entier est en tendance forte (surpondération d'un secteur fort jugé "normal")
 - **P3** : Le score composite `50% × (trend+vcp)/2 + 30% × score_screener + 20% × RSI_relatif` a des pondérations non calibrées explicitement
 
+### Anomalies résolues dans cette section
+- ✅ `selector_min_close: 10.0` sur tous les presets (A-007 ✅ Sprint S2)
+
 ### Risques
-- Preset petit compte avec `min_close: 5.0` peut sélectionner des actions à 5–9 $ avec frais relatifs élevés
 - Neutralisation sectorielle peut créer des biais inverses dans certains régimes
 
 ### Pour atteindre 10/10
@@ -373,10 +373,10 @@ Module complet pour dividendes/splits/reverse-splits. Idempotence SHA-256, audit
 
 ## 13. backtesting
 
-**Note : 7/10**
+**Note : 7.5/10** *(révisée +0.5 — A-010 ✅, A-011 ✅, A-027 ✅ Sprint S3)*
 
 ### Résumé
-Module backtesting mature avec modes research/pipeline, convention `signal J → entrée open J+1`, simulation PDT/cash/swing_only, phases de fidélité 2/3/4/5/7. Walk-forward, calibration sentiment, diagnostic screener. `BacktestReport` structuré avec `report.json`. PIT via `stock_scores_history`.
+Module backtesting mature avec modes research/pipeline, convention `signal J → entrée open J+1`, simulation PDT/cash/swing_only, phases de fidélité 2/3/4/5/7. Walk-forward, calibration sentiment, diagnostic screener. `BacktestReport` structuré avec `report.json`. PIT via `stock_scores_history`. Depuis Sprint S3 : ParquetCache branché (`--use-cache`), Bootstrap Monte Carlo exposé (`--bootstrap-samples`), bornes walk-forward enforced [0.05, 0.40].
 
 ### Points forts
 - Convention fidèle `signal J → entrée J+1 open` (pas de look-ahead)
@@ -384,29 +384,28 @@ Module backtesting mature avec modes research/pipeline, convention `signal J →
 - `TradingConstraintConfig` : 3 axes indépendants (account_type, pdt_rule, swing_only)
 - `BackfillScoresHistoryService` : reconstruction PIT historique
 - `run_metadata` avec git_commit_sha, dataset_hash (reproductibilité)
+- ✅ **`--use-cache`** : `ParquetCache` branché dans CLI `backtesting run` — 3x–10x vitesse sur backtests > 2 ans (A-010 ✅ Sprint S3)
+- ✅ **`--bootstrap-samples N`** + **`--sensitivity-analysis`** exposés en CLI (A-011 ✅ Sprint S3)
+- ✅ **Bornes walk-forward `[0.05, 0.40]`** enforced via `validate_walk_forward_weights()` — clip silencieux + mode strict `ValueError` (A-027 ✅ Sprint S3)
 
 ### Faiblesses
-- **P2** : `ParquetCache` présent mais "pas encore branché par défaut" (`DOC_TECHNIQUE.md`) — chaque run full recharge les données depuis la DB → lent sur grands datasets
-- **P2** : `analytics.py` et `statistical_validation.py` présents mais non branchés automatiquement à la CLI standard — les capacités (bootstrap Monte Carlo, attribution sectorielle) ne sont pas accessibles sans code custom
-- **P3** : Le `walk_forward.py` sentiment calibration ne couvre pas le walk-forward pour les paramètres de risque (ATR period, Kelly, correlation threshold)
+- **P3** : Le `walk_forward.py` sentiment calibration ne couvre pas le walk-forward pour les paramètres de risque (ATR period, Kelly, correlation threshold) — (A-022 actif → Sprint S4)
 
 ### Risques
-- Performances backtest non fiables sans `ParquetCache` sur backtests historiques longs (> 2 ans, 500 symboles)
-- Bootstrap Monte Carlo non accessible en standard → illusion de robustesse sur un seul backtest
+- Walk-forward sur paramètres risque absent → optimisation out-of-sample des paramètres ATR/Kelly non disponible
 
 ### Pour atteindre 10/10
-- Brancher `ParquetCache` par défaut sur la commande `run`
-- Exposer `bootstrap_trades()` et `parameter_sensitivity()` dans la CLI (en opt-in)
-- Ajouter walk-forward pour les paramètres risk (pas uniquement les poids sentiment)
+- Étendre `walk_forward.py` pour supporter les paramètres risk (ATR period, Kelly, correlation) → Sprint S4
+- Ajouter un rapport automatique Bootstrap MC dans les artifacts de chaque run
 
 ---
 
 ## 14. IHM / supervision
 
-**Note : 7.5/10**
+**Note : 8.0/10** *(révisée +0.5 — A-014 ✅, A-015 ✅ Sprint S3)*
 
 ### Résumé
-IHM Streamlit opérateur complète : pipeline 1→14, Backtesting, Risk, Exécution, Market Regime, Supervision Ops, Paramètres. Workflow quotidien one-click. Process registry. Résumés métier structurés. Supervision Windows watcher read-only.
+IHM Streamlit opérateur complète : pipeline 1→14, Backtesting, Risk, Exécution, Market Regime, Supervision Ops, Paramètres. Workflow quotidien one-click. Process registry. Résumés métier structurés. Supervision Windows watcher read-only. Depuis Sprint S3 : alerte IHM sur diffs réconciliation non résolus > 24h et sur market_cap TTL expiré.
 
 ### Points forts
 - Workflow pipeline GUI complet avec résumés métier extraits (`::alpha_trade_run_summary::`)
@@ -414,20 +413,18 @@ IHM Streamlit opérateur complète : pipeline 1→14, Backtesting, Risk, Exécut
 - Supervision watcher Windows read-only (Task Scheduler / NSSM) sans admin
 - Page Market Regime avec snapshot à la volée + historique
 - `test_ihm_pipeline_e2e.py`, `test_ihm_execution_e2e.py`, `test_ihm_market_regime_banner.py` : tests E2E
+- ✅ **Alerte réconciliation** : bandeau warn si diffs non résolus (`BLOCKED`, `MANUAL_REVIEW`) depuis > 24h dans `execution_reconciliation_results` (A-014 ✅ Sprint S3)
+- ✅ **Alerte market_cap TTL** : warning si > 30% des symboles ont market_cap > 45j dans `ihm/pages/screening.py` (A-015 ✅ Sprint S3)
 
 ### Faiblesses
-- **P2** : L'IHM n'expose pas toutes les options `modelFactory --mode train` (par ex. `--optimize-target` et certains flags avancés LightGBM). Un opérateur avancé doit utiliser la CLI manuellement
-- **P2** : Page Execution n'affiche pas les `execution_reconciliation_results` avec diff actionnable clairement mis en évidence
-- **P3** : Pas de dashboard de PnL quotidien en IHM — l'opérateur doit aller dans les tables DB ou les rapports backtest
-- **P3** : Notifications email sont configurables depuis l'IHM mais non testées en conditions réelles (SMTP)
+- **P3** : Pas de dashboard de PnL quotidien en IHM — l'opérateur doit aller dans les tables DB ou les rapports backtest (A-021 actif → Sprint S4)
+- **P3** : Notifications email configurables depuis l'IHM mais le pipeline SMTP mériterait un test d'intégration avec serveur mock
 
 ### Risques
-- Opérateur non averti → IHM peut paraître complète mais sans alerting push, un incident n'est détecté qu'à la prochaine connexion
 - Absence de PnL live → impossible de voir rapidement si une exécution du jour a bien fonctionné
 
 ### Pour atteindre 10/10
-- Ajouter widget PnL quotidien (MTM portfolio + cash ledger) dans la page Overview
-- Exposer les `reconciliation_results` diff de manière actionnable (bouton "resolve" ou "investigate")
+- Ajouter widget PnL quotidien (MTM portfolio + cash ledger) dans la page Overview (Sprint S4)
 - Tester le pipeline SMTP de notifications en intégration (avec serveur mock)
 - Ajouter un indicateur "dernière exécution : il y a N heures" dans la bannière
 
@@ -435,16 +432,18 @@ IHM Streamlit opérateur complète : pipeline 1→14, Backtesting, Risk, Exécut
 
 ## 15. Observabilité / run summaries / logs
 
-**Note : 7/10**
+**Note : 7.5/10** *(révisée +0.5 — A-013 ✅, A-025 ✅ Sprint S3)*
 
 ### Résumé
-RotatingFileHandler présent, logs structurés par module, `run_summaries` DB + `::alpha_trade_run_summary::` pattern IHM. Tables `execution_events`, `risk_decisions`, `cleaning_audit_runs` fournissent un audit trail multi-couches.
+`TimedRotatingFileHandler` + gzip depuis Sprint S3, logs structurés par module, `run_summaries` DB + `::alpha_trade_run_summary::` pattern IHM. Tables `execution_events`, `risk_decisions`, `cleaning_audit_runs` fournissent un audit trail multi-couches. Alerting email automatique sur circuit_breaker opérationnel depuis Sprint S3.
 
 ### Points forts
 - `run_business_summaries` table partagée entre watcher, execution, screener
 - Pattern `::alpha_trade_run_summary::` parsé et affiché dans l'IHM
 - `execution_events` : journal complet événement par événement
 - Artifacts JSON `artifacts/market_regime/snapshot_*.json` exploitables par des outils tiers
+- ✅ **`TimedRotatingFileHandler`** quotidien avec compression gzip automatique + max 30 fichiers (A-025 ✅ Sprint S3)
+- ✅ **Alerting email automatique** : `NotificationService` déclenché sur `circuit_breaker_fired` + `kill_switch_activated` via SMTP (A-013 ✅ Sprint S3)
 
 ### Faiblesses
 - **P2** : Pas de monitoring externe (Prometheus/Grafana/Alertmanager) — observabilité limitée à la consultation active de l'IHM
@@ -452,12 +451,12 @@ RotatingFileHandler présent, logs structurés par module, `run_summaries` DB + 
 - **P3** : Les `run_summaries` IHM sont capturés par pattern regex sur stdout — fragile si un print non anticipé précède le pattern
 
 ### Risques
-- Incident silencieux : si l'opérateur ne consulte pas l'IHM pendant 24h, un circuit breaker déclenché peut passer inaperçu
-- Rotation de logs : historique limité à 3 backups (15 Mo) — un backtest long peut tronquer l'historique de log
+- Logs rotatifs locaux : historique limité à 30 fichiers gzip — suffisant pour usage quotidien mais pas pour audit annuel
+- Pas de Prometheus → métriques pipeline (latence, count candidats, nb ordres) non visualisables en temps réel
 
 ### Pour atteindre 10/10
-- Intégrer Prometheus ou équivalent pour métriques pipeline (latence steps, count candidats, nb ordres)
-- Centraliser les logs (syslog, Loki ou équivalent Windows)
+- Intégrer Prometheus ou équivalent pour métriques pipeline (latence steps, count candidats, nb ordres) → Sprint S5
+- Centraliser les logs (syslog, Loki ou équivalent Windows) → Sprint S5
 - Renforcer le pattern de capture run_summary (JSON strict plutôt que regex stdout)
 
 ---

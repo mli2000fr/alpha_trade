@@ -1,4 +1,10 @@
-"""Utilitaires walk-forward pour charger et appliquer les meilleurs poids calibrés."""
+"""Utilitaires walk-forward pour charger et appliquer les meilleurs poids calibrés.
+
+Sprint S3 / A-027 : ``validate_walk_forward_weights`` ajoute des bornes business
+([0.05, 0.40] par défaut) sur les poids sentiment/macro/quant et **clip** les
+valeurs hors bornes avec un log WARNING plutôt qu'un assert fatal, afin de ne
+pas bloquer un run opérationnel.
+"""
 from __future__ import annotations
 
 import json
@@ -12,6 +18,15 @@ import pandas as pd
 from event_sentiment.signal_aggregator import SentimentSignalAggregator
 
 LOGGER = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Sprint S3 / A-027 — bornes business sur les poids calibrés
+# ---------------------------------------------------------------------------
+
+#: Borne inférieure inclusive sur chaque poids individuel.
+WEIGHT_MIN: float = 0.05
+#: Borne supérieure inclusive sur chaque poids individuel.
+WEIGHT_MAX: float = 0.40
 
 _WEIGHT_FILENAMES = (
     "latest_best_weights.json",
@@ -76,6 +91,77 @@ def load_walk_forward_weights(path: Path) -> WalkForwardWeights | None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Sprint S3 / A-027 — validation des bornes business sur les poids
+# ---------------------------------------------------------------------------
+
+
+def validate_walk_forward_weights(
+    weights: WalkForwardWeights,
+    *,
+    min_weight: float = WEIGHT_MIN,
+    max_weight: float = WEIGHT_MAX,
+    strict: bool = False,
+) -> WalkForwardWeights:
+    """Vérifie et corrige les poids walk-forward selon les bornes business.
+
+    En mode ``strict=False`` (défaut opérationnel), les poids hors bornes sont
+    **clippés** avec un log ``WARNING``. En mode ``strict=True`` (tests unitaires,
+    validation manuelle), une ``ValueError`` est levée.
+
+    Args:
+        weights: Poids calibrés à valider.
+        min_weight: Borne inférieure inclusive (défaut 0.05).
+        max_weight: Borne supérieure inclusive (défaut 0.40).
+        strict: Si ``True``, lève ``ValueError`` sur tout dépassement.
+
+    Returns:
+        ``WalkForwardWeights`` validés/clippés.
+
+    Raises:
+        ValueError: Si ``strict=True`` et au moins un poids est hors bornes.
+    """
+    violations: list[str] = []
+
+    def _check(name: str, value: float) -> float:
+        if value < min_weight:
+            msg = f"Poids {name}={value:.4f} < borne inférieure {min_weight}"
+            violations.append(msg)
+            return min_weight
+        if value > max_weight:
+            msg = f"Poids {name}={value:.4f} > borne supérieure {max_weight}"
+            violations.append(msg)
+            return max_weight
+        return value
+
+    clipped_sentiment = _check("sentiment_weight", weights.sentiment_weight)
+    clipped_macro = _check("macro_weight", weights.macro_weight)
+    clipped_quant = _check("quant_weight", weights.quant_weight)
+
+    if violations:
+        if strict:
+            raise ValueError(
+                "Poids walk-forward hors bornes business [{}, {}] : {}".format(
+                    min_weight, max_weight, " | ".join(violations)
+                )
+            )
+        for msg in violations:
+            LOGGER.warning("A-027 bornes walk-forward — %s (clippage appliqué)", msg)
+
+    if clipped_sentiment == weights.sentiment_weight and clipped_macro == weights.macro_weight and clipped_quant == weights.quant_weight:
+        return weights
+
+    return WalkForwardWeights(
+        sentiment_weight=clipped_sentiment,
+        macro_weight=clipped_macro,
+        quant_weight=clipped_quant,
+        calibration_run_id=weights.calibration_run_id,
+        calibration_source=weights.calibration_source,
+        scenario_name=weights.scenario_name,
+        artifact_path=weights.artifact_path,
+    )
+
+
 def resolve_latest_walk_forward_weights(search_roots: Iterable[Path] | None = None) -> WalkForwardWeights | None:
     candidates: list[Path] = []
     for root in _candidate_roots(search_roots):
@@ -87,7 +173,11 @@ def resolve_latest_walk_forward_weights(search_roots: Iterable[Path] | None = No
     if not existing_candidates:
         return None
     latest_path = max(existing_candidates, key=lambda path: path.stat().st_mtime)
-    return load_walk_forward_weights(latest_path)
+    loaded = load_walk_forward_weights(latest_path)
+    if loaded is None:
+        return None
+    # Sprint S3 / A-027 — applique les bornes business (clippage + warning).
+    return validate_walk_forward_weights(loaded)
 
 
 def apply_walk_forward_weights(scores_df: pd.DataFrame, weights: WalkForwardWeights | None) -> pd.DataFrame:

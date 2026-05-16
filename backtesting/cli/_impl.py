@@ -215,6 +215,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seed reproductibilité (consignée dans report.json[run_metadata]).",
     )
 
+    # Sprint S3 / A-010 — cache Parquet pour accélérer les re-runs.
+    run_p.add_argument(
+        "--use-cache",
+        action="store_true",
+        default=False,
+        help="Active le cache Parquet local pour OHLCV/scores/predictions (artifacts/backtest_cache/). "
+        "Accélère les re-runs sur le même jeu de données. Ignorer si le dataset a changé.",
+    )
+    run_p.add_argument(
+        "--cache-dir",
+        default="artifacts/backtest_cache",
+        help="Répertoire du cache Parquet (défaut: artifacts/backtest_cache/).",
+    )
+
+    # Sprint S3 / A-011 — bootstrap trades + analyse de sensibilité.
+    run_p.add_argument(
+        "--bootstrap-samples",
+        type=int,
+        default=0,
+        help="Nombre d'itérations Monte Carlo pour le bootstrap des trades (G1). "
+        "0 = désactivé. Recommandé : 1000.",
+    )
+    run_p.add_argument(
+        "--sensitivity-analysis",
+        action="store_true",
+        default=False,
+        help="Active l'analyse de sensibilité ±10%% sur tp/ts/fees_pct (G2). "
+        "Résultats affichés après le rapport principal.",
+    )
+
     # ------------------------------------------------------------------
     # Phase B (refactor) — micro-structure (slippage volume-aware,
     # initial stop dur, gap filter, intra-bar priority).
@@ -505,6 +535,126 @@ def _explicit_flags(argv: list[str]) -> set[str]:
     return explicit
 
 
+def _run_statistical_validation(
+    args: argparse.Namespace,
+    pf: object,
+    *,
+    fees_pct: float,
+    output_dir: "Path | None",
+) -> None:
+    """Sprint S3 / A-011 — Bootstrap trades + analyse de sensibilité post-backtest.
+
+    Activé uniquement si ``--bootstrap-samples > 0`` ou ``--sensitivity-analysis``.
+    """
+    bootstrap_n = int(getattr(args, "bootstrap_samples", 0) or 0)
+    do_sensitivity = bool(getattr(args, "sensitivity_analysis", False))
+    if not bootstrap_n and not do_sensitivity:
+        return
+
+    import json as _json
+    import pandas as _pd
+    from backtesting.statistical_validation import BootstrapResult, bootstrap_trades, parameter_sensitivity
+    from backtesting.report import _get_closed_trades  # best-effort — peut ne pas exister
+
+    # --- G1. Bootstrap ---
+    if bootstrap_n > 0:
+        _safe_print(f"\n📐 Bootstrap Monte Carlo ({bootstrap_n} itérations)...")
+        try:
+            closed_trades = _get_closed_trades(pf)
+        except Exception:
+            try:
+                closed_trades = pf.closed_trades.records_readable
+            except Exception:
+                closed_trades = _pd.DataFrame()
+
+        if closed_trades.empty or "return_pct" not in closed_trades.columns:
+            _safe_print("   ⚠️ Aucun trade clôturé disponible pour le bootstrap.")
+        else:
+            br = bootstrap_trades(
+                closed_trades,
+                n_iterations=bootstrap_n,
+                initial_equity=float(getattr(args, "equity", 100_000)),
+                seed=getattr(args, "seed", 0),
+            )
+            _safe_print(f"   Return moyen           : {br.mean_total_return_pct:.2f}%")
+            _safe_print(
+                f"   IC {int(0.95 * 100)}%% return          : [{br.ci_low_total_return_pct:.2f}%, {br.ci_high_total_return_pct:.2f}%]"
+            )
+            _safe_print(f"   Sharpe moyen           : {br.mean_sharpe:.3f}")
+            _safe_print(
+                f"   IC {int(0.95 * 100)}%% Sharpe          : [{br.ci_low_sharpe:.3f}, {br.ci_high_sharpe:.3f}]"
+            )
+            _safe_print(f"   Max DD moyen           : {br.mean_max_dd_pct:.2f}%")
+            _safe_print(f"   Win rate               : {br.win_rate_pct:.1f}%\n")
+            if output_dir is not None:
+                bootstrap_path = output_dir / "bootstrap_result.json"
+                bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
+                bootstrap_path.write_text(
+                    _json.dumps(br.to_dict(), indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                _safe_print(f"   → {bootstrap_path}")
+
+    # --- G2. Sensibilité ---
+    if do_sensitivity:
+        _safe_print("\n📊 Analyse de sensibilité ±10% (tp / ts / fees_pct)...")
+        try:
+            from backtesting.data_loader import load_ohlcv, load_scores, pivot_ohlcv
+            from backtesting.resilience import prepare_scores_for_sentiment_mode
+            from backtesting.signal_replay import replay_signals
+            from backtesting.simulator import BacktestConfig, BacktestEngine
+            from database.connection import get_sqlalchemy_engine as _gse
+            from datetime import datetime as _dt
+
+            _engine = _gse()
+            _start = _dt.strptime(args.start, "%Y-%m-%d").date()
+            _end = _dt.strptime(args.end, "%Y-%m-%d").date()
+            _ohlcv_df = load_ohlcv(_engine, _start, _end)
+            _pivoted = pivot_ohlcv(_ohlcv_df)
+
+            from backtesting.data_loader import load_scores as _ls
+            _score_result = _ls(_engine, _start, _end, capital_preset_key=getattr(args, "capital_preset_key", None))
+            _scores_df = _score_result.frame if hasattr(_score_result, "frame") else _score_result
+
+            base_params = {
+                "tp": float(args.tp),
+                "ts": float(args.ts),
+                "fees_pct": fees_pct,
+            }
+
+            def _metric_fn(params: dict) -> float:
+                _tp = float(params.get("tp", 0.08))
+                _ts = float(params.get("ts", 0.05))
+                _fees = float(params.get("fees_pct", 0.001))
+                _signals = replay_signals(_scores_df, None, max_positions=int(args.max_positions))
+                _cfg = BacktestConfig(
+                    start_date=_start, end_date=_end,
+                    initial_equity=float(args.equity),
+                    profit_taker_pct=_tp, trailing_stop_pct=_ts,
+                    max_positions=int(args.max_positions),
+                    fees_pct=_fees,
+                )
+                _pf = BacktestEngine(_cfg).run(
+                    open=_pivoted["open"], close=_pivoted["close"],
+                    high=_pivoted["high"], low=_pivoted["low"],
+                    signals_df=_signals,
+                )
+                try:
+                    return float(_pf.total_return())
+                except Exception:
+                    return 0.0
+
+            sens_df = parameter_sensitivity(base_params, _metric_fn)
+            if not sens_df.empty:
+                _safe_print(sens_df.to_string(index=False))
+                if output_dir is not None:
+                    sens_path = output_dir / "sensitivity_analysis.csv"
+                    sens_df.to_csv(sens_path, index=False)
+                    _safe_print(f"\n   → {sens_path}")
+        except Exception as exc:  # noqa: BLE001
+            _safe_print(f"   ⚠️ Analyse de sensibilité échouée : {exc}")
+
+
 def _run_backtest(args: argparse.Namespace) -> None:
     """Exécute le backtest complet."""
     from datetime import datetime
@@ -658,6 +808,17 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     # 1. Charger les données
     engine = get_sqlalchemy_engine()
+
+    # Sprint S3 / A-010 — cache Parquet optionnel.
+    use_cache = bool(getattr(args, "use_cache", False))
+    cache: object
+    if use_cache:
+        from backtesting.cache import ParquetCache
+        cache = ParquetCache(cache_dir=getattr(args, "cache_dir", "artifacts/backtest_cache"), enabled=True)
+        _safe_print(f"   cache=enabled dir={getattr(args, 'cache_dir', 'artifacts/backtest_cache')}\n")
+    else:
+        from backtesting.cache import ParquetCache
+        cache = ParquetCache(enabled=False)
     ohlcv_start = (
         _resolve_phase2_ohlcv_history_start(
             start,
@@ -669,7 +830,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
     )
 
     _safe_print("📊 Chargement OHLCV...")
-    ohlcv_df = load_ohlcv(engine, ohlcv_start, end)
+    _ohlcv_cache_key = f"ohlcv_{ohlcv_start}_{end}"
+    ohlcv_df = cache.get_or_load(_ohlcv_cache_key, lambda: load_ohlcv(engine, ohlcv_start, end))
     if ohlcv_df.empty:
         _safe_print("❌ Aucune donnée OHLCV trouvée. Vérifiez la base de données.")
         sys.exit(1)
@@ -1001,6 +1163,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
         risk_free_rate=float(getattr(args, "risk_free_rate", 0.0) or 0.0),
     )
     report.print_summary()
+
+    # Sprint S3 / A-011 — bootstrap Monte Carlo + analyse de sensibilité.
+    _run_statistical_validation(args, pf, fees_pct=fees_pct, output_dir=Path(args.output_dir) if args.output_dir else None)
 
     output_dir = Path(args.output_dir) if args.output_dir else None
     artifact_paths: dict[str, str] = {}

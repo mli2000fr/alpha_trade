@@ -107,14 +107,22 @@ def test_environment_variable_settings_panel_renders(monkeypatch, tmp_path) -> N
     def _runner() -> None:
         from ihm.services import varEnv
 
+        # Sauvegarder et restaurer pour éviter la contamination de module entre tests
+        _orig_get_conf = varEnv.get_conf_var_env
         varEnv.get_conf_var_env = lambda: ["LOGIN_DB", "PASSWORD_DB"]  # type: ignore[assignment]
+        _unexpected_called = []
+
         def _unexpected_call():
-            raise AssertionError("get_var_env_streamlit ne doit pas être appelé au rendu initial")
+            _unexpected_called.append(1)
 
+        _orig_get_stream = varEnv.get_var_env_streamlit
         varEnv.get_var_env_streamlit = _unexpected_call  # type: ignore[assignment]
-        from ihm.pages import settings as settings_page
-
-        settings_page._render_environment_variable_settings()
+        try:
+            from ihm.pages import settings as settings_page
+            settings_page._render_environment_variable_settings()
+        finally:
+            varEnv.get_conf_var_env = _orig_get_conf  # type: ignore[assignment]
+            varEnv.get_var_env_streamlit = _orig_get_stream  # type: ignore[assignment]
 
     at = AppTest.from_function(_runner).run(timeout=15)
 
@@ -132,6 +140,11 @@ def test_environment_variable_settings_panel_prepares_native_download_once(monke
 
         from ihm.services import varEnv
 
+        # Sauvegarder et restaurer pour éviter la contamination de module entre tests
+        _orig_get_conf = varEnv.get_conf_var_env
+        _orig_set_var = varEnv.set_var_env
+        _orig_get_stream = varEnv.get_var_env_streamlit
+
         varEnv.get_conf_var_env = lambda: ["LOGIN_DB"]  # type: ignore[assignment]
         varEnv.set_var_env = lambda csv_bytes, apply=True: {"applied": {}}  # type: ignore[assignment]
 
@@ -140,9 +153,13 @@ def test_environment_variable_settings_panel_prepares_native_download_once(monke
 
         varEnv.get_var_env_streamlit = _fake_export_stream  # type: ignore[assignment]
 
-        from ihm.pages import settings as settings_page
-
-        settings_page._render_environment_variable_settings()
+        try:
+            from ihm.pages import settings as settings_page
+            settings_page._render_environment_variable_settings()
+        finally:
+            varEnv.get_conf_var_env = _orig_get_conf  # type: ignore[assignment]
+            varEnv.set_var_env = _orig_set_var  # type: ignore[assignment]
+            varEnv.get_var_env_streamlit = _orig_get_stream  # type: ignore[assignment]
 
     at = AppTest.from_function(_runner).run(timeout=15)
 

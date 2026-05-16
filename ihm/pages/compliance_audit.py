@@ -94,11 +94,13 @@ def render() -> None:
                 options=["live", "paper"],
                 index=0,
                 key="cmpl_pre_live_broker_mode",
+                help="Broker mode : `live` = ordres réels, `paper` = simulation sandbox.",
             )
             pre_live_skip_network = st.checkbox(
                 "Skip checks réseau (`--skip-network`)",
                 value=False,
                 key="cmpl_pre_live_skip_network",
+                help="Désactive les vérifications réseau (ping broker, DNS) lors du pre-live checklist.",
             )
             if not account_id:
                 st.error("Sélectionnez un compte dans la sidebar.")
@@ -122,6 +124,7 @@ def render() -> None:
                 "Mois (YYYY-MM, vide = mois en cours)",
                 value="",
                 key="cmpl_monthly_broker_month",
+                help="Format YYYY-MM (ex : 2026-04). Laissez vide pour générer le rapport du mois en cours.",
             )
             render_ops_command_panel(
                 "monthly_broker_report",

@@ -45,13 +45,13 @@ def test_async_engine_built_when_enabled() -> None:
     with _async_enabled():
         engine = async_engine.make_async_engine()
         assert engine is not None
-        # Cleanup
-        asyncio.get_event_loop().run_until_complete(engine.dispose())
+        # Cleanup — asyncio.run() crée un event loop propre (Python 3.10+)
+        asyncio.run(engine.dispose())
 
 
 def test_fetch_market_data_async_empty_returns_empty_list() -> None:
     with _async_enabled():
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             async_loaders.fetch_market_data_async(symbols=[])
         )
         assert result == []
@@ -59,7 +59,7 @@ def test_fetch_market_data_async_empty_returns_empty_list() -> None:
 
 def test_loaders_return_none_when_async_disabled() -> None:
     os.environ.pop(async_engine.ENV_TOGGLE, None)
-    assert asyncio.get_event_loop().run_until_complete(
+    assert asyncio.run(
         async_loaders.fetch_scores_async("run-1")
     ) is None
 

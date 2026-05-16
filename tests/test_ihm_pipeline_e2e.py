@@ -99,6 +99,10 @@ def test_render_event_sentiment_block_returns_expected_keys() -> None:
 
     def _runner() -> None:
         import streamlit as st
+        import ihm.pages._execution_center as _ec_mod
+
+        # Éviter la connexion DB réelle qui timeout en environnement de test
+        _ec_mod._load_contextual_backlog_preview = lambda *_a, **_kw: {"pending_pairs": 0}
 
         from ihm.pages._execution_center import _render_event_sentiment_block
 

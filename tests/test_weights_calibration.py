@@ -1,4 +1,7 @@
-"""Tests Phase 7.2 — calibration empirique poids (audit_global §7.2)."""
+"""Tests Phase 7.2 — calibration empirique poids (audit_global §7.2).
+
+Sprint S3 / A-027 : bornes business [0.05, 0.40] sur poids walk-forward calibrés.
+"""
 from __future__ import annotations
 
 from datetime import date
@@ -95,4 +98,53 @@ def test_calibrate_sentiment_grid_normalisation() -> None:
     s = w["quant_weight"] + w["sentiment_weight"] + w["macro_weight"]
     assert abs(s - 1.0) < 1e-3
     assert all(v >= 0.0 for v in w.values())
+
+
+# ---------------------------------------------------------------------------
+# Sprint S3 / A-027 — bornes business sur les poids walk-forward
+# ---------------------------------------------------------------------------
+
+def test_validate_walk_forward_weights_clips_above_max() -> None:
+    """Poids au-dessus de WEIGHT_MAX doit être clippé avec warning."""
+    from backtesting.walk_forward import WalkForwardWeights, validate_walk_forward_weights, WEIGHT_MAX
+    w = WalkForwardWeights(sentiment_weight=0.20, macro_weight=0.10, quant_weight=0.80)
+    validated = validate_walk_forward_weights(w, strict=False)
+    assert validated.quant_weight == pytest.approx(WEIGHT_MAX)
+    assert validated.sentiment_weight == pytest.approx(0.20)
+
+
+def test_validate_walk_forward_weights_clips_below_min() -> None:
+    """Poids en dessous de WEIGHT_MIN doit être clippé."""
+    from backtesting.walk_forward import WalkForwardWeights, validate_walk_forward_weights, WEIGHT_MIN
+    w = WalkForwardWeights(sentiment_weight=0.01, macro_weight=0.10, quant_weight=0.40)
+    validated = validate_walk_forward_weights(w, strict=False)
+    assert validated.sentiment_weight == pytest.approx(WEIGHT_MIN)
+
+
+def test_validate_walk_forward_weights_strict_raises() -> None:
+    """strict=True doit lever ValueError sur tout dépassement."""
+    from backtesting.walk_forward import WalkForwardWeights, validate_walk_forward_weights
+    w = WalkForwardWeights(sentiment_weight=0.20, macro_weight=0.10, quant_weight=0.80)
+    with pytest.raises(ValueError, match="hors bornes"):
+        validate_walk_forward_weights(w, strict=True)
+
+
+def test_validate_walk_forward_weights_valid_unchanged() -> None:
+    """Poids dans les bornes doivent être retournés inchangés."""
+    from backtesting.walk_forward import WalkForwardWeights, validate_walk_forward_weights
+    w = WalkForwardWeights(sentiment_weight=0.20, macro_weight=0.10, quant_weight=0.35)
+    validated = validate_walk_forward_weights(w, strict=True)
+    assert validated is w  # Même objet renvoyé si pas de violation
+
+
+def test_validate_walk_forward_weights_preserves_metadata() -> None:
+    """Les métadonnées calibration_run_id etc. sont conservées après clippage."""
+    from backtesting.walk_forward import WalkForwardWeights, validate_walk_forward_weights
+    w = WalkForwardWeights(
+        sentiment_weight=0.20, macro_weight=0.10, quant_weight=0.80,
+        calibration_run_id="wf-99", calibration_source="test"
+    )
+    validated = validate_walk_forward_weights(w, strict=False)
+    assert validated.calibration_run_id == "wf-99"
+    assert validated.calibration_source == "test"
 

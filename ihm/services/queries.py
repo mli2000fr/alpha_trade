@@ -1256,3 +1256,52 @@ def get_prediction_governance_audit(
     )
 
 
+# ---------------------------------------------------------------------------
+# Sprint S3 / A-015 — Fraîcheur market_cap pour alerte IHM
+# ---------------------------------------------------------------------------
+
+
+def get_stale_market_cap_stats(*, cutoff_days: int = 45) -> dict[str, int | float]:
+    """Retourne des statistiques de fraîcheur de ``market_cap_refreshed_at``.
+
+    Returns un dict avec :
+    - ``total_symbols`` : total de symboles actifs avec market_cap renseigné
+    - ``stale_symbols`` : symboles dont ``market_cap_refreshed_at`` est NULL
+      ou antérieur à ``cutoff_days`` jours
+    - ``stale_pct`` : pourcentage de symboles périmés (0.0–100.0)
+    - ``cutoff_days`` : seuil utilisé
+    """
+    result = safe_scalar(
+        """
+        SELECT COUNT(*)
+        FROM stock_metadata
+        WHERE LOWER(TRIM(COALESCE(status, ''))) = 'active'
+          AND COALESCE(tradable, 0) = 1
+          AND market_cap IS NOT NULL
+        """
+    )
+    total = int(result or 0)
+    if total == 0:
+        return {"total_symbols": 0, "stale_symbols": 0, "stale_pct": 0.0, "cutoff_days": cutoff_days}
+
+    stale = safe_scalar(
+        """
+        SELECT COUNT(*)
+        FROM stock_metadata
+        WHERE LOWER(TRIM(COALESCE(status, ''))) = 'active'
+          AND COALESCE(tradable, 0) = 1
+          AND market_cap IS NOT NULL
+          AND (
+              market_cap_refreshed_at IS NULL
+              OR market_cap_refreshed_at < (NOW() - INTERVAL :cutoff_days DAY)
+          )
+        """,
+        {"cutoff_days": cutoff_days},
+    )
+    stale_count = int(stale or 0)
+    return {
+        "total_symbols": total,
+        "stale_symbols": stale_count,
+        "stale_pct": round((stale_count / total) * 100.0, 1) if total > 0 else 0.0,
+        "cutoff_days": cutoff_days,
+    }

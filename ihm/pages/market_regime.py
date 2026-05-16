@@ -304,8 +304,8 @@ def render() -> None:
     st.markdown("---")
     st.subheader("Calcul d'un snapshot à la volée")
     col_a, col_b, col_c = st.columns([1, 1, 1])
-    sel_date = col_a.date_input("Date de référence", value=_date.today())
-    sel_equity = col_b.number_input("Equity simulée ($)", min_value=0.0, value=2000.0, step=500.0)
+    sel_date = col_a.date_input("Date de référence", value=_date.today(), help="Date de référence pour le calcul du snapshot de régime de marché.")
+    sel_equity = col_b.number_input("Equity simulée ($)", min_value=0.0, value=2000.0, step=500.0, help="Equity totale simulée en dollars pour le calcul du régime de marché.")
     if col_c.button("🔁 Calculer", use_container_width=True):
         with st.spinner("Calcul du snapshot…"):
             snap = _compute_live_snapshot(sel_date, sel_equity if sel_equity > 0 else None)
@@ -321,6 +321,7 @@ def render() -> None:
             options=list(DEMO_SCENARIOS.keys()),
             format_func=lambda key: DEMO_SCENARIOS.get(key, key),
             key="market_regime_demo_scenario",
+            help="Scénario de démonstration prédéfini pour simuler un régime de marché sans connexion aux providers externes.",
         )
         if st.button("🧪 Charger ce scénario", use_container_width=True, key="market_regime_demo_button"):
             with st.spinner("Calcul du scénario de démonstration…"):

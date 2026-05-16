@@ -6,9 +6,9 @@
 
 ## 1. Évaluation globale de l'adéquation swing trade
 
-**Score fitness swing trade : 7/10**
+**Score fitness swing trade : 7.5/10** *(+0.5 post-Sprint S3 : alerting opérationnel, backtesting plus rapide et robuste)*
 
-L'application est conçue explicitement pour le swing trading US (NYSE/NASDAQ), horizon de quelques jours à quelques semaines, positions long uniquement. Elle couvre les contraintes critiques du style : PDT rule, cash/margin, swing_only, exécution end-of-day.
+L'application est conçue explicitement pour le swing trading US (NYSE/NASDAQ), horizon de quelques jours à quelques semaines, positions long uniquement. Elle couvre les contraintes critiques du style : PDT rule, cash/margin, swing_only, exécution end-of-day. L'alerting email automatique sur circuit_breaker est opérationnel depuis Sprint S3, ce qui améliore la surveillance en production réelle.
 
 ---
 
@@ -17,7 +17,7 @@ L'application est conçue explicitement pour le swing trading US (NYSE/NASDAQ), 
 ### 2.1 Convention d'exécution correcte
 - **Signal J → entrée open J+1** : évite le look-ahead biais
 - **Swing only** option : interdit la revente le jour même
-- **PDT rule** implémentée côté backtesting ET exécution réelle
+- **PDT rule** implémentée côté backtesting ET exécution réelle (presets margin : `pdt_rule: "auto"` ✅ Sprint S2)
 - **Cash settlement T+1** simulé en backtest et appliqué en exécution via `non_marginable_buying_power`
 
 ### 2.2 Filtres techniques pertinents pour swing trade
@@ -26,17 +26,21 @@ L'application est conçue explicitement pour le swing trading US (NYSE/NASDAQ), 
 - **Filtre ATR 1.5–6%** : exclut les titres trop calmes (peu de momentum) et trop volatils (risque de spike imprévisible). Pertinent pour swing.
 - **Blackout earnings 3 jours** : évite les positions binaires avant résultats
 - **Filtre beta ≥ 0.8** : cible des titres directionnels, pas les valeurs défensives
+- **`selector_min_close: 10.0 USD` uniformisé** sur tous les presets ✅ Sprint S2
 
 ### 2.3 Risk management swing-compatible
 - **ATR sizing** (risque 1% par trade) : approche standard swing traders professionnels
 - **Trailing stop ATR dynamique** : disponible, break-even à 2R
 - **Corrélation filter** : réduit le risque de concentration sectorielle camouflée
 - **Circuit breaker** drawdown 15% + perte daily 5% : protections standard swing desk
+- **Alerting email automatique** sur déclenchement circuit_breaker ✅ Sprint S3
 
 ### 2.4 Backtesting rigoureux
 - Phases de fidélité 2/3/4/5/7 pour rapprocher le backtest du live
 - Diagnostic screener : analyse pourquoi l'univers est plein/vide selon les régimes
-- Walk-forward hors échantillon
+- Walk-forward hors échantillon avec bornes business enforced [0.05, 0.40] ✅ Sprint S3
+- **ParquetCache** opérationnel (`--use-cache`) : backtests > 2 ans 3x–10x plus rapides ✅ Sprint S3
+- **Bootstrap Monte Carlo** accessible (`--bootstrap-samples 1000`) ✅ Sprint S3
 
 ---
 
@@ -57,25 +61,28 @@ Le swing trade est naturellement long-only sur bull market, mais en rotation sec
 **c) Pas de streaming de prix en temps réel**  
 Le polling (2s) pour les fills est correct pour des ordres quotidiens mais ne permet pas de gérer des ajustements intrajournaliers des stops. Le watcher post-exécution pallie partiellement ce manque.
 
+**d) Pas de PnL quotidien dans l'IHM** (A-021 actif → Sprint S4)  
+L'opérateur doit consulter les tables DB manuellement pour consulter le P&L du jour.
+
 ### 3.2 Limites spécifiques aux petits comptes swing
 
-**d) Capital < 5 000 $ : univers souvent vide**  
+**e) Capital < 5 000 $ : univers souvent vide**  
 Avec les filtres du profil strict (close ≥ 10$, ADV ≥ 30M$, market_cap ≥ 2Md$), un petit compte cash swing de 4 000 $ n'a accès qu'à 3–4 positions × 1 000 $ chacune. Si les 3–4 candidats disponibles ce jour-là sont tous blackoutés earnings ou en excès de volatilité, le pipeline produit 0 candidats → portefeuille vide.
 
 **Mitigation** : Les presets petits comptes relâchent les filtres (ce qui crée d'autres risques). C'est un compromis difficile.
 
-**e) `risk_min_position_notional: 150 USD` sur micro-compte**  
+**f) `risk_min_position_notional: 150 USD` sur petit compte (capital_0_5000)**  
 Sur un ordre de 150 USD, le spread de 40–80 bps représente 60–120 cents d'impact. Pour un objectif de profit de 8%, le coût total (entrée + sortie) est ~1.6–2.4% → ratio coût/objectif 20–30%. Marginal pour swing trade court.
 
 ### 3.3 ML / Signal qualité
 
-**f) LSTM per-symbol sur historique potentiellement court**  
+**g) LSTM per-symbol sur historique potentiellement court**  
 Sur un titre qui a 252–504 jours d'historique available, l'LSTM est entraîné sur un ensemble limité. Le risque d'overfitting est réel. Un swing trade basé sur une proba ML issué d'un modèle overfit peut générer de faux signaux de conviction.
 
-**g) Sentiment FinBERT : qualité variable**  
+**h) Sentiment FinBERT : qualité variable**  
 Le modèle `ProsusAI/finbert` est entraîné sur des articles financiers généraux. Sur des news très techniques ou spécifiques à un secteur (biotechs, utilities), l'interprétation peut être imprécise.
 
-**h) Biais positif FinBERT historique**  
+**i) Biais positif FinBERT historique**  
 Le modèle finbert a un léger biais positif sur les articles de presse d'entreprise (press releases, earnings beats). Ce biais peut sur-scorer des articles neutres ou légèrement négatifs.
 
 ---
@@ -84,10 +91,10 @@ Le modèle finbert a un léger biais positif sur les articles de presse d'entrep
 
 | Profil | Adéquation | Limitations |
 |---|---|---|
-| Compte paper, 10k–50k$, margin | ✅ Très bien | Pipeline complet exploitable |
-| Compte cash, 5k–25k$ | ✅ Bien | PDT évité, swing_only, univers parfois restreint |
-| Micro-compte ≤ 2k $ | 🟡 Fragile | Frais relatifs élevés, univers souvent vide, max_positions à corriger (A-001) |
-| Grand compte live ≥ 50k$ | ✅ Bien | Alerting push manquant, monitoring live externe absent ; SSL activable ✅ (A-012 résolu) |
+| Compte paper, 10k–50k$, margin | ✅ Très bien | Pipeline complet exploitable, alerting email actif ✅ S3 |
+| Compte cash, 5k–25k$ | ✅ Bien | PDT évité, swing_only, min_close=10$ uniformisé ✅ S2, univers parfois restreint |
+| Micro-compte ≤ 2k $ | 🟡 Fragile | Frais relatifs élevés, univers souvent vide, max_positions=3 ✅ S1 |
+| Grand compte live ≥ 50k$ | ✅ Bien | Alerting push email activé ✅ S3 ; alertes IHM réconciliation + market_cap TTL ; SSL activable ✅ S1 |
 | Multi-comptes paper + live | ✅ Supporté | Isolation par account_id, CLI `--account` |
 
 ---
@@ -109,8 +116,9 @@ Le modèle finbert a un léger biais positif sur les articles de presse d'entrep
 ## 6. Risque de sur-ajustement du pipeline
 
 Le pipeline a de nombreux paramètres configurables (40+ par preset). Le risque de "curve fitting" sur les presets via backtest est réel. Pour mitiger :
-- Utiliser le walk-forward sentiment calibration déjà implémenté
+- Utiliser le walk-forward sentiment calibration déjà implémenté avec bornes enforced [0.05, 0.40] ✅ Sprint S3
 - Valider chaque preset sur une période hors échantillon de 6+ mois
+- Utiliser le Bootstrap Monte Carlo (`--bootstrap-samples 1000`) pour quantifier la robustesse statistique ✅ Sprint S3
 - Ne pas modifier trop fréquemment les paramètres entre les runs
 
 ---
@@ -122,9 +130,9 @@ Le pipeline a de nombreux paramètres configurables (40+ par preset). Le risque 
 1. ✅ Utiliser des comptes ≥ 5 000 $ pour avoir un univers viable
 2. ✅ Lancer le pipeline après 18h00 EST (bulk EOD fiable)
 3. ✅ Exécuter toutes les 14 étapes dans l'ordre strict
-4. ✅ Surveiller régulièrement l'IHM pour détecter les alertes
-5. ⚠️ Activer le trailing stop ATR avant de passer live
-6. ⚠️ Effectuer un backfill PIT complet avant tout backtest sérieux
-7. ⚠️ Valider la calibration sentiment au moins tous les trimestres
-8. ❌ Ne pas utiliser le micro-compte preset sans correction des paramètres
-
+4. ✅ Surveiller régulièrement l'IHM pour détecter les alertes (+ alerting email automatique actif ✅ S3)
+5. ✅ Activer le trailing stop ATR avant de passer live
+6. ✅ Effectuer un backfill PIT complet avant tout backtest sérieux
+7. ✅ Valider la calibration sentiment au moins tous les trimestres
+8. ✅ Utiliser `--bootstrap-samples` pour valider la robustesse statistique avant tout changement de preset
+9. ⚠️ Le micro-compte preset est désormais cohérent (max_positions=3 ✅ S1) mais reste fragile sur l'univers

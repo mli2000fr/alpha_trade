@@ -42,13 +42,13 @@
 
 | Table logique | data_lineage_matrix §4 | Tables réelles | Verdict |
 |---|---|---|---|
-| Ordres d'exécution | `execution_orders` ❌ | `execution_order_requests` + `execution_broker_orders` | ❌ |
-| Événements audit exec | `execution_audit_events` ❌ | `execution_events` | ❌ |
+| Ordres d'exécution | `execution_order_requests` + `execution_broker_orders` ✅ | `execution_order_requests` + `execution_broker_orders` | ✅ **RÉSOLU** (A-002 Sprint S1) |
+| Événements audit exec | `execution_events` ✅ | `execution_events` | ✅ **RÉSOLU** (A-002 Sprint S1) |
 | Données scoring | `selector_alpha_candidates` | `stock_scores` (update via AlphaScanner) | ⚠️ Sémantique différente |
 | ML drift | `ml_drift_runs` | `ml_drift_runs` (Phase 7.4 + S4 gate) | ✅ |
 | Watcher heartbeats | `watcher_heartbeats` | `run_business_summaries` (watcher section) | ⚠️ Ambiguïté |
 
-**Écart majeur** : `execution_orders` et `execution_audit_events` sont des noms obsolètes. Ces tables n'existent plus dans le schéma canonique depuis le refactoring exécution. La lineage doit être régénérée.
+**Aucun écart actif sur les noms de tables d'exécution** — LINEAGE_SPEC régénéré Sprint S1 (A-002 ✅). Nouvelles tables `execution_reconciliation_results` et `execution_targets_snapshot` à intégrer progressivement en Sprint S4.
 
 ---
 
@@ -58,8 +58,8 @@
 |---|---|---|---|
 | Framework backtest | ✅ "simulateur custom PIT — aucune dépendance vectorbt" (`DOC_TECHNIQUE.md:497`) | `backtesting/simulator.py` custom | ✅ **RÉSOLU** (A-004) |
 | Moteur backtesting | "BacktestEngine" | `BacktestEngine` (`backtesting/simulator.py`) | ✅ |
-| Résidu argparse | `backtesting/cli/_impl.py:67` : `description="Backtest intégré Alpha Trade (vectorbt)"` | Non corrigé | ⚠️ Résidu cosmétique (A-004 résidu) |
-| ParquetCache branché | "pas encore branché par défaut" | Non branché dans CLI `run` | ✅ (doc exacte) |
+| Résidu argparse | `backtesting/cli/_impl.py:67` : `description="Backtest intégré Alpha Trade (simulateur custom PIT)"` | Corrigé | ✅ **RÉSOLU** (A-004 Sprint S1) |
+| ParquetCache branché | "--use-cache activé dans CLI run" | `--use-cache` branché, `ParquetCache` instancié | ✅ **RÉSOLU** (A-010 Sprint S3) |
 | Walk-forward | Documenté | `backtesting/walk_forward.py` | ✅ |
 
 ---
@@ -81,7 +81,7 @@
 
 | Point | DOC_FONCTIONNELLE §2.3 | core/filter_profiles.py | config/capital_presets.yaml | Verdict |
 |---|---|---|---|---|
-| `min_close` | 10 $ | 10 $ | Variable (5–12 $) | ⚠️ Divergence presets petits comptes |
+| `min_close` | 10 $ | 10 $ | 10 $ tous presets ✅ Sprint S2 | ✅ |
 | `avg_dollar_volume_20d` | 30 M$ | 30 M$ | Variable (2M–40M$) | ⚠️ Presets petits comptes relâchés (justifié) |
 | `volatility_ratio` | ≤ 0.90 | 0.90 | Variable (0.85–1.0) | ⚠️ Cohérent sauf micro-compte (1.0) |
 | `min_market_cap` | 2 Md$ | 2 Md$ | Variable (500M–3Md$) | ⚠️ Micro-compte à 500M$ sous-optimal |
@@ -126,6 +126,6 @@
 | `max_spread_bps` = 25 bps | DOC_FONCTIONNELLE §2.3 | `STRICT_SWING_CASH_FILTERS.max_spread_bps = 40` | **Code (40 bps)** — doc à corriger | 🔴 Actif |
 | `beta_126 >= 1.0` | DOC_FONCTIONNELLE §2.3 | `STRICT_SWING_CASH_FILTERS.min_beta_126 = 0.8` | **Code (0.8)** — doc à corriger | 🔴 Actif |
 | Backtest framework = vectorbt | DOC_TECHNIQUE §9 | Simulateur custom | **Code** — mention vectorbt supprimée dans §9 | ✅ RÉSOLU (A-004 principal) ; résidu argparse |
-| Noms tables execution | data_lineage_matrix §4 | Schéma réel | **Code/schéma** — régénérer la lineage matrix | 🔴 Actif (A-002) |
+| Noms tables execution | data_lineage_matrix §4 | Schéma réel | **Code/schéma** — lineage matrix régénérée Sprint S1 | ✅ RÉSOLU (A-002 Sprint S1) |
 | `model_predictions` sans gouvernance ML | DOC_TECHNIQUE §5.5 | Colonnes présentes dans SQL | **Code** — gouvernance ML en DB complète | ✅ RÉSOLU (A-003) |
 

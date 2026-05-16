@@ -43,6 +43,7 @@ def test_sandbox_health_renders_with_rollup(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setenv("ALPHA_TRADE_SANDBOX_DIR", str(tmp_path))
 
     def _runner() -> None:
+        from pathlib import Path  # doit être importé dans le scope du runner (AppTest)
         from ihm.services import sandbox_health_loader
         sandbox_health_loader.DEFAULT_SANDBOX_DIR = Path(  # type: ignore[attr-defined]
             __import__("os").environ["ALPHA_TRADE_SANDBOX_DIR"]

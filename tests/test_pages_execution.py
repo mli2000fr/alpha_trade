@@ -31,7 +31,7 @@ def _patch_common(monkeypatch, *, fills: pd.DataFrame, reconciliation: pd.DataFr
     monkeypatch.setattr(execution.st, "info", lambda value: calls["infos"].append(value))
     monkeypatch.setattr(execution.st, "error", lambda value: calls["infos"].append(value))
     monkeypatch.setattr(execution.st, "metric", lambda *args, **kwargs: None)
-    monkeypatch.setattr(execution.st, "selectbox", lambda label, options: options[0])
+    monkeypatch.setattr(execution.st, "selectbox", lambda label, options=None, *args, **kwargs: (options or [])[0] if (options or []) else None)
     monkeypatch.setattr(
         execution.st,
         "expander",
@@ -42,6 +42,7 @@ def _patch_common(monkeypatch, *, fills: pd.DataFrame, reconciliation: pd.DataFr
     monkeypatch.setattr(execution, "run_status_badge", lambda status: str(status))
     monkeypatch.setattr(execution, "heartbeat_badge", lambda *args, **kwargs: "heartbeat")
     monkeypatch.setattr(execution, "show_dataframe", lambda df, title=None, height=400: calls["dataframes"].append((title, df.copy() if hasattr(df, "copy") else df)))
+    monkeypatch.setattr(execution, "render_symbol_table", lambda df, key=None, symbol_col=None, title=None, height=300: calls["dataframes"].append((title, df.copy() if hasattr(df, "copy") else df)))
     monkeypatch.setattr(execution, "get_run_summary", lambda record: record.get("run_summary") if record else None)
     monkeypatch.setattr(execution, "get_latest_run_business_summary", lambda **kwargs: None)
     monkeypatch.setattr(execution, "get_latest_execution_protection_watch_service_summary", lambda **kwargs: None)
@@ -169,3 +170,70 @@ def test_render_separates_run_scope_and_account_scope_context(monkeypatch) -> No
     assert "📚 Contexte compte — hors scope strict du run" in calls["expanders"]
 
 
+# ---------------------------------------------------------------------------
+# Sprint S3 / A-014 — alerte réconciliation diffs > 24h
+# ---------------------------------------------------------------------------
+
+def test_render_reconciliation_age_warning_on_old_unresolved_diffs(monkeypatch) -> None:
+    """Un diff non résolu vieux de > 24h doit déclencher st.warning."""
+    from datetime import datetime, timedelta, timezone
+
+    old_ts = (datetime.now(timezone.utc) - timedelta(hours=30)).strftime("%Y-%m-%dT%H:%M:%S")
+    recent_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    reconciliation = pd.DataFrame({
+        "symbol": ["AAPL", "MSFT"],
+        "action": ["buy_more", "investigate"],
+        "target_qty": [100.0, 0.0],
+        "internal_position_qty": [80.0, 12.0],
+        "broker_position_qty": [80.0, 12.0],
+        "position_delta": [-20.0, 12.0],
+        "has_open_protection": [True, True],
+        "open_request_buy_qty": [0.0, 0.0],
+        "open_request_sell_qty": [0.0, 0.0],
+        "open_broker_buy_qty": [0.0, 0.0],
+        "open_broker_sell_qty": [0.0, 0.0],
+        "reconciliation_status": ["BLOCKED", "MANUAL_REVIEW"],
+        "reason_code": ["missing_protection", "external_symbol"],
+        "created_at": [old_ts, recent_ts],
+    })
+
+    warnings: list[str] = []
+    calls = _patch_common(monkeypatch, fills=pd.DataFrame(), reconciliation=reconciliation)
+    monkeypatch.setattr(execution.st, "warning", lambda msg: warnings.append(str(msg)))
+
+    execution.render()
+
+    assert any("24h" in w for w in warnings), "Warning 24h attendu pour diff non résolu vieux de 30h"
+
+
+def test_render_no_age_warning_when_all_resolved(monkeypatch) -> None:
+    """Pas de warning si les diffs non résolus sont récents."""
+    from datetime import datetime, timedelta, timezone
+
+    recent_ts = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    reconciliation = pd.DataFrame({
+        "symbol": ["AAPL"],
+        "action": ["buy_more"],
+        "target_qty": [100.0],
+        "internal_position_qty": [80.0],
+        "broker_position_qty": [80.0],
+        "position_delta": [-20.0],
+        "has_open_protection": [True],
+        "open_request_buy_qty": [0.0],
+        "open_request_sell_qty": [0.0],
+        "open_broker_buy_qty": [0.0],
+        "open_broker_sell_qty": [0.0],
+        "reconciliation_status": ["BLOCKED"],
+        "reason_code": ["missing_protection"],
+        "created_at": [recent_ts],
+    })
+
+    warnings: list[str] = []
+    _patch_common(monkeypatch, fills=pd.DataFrame(), reconciliation=reconciliation)
+    monkeypatch.setattr(execution.st, "warning", lambda msg: warnings.append(str(msg)))
+
+    execution.render()
+
+    assert not any("24h" in w for w in warnings), "Pas de warning 24h si diffs récents"

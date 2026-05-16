@@ -10,10 +10,11 @@
 
 | Total initial | Résolues (code vérifié) | Actives | P0 | P1 | P2 | P3 |
 |---|---|---|---|---|---|---|
-| 27 | 13 | 14 | 0 | 0 | 6 | 8 |
+| 27 | 20 | 7 | 0 | 0 | 1 | 6 |
 
 > **Sprint S1 livré** — 4 anomalies supplémentaires résolues : A-001 ✅, A-002 ✅, A-004-résidu ✅, A-016 ✅  
-> **Sprint S2 livré** — 3 anomalies supplémentaires résolues : A-006 ✅, A-007 ✅, A-017 ✅
+> **Sprint S2 livré** — 3 anomalies supplémentaires résolues : A-006 ✅, A-007 ✅, A-017 ✅  
+> **Sprint S3 livré** — 7 anomalies supplémentaires résolues : A-010 ✅, A-011 ✅, A-013 ✅, A-014 ✅, A-015 ✅, A-025 ✅, A-027 ✅
 
 ---
 
@@ -90,56 +91,58 @@
 
 ---
 
-### A-010 — ParquetCache non branché par défaut (backtesting lent sur grands datasets)
-- **Sévérité** : P2
+### A-010 ✅ — ParquetCache non branché par défaut — RÉSOLU (Sprint S3)
+- **Sévérité initiale** : P2
 - **Domaine** : backtesting
-- **Vérification code** : `backtesting/cli/_impl.py:64` — `_build_parser()` ne contient pas d'option `--use-cache`. `backtesting/cache.py` (`ParquetCache`) existe et est testé mais non instancié dans `_run_backtest()`. `doc/DOC_TECHNIQUE.md:163` confirme : "pas encore branché par défaut à la commande `run`".
-- **Description** : `backtesting/cache.py` (`ParquetCache`) est présent mais non utilisé par défaut dans la commande `run`. Chaque backtest full recharge toutes les données depuis MySQL. Sur 2 ans, 500 symboles, cela prend plusieurs dizaines de minutes et charge significativement la DB.
-- **Preuve** : `backtesting/cli/_impl.py:_build_parser()` — absence d'option cache ; `doc/DOC_TECHNIQUE.md:163`
-- **Recommandation** : Activer `ParquetCache` comme option `--use-cache` dans la CLI, avec invalidation sur changement de dates ou de dataset_hash
-- **Test à ajouter** : `test_backtesting.py` — ajouter test de performance avec cache activé vs désactivé
+- **Résolution** : `backtesting/cli/_impl.py` — option `--use-cache` ajoutée à `_build_parser()` ; `_run_backtest()` instancie `ParquetCache(base_dir=output_dir/"cache")` si `args.use_cache=True`.
+- **Tests ajoutés** : `test_backtesting.py::TestCLI::test_run_backtest_with_use_cache_flag_wires_parquet_cache`
+- **Résultat test** : ✅ Pass
 
 ---
 
-### A-011 — `analytics.py` et `statistical_validation.py` non branchés à la CLI standard
-- **Sévérité** : P2
+### A-011 ✅ — analytics.py et statistical_validation.py non branchés à la CLI — RÉSOLU (Sprint S3)
+- **Sévérité initiale** : P2
 - **Domaine** : backtesting
-- **Vérification code** : `backtesting/cli/_impl.py:_build_parser()` — pas d'option `--bootstrap-samples` ni `--sensitivity-analysis`. `backtesting/analytics.py` et `backtesting/statistical_validation.py` existent mais ne sont pas importés dans `_impl.py`.
-- **Description** : Bootstrap Monte Carlo (`bootstrap_trades()`), attribution sectorielle, exports HTML interactifs et `parameter_sensitivity()` sont implémentés mais ne sont pas accessibles via la CLI standard `python -m backtesting run`.
-- **Preuve** : Absence d'options dans `backtesting/cli/_impl.py:_build_parser()` ; `doc/DOC_TECHNIQUE.md §2.1`
-- **Recommandation** : Ajouter options `--bootstrap-samples 1000` et `--sensitivity-analysis` à la CLI
-- **Test à ajouter** : `test_backtesting.py` — tester le pipeline complet avec bootstrap activé
+- **Résolution** : `backtesting/cli/_impl.py` — options `--bootstrap-samples` et `--sensitivity-analysis` ajoutées ; `_run_statistical_validation()` implémentée, appelée après le run principal si l'une des options est activée.
+- **Tests ajoutés** : `test_backtesting.py::TestCLI` — tests `--bootstrap-samples` et `--sensitivity-analysis`
+- **Résultat test** : ✅ Pass
 
 ---
 
-### A-013 — Pas de déclenchement automatique d'alerting externe (email/Slack)
-- **Sévérité** : P2
+### A-013 ✅ — Alerting automatique email sur circuit_breaker + kill_switch — RÉSOLU (Sprint S3)
+- **Sévérité initiale** : P2
 - **Domaine** : Observabilité
-- **Description** : Le circuit breaker, les échecs consécutifs (kill switch), et les résultats de réconciliation ne déclenchent pas d'alerting externe automatique. L'opérateur doit consulter l'IHM activement.
-- **Preuve** : `doc/DOC_FONCTIONNELLE.md §6 : "Pas de notification externe : Pas d'email/SMS/Slack, logs fichier uniquement"`
-- **Recommandation** : Intégrer les notifications email déjà partiellement implémentées (`artifacts/ihm_notifications/`) comme déclencheur automatique sur circuit breaker + kill switch
-- **Test à ajouter** : `test_ihm_notifications.py` — étendre pour tester le déclenchement email sur circuit_breaker_fired
+- **Résolution** :
+  - `risk_management/circuit_breaker.py` : `_try_send_alert(event, payload)` injecte `send_notification` depuis `ihm.services.email_notifier`
+  - `ihm/services/email_notifier.py` : service email SMTP complet avec templates (`circuit_breaker_fired`, `kill_switch_activated`)
+  - Erreurs swallowées — l'alerting ne bloque pas l'exécution critique
+- **Tests ajoutés** : `test_circuit_breaker.py` :
+  - `test_circuit_breaker_drawdown_calls_send_notification`
+  - `test_circuit_breaker_daily_loss_calls_send_notification`
+  - `test_circuit_breaker_no_trigger_no_notification`
+- **Résultat test** : ✅ Pass
 
 ---
 
-### A-014 — `auto_rebalance_on_reconcile: false` — dérive silencieuse possible
-- **Sévérité** : P2
-- **Domaine** : execution_engine
-- **Vérification code** : `execution_engine/config.py:101` — `auto_rebalance_on_reconcile: bool = False  # si True : soumet des ordres pour corriger les ecarts`
-- **Description** : Le rééquilibrage automatique est désactivé. Si des positions dérivent de leurs cibles (ordres partiels, fills manqués), la dérive s'accumule sans correction automatique.
-- **Preuve** : `execution_engine/config.py:101`
-- **Recommandation** : Ajouter une alerte dans l'IHM quand `execution_reconciliation_results` contient des diffs > seuil depuis plus de N heures. Documenter la procédure de rééquilibrage manuel.
-- **Test à ajouter** : `test_execution_engine_reconciliation.py` — tester la détection de dérive et l'alerting
+### A-014 ✅ — Dérive silencieuse réconciliation — RÉSOLU (Sprint S3)
+- **Sévérité initiale** : P2
+- **Domaine** : execution_engine / IHM
+- **Résolution** : `ihm/pages/execution.py` — `_render_reconciliation_age_warning()` détecte les diffs non résolus (`BLOCKED`, `MANUAL_REVIEW`) datant de plus de 24h et affiche `st.warning()`.
+- **Tests ajoutés** : `test_pages_execution.py` :
+  - `test_render_reconciliation_age_warning_on_old_unresolved_diffs`
+  - `test_render_no_age_warning_when_all_resolved`
+- **Résultat test** : ✅ Pass
 
 ---
 
-### A-015 — Market cap Finnhub stale (TTL non enforced en prod)
-- **Sévérité** : P2
-- **Domaine** : dataIntegrityEngine / selector
-- **Description** : `market_cap_max_age_days: 45` dans `STRICT_SWING_CASH_FILTERS` mais `update_sector` (Finnhub) est schedulé "weekly" dans la lineage matrix. Si Finnhub quota est épuisé ou l'update_sector non exécuté, le TTL de 45 jours peut expirer silencieusement.
-- **Preuve** : `doc/data_lineage_matrix.md:39` — Fréquence `weekly`. `core/filter_profiles.py:263`
-- **Recommandation** : Ajouter alerting dans l'IHM si `stock_metadata.market_cap_refreshed_at < NOW() - 45 jours` pour N% des symboles actifs
-- **Test à ajouter** : `test_alpha_scanner.py` — tester le comportement du filtre market_cap quand TTL expiré
+### A-015 ✅ — Market cap Finnhub stale (TTL non enforced) — RÉSOLU (Sprint S3)
+- **Sévérité initiale** : P2
+- **Domaine** : dataIntegrityEngine / IHM
+- **Résolution** : `ihm/pages/screening.py` — appel `get_stale_market_cap_stats(cutoff_days=45)` ; si `stale_pct >= 30` : `st.warning(f"⚠️ {stale_pct:.0f}% des symboles ont un market_cap > 45j")`.
+- **Tests ajoutés** : `test_pages_screening.py` :
+  - `test_render_screening_warning_on_stale_market_cap`
+  - `test_render_screening_no_warning_when_market_cap_fresh`
+- **Résultat test** : ✅ Pass
 
 ---
 
@@ -218,11 +221,15 @@
 
 ---
 
-### A-025 — Compression logs non configurée
-- **Sévérité** : P3
+### A-025 ✅ — Compression logs non configurée — RÉSOLU (Sprint S3)
+- **Sévérité initiale** : P3
 - **Domaine** : Observabilité
-- **Description** : RotatingFileHandler configuré avec 5 Mo et 3 backups. Sur un pipeline intensif (500 symboles, ML train), 15 Mo total peut être insuffisant pour 24h d'historique.
-- **Recommandation** : Passer à `TimedRotatingFileHandler` quotidien avec rétention 7–14 jours + compression gzip
+- **Résolution** : `common/logging_setup.py` — `configure_root_logging(use_timed_rotation=True, ...)` utilise `TimedRotatingFileHandler(when="midnight", backupCount=14)` + `_gzip_rotator` + `_gzip_namer` pour compression automatique des logs rotatifs.
+- **Tests ajoutés** : `test_common_utils.py` :
+  - `test_timed_rotation_creates_timed_rotating_file_handler`
+  - `test_gzip_namer_appends_gz_suffix`
+  - `test_default_rotation_uses_rotating_file_handler`
+- **Résultat test** : ✅ Pass
 
 ---
 
@@ -234,11 +241,17 @@
 
 ---
 
-### A-027 — `backtesting/walk_forward.py` sentiment : absence de test de régression des poids
-- **Sévérité** : P3
+### A-027 ✅ — Absence de test de régression des poids walk-forward — RÉSOLU (Sprint S3)
+- **Sévérité initiale** : P3
 - **Domaine** : backtesting / tests
-- **Description** : Le walk-forward calibration des poids sentiment existe (`test_weights_calibration.py`) mais il n'y a pas de test de régression qui vérifie que les poids calibrés restent dans des bornes métier raisonnables (ex. poids sentiment ≥ 0.05 et ≤ 0.40).
-- **Recommandation** : Ajouter des assertions business dans `test_weights_calibration.py` sur les plages de poids admissibles
+- **Résolution** : `backtesting/walk_forward.py` — `validate_walk_forward_weights(w, strict=False)` avec `WEIGHT_MIN=0.05`, `WEIGHT_MAX=0.40`. En mode non-strict : clip silencieux. En mode strict : `ValueError("hors bornes")`. Intégré dans `resolve_latest_walk_forward_weights()`.
+- **Tests ajoutés** : `test_weights_calibration.py` :
+  - `test_validate_walk_forward_weights_clips_above_max`
+  - `test_validate_walk_forward_weights_clips_below_min`
+  - `test_validate_walk_forward_weights_strict_raises`
+  - `test_validate_walk_forward_weights_valid_unchanged`
+  - `test_validate_walk_forward_weights_preserves_metadata`
+- **Résultat test** : ✅ Pass
 
 ---
 
@@ -315,8 +328,18 @@
 | **5** | A-006 | Passer PDT rule `"auto"` sur presets margin ≥ 25k$ | `config/capital_presets.yaml` | ✅ Sprint S2 |
 | **6** | A-007 | `selector_min_close: 10.0` sur tous les presets | `config/capital_presets.yaml` | ✅ Sprint S2 |
 | **7** | A-017 | `fill_timeout_seconds` → 180 | `execution_engine/config.py` | ✅ Sprint S2 |
-| **8** | A-010 | Brancher `ParquetCache` via `--use-cache` | `backtesting/cli/_impl.py` | 🔴 Sprint S3 |
-| **9** | A-011 | Brancher analytics/statistical_validation CLI | `backtesting/cli/_impl.py` | 🔴 Sprint S3 |
-| **10** | A-013 | Alerting externe circuit breaker | `execution_engine/` + notifications | 🔴 Sprint S3 |
-| **11** | A-014 | Alerte IHM dérive réconciliation | `ihm/` + `execution_engine/` | 🔴 Sprint S3 |
-| **12** | A-023 | Activer `test_data_lineage_autogen.py` en CI | `pytest.ini` / CI config | 🔴 Sprint S3 |
+| **8** | A-010 | Brancher `ParquetCache` via `--use-cache` | `backtesting/cli/_impl.py` | ✅ Sprint S3 |
+| **9** | A-011 | Brancher analytics/statistical_validation CLI | `backtesting/cli/_impl.py` | ✅ Sprint S3 |
+| **10** | A-013 | Alerting externe circuit breaker | `risk_management/circuit_breaker.py` + `ihm/services/email_notifier.py` | ✅ Sprint S3 |
+| **11** | A-014 | Alerte IHM dérive réconciliation > 24h | `ihm/pages/execution.py` | ✅ Sprint S3 |
+| **12** | A-015 | Alerte IHM TTL market_cap stale | `ihm/pages/screening.py` | ✅ Sprint S3 |
+| **13** | A-025 | TimedRotatingFileHandler + gzip | `common/logging_setup.py` | ✅ Sprint S3 |
+| **14** | A-027 | Bornes business poids walk-forward [0.05, 0.40] | `backtesting/walk_forward.py` | ✅ Sprint S3 |
+| **15** | A-008 | Documenter biais IEX spread_bps + max_spread_bps_iex | `doc/dataIntegrityEngine.md` | 🔴 Sprint S4 |
+| **16** | A-019 | Documenter Stooq sans clé API | `doc/` | 🔴 Sprint S4 |
+| **17** | A-020 | Documenter quota EODHD macro provider | `doc/` | 🔴 Sprint S4 |
+| **18** | A-021 | Widget PnL quotidien page Overview | `ihm/pages/overview.py` | 🔴 Sprint S4 |
+| **19** | A-022 | Walk-forward paramètres risque (ATR, Kelly) | `backtesting/walk_forward.py` | 🔴 Sprint S4 |
+| **20** | A-023 | Activer `test_data_lineage_autogen.py` en CI | `pytest.ini` / CI | 🔴 Sprint S4 |
+| **21** | A-024 | Archiver prompts anciens sprints | `prompt/archive/` | 🔴 Sprint S4 |
+| **22** | A-026 | Documenter test no-op import_alpaca_bar | `doc/dataIntegrityEngine.md` | 🔴 Sprint S4 |

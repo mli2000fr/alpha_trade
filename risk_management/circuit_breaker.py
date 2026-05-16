@@ -1,4 +1,10 @@
-"""Circuit breaker — coupe les allocations si drawdown/perte excessive."""
+"""Circuit breaker — coupe les allocations si drawdown/perte excessive.
+
+Sprint S3 / A-013 : ``is_active()`` émet désormais une notification email
+(best-effort, silencieuse si le notificateur n'est pas configuré) quand un
+circuit breaker se déclenche. La dépendance vers ``ihm.services.email_notifier``
+est lazily importée pour éviter de polluer les imports du moteur risk.
+"""
 from __future__ import annotations
 
 import logging
@@ -15,6 +21,15 @@ class PnLSnapshot:
     portfolio_high_watermark: float | None = None
     portfolio_current_value: float | None = None
     daily_pnl: float | None = None
+
+
+def _try_send_alert(event: str, payload: dict) -> None:
+    """Tente d'envoyer une notification email — silencieux si désactivé."""
+    try:
+        from ihm.services.email_notifier import send_notification
+        send_notification(event=event, payload=payload)
+    except Exception:  # noqa: BLE001 — alerting best-effort, ne bloque jamais le trading
+        LOGGER.debug("Notification email circuit_breaker indisponible.", exc_info=True)
 
 
 class CircuitBreaker:
@@ -41,6 +56,17 @@ class CircuitBreaker:
         dd = (hwm - cur) / hwm
         if dd >= self._cfg.max_portfolio_drawdown_pct:
             LOGGER.warning("Circuit breaker drawdown: %.2f%% >= seuil %.2f%%", dd * 100, self._cfg.max_portfolio_drawdown_pct * 100)
+            # Sprint S3 / A-013 — alerte email best-effort.
+            _try_send_alert(
+                event="circuit_breaker_fired",
+                payload={
+                    "trigger": "drawdown",
+                    "drawdown_pct": round(dd * 100, 2),
+                    "threshold_pct": round(self._cfg.max_portfolio_drawdown_pct * 100, 2),
+                    "portfolio_high_watermark": hwm,
+                    "portfolio_current_value": cur,
+                },
+            )
             return True
         return False
 
@@ -54,5 +80,16 @@ class CircuitBreaker:
         loss_pct = abs(min(daily, 0.0)) / equity
         if loss_pct >= self._cfg.max_daily_loss_pct:
             LOGGER.warning("Circuit breaker daily loss: %.2f%% >= seuil %.2f%%", loss_pct * 100, self._cfg.max_daily_loss_pct * 100)
+            # Sprint S3 / A-013 — alerte email best-effort.
+            _try_send_alert(
+                event="circuit_breaker_fired",
+                payload={
+                    "trigger": "daily_loss",
+                    "daily_loss_pct": round(loss_pct * 100, 2),
+                    "threshold_pct": round(self._cfg.max_daily_loss_pct * 100, 2),
+                    "daily_pnl": daily,
+                    "account_equity": equity,
+                },
+            )
             return True
         return False

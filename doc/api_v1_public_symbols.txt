@@ -193,6 +193,7 @@ service.eodhd.clientEodhd.DEFAULT_BACKOFF_SECONDS
 service.eodhd.clientEodhd.DEFAULT_MAX_ATTEMPTS
 service.eodhd.clientEodhd.DEFAULT_TIMEOUT_SECONDS
 service.eodhd.clientEodhd.EodhdBarsFetchError
+service.eodhd.clientEodhd.EodhdPermissionError
 service.eodhd.clientEodhd.EodhdSymbolNotFound
 service.eodhd.clientEodhd.LOGGER
 service.eodhd.clientEodhd.SENSITIVE_QUERY_KEYS
@@ -200,7 +201,18 @@ service.eodhd.clientEodhd.TELEMETRY_CLIENT
 service.eodhd.clientEodhd.fetch_dividends
 service.eodhd.clientEodhd.fetch_eod
 service.eodhd.clientEodhd.fetch_eod_bulk
+service.eodhd.clientEodhd.fetch_fundamentals
 service.eodhd.clientEodhd.fetch_splits
+service.eodhd.clientEodhd.fetch_symbol_fundamentals_record
+service.eodhd.news_client.DEFAULT_BACKOFF_SECONDS
+service.eodhd.news_client.DEFAULT_MAX_ATTEMPTS
+service.eodhd.news_client.DEFAULT_TIMEOUT_SECONDS
+service.eodhd.news_client.EODHD_NEWS_ENDPOINT_PATH
+service.eodhd.news_client.EodhdNewsFetchError
+service.eodhd.news_client.LOGGER
+service.eodhd.news_client.TELEMETRY_CLIENT
+service.eodhd.news_client.fetch_news_page
+service.eodhd.news_client.iter_news_pages
 service.eodhd.quota.DEFAULT_COOLDOWN_SECONDS
 service.eodhd.quota.DEFAULT_DAILY_QUOTA
 service.eodhd.quota.DEFAULT_FAILURE_THRESHOLD
@@ -285,6 +297,10 @@ service.market.models.neutral_snapshot
 service.market.regime_manager.LOGGER
 service.market.regime_manager.build_snapshot
 service.market.regime_manager.reset_cache
+service.market.sentiment_provider.DbSentimentScoreProvider
+service.market.sentiment_provider.LOGGER
+service.market.sentiment_provider.MarketSentimentReading
+service.market.sentiment_provider.load_market_sentiment_reading
 service.market.sentiment_regime.SentimentRegimeEvaluation
 service.market.sentiment_regime.evaluate_sentiment_regime
 service.market.volatility.LOGGER
@@ -297,3 +313,5 @@ service.stooq.clientStooq.DEFAULT_TIMEOUT_SECONDS
 service.stooq.clientStooq.LOGGER
 service.stooq.clientStooq.STOOQ_DAILY_URL
 service.stooq.clientStooq.fetch_daily_bars
+service.yahoo.clientYahooFinance.LOGGER
+service.yahoo.clientYahooFinance.fetch_symbol_fundamentals_record

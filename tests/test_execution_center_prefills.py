@@ -212,7 +212,8 @@ def test_apply_selected_capital_preset_can_override_execution_settings_from_buck
 
     assert session_state["pipeline_risk_account_equity"] == 60_000.0
     assert session_state["pipeline_execution_account_type"] == "margin"
-    assert session_state["pipeline_execution_pdt_rule"] == "off"
+    # Sprint S2 / A-006 : execution_pdt_rule="auto" sur capital_50001_100000 (margin preset).
+    assert session_state["pipeline_execution_pdt_rule"] == "auto"
     assert session_state["pipeline_execution_submission_window"] == "both"
 
 

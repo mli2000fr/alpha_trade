@@ -476,7 +476,9 @@ def test_upsert_scores_snapshot_calls_archive(monkeypatch) -> None:
     db_io.upsert_scores_snapshot(engine, scores_df, chunksize=1000)
 
     assert len(archive_calls) == 1, "archive_scores_snapshot doit être appelé une fois"
-    assert archive_calls[0][1]["capital_preset_key"] == "capital_50001_100000"
+    # DEFAULT_CAPITAL_PRESET_KEY = "capital_0_2000_eur" (mis à jour Sprint S3)
+    from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
+    assert archive_calls[0][1]["capital_preset_key"] == DEFAULT_CAPITAL_PRESET_KEY
 
 
 def test_upsert_scores_snapshot_archive_failure_does_not_break(monkeypatch) -> None:

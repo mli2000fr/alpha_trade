@@ -1,6 +1,8 @@
 """ihm/pages/execution.py — Suivi des runs d'exécution."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pandas as pd
 import streamlit as st
 
@@ -65,6 +67,41 @@ def _show_position_lots_table(df: pd.DataFrame, *, title: str, height: int = 260
         if column in df.columns
     ]
     show_dataframe(df[lot_columns], title=title, height=height)
+
+
+# ---------------------------------------------------------------------------
+# Sprint S3 / A-014 — alerte réconciliation avec diffs > 24h
+# ---------------------------------------------------------------------------
+
+_RECON_UNRESOLVED_STATUSES = {"BLOCKED", "MANUAL_REVIEW"}
+_RECON_ALERT_THRESHOLD_HOURS = 24
+
+
+def _render_reconciliation_age_warning(reconciliation: pd.DataFrame) -> None:
+    """Affiche un warning Streamlit si des diffs de réconciliation non résolus
+    ont une colonne ``created_at`` vieille de plus de ``_RECON_ALERT_THRESHOLD_HOURS``.
+    """
+    if "created_at" not in reconciliation.columns:
+        return
+    if "reconciliation_status" not in reconciliation.columns:
+        return
+
+    unresolved_mask = reconciliation["reconciliation_status"].isin(_RECON_UNRESOLVED_STATUSES)
+    unresolved = reconciliation[unresolved_mask].copy()
+    if unresolved.empty:
+        return
+
+    now_utc = datetime.now(timezone.utc)
+    created_at_ts = pd.to_datetime(unresolved["created_at"], errors="coerce", utc=True)
+    age_hours = (now_utc - created_at_ts).dt.total_seconds() / 3600.0
+    old_diffs_count = int((age_hours > _RECON_ALERT_THRESHOLD_HOURS).sum())
+    if old_diffs_count > 0:
+        max_age_h = float(age_hours.max())
+        st.warning(
+            f"⚠️ **{old_diffs_count} diff(s) de réconciliation non résolus depuis plus de "
+            f"{_RECON_ALERT_THRESHOLD_HOURS}h** (âge max ≈ {max_age_h:.0f}h). "
+            "Statuts concernés : BLOCKED / MANUAL_REVIEW. Vérification manuelle recommandée."
+        )
 
 
 def render() -> None:
@@ -305,6 +342,10 @@ def render() -> None:
     )
     if not reconciliation.empty:
         st.subheader("🧭 Réconciliation actionnable")
+
+        # Sprint S3 / A-014 — alerte si des diffs non résolus sont vieux de > 24h.
+        _render_reconciliation_age_warning(reconciliation)
+
         metric_row([
             ("SAFE_AUTO", int((reconciliation["reconciliation_status"] == "SAFE_AUTO").sum()) if "reconciliation_status" in reconciliation.columns else 0, None),
             ("MANUAL_REVIEW", int((reconciliation["reconciliation_status"] == "MANUAL_REVIEW").sum()) if "reconciliation_status" in reconciliation.columns else 0, None),

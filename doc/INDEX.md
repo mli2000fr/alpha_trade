@@ -1,14 +1,15 @@
 # Index de la documentation Alpha Trade
 
-> Généré automatiquement par `scripts/generate_doc_index.py` le 2026-05-11.
-> 78 documents indexés.
+> Généré automatiquement par `scripts/generate_doc_index.py` le 2026-05-16.
+> 82 documents indexés.
 
 ## Sommaire
 
 * [API & Stabilité](#api-stabilité) (4)
 * [Architecture](#architecture) (3)
+* [Audit externe](#audit-externe) (1)
 * [Conformité & Audit](#conformité-audit) (4)
-* [Divers](#divers) (50)
+* [Divers](#divers) (53)
 * [Documentation utilisateur](#documentation-utilisateur) (3)
 * [Performance](#performance) (4)
 * [Runbooks & Ops](#runbooks-ops) (3)
@@ -30,6 +31,12 @@
 | [`architecture/c4_component.md`](architecture/c4_component.md) | C4 Model — Niveau 3 : Composants Execution Engine | Phase C / S18.1. Zoom sur le container Execution Engine (le plus |
 | [`architecture/c4_container.md`](architecture/c4_container.md) | C4 Model — Niveau 2 : Containers | Phase C / S18.1. Décomposition d'Alpha Trade en applications/services |
 | [`architecture/c4_context.md`](architecture/c4_context.md) | C4 Model — Niveau 1 : Contexte système | Phase C / S18.1. Format Mermaid C4. Voir aussi `c4_container.md` et |
+
+## Audit externe
+
+| Document | Titre | Description |
+|---|---|---|
+| [`external_audit/ia1.md`](external_audit/ia1.md) | Audit externe IA — Alpha Trade | _Date : 2026-05-13_ |
 
 ## Conformité & Audit
 
@@ -83,11 +90,14 @@
 | [`modelFactory.md`](modelFactory.md) | Model Factory — Référence complète | `modelFactory/` est le module ML opérationnel du projet. Il ne se limite plus à un simple entraînement LSTM par symbole. |
 | [`observability.md`](observability.md) | Observabilité — Endpoint `/metrics` Prometheus (Phase 7.5) | **Audience** : opérateurs Alpha Trade. |
 | [`phase_f_implementation.md`](phase_f_implementation.md) | Phase F — Mesures effectives (Sprints S22 + S23) — Récap d'implémentation | Statut : **infrastructure livrée et fonctionnelle** ; les itérations |
+| [`pipelin_sentiment.md`](pipelin_sentiment.md) | Pipeline sentiment — notes de synthèse | Cette note résume les explications utiles sur le pipeline sentiment du projet, en particulier : |
 | [`pre_live_checklist.md`](pre_live_checklist.md) | Recette pré-live (Sprint S5 — A-013 + A-008) | **Audience** : opérateur en charge d'une bascule d'un compte Alpaca de |
+| [`question_1.md`](question_1.md) | Réponses détaillées à `doc/question.txt` | Document rédigé à partir du code, de la documentation et des tests présents dans le workspace. |
 | [`relecture_phase_g.md`](relecture_phase_g.md) | Relecture documentation — Phase G (Sprint S25.5) | Checklist humaine : passer en revue tous les fichiers `doc/` pour |
 | [`risk_management.md`](risk_management.md) | Risk Management — Guide d'usage | Ce document résume le fonctionnement du module `risk_management/` et les commandes utiles pour : |
 | [`sandbox_health_runbook.md`](sandbox_health_runbook.md) | Runbook — Sandbox health (régression nightly) | Sprint S24.2 — Phase G. |
 | [`screener.md`](screener.md) | Screener — Guide d'usage | Ce document résume le fonctionnement du module `screener/` et les commandes utiles pour : |
+| [`sector_normalization_full_production_sql.md`](sector_normalization_full_production_sql.md) | 🧠 ISecteurs métier principaux | sector_code	sector_name |
 | [`selector.md`](selector.md) | Selector — Guide d'usage | Ce document résume le fonctionnement du module `selector/` et les commandes utiles pour : |
 | [`sentiment_issue.md`](sentiment_issue.md) | Diagnostic et reprise — pipeline `event_sentiment` | Ce document trace le diagnostic, les corrections apportées et la reprise opératoire effectuée pour le pipeline sentiment, avec priorité sur  |
 | [`sentiments_migration.md`](sentiments_migration.md) | Migration des résultats du pipeline « Import + score + history_backfill + relevance_backfill auto » | Date d'analyse : 2026-05-10 |

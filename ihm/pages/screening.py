@@ -28,7 +28,7 @@ from ihm.services.run_summary import (
     build_latest_run_summary_rows,
     build_pipeline_flow_caption,
 )
-from ihm.services.queries import get_alpha_scanner_dependency_diagnostic, get_stock_scores
+from ihm.services.queries import get_alpha_scanner_dependency_diagnostic, get_stock_scores, get_stale_market_cap_stats
 
 SCREENER_ARTIFACT_SELECTBOX_KEY = "screening_screener_artifacts_dir_select"
 SCREENER_CSV_PREVIEW_SELECTBOX_KEY = "screening_screener_csv_preview_select"
@@ -275,6 +275,21 @@ def render() -> None:
         ("Candidats", candidates, None),
         ("Secteurs", sectors, None),
     ])
+
+    # Sprint S3 / A-015 — alerte TTL market_cap.
+    try:
+        mcap_stats = get_stale_market_cap_stats(cutoff_days=45)
+        stale_pct = float(mcap_stats.get("stale_pct", 0.0))
+        if stale_pct > 20.0:
+            stale_count = int(mcap_stats.get("stale_symbols", 0))
+            st.warning(
+                f"⚠️ **{stale_pct:.0f}% des symboles ont un `market_cap_refreshed_at` > 45 jours** "
+                f"({stale_count} / {int(mcap_stats.get('total_symbols', 0))} symboles). "
+                "Le filtre market_cap TTL du selector peut rejeter des candidats légitimes — "
+                "pensez à relancer la synchronisation market_cap."
+            )
+    except Exception:  # noqa: BLE001 — jamais bloquant
+        pass
 
     quality_rows = _build_quality_summary_rows(_merge_pipeline_runs())
     with st.container(border=True):
