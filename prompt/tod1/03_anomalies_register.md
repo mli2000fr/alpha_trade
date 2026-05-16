@@ -10,11 +10,13 @@
 
 | Total initial | Résolues (code vérifié) | Actives | P0 | P1 | P2 | P3 |
 |---|---|---|---|---|---|---|
-| 27 | 20 | 7 | 0 | 0 | 1 | 6 |
+| 27 | 27 | 0 | 0 | 0 | 0 | 0 |
 
 > **Sprint S1 livré** — 4 anomalies supplémentaires résolues : A-001 ✅, A-002 ✅, A-004-résidu ✅, A-016 ✅  
 > **Sprint S2 livré** — 3 anomalies supplémentaires résolues : A-006 ✅, A-007 ✅, A-017 ✅  
-> **Sprint S3 livré** — 7 anomalies supplémentaires résolues : A-010 ✅, A-011 ✅, A-013 ✅, A-014 ✅, A-015 ✅, A-025 ✅, A-027 ✅
+> **Sprint S3 livré** — 7 anomalies supplémentaires résolues : A-010 ✅, A-011 ✅, A-013 ✅, A-014 ✅, A-015 ✅, A-025 ✅, A-027 ✅  
+> **Sprint S4 livré** — 7 anomalies supplémentaires résolues : A-008 ✅, A-019 ✅, A-020 ✅, A-021 ✅, A-022 ✅, A-023 ✅, A-024 ✅, A-026 ✅  
+> **Sprint S5 livré** — Tâches infra livrées : T5.1 ✅ (métriques Prometheus), T5.2 ✅ (orchestrateur), T5.3 ✅ (backup ML), T5.4 ✅ (backup DB) — 38 nouveaux tests verts
 
 ---
 

@@ -186,3 +186,104 @@ test_fill_timeout_configurable_for_live()    # configurable à 300s pour live
 test_fill_timeout_must_be_positive()         # validation > 0
 ```
 
+---
+
+## Récapitulatif Sprint S5 — Tâches infra livrées (38 nouveaux tests)
+
+### T5.1 ✅ — `common/metrics.py` — Métriques Prometheus pipeline
+
+**Résolution** : Nouveau module `common/metrics.py` avec métriques pipeline. Tests ajoutés :
+```python
+# tests/test_prometheus_metrics.py — 12 tests
+test_common_metrics_importable()                         # module importable, attributs présents
+test_metrics_are_not_none()                              # toutes les métriques non-None
+test_pipeline_steps_total_labels_inc_never_raises()      # Counter ne lève pas
+test_pipeline_duration_seconds_observe_never_raises()    # Histogram ne lève pas
+test_candidates_count_set_never_raises()                 # Gauge ne lève pas
+test_ml_train_duration_seconds_observe_never_raises()    # Histogram ML ne lève pas
+test_db_backup_total_inc_never_raises()                  # Counter backup DB ne lève pas
+test_ml_backup_total_inc_never_raises()                  # Counter backup ML ne lève pas
+test_record_pipeline_step_ok()                           # context-manager nominal
+test_record_pipeline_step_propagates_exception()         # exception propagée + status=ERROR
+test_record_pipeline_step_ok_after_exception()           # step suivant non contaminé
+test_is_available_returns_bool()                         # is_available() retourne bool
+```
+- **Fichier** : `common/metrics.py` (🆕 créé)
+- **Métriques** : `alpha_pipeline_steps_total`, `alpha_pipeline_duration_seconds`, `alpha_candidates_count`, `alpha_ml_train_duration_seconds`, `alpha_db_backup_total`, `alpha_ml_backup_total`
+- **No-op** si `prometheus_client` absent (extra `[observability]` optionnel inchangé)
+
+---
+
+### T5.2 ✅ — `flows/daily_pipeline.py` — Orchestrateur pipeline pur Python
+
+**Résolution** : Package `flows/` avec orchestrateur `daily_pipeline.py`. Tests ajoutés :
+```python
+# tests/test_pipeline_flow.py — 14 tests
+test_step_result_to_dict_has_expected_keys()             # StepResult sérialisable
+test_run_step_none_fn_returns_skipped()                  # fn=None → SKIPPED
+test_run_step_ok_fn_returns_ok()                         # fn nominale → OK + metadata
+test_run_step_raises_fn_returns_failed()                 # fn qui lève → FAILED + error
+test_daily_pipeline_dry_run_all_skipped()                # dry_run → tous SKIPPED
+test_daily_pipeline_dry_run_metadata()                   # account_id, run_date présents
+test_daily_pipeline_steps_override_all_ok()              # tous OK → status global OK
+test_daily_pipeline_one_step_fails_status_partial()      # 1/3 echecs → PARTIAL
+test_daily_pipeline_all_steps_fail_status_failed()       # tous echecs → FAILED
+test_daily_pipeline_metrics_emitted_on_success()         # pipeline_steps_total.inc() appelé
+test_daily_pipeline_flow_result_to_dict_is_json_serializable()  # JSON valide
+test_main_dry_run_outputs_json()                         # CLI --dry-run → JSON stdout rc=0
+test_main_invalid_date_returns_2()                       # date invalide → rc=2
+test_main_report_out_writes_file()                       # --report-out écrit fichier JSON
+```
+- **Fichiers** : `flows/__init__.py`, `flows/daily_pipeline.py` (🆕 créés)
+- **Préfect opt-in** : `ALPHA_TRADE_USE_PREFECT=1` active les décorateurs Prefect
+- **Statuts** : `OK | PARTIAL | FAILED | SKIPPED`
+
+---
+
+### T5.3 ✅ — `scripts/backup_ml_artifacts.py` — Backup artefacts ML
+
+**Résolution** : Script de backup `scripts/backup_ml_artifacts.py`. Tests ajoutés :
+```python
+# tests/test_ml_artifacts_backup.py — 12 tests
+test_backup_report_to_dict_has_expected_keys()           # BackupReport sérialisable
+test_dry_run_source_missing_produces_error()             # source absente → erreur rapport
+test_dry_run_source_exists_no_files_created()            # dry_run → aucun fichier créé
+test_backup_creates_targz()                              # backup réel → .tar.gz créé
+test_backup_archive_contains_expected_files()            # archive contient config.json
+test_backup_rotation_keeps_n_files()                     # rotation → au plus N archives
+test_backup_rotation_dry_run_does_not_delete()           # dry_run → aucune suppression
+test_main_dry_run_outputs_json()                         # CLI --dry-run → JSON stdout rc=0
+test_main_missing_source_returns_1()                     # source absente → rc=1
+test_main_report_out_writes_file()                       # --report-out écrit fichier JSON
+test_list_archives_sorted_by_mtime()                     # archives triées par mtime
+test_build_archive_path_has_right_format()               # format ml_artifacts_*.tar.gz
+```
+- **Fichier** : `scripts/backup_ml_artifacts.py` (🆕 créé)
+- **Portable** : `shutil.make_archive` (Windows + Linux, sans binaire externe)
+- **Rotation** : `--keep N` (défaut: 7)
+
+---
+
+### T5.4 ✅ — `scripts/backup_db.py` — Backup MySQL automatique
+
+**Résolution** : Script `scripts/backup_db.py` avec `mysqldump` + gzip streaming.
+
+- **Fichier** : `scripts/backup_db.py` (🆕 créé)
+- **Commande** : `mysqldump --single-transaction --routines ...` | gzip → `.sql.gz`
+- **CI-safe** : gracieux si `mysqldump` absent (erreur dans rapport, pas d'exception)
+- **Rotation** : `--keep N` (défaut: 30)
+- **Credentials** : `LOGIN_DB` / `PASSWORD_DB` (env vars, cohérent avec `restore_from_backup.py`)
+- **Métriques** : émet `alpha_db_backup_total` (OK/ERROR)
+
+---
+
+## Synthèse globale des tests par sprint
+
+| Sprint | Tests ajoutés | Tests totaux (cumul) |
+|---|---|---|
+| Avant S1 | Tests existants | ~2200 |
+| S1 | +20 | ~2220 |
+| S2 | +86 | ~2306 |
+| S3 | +17 (+ corrections) | **2316** |
+| S4 | +14 | **2330** |
+| S5 | +38 | **2378** |

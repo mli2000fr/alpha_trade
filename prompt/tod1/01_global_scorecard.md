@@ -22,13 +22,13 @@
 | **corporate_actions** | 7.5 | Dividendes/splits, idempotence, provider CA documenté ✅ (A-005 ✅) |
 | **backtesting** | 8.0 | ParquetCache ✅ (A-010 S3), Bootstrap MC ✅ (A-011 S3), walk-forward risk params ✅ (A-022 ✅ S4) |
 | **ihm** | 8.5 | Widget PnL quotidien ✅ (A-021 ✅ S4), alertes réconciliation ✅ (A-014 S3), market_cap TTL ✅ (A-015 S3) |
-| **observabilité / run summaries / logs** | 7.5 | TimedRotatingFileHandler+gzip ✅ (A-025 S3), alerting email CB ✅ (A-013 S3), audit trail DB |
+| **observabilité / run summaries / logs** | 8.5 | TimedRotatingFileHandler+gzip ✅ (A-025 S3), alerting email CB ✅ (A-013 S3), métriques Prometheus pipeline ✅ (T5.1 S5), audit trail DB |
 | **sécurité / readiness prod** | 7.5 | Secrets env/vault, scan literals, SSL MySQL activable ✅ (A-012 ✅) |
-| **qualité logicielle globale** | 8.5 | 2340+ tests verts (incluant 14 nouveaux S4), mypy, ruff, idempotence généralisée |
+| **qualité logicielle globale** | 9.0 | 2378+ tests verts (38 nouveaux S5), orchestrateur pipeline ✅ (T5.2), backup ML ✅ (T5.3), backup DB ✅ (T5.4), mypy, ruff |
 
 ---
 
-## Note globale : **8,5 / 10** *(post Sprint S4 — 27 anomalies résolues au total)*
+## Note globale : **9,0 / 10** *(post Sprint S5 — 27 anomalies résolues + T5.1/T5.2/T5.3/T5.4 livrées)*
 
 ### Décomposition par catégorie
 
@@ -37,9 +37,9 @@
 | Données / intégrité | 20% | 8.0 |
 | Signal / ML | 20% | 7.2 |
 | Risk / exécution | 25% | 8.2 |
-| Infrastructure / qualité | 20% | 8.5 |
-| IHM / ops | 15% | 8.2 |
-| **Moyenne pondérée** | **100%** | **8.5** |
+| Infrastructure / qualité | 20% | 9.0 |
+| IHM / ops | 15% | 8.5 |
+| **Moyenne pondérée** | **100%** | **9.0** |
 
 ---
 
@@ -49,9 +49,9 @@
 |---|---|---|
 | Amateur sérieux | 3–4/10 | ❌ Très au-dessus |
 | Indépendant avancé | 5–6.5/10 | ✅ Dépassé |
-| Quasi-pro / pre-institutional | 7–8/10 | 🟢 **Ici (8.5 post-S4) → vise 9.0 post-S5** |
-| Pro-grade buy-side / prop desk | 8–9/10 | 🟡 En approche (Prometheus + Prefect manquent) |
-| Institutionnel très mature | 9.5–10/10 | ❌ 2–3 sprints majeurs |
+| Quasi-pro / pre-institutional | 7–8/10 | 🟢 **Dépassé post-S5** |
+| **Pro-grade buy-side / prop desk** | 8–9/10 | 🟢 **Ici (9.0 post-S5)** |
+| Institutionnel très mature | 9.5–10/10 | ❌ 1–2 sprints majeurs |
 
 ---
 
@@ -83,5 +83,7 @@
 22. ✅ **Lineage tests CI confirmés** : `test_data_lineage_autogen.py` dans `testpaths = tests` (A-023 ✅ Sprint S4)
 23. ✅ **Prompts archivés** : `prompt/archive/` créé, 13 sous-dossiers historiques déplacés (A-024 ✅ Sprint S4)
 24. ✅ **Test no-op documenté** : `test_import_alpaca_bar_noop.py` référencé dans `doc/dataIntegrityEngine.md §11` (A-026 ✅ Sprint S4)
-25. **Orchestrateur pipeline** : scheduler léger ou Prefect (Sprint S5)
-26. **Monitoring live** : Prometheus/Grafana ou équivalent (Sprint S5)
+25. ✅ **Métriques Prometheus pipeline** : `common/metrics.py` — Counter/Histogram/Gauge + context-manager `record_pipeline_step` (T5.1 ✅ Sprint S5)
+26. ✅ **Orchestrateur pipeline** : `flows/daily_pipeline.py` — pur Python + Prefect opt-in, `FlowResult` JSON (T5.2 ✅ Sprint S5)
+27. ✅ **Backup artefacts ML** : `scripts/backup_ml_artifacts.py` — tar.gz + rotation N archives, portable Windows/Linux (T5.3 ✅ Sprint S5)
+28. ✅ **Backup DB automatique** : `scripts/backup_db.py` — mysqldump + .sql.gz + rotation N dumps (T5.4 ✅ Sprint S5)

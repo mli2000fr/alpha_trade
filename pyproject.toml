@@ -83,6 +83,10 @@ security = [
 mutation = [
     "mutmut>=2.5",
 ]
+# Sprint S5 — orchestration pipeline (opt-in)
+orchestration = [
+    "prefect>=2.0",
+]
 
 # ---------------------------------------------------------------------------
 # setuptools : déclare tous les packages pour que pip install -e . fonctionne
@@ -110,6 +114,8 @@ include = [
     "reporting*",
     "tax*",
     "lineage*",
+    # Sprint S5 — orchestration pipeline
+    "flows*",
 ]
 
 # ---------------------------------------------------------------------------

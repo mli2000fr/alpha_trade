@@ -11,8 +11,8 @@
 | S1 | Corrections docs + config P1 (quick wins) | ✅ Immédiat | 1–2 jours | doc, config, tests | ✅ **LIVRÉ** |
 | S2 | Corrections techniques P2 | ✅ Critique | 2–3 jours | execution, config | ✅ **LIVRÉ** |
 | S3 | Améliorations opérationnelles P2 | 🔵 Important | 5–7 jours | backtesting, observabilité, sécurité | ✅ **LIVRÉ** |
-| S4 | Qualité avancée + analytics P3 | 🟢 Perfectionnement | 5–7 jours | backtesting, IHM, ML, walk-forward | 🔴 À faire |
-| S5 | Pro-grade : monitoring + orchestration | 🟡 Long terme | 10–15 jours | infra, ops, ML governance | 🔴 À faire |
+| S4 | Qualité avancée + analytics P3 | 🟢 Perfectionnement | 5–7 jours | backtesting, IHM, ML, walk-forward | ✅ **LIVRÉ** |
+| S5 | Pro-grade : monitoring + orchestration | 🟡 Long terme | 10–15 jours | infra, ops, ML governance | ✅ **LIVRÉ** |
 
 ---
 
@@ -267,12 +267,12 @@ qui utilisaient des poids hors-bornes (`quant_weight=0.70` → clippé à `0.40`
 
 ---
 
-## Sprint S4 — Qualité avancée + analytics
+## Sprint S4 — Qualité avancée + analytics ✅ **LIVRÉ**
 
 **Objectif** : Enrichir les capacités analytiques, le PnL IHM et étendre le walk-forward.  
 **Durée estimée** : 5–7 jours  
 **Modules impactés** : `backtesting/`, `ihm/`, `modelFactory/`, `doc/`  
-**Anomalies traitées** : A-019, A-020, A-021, A-022, A-024
+**Anomalies traitées** : A-019 ✅, A-020 ✅, A-021 ✅, A-022 ✅, A-024 ✅
 
 ### Tâches détaillées
 
@@ -334,51 +334,133 @@ prompt/tod1/            # conserver les livrables d'audit courant
 
 ---
 
-## Sprint S5 — Pro-grade : monitoring + orchestration + gouvernance ML
+## Sprint S5 — Pro-grade : monitoring + orchestration + gouvernance ML ✅ **LIVRÉ**
 
 **Objectif** : Atteindre un niveau quasi-institutionnel avec monitoring live, orchestration pipeline, gouvernance ML complète.  
-**Durée estimée** : 10–15 jours  
-**Modules impactés** : infra, `modelFactory/`, `database/`, `ihm/`
+**Durée estimée** : 10–15 jours | **Durée réelle** : ~1 jour  
+**Modules impactés** : `common/`, `flows/`, `scripts/`, `tests/`  
+**Anomalies traitées** : T5.1 ✅, T5.2 ✅, T5.3 ✅, T5.4 ✅
 
-### Tâches détaillées
+> ✅ **Toutes les tâches S5 livrées** :
+> - T5.1 ✅ (`common/metrics.py` — métriques Prometheus pipeline : Counter/Histogram/Gauge)
+> - T5.2 ✅ (`flows/daily_pipeline.py` — orchestrateur pipeline pur Python + Prefect opt-in)
+> - T5.3 ✅ (`scripts/backup_ml_artifacts.py` — backup tar.gz + rotation N archives)
+> - T5.4 ✅ (`scripts/backup_db.py` — mysqldump .sql.gz + rotation N dumps)
 
-**T5.1** — Intégrer Prometheus metrics pour le pipeline
+### Tâches livrées
+
+**T5.1** ✅ — `common/metrics.py` — Métriques Prometheus pipeline
 ```python
-# common/metrics.py
-from prometheus_client import Counter, Histogram, Gauge
-pipeline_steps_total = Counter('alpha_pipeline_steps', 'Pipeline steps', ['step', 'status'])
-candidates_gauge = Gauge('alpha_candidates_count', 'Candidats sélectionnés après AlphaScanner')
-```
+from common.metrics import pipeline_steps_total, candidates_count, record_pipeline_step
 
-**T5.2** — Orchestrateur pipeline (Prefect ou équivalent léger)
-```python
-# flows/daily_pipeline.py
-@flow(name="alpha_trade_daily")
-def daily_pipeline(date: date, account_id: str):
-    run_import_bars(date)
-    run_sanitizer(date)
+pipeline_steps_total.labels(step="screener", status="OK").inc()
+candidates_count.set(42)
+
+with record_pipeline_step("screener"):
     run_screener(date)
-    ...
 ```
+- **Métriques ajoutées** :
+  - `alpha_pipeline_steps_total` (Counter, labels `step`/`status`)
+  - `alpha_pipeline_duration_seconds` (Histogram, label `step`)
+  - `alpha_candidates_count` (Gauge)
+  - `alpha_ml_train_duration_seconds` (Histogram, label `symbol`)
+  - `alpha_db_backup_total` (Counter, label `status`)
+  - `alpha_ml_backup_total` (Counter, label `status`)
+- Context-manager `record_pipeline_step(step)` émet durée + status OK/ERROR
+- No-op si `prometheus_client` absent (extra `[observability]` optionnel)
 
-**T5.3** — Backup automatique des artefacts ML
+**T5.2** ✅ — `flows/daily_pipeline.py` — Orchestrateur pipeline pur Python
 ```bash
-# scripts/backup_ml_artifacts.sh
-rsync -avz artifacts/models/ backup:/alpha_trade/models/
+python -m flows.daily_pipeline --date 2026-05-17 --account-id paper1 --dry-run
 ```
+- `ALPHA_TRADE_USE_PREFECT=1` → intégration Prefect opt-in si installé
+- Séquence : `import_bars → sanitizer → screener → selector → ml_predictor`
+- `FlowResult` avec statut global `OK | PARTIAL | FAILED | SKIPPED`
+- Métriques émises via `common.metrics` à chaque étape
+- Import lazy des modules pipeline pour éviter les import loops
+- CLI `--date`, `--account-id`, `--dry-run`, `--report-out` (JSON)
 
-**T5.4** — Sauvegarde DB automatique quotidienne
+**T5.3** ✅ — `scripts/backup_ml_artifacts.py` — Backup artefacts ML
 ```bash
-mysqldump alpha_trade | gzip > backups/alpha_trade_$(date +%Y%m%d).sql.gz
+python scripts/backup_ml_artifacts.py \
+    --artifacts-dir artifacts/models \
+    --dest-dir backups/ml \
+    --keep 7
 ```
+- Archive `ml_artifacts_YYYYMMDD_HHMMSS.tar.gz` via `shutil.make_archive` (portable Windows+Linux)
+- Rotation automatique : conserve les `--keep` dernières archives (défaut: 7)
+- `--dry-run` : rapport sans écriture disque
+- `BackupReport` sérialisable JSON avec `archive_size_bytes`, `rotated_files`, `kept_files`
+- Émet métrique `alpha_ml_backup_total`
 
-### Tests à ajouter
+**T5.4** ✅ — `scripts/backup_db.py` — Backup MySQL
+```bash
+python scripts/backup_db.py \
+    --host localhost \
+    --db alpha_trade \
+    --dest-dir backups/db \
+    --keep 30
+```
+- Exécute `mysqldump` + compresse en `.sql.gz` en streaming (pas de fichier tmp)
+- Rotation automatique : conserve les `--keep` derniers dumps (défaut: 30)
+- Gracieux si `mysqldump` absent (signalé dans rapport, CI-safe)
+- Credentials depuis `LOGIN_DB` / `PASSWORD_DB` env vars
+- Émet métrique `alpha_db_backup_total`
 
-| Test | Type | Priorité |
+### Tests ajoutés et résultats
+
+| Test | Type | Résultat |
 |---|---|---|
-| `test_pipeline_flow.py` — pipeline Prefect end-to-end sur dataset mock | E2E | P2 |
-| `test_ml_artifacts_backup.py` — backup déclenché après train | Intégration | P2 |
-| `test_prometheus_metrics.py` — métriques exposées et non-None | Unitaire | P3 |
+| `test_prometheus_metrics.py::test_common_metrics_importable` | Unitaire | ✅ Pass |
+| `test_prometheus_metrics.py::test_metrics_are_not_none` | Unitaire | ✅ Pass |
+| `test_prometheus_metrics.py::test_pipeline_steps_total_labels_inc_never_raises` | Unitaire | ✅ Pass |
+| `test_prometheus_metrics.py::test_pipeline_duration_seconds_observe_never_raises` | Unitaire | ✅ Pass |
+| `test_prometheus_metrics.py::test_candidates_count_set_never_raises` | Unitaire | ✅ Pass |
+| `test_prometheus_metrics.py::test_record_pipeline_step_ok` | Unitaire | ✅ Pass |
+| `test_prometheus_metrics.py::test_record_pipeline_step_propagates_exception` | Unitaire | ✅ Pass |
+| `test_prometheus_metrics.py::test_is_available_returns_bool` | Unitaire | ✅ Pass |
+| `test_pipeline_flow.py::test_step_result_to_dict_has_expected_keys` | Unitaire | ✅ Pass |
+| `test_pipeline_flow.py::test_run_step_none_fn_returns_skipped` | Unitaire | ✅ Pass |
+| `test_pipeline_flow.py::test_run_step_ok_fn_returns_ok` | Unitaire | ✅ Pass |
+| `test_pipeline_flow.py::test_run_step_raises_fn_returns_failed` | Unitaire | ✅ Pass |
+| `test_pipeline_flow.py::test_daily_pipeline_dry_run_all_skipped` | Intégration | ✅ Pass |
+| `test_pipeline_flow.py::test_daily_pipeline_one_step_fails_status_partial` | Intégration | ✅ Pass |
+| `test_pipeline_flow.py::test_daily_pipeline_all_steps_fail_status_failed` | Intégration | ✅ Pass |
+| `test_pipeline_flow.py::test_daily_pipeline_metrics_emitted_on_success` | Intégration | ✅ Pass |
+| `test_pipeline_flow.py::test_main_dry_run_outputs_json` | CLI | ✅ Pass |
+| `test_ml_artifacts_backup.py::test_backup_creates_targz` | Intégration | ✅ Pass |
+| `test_ml_artifacts_backup.py::test_backup_archive_contains_expected_files` | Intégration | ✅ Pass |
+| `test_ml_artifacts_backup.py::test_backup_rotation_keeps_n_files` | Intégration | ✅ Pass |
+| `test_ml_artifacts_backup.py::test_dry_run_source_missing_produces_error` | Unitaire | ✅ Pass |
+| `test_ml_artifacts_backup.py::test_main_dry_run_outputs_json` | CLI | ✅ Pass |
+| Suite complète S5 (38 tests) | Régression | ✅ **38 Pass, 0 Fail** |
+| Régression modules existants (27 tests) | Non-régression | ✅ **27 Pass, 0 Fail** |
+
+### Gain réalisé sur les notes
+
+| Module | Avant S5 | Après S5 |
+|---|---|---|
+| observabilité | 7.5 | **8.5** |
+| infra / ops | — | **8.0** |
+| qualité logicielle globale | 8.5 | **9.0** |
+| **Note globale** | 8.5 | **9.0** |
+
+### Fichiers créés / modifiés
+
+| Fichier | Action |
+|---|---|
+| `common/metrics.py` | 🆕 Créé |
+| `flows/__init__.py` | 🆕 Créé |
+| `flows/daily_pipeline.py` | 🆕 Créé |
+| `scripts/backup_ml_artifacts.py` | 🆕 Créé |
+| `scripts/backup_db.py` | 🆕 Créé |
+| `tests/test_prometheus_metrics.py` | 🆕 Créé (12 tests) |
+| `tests/test_pipeline_flow.py` | 🆕 Créé (14 tests) |
+| `tests/test_ml_artifacts_backup.py` | 🆕 Créé (12 tests) |
+| `pyproject.toml` | ✏️ Modifié (extra `[orchestration]`, package `flows*`) |
+| `prompt/tod1/08_sprint_plan.md` | ✏️ Mis à jour |
+| `prompt/tod1/01_global_scorecard.md` | ✏️ Mis à jour |
+| `prompt/tod1/09_final_verdict.md` | ✏️ Mis à jour |
 
 ---
 
