@@ -6,7 +6,7 @@ from typing import Iterable
 from event_sentiment.models import ContextualSentimentRecord, NormalizedNewsArticle, SentimentRecord
 
 LOGGER = logging.getLogger(__name__)
-HF_TOKEN_ENV_VAR = "HUHHING_FACE_TOKEN"
+HF_TOKEN_ENV_VAR = "HUGGING_FACE_TOKEN"
 HF_TOKEN_ENV_VARS = (
     HF_TOKEN_ENV_VAR,
     "HF_TOKEN",
@@ -121,6 +121,11 @@ class FinBERTSentimentService:
         self._export_hf_token_aliases(token)
         if token is not None:
             load_kwargs["token"] = token
+            try:
+                import huggingface_hub
+                huggingface_hub.login(token=token, add_to_git_credential=False)
+            except Exception:
+                pass  # huggingface_hub non disponible ou login échoué, on continue
         self.tokenizer = auto_tokenizer_cls.from_pretrained(self.model_name, **load_kwargs)
         self.model = auto_model_cls.from_pretrained(self.model_name, **load_kwargs)
         self.model.to(self.device)
