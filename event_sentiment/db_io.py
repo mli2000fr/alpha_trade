@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -392,26 +392,47 @@ class EventSentimentRepository:
         self,
         *,
         min_relevance: float = 0.0,
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> int:
         """Compte les couples ``(article, symbol)`` encore à scorer en contextuel.
 
         Le compteur reflète le comportement actuel du pipeline contextuel :
         paires présentes dans ``news_ticker_map`` mais absentes de
         ``news_ticker_sentiment``, filtrées par ``relevance_score`` minimal.
+
+        Les paramètres ``start_date`` / ``end_date`` permettent de restreindre
+        le comptage aux articles dont ``news_raw.published_at_utc`` est
+        compris dans la plage ``[start_date, end_date]`` (bornes incluses).
+        Si ``None``, la borne correspondante est ignorée.
         """
+        date_filters = ""
+        params: dict[str, object] = {"min_relevance": float(min_relevance)}
+        if start_date is not None:
+            date_filters += "\n          AND nr.published_at_utc >= :start_date"
+            params["start_date"] = start_date
+        if end_date is not None:
+            date_filters += "\n          AND nr.published_at_utc < :end_date_exclusive"
+            # On étend end_date d'un jour pour inclure les articles du jour de fin
+            params["end_date_exclusive"] = end_date + timedelta(days=1)
+        join_clause = (
+            "\n            JOIN news_raw nr ON nr.article_id = ntm.article_id"
+            if (start_date is not None or end_date is not None)
+            else ""
+        )
         query = text(
-            """
+            f"""
             SELECT COUNT(*)
-            FROM news_ticker_map ntm
+            FROM news_ticker_map ntm{join_clause}
             LEFT JOIN news_ticker_sentiment nts
                 ON nts.article_id = ntm.article_id AND nts.symbol = ntm.symbol
             WHERE nts.article_id IS NULL
-              AND COALESCE(ntm.relevance_score, 1.0) >= :min_relevance
+              AND COALESCE(ntm.relevance_score, 1.0) >= :min_relevance{date_filters}
             """
         )
         with self.engine.connect() as conn:
             return int(
-                conn.execute(query, {"min_relevance": float(min_relevance)}).scalar_one() or 0
+                conn.execute(query, params).scalar_one() or 0
             )
 
     def iter_ticker_map_for_relevance_backfill(

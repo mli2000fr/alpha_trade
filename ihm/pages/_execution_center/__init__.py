@@ -562,17 +562,41 @@ class LaunchOptionsContext:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def _load_contextual_backlog_preview(min_relevance: float) -> dict[str, object]:
+def _load_contextual_backlog_preview(
+    min_relevance: float,
+    start_date_iso: str | None = None,
+    end_date_iso: str | None = None,
+) -> dict[str, object]:
     """Retourne un aperçu du backlog contextuel restant.
 
     Le compteur reflète le comportement actuel du backend contextuel : paires
     présentes dans ``news_ticker_map`` mais absentes de
     ``news_ticker_sentiment``, filtrées par ``relevance_score`` minimal.
+
+    Les paramètres ``start_date_iso`` / ``end_date_iso`` (format ``YYYY-MM-DD``)
+    permettent de restreindre le comptage à une plage de dates sur
+    ``news_raw.published_at_utc``.
     """
+    from datetime import date as _date
+
+    start_date_obj: _date | None = None
+    end_date_obj: _date | None = None
+    if start_date_iso:
+        try:
+            start_date_obj = _date.fromisoformat(start_date_iso)
+        except ValueError:
+            pass
+    if end_date_iso:
+        try:
+            end_date_obj = _date.fromisoformat(end_date_iso)
+        except ValueError:
+            pass
     try:
         repository = EventSentimentRepository()
         pending_pairs = repository.count_pending_contextual_pairs(
-            min_relevance=float(min_relevance)
+            min_relevance=float(min_relevance),
+            start_date=start_date_obj,
+            end_date=end_date_obj,
         )
     except Exception as exc:  # noqa: BLE001 — best effort UI
         return {"error": str(exc)}
@@ -882,8 +906,71 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     ),
                 )
             )
+        # Filtre de dates pour le comptage du backlog contextuel
+        st.caption(
+            "Restreindre l'estimation du backlog aux articles publiés dans une plage de dates "
+            "(filtre sur `news_raw.published_at_utc`). Laissez les deux champs vides pour un comptage global."
+        )
+        backlog_date_col1, backlog_date_col2 = st.columns(2)
+        with backlog_date_col1:
+            _backlog_start_default = cast(
+                date | None,
+                st.session_state.get("pipeline_contextual_backlog_start_date", None),
+            )
+            _backlog_start_picker = st.date_input(
+                "Backlog contextuel — date de début",
+                value=_backlog_start_default,
+                key="pipeline_contextual_backlog_start_date",
+                format="YYYY-MM-DD",
+                help=(
+                    "Date de début (incluse) pour filtrer les paires contextuelles "
+                    "encore à traiter. Laissez vide pour ne pas filtrer en bas."
+                ),
+            )
+        with backlog_date_col2:
+            _backlog_end_default = cast(
+                date | None,
+                st.session_state.get("pipeline_contextual_backlog_end_date", None),
+            )
+            _backlog_end_picker = st.date_input(
+                "Backlog contextuel — date de fin",
+                value=_backlog_end_default,
+                key="pipeline_contextual_backlog_end_date",
+                format="YYYY-MM-DD",
+                help=(
+                    "Date de fin (incluse) pour filtrer les paires contextuelles "
+                    "encore à traiter. Laissez vide pour ne pas filtrer en haut."
+                ),
+            )
+        _backlog_start_iso: str | None = (
+            _backlog_start_picker.isoformat()
+            if isinstance(_backlog_start_picker, date)
+            else None
+        )
+        _backlog_end_iso: str | None = (
+            _backlog_end_picker.isoformat()
+            if isinstance(_backlog_end_picker, date)
+            else None
+        )
+        # Validation de cohérence des dates du filtre backlog
+        _backlog_dates_valid = True
+        if (
+            _backlog_start_iso is not None
+            and _backlog_end_iso is not None
+            and _backlog_start_picker > _backlog_end_picker  # type: ignore[operator]
+        ):
+            st.error(
+                "Plage de dates backlog invalide : la date de début doit être ≤ la date de fin. "
+                "Les deux bornes seront ignorées pour l'estimation."
+            )
+            _backlog_dates_valid = False
+            _backlog_start_iso = None
+            _backlog_end_iso = None
+
         contextual_backlog_preview = _load_contextual_backlog_preview(
-            float(sentiment_contextual_min_relevance)
+            float(sentiment_contextual_min_relevance),
+            _backlog_start_iso,
+            _backlog_end_iso,
         )
         if contextual_backlog_preview.get("error"):
             st.caption(
@@ -912,9 +999,17 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     "Relances estimées après ce run",
                     estimated_relaunches_remaining,
                 )
+            _date_filter_suffix = ""
+            if _backlog_start_iso or _backlog_end_iso:
+                _parts = []
+                if _backlog_start_iso:
+                    _parts.append(f"du `{_backlog_start_iso}`")
+                if _backlog_end_iso:
+                    _parts.append(f"au `{_backlog_end_iso}`")
+                _date_filter_suffix = f" · fenêtre {' '.join(_parts)}"
             st.caption(
-                "Estimation live (TTL ~60s) alignée sur le backend contextuel actuel : backlog global des paires absentes de `news_ticker_sentiment`, "
-                f"filtré avec `min_relevance >= {float(sentiment_contextual_min_relevance):g}`. "
+                "Estimation live (TTL ~60s) alignée sur le backend contextuel actuel : backlog des paires absentes de `news_ticker_sentiment`, "
+                f"filtré avec `min_relevance >= {float(sentiment_contextual_min_relevance):g}`{_date_filter_suffix}. "
                 f"Avec un cap de `{int(sentiment_contextual_max_pairs)}` paires/run, cela représente ≈ `{estimated_runs_needed}` run(s) au total."
             )
 
