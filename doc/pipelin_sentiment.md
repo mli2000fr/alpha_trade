@@ -246,6 +246,26 @@ Score `[0,1]` qui mesure **à quel point un article concerne réellement un symb
 
 ## 7. Ordre pratique recommandé
 
+### Nouveau bouton IHM 7.bis — scoring sentiment seul
+
+Dans le bloc `7.bis Import des news brutes` de l'IHM, un bouton dédié permet désormais de lancer **uniquement le scoring sentiment** sur :
+
+- la `Date de début` et la `Date de fin` choisies dans le panneau 7.bis ;
+- l'`Univers de symboles pour l'import` choisi dans ce même panneau ;
+- le `Event Sentiment — mode de scoring` choisi dans le bloc de paramétrage principal.
+
+Ce bouton lance un `python -m event_sentiment --skip-ingestion ...` :
+
+- sans réimporter de news ;
+- avec le `ScoringMode` courant (`Standard only`, `Contextual only`, `Standard + contextual`) ;
+- en réutilisant le scope 7.bis pour les symboles.
+
+Cas d'usage typique :
+
+- les news sont déjà présentes dans `news_raw` ;
+- on veut seulement rejouer le scoring standard et/ou contextual sur un périmètre borné ;
+- sans lancer le wrapper auto complet ni un `relevance_backfill`.
+
 ### Cas 1 — enrichir un historique déjà importé
 
 1. `python -m event_sentiment.relevance_backfill ... --rescore-contextual`

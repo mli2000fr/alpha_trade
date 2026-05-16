@@ -393,6 +393,7 @@ def _render_launchable_step_panel(
             companion_active_runs = (
                 [
                     *active_by_step.get("import_news_pending_loop", []),
+                    *active_by_step.get("score_sentiment_only", []),
                     *active_by_step.get("score_history_relevance_backfill_auto", []),
                 ]
                 if step.key == "sentiment_pipeline"

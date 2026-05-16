@@ -93,6 +93,8 @@ def _render_import_news_panel(
         st.caption(
             "Lance `event_sentiment/importe_news.py` avec une date de début et une date de fin. "
             "Le bouton import brut réutilise la source news et le mode de mapping ticker configurés dans l'étape 7. "
+            "Le bouton scoring seul relance uniquement `python -m event_sentiment --skip-ingestion` sur la même fenêtre et le même univers 7.bis, "
+            "en respectant le `mode de scoring` choisi dans le bloc `Event Sentiment`. "
             "Le bouton intermédiaire reprend uniquement le complément post-import (score + history backfill + relevance backfill). "
             "Le bouton `Rebuild daily sentiment features only` reconstruit uniquement les features journalières sentiment sur la fenêtre choisie. "
             "Le dernier bouton exécute un script PowerShell Windows qui enchaîne l'import brut puis relance "
@@ -256,6 +258,9 @@ def _render_import_news_panel(
             news_import_max_symbols=news_import_max_symbols or None,
         )
         import_command_preview = format_command_for_display(build_pipeline_command("import_news", import_options))
+        score_only_command_preview = format_command_for_display(
+            build_pipeline_command("score_sentiment_only", import_options)
+        )
         auto_score_command_preview = format_command_for_display(
             build_pipeline_command("import_news_pending_loop", import_options)
         )
@@ -267,6 +272,11 @@ def _render_import_news_panel(
         )
         st.caption("Commande import brut seule (source news + mapping ticker, sans scoring contextuel)")
         st.code(import_command_preview, language="powershell")
+        st.caption(
+            "Commande dédiée — scoring sentiment seul sur le scope 7.bis "
+            "(mode standard/contextual selon le paramétrage `Event Sentiment — mode de scoring` ; sans réimport)"
+        )
+        st.code(score_only_command_preview, language="powershell")
         st.caption("Commande dédiée — reconstruction seule des features sentiment journalières")
         st.code(rebuild_features_command_preview, language="powershell")
         st.caption(
@@ -278,14 +288,16 @@ def _render_import_news_panel(
         st.code(auto_score_command_preview, language="powershell")
 
         import_active_runs = active_by_step.get("import_news", [])
+        score_only_active_runs = active_by_step.get("score_sentiment_only", [])
         rebuild_features_active_runs = active_by_step.get("rebuild_daily_sentiment_features_only", [])
         auto_followup_active_runs = active_by_step.get("score_history_relevance_backfill_auto", [])
         auto_score_active_runs = active_by_step.get("import_news_pending_loop", [])
         locked_by_sentiment = bool(active_by_step.get("sentiment_pipeline"))
-        import_locked = workflow_active or locked_by_sentiment or bool(auto_score_active_runs) or bool(auto_followup_active_runs) or bool(rebuild_features_active_runs)
-        rebuild_features_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(auto_followup_active_runs) or bool(auto_score_active_runs)
-        auto_followup_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(auto_score_active_runs) or bool(rebuild_features_active_runs)
-        auto_score_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(auto_followup_active_runs) or bool(rebuild_features_active_runs)
+        import_locked = workflow_active or locked_by_sentiment or bool(score_only_active_runs) or bool(auto_score_active_runs) or bool(auto_followup_active_runs) or bool(rebuild_features_active_runs)
+        score_only_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(auto_followup_active_runs) or bool(auto_score_active_runs) or bool(rebuild_features_active_runs)
+        rebuild_features_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(score_only_active_runs) or bool(auto_followup_active_runs) or bool(auto_score_active_runs)
+        auto_followup_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(score_only_active_runs) or bool(auto_score_active_runs) or bool(rebuild_features_active_runs)
+        auto_score_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(score_only_active_runs) or bool(auto_followup_active_runs) or bool(rebuild_features_active_runs)
 
         if workflow_active:
             st.warning("Un workflow complet est en cours : l'import manuel de news est temporairement désactivé.")
@@ -295,6 +307,11 @@ def _render_import_news_panel(
             st.warning(
                 "Le script PowerShell score + history backfill + relevance backfill auto est déjà actif : "
                 "attendez sa fin avant de relancer un import brut ou le run auto complet."
+            )
+        elif score_only_active_runs:
+            st.warning(
+                "Un scoring sentiment seul sur le scope 7.bis est déjà actif : "
+                "attendez sa fin avant de relancer un import brut ou un autre run 7.bis."
             )
         elif rebuild_features_active_runs:
             st.warning(
@@ -328,6 +345,18 @@ def _render_import_news_panel(
                 ):
                     stop_pipeline_run(run_id)
                     st.rerun()
+        elif score_only_active_runs:
+            st.info(f"{len(score_only_active_runs)} run(s) de scoring sentiment seul déjà actif(s).")
+            for run in score_only_active_runs:
+                run_id = str(run.get("run_id", ""))
+                st.caption(f"Actif : `{run_id}`")
+                if st.button(
+                    "⏹️ Arrêter ce scoring seul",
+                    key=f"stop_score_sentiment_only_run_{run_id}",
+                    use_container_width=True,
+                ):
+                    stop_pipeline_run(run_id)
+                    st.rerun()
         elif rebuild_features_active_runs:
             st.info(f"{len(rebuild_features_active_runs)} reconstruction(s) de features déjà active(s).")
             for run in rebuild_features_active_runs:
@@ -353,7 +382,7 @@ def _render_import_news_panel(
                     stop_pipeline_run(run_id)
                     st.rerun()
         else:
-            import_col, rebuild_col, followup_col, auto_col = st.columns(4)
+            import_col, score_only_col, rebuild_col, followup_col, auto_col = st.columns(5)
             with import_col:
                 run_clicked = st.button(
                     "📰 Importer les news sur la période",
@@ -371,6 +400,24 @@ def _render_import_news_panel(
                     )
                     _register_new_run(record, all_runs)
                     st.success(f"Import news démarré en arrière-plan : `{record.run_id}`")
+                    st.rerun()
+            with score_only_col:
+                score_only_clicked = st.button(
+                    "🧠 Scorer sentiment seulement",
+                    key="run_pipeline_score_sentiment_only",
+                    use_container_width=True,
+                    disabled=score_only_locked or start_value > end_value,
+                    help="Réutilise le `mode de scoring` du bloc Event Sentiment sur la fenêtre + l'univers 7.bis, sans réimport.",
+                )
+                if score_only_clicked:
+                    record = start_pipeline_run(
+                        "score_sentiment_only",
+                        "7.bis Score sentiment only",
+                        import_options,
+                        db_config=db_config,
+                    )
+                    _register_new_run(record, all_runs)
+                    st.success(f"Scoring sentiment seul démarré en arrière-plan : `{record.run_id}`")
                     st.rerun()
             with rebuild_col:
                 rebuild_clicked = st.button(
@@ -426,6 +473,8 @@ def _render_import_news_panel(
 
         st.caption("Dernier run — import brut")
         _render_step_result(latest_by_step.get("import_news"))
+        st.caption("Dernier run — scoring sentiment seul")
+        _render_step_result(latest_by_step.get("score_sentiment_only"))
         st.caption("Dernier run — rebuild daily sentiment features only")
         _render_step_result(latest_by_step.get("rebuild_daily_sentiment_features_only"))
         st.caption("Dernier run — score + history_backfill + relevance_backfill auto")

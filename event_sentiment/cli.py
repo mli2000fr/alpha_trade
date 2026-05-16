@@ -9,6 +9,7 @@ import dateutil.parser
 from common.utils import configure_root_logging
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.db_io import EventSentimentRepository
+from event_sentiment.importe_news import resolve_symbols_from_inputs
 from event_sentiment.pipeline import EventSentimentPipeline
 
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
@@ -110,6 +111,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-utc", type=str, default=None, help="Fenêtre UTC de début, ex: 2026-01-01T00:00:00Z")
     parser.add_argument("--end-utc", type=str, default=None, help="Fenêtre UTC de fin, ex: 2026-01-31T23:59:59Z")
     parser.add_argument("--symbols", type=str, default=None, help="Liste optionnelle de symboles, séparés par des virgules")
+    parser.add_argument(
+        "--symbol-source",
+        type=str,
+        choices=("stock_scores", "stock_scores_history", "stock_scores_all", "candidates", "stock_bars_daily"),
+        default=None,
+        help=(
+            "Source optionnelle des symboles quand --symbols est absent. "
+            "Utile notamment pour scorer uniquement le scope 7.bis de l'IHM en "
+            "mode --skip-ingestion."
+        ),
+    )
+    parser.add_argument(
+        "--max-symbols",
+        type=int,
+        default=None,
+        help="Garde-fou sécurité : refuse le run si l'univers résolu dépasse cette limite.",
+    )
     parser.add_argument(
         "--finbert-revision",
         type=str,
@@ -261,9 +279,26 @@ def main() -> None:
 
     start_utc = dateutil.parser.isoparse(args.start_utc) if args.start_utc else None
     end_utc = dateutil.parser.isoparse(args.end_utc) if args.end_utc else None
-    symbols = [symbol.strip().upper() for symbol in args.symbols.split(",")] if args.symbols else None
 
     repository = EventSentimentRepository()
+    if args.symbols or args.symbol_source:
+        symbols, _effective_symbol_source = resolve_symbols_from_inputs(
+            symbols_csv=args.symbols,
+            symbol_source=str(args.symbol_source or "candidates"),
+            repository=repository,
+            logger=logging.getLogger(__name__),
+        )
+        if args.max_symbols is not None and args.max_symbols > 0 and len(symbols) > int(args.max_symbols):
+            raise SystemExit(
+                "Le nombre de symboles résolus ({0}) dépasse --max-symbols={1}. "
+                "Réduisez l'univers (--symbol-source / --symbols) ou augmentez explicitement la limite.".format(
+                    len(symbols),
+                    int(args.max_symbols),
+                )
+            )
+    else:
+        symbols = [symbol.strip().upper() for symbol in args.symbols.split(",")] if args.symbols else None
+
     config_overrides: dict[str, object] = {}
     if args.finbert_revision:
         config_overrides["finbert_model_revision"] = args.finbert_revision

@@ -973,6 +973,57 @@ def test_build_pipeline_command_import_news_pending_loop_exposes_symbol_scope_op
     assert "-Symbols" not in command
 
 
+def test_build_pipeline_command_score_sentiment_only_uses_7bis_scope_and_selected_scoring_mode() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_symbol_source="stock_scores_history",
+        news_import_max_symbols=500,
+        sentiment_news_provider="eodhd",
+        sentiment_scoring_mode="contextual_only",
+        sentiment_contextual_min_relevance=0.3,
+        sentiment_contextual_max_pairs=4000,
+        sentiment_pending_limit=5000,
+        sentiment_pending_max_batches_per_run=10,
+        sentiment_feature_flush_every_n_batches=2,
+        sentiment_finbert_batch_size=32,
+    )
+
+    command = build_pipeline_command("score_sentiment_only", options)
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment",
+        "--skip-ingestion",
+        "--news-provider",
+        "eodhd",
+        "--scoring-mode",
+        "contextual_only",
+        "--contextual-min-relevance",
+        "0.3",
+        "--contextual-max-pairs",
+        "4000",
+        "--sentiment-pending-limit",
+        "5000",
+        "--sentiment-pending-max-batches",
+        "10",
+        "--feature-flush-every-n-batches",
+        "2",
+        "--finbert-batch-size",
+        "32",
+        "--start-utc",
+        "2026-04-01T00:00:00Z",
+        "--end-utc",
+        "2026-04-15T23:59:59Z",
+        "--symbol-source",
+        "stock_scores_history",
+        "--max-symbols",
+        "500",
+    ]
+
+
 def test_build_pipeline_command_score_history_relevance_backfill_auto_skips_import() -> None:
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",

@@ -974,6 +974,22 @@ def _extend_import_news_powershell_args(
         command_args.extend(["-MaxSymbols", str(int(max_symbols))])
 
 
+def _extend_event_sentiment_symbol_scope_args(
+    command: list[str],
+    *,
+    symbols: str | None,
+    symbol_source: str,
+    max_symbols: int | None,
+) -> None:
+    if symbols:
+        command.extend(["--symbols", symbols])
+    elif symbol_source:
+        command.extend(["--symbol-source", symbol_source])
+
+    if max_symbols is not None and max_symbols > 0:
+        command.extend(["--max-symbols", str(int(max_symbols))])
+
+
 def _extend_relevance_backfill_powershell_args(
     command_args: list[str],
     options: PipelineLaunchOptions,
@@ -1361,6 +1377,26 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                     "--contextual-max-pairs",
                     str(int(options.backfill_relevance_contextual_max_pairs)),
                 ])
+        return command
+
+    if step_key == "score_sentiment_only":
+        if news_import_start_date is None:
+            raise ValueError("La date de début est obligatoire pour scorer le sentiment sur le scope 7.bis.")
+        command = [sys.executable, "-u", "-m", "event_sentiment", "--skip-ingestion"]
+        _extend_event_sentiment_cli_common_args(
+            command,
+            options,
+            include_contextual_scoring=True,
+        )
+        command.extend(["--start-utc", f"{news_import_start_date}T00:00:00Z"])
+        if news_import_end_date:
+            command.extend(["--end-utc", f"{news_import_end_date}T23:59:59Z"])
+        _extend_event_sentiment_symbol_scope_args(
+            command,
+            symbols=news_import_symbols,
+            symbol_source=news_import_symbol_source,
+            max_symbols=news_import_max_symbols,
+        )
         return command
 
     if step_key == "rebuild_daily_sentiment_features_only":
