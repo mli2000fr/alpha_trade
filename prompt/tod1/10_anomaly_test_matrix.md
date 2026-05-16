@@ -8,10 +8,10 @@
 
 | ID | Titre | Sévérité | Statut | Correctif | Tests | Sprint |
 |---|---|---|---|---|---|---|
-| A-001 | max_positions 10 vs "3 lignes" | P1 | 🔴 Actif | Corriger `risk_max_positions: 3` | `test_capital_preset_risk_overrides.py` | S1 |
-| A-002 | Noms tables obsolètes lineage matrix | P1 | 🔴 Actif | Régénérer `data_lineage_matrix.md` | `test_data_lineage_autogen.py` | S1 |
+| A-001 | max_positions 10 vs "3 lignes" | P1 | ✅ **RÉSOLU Sprint S1** | `risk_max_positions: 3`, `min_notional: 500.0` dans `capital_0_2000_eur` | `test_capital_preset_risk_overrides.py` (5 nouveaux tests) | — |
+| A-002 | Noms tables obsolètes lineage matrix | P1 | ✅ **RÉSOLU Sprint S1** | LINEAGE_SPEC corrigé, MD régénéré, CI `--check` vert | `test_data_lineage_autogen.py` (7/7 pass) | — |
 | A-003 | model_predictions absence governance ML | P1 | ✅ **RÉSOLU** | `selected_model`, `decision_threshold`, `calibration_method`, `signal_label` présents dans `model_predictions.sql:8-11` + persistés par `db_registry.py:336-363` | `test_model_factory_db_registry.py` | — |
-| A-004 | vectorbt mention obsolète DOC_TECHNIQUE | P1 | ✅ **RÉSOLU** (sauf résidu argparse) | `DOC_TECHNIQUE.md:497` corrigé. Résidu : `backtesting/cli/_impl.py:67` à corriger (cosmétique) | `test_doc_provider_alignment.py` | S1 (résidu) |
+| A-004 | vectorbt mention obsolète DOC_TECHNIQUE | P1 | ✅ **RÉSOLU Sprint S1** (résidu argparse corrigé) | `backtesting/cli/_impl.py:67` description mise à jour | `test_doc_provider_alignment.py` | — |
 | A-005 | CA provider ambigu (Alpaca vs EODHD) | P1 | ✅ **RÉSOLU** | Règle documentée : `DOC_FONCTIONNELLE.md:246` + `data_lineage_matrix.md §7:109-111` + factory `corporate_actions/provider.py:402-432` | `test_corporate_actions.py` | — |
 | A-006 | PDT rule off sur comptes margin ≥ 25k$ | P2 | 🔴 Actif | Passer `pdt_rule: auto` sur presets margin | `test_execution_config.py` | S2 |
 | A-007 | min_close 5.0$ sous profil strict | P2 | 🔴 Actif | Uniformiser `min_close: 10.0` preset 0_5000 | `test_strict_filter_profiles.py` | S2 |
@@ -23,7 +23,7 @@
 | A-013 | Pas d'alerting externe automatique | P2 | 🔴 Actif | Déclencher email sur circuit_breaker + kill_switch | `test_ihm_notifications.py` | S3 |
 | A-014 | auto_rebalance off → dérive silencieuse | P2 | 🔴 Actif | Alerting si diff réconciliation > seuil depuis > 24h | `test_execution_engine_reconciliation.py` | S3 |
 | A-015 | Market cap stale TTL non alerté | P2 | 🔴 Actif | Alerte IHM si TTL expiré sur N% symboles | `test_alpha_scanner.py` | S3 |
-| A-016 | PDT rule commentaire absent (cash comptes) | P2 | 🔴 Actif | Ajouter commentaire YAML | Aucun test | S1 |
+| A-016 | PDT rule commentaire absent (cash comptes) | P2 | ✅ **RÉSOLU Sprint S1** | Commentaire ajouté sur 4 presets cash dans `config/capital_presets.yaml` | `test_cash_presets_have_pdt_off` (nouveau) | — |
 | A-017 | fill_timeout insuffisant lors de gap | P2 | 🔴 Actif | Augmenter à 180/300s + runbook | `test_execution_engine_executor.py` | S2 |
 | A-018 | §1.3 DOC_FONCTIONNELLE step 1 = alpaca | P3 | ✅ **RÉSOLU** | `DOC_FONCTIONNELLE.md:37` nomme EODHD comme provider primaire | `test_doc_provider_alignment.py` | — |
 | A-019 | Stooq apikey conditionnelle non testée | P3 | 🔴 Actif | Documenter utilisation sans clé | `test_macro_providers.py` | S3 |
@@ -40,64 +40,56 @@
 
 ## Détail des tests prioritaires P1 actifs
 
-### A-001 — `test_capital_preset_risk_overrides.py`
-
-**Objectif** : Valider la cohérence interne des presets capital  
-**Type** : Unitaire / configuration  
-**Priorité** : P1  
-**Scénario** :
-```
-Given : fichier config/capital_presets.yaml chargé
-When : on vérifie chaque preset
-Then : max_positions × min_notional <= 0.95 × max_equity (solvabilité notionnelle)
-Then : description mentionne le bon nombre de lignes
-Then : si account_type=cash → pdt_rule doit être "off"
-```
-**Fixtures** : `config/capital_presets.yaml` chargé directement  
-**Ce que le test empêche** : Regression de presets incohérents (positions × notional > equity)
+> ⚠️ **Toutes les anomalies P1 sont maintenant résolues** (A-001 ✅, A-002 ✅, A-003 ✅, A-004 ✅, A-005 ✅ après Sprint S1). Aucune P1 active restante.
 
 ---
 
-### A-002 — `test_data_lineage_autogen.py`
+## Détail des tests P1/P2 RÉSOLUS ✅
 
-**Objectif** : Valider que la lineage matrix référence les bons noms de tables  
-**Type** : Non-régression documentation  
-**Priorité** : P1  
-**Scénario** :
+### A-001 ✅ — `test_capital_preset_risk_overrides.py` — RÉSOLU Sprint S1
+
+**Résolution** : 5 nouveaux tests ajoutés et passent tous. `risk_max_positions: 3`, `min_notional: 500.0` confirmés.
+
+Tests ajoutés :
+```python
+test_positions_notional_solvency()          # max_pos × min_notional ≤ 0.95 × max_equity
+test_micro_account_max_positions_coherent() # capital_0_2000_eur.max_positions ≤ 5
+test_micro_account_min_notional_viable()    # capital_0_2000_eur.min_notional ≥ 400 USD
+test_positions_increase_with_account_size() # monotonie des positions entre tranches
+test_cash_presets_have_pdt_off()            # pdt_rule='off' sur tous les presets cash
 ```
-Given : data_lineage_matrix.md et liste des tables réelles depuis database/sql/
-When : vérification croisée des noms de tables
-Then : aucun nom obsolète (execution_orders, execution_audit_events, etc.)
-Then : pas de table référencée dans lineage absente du schéma réel
-```
-**Ce que le test empêche** : Divergence silencieuse doc ↔ schéma DB
 
 ---
 
-## Détail des tests P1 RÉSOLUS ✅
+### A-002 ✅ — `test_data_lineage_autogen.py` — RÉSOLU Sprint S1
 
-### A-003 ✅ — `test_model_factory_db_registry.py` — RÉSOLU
+**Résolution** : `scripts/generate_data_lineage.py` LINEAGE_SPEC corrigé :
+- `execution_orders` → `execution_order_requests` + `execution_broker_orders`
+- `execution_audit_events` → `execution_events`
 
-**Résolution confirmée** : `model_predictions.sql:8-11` contient les 4 colonnes de gouvernance ML. `db_registry.py:336-363` les persiste. Aucune action requise — le test doit simplement vérifier que ces colonnes sont non-NULL après un run.
-
----
-
-### A-004 ✅ — `test_doc_provider_alignment.py` — RÉSOLU (sauf résidu argparse)
-
-**Résolution confirmée** : `DOC_TECHNIQUE.md:497` ne contient plus "vectorbt". Résidu cosmétique dans `backtesting/cli/_impl.py:67` — à corriger dans S1.
+`doc/data_lineage_matrix.md` régénéré. `test_repo_lineage_matrix_is_in_sync` passe. 7/7 tests verts.
 
 ---
 
-### A-005 ✅ — `test_corporate_actions.py` — RÉSOLU
+### A-003 ✅ — `test_model_factory_db_registry.py` — RÉSOLU (avant Sprint S1)
 
-**Résolution confirmée** : Factory `build_corporate_action_provider()` correctement implémentée (`corporate_actions/provider.py:402-432`). Le test du switch provider est un test de non-régression à conserver dans la CI.
-```
-Given : config avec bars_provider='eodhd'
-When : build_corporate_action_provider(config)
-Then : provider est EodhdCorporateActionProvider
+**Résolution confirmée** : `model_predictions.sql:8-11` contient les 4 colonnes. `db_registry.py:336-363` les persiste. Tests verts.
 
-Given : config avec bars_provider='alpaca'
-When : build_corporate_action_provider(config)
-Then : provider est AlpacaCorporateActionProvider
-```
+---
+
+### A-004 ✅ — `test_doc_provider_alignment.py` — RÉSOLU Sprint S1
+
+**Résolution** : `backtesting/cli/_impl.py:67` : `description="Backtest intégré Alpha Trade (simulateur custom PIT)"`. Plus aucun résidu "vectorbt".
+
+---
+
+### A-005 ✅ — `test_corporate_actions.py` — RÉSOLU (avant Sprint S1)
+
+**Résolution confirmée** : Factory `build_corporate_action_provider()` correctement implémentée. Tests de non-régression à conserver en CI.
+
+---
+
+### A-016 ✅ — `test_cash_presets_have_pdt_off` — RÉSOLU Sprint S1
+
+**Résolution** : 4 presets cash annotés avec commentaire explicatif. Test de régression ajouté dans `test_capital_preset_risk_overrides.py`.
 

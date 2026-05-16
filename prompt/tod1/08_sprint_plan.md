@@ -6,79 +6,72 @@
 
 ## Vue d'ensemble
 
-| Sprint | Objectif principal | Priorité | Durée estimée | Modules |
-|---|---|---|---|---|
-| S1 | Corrections docs + config P1 (quick wins) | ✅ Immédiat | 1–2 jours | doc, config, tests |
-| S2 | Corrections techniques P1/P2 | ✅ Critique | 3–5 jours | DB, modelFactory, execution, config |
-| S3 | Améliorations opérationnelles P2 | 🔵 Important | 5–7 jours | backtesting, observabilité, sécurité |
-| S4 | Qualité avancée + analytics P3 | 🟢 Perfectionnement | 5–7 jours | backtesting, IHM, ML, walk-forward |
-| S5 | Pro-grade : monitoring + orchestration | 🟡 Long terme | 10–15 jours | infra, ops, ML governance |
+| Sprint | Objectif principal | Priorité | Durée estimée | Modules | Statut |
+|---|---|---|---|---|---|
+| S1 | Corrections docs + config P1 (quick wins) | ✅ Immédiat | 1–2 jours | doc, config, tests | ✅ **LIVRÉ** |
+| S2 | Corrections techniques P2 | ✅ Critique | 2–3 jours | execution, config | 🔴 À faire |
+| S3 | Améliorations opérationnelles P2 | 🔵 Important | 5–7 jours | backtesting, observabilité, sécurité | 🔴 À faire |
+| S4 | Qualité avancée + analytics P3 | 🟢 Perfectionnement | 5–7 jours | backtesting, IHM, ML, walk-forward | 🔴 À faire |
+| S5 | Pro-grade : monitoring + orchestration | 🟡 Long terme | 10–15 jours | infra, ops, ML governance | 🔴 À faire |
 
 ---
 
-## Sprint S1 — Quick Wins : Corrections docs et config P1
+## Sprint S1 — Quick Wins : Corrections docs et config P1 ✅ **LIVRÉ**
 
 **Objectif** : Éliminer les incohérences P1 documentaires et de configuration sans toucher au code algorithme.  
-**Durée estimée** : 1–2 jours  
-**Modules impactés** : `doc/`, `config/`  
-**Anomalies traitées** : A-001, A-002, A-016, A-023
+**Durée estimée** : 1–2 jours | **Durée réelle** : ~1 jour  
+**Modules impactés** : `doc/`, `config/`, `backtesting/cli/`, `tests/`  
+**Anomalies clôturées** : A-001 ✅, A-002 ✅, A-004-résidu ✅, A-016 ✅
 
-> ✅ **Anomalies déjà résolues (S1 complet pour ces items)** :
-> - A-004 ✅ (vectorbt mention dans DOC_TECHNIQUE — sauf résidu argparse)
-> - A-005 ✅ (provider CA documenté dans DOC_FONCTIONNELLE + lineage matrix)
-> - A-018 ✅ (DOC_FONCTIONNELLE §1.3 étape 1 = EODHD)
+> ✅ **Toutes les anomalies S1 résolues** :
+> - A-001 ✅ (risk_max_positions: 3, min_notional: 500 USD sur capital_0_2000_eur)
+> - A-002 ✅ (LINEAGE_SPEC corrigé, data_lineage_matrix.md régénéré, CI check vert)
+> - A-004-résidu ✅ (argparse description backtesting/cli/_impl.py:67 corrigée)
+> - A-004 ✅ (DOC_TECHNIQUE §9 — déjà corrigé avant S1, entièrement clos)
+> - A-005 ✅ (provider CA — déjà corrigé avant S1)
+> - A-016 ✅ (commentaire PDT rule ajouté sur 4 presets cash)
+> - A-018 ✅ (DOC_FONCTIONNELLE §1.3 — déjà corrigé avant S1)
 
-### Tâches détaillées
+### Tâches livrées
 
-**T1.1** — Corriger `config/capital_presets.yaml` preset `capital_0_2000_eur`
+**T1.1** ✅ — `config/capital_presets.yaml` preset `capital_0_2000_eur` corrigé
 ```yaml
-# Avant :
-risk_max_positions: 10
-risk_min_position_notional: 150.0
-# Après :
-risk_max_positions: 3
-risk_min_position_notional: 500.0
+risk_max_positions: 3                     # 3 lignes ≈ 600-700 € chacune — A-001 fix
+risk_min_position_notional: 500.0        # ticket mini USD — A-001 fix
 ```
-**Fichiers** : `config/capital_presets.yaml:15-19`
 
-**T1.2** — Régénérer `doc/data_lineage_matrix.md` via `scripts/generate_data_lineage.py`
-- Vérifier que `execution_orders` → `execution_order_requests` + `execution_broker_orders`
-- Vérifier que `execution_audit_events` → `execution_events`
-- Activer vérification en CI : `python scripts/generate_data_lineage.py --check`
+**T1.2** ✅ — `scripts/generate_data_lineage.py` LINEAGE_SPEC + PROVIDER_SPEC corrigés, MD régénéré
+- `execution_orders` → `execution_order_requests` + `execution_broker_orders`
+- `execution_audit_events` → `execution_events`
+- `python scripts/generate_data_lineage.py --check` → exit 0 ✅
 
-**T1.3** — Corriger le résidu argparse de vectorbt (A-004 résidu)
+**T1.3** ✅ — `backtesting/cli/_impl.py:67` description argparse corrigée
 ```python
-# backtesting/cli/_impl.py:67
-# Avant :
-description="Backtest intégré Alpha Trade (vectorbt)"
-# Après :
 description="Backtest intégré Alpha Trade (simulateur custom PIT)"
 ```
 
-**T1.4** — Ajouter commentaire YAML pour PDT rule sur comptes cash (A-016)
-```yaml
-execution_pdt_rule: "off"  # PDT rule N/A sur compte cash (règle margin uniquement — cf. execution_engine/config.py effective_pdt_rule)
-```
+**T1.4** ✅ — Commentaire PDT rule ajouté sur 4 presets cash dans `config/capital_presets.yaml`
 
-### Tests à ajouter/exécuter
+### Tests ajoutés et résultats
 
-| Test | Type | Priorité |
+| Test | Type | Résultat |
 |---|---|---|
-| `test_capital_preset_risk_overrides.py` — ajout assertion `max_positions × notional ≤ 0.95 × equity` | Unitaire config | P1 |
-| `test_data_lineage_autogen.py` — activer en CI | Non-régression doc | P1 |
+| `test_positions_notional_solvency` (nouveau) | Unitaire config | ✅ Pass |
+| `test_micro_account_max_positions_coherent` (nouveau) | Unitaire config | ✅ Pass |
+| `test_micro_account_min_notional_viable` (nouveau) | Unitaire config | ✅ Pass |
+| `test_positions_increase_with_account_size` (nouveau) | Unitaire config | ✅ Pass |
+| `test_cash_presets_have_pdt_off` (nouveau) | Unitaire config | ✅ Pass |
+| `test_capital_preset_risk_overrides.py` (13 tests) | Régression | ✅ 13/13 Pass |
+| `test_data_lineage_autogen.py` (7 tests) | Non-régression doc | ✅ 7/7 Pass |
+| Ensemble filtré "lineage or preset or capital" (80 tests) | Régression globale | ✅ 80 Pass, 0 Fail |
 
-### Critères d'acceptation
+### Gain réalisé sur les notes
 
-- ✅ `test_capital_preset_risk_overrides.py` passe sur `capital_0_2000_eur` avec max_positions=3
-- ✅ `test_data_lineage_autogen.py` vert en CI sans erreur de noms de tables
-- ✅ Aucun résidu "vectorbt" dans `_impl.py` argparse
-
-### Gain attendu sur les notes
-
-| Module | Avant | Après |
+| Module | Avant S1 | Après S1 |
 |---|---|---|
-| Configuration | 7.0 | 7.5 |
-| Documentation | 8.5 (déjà révisé) | 9.0 (après T1.2) |
+| Configuration | 7.0 | **7.5** |
+| Documentation (lineage matrix) | 8.5 | **9.0** |
+| Backtesting CLI | — | résidu vectorbt éliminé ✅ |
 
 ---
 

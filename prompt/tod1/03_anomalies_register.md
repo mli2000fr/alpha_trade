@@ -10,42 +10,37 @@
 
 | Total initial | Résolues (code vérifié) | Actives | P0 | P1 | P2 | P3 |
 |---|---|---|---|---|---|---|
-| 27 | 6 | 21 | 0 | 2 | 10 | 9 |
+| 27 | 10 | 17 | 0 | 0 | 9 | 8 |
+
+> **Sprint S1 livré** — 4 anomalies supplémentaires résolues : A-001 ✅, A-002 ✅, A-004-résidu ✅, A-016 ✅
 
 ---
 
-## Anomalies P1 (majeures) — actives
+## ~~Anomalies P1 (majeures) — actives~~ → Toutes résolues ✅ (après Sprint S1)
 
-### A-001 — `capital_0_2000_eur` : `risk_max_positions: 10` incohérent
-- **Sévérité** : P1
+### A-001 ✅ — `capital_0_2000_eur` : `risk_max_positions: 10` incohérent — RÉSOLU (Sprint S1)
+- **Sévérité initiale** : P1
 - **Domaine** : Configuration / capital_presets
-- **Vérification code** : `config/capital_presets.yaml:16` — `risk_max_positions: 10` avec commentaire `# 3 lignes ≈ 600-700 € chacune`. Contradiction directement visible dans le fichier YAML.
-- **Description** : Le preset `capital_0_2000_eur` déclare `risk_max_positions: 10` alors que la description dit "3 lignes ≈ 600-700 € chacune" et que le capital est de ~2 000 €. Avec 10 positions à `risk_min_position_notional: 150 USD`, on obtient 1 500 USD de capital alloué minimum — mathématiquement tenu mais chaque position est sous-dimensionnée (150 USD), rendant le coût des frais relatifs prohibitifs.
-- **Preuve** : `config/capital_presets.yaml:16` — `risk_max_positions: 10` + commentaire inline "# 3 lignes ≈ 600-700 € chacune"
-- **Impact métier** : Positions de 150 USD sur compte de 2 000 € → frais de transaction Alpaca (~1 USD/trade) représentent ~0.67% = ≥ 67 bps par aller-retour → destructeur d'alpha
-- **Impact technique** : Incohérence entre la description et la valeur → confusion opérateur, test `test_capital_preset_risk_overrides.py` peut ne pas détecter cette incohérence sémantique
-- **Probabilité** : Certaine (valeur incorrecte dans le fichier)
-- **Niveau de confiance** : Très élevé (vérifié dans le code source)
-- **Recommandation** : Corriger `risk_max_positions: 3` pour ce preset et reconfigurer `risk_min_position_notional: 500 USD` minimum
-- **Test à ajouter** : `test_capital_preset_risk_overrides.py` — valider que `max_positions × min_notional ≤ 0.95 × preset.max_equity`
+- **Résolution** : `config/capital_presets.yaml:16` — corrigé en `risk_max_positions: 3` et `risk_min_position_notional: 500.0`.
+- **Tests ajoutés** : `test_capital_preset_risk_overrides.py` :
+  - `test_positions_notional_solvency` — vérifie `max_positions × min_notional ≤ 0.95 × max_equity`
+  - `test_micro_account_max_positions_coherent` — vérifie `max_positions ≤ 5` pour `capital_0_2000_eur`
+  - `test_micro_account_min_notional_viable` — vérifie `min_notional ≥ 400 USD`
+  - `test_positions_increase_with_account_size` — monotonie des positions entre tranches
+- **Résultat test** : 13/13 passed ✅
 
 ---
 
-### A-002 — `data_lineage_matrix.md` : noms de tables obsolètes (execution)
-- **Sévérité** : P1
+### A-002 ✅ — `data_lineage_matrix.md` : noms de tables obsolètes (execution) — RÉSOLU (Sprint S1)
+- **Sévérité initiale** : P1
 - **Domaine** : Documentation / database
-- **Vérification code** : `database/sql/execution/` contient : `execution_order_requests.sql`, `execution_broker_orders.sql`, `execution_events.sql`. La matrix utilise `execution_orders` (inexistant) et `execution_audit_events` (inexistant).
-- **Description** : `data_lineage_matrix.md §4` utilise les noms `execution_orders` et `execution_audit_events` qui ne correspondent à aucun fichier SQL réel. Les tables réelles sont `execution_order_requests`, `execution_broker_orders`, `execution_events`.
-- **Preuve** : `doc/data_lineage_matrix.md:68` (`execution_orders`) et `:70` (`execution_audit_events`) vs `database/sql/execution/` (noms canoniques vérifiés)
-- **Impact métier** : Un opérateur qui cherche une table en incident trouvera un nom obsolète → perte de temps en production
-- **Impact technique** : La documentation de production diverge du schéma réel ; tout script qui lirait la matrix pour générer des requêtes échouerait
-- **Probabilité** : Certaine (divergence vérifiée par lecture des fichiers SQL réels)
-- **Niveau de confiance** : Très élevé (vérifié dans le code source)
-- **Recommandation** : Corriger `data_lineage_matrix.md §4` :
-  - `execution_orders` → `execution_order_requests` + `execution_broker_orders` (deux tables distinctes)
+- **Résolution** : `scripts/generate_data_lineage.py` — LINEAGE_SPEC mis à jour :
+  - `execution_orders` → `execution_order_requests` + `execution_broker_orders`
   - `execution_audit_events` → `execution_events`
-  - Régénérer via `scripts/generate_data_lineage.py` si ce script est à jour
-- **Test à ajouter** : `test_data_lineage_autogen.py` — vérifier que chaque table listée dans la matrix existe réellement en DB
+  - PROVIDER_SPEC alpaca : `execution_orders` → `execution_broker_orders`
+  - `doc/data_lineage_matrix.md` régénéré via `python scripts/generate_data_lineage.py`
+- **Vérification CI** : `python scripts/generate_data_lineage.py --check` → exit 0 ✅
+- **Tests** : `test_data_lineage_autogen.py` — 7/7 passed ✅, `test_repo_lineage_matrix_is_in_sync` passe ✅
 
 ---
 
@@ -137,14 +132,14 @@
 
 ---
 
-### A-016 — `execution_pdt_rule: "off"` sur presets 10–25k$ cash — commentaire manquant
-- **Sévérité** : P2
+### A-016 ✅ — `execution_pdt_rule: "off"` sur presets cash — RÉSOLU (Sprint S1)
+- **Sévérité initiale** : P2
 - **Domaine** : Configuration / execution_engine
-- **Vérification code** : `config/capital_presets.yaml:182-183` — `execution_account_type: cash` et `execution_pdt_rule: "off"` sans commentaire explicatif. `execution_engine/config.py:174-177` — `effective_pdt_rule` retourne `"off"` automatiquement si `account_type == "cash"`. Comportement correct mécaniquement.
-- **Description** : Les presets `capital_10001_25000` ont `execution_account_type: cash` et `execution_pdt_rule: "off"`. La règle PDT s'applique uniquement aux comptes margin — sur un compte cash, PDT est effectivement N/A. Cette configuration est donc correcte mais mérite une note explicite pour éviter la confusion opérateur.
-- **Preuve** : `config/capital_presets.yaml:182-183` — absence de commentaire justificatif
-- **Recommandation** : Ajouter commentaire dans le YAML : `# pdt_rule: off car account_type=cash (PDT ne s'applique qu'aux comptes margin — cf. execution_engine/config.py effective_pdt_rule)`
-- **Test à ajouter** : Aucun test supplémentaire — comportement correct mais commentaire YAML à ajouter
+- **Résolution** : Commentaire ajouté sur tous les presets cash (`capital_0_2000_eur`, `capital_0_5000`, `capital_5001_10000`, `capital_10001_25000`) :
+  ```yaml
+  execution_pdt_rule: "off"  # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
+  ```
+- **Test ajouté** : `test_cash_presets_have_pdt_off` dans `test_capital_preset_risk_overrides.py` — vérifie que tous les presets cash ont `pdt_rule='off'` ✅
 
 ---
 
@@ -250,11 +245,11 @@
 
 ---
 
-### A-004 ✅ — `DOC_TECHNIQUE.md §9` : mention "vectorbt" — RÉSOLU (résidu mineur)
+### A-004 ✅ — `DOC_TECHNIQUE.md §9` : mention "vectorbt" — RÉSOLU (résidu argparse corrigé Sprint S1)
 - **Sévérité initiale** : P1 (documentation)
 - **Domaine** : documentation
 - **Résolution confirmée** : `doc/DOC_TECHNIQUE.md:497` — "simulateur custom PIT — aucune dépendance vectorbt ; moteur `BacktestEngine` dans `backtesting/simulator.py`".
-- **Résidu mineur** : `backtesting/cli/_impl.py:67` — `description="Backtest intégré Alpha Trade (vectorbt)"` dans `argparse.ArgumentParser`. À corriger lors du prochain passage sur ce fichier (cosmétique, pas d'impact fonctionnel).
+- **Résidu Sprint S1 corrigé** : `backtesting/cli/_impl.py:67` — `description="Backtest intégré Alpha Trade (simulateur custom PIT)"` ✅ (était "vectorbt"). Entièrement résolu.
 
 ---
 
@@ -297,17 +292,17 @@
 
 ## Guide de priorisation pour correction
 
-| Ordre | Anomalie | Action | Fichier(s) |
-|---|---|---|---|
-| **1** | A-001 | Corriger `risk_max_positions: 3` + `risk_min_position_notional: 500` | `config/capital_presets.yaml` |
-| **2** | A-002 | Corriger noms de tables dans `§4` de la matrix | `doc/data_lineage_matrix.md` |
-| **3** | A-006 | Passer PDT rule `"auto"` sur presets margin ≥ 25k$ | `config/capital_presets.yaml` |
-| **4** | A-007 | `selector_min_close: 10.0` sur `capital_0_5000` | `config/capital_presets.yaml` |
-| **5** | A-016 | Ajouter commentaire PDT off cash | `config/capital_presets.yaml` |
-| **6** | A-004 résidu | Corriger description argparse "vectorbt" | `backtesting/cli/_impl.py:67` |
-| **7** | A-010 | Brancher `ParquetCache` via `--use-cache` | `backtesting/cli/_impl.py` |
-| **8** | A-011 | Brancher analytics/statistical_validation CLI | `backtesting/cli/_impl.py` |
-| **9** | A-017 | `fill_timeout_seconds` → 180 | `execution_engine/config.py` |
-| **10** | A-013 | Alerting externe circuit breaker | `execution_engine/` + notifications |
-| **11** | A-014 | Alerte IHM dérive réconciliation | `ihm/` + `execution_engine/` |
-| **12** | A-023 | Activer `test_data_lineage_autogen.py` en CI | `pytest.ini` / CI config |
+| Ordre | Anomalie | Action | Fichier(s) | Statut |
+|---|---|---|---|---|
+| **1** | A-001 | Corriger `risk_max_positions: 3` + `risk_min_position_notional: 500` | `config/capital_presets.yaml` | ✅ Sprint S1 |
+| **2** | A-002 | Corriger noms de tables dans LINEAGE_SPEC + régénérer | `scripts/generate_data_lineage.py` | ✅ Sprint S1 |
+| **3** | A-016 | Ajouter commentaire PDT off cash | `config/capital_presets.yaml` | ✅ Sprint S1 |
+| **4** | A-004 résidu | Corriger description argparse "vectorbt" | `backtesting/cli/_impl.py:67` | ✅ Sprint S1 |
+| **5** | A-006 | Passer PDT rule `"auto"` sur presets margin ≥ 25k$ | `config/capital_presets.yaml` | 🔴 Sprint S2 |
+| **6** | A-007 | `selector_min_close: 10.0` sur `capital_0_5000` | `config/capital_presets.yaml` | 🔴 Sprint S2 |
+| **7** | A-017 | `fill_timeout_seconds` → 180 | `execution_engine/config.py` | 🔴 Sprint S2 |
+| **8** | A-010 | Brancher `ParquetCache` via `--use-cache` | `backtesting/cli/_impl.py` | 🔴 Sprint S3 |
+| **9** | A-011 | Brancher analytics/statistical_validation CLI | `backtesting/cli/_impl.py` | 🔴 Sprint S3 |
+| **10** | A-013 | Alerting externe circuit breaker | `execution_engine/` + notifications | 🔴 Sprint S3 |
+| **11** | A-014 | Alerte IHM dérive réconciliation | `ihm/` + `execution_engine/` | 🔴 Sprint S3 |
+| **12** | A-023 | Activer `test_data_lineage_autogen.py` en CI | `pytest.ini` / CI config | 🔴 Sprint S3 |

@@ -12,7 +12,7 @@ L'application est **clairement plus avancée qu'un projet hobby** : elle dispose
 
 ---
 
-## Note globale : **7,4 / 10 — Niveau "Indépendant avancé / quasi-pro"** *(révisée après vérification code)*
+## Note globale : **7,5 / 10 — Niveau "Quasi-pro"** *(post Sprint S1 livré)*
 
 | Dimension | Note |
 |---|---|
@@ -27,6 +27,7 @@ L'application est **clairement plus avancée qu'un projet hobby** : elle dispose
 | DB / lineage / auditabilité | 7.5/10 |
 | IHM / supervision | 7.5/10 |
 | Qualité logicielle | 8.5/10 |
+| Configuration | 7.5/10 |
 | Sécurité / readiness prod | 7.5/10 |
 
 ---
@@ -47,26 +48,29 @@ L'application est **clairement plus avancée qu'un projet hobby** : elle dispose
 
 ## Vulnérabilités critiques identifiées
 
-> ✅ = Confirmées RÉSOLUES après vérification directe du code source
+> ✅ = Confirmées RÉSOLUES après vérification code ou livraison Sprint S1
 
-1. **`capital_0_2000_eur` : `risk_max_positions: 10` incompatible** avec la description "3 lignes" et le capital de 2 000 €. **(P1 actif — A-001)**
-2. ✅ ~~**`data_lineage_matrix.md` : provider CA ambigu**~~ — **RÉSOLU** : règle conditionnelle documentée (`EodhdCorporateActionProvider` si `bars_provider=eodhd`) dans `DOC_FONCTIONNELLE.md:246` et `data_lineage_matrix.md §7`. Factory `build_corporate_action_provider()` correctement implémentée. **(A-005 ✅)**
-3. **`data_lineage_matrix.md` nomme `execution_orders`** (ancienne table) alors que le schéma réel utilise `execution_order_requests` + `execution_broker_orders` + `execution_events`. **(P1 actif — A-002)**
-4. ✅ ~~**`DOC_TECHNIQUE.md §9` mentionne "vectorbt"**~~ — **RÉSOLU** : `DOC_TECHNIQUE.md:497` confirme "simulateur custom PIT — aucune dépendance vectorbt". Résidu cosmétique dans argparse (`backtesting/cli/_impl.py:67`). **(A-004 ✅)**
-5. ✅ ~~**`model_predictions` ne persiste pas `selected_model`**~~ — **RÉSOLU** : colonnes `selected_model`, `decision_threshold`, `calibration_method`, `signal_label` présentes (`database/sql/ml/model_predictions.sql:8-11`) et persistées par `modelFactory/db_registry.py`. **(A-003 ✅)**
-6. **Tous les presets ≥ 25 001 $ ont `execution_pdt_rule: "off"`** sur compte `margin`. Risque de violation PDT si l'equity chute sous 25 000 $. **(P2 actif — A-006)**
-7. **`market_regimes.macro_provider: eodhd`** dans config.yaml, mais `yields.enabled: false`. **(P3 — A-020)**
-8. ✅ ~~**SSL MySQL absent**~~ — **RÉSOLU** : `database/connection.py:97-111` active TLS si la variable `DB_SSL_CA_PATH` est définie. **(A-012 ✅)**
+1. ✅ ~~**`capital_0_2000_eur` : `risk_max_positions: 10`**~~ — **RÉSOLU Sprint S1** : `risk_max_positions: 3`, `risk_min_position_notional: 500.0`, commentaires PDT cash ajoutés sur 4 presets. Tests ajoutés. **(A-001 ✅, A-016 ✅)**
+2. ✅ ~~**`data_lineage_matrix.md` : provider CA ambigu**~~ — **RÉSOLU** avant Sprint S1 : règle conditionnelle documentée dans `DOC_FONCTIONNELLE.md:246` et `data_lineage_matrix.md §7`. **(A-005 ✅)**
+3. ✅ ~~**`data_lineage_matrix.md` nomme `execution_orders`**~~ — **RÉSOLU Sprint S1** : LINEAGE_SPEC corrigé → `execution_order_requests` + `execution_broker_orders` + `execution_events`, MD régénéré, CI check vert. **(A-002 ✅)**
+4. ✅ ~~**`DOC_TECHNIQUE.md §9` mentionne "vectorbt"**~~ — **RÉSOLU** (résidu argparse `backtesting/cli/_impl.py:67` corrigé Sprint S1). **(A-004 ✅)**
+5. ✅ ~~**`model_predictions` ne persiste pas `selected_model`**~~ — **RÉSOLU** avant Sprint S1 : colonnes présentes en DB et persistées par `db_registry.py`. **(A-003 ✅)**
+6. **Presets ≥ 25 001 $ ont `execution_pdt_rule: "off"` sur compte margin** — risque PDT si equity < 25 000 $. **(P2 actif — A-006 → Sprint S2)**
+7. **`market_regimes.yields.enabled: false`** malgré `macro_provider: eodhd`. **(P3 — A-020)**
+8. ✅ ~~**SSL MySQL absent**~~ — **RÉSOLU** avant Sprint S1 : TLS activable via `DB_SSL_CA_PATH`. **(A-012 ✅)**
 
 ---
 
 ## Recommandations prioritaires (Top 5)
 
-1. **Corriger `capital_0_2000_eur.risk_max_positions`** à 3 et ajuster `risk_min_position_notional: 500`.
-2. **Corriger `data_lineage_matrix.md §4`** : remplacer `execution_orders` → `execution_order_requests` + `execution_broker_orders`, `execution_audit_events` → `execution_events`.
-3. **Passer `execution_pdt_rule: "auto"`** sur les 3 presets margin (capital_25001_50000, capital_50001_100000, capital_100001_plus).
-4. **Brancher `ParquetCache`** via `--use-cache` dans la CLI backtesting et exposer les analytics (bootstrap Monte Carlo).
-5. **Intégrer alerting email automatique** sur circuit_breaker + kill_switch (notifications partiellement implémentées dans `artifacts/ihm_notifications/`).
+> ~~1. Corriger `capital_0_2000_eur.risk_max_positions`~~ → **FAIT Sprint S1 ✅**  
+> ~~2. Corriger `data_lineage_matrix.md §4`~~ → **FAIT Sprint S1 ✅**
+
+1. **Passer `execution_pdt_rule: "auto"`** sur les 3 presets margin (capital_25001_50000, capital_50001_100000, capital_100001_plus). → **Sprint S2**
+2. **Corriger `selector_min_close: 10.0`** sur `capital_0_5000` (actuellement 5.0). → **Sprint S2**
+3. **Augmenter `fill_timeout_seconds: 180`** dans `execution_engine/config.py` (actuellement 120). → **Sprint S2**
+4. **Brancher `ParquetCache`** via `--use-cache` dans la CLI backtesting. → **Sprint S3**
+5. **Intégrer alerting email automatique** sur circuit_breaker + kill_switch. → **Sprint S3**
 
 ---
 
@@ -76,7 +80,7 @@ L'application est **clairement plus avancée qu'un projet hobby** : elle dispose
 |---|---|
 | Application amateur sérieuse | ✅ Largement dépassé |
 | Indépendant avancé | ✅ Atteint |
-| Quasi-pro (pre-institutional) | 🟡 Partiel — 75-80% du chemin (score 7.4, vise 8.0) |
+| Quasi-pro (pre-institutional) | 🟡 En cours — 80% du chemin (score 7.5 post-S1, vise 8.0 post-S2) |
 | Professionnel buy-side / prop desk | ❌ Non — manque : alerting push, orchestrateur pipeline, monitoring live, DR formalisé |
 | Institutionnel très mature | ❌ Non — nécessite containerisation, tests de charge, SLA formels |
 

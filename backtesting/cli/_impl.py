@@ -64,7 +64,7 @@ def _safe_print(*values: object, sep: str = " ", end: str = "\n") -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m backtesting",
-        description="Backtest intégré Alpha Trade (vectorbt)",
+        description="Backtest intégré Alpha Trade (simulateur custom PIT)",
     )
     sub = parser.add_subparsers(dest="command")
 

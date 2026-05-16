@@ -4,7 +4,7 @@
 > **Auditeur** : GitHub Copilot — rôle auditeur principal software + quant trading + architecture data/ops  
 > **Version auditée** : 0.3.0 (Python ≥ 3.12, MySQL 8.x)  
 > **Périmètre** : application complète Alpha Trade (swing trading US, production)  
-> **Note globale** : **7.4 / 10** *(révisée après vérification code — 6 anomalies confirmées résolues)*
+> **Note globale** : **7.5 / 10** *(post Sprint S1 livré — 10 anomalies résolues, 17 actives)*
 
 ---
 
@@ -26,16 +26,19 @@
 
 ---
 
-## Anomalies résolues ✅ (confirmées par vérification code)
+## Anomalies résolues ✅ (confirmées par vérification code + Sprint S1 livré)
 
-| ID | Titre | Impact sur score |
-|---|---|---|
-| A-003 ✅ | Gouvernance ML en DB (selected_model, decision_threshold) | modelFactory : 6.5 → 7.0 |
-| A-004 ✅ | Mention "vectorbt" dans DOC_TECHNIQUE §9 | Documentation : 8.0 → 8.5 |
-| A-005 ✅ | Provider CA ambigu (Alpaca vs EODHD) | corporate_actions : 7.0 → 7.5 |
-| A-009 ✅ | Unicité model_predictions (UNIQUE KEY) | database : 7.0 → 7.5 |
-| A-012 ✅ | SSL MySQL absent | Sécurité : 7.0 → 7.5 |
-| A-018 ✅ | DOC_FONCTIONNELLE §1.3 step 1 = alpaca | Documentation (résidu mineur) |
+| ID | Titre | Sprint | Impact sur score |
+|---|---|---|---|
+| A-001 ✅ | Preset micro-compte : risk_max_positions=3, min_notional=500$ | **S1 livré** | Configuration : 7.0 → **7.5** |
+| A-002 ✅ | Lineage matrix : execution_order_requests, execution_broker_orders, execution_events | **S1 livré** | Documentation : 8.5 → **9.0** |
+| A-004 ✅ | Description argparse vectorbt éliminée dans backtesting/cli/_impl.py | **S1 livré** | Documentation : entièrement clos |
+| A-016 ✅ | Commentaire PDT rule cash sur 4 presets | **S1 livré** | Configuration : lisibilité opérateur |
+| A-003 ✅ | Gouvernance ML en DB (selected_model, decision_threshold) | Avant S1 | modelFactory : 6.5 → 7.0 |
+| A-005 ✅ | Provider CA ambigu (Alpaca vs EODHD) | Avant S1 | corporate_actions : 7.0 → 7.5 |
+| A-009 ✅ | Unicité model_predictions (UNIQUE KEY) | Avant S1 | database : +0.5 |
+| A-012 ✅ | SSL MySQL activable via DB_SSL_CA_PATH | Avant S1 | Sécurité : 7.0 → 7.5 |
+| A-018 ✅ | DOC_FONCTIONNELLE §1.3 step 1 = EODHD | Avant S1 | Documentation (résidu mineur) |
 
 ---
 

@@ -13,10 +13,10 @@ presets:
     values:
       risk_account_equity: "__DETECTED_EQUITY__"
       risk_per_trade_pct: 0.015                # 1.5 % = ~30 € risqués / trade
-      risk_max_positions: 10                    # 3 lignes ≈ 600-700 € chacune
+      risk_max_positions: 3                     # 3 lignes ≈ 600-700 € chacune — A-001 fix
       risk_max_position_weight: 0.35           # 35 % par ligne (concentration assumée)
       risk_max_sector_weight: 0.55             # 1 secteur peut héberger 2 lignes /3
-      risk_min_position_notional: 150.0        # ticket mini USD (sinon frais > alpha)
+      risk_min_position_notional: 500.0        # ticket mini USD (sinon frais > alpha) — A-001 fix
       # Monotonie respectée : DD plus strict que les tranches supérieures
       # (ordre attendu par tests/test_capital_preset_risk_overrides.py).
       risk_max_drawdown_pct: 0.07
@@ -28,7 +28,7 @@ presets:
       risk_score_weight: 0.45
       risk_prediction_weight: 0.55
       execution_account_type: cash             # PDT rule désactivable car cash
-      execution_pdt_rule: "off"
+      execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true               # interdit toute logique day-trade
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
@@ -80,7 +80,7 @@ presets:
       risk_score_weight: 0.45
       risk_prediction_weight: 0.55
       execution_account_type: cash
-      execution_pdt_rule: "off"
+      execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
@@ -130,7 +130,7 @@ presets:
       risk_score_weight: 0.45
       risk_prediction_weight: 0.55
       execution_account_type: cash
-      execution_pdt_rule: "off"
+      execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true
       execution_submission_window: both
       execution_trailing_trigger: multiple_r
@@ -180,7 +180,7 @@ presets:
       risk_score_weight: 0.40
       risk_prediction_weight: 0.60
       execution_account_type: cash
-      execution_pdt_rule: "off"
+      execution_pdt_rule: "off"               # PDT N/A sur compte cash (règle margin only — cf. execution_engine/config.py:effective_pdt_rule)
       execution_swing_only: true
       execution_submission_window: both
       execution_trailing_trigger: multiple_r

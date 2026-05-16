@@ -134,19 +134,19 @@ risk_management:
 
 | Paramètre | Valeur | Évaluation |
 |---|---|---|
-| `risk_max_positions` | 10 | ❌ **Incohérent** — description dit "3 lignes" |
-| `risk_min_position_notional` | 150 USD | ⚠️ Trop bas — frais relatifs élevés |
+| `risk_max_positions` | ~~10~~ → **3** | ✅ **Corrigé Sprint S1** — description "3 lignes" maintenant cohérente |
+| `risk_min_position_notional` | ~~150 USD~~ → **500 USD** | ✅ **Corrigé Sprint S1** — frais relatifs acceptables (500 USD × 1 USD Alpaca = 0.2%) |
 | `risk_per_trade_pct` | 1.5% | ✅ Prudent |
 | `risk_max_drawdown_pct` | 7% | ✅ Très strict pour micro-compte |
 | `execution_account_type` | cash | ✅ Correct pour micro-compte EU |
-| `execution_pdt_rule` | off | ✅ Correct (cash account) |
+| `execution_pdt_rule` | off | ✅ Correct (cash account) — **commentaire explicatif ajouté Sprint S1** ✅ |
 | `execution_swing_only` | true | ✅ Correct |
 | `selector_min_close` | 10.0 USD | ✅ Aligné profil strict |
 | `selector_min_market_cap` | 500M USD | ⚠️ Trop bas — peut inclure des small caps peu liquides |
 | `selector_max_spread_bps` | 80 bps | ⚠️ Très permissif — coût d'exécution élevé |
 | `selector_min_beta_126` | 0.65 | ✅ Relâché mais acceptable |
 
-**Verdict** : **Fragile → Incohérent** sur `max_positions`. Corriger `max_positions: 3` est non-négociable. `selector_min_market_cap: 500M$` est trop bas pour un swing trade discipliné sur petit compte.
+**Verdict** : ✅ **Corrigé Sprint S1** — `risk_max_positions: 3`, `risk_min_position_notional: 500.0 USD`, commentaires PDT cash ajoutés. Tests de non-régression 13/13 passent.
 
 ---
 
@@ -265,19 +265,19 @@ risk_management:
 
 | Tranche | Verdict | Issues principales |
 |---|---|---|
-| 0 → 2 000 € | **Incohérent** | max_positions=10 vs "3 lignes", min_market_cap trop bas |
-| 2 001 → 5 000 $ | **Fragile** | min_close=5$ (risque frais), PDT OK (cash) |
+| 0 → 2 000 € | ✅ **Corrigé Sprint S1** | max_positions=3 ✅, min_notional=500$ ✅, commentaires PDT ✅ |
+| 2 001 → 5 000 $ | **Fragile** | min_close=5$ (risque frais) — **Sprint S2** (A-007) |
 | 5 001 → 10 000 $ | **Cohérent mais perfectible** | min_close=7$ encore |
 | 10 001 → 25 000 $ | **Cohérent** | min_close=8$ |
-| 25 001 → 50 000 $ | **Cohérent mais perfectible** | PDT rule off sur margin |
+| 25 001 → 50 000 $ | **Cohérent mais perfectible** | PDT rule off sur margin — **Sprint S2** (A-006) |
 | 50 001 → 100 000 $ | **Cohérent** | PDT rule off, Kelly désactivé |
 | 100 001 $+ | **Cohérent** | PDT rule off, max_drawdown 18% notable |
 
 ### Actions prioritaires
 
-1. **P1** : Corriger `capital_0_2000_eur.risk_max_positions: 3`
-2. **P2** : Uniformiser `selector_min_close: 10.0` sur les 3 premières tranches
-3. **P2** : Passer `execution_pdt_rule: auto` sur les 3 tranches margin
+1. ✅ ~~**P1** : Corriger `capital_0_2000_eur.risk_max_positions: 3`~~ — **FAIT Sprint S1**
+2. **P2** : Uniformiser `selector_min_close: 10.0` sur les tranches 0_5000 et 5001_10000 — **Sprint S2**
+3. **P2** : Passer `execution_pdt_rule: auto` sur les 3 tranches margin — **Sprint S2**
 4. **P3** : Activer Kelly (au moins sur presets ≥ 50k$) avec `max_kelly_fraction: 0.25` comme garde-fou
 5. **P3** : Activer trailing stop ATR en paper (au moins `capital_50001_100000` et `capital_100001_plus`)
 

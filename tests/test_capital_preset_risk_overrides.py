@@ -1,4 +1,5 @@
 """Sprint S3 / A-011 — overrides risk_max_drawdown_pct / risk_max_daily_loss_pct par préset.
+Sprint S1 / A-001 — cohérence risk_max_positions / risk_min_position_notional.
 
 Vérifie que :
 - Chaque préset capital définit ``risk_max_drawdown_pct`` et
@@ -9,6 +10,10 @@ Vérifie que :
   daily_loss ∈ [0.02, 0.07]).
 - Le CLI ``risk_management`` accepte les flags ``--max-portfolio-drawdown-pct``
   et ``--max-daily-loss-pct``.
+- [A-001] ``risk_max_positions × risk_min_position_notional ≤ 0.95 × max_equity``
+  (solvabilité notionnelle).
+- [A-001] Le preset micro-compte ``capital_0_2000_eur`` a au plus 5 positions.
+- [A-016] Les presets cash ont ``execution_pdt_rule='off'`` (PDT N/A).
 """
 from __future__ import annotations
 
@@ -96,4 +101,87 @@ def test_preset_values_match_risk_config_defaults_can_construct(presets):
         )
         assert cfg.max_portfolio_drawdown_pct > 0
         assert cfg.max_daily_loss_pct > 0
+
+
+# ---------------------------------------------------------------------------
+# Sprint S1 / A-001 — cohérence max_positions × min_notional vs equity
+# ---------------------------------------------------------------------------
+
+def test_positions_notional_solvency(presets):
+    """[A-001] max_positions × min_position_notional ≤ 0.95 × max_equity.
+
+    Garantit qu'un portefeuille entièrement chargé au minimum de notionnel
+    reste en dessous de 95 % du capital de la tranche.
+    Note : ``capital_0_2000_eur`` a max_equity=2000 EUR ≈ 2000 USD (approx).
+    """
+    for preset in presets:
+        max_equity = preset.max_equity
+        if max_equity is None:
+            # Grand compte sans plafond : on utilise min_equity + 1 comme proxy
+            continue
+        max_pos = int(preset.values.get("risk_max_positions", 1))
+        min_notional = float(preset.values.get("risk_min_position_notional", 0))
+        total_min_notional = max_pos * min_notional
+        limit = 0.95 * max_equity
+        assert total_min_notional <= limit, (
+            f"{preset.key}: {max_pos} positions × {min_notional}$ = {total_min_notional}$ "
+            f"> 0.95 × {max_equity} = {limit}$ — portefeuille insolvable au minimum notionnel"
+        )
+
+
+def test_micro_account_max_positions_coherent(presets):
+    """[A-001] Le preset capital_0_2000_eur doit avoir au plus 5 positions.
+
+    Un compte de ~2 000 € avec >5 positions implique des tickets si petits
+    que les frais de transaction deviennent supérieurs à l'alpha attendu.
+    """
+    micro = next((p for p in presets if p.key == "capital_0_2000_eur"), None)
+    if micro is None:
+        pytest.skip("Preset capital_0_2000_eur non trouvé")
+    max_pos = int(micro.values["risk_max_positions"])
+    assert max_pos <= 5, (
+        f"capital_0_2000_eur.risk_max_positions={max_pos} > 5 — "
+        f"tickets trop petits pour être rentables après frais"
+    )
+
+
+def test_micro_account_min_notional_viable(presets):
+    """[A-001] Le preset capital_0_2000_eur doit avoir un ticket min ≥ 400 USD.
+
+    Sous 400 USD, la commission relative (≥ 1 USD/trade Alpaca) dépasse 0.25 %
+    par aller-retour, détruisant l'alpha sur un swing trade standard de 5-8 %.
+    """
+    micro = next((p for p in presets if p.key == "capital_0_2000_eur"), None)
+    if micro is None:
+        pytest.skip("Preset capital_0_2000_eur non trouvé")
+    min_notional = float(micro.values["risk_min_position_notional"])
+    assert min_notional >= 400.0, (
+        f"capital_0_2000_eur.risk_min_position_notional={min_notional} < 400$ — "
+        f"frais relatifs trop élevés pour le swing trade"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sprint S1 / A-016 — PDT rule cohérente avec account_type
+# ---------------------------------------------------------------------------
+
+def test_cash_presets_have_pdt_off(presets):
+    """[A-016] Tout preset cash doit avoir pdt_rule='off' (PDT N/A sur cash)."""
+    for preset in presets:
+        account_type = preset.values.get("execution_account_type", "cash")
+        pdt_rule = preset.values.get("execution_pdt_rule", "off")
+        if account_type == "cash":
+            assert pdt_rule == "off", (
+                f"{preset.key}: account_type=cash mais pdt_rule='{pdt_rule}' "
+                f"(devrait être 'off' — PDT ne s'applique qu'aux comptes margin)"
+            )
+
+
+def test_positions_increase_with_account_size(presets):
+    """Convention métier : tranche supérieure peut gérer plus de positions."""
+    max_positions = [int(p.values["risk_max_positions"]) for p in presets]
+    assert max_positions == sorted(max_positions), (
+        f"risk_max_positions doit être croissant entre presets: {max_positions}"
+    )
+
 

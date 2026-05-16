@@ -65,9 +65,10 @@
 | risk_runs | risk_management | execution_engine, ihm | computed | — | daily | P1 |
 | risk_decisions | risk_management | execution_engine | computed | — | daily | P1 |
 | execution_runs | execution_engine.executor | reconciliation, ihm, watcher | computed | — | daily | P1 |
-| execution_orders | execution_engine.executor | reconciliation, tca | broker (Alpaca) | Alpaca | intraday | P1 |
+| execution_order_requests | execution_engine.executor | execution_engine (soumission broker), reconciliation | computed | — | intraday | P1 |
+| execution_broker_orders | execution_engine.executor | reconciliation, tca | broker (Alpaca) | Alpaca | intraday | P1 |
 | execution_positions | execution_engine.executor | risk_management (J+1 equity) | broker | Alpaca | intraday | P1 |
-| execution_audit_events | execution_engine.executor | reconciliation | computed | — | on-event | P2 |
+| execution_events | execution_engine.executor | reconciliation, ihm | computed | — | on-event | P2 |
 | execution_kill_switch_runs *(Phase 5.2.c)* | execution_engine cancel-all | watcher, ihm | computed | — | manual | P1 |
 | execution_locks | watcher / executor | mutual exclusion | computed | — | on-event | P1 |
 | watcher_heartbeats *(Phase 1.2)* | watcher.protection_watcher | ihm, alerting | computed | — | continuous | P1 |
