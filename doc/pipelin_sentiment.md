@@ -266,6 +266,22 @@ Cas d'usage typique :
 - on veut seulement rejouer le scoring standard et/ou contextual sur un périmètre borné ;
 - sans lancer le wrapper auto complet ni un `relevance_backfill`.
 
+### Nouvelle case IHM 7.bis — réutiliser `news_ingestion_checkpoint`
+
+Le bloc `7.bis Import des news brutes` expose aussi une case à cocher pour les boutons qui **contiennent réellement une étape d'import** :
+
+- `Importer les news sur la période`
+- `Import + score + history_backfill + relevance_backfill auto`
+
+Quand cette case est cochée :
+
+- l'import news ne repart plus systématiquement de la `Date de début` pour chaque symbole ;
+- il réutilise `news_ingestion_checkpoint` pour reprendre au plus près du watermark connu ;
+- si un symbole est déjà à jour par rapport à la `Date de fin` sélectionnée, ce symbole est sauté ;
+- un overlap de checkpoint est conservé pour éviter de rater les dernières news autour de la frontière.
+
+Objectif : éviter un refetch complet inutile quand la période ciblée est déjà presque entièrement couverte.
+
 ### Cas 1 — enrichir un historique déjà importé
 
 1. `python -m event_sentiment.relevance_backfill ... --rescore-contextual`

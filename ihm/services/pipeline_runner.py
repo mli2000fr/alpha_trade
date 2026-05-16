@@ -335,6 +335,7 @@ class PipelineLaunchOptions:
     news_import_symbols: str | None = None
     news_import_symbol_source: NewsImportSymbolSource = "stock_scores_all"
     news_import_max_symbols: int | None = None
+    news_import_resume_from_checkpoint: bool = True
     sentiment_start_utc: str | None = None
     sentiment_end_utc: str | None = None
     sentiment_symbols: str | None = None
@@ -948,6 +949,7 @@ def _extend_import_news_cli_args(
     symbols: str | None,
     symbol_source: str,
     max_symbols: int | None,
+    resume_from_checkpoint: bool = False,
 ) -> None:
     if symbols:
         command.extend(["--symbols", symbols])
@@ -957,6 +959,9 @@ def _extend_import_news_cli_args(
     if max_symbols is not None and max_symbols > 0:
         command.extend(["--max-symbols", str(int(max_symbols))])
 
+    if resume_from_checkpoint:
+        command.append("--resume-checkpoints")
+
 
 def _extend_import_news_powershell_args(
     command_args: list[str],
@@ -964,6 +969,7 @@ def _extend_import_news_powershell_args(
     symbols: str | None,
     symbol_source: str,
     max_symbols: int | None,
+    resume_from_checkpoint: bool = False,
 ) -> None:
     if symbols:
         command_args.extend(["-Symbols", symbols])
@@ -972,6 +978,9 @@ def _extend_import_news_powershell_args(
 
     if max_symbols is not None and max_symbols > 0:
         command_args.extend(["-MaxSymbols", str(int(max_symbols))])
+
+    if resume_from_checkpoint:
+        command_args.append("-ResumeCheckpoints")
 
 
 def _extend_event_sentiment_symbol_scope_args(
@@ -1066,6 +1075,7 @@ def _build_import_news_pending_loop_command(
         symbols=news_import_symbols,
         symbol_source=news_import_symbol_source,
         max_symbols=news_import_max_symbols,
+        resume_from_checkpoint=bool(options.news_import_resume_from_checkpoint),
     )
     _extend_relevance_backfill_powershell_args(command_args, options)
     if skip_import:
@@ -1438,6 +1448,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             symbols=news_import_symbols,
             symbol_source=news_import_symbol_source,
             max_symbols=news_import_max_symbols,
+            resume_from_checkpoint=bool(options.news_import_resume_from_checkpoint),
         )
         return command
 

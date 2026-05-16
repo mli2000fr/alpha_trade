@@ -883,6 +883,18 @@ def test_build_pipeline_command_import_news_emits_stock_scores_when_explicitly_r
     assert command[command.index("--max-symbols") + 1] == "300"
 
 
+def test_build_pipeline_command_import_news_can_resume_from_checkpoints() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_resume_from_checkpoint=True,
+    )
+
+    command = build_pipeline_command("import_news", options)
+
+    assert "--resume-checkpoints" in command
+
+
 def test_build_pipeline_command_import_news_pending_loop() -> None:
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",
@@ -937,6 +949,18 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
     assert command[command.index("-RelevanceBackfillPurgeBelow") + 1] == "0.2"
     assert command[command.index("-RelevanceBackfillContextualMinRelevance") + 1] == "0.4"
     assert command[command.index("-RelevanceBackfillContextualMaxPairs") + 1] == "2500"
+
+
+def test_build_pipeline_command_import_news_pending_loop_can_resume_import_from_checkpoints() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_resume_from_checkpoint=True,
+    )
+
+    command = build_pipeline_command("import_news_pending_loop", options)
+
+    assert "-ResumeCheckpoints" in command
 
 
 def test_build_pipeline_command_import_news_pending_loop_supports_contextual_only_mode() -> None:

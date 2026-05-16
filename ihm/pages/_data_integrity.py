@@ -174,6 +174,22 @@ def _render_import_news_panel(
             )
             news_import_max_symbols = int(news_import_max_symbols_raw) if news_import_max_symbols_raw is not None else 0
 
+        news_import_resume_from_checkpoint = bool(
+            st.checkbox(
+                "Réutiliser `news_ingestion_checkpoint` pour l'import news",
+                value=bool(st.session_state.get("pipeline_import_news_resume_from_checkpoint", False)),
+                key="pipeline_import_news_resume_from_checkpoint",
+                help=(
+                    "Si coché, les boutons qui réimportent des news reprennent depuis le watermark/checkpoint connu par symbole au lieu de repartir systématiquement de la date de début. "
+                    "Utile pour éviter un refetch complet quand la période est déjà presque à jour."
+                ),
+            )
+        )
+        st.caption(
+            "Cette option ne s'applique qu'aux boutons qui contiennent réellement l'étape d'import news. "
+            "Si le checkpoint couvre déjà la date de fin sélectionnée pour un symbole, l'import de ce symbole est sauté."
+        )
+
         news_import_symbols = str(
             st.text_input(
                 "Liste explicite de symboles (CSV, prioritaire)",
@@ -256,6 +272,7 @@ def _render_import_news_panel(
                 news_import_symbol_source,
             ),
             news_import_max_symbols=news_import_max_symbols or None,
+            news_import_resume_from_checkpoint=news_import_resume_from_checkpoint,
         )
         import_command_preview = format_command_for_display(build_pipeline_command("import_news", import_options))
         score_only_command_preview = format_command_for_display(

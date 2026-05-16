@@ -45,6 +45,9 @@ param(
     [int]$MaxSymbols = 0,
 
     [Parameter()]
+    [switch]$ResumeCheckpoints,
+
+    [Parameter()]
     [double]$MinRelevanceScore = 0.0,
 
     [Parameter()]
@@ -184,6 +187,7 @@ $summary = [ordered]@{
     import_symbols_truncated = ($NormalizedImportSymbols.Count -gt 25)
     import_symbol_source = $SymbolSource
     import_max_symbols = $MaxSymbols
+    import_resume_checkpoints = [bool]$ResumeCheckpoints
     min_relevance_score = $MinRelevanceScore
     enable_contextual_scoring = $ContextualScoringEnabled
     contextual_min_relevance = $ContextualMinRelevance
@@ -440,6 +444,9 @@ try {
     }
     if ($MaxSymbols -gt 0) {
         $importNewsArguments += @('--max-symbols', ([string]$MaxSymbols))
+    }
+    if ($ResumeCheckpoints) {
+        $importNewsArguments += '--resume-checkpoints'
     }
     if ($TickerRelevanceMode -ne 'provider_default') {
         $importNewsArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)

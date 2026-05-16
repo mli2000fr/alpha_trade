@@ -866,7 +866,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 st.number_input(
                     "Cap dur paires contextuelles / run",
                     min_value=100,
-                    max_value=500_000,
+                    max_value=5000_000,
                     step=500,
                     value=int(
                         cast(int, st.session_state.get(

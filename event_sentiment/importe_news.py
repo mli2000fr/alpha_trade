@@ -1,6 +1,6 @@
 import argparse
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from common.utils import configure_root_logging
@@ -160,6 +160,65 @@ def _warn_ignored_scoring_flags(args: argparse.Namespace, logger: logging.Logger
             ", ".join(ignored_flags),
         )
 
+
+def _coerce_utc_datetime(value: object) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _resolve_checkpoint_aware_import_scope(
+    *,
+    symbols: list[str],
+    start_utc: datetime,
+    end_utc: datetime,
+    repository: EventSentimentRepository,
+    config: EventSentimentConfig,
+    logger: logging.Logger,
+) -> tuple[list[str], dict[str, datetime], dict[str, bool], int]:
+    checkpoints = repository.get_checkpoints(config.source_name, symbols)
+    start_overrides: dict[str, datetime] = {}
+    resume_overrides: dict[str, bool] = {}
+    selected_symbols: list[str] = []
+    skipped_symbols = 0
+
+    overlap = getattr(config, "checkpoint_overlap_minutes", 0)
+
+    for symbol in symbols:
+        checkpoint = checkpoints.get(symbol) or {}
+        watermark = _coerce_utc_datetime(checkpoint.get("watermark_published_at_utc"))
+        updated_at = _coerce_utc_datetime(checkpoint.get("updated_at"))
+        anchor = watermark or updated_at
+        if anchor is None:
+            selected_symbols.append(symbol)
+            start_overrides[symbol] = start_utc
+            resume_overrides[symbol] = False
+            continue
+
+        if anchor >= end_utc:
+            skipped_symbols += 1
+            logger.info(
+                "Import ignoré (checkpoint déjà à jour) | symbol=%s checkpoint=%s end=%s",
+                symbol,
+                anchor,
+                end_utc,
+            )
+            continue
+
+        effective_start = start_utc
+        if watermark is not None:
+            effective_start = max(start_utc, watermark - timedelta(minutes=int(overlap)))
+        elif updated_at is not None:
+            effective_start = max(start_utc, updated_at)
+
+        selected_symbols.append(symbol)
+        start_overrides[symbol] = effective_start
+        resume_overrides[symbol] = watermark is not None
+
+    return selected_symbols, start_overrides, resume_overrides, skipped_symbols
+
 # python ./event_sentiment/importe_news.py --start-date 2025-01-01 --end-date 2025-04-20
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -225,6 +284,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--resume-checkpoints",
+        action="store_true",
+        default=False,
+        help=(
+            "Réutilise news_ingestion_checkpoint pour reprendre l'import par symbole depuis le watermark connu, "
+            "et saute les symboles déjà à jour par rapport à --end-date."
+        ),
+    )
+    parser.add_argument(
         "--sentiment-pending-limit",
         type=int,
         default=None,
@@ -286,16 +354,51 @@ def main():
     config = EventSentimentConfig.for_provider(args.news_provider, **config_overrides)
     ingestion = NewsIngestionService(repository=repository, config=config)
 
+    symbol_start_overrides: dict[str, datetime] | None = None
+    symbol_resume_overrides: dict[str, bool] | None = None
+    if args.resume_checkpoints:
+        symbols, resolved_start_overrides, resolved_resume_overrides, skipped_symbols = _resolve_checkpoint_aware_import_scope(
+            symbols=symbols,
+            start_utc=start_date,
+            end_utc=end_date,
+            repository=repository,
+            config=config,
+            logger=logger,
+        )
+        symbol_start_overrides = resolved_start_overrides
+        symbol_resume_overrides = resolved_resume_overrides
+        logger.info(
+            "Import checkpoint-aware | selected_symbols=%s skipped_symbols=%s end=%s",
+            len(symbols),
+            skipped_symbols,
+            end_date,
+        )
+        if not symbols:
+            logger.warning("Tous les symboles sont déjà à jour d'après news_ingestion_checkpoint ; aucun import provider nécessaire.")
+            return
+
     batch_size = max(1, int(args.batch_size))
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i:i+batch_size]
         logger.info(f"Traitement batch {i//batch_size+1} ({len(batch)} symbols): {batch}")
-        summary = ingestion.run(
-            start_utc=start_date,
-            end_utc=end_date,
-            symbols=batch,
-            resume_checkpoints=False,
-        )
+        if args.resume_checkpoints:
+            batch_start_overrides = {symbol: symbol_start_overrides[symbol] for symbol in batch} if symbol_start_overrides else None
+            batch_resume_overrides = {symbol: symbol_resume_overrides[symbol] for symbol in batch} if symbol_resume_overrides else None
+            summary = ingestion.run(
+                start_utc=start_date,
+                end_utc=end_date,
+                symbols=batch,
+                symbol_start_overrides=batch_start_overrides,
+                symbol_resume_overrides=batch_resume_overrides,
+                resume_checkpoints=False,
+            )
+        else:
+            summary = ingestion.run(
+                start_utc=start_date,
+                end_utc=end_date,
+                symbols=batch,
+                resume_checkpoints=False,
+            )
         logger.info(f"Résultat batch {i//batch_size+1}: {summary}")
 
     logger.info("Import des news terminé.")
