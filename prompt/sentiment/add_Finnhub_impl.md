@@ -72,7 +72,7 @@ Le scoring FinBERT historique (table `news_sentiment`) produit **un score par ar
 
 ### CLI / IHM
 - **CLI** : `--enable-contextual-scoring`, `--contextual-min-relevance`, `--contextual-max-pairs`. Summary enrichi (`contextual_pairs_loaded`, `contextual_scored`, `enable_contextual_scoring`, `contextual_scoring_min_relevance`, `contextual_scoring_max_pairs_per_run`).
-- **IHM** : nouvel `expander` « Niveau 4 — Re-scoring FinBERT contextualisé (opt-in) » dans `_render_event_sentiment_block`. Checkbox + 2 number_inputs (`pipeline_sentiment_contextual_min_relevance` défaut `0.3`, `pipeline_sentiment_contextual_max_pairs` défaut `5000`). Propagation vers `PipelineLaunchOptions.sentiment_enable_contextual_scoring` / `sentiment_contextual_min_relevance` / `sentiment_contextual_max_pairs`. `pipeline_runner.build_pipeline_command("sentiment_pipeline", ...)` injecte les nouveaux flags.
+- **IHM** : nouvel `expander` « Niveau 4 — Re-scoring FinBERT contextualisé (opt-in) » dans `_render_event_sentiment_block`. Checkbox + 2 number_inputs (`pipeline_sentiment_contextual_min_relevance` défaut `0.3`, `pipeline_sentiment_contextual_max_pairs` défaut `50000`). Propagation vers `PipelineLaunchOptions.sentiment_enable_contextual_scoring` / `sentiment_contextual_min_relevance` / `sentiment_contextual_max_pairs`. `pipeline_runner.build_pipeline_command("sentiment_pipeline", ...)` injecte les nouveaux flags.
 
 ### Migration DB
 - **`alembic/versions/0028_news_ticker_sentiment.py`** + **`database/sql/news/news_ticker_sentiment.sql`** + ajout dans **`database/sql/news/init_event_sentiment.sql`**.
