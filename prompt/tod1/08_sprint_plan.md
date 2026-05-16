@@ -433,8 +433,8 @@ python scripts/backup_db.py \
 | `test_ml_artifacts_backup.py::test_backup_rotation_keeps_n_files` | Intégration | ✅ Pass |
 | `test_ml_artifacts_backup.py::test_dry_run_source_missing_produces_error` | Unitaire | ✅ Pass |
 | `test_ml_artifacts_backup.py::test_main_dry_run_outputs_json` | CLI | ✅ Pass |
-| Suite complète S5 (38 tests) | Régression | ✅ **38 Pass, 0 Fail** |
-| Régression modules existants (27 tests) | Non-régression | ✅ **27 Pass, 0 Fail** |
+| Suite complète S5 (62 tests) | Régression | ✅ **62 Pass, 0 Fail** |
+| Régression navigation + ops (75 tests) | Non-régression | ✅ **75 Pass, 0 Fail** |
 
 ### Gain réalisé sur les notes
 
@@ -454,10 +454,15 @@ python scripts/backup_db.py \
 | `flows/daily_pipeline.py` | 🆕 Créé |
 | `scripts/backup_ml_artifacts.py` | 🆕 Créé |
 | `scripts/backup_db.py` | 🆕 Créé |
+| `ihm/pages/ops_infra.py` | 🆕 Créé — page IHM "🔧 Infra & Backups" |
 | `tests/test_prometheus_metrics.py` | 🆕 Créé (12 tests) |
 | `tests/test_pipeline_flow.py` | 🆕 Créé (14 tests) |
 | `tests/test_ml_artifacts_backup.py` | 🆕 Créé (12 tests) |
+| `tests/test_pages_ops_infra.py` | 🆕 Créé (24 tests) |
 | `pyproject.toml` | ✏️ Modifié (extra `[orchestration]`, package `flows*`) |
+| `ihm/services/ops_runner.py` | ✏️ Modifié (3 nouvelles commandes : `daily_pipeline`, `backup_ml_artifacts`, `backup_db`) |
+| `ihm/services/navigation.py` | ✏️ Modifié (page `ops_infra` dans section "Workflow & Orchestration") |
+| `tests/test_ihm_navigation.py` | ✏️ Modifié (page `ops_infra` ajoutée à l'ordre attendu) |
 | `prompt/tod1/08_sprint_plan.md` | ✏️ Mis à jour |
 | `prompt/tod1/01_global_scorecard.md` | ✏️ Mis à jour |
 | `prompt/tod1/09_final_verdict.md` | ✏️ Mis à jour |

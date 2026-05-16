@@ -24,7 +24,7 @@
 | **ihm** | 8.5 | Widget PnL quotidien ✅ (A-021 ✅ S4), alertes réconciliation ✅ (A-014 S3), market_cap TTL ✅ (A-015 S3) |
 | **observabilité / run summaries / logs** | 8.5 | TimedRotatingFileHandler+gzip ✅ (A-025 S3), alerting email CB ✅ (A-013 S3), métriques Prometheus pipeline ✅ (T5.1 S5), audit trail DB |
 | **sécurité / readiness prod** | 7.5 | Secrets env/vault, scan literals, SSL MySQL activable ✅ (A-012 ✅) |
-| **qualité logicielle globale** | 9.0 | 2378+ tests verts (38 nouveaux S5), orchestrateur pipeline ✅ (T5.2), backup ML ✅ (T5.3), backup DB ✅ (T5.4), mypy, ruff |
+| **qualité logicielle globale** | 9.0 | 2402+ tests verts (62 nouveaux S5), orchestrateur pipeline ✅ (T5.2), backup ML ✅ (T5.3), backup DB ✅ (T5.4), page IHM Infra & Backups ✅, mypy, ruff |
 
 ---
 

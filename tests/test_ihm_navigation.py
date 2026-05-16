@@ -15,6 +15,8 @@ def test_navigation_sidebar_order_matches_pipeline_then_support_pages() -> None:
         "alpaca_accounts",
         "corporate_actions",
         "supervision_ops",
+        # Sprint S5 — page Infra & Backups
+        "ops_infra",
         "backtesting",
         "parity",
         "db_admin",

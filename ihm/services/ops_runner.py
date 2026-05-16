@@ -56,6 +56,9 @@ OpsCommandKey = Literal[
     "restore_from_backup",
     "cross_check_stooq",
     "data_source_health",
+    # Sprint S5 — backups
+    "backup_ml_artifacts",
+    "backup_db",
 ]
 
 
@@ -181,6 +184,31 @@ OPS_COMMAND_CATALOG: dict[OpsCommandKey, OpsCommandSpec] = {
         label="Health providers data",
         description="`python -m dataIntegrityEngine.data_source_health` — santé Alpaca / EODHD / Stooq.",
         icon="💚",
+    ),
+    # -------------------------------------------------------------------------
+    # Sprint S5 — backups
+    # -------------------------------------------------------------------------
+    "backup_ml_artifacts": OpsCommandSpec(
+        key="backup_ml_artifacts",
+        label="Backup artefacts ML",
+        description=(
+            "`python scripts/backup_ml_artifacts.py` — archive `artifacts/models/` "
+            "en `.tar.gz` horodaté → `backups/ml/`. "
+            "Rotation automatique : conserve les N dernières archives."
+        ),
+        icon="🤖",
+        requires_account=False,
+    ),
+    "backup_db": OpsCommandSpec(
+        key="backup_db",
+        label="Backup base de données",
+        description=(
+            "`python scripts/backup_db.py` — mysqldump compressé en `.sql.gz` → `backups/db/`. "
+            "Rotation automatique : conserve les N derniers dumps. "
+            "Requiert `LOGIN_DB` / `PASSWORD_DB` dans l'environnement."
+        ),
+        icon="🗄️",
+        requires_account=False,
     ),
 }
 
@@ -330,6 +358,41 @@ def build_ops_command(key: OpsCommandKey, **kwargs: Any) -> list[str]:
 
     if key == "data_source_health":
         return _module("dataIntegrityEngine.data_source_health") + extra
+
+    # -------------------------------------------------------------------------
+    # Sprint S5 — backups
+    # -------------------------------------------------------------------------
+
+
+    if key == "backup_ml_artifacts":
+        artifacts_dir = str(kwargs.get("artifacts_dir") or "artifacts/models").strip()
+        dest_dir = str(kwargs.get("dest_dir") or "backups/ml").strip()
+        keep = int(kwargs.get("keep") or 7)
+        cmd = _script(
+            "scripts/backup_ml_artifacts.py",
+            "--artifacts-dir", artifacts_dir,
+            "--dest-dir", dest_dir,
+            "--keep", str(keep),
+        )
+        if bool(kwargs.get("dry_run", False)):
+            cmd.append("--dry-run")
+        return cmd + extra
+
+    if key == "backup_db":
+        host = str(kwargs.get("host") or "localhost").strip()
+        db = str(kwargs.get("db") or "alpha_trade").strip()
+        dest_dir = str(kwargs.get("dest_dir") or "backups/db").strip()
+        keep = int(kwargs.get("keep") or 30)
+        cmd = _script(
+            "scripts/backup_db.py",
+            "--host", host,
+            "--db", db,
+            "--dest-dir", dest_dir,
+            "--keep", str(keep),
+        )
+        if bool(kwargs.get("dry_run", False)):
+            cmd.append("--dry-run")
+        return cmd + extra
 
     raise KeyError(f"Commande ops inconnue : {key}")
 
