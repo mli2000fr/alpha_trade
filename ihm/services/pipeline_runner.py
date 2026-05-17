@@ -1642,8 +1642,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return _build_chained_ps_commands(
             [
                 ("Import news brut (scope large stock_scores_all)", cmd0),
-                ("Scoring FinBERT standard (scope candidats / override CSV)", cmd1),
                 ("Calcul relevance_score (scope candidats / override CSV)", cmd2),
+                ("Scoring FinBERT standard (scope candidats / override CSV)", cmd1),
                 ("Scoring FinBERT contextuel (scope candidats / override CSV)", cmd4),
                 ("Agregation features : ticker=candidats, secteur=scope large importe", cmd3),
             ],
@@ -1774,17 +1774,14 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         rebuild_end_date = news_import_end_date or (str(sentiment_end_utc)[:10] if sentiment_end_utc else None)
         if rebuild_start_date is None:
             raise ValueError("La date de début est obligatoire pour reconstruire les features journalières sentiment.")
-        command = [
-            sys.executable,
-            "-u",
-            "-m",
-            "event_sentiment.history_backfill",
-            "--start-date",
-            rebuild_start_date,
-        ]
-        if rebuild_end_date:
-            command.extend(["--end-date", rebuild_end_date])
-        return command
+        return _build_sentiment_history_backfill_command(
+            sentiment_start_utc=f"{rebuild_start_date}T00:00:00Z",
+            sentiment_end_utc=f"{rebuild_end_date}T23:59:59Z" if rebuild_end_date else None,
+            ticker_symbols=news_import_symbols,
+            ticker_symbol_source=None if news_import_symbols else news_import_symbol_source,
+            ticker_max_symbols=news_import_max_symbols,
+            ingestion_source=options.sentiment_news_provider,
+        )
 
     if step_key == "import_news":
         if news_import_start_date is None:

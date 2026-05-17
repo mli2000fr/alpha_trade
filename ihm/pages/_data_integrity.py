@@ -42,9 +42,20 @@ NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS = (
     "stock_bars_daily",
 )
 
+_IMPORT_NEWS_START_DATE_WIDGET_KEY = f"{IMPORT_NEWS_START_DATE_KEY}__widget"
+_IMPORT_NEWS_END_DATE_WIDGET_KEY = f"{IMPORT_NEWS_END_DATE_KEY}__widget"
+
 
 def _coerce_date(value: object, fallback: DateValue) -> DateValue:
     return value if isinstance(value, DateValue) else fallback
+
+
+def _prime_date_widget_state(widget_key: str, persisted_key: str, fallback: DateValue) -> DateValue:
+    persisted_value = _coerce_date(st.session_state.get(persisted_key), fallback)
+    widget_value = _coerce_date(st.session_state.get(widget_key), persisted_value)
+    if widget_key not in st.session_state or not isinstance(st.session_state.get(widget_key), DateValue):
+        st.session_state[widget_key] = widget_value
+    return widget_value
 
 
 def _register_new_run(record: PipelineRunRecord, all_runs: list[dict[str, object]]) -> None:
@@ -250,6 +261,8 @@ def _render_import_news_panel(
     today = DateValue.today()
     default_start = _coerce_date(st.session_state.get(IMPORT_NEWS_START_DATE_KEY), today - timedelta(days=7))
     default_end = _coerce_date(st.session_state.get(IMPORT_NEWS_END_DATE_KEY), today)
+    start_widget_value = _prime_date_widget_state(_IMPORT_NEWS_START_DATE_WIDGET_KEY, IMPORT_NEWS_START_DATE_KEY, default_start)
+    end_widget_value = _prime_date_widget_state(_IMPORT_NEWS_END_DATE_WIDGET_KEY, IMPORT_NEWS_END_DATE_KEY, default_end)
 
     with st.container(border=True):
         st.markdown("**7.bis Traitement par étape**")
@@ -261,13 +274,13 @@ def _render_import_news_panel(
         with st.expander("Mini guide d'usage — quand lancer quoi ?", expanded=False):
             st.markdown(
                 "1. **Import news** : importe les news brutes sur la fenêtre ciblée et alimente déjà `news_raw` + `news_ticker_map`.\n"
-                "2. **Scoring FinBERT standard (sans features)** : remplit `news_sentiment` sans encore reconstruire les agrégats journaliers.\n"
-                "3. **Calcul `relevance_score` (Niveau 2/3)** : complète/backfill `news_ticker_map.relevance_score` en pur Python sur les lignes de `news_ticker_map` déjà créées par l'import.\n"
+                "2. **Calcul `relevance_score` (Niveau 2/3)** : complète/backfill `news_ticker_map.relevance_score` en pur Python sur les lignes de `news_ticker_map` déjà créées par l'import.\n"
+                "3. **Scoring FinBERT standard (sans features)** : remplit `news_sentiment` sans encore reconstruire les agrégats journaliers.\n"
                 "4. **Agrégation features journalières** : reconstruit `ticker_daily_sentiment_features` / `sector_daily_sentiment_features`.\n"
                 "5. **Scoring FinBERT contextuel (Niveau 4)** : enrichit `news_ticker_sentiment` sur les couples `(article, symbole)` compatibles avec le scope et les seuils configurés."
             )
             st.info(
-                "**Ordre recommandé :** ① Import news → ② scoring standard → ③ relevance backfill → ④ agrégation journalière → ⑤ scoring contextuel.\n\n"
+                "**Ordre recommandé :** ① Import news → ② relevance backfill → ③ scoring standard → ④ agrégation journalière → ⑤ scoring contextuel.\n\n"
                 "⚠️ Le scoring contextuel est volontairement placé en dernier dans cet outil manuel pour refléter la nouvelle orchestration métier visible dans l'IHM Pipeline."
             )
 
@@ -275,23 +288,25 @@ def _render_import_news_panel(
         with date_col1:
             start_value_raw = st.date_input(
                 "Date de début",
-                value=default_start,
-                key=IMPORT_NEWS_START_DATE_KEY,
+                value=start_widget_value,
+                key=_IMPORT_NEWS_START_DATE_WIDGET_KEY,
                 format="YYYY-MM-DD",
             )
             start_value = _coerce_date(start_value_raw, default_start)
         with date_col2:
             end_value_raw = st.date_input(
                 "Date de fin",
-                value=default_end,
-                key=IMPORT_NEWS_END_DATE_KEY,
+                value=end_widget_value,
+                key=_IMPORT_NEWS_END_DATE_WIDGET_KEY,
                 format="YYYY-MM-DD",
             )
             end_value = _coerce_date(end_value_raw, default_end)
-        # Les previews/commandes doivent utiliser les valeurs retournées par les
-        # widgets ci-dessus. Ne pas réécrire `st.session_state` sur ces mêmes
-        # clés ici : Streamlit interdit de muter une clé déjà liée à un widget
-        # dans le même run et lève alors `StreamlitAPIException`.
+        # Persiste les dernières dates validées sur des clés dédiées aux previews
+        # / commandes. Les widgets utilisent des shadow keys distinctes afin de
+        # permettre des mises à jour successives sans heurter les contraintes de
+        # mutation Streamlit sur une clé déjà liée à un widget.
+        st.session_state[IMPORT_NEWS_START_DATE_KEY] = start_value
+        st.session_state[IMPORT_NEWS_END_DATE_KEY] = end_value
 
         source_col, cap_col = st.columns(2)
         current_max_symbols = int(options.news_import_max_symbols or 0)
@@ -449,22 +464,22 @@ def _render_import_news_panel(
                 "stop": "⏹️ Arrêter l'import news",
             },
             {
-                "key": "sentiment_standard_scoring",
-                "label": "🧠 Scoring FinBERT standard (sans features)",
-                "run_label": "7.bis Traitement par étape — 2. Scoring FinBERT standard (sans features)",
-                "caption": "Sous-étape 2 — Scoring FinBERT standard (sans features)",
-                "preview": format_command_for_display(build_pipeline_command("sentiment_standard_scoring", import_options)),
-                "success": "Scoring FinBERT standard démarré en arrière-plan",
-                "stop": "⏹️ Arrêter le scoring standard",
-            },
-            {
                 "key": "sentiment_relevance_backfill",
                 "label": "🧮 Calcul relevance_score (Niveau 2/3)",
-                "run_label": "7.bis Traitement par étape — 3. Calcul relevance_score (Niveau 2/3)",
-                "caption": "Sous-étape 3 — Calcul `relevance_score` (Niveau 2/3)",
+                "run_label": "7.bis Traitement par étape — 2. Calcul relevance_score (Niveau 2/3)",
+                "caption": "Sous-étape 2 — Calcul `relevance_score` (Niveau 2/3)",
                 "preview": format_command_for_display(build_pipeline_command("sentiment_relevance_backfill", import_options)),
                 "success": "Calcul relevance_score démarré en arrière-plan",
                 "stop": "⏹️ Arrêter le relevance backfill",
+            },
+            {
+                "key": "sentiment_standard_scoring",
+                "label": "🧠 Scoring FinBERT standard (sans features)",
+                "run_label": "7.bis Traitement par étape — 3. Scoring FinBERT standard (sans features)",
+                "caption": "Sous-étape 3 — Scoring FinBERT standard (sans features)",
+                "preview": format_command_for_display(build_pipeline_command("sentiment_standard_scoring", import_options)),
+                "success": "Scoring FinBERT standard démarré en arrière-plan",
+                "stop": "⏹️ Arrêter le scoring standard",
             },
             {
                 "key": "rebuild_daily_sentiment_features_only",

@@ -392,6 +392,9 @@ def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -
     assert "--symbol-source stock_scores_all" in ps_script
     assert "--symbol-source candidates" in ps_script
     assert "--ticker-symbol-source candidates" in ps_script
+    assert ps_script.index("Calcul relevance_score (scope candidats / override CSV)") < ps_script.index(
+        "Scoring FinBERT standard (scope candidats / override CSV)"
+    )
 
 
 def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_options() -> None:
@@ -443,6 +446,9 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
     assert "event_sentiment.relevance_backfill" in ps_script
     assert "event_sentiment.history_backfill" in ps_script
     assert "--scoring-mode contextual_only" in ps_script
+    assert ps_script.index("Calcul relevance_score (scope candidats / override CSV)") < ps_script.index(
+        "Scoring FinBERT standard (scope candidats / override CSV)"
+    )
 
 
 def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_with_explicit_thresholds() -> None:
@@ -463,7 +469,8 @@ def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_wit
 
     assert command[0] == "powershell.exe"
     ps_script = command[-1]
-    # Le step 7 canonique importe large, score les candidats puis reconstruit les features ticker filtrées.
+    # Le step 7 canonique importe large, calcule relevance_score avant le scoring standard,
+    # puis reconstruit les features ticker filtrées.
     assert "--symbol-source stock_scores_all" in ps_script
     assert "--skip-features" in ps_script
     assert "--scoring-mode contextual_only" in ps_script
@@ -473,6 +480,39 @@ def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_wit
     assert "event_sentiment.history_backfill" in ps_script
     assert "AAPL" in ps_script
     assert "--ticker-symbols AAPL" in ps_script
+    assert ps_script.index("Calcul relevance_score (scope candidats / override CSV)") < ps_script.index(
+        "Scoring FinBERT standard (scope candidats / override CSV)"
+    )
+
+
+def test_build_pipeline_command_rebuild_daily_sentiment_features_only_reuses_manual_scope_and_provider() -> None:
+    command = build_pipeline_command(
+        "rebuild_daily_sentiment_features_only",
+        PipelineLaunchOptions(
+            news_import_start_date="2022-01-01",
+            news_import_end_date="2022-01-31",
+            news_import_symbol_source="candidates",
+            news_import_max_symbols=25,
+            sentiment_news_provider="eodhd",
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment.history_backfill",
+        "--start-date",
+        "2022-01-01",
+        "--end-date",
+        "2022-01-31",
+        "--ingestion-source",
+        "eodhd",
+        "--ticker-symbol-source",
+        "candidates",
+        "--ticker-max-symbols",
+        "25",
+    ]
 
 
 def test_build_pipeline_command_signal_aggregator_exposes_default_backend_options() -> None:
@@ -1249,6 +1289,10 @@ def test_build_pipeline_command_rebuild_daily_sentiment_features_only() -> None:
         "2026-04-01",
         "--end-date",
         "2026-04-15",
+        "--ingestion-source",
+        "eodhd",
+        "--ticker-symbol-source",
+        "stock_scores_all",
     ]
 
 
