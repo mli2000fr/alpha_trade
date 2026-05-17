@@ -1,13 +1,16 @@
 from datetime import date
+from typing import Any, cast
 
 import pandas as pd
+import pytest
+from sqlalchemy.exc import OperationalError
 
 from event_sentiment.db_io import EventSentimentRepository
 
 
 class _FakeConnection:
     def __init__(self) -> None:
-        self.executed: list[object] = []
+        self.executed: list[tuple[object, Any]] = []
 
     def execute(self, statement, params=None):
         self.executed.append((statement, params))
@@ -87,8 +90,33 @@ class _FakeMappingsResult:
         return self._rows
 
 
+class _FakeMySQLError(Exception):
+    def __init__(self, errno: int, message: str) -> None:
+        super().__init__(errno, message)
+        self.args = (errno, message)
+
+
+def _make_relevance_row(index: int) -> dict[str, object]:
+    article_id = f"a{index:04d}"
+    symbol = f"S{index:04d}"
+    return {
+        "article_id": article_id,
+        "symbol": symbol,
+        "is_primary_ticker": 1,
+        "headline": f"headline-{index}",
+        "summary": None,
+        "content": None,
+        "company_name": None,
+        "ticker_count": 1,
+    }
+
+
+def _make_repository() -> EventSentimentRepository:
+    return cast(EventSentimentRepository, object.__new__(EventSentimentRepository))
+
+
 def test_upsert_normalizes_pandas_nat_to_none(monkeypatch) -> None:
-    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    repository = _make_repository()
     repository.engine = _FakeEngine()
     repository.metadata = None
     repository._tables = {}
@@ -116,7 +144,7 @@ def test_upsert_normalizes_pandas_nat_to_none(monkeypatch) -> None:
 
 
 def test_upsert_macro_event_audit_uses_macro_event_type_in_unique_key(monkeypatch) -> None:
-    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    repository = _make_repository()
     captured: dict[str, object] = {}
 
     def _fake_upsert(table_name, records, key_columns):
@@ -151,7 +179,7 @@ def test_upsert_macro_event_audit_uses_macro_event_type_in_unique_key(monkeypatc
 
 
 def test_upsert_drops_unknown_columns_not_present_in_table(monkeypatch) -> None:
-    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    repository = _make_repository()
     repository.engine = _FakeEngine()
     repository.metadata = None
     repository._tables = {}
@@ -191,7 +219,7 @@ def test_upsert_drops_unknown_columns_not_present_in_table(monkeypatch) -> None:
 
 
 def test_upsert_splits_large_payload_into_multiple_batches(monkeypatch) -> None:
-    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    repository = _make_repository()
     repository.engine = _FakeEngine()
     repository.metadata = None
     repository._tables = {}
@@ -229,7 +257,7 @@ def test_upsert_splits_large_payload_into_multiple_batches(monkeypatch) -> None:
 
 
 def test_count_pending_contextual_pairs_uses_min_relevance_filter() -> None:
-    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    repository = _make_repository()
     fake_engine = _FakeEngine()
     repository.engine = fake_engine
     repository.metadata = None
@@ -256,7 +284,7 @@ def test_count_pending_contextual_pairs_uses_min_relevance_filter() -> None:
 
 
 def test_load_pending_contextual_pairs_uses_same_strict_min_relevance_filter() -> None:
-    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    repository = _make_repository()
     fake_engine = _FakeEngine()
     repository.engine = fake_engine
     repository.metadata = None
@@ -291,5 +319,143 @@ def test_load_pending_contextual_pairs_uses_same_strict_min_relevance_filter() -
     }
     assert "ntm.relevance_score IS NOT NULL" in sql
     assert "ntm.relevance_score >= :min_relevance" in sql
+
+
+def test_iter_ticker_map_for_relevance_backfill_uses_stable_keyset_pagination() -> None:
+    repository = _make_repository()
+    fake_engine = _FakeEngine()
+    repository.engine = fake_engine
+    repository.metadata = None
+    repository._tables = {}
+
+    rows = [_make_relevance_row(index) for index in range(1, 1201)]
+
+    def _fake_execute(statement, params=None):
+        fake_engine.connection.executed.append((statement, params))
+        params = params or {}
+        last_article_id = params.get("last_article_id")
+        last_symbol = params.get("last_symbol")
+        limit_rows = int(params.get("limit_rows") or 0)
+        filtered_rows = rows
+        if last_article_id is not None and last_symbol is not None:
+            filtered_rows = [
+                row
+                for row in rows
+                if (str(row["article_id"]) > str(last_article_id))
+                or (
+                    str(row["article_id"]) == str(last_article_id)
+                    and str(row["symbol"]) > str(last_symbol)
+                )
+            ]
+        return _FakeMappingsResult(filtered_rows[:limit_rows])
+
+    fake_engine.connection.execute = _fake_execute  # type: ignore[method-assign]
+
+    batches = list(
+        EventSentimentRepository.iter_ticker_map_for_relevance_backfill(
+            repository,
+            batch_size=500,
+            start_date=date(2020, 1, 1),
+            end_date=date(2020, 1, 31),
+            ingestion_source="eodhd",
+        )
+    )
+
+    assert [len(batch) for batch in batches] == [500, 500, 200]
+    assert sum(len(batch) for batch in batches) == 1200
+    first_params = cast(dict[str, object], fake_engine.connection.executed[0][1])
+    second_params = cast(dict[str, object], fake_engine.connection.executed[1][1])
+    third_params = cast(dict[str, object], fake_engine.connection.executed[2][1])
+    assert first_params == {
+        "start_date": date(2020, 1, 1),
+        "end_date": date(2020, 1, 31),
+        "ingestion_source": "eodhd",
+        "limit_rows": 500,
+    }
+    assert second_params["last_article_id"] == "a0500"
+    assert second_params["last_symbol"] == "S0500"
+    assert third_params["last_article_id"] == "a1000"
+    assert third_params["last_symbol"] == "S1000"
+    assert all("offset_rows" not in params for _stmt, params in fake_engine.connection.executed)
+
+
+def test_upsert_retries_deadlock_and_succeeds(monkeypatch) -> None:
+    repository = _make_repository()
+    repository.engine = _FakeEngine()
+    repository.metadata = None
+    repository._tables = {}
+
+    class _TickerTable:
+        def __init__(self) -> None:
+            self.c = {
+                "symbol": _FakeColumn("symbol"),
+                "trade_date": _FakeColumn("trade_date"),
+                "news_count_1d": _FakeColumn("news_count_1d"),
+                "updated_at": _FakeColumn("updated_at"),
+            }
+
+    attempts = {"count": 0}
+
+    def _fake_execute(statement, params=None):
+        attempts["count"] += 1
+        repository.engine.connection.executed.append((statement, params))
+        if attempts["count"] == 1:
+            raise OperationalError("statement", params, _FakeMySQLError(1213, "Deadlock found"))
+        return None
+
+    monkeypatch.setattr(repository, "_table", lambda table_name: _TickerTable())
+    monkeypatch.setattr("event_sentiment.db_io.mysql_insert", lambda table: _FakeInsert())
+    monkeypatch.setattr(repository, "_upsert_retry_attempts", lambda: 3)
+    monkeypatch.setattr(repository, "_upsert_retry_backoff_seconds", lambda: 0.0)
+    monkeypatch.setattr(repository.engine.connection, "execute", _fake_execute)
+
+    rowcount = EventSentimentRepository._upsert(
+        repository,
+        "ticker_daily_sentiment_features",
+        [{"symbol": "AAPL", "trade_date": date(2026, 4, 16), "news_count_1d": 3}],
+        key_columns={"symbol", "trade_date"},
+    )
+
+    assert rowcount == 1
+    assert attempts["count"] == 2
+
+
+def test_upsert_raises_after_exhausting_deadlock_retries(monkeypatch) -> None:
+    repository = _make_repository()
+    repository.engine = _FakeEngine()
+    repository.metadata = None
+    repository._tables = {}
+
+    class _TickerTable:
+        def __init__(self) -> None:
+            self.c = {
+                "symbol": _FakeColumn("symbol"),
+                "trade_date": _FakeColumn("trade_date"),
+                "news_count_1d": _FakeColumn("news_count_1d"),
+                "updated_at": _FakeColumn("updated_at"),
+            }
+
+    attempts = {"count": 0}
+
+    def _fake_execute(statement, params=None):
+        attempts["count"] += 1
+        repository.engine.connection.executed.append((statement, params))
+        raise OperationalError("statement", params, _FakeMySQLError(1213, "Deadlock found"))
+
+    monkeypatch.setattr(repository, "_table", lambda table_name: _TickerTable())
+    monkeypatch.setattr("event_sentiment.db_io.mysql_insert", lambda table: _FakeInsert())
+    monkeypatch.setattr(repository, "_upsert_retry_attempts", lambda: 2)
+    monkeypatch.setattr(repository, "_upsert_retry_backoff_seconds", lambda: 0.0)
+    monkeypatch.setattr(repository.engine.connection, "execute", _fake_execute)
+
+    with pytest.raises(OperationalError):
+        EventSentimentRepository._upsert(
+            repository,
+            "ticker_daily_sentiment_features",
+            [{"symbol": "AAPL", "trade_date": date(2026, 4, 16), "news_count_1d": 3}],
+            key_columns={"symbol", "trade_date"},
+        )
+
+    assert attempts["count"] == 2
 
 

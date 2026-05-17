@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from datetime import date, datetime
 from typing import Any
 
@@ -15,6 +16,10 @@ from database.stock_scores import list_candidate_symbols
 LOGGER = logging.getLogger(__name__)
 UPSERT_BATCH_SIZE_ENV = "EVENT_SENTIMENT_UPSERT_BATCH_SIZE"
 DEFAULT_UPSERT_BATCH_SIZE = 1000
+UPSERT_RETRY_ATTEMPTS_ENV = "EVENT_SENTIMENT_UPSERT_RETRY_ATTEMPTS"
+DEFAULT_UPSERT_RETRY_ATTEMPTS = 3
+UPSERT_RETRY_BACKOFF_SECONDS_ENV = "EVENT_SENTIMENT_UPSERT_RETRY_BACKOFF_SECONDS"
+DEFAULT_UPSERT_RETRY_BACKOFF_SECONDS = 0.1
 
 
 class EventSentimentRepository:
@@ -72,6 +77,52 @@ class EventSentimentRepository:
             return []
         return [records[index:index + batch_size] for index in range(0, len(records), batch_size)]
 
+    @staticmethod
+    def _upsert_retry_attempts() -> int:
+        raw = str(os.getenv(UPSERT_RETRY_ATTEMPTS_ENV, "") or "").strip()
+        if not raw:
+            return DEFAULT_UPSERT_RETRY_ATTEMPTS
+        try:
+            value = int(raw)
+        except ValueError:
+            LOGGER.warning(
+                "%s invalide (%r) ; fallback=%s",
+                UPSERT_RETRY_ATTEMPTS_ENV,
+                raw,
+                DEFAULT_UPSERT_RETRY_ATTEMPTS,
+            )
+            return DEFAULT_UPSERT_RETRY_ATTEMPTS
+        return max(value, 1)
+
+    @staticmethod
+    def _upsert_retry_backoff_seconds() -> float:
+        raw = str(os.getenv(UPSERT_RETRY_BACKOFF_SECONDS_ENV, "") or "").strip()
+        if not raw:
+            return DEFAULT_UPSERT_RETRY_BACKOFF_SECONDS
+        try:
+            value = float(raw)
+        except ValueError:
+            LOGGER.warning(
+                "%s invalide (%r) ; fallback=%.3f",
+                UPSERT_RETRY_BACKOFF_SECONDS_ENV,
+                raw,
+                DEFAULT_UPSERT_RETRY_BACKOFF_SECONDS,
+            )
+            return DEFAULT_UPSERT_RETRY_BACKOFF_SECONDS
+        return max(value, 0.0)
+
+    @staticmethod
+    def _is_retryable_mysql_operational_error(exc: OperationalError) -> bool:
+        original = getattr(exc, "orig", None)
+        args = getattr(original, "args", ()) or ()
+        if not args:
+            return False
+        try:
+            errno = int(args[0])
+        except (TypeError, ValueError):
+            return False
+        return errno in {1205, 1213}
+
     def _upsert(self, table_name: str, records: list[dict[str, Any]], key_columns: set[str]) -> int:
         if not records:
             return 0
@@ -92,6 +143,8 @@ class EventSentimentRepository:
             if key_column not in records[0]:
                 raise KeyError(f"Clé d'upsert absente pour {table_name}: {key_column}")
         batch_size = self._upsert_batch_size()
+        retry_attempts = self._upsert_retry_attempts()
+        retry_backoff_seconds = self._upsert_retry_backoff_seconds()
         record_batches = self._chunk_records(records, batch_size)
         if len(record_batches) > 1:
             LOGGER.info(
@@ -101,25 +154,47 @@ class EventSentimentRepository:
                 batch_size,
                 len(record_batches),
             )
-        with self.engine.begin() as conn:
-            for batch_index, batch_records in enumerate(record_batches, start=1):
-                stmt = mysql_insert(table).values(batch_records)
-                update_cols = {
-                    column.name: stmt.inserted[column.name]
-                    for column in table.c.values()
-                    if column.name in batch_records[0] and column.name not in key_columns
-                }
-                if "updated_at" in table.c:
-                    update_cols["updated_at"] = func.current_timestamp()
+        for batch_index, batch_records in enumerate(record_batches, start=1):
+            stmt = mysql_insert(table).values(batch_records)
+            update_cols = {
+                column.name: stmt.inserted[column.name]
+                for column in table.c.values()
+                if column.name in batch_records[0] and column.name not in key_columns
+            }
+            if "updated_at" in table.c:
+                update_cols["updated_at"] = func.current_timestamp()
+            for attempt in range(1, retry_attempts + 1):
                 try:
-                    conn.execute(stmt.on_duplicate_key_update(**update_cols))
+                    with self.engine.begin() as conn:
+                        conn.execute(stmt.on_duplicate_key_update(**update_cols))
+                    break
                 except OperationalError as exc:
+                    if self._is_retryable_mysql_operational_error(exc) and attempt < retry_attempts:
+                        original = getattr(exc, "orig", None)
+                        args = getattr(original, "args", ()) or ()
+                        errno = args[0] if args else "?"
+                        LOGGER.warning(
+                            "Upsert MySQL retryable error | table=%s batch=%s/%s rows_in_batch=%s attempt=%s/%s errno=%s backoff=%.3fs",
+                            table_name,
+                            batch_index,
+                            len(record_batches),
+                            len(batch_records),
+                            attempt,
+                            retry_attempts,
+                            errno,
+                            retry_backoff_seconds,
+                        )
+                        if retry_backoff_seconds > 0:
+                            time.sleep(retry_backoff_seconds * attempt)
+                        continue
                     LOGGER.exception(
-                        "Upsert MySQL échoué | table=%s batch=%s/%s rows_in_batch=%s",
+                        "Upsert MySQL échoué | table=%s batch=%s/%s rows_in_batch=%s attempt=%s/%s",
                         table_name,
                         batch_index,
                         len(record_batches),
                         len(batch_records),
+                        attempt,
+                        retry_attempts,
                     )
                     raise
         return len(records)
@@ -537,48 +612,61 @@ class EventSentimentRepository:
         if symbols:
             filters.append("ntm.symbol IN :symbols")
             params["symbols"] = list(symbols)
-        where_clause = (" WHERE " + " AND ".join(filters)) if filters else ""
-        query_sql = (
-            """
-            SELECT
-                ntm.article_id,
-                ntm.symbol,
-                ntm.is_primary_ticker,
-                nr.headline,
-                nr.summary,
-                nr.content,
-                sm.company_name AS company_name,
-                (
-                    SELECT COUNT(*) FROM news_ticker_map ntm2
-                    WHERE ntm2.article_id = ntm.article_id
-                ) AS ticker_count
-            FROM news_ticker_map ntm
-            JOIN news_raw nr ON nr.article_id = ntm.article_id
-            LEFT JOIN stock_metadata sm ON sm.symbol = ntm.symbol
-            """
-            + where_clause
-            + """
-            ORDER BY ntm.article_id ASC, ntm.symbol ASC
-            LIMIT :limit_rows OFFSET :offset_rows
-            """
+        last_article_id: str | None = None
+        last_symbol: str | None = None
+        pagination_filter = (
+            "(ntm.article_id > :last_article_id OR "
+            "(ntm.article_id = :last_article_id AND ntm.symbol > :last_symbol))"
         )
-        stmt = text(query_sql)
-        if symbols:
-            stmt = stmt.bindparams(bindparam("symbols", expanding=True))
-
-        offset = 0
+        where_clause = (" WHERE " + " AND ".join(filters)) if filters else ""
         while True:
+            runtime_filters = list(filters)
+            runtime_params = dict(params)
+            if last_article_id is not None and last_symbol is not None:
+                runtime_filters.append(pagination_filter)
+                runtime_params["last_article_id"] = last_article_id
+                runtime_params["last_symbol"] = last_symbol
+            runtime_where_clause = (" WHERE " + " AND ".join(runtime_filters)) if runtime_filters else ""
+            stmt = text(
+                """
+                SELECT
+                    ntm.article_id,
+                    ntm.symbol,
+                    ntm.is_primary_ticker,
+                    nr.headline,
+                    nr.summary,
+                    nr.content,
+                    sm.company_name AS company_name,
+                    (
+                        SELECT COUNT(*) FROM news_ticker_map ntm2
+                        WHERE ntm2.article_id = ntm.article_id
+                    ) AS ticker_count
+                FROM news_ticker_map ntm
+                JOIN news_raw nr ON nr.article_id = ntm.article_id
+                LEFT JOIN stock_metadata sm ON sm.symbol = ntm.symbol
+                """
+                + runtime_where_clause
+                + """
+                ORDER BY ntm.article_id ASC, ntm.symbol ASC
+                LIMIT :limit_rows
+                """
+            )
+            if symbols:
+                stmt = stmt.bindparams(bindparam("symbols", expanding=True))
             with self.engine.connect() as conn:
                 rows = conn.execute(
                     stmt,
-                    {**params, "limit_rows": int(batch_size), "offset_rows": int(offset)},
+                    {**runtime_params, "limit_rows": int(batch_size)},
                 ).mappings().all()
             if not rows:
                 return
-            yield [dict(row) for row in rows]
+            materialized_rows = [dict(row) for row in rows]
+            yield materialized_rows
             if len(rows) < batch_size:
                 return
-            offset += len(rows)
+            last_row = materialized_rows[-1]
+            last_article_id = str(last_row["article_id"])
+            last_symbol = str(last_row["symbol"])
 
     def delete_ticker_map_below_score(
         self,
