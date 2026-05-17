@@ -288,6 +288,10 @@ def _render_import_news_panel(
                 format="YYYY-MM-DD",
             )
             end_value = _coerce_date(end_value_raw, default_end)
+        # Les previews/commandes doivent utiliser les valeurs retournées par les
+        # widgets ci-dessus. Ne pas réécrire `st.session_state` sur ces mêmes
+        # clés ici : Streamlit interdit de muter une clé déjà liée à un widget
+        # dans le même run et lève alors `StreamlitAPIException`.
 
         source_col, cap_col = st.columns(2)
         current_max_symbols = int(options.news_import_max_symbols or 0)

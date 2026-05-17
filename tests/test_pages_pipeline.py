@@ -1,7 +1,7 @@
-from datetime import datetime, time as dt_time, timedelta
+from datetime import date as dt_date, datetime, time as dt_time, timedelta
 from typing import cast
 
-from ihm.pages import _workflow as workflow_page, pipeline
+from ihm.pages import _data_integrity as data_integrity_page, _workflow as workflow_page, pipeline
 
 
 class _DummyContainer:
@@ -12,8 +12,146 @@ class _DummyContainer:
         return False
 
 
+class _DummyColumn(_DummyContainer):
+    pass
+
+
+class _WidgetBoundSessionState(dict[str, object]):
+    def __init__(self) -> None:
+        super().__init__()
+        self._widget_keys: set[str] = set()
+
+    def bind_widget_value(self, key: str, value: object) -> None:
+        super().__setitem__(key, value)
+        self._widget_keys.add(key)
+
+    def __setitem__(self, key: str, value: object) -> None:
+        if key in self._widget_keys:
+            raise AssertionError(f"post-widget mutation interdite pour {key}")
+        super().__setitem__(key, value)
+
+
 def test_pages_pipeline_importable():
     assert hasattr(pipeline, "__doc__")
+
+
+def test_render_import_news_panel_previews_use_selected_date_window(monkeypatch) -> None:
+    session_state: dict[str, object] = {}
+    preview_calls: list[tuple[str, object, object]] = []
+
+    monkeypatch.setattr(data_integrity_page.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(data_integrity_page.st, "container", lambda **kwargs: _DummyContainer())
+    monkeypatch.setattr(data_integrity_page.st, "expander", lambda *args, **kwargs: _DummyContainer())
+    monkeypatch.setattr(data_integrity_page.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(data_integrity_page.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "info", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "error", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "success", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "divider", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "code", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(data_integrity_page.st, "button", lambda *args, **kwargs: False)
+    monkeypatch.setattr(data_integrity_page, "_render_step_result", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page, "_render_backfill_completeness_panel", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        data_integrity_page,
+        "_resolve_import_news_scope_preview",
+        lambda *args, **kwargs: {"effective_source": "stock_scores_all", "symbol_count": 3, "sample_symbols": ["AAPL"]},
+    )
+
+    target_start = dt_date(2022, 1, 1)
+    target_end = dt_date(2022, 1, 31)
+
+    def _fake_date_input(label, *args, **kwargs):
+        return target_start if "début" in str(label).lower() else target_end
+
+    monkeypatch.setattr(data_integrity_page.st, "date_input", _fake_date_input)
+    monkeypatch.setattr(data_integrity_page.st, "selectbox", lambda *args, **kwargs: "stock_scores_all")
+    monkeypatch.setattr(data_integrity_page.st, "number_input", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(data_integrity_page.st, "checkbox", lambda *args, **kwargs: kwargs.get("value", False))
+    monkeypatch.setattr(data_integrity_page.st, "text_input", lambda *args, **kwargs: "")
+
+    def _fake_build_pipeline_command(step_key, options):
+        preview_calls.append((step_key, options.news_import_start_date, options.news_import_end_date))
+        return ["python", step_key, str(options.news_import_start_date), str(options.news_import_end_date)]
+
+    monkeypatch.setattr(data_integrity_page, "build_pipeline_command", _fake_build_pipeline_command)
+    monkeypatch.setattr(data_integrity_page, "format_command_for_display", lambda command: " ".join(command))
+
+    data_integrity_page._render_import_news_panel(
+        pipeline.PipelineLaunchOptions(),
+        {},
+        workflow_active=False,
+        active_by_step={},
+        all_runs=[],
+        latest_by_step={},
+    )
+
+    assert len(preview_calls) == 5
+    assert all(start == "2022-01-01" for _key, start, _end in preview_calls)
+    assert all(end == "2022-01-31" for _key, _start, end in preview_calls)
+
+
+def test_render_import_news_panel_does_not_mutate_widget_bound_date_keys_after_date_input(monkeypatch) -> None:
+    session_state = _WidgetBoundSessionState()
+
+    monkeypatch.setattr(data_integrity_page.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(data_integrity_page.st, "container", lambda **kwargs: _DummyContainer())
+    monkeypatch.setattr(data_integrity_page.st, "expander", lambda *args, **kwargs: _DummyContainer())
+    monkeypatch.setattr(data_integrity_page.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
+    monkeypatch.setattr(data_integrity_page.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "info", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "error", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "success", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "divider", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "code", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page.st, "rerun", lambda: None)
+    monkeypatch.setattr(data_integrity_page.st, "button", lambda *args, **kwargs: False)
+    monkeypatch.setattr(data_integrity_page, "_render_step_result", lambda *args, **kwargs: None)
+    monkeypatch.setattr(data_integrity_page, "_render_backfill_completeness_panel", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        data_integrity_page,
+        "_resolve_import_news_scope_preview",
+        lambda *args, **kwargs: {"effective_source": "stock_scores_all", "symbol_count": 3, "sample_symbols": ["AAPL"]},
+    )
+
+    target_start = dt_date(2022, 1, 1)
+    target_end = dt_date(2022, 1, 31)
+
+    def _fake_date_input(label, *args, **kwargs):
+        key = str(kwargs.get("key") or "")
+        value = target_start if "début" in str(label).lower() else target_end
+        if key:
+            session_state.bind_widget_value(key, value)
+        return value
+
+    monkeypatch.setattr(data_integrity_page.st, "date_input", _fake_date_input)
+    monkeypatch.setattr(data_integrity_page.st, "selectbox", lambda *args, **kwargs: "stock_scores_all")
+    monkeypatch.setattr(data_integrity_page.st, "number_input", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(data_integrity_page.st, "checkbox", lambda *args, **kwargs: kwargs.get("value", False))
+    monkeypatch.setattr(data_integrity_page.st, "text_input", lambda *args, **kwargs: "")
+    monkeypatch.setattr(data_integrity_page, "build_pipeline_command", lambda step_key, options: [step_key])
+    monkeypatch.setattr(data_integrity_page, "format_command_for_display", lambda command: " ".join(command))
+
+    data_integrity_page._render_import_news_panel(
+        pipeline.PipelineLaunchOptions(),
+        {},
+        workflow_active=False,
+        active_by_step={},
+        all_runs=[],
+        latest_by_step={},
+    )
+
+    assert session_state[data_integrity_page.IMPORT_NEWS_START_DATE_KEY] == target_start
+    assert session_state[data_integrity_page.IMPORT_NEWS_END_DATE_KEY] == target_end
 
 
 def test_pipeline_page_no_longer_exposes_legacy_strict_preset_preferences() -> None:
