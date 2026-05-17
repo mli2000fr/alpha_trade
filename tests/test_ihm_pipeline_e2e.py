@@ -108,6 +108,8 @@ def test_render_event_sentiment_block_returns_expected_keys() -> None:
 
         result = _render_event_sentiment_block()
         st.session_state["__test_sentiment_news_provider"] = result["sentiment_news_provider"]
+        st.session_state["__test_sentiment_scoring_mode"] = result["sentiment_scoring_mode"]
+        st.session_state["__test_sentiment_enable_contextual"] = result["sentiment_enable_contextual_scoring"]
         assert set(result) == {
             "sentiment_start_utc",
             "sentiment_end_utc",
@@ -132,6 +134,8 @@ def test_render_event_sentiment_block_returns_expected_keys() -> None:
     at = AppTest.from_function(_runner).run(timeout=10)
     assert not at.exception, f"Exception remontée par AppTest : {at.exception}"
     assert at.session_state["__test_sentiment_news_provider"] == "eodhd"
+    assert at.session_state["__test_sentiment_scoring_mode"] == "standard_and_contextual"
+    assert at.session_state["__test_sentiment_enable_contextual"] is True
 
 
 @pytest.mark.e2e

@@ -425,6 +425,8 @@ class EventSentimentRepository:
         min_relevance: float = 0.0,
         start_date: date | None = None,
         end_date: date | None = None,
+        symbols: list[str] | None = None,
+        ingestion_source: str | None = None,
     ) -> int:
         """Compte les couples ``(article, symbol)`` encore à scorer en contextuel.
 
@@ -432,35 +434,46 @@ class EventSentimentRepository:
         paires présentes dans ``news_ticker_map`` mais absentes de
         ``news_ticker_sentiment``, filtrées par ``relevance_score`` minimal.
 
-        Les paramètres ``start_date`` / ``end_date`` permettent de restreindre
-        le comptage aux articles dont ``news_raw.published_at_utc`` est
-        compris dans la plage ``[start_date, end_date]`` (bornes incluses).
-        Si ``None``, la borne correspondante est ignorée.
+        Les paramètres de scope reflètent le comportement du loader SQL
+        contextuel principal : filtre sur ``news_raw.effective_trade_date``
+        (bornes incluses), sur l'univers ``symbols`` et sur
+        ``news_raw.ingestion_source`` quand fourni.
         """
-        date_filters = ""
+        filters = [
+            "nts.article_id IS NULL",
+            "COALESCE(ntm.relevance_score, 1.0) >= :min_relevance",
+        ]
         params: dict[str, object] = {"min_relevance": float(min_relevance)}
         if start_date is not None:
-            date_filters += "\n          AND nr.published_at_utc >= :start_date"
+            filters.append("nr.effective_trade_date >= :start_date")
             params["start_date"] = start_date
         if end_date is not None:
-            date_filters += "\n          AND nr.published_at_utc < :end_date_exclusive"
-            # On étend end_date d'un jour pour inclure les articles du jour de fin
-            params["end_date_exclusive"] = end_date + timedelta(days=1)
-        join_clause = (
-            "\n            JOIN news_raw nr ON nr.article_id = ntm.article_id"
-            if (start_date is not None or end_date is not None)
-            else ""
-        )
-        query = text(
-            f"""
+            filters.append("nr.effective_trade_date <= :end_date")
+            params["end_date"] = end_date
+        if ingestion_source:
+            filters.append("nr.ingestion_source = :ingestion_source")
+            params["ingestion_source"] = str(ingestion_source)
+
+        sql = (
+            """
             SELECT COUNT(*)
-            FROM news_ticker_map ntm{join_clause}
+            FROM news_ticker_map ntm
+            JOIN news_raw nr ON nr.article_id = ntm.article_id
             LEFT JOIN news_ticker_sentiment nts
                 ON nts.article_id = ntm.article_id AND nts.symbol = ntm.symbol
-            WHERE nts.article_id IS NULL
-              AND COALESCE(ntm.relevance_score, 1.0) >= :min_relevance{date_filters}
-            """
+            WHERE """
+            + "\n              AND ".join(filters)
         )
+        if symbols:
+            sql = sql.replace(
+                "WHERE ",
+                "WHERE ntm.symbol IN :symbols\n              AND ",
+                1,
+            )
+            params["symbols"] = list(symbols)
+        query = text(sql)
+        if symbols:
+            query = query.bindparams(bindparam("symbols", expanding=True))
         with self.engine.connect() as conn:
             return int(
                 conn.execute(query, params).scalar_one() or 0

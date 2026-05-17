@@ -566,6 +566,8 @@ def _load_contextual_backlog_preview(
     min_relevance: float,
     start_date_iso: str | None = None,
     end_date_iso: str | None = None,
+    symbols_csv: str | None = None,
+    ingestion_source: str | None = None,
 ) -> dict[str, object]:
     """Retourne un aperçu du backlog contextuel restant.
 
@@ -573,9 +575,8 @@ def _load_contextual_backlog_preview(
     présentes dans ``news_ticker_map`` mais absentes de
     ``news_ticker_sentiment``, filtrées par ``relevance_score`` minimal.
 
-    Les paramètres ``start_date_iso`` / ``end_date_iso`` (format ``YYYY-MM-DD``)
-    permettent de restreindre le comptage à une plage de dates sur
-    ``news_raw.published_at_utc``.
+    Les paramètres de scope permettent de restreindre le comptage aux mêmes
+    dates/symboles/provider que le loader SQL contextuel principal.
     """
     from datetime import date as _date
 
@@ -591,12 +592,19 @@ def _load_contextual_backlog_preview(
             end_date_obj = _date.fromisoformat(end_date_iso)
         except ValueError:
             pass
+    symbols_list = [
+        symbol.strip().upper()
+        for symbol in str(symbols_csv or "").split(",")
+        if symbol and symbol.strip()
+    ]
     try:
         repository = EventSentimentRepository()
         pending_pairs = repository.count_pending_contextual_pairs(
             min_relevance=float(min_relevance),
             start_date=start_date_obj,
             end_date=end_date_obj,
+            symbols=symbols_list or None,
+            ingestion_source=str(ingestion_source or "").strip().lower() or None,
         )
     except Exception as exc:  # noqa: BLE001 — best effort UI
         return {"error": str(exc)}
@@ -645,7 +653,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             )
         ).strip().upper()
 
-    provider_col, mode_col = st.columns(2)
+    provider_col, relevance_mode_col = st.columns(2)
     _provider_options = ("eodhd", "alpaca", "finnhub")
     _current_provider = str(
         st.session_state.get("pipeline_sentiment_news_provider", "eodhd")
@@ -675,7 +683,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
     ).strip().lower()
     if _current_relevance not in _relevance_options:
         _current_relevance = "provider_default"
-    with mode_col:
+    with relevance_mode_col:
         sentiment_ticker_relevance_mode = str(
             st.selectbox(
                 "Event Sentiment — mapping ticker",
@@ -711,48 +719,14 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         )
     )
 
-    scoring_mode_options = (
-        ("standard_only", "Standard only"),
-        ("contextual_only", "Contextual only"),
-        ("standard_and_contextual", "Standard + contextual"),
+    sentiment_scoring_mode = "standard_and_contextual"
+    sentiment_enable_contextual_scoring = True
+    st.session_state["pipeline_sentiment_scoring_mode"] = sentiment_scoring_mode
+    st.session_state["pipeline_sentiment_enable_contextual_scoring"] = sentiment_enable_contextual_scoring
+    st.info(
+        "Le mode de scoring n'est plus configurable ici : l'étape 7 fusionnée exécute toujours la chaîne complète "
+        "standard → relevance_score → agrégation journalière → contextuel. Pour rejouer uniquement une sous-étape, utilisez le panneau `7.bis Traitement par étape`."
     )
-    scoring_mode_values = [value for value, _label in scoring_mode_options]
-    scoring_mode_labels = {value: label for value, label in scoring_mode_options}
-    current_scoring_mode = str(
-        st.session_state.get(
-            "pipeline_sentiment_scoring_mode",
-            "standard_and_contextual",
-        )
-    ).strip().lower()
-    if current_scoring_mode not in scoring_mode_values:
-        current_scoring_mode = "standard_and_contextual"
-    sentiment_scoring_mode = cast(
-        str,
-        st.selectbox(
-            "Event Sentiment — mode de scoring",
-            options=scoring_mode_values,
-            index=scoring_mode_values.index(current_scoring_mode),
-            key="pipeline_sentiment_scoring_mode",
-            format_func=lambda value: scoring_mode_labels.get(str(value), str(value)),
-            help=(
-                "`Standard only` = score article standard uniquement ; "
-                "`Contextual only` = re-score uniquement les couples (article, symbole) ; "
-                "`Standard + contextual` = exécute les deux passes dans le même run."
-            ),
-        ),
-    )
-    sentiment_enable_contextual_scoring = sentiment_scoring_mode in {"contextual_only", "standard_and_contextual"}
-    st.caption(
-        "Guide rapide : `Standard only` pour un rattrapage article standard ; "
-        "`Contextual only` pour rejouer uniquement le Niveau 4 sur un corpus déjà préparé ; "
-        "`Standard + contextual` pour activer aussi la 5e sous-étape contextuelle de l'étape 7 fusionnée."
-    )
-    if sentiment_scoring_mode == "contextual_only":
-        st.info(
-            "Mode `Contextual only` : utile pour enrichir/rejouer `news_ticker_sentiment` sur un corpus déjà scoré. "
-            "Les nouveaux articles encore absents de `news_sentiment` nécessitent d'abord un run `Standard only` ou `Standard + contextual`. "
-            "Après un run purement contextuel sur une fenêtre existante, lancez `Rebuild daily sentiment features only` si vous voulez rematérialiser les agrégats journaliers downstream."
-        )
 
     with st.expander("Performance FinBERT / backlog pending", expanded=False):
         st.caption(
@@ -1008,6 +982,8 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             float(sentiment_contextual_min_relevance),
             _backlog_start_iso,
             _backlog_end_iso,
+            sentiment_symbols,
+            sentiment_news_provider,
         )
         if contextual_backlog_preview.get("error"):
             st.caption(

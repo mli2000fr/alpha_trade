@@ -533,7 +533,7 @@ class EventSentimentPipeline:
         # Étape opt-in via config.enable_contextual_scoring. Garde-fous perf :
         # filtre par relevance_score + cap dur sur le nombre de paires.
         if scoring_mode in {"contextual_only", "standard_and_contextual"}:
-            contextual_stats, contextual_impacted_trade_dates = self._run_contextual_scoring()
+            contextual_stats, contextual_impacted_trade_dates = self._run_contextual_scoring(pending_scope)
             stats.update(contextual_stats)
             if contextual_impacted_trade_dates:
                 contextual_trade_dates_set = set(contextual_impacted_trade_dates)
@@ -590,7 +590,7 @@ class EventSentimentPipeline:
         assert scorer is not None
         return scorer
 
-    def _run_contextual_scoring(self) -> tuple[dict[str, object], list[date]]:
+    def _run_contextual_scoring(self, pending_scope: dict[str, object]) -> tuple[dict[str, object], list[date]]:
         """Niveau 4 — pipeline scoring contextualisé (article, symbol).
 
         Charge les paires en attente via ``load_pending_contextual_pairs``
@@ -601,9 +601,18 @@ class EventSentimentPipeline:
         """
         cap = int(getattr(self.config, "contextual_scoring_max_pairs_per_run", 5000))
         min_relevance = float(getattr(self.config, "contextual_scoring_min_relevance", 0.0))
+        contextual_scope = {
+            key: (value if not isinstance(value, list) else list(value))
+            for key, value in pending_scope.items()
+            if value not in (None, [])
+        }
         pending = self.repository.load_pending_contextual_pairs(
             limit=cap,
             min_relevance=min_relevance,
+            start_date=cast(date | None, pending_scope.get("start_date")),
+            end_date=cast(date | None, pending_scope.get("end_date")),
+            symbols=cast(list[str] | None, pending_scope.get("symbols")),
+            ingestion_source=cast(str | None, pending_scope.get("ingestion_source")),
         )
         if not pending:
             return (
@@ -612,6 +621,7 @@ class EventSentimentPipeline:
                     "contextual_scored": 0,
                     "contextual_min_relevance": min_relevance,
                     "contextual_cap": cap,
+                    "contextual_scope": contextual_scope,
                 },
                 [],
             )
@@ -648,6 +658,7 @@ class EventSentimentPipeline:
                 "contextual_scored": int(scored),
                 "contextual_min_relevance": min_relevance,
                 "contextual_cap": cap,
+                "contextual_scope": contextual_scope,
             },
             sorted({cast(date, row["effective_trade_date"]) for row in pending if row.get("effective_trade_date") is not None}),
         )
