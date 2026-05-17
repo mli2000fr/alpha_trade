@@ -887,6 +887,9 @@ class EventSentimentRepository:
                 ticker_filters.append("nr.ingestion_source = :ingestion_source")
                 sector_filters.append("nr.ingestion_source = :ingestion_source")
                 params["ingestion_source"] = str(ingestion_source).strip().lower()
+            if normalized_ticker_symbols:
+                ticker_filters.append("ntm.symbol IN :ticker_symbols")
+                params["ticker_symbols"] = normalized_ticker_symbols
             ticker_query = text(
                 f"""
                 SELECT
@@ -915,33 +918,6 @@ class EventSentimentRepository:
             )
             if normalized_ticker_symbols:
                 ticker_query = ticker_query.bindparams(bindparam("ticker_symbols", expanding=True))
-                params["ticker_symbols"] = normalized_ticker_symbols
-                ticker_query = text(
-                    f"""
-                    SELECT
-                        nr.article_id,
-                        nr.effective_trade_date,
-                        nr.event_timestamp_ny,
-                        nr.market_session_tag,
-                        nr.source,
-                        nr.is_major_event,
-                        ntm.symbol,
-                        COALESCE(ntm.sector, 'UNKNOWN') AS sector,
-                        COALESCE(ntm.relevance_score, 1.0) AS relevance_score,
-                        COALESCE(nts.sentiment_label, ns.sentiment_label) AS sentiment_label,
-                        COALESCE(nts.positive_score, ns.positive_score) AS positive_score,
-                        COALESCE(nts.neutral_score, ns.neutral_score) AS neutral_score,
-                        COALESCE(nts.negative_score, ns.negative_score) AS negative_score,
-                        COALESCE(nts.sentiment_confidence, ns.sentiment_confidence) AS sentiment_confidence,
-                        COALESCE(nts.sentiment_net_score, ns.sentiment_net_score) AS sentiment_net_score
-                    FROM news_raw nr
-                    JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
-                    JOIN news_sentiment ns ON ns.article_id = nr.article_id
-                    LEFT JOIN news_ticker_sentiment nts
-                        ON nts.article_id = nr.article_id AND nts.symbol = ntm.symbol
-                    WHERE {' AND '.join([*ticker_filters, 'ntm.symbol IN :ticker_symbols'])}
-                    """
-                ).bindparams(bindparam("ticker_symbols", expanding=True))
             sector_query = text(
                 f"""
                 SELECT

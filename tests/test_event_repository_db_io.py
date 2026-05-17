@@ -459,3 +459,77 @@ def test_upsert_raises_after_exhausting_deadlock_retries(monkeypatch) -> None:
     assert attempts["count"] == 2
 
 
+def test_load_feature_frames_with_date_range_and_ticker_symbols_binds_expanding_param(monkeypatch) -> None:
+    repository = _make_repository()
+    repository.engine = object()
+    repository.metadata = None
+    repository._tables = {}
+
+    calls: list[tuple[object, object, object]] = []
+
+    def _fake_read_sql_query(statement, engine, params=None):
+        calls.append((statement, engine, params))
+        return pd.DataFrame()
+
+    monkeypatch.setattr("event_sentiment.db_io.pd.read_sql_query", _fake_read_sql_query)
+
+    ticker_df, sector_df, macro_df = EventSentimentRepository.load_feature_frames(
+        repository,
+        start_date=date(2020, 1, 1),
+        end_date=date(2020, 1, 31),
+        ingestion_source="eodhd",
+        ticker_symbols=["aapl", "MSFT"],
+    )
+
+    assert ticker_df.empty
+    assert sector_df.empty
+    assert macro_df.empty
+    assert len(calls) == 3
+    ticker_statement, ticker_engine, ticker_params = calls[0]
+    assert ticker_engine is repository.engine
+    assert ticker_params == {
+        "start_date": date(2020, 1, 1),
+        "end_date": date(2020, 1, 31),
+        "ingestion_source": "eodhd",
+        "ticker_symbols": ["AAPL", "MSFT"],
+    }
+    assert "ntm.symbol IN" in str(ticker_statement)
+    assert "ticker_symbols" in str(ticker_statement)
+
+
+def test_load_feature_frames_with_trade_dates_and_ticker_symbols_binds_expanding_param(monkeypatch) -> None:
+    repository = _make_repository()
+    repository.engine = object()
+    repository.metadata = None
+    repository._tables = {}
+
+    calls: list[tuple[object, object, object]] = []
+
+    def _fake_read_sql_query(statement, engine, params=None):
+        calls.append((statement, engine, params))
+        return pd.DataFrame()
+
+    monkeypatch.setattr("event_sentiment.db_io.pd.read_sql_query", _fake_read_sql_query)
+
+    ticker_df, sector_df, macro_df = EventSentimentRepository.load_feature_frames(
+        repository,
+        trade_dates=[date(2020, 1, 2), date(2020, 1, 3)],
+        ingestion_source="eodhd",
+        ticker_symbols=["nvda"],
+    )
+
+    assert ticker_df.empty
+    assert sector_df.empty
+    assert macro_df.empty
+    assert len(calls) == 3
+    ticker_statement, ticker_engine, ticker_params = calls[0]
+    assert ticker_engine is repository.engine
+    assert ticker_params == {
+        "trade_dates": [date(2020, 1, 2), date(2020, 1, 3)],
+        "ingestion_source": "eodhd",
+        "ticker_symbols": ["NVDA"],
+    }
+    assert "ntm.symbol IN" in str(ticker_statement)
+    assert "ticker_symbols" in str(ticker_statement)
+
+
