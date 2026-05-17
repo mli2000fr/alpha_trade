@@ -6,6 +6,7 @@ les sous-étapes de l'étape 7 Sentiment Pipeline.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from datetime import date as DateValue, timedelta
 from typing import Literal, cast
 
@@ -42,20 +43,33 @@ NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS = (
     "stock_bars_daily",
 )
 
-_IMPORT_NEWS_START_DATE_WIDGET_KEY = f"{IMPORT_NEWS_START_DATE_KEY}__widget"
-_IMPORT_NEWS_END_DATE_WIDGET_KEY = f"{IMPORT_NEWS_END_DATE_KEY}__widget"
-
 
 def _coerce_date(value: object, fallback: DateValue) -> DateValue:
     return value if isinstance(value, DateValue) else fallback
 
 
-def _prime_date_widget_state(widget_key: str, persisted_key: str, fallback: DateValue) -> DateValue:
-    persisted_value = _coerce_date(st.session_state.get(persisted_key), fallback)
-    widget_value = _coerce_date(st.session_state.get(widget_key), persisted_value)
-    if widget_key not in st.session_state or not isinstance(st.session_state.get(widget_key), DateValue):
-        st.session_state[widget_key] = widget_value
-    return widget_value
+def _coerce_date_text(value: object, fallback: DateValue) -> str:
+    if isinstance(value, DateValue):
+        return value.isoformat()
+    text = str(value or "").strip()
+    return text or fallback.isoformat()
+
+
+def _parse_iso_date_text(value: object) -> DateValue | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _ensure_date_widget_state(key: str, fallback: DateValue) -> str:
+    value = _coerce_date_text(st.session_state.get(key), fallback)
+    if key not in st.session_state or not str(st.session_state.get(key) or "").strip():
+        st.session_state[key] = value
+    return value
 
 
 def _register_new_run(record: PipelineRunRecord, all_runs: list[dict[str, object]]) -> None:
@@ -259,10 +273,10 @@ def _render_import_news_panel(
     latest_by_step: dict[str, dict[str, object]],
 ) -> None:
     today = DateValue.today()
-    default_start = _coerce_date(st.session_state.get(IMPORT_NEWS_START_DATE_KEY), today - timedelta(days=7))
-    default_end = _coerce_date(st.session_state.get(IMPORT_NEWS_END_DATE_KEY), today)
-    start_widget_value = _prime_date_widget_state(_IMPORT_NEWS_START_DATE_WIDGET_KEY, IMPORT_NEWS_START_DATE_KEY, default_start)
-    end_widget_value = _prime_date_widget_state(_IMPORT_NEWS_END_DATE_WIDGET_KEY, IMPORT_NEWS_END_DATE_KEY, default_end)
+    default_start = today - timedelta(days=7)
+    default_end = today
+    _ensure_date_widget_state(IMPORT_NEWS_START_DATE_KEY, default_start)
+    _ensure_date_widget_state(IMPORT_NEWS_END_DATE_KEY, default_end)
 
     with st.container(border=True):
         st.markdown("**7.bis Traitement par étape**")
@@ -286,27 +300,28 @@ def _render_import_news_panel(
 
         date_col1, date_col2 = st.columns(2)
         with date_col1:
-            start_value_raw = st.date_input(
+            st.text_input(
                 "Date de début",
-                value=start_widget_value,
-                key=_IMPORT_NEWS_START_DATE_WIDGET_KEY,
-                format="YYYY-MM-DD",
+                key=IMPORT_NEWS_START_DATE_KEY,
+                help="Format attendu : YYYY-MM-DD (ex: 2020-01-01)",
             )
-            start_value = _coerce_date(start_value_raw, default_start)
         with date_col2:
-            end_value_raw = st.date_input(
+            st.text_input(
                 "Date de fin",
-                value=end_widget_value,
-                key=_IMPORT_NEWS_END_DATE_WIDGET_KEY,
-                format="YYYY-MM-DD",
+                key=IMPORT_NEWS_END_DATE_KEY,
+                help="Format attendu : YYYY-MM-DD (ex: 2020-01-31)",
             )
-            end_value = _coerce_date(end_value_raw, default_end)
-        # Persiste les dernières dates validées sur des clés dédiées aux previews
-        # / commandes. Les widgets utilisent des shadow keys distinctes afin de
-        # permettre des mises à jour successives sans heurter les contraintes de
-        # mutation Streamlit sur une clé déjà liée à un widget.
-        st.session_state[IMPORT_NEWS_START_DATE_KEY] = start_value
-        st.session_state[IMPORT_NEWS_END_DATE_KEY] = end_value
+        start_raw = str(st.session_state.get(IMPORT_NEWS_START_DATE_KEY) or "").strip()
+        end_raw = str(st.session_state.get(IMPORT_NEWS_END_DATE_KEY) or "").strip()
+        start_value = _parse_iso_date_text(start_raw)
+        end_value = _parse_iso_date_text(end_raw)
+        date_inputs_valid = True
+        if start_value is None:
+            st.error("Date de début invalide. Utilisez le format ISO `YYYY-MM-DD`.")
+            date_inputs_valid = False
+        if end_value is None:
+            st.error("Date de fin invalide. Utilisez le format ISO `YYYY-MM-DD`.")
+            date_inputs_valid = False
 
         source_col, cap_col = st.columns(2)
         current_max_symbols = int(options.news_import_max_symbols or 0)
@@ -435,10 +450,14 @@ def _render_import_news_panel(
                     + "`"
                 )
 
+        if not date_inputs_valid:
+            st.caption(f"Fenêtre appliquée : {start_raw or 'invalide'} → {end_raw or 'invalide'}")
+            return
+
         import_options = replace(
             options,
-            news_import_start_date=start_value.isoformat(),
-            news_import_end_date=end_value.isoformat(),
+            news_import_start_date=cast(DateValue, start_value).isoformat(),
+            news_import_end_date=cast(DateValue, end_value).isoformat(),
             news_import_symbols=news_import_symbols or None,
             news_import_symbol_source=cast(
                 Literal[
@@ -500,6 +519,7 @@ def _render_import_news_panel(
                 "stop": "⏹️ Arrêter le scoring contextuel",
             },
         ]
+        st.caption(f"Fenêtre appliquée : {cast(DateValue, start_value).isoformat()} → {cast(DateValue, end_value).isoformat()}")
         for spec in step_specs:
             st.caption(str(spec["caption"]))
             st.code(str(spec["preview"]), language="powershell")
@@ -525,7 +545,7 @@ def _render_import_news_panel(
         elif active_related_runs:
             st.warning("Un outil manuel/backfill sentiment est déjà actif : terminez-le ou arrêtez-le avant de relancer une autre sous-étape.")
 
-        if start_value > end_value:
+        if cast(DateValue, start_value) > cast(DateValue, end_value):
             st.error("La date de début doit être antérieure ou égale à la date de fin.")
         elif active_related_runs:
             for spec in step_specs:
@@ -584,5 +604,5 @@ def _render_import_news_panel(
             _render_step_result(latest_by_step.get(str(spec["key"])))
 
         st.divider()
-        _render_backfill_completeness_panel(start_value, end_value)
+        _render_backfill_completeness_panel(cast(DateValue, start_value), cast(DateValue, end_value))
 
