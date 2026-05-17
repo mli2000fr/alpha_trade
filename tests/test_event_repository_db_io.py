@@ -76,6 +76,17 @@ class _FakeScalarResult:
         return self._value
 
 
+class _FakeMappingsResult:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self._rows = rows
+
+    def mappings(self):
+        return self
+
+    def all(self) -> list[dict[str, object]]:
+        return self._rows
+
+
 def test_upsert_normalizes_pandas_nat_to_none(monkeypatch) -> None:
     repository = EventSentimentRepository.__new__(EventSentimentRepository)
     repository.engine = _FakeEngine()
@@ -237,6 +248,48 @@ def test_count_pending_contextual_pairs_uses_min_relevance_filter() -> None:
 
     assert count == 42
     _statement, params = fake_engine.connection.executed[0]
+    sql = str(_statement)
     assert params == {"min_relevance": 0.35}
+    assert "ntm.relevance_score IS NOT NULL" in sql
+    assert "ntm.relevance_score >= :min_relevance" in sql
+    assert "COALESCE(ntm.relevance_score, 1.0) >= :min_relevance" not in sql
+
+
+def test_load_pending_contextual_pairs_uses_same_strict_min_relevance_filter() -> None:
+    repository = EventSentimentRepository.__new__(EventSentimentRepository)
+    fake_engine = _FakeEngine()
+    repository.engine = fake_engine
+    repository.metadata = None
+    repository._tables = {}
+
+    def _fake_execute(statement, params=None):
+        fake_engine.connection.executed.append((statement, params))
+        return _FakeMappingsResult([])
+
+    fake_engine.connection.execute = _fake_execute  # type: ignore[method-assign]
+
+    rows = EventSentimentRepository.load_pending_contextual_pairs(
+        repository,
+        limit=500,
+        min_relevance=0.3,
+        start_date=date(2026, 5, 10),
+        end_date=date(2026, 5, 17),
+        symbols=["AAPL", "MSFT"],
+        ingestion_source="eodhd",
+    )
+
+    assert rows == []
+    _statement, params = fake_engine.connection.executed[0]
+    sql = str(_statement)
+    assert params == {
+        "limit_rows": 500,
+        "min_relevance": 0.3,
+        "start_date": date(2026, 5, 10),
+        "end_date": date(2026, 5, 17),
+        "ingestion_source": "eodhd",
+        "symbols": ["AAPL", "MSFT"],
+    }
+    assert "ntm.relevance_score IS NOT NULL" in sql
+    assert "ntm.relevance_score >= :min_relevance" in sql
 
 

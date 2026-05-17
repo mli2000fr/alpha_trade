@@ -162,6 +162,57 @@ def test_render_signal_aggregator_block_returns_expected_keys() -> None:
 
 
 @pytest.mark.e2e
+def test_contextual_backlog_estimation_is_manual_and_runs_only_after_click() -> None:
+    """Le backlog contextuel ne doit plus être estimé au rendu initial."""
+
+    def _runner() -> None:
+        import streamlit as st
+        import ihm.pages._execution_center as _ec_mod
+
+        def _fake_preview(
+            min_relevance: float,
+            start_date_iso: str | None = None,
+            end_date_iso: str | None = None,
+            symbols_csv: str | None = None,
+            ingestion_source: str | None = None,
+        ) -> dict[str, object]:
+            st.session_state["__test_contextual_estimate_calls"] = int(
+                st.session_state.get("__test_contextual_estimate_calls", 0)
+            ) + 1
+            st.session_state["__test_contextual_estimate_args"] = {
+                "min_relevance": min_relevance,
+                "start_date_iso": start_date_iso,
+                "end_date_iso": end_date_iso,
+                "symbols_csv": symbols_csv,
+                "ingestion_source": ingestion_source,
+            }
+            return {"pending_pairs": 12}
+
+        _ec_mod._load_contextual_backlog_preview = _fake_preview
+
+        from ihm.pages._execution_center import _render_event_sentiment_block
+
+        _render_event_sentiment_block()
+
+    at = AppTest.from_function(_runner).run(timeout=15)
+    assert not at.exception, f"Exception remontée par AppTest : {at.exception}"
+    assert "__test_contextual_estimate_calls" not in at.session_state
+    assert len(at.button) == 1
+
+    at.button[0].click().run(timeout=15)
+
+    assert not at.exception, f"Exception après clic : {at.exception}"
+    assert at.session_state["__test_contextual_estimate_calls"] == 1
+    assert at.session_state["__test_contextual_estimate_args"] == {
+        "min_relevance": 0.3,
+        "start_date_iso": None,
+        "end_date_iso": None,
+        "symbols_csv": "",
+        "ingestion_source": "eodhd",
+    }
+
+
+@pytest.mark.e2e
 def test_render_execution_block_returns_expected_keys() -> None:
     """Smoke S6.1 : helper Execution renvoie le dict attendu sous AppTest."""
 

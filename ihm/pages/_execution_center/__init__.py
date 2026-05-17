@@ -561,7 +561,26 @@ class LaunchOptionsContext:
     capital_preset_key: str
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+CONTEXTUAL_BACKLOG_ESTIMATE_STATE_KEY = "pipeline_contextual_backlog_estimate_state"
+
+
+def _build_contextual_backlog_estimate_scope(
+    *,
+    min_relevance: float,
+    start_date_iso: str | None,
+    end_date_iso: str | None,
+    symbols_csv: str | None,
+    ingestion_source: str | None,
+) -> dict[str, object]:
+    return {
+        "min_relevance": round(float(min_relevance), 6),
+        "start_date_iso": str(start_date_iso or "").strip() or None,
+        "end_date_iso": str(end_date_iso or "").strip() or None,
+        "symbols_csv": str(symbols_csv or "").strip().upper() or None,
+        "ingestion_source": str(ingestion_source or "").strip().lower() or None,
+    }
+
+
 def _load_contextual_backlog_preview(
     min_relevance: float,
     start_date_iso: str | None = None,
@@ -577,6 +596,10 @@ def _load_contextual_backlog_preview(
 
     Les paramètres de scope permettent de restreindre le comptage aux mêmes
     dates/symboles/provider que le loader SQL contextuel principal.
+
+    Note métier : quand ``min_relevance > 0``, seules les paires avec
+    ``news_ticker_map.relevance_score`` effectivement calculé et supérieur ou
+    égal au seuil sont comptées.
     """
     from datetime import date as _date
 
@@ -979,19 +1002,61 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             _backlog_start_iso = None
             _backlog_end_iso = None
 
-        contextual_backlog_preview = _load_contextual_backlog_preview(
-            float(sentiment_contextual_min_relevance),
-            _backlog_start_iso,
-            _backlog_end_iso,
-            sentiment_symbols,
-            sentiment_news_provider,
+        estimate_scope = _build_contextual_backlog_estimate_scope(
+            min_relevance=float(sentiment_contextual_min_relevance),
+            start_date_iso=_backlog_start_iso,
+            end_date_iso=_backlog_end_iso,
+            symbols_csv=sentiment_symbols,
+            ingestion_source=sentiment_news_provider,
         )
-        if contextual_backlog_preview.get("error"):
+
+        estimate_col1, estimate_col2 = st.columns([1, 3])
+        with estimate_col1:
+            estimate_clicked = st.button(
+                "Estimer",
+                key="pipeline_contextual_backlog_estimate_button",
+                use_container_width=True,
+                disabled=not _backlog_dates_valid,
+            )
+        with estimate_col2:
             st.caption(
-                "Impossible d'estimer le backlog contextuel restant en live : "
+                "Le calcul d'estimation est manuel pour éviter de bloquer l'IHM à chaque affichage. "
+                "Il tient compte du provider, des symboles, des bornes de dates et du `Seuil min relevance`."
+            )
+
+        if estimate_clicked and _backlog_dates_valid:
+            with st.spinner("Estimation du backlog contextuel en cours…"):
+                st.session_state[CONTEXTUAL_BACKLOG_ESTIMATE_STATE_KEY] = {
+                    "scope": estimate_scope,
+                    "preview": _load_contextual_backlog_preview(
+                        float(sentiment_contextual_min_relevance),
+                        _backlog_start_iso,
+                        _backlog_end_iso,
+                        sentiment_symbols,
+                        sentiment_news_provider,
+                    ),
+                }
+
+        stored_estimate_state = st.session_state.get(CONTEXTUAL_BACKLOG_ESTIMATE_STATE_KEY)
+        contextual_backlog_preview: dict[str, object] | None = None
+        if isinstance(stored_estimate_state, dict) and stored_estimate_state.get("scope") == estimate_scope:
+            stored_preview = stored_estimate_state.get("preview")
+            if isinstance(stored_preview, dict):
+                contextual_backlog_preview = stored_preview
+        elif stored_estimate_state is None:
+            st.info("Cliquez sur `Estimer` pour calculer le backlog contextuel sur le scope courant.")
+        else:
+            st.caption(
+                "Les paramètres du scope courant diffèrent de la dernière estimation affichée. "
+                "Cliquez sur `Estimer` pour recalculer avec les nouvelles valeurs."
+            )
+
+        if contextual_backlog_preview is not None and contextual_backlog_preview.get("error"):
+            st.caption(
+                "Impossible d'estimer le backlog contextuel restant : "
                 f"{contextual_backlog_preview.get('error')}"
             )
-        else:
+        elif contextual_backlog_preview is not None:
             pending_contextual_pairs = int(
                 contextual_backlog_preview.get("pending_pairs") or 0
             )
@@ -1022,8 +1087,8 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     _parts.append(f"au `{_backlog_end_iso}`")
                 _date_filter_suffix = f" · fenêtre {' '.join(_parts)}"
             st.caption(
-                "Estimation live (TTL ~60s) alignée sur le backend contextuel actuel : backlog des paires absentes de `news_ticker_sentiment`, "
-                f"filtré avec `min_relevance >= {float(sentiment_contextual_min_relevance):g}`{_date_filter_suffix}. "
+                "Estimation manuelle alignée sur le backend contextuel actuel : backlog des paires absentes de `news_ticker_sentiment`, "
+                f"filtré avec `relevance_score >= {float(sentiment_contextual_min_relevance):g}`{_date_filter_suffix}. "
                 f"Avec des lots internes de `{int(sentiment_contextual_max_pairs)}` paires, cela représente ≈ `{estimated_batches_needed}` lot(s) contextuels successifs drainés automatiquement dans le même run."
             )
 

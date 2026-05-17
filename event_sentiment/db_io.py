@@ -131,6 +131,26 @@ class EventSentimentRepository:
             raise ValueError("symbol checkpoint vide.")
         return normalized
 
+    @staticmethod
+    def _build_contextual_relevance_filters(min_relevance: float) -> tuple[list[str], dict[str, float]]:
+        """Construit le filtre SQL de pertinence pour le backlog contextuel.
+
+        Quand ``min_relevance > 0``, on exige désormais un
+        ``news_ticker_map.relevance_score`` effectivement calculé et supérieur
+        ou égal au seuil. Cela évite de compter/charger implicitement les
+        lignes encore à ``NULL`` comme si elles valaient ``1.0``.
+        """
+        normalized_min_relevance = float(min_relevance)
+        if normalized_min_relevance > 0.0:
+            return (
+                [
+                    "ntm.relevance_score IS NOT NULL",
+                    "ntm.relevance_score >= :min_relevance",
+                ],
+                {"min_relevance": normalized_min_relevance},
+            )
+        return ([], {})
+
     def _build_pending_article_query(
         self,
         *,
@@ -354,17 +374,17 @@ class EventSentimentRepository:
         Retourne les paires présentes dans ``news_ticker_map`` mais absentes
         de ``news_ticker_sentiment``. Filtre optionnel par ``relevance_score``
         (perf : ne tokenise pas les paires dont le Niveau 2/3 a déjà jugé la
-        pertinence trop faible). Le ``company_name`` est résolu via
+        pertinence trop faible). Dès qu'un seuil ``> 0`` est fourni, les
+        lignes sans ``relevance_score`` calculé sont exclues. Le ``company_name`` est résolu via
         ``stock_metadata`` (jointure LEFT, NULLable).
         """
-        filters = [
-            "nts.article_id IS NULL",
-            "COALESCE(ntm.relevance_score, 1.0) >= :min_relevance",
-        ]
+        filters = ["nts.article_id IS NULL"]
         params: dict[str, Any] = {
             "limit_rows": int(limit),
-            "min_relevance": float(min_relevance),
         }
+        relevance_filters, relevance_params = self._build_contextual_relevance_filters(min_relevance)
+        filters.extend(relevance_filters)
+        params.update(relevance_params)
         if start_date is not None:
             filters.append("nr.effective_trade_date >= :start_date")
             params["start_date"] = start_date
@@ -390,7 +410,7 @@ class EventSentimentRepository:
                 nr.effective_trade_date,
                 nr.market_session_tag,
                 nr.is_major_event,
-                COALESCE(ntm.relevance_score, 1.0) AS relevance_score,
+                ntm.relevance_score AS relevance_score,
                 sm.company_name AS company_name
             FROM news_ticker_map ntm
             JOIN news_raw nr ON nr.article_id = ntm.article_id
@@ -433,17 +453,19 @@ class EventSentimentRepository:
         Le compteur reflète le comportement actuel du pipeline contextuel :
         paires présentes dans ``news_ticker_map`` mais absentes de
         ``news_ticker_sentiment``, filtrées par ``relevance_score`` minimal.
+        Dès qu'un seuil ``> 0`` est fourni, les lignes sans
+        ``relevance_score`` calculé sont exclues du comptage.
 
         Les paramètres de scope reflètent le comportement du loader SQL
         contextuel principal : filtre sur ``news_raw.effective_trade_date``
         (bornes incluses), sur l'univers ``symbols`` et sur
         ``news_raw.ingestion_source`` quand fourni.
         """
-        filters = [
-            "nts.article_id IS NULL",
-            "COALESCE(ntm.relevance_score, 1.0) >= :min_relevance",
-        ]
-        params: dict[str, object] = {"min_relevance": float(min_relevance)}
+        filters = ["nts.article_id IS NULL"]
+        params: dict[str, object] = {}
+        relevance_filters, relevance_params = self._build_contextual_relevance_filters(min_relevance)
+        filters.extend(relevance_filters)
+        params.update(relevance_params)
         if start_date is not None:
             filters.append("nr.effective_trade_date >= :start_date")
             params["start_date"] = start_date
