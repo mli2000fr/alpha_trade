@@ -646,7 +646,7 @@ def test_workflow_launcher_can_launch_explicit_selected_pipelines_in_order(monke
     )
 
 
-def test_workflow_launcher_custom_selection_displays_7bis_between_7_and_8(monkeypatch) -> None:
+def test_workflow_launcher_custom_selection_no_longer_displays_7bis_between_7_and_8(monkeypatch) -> None:
     checkbox_labels: list[str] = []
 
     monkeypatch.setattr(workflow_page, "_merge_runs", lambda: ([], []))
@@ -675,15 +675,11 @@ def test_workflow_launcher_custom_selection_displays_7bis_between_7_and_8(monkey
 
     custom_labels = [label for label in checkbox_labels if label[:1].isdigit()]
     assert "7. Sentiment Pipeline" in custom_labels
-    # Le label réel est "7bis. Recalcul relevance + contextual (7bis)" — on vérifie le préfixe
-    assert any(label.startswith("7bis.") for label in custom_labels), (
-        f"Aucun label 7bis trouvé dans : {custom_labels}"
-    )
     assert "8. Signal Aggregator" in custom_labels
     idx_7 = custom_labels.index("7. Sentiment Pipeline")
-    idx_7bis = next(i for i, l in enumerate(custom_labels) if l.startswith("7bis."))
     idx_8 = custom_labels.index("8. Signal Aggregator")
-    assert idx_7 < idx_7bis < idx_8
+    assert idx_7 < idx_8
+    assert not any(label.startswith("7bis.") for label in custom_labels), custom_labels
 
 
 def test_build_workflow_child_run_payload_returns_latest_runs_first_with_labels(monkeypatch) -> None:

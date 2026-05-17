@@ -343,6 +343,11 @@ class EventSentimentRepository:
         self,
         limit: int = 5000,
         min_relevance: float = 0.0,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        symbols: list[str] | None = None,
+        ingestion_source: str | None = None,
     ) -> list[dict[str, Any]]:
         """Liste les couples ``(article, symbol)`` à scorer en contextuel.
 
@@ -352,7 +357,25 @@ class EventSentimentRepository:
         pertinence trop faible). Le ``company_name`` est résolu via
         ``stock_metadata`` (jointure LEFT, NULLable).
         """
-        query = text(
+        filters = [
+            "nts.article_id IS NULL",
+            "COALESCE(ntm.relevance_score, 1.0) >= :min_relevance",
+        ]
+        params: dict[str, Any] = {
+            "limit_rows": int(limit),
+            "min_relevance": float(min_relevance),
+        }
+        if start_date is not None:
+            filters.append("nr.effective_trade_date >= :start_date")
+            params["start_date"] = start_date
+        if end_date is not None:
+            filters.append("nr.effective_trade_date <= :end_date")
+            params["end_date"] = end_date
+        if ingestion_source:
+            filters.append("nr.ingestion_source = :ingestion_source")
+            params["ingestion_source"] = str(ingestion_source)
+
+        sql = (
             """
             SELECT
                 nr.article_id,
@@ -374,18 +397,26 @@ class EventSentimentRepository:
             LEFT JOIN news_ticker_sentiment nts
                 ON nts.article_id = ntm.article_id AND nts.symbol = ntm.symbol
             LEFT JOIN stock_metadata sm ON sm.symbol = ntm.symbol
-            WHERE nts.article_id IS NULL
-              AND COALESCE(ntm.relevance_score, 1.0) >= :min_relevance
+            WHERE """
+            + "\n              AND ".join(filters)
+            + """
             ORDER BY nr.effective_trade_date ASC, nr.published_at_utc ASC,
                      ntm.article_id ASC, ntm.symbol ASC
             LIMIT :limit_rows
             """
         )
+        if symbols:
+            sql = sql.replace(
+                "WHERE ",
+                "WHERE ntm.symbol IN :symbols\n              AND ",
+                1,
+            )
+            params["symbols"] = list(symbols)
+        query = text(sql)
+        if symbols:
+            query = query.bindparams(bindparam("symbols", expanding=True))
         with self.engine.connect() as conn:
-            rows = conn.execute(
-                query,
-                {"limit_rows": int(limit), "min_relevance": float(min_relevance)},
-            ).mappings().all()
+            rows = conn.execute(query, params).mappings().all()
         return [dict(row) for row in rows]
 
     def count_pending_contextual_pairs(

@@ -395,6 +395,10 @@ def _render_launchable_step_panel(
                     *active_by_step.get("import_news_pending_loop", []),
                     *active_by_step.get("score_sentiment_only", []),
                     *active_by_step.get("score_history_relevance_backfill_auto", []),
+                    *active_by_step.get("sentiment_standard_scoring", []),
+                    *active_by_step.get("sentiment_relevance_backfill", []),
+                    *active_by_step.get("rebuild_daily_sentiment_features_only", []),
+                    *active_by_step.get("sentiment_contextual_scoring", []),
                 ]
                 if step.key == "sentiment_pipeline"
                 else []
@@ -427,7 +431,7 @@ def _render_launchable_step_panel(
                     run_ids = ", ".join(f"`{run.get('run_id', '')}`" for run in companion_active_runs)
                     st.warning(
                         "Le lancement manuel du Sentiment Pipeline est temporairement désactivé : "
-                        "un run auto 7.bis (avec ou sans import) est déjà actif "
+                        "un outil manuel/backfill sentiment est déjà actif "
                         f"({run_ids})."
                     )
 

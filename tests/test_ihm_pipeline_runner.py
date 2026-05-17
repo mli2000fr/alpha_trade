@@ -29,7 +29,6 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
         "sync_earnings_calendar",
         "alpha_scanner",
         "sentiment_pipeline",
-        "relevance_backfill",
         "signal_aggregator",
         "ml_train",
         "ml_predict",
@@ -50,10 +49,10 @@ def test_pipeline_step_number_helpers_handle_main_suffixes_and_auxiliary_prefixe
     assert is_canonical_pipeline_step_number("12") is True
     assert is_canonical_pipeline_step_number("7bis") is False
     assert is_canonical_pipeline_step_number("B1") is False
-    assert is_workflow_core_step_number("7bis") is True
+    assert is_workflow_core_step_number("7bis") is False
 
 
-def test_get_pipeline_workflow_steps_includes_7bis_when_explicitly_selected() -> None:
+def test_get_pipeline_workflow_steps_ignores_removed_7bis_when_explicitly_selected() -> None:
     keys = [
         step.key
         for step in get_pipeline_workflow_steps(
@@ -61,7 +60,7 @@ def test_get_pipeline_workflow_steps_includes_7bis_when_explicitly_selected() ->
         )
     ]
 
-    assert keys == ["relevance_backfill", "signal_aggregator", "execution"]
+    assert keys == ["signal_aggregator", "execution"]
 
 
 def test_get_pipeline_auxiliary_steps_contains_expected_keys() -> None:
@@ -80,7 +79,6 @@ def test_get_pipeline_workflow_steps_defaults_to_1_to_12_with_ml_train() -> None
         "sync_earnings_calendar",
         "alpha_scanner",
         "sentiment_pipeline",
-        "relevance_backfill",
         "signal_aggregator",
         "ml_train",
         "ml_predict",
@@ -106,7 +104,6 @@ def test_get_pipeline_workflow_steps_can_start_at_3_and_append_corporate_actions
         "sync_earnings_calendar",
         "alpha_scanner",
         "sentiment_pipeline",
-        "relevance_backfill",
         "signal_aggregator",
         "ml_predict",
         "risk_management",
@@ -127,7 +124,6 @@ def test_get_pipeline_workflow_steps_can_use_explicit_selected_step_keys_in_cano
     assert keys == [
         "import_alpaca_bar",
         "stock_screener",
-        "relevance_backfill",
         "ml_predict",
         "execution",
     ]
@@ -378,22 +374,24 @@ def test_pipeline_launch_options_defaults_to_alpaca_for_sentiment_news_provider(
 
 
 def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -> None:
-    """Step 7 génère une commande PowerShell chaînée (3 sous-commandes)."""
+    """Step 7 génère une commande PowerShell chaînée incluant désormais le contextual."""
     command = build_pipeline_command("sentiment_pipeline", PipelineLaunchOptions())
 
     assert command[0] == "powershell.exe", f"Step 7 doit lancer via powershell.exe, got {command[0]}"
     ps_script = command[-1]
-    # Les 3 étapes chaînées doivent être présentes dans le script PS
+    # Les 4 étapes chaînées doivent être présentes dans le script PS
     assert "event_sentiment" in ps_script
     assert "--news-provider" in ps_script
     assert "eodhd" in ps_script
     assert "event_sentiment.relevance_backfill" in ps_script
     assert "event_sentiment.history_backfill" in ps_script
     assert "--skip-features" in ps_script
+    assert "--scoring-mode contextual_only" in ps_script
+    assert "--skip-ingestion" in ps_script
 
 
 def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_options() -> None:
-    """Step 7 injecte les options sentiment dans le script PS chaîné."""
+    """Step 7 injecte les options sentiment dans le script PS fusionné."""
     command = build_pipeline_command(
         "sentiment_pipeline",
         PipelineLaunchOptions(
@@ -402,6 +400,10 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
             sentiment_symbols="msft, aapl,MSFT,nvda",
             sentiment_news_provider="alpaca",
             sentiment_ticker_relevance_mode="strict",
+            sentiment_scoring_mode="standard_and_contextual",
+            sentiment_enable_contextual_scoring=True,
+            sentiment_contextual_min_relevance=0.25,
+            sentiment_contextual_max_pairs=2000,
             sentiment_pending_limit=5000,
             sentiment_pending_max_batches_per_run=10,
             sentiment_finbert_batch_size=32,
@@ -420,18 +422,22 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
     assert "10" in ps_script
     assert "--finbert-batch-size" in ps_script
     assert "32" in ps_script
+    assert "--contextual-min-relevance" in ps_script
+    assert "0.25" in ps_script
+    assert "--contextual-max-pairs" in ps_script
+    assert "2000" in ps_script
     assert "--start-utc" in ps_script
     assert "2026-04-01T00:00:00Z" in ps_script
     assert "--end-utc" in ps_script
     assert "2026-04-30T23:59:59Z" in ps_script
     assert "AAPL,MSFT,NVDA" in ps_script
-    # Les 3 étapes doivent toutes être présentes
+    # Les étapes relevance, history et contextual doivent toutes être présentes
     assert "event_sentiment.relevance_backfill" in ps_script
     assert "event_sentiment.history_backfill" in ps_script
+    assert "--scoring-mode contextual_only" in ps_script
 
 
-def test_build_pipeline_command_sentiment_pipeline_supports_contextual_only_and_feature_flush() -> None:
-    """Step 7 est toujours standard_only — les options contextuel/flush sont ignorées pour step 7."""
+def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_with_explicit_thresholds() -> None:
     command = build_pipeline_command(
         "sentiment_pipeline",
         PipelineLaunchOptions(
@@ -439,21 +445,21 @@ def test_build_pipeline_command_sentiment_pipeline_supports_contextual_only_and_
             sentiment_end_utc="2026-04-30T23:59:59Z",
             sentiment_symbols="aapl",
             sentiment_news_provider="eodhd",
-            sentiment_scoring_mode="contextual_only",  # ignoré : step 7 → toujours standard
+            sentiment_scoring_mode="standard_and_contextual",
+            sentiment_enable_contextual_scoring=True,
             sentiment_contextual_min_relevance=0.25,
             sentiment_contextual_max_pairs=2000,
-            sentiment_feature_flush_every_n_batches=3,  # non passé à cmd1 (--skip-features active)
+            sentiment_feature_flush_every_n_batches=3,
         ),
     )
 
     assert command[0] == "powershell.exe"
     ps_script = command[-1]
-    # Step 7 est standard : aucun flag contextuel dans cmd1
-    assert "--scoring-mode" not in ps_script
-    assert "contextual_only" not in ps_script
-    # --skip-features doit être présent dans cmd1
+    # La partie standard reste sans features, puis une sous-commande contextuelle dédiée est ajoutée.
     assert "--skip-features" in ps_script
-    # Les 3 étapes chaînées
+    assert "--scoring-mode contextual_only" in ps_script
+    assert "--contextual-min-relevance 0.25" in ps_script
+    assert "--contextual-max-pairs 2000" in ps_script
     assert "event_sentiment.relevance_backfill" in ps_script
     assert "event_sentiment.history_backfill" in ps_script
     assert "AAPL" in ps_script
@@ -986,7 +992,7 @@ def test_build_pipeline_command_import_news_pending_loop_exposes_symbol_scope_op
     assert "-Symbols" not in command
 
 
-def test_build_pipeline_command_score_sentiment_only_uses_7bis_scope_and_selected_scoring_mode() -> None:
+def test_build_pipeline_command_score_sentiment_only_uses_manual_scope_and_selected_scoring_mode() -> None:
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",
         news_import_end_date="2026-04-15",
@@ -1052,6 +1058,124 @@ def test_build_pipeline_command_score_history_relevance_backfill_auto_skips_impo
     assert command[command.index("-SymbolSource") + 1] == "stock_scores_history"
     assert command[command.index("-MaxSymbols") + 1] == "500"
     assert "-SkipImport" in command
+
+
+def test_build_pipeline_command_sentiment_standard_scoring_forces_standard_only_without_features() -> None:
+    command = build_pipeline_command(
+        "sentiment_standard_scoring",
+        PipelineLaunchOptions(
+            news_import_start_date="2026-04-01",
+            news_import_end_date="2026-04-15",
+            news_import_symbols="msft, aapl",
+            sentiment_news_provider="eodhd",
+            sentiment_contextual_min_relevance=0.4,
+            sentiment_contextual_max_pairs=2500,
+            sentiment_pending_limit=5000,
+            sentiment_pending_max_batches_per_run=10,
+            sentiment_finbert_batch_size=32,
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment",
+        "--skip-ingestion",
+        "--skip-features",
+        "--scoring-mode",
+        "standard_only",
+        "--news-provider",
+        "eodhd",
+        "--sentiment-pending-limit",
+        "5000",
+        "--sentiment-pending-max-batches",
+        "10",
+        "--finbert-batch-size",
+        "32",
+        "--start-utc",
+        "2026-04-01T00:00:00Z",
+        "--end-utc",
+        "2026-04-15T23:59:59Z",
+        "--symbols",
+        "AAPL,MSFT",
+    ]
+
+
+def test_build_pipeline_command_sentiment_relevance_backfill_uses_manual_scope() -> None:
+    command = build_pipeline_command(
+        "sentiment_relevance_backfill",
+        PipelineLaunchOptions(
+            news_import_start_date="2026-04-01",
+            news_import_end_date="2026-04-15",
+            news_import_symbols="msft, aapl",
+            backfill_relevance_batch_size=750,
+            backfill_relevance_purge_below=0.2,
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment.relevance_backfill",
+        "--batch-size",
+        "750",
+        "--start-date",
+        "2026-04-01",
+        "--end-date",
+        "2026-04-15",
+        "--symbols",
+        "AAPL,MSFT",
+        "--purge-below",
+        "0.2",
+    ]
+
+
+def test_build_pipeline_command_sentiment_contextual_scoring_forces_contextual_only() -> None:
+    command = build_pipeline_command(
+        "sentiment_contextual_scoring",
+        PipelineLaunchOptions(
+            news_import_start_date="2026-04-01",
+            news_import_end_date="2026-04-15",
+            news_import_symbols="msft, aapl",
+            sentiment_news_provider="eodhd",
+            sentiment_contextual_min_relevance=0.4,
+            sentiment_contextual_max_pairs=2500,
+            sentiment_pending_limit=5000,
+            sentiment_pending_max_batches_per_run=10,
+            sentiment_finbert_batch_size=32,
+        ),
+    )
+
+    assert command == [
+        command[0],
+        "-u",
+        "-m",
+        "event_sentiment",
+        "--skip-ingestion",
+        "--skip-features",
+        "--scoring-mode",
+        "contextual_only",
+        "--news-provider",
+        "eodhd",
+        "--contextual-min-relevance",
+        "0.4",
+        "--contextual-max-pairs",
+        "2500",
+        "--sentiment-pending-limit",
+        "5000",
+        "--sentiment-pending-max-batches",
+        "10",
+        "--finbert-batch-size",
+        "32",
+        "--start-utc",
+        "2026-04-01T00:00:00Z",
+        "--end-utc",
+        "2026-04-15T23:59:59Z",
+        "--symbols",
+        "AAPL,MSFT",
+    ]
 
 
 def test_build_pipeline_command_relevance_backfill_exposes_contextual_options() -> None:

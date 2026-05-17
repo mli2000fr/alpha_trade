@@ -458,17 +458,9 @@ def is_canonical_pipeline_step_number(step_num: str, *, min_step: int = 1, max_s
 
 
 def is_workflow_core_step_number(step_num: str, *, min_step: int = 1, max_step: int = 12) -> bool:
-    """Retourne ``True`` pour les étapes coeur du workflow quotidien.
-
-    Inclut les étapes strictement numériques ``1`` → ``12`` ainsi que les
-    étapes intermédiaires métier comme ``7bis`` qui doivent apparaître dans le
-    workflow complet et la sélection personnalisée, sans changer la sémantique
-    de :func:`is_canonical_pipeline_step_number` utilisée ailleurs.
-    """
+    """Retourne ``True`` pour les étapes coeur strictement numériques du workflow quotidien."""
 
     normalized = str(step_num).strip().lower()
-    if normalized == "7bis":
-        return min_step <= 7 <= max_step
     return is_canonical_pipeline_step_number(normalized, min_step=min_step, max_step=max_step)
 
 
@@ -563,21 +555,13 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="sentiment_pipeline",
         num="7",
         name="Sentiment Pipeline",
-        desc="Import news → Scoring FinBERT standard → Calcul relevance_score → Agrégation features ticker/secteur journalières.",
+        desc=(
+            "Import news → Scoring FinBERT standard (sans features) → Calcul relevance_score "
+            "(Niveau 2/3) → Agrégation features ticker/secteur journalières → "
+            "Scoring FinBERT contextuel (Niveau 4)."
+        ),
         tables="ticker_daily_sentiment_features, sector_daily_sentiment_features",
         deps="alpha_scanner",
-    ),
-    PipelineStepDefinition(
-        key="relevance_backfill",
-        num="7bis",
-        name="Contextual FinBERT (7bis)",
-        desc=(
-            "Scoring FinBERT contextualisé (Niveau 4) sur les paires (article, symbole) "
-            "dont relevance_score ≥ seuil. Requiert que l'étape 7 ait préalablement "
-            "calculé les relevance_scores."
-        ),
-        tables="news_ticker_sentiment (insert/update)",
-        deps="sentiment_pipeline",
     ),
     PipelineStepDefinition(
         key="signal_aggregator",
@@ -813,14 +797,20 @@ def _extend_event_sentiment_cli_common_args(
                 str(int(options.sentiment_contextual_max_pairs)),
             ])
 
-    if include_contextual_scoring and options.sentiment_pending_limit is not None and options.sentiment_pending_limit > 0:
+def _extend_event_sentiment_runtime_args(
+    command: list[str],
+    options: PipelineLaunchOptions,
+    *,
+    include_feature_flush: bool = True,
+) -> None:
+    """Ajoute les réglages de débit/runtime communs au CLI principal Event Sentiment."""
+
+    if options.sentiment_pending_limit is not None and options.sentiment_pending_limit > 0:
         command.extend([
             "--sentiment-pending-limit",
             str(int(options.sentiment_pending_limit)),
         ])
     if (
-        include_contextual_scoring
-        and
         options.sentiment_pending_max_batches_per_run is not None
         and options.sentiment_pending_max_batches_per_run > 0
     ):
@@ -829,7 +819,7 @@ def _extend_event_sentiment_cli_common_args(
             str(int(options.sentiment_pending_max_batches_per_run)),
         ])
     if (
-        include_contextual_scoring
+        include_feature_flush
         and
         options.sentiment_feature_flush_every_n_batches is not None
         and options.sentiment_feature_flush_every_n_batches > 0
@@ -838,15 +828,164 @@ def _extend_event_sentiment_cli_common_args(
             "--feature-flush-every-n-batches",
             str(int(options.sentiment_feature_flush_every_n_batches)),
         ])
-    if (
-        include_contextual_scoring
-        and options.sentiment_finbert_batch_size is not None
-        and options.sentiment_finbert_batch_size > 0
-    ):
+    if options.sentiment_finbert_batch_size is not None and options.sentiment_finbert_batch_size > 0:
         command.extend([
             "--finbert-batch-size",
             str(int(options.sentiment_finbert_batch_size)),
         ])
+
+
+def _extend_event_sentiment_scope_args(
+    command: list[str],
+    *,
+    start_utc: str | None,
+    end_utc: str | None,
+    symbols: str | None,
+) -> None:
+    if start_utc:
+        command.extend(["--start-utc", start_utc])
+    if end_utc:
+        command.extend(["--end-utc", end_utc])
+    if symbols:
+        command.extend(["--symbols", symbols])
+
+
+def _extend_relevance_backfill_scope_args(
+    command: list[str],
+    *,
+    start_utc: str | None,
+    end_utc: str | None,
+    symbols: str | None,
+    symbol_source: str | None = None,
+    max_symbols: int | None = None,
+) -> None:
+    if start_utc:
+        command.extend(["--start-date", str(start_utc)[:10]])
+    if end_utc:
+        command.extend(["--end-date", str(end_utc)[:10]])
+    if symbols:
+        command.extend(["--symbols", symbols])
+    elif symbol_source:
+        command.extend(["--symbol-source", symbol_source])
+    if max_symbols is not None and max_symbols > 0:
+        command.extend(["--max-symbols", str(int(max_symbols))])
+
+
+def _build_sentiment_standard_command(
+    options: PipelineLaunchOptions,
+    *,
+    sentiment_start_utc: str | None,
+    sentiment_end_utc: str | None,
+    sentiment_symbols: str | None,
+    skip_ingestion: bool,
+) -> list[str]:
+    command = [sys.executable, "-u", "-m", "event_sentiment"]
+    if skip_ingestion:
+        command.append("--skip-ingestion")
+    command.extend(["--skip-features", "--scoring-mode", "standard_only"])
+    _extend_event_sentiment_cli_common_args(
+        command,
+        options,
+        include_contextual_scoring=False,
+    )
+    _extend_event_sentiment_runtime_args(command, options, include_feature_flush=False)
+    _extend_event_sentiment_scope_args(
+        command,
+        start_utc=sentiment_start_utc,
+        end_utc=sentiment_end_utc,
+        symbols=sentiment_symbols,
+    )
+    return command
+
+
+def _build_sentiment_relevance_backfill_command(
+    options: PipelineLaunchOptions,
+    *,
+    sentiment_start_utc: str | None,
+    sentiment_end_utc: str | None,
+    sentiment_symbols: str | None,
+) -> list[str]:
+    command = [
+        sys.executable, "-u", "-m", "event_sentiment.relevance_backfill",
+        "--batch-size", str(int(options.backfill_relevance_batch_size or 500)),
+    ]
+    _extend_relevance_backfill_scope_args(
+        command,
+        start_utc=sentiment_start_utc,
+        end_utc=sentiment_end_utc,
+        symbols=sentiment_symbols,
+    )
+    if options.backfill_relevance_rescore_all:
+        command.append("--rescore-all")
+    if (
+        options.backfill_relevance_purge_below is not None
+        and options.backfill_relevance_purge_below > 0.0
+    ):
+        command.extend(["--purge-below", f"{float(options.backfill_relevance_purge_below):g}"])
+    return command
+
+
+def _build_sentiment_history_backfill_command(
+    *,
+    sentiment_start_utc: str | None,
+    sentiment_end_utc: str | None,
+) -> list[str]:
+    command = [sys.executable, "-u", "-m", "event_sentiment.history_backfill"]
+    if sentiment_start_utc:
+        command.extend(["--start-date", str(sentiment_start_utc)[:10]])
+    if sentiment_end_utc:
+        command.extend(["--end-date", str(sentiment_end_utc)[:10]])
+    return command
+
+
+def _build_sentiment_contextual_command(
+    options: PipelineLaunchOptions,
+    *,
+    sentiment_start_utc: str | None,
+    sentiment_end_utc: str | None,
+    sentiment_symbols: str | None,
+) -> list[str]:
+    command = [
+        sys.executable,
+        "-u",
+        "-m",
+        "event_sentiment",
+        "--skip-ingestion",
+        "--skip-features",
+        "--scoring-mode",
+        "contextual_only",
+    ]
+    _extend_event_sentiment_cli_common_args(
+        command,
+        options,
+        include_contextual_scoring=True,
+    )
+    if (
+        "--contextual-min-relevance" not in command
+        and options.sentiment_contextual_min_relevance is not None
+        and options.sentiment_contextual_min_relevance > 0.0
+    ):
+        command.extend([
+            "--contextual-min-relevance",
+            f"{float(options.sentiment_contextual_min_relevance):g}",
+        ])
+    if (
+        "--contextual-max-pairs" not in command
+        and options.sentiment_contextual_max_pairs is not None
+        and options.sentiment_contextual_max_pairs > 0
+    ):
+        command.extend([
+            "--contextual-max-pairs",
+            str(int(options.sentiment_contextual_max_pairs)),
+        ])
+    _extend_event_sentiment_runtime_args(command, options, include_feature_flush=False)
+    _extend_event_sentiment_scope_args(
+        command,
+        start_utc=sentiment_start_utc,
+        end_utc=sentiment_end_utc,
+        symbols=sentiment_symbols,
+    )
+    return command
 
 
 def _extend_event_sentiment_powershell_args(
@@ -1376,76 +1515,42 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "sentiment_pipeline":
-        # cmd1 : import news + scoring FinBERT standard UNIQUEMENT (sans features).
-        # --skip-features permet d'insérer le calcul relevance avant l'agrégation.
-        cmd1 = [sys.executable, "-u", "-m", "event_sentiment", "--skip-features"]
-        news_provider = options.sentiment_news_provider or "eodhd"
-        cmd1.extend(["--news-provider", news_provider])
-        if (
-            options.sentiment_ticker_relevance_mode
-            and options.sentiment_ticker_relevance_mode != "provider_default"
-        ):
-            cmd1.extend(["--ticker-relevance-mode", options.sentiment_ticker_relevance_mode])
-        if (
-            options.sentiment_ticker_relevance_mode == "scored"
-            and options.sentiment_min_relevance_score is not None
-            and options.sentiment_min_relevance_score > 0.0
-        ):
-            cmd1.extend(["--min-relevance-score", f"{float(options.sentiment_min_relevance_score):g}"])
-        # Aucun flag contextuel : step 7 est toujours standard_only.
-        if options.sentiment_pending_limit is not None and options.sentiment_pending_limit > 0:
-            cmd1.extend(["--sentiment-pending-limit", str(int(options.sentiment_pending_limit))])
-        if options.sentiment_pending_max_batches_per_run is not None and options.sentiment_pending_max_batches_per_run > 0:
-            cmd1.extend(["--sentiment-pending-max-batches", str(int(options.sentiment_pending_max_batches_per_run))])
-        if options.sentiment_finbert_batch_size is not None and options.sentiment_finbert_batch_size > 0:
-            cmd1.extend(["--finbert-batch-size", str(int(options.sentiment_finbert_batch_size))])
-        if sentiment_start_utc:
-            cmd1.extend(["--start-utc", sentiment_start_utc])
-        if sentiment_end_utc:
-            cmd1.extend(["--end-utc", sentiment_end_utc])
-        if sentiment_symbols:
-            cmd1.extend(["--symbols", sentiment_symbols])
-
-        # cmd2 : calcul relevance_score (Niveau 2/3) — sans contextuel.
-        # Calculé APRÈS le scoring standard (news_ticker_map déjà peuplé),
-        # et AVANT l'agrégation features pour pondérer correctement les scores journaliers.
-        cmd2 = [
-            sys.executable, "-u", "-m", "event_sentiment.relevance_backfill",
-            "--batch-size", str(int(options.backfill_relevance_batch_size or 500)),
-        ]
-        if sentiment_start_utc:
-            cmd2.extend(["--start-date", str(sentiment_start_utc)[:10]])
-        if sentiment_end_utc:
-            cmd2.extend(["--end-date", str(sentiment_end_utc)[:10]])
-        if sentiment_symbols:
-            cmd2.extend(["--symbols", sentiment_symbols])
-        if options.backfill_relevance_rescore_all:
-            cmd2.append("--rescore-all")
-        if (
-            options.backfill_relevance_purge_below is not None
-            and options.backfill_relevance_purge_below > 0.0
-        ):
-            cmd2.extend(["--purge-below", f"{float(options.backfill_relevance_purge_below):g}"])
-        # PAS de --rescore-contextual : le scoring contextuel appartient à l'étape 7bis.
-
-        # cmd3 : agrégation features journalières (avec relevance_score maintenant calculé).
-        cmd3 = [sys.executable, "-u", "-m", "event_sentiment.history_backfill"]
-        if sentiment_start_utc:
-            cmd3.extend(["--start-date", str(sentiment_start_utc)[:10]])
-        if sentiment_end_utc:
-            cmd3.extend(["--end-date", str(sentiment_end_utc)[:10]])
+        cmd1 = _build_sentiment_standard_command(
+            options,
+            sentiment_start_utc=sentiment_start_utc,
+            sentiment_end_utc=sentiment_end_utc,
+            sentiment_symbols=sentiment_symbols,
+            skip_ingestion=False,
+        )
+        cmd2 = _build_sentiment_relevance_backfill_command(
+            options,
+            sentiment_start_utc=sentiment_start_utc,
+            sentiment_end_utc=sentiment_end_utc,
+            sentiment_symbols=sentiment_symbols,
+        )
+        cmd3 = _build_sentiment_history_backfill_command(
+            sentiment_start_utc=sentiment_start_utc,
+            sentiment_end_utc=sentiment_end_utc,
+        )
+        cmd4 = _build_sentiment_contextual_command(
+            options,
+            sentiment_start_utc=sentiment_start_utc,
+            sentiment_end_utc=sentiment_end_utc,
+            sentiment_symbols=sentiment_symbols,
+        )
 
         return _build_chained_ps_commands(
             [
                 ("Import news + Scoring FinBERT standard (sans features)", cmd1),
                 ("Calcul relevance_score (Niveau 2/3, pur Python — sans FinBERT)", cmd2),
                 ("Agregation features journalieres (ticker/secteur)", cmd3),
+                ("Scoring FinBERT contextuel (Niveau 4 — news_ticker_sentiment)", cmd4),
             ],
             title="ETAPE 7 — Sentiment Pipeline",
         )
 
     if step_key == "relevance_backfill":
-        # Étape 7bis : scoring FinBERT contextuel uniquement.
+        # Outil de maintenance : scoring FinBERT contextuel uniquement.
         # --contextual-only  → pas de recalcul relevance_score (appartient à l'étape 7).
         # --rescore-contextual → active systématiquement la Phase 2 FinBERT contextuel.
         contextual_cmd = [
@@ -1487,21 +1592,69 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             ])
         return _build_chained_ps_commands(
             [("Scoring FinBERT contextuel (Niveau 4 — news_ticker_sentiment)", contextual_cmd)],
-            title="ETAPE 7bis — Contextual FinBERT",
+            title="MAINTENANCE — Contextual FinBERT",
         )
 
     if step_key == "score_sentiment_only":
         if news_import_start_date is None:
-            raise ValueError("La date de début est obligatoire pour scorer le sentiment sur le scope 7.bis.")
+            raise ValueError("La date de début est obligatoire pour scorer le sentiment sur le scope manuel sentiment.")
         command = [sys.executable, "-u", "-m", "event_sentiment", "--skip-ingestion"]
         _extend_event_sentiment_cli_common_args(
             command,
             options,
             include_contextual_scoring=True,
         )
+        _extend_event_sentiment_runtime_args(command, options, include_feature_flush=True)
         command.extend(["--start-utc", f"{news_import_start_date}T00:00:00Z"])
         if news_import_end_date:
             command.extend(["--end-utc", f"{news_import_end_date}T23:59:59Z"])
+        _extend_event_sentiment_symbol_scope_args(
+            command,
+            symbols=news_import_symbols,
+            symbol_source=news_import_symbol_source,
+            max_symbols=news_import_max_symbols,
+        )
+        return command
+
+    if step_key == "sentiment_standard_scoring":
+        if news_import_start_date is None:
+            raise ValueError("La date de début est obligatoire pour le scoring FinBERT standard manuel.")
+        return _build_sentiment_standard_command(
+            options,
+            sentiment_start_utc=f"{news_import_start_date}T00:00:00Z",
+            sentiment_end_utc=f"{news_import_end_date}T23:59:59Z" if news_import_end_date else None,
+            sentiment_symbols=None,
+            skip_ingestion=True,
+        )
+
+    if step_key == "sentiment_relevance_backfill":
+        if news_import_start_date is None:
+            raise ValueError("La date de début est obligatoire pour le calcul manuel de relevance_score.")
+        command = _build_sentiment_relevance_backfill_command(
+            options,
+            sentiment_start_utc=f"{news_import_start_date}T00:00:00Z",
+            sentiment_end_utc=f"{news_import_end_date}T23:59:59Z" if news_import_end_date else None,
+            sentiment_symbols=None,
+        )
+        _extend_relevance_backfill_scope_args(
+            command,
+            start_utc=None,
+            end_utc=None,
+            symbols=news_import_symbols,
+            symbol_source=news_import_symbol_source,
+            max_symbols=news_import_max_symbols,
+        )
+        return command
+
+    if step_key == "sentiment_contextual_scoring":
+        if news_import_start_date is None:
+            raise ValueError("La date de début est obligatoire pour le scoring FinBERT contextuel manuel.")
+        command = _build_sentiment_contextual_command(
+            options,
+            sentiment_start_utc=f"{news_import_start_date}T00:00:00Z",
+            sentiment_end_utc=f"{news_import_end_date}T23:59:59Z" if news_import_end_date else None,
+            sentiment_symbols=None,
+        )
         _extend_event_sentiment_symbol_scope_args(
             command,
             symbols=news_import_symbols,

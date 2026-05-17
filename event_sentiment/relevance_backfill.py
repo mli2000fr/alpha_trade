@@ -36,6 +36,7 @@ import dateutil.parser
 from common.utils import configure_root_logging
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.db_io import EventSentimentRepository
+from event_sentiment.importe_news import resolve_symbols_from_inputs
 from event_sentiment.models import NormalizedNewsArticle
 from event_sentiment.relevance import (
     DEFAULT_WEIGHTS,
@@ -180,12 +181,18 @@ class RelevanceBackfillService:
         batch_size: int = 500,
         min_relevance: float = 0.0,
         max_pairs: int | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        symbols: list[str] | None = None,
         dry_run: bool = False,
     ) -> dict[str, int]:
         cap = int(max_pairs or self.config.contextual_scoring_max_pairs_per_run)
         pending = self.repository.load_pending_contextual_pairs(
             limit=cap,
             min_relevance=min_relevance,
+            start_date=start_date,
+            end_date=end_date,
+            symbols=symbols,
         )
         if not pending:
             return {"contextual_pairs_loaded": 0, "contextual_scored": 0}
@@ -246,6 +253,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-date", type=str, default=None, help="ISO date (effective_trade_date)")
     parser.add_argument("--end-date", type=str, default=None, help="ISO date (effective_trade_date)")
     parser.add_argument("--symbols", type=str, default=None, help="Liste CSV de symboles à filtrer")
+    parser.add_argument(
+        "--symbol-source",
+        type=str,
+        choices=("stock_scores", "stock_scores_history", "stock_scores_all", "candidates", "stock_bars_daily"),
+        default=None,
+        help="Source optionnelle des symboles quand --symbols est absent.",
+    )
+    parser.add_argument(
+        "--max-symbols",
+        type=int,
+        default=None,
+        help="Garde-fou sécurité : refuse le run si l'univers résolu dépasse cette limite.",
+    )
     parser.add_argument("--dry-run", action="store_true", default=False)
     parser.add_argument(
         "--rescore-all",
@@ -280,8 +300,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help=(
             "Exécute uniquement le scoring FinBERT contextuel (Niveau 4), sans recalculer "
-            "relevance_score. Utilisé par l'étape 7bis (le calcul relevance_score appartient "
-            "à l'étape 7)."
+            "relevance_score. Utile pour la maintenance ciblée d'un scope déjà scoré en standard."
         ),
     )
     parser.add_argument(
@@ -311,6 +330,23 @@ def main() -> None:
     repository = EventSentimentRepository()
     config = EventSentimentConfig.for_provider("finnhub")
     service = RelevanceBackfillService(repository=repository, config=config)
+    if args.symbols or args.symbol_source:
+        symbols, _effective_symbol_source = resolve_symbols_from_inputs(
+            symbols_csv=args.symbols,
+            symbol_source=str(args.symbol_source or "stock_scores_all"),
+            repository=repository,
+            logger=LOGGER,
+        )
+        if args.max_symbols is not None and args.max_symbols > 0 and len(symbols) > int(args.max_symbols):
+            raise SystemExit(
+                "Le nombre de symboles résolus ({0}) dépasse --max-symbols={1}. "
+                "Réduisez l'univers (--symbol-source / --symbols) ou augmentez explicitement la limite.".format(
+                    len(symbols),
+                    int(args.max_symbols),
+                )
+            )
+    else:
+        symbols = _parse_symbols(args.symbols)
 
     summary: dict[str, Any] = {
         "run_id": _build_run_id(),
@@ -322,6 +358,8 @@ def main() -> None:
         "start_date": args.start_date,
         "end_date": args.end_date,
         "symbols": args.symbols,
+        "symbol_source": args.symbol_source,
+        "max_symbols": args.max_symbols,
     }
 
     if not args.contextual_only:
@@ -329,7 +367,7 @@ def main() -> None:
             batch_size=int(args.batch_size),
             start_date=_parse_date(args.start_date),
             end_date=_parse_date(args.end_date),
-            symbols=_parse_symbols(args.symbols),
+            symbols=symbols,
             dry_run=bool(args.dry_run),
             rescore_all=bool(args.rescore_all),
         )
@@ -340,7 +378,7 @@ def main() -> None:
                 threshold=float(args.purge_below),
                 start_date=_parse_date(args.start_date),
                 end_date=_parse_date(args.end_date),
-                symbols=_parse_symbols(args.symbols),
+                symbols=symbols,
                 dry_run=bool(args.dry_run),
             )
             summary.update(purge_stats)
@@ -356,6 +394,9 @@ def main() -> None:
             batch_size=int(args.batch_size),
             min_relevance=float(args.contextual_min_relevance),
             max_pairs=args.contextual_max_pairs,
+            start_date=_parse_date(args.start_date),
+            end_date=_parse_date(args.end_date),
+            symbols=symbols,
             dry_run=bool(args.dry_run),
         )
         summary.update(ctx_stats)

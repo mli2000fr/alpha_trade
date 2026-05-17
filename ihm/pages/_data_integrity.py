@@ -1,7 +1,7 @@
 """ihm/pages/_data_integrity.py — Phase 6.2 (Backlog L10).
 
-Panneau « 7.bis Import News » (event_sentiment.importe_news) extrait de
-``pipeline.py``.
+Panneau auxiliaire « 7.bis Traitement par étape » pour piloter manuellement
+les sous-étapes de l'étape 7 Sentiment Pipeline.
 """
 from __future__ import annotations
 
@@ -191,7 +191,7 @@ def _render_backfill_completeness_panel(
             st.warning(
                 f"⚠️ {r_null} paire(s) sans `relevance_score` "
                 f"({r_pct:.1f} % des paires scorées). "
-                "→ Relancez **relevance_backfill** (étape 7bis) pour combler."
+                "→ Relancez **Calcul relevance_score (Niveau 2/3)** dans le panneau de maintenance pour combler."
             )
             if r_total > 0:
                 progress_val = min(1.0, max(0.0, r_scored / r_total))
@@ -231,7 +231,7 @@ def _render_backfill_completeness_panel(
             st.info(
                 f"ℹ️ {c_pending} paire(s) sans score contextuel FinBERT "
                 f"({c_pct:.1f} % des paires traitées). "
-                "→ Activez `--rescore-contextual` sur le bouton **relevance_backfill** si nécessaire."
+                "→ Relancez **Scoring FinBERT contextuel (Niveau 4)** dans le panneau de maintenance si nécessaire."
             )
             if c_total > 0:
                 progress_val = min(1.0, max(0.0, c_scored / c_total))
@@ -252,39 +252,23 @@ def _render_import_news_panel(
     default_end = _coerce_date(st.session_state.get(IMPORT_NEWS_END_DATE_KEY), today)
 
     with st.container(border=True):
-        st.markdown("**7.bis Import des news brutes**")
+        st.markdown("**7.bis Traitement par étape**")
         st.caption(
-            "Lance `event_sentiment/importe_news.py` avec une date de début et une date de fin. "
-            "Le bouton import brut réutilise la source news et le mode de mapping ticker configurés dans l'étape 7. "
-            "Le bouton scoring seul relance uniquement `python -m event_sentiment --skip-ingestion` sur la même fenêtre et le même univers 7.bis, "
-            "en respectant le `mode de scoring` choisi dans le bloc `Event Sentiment`. "
-            "Le bouton intermédiaire reprend uniquement le complément post-import (score + history backfill + relevance backfill). "
-            "Le bouton `Rebuild daily sentiment features only` reconstruit uniquement les features journalières sentiment sur la fenêtre choisie. "
-            "Le dernier bouton exécute un script PowerShell Windows qui enchaîne l'import brut puis relance "
-            "`python -m event_sentiment` jusqu'à ce qu'il n'y ait plus d'articles pending dans `news_raw`/`news_sentiment`, "
-            "puis lance automatiquement `python -m event_sentiment.history_backfill` sur la même fenêtre, suivi de "
-            "`python -m event_sentiment.relevance_backfill` juste après ; "
-            "c'est ce bouton qui reprend aussi le re-scoring FinBERT contextualisé (Niveau 4) quand il est activé."
+            "Ce bloc auxiliaire permet de lancer **pas à pas** les 5 sous-étapes de la nouvelle étape 7, "
+            "en réutilisant les paramètres déjà saisis dans l'IHM (provider, fenêtre, symboles, seuils, batch sizes, caps contextuels, etc.). "
+            "Il ne matérialise pas une étape cœur supplémentaire du workflow : c'est un outil de maintenance et de pilotage manuel."
         )
         with st.expander("Mini guide d'usage — quand lancer quoi ?", expanded=False):
             st.markdown(
-                "- **`Standard only`** (étape 7) : **1er passage obligatoire** — remplit `news_sentiment` (1 score par article). "
-                "Aucune dépendance au `relevance_score` : peut tourner avant le relevance backfill.\n"
-                "- **7bis Phase 1 — relevance backfill sans contextual** : **2e passage** — calcule `relevance_score` dans `news_ticker_map`. "
-                "À faire avant le contextual pour que le filtre `min-relevance` soit réel (sinon `COALESCE = 1.0` sur les NULL → filtre inopérant).\n"
-                "- **`Rebuild daily sentiment features only`** : **3e passage** — reconstruit les agrégats journaliers `ticker_daily_sentiment_features` / `sector_daily_sentiment_features` "
-                "pondérés par le vrai `relevance_score` (à faire après la Phase 1 ci-dessus).\n"
-                "- **`Ajouter le contextual à ce backfill 7bis`** (coché par défaut) **ou `Contextual only`** : **4e passage** — scoring FinBERT par paire (article, ticker) → `news_ticker_sentiment`. "
-                "Le filtre `min-relevance 0.3` est maintenant opérant car tous les `relevance_score` sont calculés.\n"
-                "- **`Standard + contextual`** : pratique sur une fenêtre courte/moyenne quand vous voulez tout faire en un seul run (sans passer par les phases séparées)."
+                "1. **Import news** : importe les news brutes sur la fenêtre ciblée.\n"
+                "2. **Scoring FinBERT standard (sans features)** : remplit `news_sentiment` sans encore reconstruire les agrégats journaliers.\n"
+                "3. **Calcul `relevance_score` (Niveau 2/3)** : enrichit `news_ticker_map` en pur Python, avant les agrégations.\n"
+                "4. **Agrégation features journalières** : reconstruit `ticker_daily_sentiment_features` / `sector_daily_sentiment_features`.\n"
+                "5. **Scoring FinBERT contextuel (Niveau 4)** : enrichit `news_ticker_sentiment` sur les couples `(article, symbole)` compatibles avec le scope et les seuils configurés."
             )
             st.info(
-                "**Ordre optimal (backfill complet) :** "
-                "① Étape 7 `Standard only` → ② 7bis relevance backfill (sans contextual) → "
-                "③ `Rebuild daily sentiment features only` → ④ 7bis avec `Ajouter le contextual` coché → "
-                "⑤ `signal_aggregator` pour refléter dans `stock_scores`.\n\n"
-                "⚠️ Faire le contextual **avant** le relevance backfill est possible mais déconseillé : "
-                "le filtre `min-relevance` sera inopérant sur les paires sans `relevance_score` (traitées avec `COALESCE = 1.0`)."
+                "**Ordre recommandé :** ① Import news → ② scoring standard → ③ relevance backfill → ④ agrégation journalière → ⑤ scoring contextuel.\n\n"
+                "⚠️ Le scoring contextuel est volontairement placé en dernier dans cet outil manuel pour refléter la nouvelle orchestration métier visible dans l'IHM Pipeline."
             )
 
         date_col1, date_col2 = st.columns(2)
@@ -445,230 +429,135 @@ def _render_import_news_panel(
             news_import_max_symbols=news_import_max_symbols or None,
             news_import_resume_from_checkpoint=news_import_resume_from_checkpoint,
         )
-        import_command_preview = format_command_for_display(build_pipeline_command("import_news", import_options))
-        score_only_command_preview = format_command_for_display(
-            build_pipeline_command("score_sentiment_only", import_options)
-        )
-        auto_score_command_preview = format_command_for_display(
-            build_pipeline_command("import_news_pending_loop", import_options)
-        )
-        auto_followup_command_preview = format_command_for_display(
-            build_pipeline_command("score_history_relevance_backfill_auto", import_options)
-        )
-        rebuild_features_command_preview = format_command_for_display(
-            build_pipeline_command("rebuild_daily_sentiment_features_only", import_options)
-        )
-        st.caption("Commande import brut seule (source news + mapping ticker, sans scoring contextuel)")
-        st.code(import_command_preview, language="powershell")
-        st.caption(
-            "Commande dédiée — scoring sentiment seul sur le scope 7.bis "
-            "(mode standard/contextual selon le paramétrage `Event Sentiment — mode de scoring` ; sans réimport)"
-        )
-        st.code(score_only_command_preview, language="powershell")
-        st.caption("Commande dédiée — reconstruction seule des features sentiment journalières")
-        st.code(rebuild_features_command_preview, language="powershell")
-        st.caption(
-            "Commande PowerShell score + history backfill + relevance backfill auto "
-            "(sans import brut ; traite le backlog déjà importé dans la fenêtre)"
-        )
-        st.code(auto_followup_command_preview, language="powershell")
-        st.caption("Commande PowerShell import + scoring auto jusqu'à `pending=0`, puis history backfill suivi de relevance backfill (reprend aussi le scoring contextuel si activé)")
-        st.code(auto_score_command_preview, language="powershell")
+        step_specs = [
+            {
+                "key": "import_news",
+                "label": "📰 Import news",
+                "run_label": "7.bis Traitement par étape — 1. Import news",
+                "caption": "Sous-étape 1 — Import news",
+                "preview": format_command_for_display(build_pipeline_command("import_news", import_options)),
+                "success": "Import news démarré en arrière-plan",
+                "stop": "⏹️ Arrêter l'import news",
+            },
+            {
+                "key": "sentiment_standard_scoring",
+                "label": "🧠 Scoring FinBERT standard (sans features)",
+                "run_label": "7.bis Traitement par étape — 2. Scoring FinBERT standard (sans features)",
+                "caption": "Sous-étape 2 — Scoring FinBERT standard (sans features)",
+                "preview": format_command_for_display(build_pipeline_command("sentiment_standard_scoring", import_options)),
+                "success": "Scoring FinBERT standard démarré en arrière-plan",
+                "stop": "⏹️ Arrêter le scoring standard",
+            },
+            {
+                "key": "sentiment_relevance_backfill",
+                "label": "🧮 Calcul relevance_score (Niveau 2/3)",
+                "run_label": "7.bis Traitement par étape — 3. Calcul relevance_score (Niveau 2/3)",
+                "caption": "Sous-étape 3 — Calcul `relevance_score` (Niveau 2/3)",
+                "preview": format_command_for_display(build_pipeline_command("sentiment_relevance_backfill", import_options)),
+                "success": "Calcul relevance_score démarré en arrière-plan",
+                "stop": "⏹️ Arrêter le relevance backfill",
+            },
+            {
+                "key": "rebuild_daily_sentiment_features_only",
+                "label": "🧱 Agrégation features journalières",
+                "run_label": "7.bis Traitement par étape — 4. Agrégation features journalières",
+                "caption": "Sous-étape 4 — Agrégation features journalières (ticker/secteur)",
+                "preview": format_command_for_display(build_pipeline_command("rebuild_daily_sentiment_features_only", import_options)),
+                "success": "Agrégation des features journalières démarrée en arrière-plan",
+                "stop": "⏹️ Arrêter l'agrégation journalière",
+            },
+            {
+                "key": "sentiment_contextual_scoring",
+                "label": "🎯 Scoring FinBERT contextuel (Niveau 4)",
+                "run_label": "7.bis Traitement par étape — 5. Scoring FinBERT contextuel (Niveau 4)",
+                "caption": "Sous-étape 5 — Scoring FinBERT contextuel (Niveau 4 — `news_ticker_sentiment`)",
+                "preview": format_command_for_display(build_pipeline_command("sentiment_contextual_scoring", import_options)),
+                "success": "Scoring FinBERT contextuel démarré en arrière-plan",
+                "stop": "⏹️ Arrêter le scoring contextuel",
+            },
+        ]
+        for spec in step_specs:
+            st.caption(str(spec["caption"]))
+            st.code(str(spec["preview"]), language="powershell")
 
-        import_active_runs = active_by_step.get("import_news", [])
-        score_only_active_runs = active_by_step.get("score_sentiment_only", [])
-        rebuild_features_active_runs = active_by_step.get("rebuild_daily_sentiment_features_only", [])
-        auto_followup_active_runs = active_by_step.get("score_history_relevance_backfill_auto", [])
-        auto_score_active_runs = active_by_step.get("import_news_pending_loop", [])
         locked_by_sentiment = bool(active_by_step.get("sentiment_pipeline"))
-        import_locked = workflow_active or locked_by_sentiment or bool(score_only_active_runs) or bool(auto_score_active_runs) or bool(auto_followup_active_runs) or bool(rebuild_features_active_runs)
-        score_only_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(auto_followup_active_runs) or bool(auto_score_active_runs) or bool(rebuild_features_active_runs)
-        rebuild_features_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(score_only_active_runs) or bool(auto_followup_active_runs) or bool(auto_score_active_runs)
-        auto_followup_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(score_only_active_runs) or bool(auto_score_active_runs) or bool(rebuild_features_active_runs)
-        auto_score_locked = workflow_active or locked_by_sentiment or bool(import_active_runs) or bool(score_only_active_runs) or bool(auto_followup_active_runs) or bool(rebuild_features_active_runs)
+        related_active_keys = [
+            *(str(spec["key"]) for spec in step_specs),
+            "score_sentiment_only",
+            "relevance_backfill",
+            "score_history_relevance_backfill_auto",
+            "import_news_pending_loop",
+        ]
+        active_related_runs = {
+            key: active_by_step.get(key, [])
+            for key in related_active_keys
+            if active_by_step.get(key)
+        }
 
         if workflow_active:
-            st.warning("Un workflow complet est en cours : l'import manuel de news est temporairement désactivé.")
+            st.warning("Un workflow complet est en cours : le traitement manuel par sous-étape est temporairement désactivé.")
         elif locked_by_sentiment:
-            st.warning("Le Sentiment Pipeline est déjà actif : attendez sa fin avant de relancer un import de news.")
-        elif auto_followup_active_runs:
-            st.warning(
-                "Le script PowerShell score + history backfill + relevance backfill auto est déjà actif : "
-                "attendez sa fin avant de relancer un import brut ou le run auto complet."
-            )
-        elif score_only_active_runs:
-            st.warning(
-                "Un scoring sentiment seul sur le scope 7.bis est déjà actif : "
-                "attendez sa fin avant de relancer un import brut ou un autre run 7.bis."
-            )
-        elif rebuild_features_active_runs:
-            st.warning(
-                "Une reconstruction dédiée des features sentiment journalières est déjà active : "
-                "attendez sa fin avant de relancer un autre run 7.bis."
-            )
-        elif auto_score_active_runs:
-            st.warning("Le script PowerShell import + scoring + backfill auto est déjà actif : attendez sa fin avant de relancer un import brut.")
-        elif import_active_runs:
-            st.warning("Un import brut est déjà actif : attendez sa fin avant de lancer un script PowerShell auto complémentaire ou complet.")
+            st.warning("Le Sentiment Pipeline est déjà actif : attendez sa fin avant de lancer un traitement pas à pas.")
+        elif active_related_runs:
+            st.warning("Un outil manuel/backfill sentiment est déjà actif : terminez-le ou arrêtez-le avant de relancer une autre sous-étape.")
 
         if start_value > end_value:
             st.error("La date de début doit être antérieure ou égale à la date de fin.")
-        elif import_active_runs:
-            st.info(f"{len(import_active_runs)} import(s) de news déjà actif(s).")
-            for run in import_active_runs:
-                run_id = str(run.get("run_id", ""))
-                st.caption(f"Actif : `{run_id}`")
-                if st.button("⏹️ Arrêter cet import", key=f"stop_import_news_run_{run_id}", use_container_width=True):
-                    stop_pipeline_run(run_id)
-                    st.rerun()
-        elif auto_followup_active_runs:
-            st.info(f"{len(auto_followup_active_runs)} run(s) auto score + backfill déjà actif(s).")
-            for run in auto_followup_active_runs:
-                run_id = str(run.get("run_id", ""))
-                st.caption(f"Actif : `{run_id}`")
-                if st.button(
-                    "⏹️ Arrêter ce run auto score + backfill",
-                    key=f"stop_score_history_relevance_backfill_auto_run_{run_id}",
-                    use_container_width=True,
-                ):
-                    stop_pipeline_run(run_id)
-                    st.rerun()
-        elif score_only_active_runs:
-            st.info(f"{len(score_only_active_runs)} run(s) de scoring sentiment seul déjà actif(s).")
-            for run in score_only_active_runs:
-                run_id = str(run.get("run_id", ""))
-                st.caption(f"Actif : `{run_id}`")
-                if st.button(
-                    "⏹️ Arrêter ce scoring seul",
-                    key=f"stop_score_sentiment_only_run_{run_id}",
-                    use_container_width=True,
-                ):
-                    stop_pipeline_run(run_id)
-                    st.rerun()
-        elif rebuild_features_active_runs:
-            st.info(f"{len(rebuild_features_active_runs)} reconstruction(s) de features déjà active(s).")
-            for run in rebuild_features_active_runs:
-                run_id = str(run.get("run_id", ""))
-                st.caption(f"Actif : `{run_id}`")
-                if st.button(
-                    "⏹️ Arrêter ce rebuild features",
-                    key=f"stop_rebuild_daily_sentiment_features_only_run_{run_id}",
-                    use_container_width=True,
-                ):
-                    stop_pipeline_run(run_id)
-                    st.rerun()
-        elif auto_score_active_runs:
-            st.info(f"{len(auto_score_active_runs)} run(s) auto import + scoring + backfill déjà actif(s).")
-            for run in auto_score_active_runs:
-                run_id = str(run.get("run_id", ""))
-                st.caption(f"Actif : `{run_id}`")
-                if st.button(
-                    "⏹️ Arrêter ce run auto import + scoring + backfill",
-                    key=f"stop_import_news_pending_loop_run_{run_id}",
-                    use_container_width=True,
-                ):
-                    stop_pipeline_run(run_id)
-                    st.rerun()
+        elif active_related_runs:
+            for spec in step_specs:
+                runs = active_by_step.get(str(spec["key"]), [])
+                if not runs:
+                    continue
+                st.info(f"{len(runs)} run(s) actif(s) pour {spec['caption']}.")
+                for run in runs:
+                    run_id = str(run.get("run_id", ""))
+                    st.caption(f"Actif : `{run_id}`")
+                    if st.button(str(spec["stop"]), key=f"stop_{spec['key']}_{run_id}", use_container_width=True):
+                        stop_pipeline_run(run_id)
+                        st.rerun()
+            for legacy_key, legacy_label in (
+                ("score_sentiment_only", "Scoring sentiment seul (legacy maintenance)"),
+                ("relevance_backfill", "Contextual/relevance backfill (legacy maintenance)"),
+                ("score_history_relevance_backfill_auto", "Wrapper auto score + backfills (legacy maintenance)"),
+                ("import_news_pending_loop", "Wrapper auto import + score + backfills (legacy maintenance)"),
+            ):
+                runs = active_by_step.get(legacy_key, [])
+                if not runs:
+                    continue
+                st.info(f"{len(runs)} run(s) actif(s) pour {legacy_label}.")
+                for run in runs:
+                    run_id = str(run.get("run_id", ""))
+                    st.caption(f"Actif : `{run_id}`")
+                    if st.button(
+                        f"⏹️ Arrêter {legacy_label}",
+                        key=f"stop_{legacy_key}_{run_id}",
+                        use_container_width=True,
+                    ):
+                        stop_pipeline_run(run_id)
+                        st.rerun()
         else:
-            import_col, score_only_col, rebuild_col, followup_col, auto_col = st.columns(5)
-            with import_col:
-                run_clicked = st.button(
-                    "📰 Importer les news sur la période",
-                    key="run_pipeline_import_news",
-                    type="primary",
-                    use_container_width=True,
-                    disabled=import_locked or start_value > end_value,
-                )
-                if run_clicked:
-                    record = start_pipeline_run(
-                        "import_news",
-                        "7.bis Import News",
-                        import_options,
-                        db_config=db_config,
+            button_columns = st.columns(5)
+            for column, spec in zip(button_columns, step_specs):
+                with column:
+                    clicked = st.button(
+                        str(spec["label"]),
+                        key=f"run_{spec['key']}",
+                        use_container_width=True,
                     )
-                    _register_new_run(record, all_runs)
-                    st.success(f"Import news démarré en arrière-plan : `{record.run_id}`")
-                    st.rerun()
-            with score_only_col:
-                score_only_clicked = st.button(
-                    "🧠 Scorer sentiment seulement",
-                    key="run_pipeline_score_sentiment_only",
-                    use_container_width=True,
-                    disabled=score_only_locked or start_value > end_value,
-                    help="Réutilise le `mode de scoring` du bloc Event Sentiment sur la fenêtre + l'univers 7.bis, sans réimport.",
-                )
-                if score_only_clicked:
-                    record = start_pipeline_run(
-                        "score_sentiment_only",
-                        "7.bis Score sentiment only",
-                        import_options,
-                        db_config=db_config,
-                    )
-                    _register_new_run(record, all_runs)
-                    st.success(f"Scoring sentiment seul démarré en arrière-plan : `{record.run_id}`")
-                    st.rerun()
-            with rebuild_col:
-                rebuild_clicked = st.button(
-                    "🧱 Rebuild daily sentiment features only",
-                    key="run_pipeline_rebuild_daily_sentiment_features_only",
-                    use_container_width=True,
-                    disabled=rebuild_features_locked or start_value > end_value,
-                )
-                if rebuild_clicked:
-                    record = start_pipeline_run(
-                        "rebuild_daily_sentiment_features_only",
-                        "7.bis Rebuild daily sentiment features only",
-                        import_options,
-                        db_config=db_config,
-                    )
-                    _register_new_run(record, all_runs)
-                    st.success(f"Rebuild des features sentiment démarré en arrière-plan : `{record.run_id}`")
-                    st.rerun()
-            with followup_col:
-                auto_followup_clicked = st.button(
-                    "⚙️ Score + history_backfill + relevance_backfill auto",
-                    key="run_pipeline_score_history_relevance_backfill_auto",
-                    use_container_width=True,
-                    disabled=auto_followup_locked or start_value > end_value,
-                )
-                if auto_followup_clicked:
-                    record = start_pipeline_run(
-                        "score_history_relevance_backfill_auto",
-                        "7.bis Score + history_backfill + relevance_backfill auto",
-                        import_options,
-                        db_config=db_config,
-                    )
-                    _register_new_run(record, all_runs)
-                    st.success(f"Score + backfill auto démarrés en arrière-plan : `{record.run_id}`")
-                    st.rerun()
-            with auto_col:
-                auto_clicked = st.button(
-                    "⚙️ Import + score + history_backfill + relevance_backfill auto",
-                    key="run_pipeline_import_news_pending_loop",
-                    use_container_width=True,
-                    disabled=auto_score_locked or start_value > end_value,
-                )
-                if auto_clicked:
-                    record = start_pipeline_run(
-                        "import_news_pending_loop",
-                        "7.bis Import News + scoring + backfill auto",
-                        import_options,
-                        db_config=db_config,
-                    )
-                    _register_new_run(record, all_runs)
-                    st.success(f"Import + scoring + backfill auto démarrés en arrière-plan : `{record.run_id}`")
-                    st.rerun()
+                    if clicked:
+                        record = start_pipeline_run(
+                            str(spec["key"]),
+                            str(spec["run_label"]),
+                            import_options,
+                            db_config=db_config,
+                        )
+                        _register_new_run(record, all_runs)
+                        st.success(f"{spec['success']} : `{record.run_id}`")
+                        st.rerun()
 
-        st.caption("Dernier run — import brut")
-        _render_step_result(latest_by_step.get("import_news"))
-        st.caption("Dernier run — scoring sentiment seul")
-        _render_step_result(latest_by_step.get("score_sentiment_only"))
-        st.caption("Dernier run — rebuild daily sentiment features only")
-        _render_step_result(latest_by_step.get("rebuild_daily_sentiment_features_only"))
-        st.caption("Dernier run — score + history_backfill + relevance_backfill auto")
-        _render_step_result(latest_by_step.get("score_history_relevance_backfill_auto"))
-        st.caption("Dernier run — import + scoring + backfill auto")
-        _render_step_result(latest_by_step.get("import_news_pending_loop"))
+        for spec in step_specs:
+            st.caption(f"Dernier run — {spec['caption']}")
+            _render_step_result(latest_by_step.get(str(spec["key"])))
 
         st.divider()
         _render_backfill_completeness_panel(start_value, end_value)

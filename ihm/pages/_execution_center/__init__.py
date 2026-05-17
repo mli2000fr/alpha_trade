@@ -609,9 +609,10 @@ def _render_event_sentiment_block() -> dict[str, Any]:
     Retourne les valeurs nettoyées (``start_utc``, ``end_utc``, ``symbols``)
     qui seront passées à :class:`PipelineLaunchOptions`.
     """
-    st.markdown("#### Paramètres Event Sentiment")
+    st.markdown("#### Paramètres Étape 7 — Event Sentiment")
     st.caption(
-        "Ces réglages reflètent les options réellement supportées par `python -m event_sentiment`. "
+        "Ces réglages alimentent désormais l'étape 7 fusionnée : import news, scoring FinBERT standard, "
+        "calcul `relevance_score`, agrégation des features journalières et scoring contextuel. "
         "Si les symboles sont laissés vides, le backend consomme automatiquement les candidats `stock_scores.is_candidate=1`."
     )
 
@@ -742,9 +743,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
     )
     sentiment_enable_contextual_scoring = sentiment_scoring_mode in {"contextual_only", "standard_and_contextual"}
     st.caption(
-        "Guide rapide : `Standard only` pour remplir ou rattraper `news_sentiment` ; "
-        "`Contextual only` pour enrichir un corpus déjà scoré standard dans `news_ticker_sentiment` ; "
-        "`Standard + contextual` pour faire les deux dans le même run quand la fenêtre reste raisonnable."
+        "Guide rapide : `Standard only` pour un rattrapage article standard ; "
+        "`Contextual only` pour rejouer uniquement le Niveau 4 sur un corpus déjà préparé ; "
+        "`Standard + contextual` pour activer aussi la 5e sous-étape contextuelle de l'étape 7 fusionnée."
     )
     if sentiment_scoring_mode == "contextual_only":
         st.info(
@@ -858,11 +859,11 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 st.caption("Flush final unique conservé : comportement historique du pipeline.")
 
     # Niveau 4 — re-scoring FinBERT contextualisé par couple (article, symbol).
-    with st.expander("7bis — Contextual FinBERT (Niveau 4)", expanded=False):
+    with st.expander("Étape 7 — Scoring contextuel FinBERT (Niveau 4)", expanded=False):
         st.caption(
-            "Paramètres de l'étape **7bis** (`python -m event_sentiment.relevance_backfill --contextual-only --rescore-contextual`). "
-            "L'étape 7bis exécute **uniquement** le scoring FinBERT contextuel Niveau 4 : elle ne recalcule plus `relevance_score` "
-            "(cette Phase 1 est désormais intégrée à l'étape 7). "
+            "Paramètres de la 5e sous-étape de l'étape 7 fusionnée. "
+            "Le scoring contextuel Niveau 4 enrichit `news_ticker_sentiment` après le scoring standard, "
+            "le calcul `relevance_score` et l'agrégation journalière. "
             "Le cap de paires contextuelles est un cap **par run** : si vous mettez `5000`, le run score au plus `5000` couples `(article, symbole)` puis le run suivant reprend le reliquat."
         )
         ctx_col1, ctx_col2 = st.columns(2)
@@ -907,9 +908,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 )
             )
 
-        # Paramètres batch et purge (déplacés depuis l'ancien bloc 7bis).
-        # 'Re-scorer toutes les lignes' retiré : l'étape 7bis ne calcule pas relevance_score.
-        # L'étape 7 calcule relevance_score uniquement sur les paires NULL (comportement par défaut).
+        # Paramètres batch et purge conservés pour l'étape 7 fusionnée + les outils de maintenance.
         backfill_relevance_rescore_all: bool = False
         batch_purge_col1, batch_purge_col2 = st.columns(2)
         with batch_purge_col1:
@@ -1058,16 +1057,16 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         "sentiment_news_provider": sentiment_news_provider,
         "sentiment_ticker_relevance_mode": sentiment_ticker_relevance_mode,
         "sentiment_min_relevance_score": sentiment_min_relevance_score,
-        "sentiment_scoring_mode": sentiment_scoring_mode,               # toujours "standard_only"
-        "sentiment_enable_contextual_scoring": sentiment_enable_contextual_scoring,  # toujours False
+        "sentiment_scoring_mode": sentiment_scoring_mode,
+        "sentiment_enable_contextual_scoring": sentiment_enable_contextual_scoring,
         "sentiment_contextual_min_relevance": sentiment_contextual_min_relevance,
         "sentiment_contextual_max_pairs": sentiment_contextual_max_pairs,
         "sentiment_pending_limit": sentiment_pending_limit,
         "sentiment_pending_max_batches_per_run": sentiment_pending_max_batches_per_run,
         "sentiment_feature_flush_every_n_batches": sentiment_feature_flush_every_n_batches,
         "sentiment_finbert_batch_size": sentiment_finbert_batch_size,
-        "backfill_relevance_dry_run": False,                            # supprimé de l'UI
-        "backfill_relevance_rescore_all": False,                        # supprimé de l'UI (inutile pour 7bis)
+        "backfill_relevance_dry_run": False,
+        "backfill_relevance_rescore_all": False,
         "backfill_relevance_batch_size": backfill_relevance_batch_size,
         "backfill_relevance_purge_below": backfill_relevance_purge_below,
     }

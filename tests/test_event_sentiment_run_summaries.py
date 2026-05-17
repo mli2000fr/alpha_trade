@@ -247,6 +247,70 @@ def test_event_sentiment_pipeline_emits_live_progress(monkeypatch) -> None:
     assert ingestion_payload["progress_item"] == "AAPL"
 
 
+def test_event_sentiment_pipeline_contextual_only_forwards_scope_to_repository(monkeypatch) -> None:
+    class _DummyRepository:
+        def __init__(self) -> None:
+            self.contextual_kwargs: dict[str, object] | None = None
+
+        def load_candidate_symbols(self):
+            return ["AAPL"]
+
+        def load_pending_contextual_pairs(self, **kwargs):
+            self.contextual_kwargs = dict(kwargs)
+            return []
+
+        def upsert_news_ticker_sentiment(self, rows):
+            return 0
+
+    class _DummyConfig:
+        finbert_model_name = "dummy"
+        finbert_model_version = "1"
+        finbert_batch_size = 4
+        finbert_max_length = 128
+        finbert_model_revision = None
+        macro_rule_version = "1"
+        initial_backfill_days = 2
+        checkpoint_overlap_minutes = 60
+        candidate_reactivation_backfill_days = 5
+        sentiment_pending_limit = 100
+        sentiment_pending_max_batches_per_run = 1
+        feature_history_buffer_days = 2
+        feature_version = "v1"
+        feature_rolling_windows = [3]
+        source_name = "alpaca_news"
+        provider_name = "alpaca"
+        regular_session_maps_to_same_day = True
+        scoring_mode = "contextual_only"
+        enable_contextual_scoring = True
+        contextual_scoring_min_relevance = 0.35
+        contextual_scoring_max_pairs_per_run = 250
+
+    repository = _DummyRepository()
+    pipeline_instance = cli.EventSentimentPipeline(
+        repository=repository,
+        config=_DummyConfig(),
+        progress_callback=None,
+    )
+
+    stats = pipeline_instance.run(
+        start_utc=cli.dateutil.parser.isoparse("2026-04-01T00:00:00Z"),
+        end_utc=cli.dateutil.parser.isoparse("2026-04-02T00:00:00Z"),
+        symbols=["AAPL"],
+        skip_ingestion=True,
+        skip_features=True,
+    )
+
+    assert stats["contextual_pairs_loaded"] == 0
+    assert repository.contextual_kwargs == {
+        "limit": 250,
+        "min_relevance": 0.35,
+        "start_date": cli.dateutil.parser.isoparse("2026-04-01T00:00:00Z").date(),
+        "end_date": cli.dateutil.parser.isoparse("2026-04-02T00:00:00Z").date(),
+        "symbols": ["AAPL"],
+        "ingestion_source": "alpaca",
+    }
+
+
 def test_signal_aggregator_main_emits_structured_summary(monkeypatch, capsys) -> None:
     monkeypatch.setattr(signal_aggregator, "configure_root_logging", lambda **kwargs: None)
     monkeypatch.setattr(db_connection, "get_sqlalchemy_engine", lambda: object())

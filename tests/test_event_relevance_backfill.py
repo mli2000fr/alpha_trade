@@ -22,6 +22,7 @@ class _FakeRepo:
         self.deleted = 0
         self.contextual_pending: list[dict[str, Any]] = []
         self.contextual_upsert_calls: list[list[dict[str, Any]]] = []
+        self.contextual_load_kwargs: dict[str, Any] | None = None
 
     def iter_ticker_map_for_relevance_backfill(self, **_kwargs):
         for batch in self._batches:
@@ -36,6 +37,7 @@ class _FakeRepo:
         return 1
 
     def load_pending_contextual_pairs(self, **_kwargs) -> list[dict[str, Any]]:
+        self.contextual_load_kwargs = dict(_kwargs)
         return self.contextual_pending
 
     def upsert_news_ticker_sentiment(self, records: list[dict[str, Any]]) -> int:
@@ -121,4 +123,28 @@ def test_backfill_contextual_dry_run_skips_finbert() -> None:
     assert stats["contextual_pairs_loaded"] == 1
     assert stats["contextual_scored"] == 0
     assert repo.contextual_upsert_calls == []
+
+
+def test_backfill_contextual_forwards_scope_filters_to_repository() -> None:
+    repo = _FakeRepo(batches=[])
+    service = RelevanceBackfillService(repository=repo, config=EventSentimentConfig())
+
+    service.backfill_contextual(
+        batch_size=5,
+        min_relevance=0.3,
+        max_pairs=25,
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 31),
+        symbols=["AAPL", "MSFT"],
+        dry_run=True,
+    )
+
+    assert repo.contextual_load_kwargs == {
+        "limit": 25,
+        "min_relevance": 0.3,
+        "start_date": date(2026, 1, 1),
+        "end_date": date(2026, 1, 31),
+        "symbols": ["AAPL", "MSFT"],
+    }
+
 

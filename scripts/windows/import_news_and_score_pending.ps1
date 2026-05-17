@@ -155,10 +155,10 @@ function Get-SymbolPreview {
 
 $summary = [ordered]@{
     mode = if ($SkipImport) {
-        'score_pending_history_and_relevance_backfill'
+        'score_pending_relevance_history_and_contextual_backfill'
     }
     else {
-        'import_news_score_pending_history_and_relevance_backfill'
+        'import_news_score_pending_relevance_history_and_contextual_backfill'
     }
     start_date = $StartDate
     end_date = $EndDate
@@ -179,6 +179,7 @@ $summary = [ordered]@{
     relevance_backfill_enabled = $true
     relevance_backfill_batch_size = $RelevanceBackfillBatchSize
     relevance_backfill_completed = $false
+    contextual_backfill_completed = $false
     news_provider = $NewsProvider
     ticker_relevance_mode = $TickerRelevanceMode
     scoring_mode = $EffectiveScoringMode
@@ -469,7 +470,7 @@ try {
     Write-Host ("Articles pending après import (scope {0} → {1}, provider={2}) : {3}" -f $StartDate, $EndDate, $NewsProvider, $pendingCount)
     if ($summary.initial_pending_global -ne $summary.initial_pending) {
         Write-Warning (
-            "Backlog pending global détecté hors scope 7.bis (global={0}, scope={1}). Le wrapper va traiter uniquement le scope demandé." -f
+            "Backlog pending global détecté hors scope demandé (global={0}, scope={1}). Le wrapper va traiter uniquement le périmètre ciblé." -f
             $summary.initial_pending_global, $summary.initial_pending
         )
     }
@@ -489,6 +490,9 @@ try {
                 '-m',
                 'event_sentiment',
                 '--skip-ingestion',
+                '--skip-features',
+                '--scoring-mode',
+                'standard_only',
                 '--news-provider',
                 $NewsProvider,
                 '--start-utc',
@@ -510,20 +514,6 @@ try {
             }
             if ($TickerRelevanceMode -eq 'scored' -and $MinRelevanceScore -gt 0) {
                 $scoringArguments += @('--min-relevance-score', ([string]$MinRelevanceScore))
-            }
-            if ($FeatureFlushEveryNBatches -gt 0) {
-                $scoringArguments += @('--feature-flush-every-n-batches', ([string]$FeatureFlushEveryNBatches))
-            }
-            if ($EffectiveScoringMode -eq 'standard_and_contextual') {
-                $scoringArguments += '--enable-contextual-scoring'
-            }
-            if ($ContextualScoringEnabled) {
-                if ($ContextualMinRelevance -gt 0) {
-                    $scoringArguments += @('--contextual-min-relevance', ([string]$ContextualMinRelevance))
-                }
-                if ($ContextualMaxPairs -gt 0) {
-                    $scoringArguments += @('--contextual-max-pairs', ([string]$ContextualMaxPairs))
-                }
             }
             Invoke-PythonStep -Label ("Sentiment pipeline auto #{0}" -f $runIndex) -Arguments @($scoringArguments)
             $summary.scoring_runs_executed = $runIndex
@@ -555,76 +545,22 @@ try {
         }
     }
     elseif ($ContextualScoringEnabled) {
-        Write-Warning 'Mode contextual_only actif : le backlog pending standard ne sera pas drainé par ce wrapper.'
-        $scoringArguments = @(
-            '-u',
-            '-m',
-            'event_sentiment',
-            '--skip-ingestion',
-            '--scoring-mode',
-            'contextual_only',
-            '--news-provider',
-            $NewsProvider,
-            '--start-utc',
-            $runWindow.StartUtc,
-            '--end-utc',
-            $runWindow.EndUtc,
-            '--sentiment-pending-limit',
-            ([string]$SentimentPendingLimit),
-            '--sentiment-pending-max-batches',
-            ([string]$SentimentPendingMaxBatches),
-            '--finbert-batch-size',
-            ([string]$FinBertBatchSize)
-        )
-        if ($ScopedSymbols.Count -gt 0) {
-            $scoringArguments += @('--symbols', $ScopedSymbolsCsv)
-        }
-        if ($TickerRelevanceMode -ne 'provider_default') {
-            $scoringArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)
-        }
-        if ($TickerRelevanceMode -eq 'scored' -and $MinRelevanceScore -gt 0) {
-            $scoringArguments += @('--min-relevance-score', ([string]$MinRelevanceScore))
-        }
-        if ($FeatureFlushEveryNBatches -gt 0) {
-            $scoringArguments += @('--feature-flush-every-n-batches', ([string]$FeatureFlushEveryNBatches))
-        }
-        if ($ContextualMinRelevance -gt 0) {
-            $scoringArguments += @('--contextual-min-relevance', ([string]$ContextualMinRelevance))
-        }
-        if ($ContextualMaxPairs -gt 0) {
-            $scoringArguments += @('--contextual-max-pairs', ([string]$ContextualMaxPairs))
-        }
-        Invoke-PythonStep -Label 'Sentiment pipeline contextual-only' -Arguments @($scoringArguments)
-        $summary.scoring_runs_executed = 1
+        Write-Warning 'Mode contextual_only actif : le backlog pending standard ne sera pas drainé par ce wrapper ; seul le scoring contextuel sera rejoué en fin de chaîne.'
     }
 
     $summary.final_pending = $pendingCount
     $summary.final_pending_global = Get-PendingArticleCount
-    Write-Host 'Import + scoring auto terminés : plus aucun article pending dans le scope demandé.'
+    if ($StandardScoringEnabled) {
+        Write-Host 'Scoring standard auto terminé : plus aucun article pending dans le scope demandé.'
+    }
+    else {
+        Write-Host 'Scoring standard auto ignoré : passage direct aux backfills/rejeu contextuel.'
+    }
     if ($summary.final_pending_global -gt 0) {
         Write-Warning (
             "Il reste {0} article(s) pending hors scope ({1} → {2}, provider={3})." -f
             $summary.final_pending_global, $StartDate, $EndDate, $NewsProvider
         )
-    }
-
-    if (-not $SkipHistoryBackfill) {
-        Invoke-PythonStep -Label 'History backfill auto' -Arguments @(
-            '-u',
-            '-m',
-            'event_sentiment.history_backfill',
-            '--start-date',
-            $StartDate,
-            '--end-date',
-            $EndDate,
-            '--batch-days',
-            [string]$HistoryBackfillBatchDays
-        )
-        $summary.history_backfill_completed = $true
-        Write-Host 'History backfill auto terminé.'
-    }
-    else {
-        Write-Host 'History backfill auto ignoré (SkipHistoryBackfill actif).'
     }
 
     $relevanceBackfillArguments = @(
@@ -650,18 +586,82 @@ try {
     if ($ScopedSymbols.Count -gt 0) {
         $relevanceBackfillArguments += @('--symbols', $ScopedSymbolsCsv)
     }
-    if ($RelevanceBackfillRescoreContextual) {
-        $relevanceBackfillArguments += '--rescore-contextual'
-        if ($RelevanceBackfillContextualMinRelevance -gt 0) {
-            $relevanceBackfillArguments += @('--contextual-min-relevance', ([string]$RelevanceBackfillContextualMinRelevance))
-        }
-        if ($RelevanceBackfillContextualMaxPairs -gt 0) {
-            $relevanceBackfillArguments += @('--contextual-max-pairs', ([string]$RelevanceBackfillContextualMaxPairs))
-        }
-    }
     Invoke-PythonStep -Label 'Relevance backfill auto' -Arguments @($relevanceBackfillArguments)
     $summary.relevance_backfill_completed = $true
     Write-Host 'Relevance backfill auto terminé.'
+
+    if (-not $SkipHistoryBackfill) {
+        Invoke-PythonStep -Label 'History backfill auto' -Arguments @(
+            '-u',
+            '-m',
+            'event_sentiment.history_backfill',
+            '--start-date',
+            $StartDate,
+            '--end-date',
+            $EndDate,
+            '--batch-days',
+            [string]$HistoryBackfillBatchDays
+        )
+        $summary.history_backfill_completed = $true
+        Write-Host 'History backfill auto terminé.'
+    }
+    else {
+        Write-Host 'History backfill auto ignoré (SkipHistoryBackfill actif).'
+    }
+
+    if ($ContextualScoringEnabled -or $RelevanceBackfillRescoreContextual) {
+        $contextualArguments = @(
+            '-u',
+            '-m',
+            'event_sentiment',
+            '--skip-ingestion',
+            '--skip-features',
+            '--scoring-mode',
+            'contextual_only',
+            '--news-provider',
+            $NewsProvider,
+            '--start-utc',
+            $runWindow.StartUtc,
+            '--end-utc',
+            $runWindow.EndUtc,
+            '--sentiment-pending-limit',
+            ([string]$SentimentPendingLimit),
+            '--sentiment-pending-max-batches',
+            ([string]$SentimentPendingMaxBatches),
+            '--finbert-batch-size',
+            ([string]$FinBertBatchSize)
+        )
+        if ($ScopedSymbols.Count -gt 0) {
+            $contextualArguments += @('--symbols', $ScopedSymbolsCsv)
+        }
+        if ($TickerRelevanceMode -ne 'provider_default') {
+            $contextualArguments += @('--ticker-relevance-mode', $TickerRelevanceMode)
+        }
+        if ($TickerRelevanceMode -eq 'scored' -and $MinRelevanceScore -gt 0) {
+            $contextualArguments += @('--min-relevance-score', ([string]$MinRelevanceScore))
+        }
+        $effectiveContextualMinRelevance = if ($RelevanceBackfillContextualMinRelevance -gt 0) {
+            $RelevanceBackfillContextualMinRelevance
+        }
+        else {
+            $ContextualMinRelevance
+        }
+        $effectiveContextualMaxPairs = if ($RelevanceBackfillContextualMaxPairs -gt 0) {
+            $RelevanceBackfillContextualMaxPairs
+        }
+        else {
+            $ContextualMaxPairs
+        }
+        if ($effectiveContextualMinRelevance -gt 0) {
+            $contextualArguments += @('--contextual-min-relevance', ([string]$effectiveContextualMinRelevance))
+        }
+        if ($effectiveContextualMaxPairs -gt 0) {
+            $contextualArguments += @('--contextual-max-pairs', ([string]$effectiveContextualMaxPairs))
+        }
+        Invoke-PythonStep -Label 'Contextual backfill auto' -Arguments @($contextualArguments)
+        $summary.contextual_backfill_completed = $true
+        Write-Host 'Contextual backfill auto terminé.'
+    }
 
     $summary.status = 'completed'
     Write-RunSummary -Payload $summary

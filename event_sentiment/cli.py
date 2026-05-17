@@ -118,7 +118,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Source optionnelle des symboles quand --symbols est absent. "
-            "Utile notamment pour scorer uniquement le scope 7.bis de l'IHM en "
+            "Utile notamment pour scorer uniquement un scope manuel de l'IHM en "
             "mode --skip-ingestion."
         ),
     )
@@ -236,8 +236,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help=(
             "N'exécute pas l'agrégation des features journalières (ticker/secteur) "
-            "à la fin du run. Utilisé par l'étape 7 pour effectuer le calcul "
-            "relevance_score avant l'agrégation (cmd2=relevance, cmd3=features)."
+            "à la fin du run. Utilisé par l'étape 7 fusionnée et les outils manuels "
+            "quand on veut enchaîner explicitement scoring standard/contextuel, "
+            "relevance backfill et history backfill dans cet ordre."
         ),
     )
     parser.add_argument(
