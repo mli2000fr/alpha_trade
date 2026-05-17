@@ -24,7 +24,7 @@ class EventSentimentConfig:
     news_provider: NewsProvider = "eodhd"
     start_utc: datetime | None = None
     end_utc: datetime | None = None
-    page_limit: int = 50
+    page_limit: int = 500
     sleep_between_requests: float = 0.0
     regular_session_maps_to_same_day: bool = False
     checkpoint_overlap_minutes: int = 60
