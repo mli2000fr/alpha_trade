@@ -262,7 +262,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Nombre max de batchs pending successifs traités dans le même process Python. "
-            "Réduit fortement l'overhead de redémarrage quand le backlog est important."
+            "Réduit fortement l'overhead de redémarrage quand le backlog est important. "
+            "`0` = pas de plafond : boucle jusqu'à épuisement du backlog du scope demandé."
         ),
     )
     parser.add_argument(

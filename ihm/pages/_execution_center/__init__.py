@@ -765,7 +765,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             f"Valeurs IHM recommandées : `{RECOMMENDED_EVENT_SENTIMENT_PENDING_LIMIT}` / "
             f"`{RECOMMENDED_EVENT_SENTIMENT_PENDING_MAX_BATCHES_PER_RUN}` / "
             f"`{RECOMMENDED_EVENT_SENTIMENT_FINBERT_BATCH_SIZE}`. En cas d'OOM GPU, le backend tente "
-            "automatiquement `64 -> 32 -> 16` avant fallback CPU."
+            "automatiquement `64 -> 32 -> 16` avant fallback CPU. "
+            "Dans l'IHM, la valeur préremplie pour `Batchs pending / process Python` est désormais `0` "
+            "afin que le scoring standard manuel et les wrappers drainent le backlog jusqu'au bout par défaut."
         )
         perf_col1, perf_col2, perf_col3 = st.columns(3)
         with perf_col1:
@@ -792,19 +794,20 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             sentiment_pending_max_batches_per_run = int(
                 st.number_input(
                     "Batchs pending / process Python",
-                    min_value=1,
+                    min_value=0,
                     max_value=100,
                     step=1,
                     value=int(
                         cast(int, st.session_state.get(
                             "pipeline_sentiment_pending_max_batches_per_run",
-                            RECOMMENDED_EVENT_SENTIMENT_PENDING_MAX_BATCHES_PER_RUN,
+                            0,
                         ))
                     ),
                     key="pipeline_sentiment_pending_max_batches_per_run",
                     help=(
                         "Nombre de sous-batchs pending successifs traités dans le même process Python. "
-                        "Augmenter pour réduire les redémarrages de process sur gros backlog."
+                        "Augmenter pour réduire les redémarrages de process sur gros backlog. "
+                        "`0` = aucun plafond : le process vide tout le backlog du scope demandé."
                     ),
                 )
             )
@@ -3496,7 +3499,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ),
             sentiment_pending_max_batches_per_run=(
                 int(sentiment_pending_max_batches_per_run)
-                if sentiment_pending_max_batches_per_run
+                if sentiment_pending_max_batches_per_run is not None
                 else None
             ),
             sentiment_feature_flush_every_n_batches=(

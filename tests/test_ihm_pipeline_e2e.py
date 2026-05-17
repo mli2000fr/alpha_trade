@@ -284,6 +284,7 @@ def test_build_launch_options_returns_default_swing_options_under_apptest() -> N
         st.session_state["__test_options_pdt_rule"] = options.execution_pdt_rule
         st.session_state["__test_options_swing_only"] = bool(options.execution_swing_only)
         st.session_state["__test_options_sentiment_news_provider"] = options.sentiment_news_provider
+        st.session_state["__test_options_sentiment_pending_max_batches"] = options.sentiment_pending_max_batches_per_run
         st.session_state["__test_options_fundamentals_provider"] = options.data_integrity_fundamentals_provider
         st.session_state["__test_options_fundamentals_overwrite"] = bool(options.data_integrity_fundamentals_overwrite_existing)
         st.session_state["__test_live_confirmed"] = bool(live_confirmed)
@@ -297,6 +298,7 @@ def test_build_launch_options_returns_default_swing_options_under_apptest() -> N
     assert at.session_state["__test_options_pdt_rule"] == "off"
     assert at.session_state["__test_options_swing_only"] is True
     assert at.session_state["__test_options_sentiment_news_provider"] == "eodhd"
+    assert at.session_state["__test_options_sentiment_pending_max_batches"] == 0
     assert at.session_state["__test_options_fundamentals_provider"] == "yahoo_finance"
     assert at.session_state["__test_options_fundamentals_overwrite"] is False
     # Live confirmation court-circuit en non-live ⇒ True.

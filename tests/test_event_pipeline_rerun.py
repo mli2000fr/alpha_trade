@@ -455,6 +455,83 @@ def test_pipeline_flushes_features_every_n_pending_batches(monkeypatch) -> None:
     }
 
 
+def test_pipeline_zero_pending_max_batches_drains_all_pending_articles(monkeypatch) -> None:
+    repository = _InMemoryRepository()
+    for idx, trade_date in enumerate(
+        (date(2026, 1, 2), date(2026, 1, 3), date(2026, 1, 4), date(2026, 1, 5)),
+        start=1,
+    ):
+        article_id = f"alpaca:drain-all-{idx}"
+        repository.upsert_news_raw([
+            {
+                "article_id": article_id,
+                "headline": f"Headline {idx}",
+                "summary": f"Summary {idx}",
+                "content": None,
+                "source": "Reuters",
+                "author": "Reporter",
+                "published_at_utc": datetime(2026, 1, idx, 22, 0, 0),
+                "event_timestamp_utc": datetime(2026, 1, idx, 22, 0, 0),
+                "event_timestamp_ny": datetime(2026, 1, idx, 17, 0, 0),
+                "effective_trade_date": trade_date,
+                "market_session_tag": "post_market",
+                "url": f"https://example.test/drain-all-{idx}",
+                "ingestion_source": "alpaca",
+                "dedupe_hash": f"drain-all-{idx}",
+                "is_major_event": 0,
+                "raw_payload": {"id": article_id},
+            }
+        ])
+        repository.upsert_news_ticker_map([
+            {
+                "article_id": article_id,
+                "symbol": "AAPL",
+                "sector": "Technology",
+                "sector_source": "stock_metadata",
+                "sector_updated_at": datetime(2026, 1, 1, 0, 0, 0),
+                "is_primary_ticker": 1,
+            }
+        ])
+
+    config = EventSentimentConfig.for_provider(
+        "alpaca",
+        sentiment_pending_limit=1,
+        sentiment_pending_max_batches_per_run=0,
+    )
+    fake_finbert = _InMemoryFinBERTSentimentService()
+
+    class _NoOpMacroRuleEngine:
+        def classify(self, article, sentiment):
+            return []
+
+    monkeypatch.setattr(
+        "event_sentiment.pipeline.NewsIngestionService",
+        lambda repository, config: _InMemoryIngestionService(repository, config),
+    )
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", lambda *args, **kwargs: fake_finbert)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", lambda *args, **kwargs: _NoOpMacroRuleEngine())
+
+    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    stats = pipeline.run(
+        start_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        end_utc=datetime(2026, 1, 6, tzinfo=UTC),
+        symbols=["AAPL"],
+        skip_ingestion=True,
+        skip_features=True,
+    )
+
+    assert stats["pending_batches_processed"] == 4
+    assert stats["pending_articles_loaded"] == 4
+    assert stats["sentiment_inferred"] == 4
+    assert sorted(repository.news_sentiment) == [
+        "alpaca:drain-all-1",
+        "alpaca:drain-all-2",
+        "alpaca:drain-all-3",
+        "alpaca:drain-all-4",
+    ]
+    assert len(fake_finbert.calls) == 4
+
+
 def test_pipeline_rerun_is_idempotent_end_to_end(monkeypatch) -> None:
     repository = _InMemoryRepository()
     config = EventSentimentConfig()

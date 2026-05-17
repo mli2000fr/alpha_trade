@@ -238,6 +238,7 @@ class EventSentimentPipeline:
         skip_features: bool = False,
     ) -> tuple[int, list[date], list[date]]:
         max_batches = int(getattr(self.config, "sentiment_pending_max_batches_per_run", 1))
+        unlimited_batches = max_batches <= 0
         feature_flush_every_n_batches = int(getattr(self.config, "feature_flush_every_n_pending_batches", 0) or 0)
         impacted_trade_dates: set[date] = set()
         pending_feature_flush_dates: set[date] = set()
@@ -247,7 +248,7 @@ class EventSentimentPipeline:
         total_macro_rows = 0
         feature_flushes_completed = 0
 
-        while batches_processed < max_batches:
+        while unlimited_batches or batches_processed < max_batches:
             pending_rows = self.repository.load_pending_articles(
                 limit=self.config.sentiment_pending_limit,
                 start_date=pending_scope.get("start_date"),

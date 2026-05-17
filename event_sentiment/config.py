@@ -42,6 +42,7 @@ class EventSentimentConfig:
     # externes implicites hors provider news choisi.
     allow_sector_fallback: bool = False
     sentiment_pending_limit: int = 1000
+    # `0` = boucle jusqu'à épuisement complet du backlog pending dans le scope.
     sentiment_pending_max_batches_per_run: int = 1
     feature_flush_every_n_pending_batches: int = 0
     feature_version: str = "v2"
@@ -95,8 +96,8 @@ class EventSentimentConfig:
             raise ValueError("finbert_max_length doit être >= 32.")
         if self.sentiment_pending_limit < 1:
             raise ValueError("sentiment_pending_limit doit être >= 1.")
-        if self.sentiment_pending_max_batches_per_run < 1:
-            raise ValueError("sentiment_pending_max_batches_per_run doit être >= 1.")
+        if self.sentiment_pending_max_batches_per_run < 0:
+            raise ValueError("sentiment_pending_max_batches_per_run doit être >= 0 (0 = illimité).")
         if self.feature_flush_every_n_pending_batches < 0:
             raise ValueError("feature_flush_every_n_pending_batches doit être >= 0.")
         if not self.feature_rolling_windows:

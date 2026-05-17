@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Literal
@@ -735,6 +735,24 @@ def _normalize_symbol_list(value: str | None) -> str | None:
     return ",".join(normalized) if normalized else None
 
 
+def _with_default_sentiment_pending_max_batches(
+    options: PipelineLaunchOptions,
+    *,
+    default_value: int = 0,
+) -> PipelineLaunchOptions:
+    """Applique un défaut IHM/wrapper pour `--sentiment-pending-max-batches`.
+
+    On ne touche pas aux appels où l'utilisateur a explicitement fourni une
+    valeur. En revanche, pour le scoring standard manuel et les wrappers auto,
+    on veut un comportement implicite « drainer jusqu'au bout » même si la
+    valeur n'a pas été renseignée côté appelant.
+    """
+
+    if options.sentiment_pending_max_batches_per_run is not None:
+        return options
+    return replace(options, sentiment_pending_max_batches_per_run=int(default_value))
+
+
 def _build_powershell_file_command(script_path: Path, arguments: list[str] | None = None) -> list[str]:
     return [
         "powershell.exe" if os.name == "nt" else "pwsh",
@@ -815,10 +833,7 @@ def _extend_event_sentiment_runtime_args(
             "--sentiment-pending-limit",
             str(int(options.sentiment_pending_limit)),
         ])
-    if (
-        options.sentiment_pending_max_batches_per_run is not None
-        and options.sentiment_pending_max_batches_per_run > 0
-    ):
+    if options.sentiment_pending_max_batches_per_run is not None:
         command.extend([
             "--sentiment-pending-max-batches",
             str(int(options.sentiment_pending_max_batches_per_run)),
@@ -886,16 +901,17 @@ def _build_sentiment_standard_command(
     sentiment_max_symbols: int | None = None,
     skip_ingestion: bool,
 ) -> list[str]:
+    effective_options = _with_default_sentiment_pending_max_batches(options)
     command = [sys.executable, "-u", "-m", "event_sentiment"]
     if skip_ingestion:
         command.append("--skip-ingestion")
     command.extend(["--skip-features", "--scoring-mode", "standard_only"])
     _extend_event_sentiment_cli_common_args(
         command,
-        options,
+        effective_options,
         include_contextual_scoring=False,
     )
-    _extend_event_sentiment_runtime_args(command, options, include_feature_flush=False)
+    _extend_event_sentiment_runtime_args(command, effective_options, include_feature_flush=False)
     _extend_event_sentiment_scope_args(
         command,
         start_utc=sentiment_start_utc,
@@ -1128,10 +1144,7 @@ def _extend_event_sentiment_powershell_args(
             "-SentimentPendingLimit",
             str(int(options.sentiment_pending_limit)),
         ])
-    if (
-        options.sentiment_pending_max_batches_per_run is not None
-        and options.sentiment_pending_max_batches_per_run > 0
-    ):
+    if options.sentiment_pending_max_batches_per_run is not None:
         command_args.extend([
             "-SentimentPendingMaxBatches",
             str(int(options.sentiment_pending_max_batches_per_run)),
@@ -1271,6 +1284,7 @@ def _build_import_news_pending_loop_command(
     news_import_max_symbols: int | None,
     skip_import: bool = False,
 ) -> list[str]:
+    effective_options = _with_default_sentiment_pending_max_batches(options)
     if news_import_start_date is None:
         raise ValueError("La date de début est obligatoire pour le pipeline auto news.")
     script_path = PROJECT_ROOT / "scripts" / "windows" / "import_news_and_score_pending.ps1"
@@ -1286,7 +1300,7 @@ def _build_import_news_pending_loop_command(
         command_args.extend(["-EndDate", news_import_end_date])
     _extend_event_sentiment_powershell_args(
         command_args,
-        options,
+        effective_options,
         include_contextual_scoring=True,
     )
     _extend_import_news_powershell_args(
@@ -1296,7 +1310,7 @@ def _build_import_news_pending_loop_command(
         max_symbols=news_import_max_symbols,
         resume_from_checkpoint=bool(options.news_import_resume_from_checkpoint),
     )
-    _extend_relevance_backfill_powershell_args(command_args, options)
+    _extend_relevance_backfill_powershell_args(command_args, effective_options)
     if skip_import:
         command_args.append("-SkipImport")
     return _build_powershell_file_command(script_path, command_args)

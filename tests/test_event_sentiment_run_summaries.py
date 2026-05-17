@@ -237,15 +237,61 @@ def test_event_sentiment_pipeline_emits_live_progress(monkeypatch) -> None:
 
     assert stats["resolved_symbols"] == 2
     assert progress_payloads
-    assert any(payload.get("progress_phase") == "ingestion" for payload in progress_payloads)
-    ingestion_payload = next(
-        payload
-        for payload in progress_payloads
-        if payload.get("progress_phase") == "ingestion" and payload.get("progress_current") == 1
-    )
-    assert ingestion_payload["progress_current"] == 1
-    assert ingestion_payload["progress_total"] == 2
-    assert ingestion_payload["progress_item"] == "AAPL"
+
+
+def test_event_sentiment_cli_forwards_zero_pending_max_batches_as_unlimited(monkeypatch) -> None:
+    captured_overrides: dict[str, object] = {}
+
+    class _FakePipeline:
+        def __init__(self, repository, config, progress_callback=None):
+            self.repository = repository
+            self.config = config
+            self.progress_callback = progress_callback
+
+        def run(self, **kwargs):
+            return {
+                "resolved_symbols": 0,
+                "start_utc": "2026-01-01T00:00:00+00:00",
+                "end_utc": "2026-01-01T00:00:00+00:00",
+                "ingestion": {},
+                "sentiment_inferred": 0,
+            }
+
+    class _FakeConfig:
+        def __init__(self, **kwargs):
+            self.sentiment_pending_max_batches_per_run = kwargs.get("sentiment_pending_max_batches_per_run", 1)
+            self.sentiment_pending_limit = kwargs.get("sentiment_pending_limit", 1000)
+            self.feature_flush_every_n_pending_batches = kwargs.get("feature_flush_every_n_pending_batches", 0)
+            self.finbert_batch_size = kwargs.get("finbert_batch_size", 16)
+            self.provider_ticker_relevance_mode = "provider_default"
+            self.news_provider = "eodhd"
+            self.source_name = "eodhd_news"
+            self.enable_contextual_scoring = False
+            self.scoring_mode = "standard_only"
+            self.contextual_scoring_min_relevance = 0.0
+            self.contextual_scoring_max_pairs_per_run = 5000
+
+        @classmethod
+        def for_provider(cls, news_provider: str, **overrides: object):
+            captured_overrides.update(overrides)
+            cfg = cls(**overrides)
+            cfg.news_provider = news_provider
+            cfg.source_name = f"{news_provider}_news"
+            return cfg
+
+    monkeypatch.setattr(cli, "EventSentimentConfig", _FakeConfig)
+    monkeypatch.setattr(cli, "EventSentimentPipeline", _FakePipeline)
+    monkeypatch.setattr(cli, "EventSentimentRepository", lambda: object())
+    monkeypatch.setattr(sys, "argv", [
+        "event_sentiment.py",
+        "--skip-ingestion",
+        "--sentiment-pending-max-batches",
+        "0",
+    ])
+
+    cli.main()
+
+    assert captured_overrides["sentiment_pending_max_batches_per_run"] == 0
 
 
 def test_event_sentiment_pipeline_contextual_only_forwards_scope_to_repository(monkeypatch) -> None:

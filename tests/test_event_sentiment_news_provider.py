@@ -82,6 +82,16 @@ def test_event_sentiment_config_default_provider_is_eodhd() -> None:
     assert cfg.allow_sector_fallback is False
 
 
+def test_event_sentiment_config_accepts_zero_pending_max_batches_for_unlimited_mode() -> None:
+    cfg = EventSentimentConfig(sentiment_pending_max_batches_per_run=0)
+    assert cfg.sentiment_pending_max_batches_per_run == 0
+
+
+def test_event_sentiment_config_rejects_negative_pending_max_batches() -> None:
+    with pytest.raises(ValueError, match="sentiment_pending_max_batches_per_run"):
+        EventSentimentConfig(sentiment_pending_max_batches_per_run=-1)
+
+
 def test_config_for_provider_eodhd_keeps_explicit_sector_fallback_override() -> None:
     cfg = EventSentimentConfig.for_provider("eodhd", allow_sector_fallback=True)
     assert cfg.allow_sector_fallback is True

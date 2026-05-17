@@ -67,7 +67,7 @@ param(
     [int]$SentimentPendingLimit = 5000,
 
     [Parameter()]
-    [int]$SentimentPendingMaxBatches = 10,
+    [int]$SentimentPendingMaxBatches = 0,
 
     [Parameter()]
     [int]$FeatureFlushEveryNBatches = 0,

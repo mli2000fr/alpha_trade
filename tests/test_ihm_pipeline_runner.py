@@ -1008,6 +1008,19 @@ def test_build_pipeline_command_import_news_pending_loop_can_resume_import_from_
     assert "-ResumeCheckpoints" in command
 
 
+def test_build_pipeline_command_import_news_pending_loop_defaults_to_unlimited_pending_batches() -> None:
+    command = build_pipeline_command(
+        "import_news_pending_loop",
+        PipelineLaunchOptions(
+            news_import_start_date="2026-04-01",
+            news_import_end_date="2026-04-15",
+        ),
+    )
+
+    assert "-SentimentPendingMaxBatches" in command
+    assert command[command.index("-SentimentPendingMaxBatches") + 1] == "0"
+
+
 def test_build_pipeline_command_import_news_pending_loop_supports_contextual_only_mode() -> None:
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",
@@ -1150,6 +1163,36 @@ def test_build_pipeline_command_sentiment_standard_scoring_forces_standard_only_
         "--symbols",
         "AAPL,MSFT",
     ]
+
+
+def test_build_pipeline_command_sentiment_standard_scoring_defaults_to_unlimited_pending_batches() -> None:
+    command = build_pipeline_command(
+        "sentiment_standard_scoring",
+        PipelineLaunchOptions(
+            news_import_start_date="2026-04-01",
+            news_import_end_date="2026-04-15",
+            sentiment_news_provider="eodhd",
+        ),
+    )
+
+    assert "--sentiment-pending-max-batches" in command
+    assert command[command.index("--sentiment-pending-max-batches") + 1] == "0"
+
+
+def test_build_pipeline_command_sentiment_standard_scoring_keeps_zero_pending_max_batches_for_unlimited_mode() -> None:
+    command = build_pipeline_command(
+        "sentiment_standard_scoring",
+        PipelineLaunchOptions(
+            news_import_start_date="2026-04-01",
+            news_import_end_date="2026-04-15",
+            sentiment_news_provider="eodhd",
+            sentiment_pending_limit=5000,
+            sentiment_pending_max_batches_per_run=0,
+        ),
+    )
+
+    assert "--sentiment-pending-max-batches" in command
+    assert command[command.index("--sentiment-pending-max-batches") + 1] == "0"
 
 
 def test_build_pipeline_command_sentiment_relevance_backfill_uses_manual_scope() -> None:
