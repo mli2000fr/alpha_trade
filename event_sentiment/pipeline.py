@@ -1,4 +1,5 @@
 ﻿import logging
+from math import ceil
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Callable, Sequence, cast
@@ -533,7 +534,7 @@ class EventSentimentPipeline:
         # Étape opt-in via config.enable_contextual_scoring. Garde-fous perf :
         # filtre par relevance_score + cap dur sur le nombre de paires.
         if scoring_mode in {"contextual_only", "standard_and_contextual"}:
-            contextual_stats, contextual_impacted_trade_dates = self._run_contextual_scoring(pending_scope)
+            contextual_stats, contextual_impacted_trade_dates = self._run_contextual_scoring(pending_scope, stats)
             stats.update(contextual_stats)
             if contextual_impacted_trade_dates:
                 contextual_trade_dates_set = set(contextual_impacted_trade_dates)
@@ -541,13 +542,6 @@ class EventSentimentPipeline:
                 remaining_impacted_trade_dates = sorted(
                     set(remaining_impacted_trade_dates).union(contextual_trade_dates_set)
                 )
-            self._emit_progress(
-                stats,
-                current=max(_coerce_int(stats.get("contextual_pairs_loaded")), 1),
-                total=max(_coerce_int(stats.get("contextual_pairs_loaded")), 1),
-                label="📰 Progression sentiment pipeline — scoring contextuel",
-                phase="contextual_scoring",
-            )
         if skip_features:
             stats["impacted_trade_dates"] = [d.isoformat() for d in impacted_trade_dates]
             stats.setdefault("ticker_day_rows", 0)
@@ -590,77 +584,180 @@ class EventSentimentPipeline:
         assert scorer is not None
         return scorer
 
-    def _run_contextual_scoring(self, pending_scope: dict[str, object]) -> tuple[dict[str, object], list[date]]:
+    def _count_pending_contextual_pairs(self, **kwargs: object) -> int | None:
+        counter = getattr(self.repository, "count_pending_contextual_pairs", None)
+        if not callable(counter):
+            return None
+        return int(counter(**kwargs) or 0)
+
+    def _run_contextual_scoring(
+        self,
+        pending_scope: dict[str, object],
+        stats: dict[str, object],
+    ) -> tuple[dict[str, object], list[date]]:
         """Niveau 4 — pipeline scoring contextualisé (article, symbol).
 
         Charge les paires en attente via ``load_pending_contextual_pairs``
-        (cap par ``contextual_scoring_max_pairs_per_run`` et seuil
+        (lot interne borné par ``contextual_scoring_max_pairs_per_run`` et seuil
         ``contextual_scoring_min_relevance``), invoque le scorer contextuel
-        FinBERT, persiste dans ``news_ticker_sentiment`` et retourne les
-        compteurs pour le summary.
+        FinBERT, persiste dans ``news_ticker_sentiment`` puis reboucle
+        automatiquement jusqu'à épuisement du backlog contextuel sur le scope.
+        Retourne les compteurs agrégés pour le summary.
         """
-        cap = int(getattr(self.config, "contextual_scoring_max_pairs_per_run", 5000))
+        cap = max(int(getattr(self.config, "contextual_scoring_max_pairs_per_run", 5000) or 5000), 1)
         min_relevance = float(getattr(self.config, "contextual_scoring_min_relevance", 0.0))
         contextual_scope = {
             key: (value if not isinstance(value, list) else list(value))
             for key, value in pending_scope.items()
             if value not in (None, [])
         }
-        pending = self.repository.load_pending_contextual_pairs(
-            limit=cap,
-            min_relevance=min_relevance,
-            start_date=cast(date | None, pending_scope.get("start_date")),
-            end_date=cast(date | None, pending_scope.get("end_date")),
-            symbols=cast(list[str] | None, pending_scope.get("symbols")),
-            ingestion_source=cast(str | None, pending_scope.get("ingestion_source")),
-        )
-        if not pending:
-            return (
-                {
-                    "contextual_pairs_loaded": 0,
-                    "contextual_scored": 0,
-                    "contextual_min_relevance": min_relevance,
-                    "contextual_cap": cap,
-                    "contextual_scope": contextual_scope,
-                },
-                [],
-            )
-
-        pairs: list[tuple[NormalizedNewsArticle, str, str | None]] = []
-        for row in pending:
-            article = NormalizedNewsArticle(
-                article_id=row["article_id"],
-                headline=row.get("headline") or "",
-                summary=row.get("summary"),
-                content=row.get("content"),
-                source=row.get("source") or "",
-                author=None,
-                url=None,
-                published_at_utc=row["published_at_utc"],
-                event_timestamp_utc=row["event_timestamp_utc"],
-                event_timestamp_ny=row["event_timestamp_ny"],
-                effective_trade_date=row["effective_trade_date"],
-                market_session_tag=row.get("market_session_tag") or "regular",
-                tickers=[],
-                raw_payload={},
-                is_major_event=int(row.get("is_major_event") or 0),
-            )
-            pairs.append((article, str(row["symbol"]), row.get("company_name")))
-
         scorer = self._ensure_contextual_scorer()
-        records = scorer.score_pairs(pairs)
-        scored = self.repository.upsert_news_ticker_sentiment(
-            [asdict(record) for record in records]
+        total_loaded = 0
+        total_scored = 0
+        batch_count = 0
+        impacted_trade_dates: set[date] = set()
+        contextual_query_kwargs = {
+            "start_date": cast(date | None, pending_scope.get("start_date")),
+            "end_date": cast(date | None, pending_scope.get("end_date")),
+            "symbols": cast(list[str] | None, pending_scope.get("symbols")),
+            "ingestion_source": cast(str | None, pending_scope.get("ingestion_source")),
+        }
+        initial_pending_pairs = self._count_pending_contextual_pairs(
+            min_relevance=min_relevance,
+            **contextual_query_kwargs,
         )
-        return (
+        estimated_batches = (
+            int(ceil(initial_pending_pairs / cap))
+            if initial_pending_pairs is not None and initial_pending_pairs > 0
+            else 0
+        )
+
+        stats.update(
             {
-                "contextual_pairs_loaded": len(pending),
-                "contextual_scored": int(scored),
+                "contextual_pairs_loaded": 0,
+                "contextual_scored": 0,
+                "contextual_batches_processed": 0,
                 "contextual_min_relevance": min_relevance,
                 "contextual_cap": cap,
                 "contextual_scope": contextual_scope,
+                "contextual_total_pending_pairs": int(initial_pending_pairs or 0),
+                "contextual_pairs_remaining": int(initial_pending_pairs or 0),
+                "contextual_estimated_batches": int(estimated_batches),
+                "contextual_current_batch": 0,
+                "contextual_last_batch_size": 0,
+            }
+        )
+        if initial_pending_pairs is not None:
+            self._emit_progress(
+                stats,
+                current=0,
+                total=max(initial_pending_pairs, 1),
+                label=(
+                    "📰 Progression sentiment pipeline — scoring contextuel"
+                    if estimated_batches <= 0
+                    else f"📰 Progression sentiment pipeline — scoring contextuel (lot 0/{estimated_batches})"
+                ),
+                phase="contextual_scoring",
+                unit="paires",
+            )
+
+        while True:
+            pending = self.repository.load_pending_contextual_pairs(
+                limit=cap,
+                min_relevance=min_relevance,
+                **contextual_query_kwargs,
+            )
+            if not pending:
+                break
+
+            batch_count += 1
+            total_loaded += len(pending)
+            pairs: list[tuple[NormalizedNewsArticle, str, str | None]] = []
+            for row in pending:
+                article = NormalizedNewsArticle(
+                    article_id=row["article_id"],
+                    headline=row.get("headline") or "",
+                    summary=row.get("summary"),
+                    content=row.get("content"),
+                    source=row.get("source") or "",
+                    author=None,
+                    url=None,
+                    published_at_utc=row["published_at_utc"],
+                    event_timestamp_utc=row["event_timestamp_utc"],
+                    event_timestamp_ny=row["event_timestamp_ny"],
+                    effective_trade_date=row["effective_trade_date"],
+                    market_session_tag=row.get("market_session_tag") or "regular",
+                    tickers=[],
+                    raw_payload={},
+                    is_major_event=int(row.get("is_major_event") or 0),
+                )
+                pairs.append((article, str(row["symbol"]), row.get("company_name")))
+                if row.get("effective_trade_date") is not None:
+                    impacted_trade_dates.add(cast(date, row["effective_trade_date"]))
+
+            records = scorer.score_pairs(pairs)
+            scored = int(self.repository.upsert_news_ticker_sentiment([asdict(record) for record in records]))
+            if scored <= 0:
+                raise RuntimeError(
+                    "Scoring contextuel bloqué : aucune paire persistée sur le dernier lot. "
+                    "Le backlog ne peut pas être drainé automatiquement."
+                )
+            total_scored += scored
+
+            remaining_pending_pairs = self._count_pending_contextual_pairs(
+                min_relevance=min_relevance,
+                **contextual_query_kwargs,
+            )
+            processed_pairs = total_scored
+            if initial_pending_pairs is not None and remaining_pending_pairs is not None:
+                processed_pairs = max(total_scored, initial_pending_pairs - remaining_pending_pairs)
+
+            stats.update(
+                {
+                    "contextual_pairs_loaded": total_loaded,
+                    "contextual_scored": total_scored,
+                    "contextual_batches_processed": batch_count,
+                    "contextual_current_batch": batch_count,
+                    "contextual_last_batch_size": len(pending),
+                    "contextual_pairs_remaining": int(
+                        remaining_pending_pairs if remaining_pending_pairs is not None else 0
+                    ),
+                }
+            )
+            total_for_progress = (
+                initial_pending_pairs
+                if initial_pending_pairs is not None and initial_pending_pairs > 0
+                else max(total_loaded, total_scored, 1)
+            )
+            batch_label = (
+                f"lot {batch_count}/{estimated_batches}"
+                if estimated_batches > 0
+                else f"lot {batch_count}"
+            )
+            self._emit_progress(
+                stats,
+                current=processed_pairs,
+                total=total_for_progress,
+                label=f"📰 Progression sentiment pipeline — scoring contextuel ({batch_label})",
+                phase="contextual_scoring",
+                unit="paires",
+            )
+
+        return (
+            {
+                "contextual_pairs_loaded": total_loaded,
+                "contextual_scored": total_scored,
+                "contextual_batches_processed": batch_count,
+                "contextual_min_relevance": min_relevance,
+                "contextual_cap": cap,
+                "contextual_scope": contextual_scope,
+                "contextual_total_pending_pairs": int(initial_pending_pairs or 0),
+                "contextual_pairs_remaining": 0,
+                "contextual_estimated_batches": int(estimated_batches),
+                "contextual_current_batch": int(batch_count),
+                "contextual_last_batch_size": int(len(pending) if "pending" in locals() and pending else 0),
             },
-            sorted({cast(date, row["effective_trade_date"]) for row in pending if row.get("effective_trade_date") is not None}),
+            sorted(impacted_trade_dates),
         )
 
     def _emit_ingestion_progress(self, stats: dict[str, object], payload: dict[str, object]) -> None:
@@ -685,6 +782,7 @@ class EventSentimentPipeline:
         total: int,
         label: str,
         phase: str,
+        unit: str | None = None,
         item: str | None = None,
     ) -> None:
         if not callable(self.progress_callback):
@@ -696,7 +794,7 @@ class EventSentimentPipeline:
                 total=total,
                 label=label,
                 phase=phase,
-                unit="symboles" if phase == "ingestion" else "articles",
+                unit=unit or ("symboles" if phase == "ingestion" else "articles"),
                 item=item,
             )
         )

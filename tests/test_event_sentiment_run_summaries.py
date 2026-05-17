@@ -7,6 +7,7 @@ import pandas as pd
 
 from database import connection as db_connection
 from event_sentiment import cli, signal_aggregator
+from event_sentiment.models import ContextualSentimentRecord
 
 
 def _payload_from_stdout(stdout: str, prefix: str) -> dict[str, object]:
@@ -309,6 +310,169 @@ def test_event_sentiment_pipeline_contextual_only_forwards_scope_to_repository(m
         "symbols": ["AAPL"],
         "ingestion_source": "alpaca",
     }
+
+
+def test_event_sentiment_pipeline_emits_contextual_batch_progress(monkeypatch) -> None:
+    class _DummyRepository:
+        def __init__(self) -> None:
+            self.pending_pairs = [
+                {
+                    "article_id": "alpaca:ctx-1",
+                    "symbol": "AAPL",
+                    "headline": "Headline 1",
+                    "summary": "Summary 1",
+                    "content": None,
+                    "source": "Reuters",
+                    "published_at_utc": cli.dateutil.parser.isoparse("2026-04-01T12:00:00Z").replace(tzinfo=None),
+                    "event_timestamp_utc": cli.dateutil.parser.isoparse("2026-04-01T12:00:00Z").replace(tzinfo=None),
+                    "event_timestamp_ny": cli.dateutil.parser.isoparse("2026-04-01T08:00:00Z").replace(tzinfo=None),
+                    "effective_trade_date": cli.dateutil.parser.isoparse("2026-04-01T00:00:00Z").date(),
+                    "market_session_tag": "regular",
+                    "is_major_event": 0,
+                    "company_name": "Apple Inc.",
+                    "relevance_score": 0.9,
+                },
+                {
+                    "article_id": "alpaca:ctx-2",
+                    "symbol": "MSFT",
+                    "headline": "Headline 2",
+                    "summary": "Summary 2",
+                    "content": None,
+                    "source": "Reuters",
+                    "published_at_utc": cli.dateutil.parser.isoparse("2026-04-01T13:00:00Z").replace(tzinfo=None),
+                    "event_timestamp_utc": cli.dateutil.parser.isoparse("2026-04-01T13:00:00Z").replace(tzinfo=None),
+                    "event_timestamp_ny": cli.dateutil.parser.isoparse("2026-04-01T09:00:00Z").replace(tzinfo=None),
+                    "effective_trade_date": cli.dateutil.parser.isoparse("2026-04-01T00:00:00Z").date(),
+                    "market_session_tag": "regular",
+                    "is_major_event": 0,
+                    "company_name": "Microsoft Corp.",
+                    "relevance_score": 0.9,
+                },
+                {
+                    "article_id": "alpaca:ctx-3",
+                    "symbol": "NVDA",
+                    "headline": "Headline 3",
+                    "summary": "Summary 3",
+                    "content": None,
+                    "source": "Reuters",
+                    "published_at_utc": cli.dateutil.parser.isoparse("2026-04-01T14:00:00Z").replace(tzinfo=None),
+                    "event_timestamp_utc": cli.dateutil.parser.isoparse("2026-04-01T14:00:00Z").replace(tzinfo=None),
+                    "event_timestamp_ny": cli.dateutil.parser.isoparse("2026-04-01T10:00:00Z").replace(tzinfo=None),
+                    "effective_trade_date": cli.dateutil.parser.isoparse("2026-04-02T00:00:00Z").date(),
+                    "market_session_tag": "regular",
+                    "is_major_event": 0,
+                    "company_name": "NVIDIA Corp.",
+                    "relevance_score": 0.9,
+                },
+            ]
+            self.scored_pairs: set[tuple[str, str]] = set()
+
+        def load_candidate_symbols(self):
+            return ["AAPL", "MSFT", "NVDA"]
+
+        def load_pending_contextual_pairs(self, limit=None, **kwargs):
+            pending = [
+                dict(row)
+                for row in self.pending_pairs
+                if (str(row["article_id"]), str(row["symbol"])) not in self.scored_pairs
+            ]
+            return pending[: int(limit or len(pending))]
+
+        def count_pending_contextual_pairs(self, **kwargs):
+            return sum(
+                1
+                for row in self.pending_pairs
+                if (str(row["article_id"]), str(row["symbol"])) not in self.scored_pairs
+            )
+
+        def upsert_news_ticker_sentiment(self, rows):
+            for row in rows:
+                self.scored_pairs.add((str(row["article_id"]), str(row["symbol"])))
+            return len(rows)
+
+    class _DummyConfig:
+        finbert_model_name = "dummy"
+        finbert_model_version = "1"
+        finbert_batch_size = 4
+        finbert_max_length = 128
+        finbert_model_revision = None
+        macro_rule_version = "1"
+        initial_backfill_days = 2
+        checkpoint_overlap_minutes = 60
+        candidate_reactivation_backfill_days = 5
+        sentiment_pending_limit = 100
+        sentiment_pending_max_batches_per_run = 1
+        feature_history_buffer_days = 2
+        feature_version = "v1"
+        feature_rolling_windows = [3]
+        source_name = "alpaca_news"
+        provider_name = "alpaca"
+        regular_session_maps_to_same_day = True
+        scoring_mode = "contextual_only"
+        enable_contextual_scoring = True
+        contextual_scoring_min_relevance = 0.2
+        contextual_scoring_max_pairs_per_run = 2
+
+    class _FakeContextualScorer:
+        def adopt_runtime_from(self, finbert) -> None:
+            return None
+
+        def score_pairs(self, pairs):
+            scored = []
+            for article, symbol, _company_name in pairs:
+                scored.append(
+                    ContextualSentimentRecord(
+                        article_id=article.article_id,
+                        symbol=symbol,
+                        model_name="dummy",
+                        model_version="1",
+                        text_strategy="contextual_company",
+                        text_hash=f"ctx-{symbol.lower()}",
+                        truncated=0,
+                        max_length_tokens=128,
+                        sentiment_label="positive",
+                        positive_score=0.9,
+                        neutral_score=0.08,
+                        negative_score=0.02,
+                        sentiment_confidence=0.9,
+                        sentiment_net_score=0.88,
+                        scoring_version="contextual_v1",
+                    )
+                )
+            return scored
+
+    progress_payloads: list[dict[str, object]] = []
+    pipeline_instance = cli.EventSentimentPipeline(
+        repository=_DummyRepository(),
+        config=_DummyConfig(),
+        progress_callback=progress_payloads.append,
+    )
+    monkeypatch.setattr(
+        pipeline_instance,
+        "_ensure_contextual_scorer",
+        lambda: _FakeContextualScorer(),
+    )
+
+    stats = pipeline_instance.run(
+        start_utc=cli.dateutil.parser.isoparse("2026-04-01T00:00:00Z"),
+        end_utc=cli.dateutil.parser.isoparse("2026-04-03T00:00:00Z"),
+        symbols=["AAPL", "MSFT", "NVDA"],
+        skip_ingestion=True,
+        skip_features=True,
+    )
+
+    contextual_payloads = [
+        payload for payload in progress_payloads if payload.get("progress_phase") == "contextual_scoring"
+    ]
+    assert stats["contextual_scored"] == 3
+    assert stats["contextual_batches_processed"] == 2
+    assert contextual_payloads
+    assert contextual_payloads[0]["progress_unit"] == "paires"
+    assert any("lot 1/2" in str(payload.get("progress_label")) for payload in contextual_payloads)
+    assert any("lot 2/2" in str(payload.get("progress_label")) for payload in contextual_payloads)
+    assert any(payload.get("progress_current") == 2 and payload.get("progress_total") == 3 for payload in contextual_payloads)
+    assert contextual_payloads[-1]["progress_current"] == 3
+    assert contextual_payloads[-1]["contextual_pairs_remaining"] == 0
 
 
 def test_signal_aggregator_main_emits_structured_summary(monkeypatch, capsys) -> None:

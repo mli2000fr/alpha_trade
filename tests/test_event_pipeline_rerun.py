@@ -64,12 +64,29 @@ class _InMemoryRepository:
             self.news_ticker_sentiment[(record["article_id"], record["symbol"])] = dict(record)
         return len(records)
 
-    def load_pending_contextual_pairs(self, limit=5000, min_relevance=0.0):
+    def load_pending_contextual_pairs(
+        self,
+        limit=5000,
+        min_relevance=0.0,
+        *,
+        start_date=None,
+        end_date=None,
+        symbols=None,
+        ingestion_source=None,
+    ):
         pending: list[dict] = []
         for (article_id, symbol), mapping in sorted(self.news_ticker_map.items()):
             if (article_id, symbol) in self.news_ticker_sentiment:
                 continue
             raw = self.news_raw[article_id]
+            if start_date is not None and raw["effective_trade_date"] < start_date:
+                continue
+            if end_date is not None and raw["effective_trade_date"] > end_date:
+                continue
+            if symbols is not None and symbol not in set(symbols):
+                continue
+            if ingestion_source is not None and str(raw.get("ingestion_source")) != str(ingestion_source):
+                continue
             pending.append(
                 {
                     "article_id": article_id,
@@ -622,6 +639,94 @@ def test_pipeline_contextual_only_rebuilds_features_without_standard_pending_sco
     assert repository.news_ticker_sentiment[(article_id, "AAPL")]["scoring_version"] == "contextual_v1"
     assert len(repository.feature_frame_requests) == 1
     assert repository.feature_frame_requests[0]["end_date"] == date(2026, 1, 3)
+
+
+def test_pipeline_contextual_only_drains_backlog_automatically_across_multiple_batches(monkeypatch) -> None:
+    repository = _InMemoryRepository()
+    fake_contextual = _InMemoryContextualScorer()
+    for idx, symbol in enumerate(("AAPL", "MSFT", "NVDA"), start=1):
+        article_id = f"alpaca:contextual-loop-{idx}"
+        trade_date = date(2026, 1, idx)
+        repository.upsert_news_raw([
+            {
+                "article_id": article_id,
+                "headline": f"Headline {idx}",
+                "summary": "Contextual loop",
+                "content": None,
+                "source": "Reuters",
+                "author": "Reporter",
+                "published_at_utc": datetime(2026, 1, idx, 22, 0, 0),
+                "event_timestamp_utc": datetime(2026, 1, idx, 22, 0, 0),
+                "event_timestamp_ny": datetime(2026, 1, idx, 17, 0, 0),
+                "effective_trade_date": trade_date,
+                "market_session_tag": "post_market",
+                "url": f"https://example.test/contextual-loop-{idx}",
+                "ingestion_source": "alpaca",
+                "dedupe_hash": f"contextual-loop-{idx}",
+                "is_major_event": 0,
+                "raw_payload": {"id": article_id},
+            }
+        ])
+        repository.upsert_news_ticker_map([
+            {
+                "article_id": article_id,
+                "symbol": symbol,
+                "sector": "Technology",
+                "sector_source": "stock_metadata",
+                "sector_updated_at": datetime(2026, 1, 1, 0, 0, 0),
+                "is_primary_ticker": 1,
+                "relevance_score": 0.95,
+            }
+        ])
+        repository.upsert_news_sentiment([
+            {
+                "article_id": article_id,
+                "model_name": "ProsusAI/finbert",
+                "model_version": "finbert_v1",
+                "text_strategy": "headline_summary",
+                "text_hash": f"base-hash-{idx}",
+                "truncated": 0,
+                "max_length_tokens": 256,
+                "sentiment_label": "positive",
+                "positive_score": 0.81,
+                "neutral_score": 0.15,
+                "negative_score": 0.04,
+                "sentiment_confidence": 0.81,
+                "sentiment_net_score": 0.77,
+            }
+        ])
+
+    config = EventSentimentConfig.for_provider(
+        "alpaca",
+        scoring_mode="contextual_only",
+        contextual_scoring_min_relevance=0.2,
+        contextual_scoring_max_pairs_per_run=2,
+    )
+
+    monkeypatch.setattr(
+        "event_sentiment.pipeline.NewsIngestionService",
+        lambda repository, config: _InMemoryIngestionService(repository, config),
+    )
+    monkeypatch.setattr("event_sentiment.pipeline.FinBERTSentimentService", lambda *args, **kwargs: _InMemoryFinBERTSentimentService())
+    monkeypatch.setattr("event_sentiment.pipeline.ContextualFinBERTScorer", lambda *args, **kwargs: fake_contextual)
+    monkeypatch.setattr("event_sentiment.pipeline.MacroRuleEngine", lambda *args, **kwargs: _InMemoryMacroRuleEngine())
+
+    pipeline = EventSentimentPipeline(repository=repository, config=config)
+    stats = pipeline.run(
+        start_utc=datetime(2026, 1, 1, tzinfo=UTC),
+        end_utc=datetime(2026, 1, 5, tzinfo=UTC),
+        symbols=["AAPL", "MSFT", "NVDA"],
+        skip_ingestion=True,
+        skip_features=True,
+    )
+
+    assert stats["contextual_pairs_loaded"] == 3
+    assert stats["contextual_scored"] == 3
+    assert stats["contextual_batches_processed"] == 2
+    assert len(fake_contextual.calls) == 2
+    assert len(fake_contextual.calls[0]) == 2
+    assert len(fake_contextual.calls[1]) == 1
+    assert len(repository.news_ticker_sentiment) == 3
 
 
 def test_pipeline_final_feature_aggregation_is_chunked_for_large_trade_date_ranges(monkeypatch) -> None:

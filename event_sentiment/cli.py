@@ -97,6 +97,10 @@ def _build_cli_run_summary(
         summary["finbert_batch_size"] = getattr(config, "finbert_batch_size", None)
     for key in (
         "pending_batches_processed",
+        "contextual_batches_processed",
+        "contextual_total_pending_pairs",
+        "contextual_pairs_remaining",
+        "contextual_estimated_batches",
         "finbert_effective_batch_size",
         "finbert_runtime_device",
         "finbert_gpu_oom_batch_fallbacks",
@@ -217,8 +221,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help=(
-            "Niveau 4 — cap dur sur le nombre de paires (article, symbole) "
-            "scorées par run (défaut config : 5000)."
+            "Niveau 4 — taille max d'un lot interne de paires (article, symbole) "
+            "chargées/scorées à la fois (défaut config : 5000). Le pipeline "
+            "reboucle automatiquement ensuite jusqu'à épuisement du backlog "
+            "contextuel du scope demandé."
         ),
     )
     parser.add_argument(

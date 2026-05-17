@@ -485,6 +485,7 @@ class EventSentimentRepository:
         start_date: date | None = None,
         end_date: date | None = None,
         symbols: list[str] | None = None,
+        ingestion_source: str | None = None,
         rescore_all: bool = False,
     ):
         """Itère par batch les lignes ``news_ticker_map`` candidates au
@@ -504,6 +505,9 @@ class EventSentimentRepository:
         if end_date is not None:
             filters.append("nr.effective_trade_date <= :end_date")
             params["end_date"] = end_date
+        if ingestion_source:
+            filters.append("nr.ingestion_source = :ingestion_source")
+            params["ingestion_source"] = str(ingestion_source).strip().lower()
         if symbols:
             filters.append("ntm.symbol IN :symbols")
             params["symbols"] = list(symbols)
@@ -556,6 +560,7 @@ class EventSentimentRepository:
         start_date: date | None = None,
         end_date: date | None = None,
         symbols: list[str] | None = None,
+        ingestion_source: str | None = None,
     ) -> int:
         """Purge optionnelle des lignes ``news_ticker_map.relevance_score < seuil``.
 
@@ -565,7 +570,7 @@ class EventSentimentRepository:
         """
         filters = ["relevance_score IS NOT NULL", "relevance_score < :threshold"]
         params: dict[str, Any] = {"threshold": float(threshold)}
-        if start_date is not None or end_date is not None or symbols:
+        if start_date is not None or end_date is not None or symbols or ingestion_source:
             # On a besoin d'un sous-select sur news_raw pour les bornes de date.
             join_clause = "JOIN news_raw nr ON nr.article_id = ntm.article_id"
             if start_date is not None:
@@ -574,6 +579,9 @@ class EventSentimentRepository:
             if end_date is not None:
                 filters.append("nr.effective_trade_date <= :end_date")
                 params["end_date"] = end_date
+            if ingestion_source:
+                filters.append("nr.ingestion_source = :ingestion_source")
+                params["ingestion_source"] = str(ingestion_source).strip().lower()
             if symbols:
                 filters.append("ntm.symbol IN :symbols")
                 params["symbols"] = list(symbols)

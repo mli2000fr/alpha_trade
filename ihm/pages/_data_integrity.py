@@ -260,9 +260,9 @@ def _render_import_news_panel(
         )
         with st.expander("Mini guide d'usage — quand lancer quoi ?", expanded=False):
             st.markdown(
-                "1. **Import news** : importe les news brutes sur la fenêtre ciblée.\n"
+                "1. **Import news** : importe les news brutes sur la fenêtre ciblée et alimente déjà `news_raw` + `news_ticker_map`.\n"
                 "2. **Scoring FinBERT standard (sans features)** : remplit `news_sentiment` sans encore reconstruire les agrégats journaliers.\n"
-                "3. **Calcul `relevance_score` (Niveau 2/3)** : enrichit `news_ticker_map` en pur Python, avant les agrégations.\n"
+                "3. **Calcul `relevance_score` (Niveau 2/3)** : complète/backfill `news_ticker_map.relevance_score` en pur Python sur les lignes de `news_ticker_map` déjà créées par l'import.\n"
                 "4. **Agrégation features journalières** : reconstruit `ticker_daily_sentiment_features` / `sector_daily_sentiment_features`.\n"
                 "5. **Scoring FinBERT contextuel (Niveau 4)** : enrichit `news_ticker_sentiment` sur les couples `(article, symbole)` compatibles avec le scope et les seuils configurés."
             )

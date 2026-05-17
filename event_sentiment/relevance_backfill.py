@@ -28,7 +28,7 @@ import json
 import logging
 from dataclasses import asdict
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 import dateutil.parser
@@ -101,6 +101,7 @@ class RelevanceBackfillService:
         start_date: date | None = None,
         end_date: date | None = None,
         symbols: list[str] | None = None,
+        ingestion_source: str | None = None,
         dry_run: bool = False,
         rescore_all: bool = False,
     ) -> dict[str, int]:
@@ -111,6 +112,7 @@ class RelevanceBackfillService:
             start_date=start_date,
             end_date=end_date,
             symbols=symbols,
+            ingestion_source=ingestion_source,
             rescore_all=rescore_all,
         ):
             scanned += len(batch)
@@ -153,8 +155,9 @@ class RelevanceBackfillService:
         start_date: date | None = None,
         end_date: date | None = None,
         symbols: list[str] | None = None,
+        ingestion_source: str | None = None,
         dry_run: bool = False,
-    ) -> dict[str, int]:
+    ) -> dict[str, int | float]:
         if dry_run:
             LOGGER.info(
                 "Purge dry-run (no DELETE) | threshold=%.3f start=%s end=%s symbols=%s",
@@ -169,6 +172,7 @@ class RelevanceBackfillService:
             start_date=start_date,
             end_date=end_date,
             symbols=symbols,
+            ingestion_source=ingestion_source,
         )
         return {"relevance_purged": deleted, "relevance_purge_threshold": threshold}
 
@@ -184,6 +188,7 @@ class RelevanceBackfillService:
         start_date: date | None = None,
         end_date: date | None = None,
         symbols: list[str] | None = None,
+        ingestion_source: str | None = None,
         dry_run: bool = False,
     ) -> dict[str, int]:
         cap = int(max_pairs or self.config.contextual_scoring_max_pairs_per_run)
@@ -193,6 +198,7 @@ class RelevanceBackfillService:
             start_date=start_date,
             end_date=end_date,
             symbols=symbols,
+            ingestion_source=ingestion_source,
         )
         if not pending:
             return {"contextual_pairs_loaded": 0, "contextual_scored": 0}
@@ -250,6 +256,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("--batch-size", type=int, default=500)
+    parser.add_argument(
+        "--news-provider",
+        type=str,
+        choices=("alpaca", "finnhub", "eodhd"),
+        default="eodhd",
+        help=(
+            "Provider news du scope visé. Utilisé pour aligner la config provider et filtrer "
+            "`news_raw.ingestion_source` / `news_ticker_map` sur le même périmètre que l'étape 7."
+        ),
+    )
     parser.add_argument("--start-date", type=str, default=None, help="ISO date (effective_trade_date)")
     parser.add_argument("--end-date", type=str, default=None, help="ISO date (effective_trade_date)")
     parser.add_argument("--symbols", type=str, default=None, help="Liste CSV de symboles à filtrer")
@@ -328,7 +344,8 @@ def main() -> None:
     started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     repository = EventSentimentRepository()
-    config = EventSentimentConfig.for_provider("finnhub")
+    news_provider = cast(Literal["alpaca", "finnhub", "eodhd"], str(args.news_provider or "eodhd"))
+    config = EventSentimentConfig.for_provider(news_provider)
     service = RelevanceBackfillService(repository=repository, config=config)
     if args.symbols or args.symbol_source:
         symbols, _effective_symbol_source = resolve_symbols_from_inputs(
@@ -351,6 +368,8 @@ def main() -> None:
     summary: dict[str, Any] = {
         "run_id": _build_run_id(),
         "started_at": started_at.isoformat(timespec="seconds"),
+        "news_provider": news_provider,
+        "source_name": getattr(config, "source_name", None),
         "dry_run": bool(args.dry_run),
         "rescore_all": bool(args.rescore_all),
         "rescore_contextual": bool(args.rescore_contextual),
@@ -368,6 +387,7 @@ def main() -> None:
             start_date=_parse_date(args.start_date),
             end_date=_parse_date(args.end_date),
             symbols=symbols,
+            ingestion_source=news_provider,
             dry_run=bool(args.dry_run),
             rescore_all=bool(args.rescore_all),
         )
@@ -379,6 +399,7 @@ def main() -> None:
                 start_date=_parse_date(args.start_date),
                 end_date=_parse_date(args.end_date),
                 symbols=symbols,
+                ingestion_source=news_provider,
                 dry_run=bool(args.dry_run),
             )
             summary.update(purge_stats)
@@ -397,6 +418,7 @@ def main() -> None:
             start_date=_parse_date(args.start_date),
             end_date=_parse_date(args.end_date),
             symbols=symbols,
+            ingestion_source=news_provider,
             dry_run=bool(args.dry_run),
         )
         summary.update(ctx_stats)

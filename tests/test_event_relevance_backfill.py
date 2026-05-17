@@ -5,11 +5,8 @@ Repository et FinBERT sont mockés ; on ne touche pas la DB.
 
 from __future__ import annotations
 
-import json
 from datetime import date, datetime, timezone
 from typing import Any
-
-import pytest
 
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.relevance_backfill import RelevanceBackfillService
@@ -20,11 +17,14 @@ class _FakeRepo:
         self._batches = batches
         self.upsert_calls: list[list[dict[str, Any]]] = []
         self.deleted = 0
+        self.relevance_iter_kwargs: dict[str, Any] | None = None
+        self.delete_kwargs: dict[str, Any] | None = None
         self.contextual_pending: list[dict[str, Any]] = []
         self.contextual_upsert_calls: list[list[dict[str, Any]]] = []
         self.contextual_load_kwargs: dict[str, Any] | None = None
 
     def iter_ticker_map_for_relevance_backfill(self, **_kwargs):
+        self.relevance_iter_kwargs = dict(_kwargs)
         for batch in self._batches:
             yield batch
 
@@ -33,6 +33,7 @@ class _FakeRepo:
         return len(records)
 
     def delete_ticker_map_below_score(self, **kwargs) -> int:
+        self.delete_kwargs = dict(kwargs)
         self.deleted = 1
         return 1
 
@@ -83,6 +84,29 @@ def test_backfill_relevance_writes_when_not_dry_run() -> None:
     assert 0.0 <= float(payload["relevance_score"]) <= 1.0
 
 
+def test_backfill_relevance_forwards_ingestion_source_to_repository() -> None:
+    repo = _FakeRepo(batches=[[_make_row("a1", "AAPL")]])
+    service = RelevanceBackfillService(repository=repo, config=EventSentimentConfig())
+
+    service.backfill_relevance(
+        batch_size=10,
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 31),
+        symbols=["AAPL"],
+        ingestion_source="eodhd",
+        dry_run=True,
+    )
+
+    assert repo.relevance_iter_kwargs == {
+        "batch_size": 10,
+        "start_date": date(2026, 1, 1),
+        "end_date": date(2026, 1, 31),
+        "symbols": ["AAPL"],
+        "ingestion_source": "eodhd",
+        "rescore_all": False,
+    }
+
+
 def test_purge_below_dry_run_returns_zero() -> None:
     repo = _FakeRepo(batches=[])
     service = RelevanceBackfillService(repository=repo, config=EventSentimentConfig())
@@ -94,9 +118,16 @@ def test_purge_below_dry_run_returns_zero() -> None:
 def test_purge_below_calls_repo_delete() -> None:
     repo = _FakeRepo(batches=[])
     service = RelevanceBackfillService(repository=repo, config=EventSentimentConfig())
-    stats = service.purge_below(threshold=0.2, dry_run=False)
+    stats = service.purge_below(threshold=0.2, ingestion_source="alpaca", dry_run=False)
     assert stats["relevance_purged"] == 1
     assert repo.deleted == 1
+    assert repo.delete_kwargs == {
+        "threshold": 0.2,
+        "start_date": None,
+        "end_date": None,
+        "symbols": None,
+        "ingestion_source": "alpaca",
+    }
 
 
 def test_backfill_contextual_dry_run_skips_finbert() -> None:
@@ -136,6 +167,7 @@ def test_backfill_contextual_forwards_scope_filters_to_repository() -> None:
         start_date=date(2026, 1, 1),
         end_date=date(2026, 1, 31),
         symbols=["AAPL", "MSFT"],
+        ingestion_source="eodhd",
         dry_run=True,
     )
 
@@ -145,6 +177,7 @@ def test_backfill_contextual_forwards_scope_filters_to_repository() -> None:
         "start_date": date(2026, 1, 1),
         "end_date": date(2026, 1, 31),
         "symbols": ["AAPL", "MSFT"],
+        "ingestion_source": "eodhd",
     }
 
 

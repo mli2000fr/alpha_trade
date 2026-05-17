@@ -71,7 +71,9 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Symboles", "resolved_symbols"),
         ("Fetch", "fetched_articles"),
         ("Landed", "landed_articles"),
+        ("Ticker map", "ticker_maps"),
         ("Sentiments", "sentiment_inferred"),
+        ("Contextuel", "contextual_scored"),
         ("Macro", "macro_rows"),
         ("Ticker jours", "ticker_day_rows"),
         ("Secteur jours", "sector_day_rows"),
@@ -262,6 +264,32 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
     step_key = _step_key(record)
     lines: list[str] = []
 
+    if bool(summary.get("progress_live")):
+        progress_label = str(summary.get("progress_label") or "Progression en cours").strip()
+        progress_current = _to_int(summary.get("progress_current"))
+        progress_total = _to_int(summary.get("progress_total"))
+        progress_unit = str(summary.get("progress_unit") or "éléments").strip()
+        progress_item = str(summary.get("progress_item") or "").strip()
+        progress_line = f"{progress_label} : {progress_current}/{progress_total} {progress_unit}."
+        if progress_item:
+            progress_line = f"{progress_line[:-1]} — {progress_item}."
+        lines.append(progress_line)
+
+    if str(summary.get("progress_phase") or "").strip() == "contextual_scoring":
+        batch_index = _to_int(summary.get("contextual_current_batch"))
+        batch_total = _to_int(summary.get("contextual_estimated_batches"))
+        batch_size = _to_int(summary.get("contextual_last_batch_size"))
+        remaining_pairs = _to_int(summary.get("contextual_pairs_remaining"))
+        if batch_index > 0:
+            batch_label = (
+                f"Lot contextuel {batch_index}/{batch_total}"
+                if batch_total > 0
+                else f"Lot contextuel {batch_index}"
+            )
+            lines.append(
+                f"{batch_label} — taille du dernier lot : {batch_size} paire(s), reste : {remaining_pairs}."
+            )
+
     if step_key == "import_alpaca_bar":
         stooq_status = get_stooq_cross_check_status(record)
         if stooq_status is not None:
@@ -281,8 +309,8 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
     if step_key != "sync_earnings_calendar":
         return lines
 
-    resumed = int(summary.get("symbols_skipped_resume", 0) or 0)
-    remaining = int(summary.get("symbols_remaining", 0) or 0)
+    resumed = _to_int(summary.get("symbols_skipped_resume", 0))
+    remaining = _to_int(summary.get("symbols_remaining", 0))
     lines.append(f"Reprise bookmark : {resumed} symbole(s) déjà traité(s), {remaining} restant(s) à rejouer.")
     bookmark_path = str(summary.get("bookmark_path", "") or "").strip()
     if bookmark_path:
@@ -373,6 +401,22 @@ def _to_float(value: object) -> float | None:
     return float(cast(int | float, value))
 
 
+def _to_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    return 0
+
+
+def _coerce_float(value: object) -> float:
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float, str)):
+        return float(value)
+    return 0.0
+
+
 def _merge_nested_counts(target: dict[str, object], key: str, value: Mapping[str, object]) -> None:
     current = target.get(key)
     merged = dict(cast(Mapping[str, object], current)) if isinstance(current, Mapping) else {}
@@ -389,10 +433,11 @@ def _merge_scalar_metric(target: dict[str, object], key: str, value: int | float
         return
     if key.startswith("max_"):
         current_value = _to_float(target.get(key))
-        target[key] = value if current_value is None else max(current_value, float(value))
+        normalized_value = float(value)
+        target[key] = normalized_value if current_value is None else max(current_value, normalized_value)
         return
     if key == "duration_seconds":
-        current = float(target.get("children_duration_seconds", 0.0) or 0.0)
+        current = _coerce_float(target.get("children_duration_seconds", 0.0))
         target["children_duration_seconds"] = round(current + float(value), 2)
         return
     current_value = _to_float(target.get(key))

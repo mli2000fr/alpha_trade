@@ -70,8 +70,9 @@ class EventSentimentConfig:
     #
     # * ``contextual_scoring_min_relevance`` : skip les paires dont
     #   ``relevance_score < seuil`` (réutilise le Niveau 2/3).
-    # * ``contextual_scoring_max_pairs_per_run`` : cap dur sur le nombre de
-    #   paires scorées par run (évite l'explosion N×M tokenisations).
+    # * ``contextual_scoring_max_pairs_per_run`` : taille max d'un lot interne
+    #   chargé/scoré à la fois. Le pipeline reboucle ensuite automatiquement
+    #   jusqu'à épuisement du backlog contextuel sur le scope demandé.
     enable_contextual_scoring: bool = False
     scoring_mode: SentimentScoringMode = "standard_only"
     contextual_scoring_min_relevance: float = 0.0

@@ -1119,6 +1119,8 @@ def test_build_pipeline_command_sentiment_relevance_backfill_uses_manual_scope()
         "-u",
         "-m",
         "event_sentiment.relevance_backfill",
+        "--news-provider",
+        "eodhd",
         "--batch-size",
         "750",
         "--start-date",
@@ -1204,6 +1206,8 @@ def test_build_pipeline_command_relevance_backfill_exposes_contextual_options() 
     assert "--rescore-contextual" in ps_script
     assert "--batch-size" in ps_script
     assert "750" in ps_script
+    assert "--news-provider" in ps_script
+    assert "eodhd" in ps_script
     assert "2026-04-01" in ps_script
     assert "2026-04-15" in ps_script
     assert "AAPL,MSFT,NVDA" in ps_script

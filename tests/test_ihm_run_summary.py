@@ -439,3 +439,27 @@ def test_build_latest_run_summary_rows_preserves_scope_order_and_filters_missing
     assert "cibles=3" in str(rows[1]["résumé métier"])
 
 
+def test_get_run_summary_detail_lines_includes_live_contextual_batch_progress() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "sentiment_pipeline",
+            "run_summary": {
+                "progress_live": True,
+                "progress_phase": "contextual_scoring",
+                "progress_label": "📰 Progression sentiment pipeline — scoring contextuel (lot 2/5)",
+                "progress_current": 40,
+                "progress_total": 100,
+                "progress_unit": "paires",
+                "contextual_current_batch": 2,
+                "contextual_estimated_batches": 5,
+                "contextual_last_batch_size": 20,
+                "contextual_pairs_remaining": 60,
+            },
+        }
+    )
+
+    assert any("40/100 paires" in line for line in lines)
+    assert any("Lot contextuel 2/5" in line for line in lines)
+    assert any("reste : 60" in line for line in lines)
+
+

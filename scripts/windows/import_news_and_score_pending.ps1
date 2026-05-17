@@ -567,6 +567,8 @@ try {
         '-u',
         '-m',
         'event_sentiment.relevance_backfill',
+        '--news-provider',
+        $NewsProvider,
         '--start-date',
         $StartDate,
         '--end-date',

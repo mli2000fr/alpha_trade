@@ -838,7 +838,8 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             "Paramètres de la 5e sous-étape de l'étape 7 fusionnée. "
             "Le scoring contextuel Niveau 4 enrichit `news_ticker_sentiment` après le scoring standard, "
             "le calcul `relevance_score` et l'agrégation journalière. "
-            "Le cap de paires contextuelles est un cap **par run** : si vous mettez `5000`, le run score au plus `5000` couples `(article, symbole)` puis le run suivant reprend le reliquat."
+            "Le cap de paires contextuelles borne désormais **chaque lot interne** : si vous mettez `5000`, "
+            "le backend charge/scorera `5000` couples `(article, symbole)` à la fois puis rebouclera automatiquement jusqu'à épuisement du backlog sur le scope demandé."
         )
         ctx_col1, ctx_col2 = st.columns(2)
         with ctx_col1:
@@ -864,7 +865,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         with ctx_col2:
             sentiment_contextual_max_pairs = int(
                 st.number_input(
-                    "Cap dur paires contextuelles / run",
+                    "Taille lot paires contextuelles",
                     min_value=100,
                     max_value=5000_000,
                     step=500,
@@ -875,9 +876,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     ),
                     key="pipeline_sentiment_contextual_max_pairs",
                     help=(
-                        "Cap de paires `(article, symbole)` traitées en contextuel sur **ce run uniquement**. "
-                        "Si le backlog dépasse ce nombre, il faudra relancer pour traiter le lot suivant. "
-                        "Ne pas mettre 'illimité' par défaut : sur gros historique cela ferait des runs très longs et chargerait trop de paires en mémoire."
+                        "Nombre max de paires `(article, symbole)` chargées/scorées dans un lot contextuel. "
+                        "Le pipeline reboucle ensuite automatiquement jusqu'à épuisement du backlog. "
+                        "Ne pas mettre 'illimité' par défaut : sur gros historique cela chargerait trop de paires en mémoire en une seule fois."
                     ),
                 )
             )
@@ -919,8 +920,8 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             )
         # Filtre de dates pour le comptage du backlog contextuel
         st.caption(
-            "Restreindre l'estimation du backlog aux articles publiés dans une plage de dates "
-            "(filtre sur `news_raw.published_at_utc`). Laissez les deux champs vides pour un comptage global."
+            "Restreindre l'estimation du backlog au même scope que le scoring contextuel "
+            "(filtre sur `news_raw.effective_trade_date`, symboles et provider). Laissez les deux champs vides pour un comptage global."
         )
         backlog_date_col1, backlog_date_col2 = st.columns(2)
         with backlog_date_col1:
@@ -994,13 +995,13 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             pending_contextual_pairs = int(
                 contextual_backlog_preview.get("pending_pairs") or 0
             )
-            estimated_runs_needed = (
+            estimated_batches_needed = (
                 (pending_contextual_pairs + max(int(sentiment_contextual_max_pairs), 1) - 1)
                 // max(int(sentiment_contextual_max_pairs), 1)
                 if pending_contextual_pairs > 0
                 else 0
             )
-            estimated_relaunches_remaining = max(estimated_runs_needed - 1, 0)
+            estimated_additional_batches = max(estimated_batches_needed - 1, 0)
             backlog_col1, backlog_col2 = st.columns(2)
             with backlog_col1:
                 st.metric(
@@ -1009,8 +1010,8 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 )
             with backlog_col2:
                 st.metric(
-                    "Relances estimées après ce run",
-                    estimated_relaunches_remaining,
+                    "Lots internes estimés après le premier",
+                    estimated_additional_batches,
                 )
             _date_filter_suffix = ""
             if _backlog_start_iso or _backlog_end_iso:
@@ -1023,7 +1024,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             st.caption(
                 "Estimation live (TTL ~60s) alignée sur le backend contextuel actuel : backlog des paires absentes de `news_ticker_sentiment`, "
                 f"filtré avec `min_relevance >= {float(sentiment_contextual_min_relevance):g}`{_date_filter_suffix}. "
-                f"Avec un cap de `{int(sentiment_contextual_max_pairs)}` paires/run, cela représente ≈ `{estimated_runs_needed}` run(s) au total."
+                f"Avec des lots internes de `{int(sentiment_contextual_max_pairs)}` paires, cela représente ≈ `{estimated_batches_needed}` lot(s) contextuels successifs drainés automatiquement dans le même run."
             )
 
     return {

@@ -556,11 +556,16 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         num="7",
         name="Sentiment Pipeline",
         desc=(
-            "Import news → Scoring FinBERT standard (sans features) → Calcul relevance_score "
-            "(Niveau 2/3) → Agrégation features ticker/secteur journalières → "
+            "Import news (alimente `news_raw` + `news_ticker_map`) → Scoring FinBERT standard "
+            "(sans features) → Backfill/complément `relevance_score` (Niveau 2/3) → "
+            "Agrégation features ticker/secteur journalières → "
             "Scoring FinBERT contextuel (Niveau 4)."
         ),
-        tables="ticker_daily_sentiment_features, sector_daily_sentiment_features",
+        tables=(
+            "news_raw, news_ticker_map, news_sentiment, news_ticker_sentiment, "
+            "macro_event_audit, ticker_daily_sentiment_features, sector_daily_sentiment_features, "
+            "news_ingestion_checkpoint"
+        ),
         deps="alpha_scanner",
     ),
     PipelineStepDefinition(
@@ -907,6 +912,7 @@ def _build_sentiment_relevance_backfill_command(
 ) -> list[str]:
     command = [
         sys.executable, "-u", "-m", "event_sentiment.relevance_backfill",
+        "--news-provider", str(options.sentiment_news_provider or "eodhd"),
         "--batch-size", str(int(options.backfill_relevance_batch_size or 500)),
     ]
     _extend_relevance_backfill_scope_args(
@@ -1558,6 +1564,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "-u",
             "-m",
             "event_sentiment.relevance_backfill",
+            "--news-provider",
+            str(options.sentiment_news_provider or "eodhd"),
             "--contextual-only",    # ne touche pas relevance_score
             "--rescore-contextual", # Phase 2 FinBERT toujours active
             "--batch-size",
@@ -1634,16 +1642,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             options,
             sentiment_start_utc=f"{news_import_start_date}T00:00:00Z",
             sentiment_end_utc=f"{news_import_end_date}T23:59:59Z" if news_import_end_date else None,
-            sentiment_symbols=None,
+            sentiment_symbols=news_import_symbols,
         )
-        _extend_relevance_backfill_scope_args(
-            command,
-            start_utc=None,
-            end_utc=None,
-            symbols=news_import_symbols,
-            symbol_source=news_import_symbol_source,
-            max_symbols=news_import_max_symbols,
-        )
+        if not news_import_symbols:
+            _extend_relevance_backfill_scope_args(
+                command,
+                start_utc=None,
+                end_utc=None,
+                symbols=None,
+                symbol_source=news_import_symbol_source,
+                max_symbols=news_import_max_symbols,
+            )
         return command
 
     if step_key == "sentiment_contextual_scoring":

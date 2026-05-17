@@ -128,3 +128,46 @@ def test_render_run_summary_block_renders_earnings_resume_details(monkeypatch) -
     ]
 
 
+def test_render_run_summary_block_renders_contextual_progress_bar_with_batch_details(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(run_summary_component.st, "subheader", lambda value: calls.append(("subheader", value)))
+    monkeypatch.setattr(run_summary_component.st, "markdown", lambda value: calls.append(("markdown", value)))
+    monkeypatch.setattr(run_summary_component.st, "caption", lambda value: calls.append(("caption", value)))
+    monkeypatch.setattr(run_summary_component.st, "progress", lambda value, text=None: calls.append(("progress", (value, text))))
+    monkeypatch.setattr(run_summary_component, "metric_row", lambda metrics: calls.append(("metric_row", metrics)))
+
+    rendered = run_summary_component.render_run_summary_block(
+        {
+            "step_key": "sentiment_pipeline",
+            "status": "running",
+            "run_summary": {
+                "resolved_symbols": 3,
+                "progress_live": True,
+                "progress_ratio": 0.4,
+                "progress_phase": "contextual_scoring",
+                "progress_label": "📰 Progression sentiment pipeline — scoring contextuel (lot 2/5)",
+                "progress_current": 40,
+                "progress_total": 100,
+                "progress_unit": "paires",
+                "contextual_current_batch": 2,
+                "contextual_estimated_batches": 5,
+                "contextual_last_batch_size": 20,
+                "contextual_pairs_remaining": 60,
+            },
+        },
+        title="**Résumé métier**",
+        max_metrics=3,
+        heading_level="markdown",
+        show_caption=False,
+    )
+
+    assert rendered is True
+    assert calls[0] == ("markdown", "**Résumé métier**")
+    progress_call = next(call for call in calls if call[0] == "progress")
+    progress_value, progress_text = progress_call[1]
+    assert progress_value == 0.4
+    assert "40/100 paires" in str(progress_text)
+    assert "dernier lot=20" in str(progress_text)
+    assert "reste=60" in str(progress_text)
+
+
