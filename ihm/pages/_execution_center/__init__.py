@@ -642,9 +642,11 @@ def _render_event_sentiment_block() -> dict[str, Any]:
     """
     st.markdown("#### Paramètres Étape 7 — Event Sentiment")
     st.caption(
-        "Ces réglages alimentent désormais l'étape 7 fusionnée : import news, scoring FinBERT standard, "
-        "calcul `relevance_score`, agrégation des features journalières et scoring contextuel. "
-        "Si les symboles sont laissés vides, le backend consomme automatiquement les candidats `stock_scores.is_candidate=1`."
+        "Ces réglages alimentent désormais l'étape 7 canonique à scope mixte : import news large sur "
+        "`stock_scores_all`, scoring FinBERT standard / `relevance_score` / contextuel sur les candidats, "
+        "reconstruction des features ticker sur les candidats et des features secteur sur le scope large importé. "
+        "Si le CSV est laissé vide, les sous-étapes ciblées retombent automatiquement sur `stock_scores.is_candidate=1` ; "
+        "pour un import ou un backfill manuel d'un autre univers, utilisez le panneau `7.bis` ci-dessous."
     )
 
     sentiment_col1, sentiment_col2, sentiment_col3 = st.columns(3)
@@ -675,6 +677,9 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 help="Exemple : AAPL,MSFT,NVDA",
             )
         ).strip().upper()
+    st.caption(
+        "⚙️ `CSV` n'affecte que les sous-étapes ciblées candidats de l'étape 7 (standard / relevance / contextual / ticker). "
+        "L'import brut canonique reste piloté sur `stock_scores_all` ; pour modifier l'univers d'import lui-même, passez par `7.bis`.")
 
     provider_col, relevance_mode_col = st.columns(2)
     _provider_options = ("eodhd", "alpaca", "finnhub")

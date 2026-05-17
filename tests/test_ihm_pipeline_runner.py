@@ -379,7 +379,8 @@ def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -
 
     assert command[0] == "powershell.exe", f"Step 7 doit lancer via powershell.exe, got {command[0]}"
     ps_script = command[-1]
-    # Les 4 étapes chaînées doivent être présentes dans le script PS
+    # Les 5 étapes chaînées doivent être présentes dans le script PS
+    assert "importe_news.py" in ps_script
     assert "event_sentiment" in ps_script
     assert "--news-provider" in ps_script
     assert "eodhd" in ps_script
@@ -388,6 +389,9 @@ def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -
     assert "--skip-features" in ps_script
     assert "--scoring-mode contextual_only" in ps_script
     assert "--skip-ingestion" in ps_script
+    assert "--symbol-source stock_scores_all" in ps_script
+    assert "--symbol-source candidates" in ps_script
+    assert "--ticker-symbol-source candidates" in ps_script
 
 
 def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_options() -> None:
@@ -430,7 +434,11 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
     assert "2026-04-01T00:00:00Z" in ps_script
     assert "--end-utc" in ps_script
     assert "2026-04-30T23:59:59Z" in ps_script
+    assert "--start-date 2026-04-01" in ps_script
+    assert "--end-date 2026-04-30" in ps_script
     assert "AAPL,MSFT,NVDA" in ps_script
+    assert "--symbol-source stock_scores_all" in ps_script
+    assert "--ticker-symbols AAPL,MSFT,NVDA" in ps_script
     # Les étapes relevance, history et contextual doivent toutes être présentes
     assert "event_sentiment.relevance_backfill" in ps_script
     assert "event_sentiment.history_backfill" in ps_script
@@ -455,7 +463,8 @@ def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_wit
 
     assert command[0] == "powershell.exe"
     ps_script = command[-1]
-    # La partie standard reste sans features, puis une sous-commande contextuelle dédiée est ajoutée.
+    # Le step 7 canonique importe large, score les candidats puis reconstruit les features ticker filtrées.
+    assert "--symbol-source stock_scores_all" in ps_script
     assert "--skip-features" in ps_script
     assert "--scoring-mode contextual_only" in ps_script
     assert "--contextual-min-relevance 0.25" in ps_script
@@ -463,6 +472,7 @@ def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_wit
     assert "event_sentiment.relevance_backfill" in ps_script
     assert "event_sentiment.history_backfill" in ps_script
     assert "AAPL" in ps_script
+    assert "--ticker-symbols AAPL" in ps_script
 
 
 def test_build_pipeline_command_signal_aggregator_exposes_default_backend_options() -> None:

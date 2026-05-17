@@ -556,10 +556,10 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         num="7",
         name="Sentiment Pipeline",
         desc=(
-            "Import news (alimente `news_raw` + `news_ticker_map`) → Scoring FinBERT standard "
-            "(sans features) → Backfill/complément `relevance_score` (Niveau 2/3) → "
-            "Agrégation features ticker/secteur journalières → "
-            "Scoring FinBERT contextuel (Niveau 4)."
+            "Import news brut sur `stock_scores_all` → scoring FinBERT standard + `relevance_score` + "
+            "scoring contextuel sur les candidats (ou override CSV) → reconstruction des features journalières "
+            "avec `ticker_daily_sentiment_features` filtré candidats et `sector_daily_sentiment_features` "
+            "sur le scope large importé."
         ),
         tables=(
             "news_raw, news_ticker_map, news_sentiment, news_ticker_sentiment, "
@@ -882,6 +882,8 @@ def _build_sentiment_standard_command(
     sentiment_start_utc: str | None,
     sentiment_end_utc: str | None,
     sentiment_symbols: str | None,
+    sentiment_symbol_source: str | None = None,
+    sentiment_max_symbols: int | None = None,
     skip_ingestion: bool,
 ) -> list[str]:
     command = [sys.executable, "-u", "-m", "event_sentiment"]
@@ -898,7 +900,13 @@ def _build_sentiment_standard_command(
         command,
         start_utc=sentiment_start_utc,
         end_utc=sentiment_end_utc,
+        symbols=None,
+    )
+    _extend_event_sentiment_symbol_scope_args(
+        command,
         symbols=sentiment_symbols,
+        symbol_source=str(sentiment_symbol_source or ""),
+        max_symbols=sentiment_max_symbols,
     )
     return command
 
@@ -909,6 +917,8 @@ def _build_sentiment_relevance_backfill_command(
     sentiment_start_utc: str | None,
     sentiment_end_utc: str | None,
     sentiment_symbols: str | None,
+    sentiment_symbol_source: str | None = None,
+    sentiment_max_symbols: int | None = None,
 ) -> list[str]:
     command = [
         sys.executable, "-u", "-m", "event_sentiment.relevance_backfill",
@@ -920,6 +930,8 @@ def _build_sentiment_relevance_backfill_command(
         start_utc=sentiment_start_utc,
         end_utc=sentiment_end_utc,
         symbols=sentiment_symbols,
+        symbol_source=sentiment_symbol_source,
+        max_symbols=sentiment_max_symbols,
     )
     if options.backfill_relevance_rescore_all:
         command.append("--rescore-all")
@@ -935,12 +947,24 @@ def _build_sentiment_history_backfill_command(
     *,
     sentiment_start_utc: str | None,
     sentiment_end_utc: str | None,
+    ticker_symbols: str | None = None,
+    ticker_symbol_source: str | None = None,
+    ticker_max_symbols: int | None = None,
+    ingestion_source: str | None = None,
 ) -> list[str]:
     command = [sys.executable, "-u", "-m", "event_sentiment.history_backfill"]
     if sentiment_start_utc:
         command.extend(["--start-date", str(sentiment_start_utc)[:10]])
     if sentiment_end_utc:
         command.extend(["--end-date", str(sentiment_end_utc)[:10]])
+    if ingestion_source:
+        command.extend(["--ingestion-source", ingestion_source])
+    if ticker_symbols:
+        command.extend(["--ticker-symbols", ticker_symbols])
+    elif ticker_symbol_source:
+        command.extend(["--ticker-symbol-source", ticker_symbol_source])
+    if ticker_max_symbols is not None and ticker_max_symbols > 0:
+        command.extend(["--ticker-max-symbols", str(int(ticker_max_symbols))])
     return command
 
 
@@ -950,6 +974,8 @@ def _build_sentiment_contextual_command(
     sentiment_start_utc: str | None,
     sentiment_end_utc: str | None,
     sentiment_symbols: str | None,
+    sentiment_symbol_source: str | None = None,
+    sentiment_max_symbols: int | None = None,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -989,8 +1015,56 @@ def _build_sentiment_contextual_command(
         command,
         start_utc=sentiment_start_utc,
         end_utc=sentiment_end_utc,
-        symbols=sentiment_symbols,
+        symbols=None,
     )
+    _extend_event_sentiment_symbol_scope_args(
+        command,
+        symbols=sentiment_symbols,
+        symbol_source=str(sentiment_symbol_source or ""),
+        max_symbols=sentiment_max_symbols,
+    )
+    return command
+
+
+def _build_import_news_command(
+    options: PipelineLaunchOptions,
+    *,
+    import_start_date: str | None,
+    import_end_date: str | None,
+    import_symbols: str | None,
+    import_symbol_source: str,
+    import_max_symbols: int | None,
+    resume_from_checkpoint: bool,
+    force_symbol_source: bool = False,
+) -> list[str]:
+    command = [
+        sys.executable,
+        "-u",
+        str(PROJECT_ROOT / "event_sentiment" / "importe_news.py"),
+    ]
+    if import_start_date:
+        command.extend(["--start-date", import_start_date])
+    if import_end_date:
+        command.extend(["--end-date", import_end_date])
+    _extend_event_sentiment_cli_common_args(
+        command,
+        options,
+        include_contextual_scoring=False,
+    )
+    if force_symbol_source and not import_symbols and import_symbol_source:
+        command.extend(["--symbol-source", import_symbol_source])
+        if import_max_symbols is not None and import_max_symbols > 0:
+            command.extend(["--max-symbols", str(int(import_max_symbols))])
+        if resume_from_checkpoint:
+            command.append("--resume-checkpoints")
+    else:
+        _extend_import_news_cli_args(
+            command,
+            symbols=import_symbols,
+            symbol_source=import_symbol_source,
+            max_symbols=import_max_symbols,
+            resume_from_checkpoint=resume_from_checkpoint,
+        )
     return command
 
 
@@ -1521,36 +1595,57 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "sentiment_pipeline":
+        candidate_scope_symbols = sentiment_symbols
+        candidate_scope_symbol_source = None if candidate_scope_symbols else "candidates"
+        import_start_date = str(sentiment_start_utc)[:10] if sentiment_start_utc else None
+        import_end_date = str(sentiment_end_utc)[:10] if sentiment_end_utc else None
+        cmd0 = _build_import_news_command(
+            options,
+            import_start_date=import_start_date,
+            import_end_date=import_end_date,
+            import_symbols=None,
+            import_symbol_source="stock_scores_all",
+            import_max_symbols=None,
+            resume_from_checkpoint=bool(options.news_import_resume_from_checkpoint),
+            force_symbol_source=True,
+        )
         cmd1 = _build_sentiment_standard_command(
             options,
             sentiment_start_utc=sentiment_start_utc,
             sentiment_end_utc=sentiment_end_utc,
-            sentiment_symbols=sentiment_symbols,
-            skip_ingestion=False,
+            sentiment_symbols=candidate_scope_symbols,
+            sentiment_symbol_source=candidate_scope_symbol_source,
+            skip_ingestion=True,
         )
         cmd2 = _build_sentiment_relevance_backfill_command(
             options,
             sentiment_start_utc=sentiment_start_utc,
             sentiment_end_utc=sentiment_end_utc,
-            sentiment_symbols=sentiment_symbols,
+            sentiment_symbols=candidate_scope_symbols,
+            sentiment_symbol_source=candidate_scope_symbol_source,
         )
         cmd3 = _build_sentiment_history_backfill_command(
             sentiment_start_utc=sentiment_start_utc,
             sentiment_end_utc=sentiment_end_utc,
+            ticker_symbols=candidate_scope_symbols,
+            ticker_symbol_source=candidate_scope_symbol_source,
+            ingestion_source=options.sentiment_news_provider,
         )
         cmd4 = _build_sentiment_contextual_command(
             options,
             sentiment_start_utc=sentiment_start_utc,
             sentiment_end_utc=sentiment_end_utc,
-            sentiment_symbols=sentiment_symbols,
+            sentiment_symbols=candidate_scope_symbols,
+            sentiment_symbol_source=candidate_scope_symbol_source,
         )
 
         return _build_chained_ps_commands(
             [
-                ("Import news + Scoring FinBERT standard (sans features)", cmd1),
-                ("Calcul relevance_score (Niveau 2/3, pur Python — sans FinBERT)", cmd2),
-                ("Agregation features journalieres (ticker/secteur)", cmd3),
-                ("Scoring FinBERT contextuel (Niveau 4 — news_ticker_sentiment)", cmd4),
+                ("Import news brut (scope large stock_scores_all)", cmd0),
+                ("Scoring FinBERT standard (scope candidats / override CSV)", cmd1),
+                ("Calcul relevance_score (scope candidats / override CSV)", cmd2),
+                ("Scoring FinBERT contextuel (scope candidats / override CSV)", cmd4),
+                ("Agregation features : ticker=candidats, secteur=scope large importe", cmd3),
             ],
             title="ETAPE 7 — Sentiment Pipeline",
         )
@@ -1631,7 +1726,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             options,
             sentiment_start_utc=f"{news_import_start_date}T00:00:00Z",
             sentiment_end_utc=f"{news_import_end_date}T23:59:59Z" if news_import_end_date else None,
-            sentiment_symbols=None,
+            sentiment_symbols=news_import_symbols,
+            sentiment_symbol_source=None if news_import_symbols else news_import_symbol_source,
+            sentiment_max_symbols=news_import_max_symbols,
             skip_ingestion=True,
         )
 
@@ -1692,25 +1789,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     if step_key == "import_news":
         if news_import_start_date is None:
             raise ValueError("La date de début est obligatoire pour l'import des news.")
-        command = [
-            sys.executable,
-            "-u",
-            str(PROJECT_ROOT / "event_sentiment" / "importe_news.py"),
-            "--start-date",
-            news_import_start_date,
-        ]
-        if news_import_end_date:
-            command.extend(["--end-date", news_import_end_date])
-        _extend_event_sentiment_cli_common_args(
-            command,
+        command = _build_import_news_command(
             options,
-            include_contextual_scoring=False,
-        )
-        _extend_import_news_cli_args(
-            command,
-            symbols=news_import_symbols,
-            symbol_source=news_import_symbol_source,
-            max_symbols=news_import_max_symbols,
+            import_start_date=news_import_start_date,
+            import_end_date=news_import_end_date,
+            import_symbols=news_import_symbols,
+            import_symbol_source=news_import_symbol_source,
+            import_max_symbols=news_import_max_symbols,
             resume_from_checkpoint=bool(options.news_import_resume_from_checkpoint),
         )
         return command

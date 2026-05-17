@@ -285,12 +285,14 @@ Pour `signal_aggregator`, l'IHM expose désormais :
 
 Points importants :
 
-- si `symbols` est laissé vide côté IHM, `event_sentiment` recharge automatiquement les candidats depuis `stock_scores.is_candidate = 1` ;
+- le step `7. Sentiment Pipeline` applique désormais un **scope mixte canonique** : import brut large sur `stock_scores_all`, scoring standard / `relevance_score` / contextual sur les **candidats** (ou override CSV), reconstruction des features ticker sur les **candidats** et des features secteur sur le **scope large importé** ;
+- si `symbols` est laissé vide côté IHM, seules les **sous-étapes ciblées candidats** rechargent automatiquement `stock_scores.is_candidate = 1` ; l'univers d'import canonique du step 7, lui, reste `stock_scores_all` ;
 - le mode `Event Sentiment — mode de scoring` ne sert pas au même usage selon le choix retenu :
   - `Standard only` pour remplir ou rattraper `news_sentiment` ;
   - `Contextual only` pour enrichir un corpus déjà scoré standard dans `news_ticker_sentiment` ;
   - `Standard + contextual` pour enchaîner les deux dans le même run ;
 - la case `Ajouter le contextual à ce backfill 7bis` du bloc `7bis — Backfill relevance / contextual` n'est **pas un doublon** de ce mode : elle ajoute uniquement le rescoring contextuel au step dédié `python -m event_sentiment.relevance_backfill` ;
+- pour changer l'univers d'**import brut** lui-même (au lieu du scope candidats des sous-étapes ticker), il faut utiliser `7.bis — Import des news brutes` ;
 - ordre recommandé pour enrichir un corpus existant : `Contextual only` puis `Rebuild daily sentiment features only`, puis éventuellement `signal_aggregator` si l'on veut refléter immédiatement les nouvelles features dans `stock_scores` ;
 - dans le workflow complet IHM, ce step `7bis` est exécuté automatiquement entre `7. Sentiment Pipeline` et `8. Signal Aggregator` ;
 - `signal_aggregator` réutilise le champ global `trade date` de la page quand il est renseigné ;

@@ -262,7 +262,15 @@ python -m event_sentiment.signal_aggregator ...
 
 L'IHM expose désormais les options backend réellement supportées par ces deux points d'entrée.
 
-Pour `sentiment_pipeline` (`python -m event_sentiment`) :
+Pour `sentiment_pipeline` (step 7 IHM canonique), le lancement n'appelle plus un unique `python -m event_sentiment`, mais une chaîne fixe :
+
+1. `event_sentiment/importe_news.py` sur `stock_scores_all` ;
+2. `python -m event_sentiment --skip-ingestion --skip-features --scoring-mode standard_only` sur les **candidats** (ou override CSV) ;
+3. `python -m event_sentiment.relevance_backfill` sur les **candidats** (ou override CSV) ;
+4. `python -m event_sentiment --skip-ingestion --skip-features --scoring-mode contextual_only` sur les **candidats** (ou override CSV) ;
+5. `python -m event_sentiment.history_backfill --ingestion-source <provider> --ticker-symbol-source candidates` pour reconstruire `ticker_daily_sentiment_features` côté candidats et `sector_daily_sentiment_features` sur le scope large importé.
+
+Les paramètres exposés côté IHM restent :
 
 - `--start-utc`
 - `--end-utc`
@@ -281,13 +289,10 @@ Pour `sentiment_pipeline` (`python -m event_sentiment`) :
 
 Points importants :
 
-- si `symbols` est laissé vide dans l'IHM, le backend recharge automatiquement les candidats `stock_scores.is_candidate = 1` ;
+- dans le step 7 IHM, si `symbols` est laissé vide, **les sous-étapes ciblées candidats** rechargent automatiquement `stock_scores.is_candidate = 1`, alors que l'**import brut canonique** reste piloté sur `stock_scores_all` ;
 - les dates UTC restent optionnelles : sans fenêtre explicite, le backend retombe sur sa logique de checkpoints/backfill.
 - le mode de pertinence `scored` active le stockage de `relevance_score` / `relevance_components` dans `news_ticker_map` ;
-- le `mode de scoring` IHM se traduit ainsi :
-  - `Standard only` = pas de flag contextuel, le pipeline continue de n'écrire que `news_sentiment` ;
-  - `Contextual only` = `--scoring-mode contextual_only`, utile pour enrichir un corpus déjà scoré standard ;
-  - `Standard + contextual` = `--enable-contextual-scoring`, le pipeline enchaîne standard puis contextuel ;
+- le step 7 IHM exécute désormais toujours la chaîne canonique **import large → standard candidats → relevance candidats → contextual candidats → features ticker candidats / secteur large** ; les replays ciblés continuent de passer par `7.bis` ;
 - `contextual_scoring_max_pairs_per_run` est un cap **par run** : si vous laissez `5000`, le run score au plus `5000` paires contextuelles puis un run suivant reprend le lot suivant tant qu'il reste des couples absents de `news_ticker_sentiment` ;
 - la case `Ajouter le contextual à ce backfill 7bis` du bloc `7bis — Backfill relevance / contextual` n'est pas un doublon de ce mode : elle ajoute seulement `--rescore-contextual` au CLI dédié `python -m event_sentiment.relevance_backfill` ;
 - ordre recommandé en IHM pour enrichir un historique existant : `Contextual only` puis `Rebuild daily sentiment features only`, puis éventuellement `signal_aggregator`.
@@ -313,7 +318,9 @@ L'IHM calcule implicitement le poids quantitatif comme `1 - sentiment_weight - m
 
 ### 4.1 Résolution de l'univers
 
-Si `--symbols` n'est pas fourni, `EventSentimentPipeline` charge les symboles candidats depuis `stock_scores` avec `is_candidate = 1`.
+Pour le CLI nu `python -m event_sentiment`, si `--symbols` n'est pas fourni, `EventSentimentPipeline` charge les symboles candidats depuis `stock_scores` avec `is_candidate = 1`.
+
+⚠️ Le step 7 IHM canonique applique désormais un contrat différent : **import brut large sur `stock_scores_all`**, puis **phases ticker/contextual ciblées candidats** via des flags explicites au moment de construire chaque sous-commande.
 
 ### 4.2 Résolution des fenêtres temporelles
 

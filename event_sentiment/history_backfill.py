@@ -5,13 +5,14 @@ import json
 import logging
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Sequence
+from typing import Any, Sequence, cast
 from uuid import uuid4
 
 from common.utils import configure_root_logging
 from event_sentiment.aggregation import build_sector_daily_features, build_ticker_daily_features
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.db_io import EventSentimentRepository
+from event_sentiment.importe_news import resolve_symbols_from_inputs
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
@@ -46,8 +47,9 @@ class EventSentimentHistoryBackfillService:
         start_date: date | None = None,
         end_date: date | None = None,
         years: int | None = None,
+        ingestion_source: str | None = None,
     ) -> tuple[date, date]:
-        scored_dates = self.repository.list_scored_trade_dates()
+        scored_dates = self.repository.list_scored_trade_dates(ingestion_source=ingestion_source)
         if not scored_dates:
             raise RuntimeError("Aucune date scorée disponible dans news_raw/news_sentiment pour reconstruire l'historique.")
 
@@ -65,8 +67,18 @@ class EventSentimentHistoryBackfillService:
             )
         return min(available_dates), max(available_dates)
 
-    def list_trade_dates(self, start_date: date, end_date: date) -> list[date]:
-        return self.repository.list_scored_trade_dates(start_date=start_date, end_date=end_date)
+    def list_trade_dates(
+        self,
+        start_date: date,
+        end_date: date,
+        *,
+        ingestion_source: str | None = None,
+    ) -> list[date]:
+        return self.repository.list_scored_trade_dates(
+            start_date=start_date,
+            end_date=end_date,
+            ingestion_source=ingestion_source,
+        )
 
     @staticmethod
     def _chunk_dates(trade_dates: Sequence[date], batch_days: int) -> list[list[date]]:
@@ -78,9 +90,22 @@ class EventSentimentHistoryBackfillService:
         end_date: date | None = None,
         years: int | None = None,
         batch_days: int | None = None,
+        *,
+        ingestion_source: str | None = None,
+        ticker_symbols: list[str] | None = None,
     ) -> EventSentimentHistoryBackfillResult:
-        resolved_start, resolved_end = self.resolve_bounds(start_date=start_date, end_date=end_date, years=years)
-        trade_dates = self.list_trade_dates(resolved_start, resolved_end)
+        normalized_ticker_symbols = sorted({str(symbol).strip().upper() for symbol in (ticker_symbols or []) if str(symbol).strip()})
+        resolved_start, resolved_end = self.resolve_bounds(
+            start_date=start_date,
+            end_date=end_date,
+            years=years,
+            ingestion_source=ingestion_source,
+        )
+        trade_dates = self.list_trade_dates(
+            resolved_start,
+            resolved_end,
+            ingestion_source=ingestion_source,
+        )
         if not trade_dates:
             return EventSentimentHistoryBackfillResult(
                 start_date=resolved_start,
@@ -112,6 +137,8 @@ class EventSentimentHistoryBackfillService:
             ticker_df, sector_df, macro_df = self.repository.load_feature_frames(
                 start_date=batch_start,
                 end_date=batch_end,
+                ingestion_source=ingestion_source,
+                ticker_symbols=normalized_ticker_symbols or None,
             )
             ticker_features = build_ticker_daily_features(
                 ticker_df,
@@ -124,10 +151,18 @@ class EventSentimentHistoryBackfillService:
                 feature_version=self.config.feature_version,
                 rolling_windows=self.config.feature_rolling_windows,
             )
+            if normalized_ticker_symbols and not ticker_features.empty:
+                ticker_features = ticker_features[
+                    ticker_features["symbol"].astype(str).str.upper().isin(normalized_ticker_symbols)
+                ].copy()
             ticker_features = ticker_features[ticker_features["trade_date"].isin(target_date_set)].copy()
             sector_features = sector_features[sector_features["trade_date"].isin(target_date_set)].copy()
-            ticker_rows_upserted += self.repository.upsert_ticker_daily_features(ticker_features.to_dict(orient="records"))
-            sector_rows_upserted += self.repository.upsert_sector_daily_features(sector_features.to_dict(orient="records"))
+            ticker_rows_upserted += self.repository.upsert_ticker_daily_features(
+                cast(list[dict[str, Any]], ticker_features.to_dict(orient="records"))
+            )
+            sector_rows_upserted += self.repository.upsert_sector_daily_features(
+                cast(list[dict[str, Any]], sector_features.to_dict(orient="records"))
+            )
 
         return EventSentimentHistoryBackfillResult(
             start_date=resolved_start,
@@ -154,6 +189,27 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end-date", type=str, default=None, help="Date de fin ISO (YYYY-MM-DD).")
     parser.add_argument("--years", type=int, default=None, help="Lookback par défaut si start-date absent. Défaut config bootstrap_default_years.")
     parser.add_argument("--batch-days", type=int, default=None, help="Nombre de trade_dates par batch de reconstruction.")
+    parser.add_argument(
+        "--ingestion-source",
+        type=str,
+        choices=["alpaca", "finnhub", "eodhd"],
+        default=None,
+        help="Filtre optionnel sur `news_raw.ingestion_source` pour rester aligné avec le provider du run.",
+    )
+    parser.add_argument("--ticker-symbols", type=str, default=None, help="Liste CSV de symboles à conserver pour les features ticker.")
+    parser.add_argument(
+        "--ticker-symbol-source",
+        type=str,
+        choices=("stock_scores", "stock_scores_history", "stock_scores_all", "candidates", "stock_bars_daily"),
+        default=None,
+        help="Source optionnelle des symboles ticker quand --ticker-symbols est absent.",
+    )
+    parser.add_argument(
+        "--ticker-max-symbols",
+        type=int,
+        default=None,
+        help="Garde-fou sécurité : refuse le run si l'univers ticker résolu dépasse cette limite.",
+    )
     parser.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return parser
 
@@ -170,12 +226,36 @@ def main(argv: list[str] | None = None) -> int:
     start_date = date.fromisoformat(args.start_date) if args.start_date else None
     end_date = date.fromisoformat(args.end_date) if args.end_date else None
     service = EventSentimentHistoryBackfillService()
+    ticker_symbols: list[str] | None = None
+    effective_ticker_symbol_source: str | None = None
+    if args.ticker_symbols or args.ticker_symbol_source:
+        ticker_symbols, effective_ticker_symbol_source = resolve_symbols_from_inputs(
+            symbols_csv=args.ticker_symbols,
+            symbol_source=str(args.ticker_symbol_source or "stock_scores_all"),
+            repository=service.repository,
+            logger=LOGGER,
+        )
+        resolved_ticker_symbols = ticker_symbols or []
+        if (
+            args.ticker_max_symbols is not None
+            and args.ticker_max_symbols > 0
+            and len(resolved_ticker_symbols) > int(args.ticker_max_symbols)
+        ):
+            raise SystemExit(
+                "Le nombre de symboles ticker résolus ({0}) dépasse --ticker-max-symbols={1}. "
+                "Réduisez l'univers (--ticker-symbol-source / --ticker-symbols) ou augmentez explicitement la limite.".format(
+                    len(resolved_ticker_symbols),
+                    int(args.ticker_max_symbols),
+                )
+            )
     started_at = _utc_now_naive()
     result = service.backfill(
         start_date=start_date,
         end_date=end_date,
         years=args.years,
         batch_days=args.batch_days,
+        ingestion_source=str(args.ingestion_source or "").strip().lower() or None,
+        ticker_symbols=ticker_symbols,
     )
     finished_at = _utc_now_naive()
     _emit_run_summary(
@@ -184,6 +264,9 @@ def main(argv: list[str] | None = None) -> int:
             "started_at": started_at.isoformat(timespec="seconds"),
             "finished_at": finished_at.isoformat(timespec="seconds"),
             "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+            "ingestion_source": str(args.ingestion_source or "").strip().lower() or None,
+            "ticker_symbol_source": effective_ticker_symbol_source,
+            "ticker_symbol_count": len(ticker_symbols or []),
             **asdict(result),
         }
     )

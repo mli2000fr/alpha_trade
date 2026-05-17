@@ -40,7 +40,7 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 4. **Sync Latest Quotes** — snapshot des dernières quotes Alpaca pour alimenter le filtre de spread
 5. **Sync Earnings Calendar** — synchronisation du calendrier earnings Finnhub pour alimenter le blackout résultats
 6. **Alpha Scanner** — scoring avancé Minervini/VCP + neutralisation sectorielle
-7. **Analyse de sentiment** des news via FinBERT + fusion avec les scores quantitatifs
+7. **Analyse de sentiment** des news via FinBERT — import news brut sur l'univers élargi `stock_scores_all`, scoring article/ticker sur les candidats, features ticker ciblées candidats et features secteur sur l'univers élargi importé
 8. **Signal Aggregator** — fusion quant + sentiment → `final_score_sentiment`
 9. **ML Train** — entraînement `modelFactory` par symbole candidat : LSTM+Attention, challengers locaux `LightGBM` / `CatBoost`, modèle global optionnel et sélection éventuelle du champion servi (périodique)
 10. **ML Predict** — inférence quotidienne sur le **champion sélectionné** par symbole (`lstm_attention`, `lightgbm`, `catboost` ou `global_model` selon les artefacts disponibles)
@@ -134,6 +134,7 @@ Dans l'IHM, l'étape `Alpha Scanner` n'expose plus de case à cocher dédiée : 
 
 #### Analyse de sentiment (FinBERT)
 - Ingestion des news Alpaca, scoring via le modèle pré-entraîné `ProsusAI/finbert`
+- Dans l'IHM, le step `7. Sentiment Pipeline` applique désormais un **scope mixte canonique** : import brut sur `stock_scores_all`, scoring standard / `relevance_score` / contextual sur les **candidats** (ou override CSV), `ticker_daily_sentiment_features` sur les **candidats** et `sector_daily_sentiment_features` sur l'**univers élargi importé**
 - Mapping article → ticker en 3 modes : `provider_default` (hérité), `strict` (ticker principal seul) et `scored` (score de pertinence `relevance_score` par couple `(article, symbole)`)
 - La migration Alembic `0027_news_ticker_map_relevance` ajoute `news_ticker_map.relevance_score` et `relevance_components` pour filtrer/pondérer les articles trop bruités sans casser l'historique (`NULL` reste accepté)
 - Le Niveau 4 optionnel produit un score FinBERT contextualisé par couple `(article, symbole)` dans `news_ticker_sentiment` ; la migration `0028_news_ticker_sentiment` l'ajoute sans modifier `news_sentiment`

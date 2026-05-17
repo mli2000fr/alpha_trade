@@ -144,13 +144,18 @@ Avant même de cliquer sur le bouton, la page affiche désormais un **résumé l
 
 ## Event Sentiment — mini guide d'usage IHM
 
-Le bloc **Event Sentiment** expose maintenant trois modes de scoring :
+Le bloc **Event Sentiment** applique désormais un **flux canonique fixe** pour l'étape `7` :
 
-| Mode | À utiliser quand | Ce que fait le run |
-|---|---|---|
-| `Standard only` | vous avez un backlog d'articles à vider rapidement, ou de nouveaux imports bruts à scorer | remplit `news_sentiment` puis reconstruit les features journalières sentiment |
-| `Contextual only` | `news_sentiment` est déjà présent et vous voulez enrichir le niveau `(article, symbole)` | remplit `news_ticker_sentiment` sans refaire le scoring standard |
-| `Standard + contextual` | fenêtre courte/moyenne, ou vous voulez tout faire en une seule passe | exécute d'abord le standard puis le contextuel dans le même run |
+| Sous-étape | Scope canonique |
+|---|---|
+| Import news brut | `stock_scores_all` |
+| Scoring standard | candidats du jour (ou override CSV) |
+| `relevance_score` | candidats du jour (ou override CSV) |
+| Scoring contextuel | candidats du jour (ou override CSV) |
+| Features ticker | candidats du jour |
+| Features secteur | univers large importé |
+
+Le champ `CSV` du bloc `Event Sentiment` ne sert donc plus à changer l'univers d'**import brut** du step 7 ; il ne pilote que les sous-étapes ciblées candidats. Pour un import manuel sur un autre univers, utilisez `7.bis`.
 
 ### Point important : pas de doublon avec `7bis — Backfill relevance / contextual`
 
@@ -160,8 +165,8 @@ Elle sert uniquement au step dédié `python -m event_sentiment.relevance_backfi
 
 En résumé :
 
-- **mode de scoring** = comportement du run principal **Event Sentiment** ;
-- **case 7bis contextuel** = comportement du **backfill dédié** `relevance_backfill`.
+- **step 7** = flux canonique à scopes mixtes ;
+- **7bis** = outils manuels/backfill pour changer l'univers d'import, rejouer un scoring ciblé ou reconstruire l'historique.
 
 Dans le workflow complet IHM, `7bis` est exécuté automatiquement **entre `7. Sentiment Pipeline` et `8. Signal Aggregator`**.
 

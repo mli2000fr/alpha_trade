@@ -228,7 +228,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Par défaut, l'univers provient de stock_scores_all pour couvrir l'union du snapshot courant et de l'historique PIT."
         )
     )
-    parser.add_argument("--start-date", type=str, required=True, help="Date de début au format YYYY-MM-DD (ex: 2024-05-06)")
+    parser.add_argument(
+        "--start-date",
+        type=str,
+        required=False,
+        help=(
+            "Date de début au format YYYY-MM-DD (ex: 2024-05-06). Si absente, "
+            "fallback sur `initial_backfill_days` du provider choisi."
+        ),
+    )
     parser.add_argument("--end-date", type=str, required=False, help="Date de fin au format YYYY-MM-DD (ex: 2024-05-10). Par défaut: aujourd'hui.")
     parser.add_argument(
         "--symbols",
@@ -317,7 +325,6 @@ def main():
     parser = build_arg_parser()
     args = parser.parse_args()
 
-    start_date = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     if args.end_date:
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     else:
@@ -352,6 +359,16 @@ def main():
     if args.min_relevance_score is not None:
         config_overrides["min_relevance_score"] = float(args.min_relevance_score)
     config = EventSentimentConfig.for_provider(args.news_provider, **config_overrides)
+    if args.start_date:
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    else:
+        start_date = end_date - timedelta(days=int(config.initial_backfill_days))
+        logger.info(
+            "Date de debut implicite derivee du provider | initial_backfill_days=%s start=%s end=%s",
+            config.initial_backfill_days,
+            start_date,
+            end_date,
+        )
     ingestion = NewsIngestionService(repository=repository, config=config)
 
     symbol_start_overrides: dict[str, datetime] | None = None

@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
@@ -245,9 +245,13 @@ class EventSentimentRepository:
         self,
         start_date: date | None = None,
         end_date: date | None = None,
+        ingestion_source: str | None = None,
     ) -> list[date]:
         filters = ["ns.article_id = nr.article_id"]
         params: dict[str, Any] = {}
+        if ingestion_source is not None:
+            filters.append("nr.ingestion_source = :ingestion_source")
+            params["ingestion_source"] = str(ingestion_source).strip().lower()
         if start_date is not None:
             filters.append("nr.effective_trade_date >= :start_date")
             params["start_date"] = start_date
@@ -713,11 +717,26 @@ class EventSentimentRepository:
         start_date: date | None = None,
         end_date: date | None = None,
         trade_dates: list[date] | None = None,
+        ingestion_source: str | None = None,
+        ticker_symbols: list[str] | None = None,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         normalized_trade_dates = sorted({value for value in (trade_dates or []) if value is not None})
+        normalized_ticker_symbols = [
+            self._normalize_symbol(symbol) for symbol in (ticker_symbols or []) if str(symbol).strip()
+        ]
         if normalized_trade_dates:
+            ticker_filters = ["nr.effective_trade_date IN :trade_dates"]
+            sector_filters = ["nr.effective_trade_date IN :trade_dates"]
+            params: dict[str, Any] = {"trade_dates": normalized_trade_dates}
+            if ingestion_source is not None:
+                ticker_filters.append("nr.ingestion_source = :ingestion_source")
+                sector_filters.append("nr.ingestion_source = :ingestion_source")
+                params["ingestion_source"] = str(ingestion_source).strip().lower()
+            if normalized_ticker_symbols:
+                ticker_filters.append("ntm.symbol IN :ticker_symbols")
+                params["ticker_symbols"] = normalized_ticker_symbols
             ticker_query = text(
-                """
+                f"""
                 SELECT
                     nr.article_id,
                     nr.effective_trade_date,
@@ -739,11 +758,13 @@ class EventSentimentRepository:
                 JOIN news_sentiment ns ON ns.article_id = nr.article_id
                 LEFT JOIN news_ticker_sentiment nts
                     ON nts.article_id = nr.article_id AND nts.symbol = ntm.symbol
-                WHERE nr.effective_trade_date IN :trade_dates
+                WHERE {' AND '.join(ticker_filters)}
                 """
             ).bindparams(bindparam("trade_dates", expanding=True))
+            if normalized_ticker_symbols:
+                ticker_query = ticker_query.bindparams(bindparam("ticker_symbols", expanding=True))
             sector_query = text(
-                """
+                f"""
                 SELECT
                     nr.article_id,
                     nr.effective_trade_date,
@@ -758,7 +779,7 @@ class EventSentimentRepository:
                 FROM news_raw nr
                 JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
                 JOIN news_sentiment ns ON ns.article_id = nr.article_id
-                WHERE nr.effective_trade_date IN :trade_dates
+                WHERE {' AND '.join(sector_filters)}
                 """
             ).bindparams(bindparam("trade_dates", expanding=True))
             macro_query = text(
@@ -768,12 +789,18 @@ class EventSentimentRepository:
                 WHERE trade_date IN :trade_dates
                 """
             ).bindparams(bindparam("trade_dates", expanding=True))
-            params: dict[str, Any] = {"trade_dates": normalized_trade_dates}
         else:
             if start_date is None or end_date is None:
                 raise ValueError("load_feature_frames requiert start_date/end_date ou trade_dates.")
+            ticker_filters = ["nr.effective_trade_date BETWEEN :start_date AND :end_date"]
+            sector_filters = ["nr.effective_trade_date BETWEEN :start_date AND :end_date"]
+            params: dict[str, Any] = {"start_date": start_date, "end_date": end_date}
+            if ingestion_source is not None:
+                ticker_filters.append("nr.ingestion_source = :ingestion_source")
+                sector_filters.append("nr.ingestion_source = :ingestion_source")
+                params["ingestion_source"] = str(ingestion_source).strip().lower()
             ticker_query = text(
-                """
+                f"""
                 SELECT
                     nr.article_id,
                     nr.effective_trade_date,
@@ -795,11 +822,40 @@ class EventSentimentRepository:
                 JOIN news_sentiment ns ON ns.article_id = nr.article_id
                 LEFT JOIN news_ticker_sentiment nts
                     ON nts.article_id = nr.article_id AND nts.symbol = ntm.symbol
-                WHERE nr.effective_trade_date BETWEEN :start_date AND :end_date
+                WHERE {' AND '.join(ticker_filters)}
                 """
             )
+            if normalized_ticker_symbols:
+                ticker_query = ticker_query.bindparams(bindparam("ticker_symbols", expanding=True))
+                params["ticker_symbols"] = normalized_ticker_symbols
+                ticker_query = text(
+                    f"""
+                    SELECT
+                        nr.article_id,
+                        nr.effective_trade_date,
+                        nr.event_timestamp_ny,
+                        nr.market_session_tag,
+                        nr.source,
+                        nr.is_major_event,
+                        ntm.symbol,
+                        COALESCE(ntm.sector, 'UNKNOWN') AS sector,
+                        COALESCE(ntm.relevance_score, 1.0) AS relevance_score,
+                        COALESCE(nts.sentiment_label, ns.sentiment_label) AS sentiment_label,
+                        COALESCE(nts.positive_score, ns.positive_score) AS positive_score,
+                        COALESCE(nts.neutral_score, ns.neutral_score) AS neutral_score,
+                        COALESCE(nts.negative_score, ns.negative_score) AS negative_score,
+                        COALESCE(nts.sentiment_confidence, ns.sentiment_confidence) AS sentiment_confidence,
+                        COALESCE(nts.sentiment_net_score, ns.sentiment_net_score) AS sentiment_net_score
+                    FROM news_raw nr
+                    JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
+                    JOIN news_sentiment ns ON ns.article_id = nr.article_id
+                    LEFT JOIN news_ticker_sentiment nts
+                        ON nts.article_id = nr.article_id AND nts.symbol = ntm.symbol
+                    WHERE {' AND '.join([*ticker_filters, 'ntm.symbol IN :ticker_symbols'])}
+                    """
+                ).bindparams(bindparam("ticker_symbols", expanding=True))
             sector_query = text(
-                """
+                f"""
                 SELECT
                     nr.article_id,
                     nr.effective_trade_date,
@@ -814,7 +870,7 @@ class EventSentimentRepository:
                 FROM news_raw nr
                 JOIN news_ticker_map ntm ON ntm.article_id = nr.article_id
                 JOIN news_sentiment ns ON ns.article_id = nr.article_id
-                WHERE nr.effective_trade_date BETWEEN :start_date AND :end_date
+                WHERE {' AND '.join(sector_filters)}
                 """
             )
             macro_query = text(
@@ -824,7 +880,6 @@ class EventSentimentRepository:
                 WHERE trade_date BETWEEN :start_date AND :end_date
                 """
             )
-            params = {"start_date": start_date, "end_date": end_date}
 
         ticker_df = pd.read_sql_query(ticker_query, self.engine, params=params)
         sector_df = pd.read_sql_query(sector_query, self.engine, params=params)

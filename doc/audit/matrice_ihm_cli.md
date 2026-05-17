@@ -28,7 +28,7 @@ Légende : ✅ exposé · ⚠️ exposé partiellement · ❌ absent de l'IHM.
 | `dataIntegrityEngine.sync_earnings_calendar` | (default) | ✅ | Pipeline (step B2) | |
 | `screener.stock_screener` | (default) | ✅ | Pipeline (step 5) | |
 | `selector.alpha_scanner` | (default) | ✅ | Pipeline (step 6) | |
-| `event_sentiment` (ingest) | `--mode ingest` | ✅ | Pipeline (step 7) | |
+| `event_sentiment` + `importe_news.py` + `relevance_backfill` + `history_backfill` | chaîne canonique step 7 | ✅ | Pipeline (step 7) | import brut `stock_scores_all`, scoring/contextual candidats, features ticker candidats / secteur large. |
 | `event_sentiment.signal_aggregator` | (default) | ✅ | Pipeline (step 8) | |
 | `modelFactory` train/predict | `--mode rebuild-all\|missing\|stale` | ✅ | Pipeline (steps 9-10) + page ML | |
 | `risk_management` | (default) | ✅ | Pipeline (step 11) + page Risk | |
