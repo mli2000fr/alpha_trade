@@ -332,7 +332,12 @@ def _render_import_news_panel(
         news_import_resume_from_checkpoint = bool(
             st.checkbox(
                 "Réutiliser `news_ingestion_checkpoint` pour l'import news",
-                value=bool(st.session_state.get("pipeline_import_news_resume_from_checkpoint", False)),
+                value=bool(
+                    st.session_state.get(
+                        "pipeline_import_news_resume_from_checkpoint",
+                        getattr(options, "news_import_resume_from_checkpoint", True),
+                    )
+                ),
                 key="pipeline_import_news_resume_from_checkpoint",
                 help=(
                     "Si coché, les boutons qui réimportent des news reprennent depuis le watermark/checkpoint connu par symbole au lieu de repartir systématiquement de la date de début. "
