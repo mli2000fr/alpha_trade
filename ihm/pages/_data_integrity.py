@@ -1,6 +1,6 @@
 """ihm/pages/_data_integrity.py — Phase 6.2 (Backlog L10).
 
-Panneau auxiliaire « 7.bis Traitement par étape » pour piloter manuellement
+Panneau auxiliaire « Traitement par étape » pour piloter manuellement
 les sous-étapes de l'étape 7 Sentiment Pipeline.
 """
 from __future__ import annotations
@@ -43,6 +43,9 @@ NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS = (
     "stock_bars_daily",
 )
 
+IMPORT_NEWS_START_DATE_WIDGET_KEY = f"{IMPORT_NEWS_START_DATE_KEY}_widget"
+IMPORT_NEWS_END_DATE_WIDGET_KEY = f"{IMPORT_NEWS_END_DATE_KEY}_widget"
+
 
 def _coerce_date(value: object, fallback: DateValue) -> DateValue:
     return value if isinstance(value, DateValue) else fallback
@@ -65,11 +68,45 @@ def _parse_iso_date_text(value: object) -> DateValue | None:
         return None
 
 
-def _ensure_date_widget_state(key: str, fallback: DateValue) -> str:
-    value = _coerce_date_text(st.session_state.get(key), fallback)
-    if key not in st.session_state or not str(st.session_state.get(key) or "").strip():
-        st.session_state[key] = value
-    return value
+def _date_last_synced_key(widget_key: str) -> str:
+    return f"{widget_key}_last_synced"
+
+
+def _ensure_date_input_state(canonical_key: str, widget_key: str, fallback: DateValue) -> str:
+    """Initialise l'état date sans écraser une saisie utilisateur en cours.
+
+    Le bloc 7.bis est rendu hors du `st.fragment(run_every="2s")` de la page
+    Pipeline pour éviter qu'un auto-refresh n'écrase une saisie en cours.
+    On garde néanmoins une clé widget séparée de la clé métier persistée afin
+    que, si le widget est recréé après un rerun classique, il reparte de la
+    dernière date validée et non du défaut `today-7/today`.
+    """
+    canonical_value = _coerce_date_text(st.session_state.get(canonical_key), fallback)
+    if canonical_key not in st.session_state or not str(st.session_state.get(canonical_key) or "").strip():
+        st.session_state[canonical_key] = canonical_value
+
+    last_synced_key = _date_last_synced_key(widget_key)
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = canonical_value
+        st.session_state[last_synced_key] = canonical_value
+    else:
+        previous_synced = str(st.session_state.get(last_synced_key) or "").strip()
+        current_widget_value = str(st.session_state.get(widget_key) or "").strip()
+        if canonical_value != previous_synced and current_widget_value == previous_synced:
+            st.session_state[widget_key] = canonical_value
+            st.session_state[last_synced_key] = canonical_value
+    return str(st.session_state.get(widget_key) or canonical_value)
+
+
+def _sync_date_input(canonical_key: str, widget_key: str, raw_value: str) -> None:
+    st.session_state[canonical_key] = raw_value
+    st.session_state[_date_last_synced_key(widget_key)] = raw_value
+
+
+def _format_date_input_status(raw_value: str, parsed_value: DateValue | None) -> str:
+    if parsed_value is not None:
+        return parsed_value.isoformat()
+    return f"invalide ({raw_value})" if raw_value else "invalide"
 
 
 def _register_new_run(record: PipelineRunRecord, all_runs: list[dict[str, object]]) -> None:
@@ -122,10 +159,16 @@ def _backfill_diag_float(diag: dict[str, object], key: str, default: float = 0.0
 def _render_backfill_completeness_panel(
     start_value: DateValue,
     end_value: DateValue,
+    *,
+    use_expander: bool = True,
 ) -> None:
     """Panneau de compteurs de complétude des backfills history + relevance."""
 
-    with st.expander("📊 Compteurs de complétude — History & Relevance backfill", expanded=False):
+    panel_title = "📊 Compteurs de complétude — History & Relevance backfill"
+    panel_context = st.expander(panel_title, expanded=False) if use_expander else st.container(border=True)
+    with panel_context:
+        if not use_expander:
+            st.markdown(f"**{panel_title}**")
         st.caption(
             "Ces compteurs interrogent la base en temps réel pour vérifier l'avancement "
             "des deux backfills sur la fenêtre configurée ci-dessus (date début → date fin). "
@@ -263,6 +306,33 @@ def _render_backfill_completeness_panel(
                 st.progress(progress_val, text=f"{c_scored}/{c_total} paires scorées contextuellement")
 
 
+def _latest_step_run_for_panel(
+    latest_by_step: dict[str, dict[str, object]],
+    step_specs: list[dict[str, object]],
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    """Retourne le run le plus récent parmi les sous-étapes affichées du panneau."""
+
+    candidates: list[tuple[tuple[str, str, str, int], dict[str, object], dict[str, object]]] = []
+    for index, spec in enumerate(step_specs):
+        step_key = str(spec.get("key") or "")
+        run = latest_by_step.get(step_key)
+        if not isinstance(run, dict) or not run:
+            continue
+        sort_key = (
+            str(run.get("finished_at") or ""),
+            str(run.get("actual_started_at") or run.get("started_at") or ""),
+            str(run.get("executed_at") or ""),
+            index,
+        )
+        candidates.append((sort_key, spec, run))
+
+    if not candidates:
+        return None, None
+
+    _sort_key, winning_spec, winning_run = max(candidates, key=lambda item: item[0])
+    return winning_spec, winning_run
+
+
 def _render_import_news_panel(
     options: PipelineLaunchOptions,
     db_config: dict[str, str | None],
@@ -275,17 +345,17 @@ def _render_import_news_panel(
     today = DateValue.today()
     default_start = today - timedelta(days=7)
     default_end = today
-    _ensure_date_widget_state(IMPORT_NEWS_START_DATE_KEY, default_start)
-    _ensure_date_widget_state(IMPORT_NEWS_END_DATE_KEY, default_end)
+    _ensure_date_input_state(IMPORT_NEWS_START_DATE_KEY, IMPORT_NEWS_START_DATE_WIDGET_KEY, default_start)
+    _ensure_date_input_state(IMPORT_NEWS_END_DATE_KEY, IMPORT_NEWS_END_DATE_WIDGET_KEY, default_end)
 
-    with st.container(border=True):
-        st.markdown("**7.bis Traitement par étape**")
+    with st.expander("**B4. Sentiment - Traitement Manuel**", expanded=False):
         st.caption(
             "Ce bloc auxiliaire permet de lancer **pas à pas** les 5 sous-étapes de la nouvelle étape 7, "
             "en réutilisant les paramètres déjà saisis dans l'IHM (provider, fenêtre, symboles, seuils, batch sizes, caps contextuels, etc.). "
             "Il ne matérialise pas une étape cœur supplémentaire du workflow : c'est un outil de maintenance et de pilotage manuel."
         )
-        with st.expander("Mini guide d'usage — quand lancer quoi ?", expanded=False):
+        with st.container(border=True):
+            st.markdown("**Mini guide d'usage — quand lancer quoi ?**")
             st.markdown(
                 "1. **Import news** : importe les news brutes sur la fenêtre ciblée et alimente déjà `news_raw` + `news_ticker_map`.\n"
                 "2. **Calcul `relevance_score` (Niveau 2/3)** : complète/backfill `news_ticker_map.relevance_score` en pur Python sur les lignes de `news_ticker_map` déjà créées par l'import.\n"
@@ -300,19 +370,25 @@ def _render_import_news_panel(
 
         date_col1, date_col2 = st.columns(2)
         with date_col1:
-            st.text_input(
+            start_widget_return = st.text_input(
                 "Date de début",
-                key=IMPORT_NEWS_START_DATE_KEY,
+                key=IMPORT_NEWS_START_DATE_WIDGET_KEY,
                 help="Format attendu : YYYY-MM-DD (ex: 2020-01-01)",
             )
         with date_col2:
-            st.text_input(
+            end_widget_return = st.text_input(
                 "Date de fin",
-                key=IMPORT_NEWS_END_DATE_KEY,
+                key=IMPORT_NEWS_END_DATE_WIDGET_KEY,
                 help="Format attendu : YYYY-MM-DD (ex: 2020-01-31)",
             )
-        start_raw = str(st.session_state.get(IMPORT_NEWS_START_DATE_KEY) or "").strip()
-        end_raw = str(st.session_state.get(IMPORT_NEWS_END_DATE_KEY) or "").strip()
+        st.caption(
+            "ℹ️ Les changements de dates sont appliqués dès que vous quittez le champ "
+            "(Tab, clic ailleurs, lancement d'un job, etc.)."
+        )
+        start_raw = str(st.session_state.get(IMPORT_NEWS_START_DATE_WIDGET_KEY, start_widget_return) or "").strip()
+        end_raw = str(st.session_state.get(IMPORT_NEWS_END_DATE_WIDGET_KEY, end_widget_return) or "").strip()
+        _sync_date_input(IMPORT_NEWS_START_DATE_KEY, IMPORT_NEWS_START_DATE_WIDGET_KEY, start_raw)
+        _sync_date_input(IMPORT_NEWS_END_DATE_KEY, IMPORT_NEWS_END_DATE_WIDGET_KEY, end_raw)
         start_value = _parse_iso_date_text(start_raw)
         end_value = _parse_iso_date_text(end_raw)
         date_inputs_valid = True
@@ -451,7 +527,11 @@ def _render_import_news_panel(
                 )
 
         if not date_inputs_valid:
-            st.caption(f"Fenêtre appliquée : {start_raw or 'invalide'} → {end_raw or 'invalide'}")
+            st.caption(
+                "Fenêtre appliquée : "
+                f"{_format_date_input_status(start_raw, start_value)} → "
+                f"{_format_date_input_status(end_raw, end_value)}"
+            )
             return
 
         import_options = replace(
@@ -476,7 +556,7 @@ def _render_import_news_panel(
             {
                 "key": "import_news",
                 "label": "📰 Import news",
-                "run_label": "7.bis Traitement par étape — 1. Import news",
+                "run_label": "Traitement par étape — 1. Import news",
                 "caption": "Sous-étape 1 — Import news",
                 "preview": format_command_for_display(build_pipeline_command("import_news", import_options)),
                 "success": "Import news démarré en arrière-plan",
@@ -485,7 +565,7 @@ def _render_import_news_panel(
             {
                 "key": "sentiment_relevance_backfill",
                 "label": "🧮 Calcul relevance_score (Niveau 2/3)",
-                "run_label": "7.bis Traitement par étape — 2. Calcul relevance_score (Niveau 2/3)",
+                "run_label": "Traitement par étape — 2. Calcul relevance_score (Niveau 2/3)",
                 "caption": "Sous-étape 2 — Calcul `relevance_score` (Niveau 2/3)",
                 "preview": format_command_for_display(build_pipeline_command("sentiment_relevance_backfill", import_options)),
                 "success": "Calcul relevance_score démarré en arrière-plan",
@@ -494,7 +574,7 @@ def _render_import_news_panel(
             {
                 "key": "sentiment_standard_scoring",
                 "label": "🧠 Scoring FinBERT standard (sans features)",
-                "run_label": "7.bis Traitement par étape — 3. Scoring FinBERT standard (sans features)",
+                "run_label": "Traitement par étape — 3. Scoring FinBERT standard (sans features)",
                 "caption": "Sous-étape 3 — Scoring FinBERT standard (sans features)",
                 "preview": format_command_for_display(build_pipeline_command("sentiment_standard_scoring", import_options)),
                 "success": "Scoring FinBERT standard démarré en arrière-plan",
@@ -503,7 +583,7 @@ def _render_import_news_panel(
             {
                 "key": "rebuild_daily_sentiment_features_only",
                 "label": "🧱 Agrégation features journalières",
-                "run_label": "7.bis Traitement par étape — 4. Agrégation features journalières",
+                "run_label": "Traitement par étape — 4. Agrégation features journalières",
                 "caption": "Sous-étape 4 — Agrégation features journalières (ticker/secteur)",
                 "preview": format_command_for_display(build_pipeline_command("rebuild_daily_sentiment_features_only", import_options)),
                 "success": "Agrégation des features journalières démarrée en arrière-plan",
@@ -512,7 +592,7 @@ def _render_import_news_panel(
             {
                 "key": "sentiment_contextual_scoring",
                 "label": "🎯 Scoring FinBERT contextuel (Niveau 4)",
-                "run_label": "7.bis Traitement par étape — 5. Scoring FinBERT contextuel (Niveau 4)",
+                "run_label": "Traitement par étape — 5. Scoring FinBERT contextuel (Niveau 4)",
                 "caption": "Sous-étape 5 — Scoring FinBERT contextuel (Niveau 4 — `news_ticker_sentiment`)",
                 "preview": format_command_for_display(build_pipeline_command("sentiment_contextual_scoring", import_options)),
                 "success": "Scoring FinBERT contextuel démarré en arrière-plan",
@@ -599,10 +679,17 @@ def _render_import_news_panel(
                         st.success(f"{spec['success']} : `{record.run_id}`")
                         st.rerun()
 
-        for spec in step_specs:
-            st.caption(f"Dernier run — {spec['caption']}")
-            _render_step_result(latest_by_step.get(str(spec["key"])))
+        latest_spec, latest_run = _latest_step_run_for_panel(latest_by_step, step_specs)
+        if latest_spec is not None:
+            st.caption(f"Dernier run — {latest_spec['caption']}")
+        else:
+            st.caption("Dernier run")
+        _render_step_result(latest_run)
 
         st.divider()
-        _render_backfill_completeness_panel(cast(DateValue, start_value), cast(DateValue, end_value))
+        _render_backfill_completeness_panel(
+            cast(DateValue, start_value),
+            cast(DateValue, end_value),
+            use_expander=False,
+        )
 

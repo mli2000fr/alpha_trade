@@ -91,8 +91,7 @@ def _build_watcher_handoff_rows(
 
 
 def _render_watcher_handoff_panel(options: PipelineLaunchOptions) -> None:
-    with st.container(border=True):
-        st.markdown("**12.bis — Watcher post-exécution (hors workflow 1 → 14)**")
+    with st.expander("**12.bis — Watcher post-exécution (hors workflow 1 → 14)**", expanded=False):
         st.info(
             "Le watcher se lance juste après `Execution` pour surveiller les protections broker-side. Il ne remplace pas les étapes 13 et 14 : "
             "les Corporate Actions peuvent s'enchaîner pendant que le watcher tourne."

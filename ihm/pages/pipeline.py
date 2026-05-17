@@ -340,6 +340,22 @@ def _render_ml_train_all_symbols_block(
         )
 
 
+def _build_pipeline_run_context() -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+    dict[str, dict[str, object]],
+    bool,
+    dict[str, list[dict[str, object]]],
+]:
+    active_runs, all_runs = _merge_runs()
+    latest_by_step = _latest_run_by_step(all_runs)
+    workflow_active = any(_is_workflow_run(run) for run in active_runs)
+    active_by_step: dict[str, list[dict[str, object]]] = {}
+    for run in active_runs:
+        active_by_step.setdefault(str(run.get("step_key", "")), []).append(run)
+    return active_runs, all_runs, latest_by_step, workflow_active, active_by_step
+
+
 def _render_launchable_step_panel(
     step: Any,
     options: PipelineLaunchOptions,
@@ -459,26 +475,12 @@ def _render_launchable_step_panel(
                 _render_ml_inspection_link(step.key)
 
         _render_step_result(latest_by_step.get(step.key))
-        if step.key == "sentiment_pipeline":
-            _render_import_news_panel(
-                options,
-                db_config,
-                workflow_active=workflow_active,
-                active_by_step=active_by_step,
-                all_runs=all_runs,
-                latest_by_step=latest_by_step,
-            )
 
 
 @st.fragment(run_every="2s")
 def _render_step_panels(options: PipelineLaunchOptions, live_confirmed: bool, db_config: dict[str, str | None]) -> None:
-    active_runs, all_runs = _merge_runs()
-    latest_by_step = _latest_run_by_step(all_runs)
+    active_runs, all_runs, latest_by_step, workflow_active, active_by_step = _build_pipeline_run_context()
     dependency_diagnostic = get_alpha_scanner_dependency_diagnostic()
-    workflow_active = any(_is_workflow_run(run) for run in active_runs)
-    active_by_step: dict[str, list[dict[str, object]]] = {}
-    for run in active_runs:
-        active_by_step.setdefault(str(run.get("step_key", "")), []).append(run)
 
     auxiliary_steps = get_pipeline_auxiliary_steps()
     if auxiliary_steps:
@@ -532,6 +534,16 @@ def render() -> None:
     _render_workflow_launcher(options, live_confirmed, db_config)
     _render_runtime_center()
     _render_step_panels(options, live_confirmed, db_config)
+
+    _, all_runs, latest_by_step, workflow_active, active_by_step = _build_pipeline_run_context()
+    _render_import_news_panel(
+        options,
+        db_config,
+        workflow_active=workflow_active,
+        active_by_step=active_by_step,
+        all_runs=all_runs,
+        latest_by_step=latest_by_step,
+    )
 
 
 run_page_if_standalone(__name__, render)
