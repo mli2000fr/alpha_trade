@@ -275,6 +275,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--contextual-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Exécute uniquement le scoring FinBERT contextuel (Niveau 4), sans recalculer "
+            "relevance_score. Utilisé par l'étape 7bis (le calcul relevance_score appartient "
+            "à l'étape 7)."
+        ),
+    )
+    parser.add_argument(
         "--contextual-min-relevance",
         type=float,
         default=0.0,
@@ -308,30 +318,38 @@ def main() -> None:
         "dry_run": bool(args.dry_run),
         "rescore_all": bool(args.rescore_all),
         "rescore_contextual": bool(args.rescore_contextual),
+        "contextual_only": bool(args.contextual_only),
         "start_date": args.start_date,
         "end_date": args.end_date,
         "symbols": args.symbols,
     }
 
-    relevance_stats = service.backfill_relevance(
-        batch_size=int(args.batch_size),
-        start_date=_parse_date(args.start_date),
-        end_date=_parse_date(args.end_date),
-        symbols=_parse_symbols(args.symbols),
-        dry_run=bool(args.dry_run),
-        rescore_all=bool(args.rescore_all),
-    )
-    summary.update(relevance_stats)
-
-    if args.purge_below is not None:
-        purge_stats = service.purge_below(
-            threshold=float(args.purge_below),
+    if not args.contextual_only:
+        relevance_stats = service.backfill_relevance(
+            batch_size=int(args.batch_size),
             start_date=_parse_date(args.start_date),
             end_date=_parse_date(args.end_date),
             symbols=_parse_symbols(args.symbols),
             dry_run=bool(args.dry_run),
+            rescore_all=bool(args.rescore_all),
         )
-        summary.update(purge_stats)
+        summary.update(relevance_stats)
+
+        if args.purge_below is not None:
+            purge_stats = service.purge_below(
+                threshold=float(args.purge_below),
+                start_date=_parse_date(args.start_date),
+                end_date=_parse_date(args.end_date),
+                symbols=_parse_symbols(args.symbols),
+                dry_run=bool(args.dry_run),
+            )
+            summary.update(purge_stats)
+    else:
+        summary.setdefault("relevance_scanned", 0)
+        summary.setdefault("relevance_rescored", 0)
+        LOGGER.info(
+            "Calcul relevance_score désactivé (--contextual-only) : scoring FinBERT contextuel uniquement."
+        )
 
     if args.rescore_contextual:
         ctx_stats = service.backfill_contextual(

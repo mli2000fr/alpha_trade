@@ -1308,6 +1308,177 @@ def get_stale_market_cap_stats(*, cutoff_days: int = 45) -> dict[str, int | floa
 
 
 # ---------------------------------------------------------------------------
+# Sprint S5 — Compteurs de complétude backfill sentiment (7bis)
+# ---------------------------------------------------------------------------
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def get_backfill_completeness_diagnostic(
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[str, object]:
+    """Retourne les compteurs de complétude des deux backfills 7bis.
+
+    - **Relevance backfill** (Niveau 2/3) : compte les lignes ``news_ticker_map``
+      dont ``relevance_score IS NULL`` sur la fenêtre demandée.
+    - **Contextual backfill** (Niveau 4 FinBERT) : compte les paires
+      ``(article, symbol)`` présentes dans ``news_ticker_map`` mais absentes de
+      ``news_ticker_sentiment`` (indépendamment du ``relevance_score``).
+    - **History backfill** : compare les trade-dates scorées (``news_raw`` ∩
+      ``news_sentiment``) avec les dates couvertes dans
+      ``ticker_daily_sentiment_features``.  Retourne le nombre de dates
+      manquantes et de dates couvertes dans la plage.
+
+    Les paramètres ``start_date`` / ``end_date`` filtrent sur
+    ``news_raw.effective_trade_date`` (bornes incluses). Si ``None``, la borne
+    correspondante est ignorée.
+    """
+    date_filters_trade = ""
+    date_filters_pub = ""
+    params: dict[str, object] = {}
+    if start_date is not None:
+        date_filters_trade += " AND nr.effective_trade_date >= :start_date"
+        date_filters_pub += " AND nr.effective_trade_date >= :start_date"
+        params["start_date"] = start_date
+    if end_date is not None:
+        date_filters_trade += " AND nr.effective_trade_date <= :end_date"
+        date_filters_pub += " AND nr.effective_trade_date <= :end_date"
+        params["end_date"] = end_date
+
+    # --- Relevance backfill : lignes news_ticker_map sans relevance_score ---
+    relevance_null_raw, relevance_null_error = _safe_scalar_with_error(
+        f"""
+        SELECT COUNT(*)
+        FROM news_ticker_map ntm
+        JOIN news_raw nr ON nr.article_id = ntm.article_id
+        WHERE ntm.relevance_score IS NULL
+        {date_filters_trade}
+        """,
+        params or None,
+    )
+    relevance_null = _coerce_int(relevance_null_raw)
+
+    # --- Total lignes news_ticker_map sur la fenêtre (dénominateur) ---
+    relevance_total_raw, relevance_total_error = _safe_scalar_with_error(
+        f"""
+        SELECT COUNT(*)
+        FROM news_ticker_map ntm
+        JOIN news_raw nr ON nr.article_id = ntm.article_id
+        WHERE 1=1
+        {date_filters_trade}
+        """,
+        params or None,
+    )
+    relevance_total = _coerce_int(relevance_total_raw)
+    relevance_scored = max(0, relevance_total - relevance_null)
+
+    # --- Contextual backfill : paires sans news_ticker_sentiment ---
+    contextual_pending_raw, contextual_pending_error = _safe_scalar_with_error(
+        f"""
+        SELECT COUNT(*)
+        FROM news_ticker_map ntm
+        JOIN news_raw nr ON nr.article_id = ntm.article_id
+        LEFT JOIN news_ticker_sentiment nts
+            ON nts.article_id = ntm.article_id AND nts.symbol = ntm.symbol
+        WHERE nts.article_id IS NULL
+        {date_filters_trade}
+        """,
+        params or None,
+    )
+    contextual_pending = _coerce_int(contextual_pending_raw)
+
+    contextual_total_raw, contextual_total_error = _safe_scalar_with_error(
+        f"""
+        SELECT COUNT(*)
+        FROM news_ticker_map ntm
+        JOIN news_raw nr ON nr.article_id = ntm.article_id
+        WHERE 1=1
+        {date_filters_trade}
+        """,
+        params or None,
+    )
+    contextual_total = _coerce_int(contextual_total_raw)
+    contextual_scored = max(0, contextual_total - contextual_pending)
+
+    # --- History backfill : trade-dates scorées non couvertes par ticker_daily_sentiment_features ---
+    history_missing_raw, history_missing_error = _safe_scalar_with_error(
+        f"""
+        SELECT COUNT(DISTINCT scored.effective_trade_date)
+        FROM (
+            SELECT DISTINCT nr.effective_trade_date
+            FROM news_raw nr
+            JOIN news_sentiment ns ON ns.article_id = nr.article_id
+            WHERE 1=1
+            {date_filters_trade}
+        ) scored
+        LEFT JOIN ticker_daily_sentiment_features tf
+            ON tf.trade_date = scored.effective_trade_date
+        WHERE tf.trade_date IS NULL
+        """,
+        params or None,
+    )
+    history_missing = _coerce_int(history_missing_raw)
+
+    history_covered_raw, history_covered_error = _safe_scalar_with_error(
+        f"""
+        SELECT COUNT(DISTINCT tf.trade_date)
+        FROM ticker_daily_sentiment_features tf
+        WHERE 1=1
+        {'AND tf.trade_date >= :start_date' if start_date is not None else ''}
+        {'AND tf.trade_date <= :end_date' if end_date is not None else ''}
+        """,
+        params or None,
+    )
+    history_covered = _coerce_int(history_covered_raw)
+
+    history_scored_dates_raw, _ = _safe_scalar_with_error(
+        f"""
+        SELECT COUNT(DISTINCT nr.effective_trade_date)
+        FROM news_raw nr
+        JOIN news_sentiment ns ON ns.article_id = nr.article_id
+        WHERE 1=1
+        {date_filters_trade}
+        """,
+        params or None,
+    )
+    history_scored_dates = _coerce_int(history_scored_dates_raw)
+
+    query_error = (
+        relevance_null_error
+        or relevance_total_error
+        or contextual_pending_error
+        or contextual_total_error
+        or history_missing_error
+        or history_covered_error
+    )
+
+    return {
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+        # Relevance backfill
+        "relevance_null": relevance_null,
+        "relevance_scored": relevance_scored,
+        "relevance_total": relevance_total,
+        "relevance_pct": round(relevance_scored / relevance_total * 100.0, 1) if relevance_total > 0 else 100.0,
+        # Contextual backfill
+        "contextual_pending": contextual_pending,
+        "contextual_scored": contextual_scored,
+        "contextual_total": contextual_total,
+        "contextual_pct": round(contextual_scored / contextual_total * 100.0, 1) if contextual_total > 0 else 100.0,
+        # History backfill
+        "history_missing_dates": history_missing,
+        "history_covered_dates": history_covered,
+        "history_scored_dates": history_scored_dates,
+        "history_pct": round(
+            history_covered / history_scored_dates * 100.0, 1
+        ) if history_scored_dates > 0 else 100.0,
+        # Méta
+        "query_error": query_error,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Sprint S4 / A-021 — PnL quotidien pour la page Overview
 # ---------------------------------------------------------------------------
 

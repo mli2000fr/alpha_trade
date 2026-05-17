@@ -231,6 +231,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--skip-features",
+        action="store_true",
+        default=False,
+        help=(
+            "N'exécute pas l'agrégation des features journalières (ticker/secteur) "
+            "à la fin du run. Utilisé par l'étape 7 pour effectuer le calcul "
+            "relevance_score avant l'agrégation (cmd2=relevance, cmd3=features)."
+        ),
+    )
+    parser.add_argument(
         "--sentiment-pending-limit",
         type=int,
         default=None,
@@ -341,6 +351,7 @@ def main() -> None:
         end_utc=end_utc,
         symbols=symbols,
         skip_ingestion=bool(args.skip_ingestion),
+        skip_features=bool(args.skip_features),
     )
     finished_at = _utc_now_naive()
     _emit_run_summary(

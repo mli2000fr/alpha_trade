@@ -353,7 +353,6 @@ class PipelineLaunchOptions:
     # === Relevance backfill (step 7bis) ==================================
     backfill_relevance_dry_run: bool = False
     backfill_relevance_rescore_all: bool = False
-    backfill_relevance_rescore_contextual: bool = False
     backfill_relevance_purge_below: float | None = None
     backfill_relevance_batch_size: int = 500
     backfill_relevance_contextual_min_relevance: float = 0.0
@@ -564,20 +563,20 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="sentiment_pipeline",
         num="7",
         name="Sentiment Pipeline",
-        desc="Ingestion news → scoring FinBERT → features ticker/secteur journalières.",
+        desc="Import news → Scoring FinBERT standard → Calcul relevance_score → Agrégation features ticker/secteur journalières.",
         tables="ticker_daily_sentiment_features, sector_daily_sentiment_features",
         deps="alpha_scanner",
     ),
     PipelineStepDefinition(
         key="relevance_backfill",
         num="7bis",
-        name="Recalcul relevance + contextual (7bis)",
+        name="Contextual FinBERT (7bis)",
         desc=(
-            "Backfill batch des scores de pertinence article→symbole "
-            "(Niveau 2/3) et, si activé, du re-scoring FinBERT contextualisé "
-            "(Niveau 4) sur les lignes news_ticker_map historiques."
+            "Scoring FinBERT contextualisé (Niveau 4) sur les paires (article, symbole) "
+            "dont relevance_score ≥ seuil. Requiert que l'étape 7 ait préalablement "
+            "calculé les relevance_scores."
         ),
-        tables="news_ticker_map (update relevance_*), news_ticker_sentiment (insert)",
+        tables="news_ticker_sentiment (insert/update)",
         deps="sentiment_pipeline",
     ),
     PipelineStepDefinition(
@@ -1025,21 +1024,22 @@ def _extend_relevance_backfill_powershell_args(
             f"{float(options.backfill_relevance_purge_below):g}",
         ])
 
-    if options.backfill_relevance_rescore_contextual:
-        command_args.append("-RelevanceBackfillRescoreContextual")
-        if options.backfill_relevance_contextual_min_relevance > 0.0:
-            command_args.extend([
-                "-RelevanceBackfillContextualMinRelevance",
-                f"{float(options.backfill_relevance_contextual_min_relevance):g}",
-            ])
-        if (
-            options.backfill_relevance_contextual_max_pairs is not None
-            and options.backfill_relevance_contextual_max_pairs > 0
-        ):
-            command_args.extend([
-                "-RelevanceBackfillContextualMaxPairs",
-                str(int(options.backfill_relevance_contextual_max_pairs)),
-            ])
+    # Paramètres contextuels toujours transmis au PS1 (le script décide s'il les utilise).
+    if options.backfill_relevance_contextual_min_relevance > 0.0:
+        command_args.extend([
+            "-RelevanceBackfillContextualMinRelevance",
+            f"{float(options.backfill_relevance_contextual_min_relevance):g}",
+        ])
+
+    if (
+        options.backfill_relevance_contextual_max_pairs is not None
+        and options.backfill_relevance_contextual_max_pairs > 0
+    ):
+        command_args.extend([
+            "-RelevanceBackfillContextualMaxPairs",
+            str(int(options.backfill_relevance_contextual_max_pairs)),
+        ])
+
 
 
 def _build_import_news_pending_loop_command(
@@ -1090,6 +1090,52 @@ def is_gpu_available() -> bool:
         return bool(torch.cuda.is_available())
     except Exception:
         return False
+
+
+def _build_chained_ps_commands(
+    steps: list[tuple[str, list[str]]],
+    title: str | None = None,
+) -> list[str]:
+    """Chaîne N commandes Python via PowerShell inline avec labels de progression.
+
+    Chaque étape n'est lancée que si la précédente a réussi (exit=0).
+    Un Write-Host affiche le label de chaque étape avant son exécution.
+    Si ``title`` est fourni, un bandeau jaune est affiché avant les étapes.
+    """
+
+    def _quote(arg: str) -> str:
+        if " " in arg or '"' in arg or "'" in arg:
+            escaped = arg.replace('"', '\\"')
+            return f'"{escaped}"'
+        return arg
+
+    project_root_escaped = str(PROJECT_ROOT).replace("'", "''")
+    total = len(steps)
+    parts: list[str] = [
+        f"Push-Location '{project_root_escaped}'",
+        "$ec = 0",
+    ]
+    if title:
+        safe_title = title.replace("'", "''")
+        divider = "=" * 60
+        parts.append(
+            f"Write-Host '{divider}' -ForegroundColor Yellow; "
+            f"Write-Host '  {safe_title}' -ForegroundColor Yellow; "
+            f"Write-Host '{divider}' -ForegroundColor Yellow"
+        )
+    for i, (label, cmd) in enumerate(steps, 1):
+        cmd_str = " ".join(_quote(a) for a in cmd)
+        safe_label = label.replace("'", "''")
+        parts.append(
+            f"if ($ec -eq 0) {{"
+            f" Write-Host '[{i}/{total}] {safe_label}' -ForegroundColor Cyan;"
+            f" & {cmd_str};"
+            f" $ec = $LASTEXITCODE"
+            f" }}"
+        )
+    parts.extend(["Pop-Location", "exit $ec"])
+    ps_script = "; ".join(parts)
+    return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script]
 
 
 def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
@@ -1330,64 +1376,119 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "sentiment_pipeline":
-        command = [sys.executable, "-u", "-m", "event_sentiment"]
-        _extend_event_sentiment_cli_common_args(
-            command,
-            options,
-            include_contextual_scoring=True,
-        )
+        # cmd1 : import news + scoring FinBERT standard UNIQUEMENT (sans features).
+        # --skip-features permet d'insérer le calcul relevance avant l'agrégation.
+        cmd1 = [sys.executable, "-u", "-m", "event_sentiment", "--skip-features"]
+        news_provider = options.sentiment_news_provider or "eodhd"
+        cmd1.extend(["--news-provider", news_provider])
+        if (
+            options.sentiment_ticker_relevance_mode
+            and options.sentiment_ticker_relevance_mode != "provider_default"
+        ):
+            cmd1.extend(["--ticker-relevance-mode", options.sentiment_ticker_relevance_mode])
+        if (
+            options.sentiment_ticker_relevance_mode == "scored"
+            and options.sentiment_min_relevance_score is not None
+            and options.sentiment_min_relevance_score > 0.0
+        ):
+            cmd1.extend(["--min-relevance-score", f"{float(options.sentiment_min_relevance_score):g}"])
+        # Aucun flag contextuel : step 7 est toujours standard_only.
+        if options.sentiment_pending_limit is not None and options.sentiment_pending_limit > 0:
+            cmd1.extend(["--sentiment-pending-limit", str(int(options.sentiment_pending_limit))])
+        if options.sentiment_pending_max_batches_per_run is not None and options.sentiment_pending_max_batches_per_run > 0:
+            cmd1.extend(["--sentiment-pending-max-batches", str(int(options.sentiment_pending_max_batches_per_run))])
+        if options.sentiment_finbert_batch_size is not None and options.sentiment_finbert_batch_size > 0:
+            cmd1.extend(["--finbert-batch-size", str(int(options.sentiment_finbert_batch_size))])
         if sentiment_start_utc:
-            command.extend(["--start-utc", sentiment_start_utc])
+            cmd1.extend(["--start-utc", sentiment_start_utc])
         if sentiment_end_utc:
-            command.extend(["--end-utc", sentiment_end_utc])
+            cmd1.extend(["--end-utc", sentiment_end_utc])
         if sentiment_symbols:
-            command.extend(["--symbols", sentiment_symbols])
-        return command
+            cmd1.extend(["--symbols", sentiment_symbols])
 
-    if step_key == "relevance_backfill":
-        command = [
-            sys.executable,
-            "-u",
-            "-m",
-            "event_sentiment.relevance_backfill",
-            "--batch-size",
-            str(int(options.backfill_relevance_batch_size or 500)),
+        # cmd2 : calcul relevance_score (Niveau 2/3) — sans contextuel.
+        # Calculé APRÈS le scoring standard (news_ticker_map déjà peuplé),
+        # et AVANT l'agrégation features pour pondérer correctement les scores journaliers.
+        cmd2 = [
+            sys.executable, "-u", "-m", "event_sentiment.relevance_backfill",
+            "--batch-size", str(int(options.backfill_relevance_batch_size or 500)),
         ]
         if sentiment_start_utc:
-            # Réutilise la date d'effet : on extrait la date ISO sans heure.
-            command.extend(["--start-date", str(sentiment_start_utc)[:10]])
+            cmd2.extend(["--start-date", str(sentiment_start_utc)[:10]])
         if sentiment_end_utc:
-            command.extend(["--end-date", str(sentiment_end_utc)[:10]])
+            cmd2.extend(["--end-date", str(sentiment_end_utc)[:10]])
         if sentiment_symbols:
-            command.extend(["--symbols", sentiment_symbols])
-        if options.backfill_relevance_dry_run:
-            command.append("--dry-run")
+            cmd2.extend(["--symbols", sentiment_symbols])
         if options.backfill_relevance_rescore_all:
-            command.append("--rescore-all")
+            cmd2.append("--rescore-all")
         if (
             options.backfill_relevance_purge_below is not None
             and options.backfill_relevance_purge_below > 0.0
         ):
-            command.extend([
+            cmd2.extend(["--purge-below", f"{float(options.backfill_relevance_purge_below):g}"])
+        # PAS de --rescore-contextual : le scoring contextuel appartient à l'étape 7bis.
+
+        # cmd3 : agrégation features journalières (avec relevance_score maintenant calculé).
+        cmd3 = [sys.executable, "-u", "-m", "event_sentiment.history_backfill"]
+        if sentiment_start_utc:
+            cmd3.extend(["--start-date", str(sentiment_start_utc)[:10]])
+        if sentiment_end_utc:
+            cmd3.extend(["--end-date", str(sentiment_end_utc)[:10]])
+
+        return _build_chained_ps_commands(
+            [
+                ("Import news + Scoring FinBERT standard (sans features)", cmd1),
+                ("Calcul relevance_score (Niveau 2/3, pur Python — sans FinBERT)", cmd2),
+                ("Agregation features journalieres (ticker/secteur)", cmd3),
+            ],
+            title="ETAPE 7 — Sentiment Pipeline",
+        )
+
+    if step_key == "relevance_backfill":
+        # Étape 7bis : scoring FinBERT contextuel uniquement.
+        # --contextual-only  → pas de recalcul relevance_score (appartient à l'étape 7).
+        # --rescore-contextual → active systématiquement la Phase 2 FinBERT contextuel.
+        contextual_cmd = [
+            sys.executable,
+            "-u",
+            "-m",
+            "event_sentiment.relevance_backfill",
+            "--contextual-only",    # ne touche pas relevance_score
+            "--rescore-contextual", # Phase 2 FinBERT toujours active
+            "--batch-size",
+            str(int(options.backfill_relevance_batch_size or 500)),
+        ]
+        if sentiment_start_utc:
+            contextual_cmd.extend(["--start-date", str(sentiment_start_utc)[:10]])
+        if sentiment_end_utc:
+            contextual_cmd.extend(["--end-date", str(sentiment_end_utc)[:10]])
+        if sentiment_symbols:
+            contextual_cmd.extend(["--symbols", sentiment_symbols])
+        if (
+            options.backfill_relevance_purge_below is not None
+            and options.backfill_relevance_purge_below > 0.0
+        ):
+            contextual_cmd.extend([
                 "--purge-below",
                 f"{float(options.backfill_relevance_purge_below):g}",
             ])
-        if options.backfill_relevance_rescore_contextual:
-            command.append("--rescore-contextual")
-            if options.backfill_relevance_contextual_min_relevance > 0.0:
-                command.extend([
-                    "--contextual-min-relevance",
-                    f"{float(options.backfill_relevance_contextual_min_relevance):g}",
-                ])
-            if (
-                options.backfill_relevance_contextual_max_pairs is not None
-                and options.backfill_relevance_contextual_max_pairs > 0
-            ):
-                command.extend([
-                    "--contextual-max-pairs",
-                    str(int(options.backfill_relevance_contextual_max_pairs)),
-                ])
-        return command
+        if options.backfill_relevance_contextual_min_relevance > 0.0:
+            contextual_cmd.extend([
+                "--contextual-min-relevance",
+                f"{float(options.backfill_relevance_contextual_min_relevance):g}",
+            ])
+        if (
+            options.backfill_relevance_contextual_max_pairs is not None
+            and options.backfill_relevance_contextual_max_pairs > 0
+        ):
+            contextual_cmd.extend([
+                "--contextual-max-pairs",
+                str(int(options.backfill_relevance_contextual_max_pairs)),
+            ])
+        return _build_chained_ps_commands(
+            [("Scoring FinBERT contextuel (Niveau 4 — news_ticker_sentiment)", contextual_cmd)],
+            title="ETAPE 7bis — Contextual FinBERT",
+        )
 
     if step_key == "score_sentiment_only":
         if news_import_start_date is None:

@@ -234,6 +234,7 @@ class EventSentimentPipeline:
         stats: dict[str, object],
         *,
         resolved_symbols: list[str],
+        skip_features: bool = False,
     ) -> tuple[int, list[date], list[date]]:
         max_batches = int(getattr(self.config, "sentiment_pending_max_batches_per_run", 1))
         feature_flush_every_n_batches = int(getattr(self.config, "feature_flush_every_n_pending_batches", 0) or 0)
@@ -300,7 +301,8 @@ class EventSentimentPipeline:
             )
 
             if (
-                feature_flush_every_n_batches > 0
+                not skip_features
+                and feature_flush_every_n_batches > 0
                 and pending_feature_flush_dates
                 and batches_processed % feature_flush_every_n_batches == 0
             ):
@@ -426,6 +428,7 @@ class EventSentimentPipeline:
         symbols: list[str] | None = None,
         *,
         skip_ingestion: bool = False,
+        skip_features: bool = False,
     ) -> dict:
         if skip_ingestion:
             resolved_symbols = sorted({symbol.strip().upper() for symbol in (symbols or []) if symbol and symbol.strip()})
@@ -523,6 +526,7 @@ class EventSentimentPipeline:
                 pending_scope,
                 stats,
                 resolved_symbols=resolved_symbols,
+                skip_features=skip_features,
             )
 
         # Niveau 4 — re-scoring FinBERT contextualisé par couple (article, symbol).
@@ -544,12 +548,20 @@ class EventSentimentPipeline:
                 label="📰 Progression sentiment pipeline — scoring contextuel",
                 phase="contextual_scoring",
             )
-        self._finalize_feature_aggregation(
-            impacted_trade_dates=impacted_trade_dates,
-            remaining_impacted_trade_dates=remaining_impacted_trade_dates,
-            resolved_symbols=resolved_symbols,
-            stats=stats,
-        )
+        if skip_features:
+            stats["impacted_trade_dates"] = [d.isoformat() for d in impacted_trade_dates]
+            stats.setdefault("ticker_day_rows", 0)
+            stats.setdefault("sector_day_rows", 0)
+            LOGGER.info(
+                "Agrégation features ignorée (--skip-features) : sera effectuée par la commande suivante (history_backfill)."
+            )
+        else:
+            self._finalize_feature_aggregation(
+                impacted_trade_dates=impacted_trade_dates,
+                remaining_impacted_trade_dates=remaining_impacted_trade_dates,
+                resolved_symbols=resolved_symbols,
+                stats=stats,
+            )
         LOGGER.info(
             "Event sentiment pipeline summary | symbols=%s pending_batches=%s pending_articles=%s sentiment=%s contextual=%s ticker_day_rows=%s sector_day_rows=%s macro_rows=%s impacted_trade_dates=%s",
             len(resolved_symbols),

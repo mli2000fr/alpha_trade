@@ -138,20 +138,36 @@ def test_ihm_cli_contract_flags_are_known_by_target_argparse(step) -> None:
 
 
 def test_ihm_cli_contract_pipeline_steps_emit_python_module_invocations() -> None:
-    """Garde-fou : tous les steps construisent une commande Python valide.
+    """Garde-fou : tous les steps construisent une commande valide.
 
-    Forme acceptée : ``python -u -m <module>`` ou ``python -u <script.py>``.
+    Forme acceptée :
+    - ``python -u -m <module>`` ou ``python -u <script.py>``
+    - ``powershell.exe -NoProfile ...`` (steps chaînés multi-commandes, ex: sentiment_pipeline)
     """
+    # Steps qui utilisent PowerShell chaining au lieu d'une invocation Python directe.
+    PS_BASED_STEPS = {"sentiment_pipeline"}
+
     options = PipelineLaunchOptions()
     for step in (*PIPELINE_STEPS, *PIPELINE_AUXILIARY_STEPS):
         command = build_pipeline_command(step.key, options)
         assert command, f"Step {step.key} : commande vide"
-        assert command[1] == "-u", f"Step {step.key} : second token doit être `-u`, got {command[1]}"
-        # Soit `-m <module>`, soit un chemin vers un script.
-        third = command[2]
-        assert third == "-m" or third.endswith(".py"), (
-            f"Step {step.key} : forme attendue `-m <module>` ou `<script.py>`, got {third!r}"
-        )
+
+        if step.key in PS_BASED_STEPS:
+            assert command[0] == "powershell.exe", (
+                f"Step {step.key} (PS-based) doit commencer par `powershell.exe`, got {command[0]}"
+            )
+            # Le script PS doit contenir au moins une invocation python
+            ps_script = command[-1]
+            assert "event_sentiment" in ps_script, (
+                f"Step {step.key} : script PS ne référence pas event_sentiment"
+            )
+        else:
+            assert command[1] == "-u", f"Step {step.key} : second token doit être `-u`, got {command[1]}"
+            # Soit `-m <module>`, soit un chemin vers un script.
+            third = command[2]
+            assert third == "-m" or third.endswith(".py"), (
+                f"Step {step.key} : forme attendue `-m <module>` ou `<script.py>`, got {third!r}"
+            )
 
 
 # ---------------------------------------------------------------------------

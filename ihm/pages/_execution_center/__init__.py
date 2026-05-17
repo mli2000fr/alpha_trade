@@ -858,11 +858,12 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 st.caption("Flush final unique conservé : comportement historique du pipeline.")
 
     # Niveau 4 — re-scoring FinBERT contextualisé par couple (article, symbol).
-    with st.expander("Niveau 4 — Re-scoring FinBERT contextualisé (opt-in)", expanded=False):
+    with st.expander("7bis — Contextual FinBERT (Niveau 4)", expanded=False):
         st.caption(
-            "Le mode de scoring sélectionné ci-dessus pilote l'activation du contextual. "
-            "Les paramètres ci-dessous ne sont pris en compte que pour `Contextual only` et `Standard + contextual`. "
-            "Le cap de paires contextuelles est un cap **par run** : si vous mettez `5000`, le run score au plus `5000` couples `(article, symbole)` puis le run suivant reprend le reliquat via `news_ticker_sentiment`."
+            "Paramètres de l'étape **7bis** (`python -m event_sentiment.relevance_backfill --contextual-only --rescore-contextual`). "
+            "L'étape 7bis exécute **uniquement** le scoring FinBERT contextuel Niveau 4 : elle ne recalcule plus `relevance_score` "
+            "(cette Phase 1 est désormais intégrée à l'étape 7). "
+            "Le cap de paires contextuelles est un cap **par run** : si vous mettez `5000`, le run score au plus `5000` couples `(article, symbole)` puis le run suivant reprend le reliquat."
         )
         ctx_col1, ctx_col2 = st.columns(2)
         with ctx_col1:
@@ -878,10 +879,10 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                         ))
                     ),
                     key="pipeline_sentiment_contextual_min_relevance",
-                    disabled=not sentiment_enable_contextual_scoring,
                     help=(
                         "Ne tokenise FinBERT contextuel que si "
-                        "relevance_score ≥ seuil (perf garde-fou)."
+                        "relevance_score ≥ seuil (perf garde-fou). "
+                        "Le relevance_score ayant été calculé par l'étape 7, ce filtre est désormais réel."
                     ),
                 )
             )
@@ -898,11 +899,48 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                         ))
                     ),
                     key="pipeline_sentiment_contextual_max_pairs",
-                    disabled=not sentiment_enable_contextual_scoring,
                     help=(
                         "Cap de paires `(article, symbole)` traitées en contextuel sur **ce run uniquement**. "
                         "Si le backlog dépasse ce nombre, il faudra relancer pour traiter le lot suivant. "
                         "Ne pas mettre 'illimité' par défaut : sur gros historique cela ferait des runs très longs et chargerait trop de paires en mémoire."
+                    ),
+                )
+            )
+
+        # Paramètres batch et purge (déplacés depuis l'ancien bloc 7bis).
+        # 'Re-scorer toutes les lignes' retiré : l'étape 7bis ne calcule pas relevance_score.
+        # L'étape 7 calcule relevance_score uniquement sur les paires NULL (comportement par défaut).
+        backfill_relevance_rescore_all: bool = False
+        batch_purge_col1, batch_purge_col2 = st.columns(2)
+        with batch_purge_col1:
+            backfill_relevance_batch_size = int(
+                st.number_input(
+                    "Batch size contextuel",
+                    min_value=50,
+                    max_value=10_000,
+                    step=50,
+                    value=int(
+                        cast(int, st.session_state.get("pipeline_backfill_relevance_batch_size", 500))
+                    ),
+                    key="pipeline_backfill_relevance_batch_size",
+                    help="Taille des lots de paires (article, symbole) envoyées à FinBERT à la fois.",
+                )
+            )
+        with batch_purge_col2:
+            backfill_relevance_purge_below = float(
+                st.number_input(
+                    "Purge below (0 = off)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    step=0.05,
+                    value=float(
+                        cast(float, st.session_state.get("pipeline_backfill_relevance_purge_below", 0.0))
+                    ),
+                    key="pipeline_backfill_relevance_purge_below",
+                    help=(
+                        "Si > 0 : DELETE des lignes `news_ticker_map` avec "
+                        "`relevance_score < seuil` (FK CASCADE supprime aussi `news_ticker_sentiment` associé). "
+                        "Appliqué dans l'étape 7 après le calcul du relevance_score."
                     ),
                 )
             )
@@ -1013,93 +1051,6 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                 f"Avec un cap de `{int(sentiment_contextual_max_pairs)}` paires/run, cela représente ≈ `{estimated_runs_needed}` run(s) au total."
             )
 
-    # 7bis — Backfill batch des scores (Niveau 2/3 + Niveau 4 optionnel).
-    with st.expander("7bis — Backfill relevance / contextual (étape dédiée)", expanded=False):
-        st.caption(
-            "Cette section fournit les flags consommés par l'étape `relevance_backfill` "
-            "(`python -m event_sentiment.relevance_backfill`). Réutilise les dates et "
-            "symboles du bloc Sentiment ci-dessus."
-        )
-        st.info(
-            "Ce n'est pas un doublon du `mode de scoring` ci-dessus : le sélecteur `Standard only / Contextual only / Standard + contextual` pilote `python -m event_sentiment`, "
-            "alors que ce bloc 7bis pilote uniquement `python -m event_sentiment.relevance_backfill` pour rejouer un backfill ciblé."
-        )
-        st.caption(
-            "Ordre conseillé en maintenance : 1) `Contextual only` sur la fenêtre voulue pour remplir `news_ticker_sentiment`, "
-            "2) `Rebuild daily sentiment features only` pour reconstruire `ticker_daily_sentiment_features` / `sector_daily_sentiment_features`, "
-            "3) relancer `signal_aggregator` si vous voulez refléter immédiatement ce nouveau signal dans `stock_scores`."
-        )
-        st.caption(
-            "Le cap contextuel utilisé par ce backfill 7bis réutilise le même réglage `Cap dur paires contextuelles / run` du bloc Niveau 4 ci-dessus. "
-            "Exemple : `5000` = le run traite jusqu'à `5000` paires contextuelles puis le run suivant reprendra le reliquat."
-        )
-        bf_col1, bf_col2, bf_col3 = st.columns(3)
-        with bf_col1:
-            backfill_relevance_dry_run = bool(
-                st.checkbox(
-                    "Dry-run",
-                    value=bool(st.session_state.get("pipeline_backfill_relevance_dry_run", False)),
-                    key="pipeline_backfill_relevance_dry_run",
-                )
-            )
-        with bf_col2:
-            backfill_relevance_rescore_all = bool(
-                st.checkbox(
-                    "Re-scorer toutes les lignes",
-                    value=bool(st.session_state.get("pipeline_backfill_relevance_rescore_all", False)),
-                    key="pipeline_backfill_relevance_rescore_all",
-                    help="Recalcule même si relevance_score est déjà renseigné.",
-                )
-            )
-        with bf_col3:
-            backfill_relevance_rescore_contextual = bool(
-                st.checkbox(
-                    "Ajouter le contextual à ce backfill 7bis",
-                    value=bool(
-                        st.session_state.get(
-                            "pipeline_backfill_relevance_rescore_contextual", False
-                        )
-                    ),
-                    key="pipeline_backfill_relevance_rescore_contextual",
-                    help=(
-                        "Ajoute le scoring FinBERT contextualisé au backfill `relevance_backfill` uniquement. "
-                        "N'affecte pas le mode de scoring du run principal `event_sentiment`."
-                    ),
-                )
-            )
-        bf_col4, bf_col5 = st.columns(2)
-        with bf_col4:
-            backfill_relevance_batch_size = int(
-                st.number_input(
-                    "Batch size",
-                    min_value=50,
-                    max_value=10_000,
-                    step=50,
-                    value=int(
-                        cast(int, st.session_state.get("pipeline_backfill_relevance_batch_size", 500))
-                    ),
-                    key="pipeline_backfill_relevance_batch_size",
-                )
-            )
-        with bf_col5:
-            backfill_relevance_purge_below = float(
-                st.number_input(
-                    "Purge below (0 = off)",
-                    min_value=0.0,
-                    max_value=1.0,
-                    step=0.05,
-                    value=float(
-                        cast(float, st.session_state.get("pipeline_backfill_relevance_purge_below", 0.0))
-                    ),
-                    key="pipeline_backfill_relevance_purge_below",
-                    help=(
-                        "Si > 0 : DELETE des lignes news_ticker_map avec "
-                        "relevance_score < seuil (FK CASCADE supprime aussi "
-                        "news_ticker_sentiment associé)."
-                    ),
-                )
-            )
-
     return {
         "sentiment_start_utc": sentiment_start_utc,
         "sentiment_end_utc": sentiment_end_utc,
@@ -1107,17 +1058,16 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         "sentiment_news_provider": sentiment_news_provider,
         "sentiment_ticker_relevance_mode": sentiment_ticker_relevance_mode,
         "sentiment_min_relevance_score": sentiment_min_relevance_score,
-        "sentiment_scoring_mode": sentiment_scoring_mode,
-        "sentiment_enable_contextual_scoring": sentiment_enable_contextual_scoring,
+        "sentiment_scoring_mode": sentiment_scoring_mode,               # toujours "standard_only"
+        "sentiment_enable_contextual_scoring": sentiment_enable_contextual_scoring,  # toujours False
         "sentiment_contextual_min_relevance": sentiment_contextual_min_relevance,
         "sentiment_contextual_max_pairs": sentiment_contextual_max_pairs,
         "sentiment_pending_limit": sentiment_pending_limit,
         "sentiment_pending_max_batches_per_run": sentiment_pending_max_batches_per_run,
         "sentiment_feature_flush_every_n_batches": sentiment_feature_flush_every_n_batches,
         "sentiment_finbert_batch_size": sentiment_finbert_batch_size,
-        "backfill_relevance_dry_run": backfill_relevance_dry_run,
-        "backfill_relevance_rescore_all": backfill_relevance_rescore_all,
-        "backfill_relevance_rescore_contextual": backfill_relevance_rescore_contextual,
+        "backfill_relevance_dry_run": False,                            # supprimé de l'UI
+        "backfill_relevance_rescore_all": False,                        # supprimé de l'UI (inutile pour 7bis)
         "backfill_relevance_batch_size": backfill_relevance_batch_size,
         "backfill_relevance_purge_below": backfill_relevance_purge_below,
     }
@@ -3325,7 +3275,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         sentiment_finbert_batch_size = _sentiment_vars["sentiment_finbert_batch_size"]
         backfill_relevance_dry_run = _sentiment_vars["backfill_relevance_dry_run"]
         backfill_relevance_rescore_all = _sentiment_vars["backfill_relevance_rescore_all"]
-        backfill_relevance_rescore_contextual = _sentiment_vars["backfill_relevance_rescore_contextual"]
         backfill_relevance_batch_size = _sentiment_vars["backfill_relevance_batch_size"]
         backfill_relevance_purge_below = _sentiment_vars["backfill_relevance_purge_below"]
 
@@ -3516,7 +3465,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ),
             backfill_relevance_dry_run=bool(backfill_relevance_dry_run),
             backfill_relevance_rescore_all=bool(backfill_relevance_rescore_all),
-            backfill_relevance_rescore_contextual=bool(backfill_relevance_rescore_contextual),
             backfill_relevance_batch_size=int(backfill_relevance_batch_size or 500),
             backfill_relevance_purge_below=(
                 float(backfill_relevance_purge_below)

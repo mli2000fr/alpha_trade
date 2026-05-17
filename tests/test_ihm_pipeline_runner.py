@@ -378,19 +378,22 @@ def test_pipeline_launch_options_defaults_to_alpaca_for_sentiment_news_provider(
 
 
 def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -> None:
+    """Step 7 génère une commande PowerShell chaînée (3 sous-commandes)."""
     command = build_pipeline_command("sentiment_pipeline", PipelineLaunchOptions())
 
-    assert command == [
-        command[0],
-        "-u",
-        "-m",
-        "event_sentiment",
-        "--news-provider",
-        "eodhd",
-    ]
+    assert command[0] == "powershell.exe", f"Step 7 doit lancer via powershell.exe, got {command[0]}"
+    ps_script = command[-1]
+    # Les 3 étapes chaînées doivent être présentes dans le script PS
+    assert "event_sentiment" in ps_script
+    assert "--news-provider" in ps_script
+    assert "eodhd" in ps_script
+    assert "event_sentiment.relevance_backfill" in ps_script
+    assert "event_sentiment.history_backfill" in ps_script
+    assert "--skip-features" in ps_script
 
 
 def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_options() -> None:
+    """Step 7 injecte les options sentiment dans le script PS chaîné."""
     command = build_pipeline_command(
         "sentiment_pipeline",
         PipelineLaunchOptions(
@@ -405,31 +408,30 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
         ),
     )
 
-    assert command == [
-        command[0],
-        "-u",
-        "-m",
-        "event_sentiment",
-        "--news-provider",
-        "alpaca",
-        "--ticker-relevance-mode",
-        "strict",
-        "--sentiment-pending-limit",
-        "5000",
-        "--sentiment-pending-max-batches",
-        "10",
-        "--finbert-batch-size",
-        "32",
-        "--start-utc",
-        "2026-04-01T00:00:00Z",
-        "--end-utc",
-        "2026-04-30T23:59:59Z",
-        "--symbols",
-        "AAPL,MSFT,NVDA",
-    ]
+    assert command[0] == "powershell.exe"
+    ps_script = command[-1]
+    assert "--news-provider" in ps_script
+    assert "alpaca" in ps_script
+    assert "--ticker-relevance-mode" in ps_script
+    assert "strict" in ps_script
+    assert "--sentiment-pending-limit" in ps_script
+    assert "5000" in ps_script
+    assert "--sentiment-pending-max-batches" in ps_script
+    assert "10" in ps_script
+    assert "--finbert-batch-size" in ps_script
+    assert "32" in ps_script
+    assert "--start-utc" in ps_script
+    assert "2026-04-01T00:00:00Z" in ps_script
+    assert "--end-utc" in ps_script
+    assert "2026-04-30T23:59:59Z" in ps_script
+    assert "AAPL,MSFT,NVDA" in ps_script
+    # Les 3 étapes doivent toutes être présentes
+    assert "event_sentiment.relevance_backfill" in ps_script
+    assert "event_sentiment.history_backfill" in ps_script
 
 
 def test_build_pipeline_command_sentiment_pipeline_supports_contextual_only_and_feature_flush() -> None:
+    """Step 7 est toujours standard_only — les options contextuel/flush sont ignorées pour step 7."""
     command = build_pipeline_command(
         "sentiment_pipeline",
         PipelineLaunchOptions(
@@ -437,35 +439,24 @@ def test_build_pipeline_command_sentiment_pipeline_supports_contextual_only_and_
             sentiment_end_utc="2026-04-30T23:59:59Z",
             sentiment_symbols="aapl",
             sentiment_news_provider="eodhd",
-            sentiment_scoring_mode="contextual_only",
+            sentiment_scoring_mode="contextual_only",  # ignoré : step 7 → toujours standard
             sentiment_contextual_min_relevance=0.25,
             sentiment_contextual_max_pairs=2000,
-            sentiment_feature_flush_every_n_batches=3,
+            sentiment_feature_flush_every_n_batches=3,  # non passé à cmd1 (--skip-features active)
         ),
     )
 
-    assert command == [
-        command[0],
-        "-u",
-        "-m",
-        "event_sentiment",
-        "--news-provider",
-        "eodhd",
-        "--scoring-mode",
-        "contextual_only",
-        "--contextual-min-relevance",
-        "0.25",
-        "--contextual-max-pairs",
-        "2000",
-        "--feature-flush-every-n-batches",
-        "3",
-        "--start-utc",
-        "2026-04-01T00:00:00Z",
-        "--end-utc",
-        "2026-04-30T23:59:59Z",
-        "--symbols",
-        "AAPL",
-    ]
+    assert command[0] == "powershell.exe"
+    ps_script = command[-1]
+    # Step 7 est standard : aucun flag contextuel dans cmd1
+    assert "--scoring-mode" not in ps_script
+    assert "contextual_only" not in ps_script
+    # --skip-features doit être présent dans cmd1
+    assert "--skip-features" in ps_script
+    # Les 3 étapes chaînées
+    assert "event_sentiment.relevance_backfill" in ps_script
+    assert "event_sentiment.history_backfill" in ps_script
+    assert "AAPL" in ps_script
 
 
 def test_build_pipeline_command_signal_aggregator_exposes_default_backend_options() -> None:
@@ -910,7 +901,6 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
         sentiment_finbert_batch_size=32,
         backfill_relevance_dry_run=True,
         backfill_relevance_rescore_all=True,
-        backfill_relevance_rescore_contextual=True,
         backfill_relevance_batch_size=750,
         backfill_relevance_purge_below=0.2,
         backfill_relevance_contextual_min_relevance=0.4,
@@ -945,7 +935,6 @@ def test_build_pipeline_command_import_news_pending_loop() -> None:
     assert command[command.index("-RelevanceBackfillBatchSize") + 1] == "750"
     assert "-RelevanceBackfillDryRun" in command
     assert "-RelevanceBackfillRescoreAll" in command
-    assert "-RelevanceBackfillRescoreContextual" in command
     assert command[command.index("-RelevanceBackfillPurgeBelow") + 1] == "0.2"
     assert command[command.index("-RelevanceBackfillContextualMinRelevance") + 1] == "0.4"
     assert command[command.index("-RelevanceBackfillContextualMaxPairs") + 1] == "2500"
@@ -1066,6 +1055,7 @@ def test_build_pipeline_command_score_history_relevance_backfill_auto_skips_impo
 
 
 def test_build_pipeline_command_relevance_backfill_exposes_contextual_options() -> None:
+    """Step 7bis : --contextual-only et --rescore-contextual toujours présents ; pas de --dry-run/--rescore-all."""
     command = build_pipeline_command(
         "relevance_backfill",
         PipelineLaunchOptions(
@@ -1074,7 +1064,6 @@ def test_build_pipeline_command_relevance_backfill_exposes_contextual_options() 
             sentiment_symbols="msft, aapl,MSFT,nvda",
             backfill_relevance_dry_run=True,
             backfill_relevance_rescore_all=True,
-            backfill_relevance_rescore_contextual=True,
             backfill_relevance_batch_size=750,
             backfill_relevance_purge_below=0.2,
             backfill_relevance_contextual_min_relevance=0.4,
@@ -1082,29 +1071,26 @@ def test_build_pipeline_command_relevance_backfill_exposes_contextual_options() 
         ),
     )
 
-    assert command == [
-        command[0],
-        "-u",
-        "-m",
-        "event_sentiment.relevance_backfill",
-        "--batch-size",
-        "750",
-        "--start-date",
-        "2026-04-01",
-        "--end-date",
-        "2026-04-15",
-        "--symbols",
-        "AAPL,MSFT,NVDA",
-        "--dry-run",
-        "--rescore-all",
-        "--purge-below",
-        "0.2",
-        "--rescore-contextual",
-        "--contextual-min-relevance",
-        "0.4",
-        "--contextual-max-pairs",
-        "2500",
-    ]
+    # La commande est maintenant wrappée dans PowerShell (_build_chained_ps_commands).
+    assert command[0] in ("powershell.exe", "pwsh")
+    assert "-NoProfile" in command
+    assert "-Command" in command
+    ps_script = command[-1]
+    assert "--contextual-only" in ps_script
+    assert "--rescore-contextual" in ps_script
+    assert "--batch-size" in ps_script
+    assert "750" in ps_script
+    assert "2026-04-01" in ps_script
+    assert "2026-04-15" in ps_script
+    assert "AAPL,MSFT,NVDA" in ps_script
+    assert "--purge-below" in ps_script
+    assert "0.2" in ps_script
+    assert "--contextual-min-relevance" in ps_script
+    assert "0.4" in ps_script
+    assert "--contextual-max-pairs" in ps_script
+    assert "2500" in ps_script
+    assert "--dry-run" not in ps_script
+    assert "--rescore-all" not in ps_script
 
 
 def test_build_pipeline_command_rebuild_daily_sentiment_features_only() -> None:

@@ -125,7 +125,6 @@ def test_render_event_sentiment_block_returns_expected_keys() -> None:
             "sentiment_finbert_batch_size",
             "backfill_relevance_dry_run",
             "backfill_relevance_rescore_all",
-            "backfill_relevance_rescore_contextual",
             "backfill_relevance_batch_size",
             "backfill_relevance_purge_below",
         }

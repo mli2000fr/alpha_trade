@@ -29,6 +29,7 @@ from ihm.pages._shared import (
 )
 from ihm.services.pipeline_runner import build_pipeline_command, format_command_for_display
 from ihm.services.process_registry import PipelineRunRecord, stop_pipeline_run
+from ihm.services.queries import get_backfill_completeness_diagnostic
 
 __all__ = ["_render_import_news_panel"]
 
@@ -75,6 +76,168 @@ def _resolve_import_news_scope_preview(
     }
 
 
+def _backfill_diag_int(diag: dict[str, object], key: str, default: int = 0) -> int:
+    """Extrait un int depuis un dict[str, object] sans avertissement de typage."""
+    value = diag.get(key, default)
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _backfill_diag_float(diag: dict[str, object], key: str, default: float = 0.0) -> float:
+    """Extrait un float depuis un dict[str, object] sans avertissement de typage."""
+    value = diag.get(key, default)
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _render_backfill_completeness_panel(
+    start_value: DateValue,
+    end_value: DateValue,
+) -> None:
+    """Panneau de compteurs de complétude des backfills history + relevance."""
+
+    with st.expander("📊 Compteurs de complétude — History & Relevance backfill", expanded=False):
+        st.caption(
+            "Ces compteurs interrogent la base en temps réel pour vérifier l'avancement "
+            "des deux backfills sur la fenêtre configurée ci-dessus (date début → date fin). "
+            "Le TTL de cache est de 30 s ; cliquez sur 🔄 pour forcer l'actualisation."
+        )
+
+        col_refresh, _ = st.columns([1, 5])
+        with col_refresh:
+            if st.button("🔄 Actualiser les compteurs", key="refresh_backfill_completeness"):
+                get_backfill_completeness_diagnostic.clear()  # type: ignore[attr-defined]
+
+        diag = get_backfill_completeness_diagnostic(
+            start_date=start_value,
+            end_date=end_value,
+        )
+
+        if diag.get("query_error"):
+            st.error(f"Erreur lors du calcul des compteurs : {diag['query_error']}")
+            return
+
+        st.markdown("##### History backfill (`ticker_daily_sentiment_features`)")
+        st.caption(
+            "Compare les trade-dates scorées (articles avec `news_sentiment`) "
+            "avec les trade-dates couvertes dans `ticker_daily_sentiment_features`. "
+            "**Zéro date manquante = backfill complet** sur cette fenêtre."
+        )
+        h_scored = _backfill_diag_int(diag, "history_scored_dates")
+        h_covered = _backfill_diag_int(diag, "history_covered_dates")
+        h_missing = _backfill_diag_int(diag, "history_missing_dates")
+        h_pct = _backfill_diag_float(diag, "history_pct", 100.0)
+
+        h_col1, h_col2, h_col3 = st.columns(3)
+        with h_col1:
+            st.metric("Dates scorées (source)", h_scored)
+        with h_col2:
+            st.metric("Dates couvertes (features)", h_covered)
+        with h_col3:
+            st.metric(
+                "Dates manquantes 🔴",
+                h_missing,
+                help="Nombre de trade-dates avec des articles scorés mais sans entrée dans ticker_daily_sentiment_features.",
+            )
+
+        if h_missing == 0 and h_scored > 0:
+            st.success(f"✅ History backfill **complet** sur la période ({h_pct:.1f} % couvert).")
+        elif h_missing == 0 and h_scored == 0:
+            st.info("Aucun article scoré sur cette période — rien à reconstruire.")
+        else:
+            st.warning(
+                f"⚠️ {h_missing} trade-date(s) manquante(s) dans `ticker_daily_sentiment_features` "
+                f"({h_pct:.1f} % des dates scorées couvertes). "
+                "→ Relancez **Rebuild daily sentiment features only** pour les combler."
+            )
+            if h_scored > 0:
+                progress_val = min(1.0, max(0.0, h_covered / h_scored))
+                st.progress(progress_val, text=f"{h_covered}/{h_scored} dates couvertes")
+
+        st.divider()
+
+        st.markdown("##### Relevance backfill — Niveau 2/3 (`news_ticker_map.relevance_score`)")
+        st.caption(
+            "Compte les paires article↔ticker dans `news_ticker_map` dont le "
+            "`relevance_score` n'a pas encore été calculé. "
+            "**Zéro NULL = backfill relevance complet** sur cette fenêtre."
+        )
+        r_null = _backfill_diag_int(diag, "relevance_null")
+        r_scored = _backfill_diag_int(diag, "relevance_scored")
+        r_total = _backfill_diag_int(diag, "relevance_total")
+        r_pct = _backfill_diag_float(diag, "relevance_pct", 100.0)
+
+        r_col1, r_col2, r_col3 = st.columns(3)
+        with r_col1:
+            st.metric("Total paires ticker_map", r_total)
+        with r_col2:
+            st.metric("Paires avec relevance_score", r_scored)
+        with r_col3:
+            st.metric(
+                "Paires sans relevance_score 🔴",
+                r_null,
+                help="Paires pour lesquelles le relevance_score (Niveau 2/3) n'a pas encore été calculé.",
+            )
+
+        if r_null == 0 and r_total > 0:
+            st.success(f"✅ Relevance backfill **complet** sur la période ({r_pct:.1f} % scoré).")
+        elif r_total == 0:
+            st.info("Aucune paire article↔ticker sur cette période.")
+        else:
+            st.warning(
+                f"⚠️ {r_null} paire(s) sans `relevance_score` "
+                f"({r_pct:.1f} % des paires scorées). "
+                "→ Relancez **relevance_backfill** (étape 7bis) pour combler."
+            )
+            if r_total > 0:
+                progress_val = min(1.0, max(0.0, r_scored / r_total))
+                st.progress(progress_val, text=f"{r_scored}/{r_total} paires scorées")
+
+        st.divider()
+
+        st.markdown("##### Contextual backfill — Niveau 4 FinBERT (`news_ticker_sentiment`)")
+        st.caption(
+            "Compte les paires article↔ticker présentes dans `news_ticker_map` "
+            "mais absentes de `news_ticker_sentiment`. "
+            "**Zéro pending = backfill contextuel complet** sur cette fenêtre "
+            "(uniquement pertinent si le scoring contextuel Niveau 4 est activé)."
+        )
+        c_pending = _backfill_diag_int(diag, "contextual_pending")
+        c_scored = _backfill_diag_int(diag, "contextual_scored")
+        c_total = _backfill_diag_int(diag, "contextual_total")
+        c_pct = _backfill_diag_float(diag, "contextual_pct", 100.0)
+
+        c_col1, c_col2, c_col3 = st.columns(3)
+        with c_col1:
+            st.metric("Total paires ticker_map", c_total)
+        with c_col2:
+            st.metric("Paires dans news_ticker_sentiment", c_scored)
+        with c_col3:
+            st.metric(
+                "Paires en attente contextuel 🟡",
+                c_pending,
+                help="Paires absentes de news_ticker_sentiment (scoring FinBERT Niveau 4 non encore effectué).",
+            )
+
+        if c_pending == 0 and c_total > 0:
+            st.success(f"✅ Contextual backfill **complet** sur la période ({c_pct:.1f} % scoré).")
+        elif c_total == 0:
+            st.info("Aucune paire article↔ticker sur cette période.")
+        else:
+            st.info(
+                f"ℹ️ {c_pending} paire(s) sans score contextuel FinBERT "
+                f"({c_pct:.1f} % des paires traitées). "
+                "→ Activez `--rescore-contextual` sur le bouton **relevance_backfill** si nécessaire."
+            )
+            if c_total > 0:
+                progress_val = min(1.0, max(0.0, c_scored / c_total))
+                st.progress(progress_val, text=f"{c_scored}/{c_total} paires scorées contextuellement")
+
+
 def _render_import_news_panel(
     options: PipelineLaunchOptions,
     db_config: dict[str, str | None],
@@ -105,15 +268,23 @@ def _render_import_news_panel(
         )
         with st.expander("Mini guide d'usage — quand lancer quoi ?", expanded=False):
             st.markdown(
-                "- **`Standard only`** : premier passage recommandé pour vider un backlog article standard ou après un nouvel import massif.\n"
-                "- **`Contextual only`** : second passage ciblé quand `news_sentiment` est déjà rempli et que vous voulez enrichir `news_ticker_sentiment` sans rescoring standard complet.\n"
-                "- **`Standard + contextual`** : pratique sur une fenêtre courte/moyenne quand vous voulez tout faire en un seul run.\n"
-                "- **`Ajouter le contextual à ce backfill 7bis`** : option du backfill `relevance_backfill`, utile pour rejouer le contextual sur un périmètre déjà importé/scoré sans relancer tout `event_sentiment`.\n"
-                "- **`Rebuild daily sentiment features only`** : reconstruit uniquement les agrégats journaliers ticker/secteur ; aucun rescoring FinBERT n'est relancé."
+                "- **`Standard only`** (étape 7) : **1er passage obligatoire** — remplit `news_sentiment` (1 score par article). "
+                "Aucune dépendance au `relevance_score` : peut tourner avant le relevance backfill.\n"
+                "- **7bis Phase 1 — relevance backfill sans contextual** : **2e passage** — calcule `relevance_score` dans `news_ticker_map`. "
+                "À faire avant le contextual pour que le filtre `min-relevance` soit réel (sinon `COALESCE = 1.0` sur les NULL → filtre inopérant).\n"
+                "- **`Rebuild daily sentiment features only`** : **3e passage** — reconstruit les agrégats journaliers `ticker_daily_sentiment_features` / `sector_daily_sentiment_features` "
+                "pondérés par le vrai `relevance_score` (à faire après la Phase 1 ci-dessus).\n"
+                "- **`Ajouter le contextual à ce backfill 7bis`** (coché par défaut) **ou `Contextual only`** : **4e passage** — scoring FinBERT par paire (article, ticker) → `news_ticker_sentiment`. "
+                "Le filtre `min-relevance 0.3` est maintenant opérant car tous les `relevance_score` sont calculés.\n"
+                "- **`Standard + contextual`** : pratique sur une fenêtre courte/moyenne quand vous voulez tout faire en un seul run (sans passer par les phases séparées)."
             )
             st.info(
-                "Ordre recommandé pour une phase d'enrichissement : `Contextual only` d'abord, puis `Rebuild daily sentiment features only` sur la même fenêtre. "
-                "Ajoutez ensuite `signal_aggregator` si vous avez besoin de refléter immédiatement ces features dans `stock_scores`."
+                "**Ordre optimal (backfill complet) :** "
+                "① Étape 7 `Standard only` → ② 7bis relevance backfill (sans contextual) → "
+                "③ `Rebuild daily sentiment features only` → ④ 7bis avec `Ajouter le contextual` coché → "
+                "⑤ `signal_aggregator` pour refléter dans `stock_scores`.\n\n"
+                "⚠️ Faire le contextual **avant** le relevance backfill est possible mais déconseillé : "
+                "le filtre `min-relevance` sera inopérant sur les paires sans `relevance_score` (traitées avec `COALESCE = 1.0`)."
             )
 
         date_col1, date_col2 = st.columns(2)
@@ -498,3 +669,7 @@ def _render_import_news_panel(
         _render_step_result(latest_by_step.get("score_history_relevance_backfill_auto"))
         st.caption("Dernier run — import + scoring + backfill auto")
         _render_step_result(latest_by_step.get("import_news_pending_loop"))
+
+        st.divider()
+        _render_backfill_completeness_panel(start_value, end_value)
+
