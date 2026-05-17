@@ -11,6 +11,7 @@ from ihm.services.db_admin import (
 	FUNCTIONALITY_GROUP_ORDER,
 	PROTECTED_TABLES,
 	TableCatalogEntry,
+	TablePurgePlan,
 	build_table_purge_plan,
 	execute_table_purge,
 	list_grouped_tables,
@@ -21,6 +22,7 @@ CHECKBOX_PREFIX = "ihm_db_admin_table_"
 CONFIRM_PURGE_KEY = "ihm_db_admin_confirm_purge"
 PENDING_RESET_TABLES_KEY = "ihm_db_admin_pending_reset_tables"
 PENDING_RESET_CONFIRM_KEY = "ihm_db_admin_pending_reset_confirm"
+LAST_PURGE_FEEDBACK_KEY = "ihm_db_admin_last_purge_feedback"
 
 
 def _checkbox_key(table_name: str) -> str:
@@ -44,6 +46,47 @@ def _apply_pending_widget_resets(grouped_tables: dict[str, list[TableCatalogEntr
 
 	if bool(st.session_state.pop(PENDING_RESET_CONFIRM_KEY, False)):
 		st.session_state[CONFIRM_PURGE_KEY] = False
+
+
+def _render_last_purge_feedback() -> None:
+	feedback = st.session_state.pop(LAST_PURGE_FEEDBACK_KEY, None)
+	if not isinstance(feedback, dict):
+		return
+
+	executed_tables_raw = feedback.get("executed_tables")
+	total_rows_raw = feedback.get("total_rows_affected")
+	executed_tables = [table_name for table_name in executed_tables_raw if isinstance(table_name, str)] if isinstance(executed_tables_raw, list) else []
+	total_rows = total_rows_raw if isinstance(total_rows_raw, int) and total_rows_raw >= 0 else 0
+
+	if not executed_tables:
+		st.success("Vidage terminé.")
+		return
+
+	st.success(
+		f"Vidage terminé pour {len(executed_tables)} table(s). Total de lignes affectées : {total_rows}."
+	)
+	st.caption("Tables vidées lors de la dernière exécution : " + ", ".join(f"`{table_name}`" for table_name in executed_tables))
+
+
+def _build_execute_blockers(plan: TablePurgePlan, *, confirm_purge: bool) -> tuple[str, ...]:
+	blockers: list[str] = []
+
+	if not plan.operations:
+		if plan.protected_tables and not plan.missing_tables and not plan.blocked_by_dependencies:
+			blockers.append("La sélection courante ne contient aucune table purgeable exécutable.")
+		else:
+			blockers.append("Aucune commande SQL exécutable n'a été générée pour la sélection courante.")
+
+	if plan.missing_tables:
+		blockers.append("Retirez les tables absentes de la sélection avant exécution.")
+
+	if plan.blocked_by_dependencies:
+		blockers.append("Sélectionnez également les tables dépendantes listées ci-dessus avant de lancer le vidage.")
+
+	if not confirm_purge:
+		blockers.append("Cochez la case de confirmation pour activer le bouton d'exécution.")
+
+	return tuple(blockers)
 
 
 def _render_group(group_name: str, entries: list[TableCatalogEntry]) -> None:
@@ -114,6 +157,7 @@ def render() -> None:
 	st.info(
 		f"Base active : `{active_db.get('name')}` sur `{active_db.get('host')}` — source `{active_db.get('source')}`."
 	)
+	_render_last_purge_feedback()
 
 	action_col1, action_col2, action_col3 = st.columns(3)
 	if action_col1.button("Sélectionner toutes les tables purgeables", use_container_width=True):
@@ -183,11 +227,19 @@ def render() -> None:
 	else:
 		st.info("Aucune commande exécutable pour la sélection courante.")
 
-	can_execute = bool(plan.operations) and not plan.missing_tables and not plan.blocked_by_dependencies
 	confirm_purge = st.checkbox(
 		"Je confirme vouloir vider définitivement les données des tables sélectionnées.",
 		key=CONFIRM_PURGE_KEY,
 	)
+	execution_blockers = _build_execute_blockers(plan, confirm_purge=confirm_purge)
+	can_execute = not execution_blockers
+
+	if execution_blockers:
+		st.info("Le bouton d'exécution reste désactivé tant que les points suivants ne sont pas validés :")
+		for blocker in execution_blockers:
+			st.markdown(f"- {blocker}")
+	else:
+		st.success("Confirmation reçue : le bouton d'exécution est prêt.")
 
 	if st.button(
 		"🧨 Vider les tables sélectionnées",
@@ -202,9 +254,11 @@ def render() -> None:
 		else:
 			st.session_state[PENDING_RESET_TABLES_KEY] = list(result.executed_tables)
 			st.session_state[PENDING_RESET_CONFIRM_KEY] = True
-			st.success(
-				f"Vidage terminé pour {len(result.executed_tables)} table(s). Total de lignes affectées : {result.total_rows_affected}."
-			)
+			st.session_state[LAST_PURGE_FEEDBACK_KEY] = {
+				"executed_tables": list(result.executed_tables),
+				"total_rows_affected": result.total_rows_affected,
+			}
+			reset_db_caches(clear_errors=False)
 			st.rerun()
 
 	protected_names = ", ".join(sorted(PROTECTED_TABLES))

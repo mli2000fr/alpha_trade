@@ -208,28 +208,38 @@ def test_apply_pending_widget_resets_clears_table_selection_and_confirmation(mon
     assert db_admin_page.PENDING_RESET_CONFIRM_KEY not in session_state
 
 
-def test_execute_table_purge_rejects_protected_tables_even_if_operation_is_injected() -> None:
-    engine = create_engine("sqlite:///:memory:")
+def test_render_last_purge_feedback_displays_success_and_clears_session_state(monkeypatch) -> None:
+    session_state = {
+        db_admin_page.LAST_PURGE_FEEDBACK_KEY: {
+            "executed_tables": ["stock_scores", "model_metrics"],
+            "total_rows_affected": 17,
+        }
+    }
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(db_admin_page.st, "session_state", session_state, raising=False)
+    monkeypatch.setattr(db_admin_page.st, "success", lambda message: messages.append(("success", str(message))))
+    monkeypatch.setattr(db_admin_page.st, "caption", lambda message: messages.append(("caption", str(message))))
+
+    db_admin_page._render_last_purge_feedback()
+
+    assert messages[0] == (
+        "success",
+        "Vidage terminé pour 2 table(s). Total de lignes affectées : 17.",
+    )
+    assert "`stock_scores`" in messages[1][1]
+    assert db_admin_page.LAST_PURGE_FEEDBACK_KEY not in session_state
+
+
+def test_build_execute_blockers_requires_confirmation_before_enabling_button() -> None:
     plan = TablePurgePlan(
-        selected_tables=("news_raw", "news_ticker_map", "news_ingestion_checkpoint"),
+        selected_tables=("stock_scores",),
         operations=(
             TablePurgeOperation(
-                table_name="news_raw",
-                statement="DELETE FROM news_raw;",
+                table_name="stock_scores",
+                statement="DELETE FROM `stock_scores`;",
                 strategy="delete",
-                reason="test guard",
-            ),
-            TablePurgeOperation(
-                table_name="news_ticker_map",
-                statement="DELETE FROM news_ticker_map;",
-                strategy="delete",
-                reason="test guard",
-            ),
-            TablePurgeOperation(
-                table_name="news_ingestion_checkpoint",
-                statement="DELETE FROM news_ingestion_checkpoint;",
-                strategy="delete",
-                reason="test guard",
+                reason="Suppression simple.",
             ),
         ),
         protected_tables=(),
@@ -238,10 +248,85 @@ def test_execute_table_purge_rejects_protected_tables_even_if_operation_is_injec
         cycle_tables=(),
     )
 
-    with pytest.raises(
-        ValueError,
-        match="Tables protégées : news_ingestion_checkpoint, news_raw, news_ticker_map",
-    ):
-        execute_table_purge(engine, plan)
+    blockers_without_confirmation = db_admin_page._build_execute_blockers(plan, confirm_purge=False)
+    blockers_with_confirmation = db_admin_page._build_execute_blockers(plan, confirm_purge=True)
+
+    assert blockers_without_confirmation == (
+        "Cochez la case de confirmation pour activer le bouton d'exécution.",
+    )
+    assert blockers_with_confirmation == ()
+
+
+def test_execute_table_purge_rejects_protected_tables_even_if_operation_is_injected() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        plan = TablePurgePlan(
+            selected_tables=("news_raw", "news_ticker_map", "news_ingestion_checkpoint"),
+            operations=(
+                TablePurgeOperation(
+                    table_name="news_raw",
+                    statement="DELETE FROM news_raw;",
+                    strategy="delete",
+                    reason="test guard",
+                ),
+                TablePurgeOperation(
+                    table_name="news_ticker_map",
+                    statement="DELETE FROM news_ticker_map;",
+                    strategy="delete",
+                    reason="test guard",
+                ),
+                TablePurgeOperation(
+                    table_name="news_ingestion_checkpoint",
+                    statement="DELETE FROM news_ingestion_checkpoint;",
+                    strategy="delete",
+                    reason="test guard",
+                ),
+            ),
+            protected_tables=(),
+            missing_tables=(),
+            blocked_by_dependencies={},
+            cycle_tables=(),
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Tables protégées : news_ingestion_checkpoint, news_raw, news_ticker_map",
+        ):
+            execute_table_purge(engine, plan)
+    finally:
+        engine.dispose()
+
+
+def test_execute_table_purge_deletes_rows_and_reports_affected_count() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
+            conn.exec_driver_sql(
+                "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL, FOREIGN KEY(parent_id) REFERENCES parent(id))"
+            )
+            conn.exec_driver_sql("INSERT INTO parent (id) VALUES (1), (2)")
+            conn.exec_driver_sql("INSERT INTO child (id, parent_id) VALUES (10, 1), (11, 1), (12, 2)")
+
+        snapshot = DatabaseTableSnapshot(
+            existing_tables=("child", "parent"),
+            row_estimates={"child": 3, "parent": 2},
+            foreign_key_pairs=(("child", "parent"),),
+        )
+        plan = build_table_purge_plan(["parent", "child"], snapshot)
+
+        result = execute_table_purge(engine, plan)
+
+        with engine.connect() as conn:
+            remaining_child = conn.exec_driver_sql("SELECT COUNT(*) FROM child").scalar_one()
+            remaining_parent = conn.exec_driver_sql("SELECT COUNT(*) FROM parent").scalar_one()
+
+        assert [operation.table_name for operation in plan.operations] == ["child", "parent"]
+        assert result.executed_tables == ("child", "parent")
+        assert result.total_rows_affected == 5
+        assert remaining_child == 0
+        assert remaining_parent == 0
+    finally:
+        engine.dispose()
 
 
