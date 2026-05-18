@@ -347,7 +347,7 @@ def _check_feature_contract(cfg_data: dict, *, symbol: str, config_path: Path) -
             include_cross_sectional=bool(data_cfg.get("enable_cross_sectional_features", False)),
             persisted_feature_columns=cfg_data.get("feature_columns"),
             persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
-            allow_legacy_missing_contract=True,
+            allow_legacy_missing_contract=False,
         )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("feature_contract_check_failed symbol=%s error=%s", symbol, exc)
@@ -713,7 +713,7 @@ def _predict_with_tabular_model(
         route_feature_columns=resolved_feature_columns,
         route_feature_fingerprint=route_feature_fingerprint,
         runtime_feature_columns=list(last_row.columns),
-        allow_legacy_missing_contract=True,
+        allow_legacy_missing_contract=False,
     )
     if contract_reason is not None:
         LOGGER.error(
@@ -985,7 +985,7 @@ def predict_symbol(
         route_feature_columns=route.get("feature_columns"),
         route_feature_fingerprint=route.get("feature_fingerprint"),
         runtime_feature_columns=list(df.columns),
-        allow_legacy_missing_contract=True,
+        allow_legacy_missing_contract=False,
     )
     if contract_reason is not None:
         LOGGER.error(

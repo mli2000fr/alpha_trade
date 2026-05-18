@@ -157,7 +157,7 @@ def validate_feature_contract(
     route_feature_columns: object = None,
     route_feature_fingerprint: object = None,
     runtime_feature_columns: object = None,
-    allow_legacy_missing_contract: bool = True,
+    allow_legacy_missing_contract: bool = False,
 ) -> str | None:
     expected_columns = get_feature_columns(
         include_sentiment=include_sentiment,

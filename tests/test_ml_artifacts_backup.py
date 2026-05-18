@@ -209,3 +209,45 @@ def test_build_archive_path_has_right_format(tmp_path: Path) -> None:
     assert p.name.endswith(".tar.gz")
 
 
+# ---------------------------------------------------------------------------
+# Test écriture atomique trainer._atomic_write_json
+# ---------------------------------------------------------------------------
+
+def test_atomic_write_json_produces_valid_file(tmp_path: Path) -> None:
+    """_atomic_write_json doit produire un fichier JSON valide à la destination finale."""
+    from modelFactory.trainer import _atomic_write_json
+
+    dest = tmp_path / "config.json"
+    data = {"symbol": "AAPL", "score": 0.9, "nested": {"a": 1}}
+    _atomic_write_json(dest, data)
+
+    assert dest.exists()
+    with open(dest, encoding="utf-8") as fh:
+        loaded = json.load(fh)
+    assert loaded == data
+
+
+def test_atomic_write_json_leaves_no_tmp_file_on_success(tmp_path: Path) -> None:
+    """Après un succès, aucun fichier temporaire .tmp. ne doit subsister."""
+    from modelFactory.trainer import _atomic_write_json
+
+    dest = tmp_path / "metrics.json"
+    _atomic_write_json(dest, {"run_id": "abc123"})
+
+    remaining = list(tmp_path.glob("*.tmp.*"))
+    assert len(remaining) == 0, f"Fichiers temporaires non supprimés: {remaining}"
+
+
+def test_atomic_write_json_overwrites_existing_file(tmp_path: Path) -> None:
+    """_atomic_write_json doit écraser atomiquement un fichier existant."""
+    from modelFactory.trainer import _atomic_write_json
+
+    dest = tmp_path / "config.json"
+    dest.write_text('{"old": true}', encoding="utf-8")
+
+    _atomic_write_json(dest, {"new": True, "version": 2})
+
+    with open(dest, encoding="utf-8") as fh:
+        loaded = json.load(fh)
+    assert loaded == {"new": True, "version": 2}
+    assert "old" not in loaded

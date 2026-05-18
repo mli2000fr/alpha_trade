@@ -18,6 +18,35 @@ from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.runtime_status import reset_runtime_status, snapshot_runtime_status
 
 
+def _contract(
+    feature_columns: list[str],
+    *,
+    include_sentiment: bool = False,
+    feature_set: str = "v1",
+    include_cross_sectional: bool = False,
+) -> dict:
+    """Construit un feature_contract minimal valide pour les tests.
+
+    Génère directement le fingerprint à partir des colonnes fournies,
+    sans passer par get_feature_columns (pour éviter les interférences
+    avec les monkeypatches actifs dans les tests).
+    """
+    fp = compute_feature_fingerprint(
+        include_sentiment=include_sentiment,
+        feature_set=feature_set,
+        include_cross_sectional=include_cross_sectional,
+        feature_columns=feature_columns,
+    )
+    return {
+        "schema_version": 1,
+        "feature_columns": feature_columns,
+        "feature_count": len(feature_columns),
+        "feature_fingerprint": fp,
+        "require_exact_order": True,
+        "allow_extra_runtime_columns": True,
+    }
+
+
 class PickleableFakeGlobalModel:
     def predict_proba(self, X):
         return np.array([[0.2, 0.8]], dtype=float)
@@ -178,6 +207,7 @@ def test_predict_symbol_returns_dataframe_and_persists(tmp_path: Path, monkeypat
                     "include_sentiment_features": False,
                 },
                 "run_id": "run-config",
+                "feature_contract": _contract(["feat1"]),
             }
         ),
         encoding="utf-8",
@@ -291,6 +321,7 @@ def test_predict_symbol_applies_saved_calibration_and_decision_threshold(tmp_pat
                 },
                 "run_id": "run-config",
                 "calibrator_path": str(symbol_dir / "calibrator.pkl"),
+                "feature_contract": _contract(["feat1"]),
             }
         ),
         encoding="utf-8",
@@ -368,6 +399,7 @@ def test_predict_symbol_supports_cross_sectional_features(tmp_path: Path, monkey
                     "cross_sectional_min_universe": 2,
                 },
                 "run_id": "run-config",
+                "feature_contract": _contract(["feat1", "ret_20_rank"], include_cross_sectional=True),
             }
         ),
         encoding="utf-8",
@@ -399,6 +431,11 @@ def test_predict_symbol_supports_cross_sectional_features(tmp_path: Path, monkey
     )
     monkeypatch.setattr(
         predictor,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1", "ret_20_rank"],
+    )
+    monkeypatch.setattr(
+        model_factory_features,
         "get_feature_columns",
         lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1", "ret_20_rank"],
     )
@@ -460,6 +497,7 @@ def test_predict_symbol_can_route_to_local_tabular_model(
                     "decision_threshold": 0.5,
                 },
                 "run_id": "run-config",
+                "feature_contract": _contract(["feat1"]),
                 "artifact_routes": {
                     "selected_model": model_name,
                     "models": {
@@ -486,6 +524,11 @@ def test_predict_symbol_can_route_to_local_tabular_model(
         predictor,
         "compute_features",
         lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
     )
 
     result = predictor.predict_symbol(
@@ -524,6 +567,7 @@ def test_predict_symbol_can_route_to_global_model(tmp_path: Path, monkeypatch) -
                     "decision_threshold": 0.6,
                 },
                 "feature_columns": ["feat1"],
+                "feature_contract": _contract(["feat1"]),
                 "artifact_symbol": "__GLOBAL__",
                 "architecture_selected": "global_model",
             }
@@ -538,6 +582,7 @@ def test_predict_symbol_can_route_to_global_model(tmp_path: Path, monkeypatch) -
                     "forecast_horizon": 1,
                     "include_sentiment_features": False,
                 },
+                "feature_contract": _contract(["feat1"]),
                 "artifact_routes": {
                     "selected_model": "global_model",
                     "models": {
@@ -562,6 +607,11 @@ def test_predict_symbol_can_route_to_global_model(tmp_path: Path, monkeypatch) -
         predictor,
         "compute_features",
         lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
     )
 
     result = predictor.predict_symbol(
@@ -594,6 +644,7 @@ def test_predict_symbol_falls_back_to_lstm_when_selected_tabular_route_is_unserv
                     "include_sentiment_features": False,
                 },
                 "run_id": "run-config",
+                "feature_contract": _contract(["feat1"]),
                 "artifact_routes": {
                     "selected_model": "lightgbm",
                     "models": {
@@ -679,12 +730,25 @@ def test_predict_symbol_aborts_on_feature_fingerprint_drift(tmp_path: Path, monk
                 },
                 "run_id": "run-config",
                 "feature_fingerprint": "outdated-contract",
+                "feature_contract": {
+                    "schema_version": 1,
+                    "feature_columns": ["feat1"],
+                    "feature_count": 1,
+                    "feature_fingerprint": "outdated-contract",
+                    "require_exact_order": True,
+                    "allow_extra_runtime_columns": True,
+                },
             }
         ),
         encoding="utf-8",
     )
 
     monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+    )
 
     result = predictor.predict_symbol(
         symbol,
@@ -716,6 +780,7 @@ def test_predict_symbol_falls_back_to_lstm_when_selected_tabular_model_is_corrup
                     "include_sentiment_features": False,
                 },
                 "run_id": "run-config",
+                "feature_contract": _contract(["feat1"]),
                 "artifact_routes": {
                     "selected_model": "lightgbm",
                     "models": {
@@ -752,6 +817,11 @@ def test_predict_symbol_falls_back_to_lstm_when_selected_tabular_model_is_corrup
         predictor,
         "compute_features",
         lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
@@ -796,6 +866,7 @@ def test_predict_symbol_ignores_corrupted_calibrator_and_records_runtime_status(
                 },
                 "run_id": "run-config",
                 "calibrator_path": str(symbol_dir / "calibrator.pkl"),
+                "feature_contract": _contract(["feat1"]),
             }
         ),
         encoding="utf-8",
@@ -820,6 +891,11 @@ def test_predict_symbol_ignores_corrupted_calibrator_and_records_runtime_status(
         predictor,
         "compute_features",
         lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
@@ -958,7 +1034,7 @@ def test_predict_symbol_persistence_failure_is_best_effort(tmp_path: Path, monke
     with open(symbol_dir / "scaler.pkl", "wb") as fh:
         pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat1"]}, cast(Any, fh))
     (symbol_dir / "config.json").write_text(
-        json.dumps({"data": {"sequence_length": 2, "forecast_horizon": 1, "include_sentiment_features": False}, "run_id": "run-config"}),
+        json.dumps({"data": {"sequence_length": 2, "forecast_horizon": 1, "include_sentiment_features": False}, "run_id": "run-config", "feature_contract": _contract(["feat1"])}),
         encoding="utf-8",
     )
 
@@ -1027,6 +1103,7 @@ def test_predict_symbol_falls_back_to_lstm_when_tabular_runtime_is_incompatible(
             {
                 "data": {"sequence_length": 2, "forecast_horizon": 1, "include_sentiment_features": False},
                 "run_id": "run-config",
+                "feature_contract": _contract(["feat1"]),
                 "artifact_routes": {
                     "selected_model": "lightgbm",
                     "models": {
@@ -1062,6 +1139,11 @@ def test_predict_symbol_falls_back_to_lstm_when_tabular_runtime_is_incompatible(
         predictor,
         "compute_features",
         lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(predictor.LSTMAttentionModule, "load_from_checkpoint", lambda path, map_location=None: FakeLstm())
@@ -1107,6 +1189,7 @@ def test_predict_symbol_ignores_runtime_incompatible_calibrator(tmp_path: Path, 
                 "data": {"sequence_length": 2, "forecast_horizon": 1, "include_sentiment_features": False},
                 "run_id": "run-config",
                 "calibrator_path": str(symbol_dir / "calibrator.pkl"),
+                "feature_contract": _contract(["feat1"]),
             }
         ),
         encoding="utf-8",
@@ -1131,6 +1214,11 @@ def test_predict_symbol_ignores_runtime_incompatible_calibrator(tmp_path: Path, 
         predictor,
         "compute_features",
         lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(predictor.LSTMAttentionModule, "load_from_checkpoint", lambda path, map_location=None: FakeModel())

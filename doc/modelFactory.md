@@ -747,6 +747,32 @@ Causes typiques :
 7. route tabulaire servable en théorie mais modèle/calibrateur corrompu →
    fallback explicite `lstm_attention`
 
+
+### 11.3 GPU non utilisé
+
+Causes typiques :
+
+1. `--accelerator cpu`
+2. `--accelerator gpu` demandé sans CUDA disponible
+3. fallback automatique vers CPU en prédiction
+
+### 11.4 Drift gate ML → risk_management
+
+Le drift monitor publie une décision `drift_policy_decision` dans
+`ml_drift_runs.payload`.
+
+La consommation côté `risk_management` suit alors la règle suivante :
+
+1. si `ALPHA_TRADE_DISABLE_ML=1`, le ML est désactivé manuellement ;
+2. sinon, si la dernière décision drift porte `gate=disabled` ou
+   `gate_action=kill_switch_ml`, `risk_management` **ignore totalement**
+   `model_predictions` ;
+3. le run summary risk expose `ml_gate_enabled`, `ml_gate_reason`,
+   `ml_gate_decision_id`, `ml_gate_drift_status` et `ml_gate_action`.
+
+Le comportement attendu en incident drift est donc : **pas de consommation ML,
+pas de persistance du batch predict sous kill-switch, repli quant pur traçable**.
+
 ### 11.5 DB partiellement indisponible / lecture registre impossible
 
 Le prédicteur essaie d'abord de relire le run depuis `model_training_run`.
@@ -776,30 +802,6 @@ En cas d'incident artefact / serving :
 5. si le drift gate a activé le kill-switch, ne pas forcer la persistance ML : le
    fallback nominal reste le quant pur côté `risk_management`.
 
-### 11.4 Drift gate ML → risk_management
-
-Le drift monitor publie une décision `drift_policy_decision` dans
-`ml_drift_runs.payload`.
-
-La consommation côté `risk_management` suit alors la règle suivante :
-
-1. si `ALPHA_TRADE_DISABLE_ML=1`, le ML est désactivé manuellement ;
-2. sinon, si la dernière décision drift porte `gate=disabled` ou
-   `gate_action=kill_switch_ml`, `risk_management` **ignore totalement**
-   `model_predictions` ;
-3. le run summary risk expose `ml_gate_enabled`, `ml_gate_reason`,
-   `ml_gate_decision_id`, `ml_gate_drift_status` et `ml_gate_action`.
-
-Le comportement attendu en incident drift est donc : **pas de consommation ML,
-pas de persistance du batch predict sous kill-switch, repli quant pur traçable**.
-
-### 11.3 GPU non utilisé
-
-Causes typiques :
-
-1. `--accelerator cpu`
-2. `--accelerator gpu` demandé sans CUDA disponible
-3. fallback automatique vers CPU en prédiction
 
 ---
 

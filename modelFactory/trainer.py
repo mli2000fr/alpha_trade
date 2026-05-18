@@ -9,7 +9,7 @@ import uuid
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any, Optional
 
 import numpy as np
@@ -57,6 +57,37 @@ from modelFactory.runtime_status import update_runtime_status
 from modelFactory.target_optimization import optimize_target_parameters
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _atomic_write_json(path: Path, data: Any, *, indent: int = 2) -> None:
+    """Écrit un fichier JSON de façon atomique (tempfile + rename).
+
+    Garantit qu'un crash mid-write ne laisse jamais un fichier partiellement
+    écrit : on écrit dans un fichier temporaire du même dossier, puis on le
+    renomme. Sur Windows, ``Path.replace()`` est atomique au niveau du
+    système de fichiers.
+    """
+    tmp_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.tmp.",
+            suffix=".json",
+            delete=False,
+        ) as fh:
+            tmp_path = Path(fh.name)
+            json.dump(data, fh, indent=indent, default=str)
+            fh.flush()
+        tmp_path.replace(path)
+    except Exception:
+        if tmp_path is not None and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def _metric_to_float(value: Any) -> float | None:
@@ -1214,8 +1245,7 @@ def train_symbol(
                 feature_columns=list(dm.scaler.feature_names),
             ),
         }
-        with open(config_path, "w") as f:
-            json.dump(config_data, f, indent=2, default=str)
+        _atomic_write_json(config_path, config_data)
 
         all_metrics = {
             "val": val_metrics,
@@ -1248,8 +1278,7 @@ def train_symbol(
                 **challengers,
             },
         }
-        with open(sym_dir / "metrics.json", "w") as f:
-            json.dump(all_metrics, f, indent=2)
+        _atomic_write_json(sym_dir / "metrics.json", all_metrics)
 
         if engine is not None:
             try:

@@ -20,8 +20,11 @@ Le résultat est exposé :
 - dans ``ml_drift_runs.payload.gate_action`` (rétro-compat : aucune nouvelle
   table — on enrichit le JSON existant).
 
-La propagation effective côté ``risk_management`` (refus de consommer
-``model_predictions``) sera traitée Sprint S8 ; S4 expose le flag.
+La propagation effective côté ``risk_management`` est assurée via
+:mod:`risk_management.ml_gate` (Sprint S8 livré) : si la dernière décision
+``drift_policy_decision`` porte ``gate=disabled`` ou
+``gate_action=kill_switch_ml``, :func:`risk_management.db_io.RiskRepository.load_predictions_asof`
+retourne ``{}`` et le scoring retombe sur le quant pur.
 """
 from __future__ import annotations
 

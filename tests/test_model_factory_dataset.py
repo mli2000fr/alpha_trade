@@ -152,3 +152,86 @@ def test_prepare_symbol_frame_merges_cross_sectional_features() -> None:
     assert prepared.attrs["cross_sectional_diagnostics"]["enabled"] is True
 
 
+def test_future_return_not_in_feature_columns() -> None:
+    """Anti-leakage : future_return ne doit jamais apparaître dans FEATURE_COLUMNS.
+
+    Les features listées dans `get_feature_columns()` sont utilisées pour
+    construire les inputs de l'entraînement. `future_return` est la target
+    dérivée — la laisser entrer dans les features serait une fuite directe.
+    """
+    from modelFactory.features import FEATURE_COLUMNS, EXPERT_FEATURE_COLUMNS, SENTIMENT_FEATURE_COLUMNS, get_feature_columns
+
+    forbidden = {"future_return", "target"}
+    base_cols = set(get_feature_columns())
+    expert_cols = set(get_feature_columns(feature_set="expert"))
+    sentiment_cols = set(get_feature_columns(include_sentiment=True))
+
+    assert base_cols.isdisjoint(forbidden), f"Colonnes interdites dans feature_cols de base: {base_cols & forbidden}"
+    assert expert_cols.isdisjoint(forbidden), f"Colonnes interdites dans feature_cols expert: {expert_cols & forbidden}"
+    assert sentiment_cols.isdisjoint(forbidden), f"Colonnes interdites dans feature_cols sentiment: {sentiment_cols & forbidden}"
+
+    assert "future_return" not in FEATURE_COLUMNS
+    assert "future_return" not in EXPERT_FEATURE_COLUMNS
+    assert "future_return" not in SENTIMENT_FEATURE_COLUMNS
+
+
+def test_scaler_fit_only_on_train_split() -> None:
+    """Anti-leakage : le scaler doit être fitté uniquement sur le split train.
+
+    Vérification que `FeatureScaler.fit()` sur le train et `transform()` sur
+    le test ne produit pas une normalisation identique à celle qui utiliserait
+    les stats du test (ce qui serait une fuite).
+    """
+    import numpy as np
+    from modelFactory.dataset import FeatureScaler, chrono_split
+
+    n = 100
+    # Deux segments de distribution très différente
+    low_vals = [float(i) * 0.01 for i in range(60)]
+    high_vals = [100.0 + float(i) for i in range(40)]
+    all_vals = low_vals + high_vals
+
+    df = pd.DataFrame({"date": pd.date_range("2020-01-01", periods=n, freq="D"), "f1": all_vals})
+    split = chrono_split(df, 0.6, 0.2)
+
+    scaler = FeatureScaler(feature_names=["f1"])
+    scaler.fit(split.train)
+
+    # mean_ et std_ doivent correspondre à la distribution du train (valeurs faibles)
+    assert scaler.mean_ is not None
+    assert scaler.std_ is not None
+    assert scaler.mean_[0] < 1.0, "Le mean du scaler doit refléter uniquement le train (valeurs < 1)"
+    assert scaler.std_[0] < 1.0, "Le std du scaler doit refléter uniquement le train (std faible)"
+
+    # Le test transformé doit produire des valeurs très éloignées de 0 (shift de distribution)
+    test_transformed = scaler.transform(split.test)
+    assert np.abs(test_transformed[:, 0]).mean() > 50.0, (
+        "Les valeurs test transformées avec les stats train doivent être très éloignées de 0 "
+        "(preuve que le scaler est bien fitté seulement sur train)"
+    )
+
+
+def test_chrono_split_no_overlap_between_train_val_test() -> None:
+    """Intégrité temporelle : aucun recouvrement d'index entre train, val et test."""
+    n = 100
+    df = pd.DataFrame({"date": pd.date_range("2020-01-01", periods=n, freq="D"), "i": range(n)})
+
+    split = dataset.chrono_split(df, 0.60, 0.20, forecast_horizon=3)
+
+    train_idx = set(split.train["i"].tolist())
+    val_idx = set(split.val["i"].tolist())
+    test_idx = set(split.test["i"].tolist())
+
+    assert train_idx.isdisjoint(val_idx), "Recouvrement entre train et val détecté"
+    assert train_idx.isdisjoint(test_idx), "Recouvrement entre train et test détecté"
+    assert val_idx.isdisjoint(test_idx), "Recouvrement entre val et test détecté"
+
+    if not split.train.empty:
+        if not split.val.empty:
+            assert max(split.train["i"]) < min(split.val["i"]), "train doit précéder val chronologiquement"
+        if not split.test.empty:
+            assert max(split.val["i"]) < min(split.test["i"]) if not split.val.empty else True, (
+                "val doit précéder test chronologiquement"
+            )
+
+
