@@ -34,6 +34,46 @@ def test_summarize_prediction_governance_audit_counts_mismatches() -> None:
     assert summary["mismatch_count"] == 1
 
 
+def test_summarize_ml_runtime_status_merges_predict_and_risk_summaries() -> None:
+    summary = ml._summarize_ml_runtime_status(
+        {
+            "entity_run_id": "ml-predict-run-1",
+            "run_summary": {
+                "ml_drift_status": "WARN",
+                "ml_kill_switch_active": True,
+                "ml_kill_switch_reason": "drift_status=ALERT ks_p=0.01 psi=0.3",
+                "gate_status": "disabled",
+                "prediction_artifact_issue_count": 2,
+                "prediction_fallback_count": 1,
+                "prediction_calibration_fallback_count": 1,
+                "last_fallback_reason": "requested_model=lightgbm tabular_model_corrupted:lightgbm -> fallback_lstm_attention",
+                "last_served_model": "lstm_attention",
+            },
+        },
+        {
+            "entity_run_id": "risk-run-1",
+            "run_summary": {
+                "ml_gate_enabled": False,
+                "ml_gate_reason": "drift_policy_kill_switch",
+                "ml_gate_action": "kill_switch_ml",
+                "ml_gate_drift_status": "ALERT",
+                "prediction_coverage_pct": 0.0,
+            },
+        },
+    )
+
+    assert summary["predict_run_id"] == "ml-predict-run-1"
+    assert summary["predict_drift_status"] == "WARN"
+    assert summary["predict_kill_switch_active"] is True
+    assert summary["artifact_issue_count"] == 2
+    assert summary["fallback_count"] == 1
+    assert summary["calibration_fallback_count"] == 1
+    assert summary["predict_last_served_model"] == "lstm_attention"
+    assert summary["risk_gate_enabled"] is False
+    assert summary["risk_gate_action"] == "kill_switch_ml"
+    assert summary["risk_gate_drift_status"] == "ALERT"
+
+
 def test_build_prediction_audit_filter_options_merges_audit_and_governance_sources() -> None:
     audit_df = pd.DataFrame(
         [

@@ -3,6 +3,7 @@ from datetime import date
 
 from modelFactory import orchestrator
 from modelFactory.config import ChampionSelectionConfig, DataConfig, ModelConfig, TrainingConfig
+from modelFactory.features import build_feature_contract
 
 
 def test_orchestrator_importable():
@@ -281,6 +282,11 @@ def test_filter_symbols_by_mode_refresh_stale_keeps_only_outdated_models(monkeyp
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
     )
+    current_contract = build_feature_contract(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
     for symbol, trained_through in (("AAPL", "2026-04-16"), ("MSFT", "2026-04-17")):
         symbol_dir = tmp_path / symbol
         symbol_dir.mkdir(parents=True, exist_ok=True)
@@ -288,6 +294,8 @@ def test_filter_symbols_by_mode_refresh_stale_keeps_only_outdated_models(monkeyp
             json.dump(
                 {
                     "feature_fingerprint": current_fp,
+                    "feature_columns": current_contract["feature_columns"],
+                    "feature_contract": current_contract,
                     "trained_through_date": trained_through,
                     "data": {"training_start_date": "2020-01-01"},
                 },
@@ -318,12 +326,19 @@ def test_filter_symbols_by_mode_refresh_stale_accepts_legacy_history_window_arti
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
     )
+    current_contract = build_feature_contract(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
     symbol_dir = tmp_path / "AAPL"
     symbol_dir.mkdir(parents=True, exist_ok=True)
     with open(symbol_dir / "config.json", "w", encoding="utf-8") as fh:
         json.dump(
             {
                 "feature_fingerprint": current_fp,
+                "feature_columns": current_contract["feature_columns"],
+                "feature_contract": current_contract,
                 "trained_through_date": "2026-04-17",
                 "data": {"history_window_years": 10},
             },
@@ -339,5 +354,41 @@ def test_filter_symbols_by_mode_refresh_stale_accepts_legacy_history_window_arti
     kept = orchestrator._filter_symbols_by_mode(object(), ["AAPL"], mode="refresh-stale", cfg=cfg)
 
     assert kept == []
+
+
+def test_filter_symbols_by_mode_refresh_stale_rebuilds_when_feature_contract_missing(monkeypatch, tmp_path) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(training_start_date=date(2020, 1, 1)),
+        model=ModelConfig(max_epochs=1),
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+    current_fp = orchestrator.compute_feature_fingerprint(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
+    symbol_dir = tmp_path / "AAPL"
+    symbol_dir.mkdir(parents=True, exist_ok=True)
+    with open(symbol_dir / "config.json", "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "feature_fingerprint": current_fp,
+                "trained_through_date": "2026-04-17",
+                "data": {"training_start_date": "2020-01-01"},
+            },
+            fh,
+        )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "load_symbol_latest_bar_dates",
+        lambda engine, symbols: {"AAPL": date(2026, 4, 17)},
+    )
+
+    kept = orchestrator._filter_symbols_by_mode(object(), ["AAPL"], mode="refresh-stale", cfg=cfg)
+
+    assert kept == ["AAPL"]
 
 

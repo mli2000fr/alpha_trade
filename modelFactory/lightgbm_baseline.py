@@ -38,12 +38,12 @@ def run_lightgbm_baseline(
         prepared_df,
         cfg,
         model_name="lightgbm",
-        model_builder=lambda: lgb.LGBMClassifier(
+        model_builder=lambda resolved_seed: lgb.LGBMClassifier(
             objective="binary",
             max_depth=cfg.baseline.max_depth,
             n_estimators=cfg.baseline.n_estimators,
             learning_rate=cfg.baseline.learning_rate,
-            random_state=cfg.baseline.random_state,
+            random_state=resolved_seed,
         ),
         artifact_dir=artifact_dir,
         # Phase 4.2.c — format natif LightGBM (.txt). Plus de pickle.

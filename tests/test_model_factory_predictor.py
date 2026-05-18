@@ -13,6 +13,9 @@ import torch
 from sqlalchemy.engine import Engine
 
 from modelFactory import predictor
+from modelFactory import features as model_factory_features
+from modelFactory.features import fingerprint as compute_feature_fingerprint
+from modelFactory.runtime_status import reset_runtime_status, snapshot_runtime_status
 
 
 class PickleableFakeGlobalModel:
@@ -196,6 +199,16 @@ def test_predict_symbol_returns_dataframe_and_persists(tmp_path: Path, monkeypat
         "compute_features",
         lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
     )
+    monkeypatch.setattr(
+        predictor,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+    )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
         predictor.LSTMAttentionModule,
@@ -297,6 +310,16 @@ def test_predict_symbol_applies_saved_calibration_and_decision_threshold(tmp_pat
         predictor,
         "compute_features",
         lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(
+        predictor,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
@@ -603,6 +626,16 @@ def test_predict_symbol_falls_back_to_lstm_when_selected_tabular_route_is_unserv
         "compute_features",
         lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
     )
+    monkeypatch.setattr(
+        predictor,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+    )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
         predictor.LSTMAttentionModule,
@@ -657,5 +690,233 @@ def test_predict_symbol_aborts_on_feature_fingerprint_drift(tmp_path: Path, monk
     )
 
     assert result is None
+
+
+def test_predict_symbol_falls_back_to_lstm_when_selected_tabular_model_is_corrupted(tmp_path: Path, monkeypatch) -> None:
+    predictor.clear_model_cache()
+    reset_runtime_status()
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat1"]}, cast(Any, fh))
+    (symbol_dir / "lightgbm_model.pkl").write_bytes(b"not-a-valid-pickle")
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                },
+                "run_id": "run-config",
+                "artifact_routes": {
+                    "selected_model": "lightgbm",
+                    "models": {
+                        "lightgbm": {
+                            "inference_backend": "lightgbm_tabular",
+                            "config_path": str(symbol_dir / "config.json"),
+                            "model_path": str(symbol_dir / "lightgbm_model.pkl"),
+                            "feature_columns": ["feat1"],
+                            "selected_decision_threshold": 0.61,
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"close": list(range(62))})
+    features = pd.DataFrame({"feat1": [float(i) for i in range(62)]})
+
+    class FakeModel:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, x):
+            return torch.tensor([[0.0, 2.0]], dtype=torch.float32), torch.tensor([[1.0]])
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(
+        predictor.LSTMAttentionModule,
+        "load_from_checkpoint",
+        lambda path, map_location=None: FakeModel(),
+    )
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is not None
+    row = result.to_dict(orient="records")[0]
+    assert row["selected_model"] == "lstm_attention"
+    runtime_status = snapshot_runtime_status()
+    assert runtime_status["prediction_artifact_issue_count"] == 1
+    assert "tabular_model_corrupted:lightgbm" in str(runtime_status["last_fallback_reason"])
+
+
+def test_predict_symbol_ignores_corrupted_calibrator_and_records_runtime_status(tmp_path: Path, monkeypatch) -> None:
+    predictor.clear_model_cache()
+    reset_runtime_status()
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat1"]}, cast(Any, fh))
+    (symbol_dir / "calibrator.pkl").write_bytes(b"not-a-valid-calibrator")
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                },
+                "run_id": "run-config",
+                "calibrator_path": str(symbol_dir / "calibrator.pkl"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"close": list(range(62))})
+    features = pd.DataFrame({"feat1": [float(i) for i in range(62)]})
+
+    class FakeModel:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, x):
+            return torch.tensor([[0.0, 2.0]], dtype=torch.float32), torch.tensor([[1.0]])
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(
+        predictor.LSTMAttentionModule,
+        "load_from_checkpoint",
+        lambda path, map_location=None: FakeModel(),
+    )
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is not None
+    row = result.to_dict(orient="records")[0]
+    assert row["selected_model"] == "lstm_attention"
+    assert row["calibration_method"] == "none"
+    runtime_status = snapshot_runtime_status()
+    assert runtime_status["prediction_calibration_fallback_count"] == 1
+    assert runtime_status["last_calibration_fallback_reason"] == "calibrator_corrupted:lstm_attention"
+
+
+def test_predict_symbol_aborts_when_scaler_feature_contract_mismatches_config(tmp_path: Path, monkeypatch) -> None:
+    predictor.clear_model_cache()
+    reset_runtime_status()
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat2"]}, cast(Any, fh))
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                },
+                "run_id": "run-config",
+                "feature_columns": ["feat1"],
+                "feature_fingerprint": compute_feature_fingerprint(
+                    include_sentiment=False,
+                    feature_set="v1",
+                    include_cross_sectional=False,
+                    feature_columns=["feat1"],
+                ),
+                "feature_contract": {
+                    "schema_version": 1,
+                    "feature_columns": ["feat1"],
+                    "feature_count": 1,
+                    "feature_fingerprint": compute_feature_fingerprint(
+                        include_sentiment=False,
+                        feature_set="v1",
+                        include_cross_sectional=False,
+                        feature_columns=["feat1"],
+                    ),
+                    "require_exact_order": True,
+                    "allow_extra_runtime_columns": True,
+                    "scaler_feature_names": ["feat1"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"close": list(range(62))})
+    features = pd.DataFrame({"feat1": [float(i) for i in range(62)]})
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(
+        predictor,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+    )
+    monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is None
+    runtime_status = snapshot_runtime_status()
+    assert runtime_status["prediction_artifact_issue_count"] == 1
+    assert runtime_status["last_artifact_issue_reason"] == "feature_contract_violation:lstm_attention"
 
 

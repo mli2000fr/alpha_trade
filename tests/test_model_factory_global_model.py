@@ -100,6 +100,9 @@ def test_train_global_model_returns_metrics_and_artifacts(monkeypatch, tmp_path:
 	with open(tmp_path / "__GLOBAL__" / "config.json", encoding="utf-8") as fh:
 		config_data = json.load(fh)
 	assert config_data["architecture_selected"] == "global_model"
+	assert config_data["feature_contract"]["feature_columns"] == result["feature_columns"]
+	assert config_data["reproducibility"]["resolved_seed"] == result["seed"]
+	assert result["feature_contract"]["feature_fingerprint"] == result["feature_fingerprint"]
 
 
 

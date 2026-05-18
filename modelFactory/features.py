@@ -80,6 +80,7 @@ def fingerprint(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
+    feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
 
@@ -88,11 +89,11 @@ def fingerprint(
     (la valeur **doit** rester stable tant que la liste de colonnes ne
     change pas — un test gold bloque les modifications accidentelles).
     """
-    columns = get_feature_columns(
+    columns = list(feature_columns or get_feature_columns(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
-    )
+    ))
     payload = {
         "columns": columns,
         "feature_set": feature_set,
@@ -101,6 +102,161 @@ def fingerprint(
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def normalize_feature_columns(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)):
+        return None
+    normalized = [str(column) for column in value]
+    return normalized or None
+
+
+def build_feature_contract(
+    *,
+    include_sentiment: bool = False,
+    feature_set: str = "v1",
+    include_cross_sectional: bool = False,
+    feature_columns: list[str] | None = None,
+    scaler_feature_names: list[str] | None = None,
+) -> dict[str, object]:
+    """Construit le manifeste persistant du contrat de features."""
+    resolved_columns = list(feature_columns or get_feature_columns(
+        include_sentiment=include_sentiment,
+        feature_set=feature_set,
+        include_cross_sectional=include_cross_sectional,
+    ))
+    contract: dict[str, object] = {
+        "schema_version": 1,
+        "feature_columns": resolved_columns,
+        "feature_count": len(resolved_columns),
+        "feature_fingerprint": fingerprint(
+            include_sentiment=include_sentiment,
+            feature_set=feature_set,
+            include_cross_sectional=include_cross_sectional,
+            feature_columns=resolved_columns,
+        ),
+        "require_exact_order": True,
+        "allow_extra_runtime_columns": True,
+    }
+    if scaler_feature_names is not None:
+        contract["scaler_feature_names"] = list(scaler_feature_names)
+    return contract
+
+
+def validate_feature_contract(
+    contract_payload: object,
+    *,
+    include_sentiment: bool = False,
+    feature_set: str = "v1",
+    include_cross_sectional: bool = False,
+    persisted_feature_columns: object = None,
+    persisted_feature_fingerprint: object = None,
+    scaler_feature_names: object = None,
+    route_feature_columns: object = None,
+    route_feature_fingerprint: object = None,
+    runtime_feature_columns: object = None,
+    allow_legacy_missing_contract: bool = True,
+) -> str | None:
+    expected_columns = get_feature_columns(
+        include_sentiment=include_sentiment,
+        feature_set=feature_set,
+        include_cross_sectional=include_cross_sectional,
+    )
+    expected_fingerprint = fingerprint(
+        include_sentiment=include_sentiment,
+        feature_set=feature_set,
+        include_cross_sectional=include_cross_sectional,
+        feature_columns=expected_columns,
+    )
+
+    contract = contract_payload if isinstance(contract_payload, dict) else None
+    contract_columns = normalize_feature_columns(contract.get("feature_columns")) if contract is not None else None
+    contract_fingerprint = str(contract.get("feature_fingerprint") or "").strip() if contract is not None else ""
+
+    if contract is None:
+        if not allow_legacy_missing_contract:
+            return "feature_contract_missing"
+        contract_columns = (
+            normalize_feature_columns(persisted_feature_columns)
+            or normalize_feature_columns(route_feature_columns)
+            or normalize_feature_columns(scaler_feature_names)
+            or list(expected_columns)
+        )
+        contract_fingerprint = fingerprint(
+            include_sentiment=include_sentiment,
+            feature_set=feature_set,
+            include_cross_sectional=include_cross_sectional,
+            feature_columns=contract_columns,
+        )
+    else:
+        if contract_columns is None:
+            return "feature_contract_columns_missing"
+        if contract_columns != list(expected_columns):
+            return (
+                "feature_contract_columns_mismatch "
+                f"persisted={contract_columns} expected={expected_columns}"
+            )
+        if not contract_fingerprint:
+            return "feature_contract_fingerprint_missing"
+        if contract_fingerprint != expected_fingerprint:
+            return (
+                "feature_contract_fingerprint_mismatch "
+                f"persisted={contract_fingerprint} expected={expected_fingerprint}"
+            )
+        scaler_names_in_contract = normalize_feature_columns(contract.get("scaler_feature_names"))
+        if scaler_names_in_contract is not None and scaler_names_in_contract != contract_columns:
+            return (
+                "feature_contract_scaler_names_mismatch "
+                f"persisted={scaler_names_in_contract} expected={contract_columns}"
+            )
+
+    persisted_columns_normalized = normalize_feature_columns(persisted_feature_columns)
+    if persisted_columns_normalized is not None and persisted_columns_normalized != contract_columns:
+        return (
+            "feature_columns_mismatch "
+            f"persisted={persisted_columns_normalized} expected={contract_columns}"
+        )
+
+    persisted_fp_normalized = str(persisted_feature_fingerprint or "").strip()
+    if persisted_fp_normalized and persisted_fp_normalized != contract_fingerprint:
+        return (
+            "feature_fingerprint_mismatch "
+            f"persisted={persisted_fp_normalized} expected={contract_fingerprint}"
+        )
+
+    scaler_feature_names_normalized = normalize_feature_columns(scaler_feature_names)
+    if scaler_feature_names_normalized is not None and scaler_feature_names_normalized != contract_columns:
+        return (
+            "scaler_feature_columns_mismatch "
+            f"persisted={scaler_feature_names_normalized} expected={contract_columns}"
+        )
+
+    route_feature_columns_normalized = normalize_feature_columns(route_feature_columns)
+    if route_feature_columns_normalized is not None and route_feature_columns_normalized != contract_columns:
+        return (
+            "route_feature_columns_mismatch "
+            f"persisted={route_feature_columns_normalized} expected={contract_columns}"
+        )
+
+    route_fp_normalized = str(route_feature_fingerprint or "").strip()
+    if route_fp_normalized and route_fp_normalized != contract_fingerprint:
+        return (
+            "route_feature_fingerprint_mismatch "
+            f"persisted={route_fp_normalized} expected={contract_fingerprint}"
+        )
+
+    runtime_feature_columns_normalized = normalize_feature_columns(runtime_feature_columns)
+    if runtime_feature_columns_normalized is not None:
+        missing_columns = [column for column in contract_columns if column not in runtime_feature_columns_normalized]
+        if missing_columns:
+            return (
+                "runtime_feature_columns_missing "
+                f"missing={missing_columns} expected={contract_columns}"
+            )
+
+    return None
 
 
 def compute_features(

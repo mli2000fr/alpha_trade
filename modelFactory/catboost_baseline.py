@@ -38,11 +38,11 @@ def run_catboost_baseline(
 		prepared_df,
 		cfg,
 		model_name="catboost",
-		model_builder=lambda: CatBoostClassifier(
+		model_builder=lambda resolved_seed: CatBoostClassifier(
 			depth=cfg.baseline.catboost_depth,
 			iterations=cfg.baseline.catboost_iterations,
 			learning_rate=cfg.baseline.catboost_learning_rate,
-			random_seed=cfg.baseline.random_state,
+			random_seed=resolved_seed,
 			loss_function="Logloss",
 			verbose=False,
 		),

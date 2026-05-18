@@ -16,6 +16,7 @@ from modelFactory.config import (
     TrainingConfig,
     WalkForwardConfig,
 )
+from modelFactory.runtime_status import reset_runtime_status, update_runtime_status
 
 
 def _make_opts(**overrides) -> argparse.Namespace:
@@ -65,6 +66,8 @@ def test_build_run_summary_contains_required_fields() -> None:
     assert summary["ml_mode"] == "rebuild-all"
     assert summary["training_start_date"] == "2020-01-01"
     assert "feature_fingerprint" in summary
+    assert summary["reproducibility_seed"] == 42
+    assert summary["reproducibility_deterministic"] is True
     assert summary["champion_min_runs"] == 0
     assert summary["champion_min_days"] == 0
     assert summary["symbols_total"] == 20
@@ -116,6 +119,48 @@ def test_run_summary_round_trips_through_json() -> None:
     assert decoded["walkforward_enabled"] is False
     assert decoded["ml_mode"] == "rebuild-missing"
     assert decoded["training_start_date"] == "2020-01-01"
+
+
+def test_build_run_summary_includes_runtime_observability_fields() -> None:
+    from datetime import datetime
+    reset_runtime_status()
+    update_runtime_status(
+        prediction_artifact_issue_count=2,
+        prediction_fallback_count=1,
+        prediction_calibration_fallback_count=1,
+        last_artifact_issue_reason="tabular_model_corrupted:lightgbm",
+        last_artifact_issue_path="F:/artifacts/models/AAPL/lightgbm_model.pkl",
+        last_fallback_reason="requested_model=lightgbm tabular_model_corrupted:lightgbm -> fallback_lstm_attention",
+        last_requested_model="lightgbm",
+        last_served_model="lstm_attention",
+        last_decision_threshold=0.55,
+        last_calibration_method="none",
+        resolved_accelerator="cpu",
+        resolved_device_name="cpu",
+    )
+    summary = model_factory_cli._build_run_summary(
+        mode="predict",
+        run_id="rid-observability",
+        opts=_make_opts(walkforward=False, ml_mode="rebuild-missing"),
+        cfg=_make_cfg(),
+        started_at=datetime(2026, 4, 27),
+        finished_at=datetime(2026, 4, 27),
+        symbols_total=3,
+        completed=2,
+        skipped=1,
+        failed=0,
+        quarantined=0,
+    )
+
+    assert summary["prediction_artifact_issue_count"] == 2
+    assert summary["prediction_fallback_count"] == 1
+    assert summary["prediction_calibration_fallback_count"] == 1
+    assert summary["fallback_reason"] == "requested_model=lightgbm tabular_model_corrupted:lightgbm -> fallback_lstm_attention"
+    assert summary["selected_model"] == "lstm_attention"
+    assert summary["decision_threshold"] == 0.55
+    assert summary["calibration_method"] == "none"
+    assert summary["resolved_device_name"] == "cpu"
+    assert summary["reproducibility_seed"] == 42
 
 
 def test_cli_parses_walkforward_default_on_and_no_walkforward() -> None:

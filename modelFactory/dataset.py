@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 from modelFactory.config import DataConfig, ModelConfig
 from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, build_cross_sectional_features, merge_cross_sectional_features
 from modelFactory.features import FEATURE_COLUMNS, build_target, compute_features, compute_future_return, get_feature_columns
+from modelFactory.reproducibility import build_torch_generator, derive_seed, seed_worker
 
 LOGGER = logging.getLogger(__name__)
 
@@ -187,14 +188,29 @@ class FeatureScaler:
         return (vals - self.mean_) / self.std_
 
     def state_dict(self) -> dict:
-        return {"mean": self.mean_.tolist(), "std": self.std_.tolist(), "features": self.feature_names}  # type: ignore[union-attr]
+        return {
+            "schema_version": 1,
+            "mean": self.mean_.tolist(),
+            "std": self.std_.tolist(),
+            "features": self.feature_names,
+        }  # type: ignore[union-attr]
 
     @classmethod
     def from_state_dict(cls, d: dict) -> "FeatureScaler":
-        s = cls()
-        s.mean_ = np.array(d["mean"])
-        s.std_ = np.array(d["std"])
-        s.feature_names = d["features"]
+        if not isinstance(d, dict):
+            raise ValueError("Scaler state invalide: payload non-dict.")
+        mean = d.get("mean")
+        std = d.get("std")
+        features = d.get("features")
+        if not isinstance(features, list) or not features:
+            raise ValueError("Scaler state invalide: features absentes ou invalides.")
+        if mean is None or std is None:
+            raise ValueError("Scaler state invalide: mean/std absents.")
+        s = cls(feature_names=[str(feature) for feature in features])
+        s.mean_ = np.asarray(mean, dtype=np.float64)
+        s.std_ = np.asarray(std, dtype=np.float64)
+        if s.mean_.ndim != 1 or s.std_.ndim != 1 or len(s.mean_) != len(s.std_) or len(s.mean_) != len(s.feature_names):
+            raise ValueError("Scaler state invalide: dimensions mean/std/features incohérentes.")
         return s
 
 
@@ -264,6 +280,7 @@ class SymbolDataModule(L.LightningDataModule):
         sentiment_df: pd.DataFrame | None = None,
         benchmark_df: pd.DataFrame | None = None,
         universe_df: pd.DataFrame | None = None,
+        reproducibility_seed: int = 42,
     ) -> None:
         super().__init__()
         self.bars_df = bars_df
@@ -272,6 +289,7 @@ class SymbolDataModule(L.LightningDataModule):
         self.sentiment_df = sentiment_df
         self.benchmark_df = benchmark_df
         self.universe_df = universe_df
+        self.reproducibility_seed = int(reproducibility_seed)
         self._feature_cols = get_feature_columns(
             data_cfg.include_sentiment_features,
             feature_set=data_cfg.feature_set,
@@ -335,6 +353,10 @@ class SymbolDataModule(L.LightningDataModule):
 
     def _build_dataloader(self, dataset: SequenceDataset, *, shuffle: bool) -> DataLoader:  # type: ignore[type-arg]
         nw = self._num_workers
+        generator_seed = derive_seed(self.reproducibility_seed, "symbol_datamodule", "train" if shuffle else "eval")
+        worker_init_fn: Callable[[int], None] | None = None
+        if nw > 0:
+            worker_init_fn = lambda worker_id: seed_worker(generator_seed, worker_id)
         return DataLoader(
             dataset,
             batch_size=self.model_cfg.batch_size,
@@ -343,6 +365,8 @@ class SymbolDataModule(L.LightningDataModule):
             num_workers=nw,
             persistent_workers=nw > 0,
             pin_memory=self._pin_memory,
+            generator=build_torch_generator(generator_seed),
+            worker_init_fn=worker_init_fn,
         )
 
 

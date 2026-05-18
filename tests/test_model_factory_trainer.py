@@ -219,7 +219,11 @@ def test_train_symbol_persists_challenger_ranking_and_routing(monkeypatch, tmp_p
 
     assert config_data["architecture_selected"] == "lstm_attention"
     assert config_data["artifact_routes"]["selected_model"] == "lstm_attention"
+    assert config_data["feature_contract"]["feature_columns"] == ["feat1"]
+    assert config_data["feature_contract"]["scaler_feature_names"] == ["feat1"]
+    assert config_data["reproducibility"]["seed"] == 42
     assert config_data["artifact_routes"]["models"]["lightgbm"]["inference_backend"] == "lightgbm_tabular"
+    assert config_data["artifact_routes"]["models"]["lightgbm"]["feature_contract"]["feature_columns"] == ["feat1"]
     assert config_data["artifact_routes"]["models"]["catboost"]["inference_backend"] == "catboost_tabular"
     assert metrics["champion"]["model_name"] == "lstm_attention"
     assert metrics["baseline_lightgbm"]["model_name"] == "lightgbm"

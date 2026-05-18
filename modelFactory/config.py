@@ -254,6 +254,18 @@ class ModelConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ReproducibilityConfig:
+    """Paramètres centralisés de seed et déterminisme backend."""
+
+    seed: int = 42
+    deterministic: bool = True
+
+    def __post_init__(self) -> None:
+        if self.seed < 0:
+            raise ValueError("reproducibility.seed doit être >= 0.")
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingConfig:
     """Configuration globale d'un run d'entraînement."""
 
@@ -266,6 +278,7 @@ class TrainingConfig:
     target_optimization: TargetOptimizationConfig = field(default_factory=TargetOptimizationConfig)
     threshold_optimization: ThresholdOptimizationConfig = field(default_factory=ThresholdOptimizationConfig)
     champion_selection: ChampionSelectionConfig = field(default_factory=ChampionSelectionConfig)
+    reproducibility: ReproducibilityConfig = field(default_factory=ReproducibilityConfig)
     artifacts_dir: Path = Path("artifacts/models")
     max_workers: int = 4
     accelerator: str = "auto"  # auto | cpu | gpu

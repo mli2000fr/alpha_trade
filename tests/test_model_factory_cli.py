@@ -128,3 +128,16 @@ def test_cli_parser_accepts_training_start_date() -> None:
     assert opts.training_start_date == date(2019, 7, 1)
 
 
+def test_cli_parser_accepts_seed_and_no_deterministic() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "train",
+        "--seed", "123",
+        "--no-deterministic",
+    ])
+
+    assert opts.seed == 123
+    assert opts.deterministic is False
+
+

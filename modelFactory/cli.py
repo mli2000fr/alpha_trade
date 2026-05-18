@@ -12,6 +12,7 @@ from uuid import uuid4
 from common.utils import configure_root_logging
 from core.run_summary import attach_schema_version
 from database.connection import get_sqlalchemy_engine
+from modelFactory.features import get_feature_columns
 from modelFactory.config import (
     BaselineConfig,
     CalibrationConfig,
@@ -19,11 +20,13 @@ from modelFactory.config import (
     DataConfig,
     GlobalModelConfig,
     ModelConfig,
+    ReproducibilityConfig,
     ThresholdOptimizationConfig,
     TargetOptimizationConfig,
     TrainingConfig,
     WalkForwardConfig,
 )
+from modelFactory.reproducibility import apply_reproducibility
 from modelFactory.runtime_status import increment_runtime_counter, reset_runtime_status, snapshot_runtime_status, update_runtime_status
 
 
@@ -209,6 +212,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-action-rate", type=float, default=0.35)
     p.add_argument("--min-precision-long", type=float, default=0.52)
     p.add_argument("--accelerator", type=str, default="auto", choices=["auto", "cpu", "gpu"])
+    p.add_argument("--seed", type=int, default=42, help="Seed racine unique pour numpy / torch / modèles tabulaires")
+    p.add_argument(
+        "--deterministic",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Active les réglages backend déterministes quand possibles (défaut: ON)",
+    )
     p.add_argument("--debug-train", action="store_true", default=False,
                    help="Mode debug ML train : logs plus détaillés et exécution plus déterministe côté orchestrateur")
     p.add_argument("--heartbeat-interval-seconds", type=float, default=DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
@@ -270,6 +280,7 @@ def main(args: list[str] | None = None) -> None:
             catboost_depth=opts.catboost_depth,
             catboost_iterations=opts.catboost_iterations,
             catboost_learning_rate=opts.catboost_learning_rate,
+            random_state=opts.seed,
         ),
         global_model=GlobalModelConfig(
             enabled=opts.enable_global_model,
@@ -299,11 +310,14 @@ def main(args: list[str] | None = None) -> None:
             max_action_rate=opts.max_action_rate,
             min_precision_long=opts.min_precision_long,
         ),
+        reproducibility=ReproducibilityConfig(seed=opts.seed, deterministic=opts.deterministic),
         artifacts_dir=Path(opts.artifacts_dir),
         max_workers=opts.max_workers,
         accelerator=opts.accelerator,
         debug_train=opts.debug_train,
     )
+
+    reproducibility_state = apply_reproducibility(cfg.reproducibility, context=f"cli:{opts.mode}")
 
     engine = get_sqlalchemy_engine()
 
@@ -323,11 +337,18 @@ def main(args: list[str] | None = None) -> None:
             "current_symbol_total": 0,
             "heartbeat_count": 0,
             "debug_train_enabled": bool(opts.debug_train),
+            "reproducibility_seed": int(reproducibility_state.get("seed", cfg.reproducibility.seed) or cfg.reproducibility.seed),
+            "reproducibility_deterministic": bool(reproducibility_state.get("deterministic_requested", cfg.reproducibility.deterministic)),
+            "reproducibility_deterministic_applied": bool(reproducibility_state.get("deterministic_applied", False)),
         }
     )
     update_runtime_status(
         current_phase="cli_ready",
-        phase_detail=f"accelerator={opts.accelerator} max_workers={opts.max_workers} log_level={logging.getLevelName(effective_log_level)}",
+        phase_detail=(
+            f"accelerator={opts.accelerator} max_workers={opts.max_workers} "
+            f"log_level={logging.getLevelName(effective_log_level)} seed={cfg.reproducibility.seed} "
+            f"deterministic={cfg.reproducibility.deterministic}"
+        ),
     )
 
     if opts.mode == "train":
@@ -537,15 +558,43 @@ def _build_run_summary(
         "total_epochs": runtime_status.get("total_epochs"),
         "current_split_index": runtime_status.get("current_split_index"),
         "feature_fingerprint": feature_fp,
+        "feature_columns": list(get_feature_columns(
+            include_sentiment=cfg.data.include_sentiment_features,
+            feature_set=cfg.data.feature_set,
+            include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        )),
         "champion_min_runs": int(getattr(opts, "champion_min_runs", 0)),
         "champion_min_days": int(getattr(opts, "champion_min_days", 0)),
+        "reproducibility_seed": int(cfg.reproducibility.seed),
+        "reproducibility_deterministic": bool(cfg.reproducibility.deterministic),
+        "reproducibility_deterministic_applied": bool(runtime_status.get("reproducibility_deterministic_applied", False)),
         "symbols_total": int(symbols_total),
         "symbols_completed": int(completed),
         "symbols_skipped": int(skipped),
         "symbols_failed": int(failed),
         "symbols_quarantined": int(quarantined),
+        "prediction_artifact_issue_count": int(runtime_status.get("prediction_artifact_issue_count", 0) or 0),
+        "prediction_fallback_count": int(runtime_status.get("prediction_fallback_count", 0) or 0),
+        "prediction_calibration_fallback_count": int(runtime_status.get("prediction_calibration_fallback_count", 0) or 0),
+        "last_artifact_issue_reason": runtime_status.get("last_artifact_issue_reason"),
+        "last_artifact_issue_path": runtime_status.get("last_artifact_issue_path"),
+        "last_fallback_reason": runtime_status.get("last_fallback_reason"),
+        "last_requested_model": runtime_status.get("last_requested_model"),
+        "last_served_model": runtime_status.get("last_served_model"),
+        "last_decision_threshold": runtime_status.get("last_decision_threshold"),
+        "last_calibration_method": runtime_status.get("last_calibration_method"),
+        "last_prediction_symbol": runtime_status.get("last_prediction_symbol"),
+        "last_prediction_date": runtime_status.get("last_prediction_date"),
+        "resolved_accelerator": runtime_status.get("resolved_accelerator"),
+        "resolved_device_name": runtime_status.get("resolved_device_name"),
     }
     # Sprint S4 (A-021) — exposition policy gate ML drift
     from modelFactory.drift_policy import summary_fields as _drift_summary_fields
     payload.update(_drift_summary_fields(drift_decision))  # type: ignore[arg-type]
+    payload["drift_status"] = payload.get("ml_drift_status")
+    payload["gate_status"] = "disabled" if bool(payload.get("ml_kill_switch_active")) else "enabled"
+    payload["fallback_reason"] = payload.get("last_fallback_reason") or payload.get("last_artifact_issue_reason")
+    payload["selected_model"] = payload.get("last_served_model")
+    payload["decision_threshold"] = payload.get("last_decision_threshold")
+    payload["calibration_method"] = payload.get("last_calibration_method")
     return attach_schema_version(payload, version=1)

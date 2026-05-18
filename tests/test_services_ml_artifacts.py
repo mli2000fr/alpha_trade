@@ -23,6 +23,9 @@ def test_list_ml_artifact_symbols_returns_sorted_symbol_directories(tmp_path: Pa
 def test_load_ml_artifact_report_extracts_champion_routes_and_ranking(tmp_path: Path) -> None:
     symbol_dir = tmp_path / "AAPL"
     symbol_dir.mkdir()
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    (symbol_dir / "scaler.pkl").write_text("scaler", encoding="utf-8")
+    (symbol_dir / "lightgbm_model.pkl").write_text("model", encoding="utf-8")
     (symbol_dir / "config.json").write_text(
         json.dumps(
             {
@@ -91,9 +94,49 @@ def test_load_ml_artifact_report_extracts_champion_routes_and_ranking(tmp_path: 
     assert report["selection_mode"] == "auto_selected_champion"
     assert report["run_id"] == "run-123"
     assert report["selected_decision_threshold"] == 0.61
+    assert report["health_status"] == "healthy"
+    assert report["selected_route_health"] == "healthy"
     assert list(report["routes_df"]["model_name"]) == ["lstm_attention", "lightgbm"]
     assert report["routes_df"].loc[report["routes_df"]["model_name"] == "lightgbm", "inference_backend"].iloc[0] == "lightgbm_tabular"
+    assert report["routes_df"].loc[report["routes_df"]["model_name"] == "lightgbm", "route_health"].iloc[0] == "healthy"
     assert list(report["ranking_df"]["model_name"]) == ["lightgbm", "lstm_attention"]
+
+
+def test_load_ml_artifact_report_marks_selected_route_degraded_when_paths_missing(tmp_path: Path) -> None:
+    symbol_dir = tmp_path / "AAPL"
+    symbol_dir.mkdir()
+    config_path = symbol_dir / "config.json"
+    metrics_path = symbol_dir / "metrics.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "run_id": "run-999",
+                "selection_mode": "auto_selected_champion",
+                "artifact_routes": {
+                    "selected_model": "lightgbm",
+                    "models": {
+                        "lightgbm": {
+                            "inference_backend": "lightgbm_tabular",
+                            "config_path": str(config_path),
+                            "model_path": str(symbol_dir / "missing_model.pkl"),
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    metrics_path.write_text(
+        json.dumps({"champion": {"model_name": "lightgbm", "selection_mode": "auto_selected_champion"}}),
+        encoding="utf-8",
+    )
+
+    report = load_ml_artifact_report("AAPL", tmp_path)
+
+    assert report["health_status"] == "degraded"
+    assert report["selected_route_health"] == "missing_paths"
+    assert "lightgbm:model_path_missing" in report["selected_route_errors"]
+    assert report["routes_df"].loc[0, "route_health"] == "missing_paths"
 
 
 def test_load_ml_artifact_report_handles_invalid_or_missing_files(tmp_path: Path) -> None:
@@ -104,6 +147,7 @@ def test_load_ml_artifact_report_handles_invalid_or_missing_files(tmp_path: Path
     report = load_ml_artifact_report("AAPL", tmp_path)
 
     assert report["selected_model"] is None
+    assert report["health_status"] == "invalid"
     assert report["routes_df"].empty
     assert report["ranking_df"].empty
     assert len(report["errors"]) == 2

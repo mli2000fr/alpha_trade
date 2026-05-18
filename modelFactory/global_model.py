@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from modelFactory.config import TrainingConfig
+from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
 from modelFactory.dataset import chrono_split_by_dates
 from modelFactory.data_loader import (
@@ -21,7 +21,9 @@ from modelFactory.data_loader import (
     load_universe_latest_bar_date,
     resolve_training_start_date,
 )
-from modelFactory.features import build_target, compute_features, compute_future_return, get_feature_columns
+from modelFactory.features import build_feature_contract, build_target, compute_features, compute_future_return, get_feature_columns
+from modelFactory.features import fingerprint as compute_feature_fingerprint
+from modelFactory.reproducibility import apply_reproducibility, derive_seed
 from modelFactory.tabular_baseline import apply_tabular_calibration, compute_tabular_metrics, fit_tabular_calibrator
 
 LOGGER = logging.getLogger(__name__)
@@ -94,7 +96,7 @@ def _split_global_by_dates(
     return split.train, split.val, split.test
 
 
-def _build_global_estimator(cfg: TrainingConfig) -> tuple[str, Any]:
+def _build_global_estimator(cfg: TrainingConfig, *, resolved_seed: int) -> tuple[str, Any]:
     model_name = cfg.global_model.model_name
     if model_name == "lightgbm":
         lgb = _import_lightgbm()
@@ -103,14 +105,14 @@ def _build_global_estimator(cfg: TrainingConfig) -> tuple[str, Any]:
             max_depth=cfg.baseline.max_depth,
             n_estimators=cfg.baseline.n_estimators,
             learning_rate=cfg.baseline.learning_rate,
-            random_state=cfg.baseline.random_state,
+            random_state=resolved_seed,
         )
     CatBoostClassifier = _import_catboost()
     return model_name, CatBoostClassifier(
         depth=cfg.baseline.catboost_depth,
         iterations=cfg.baseline.catboost_iterations,
         learning_rate=cfg.baseline.catboost_learning_rate,
-        random_seed=cfg.baseline.random_state,
+        random_seed=resolved_seed,
         loss_function="Logloss",
         verbose=False,
     )
@@ -229,9 +231,26 @@ def train_global_model(
         feature_set=effective_data_cfg.feature_set,
         include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
     )
+    feature_contract = build_feature_contract(
+        include_sentiment=effective_data_cfg.include_sentiment_features,
+        feature_set=effective_data_cfg.feature_set,
+        include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
+        feature_columns=feature_columns,
+        scaler_feature_names=feature_columns,
+    )
+    resolved_seed = derive_seed(
+        cfg.reproducibility.seed,
+        "global_model",
+        cfg.global_model.model_name,
+        cfg.global_model.artifact_symbol,
+    )
+    reproducibility_state = apply_reproducibility(
+        ReproducibilityConfig(seed=resolved_seed, deterministic=cfg.reproducibility.deterministic),
+        context=f"global_model:{cfg.global_model.model_name}",
+    )
 
     try:
-        backend_model_name, model = _build_global_estimator(cfg)
+        backend_model_name, model = _build_global_estimator(cfg, resolved_seed=resolved_seed)
     except ImportError:
         return {
             "status": "unavailable",
@@ -302,7 +321,13 @@ def train_global_model(
     config_payload = {
         "data": asdict(replace(effective_data_cfg, decision_threshold=selected_threshold)),
         "global_model": asdict(cfg.global_model),
+        "reproducibility": {
+            **asdict(cfg.reproducibility),
+            "resolved_seed": int(resolved_seed),
+            "deterministic_applied": bool(reproducibility_state.get("deterministic_applied", False)),
+        },
         "feature_columns": feature_columns,
+        "feature_contract": feature_contract,
         "cross_sectional_feature_columns": [col for col in feature_columns if col in (cross_sectional_df.columns if cross_sectional_df is not None and not cross_sectional_df.empty else [])],
         "cross_sectional_diagnostics": cross_sectional_diagnostics,
         "artifact_symbol": cfg.global_model.artifact_symbol,
@@ -315,6 +340,12 @@ def train_global_model(
         "architecture_selected": "global_model",
         "selection_mode": "global_compare_only",
         "inference_backend": "global_tabular",
+        "feature_fingerprint": compute_feature_fingerprint(
+            include_sentiment=effective_data_cfg.include_sentiment_features,
+            feature_set=effective_data_cfg.feature_set,
+            include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
+            feature_columns=feature_columns,
+        ),
     }
     with open(config_path, "w", encoding="utf-8") as fh:
         json.dump(config_payload, fh, indent=2, default=str)
@@ -331,6 +362,9 @@ def train_global_model(
             "calibrator_path": calibrator_path,
         },
         "feature_columns": feature_columns,
+        "feature_contract": feature_contract,
+        "feature_fingerprint": feature_contract.get("feature_fingerprint"),
+        "seed": int(resolved_seed),
         "cross_sectional_diagnostics": cross_sectional_diagnostics,
         "threshold_optimization": threshold_summary,
         "val": val_metrics,

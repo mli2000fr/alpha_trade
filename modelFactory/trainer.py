@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import pickle
+import inspect
 import uuid
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
@@ -27,7 +28,7 @@ from sqlalchemy.engine import Engine
 
 from modelFactory.calibration import PlattCalibrator, margin_from_logits
 from modelFactory.champion_selection import build_challenger_ranking, select_champion
-from modelFactory.config import TrainingConfig
+from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.dataset import (
     FeatureScaler,
     SequenceDataset,
@@ -46,11 +47,12 @@ from modelFactory.db_registry import (
     upsert_metrics_full,
 )
 from modelFactory.evaluation import align_sequence_rows, compute_threshold_metrics, optimize_decision_threshold
-from modelFactory.features import get_feature_columns
+from modelFactory.features import build_feature_contract, get_feature_columns
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.catboost_baseline import run_catboost_baseline
 from modelFactory.lightgbm_baseline import run_lightgbm_baseline
 from modelFactory.model import LSTMAttentionModule
+from modelFactory.reproducibility import apply_reproducibility, build_torch_generator, derive_seed, seed_worker
 from modelFactory.runtime_status import update_runtime_status
 from modelFactory.target_optimization import optimize_target_parameters
 
@@ -162,9 +164,12 @@ def _extract_best_epoch(checkpoint_path: Path) -> int | None:
 
 
 
-def _build_loader(dataset: SequenceDataset | None, batch_size: int, *, shuffle: bool) -> DataLoader | None:
+def _build_loader(dataset: SequenceDataset | None, batch_size: int, *, shuffle: bool, seed: int) -> DataLoader | None:
     if dataset is None:
         return None
+    worker_init_fn = None
+    if torch.cuda.is_available():
+        worker_init_fn = None
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -173,6 +178,8 @@ def _build_loader(dataset: SequenceDataset | None, batch_size: int, *, shuffle: 
         num_workers=0,
         persistent_workers=False,
         pin_memory=False,
+        generator=build_torch_generator(seed),
+        worker_init_fn=worker_init_fn,
     )
 
 
@@ -409,7 +416,16 @@ def _evaluate_best_checkpoint(
  ) -> tuple[dict[str, Any], dict[str, Any], PlattCalibrator | None, dict[str, Any], float]:
     model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location="cpu")
     device = torch.device("cpu")
-    val_outputs = _collect_outputs(model, _build_loader(val_ds, batch_size, shuffle=False), device)
+    val_outputs = _collect_outputs(
+        model,
+        _build_loader(
+            val_ds,
+            batch_size,
+            shuffle=False,
+            seed=derive_seed(cfg.reproducibility.seed, "evaluate_best_checkpoint", "val"),
+        ),
+        device,
+    )
     calibrator = _fit_calibrator(val_outputs, cfg)
     selected_decision_threshold = float(cfg.data.decision_threshold)
     val_future_returns = val_frame["future_return"].to_numpy() if val_frame is not None and "future_return" in val_frame else None
@@ -446,7 +462,16 @@ def _evaluate_best_checkpoint(
 
     test_metrics: dict[str, Any] = {}
     if test_ds is not None and len(test_ds) > 0:
-        test_outputs = _collect_outputs(model, _build_loader(test_ds, batch_size, shuffle=False), device)
+        test_outputs = _collect_outputs(
+            model,
+            _build_loader(
+                test_ds,
+                batch_size,
+                shuffle=False,
+                seed=derive_seed(cfg.reproducibility.seed, "evaluate_best_checkpoint", "test"),
+            ),
+            device,
+        )
         test_metrics = _compute_metrics(
             test_outputs,
             decision_threshold=selected_decision_threshold,
@@ -545,8 +570,14 @@ def _run_walk_forward_validation(
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
     )
     fold_metrics: list[dict[str, Any]] = []
+    walk_forward_seed = derive_seed(cfg.reproducibility.seed, "walk_forward", symbol)
 
     for split in splits:
+        split_seed = derive_seed(walk_forward_seed, split.split_index)
+        apply_reproducibility(
+            ReproducibilityConfig(seed=split_seed, deterministic=cfg.reproducibility.deterministic),
+            context=f"walk_forward:{symbol}:split_{split.split_index}",
+        )
         scaler = FeatureScaler(feature_names=feature_cols)
         scaler.fit(split.train)
         train_ds = build_sequence_dataset(split.train, scaler, cfg.data.sequence_length)
@@ -633,8 +664,18 @@ def _run_walk_forward_validation(
             )
             trainer.fit(
                 wf_model,
-                train_dataloaders=_build_loader(train_ds, cfg.model.batch_size, shuffle=True),
-                val_dataloaders=_build_loader(val_ds, cfg.model.batch_size, shuffle=False),
+                train_dataloaders=_build_loader(
+                    train_ds,
+                    cfg.model.batch_size,
+                    shuffle=True,
+                    seed=derive_seed(split_seed, "train_loader"),
+                ),
+                val_dataloaders=_build_loader(
+                    val_ds,
+                    cfg.model.batch_size,
+                    shuffle=False,
+                    seed=derive_seed(split_seed, "val_loader"),
+                ),
             )
             best_path = Path(ckpt_callback.best_model_path) if ckpt_callback.best_model_path else Path(tmp_dir) / "best.ckpt"
             LOGGER.info(
@@ -723,6 +764,16 @@ def train_symbol(
         insert_training_run(engine, run_id, registry_id, symbol, status="running")
 
     try:
+        symbol_seed = derive_seed(cfg.reproducibility.seed, "train_symbol", symbol)
+        reproducibility_state = apply_reproducibility(
+            ReproducibilityConfig(seed=symbol_seed, deterministic=cfg.reproducibility.deterministic),
+            context=f"train_symbol:{symbol}",
+        )
+        update_runtime_status(
+            reproducibility_seed=int(reproducibility_state.get("seed", symbol_seed) or symbol_seed),
+            reproducibility_deterministic=bool(reproducibility_state.get("deterministic_requested", cfg.reproducibility.deterministic)),
+            reproducibility_deterministic_applied=bool(reproducibility_state.get("deterministic_applied", False)),
+        )
         if len(bars_df) < cfg.data.min_history_days:
             reason = f"history_too_short rows={len(bars_df)} min={cfg.data.min_history_days}"
             LOGGER.warning("train_symbol skipped symbol=%s reason=%s", symbol, reason)
@@ -774,6 +825,9 @@ def train_symbol(
             datamodule_kwargs["benchmark_df"] = benchmark_df
         if universe_df is not None:
             datamodule_kwargs["universe_df"] = universe_df
+        datamodule_signature = inspect.signature(SymbolDataModule)
+        if "reproducibility_seed" in datamodule_signature.parameters:
+            datamodule_kwargs["reproducibility_seed"] = derive_seed(symbol_seed, "symbol_datamodule")
         dm = SymbolDataModule(
             bars_df,
             effective_cfg.data,
@@ -797,6 +851,12 @@ def train_symbol(
 
         sym_dir = (Path(cfg.artifacts_dir) / symbol).resolve()
         sym_dir.mkdir(parents=True, exist_ok=True)
+
+        final_fit_seed = derive_seed(symbol_seed, "final_fit")
+        apply_reproducibility(
+            ReproducibilityConfig(seed=final_fit_seed, deterministic=effective_cfg.reproducibility.deterministic),
+            context=f"train_symbol:{symbol}:final_fit",
+        )
 
         model = LSTMAttentionModule(
             input_size=dm.n_features,
@@ -924,12 +984,55 @@ def train_symbol(
         config_path = sym_dir / "config.json"
         calibration_method = calibrator.method if calibrator is not None and calibrator.fitted else "none"
         lstm_selection_score = _selection_score_from_metrics(test_metrics or val_metrics)
+        feature_contract = build_feature_contract(
+            include_sentiment=effective_cfg.data.include_sentiment_features,
+            feature_set=effective_cfg.data.feature_set,
+            include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
+            feature_columns=list(dm.scaler.feature_names),
+            scaler_feature_names=list(dm.scaler.feature_names),
+        )
+        lightgbm_feature_columns = list(baseline_metrics.get("feature_columns") or []) if baseline_metrics else []
+        lightgbm_feature_contract = (
+            baseline_metrics.get("feature_contract")
+            if baseline_metrics and baseline_metrics.get("feature_contract")
+            else (
+                build_feature_contract(
+                    include_sentiment=effective_cfg.data.include_sentiment_features,
+                    feature_set=effective_cfg.data.feature_set,
+                    include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
+                    feature_columns=lightgbm_feature_columns,
+                    scaler_feature_names=lightgbm_feature_columns,
+                )
+                if lightgbm_feature_columns
+                else None
+            )
+        )
+        catboost_feature_columns = list(catboost_metrics.get("feature_columns") or []) if catboost_metrics else []
+        catboost_feature_contract = (
+            catboost_metrics.get("feature_contract")
+            if catboost_metrics and catboost_metrics.get("feature_contract")
+            else (
+                build_feature_contract(
+                    include_sentiment=effective_cfg.data.include_sentiment_features,
+                    feature_set=effective_cfg.data.feature_set,
+                    include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
+                    feature_columns=catboost_feature_columns,
+                    scaler_feature_names=catboost_feature_columns,
+                )
+                if catboost_feature_columns
+                else None
+            )
+        )
         artifact_routes_models = {
             "lstm_attention": {
                 "checkpoint_path": str(sym_dir / "best.ckpt"),
                 "scaler_path": str(sym_dir / "scaler.pkl"),
                 "config_path": str(config_path),
                 "calibrator_path": calibrator_path,
+                "feature_columns": list(dm.scaler.feature_names),
+                "feature_fingerprint": feature_contract.get("feature_fingerprint"),
+                "feature_contract": feature_contract,
+                "selected_decision_threshold": effective_cfg.data.decision_threshold,
                 "inference_backend": "lstm_attention",
             },
             "lightgbm": {
@@ -937,7 +1040,13 @@ def train_symbol(
                 "model_path": (baseline_metrics.get("artifact_paths") or {}).get("model_path") if baseline_metrics else None,
                 "calibrator_path": (baseline_metrics.get("artifact_paths") or {}).get("calibrator_path") if baseline_metrics else None,
                 "config_path": str(config_path),
-                "feature_columns": baseline_metrics.get("feature_columns") if baseline_metrics else None,
+                "feature_columns": lightgbm_feature_columns or None,
+                "feature_fingerprint": (
+                    baseline_metrics.get("feature_fingerprint")
+                    if baseline_metrics and baseline_metrics.get("feature_fingerprint")
+                    else (lightgbm_feature_contract or {}).get("feature_fingerprint")
+                ),
+                "feature_contract": lightgbm_feature_contract,
                 "selected_decision_threshold": baseline_metrics.get("selected_decision_threshold") if baseline_metrics else None,
                 "inference_backend": baseline_metrics.get("inference_backend", "lightgbm_tabular") if baseline_metrics else "lightgbm_tabular",
             },
@@ -946,7 +1055,13 @@ def train_symbol(
                 "model_path": (catboost_metrics.get("artifact_paths") or {}).get("model_path") if catboost_metrics else None,
                 "calibrator_path": (catboost_metrics.get("artifact_paths") or {}).get("calibrator_path") if catboost_metrics else None,
                 "config_path": str(config_path),
-                "feature_columns": catboost_metrics.get("feature_columns") if catboost_metrics else None,
+                "feature_columns": catboost_feature_columns or None,
+                "feature_fingerprint": (
+                    catboost_metrics.get("feature_fingerprint")
+                    if catboost_metrics and catboost_metrics.get("feature_fingerprint")
+                    else (catboost_feature_contract or {}).get("feature_fingerprint")
+                ),
+                "feature_contract": catboost_feature_contract,
                 "selected_decision_threshold": catboost_metrics.get("selected_decision_threshold") if catboost_metrics else None,
                 "inference_backend": catboost_metrics.get("inference_backend", "catboost_tabular") if catboost_metrics else "catboost_tabular",
             },
@@ -988,9 +1103,16 @@ def train_symbol(
             "champion_selection": asdict(effective_cfg.champion_selection),
             "target_optimization": asdict(effective_cfg.target_optimization),
             "threshold_optimization": asdict(effective_cfg.threshold_optimization),
+            "reproducibility": {
+                **asdict(effective_cfg.reproducibility),
+                "symbol_seed": int(symbol_seed),
+                "final_fit_seed": int(final_fit_seed),
+                "deterministic_applied": bool(reproducibility_state.get("deterministic_applied", False)),
+            },
             "symbol": symbol,
             "run_id": run_id,
             "feature_columns": dm.scaler.feature_names,
+            "feature_contract": feature_contract,
             "cross_sectional_feature_columns": cross_sectional_feature_columns,
             "cross_sectional_diagnostics": cross_sectional_diagnostics,
             "calibrator_path": calibrator_path,
@@ -1009,6 +1131,7 @@ def train_symbol(
                 include_sentiment=effective_cfg.data.include_sentiment_features,
                 feature_set=effective_cfg.data.feature_set,
                 include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
+                feature_columns=list(dm.scaler.feature_names),
             ),
         }
         with open(config_path, "w") as f:
@@ -1028,6 +1151,7 @@ def train_symbol(
             },
             "diagnostics": {
                 "feature_columns": dm.scaler.feature_names,
+                "feature_contract": feature_contract,
                 "cross_sectional_feature_columns": cross_sectional_feature_columns,
                 "cross_sectional_diagnostics": cross_sectional_diagnostics,
             },

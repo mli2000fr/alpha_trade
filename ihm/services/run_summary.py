@@ -12,6 +12,21 @@ from ihm.services.pipeline_runner import (
 
 
 RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
+    "ml_train": [
+        ("Cibles", "symbols_total"),
+        ("Complétés", "symbols_completed"),
+        ("Skips", "symbols_skipped"),
+        ("Échecs", "symbols_failed"),
+        ("Quarantaine", "symbols_quarantined"),
+    ],
+    "ml_predict": [
+        ("Cibles", "symbols_total"),
+        ("Servis", "symbols_completed"),
+        ("Skips", "symbols_skipped"),
+        ("Drift", "ml_drift_status"),
+        ("Issues artefacts", "prediction_artifact_issue_count"),
+        ("Fallbacks", "prediction_fallback_count"),
+    ],
     "import_alpaca_assets": [
         ("Assets", "assets_fetched"),
         ("Rows upsert", "rows_upserted"),
@@ -326,6 +341,56 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
             lines.append(
                 f"Gate ML actif avec drift={drift_status} (action={gate_action}, raison={gate_reason})."
             )
+
+    if step_key == "ml_train":
+        training_start_date = str(summary.get("training_start_date") or "").strip()
+        feature_fp = str(summary.get("feature_fingerprint") or "").strip()
+        quarantined = _to_int(summary.get("symbols_quarantined", 0))
+        if training_start_date:
+            lines.append(f"Fenêtre training bornée depuis {training_start_date}.")
+        if feature_fp:
+            lines.append(f"Feature fingerprint actif : {feature_fp}.")
+        if quarantined > 0:
+            lines.append(f"{quarantined} symbole(s) restent sous quarantaine champion.")
+
+    if step_key == "ml_predict":
+        drift_status = str(summary.get("ml_drift_status") or "n/a").strip()
+        kill_switch_active = bool(summary.get("ml_kill_switch_active"))
+        kill_reason = str(summary.get("ml_kill_switch_reason") or "").strip()
+        artifact_issues = _to_int(summary.get("prediction_artifact_issue_count", 0))
+        fallback_count = _to_int(summary.get("prediction_fallback_count", 0))
+        calibration_fallback_count = _to_int(summary.get("prediction_calibration_fallback_count", 0))
+        last_fallback_reason = str(summary.get("last_fallback_reason") or "").strip()
+        last_requested_model = str(summary.get("last_requested_model") or "").strip()
+        last_served_model = str(summary.get("last_served_model") or "").strip()
+        last_artifact_issue_reason = str(summary.get("last_artifact_issue_reason") or "").strip()
+        last_artifact_issue_path = str(summary.get("last_artifact_issue_path") or "").strip()
+        resolved_device_name = str(summary.get("resolved_device_name") or "").strip()
+        if kill_switch_active:
+            lines.append(
+                f"Drift ML : kill-switch actif (drift={drift_status}, raison={kill_reason or 'unknown'})."
+            )
+        elif drift_status not in {"", "n/a", "N/A", "OK"}:
+            lines.append(f"Drift ML observé côté prédiction : {drift_status}.")
+        if fallback_count > 0:
+            lines.append(f"Serving dégradé : {fallback_count} fallback(s) architecture sur ce run.")
+            if last_fallback_reason:
+                lines.append(
+                    f"Dernier fallback : demandé `{last_requested_model or '—'}` → servi `{last_served_model or '—'}` ({last_fallback_reason})."
+                )
+        if artifact_issues > 0:
+            issue_line = f"{artifact_issues} incident(s) artefact détecté(s) pendant le serving."
+            if last_artifact_issue_reason:
+                issue_line += f" Dernier incident : {last_artifact_issue_reason}."
+            lines.append(issue_line)
+            if last_artifact_issue_path:
+                lines.append(f"Dernier chemin artefact en défaut : {last_artifact_issue_path}")
+        if calibration_fallback_count > 0:
+            lines.append(
+                f"{calibration_fallback_count} fallback(s) de calibrateur : serving poursuivi sans calibration quand nécessaire."
+            )
+        if resolved_device_name:
+            lines.append(f"Device d'inférence résolu : {resolved_device_name}.")
 
     if step_key != "sync_earnings_calendar":
         return lines

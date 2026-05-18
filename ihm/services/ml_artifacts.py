@@ -49,6 +49,34 @@ def _read_json_file(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     return data, None
 
 
+def _coerce_path(value: Any) -> Path | None:
+    if isinstance(value, Path):
+        return value
+    if isinstance(value, str) and value.strip():
+        return Path(value)
+    return None
+
+
+def _route_health(model_name: str, route: dict[str, Any]) -> tuple[str, list[str], dict[str, bool]]:
+    expected_keys = {
+        "lstm_attention": ("checkpoint_path", "scaler_path", "config_path"),
+        "global_model": ("model_path", "config_path"),
+        "lightgbm": ("model_path", "config_path"),
+        "catboost": ("model_path", "config_path"),
+    }.get(model_name, ("config_path",))
+    existence: dict[str, bool] = {}
+    errors: list[str] = []
+    for key in expected_keys:
+        path = _coerce_path(route.get(key))
+        exists = bool(path is not None and path.exists())
+        existence[key] = exists
+        if not exists:
+            errors.append(f"{model_name}:{key}_missing")
+    if errors:
+        return "missing_paths", errors, existence
+    return "healthy", [], existence
+
+
 def _build_routes_dataframe(config_data: dict[str, Any]) -> pd.DataFrame:
     routing = config_data.get("artifact_routes") or {}
     models = routing.get("models") or {}
@@ -56,17 +84,25 @@ def _build_routes_dataframe(config_data: dict[str, Any]) -> pd.DataFrame:
     for model_name, route in models.items():
         if not isinstance(route, dict):
             continue
+        route_health, route_errors, existence = _route_health(str(model_name), route)
         rows.append(
             {
                 "model_name": model_name,
                 "status": route.get("status"),
+                "route_health": route_health,
+                "route_errors": ", ".join(route_errors),
                 "inference_backend": route.get("inference_backend"),
                 "artifact_symbol": route.get("artifact_symbol"),
                 "checkpoint_path": route.get("checkpoint_path"),
+                "checkpoint_exists": existence.get("checkpoint_path"),
                 "scaler_path": route.get("scaler_path"),
+                "scaler_exists": existence.get("scaler_path"),
                 "model_path": route.get("model_path"),
+                "model_exists": existence.get("model_path"),
                 "config_path": route.get("config_path"),
+                "config_exists": existence.get("config_path"),
                 "calibrator_path": route.get("calibrator_path"),
+                "calibrator_exists": bool(_coerce_path(route.get("calibrator_path")) and _coerce_path(route.get("calibrator_path")).exists()) if route.get("calibrator_path") else False,
                 "selected_decision_threshold": route.get("selected_decision_threshold"),
                 "feature_columns": ", ".join(route.get("feature_columns") or []) if isinstance(route.get("feature_columns"), list) else route.get("feature_columns"),
             }
@@ -104,6 +140,9 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
             "run_id": None,
             "selected_decision_threshold": None,
             "champion": {},
+            "health_status": "invalid",
+            "selected_route_health": "missing_symbol_dir",
+            "selected_route_errors": [f"missing_symbol_dir:{symbol}"],
             "routes_df": pd.DataFrame(),
             "ranking_df": pd.DataFrame(),
         }
@@ -128,6 +167,25 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
     if selected_decision_threshold is None and isinstance(config_data.get("data"), dict):
         selected_decision_threshold = config_data["data"].get("decision_threshold")
 
+    routes_df = _build_routes_dataframe(config_data)
+    selected_route_errors: list[str] = []
+    selected_route_health = "missing_selected_route"
+    if selected_model and not routes_df.empty and "model_name" in routes_df.columns:
+        selected_rows = routes_df[routes_df["model_name"].astype(str) == str(selected_model)]
+        if not selected_rows.empty:
+            selected_route = selected_rows.iloc[0]
+            selected_route_health = str(selected_route.get("route_health") or "unknown")
+            raw_errors = str(selected_route.get("route_errors") or "").strip()
+            selected_route_errors = [part.strip() for part in raw_errors.split(",") if part.strip()]
+    if errors:
+        health_status = "invalid"
+    elif selected_route_health == "healthy":
+        health_status = "healthy"
+    elif selected_model:
+        health_status = "degraded"
+    else:
+        health_status = "invalid"
+
     return {
         "symbol": symbol,
         "symbol_dir": symbol_dir,
@@ -141,7 +199,10 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
         "run_id": config_data.get("run_id"),
         "selected_decision_threshold": selected_decision_threshold,
         "champion": champion,
-        "routes_df": _build_routes_dataframe(config_data),
+        "health_status": health_status,
+        "selected_route_health": selected_route_health,
+        "selected_route_errors": selected_route_errors,
+        "routes_df": routes_df,
         "ranking_df": _build_ranking_dataframe(metrics_data),
     }
 

@@ -9,10 +9,13 @@ import numpy as np
 import pandas as pd
 
 from modelFactory.calibration import PlattCalibrator
-from modelFactory.config import TrainingConfig
+from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.dataset import chrono_split
 from modelFactory.evaluation import compute_threshold_metrics, optimize_decision_threshold
+from modelFactory.features import build_feature_contract
+from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.features import get_feature_columns
+from modelFactory.reproducibility import apply_reproducibility, derive_seed
 
 
 def tabular_split(
@@ -127,7 +130,7 @@ def run_tabular_baseline(
 	cfg: TrainingConfig,
 	*,
 	model_name: str,
-	model_builder: Callable[[], Any],
+	model_builder: Callable[[int], Any],
 	artifact_dir: Path | None = None,
 	save_callback: Callable[[Any, Path], None] | None = None,
 	model_extension: str = ".pkl",
@@ -146,7 +149,15 @@ def run_tabular_baseline(
 	if train_df.empty or val_df.empty or test_df.empty:
 		return {"status": "skipped", "model_name": model_name, "reason": "insufficient_rows_after_split"}
 
-	model = model_builder()
+	symbol_tag = "__BATCH__"
+	if "symbol" in prepared_df.columns and not prepared_df["symbol"].empty:
+		symbol_tag = str(prepared_df["symbol"].iloc[0])
+	resolved_seed = derive_seed(cfg.reproducibility.seed, "tabular_baseline", model_name, symbol_tag)
+	apply_reproducibility(
+		ReproducibilityConfig(seed=resolved_seed, deterministic=cfg.reproducibility.deterministic),
+		context=f"tabular_baseline:{model_name}:{symbol_tag}",
+	)
+	model = model_builder(resolved_seed)
 	model.fit(train_df[feature_columns], train_df["target"].astype(int))
 
 	val_raw = model.predict_proba(val_df[feature_columns])[:, 1]
@@ -195,10 +206,25 @@ def run_tabular_baseline(
 		or val_metrics.get("threshold_business_score")
 		or 0.0
 	)
+	feature_contract = build_feature_contract(
+		include_sentiment=cfg.data.include_sentiment_features,
+		feature_set=cfg.data.feature_set,
+		include_cross_sectional=cfg.data.enable_cross_sectional_features,
+		feature_columns=feature_columns,
+		scaler_feature_names=feature_columns,
+	)
 	result = {
 		"status": "completed",
 		"model_name": model_name,
+		"seed": int(resolved_seed),
 		"feature_columns": feature_columns,
+		"feature_contract": feature_contract,
+		"feature_fingerprint": compute_feature_fingerprint(
+			include_sentiment=cfg.data.include_sentiment_features,
+			feature_set=cfg.data.feature_set,
+			include_cross_sectional=cfg.data.enable_cross_sectional_features,
+			feature_columns=feature_columns,
+		),
 		"val": val_metrics,
 		"test": test_metrics,
 		"calibration_method": calibrator.method if calibrator is not None and calibrator.fitted else "none",

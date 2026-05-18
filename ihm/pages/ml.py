@@ -12,6 +12,7 @@ import streamlit as st
 
 from ihm.pages._shared import ML_PENDING_SELECTED_SYMBOL_KEY, ML_SELECTED_SYMBOL_KEY
 from ihm.pages import run_page_if_standalone
+from ihm.components.run_summary import render_persistent_business_summary
 from ihm.components.db_controls import render_db_connection_form, render_query_diagnostic
 from ihm.components.tables import show_dataframe
 from ihm.components.symbol_table import render_symbol_table
@@ -20,11 +21,13 @@ from ihm.services.ml_artifacts import get_model_artifacts_dir, list_ml_artifact_
 from ihm.services.queries import (
     get_model_governance,
     get_model_metrics,
+    get_latest_run_business_summary,
     get_prediction_governance_audit,
     get_prediction_symbols,
     get_predictions,
     get_training_runs,
 )
+from ihm.services.run_summary import get_run_summary
 
 ML_AUDIT_FILTER_SOURCE_LIMIT = 500
 ML_SELECTED_AUDIT_NAVIGATION_KEY = "ihm_ml_selected_audit_navigation"
@@ -357,6 +360,34 @@ def _summarize_prediction_governance_audit(audit_df: pd.DataFrame) -> dict[str, 
     }
 
 
+def _summarize_ml_runtime_status(
+    predict_record: dict[str, object] | None,
+    risk_record: dict[str, object] | None,
+) -> dict[str, object]:
+    predict_summary = get_run_summary(predict_record)
+    risk_summary = get_run_summary(risk_record)
+    artifact_issue_count = int(predict_summary.get("prediction_artifact_issue_count", 0) or 0) if predict_summary else 0
+    fallback_count = int(predict_summary.get("prediction_fallback_count", 0) or 0) if predict_summary else 0
+    calibration_fallback_count = int(predict_summary.get("prediction_calibration_fallback_count", 0) or 0) if predict_summary else 0
+    return {
+        "predict_run_id": str((predict_record or {}).get("entity_run_id") or (predict_record or {}).get("summary_run_id") or "—"),
+        "predict_drift_status": str(predict_summary.get("ml_drift_status") or "n/a").strip() if predict_summary else "n/a",
+        "predict_kill_switch_active": bool(predict_summary.get("ml_kill_switch_active")) if predict_summary else False,
+        "predict_kill_switch_reason": str(predict_summary.get("ml_kill_switch_reason") or "").strip() if predict_summary else "",
+        "predict_gate_status": str(predict_summary.get("gate_status") or "enabled").strip() if predict_summary else "enabled",
+        "predict_last_served_model": str(predict_summary.get("last_served_model") or "—").strip() if predict_summary else "—",
+        "artifact_issue_count": artifact_issue_count,
+        "fallback_count": fallback_count,
+        "calibration_fallback_count": calibration_fallback_count,
+        "last_fallback_reason": str(predict_summary.get("last_fallback_reason") or "").strip() if predict_summary else "",
+        "risk_gate_enabled": bool(risk_summary.get("ml_gate_enabled")) if risk_summary and "ml_gate_enabled" in risk_summary else None,
+        "risk_gate_reason": str(risk_summary.get("ml_gate_reason") or "").strip() if risk_summary else "",
+        "risk_gate_action": str(risk_summary.get("ml_gate_action") or "allow").strip() if risk_summary else "allow",
+        "risk_gate_drift_status": str(risk_summary.get("ml_gate_drift_status") or "n/a").strip() if risk_summary else "n/a",
+        "risk_prediction_coverage_pct": risk_summary.get("prediction_coverage_pct") if risk_summary else None,
+    }
+
+
 def _prime_selected_symbol_state(symbols: list[str]) -> str | None:
     if not symbols:
         return None
@@ -392,6 +423,7 @@ def render() -> None:
     symbols = sorted(set(artifact_symbols) | set(db_symbols), key=lambda sym: (sym.startswith("__"), sym))
     if not symbols:
         st.info("Aucun artefact `modelFactory` détecté pour le moment. Lancez d'abord `ML Train` ou vérifiez le dossier des artefacts.")
+        report = None
     else:
         _prime_selected_symbol_state(symbols)
         selected_symbol = st.selectbox(
@@ -410,6 +442,20 @@ def render() -> None:
         col3.metric("Mode de sélection", str(report["selection_mode"] or "—"))
         threshold = report["selected_decision_threshold"]
         col4.metric("Decision threshold", f"{float(threshold):.2f}" if threshold is not None else "—")
+
+        if report.get("health_status") == "invalid":
+            st.error(
+                "🚫 Artefacts locaux invalides — manifestes incomplets/corrompus ou route champion introuvable."
+            )
+        elif report.get("health_status") == "degraded":
+            st.warning(
+                f"⚠️ Artefacts locaux dégradés — route sélectionnée `{report.get('selected_model') or '—'}` en état `{report.get('selected_route_health') or 'unknown'}`."
+            )
+        elif report.get("health_status") == "healthy":
+            st.success("✅ Artefacts locaux servables selon les chemins actuellement présents sur disque.")
+        selected_route_errors = report.get("selected_route_errors") or []
+        if selected_route_errors:
+            st.caption("Anomalies de route sélectionnée : " + ", ".join(str(value) for value in selected_route_errors))
 
         champion = report["champion"] or {}
         st.caption(
@@ -439,6 +485,69 @@ def render() -> None:
         st.warning("La connexion MySQL est indisponible. Les tableaux SQL ci-dessous ne peuvent pas être chargés, mais la lecture des artefacts locaux reste disponible.")
         render_db_connection_form("ml_db_form")
         return
+
+    st.subheader("🛡️ Drift / gate ML")
+    st.caption(
+        "Ce panneau croise le dernier résumé `ml_predict` (drift / kill-switch côté serving) et le dernier résumé `risk_management` "
+        "(gate effectivement consommé côté risque)."
+    )
+    latest_predict_summary = get_latest_run_business_summary(step_key="ml_predict")
+    latest_risk_summary = get_latest_run_business_summary(step_key="risk_management")
+    runtime_status = _summarize_ml_runtime_status(latest_predict_summary, latest_risk_summary)
+
+    status_col_1, status_col_2, status_col_3, status_col_4 = st.columns(4)
+    status_col_1.metric("Drift ML Predict", str(runtime_status["predict_drift_status"]))
+    status_col_2.metric(
+        "Kill-switch Predict",
+        "actif" if bool(runtime_status["predict_kill_switch_active"]) else "inactif",
+    )
+    risk_gate_enabled = runtime_status["risk_gate_enabled"]
+    status_col_3.metric(
+        "Gate Risk effectif",
+        "activé" if risk_gate_enabled is True else ("désactivé" if risk_gate_enabled is False else "n/d"),
+    )
+    artifact_health_label = str((report or {}).get("health_status") or "n/d") if isinstance(report, dict) else "n/d"
+    status_col_4.metric("Santé artefacts", artifact_health_label)
+
+    if risk_gate_enabled is False:
+        coverage = runtime_status.get("risk_prediction_coverage_pct")
+        coverage_text = f" | couverture ML={float(coverage):.0%}" if isinstance(coverage, (int, float)) else ""
+        st.error(
+            f"🚫 Gate ML désactivé côté risque — action `{runtime_status['risk_gate_action']}` | drift `{runtime_status['risk_gate_drift_status']}` | raison `{runtime_status['risk_gate_reason'] or 'unknown'}`{coverage_text}"
+        )
+    elif bool(runtime_status["predict_kill_switch_active"]):
+        st.warning(
+            f"⚠️ Kill-switch drift déclenché côté `ml_predict` — drift `{runtime_status['predict_drift_status']}` | raison `{runtime_status['predict_kill_switch_reason'] or 'unknown'}`."
+        )
+    elif str(runtime_status["predict_drift_status"]) not in {"", "n/a", "N/A", "OK"}:
+        st.info(
+            f"ℹ️ Drift observé côté ML Predict : `{runtime_status['predict_drift_status']}`. Vérifiez l'alignement avec le gate côté risque."
+        )
+
+    if int(runtime_status["artifact_issue_count"]) > 0 or int(runtime_status["fallback_count"]) > 0:
+        st.caption(
+            f"Incidents serving récents — artefacts={runtime_status['artifact_issue_count']} | fallbacks={runtime_status['fallback_count']} | calibrateurs dégradés={runtime_status['calibration_fallback_count']}"
+        )
+        if runtime_status["last_fallback_reason"]:
+            st.caption(f"Dernier fallback serving : {runtime_status['last_fallback_reason']}")
+
+    if latest_predict_summary is not None:
+        render_persistent_business_summary(
+            latest_predict_summary,
+            title="🔮 Dernier résumé ML Predict",
+            max_metrics=6,
+        )
+    else:
+        render_query_diagnostic("Aucun résumé persistant `ml_predict` disponible.")
+
+    if latest_risk_summary is not None:
+        render_persistent_business_summary(
+            latest_risk_summary,
+            title="⚖️ Dernier résumé Risk consommateur ML",
+            max_metrics=9,
+        )
+    else:
+        render_query_diagnostic("Aucun résumé persistant `risk_management` disponible pour comparer le gate effectif.")
 
     selected_symbol_for_db = st.session_state.get(ML_SELECTED_SYMBOL_KEY) if symbols else None
     symbol_filter = selected_symbol_for_db if isinstance(selected_symbol_for_db, str) else None

@@ -482,3 +482,30 @@ def test_get_run_summary_detail_lines_exposes_ml_gate_kill_switch_for_risk_manag
     assert any("Couverture ML nulle attendue" in line for line in lines)
 
 
+def test_get_run_summary_detail_lines_exposes_ml_predict_fallbacks_and_artifact_issues() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "ml_predict",
+            "run_summary": {
+                "ml_drift_status": "WARN",
+                "ml_kill_switch_active": False,
+                "prediction_artifact_issue_count": 2,
+                "prediction_fallback_count": 1,
+                "prediction_calibration_fallback_count": 1,
+                "last_requested_model": "lightgbm",
+                "last_served_model": "lstm_attention",
+                "last_fallback_reason": "requested_model=lightgbm tabular_model_corrupted:lightgbm -> fallback_lstm_attention",
+                "last_artifact_issue_reason": "tabular_model_corrupted:lightgbm",
+                "last_artifact_issue_path": "F:/artifacts/models/AAPL/lightgbm_model.pkl",
+                "resolved_device_name": "cpu",
+            },
+        }
+    )
+
+    assert any("Drift ML observé côté prédiction : WARN" in line for line in lines)
+    assert any("Serving dégradé" in line for line in lines)
+    assert any("Dernier fallback" in line for line in lines)
+    assert any("incident(s) artefact" in line for line in lines)
+    assert any("Device d'inférence résolu : cpu" in line for line in lines)
+
+

@@ -22,7 +22,10 @@ from modelFactory.data_loader import (
     load_universe_bars,
     resolve_training_start_date,
 )
+from modelFactory.features import build_feature_contract
 from modelFactory.features import fingerprint as compute_feature_fingerprint
+from modelFactory.features import normalize_feature_columns
+from modelFactory.reproducibility import apply_reproducibility, derive_seed
 from modelFactory.db_registry import load_candidate_symbols, load_stock_bars_daily_symbols, replace_model_governance
 from modelFactory.global_model import train_global_model
 from modelFactory.runtime_status import update_runtime_status
@@ -75,6 +78,10 @@ def _inject_global_model_into_symbol_artifacts(
         "model_path": global_result.get("artifact_paths", {}).get("model_path"),
         "config_path": global_result.get("artifact_paths", {}).get("config_path"),
         "calibrator_path": global_result.get("artifact_paths", {}).get("calibrator_path"),
+        "feature_columns": global_result.get("feature_columns"),
+        "feature_fingerprint": global_result.get("feature_fingerprint"),
+        "feature_contract": global_result.get("feature_contract"),
+        "selected_decision_threshold": global_result.get("threshold_optimization", {}).get("selected_threshold"),
         "inference_backend": "global_tabular",
         "backend_model_name": global_result.get("backend_model_name"),
     }
@@ -150,6 +157,11 @@ def _filter_symbols_by_mode(
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
     )
+    current_contract = build_feature_contract(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
 
     def _parse_iso_date(value: object) -> date | None:
         if isinstance(value, str) and value.strip():
@@ -181,6 +193,10 @@ def _filter_symbols_by_mode(
 
         persisted_data = cfg_data.get("data") or {}
         persisted_training_start_date = _parse_iso_date(persisted_data.get("training_start_date"))
+        persisted_contract = cfg_data.get("feature_contract")
+        persisted_contract_columns = normalize_feature_columns((persisted_contract or {}).get("feature_columns") if isinstance(persisted_contract, dict) else None)
+        persisted_contract_fp = str((persisted_contract or {}).get("feature_fingerprint") or "").strip() if isinstance(persisted_contract, dict) else ""
+        persisted_top_level_columns = normalize_feature_columns(cfg_data.get("feature_columns"))
         if persisted_training_start_date is None:
             persisted_history_window = persisted_data.get("history_window_years")
             try:
@@ -195,6 +211,18 @@ def _filter_symbols_by_mode(
         latest_available_date = latest_dates.get(symbol)
 
         if persisted != current_fp:
+            kept.append(symbol)
+            continue
+        if not isinstance(persisted_contract, dict):
+            kept.append(symbol)
+            continue
+        if persisted_contract_columns != current_contract["feature_columns"]:
+            kept.append(symbol)
+            continue
+        if persisted_contract_fp != current_contract["feature_fingerprint"]:
+            kept.append(symbol)
+            continue
+        if persisted_top_level_columns is not None and persisted_top_level_columns != current_contract["feature_columns"]:
             kept.append(symbol)
             continue
         if persisted_training_start_date != cfg.data.training_start_date:
@@ -214,6 +242,14 @@ def _filter_symbols_by_mode(
 def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] | None = None) -> TrainResult:
     """Worker function exécutée dans un sous-process. Crée son propre engine."""
     from database.connection import get_sqlalchemy_engine
+
+    apply_reproducibility(
+        cfg.reproducibility.__class__(
+            seed=derive_seed(cfg.reproducibility.seed, "orchestrator_worker", symbol),
+            deterministic=cfg.reproducibility.deterministic,
+        ),
+        context=f"orchestrator_worker:{symbol}",
+    )
     engine = get_sqlalchemy_engine()
     history_end_date = load_symbol_latest_bar_date(engine, symbol)
     history_start_date = resolve_training_start_date(history_end_date, cfg.data.training_start_date)

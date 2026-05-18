@@ -108,3 +108,15 @@ def test_threshold_optimization_rejects_invalid_action_rate_bounds() -> None:
         config.ThresholdOptimizationConfig(min_action_rate=0.40, max_action_rate=0.20)
 
 
+def test_reproducibility_config_defaults_to_seed_42_and_deterministic() -> None:
+    cfg = config.ReproducibilityConfig()
+
+    assert cfg.seed == 42
+    assert cfg.deterministic is True
+
+
+def test_reproducibility_config_rejects_negative_seed() -> None:
+    with pytest.raises(ValueError, match="reproducibility.seed"):
+        config.ReproducibilityConfig(seed=-1)
+
+
