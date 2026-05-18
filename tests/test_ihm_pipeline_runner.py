@@ -723,7 +723,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert "--accelerator" in train_cmd
     assert train_cmd[train_cmd.index("--accelerator") + 1] == "gpu"
     assert train_cmd[train_cmd.index("--ml-mode") + 1] == pipeline_runner.DEFAULT_ML_MODE
-    assert train_cmd[train_cmd.index("--history-window") + 1] == "10"
+    assert train_cmd[train_cmd.index("--training-start-date") + 1] == pipeline_runner.DEFAULT_ML_TRAINING_START_DATE
     assert train_cmd[train_cmd.index("--symbol-source") + 1] == "candidates"
 
     # Drapeaux booléens activés par défaut (swing prod)
@@ -787,7 +787,7 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
         ml_optimize_target=True,
         ml_walkforward=False,
         ml_mode="refresh-stale",
-        ml_history_window="all",
+        ml_training_start_date="2018-06-01",
         ml_heartbeat_interval_seconds=30.0,
         ml_watchdog_timeout_seconds=600,
     )
@@ -796,7 +796,7 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
 
     assert train_cmd[train_cmd.index("--accelerator") + 1] == "cpu"
     assert train_cmd[train_cmd.index("--ml-mode") + 1] == "refresh-stale"
-    assert train_cmd[train_cmd.index("--history-window") + 1] == "all"
+    assert train_cmd[train_cmd.index("--training-start-date") + 1] == "2018-06-01"
 
     # Drapeaux désactivés
     for flag in (

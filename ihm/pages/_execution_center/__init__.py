@@ -114,7 +114,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_LGBM_LEARNING_RATE,
     DEFAULT_ML_LGBM_MAX_DEPTH,
     DEFAULT_ML_LGBM_N_ESTIMATORS,
-    DEFAULT_ML_HISTORY_WINDOW,
+    DEFAULT_ML_TRAINING_START_DATE,
     DEFAULT_ML_LOG_LEVEL,
     DEFAULT_ML_MAX_ACTION_RATE,
     DEFAULT_ML_MAX_EPOCHS,
@@ -307,6 +307,17 @@ def _normalize_ml_train_preset_key(preset_key: str | None) -> str:
     if normalized in ML_TRAIN_PRESET_OPTIONS:
         return normalized
     return ML_TRAIN_PRESET_CUSTOM
+
+
+def _coerce_session_date(value: object, *, default: date) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return date.fromisoformat(value.strip())
+        except ValueError:
+            return default
+    return default
 
 
 def _ensure_normalized_ml_train_preset_session_state(session_state: dict[str, object]) -> str:
@@ -2667,25 +2678,23 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 ),
             )
         with ml_scope_col2:
-            ml_history_window = cast(
-                str,
-                st.selectbox(
-                    "Historique ML utilisé au training",
-                    options=["5", "10", "all"],
-                    index=["5", "10", "all"].index(
-                        cast(str, st.session_state.get("pipeline_ml_history_window", DEFAULT_ML_HISTORY_WINDOW))
-                        if st.session_state.get("pipeline_ml_history_window", DEFAULT_ML_HISTORY_WINDOW) in {"5", "10", "all"}
-                        else DEFAULT_ML_HISTORY_WINDOW
+            ml_training_start_date = cast(
+                date,
+                st.date_input(
+                    "Date de début du training ML",
+                    value=_coerce_session_date(
+                        st.session_state.get("pipeline_ml_training_start_date", DEFAULT_ML_TRAINING_START_DATE),
+                        default=date(2020, 1, 1),
                     ),
-                    key="pipeline_ml_history_window",
-                    format_func=lambda value: {"5": "5 ans", "10": "10 ans", "all": "Tout l'historique"}.get(str(value), str(value)),
-                    help="Fenêtre de barres daily transmise au backend Model Factory. `10 ans` est le défaut recommandé pour le swing daily.",
+                    key="pipeline_ml_training_start_date",
+                    format="YYYY-MM-DD",
+                    help="Date minimale des barres daily transmises au backend Model Factory. Le défaut `2020-01-01` permet de cadrer le training sur l'historique récent utile.",
                 ),
             )
 
         st.caption(
             "Rappel modes ML : `rebuild-all` = tout reconstruire ; `rebuild-missing` = seulement les symboles sans modèle ; "
-            "`refresh-stale` = reconstruire si le modèle est absent, obsolète ou hors contrat de features / fenêtre historique."
+            "`refresh-stale` = reconstruire si le modèle est absent, obsolète ou hors contrat de features / date de début d'historique."
         )
 
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
@@ -3441,7 +3450,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_batch_size=int(ml_batch_size),
             ml_hidden_size=int(ml_hidden_size),
             ml_mode=cast(Any, ml_mode),
-            ml_history_window=cast(Any, ml_history_window),
+            ml_training_start_date=ml_training_start_date.isoformat(),
             ml_artifacts_dir=str(ml_artifacts_dir or DEFAULT_ML_ARTIFACTS_DIR).strip() or DEFAULT_ML_ARTIFACTS_DIR,
             ml_benchmark_symbol=str(ml_benchmark_symbol or DEFAULT_ML_BENCHMARK_SYMBOL).strip().upper() or DEFAULT_ML_BENCHMARK_SYMBOL,
             ml_default_champion=cast(Any, ml_default_champion),

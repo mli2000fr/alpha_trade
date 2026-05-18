@@ -20,7 +20,7 @@ from modelFactory.data_loader import (
     load_symbol_latest_bar_dates,
     load_symbol_sentiment,
     load_universe_bars,
-    resolve_history_window_start_date,
+    resolve_training_start_date,
 )
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.db_registry import load_candidate_symbols, load_stock_bars_daily_symbols, replace_model_governance
@@ -142,8 +142,8 @@ def _filter_symbols_by_mode(
 
     - ``rebuild-missing`` : ne garde que les symboles sans ``config.json``.
     - ``refresh-stale`` : garde les symboles sans artefacts, avec contrat de
-      features/fenêtre historique différent, ou entraînés avant la dernière
-      barre disponible pour le symbole.
+      features/date de début historique différent, ou entraînés avant la
+      dernière barre disponible pour le symbole.
     """
     current_fp = compute_feature_fingerprint(
         include_sentiment=cfg.data.include_sentiment_features,
@@ -179,14 +179,25 @@ def _filter_symbols_by_mode(
             kept.append(symbol)
             continue
 
-        persisted_history_window = (cfg_data.get("data") or {}).get("history_window_years")
+        persisted_data = cfg_data.get("data") or {}
+        persisted_training_start_date = _parse_iso_date(persisted_data.get("training_start_date"))
+        if persisted_training_start_date is None:
+            persisted_history_window = persisted_data.get("history_window_years")
+            try:
+                persisted_history_window_years = int(str(persisted_history_window).strip()) if persisted_history_window is not None else None
+            except (TypeError, ValueError):
+                persisted_history_window_years = None
+            persisted_training_start_date = resolve_training_start_date(
+                latest_dates.get(symbol),
+                history_window_years=persisted_history_window_years,
+            )
         trained_through_date = _parse_iso_date(cfg_data.get("trained_through_date"))
         latest_available_date = latest_dates.get(symbol)
 
         if persisted != current_fp:
             kept.append(symbol)
             continue
-        if persisted_history_window != cfg.data.history_window_years:
+        if persisted_training_start_date != cfg.data.training_start_date:
             kept.append(symbol)
             continue
         if trained_through_date is None or latest_available_date is None or trained_through_date < latest_available_date:
@@ -194,8 +205,8 @@ def _filter_symbols_by_mode(
             continue
         skipped.append(symbol)
     LOGGER.info(
-        "ml_mode=%s current_fp=%s history_window_years=%s symbols_kept=%d symbols_skipped=%d",
-        mode, current_fp, cfg.data.history_window_years, len(kept), len(skipped),
+        "ml_mode=%s current_fp=%s training_start_date=%s symbols_kept=%d symbols_skipped=%d",
+        mode, current_fp, cfg.data.training_start_date, len(kept), len(skipped),
     )
     return kept
 
@@ -205,7 +216,7 @@ def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] 
     from database.connection import get_sqlalchemy_engine
     engine = get_sqlalchemy_engine()
     history_end_date = load_symbol_latest_bar_date(engine, symbol)
-    history_start_date = resolve_history_window_start_date(history_end_date, cfg.data.history_window_years)
+    history_start_date = resolve_training_start_date(history_end_date, cfg.data.training_start_date)
     bars = load_symbol_bars(engine, symbol, end_date=history_end_date, start_date=history_start_date)
     benchmark_df = None
     if cfg.data.feature_set == "expert" or cfg.data.enable_cross_sectional_features:

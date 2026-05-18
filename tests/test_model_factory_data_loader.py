@@ -47,6 +47,14 @@ def test_resolve_history_window_start_date_subtracts_years_with_leap_day_fallbac
     assert data_loader.resolve_history_window_start_date(data_loader.date(2024, 2, 29), 5) == data_loader.date(2019, 2, 28)
 
 
+def test_resolve_training_start_date_prefers_explicit_date() -> None:
+    assert data_loader.resolve_training_start_date(
+        data_loader.date(2026, 4, 17),
+        training_start_date=data_loader.date(2020, 1, 1),
+        history_window_years=10,
+    ) == data_loader.date(2020, 1, 1)
+
+
 def test_load_symbol_latest_bar_dates_builds_grouped_query(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

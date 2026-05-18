@@ -1,3 +1,5 @@
+from datetime import date
+
 from modelFactory import cli
 
 def test_cli_importable():
@@ -113,5 +115,16 @@ def test_cli_parser_accepts_debug_train_and_watchdog_options() -> None:
     assert opts.debug_train is True
     assert opts.heartbeat_interval_seconds == 45
     assert opts.watchdog_timeout_seconds == 900
+
+
+def test_cli_parser_accepts_training_start_date() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "train",
+        "--training-start-date", "2019-07-01",
+    ])
+
+    assert opts.training_start_date == date(2019, 7, 1)
 
 

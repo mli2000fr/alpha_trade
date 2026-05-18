@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import date
 
 from modelFactory import cli as model_factory_cli
 from modelFactory.config import (
@@ -21,7 +22,7 @@ def _make_opts(**overrides) -> argparse.Namespace:
     base = dict(
         walkforward=True,
         ml_mode="rebuild-all",
-        history_window="10",
+        training_start_date=date(2020, 1, 1),
         champion_min_runs=0,
         champion_min_days=0,
     )
@@ -31,7 +32,7 @@ def _make_opts(**overrides) -> argparse.Namespace:
 
 def _make_cfg() -> TrainingConfig:
     return TrainingConfig(
-        data=DataConfig(history_window_years=10),
+        data=DataConfig(training_start_date=date(2020, 1, 1)),
         model=ModelConfig(),
         calibration=CalibrationConfig(method="none"),
         walk_forward=WalkForwardConfig(),
@@ -62,8 +63,7 @@ def test_build_run_summary_contains_required_fields() -> None:
     assert summary["mode"] == "train"
     assert summary["walkforward_enabled"] is True
     assert summary["ml_mode"] == "rebuild-all"
-    assert summary["history_window"] == "10"
-    assert summary["history_window_years"] == 10
+    assert summary["training_start_date"] == "2020-01-01"
     assert "feature_fingerprint" in summary
     assert summary["champion_min_runs"] == 0
     assert summary["champion_min_days"] == 0
@@ -115,7 +115,7 @@ def test_run_summary_round_trips_through_json() -> None:
     assert decoded["mode"] == "predict"
     assert decoded["walkforward_enabled"] is False
     assert decoded["ml_mode"] == "rebuild-missing"
-    assert decoded["history_window"] == "10"
+    assert decoded["training_start_date"] == "2020-01-01"
 
 
 def test_cli_parses_walkforward_default_on_and_no_walkforward() -> None:
@@ -123,12 +123,12 @@ def test_cli_parses_walkforward_default_on_and_no_walkforward() -> None:
     opts_default = parser.parse_args(["--mode", "train"])
     assert opts_default.walkforward is True
     assert opts_default.ml_mode == "rebuild-all"
-    assert opts_default.history_window == "10"
+    assert opts_default.training_start_date == date(2020, 1, 1)
 
-    opts_off = parser.parse_args(["--mode", "train", "--no-walkforward", "--ml-mode", "rebuild-missing", "--history-window", "all"])
+    opts_off = parser.parse_args(["--mode", "train", "--no-walkforward", "--ml-mode", "rebuild-missing", "--training-start-date", "2018-01-01"])
     assert opts_off.walkforward is False
     assert opts_off.ml_mode == "rebuild-missing"
-    assert opts_off.history_window == "all"
+    assert opts_off.training_start_date == date(2018, 1, 1)
 
 
 def test_cli_parses_champion_quarantine_thresholds() -> None:

@@ -210,6 +210,7 @@ python -m modelFactory --mode predict
 |---|---|
 | `--sequence-length` | longueur de séquence LSTM |
 | `--forecast-horizon` | horizon de prédiction |
+| `--training-start-date` | date minimale des barres utilisées pour le training (`YYYY-MM-DD`, défaut `2020-01-01`) |
 | `--include-sentiment` | ajoute les features sentiment ticker |
 | `--enable-cross-sectional` | active les features cross-sectionnelles |
 | `--cross-sectional-min-universe` | taille minimale d'univers par date |
@@ -268,8 +269,12 @@ python -m modelFactory --mode predict
 ### 5.1 Entraînement minimal
 
 ```powershell
-python -m modelFactory --mode train --accelerator auto
+python -m modelFactory --mode train --accelerator auto --training-start-date 2020-01-01
 ```
+
+`--training-start-date` remplace l'ancienne logique de fenêtre exprimée en années.
+Le training charge désormais les barres à partir d'une date absolue, ce qui rend
+le contrat plus explicite côté IHM, CLI et artefacts persistés.
 
 ### 5.2 Entraînement orienté production locale multi-modèles
 

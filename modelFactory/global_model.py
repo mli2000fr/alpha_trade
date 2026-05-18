@@ -18,7 +18,7 @@ from modelFactory.data_loader import (
     load_symbols_sentiment,
     load_universe_bars,
     load_universe_latest_bar_date,
-    resolve_history_window_start_date,
+    resolve_training_start_date,
 )
 from modelFactory.features import build_target, compute_features, compute_future_return, get_feature_columns
 from modelFactory.tabular_baseline import apply_tabular_calibration, compute_tabular_metrics, fit_tabular_calibrator
@@ -163,7 +163,7 @@ def train_global_model(
         enable_cross_sectional_features=(cfg.data.enable_cross_sectional_features and cfg.global_model.use_cross_sectional_features),
     )
     history_end_date = load_universe_latest_bar_date(engine, symbols)
-    history_start_date = resolve_history_window_start_date(history_end_date, effective_data_cfg.history_window_years)
+    history_start_date = resolve_training_start_date(history_end_date, effective_data_cfg.training_start_date)
     universe_df = load_universe_bars(engine, symbols, end_date=history_end_date, start_date=history_start_date)
     if universe_df.empty:
         return {"status": "skipped", "model_name": "global_model", "reason": "empty_universe"}

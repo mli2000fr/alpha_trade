@@ -367,7 +367,7 @@ metrics  = executor.execute_run(risk_run_id, trade_date)
 #### Entraînement (`python -m modelFactory --mode train`)
 
 1. résolution de l'univers depuis `--symbols` ou `stock_scores.is_candidate=1` ;
-2. chargement des bars, benchmark, sentiment et univers selon les options activées ;
+2. chargement des bars, benchmark, sentiment et univers selon les options activées, borné en amont par `--training-start-date` pour le training ;
 3. entraînement du `LSTMAttentionModule` ;
 4. calibration / optimisation de seuil côté LSTM ;
 5. entraînement optionnel des challengers locaux `LightGBM` et `CatBoost` ;
@@ -642,6 +642,7 @@ Depuis la page `ihm/pages/pipeline.py`, les étapes `ML Train` et `ML Predict` e
 - activation des challengers **LightGBM** et **CatBoost** ;
 - activation optionnelle du **modèle global** ;
 - activation des **features cross-sectionnelles** ;
+- choix d'une **date de début du training ML** (défaut `2020-01-01`) ;
 - activation de la **sélection automatique du champion** ;
 - choix de la **métrique de sélection** ;
 - optimisation du **seuil de décision** ;

@@ -32,10 +32,21 @@ def _subtract_years(anchor_date: date, years: int) -> date:
         return anchor_date.replace(year=anchor_date.year - years, month=2, day=28)
 
 
-def resolve_history_window_start_date(anchor_date: date | None, history_window_years: int | None) -> date | None:
+def resolve_training_start_date(
+    anchor_date: date | None,
+    training_start_date: date | None = None,
+    history_window_years: int | None = None,
+) -> date | None:
+    if training_start_date is not None:
+        return training_start_date
     if anchor_date is None or history_window_years is None:
         return None
     return _subtract_years(anchor_date, int(history_window_years))
+
+
+def resolve_history_window_start_date(anchor_date: date | None, history_window_years: int | None) -> date | None:
+    """Compatibilité legacy avec l'ancien contrat ``history_window_years``."""
+    return resolve_training_start_date(anchor_date, history_window_years=history_window_years)
 
 
 def _build_in_clause(symbols: list[str]) -> tuple[str, dict[str, object]]:

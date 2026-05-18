@@ -79,7 +79,7 @@ class TestDataConfig:
         cfg = DataConfig()
         assert cfg.sequence_length == 60
         assert cfg.forecast_horizon == 5
-        assert cfg.history_window_years is None
+        assert cfg.training_start_date == date(2020, 1, 1)
 
     def test_invalid_sequence_length(self):
         with pytest.raises(ValueError):
@@ -89,9 +89,9 @@ class TestDataConfig:
         with pytest.raises(ValueError):
             DataConfig(train_ratio=0.9, val_ratio=0.2)
 
-    def test_invalid_history_window_years(self):
+    def test_invalid_training_start_date_type(self):
         with pytest.raises(ValueError):
-            DataConfig(history_window_years=0)
+            DataConfig(training_start_date="2020-01-01")  # type: ignore[arg-type]
 
 
 class TestModelConfig:

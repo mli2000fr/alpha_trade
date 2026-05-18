@@ -167,7 +167,7 @@ DEFAULT_ML_ARTIFACTS_DIR = "artifacts/models"
 DEFAULT_ML_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_ML_DEFAULT_CHAMPION = "lstm_attention"
 DEFAULT_ML_MODE = "rebuild-missing"
-DEFAULT_ML_HISTORY_WINDOW = "10"
+DEFAULT_ML_TRAINING_START_DATE = "2020-01-01"
 DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE = 20
 DEFAULT_ML_CALIBRATION_MIN_SAMPLES = 64
 DEFAULT_ML_CALIBRATION_MAX_ITER = 100
@@ -204,7 +204,6 @@ MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
 MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
-MLHistoryWindow = Literal["5", "10", "all"]
 MLTrainSymbolSource = Literal["candidates", "stock_bars_daily"]
 NewsImportSymbolSource = Literal[
     "stock_scores",
@@ -295,7 +294,7 @@ class PipelineLaunchOptions:
     ml_batch_size: int = DEFAULT_ML_BATCH_SIZE
     ml_hidden_size: int = DEFAULT_ML_HIDDEN_SIZE
     ml_mode: MLMode = DEFAULT_ML_MODE
-    ml_history_window: MLHistoryWindow = DEFAULT_ML_HISTORY_WINDOW
+    ml_training_start_date: str = DEFAULT_ML_TRAINING_START_DATE
     ml_train_symbol_source: MLTrainSymbolSource = "candidates"
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
@@ -1895,8 +1894,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.ml_hidden_size),
             "--ml-mode",
             options.ml_mode,
-            "--history-window",
-            options.ml_history_window,
+            "--training-start-date",
+            options.ml_training_start_date,
             "--symbol-source",
             ml_symbol_source,
             "--artifacts-dir",

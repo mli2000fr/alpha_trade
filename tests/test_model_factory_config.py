@@ -1,4 +1,5 @@
 import pytest
+from datetime import date
 
 from modelFactory import config
 
@@ -28,6 +29,17 @@ def test_data_config_accepts_expert_feature_set() -> None:
 
     assert cfg.feature_set == "expert"
     assert cfg.benchmark_symbol == "SPY"
+
+
+def test_data_config_defaults_to_training_start_date_2020_01_01() -> None:
+    cfg = config.DataConfig()
+
+    assert cfg.training_start_date == date(2020, 1, 1)
+
+
+def test_data_config_rejects_invalid_training_start_date_type() -> None:
+    with pytest.raises(ValueError, match="training_start_date"):
+        config.DataConfig(training_start_date="2020-01-01")  # type: ignore[arg-type]
 
 
 def test_data_config_accepts_cross_sectional_fields() -> None:

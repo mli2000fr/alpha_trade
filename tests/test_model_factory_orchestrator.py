@@ -61,7 +61,7 @@ def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -
     assert captured["symbol"] == "AAPL"
     assert captured["universe_df"]["symbols"] == ["AAPL", "MSFT"]
     assert captured["universe_df"]["end_date"] == date(2026, 4, 17)
-    assert captured["universe_df"]["start_date"] is None
+    assert captured["universe_df"]["start_date"] == date(2020, 1, 1)
 
 
 def test_run_training_batch_injects_global_model_into_symbol_artifacts(monkeypatch, tmp_path) -> None:
@@ -270,7 +270,7 @@ def test_filter_symbols_by_mode_rebuild_missing_keeps_only_absent_artifacts(monk
 
 def test_filter_symbols_by_mode_refresh_stale_keeps_only_outdated_models(monkeypatch, tmp_path) -> None:
     cfg = TrainingConfig(
-        data=DataConfig(history_window_years=10),
+        data=DataConfig(training_start_date=date(2020, 1, 1)),
         model=ModelConfig(max_epochs=1),
         artifacts_dir=tmp_path,
         max_workers=1,
@@ -289,7 +289,7 @@ def test_filter_symbols_by_mode_refresh_stale_keeps_only_outdated_models(monkeyp
                 {
                     "feature_fingerprint": current_fp,
                     "trained_through_date": trained_through,
-                    "data": {"history_window_years": 10},
+                    "data": {"training_start_date": "2020-01-01"},
                 },
                 fh,
             )
@@ -303,5 +303,41 @@ def test_filter_symbols_by_mode_refresh_stale_keeps_only_outdated_models(monkeyp
     kept = orchestrator._filter_symbols_by_mode(object(), ["AAPL", "MSFT"], mode="refresh-stale", cfg=cfg)
 
     assert kept == ["AAPL"]
+
+
+def test_filter_symbols_by_mode_refresh_stale_accepts_legacy_history_window_artifacts(monkeypatch, tmp_path) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(training_start_date=date(2016, 4, 17)),
+        model=ModelConfig(max_epochs=1),
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+    current_fp = orchestrator.compute_feature_fingerprint(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+    )
+    symbol_dir = tmp_path / "AAPL"
+    symbol_dir.mkdir(parents=True, exist_ok=True)
+    with open(symbol_dir / "config.json", "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "feature_fingerprint": current_fp,
+                "trained_through_date": "2026-04-17",
+                "data": {"history_window_years": 10},
+            },
+            fh,
+        )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "load_symbol_latest_bar_dates",
+        lambda engine, symbols: {"AAPL": date(2026, 4, 17)},
+    )
+
+    kept = orchestrator._filter_symbols_by_mode(object(), ["AAPL"], mode="refresh-stale", cfg=cfg)
+
+    assert kept == []
 
 

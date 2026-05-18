@@ -9,7 +9,8 @@ probabilité qu'une action monte de +2 % dans les 5 jours suivants.
 
 ### Qu'est-ce qu'un « modèle » ?
 
-Un programme qui a **appris** sur 5-10 ans d'historique à reconnaître les
+Un programme qui a **appris** sur un historique borné par une **date de début
+de training** (par défaut `2020-01-01`) à reconnaître les
 patterns annonciateurs de hausses. À chaque nouvelle journée, il regarde
 les caractéristiques (prix, volume, indicateurs techniques…) et donne une
 **probabilité** entre 0 et 1.
@@ -33,7 +34,8 @@ de 126 jours, etc.). C'est la meilleure défense contre l'**overfitting**
 ### Section 1 — Runs d'entraînement
 
 Tableau historique : pour chaque run vous voyez `run_id`, date, mode
-(`rebuild-all` / `rebuild-missing` / `refresh-stale`), durée, modèle
+(`rebuild-all` / `rebuild-missing` / `refresh-stale`), date de début du
+training, modèle
 champion, métriques (AUC, precision_long…).
 
 ### Section 2 — Prédictions du dernier run

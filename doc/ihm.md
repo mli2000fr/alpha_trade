@@ -145,7 +145,7 @@ Le bloc `⚙️ Paramètres d'exécution` regroupe les options communes à plusi
 - mode d'exécution `simulate|paper|live` ;
 - `risk_run_id` optionnel pour Execution ;
 - options broker/exécution (`allow_outside_rth`, `auto_rebalance`, type de compte, règle PDT, `swing_only`) ;
-- options `modelFactory` (accélérateur, challengers, modèle global, sélection du champion, optimisation seuil/target) ;
+- options `modelFactory` (accélérateur, date de début du training ML, challengers, modèle global, sélection du champion, optimisation seuil/target) ;
 - options `Screener` pour `stock_screener` ;
 - options `Data Integrity` pour quotes / earnings / fondamentaux.
 
@@ -182,6 +182,10 @@ Pour la zone `Screener`, l'IHM expose aussi les options backend réellement disp
 - `--min-historical-range-score`
 - `--first-pass-window-days`
 - `--disable-two-pass-loading` (piloté par une checkbox inverse "chargement en 2 passes")
+
+Dans le bloc `Paramètres Model Factory`, le champ **Historique ML utilisé au training**
+a été remplacé par une **date de début du training ML**. Par défaut, l'IHM propose
+`2020-01-01` et transmet cette valeur au backend via `--training-start-date`.
 
 Important :
 
