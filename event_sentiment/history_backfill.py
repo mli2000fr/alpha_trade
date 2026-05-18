@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
+import os
+import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Sequence, cast
+from typing import Any, Iterator, Sequence, cast
 from uuid import uuid4
 
 from common.utils import configure_root_logging
@@ -16,10 +20,72 @@ from event_sentiment.importe_news import resolve_symbols_from_inputs
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+HEARTBEAT_INTERVAL_ENV = "EVENT_SENTIMENT_HISTORY_HEARTBEAT_SECONDS"
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30.0
 
 
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _resolve_heartbeat_interval_seconds() -> float:
+    raw = str(os.getenv(HEARTBEAT_INTERVAL_ENV, "") or "").strip()
+    if not raw:
+        return DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        LOGGER.warning(
+            "%s invalide (%r) ; fallback=%.1fs",
+            HEARTBEAT_INTERVAL_ENV,
+            raw,
+            DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+        )
+        return DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+    return max(value, 0.0)
+
+
+def _format_log_context(**context: object) -> str:
+    parts = [f"{key}={value}" for key, value in context.items() if value not in (None, "", [], (), {})]
+    return " | " + " ".join(parts) if parts else ""
+
+
+@contextlib.contextmanager
+def _log_phase(phase_name: str, **context: object) -> Iterator[None]:
+    details = _format_log_context(**context)
+    interval_seconds = _resolve_heartbeat_interval_seconds()
+    started_perf = time.perf_counter()
+    stop_event = threading.Event()
+    heartbeat_thread: threading.Thread | None = None
+
+    LOGGER.info("%s started%s", phase_name, details)
+
+    if interval_seconds > 0:
+        def _heartbeat() -> None:
+            while not stop_event.wait(interval_seconds):
+                elapsed = round(time.perf_counter() - started_perf, 1)
+                LOGGER.info("%s still running | elapsed=%.1fs%s", phase_name, elapsed, details)
+
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat,
+            name=f"{phase_name}-heartbeat",
+            daemon=True,
+        )
+        heartbeat_thread.start()
+
+    try:
+        yield
+    except Exception:
+        elapsed = round(time.perf_counter() - started_perf, 1)
+        LOGGER.exception("%s failed | elapsed=%.1fs%s", phase_name, elapsed, details)
+        raise
+    else:
+        elapsed = round(time.perf_counter() - started_perf, 1)
+        LOGGER.info("%s completed | elapsed=%.1fs%s", phase_name, elapsed, details)
+    finally:
+        stop_event.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=min(interval_seconds, 0.2) if interval_seconds > 0 else 0.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +115,14 @@ class EventSentimentHistoryBackfillService:
         years: int | None = None,
         ingestion_source: str | None = None,
     ) -> tuple[date, date]:
-        scored_dates = self.repository.list_scored_trade_dates(ingestion_source=ingestion_source)
+        with _log_phase(
+            "history_backfill.resolve_bounds.scored_dates",
+            requested_start_date=start_date,
+            requested_end_date=end_date,
+            years=years,
+            ingestion_source=ingestion_source,
+        ):
+            scored_dates = self.repository.list_scored_trade_dates(ingestion_source=ingestion_source)
         if not scored_dates:
             raise RuntimeError("Aucune date scorée disponible dans news_raw/news_sentiment pour reconstruire l'historique.")
 
@@ -65,6 +138,13 @@ class EventSentimentHistoryBackfillService:
             raise RuntimeError(
                 f"Aucune date scorée disponible dans la fenêtre demandée [{resolved_start} → {resolved_end}]."
             )
+        LOGGER.info(
+            "history_backfill.resolve_bounds result | scored_dates=%s available_dates=%s resolved_window=[%s -> %s]",
+            len(scored_dates),
+            len(available_dates),
+            min(available_dates),
+            max(available_dates),
+        )
         return min(available_dates), max(available_dates)
 
     def list_trade_dates(
@@ -95,18 +175,39 @@ class EventSentimentHistoryBackfillService:
         ticker_symbols: list[str] | None = None,
     ) -> EventSentimentHistoryBackfillResult:
         normalized_ticker_symbols = sorted({str(symbol).strip().upper() for symbol in (ticker_symbols or []) if str(symbol).strip()})
+        LOGGER.info(
+            "Event sentiment history backfill started | requested_start_date=%s requested_end_date=%s years=%s batch_days=%s ingestion_source=%s ticker_symbol_count=%s",
+            start_date,
+            end_date,
+            years,
+            batch_days,
+            ingestion_source,
+            len(normalized_ticker_symbols),
+        )
         resolved_start, resolved_end = self.resolve_bounds(
             start_date=start_date,
             end_date=end_date,
             years=years,
             ingestion_source=ingestion_source,
         )
-        trade_dates = self.list_trade_dates(
-            resolved_start,
-            resolved_end,
+        with _log_phase(
+            "history_backfill.list_trade_dates",
+            resolved_start=resolved_start,
+            resolved_end=resolved_end,
             ingestion_source=ingestion_source,
-        )
+        ):
+            trade_dates = self.list_trade_dates(
+                resolved_start,
+                resolved_end,
+                ingestion_source=ingestion_source,
+            )
         if not trade_dates:
+            LOGGER.warning(
+                "Event sentiment history backfill finished without trade dates | resolved_start=%s resolved_end=%s ingestion_source=%s",
+                resolved_start,
+                resolved_end,
+                ingestion_source,
+            )
             return EventSentimentHistoryBackfillResult(
                 start_date=resolved_start,
                 end_date=resolved_end,
@@ -121,6 +222,14 @@ class EventSentimentHistoryBackfillService:
         date_batches = self._chunk_dates(trade_dates, effective_batch_days)
         ticker_rows_upserted = 0
         sector_rows_upserted = 0
+        LOGGER.info(
+            "history_backfill.trade_dates resolved | trade_dates=%s batches=%s batch_days=%s window=[%s -> %s]",
+            len(trade_dates),
+            len(date_batches),
+            effective_batch_days,
+            trade_dates[0],
+            trade_dates[-1],
+        )
 
         for batch_index, target_dates in enumerate(date_batches, start=1):
             target_date_set = set(target_dates)
@@ -134,22 +243,53 @@ class EventSentimentHistoryBackfillService:
                 batch_start,
                 batch_end,
             )
-            ticker_df, sector_df, macro_df = self.repository.load_feature_frames(
-                start_date=batch_start,
-                end_date=batch_end,
+            with _log_phase(
+                "history_backfill.load_feature_frames",
+                batch=f"{batch_index}/{len(date_batches)}",
+                batch_start=batch_start,
+                batch_end=batch_end,
+                target_dates=len(target_dates),
+                ticker_symbol_count=len(normalized_ticker_symbols),
                 ingestion_source=ingestion_source,
-                ticker_symbols=normalized_ticker_symbols or None,
+            ):
+                ticker_df, sector_df, macro_df = self.repository.load_feature_frames(
+                    start_date=batch_start,
+                    end_date=batch_end,
+                    ingestion_source=ingestion_source,
+                    ticker_symbols=normalized_ticker_symbols or None,
+                )
+            LOGGER.info(
+                "history_backfill.load_feature_frames result | batch=%s/%s ticker_rows=%s sector_rows=%s macro_rows=%s",
+                batch_index,
+                len(date_batches),
+                len(ticker_df),
+                len(sector_df),
+                len(macro_df),
             )
-            ticker_features = build_ticker_daily_features(
-                ticker_df,
-                feature_version=self.config.feature_version,
-                rolling_windows=self.config.feature_rolling_windows,
-            )
-            sector_features = build_sector_daily_features(
-                sector_df,
-                macro_df,
-                feature_version=self.config.feature_version,
-                rolling_windows=self.config.feature_rolling_windows,
+            with _log_phase(
+                "history_backfill.aggregate_features",
+                batch=f"{batch_index}/{len(date_batches)}",
+                ticker_rows=len(ticker_df),
+                sector_rows=len(sector_df),
+                macro_rows=len(macro_df),
+            ):
+                ticker_features = build_ticker_daily_features(
+                    ticker_df,
+                    feature_version=self.config.feature_version,
+                    rolling_windows=self.config.feature_rolling_windows,
+                )
+                sector_features = build_sector_daily_features(
+                    sector_df,
+                    macro_df,
+                    feature_version=self.config.feature_version,
+                    rolling_windows=self.config.feature_rolling_windows,
+                )
+            LOGGER.info(
+                "history_backfill.aggregate_features result | batch=%s/%s ticker_feature_rows=%s sector_feature_rows=%s",
+                batch_index,
+                len(date_batches),
+                len(ticker_features),
+                len(sector_features),
             )
             if normalized_ticker_symbols and not ticker_features.empty:
                 ticker_features = ticker_features[
@@ -157,11 +297,46 @@ class EventSentimentHistoryBackfillService:
                 ].copy()
             ticker_features = ticker_features[ticker_features["trade_date"].isin(target_date_set)].copy()
             sector_features = sector_features[sector_features["trade_date"].isin(target_date_set)].copy()
-            ticker_rows_upserted += self.repository.upsert_ticker_daily_features(
-                cast(list[dict[str, Any]], ticker_features.to_dict(orient="records"))
+            LOGGER.info(
+                "history_backfill.filtered_features | batch=%s/%s ticker_rows=%s sector_rows=%s target_dates=%s",
+                batch_index,
+                len(date_batches),
+                len(ticker_features),
+                len(sector_features),
+                len(target_dates),
             )
-            sector_rows_upserted += self.repository.upsert_sector_daily_features(
-                cast(list[dict[str, Any]], sector_features.to_dict(orient="records"))
+            with _log_phase(
+                "history_backfill.upsert_features",
+                batch=f"{batch_index}/{len(date_batches)}",
+                ticker_rows=len(ticker_features),
+                sector_rows=len(sector_features),
+            ):
+                batch_ticker_rows = self.repository.upsert_ticker_daily_features(
+                    cast(list[dict[str, Any]], ticker_features.to_dict(orient="records"))
+                )
+                batch_sector_rows = self.repository.upsert_sector_daily_features(
+                    cast(list[dict[str, Any]], sector_features.to_dict(orient="records"))
+                )
+            ticker_rows_upserted += batch_ticker_rows
+            sector_rows_upserted += batch_sector_rows
+            LOGGER.info(
+                "history_backfill.batch_completed | batch=%s/%s ticker_rows_upserted=%s sector_rows_upserted=%s cumulative_ticker=%s cumulative_sector=%s",
+                batch_index,
+                len(date_batches),
+                batch_ticker_rows,
+                batch_sector_rows,
+                ticker_rows_upserted,
+                sector_rows_upserted,
+            )
+
+        if ticker_rows_upserted == 0 and sector_rows_upserted == 0:
+            LOGGER.warning(
+                "Event sentiment history backfill completed with zero inserted rows | trade_dates=%s window=[%s -> %s] ingestion_source=%s ticker_symbol_count=%s",
+                len(trade_dates),
+                resolved_start,
+                resolved_end,
+                ingestion_source,
+                len(normalized_ticker_symbols),
             )
 
         return EventSentimentHistoryBackfillResult(
@@ -228,14 +403,37 @@ def main(argv: list[str] | None = None) -> int:
     service = EventSentimentHistoryBackfillService()
     ticker_symbols: list[str] | None = None
     effective_ticker_symbol_source: str | None = None
+    LOGGER.info(
+        "history_backfill CLI started | start_date=%s end_date=%s years=%s batch_days=%s ingestion_source=%s ticker_symbols_provided=%s ticker_symbol_source=%s ticker_max_symbols=%s heartbeat_interval_seconds=%.1f",
+        start_date,
+        end_date,
+        args.years,
+        args.batch_days,
+        str(args.ingestion_source or "").strip().lower() or None,
+        bool(args.ticker_symbols),
+        args.ticker_symbol_source,
+        args.ticker_max_symbols,
+        _resolve_heartbeat_interval_seconds(),
+    )
     if args.ticker_symbols or args.ticker_symbol_source:
-        ticker_symbols, effective_ticker_symbol_source = resolve_symbols_from_inputs(
-            symbols_csv=args.ticker_symbols,
+        with _log_phase(
+            "history_backfill.resolve_ticker_scope",
             symbol_source=str(args.ticker_symbol_source or "stock_scores_all"),
-            repository=service.repository,
-            logger=LOGGER,
-        )
+            explicit_symbols=bool(args.ticker_symbols),
+        ):
+            ticker_symbols, effective_ticker_symbol_source = resolve_symbols_from_inputs(
+                symbols_csv=args.ticker_symbols,
+                symbol_source=str(args.ticker_symbol_source or "stock_scores_all"),
+                repository=service.repository,
+                logger=LOGGER,
+            )
         resolved_ticker_symbols = ticker_symbols or []
+        LOGGER.info(
+            "history_backfill.resolve_ticker_scope result | source=%s symbol_count=%s sample=%s",
+            effective_ticker_symbol_source,
+            len(resolved_ticker_symbols),
+            ",".join(resolved_ticker_symbols[:10]) if resolved_ticker_symbols else "<empty>",
+        )
         if (
             args.ticker_max_symbols is not None
             and args.ticker_max_symbols > 0

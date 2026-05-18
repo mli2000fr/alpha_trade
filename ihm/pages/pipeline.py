@@ -66,6 +66,7 @@ from ihm.pages._shared import (
     _record_dependency_action_run,
     _render_log_block,
     _render_run_summary,
+    _rerun_app,
     _render_step_result,
     _sanitize_compare_ids,
     _status_badge,
@@ -426,7 +427,7 @@ def _render_launchable_step_panel(
                     st.caption(f"Actif : `{run_id}`")
                     if st.button("⏹️ Arrêter ce run", key=f"stop_step_run_{run_id}", use_container_width=True):
                         stop_pipeline_run(run_id)
-                        st.rerun()
+                        _rerun_app()
                 st.caption("Le bouton de lancement est masque tant qu'un run de cette etape est en cours.")
             else:
                 run_clicked = st.button(

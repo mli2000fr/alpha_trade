@@ -9,6 +9,7 @@ import streamlit as st
 from typing import Any
 
 from ihm.components.watcher_documentation import render_watcher_documentation_panel
+from ihm.pages._shared import _rerun_app
 from ihm.services.pipeline_runner import (
     PipelineLaunchOptions,
     format_command_for_display,
@@ -285,7 +286,7 @@ def _render_watcher_launch_controls(options: PipelineLaunchOptions) -> None:
                 )
             else:
                 st.success(f"Watcher once lancé en arrière-plan : `{records[0].run_id}`")
-            st.rerun()
+            _rerun_app()
 
     if service_clicked:
         try:
@@ -308,7 +309,7 @@ def _render_watcher_launch_controls(options: PipelineLaunchOptions) -> None:
                 )
             else:
                 st.success(f"Service watcher local IHM lancé : `{records[0].run_id}`")
-            st.rerun()
+            _rerun_app()
 
     if stop_clicked:
         run_id = str(control_state.get("local_service_run_id", "") or "")
@@ -322,7 +323,7 @@ def _render_watcher_launch_controls(options: PipelineLaunchOptions) -> None:
             else:
                 if stopped:
                     st.success(f"Arrêt demandé pour le service watcher local `{run_id}`.")
-                    st.rerun()
+                    _rerun_app()
                 else:
                     st.warning("Le service watcher local n'est plus actif.")
 

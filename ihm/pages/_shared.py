@@ -56,6 +56,7 @@ __all__ = [
     "_record_dependency_action_run",
     "_render_log_block",
     "_render_run_summary",
+    "_rerun_app",
     "_render_step_result",
     "_sanitize_compare_ids",
     "_status_badge",
@@ -115,6 +116,13 @@ def _to_optional_positive_int(value: int | float | None) -> int | None:
         return None
     normalized = int(value)
     return normalized if normalized > 0 else None
+
+
+def _rerun_app() -> None:
+    try:
+        st.rerun(scope="app")
+    except TypeError:
+        st.rerun()
 
 
 def _render_run_summary(record: dict[str, object] | None, *, compact: bool = False) -> None:
@@ -223,7 +231,7 @@ def _launch_pipeline_step(
     if track_dependency_action:
         _record_dependency_action_run(step_key, record.run_id)
     st.success(f"Run demarre en arriere-plan : `{record.run_id}`")
-    st.rerun()
+    _rerun_app()
 
 
 def _status_badge(status: str) -> str:

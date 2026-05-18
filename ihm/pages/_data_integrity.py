@@ -25,6 +25,7 @@ from ihm.pages._shared import (
     PENDING_SELECTED_RUN_KEY,
     PipelineLaunchOptions,
     _render_step_result,
+    _rerun_app,
     _sanitize_compare_ids,
     start_pipeline_run,
 )
@@ -638,7 +639,7 @@ def _render_import_news_panel(
                     st.caption(f"Actif : `{run_id}`")
                     if st.button(str(spec["stop"]), key=f"stop_{spec['key']}_{run_id}", use_container_width=True):
                         stop_pipeline_run(run_id)
-                        st.rerun()
+                        _rerun_app()
             for legacy_key, legacy_label in (
                 ("score_sentiment_only", "Scoring sentiment seul (legacy maintenance)"),
                 ("relevance_backfill", "Contextual/relevance backfill (legacy maintenance)"),
@@ -658,7 +659,7 @@ def _render_import_news_panel(
                         use_container_width=True,
                     ):
                         stop_pipeline_run(run_id)
-                        st.rerun()
+                        _rerun_app()
         else:
             button_columns = st.columns(5)
             for column, spec in zip(button_columns, step_specs):
@@ -677,7 +678,7 @@ def _render_import_news_panel(
                         )
                         _register_new_run(record, all_runs)
                         st.success(f"{spec['success']} : `{record.run_id}`")
-                        st.rerun()
+                        _rerun_app()
 
         latest_spec, latest_run = _latest_step_run_for_panel(latest_by_step, step_specs)
         if latest_spec is not None:

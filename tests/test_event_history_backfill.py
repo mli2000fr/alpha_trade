@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
+from typing import Any, cast
 
 import pandas as pd
 
@@ -117,12 +119,13 @@ class _FakeRepository:
         return len(records)
 
 
+def _build_service(repository: _FakeRepository, config: EventSentimentConfig) -> EventSentimentHistoryBackfillService:
+    return EventSentimentHistoryBackfillService(repository=cast(Any, repository), config=config)
+
+
 def test_history_backfill_resolve_bounds_uses_available_scored_dates() -> None:
     repository = _FakeRepository()
-    service = EventSentimentHistoryBackfillService(
-        repository=repository,
-        config=EventSentimentConfig(bootstrap_default_years=10),
-    )
+    service = _build_service(repository, EventSentimentConfig(bootstrap_default_years=10))
 
     start_date, end_date = service.resolve_bounds(end_date=date(2026, 1, 6), years=1)
 
@@ -133,7 +136,7 @@ def test_history_backfill_resolve_bounds_uses_available_scored_dates() -> None:
 def test_history_backfill_rebuilds_by_batches_and_filters_target_dates() -> None:
     repository = _FakeRepository()
     config = EventSentimentConfig(feature_history_buffer_days=20, bootstrap_batch_days=2)
-    service = EventSentimentHistoryBackfillService(repository=repository, config=config)
+    service = _build_service(repository, config)
 
     result = service.backfill(start_date=date(2026, 1, 2), end_date=date(2026, 1, 6), batch_days=2)
 
@@ -149,7 +152,7 @@ def test_history_backfill_rebuilds_by_batches_and_filters_target_dates() -> None
 def test_history_backfill_can_filter_ticker_scope_and_provider() -> None:
     repository = _FakeRepository()
     config = EventSentimentConfig(feature_history_buffer_days=20, bootstrap_batch_days=2)
-    service = EventSentimentHistoryBackfillService(repository=repository, config=config)
+    service = _build_service(repository, config)
 
     result = service.backfill(
         start_date=date(2026, 1, 2),
@@ -163,4 +166,23 @@ def test_history_backfill_can_filter_ticker_scope_and_provider() -> None:
     assert repository.feature_frame_calls[0]["ingestion_source"] == "eodhd"
     assert repository.feature_frame_calls[0]["ticker_symbols"] == ["AAPL"]
     assert all(row["symbol"] == "AAPL" for batch in repository.ticker_upserts for row in batch)
+
+
+def test_history_backfill_emits_phase_logs(caplog) -> None:
+    repository = _FakeRepository()
+    config = EventSentimentConfig(feature_history_buffer_days=20, bootstrap_batch_days=2)
+    service = _build_service(repository, config)
+
+    with caplog.at_level(logging.INFO):
+        service.backfill(start_date=date(2026, 1, 2), end_date=date(2026, 1, 6), batch_days=2)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("Event sentiment history backfill started" in message for message in messages)
+    assert any("history_backfill.resolve_bounds.scored_dates started" in message for message in messages)
+    assert any("history_backfill.list_trade_dates completed" in message for message in messages)
+    assert any("history_backfill.load_feature_frames result" in message for message in messages)
+    assert any("history_backfill.aggregate_features completed" in message for message in messages)
+    assert any("history_backfill.upsert_features completed" in message for message in messages)
+    assert any("history_backfill.batch_completed" in message for message in messages)
+
 
