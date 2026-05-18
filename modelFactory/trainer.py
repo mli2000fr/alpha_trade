@@ -211,6 +211,124 @@ def _build_challenger_summary(
     }
 
 
+def _skip_train_symbol(
+    *,
+    symbol: str,
+    run_id: str,
+    reason: str,
+    engine: Optional[Engine],
+) -> TrainResult:
+    LOGGER.warning("train_symbol skipped symbol=%s reason=%s", symbol, reason)
+    if engine is not None:
+        try:
+            update_training_run(engine, run_id, status="skipped", skip_reason=reason, finished_at=datetime.now(timezone.utc))
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("train_symbol registry_write_failed symbol=%s run_id=%s operation=update_training_run error=%s", symbol, run_id, exc)
+    return TrainResult(symbol, run_id, "skipped", skip_reason=reason)
+
+
+def _record_training_db_issue(symbol: str, run_id: str, *, operation: str, exc: Exception) -> None:
+    LOGGER.warning(
+        "train_symbol registry_write_failed symbol=%s run_id=%s operation=%s error=%s",
+        symbol,
+        run_id,
+        operation,
+        exc,
+    )
+    update_runtime_status(
+        last_db_issue_operation=operation,
+        last_db_issue_reason=f"training_db_issue:{type(exc).__name__}",
+        last_prediction_symbol=symbol,
+    )
+
+
+def _run_training_registry_writes(
+    engine: Engine,
+    *,
+    run_id: str,
+    symbol: str,
+    trainer: Any,
+    best_ckpt: Path,
+    scaler_path: Path,
+    config_path: Path,
+    val_metrics: dict[str, Any],
+    test_metrics: dict[str, Any],
+    walk_forward_metrics: dict[str, Any],
+    all_metrics: dict[str, Any],
+    challengers: dict[str, Any],
+    artifact_routes_models: dict[str, Any],
+    selected_architecture: str,
+    selection_mode: str,
+    selection_metric: str,
+    challenger_ranking: list[dict[str, Any]],
+) -> None:
+    best_epoch = _extract_best_epoch(best_ckpt) if best_ckpt.exists() else None
+    update_training_run(
+        engine, run_id,
+        status="completed",
+        finished_at=datetime.now(timezone.utc),
+        epochs_run=trainer.current_epoch,
+        best_epoch=best_epoch or 0,
+        checkpoint_path=str(best_ckpt),
+        scaler_path=str(scaler_path),
+        config_path=str(config_path),
+    )
+    insert_metrics(engine, run_id, symbol, "val", val_metrics)
+    if test_metrics:
+        insert_metrics(engine, run_id, symbol, "test", test_metrics)
+    wf_mean = walk_forward_metrics.get("mean") if walk_forward_metrics else None
+    if wf_mean:
+        insert_metrics(engine, run_id, symbol, "wf", wf_mean)
+    upsert_metrics_full(engine, run_id=run_id, symbol=symbol, metrics=all_metrics)
+    replace_model_governance(
+        engine,
+        run_id=run_id,
+        symbol=symbol,
+        challengers=challengers,
+        artifact_routes_models=artifact_routes_models,
+        selected_model=selected_architecture,
+        selection_mode=selection_mode,
+        selection_metric=selection_metric,
+        ranking=challenger_ranking,
+    )
+
+
+def _build_feature_contract_for_columns(cfg: TrainingConfig, feature_columns: list[str]) -> dict[str, Any] | None:
+    if not feature_columns:
+        return None
+    return build_feature_contract(
+        include_sentiment=cfg.data.include_sentiment_features,
+        feature_set=cfg.data.feature_set,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        feature_columns=feature_columns,
+        scaler_feature_names=feature_columns,
+    )
+
+
+def _build_tabular_artifact_route(
+    *,
+    metrics: dict[str, Any] | None,
+    config_path: Path,
+    feature_contract: dict[str, Any] | None,
+    default_backend: str,
+) -> dict[str, Any]:
+    artifact_paths = (metrics or {}).get("artifact_paths") or {}
+    return {
+        "status": (metrics or {}).get("status", "disabled"),
+        "model_path": artifact_paths.get("model_path"),
+        "calibrator_path": artifact_paths.get("calibrator_path"),
+        "config_path": str(config_path),
+        "feature_columns": list((metrics or {}).get("feature_columns") or []) or None,
+        "feature_fingerprint": (
+            (metrics or {}).get("feature_fingerprint")
+            or (feature_contract or {}).get("feature_fingerprint")
+        ),
+        "feature_contract": feature_contract,
+        "selected_decision_threshold": (metrics or {}).get("selected_decision_threshold"),
+        "inference_backend": (metrics or {}).get("inference_backend", default_backend),
+    }
+
+
 def _prepare_target_optimization_summary(
     *,
     bars_df: "pd.DataFrame",
@@ -760,8 +878,12 @@ def train_symbol(
     registry_id: int = 0
 
     if engine is not None:
-        registry_id = ensure_registry_entry(engine, symbol)
-        insert_training_run(engine, run_id, registry_id, symbol, status="running")
+        try:
+            registry_id = ensure_registry_entry(engine, symbol)
+            insert_training_run(engine, run_id, registry_id, symbol, status="running")
+        except Exception as exc:  # noqa: BLE001
+            _record_training_db_issue(symbol, run_id, operation="insert_training_run", exc=exc)
+            engine = None
 
     try:
         symbol_seed = derive_seed(cfg.reproducibility.seed, "train_symbol", symbol)
@@ -776,10 +898,7 @@ def train_symbol(
         )
         if len(bars_df) < cfg.data.min_history_days:
             reason = f"history_too_short rows={len(bars_df)} min={cfg.data.min_history_days}"
-            LOGGER.warning("train_symbol skipped symbol=%s reason=%s", symbol, reason)
-            if engine:
-                update_training_run(engine, run_id, status="skipped", skip_reason=reason, finished_at=datetime.now(timezone.utc))
-            return TrainResult(symbol, run_id, "skipped", skip_reason=reason)
+            return _skip_train_symbol(symbol=symbol, run_id=run_id, reason=reason, engine=engine)
 
         effective_cfg = cfg
         target_optimization_summary: dict[str, Any] = {}
@@ -839,10 +958,7 @@ def train_symbol(
 
         if dm.train_ds is None or dm.val_ds is None or len(dm.train_ds) == 0 or len(dm.val_ds) == 0:
             reason = "insufficient_sequences_after_split"
-            LOGGER.warning("train_symbol skipped symbol=%s reason=%s", symbol, reason)
-            if engine:
-                update_training_run(engine, run_id, status="skipped", skip_reason=reason, finished_at=datetime.now(timezone.utc))
-            return TrainResult(symbol, run_id, "skipped", skip_reason=reason)
+            return _skip_train_symbol(symbol=symbol, run_id=run_id, reason=reason, engine=engine)
 
         walk_forward_metrics: dict[str, Any] = {}
         prepared_df = getattr(dm, "prepared_df", None)
@@ -995,33 +1111,13 @@ def train_symbol(
         lightgbm_feature_contract = (
             baseline_metrics.get("feature_contract")
             if baseline_metrics and baseline_metrics.get("feature_contract")
-            else (
-                build_feature_contract(
-                    include_sentiment=effective_cfg.data.include_sentiment_features,
-                    feature_set=effective_cfg.data.feature_set,
-                    include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
-                    feature_columns=lightgbm_feature_columns,
-                    scaler_feature_names=lightgbm_feature_columns,
-                )
-                if lightgbm_feature_columns
-                else None
-            )
+            else _build_feature_contract_for_columns(effective_cfg, lightgbm_feature_columns)
         )
         catboost_feature_columns = list(catboost_metrics.get("feature_columns") or []) if catboost_metrics else []
         catboost_feature_contract = (
             catboost_metrics.get("feature_contract")
             if catboost_metrics and catboost_metrics.get("feature_contract")
-            else (
-                build_feature_contract(
-                    include_sentiment=effective_cfg.data.include_sentiment_features,
-                    feature_set=effective_cfg.data.feature_set,
-                    include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
-                    feature_columns=catboost_feature_columns,
-                    scaler_feature_names=catboost_feature_columns,
-                )
-                if catboost_feature_columns
-                else None
-            )
+            else _build_feature_contract_for_columns(effective_cfg, catboost_feature_columns)
         )
         artifact_routes_models = {
             "lstm_attention": {
@@ -1035,36 +1131,18 @@ def train_symbol(
                 "selected_decision_threshold": effective_cfg.data.decision_threshold,
                 "inference_backend": "lstm_attention",
             },
-            "lightgbm": {
-                "status": baseline_metrics.get("status", "disabled") if baseline_metrics else "disabled",
-                "model_path": (baseline_metrics.get("artifact_paths") or {}).get("model_path") if baseline_metrics else None,
-                "calibrator_path": (baseline_metrics.get("artifact_paths") or {}).get("calibrator_path") if baseline_metrics else None,
-                "config_path": str(config_path),
-                "feature_columns": lightgbm_feature_columns or None,
-                "feature_fingerprint": (
-                    baseline_metrics.get("feature_fingerprint")
-                    if baseline_metrics and baseline_metrics.get("feature_fingerprint")
-                    else (lightgbm_feature_contract or {}).get("feature_fingerprint")
-                ),
-                "feature_contract": lightgbm_feature_contract,
-                "selected_decision_threshold": baseline_metrics.get("selected_decision_threshold") if baseline_metrics else None,
-                "inference_backend": baseline_metrics.get("inference_backend", "lightgbm_tabular") if baseline_metrics else "lightgbm_tabular",
-            },
-            "catboost": {
-                "status": catboost_metrics.get("status", "disabled") if catboost_metrics else "disabled",
-                "model_path": (catboost_metrics.get("artifact_paths") or {}).get("model_path") if catboost_metrics else None,
-                "calibrator_path": (catboost_metrics.get("artifact_paths") or {}).get("calibrator_path") if catboost_metrics else None,
-                "config_path": str(config_path),
-                "feature_columns": catboost_feature_columns or None,
-                "feature_fingerprint": (
-                    catboost_metrics.get("feature_fingerprint")
-                    if catboost_metrics and catboost_metrics.get("feature_fingerprint")
-                    else (catboost_feature_contract or {}).get("feature_fingerprint")
-                ),
-                "feature_contract": catboost_feature_contract,
-                "selected_decision_threshold": catboost_metrics.get("selected_decision_threshold") if catboost_metrics else None,
-                "inference_backend": catboost_metrics.get("inference_backend", "catboost_tabular") if catboost_metrics else "catboost_tabular",
-            },
+            "lightgbm": _build_tabular_artifact_route(
+                metrics=baseline_metrics,
+                config_path=config_path,
+                feature_contract=lightgbm_feature_contract,
+                default_backend="lightgbm_tabular",
+            ),
+            "catboost": _build_tabular_artifact_route(
+                metrics=catboost_metrics,
+                config_path=config_path,
+                feature_contract=catboost_feature_contract,
+                default_backend="catboost_tabular",
+            ),
         }
         challengers = {
             "lstm_attention": _build_challenger_summary(
@@ -1123,6 +1201,8 @@ def train_symbol(
             "trained_through_date": trained_through_date,
             "architecture_selected": selected_architecture,
             "selection_mode": selection_mode,
+            "selection_reason": champion_decision.get("selection_reason"),
+            "selected_model_eligible": bool(champion_decision.get("selected_model_eligible", False)),
             "artifact_routes": {
                 "selected_model": selected_architecture,
                 "models": artifact_routes_models,
@@ -1160,6 +1240,8 @@ def train_symbol(
                 "selection_mode": selection_mode,
                 "selection_metric": effective_cfg.champion_selection.selection_metric,
                 "selection_score": champion_decision.get("selection_score", challengers.get(selected_architecture, {}).get("selection_score", lstm_selection_score)),
+                "selection_reason": champion_decision.get("selection_reason"),
+                "selected_model_eligible": bool(champion_decision.get("selected_model_eligible", False)),
             },
             "challengers": {
                 "ranking": challenger_ranking,
@@ -1170,37 +1252,28 @@ def train_symbol(
             json.dump(all_metrics, f, indent=2)
 
         if engine is not None:
-            best_epoch = _extract_best_epoch(best_ckpt) if best_ckpt.exists() else None
-            update_training_run(
-                engine, run_id,
-                status="completed",
-                finished_at=datetime.now(timezone.utc),
-                epochs_run=trainer.current_epoch,
-                best_epoch=best_epoch or 0,
-                checkpoint_path=str(best_ckpt),
-                scaler_path=str(scaler_path),
-                config_path=str(config_path),
-            )
-            insert_metrics(engine, run_id, symbol, "val", val_metrics)
-            if test_metrics:
-                insert_metrics(engine, run_id, symbol, "test", test_metrics)
-            wf_mean = walk_forward_metrics.get("mean") if walk_forward_metrics else None
-            if wf_mean:
-                insert_metrics(engine, run_id, symbol, "wf", wf_mean)
-            # Phase 4.2.f — persiste metrics.json complet en BLOB DB pour
-            # ne plus dépendre uniquement du fichier disque.
-            upsert_metrics_full(engine, run_id=run_id, symbol=symbol, metrics=all_metrics)
-            replace_model_governance(
-                engine,
-                run_id=run_id,
-                symbol=symbol,
-                challengers=challengers,
-                artifact_routes_models=artifact_routes_models,
-                selected_model=selected_architecture,
-                selection_mode=selection_mode,
-                selection_metric=effective_cfg.champion_selection.selection_metric,
-                ranking=challenger_ranking,
-            )
+            try:
+                _run_training_registry_writes(
+                    engine,
+                    run_id=run_id,
+                    symbol=symbol,
+                    trainer=trainer,
+                    best_ckpt=best_ckpt,
+                    scaler_path=scaler_path,
+                    config_path=config_path,
+                    val_metrics=val_metrics,
+                    test_metrics=test_metrics,
+                    walk_forward_metrics=walk_forward_metrics,
+                    all_metrics=all_metrics,
+                    challengers=challengers,
+                    artifact_routes_models=artifact_routes_models,
+                    selected_architecture=selected_architecture,
+                    selection_mode=selection_mode,
+                    selection_metric=effective_cfg.champion_selection.selection_metric,
+                    challenger_ranking=challenger_ranking,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _record_training_db_issue(symbol, run_id, operation="training_registry_writes", exc=exc)
 
         LOGGER.info(
             "train_symbol completed symbol=%s run_id=%s val_loss=%.4f calibration=%s decision_threshold=%.2f",
@@ -1227,7 +1300,10 @@ def train_symbol(
             phase_detail=str(exc)[:200],
         )
         if engine is not None:
-            update_training_run(engine, run_id, status="failed", skip_reason=str(exc)[:200], finished_at=datetime.now(timezone.utc))
+            try:
+                update_training_run(engine, run_id, status="failed", skip_reason=str(exc)[:200], finished_at=datetime.now(timezone.utc))
+            except Exception as db_exc:  # noqa: BLE001
+                _record_training_db_issue(symbol, run_id, operation="update_training_run_failed", exc=db_exc)
         return TrainResult(symbol, run_id, "failed", skip_reason=str(exc))
 
 

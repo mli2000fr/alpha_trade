@@ -465,6 +465,83 @@ def test_train_symbol_persists_model_governance_snapshot(monkeypatch, tmp_path: 
     assert any(row["model_name"] == "lightgbm" for row in governance_call["ranking"])
 
 
+def test_train_symbol_continues_when_registry_insert_fails(monkeypatch, tmp_path: Path) -> None:
+    class FakeScaler:
+        feature_names = ["feat1"]
+
+        @staticmethod
+        def state_dict() -> dict:
+            return {"mean": [0.0], "std": [1.0], "features": ["feat1"]}
+
+    class FakeLoader:
+        num_workers = 0
+
+    class FakeDataModule:
+        def __init__(self, bars_df, data_cfg, model_cfg, **kwargs) -> None:
+            frame = pd.DataFrame({"feat1": [0.1, 0.2, 0.3, 0.4], "target": [1.0, 0.0, 1.0, 0.0], "future_return": [0.02, -0.01, 0.03, -0.02]})
+            self.train_ds = [1]
+            self.val_ds = [1]
+            self.test_ds = [1]
+            self.prepared_df = frame.copy()
+            self.split = type("Split", (), {"val": frame.copy(), "test": frame.copy()})()
+            self.n_features = 1
+            self.scaler = FakeScaler()
+
+        def setup(self) -> None:
+            return None
+
+        def train_dataloader(self):
+            return FakeLoader()
+
+    class FakeModel:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class FakeCheckpoint:
+        def __init__(self, dirpath=None, filename=None, monitor=None, mode=None, save_top_k=None):
+            self.best_model_path = str(Path(dirpath) / "best.ckpt") if dirpath else ""
+
+    class FakeEarlyStopping:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class FakeLightningTrainer:
+        def __init__(self, *args, **kwargs) -> None:
+            self.strategy = type("Strategy", (), {"root_device": "cpu"})()
+            self.current_epoch = 1
+
+        def fit(self, model, datamodule=None, train_dataloaders=None, val_dataloaders=None) -> None:
+            target_path = tmp_path / "AAPL" / "best.ckpt"
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text("checkpoint", encoding="utf-8")
+
+    monkeypatch.setattr(trainer, "SymbolDataModule", FakeDataModule)
+    monkeypatch.setattr(trainer, "LSTMAttentionModule", FakeModel)
+    monkeypatch.setattr(trainer, "ModelCheckpoint", FakeCheckpoint)
+    monkeypatch.setattr(trainer, "EarlyStopping", FakeEarlyStopping)
+    monkeypatch.setattr(trainer.L, "Trainer", FakeLightningTrainer)
+    monkeypatch.setattr(trainer, "ensure_registry_entry", lambda engine, symbol: (_ for _ in ()).throw(RuntimeError("db down")))
+    monkeypatch.setattr(
+        trainer,
+        "_evaluate_best_checkpoint",
+        lambda *args, **kwargs: (
+            {"loss": 0.4, "auc": 0.70, "threshold_business_score": 0.65},
+            {"loss": 0.5, "auc": 0.68, "threshold_business_score": 0.60},
+            None,
+            {"enabled": False, "selected_threshold": 0.5, "candidates": []},
+            0.5,
+        ),
+    )
+    monkeypatch.setattr(trainer, "run_lightgbm_baseline", lambda prepared_df, cfg, artifact_dir=None: {})
+    monkeypatch.setattr(trainer, "run_catboost_baseline", lambda prepared_df, cfg, artifact_dir=None: {})
+
+    result = trainer.train_symbol("AAPL", pd.DataFrame({"close": list(range(12))}), _training_config(tmp_path), engine=cast(Engine, object()))
+
+    assert result.status == "completed"
+    assert (tmp_path / "AAPL" / "config.json").exists()
+    assert (tmp_path / "AAPL" / "metrics.json").exists()
+
+
 def test_train_symbol_target_optimization_uses_train_split_only(monkeypatch, tmp_path: Path) -> None:
     class FakeScaler:
         feature_names = ["feat1"]

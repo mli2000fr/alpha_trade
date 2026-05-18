@@ -70,3 +70,20 @@ def test_clear_model_cache_drops_all_entries(tmp_path: Path) -> None:
     obj2 = predictor.load_tabular_model_cached(path, selected_model="lightgbm")
     assert obj1 is not obj2
 
+
+def test_cache_invalidates_on_size_change_even_when_mtime_is_preserved(tmp_path: Path) -> None:
+    predictor.clear_model_cache()
+    path = tmp_path / "model.pkl"
+    _write_pickle_model(path, _FakeTabularModel())
+    original_stat = path.stat()
+
+    obj1 = predictor.load_tabular_model_cached(path, selected_model="lightgbm")
+
+    path.write_bytes(path.read_bytes() + b"padding-for-size-change")
+    import os
+    os.utime(path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    obj2 = predictor.load_tabular_model_cached(path, selected_model="lightgbm")
+    assert obj1 is not obj2
+
+

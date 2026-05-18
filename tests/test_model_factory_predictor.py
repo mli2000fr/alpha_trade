@@ -31,6 +31,11 @@ class PickleableFakeLocalModel:
         return np.array([[1.0 - self.proba, self.proba]], dtype=float)
 
 
+class PickleableIncompatibleTabularModel:
+    def predict_proba(self, X):
+        return np.array([0.7], dtype=float)
+
+
 def test_resolve_inference_device_rejects_invalid_accelerator() -> None:
     with pytest.raises(ValueError, match="accelerator"):
         predictor._resolve_inference_device("tpu")
@@ -918,5 +923,232 @@ def test_predict_symbol_aborts_when_scaler_feature_contract_mismatches_config(tm
     runtime_status = snapshot_runtime_status()
     assert runtime_status["prediction_artifact_issue_count"] == 1
     assert runtime_status["last_artifact_issue_reason"] == "feature_contract_violation:lstm_attention"
+
+
+def test_resolve_artifact_paths_falls_back_when_registry_lookup_fails(tmp_path: Path, monkeypatch) -> None:
+    reset_runtime_status()
+    monkeypatch.setattr(
+        predictor,
+        "load_training_run",
+        lambda engine, symbol, run_id=None: (_ for _ in ()).throw(RuntimeError("db unavailable")),
+    )
+
+    ckpt, scaler, config, selected_run_id = predictor._resolve_artifact_paths(
+        "AAPL",
+        tmp_path,
+        cast(Engine, object()),
+        run_id="run-1",
+    )
+
+    assert ckpt == tmp_path / "AAPL" / "best.ckpt"
+    assert scaler == tmp_path / "AAPL" / "scaler.pkl"
+    assert config == tmp_path / "AAPL" / "config.json"
+    assert selected_run_id == "run-1"
+    runtime_status = snapshot_runtime_status()
+    assert runtime_status["prediction_db_issue_count"] == 1
+    assert runtime_status["last_db_issue_operation"] == "load_training_run"
+
+
+def test_predict_symbol_persistence_failure_is_best_effort(tmp_path: Path, monkeypatch) -> None:
+    reset_runtime_status()
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat1"]}, cast(Any, fh))
+    (symbol_dir / "config.json").write_text(
+        json.dumps({"data": {"sequence_length": 2, "forecast_horizon": 1, "include_sentiment_features": False}, "run_id": "run-config"}),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"close": list(range(62))})
+    features = pd.DataFrame({"feat1": [float(i) for i in range(62)]})
+
+    class FakeModel:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, x):
+            return torch.tensor([[0.0, 2.0]], dtype=torch.float32), torch.tensor([[1.0]])
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(
+        predictor,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+    )
+    monkeypatch.setattr(
+        model_factory_features,
+        "get_feature_columns",
+        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+    )
+    monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(predictor.LSTMAttentionModule, "load_from_checkpoint", lambda path, map_location=None: FakeModel())
+    monkeypatch.setattr(predictor, "insert_predictions", lambda engine, df: (_ for _ in ()).throw(RuntimeError("write failed")))
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=True,
+    )
+
+    assert result is not None
+    runtime_status = snapshot_runtime_status()
+    assert runtime_status["prediction_db_issue_count"] == 1
+    assert runtime_status["last_db_issue_operation"] == "insert_predictions"
+
+
+def test_predict_symbol_falls_back_to_lstm_when_tabular_runtime_is_incompatible(tmp_path: Path, monkeypatch) -> None:
+    reset_runtime_status()
+    predictor.clear_model_cache()
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat1"]}, cast(Any, fh))
+
+    with open(symbol_dir / "lightgbm_model.pkl", "wb") as fh:
+        pickle.dump(PickleableIncompatibleTabularModel(), cast(Any, fh))
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {"sequence_length": 2, "forecast_horizon": 1, "include_sentiment_features": False},
+                "run_id": "run-config",
+                "artifact_routes": {
+                    "selected_model": "lightgbm",
+                    "models": {
+                        "lightgbm": {
+                            "inference_backend": "lightgbm_tabular",
+                            "config_path": str(symbol_dir / "config.json"),
+                            "model_path": str(symbol_dir / "lightgbm_model.pkl"),
+                            "feature_columns": ["feat1"],
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"close": list(range(62))})
+    features = pd.DataFrame({"feat1": [float(i) for i in range(62)]})
+
+    class FakeLstm:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, x):
+            return torch.tensor([[0.0, 2.0]], dtype=torch.float32), torch.tensor([[1.0]])
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(predictor.LSTMAttentionModule, "load_from_checkpoint", lambda path, map_location=None: FakeLstm())
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is not None
+    assert result.to_dict(orient="records")[0]["selected_model"] == "lstm_attention"
+    runtime_status = snapshot_runtime_status()
+    assert runtime_status["prediction_artifact_issue_count"] == 1
+    assert "tabular_model_incompatible:lightgbm" in str(runtime_status["last_fallback_reason"])
+
+
+def test_predict_symbol_ignores_runtime_incompatible_calibrator(tmp_path: Path, monkeypatch) -> None:
+    reset_runtime_status()
+    predictor.clear_model_cache()
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat1"]}, cast(Any, fh))
+
+    class RuntimeBrokenCalibrator:
+        def __init__(self) -> None:
+            self.fitted = True
+            self.method = "platt"
+
+        def predict_proba(self, margin):
+            raise ValueError("runtime mismatch")
+
+    with open(symbol_dir / "calibrator.pkl", "wb") as fh:
+        pickle.dump({"method": "platt", "slope": 1.0, "intercept": 0.0, "fitted": True, "max_iter": 100}, cast(Any, fh))
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {"sequence_length": 2, "forecast_horizon": 1, "include_sentiment_features": False},
+                "run_id": "run-config",
+                "calibrator_path": str(symbol_dir / "calibrator.pkl"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"close": list(range(62))})
+    features = pd.DataFrame({"feat1": [float(i) for i in range(62)]})
+
+    class FakeModel:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, x):
+            return torch.tensor([[0.0, 2.0]], dtype=torch.float32), torch.tensor([[1.0]])
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(predictor.LSTMAttentionModule, "load_from_checkpoint", lambda path, map_location=None: FakeModel())
+    monkeypatch.setattr(predictor, "load_calibrator_cached", lambda path: RuntimeBrokenCalibrator())
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is not None
+    row = result.to_dict(orient="records")[0]
+    assert row["calibration_method"] == "none"
+    runtime_status = snapshot_runtime_status()
+    assert runtime_status["prediction_calibration_fallback_count"] == 1
+    assert runtime_status["last_calibration_fallback_reason"] == "calibrator_incompatible:lstm_attention"
 
 

@@ -109,3 +109,27 @@ def test_chamionselectionconfig_rejects_negative_thresholds() -> None:
     with pytest.raises(ValueError, match="min_days"):
         ChampionSelectionConfig(min_days=-1)
 
+
+def test_select_champion_marks_zero_eligible_models_explicitly() -> None:
+    challengers = {
+        "lstm_attention": {"status": "completed", "selection_score": 0.7, "selection_eligible": False},
+        "lightgbm": {"status": "failed", "selection_score": 0.9, "selection_eligible": False},
+    }
+    artifact_routes = {
+        "lstm_attention": {"checkpoint_path": "x"},
+        "lightgbm": {"model_path": "y"},
+    }
+    cfg = ChampionSelectionConfig(
+        enabled=True,
+        allow_auto_selection=True,
+        default_champion="lstm_attention",
+    )
+
+    result = select_champion(challengers, artifact_routes, cfg)
+
+    assert result["selected_model"] == "lstm_attention"
+    assert result["selection_mode"] == "fallback_default_champion"
+    assert result["selection_reason"] == "zero_eligible_models"
+    assert result["selected_model_eligible"] is False
+
+

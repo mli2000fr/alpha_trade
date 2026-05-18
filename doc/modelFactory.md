@@ -119,16 +119,16 @@ artifacts/models/
     best.ckpt
     scaler.pkl
     calibrator.pkl                # LSTM si calibration activée
-    lightgbm_model.pkl            # si challenger LightGBM entraîné
+    lightgbm_model.txt            # challenger LightGBM natif (phase 4.2.c)
     lightgbm_calibrator.pkl       # si calibration LightGBM
-    catboost_model.pkl            # si challenger CatBoost entraîné
+    catboost_model.cbm            # challenger CatBoost natif (phase 4.2.c)
     catboost_calibrator.pkl       # si calibration CatBoost
     config.json
     metrics.json
   MSFT/
     ...
   __GLOBAL__/
-    global_model.pkl
+    global_model.pkl              # exception legacy documentée (voir §7.4 / §15)
     calibrator.pkl                # si calibration modèle global
     config.json
     metrics.json
@@ -433,8 +433,9 @@ Chaque symbole complété possède a minima :
 Suivant le backend :
 
 - `best.ckpt` + `scaler.pkl` pour le LSTM ;
-- `lightgbm_model.pkl` pour LightGBM ;
-- `catboost_model.pkl` pour CatBoost.
+- `lightgbm_model.txt` pour LightGBM ;
+- `catboost_model.cbm` pour CatBoost ;
+- `global_model.pkl` pour le modèle global tabulaire (exception legacy conservée à ce stade).
 
 ### 7.2 `config.json` — rôle stratégique
 
@@ -469,7 +470,7 @@ Il contient notamment :
 ```json
 {
   "status": "completed",
-  "model_path": ".../lightgbm_model.pkl",
+  "model_path": ".../lightgbm_model.txt",
   "calibrator_path": ".../lightgbm_calibrator.pkl",
   "config_path": ".../config.json",
   "feature_columns": ["..."],
@@ -483,7 +484,7 @@ Il contient notamment :
 ```json
 {
   "status": "completed",
-  "model_path": ".../catboost_model.pkl",
+  "model_path": ".../catboost_model.cbm",
   "calibrator_path": ".../catboost_calibrator.pkl",
   "config_path": ".../config.json",
   "feature_columns": ["..."],
@@ -504,6 +505,19 @@ Il contient notamment :
   "inference_backend": "global_tabular"
 }
 ```
+
+### 7.4 Politique de résilience sur les artefacts
+
+- les challengers tabulaires **locaux** sont désormais persistés dans leurs
+  formats natifs (`.txt` LightGBM, `.cbm` CatBoost) ;
+- le prédicteur accepte encore `.pkl` en **rétrocompatibilité contrôlée** avec
+  warning explicite, afin de ne pas casser les artefacts historiques ;
+- le `global_model` reste pour l'instant en `pickle` (`global_model.pkl`) : c'est
+  une exception connue et documentée, pas un format recommandé à généraliser ;
+- toute route champion non servable bascule vers `lstm_attention` avec
+  `fallback_reason` explicite dans les logs et le runtime status ;
+- un `config.json` absent, invalide ou incohérent provoque un refus de serving
+  explicite, jamais un best-effort silencieux.
 
 ---
 
@@ -625,12 +639,17 @@ Le prédicteur :
 
 Le prédicteur :
 
-1. recharge le modèle picklé ;
+1. recharge le modèle tabulaire natif (`.txt`/`.cbm`) ou, en legacy, un `.pkl` ;
 2. reconstruit le dernier `DataFrame` de features ;
 3. contrôle la présence des `feature_columns` ;
 4. appelle `predict_proba()` ;
 5. applique le calibrateur tabulaire si présent ;
 6. compare la proba au `selected_decision_threshold` de la route ou au `decision_threshold` de config.
+
+Si la route tabulaire demandée n'est pas servable (artefact absent, config route
+illisible, modèle corrompu), `predict_symbol()` reconstruit une route
+`lstm_attention` et enregistre un fallback explicite (`prediction_fallback_count`,
+`last_fallback_reason`, `last_requested_model`, `last_served_model`).
 
 ### 9.6 Ce qui est écrit dans `model_predictions`
 
@@ -725,6 +744,37 @@ Causes typiques :
 4. historique insuffisant pour reconstruire la dernière fenêtre
 5. route `selected_model` invalide ou incomplète
 6. dérive du `feature_fingerprint` entre entraînement et serving
+7. route tabulaire servable en théorie mais modèle/calibrateur corrompu →
+   fallback explicite `lstm_attention`
+
+### 11.5 DB partiellement indisponible / lecture registre impossible
+
+Le prédicteur essaie d'abord de relire le run depuis `model_training_run`.
+Si cette lecture ne permet pas de résoudre un triplet complet
+`checkpoint/scaler/config`, il retombe sur le dossier canonique
+`artifacts/models/<SYMBOL>/`.
+
+Cette stratégie a deux conséquences opérationnelles :
+
+1. une indisponibilité partielle de la DB ne bloque pas forcément le serving si
+   les artefacts disque restent présents et cohérents ;
+2. l'opérateur doit néanmoins traiter l'incident DB, car la traçabilité SQL peut
+   alors être incomplète même si le scoring continue.
+
+### 11.6 Procédure de reprise incident recommandée
+
+En cas d'incident artefact / serving :
+
+1. vérifier `config.json` puis `metrics.json` du symbole concerné ;
+2. contrôler l'existence des chemins de la route champion (`model_path`,
+   `checkpoint_path`, `scaler_path`, `config_path`) ;
+3. consulter les compteurs runtime (`prediction_artifact_issue_count`,
+   `prediction_fallback_count`, `last_artifact_issue_reason`,
+   `last_fallback_reason`) ;
+4. si la route champion est dégradée, réentraîner le symbole ou repasser en
+   `rebuild-missing` / `refresh-stale` ;
+5. si le drift gate a activé le kill-switch, ne pas forcer la persistance ML : le
+   fallback nominal reste le quant pur côté `risk_management`.
 
 ### 11.4 Drift gate ML → risk_management
 
@@ -859,17 +909,18 @@ Le laisser désactivé si l'objectif est de rester sur une gouvernance locale l�
 
 1. `model_metrics`, `model_governance` et `model_predictions` restent des tables **résumées**, pas des manifestes complets de gouvernance.
 2. Le routage complet du champion et certains détails challengers vivent toujours surtout dans les artefacts disque.
-3. Les modèles tabulaires locaux sont persistés via `pickle` ; c'est pratique et rapide, mais pas le format le plus strict à long terme.
+3. Le `global_model` reste persisté via `pickle` ; les challengers tabulaires locaux ont déjà migré vers les formats natifs, mais le backend global n'a pas encore été aligné.
 4. L'IHM expose les options principales de gouvernance, mais pas encore l'intégralité de la CLI `modelFactory`.
 5. Le chemin `predict` est PIT-safe côté chargement de données, mais toute nouvelle feature devra conserver cette discipline.
+6. Les tables SQL restent des vues résumées : malgré `metrics_full`, les artefacts disque demeurent la source la plus riche pour le manifeste de serving.
 
 ---
 
 ## 16. Priorités d'évolution si reprise du projet
 
 1. ajouter des filtres IHM plus fins sur les statuts d'alignement serving ↔ gouvernance ;
-2. versionner plus finement les artefacts tabulaires ;
+2. aligner le `global_model` sur un format natif aussi strict que les challengers locaux ;
 3. ajouter des contrôles de compatibilité de features encore plus explicites au chargement ;
-4. éventuellement migrer les persistences tabulaires vers des formats natifs (`LightGBM`, `CatBoost`) si le besoin d'interopérabilité augmente ;
-5. enrichir encore la navigation IHM par `run_id` pour passer d'une prédiction au manifeste artefact exact qui l'a produite.
+4. enrichir encore la navigation IHM par `run_id` pour passer d'une prédiction au manifeste artefact exact qui l'a produite ;
+5. exposer davantage de procédures de reprise depuis l'IHM (santé manifeste, raisons de dégradation, liens de reconstruction).
 

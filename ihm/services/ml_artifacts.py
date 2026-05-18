@@ -57,6 +57,11 @@ def _coerce_path(value: Any) -> Path | None:
     return None
 
 
+def _path_exists(value: Any) -> bool:
+    path = _coerce_path(value)
+    return bool(path is not None and path.exists())
+
+
 def _route_health(model_name: str, route: dict[str, Any]) -> tuple[str, list[str], dict[str, bool]]:
     expected_keys = {
         "lstm_attention": ("checkpoint_path", "scaler_path", "config_path"),
@@ -102,7 +107,7 @@ def _build_routes_dataframe(config_data: dict[str, Any]) -> pd.DataFrame:
                 "config_path": route.get("config_path"),
                 "config_exists": existence.get("config_path"),
                 "calibrator_path": route.get("calibrator_path"),
-                "calibrator_exists": bool(_coerce_path(route.get("calibrator_path")) and _coerce_path(route.get("calibrator_path")).exists()) if route.get("calibrator_path") else False,
+                "calibrator_exists": _path_exists(route.get("calibrator_path")) if route.get("calibrator_path") else False,
                 "selected_decision_threshold": route.get("selected_decision_threshold"),
                 "feature_columns": ", ".join(route.get("feature_columns") or []) if isinstance(route.get("feature_columns"), list) else route.get("feature_columns"),
             }
@@ -153,6 +158,8 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
     metrics_data, metrics_error = _read_json_file(metrics_path)
     if metrics_error:
         errors.append(metrics_error)
+    config_health = "healthy" if config_error is None else "invalid"
+    metrics_health = "healthy" if metrics_error is None else "invalid"
 
     config_data = config_data or {}
     metrics_data = metrics_data or {}
@@ -185,6 +192,13 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
         health_status = "degraded"
     else:
         health_status = "invalid"
+    if config_health == "invalid":
+        manifest_health = "invalid"
+    elif metrics_health == "invalid":
+        manifest_health = "degraded"
+    else:
+        manifest_health = "healthy"
+    degraded_reasons = [str(item) for item in [*errors, *selected_route_errors] if str(item).strip()]
 
     return {
         "symbol": symbol,
@@ -200,8 +214,12 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
         "selected_decision_threshold": selected_decision_threshold,
         "champion": champion,
         "health_status": health_status,
+        "manifest_health": manifest_health,
+        "config_health": config_health,
+        "metrics_health": metrics_health,
         "selected_route_health": selected_route_health,
         "selected_route_errors": selected_route_errors,
+        "degraded_reasons": degraded_reasons,
         "routes_df": routes_df,
         "ranking_df": _build_ranking_dataframe(metrics_data),
     }

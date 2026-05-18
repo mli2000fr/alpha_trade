@@ -441,7 +441,15 @@ def main(args: list[str] | None = None) -> None:
             LOGGER.warning("ML drift gate evaluation failed: %s", exc)
 
         if not preds.empty and (drift_decision is None or drift_decision.action != "kill_switch_ml"):
-            insert_predictions(engine, preds)
+            try:
+                insert_predictions(engine, preds)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("predict batch persistence degraded rows=%d error=%s", len(preds), exc)
+                increment_runtime_counter("prediction_db_issue_count", 1)
+                update_runtime_status(
+                    last_db_issue_operation="insert_predictions_batch",
+                    last_db_issue_reason=f"prediction_persist_failed:{type(exc).__name__}",
+                )
         elif drift_decision is not None and drift_decision.action == "kill_switch_ml":
             LOGGER.warning(
                 "predict batch persistence skipped reason=ml_kill_switch_active rows=%d decision=%s",
@@ -576,8 +584,11 @@ def _build_run_summary(
         "prediction_artifact_issue_count": int(runtime_status.get("prediction_artifact_issue_count", 0) or 0),
         "prediction_fallback_count": int(runtime_status.get("prediction_fallback_count", 0) or 0),
         "prediction_calibration_fallback_count": int(runtime_status.get("prediction_calibration_fallback_count", 0) or 0),
+        "prediction_db_issue_count": int(runtime_status.get("prediction_db_issue_count", 0) or 0),
         "last_artifact_issue_reason": runtime_status.get("last_artifact_issue_reason"),
         "last_artifact_issue_path": runtime_status.get("last_artifact_issue_path"),
+        "last_db_issue_operation": runtime_status.get("last_db_issue_operation"),
+        "last_db_issue_reason": runtime_status.get("last_db_issue_reason"),
         "last_fallback_reason": runtime_status.get("last_fallback_reason"),
         "last_requested_model": runtime_status.get("last_requested_model"),
         "last_served_model": runtime_status.get("last_served_model"),

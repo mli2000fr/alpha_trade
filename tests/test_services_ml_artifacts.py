@@ -95,6 +95,10 @@ def test_load_ml_artifact_report_extracts_champion_routes_and_ranking(tmp_path: 
     assert report["run_id"] == "run-123"
     assert report["selected_decision_threshold"] == 0.61
     assert report["health_status"] == "healthy"
+    assert report["manifest_health"] == "healthy"
+    assert report["config_health"] == "healthy"
+    assert report["metrics_health"] == "healthy"
+    assert report["degraded_reasons"] == []
     assert report["selected_route_health"] == "healthy"
     assert list(report["routes_df"]["model_name"]) == ["lstm_attention", "lightgbm"]
     assert report["routes_df"].loc[report["routes_df"]["model_name"] == "lightgbm", "inference_backend"].iloc[0] == "lightgbm_tabular"
@@ -134,8 +138,12 @@ def test_load_ml_artifact_report_marks_selected_route_degraded_when_paths_missin
     report = load_ml_artifact_report("AAPL", tmp_path)
 
     assert report["health_status"] == "degraded"
+    assert report["manifest_health"] == "healthy"
+    assert report["config_health"] == "healthy"
+    assert report["metrics_health"] == "healthy"
     assert report["selected_route_health"] == "missing_paths"
     assert "lightgbm:model_path_missing" in report["selected_route_errors"]
+    assert "lightgbm:model_path_missing" in report["degraded_reasons"]
     assert report["routes_df"].loc[0, "route_health"] == "missing_paths"
 
 
@@ -148,9 +156,13 @@ def test_load_ml_artifact_report_handles_invalid_or_missing_files(tmp_path: Path
 
     assert report["selected_model"] is None
     assert report["health_status"] == "invalid"
+    assert report["manifest_health"] == "invalid"
+    assert report["config_health"] == "invalid"
+    assert report["metrics_health"] == "invalid"
     assert report["routes_df"].empty
     assert report["ranking_df"].empty
     assert len(report["errors"]) == 2
+    assert len(report["degraded_reasons"]) == 2
     assert any("JSON invalide" in err for err in report["errors"])
     assert any("Fichier absent" in err for err in report["errors"])
 

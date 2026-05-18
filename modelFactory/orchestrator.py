@@ -112,7 +112,11 @@ def _inject_global_model_into_symbol_artifacts(
         "selection_mode": selection_mode,
         "selection_metric": cfg.champion_selection.selection_metric,
         "selection_score": champion_decision.get("selection_score", annotated.get(selected_model, {}).get("selection_score")),
+        "selection_reason": champion_decision.get("selection_reason"),
+        "selected_model_eligible": bool(champion_decision.get("selected_model_eligible", False)),
     }
+    config_data["selection_reason"] = champion_decision.get("selection_reason")
+    config_data["selected_model_eligible"] = bool(champion_decision.get("selected_model_eligible", False))
 
     with open(config_path, "w", encoding="utf-8") as fh:
         json.dump(config_data, fh, indent=2, default=str)
@@ -121,17 +125,30 @@ def _inject_global_model_into_symbol_artifacts(
 
     run_id = config_data.get("run_id")
     if engine is not None and isinstance(run_id, str) and run_id:
-        replace_model_governance(
-            engine,
-            run_id=run_id,
-            symbol=symbol,
-            challengers=annotated,
-            artifact_routes_models=models,
-            selected_model=selected_model,
-            selection_mode=selection_mode,
-            selection_metric=cfg.champion_selection.selection_metric,
-            ranking=challengers.get("ranking"),
-        )
+        try:
+            replace_model_governance(
+                engine,
+                run_id=run_id,
+                symbol=symbol,
+                challengers=annotated,
+                artifact_routes_models=models,
+                selected_model=selected_model,
+                selection_mode=selection_mode,
+                selection_metric=cfg.champion_selection.selection_metric,
+                ranking=challengers.get("ranking"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning(
+                "inject_global_model governance_write_failed symbol=%s run_id=%s error=%s",
+                symbol,
+                run_id,
+                exc,
+            )
+            update_runtime_status(
+                last_db_issue_operation="replace_model_governance",
+                last_db_issue_reason=f"training_db_issue:{type(exc).__name__}",
+                current_symbol=symbol,
+            )
 
 
 def _gpu_requested_or_available(cfg: TrainingConfig) -> bool:

@@ -143,6 +143,13 @@ def select_champion(
     default_model = champion_cfg.default_champion
     default_exists = default_model in annotated
 
+    def _selected_metadata(model_name: str, *, reason: str | None = None) -> dict[str, Any]:
+        selected_result = annotated.get(model_name, {}) if isinstance(annotated.get(model_name), dict) else {}
+        return {
+            "selected_model_eligible": bool(selected_result.get("selection_eligible", False)),
+            "selection_reason": reason,
+        }
+
     # Phase 4.2.e — annoter quarantaine sur tous les challengers complétés.
     quarantine_active = (
         (champion_cfg.min_runs > 0 or champion_cfg.min_days > 0)
@@ -174,6 +181,7 @@ def select_champion(
             "selection_mode": "default_champion",
             "annotated_challengers": annotated,
             "selection_metric": champion_cfg.selection_metric,
+            **_selected_metadata(default_model if default_exists else "lstm_attention"),
         }
 
     eligible = [
@@ -182,11 +190,13 @@ def select_champion(
         if result.get("selection_eligible") is True
     ]
     if not eligible:
+        selected_model = default_model if default_exists else "lstm_attention"
         return {
-            "selected_model": default_model if default_exists else "lstm_attention",
+            "selected_model": selected_model,
             "selection_mode": "fallback_default_champion",
             "annotated_challengers": annotated,
             "selection_metric": champion_cfg.selection_metric,
+            **_selected_metadata(selected_model, reason="zero_eligible_models"),
         }
 
     selected_model, selected_result = max(
@@ -202,6 +212,7 @@ def select_champion(
         "selection_metric": champion_cfg.selection_metric,
         "selection_score": selection_score_from_result(selected_result, champion_cfg.selection_metric),
         "annotated_challengers": annotated,
+        **_selected_metadata(selected_model),
     }
 
 

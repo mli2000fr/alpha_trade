@@ -35,6 +35,20 @@ class ArtifactIntegrityError(RuntimeError):
         self.path = path
 
 
+def _record_db_issue(
+    *,
+    operation: str,
+    symbol: str | None = None,
+    reason: str,
+) -> None:
+    increment_runtime_counter("prediction_db_issue_count", 1)
+    update_runtime_status(
+        last_prediction_symbol=symbol,
+        last_db_issue_operation=operation,
+        last_db_issue_reason=reason,
+    )
+
+
 def _record_artifact_issue(symbol: str, *, reason: str, path: Path | None = None) -> None:
     increment_runtime_counter("prediction_artifact_issue_count", 1)
     update_runtime_status(
@@ -115,6 +129,91 @@ def _load_optional_calibrator(
         return None
 
 
+def _apply_optional_calibration(
+    *,
+    symbol: str,
+    selected_model: str,
+    calibrator: Any,
+    margin: np.ndarray,
+    calibrator_path: Path | None,
+    raw_proba: float,
+) -> tuple[float, str]:
+    if calibrator is None or not getattr(calibrator, "fitted", False):
+        return raw_proba, "none"
+    try:
+        calibrated = float(calibrator.predict_proba(margin)[0])
+    except Exception as exc:  # noqa: BLE001
+        reason = f"calibrator_incompatible:{selected_model}"
+        LOGGER.warning(
+            "predict_symbol calibrator_runtime_fallback symbol=%s selected_model=%s path=%s error=%s",
+            symbol,
+            selected_model,
+            calibrator_path,
+            exc,
+        )
+        increment_runtime_counter("prediction_calibration_fallback_count", 1)
+        update_runtime_status(
+            last_prediction_symbol=symbol,
+            last_calibration_fallback_reason=reason,
+            last_calibration_fallback_path=str(calibrator_path) if calibrator_path is not None else None,
+        )
+        return raw_proba, "none"
+    return calibrated, str(getattr(calibrator, "method", "none") or "none")
+
+
+def _extract_positive_class_probability(
+    prediction_output: Any,
+    *,
+    symbol: str,
+    selected_model: str,
+    model_path: Path,
+) -> float:
+    try:
+        proba = np.asarray(prediction_output, dtype=float)
+    except Exception as exc:  # noqa: BLE001
+        reason = f"tabular_model_incompatible:{selected_model}"
+        LOGGER.error(
+            "predict_symbol %s symbol=%s path=%s error=%s",
+            reason,
+            symbol,
+            model_path,
+            exc,
+        )
+        _record_artifact_issue(symbol, reason=reason, path=model_path)
+        raise ArtifactIntegrityError(reason, path=model_path) from exc
+    if proba.ndim != 2 or proba.shape[0] < 1 or proba.shape[1] < 2:
+        reason = f"tabular_model_incompatible:{selected_model}"
+        LOGGER.error(
+            "predict_symbol %s symbol=%s path=%s shape=%s",
+            reason,
+            symbol,
+            model_path,
+            getattr(proba, "shape", None),
+        )
+        _record_artifact_issue(symbol, reason=reason, path=model_path)
+        raise ArtifactIntegrityError(reason, path=model_path)
+    return float(proba[0, 1])
+
+
+def _persist_predictions_best_effort(
+    engine: "Engine",  # type: ignore[name-defined]
+    result: pd.DataFrame,
+    *,
+    symbol: str,
+) -> None:
+    try:
+        insert_predictions(engine, result)
+    except Exception as exc:  # noqa: BLE001
+        reason = f"prediction_persist_failed:{type(exc).__name__}"
+        LOGGER.warning(
+            "predict_symbol persistence_degraded symbol=%s rows=%d error=%s",
+            symbol,
+            len(result),
+            exc,
+        )
+        _record_db_issue(operation="insert_predictions", symbol=symbol, reason=reason)
+
+
 def _path_from_value(value: object) -> Path | None:
     if isinstance(value, Path):
         return value
@@ -130,6 +229,61 @@ def _numeric_threshold(value: object, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float(default)
+
+
+def _resolve_route_decision_threshold(route: dict[str, object], cfg_data: dict[str, Any]) -> float | None:
+    threshold_value = route.get("selected_decision_threshold")
+    if threshold_value is None:
+        return None
+    return _numeric_threshold(threshold_value, cfg_data.get("data", {}).get("decision_threshold", 0.5))
+
+
+def _build_prediction_result(
+    *,
+    symbol: str,
+    prediction_date: date,
+    proba: float,
+    pred_class: int,
+    run_id: str,
+    raw_proba: float,
+    decision_threshold: float,
+    signal_label: str,
+    calibration_method: str,
+    selected_model: str,
+) -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "symbol": symbol,
+            "prediction_date": prediction_date,
+            "predicted_proba": round(proba, 6),
+            "predicted_class": pred_class,
+            "run_id": run_id,
+            "raw_proba": round(raw_proba, 6),
+            "decision_threshold": decision_threshold,
+            "signal_label": signal_label,
+            "calibration_method": calibration_method,
+            "selected_model": selected_model,
+        }
+    ])
+
+
+def _record_route_fallback_if_any(symbol: str, route: dict[str, object]) -> None:
+    fallback_reason = route.get("fallback_reason")
+    if not fallback_reason:
+        return
+    _record_prediction_fallback(
+        symbol,
+        requested_model=route.get("requested_model"),
+        served_model=route.get("selected_model"),
+        reason=str(fallback_reason),
+    )
+    LOGGER.warning(
+        "predict_symbol route_fallback symbol=%s requested_model=%s served_model=%s reason=%s",
+        symbol,
+        route.get("requested_model"),
+        route.get("selected_model"),
+        fallback_reason,
+    )
 
 
 def _resolve_inference_device(accelerator: str = "auto") -> torch.device:
@@ -156,7 +310,17 @@ def _resolve_artifact_paths(
     run_id: Optional[str],
 ) -> tuple[Path, Path, Path, Optional[str]]:
     """Résout les artefacts depuis le registre DB, sinon via le dossier canonique du symbole."""
-    selected_run = load_training_run(engine, symbol, run_id=run_id)
+    try:
+        selected_run = load_training_run(engine, symbol, run_id=run_id)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning(
+            "predict_symbol registry_lookup_failed symbol=%s run_id=%s fallback=canonical_dir error=%s",
+            symbol,
+            run_id,
+            exc,
+        )
+        _record_db_issue(operation="load_training_run", symbol=symbol, reason=f"registry_lookup_failed:{type(exc).__name__}")
+        selected_run = None
     if selected_run is not None:
         ckpt_path = Path(selected_run["checkpoint_path"])
         scaler_path = Path(selected_run["scaler_path"])
@@ -241,24 +405,24 @@ def _load_tabular_model(model_path: Path, *, selected_model: str) -> Any:
 # ---------------------------------------------------------------------------
 
 @lru_cache(maxsize=128)
-def _cached_tabular_model(model_path_str: str, mtime_ns: int, selected_model: str) -> Any:
+def _cached_tabular_model(model_path_str: str, cache_token: tuple[int, int], selected_model: str) -> Any:
     return _load_tabular_model(Path(model_path_str), selected_model=selected_model)
 
 
 @lru_cache(maxsize=128)
-def _cached_scaler(scaler_path_str: str, mtime_ns: int) -> Any:
+def _cached_scaler(scaler_path_str: str, cache_token: tuple[int, int]) -> Any:
     with open(scaler_path_str, "rb") as fh:
         return FeatureScaler.from_state_dict(pickle.load(fh))
 
 
 @lru_cache(maxsize=128)
-def _cached_calibrator(calibrator_path_str: str, mtime_ns: int) -> Any:
+def _cached_calibrator(calibrator_path_str: str, cache_token: tuple[int, int]) -> Any:
     with open(calibrator_path_str, "rb") as fh:
         return calibrator_from_state_dict(pickle.load(fh))
 
 
 @lru_cache(maxsize=64)
-def _cached_lstm_module(ckpt_path_str: str, mtime_ns: int, device_str: str) -> Any:
+def _cached_lstm_module(ckpt_path_str: str, cache_token: tuple[int, int], device_str: str) -> Any:
     import torch as _torch
     device_obj = _torch.device(device_str)
     module = LSTMAttentionModule.load_from_checkpoint(ckpt_path_str, map_location=device_obj)
@@ -267,28 +431,29 @@ def _cached_lstm_module(ckpt_path_str: str, mtime_ns: int, device_str: str) -> A
     return module
 
 
-def _safe_mtime_ns(path: Path) -> int:
+def _safe_cache_token(path: Path) -> tuple[int, int]:
     try:
-        return int(path.stat().st_mtime_ns)
+        stat_result = path.stat()
+        return int(stat_result.st_mtime_ns), int(stat_result.st_size)
     except OSError:
-        return 0
+        return 0, 0
 
 
 def load_tabular_model_cached(model_path: Path, *, selected_model: str) -> Any:
     """API publique du cache (Phase 4.2.d)."""
-    return _cached_tabular_model(str(model_path.resolve()), _safe_mtime_ns(model_path), selected_model)
+    return _cached_tabular_model(str(model_path.resolve()), _safe_cache_token(model_path), selected_model)
 
 
 def load_scaler_cached(scaler_path: Path) -> Any:
-    return _cached_scaler(str(scaler_path.resolve()), _safe_mtime_ns(scaler_path))
+    return _cached_scaler(str(scaler_path.resolve()), _safe_cache_token(scaler_path))
 
 
 def load_calibrator_cached(calibrator_path: Path) -> Any:
-    return _cached_calibrator(str(calibrator_path.resolve()), _safe_mtime_ns(calibrator_path))
+    return _cached_calibrator(str(calibrator_path.resolve()), _safe_cache_token(calibrator_path))
 
 
 def load_lstm_module_cached(ckpt_path: Path, device: Any) -> Any:
-    return _cached_lstm_module(str(ckpt_path.resolve()), _safe_mtime_ns(ckpt_path), str(device))
+    return _cached_lstm_module(str(ckpt_path.resolve()), _safe_cache_token(ckpt_path), str(device))
 
 
 def clear_model_cache() -> None:
@@ -409,35 +574,65 @@ def _prepare_prediction_frame(
     engine: "Engine",  # type: ignore[name-defined]
     cutoff_date: date | None,
 ) -> pd.DataFrame:
-    bars = load_symbol_bars(engine, symbol, end_date=cutoff_date)
+    try:
+        bars = load_symbol_bars(engine, symbol, end_date=cutoff_date)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("predict_symbol db_read_failed symbol=%s stage=load_symbol_bars error=%s", symbol, exc)
+        _record_db_issue(operation="load_symbol_bars", symbol=symbol, reason=f"db_read_failed:{type(exc).__name__}")
+        return pd.DataFrame()
     if len(bars) < data_cfg.sequence_length + 60:
         LOGGER.warning("predict_symbol insufficient_bars symbol=%s", symbol)
         return pd.DataFrame()
 
     sentiment_df = None
     if data_cfg.include_sentiment_features:
-        sentiment_df = load_symbol_sentiment(engine, symbol, end_date=cutoff_date)
+        try:
+            sentiment_df = load_symbol_sentiment(engine, symbol, end_date=cutoff_date)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("predict_symbol db_read_failed symbol=%s stage=load_symbol_sentiment error=%s", symbol, exc)
+            _record_db_issue(operation="load_symbol_sentiment", symbol=symbol, reason=f"db_read_failed:{type(exc).__name__}")
+            return pd.DataFrame()
     benchmark_df = None
     if data_cfg.feature_set == "expert" or data_cfg.enable_cross_sectional_features:
-        benchmark_df = load_benchmark_bars(engine, data_cfg.benchmark_symbol, end_date=cutoff_date)
-    df = compute_features(
-        bars,
-        sentiment_df=sentiment_df,
-        include_sentiment=data_cfg.include_sentiment_features,
-        benchmark_df=benchmark_df,
-        feature_set=data_cfg.feature_set,
-    )
-    if data_cfg.enable_cross_sectional_features:
-        universe_symbols = load_candidate_symbols(engine)
-        if symbol not in universe_symbols:
-            universe_symbols.append(symbol)
-        universe_df = load_universe_bars(engine, universe_symbols, end_date=cutoff_date)
-        cross_sectional_df, _ = build_cross_sectional_features(
-            universe_df,
+        try:
+            benchmark_df = load_benchmark_bars(engine, data_cfg.benchmark_symbol, end_date=cutoff_date)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("predict_symbol db_read_failed symbol=%s stage=load_benchmark_bars error=%s", symbol, exc)
+            _record_db_issue(operation="load_benchmark_bars", symbol=symbol, reason=f"db_read_failed:{type(exc).__name__}")
+            return pd.DataFrame()
+    try:
+        df = compute_features(
+            bars,
+            sentiment_df=sentiment_df,
+            include_sentiment=data_cfg.include_sentiment_features,
             benchmark_df=benchmark_df,
-            min_universe_size=data_cfg.cross_sectional_min_universe,
+            feature_set=data_cfg.feature_set,
         )
-        df = merge_cross_sectional_features(df, cross_sectional_df)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("predict_symbol feature_build_failed symbol=%s error=%s", symbol, exc)
+        _record_db_issue(operation="compute_features", symbol=symbol, reason=f"feature_build_failed:{type(exc).__name__}")
+        return pd.DataFrame()
+    if data_cfg.enable_cross_sectional_features:
+        try:
+            universe_symbols = load_candidate_symbols(engine)
+            if symbol not in universe_symbols:
+                universe_symbols.append(symbol)
+            universe_df = load_universe_bars(engine, universe_symbols, end_date=cutoff_date)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("predict_symbol db_read_failed symbol=%s stage=load_cross_sectional_inputs error=%s", symbol, exc)
+            _record_db_issue(operation="load_universe_bars", symbol=symbol, reason=f"db_read_failed:{type(exc).__name__}")
+            return pd.DataFrame()
+        try:
+            cross_sectional_df, _ = build_cross_sectional_features(
+                universe_df,
+                benchmark_df=benchmark_df,
+                min_universe_size=data_cfg.cross_sectional_min_universe,
+            )
+            df = merge_cross_sectional_features(df, cross_sectional_df)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("predict_symbol feature_build_failed symbol=%s stage=cross_sectional error=%s", symbol, exc)
+            _record_db_issue(operation="build_cross_sectional_features", symbol=symbol, reason=f"feature_build_failed:{type(exc).__name__}")
+            return pd.DataFrame()
         active_features = get_feature_columns(
             data_cfg.include_sentiment_features,
             feature_set=data_cfg.feature_set,
@@ -552,31 +747,58 @@ def _predict_with_tabular_model(
         )
         _record_artifact_issue(symbol, reason=reason, path=model_path)
         raise ArtifactIntegrityError(reason, path=model_path) from exc
-    raw_proba = float(model.predict_proba(last_row[resolved_feature_columns])[:, 1][0])
+    try:
+        prediction_output = model.predict_proba(last_row[resolved_feature_columns])
+        raw_proba = _extract_positive_class_probability(
+            prediction_output,
+            symbol=symbol,
+            selected_model=selected_model,
+            model_path=model_path,
+        )
+    except ArtifactIntegrityError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        reason = f"tabular_model_incompatible:{selected_model}"
+        LOGGER.error(
+            "predict_symbol %s symbol=%s path=%s error=%s",
+            reason,
+            symbol,
+            model_path,
+            exc,
+        )
+        _record_artifact_issue(symbol, reason=reason, path=model_path)
+        raise ArtifactIntegrityError(reason, path=model_path) from exc
     calibrator = _load_optional_calibrator(calibrator_path, symbol=symbol, selected_model=selected_model)
-    proba = raw_proba
-    if calibrator is not None and calibrator.fitted:
-        eps = 1e-6
-        margin = np.log(np.clip(raw_proba, eps, 1 - eps) / np.clip(1 - raw_proba, eps, 1 - eps))
-        proba = float(calibrator.predict_proba(np.array([margin], dtype=np.float64))[0])
+    eps = 1e-6
+    margin = np.array([
+        np.log(np.clip(raw_proba, eps, 1 - eps) / np.clip(1 - raw_proba, eps, 1 - eps))
+    ], dtype=np.float64)
+    proba, calibration_method = _apply_optional_calibration(
+        symbol=symbol,
+        selected_model=selected_model,
+        calibrator=calibrator,
+        margin=margin,
+        calibrator_path=calibrator_path,
+        raw_proba=raw_proba,
+    )
     threshold_value = decision_threshold if decision_threshold is not None else cfg_data.get("selected_decision_threshold", data_cfg.decision_threshold)
     effective_threshold = _numeric_threshold(threshold_value, data_cfg.decision_threshold)
     pred_date = prediction_date or date.today()
     pred_class = 1 if proba >= effective_threshold else 0
     signal_label = "long" if pred_class == 1 else "no_trade"
-    calibration_method = getattr(calibrator, "method", "none") if calibrator is not None and calibrator.fitted else "none"
-    result = pd.DataFrame([{
-        "symbol": symbol,
-        "prediction_date": pred_date,
-        "predicted_proba": round(proba, 6),
-        "predicted_class": pred_class,
-        "run_id": cfg_data.get("run_id", cfg_data.get("artifact_symbol", selected_model)),
-        "raw_proba": round(raw_proba, 6),
-        "decision_threshold": effective_threshold,
-        "signal_label": signal_label,
-        "calibration_method": calibration_method,
-        "selected_model": selected_model,
-    }])
+
+    result = _build_prediction_result(
+        symbol=symbol,
+        prediction_date=pred_date,
+        proba=proba,
+        pred_class=pred_class,
+        run_id=str(cfg_data.get("run_id", cfg_data.get("artifact_symbol", selected_model))),
+        raw_proba=raw_proba,
+        decision_threshold=effective_threshold,
+        signal_label=signal_label,
+        calibration_method=calibration_method,
+        selected_model=selected_model,
+    )
     update_runtime_status(
         last_prediction_symbol=symbol,
         last_requested_model=selected_model,
@@ -586,7 +808,7 @@ def _predict_with_tabular_model(
         last_prediction_date=pred_date.isoformat(),
     )
     if persist:
-        insert_predictions(engine, result)
+        _persist_predictions_best_effort(engine, result, symbol=symbol)
     LOGGER.info(
         "predict_symbol served symbol=%s selected_model=%s threshold=%.4f calibration=%s proba=%.4f class=%d",
         symbol,
@@ -704,7 +926,7 @@ def predict_symbol(
                     as_of_date=as_of_date,
                     persist=persist,
                     feature_columns=list(route.get("feature_columns") or []),
-                    decision_threshold=_numeric_threshold(route.get("selected_decision_threshold"), cfg_data.get("data", {}).get("decision_threshold", 0.5)) if route.get("selected_decision_threshold") is not None else None,
+                    decision_threshold=_resolve_route_decision_threshold(route, cfg_data),
                     config_path=local_config_path,
                     route_feature_fingerprint=route.get("feature_fingerprint"),
                     route_feature_contract=route.get("feature_contract"),
@@ -720,20 +942,7 @@ def predict_symbol(
                 )
                 selected_architecture = str(route["selected_model"])
 
-    if route.get("fallback_reason"):
-        _record_prediction_fallback(
-            symbol,
-            requested_model=route.get("requested_model"),
-            served_model=route.get("selected_model"),
-            reason=str(route.get("fallback_reason")),
-        )
-        LOGGER.warning(
-            "predict_symbol route_fallback symbol=%s requested_model=%s served_model=%s reason=%s",
-            symbol,
-            route.get("requested_model"),
-            route.get("selected_model"),
-            route.get("fallback_reason"),
-        )
+    _record_route_fallback_if_any(symbol, route)
 
     ckpt_path = Path(route["checkpoint_path"])
     scaler_path = Path(route["scaler_path"])
@@ -824,30 +1033,43 @@ def predict_symbol(
     )
 
     with torch.no_grad():
-        logits, _ = model(x)
-        raw_proba = torch.softmax(logits, dim=1)[0, 1].item()
+        try:
+            logits, _ = model(x)
+            logits_tensor = torch.as_tensor(logits)
+            if logits_tensor.ndim != 2 or logits_tensor.shape[0] < 1 or logits_tensor.shape[1] < 2:
+                raise ValueError(f"invalid_logits_shape={tuple(logits_tensor.shape)}")
+            raw_proba = torch.softmax(logits_tensor, dim=1)[0, 1].item()
+        except Exception as exc:  # noqa: BLE001
+            reason = f"lstm_runtime_incompatible:{selected_architecture}"
+            LOGGER.error("predict_symbol %s symbol=%s path=%s error=%s", reason, symbol, ckpt_path, exc)
+            _record_artifact_issue(symbol, reason=reason, path=ckpt_path)
+            return None
 
-    proba = raw_proba
-    if calibrator is not None and calibrator.fitted:
-        proba = float(calibrator.predict_proba(margin_from_logits(logits.cpu().numpy()))[0])
+    proba, calibration_method = _apply_optional_calibration(
+        symbol=symbol,
+        selected_model=selected_architecture,
+        calibrator=calibrator,
+        margin=margin_from_logits(logits_tensor.detach().cpu().numpy()),
+        calibrator_path=calibrator_path,
+        raw_proba=raw_proba,
+    )
 
     pred_date = prediction_date or date.today()
     pred_class = 1 if proba >= data_cfg.decision_threshold else 0
     signal_label = "long" if pred_class == 1 else "no_trade"
-    calibration_method = getattr(calibrator, "method", "none") if calibrator is not None and calibrator.fitted else "none"
 
-    result = pd.DataFrame([{
-        "symbol": symbol,
-        "prediction_date": pred_date,
-        "predicted_proba": round(proba, 6),
-        "predicted_class": pred_class,
-        "run_id": run_id,
-        "raw_proba": round(raw_proba, 6),
-        "decision_threshold": data_cfg.decision_threshold,
-        "signal_label": signal_label,
-        "calibration_method": calibration_method,
-        "selected_model": selected_architecture,
-    }])
+    result = _build_prediction_result(
+        symbol=symbol,
+        prediction_date=pred_date,
+        proba=proba,
+        pred_class=pred_class,
+        run_id=str(run_id),
+        raw_proba=raw_proba,
+        decision_threshold=float(data_cfg.decision_threshold),
+        signal_label=signal_label,
+        calibration_method=calibration_method,
+        selected_model=selected_architecture,
+    )
     update_runtime_status(
         last_prediction_symbol=symbol,
         last_requested_model=str(route.get("requested_model") or selected_architecture),
@@ -859,7 +1081,7 @@ def predict_symbol(
 
     # Persist
     if persist:
-        insert_predictions(engine, result)
+        _persist_predictions_best_effort(engine, result, symbol=symbol)
     LOGGER.info(
         "predict_symbol served symbol=%s selected_model=%s requested_model=%s date=%s proba=%.4f raw_proba=%.4f class=%d signal=%s threshold=%.4f calibration=%s",
         symbol,
