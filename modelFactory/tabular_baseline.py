@@ -10,6 +10,7 @@ import pandas as pd
 
 from modelFactory.calibration import PlattCalibrator
 from modelFactory.config import TrainingConfig
+from modelFactory.dataset import chrono_split
 from modelFactory.evaluation import compute_threshold_metrics, optimize_decision_threshold
 from modelFactory.features import get_feature_columns
 
@@ -19,18 +20,19 @@ def tabular_split(
 	*,
 	train_ratio: float,
 	val_ratio: float,
+	forecast_horizon: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 	if "target" not in df.columns:
 		raise ValueError("La baseline tabulaire attend une colonne 'target'.")
 	clean = df.loc[df["target"].notna()].reset_index(drop=True)
-	n = len(clean)
-	i_train = int(n * train_ratio)
-	i_val = i_train + int(n * val_ratio)
-	return (
-		clean.iloc[:i_train].reset_index(drop=True),
-		clean.iloc[i_train:i_val].reset_index(drop=True),
-		clean.iloc[i_val:].reset_index(drop=True),
+	split = chrono_split(
+		clean,
+		train_ratio,
+		val_ratio,
+		forecast_horizon=forecast_horizon,
+		date_column="date" if "date" in clean.columns else None,
 	)
+	return split.train, split.val, split.test
 
 
 def binary_auc(labels: np.ndarray, scores: np.ndarray) -> float | None:
@@ -139,6 +141,7 @@ def run_tabular_baseline(
 		prepared_df,
 		train_ratio=cfg.data.train_ratio,
 		val_ratio=cfg.data.val_ratio,
+		forecast_horizon=cfg.data.forecast_horizon,
 	)
 	if train_df.empty or val_df.empty or test_df.empty:
 		return {"status": "skipped", "model_name": model_name, "reason": "insufficient_rows_after_split"}

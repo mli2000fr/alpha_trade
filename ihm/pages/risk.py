@@ -6,10 +6,44 @@ import streamlit as st
 from ihm.components.run_summary import render_persistent_business_summary
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
-from ihm.components.tables import show_dataframe
 from ihm.components.symbol_table import render_symbol_table
 from ihm.services.db import db_available, get_last_query_error
 from ihm.services.queries import get_latest_run_business_summary, get_portfolio_targets, get_risk_decisions, get_risk_run_ids
+from ihm.services.run_summary import get_run_summary
+
+
+def _render_ml_gate_status(record: dict[str, object] | None) -> None:
+    summary = get_run_summary(record)
+    if not summary or "ml_gate_enabled" not in summary:
+        return
+
+    gate_enabled = bool(summary.get("ml_gate_enabled"))
+    reason = str(summary.get("ml_gate_reason") or "unknown").strip()
+    action = str(summary.get("ml_gate_action") or "allow").strip()
+    drift_status = str(summary.get("ml_gate_drift_status") or "n/a").strip()
+    prediction_coverage = summary.get("prediction_coverage_pct")
+    coverage_text = ""
+    if isinstance(prediction_coverage, (int, float)):
+        coverage_text = f" | couverture ML={float(prediction_coverage):.0%}"
+
+    if not gate_enabled:
+        st.error(
+            f"🚫 Gate ML désactivé — action `{action}` | drift `{drift_status}` | raison `{reason}`{coverage_text}"
+        )
+        if prediction_coverage == 0:
+            st.caption(
+                "La couverture ML à 0% est attendue ici : `risk_management` a refusé la consommation de `model_predictions`."
+            )
+        return
+
+    if drift_status == "WARN":
+        st.warning(
+            f"⚠️ Drift ML en WARN mais gate encore actif — action `{action}` | raison `{reason}`{coverage_text}"
+        )
+    elif drift_status not in {"", "n/a", "N/A", "OK"}:
+        st.info(
+            f"ℹ️ Gate ML actif avec drift `{drift_status}` — action `{action}` | raison `{reason}`{coverage_text}"
+        )
 
 
 def render() -> None:
@@ -40,10 +74,12 @@ def render() -> None:
             st.info("Aucun run de risque trouvé dans `risk_decisions`.")
         return
 
+    summary_record = get_latest_run_business_summary(step_key="risk_management", entity_run_id=selected_run)
     render_persistent_business_summary(
-        get_latest_run_business_summary(step_key="risk_management", entity_run_id=selected_run),
+        summary_record,
         max_metrics=9,
     )
+    _render_ml_gate_status(summary_record)
 
     # --- Décisions ---
     st.subheader("📋 Décisions de risque")

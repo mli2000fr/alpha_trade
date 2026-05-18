@@ -5,7 +5,7 @@ import argparse
 import json
 import logging
 import threading
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -386,7 +386,7 @@ def main(args: list[str] | None = None) -> None:
         print(f"{'=' * 60}")
 
     elif opts.mode == "predict":
-        from modelFactory.db_registry import load_candidate_symbols
+        from modelFactory.db_registry import insert_predictions, load_candidate_symbols
         from modelFactory.predictor import predict_batch
         from modelFactory.drift_monitor import compute_drift
         from modelFactory.drift_policy import (
@@ -396,7 +396,7 @@ def main(args: list[str] | None = None) -> None:
             summary_fields as _drift_summary_fields,
         )
         symbols = opts.symbols or load_candidate_symbols(engine)
-        preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, accelerator=opts.accelerator)
+        preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, accelerator=opts.accelerator)
 
         # Sprint S4 (A-021) — drift gate / kill switch ML
         drift_decision = None
@@ -418,6 +418,15 @@ def main(args: list[str] | None = None) -> None:
                     )
         except Exception as exc:  # pragma: no cover - guarded
             LOGGER.warning("ML drift gate evaluation failed: %s", exc)
+
+        if not preds.empty and (drift_decision is None or drift_decision.action != "kill_switch_ml"):
+            insert_predictions(engine, preds)
+        elif drift_decision is not None and drift_decision.action == "kill_switch_ml":
+            LOGGER.warning(
+                "predict batch persistence skipped reason=ml_kill_switch_active rows=%d decision=%s",
+                len(preds),
+                drift_decision.reason,
+            )
 
         print(f"\n{'=' * 60}")
         print(f"  Model Factory — Predictions: {len(preds)} rows")
@@ -447,17 +456,18 @@ def _load_drift_baseline(engine, *, days: int = 30):
     """Charge la baseline de prédictions pour le drift monitor (best-effort)."""
     import numpy as np
     from sqlalchemy import text
+    baseline_start = (datetime.now(timezone.utc) - timedelta(days=int(days))).date()
     try:
         with engine.connect() as conn:
             rows = conn.execute(
                 text(
                     """
                     SELECT predicted_proba FROM model_predictions
-                    WHERE prediction_date >= date('now', :days)
+                    WHERE prediction_date >= :baseline_start
                       AND predicted_proba IS NOT NULL
                     """
                 ),
-                {"days": f"-{int(days)} day"},
+                {"baseline_start": baseline_start},
             ).fetchall()
         return np.asarray([r[0] for r in rows if r[0] is not None], dtype=float)
     except Exception:  # pragma: no cover - best effort

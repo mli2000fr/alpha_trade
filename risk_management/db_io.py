@@ -295,6 +295,7 @@ class RiskRepository:
                 FROM model_predictions
                 WHERE symbol IN ({placeholders})
                   AND prediction_date <= :trade_date
+                  AND predicted_proba IS NOT NULL
             ) ranked
             WHERE rn = 1
         """)

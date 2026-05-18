@@ -207,7 +207,7 @@ def persist_kill_switch_event(decision: MLPolicyDecision, *, engine: Any) -> Non
                 ),
                 {
                     "run_id": f"mdr-policy-{int(datetime.now(timezone.utc).timestamp())}",
-                    "computed_at": datetime.utcnow(),
+                    "computed_at": datetime.now(timezone.utc),
                     "model_id": decision.model_id,
                     "ks_pvalue": decision.ks_pvalue,
                     "psi": decision.psi,

@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 from sqlalchemy.engine import Engine
 
-from modelFactory.config import BaselineConfig, ChampionSelectionConfig, DataConfig, ModelConfig, TrainingConfig
+from modelFactory.config import BaselineConfig, ChampionSelectionConfig, DataConfig, ModelConfig, TargetOptimizationConfig, TrainingConfig
 from modelFactory import trainer
 
 
@@ -459,5 +459,135 @@ def test_train_symbol_persists_model_governance_snapshot(monkeypatch, tmp_path: 
     assert governance_call["selected_model"] == "lightgbm"
     assert governance_call["selection_mode"] == "auto_selected_champion"
     assert any(row["model_name"] == "lightgbm" for row in governance_call["ranking"])
+
+
+def test_train_symbol_target_optimization_uses_train_split_only(monkeypatch, tmp_path: Path) -> None:
+    class FakeScaler:
+        feature_names = ["feat1"]
+
+        @staticmethod
+        def state_dict() -> dict:
+            return {"mean": [0.0], "std": [1.0], "features": ["feat1"]}
+
+    class FakeLoader:
+        num_workers = 0
+
+    class FakeDataModule:
+        def __init__(self, bars_df, data_cfg, model_cfg, **kwargs) -> None:
+            frame = pd.DataFrame(
+                {
+                    "feat1": [0.1, 0.2, 0.3, 0.4],
+                    "target": [1.0, 0.0, 1.0, 0.0],
+                    "future_return": [0.02, -0.01, 0.03, -0.02],
+                }
+            )
+            self.train_ds = [1]
+            self.val_ds = [1]
+            self.test_ds = [1]
+            self.prepared_df = frame.copy()
+            self.split = type("Split", (), {"val": frame.copy(), "test": frame.copy()})()
+            self.n_features = 1
+            self.scaler = FakeScaler()
+
+        def setup(self) -> None:
+            return None
+
+        def train_dataloader(self):
+            return FakeLoader()
+
+    class FakeModel:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class FakeCheckpoint:
+        def __init__(self, dirpath=None, filename=None, monitor=None, mode=None, save_top_k=None):
+            self.best_model_path = str(Path(dirpath) / "best.ckpt") if dirpath else ""
+
+    class FakeEarlyStopping:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class FakeLightningTrainer:
+        def __init__(self, *args, **kwargs) -> None:
+            self.strategy = type("Strategy", (), {"root_device": "cpu"})()
+            self.current_epoch = 1
+
+        def fit(self, model, datamodule=None, train_dataloaders=None, val_dataloaders=None) -> None:
+            target_path = tmp_path / "AAPL" / "best.ckpt"
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text("checkpoint", encoding="utf-8")
+
+    optimization_frame = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=8, freq="D"),
+            "close": [10.0, 10.5, 11.0, 10.8, 11.2, 11.5, 11.7, 11.9],
+            "adj_close": [10.0, 10.5, 11.0, 10.8, 11.2, 11.5, 11.7, 11.9],
+            "feat1": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+        }
+    )
+    train_only_frame = optimization_frame.iloc[:4].reset_index(drop=True)
+    optimization_calls: list[pd.DataFrame] = []
+
+    cfg = TrainingConfig(
+        data=DataConfig(sequence_length=2, forecast_horizon=1, min_history_days=10, train_ratio=0.6, val_ratio=0.2),
+        model=ModelConfig(batch_size=4, max_epochs=1, patience=1),
+        target_optimization=TargetOptimizationConfig(enabled=True, candidate_horizons=(1, 2), min_trades_fraction=0.05),
+        artifacts_dir=tmp_path,
+        accelerator="cpu",
+    )
+
+    monkeypatch.setattr(trainer, "SymbolDataModule", FakeDataModule)
+    monkeypatch.setattr(trainer, "prepare_symbol_frame", lambda *args, **kwargs: optimization_frame.copy())
+    monkeypatch.setattr(
+        trainer,
+        "chrono_split",
+        lambda df, train_ratio, val_ratio, forecast_horizon=0: type(
+            "Split",
+            (),
+            {
+                "train": train_only_frame.copy(),
+                "val": optimization_frame.iloc[4:6].reset_index(drop=True),
+                "test": optimization_frame.iloc[6:].reset_index(drop=True),
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "optimize_target_parameters",
+        lambda df, data_cfg, opt_cfg: optimization_calls.append(df.copy()) or {
+            "selected_horizon": 2,
+            "selected_target_up_threshold": 0.01,
+            "selected_target_down_threshold": -0.01,
+            "selected_score": 0.42,
+            "candidates": [],
+        },
+    )
+    monkeypatch.setattr(trainer, "LSTMAttentionModule", FakeModel)
+    monkeypatch.setattr(trainer, "ModelCheckpoint", FakeCheckpoint)
+    monkeypatch.setattr(trainer, "EarlyStopping", FakeEarlyStopping)
+    monkeypatch.setattr(trainer.L, "Trainer", FakeLightningTrainer)
+    monkeypatch.setattr(
+        trainer,
+        "_evaluate_best_checkpoint",
+        lambda *args, **kwargs: (
+            {"loss": 0.4, "auc": 0.70, "threshold_business_score": 0.65},
+            {"loss": 0.5, "auc": 0.68, "threshold_business_score": 0.60},
+            None,
+            {"enabled": False, "selected_threshold": 0.5, "candidates": []},
+            0.5,
+        ),
+    )
+    monkeypatch.setattr(trainer, "run_lightgbm_baseline", lambda prepared_df, cfg, artifact_dir=None: {})
+    monkeypatch.setattr(trainer, "run_catboost_baseline", lambda prepared_df, cfg, artifact_dir=None: {})
+
+    result = trainer.train_symbol("AAPL", pd.DataFrame({"close": list(range(12))}), cfg, engine=None)
+
+    assert result.status == "completed"
+    assert len(optimization_calls) == 1
+    pd.testing.assert_frame_equal(optimization_calls[0], train_only_frame)
+    with open(tmp_path / "AAPL" / "metrics.json", encoding="utf-8") as fh:
+        metrics = json.load(fh)
+    assert metrics["target_optimization"]["fit_scope"] == "train_split_only"
+    assert metrics["target_optimization"]["fit_rows"] == len(train_only_frame)
 
 

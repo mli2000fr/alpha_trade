@@ -354,6 +354,21 @@ Pour chaque symbole :
 16. persiste `config.json`, `metrics.json`, scaler, checkpoint et calibrateurs ;
 17. écrit les résumés DB et le snapshot de gouvernance du champion/challengers.
 
+### 6.5 Invariants temporels P0 (anti-fuite)
+
+Les splits chronologiques sont désormais **purgés** aux frontières pour empêcher
+qu'une target à horizon `forecast_horizon` traverse le split suivant :
+
+- les `forecast_horizon` dernières lignes du train sont retirées avant la validation ;
+- les `forecast_horizon` dernières lignes de la validation sont retirées avant le test ;
+- la même règle s'applique au walk-forward ;
+- pour le `global_model`, la purge est appliquée sur les **dates uniques** (pas seulement sur les lignes) ;
+- pour les challengers tabulaires, la purge est identique au chemin séquentiel.
+
+Conséquence : une observation utilisée pour l'entraînement ou la validation ne
+peut plus avoir une `future_return` ou une `target` dépendant d'une barre située
+dans le split suivant.
+
 ### 6.4 Ce qui est écrit en base
 
 #### `model_training_run`
@@ -587,6 +602,15 @@ Le prédicteur recharge les données **bornées à la date de coupe** :
 
 Cette logique est essentielle pour la compatibilité backtesting / replay sans look-ahead trivial.
 
+En complément, le contrat de features live est désormais durci :
+
+- si `config.json` contient un `feature_fingerprint`, toute dérive du contrat
+  courant provoque un **refus de serving** ;
+- pour les routes tabulaires, l'absence d'une colonne requise provoque un
+  **fail-fast explicite** en log ;
+- une route champion incomplète peut retomber sur `lstm_attention`, mais ce
+  fallback est désormais loggé explicitement avec la raison.
+
 ### 9.4 Chemin LSTM
 
 Le prédicteur :
@@ -629,6 +653,11 @@ Conséquence :
 - `model_predictions` suffit pour l'audit quotidien du backend réellement servi ;
 - `model_governance` apporte la justification SQL du champion ;
 - les artefacts restent la source la plus riche pour le manifeste brut complet.
+
+Important P0 : la CLI `predict` calcule désormais le **drift gate avant
+persistance finale**. Si le kill-switch ML est activé, les prédictions du batch
+ne sont pas écrites dans `model_predictions` ; le fallback côté risk devient
+donc explicite (`quant` pur) et cohérent avec l'état du gate.
 
 ---
 
@@ -695,6 +724,24 @@ Causes typiques :
 3. features manquantes au moment du predict
 4. historique insuffisant pour reconstruire la dernière fenêtre
 5. route `selected_model` invalide ou incomplète
+6. dérive du `feature_fingerprint` entre entraînement et serving
+
+### 11.4 Drift gate ML → risk_management
+
+Le drift monitor publie une décision `drift_policy_decision` dans
+`ml_drift_runs.payload`.
+
+La consommation côté `risk_management` suit alors la règle suivante :
+
+1. si `ALPHA_TRADE_DISABLE_ML=1`, le ML est désactivé manuellement ;
+2. sinon, si la dernière décision drift porte `gate=disabled` ou
+   `gate_action=kill_switch_ml`, `risk_management` **ignore totalement**
+   `model_predictions` ;
+3. le run summary risk expose `ml_gate_enabled`, `ml_gate_reason`,
+   `ml_gate_decision_id`, `ml_gate_drift_status` et `ml_gate_action`.
+
+Le comportement attendu en incident drift est donc : **pas de consommation ML,
+pas de persistance du batch predict sous kill-switch, repli quant pur traçable**.
 
 ### 11.3 GPU non utilisé
 

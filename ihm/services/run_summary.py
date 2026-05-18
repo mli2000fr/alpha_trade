@@ -104,6 +104,8 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Risque init.", "total_initial_risk_dollars"),
         ("Couverture ATR", "atr_coverage_pct"),
         ("Couverture ML", "prediction_coverage_pct"),
+        ("Gate ML", "ml_gate_action"),
+        ("Drift ML", "ml_gate_drift_status"),
     ],
     "execution": [
         ("Cibles", "targeted_symbols"),
@@ -305,6 +307,25 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
                     lines.append("Audit Stooq sauté faute de données ingérées exploitables pour le contrôle.")
                 elif stooq_status == "activé":
                     lines.append(f"Audit Stooq : {anomalies} anomalie(s) détectée(s).")
+
+    if step_key == "risk_management":
+        gate_enabled = summary.get("ml_gate_enabled")
+        gate_reason = str(summary.get("ml_gate_reason") or "unknown").strip()
+        gate_action = str(summary.get("ml_gate_action") or "allow").strip()
+        drift_status = str(summary.get("ml_gate_drift_status") or "n/a").strip()
+        coverage = _to_float(summary.get("prediction_coverage_pct"))
+        if gate_enabled is False:
+            lines.append(
+                f"Gate ML désactivé : action={gate_action}, drift={drift_status}, raison={gate_reason}."
+            )
+            if coverage == 0.0:
+                lines.append(
+                    "Couverture ML nulle attendue : `risk_management` a volontairement ignoré `model_predictions`."
+                )
+        elif drift_status not in {"", "n/a", "N/A", "OK"}:
+            lines.append(
+                f"Gate ML actif avec drift={drift_status} (action={gate_action}, raison={gate_reason})."
+            )
 
     if step_key != "sync_earnings_calendar":
         return lines

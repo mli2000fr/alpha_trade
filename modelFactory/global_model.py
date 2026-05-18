@@ -13,6 +13,7 @@ import pandas as pd
 
 from modelFactory.config import TrainingConfig
 from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
+from modelFactory.dataset import chrono_split_by_dates
 from modelFactory.data_loader import (
     load_benchmark_bars,
     load_symbols_sentiment,
@@ -82,19 +83,15 @@ def _split_global_by_dates(
     *,
     train_ratio: float,
     val_ratio: float,
+    forecast_horizon: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    unique_dates = pd.Index(sorted(pd.to_datetime(df["date"]).unique()))
-    n_dates = len(unique_dates)
-    i_train = int(n_dates * train_ratio)
-    i_val = i_train + int(n_dates * val_ratio)
-    train_dates = set(unique_dates[:i_train])
-    val_dates = set(unique_dates[i_train:i_val])
-    test_dates = set(unique_dates[i_val:])
-    return (
-        df[df["date"].isin(train_dates)].reset_index(drop=True),
-        df[df["date"].isin(val_dates)].reset_index(drop=True),
-        df[df["date"].isin(test_dates)].reset_index(drop=True),
+    split = chrono_split_by_dates(
+        df,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        forecast_horizon=forecast_horizon,
     )
+    return split.train, split.val, split.test
 
 
 def _build_global_estimator(cfg: TrainingConfig) -> tuple[str, Any]:
@@ -222,6 +219,7 @@ def train_global_model(
         global_df,
         train_ratio=effective_data_cfg.train_ratio,
         val_ratio=effective_data_cfg.val_ratio,
+        forecast_horizon=effective_data_cfg.forecast_horizon,
     )
     if train_df.empty or val_df.empty or test_df.empty:
         return {"status": "skipped", "model_name": "global_model", "reason": "insufficient_rows_after_date_split"}

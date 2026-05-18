@@ -249,6 +249,16 @@ def main(args: list[str] | None = None) -> None:
     # --- V2 data loading ---
     LOGGER.info("Chargement des predictions ML…")
     predictions = repo.load_predictions_asof(symbols, trade_date)
+    from risk_management.ml_gate import resolve_ml_gate_state
+    ml_gate_state = resolve_ml_gate_state(repo.engine)
+    LOGGER.info(
+        "ML gate | enabled=%s reason=%s decision_id=%s drift_status=%s action=%s",
+        ml_gate_state.enabled,
+        ml_gate_state.reason,
+        ml_gate_state.decision_id,
+        ml_gate_state.drift_status,
+        ml_gate_state.action,
+    )
     LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
     _emit_live_progress(
         dict(progress_context, targeted_symbols=len(candidates), prediction_symbols=len(predictions)),
@@ -299,6 +309,8 @@ def main(args: list[str] | None = None) -> None:
     run_id = build_run_id()
     _print_summary(entries, run_id, trade_date)
 
+    n_dec = 0
+    n_tgt = 0
     if config.dry_run:
         LOGGER.info("Mode dry-run — aucune ecriture en DB.")
     else:
@@ -400,6 +412,7 @@ def main(args: list[str] | None = None) -> None:
             "source": "default",
             "calibration_run_id": None,
         },
+        **ml_gate_state.to_summary(),
     }
     summary = attach_schema_version(summary, version=1)
     persist_run_business_summary(

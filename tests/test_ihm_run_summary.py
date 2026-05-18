@@ -463,3 +463,22 @@ def test_get_run_summary_detail_lines_includes_live_contextual_batch_progress() 
     assert any("reste : 60" in line for line in lines)
 
 
+def test_get_run_summary_detail_lines_exposes_ml_gate_kill_switch_for_risk_management() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "risk_management",
+            "run_summary": {
+                "ml_gate_enabled": False,
+                "ml_gate_reason": "drift_policy_kill_switch",
+                "ml_gate_action": "kill_switch_ml",
+                "ml_gate_drift_status": "ALERT",
+                "prediction_coverage_pct": 0.0,
+            },
+        }
+    )
+
+    assert any("Gate ML désactivé" in line for line in lines)
+    assert any("drift=ALERT" in line for line in lines)
+    assert any("Couverture ML nulle attendue" in line for line in lines)
+
+

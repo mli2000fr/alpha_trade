@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, Optional
 
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
@@ -32,7 +33,9 @@ from modelFactory.dataset import (
     SequenceDataset,
     SymbolDataModule,
     build_sequence_dataset,
+    chrono_split,
     generate_walk_forward_splits,
+    prepare_symbol_frame,
 )
 from modelFactory.db_registry import (
     ensure_registry_entry,
@@ -199,6 +202,47 @@ def _build_challenger_summary(
         "calibration_method": calibration_method,
         "selection_score": selection_score,
     }
+
+
+def _prepare_target_optimization_summary(
+    *,
+    bars_df: "pd.DataFrame",
+    cfg: TrainingConfig,
+    sentiment_df: "pd.DataFrame | None" = None,
+    benchmark_df: "pd.DataFrame | None" = None,
+    universe_df: "pd.DataFrame | None" = None,
+) -> dict[str, Any]:
+    prepared_df = prepare_symbol_frame(
+        bars_df,
+        cfg.data,
+        sentiment_df=sentiment_df,
+        benchmark_df=benchmark_df,
+        universe_df=universe_df,
+    )
+    split = chrono_split(
+        prepared_df,
+        cfg.data.train_ratio,
+        cfg.data.val_ratio,
+        forecast_horizon=cfg.data.forecast_horizon,
+    )
+    train_df = split.train.reset_index(drop=True)
+    summary: dict[str, Any] = {
+        "fit_scope": "train_split_only",
+        "fit_rows": int(len(train_df)),
+        "prepared_rows": int(len(prepared_df)),
+        "val_rows": int(len(split.val)),
+        "test_rows": int(len(split.test)),
+    }
+    if train_df.empty:
+        summary["skipped_reason"] = "insufficient_train_rows_for_target_optimization"
+        return summary
+    optimized = optimize_target_parameters(
+        train_df,
+        data_cfg=cfg.data,
+        opt_cfg=cfg.target_optimization,
+    )
+    summary.update(optimized)
+    return summary
 
 
 def _collect_outputs(model: LSTMAttentionModule, dataloader: DataLoader | None, device: torch.device) -> dict[str, np.ndarray]:
@@ -472,6 +516,7 @@ def _run_walk_forward_validation(
         test_size=cfg.walk_forward.test_size,
         step_size=cfg.walk_forward.step_size,
         max_splits=cfg.walk_forward.max_splits,
+        forecast_horizon=cfg.data.forecast_horizon,
     )
     if not splits:
         LOGGER.warning("walk_forward skipped symbol=%s reason=no_valid_split", symbol)
@@ -668,8 +713,6 @@ def train_symbol(
     Returns:
         TrainResult avec status completed|skipped|failed.
     """
-    import pandas as pd  # noqa: F811 (lazy import pour picklability worker)
-
     torch.set_float32_matmul_precision("medium")
 
     run_id = f"{symbol}_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
@@ -690,10 +733,12 @@ def train_symbol(
         effective_cfg = cfg
         target_optimization_summary: dict[str, Any] = {}
         if cfg.target_optimization.enabled:
-            target_optimization_summary = optimize_target_parameters(
-                bars_df,
-                data_cfg=cfg.data,
-                opt_cfg=cfg.target_optimization,
+            target_optimization_summary = _prepare_target_optimization_summary(
+                bars_df=bars_df,
+                cfg=cfg,
+                sentiment_df=sentiment_df,
+                benchmark_df=benchmark_df,
+                universe_df=universe_df,
             )
             selected_horizon = int(target_optimization_summary.get("selected_horizon", cfg.data.forecast_horizon))
             selected_up_threshold = float(target_optimization_summary.get("selected_target_up_threshold", cfg.data.target_up_threshold))

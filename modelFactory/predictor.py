@@ -67,17 +67,18 @@ def _resolve_artifact_paths(
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
 
 
-def _check_feature_fingerprint(cfg_data: dict, *, symbol: str) -> None:
-    """Phase 4.2.b — WARNING (pas raise) si le fingerprint a dérivé.
+def _check_feature_fingerprint(cfg_data: dict, *, symbol: str) -> str | None:
+    """Contrôle le fingerprint de features et retourne une raison bloquante si dérive.
 
     Recalcule le fingerprint à partir du contrat de features actif et le
     compare à celui persisté dans ``config.json`` à l'entraînement. Une
-    dérive = changement silencieux de ``features.py`` ; bloquer l'inférence
-    serait trop strict, mais le WARNING permet de détecter en CI/log.
+    dérive = changement silencieux de ``features.py``. Pour un scoring live,
+    on préfère désormais refuser l'inférence si le manifeste déclare un
+    fingerprint incompatible.
     """
     persisted = cfg_data.get("feature_fingerprint")
     if not persisted:
-        return  # Modèle entraîné avant Phase 4.2.b — silencieux.
+        return None  # Modèle entraîné avant fingerprinting : rétro-compat.
     try:
         data_cfg = cfg_data.get("data") or {}
         current = compute_feature_fingerprint(
@@ -87,13 +88,19 @@ def _check_feature_fingerprint(cfg_data: dict, *, symbol: str) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("feature_fingerprint_check_failed symbol=%s error=%s", symbol, exc)
-        return
+        return f"feature_fingerprint_check_failed:{exc}"
     if current != persisted:
-        LOGGER.warning(
-            "feature_fingerprint_drift symbol=%s persisted=%s current=%s "
-            "(features.py a évolué depuis l'entraînement — ré-entraîner conseillé)",
-            symbol, persisted, current,
+        reason = (
+            f"feature_fingerprint_drift persisted={persisted} current={current} "
+            "(ré-entraîner requis avant serving)"
         )
+        LOGGER.error(
+            "feature_contract_violation symbol=%s reason=%s",
+            symbol,
+            reason,
+        )
+        return reason
+    return None
 
 
 # Phase 4.2.c — chargement format natif (.txt/.cbm) avec rétrocompat .pkl.
@@ -210,17 +217,20 @@ def _resolve_selected_model_route(
     routing = cfg_data.get("artifact_routes") or {}
     selected_model = str(routing.get("selected_model") or cfg_data.get("architecture_selected") or "lstm_attention")
     models = routing.get("models") or {}
+    fallback_reason: str | None = None
     if selected_model == "global_model":
         global_route = models.get("global_model") or {}
         if global_route.get("inference_backend") == "global_tabular" and global_route.get("config_path"):
             return {
+                "requested_model": selected_model,
                 "selected_model": "global_model",
                 "inference_backend": "global_tabular",
                 "config_path": Path(global_route["config_path"]),
                 "model_path": Path(global_route["model_path"]) if global_route.get("model_path") else None,
                 "calibrator_path": Path(global_route["calibrator_path"]) if global_route.get("calibrator_path") else None,
             }
-        LOGGER.warning("predict_symbol selected_model=global_model but route missing -> fallback lstm_attention")
+        fallback_reason = "selected_model=global_model route_missing -> fallback_lstm_attention"
+        LOGGER.warning("predict_symbol %s", fallback_reason)
 
     if selected_model in {"lightgbm", "catboost"}:
         local_route = models.get(selected_model) or {}
@@ -228,6 +238,7 @@ def _resolve_selected_model_route(
         route_config_path = Path(local_route["config_path"]) if local_route.get("config_path") else config_path
         if local_route.get("inference_backend") == expected_backend and local_route.get("model_path"):
             return {
+                "requested_model": selected_model,
                 "selected_model": selected_model,
                 "inference_backend": expected_backend,
                 "config_path": route_config_path,
@@ -236,17 +247,43 @@ def _resolve_selected_model_route(
                 "feature_columns": list(local_route.get("feature_columns") or []),
                 "selected_decision_threshold": local_route.get("selected_decision_threshold"),
             }
-        LOGGER.warning("predict_symbol selected_model=%s but local_tabular route missing -> fallback lstm_attention", selected_model)
+        fallback_reason = f"selected_model={selected_model} route_missing -> fallback_lstm_attention"
+        LOGGER.warning("predict_symbol %s", fallback_reason)
 
     lstm_route = models.get("lstm_attention") or {}
     routed_ckpt = Path(lstm_route.get("checkpoint_path")) if lstm_route.get("checkpoint_path") else ckpt_path
     routed_scaler = Path(lstm_route.get("scaler_path")) if lstm_route.get("scaler_path") else scaler_path
     return {
+        "requested_model": selected_model,
         "selected_model": "lstm_attention",
         "inference_backend": "lstm_attention",
         "checkpoint_path": routed_ckpt,
         "scaler_path": routed_scaler,
         "config_path": config_path,
+        "fallback_reason": fallback_reason,
+    }
+
+
+def _build_lstm_fallback_route(
+    cfg_data: dict,
+    *,
+    ckpt_path: Path,
+    scaler_path: Path,
+    config_path: Path,
+    requested_model: object,
+    reason: str,
+) -> dict[str, object]:
+    routing = cfg_data.get("artifact_routes") or {}
+    models = routing.get("models") or {}
+    lstm_route = models.get("lstm_attention") or {}
+    return {
+        "requested_model": str(requested_model or routing.get("selected_model") or cfg_data.get("architecture_selected") or "lstm_attention"),
+        "selected_model": "lstm_attention",
+        "inference_backend": "lstm_attention",
+        "checkpoint_path": Path(lstm_route.get("checkpoint_path")) if lstm_route.get("checkpoint_path") else ckpt_path,
+        "scaler_path": Path(lstm_route.get("scaler_path")) if lstm_route.get("scaler_path") else scaler_path,
+        "config_path": Path(lstm_route.get("config_path")) if lstm_route.get("config_path") else config_path,
+        "fallback_reason": reason,
     }
 
 
@@ -352,7 +389,7 @@ def _predict_with_tabular_model(
     decision_threshold: float | None = None,
 ) -> Optional[pd.DataFrame]:
     if not model_path.exists():
-        LOGGER.warning("predict_symbol tabular_model_missing symbol=%s selected_model=%s path=%s", symbol, selected_model, model_path)
+        LOGGER.error("predict_symbol tabular_model_missing symbol=%s selected_model=%s path=%s", symbol, selected_model, model_path)
         return None
     data_cfg = _load_data_cfg_from_payload(cfg_data)
     cutoff_date = as_of_date or prediction_date
@@ -367,11 +404,12 @@ def _predict_with_tabular_model(
     last_row = df.tail(1)
     missing_columns = [col for col in resolved_feature_columns if col not in last_row.columns]
     if missing_columns:
-        LOGGER.warning(
-            "predict_symbol missing_feature_columns symbol=%s selected_model=%s missing=%s",
+        LOGGER.error(
+            "predict_symbol feature_contract_violation symbol=%s selected_model=%s missing=%s expected=%s",
             symbol,
             selected_model,
             missing_columns,
+            resolved_feature_columns,
         )
         return None
     model = load_tabular_model_cached(model_path, selected_model=selected_model)
@@ -437,50 +475,95 @@ def predict_symbol(
     with open(config_path) as f:
         cfg_data = json.load(f)
 
-    # Phase 4.2.b — vérification fingerprint features (WARNING, pas raise).
-    _check_feature_fingerprint(cfg_data, symbol=symbol)
+    fingerprint_reason = _check_feature_fingerprint(cfg_data, symbol=symbol)
+    if fingerprint_reason is not None:
+        LOGGER.error("predict_symbol aborted symbol=%s reason=%s", symbol, fingerprint_reason)
+        return None
 
     route = _resolve_selected_model_route(cfg_data, ckpt_path, scaler_path, config_path)
     selected_architecture = str(route["selected_model"])
     if route.get("inference_backend") == "global_tabular":
-        global_config_path = route.get("config_path")
-        if global_config_path is None or not Path(global_config_path).exists():
-            LOGGER.warning("predict_symbol global_route_missing_config symbol=%s", symbol)
-            return None
-        with open(Path(global_config_path), encoding="utf-8") as fh:
-            global_cfg_data = json.load(fh)
-        return _predict_with_global_model(
-            symbol,
-            cfg_data=global_cfg_data,
-            model_path=Path(route["model_path"]),
-            calibrator_path=Path(route["calibrator_path"]) if route.get("calibrator_path") else None,
-            engine=engine,
-            prediction_date=prediction_date,
-            as_of_date=as_of_date,
-            persist=persist,
-        )
+        global_config_path = Path(route["config_path"]) if route.get("config_path") else None
+        model_path = Path(route["model_path"]) if route.get("model_path") else None
+        if global_config_path is None or not global_config_path.exists() or model_path is None or not model_path.exists():
+            route = _build_lstm_fallback_route(
+                cfg_data,
+                ckpt_path=ckpt_path,
+                scaler_path=scaler_path,
+                config_path=config_path,
+                requested_model=route.get("requested_model"),
+                reason="requested_model=global_model route_unservable -> fallback_lstm_attention",
+            )
+            selected_architecture = str(route["selected_model"])
+        else:
+            if route.get("fallback_reason"):
+                LOGGER.warning(
+                    "predict_symbol route_fallback symbol=%s requested_model=%s served_model=%s reason=%s",
+                    symbol,
+                    route.get("requested_model"),
+                    route.get("selected_model"),
+                    route.get("fallback_reason"),
+                )
+            with open(global_config_path, encoding="utf-8") as fh:
+                global_cfg_data = json.load(fh)
+            return _predict_with_global_model(
+                symbol,
+                cfg_data=global_cfg_data,
+                model_path=model_path,
+                calibrator_path=Path(route["calibrator_path"]) if route.get("calibrator_path") else None,
+                engine=engine,
+                prediction_date=prediction_date,
+                as_of_date=as_of_date,
+                persist=persist,
+            )
 
     if route.get("inference_backend") in {"lightgbm_tabular", "catboost_tabular"}:
         local_config_path = Path(route["config_path"])
-        if not local_config_path.exists():
-            LOGGER.warning("predict_symbol local_route_missing_config symbol=%s selected_model=%s", symbol, selected_architecture)
-            return None
-        local_cfg_data = cfg_data
-        if local_config_path.resolve() != config_path.resolve():
-            with open(local_config_path, encoding="utf-8") as fh:
-                local_cfg_data = json.load(fh)
-        return _predict_with_tabular_model(
+        model_path = Path(route["model_path"]) if route.get("model_path") else None
+        if not local_config_path.exists() or model_path is None or not model_path.exists():
+            route = _build_lstm_fallback_route(
+                cfg_data,
+                ckpt_path=ckpt_path,
+                scaler_path=scaler_path,
+                config_path=config_path,
+                requested_model=route.get("requested_model"),
+                reason=f"requested_model={selected_architecture} route_unservable -> fallback_lstm_attention",
+            )
+            selected_architecture = str(route["selected_model"])
+        else:
+            if route.get("fallback_reason"):
+                LOGGER.warning(
+                    "predict_symbol route_fallback symbol=%s requested_model=%s served_model=%s reason=%s",
+                    symbol,
+                    route.get("requested_model"),
+                    route.get("selected_model"),
+                    route.get("fallback_reason"),
+                )
+            local_cfg_data = cfg_data
+            if local_config_path.resolve() != config_path.resolve():
+                with open(local_config_path, encoding="utf-8") as fh:
+                    local_cfg_data = json.load(fh)
+            return _predict_with_tabular_model(
+                symbol,
+                selected_model=selected_architecture,
+                cfg_data=local_cfg_data,
+                model_path=model_path,
+                calibrator_path=Path(route["calibrator_path"]) if route.get("calibrator_path") else None,
+                engine=engine,
+                prediction_date=prediction_date,
+                as_of_date=as_of_date,
+                persist=persist,
+                feature_columns=list(route.get("feature_columns") or []),
+                decision_threshold=float(route["selected_decision_threshold"]) if route.get("selected_decision_threshold") is not None else None,
+            )
+
+    if route.get("fallback_reason"):
+        LOGGER.warning(
+            "predict_symbol route_fallback symbol=%s requested_model=%s served_model=%s reason=%s",
             symbol,
-            selected_model=selected_architecture,
-            cfg_data=local_cfg_data,
-            model_path=Path(route["model_path"]),
-            calibrator_path=Path(route["calibrator_path"]) if route.get("calibrator_path") else None,
-            engine=engine,
-            prediction_date=prediction_date,
-            as_of_date=as_of_date,
-            persist=persist,
-            feature_columns=list(route.get("feature_columns") or []),
-            decision_threshold=float(route["selected_decision_threshold"]) if route.get("selected_decision_threshold") is not None else None,
+            route.get("requested_model"),
+            route.get("selected_model"),
+            route.get("fallback_reason"),
         )
 
     ckpt_path = Path(route["checkpoint_path"])
@@ -504,11 +587,16 @@ def predict_symbol(
     cutoff_date = as_of_date or prediction_date
     df = _prepare_prediction_frame(symbol, data_cfg=data_cfg, engine=engine, cutoff_date=cutoff_date)
     if len(df) < data_cfg.sequence_length:
+        LOGGER.warning("predict_symbol insufficient_sequences symbol=%s rows=%d required=%d", symbol, len(df), data_cfg.sequence_length)
         return None
 
     # Take last sequence
     last_rows = df.tail(data_cfg.sequence_length)
-    features = scaler.transform(last_rows)
+    try:
+        features = scaler.transform(last_rows)
+    except KeyError as exc:
+        LOGGER.error("predict_symbol feature_contract_violation symbol=%s selected_model=%s error=%s", symbol, selected_architecture, exc)
+        return None
     x = torch.from_numpy(features.astype(np.float32)).unsqueeze(0).to(device=device, non_blocking=device.type == "cuda")  # [1, seq, feat]
 
     # Load model (Phase 4.2.d : cache LRU)

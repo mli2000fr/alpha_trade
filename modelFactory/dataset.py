@@ -40,14 +40,60 @@ class WalkForwardSplit:
     test: pd.DataFrame
 
 
-def chrono_split(df: pd.DataFrame, train_ratio: float, val_ratio: float) -> ChronoSplit:
-    """Split chronologique sans shuffle. Le df doit être trié par date."""
+def _validate_ordered_frame(df: pd.DataFrame, *, date_column: str | None = None) -> None:
+    if df.empty:
+        return
+    if date_column is not None and date_column in df.columns:
+        dates = pd.to_datetime(df[date_column])
+        if not dates.is_monotonic_increasing:
+            raise ValueError(f"Le DataFrame doit être trié par {date_column} croissant.")
+
+
+def _purged_bounds(*, start: int, end: int, purge_tail: int) -> tuple[int, int]:
+    purge_tail = max(int(purge_tail), 0)
+    if purge_tail == 0:
+        return start, end
+    return start, max(start, end - purge_tail)
+
+
+def _purge_by_dates(
+    df: pd.DataFrame,
+    *,
+    start_dates: pd.Index,
+    purge_tail_dates: int,
+    date_column: str = "date",
+) -> pd.DataFrame:
+    if start_dates.empty:
+        return df.iloc[0:0].copy().reset_index(drop=True)
+    keep_dates = start_dates[: max(0, len(start_dates) - max(int(purge_tail_dates), 0))]
+    if len(keep_dates) == 0:
+        return df.iloc[0:0].copy().reset_index(drop=True)
+    return df[df[date_column].isin(set(keep_dates))].reset_index(drop=True)
+
+
+def chrono_split(
+    df: pd.DataFrame,
+    train_ratio: float,
+    val_ratio: float,
+    *,
+    forecast_horizon: int = 0,
+    date_column: str | None = "date",
+) -> ChronoSplit:
+    """Split chronologique sans shuffle avec purge anti-lookahead aux frontières.
+
+    Les ``forecast_horizon`` dernières lignes du train et de la validation sont
+    retirées afin d'éviter qu'une target calculée sur ``t + horizon`` traverse la
+    frontière vers le split suivant.
+    """
+    _validate_ordered_frame(df, date_column=date_column)
     n = len(df)
     i_train = int(n * train_ratio)
     i_val = i_train + int(n * val_ratio)
+    train_start, train_end = _purged_bounds(start=0, end=i_train, purge_tail=forecast_horizon)
+    val_start, val_end = _purged_bounds(start=i_train, end=i_val, purge_tail=forecast_horizon)
     return ChronoSplit(
-        train=df.iloc[:i_train].reset_index(drop=True),
-        val=df.iloc[i_train:i_val].reset_index(drop=True),
+        train=df.iloc[train_start:train_end].reset_index(drop=True),
+        val=df.iloc[val_start:val_end].reset_index(drop=True),
         test=df.iloc[i_val:].reset_index(drop=True),
     )
 
@@ -60,8 +106,11 @@ def generate_walk_forward_splits(
     test_size: int,
     step_size: int,
     max_splits: int,
+    forecast_horizon: int = 0,
+    date_column: str | None = "date",
 ) -> list[WalkForwardSplit]:
-    """Construit des splits walk-forward en fenêtre expanding."""
+    """Construit des splits walk-forward en fenêtre expanding avec purge anti-lookahead."""
+    _validate_ordered_frame(df, date_column=date_column)
     splits: list[WalkForwardSplit] = []
     train_end = min_train_size
     split_index = 0
@@ -72,11 +121,13 @@ def generate_walk_forward_splits(
         test_end = val_end + test_size
         if test_end > n:
             break
+        train_start, purged_train_end = _purged_bounds(start=0, end=train_end, purge_tail=forecast_horizon)
+        val_start, purged_val_end = _purged_bounds(start=train_end, end=val_end, purge_tail=forecast_horizon)
         splits.append(
             WalkForwardSplit(
                 split_index=split_index,
-                train=df.iloc[:train_end].reset_index(drop=True),
-                val=df.iloc[train_end:val_end].reset_index(drop=True),
+                train=df.iloc[train_start:purged_train_end].reset_index(drop=True),
+                val=df.iloc[val_start:purged_val_end].reset_index(drop=True),
                 test=df.iloc[val_end:test_end].reset_index(drop=True),
             )
         )
@@ -84,6 +135,31 @@ def generate_walk_forward_splits(
         train_end += step_size
 
     return splits
+
+
+def chrono_split_by_dates(
+    df: pd.DataFrame,
+    *,
+    train_ratio: float,
+    val_ratio: float,
+    forecast_horizon: int = 0,
+    date_column: str = "date",
+) -> ChronoSplit:
+    """Split chronologique par dates uniques avec purge des dernières dates train/val."""
+    if date_column not in df.columns:
+        raise ValueError(f"Colonne date absente: {date_column}")
+    _validate_ordered_frame(df, date_column=date_column)
+    dated = df.copy()
+    dated[date_column] = pd.to_datetime(dated[date_column])
+    unique_dates = pd.Index(sorted(dated[date_column].unique()))
+    n_dates = len(unique_dates)
+    i_train = int(n_dates * train_ratio)
+    i_val = i_train + int(n_dates * val_ratio)
+    train = _purge_by_dates(dated, start_dates=unique_dates[:i_train], purge_tail_dates=forecast_horizon, date_column=date_column)
+    val = _purge_by_dates(dated, start_dates=unique_dates[i_train:i_val], purge_tail_dates=forecast_horizon, date_column=date_column)
+    test_dates = unique_dates[i_val:]
+    test = dated[dated[date_column].isin(set(test_dates))].reset_index(drop=True)
+    return ChronoSplit(train=train, val=val, test=test)
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +306,12 @@ class SymbolDataModule(L.LightningDataModule):
         self.prepared_df = df
         self.cross_sectional_diagnostics = dict(df.attrs.get("cross_sectional_diagnostics", {}))
         # 2. Chrono split
-        split = chrono_split(df, self.data_cfg.train_ratio, self.data_cfg.val_ratio)
+        split = chrono_split(
+            df,
+            self.data_cfg.train_ratio,
+            self.data_cfg.val_ratio,
+            forecast_horizon=self.data_cfg.forecast_horizon,
+        )
         self.split = split
         # 3. Fit scaler on train
         self.scaler.fit(split.train)

@@ -1,6 +1,7 @@
 import pandas as pd
 
 from modelFactory import dataset
+from modelFactory import global_model, tabular_baseline
 
 def test_dataset_importable():
     assert hasattr(dataset, "__doc__")
@@ -25,6 +26,70 @@ def test_generate_walk_forward_splits_is_chronological() -> None:
     assert splits[0].test["i"].iloc[0] == 500
     assert splits[1].train["i"].iloc[-1] == 499
     assert splits[2].test["i"].iloc[-1] == 799
+
+
+def test_chrono_split_purges_train_and_val_boundaries_for_forecast_horizon() -> None:
+    df = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=20, freq="D"), "i": range(20)})
+
+    split = dataset.chrono_split(df, 0.50, 0.25, forecast_horizon=2)
+
+    assert split.train["i"].tolist() == list(range(8))
+    assert split.val["i"].tolist() == [10, 11, 12]
+    assert split.test["i"].tolist() == [15, 16, 17, 18, 19]
+
+
+def test_generate_walk_forward_splits_purges_boundary_windows() -> None:
+    df = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=24, freq="D"), "i": range(24)})
+
+    splits = dataset.generate_walk_forward_splits(
+        df,
+        min_train_size=8,
+        val_size=4,
+        test_size=4,
+        step_size=4,
+        max_splits=2,
+        forecast_horizon=2,
+    )
+
+    assert [row for row in splits[0].train["i"].tolist()] == [0, 1, 2, 3, 4, 5]
+    assert splits[0].val["i"].tolist() == [8, 9]
+    assert splits[0].test["i"].tolist() == [12, 13, 14, 15]
+    assert splits[1].train["i"].tolist() == list(range(10))
+    assert splits[1].val["i"].tolist() == [12, 13]
+
+
+def test_tabular_split_purges_future_horizon_rows() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=18, freq="D"),
+            "target": [1.0] * 18,
+            "future_return": [0.01] * 18,
+            "feat": [float(i) for i in range(18)],
+        }
+    )
+
+    train_df, val_df, test_df = tabular_baseline.tabular_split(df, train_ratio=0.5, val_ratio=0.25, forecast_horizon=2)
+
+    assert train_df["feat"].tolist() == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    assert val_df["feat"].tolist() == [9.0, 10.0]
+    assert test_df["feat"].tolist() == [13.0, 14.0, 15.0, 16.0, 17.0]
+
+
+def test_global_date_split_purges_last_dates_before_next_bucket() -> None:
+    dates = pd.date_range("2024-01-01", periods=8, freq="D")
+    df = pd.DataFrame(
+        {
+            "date": list(dates) * 2,
+            "symbol": ["AAPL"] * 8 + ["MSFT"] * 8,
+            "target": [1.0] * 16,
+        }
+    ).sort_values(["date", "symbol"]).reset_index(drop=True)
+
+    train_df, val_df, test_df = global_model._split_global_by_dates(df, train_ratio=0.5, val_ratio=0.25, forecast_horizon=1)
+
+    assert sorted(train_df["date"].dt.strftime("%Y-%m-%d").unique().tolist()) == ["2024-01-01", "2024-01-02", "2024-01-03"]
+    assert sorted(val_df["date"].dt.strftime("%Y-%m-%d").unique().tolist()) == ["2024-01-05"]
+    assert sorted(test_df["date"].dt.strftime("%Y-%m-%d").unique().tolist()) == ["2024-01-07", "2024-01-08"]
 
 
 def test_prepare_symbol_frame_adds_future_return() -> None:

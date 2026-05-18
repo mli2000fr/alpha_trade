@@ -550,3 +550,112 @@ def test_predict_symbol_can_route_to_global_model(tmp_path: Path, monkeypatch) -
     assert row["predicted_class"] == 1
 
 
+def test_predict_symbol_falls_back_to_lstm_when_selected_tabular_route_is_unservable(tmp_path: Path, monkeypatch) -> None:
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat1"]}, cast(Any, fh))
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                },
+                "run_id": "run-config",
+                "artifact_routes": {
+                    "selected_model": "lightgbm",
+                    "models": {
+                        "lightgbm": {
+                            "inference_backend": "lightgbm_tabular",
+                            "config_path": str(symbol_dir / "config.json"),
+                            "model_path": str(symbol_dir / "missing_lightgbm_model.pkl"),
+                            "feature_columns": ["feat1"],
+                            "selected_decision_threshold": 0.61,
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"close": list(range(62))})
+    features = pd.DataFrame({"feat1": [float(i) for i in range(62)]})
+
+    class FakeModel:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, x):
+            return torch.tensor([[0.0, 2.0]], dtype=torch.float32), torch.tensor([[1.0]])
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(
+        predictor,
+        "compute_features",
+        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+    )
+    monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(
+        predictor.LSTMAttentionModule,
+        "load_from_checkpoint",
+        lambda path, map_location=None: FakeModel(),
+    )
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is not None
+    row = result.to_dict(orient="records")[0]
+    assert row["selected_model"] == "lstm_attention"
+    assert row["predicted_class"] == 1
+
+
+def test_predict_symbol_aborts_on_feature_fingerprint_drift(tmp_path: Path, monkeypatch) -> None:
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump({"mean": [0.0], "std": [1.0], "features": ["feat1"]}, cast(Any, fh))
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                },
+                "run_id": "run-config",
+                "feature_fingerprint": "outdated-contract",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is None
+
+
