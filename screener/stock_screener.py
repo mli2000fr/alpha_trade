@@ -476,7 +476,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--trade-date",
         type=str,
         default=None,
-        help="Date logique du run (YYYY-MM-DD). Utilisée comme snapshot_date pour l'archivage stock_scores_history. Défaut : aujourd'hui.",
+        help="Date logique du run (YYYY-MM-DD). Utilisée à la fois comme borne PIT des lectures (as_of_date) et comme snapshot_date pour l'archivage stock_scores_history. Défaut : aujourd'hui (mode live).",
     )
     return parser
 
