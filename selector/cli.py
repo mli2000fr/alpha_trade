@@ -9,7 +9,7 @@ from datetime import date
 import pandas as pd
 
 from common.utils import configure_root_logging
-from selector.config import AlphaScannerConfig
+from selector.config import SUPPORTED_DATA_QUALITY_MODES, AlphaScannerConfig
 from selector.run_summary import (
     _build_cli_run_summary,
     _emit_run_summary,
@@ -37,7 +37,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-market-cap", type=float, default=None, help="Capitalisation minimale, ex. 2000000000 = 2 Md$")
     parser.add_argument("--min-beta-126", type=float, default=None, help="Beta minimale calculée sur 126 séances vs SPY")
     parser.add_argument("--max-spread-bps", type=float, default=None, help="Spread bid/ask maximal en basis points")
+    parser.add_argument(
+        "--spread-data-quality-mode",
+        choices=sorted(SUPPORTED_DATA_QUALITY_MODES),
+        default=None,
+        help="Comportement si les données quotes/spread sont indisponibles: block ou warn_skip_filter.",
+    )
     parser.add_argument("--earnings-blackout-days", type=int, default=None, help="Exclut les titres dont les résultats tombent dans les N prochains jours")
+    parser.add_argument(
+        "--earnings-data-quality-mode",
+        choices=sorted(SUPPORTED_DATA_QUALITY_MODES),
+        default=None,
+        help="Comportement si le calendrier earnings est indisponible: block ou warn_skip_filter.",
+    )
+    parser.add_argument(
+        "--market-cap-data-quality-mode",
+        choices=sorted(SUPPORTED_DATA_QUALITY_MODES),
+        default=None,
+        help="Comportement si la fraîcheur market_cap TTL est indisponible: block ou warn_skip_filter.",
+    )
     parser.add_argument("--require-above-ma200", action="store_true", default=False, help="Exige latest_close > MA200")
     parser.add_argument("--max-anomaly-count", type=int, default=20, help="Nombre maximum d'anomalies accepté par titre")
     parser.add_argument("--sector-cap-ratio", type=float, default=0.30, help="Plafond par secteur, ex. 0.30 = 30%%")
@@ -75,8 +93,14 @@ def _build_config_from_args(args: argparse.Namespace) -> AlphaScannerConfig:
         threshold_overrides["min_beta_126"] = args.min_beta_126
     if args.max_spread_bps is not None:
         threshold_overrides["max_spread_bps"] = args.max_spread_bps
+    if args.spread_data_quality_mode is not None:
+        threshold_overrides["spread_data_quality_mode"] = args.spread_data_quality_mode
     if args.earnings_blackout_days is not None:
         threshold_overrides["earnings_blackout_days"] = args.earnings_blackout_days
+    if args.earnings_data_quality_mode is not None:
+        threshold_overrides["earnings_data_quality_mode"] = args.earnings_data_quality_mode
+    if args.market_cap_data_quality_mode is not None:
+        threshold_overrides["market_cap_filter_data_quality_mode"] = args.market_cap_data_quality_mode
     if args.require_above_ma200:
         threshold_overrides["require_above_ma200"] = True
 
@@ -124,6 +148,7 @@ def main() -> None:
                 run_status="blocked",
                 failure_reason="data_quality_gate_blocked",
                 data_quality_gate=exc.payload,
+                preselection_rejections=getattr(scanner, "get_last_preselection_audit", lambda: None)(),
             )
         )
         print("Run bloqué par le data quality gate selector.")
@@ -146,6 +171,7 @@ def main() -> None:
             finished_at=finished_at,
             rejected_by_filter=rejected_by_filter,
             data_quality_gate=getattr(scanner, "get_last_data_quality_gate", lambda: None)(),
+            preselection_rejections=getattr(scanner, "get_last_preselection_audit", lambda: None)(),
         )
     )
 

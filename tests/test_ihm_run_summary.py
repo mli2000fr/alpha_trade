@@ -405,6 +405,25 @@ def test_get_run_summary_detail_lines_exposes_alpha_scanner_top_candidate_explai
         {
             "step_key": "alpha_scanner",
             "run_summary": {
+                "data_quality_gate": {
+                    "status": "warning",
+                    "skipped_filters": ["market_cap_ttl"],
+                },
+                "preselection_rejections": {
+                    "status": "ok",
+                    "input_symbols": 12,
+                    "eligible_symbols": 5,
+                    "rejected_symbols": 7,
+                    "eligible_ratio": 0.4167,
+                    "top_reasons": [
+                        {
+                            "reason": "history_status_blocked",
+                            "label": "history_status bloqué",
+                            "count": 3,
+                            "sample_symbols": ["ERR", "STALE"],
+                        }
+                    ],
+                },
                 "top_candidate_explanations": [
                     {
                         "rank": 1,
@@ -434,6 +453,10 @@ def test_get_run_summary_detail_lines_exposes_alpha_scanner_top_candidate_explai
         }
     )
 
+    assert any("Fallback data-quality appliqué" in line for line in lines)
+    assert any("market_cap_ttl" in line for line in lines)
+    assert any("Préselection SQL" in line for line in lines)
+    assert any("history_status bloqué=3" in line for line in lines)
     assert any("Top #1 AAPL" in line for line in lines)
     assert any("mode=sector_neutralized" in line for line in lines)
     assert any("trend/VCP=0.4100" in line for line in lines)

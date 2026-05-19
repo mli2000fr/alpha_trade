@@ -273,6 +273,49 @@ def _format_alpha_scanner_candidate_detail_line(candidate: Mapping[str, object])
     return line
 
 
+def _format_alpha_scanner_preselection_detail_line(summary: Mapping[str, object]) -> str | None:
+    payload = summary.get("preselection_rejections")
+    if not isinstance(payload, Mapping):
+        return None
+    status = str(payload.get("status") or "").strip().lower()
+    if status == "unavailable":
+        reason = str(payload.get("reason") or "unknown").strip()
+        return f"Préselection SQL : audit indisponible ({reason})."
+
+    input_symbols = _to_int(payload.get("input_symbols"))
+    eligible_symbols = _to_int(payload.get("eligible_symbols"))
+    rejected_symbols = _to_int(payload.get("rejected_symbols"))
+    eligible_ratio = _to_float(payload.get("eligible_ratio"))
+    parts = [f"Préselection SQL : éligibles={eligible_symbols}/{input_symbols}"]
+    if eligible_ratio is not None:
+        parts.append(f"ratio={eligible_ratio * 100.0:.2f}%")
+    if rejected_symbols > 0:
+        parts.append(f"rejets={rejected_symbols}")
+
+    top_reasons = payload.get("top_reasons")
+    top_reason_parts: list[str] = []
+    if isinstance(top_reasons, list):
+        for item in top_reasons[:3]:
+            if not isinstance(item, Mapping):
+                continue
+            label = str(item.get("label") or item.get("reason") or "").strip()
+            count = _to_int(item.get("count"))
+            sample_symbols_raw = item.get("sample_symbols")
+            sample_symbols = (
+                ", ".join(str(symbol) for symbol in sample_symbols_raw if str(symbol).strip())
+                if isinstance(sample_symbols_raw, SequenceABC) and not isinstance(sample_symbols_raw, (str, bytes))
+                else ""
+            )
+            if not label or count <= 0:
+                continue
+            suffix = f" [{sample_symbols}]" if sample_symbols else ""
+            top_reason_parts.append(f"{label}={count}{suffix}")
+    line = " — ".join(parts) + "."
+    if top_reason_parts:
+        line += f" Principaux rejets : {'; '.join(top_reason_parts)}."
+    return line
+
+
 def get_run_summary(record: Mapping[str, object] | None) -> dict[str, object]:
     if not record:
         return {}
@@ -520,6 +563,20 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
                     )
 
     if step_key == "alpha_scanner":
+        data_quality_gate = summary.get("data_quality_gate")
+        if isinstance(data_quality_gate, Mapping):
+            skipped_filters = data_quality_gate.get("skipped_filters")
+            if isinstance(skipped_filters, SequenceABC) and not isinstance(skipped_filters, (str, bytes)):
+                skipped_labels = [str(value).strip() for value in skipped_filters if str(value).strip()]
+                if skipped_labels:
+                    lines.append(
+                        "Fallback data-quality appliqué : filtres sautés = "
+                        + ", ".join(skipped_labels)
+                        + "."
+                    )
+        preselection_line = _format_alpha_scanner_preselection_detail_line(summary)
+        if preselection_line:
+            lines.append(preselection_line)
         top_candidates = summary.get("top_candidate_explanations")
         if isinstance(top_candidates, list):
             for candidate in top_candidates[:3]:

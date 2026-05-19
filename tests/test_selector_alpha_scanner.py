@@ -112,6 +112,25 @@ def test_cli_explicit_thresholds_override_strict_preset() -> None:
     assert config.earnings_blackout_days == 5
 
 
+def test_cli_can_override_data_quality_modes_per_filter() -> None:
+    args = _build_arg_parser().parse_args(
+        [
+            "--spread-data-quality-mode",
+            "warn_skip_filter",
+            "--earnings-data-quality-mode",
+            "warn_skip_filter",
+            "--market-cap-data-quality-mode",
+            "warn_skip_filter",
+        ]
+    )
+
+    config = _build_config_from_args(args)
+
+    assert config.spread_data_quality_mode == "warn_skip_filter"
+    assert config.earnings_data_quality_mode == "warn_skip_filter"
+    assert config.market_cap_filter_data_quality_mode == "warn_skip_filter"
+
+
 def test_cli_without_preset_uses_strict_profile_implicitly() -> None:
     args = _build_arg_parser().parse_args([])
 
@@ -445,6 +464,11 @@ def test_alpha_scanner_config_rejects_negative_min_quote_size() -> None:
 def test_alpha_scanner_config_rejects_negative_market_cap_ttl() -> None:
     with pytest.raises(ValueError, match="market_cap_max_age_days"):
         AlphaScannerConfig(market_cap_max_age_days=-5)
+
+
+def test_alpha_scanner_config_rejects_unknown_data_quality_mode() -> None:
+    with pytest.raises(ValueError, match="spread_data_quality_mode"):
+        AlphaScannerConfig(spread_data_quality_mode="skip")
 
 
 def test_apply_filters_iex_relaxation_rescues_thick_book() -> None:

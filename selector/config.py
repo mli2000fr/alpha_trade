@@ -15,6 +15,12 @@ from core.filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
 
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 PRICE_COLUMNS = ["symbol", "date", "close", "volume", "high", "low"]
+DATA_QUALITY_MODE_BLOCK = "block"
+DATA_QUALITY_MODE_WARN_SKIP_FILTER = "warn_skip_filter"
+SUPPORTED_DATA_QUALITY_MODES = {
+    DATA_QUALITY_MODE_BLOCK,
+    DATA_QUALITY_MODE_WARN_SKIP_FILTER,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +48,10 @@ class AlphaScannerConfig:
     min_quote_size: float | None = None
     # Phase 3.3.d — TTL appliqué au filtre ``min_market_cap``.
     market_cap_max_age_days: int | None = None
+    spread_data_quality_mode: str = DATA_QUALITY_MODE_BLOCK
     earnings_blackout_days: int | None = None
+    earnings_data_quality_mode: str = DATA_QUALITY_MODE_BLOCK
+    market_cap_filter_data_quality_mode: str = DATA_QUALITY_MODE_WARN_SKIP_FILTER
     require_above_ma200: bool = False
     max_anomaly_count: int = 20
     max_missing_days_count: int = 10
@@ -138,6 +147,15 @@ class AlphaScannerConfig:
             raise ValueError("market_cap_max_age_days doit être positif ou nul lorsqu'il est renseigné.")
         if self.earnings_blackout_days is not None and self.earnings_blackout_days < 0:
             raise ValueError("earnings_blackout_days doit être positif ou nul lorsqu'il est renseigné.")
+        for field_name, field_value in (
+            ("spread_data_quality_mode", self.spread_data_quality_mode),
+            ("earnings_data_quality_mode", self.earnings_data_quality_mode),
+            ("market_cap_filter_data_quality_mode", self.market_cap_filter_data_quality_mode),
+        ):
+            if str(field_value).strip() not in SUPPORTED_DATA_QUALITY_MODES:
+                raise ValueError(
+                    f"{field_name} doit être l'un de {sorted(SUPPORTED_DATA_QUALITY_MODES)}."
+                )
         if (
             self.min_atr_pct_20 is not None
             and self.max_atr_pct_20 is not None
@@ -164,5 +182,12 @@ class AlphaScannerConfig:
             raise ValueError("winsor_lower_pct et winsor_upper_pct doivent respecter 0 ≤ lower < upper ≤ 1.")
 
 
-__all__ = ["AlphaScannerConfig", "PRICE_COLUMNS", "RUN_SUMMARY_PREFIX"]
+__all__ = [
+    "AlphaScannerConfig",
+    "DATA_QUALITY_MODE_BLOCK",
+    "DATA_QUALITY_MODE_WARN_SKIP_FILTER",
+    "PRICE_COLUMNS",
+    "RUN_SUMMARY_PREFIX",
+    "SUPPORTED_DATA_QUALITY_MODES",
+]
 

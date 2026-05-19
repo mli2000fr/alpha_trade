@@ -71,7 +71,46 @@ class _FakeScanner:
         }
 
     def get_last_data_quality_gate(self) -> dict[str, object]:
-        return {"status": "ok", "reference_date": "2026-04-30", "blocking_checks": [], "checks": {}}
+        return {
+            "status": "warning",
+            "reference_date": "2026-04-30",
+            "blocking_checks": [],
+            "warning_checks": ["market_cap"],
+            "skipped_filters": ["market_cap_ttl"],
+            "checks": {
+                "market_cap": {
+                    "status": "warning",
+                    "filter_key": "market_cap_ttl",
+                    "applied_filter_fallback": "skip_filter",
+                }
+            },
+        }
+
+    def get_last_preselection_audit(self) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "input_symbols": 12,
+            "eligible_symbols": 5,
+            "rejected_symbols": 7,
+            "eligible_ratio": 0.4167,
+            "reason_counts": {
+                "history_status_blocked": 3,
+                "below_min_close": 2,
+                "below_liquidity_threshold": 2,
+            },
+            "sample_symbols_by_reason": {
+                "history_status_blocked": ["ERR", "STALE"],
+                "below_min_close": ["PENNY"],
+            },
+            "top_reasons": [
+                {
+                    "reason": "history_status_blocked",
+                    "label": "history_status bloqué",
+                    "count": 3,
+                    "sample_symbols": ["ERR", "STALE"],
+                }
+            ],
+        }
 
 
 def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> None:
@@ -147,7 +186,15 @@ def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> Non
     assert "max_spread_bps_iex" in payload
     assert "min_quote_size" in payload
     assert "market_cap_max_age_days" in payload
-    assert payload["data_quality_gate"]["status"] == "ok"
+    assert payload["data_quality_gate"]["status"] == "warning"
+    assert payload["data_quality_modes"] == {
+        "spread": "block",
+        "earnings_blackout": "block",
+        "market_cap_ttl": "warn_skip_filter",
+    }
+    assert payload["skipped_filters"] == ["market_cap_ttl"]
+    assert payload["preselection_rejections"]["input_symbols"] == 12
+    assert payload["preselection_rejections"]["reason_counts"]["history_status_blocked"] == 3
     assert payload["top_candidate_explanations"][0]["symbol"] == "AAPL"
     assert payload["top_candidate_explanations"][0]["selector_signal_mode"] == "sector_neutralized"
     explainability_payload = payload["top_candidate_explanations"][0]["candidate_explainability_payload"]

@@ -21,8 +21,9 @@ import logging
 import os
 import threading
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import replace
 from datetime import UTC, date, datetime
 
 import pandas as pd
@@ -77,6 +78,7 @@ class AlphaScanner:
         self._aggregated_filter_stats: Counter[str] = Counter()
         self._filter_stats_lock = threading.Lock()
         self._last_data_quality_gate: dict[str, object] | None = None
+        self._last_preselection_audit: dict[str, object] | None = None
         self.progress_callback = None
 
     # ------------------------------------------------------------------
@@ -90,6 +92,9 @@ class AlphaScanner:
     def get_last_data_quality_gate(self) -> dict[str, object] | None:
         return dict(self._last_data_quality_gate) if self._last_data_quality_gate else None
 
+    def get_last_preselection_audit(self) -> dict[str, object] | None:
+        return dict(self._last_preselection_audit) if self._last_preselection_audit else None
+
     def preflight_data_quality(self, *, reference_date: date | None = None) -> dict[str, object]:
         effective_reference_date = reference_date or getattr(self, "snapshot_date_override", None) or date.today()
         payload = _db_io.build_data_quality_gate(
@@ -100,17 +105,60 @@ class AlphaScanner:
         self._last_data_quality_gate = payload
         return payload
 
+    def _build_runtime_config_from_data_quality_gate(
+        self,
+        data_quality_gate: Mapping[str, object],
+    ) -> AlphaScannerConfig:
+        checks = data_quality_gate.get("checks")
+        if not isinstance(checks, Mapping):
+            return self.config
+        overrides: dict[str, object] = {}
+        skipped_filters: list[str] = []
+        for payload in checks.values():
+            if not isinstance(payload, Mapping) or payload.get("applied_filter_fallback") != "skip_filter":
+                continue
+            filter_key = str(payload.get("filter_key") or "").strip()
+            if filter_key == "spread":
+                overrides.update({
+                    "max_spread_bps": None,
+                    "max_spread_bps_iex": None,
+                    "min_quote_size": None,
+                })
+            elif filter_key == "earnings_blackout":
+                overrides["earnings_blackout_days"] = None
+            elif filter_key == "market_cap_ttl":
+                overrides["market_cap_max_age_days"] = None
+            if filter_key:
+                skipped_filters.append(filter_key)
+        if not overrides:
+            return self.config
+        LOGGER.warning(
+            "AlphaScanner poursuit avec fallback data-quality | skipped_filters=%s overrides=%s",
+            skipped_filters,
+            sorted(overrides),
+        )
+        return replace(self.config, **overrides)
+
+    def _capture_preselection_audit(self) -> dict[str, object]:
+        payload = _db_io.build_preselection_rejection_audit(
+            self.engine,
+            self.config,
+            self._get_stock_metadata_columns(),
+        )
+        self._last_preselection_audit = payload
+        return payload
+
     def _get_stock_metadata_columns(self) -> set[str]:
         if self._stock_metadata_columns_cache is None:
             self._stock_metadata_columns_cache = _db_io.get_stock_metadata_columns(self.engine)
-        return self._stock_metadata_columns_cache
+        return set(self._stock_metadata_columns_cache or set())
 
     def _get_stock_quote_snapshots_columns(self) -> set[str]:
         if self._stock_quote_snapshots_columns_cache is None:
             self._stock_quote_snapshots_columns_cache = (
                 _db_io.get_stock_quote_snapshots_columns(self.engine)
             )
-        return self._stock_quote_snapshots_columns_cache
+        return set(self._stock_quote_snapshots_columns_cache or set())
 
     # ------------------------------------------------------------------
     # Lecture DB (délégation)
@@ -240,6 +288,7 @@ class AlphaScanner:
         )
 
         data_quality_gate = self.preflight_data_quality()
+        self._last_preselection_audit = None
         if data_quality_gate.get("status") == "blocked":
             LOGGER.error(
                 "AlphaScanner bloque par le data quality gate | reference_date=%s blocking_checks=%s",
@@ -248,38 +297,65 @@ class AlphaScanner:
             )
             raise SelectorDataQualityError(data_quality_gate)
 
-        self._reset_selector_outputs()
+        runtime_config = self._build_runtime_config_from_data_quality_gate(data_quality_gate)
+        self._capture_preselection_audit()
 
-        all_frames: list[pd.DataFrame] = []
-        workers = self._resolve_worker_count()
-        max_in_flight = max(2, workers * 2)
-        pending: set[Future[pd.DataFrame]] = set()
-        submitted_chunks = 0
-        completed_chunks = 0
-        symbol_chunks = list(self._iter_eligible_symbol_chunks())
-        eligible_symbols = sum(len(chunk) for chunk in symbol_chunks)
-        total_chunks = len(symbol_chunks)
+        original_config = self.config
+        self.config = runtime_config
+        try:
+            self._reset_selector_outputs()
 
-        def _scan_progress() -> None:
-            self._emit_live_progress(
-                current=completed_chunks,
-                total=total_chunks,
-                label="🎯 Progression Alpha Scanner — scan multi-facteurs",
-                phase="scan_chunks",
-                extra_summary={
-                    "eligible_symbols": eligible_symbols,
-                    "chunks_submitted": submitted_chunks,
-                    "chunks_completed": completed_chunks,
-                    "chunks_total": total_chunks,
-                    "selected_candidates": sum(len(frame) for frame in all_frames),
-                },
-            )
+            all_frames: list[pd.DataFrame] = []
+            workers = self._resolve_worker_count()
+            max_in_flight = max(2, workers * 2)
+            pending: set[Future[pd.DataFrame]] = set()
+            submitted_chunks = 0
+            completed_chunks = 0
+            symbol_chunks = list(self._iter_eligible_symbol_chunks())
+            eligible_symbols = sum(len(chunk) for chunk in symbol_chunks)
+            total_chunks = len(symbol_chunks)
 
-        _scan_progress()
+            def _scan_progress() -> None:
+                self._emit_live_progress(
+                    current=completed_chunks,
+                    total=total_chunks,
+                    label="🎯 Progression Alpha Scanner — scan multi-facteurs",
+                    phase="scan_chunks",
+                    extra_summary={
+                        "eligible_symbols": eligible_symbols,
+                        "chunks_submitted": submitted_chunks,
+                        "chunks_completed": completed_chunks,
+                        "chunks_total": total_chunks,
+                        "selected_candidates": sum(len(frame) for frame in all_frames),
+                    },
+                )
 
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            for symbols in symbol_chunks:
-                while len(pending) >= max_in_flight:
+            _scan_progress()
+
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                for symbols in symbol_chunks:
+                    while len(pending) >= max_in_flight:
+                        done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                        completed_chunks += self._collect_completed(done, all_frames)
+                        _scan_progress()
+                        LOGGER.info(
+                            "Progression scan | chunks_termines=%s chunks_soumis=%s en_vol=%s candidats_cumules=%s",
+                            completed_chunks,
+                            submitted_chunks,
+                            len(pending),
+                            sum(len(frame) for frame in all_frames),
+                        )
+                    pending.add(executor.submit(self._process_chunk, symbols))
+                    submitted_chunks += 1
+                    _scan_progress()
+                    LOGGER.info(
+                        "Chunk soumis | index=%s taille=%s en_vol=%s",
+                        submitted_chunks,
+                        len(symbols),
+                        len(pending),
+                    )
+
+                while pending:
                     done, pending = wait(pending, return_when=FIRST_COMPLETED)
                     completed_chunks += self._collect_completed(done, all_frames)
                     _scan_progress()
@@ -290,76 +366,57 @@ class AlphaScanner:
                         len(pending),
                         sum(len(frame) for frame in all_frames),
                     )
-                pending.add(executor.submit(self._process_chunk, symbols))
-                submitted_chunks += 1
-                _scan_progress()
-                LOGGER.info(
-                    "Chunk soumis | index=%s taille=%s en_vol=%s",
-                    submitted_chunks,
-                    len(symbols),
-                    len(pending),
-                )
 
-            while pending:
-                done, pending = wait(pending, return_when=FIRST_COMPLETED)
-                completed_chunks += self._collect_completed(done, all_frames)
-                _scan_progress()
-                LOGGER.info(
-                    "Progression scan | chunks_termines=%s chunks_soumis=%s en_vol=%s candidats_cumules=%s",
-                    completed_chunks,
-                    submitted_chunks,
-                    len(pending),
-                    sum(len(frame) for frame in all_frames),
-                )
+            merged_candidates = pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
+            LOGGER.info("Agregation terminee | lignes_candidates=%s", len(merged_candidates))
 
-        merged_candidates = pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
-        LOGGER.info("Agregation terminee | lignes_candidates=%s", len(merged_candidates))
+            # Neutralisation cross-sectorielle sur l'univers COMPLET.
+            merged_candidates = self._apply_factor_neutralization(merged_candidates)
 
-        # Neutralisation cross-sectorielle sur l'univers COMPLET.
-        merged_candidates = self._apply_factor_neutralization(merged_candidates)
+            selected = self.rank_and_select(merged_candidates)
+            scored_for_persistence = merged_candidates.copy()
+            if not scored_for_persistence.empty:
+                if not selected.empty and {"symbol", "rank"}.issubset(selected.columns):
+                    candidate_rank_map = selected.set_index("symbol")["rank"]
+                    scored_for_persistence["candidate_rank"] = scored_for_persistence["symbol"].map(candidate_rank_map)
+                elif "candidate_rank" not in scored_for_persistence.columns:
+                    scored_for_persistence["candidate_rank"] = pd.NA
 
-        selected = self.rank_and_select(merged_candidates)
-        scored_for_persistence = merged_candidates.copy()
-        if not scored_for_persistence.empty:
-            if not selected.empty and {"symbol", "rank"}.issubset(selected.columns):
-                candidate_rank_map = selected.set_index("symbol")["rank"]
-                scored_for_persistence["candidate_rank"] = scored_for_persistence["symbol"].map(candidate_rank_map)
-            elif "candidate_rank" not in scored_for_persistence.columns:
-                scored_for_persistence["candidate_rank"] = pd.NA
-
-        self._emit_live_progress(
-            current=total_chunks,
-            total=total_chunks,
-            label="🎯 Progression Alpha Scanner — sélection finale",
-            phase="rank_select",
-            extra_summary={
-                "eligible_symbols": eligible_symbols,
-                "chunks_submitted": submitted_chunks,
-                "chunks_completed": completed_chunks,
-                "chunks_total": total_chunks,
-                "selected_candidates": int(len(selected)),
-            },
-        )
-
-        self.update_database(selected, scored_for_persistence)
-
-        elapsed = (datetime.now(UTC) - started_at).total_seconds()
-
-        if selected.empty:
-            zero_candidate_diagnostic = _summarize_zero_candidate_filters(
-                self.get_aggregated_filter_stats()
+            self._emit_live_progress(
+                current=total_chunks,
+                total=total_chunks,
+                label="🎯 Progression Alpha Scanner — sélection finale",
+                phase="rank_select",
+                extra_summary={
+                    "eligible_symbols": eligible_symbols,
+                    "chunks_submitted": submitted_chunks,
+                    "chunks_completed": completed_chunks,
+                    "chunks_total": total_chunks,
+                    "selected_candidates": int(len(selected)),
+                },
             )
-            LOGGER.critical(
-                "AlphaScanner a produit 0 candidats | duree=%.2fs | "
-                "Verifier : stock_bars_daily peuplee ? liquidity_threshold trop eleve ? "
-                "Marche en tendance baissiere (trend_score=0 pour tous) ? | %s",
-                elapsed,
-                zero_candidate_diagnostic,
-            )
-        else:
-            LOGGER.info("AlphaScanner termine en %.2fs | candidats=%s", elapsed, len(selected))
 
-        return selected
+            self.update_database(selected, scored_for_persistence)
+
+            elapsed = (datetime.now(UTC) - started_at).total_seconds()
+
+            if selected.empty:
+                zero_candidate_diagnostic = _summarize_zero_candidate_filters(
+                    self.get_aggregated_filter_stats()
+                )
+                LOGGER.critical(
+                    "AlphaScanner a produit 0 candidats | duree=%.2fs | "
+                    "Verifier : stock_bars_daily peuplee ? liquidity_threshold trop eleve ? "
+                    "Marche en tendance baissiere (trend_score=0 pour tous) ? | %s",
+                    elapsed,
+                    zero_candidate_diagnostic,
+                )
+            else:
+                LOGGER.info("AlphaScanner termine en %.2fs | candidats=%s", elapsed, len(selected))
+
+            return selected
+        finally:
+            self.config = original_config
 
     def _process_chunk(self, symbols: Sequence[str], as_of_date: date | None = None) -> pd.DataFrame:
         try:
@@ -368,8 +425,16 @@ class AlphaScanner:
             computed = self.compute_factors(market_data)
             scores = self.fetch_scores(symbols)
             metadata_df = self.fetch_instrument_metadata(symbols)
-            quotes_df = self.fetch_quote_snapshots(symbols, reference_date=as_of_date)
-            earnings_df = self.fetch_next_earnings(symbols, reference_date=as_of_date)
+            quotes_df = (
+                self.fetch_quote_snapshots(symbols, reference_date=as_of_date)
+                if self.config.max_spread_bps is not None
+                else pd.DataFrame()
+            )
+            earnings_df = (
+                self.fetch_next_earnings(symbols, reference_date=as_of_date)
+                if self.config.earnings_blackout_days is not None
+                else pd.DataFrame()
+            )
             merged = self.merge_scores(computed, scores)
             merged = self._enrich_and_filter_equities(merged, metadata_df)
             merged = self._merge_optional_symbol_overlays(merged, quotes_df, earnings_df)

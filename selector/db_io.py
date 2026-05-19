@@ -8,7 +8,8 @@ les requêtes SELECT / UPDATE et l'introspection schéma.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
@@ -17,7 +18,10 @@ from sqlalchemy import bindparam, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
-from selector.config import PRICE_COLUMNS
+from selector.config import (
+    DATA_QUALITY_MODE_BLOCK,
+    PRICE_COLUMNS,
+)
 from selector.filters import ELIGIBLE_HISTORY_STATUSES, METADATA_COLUMNS
 from selector.ranking import PERSISTED_SELECTOR_SCORE_COLUMNS, SCORE_COLUMNS
 
@@ -103,6 +107,45 @@ SNAPSHOT_NUMERIC_COLUMNS = [
     "volatility_ratio",
 ]
 SNAPSHOT_TEXT_COLUMNS = ["selector_signal_mode", "selection_explanation"]
+PRESELECTION_AUDIT_SAMPLE_LIMIT = 5
+PRESELECTION_REASON_LABELS = {
+    "metadata_missing": "metadata absente",
+    "non_us_equity": "asset_class non us_equity",
+    "inactive": "instrument inactif",
+    "not_tradable": "instrument non tradable",
+    "bars_unavailable": "bars indisponibles",
+    "history_status_blocked": "history_status bloqué",
+    "insufficient_history": "historique insuffisant",
+    "below_min_close": "prix sous le seuil",
+    "below_liquidity_threshold": "liquidité 20j insuffisante",
+}
+
+
+def _build_data_quality_check_payload(
+    *,
+    enabled: bool,
+    fallback_mode: str,
+    filter_key: str,
+    healthy: bool,
+    reason: str,
+    recommended_action: str,
+    **extra: object,
+) -> dict[str, object]:
+    status = "ok" if healthy else "blocked" if fallback_mode == DATA_QUALITY_MODE_BLOCK else "warning"
+    return {
+        "enabled": enabled,
+        "status": status,
+        "reason": reason,
+        "filter_key": filter_key,
+        "configured_fallback_mode": fallback_mode,
+        "applied_filter_fallback": "none"
+        if healthy
+        else "block"
+        if fallback_mode == DATA_QUALITY_MODE_BLOCK
+        else "skip_filter",
+        "recommended_action": recommended_action,
+        **extra,
+    }
 
 
 def _has_table(engine: Engine, table_name: str) -> bool:
@@ -155,12 +198,21 @@ def build_data_quality_gate(
     checks = {
         "quotes": _build_quotes_quality_check(engine, config, effective_reference_date),
         "earnings": _build_earnings_quality_check(engine, config, effective_reference_date),
+        "market_cap": _build_market_cap_quality_check(engine, config, effective_reference_date),
     }
     blocking_checks = [name for name, payload in checks.items() if payload.get("status") == "blocked"]
+    warning_checks = [name for name, payload in checks.items() if payload.get("status") == "warning"]
+    skipped_filters = [
+        str(payload.get("filter_key"))
+        for payload in checks.values()
+        if payload.get("applied_filter_fallback") == "skip_filter"
+    ]
     return {
-        "status": "blocked" if blocking_checks else "ok",
+        "status": "blocked" if blocking_checks else "warning" if warning_checks else "ok",
         "reference_date": effective_reference_date.isoformat(),
         "blocking_checks": blocking_checks,
+        "warning_checks": warning_checks,
+        "skipped_filters": skipped_filters,
         "checks": checks,
     }
 
@@ -171,45 +223,53 @@ def _build_quotes_quality_check(
     reference_date: date,
 ) -> dict[str, object]:
     if config.max_spread_bps is None:
-        return {
-            "enabled": False,
-            "status": "disabled",
-            "reason": "spread_filter_disabled",
-            "recommended_action": "none",
-        }
+        return _build_data_quality_check_payload(
+            enabled=False,
+            fallback_mode=config.spread_data_quality_mode,
+            filter_key="spread",
+            healthy=True,
+            reason="spread_filter_disabled",
+            recommended_action="none",
+        ) | {"status": "disabled"}
     if not _has_table(engine, "stock_quote_snapshots"):
-        return {
-            "enabled": True,
-            "status": "blocked",
-            "reason": "quotes_table_missing",
-            "max_age_days": DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
-            "recommended_action": "refresh_stock_quote_snapshots_or_disable_spread_filter",
-        }
+        return _build_data_quality_check_payload(
+            enabled=True,
+            fallback_mode=config.spread_data_quality_mode,
+            filter_key="spread",
+            healthy=False,
+            reason="quotes_table_missing",
+            recommended_action="refresh_stock_quote_snapshots_or_disable_spread_filter",
+            max_age_days=DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
+        )
     latest_quote_date = _read_scalar_date(
         engine,
         text("SELECT MAX(quote_date) FROM stock_quote_snapshots WHERE quote_date <= :reference_date"),
         {"reference_date": reference_date},
     )
     if latest_quote_date is None:
-        return {
-            "enabled": True,
-            "status": "blocked",
-            "reason": "quotes_unavailable",
-            "max_age_days": DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
-            "recommended_action": "refresh_stock_quote_snapshots_or_disable_spread_filter",
-        }
+        return _build_data_quality_check_payload(
+            enabled=True,
+            fallback_mode=config.spread_data_quality_mode,
+            filter_key="spread",
+            healthy=False,
+            reason="quotes_unavailable",
+            recommended_action="refresh_stock_quote_snapshots_or_disable_spread_filter",
+            max_age_days=DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
+        )
     age_days = max((reference_date - latest_quote_date).days, 0)
-    return {
-        "enabled": True,
-        "status": "ok" if age_days <= DATA_QUALITY_QUOTE_MAX_AGE_DAYS else "blocked",
-        "reason": "ok" if age_days <= DATA_QUALITY_QUOTE_MAX_AGE_DAYS else "quotes_stale",
-        "recommended_action": "none"
+    return _build_data_quality_check_payload(
+        enabled=True,
+        fallback_mode=config.spread_data_quality_mode,
+        filter_key="spread",
+        healthy=age_days <= DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
+        reason="ok" if age_days <= DATA_QUALITY_QUOTE_MAX_AGE_DAYS else "quotes_stale",
+        recommended_action="none"
         if age_days <= DATA_QUALITY_QUOTE_MAX_AGE_DAYS
         else "refresh_stock_quote_snapshots_or_disable_spread_filter",
-        "latest_quote_date": latest_quote_date.isoformat(),
-        "age_days": age_days,
-        "max_age_days": DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
-    }
+        latest_quote_date=latest_quote_date.isoformat(),
+        age_days=age_days,
+        max_age_days=DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
+    )
 
 
 def _build_earnings_quality_check(
@@ -218,23 +278,27 @@ def _build_earnings_quality_check(
     reference_date: date,
 ) -> dict[str, object]:
     if config.earnings_blackout_days is None:
-        return {
-            "enabled": False,
-            "status": "disabled",
-            "reason": "earnings_filter_disabled",
-            "recommended_action": "none",
-        }
+        return _build_data_quality_check_payload(
+            enabled=False,
+            fallback_mode=config.earnings_data_quality_mode,
+            filter_key="earnings_blackout",
+            healthy=True,
+            reason="earnings_filter_disabled",
+            recommended_action="none",
+        ) | {"status": "disabled"}
     required_horizon_days = max(int(config.earnings_blackout_days), 1)
     required_until = reference_date + timedelta(days=required_horizon_days)
     if not _has_table(engine, "stock_earnings_calendar"):
-        return {
-            "enabled": True,
-            "status": "blocked",
-            "reason": "earnings_table_missing",
-            "required_until": required_until.isoformat(),
-            "required_horizon_days": required_horizon_days,
-            "recommended_action": "refresh_stock_earnings_calendar_or_disable_earnings_filter",
-        }
+        return _build_data_quality_check_payload(
+            enabled=True,
+            fallback_mode=config.earnings_data_quality_mode,
+            filter_key="earnings_blackout",
+            healthy=False,
+            reason="earnings_table_missing",
+            recommended_action="refresh_stock_earnings_calendar_or_disable_earnings_filter",
+            required_until=required_until.isoformat(),
+            required_horizon_days=required_horizon_days,
+        )
     latest_earnings_date = _read_scalar_date(
         engine,
         text("SELECT MAX(earnings_date) FROM stock_earnings_calendar"),
@@ -245,36 +309,108 @@ def _build_earnings_quality_check(
         {"reference_date": reference_date},
     )
     if latest_earnings_date is None:
-        return {
-            "enabled": True,
-            "status": "blocked",
-            "reason": "earnings_unavailable",
-            "required_until": required_until.isoformat(),
-            "required_horizon_days": required_horizon_days,
-            "recommended_action": "refresh_stock_earnings_calendar_or_disable_earnings_filter",
-        }
+        return _build_data_quality_check_payload(
+            enabled=True,
+            fallback_mode=config.earnings_data_quality_mode,
+            filter_key="earnings_blackout",
+            healthy=False,
+            reason="earnings_unavailable",
+            recommended_action="refresh_stock_earnings_calendar_or_disable_earnings_filter",
+            required_until=required_until.isoformat(),
+            required_horizon_days=required_horizon_days,
+        )
     if next_earnings_date is None:
-        return {
-            "enabled": True,
-            "status": "blocked",
-            "reason": "earnings_no_future_coverage",
-            "latest_earnings_date": latest_earnings_date.isoformat(),
-            "required_until": required_until.isoformat(),
-            "required_horizon_days": required_horizon_days,
-            "recommended_action": "refresh_stock_earnings_calendar_or_disable_earnings_filter",
-        }
-    return {
-        "enabled": True,
-        "status": "ok" if latest_earnings_date >= required_until else "blocked",
-        "reason": "ok" if latest_earnings_date >= required_until else "earnings_horizon_too_short",
-        "recommended_action": "none"
+        return _build_data_quality_check_payload(
+            enabled=True,
+            fallback_mode=config.earnings_data_quality_mode,
+            filter_key="earnings_blackout",
+            healthy=False,
+            reason="earnings_no_future_coverage",
+            recommended_action="refresh_stock_earnings_calendar_or_disable_earnings_filter",
+            latest_earnings_date=latest_earnings_date.isoformat(),
+            required_until=required_until.isoformat(),
+            required_horizon_days=required_horizon_days,
+        )
+    return _build_data_quality_check_payload(
+        enabled=True,
+        fallback_mode=config.earnings_data_quality_mode,
+        filter_key="earnings_blackout",
+        healthy=latest_earnings_date >= required_until,
+        reason="ok" if latest_earnings_date >= required_until else "earnings_horizon_too_short",
+        recommended_action="none"
         if latest_earnings_date >= required_until
         else "refresh_stock_earnings_calendar_or_disable_earnings_filter",
-        "next_earnings_date": next_earnings_date.isoformat(),
-        "latest_earnings_date": latest_earnings_date.isoformat(),
-        "required_until": required_until.isoformat(),
-        "required_horizon_days": required_horizon_days,
-    }
+        next_earnings_date=next_earnings_date.isoformat(),
+        latest_earnings_date=latest_earnings_date.isoformat(),
+        required_until=required_until.isoformat(),
+        required_horizon_days=required_horizon_days,
+    )
+
+
+def _build_market_cap_quality_check(
+    engine: Engine,
+    config: AlphaScannerConfig,
+    reference_date: date,
+) -> dict[str, object]:
+    if config.min_market_cap is None or config.market_cap_max_age_days is None:
+        return _build_data_quality_check_payload(
+            enabled=False,
+            fallback_mode=config.market_cap_filter_data_quality_mode,
+            filter_key="market_cap_ttl",
+            healthy=True,
+            reason="market_cap_ttl_filter_disabled",
+            recommended_action="none",
+        ) | {"status": "disabled"}
+    if not _has_table(engine, "stock_metadata"):
+        return _build_data_quality_check_payload(
+            enabled=True,
+            fallback_mode=config.market_cap_filter_data_quality_mode,
+            filter_key="market_cap_ttl",
+            healthy=False,
+            reason="stock_metadata_missing",
+            recommended_action="refresh_stock_metadata_or_disable_market_cap_ttl_filter",
+            max_age_days=int(config.market_cap_max_age_days),
+        )
+    metadata_columns = get_stock_metadata_columns(engine)
+    if "market_cap_refreshed_at" not in metadata_columns:
+        return _build_data_quality_check_payload(
+            enabled=True,
+            fallback_mode=config.market_cap_filter_data_quality_mode,
+            filter_key="market_cap_ttl",
+            healthy=False,
+            reason="market_cap_refreshed_at_missing",
+            recommended_action="backfill_market_cap_refreshed_at_or_disable_market_cap_ttl_filter",
+            max_age_days=int(config.market_cap_max_age_days),
+        )
+    latest_refresh_date = _read_scalar_date(
+        engine,
+        text("SELECT MAX(market_cap_refreshed_at) FROM stock_metadata WHERE market_cap_refreshed_at IS NOT NULL"),
+    )
+    if latest_refresh_date is None:
+        return _build_data_quality_check_payload(
+            enabled=True,
+            fallback_mode=config.market_cap_filter_data_quality_mode,
+            filter_key="market_cap_ttl",
+            healthy=False,
+            reason="market_cap_refresh_unavailable",
+            recommended_action="refresh_stock_metadata_or_disable_market_cap_ttl_filter",
+            max_age_days=int(config.market_cap_max_age_days),
+        )
+    age_days = max((reference_date - latest_refresh_date).days, 0)
+    max_age_days = int(config.market_cap_max_age_days)
+    return _build_data_quality_check_payload(
+        enabled=True,
+        fallback_mode=config.market_cap_filter_data_quality_mode,
+        filter_key="market_cap_ttl",
+        healthy=age_days <= max_age_days,
+        reason="ok" if age_days <= max_age_days else "market_cap_refresh_stale",
+        recommended_action="none"
+        if age_days <= max_age_days
+        else "refresh_stock_metadata_or_disable_market_cap_ttl_filter",
+        latest_refresh_date=latest_refresh_date.isoformat(),
+        age_days=age_days,
+        max_age_days=max_age_days,
+    )
 
 
 def get_stock_metadata_columns(engine: Engine) -> set[str]:
@@ -545,6 +681,163 @@ def fetch_next_earnings(
         <= blackout_days
     ).astype(int)
     return earnings_df
+
+
+def _classify_preselection_rejection_reason(
+    row: Mapping[str, object],
+    config: AlphaScannerConfig,
+    *,
+    history_status_enabled: bool,
+) -> str | None:
+    metadata_symbol = str(row.get("metadata_symbol") or "").strip()
+    if not metadata_symbol:
+        return "metadata_missing"
+    asset_class = str(row.get("asset_class") or "").strip().lower()
+    if asset_class != "us_equity":
+        return "non_us_equity"
+    instrument_status = str(row.get("status") or "").strip().lower()
+    if instrument_status != "active":
+        return "inactive"
+    tradable = row.get("tradable")
+    if pd.isna(tradable) or not bool(tradable):
+        return "not_tradable"
+    bars_available = row.get("bars_available")
+    if pd.isna(bars_available) or not bool(bars_available):
+        return "bars_unavailable"
+    if history_status_enabled:
+        history_status = str(row.get("history_status") or "").strip().lower()
+        if history_status and history_status not in ELIGIBLE_HISTORY_STATUSES:
+            return "history_status_blocked"
+
+    history_days_value = pd.to_numeric(row.get("history_days"), errors="coerce")
+    if pd.isna(history_days_value) or float(history_days_value) < float(config.min_history_days):
+        return "insufficient_history"
+    latest_close_value = pd.to_numeric(row.get("latest_close"), errors="coerce")
+    if pd.isna(latest_close_value) or float(latest_close_value) <= float(config.min_close):
+        return "below_min_close"
+    avg_dollar_volume_value = pd.to_numeric(row.get("avg_dollar_volume_20d"), errors="coerce")
+    if pd.isna(avg_dollar_volume_value) or float(avg_dollar_volume_value) <= float(config.liquidity_threshold):
+        return "below_liquidity_threshold"
+    return None
+
+
+def build_preselection_rejection_audit(
+    engine: Engine,
+    config: AlphaScannerConfig,
+    metadata_columns: set[str],
+    *,
+    sample_limit: int = PRESELECTION_AUDIT_SAMPLE_LIMIT,
+) -> dict[str, object]:
+    if not _has_table(engine, config.price_table):
+        return {
+            "status": "unavailable",
+            "reason": "price_table_missing",
+            "price_table": config.price_table,
+        }
+
+    history_status_enabled = "history_status" in metadata_columns
+    history_status_select = "sm.history_status" if history_status_enabled else "NULL AS history_status"
+    stmt = text(
+        f"""
+        WITH ranked AS (
+            SELECT symbol,
+                   date,
+                   close,
+                   volume,
+                   ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+            FROM {config.price_table}
+        ), aggregated AS (
+            SELECT symbol,
+                   COUNT(*) AS history_days,
+                   MAX(CASE WHEN rn = 1 THEN close END) AS latest_close,
+                   AVG(CASE WHEN rn <= :liquidity_lookback_days THEN close * volume END) AS avg_dollar_volume_20d
+            FROM ranked
+            GROUP BY symbol
+        )
+        SELECT agg.symbol,
+               agg.history_days,
+               agg.latest_close,
+               agg.avg_dollar_volume_20d,
+               sm.symbol AS metadata_symbol,
+               sm.asset_class,
+               sm.status,
+               sm.tradable,
+               sm.bars_available,
+               {history_status_select}
+        FROM aggregated agg
+        LEFT JOIN stock_metadata sm ON sm.symbol = agg.symbol
+        ORDER BY agg.symbol
+        """
+    )
+    try:
+        audit_df = pd.read_sql_query(
+            stmt,
+            engine,
+            params={"liquidity_lookback_days": config.liquidity_lookback_days},
+        )
+    except SQLAlchemyError:
+        LOGGER.warning("Audit des rejets de pré-sélection indisponible.", exc_info=True)
+        return {
+            "status": "unavailable",
+            "reason": "preselection_audit_query_failed",
+            "price_table": config.price_table,
+        }
+
+    if audit_df.empty:
+        return {
+            "status": "ok",
+            "input_symbols": 0,
+            "eligible_symbols": 0,
+            "rejected_symbols": 0,
+            "eligible_ratio": 0.0,
+            "reason_counts": {},
+            "sample_symbols_by_reason": {},
+            "top_reasons": [],
+        }
+
+    reason_counts: Counter[str] = Counter()
+    sample_symbols_by_reason: dict[str, list[str]] = {}
+    eligible_symbols = 0
+    safe_sample_limit = max(int(sample_limit), 1)
+    for row in audit_df.to_dict(orient="records"):
+        reason = _classify_preselection_rejection_reason(
+            row,
+            config,
+            history_status_enabled=history_status_enabled,
+        )
+        if reason is None:
+            eligible_symbols += 1
+            continue
+        reason_counts[reason] += 1
+        symbol = str(row.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        samples = sample_symbols_by_reason.setdefault(reason, [])
+        if symbol not in samples and len(samples) < safe_sample_limit:
+            samples.append(symbol)
+
+    top_reasons = [
+        {
+            "reason": reason,
+            "label": PRESELECTION_REASON_LABELS.get(reason, reason),
+            "count": int(count),
+            "sample_symbols": sample_symbols_by_reason.get(reason, []),
+        }
+        for reason, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+    ]
+    total_symbols = int(len(audit_df))
+    rejected_symbols = int(sum(reason_counts.values()))
+    return {
+        "status": "ok",
+        "input_symbols": total_symbols,
+        "eligible_symbols": int(eligible_symbols),
+        "rejected_symbols": rejected_symbols,
+        "eligible_ratio": round((eligible_symbols / total_symbols), 4) if total_symbols > 0 else 0.0,
+        "reason_counts": dict(sorted(reason_counts.items())),
+        "sample_symbols_by_reason": sample_symbols_by_reason,
+        "top_reasons": top_reasons,
+        "sample_limit": safe_sample_limit,
+    }
 
 
 def iter_eligible_symbol_chunks(
@@ -847,6 +1140,7 @@ __all__ = [
     "fetch_quote_snapshots",
     "fetch_next_earnings",
     "load_benchmark_returns",
+    "build_preselection_rejection_audit",
     "iter_eligible_symbol_chunks",
     "reset_selector_outputs",
     "prepare_scores_snapshot",

@@ -72,8 +72,10 @@ Le lancement standard applique désormais automatiquement le profil partagé `ST
 - `weekly_trend_score >= 1.0`
 - `atr_pct_20` dans `[1.5 %, 6 %]`
 - `market_cap >= 2 Md$`
-- `beta_126 >= 1.0`
-- `spread_bps <= 25`
+- `beta_126 >= 0.8`
+- `spread_bps <= 40`
+- relâchement IEX possible jusqu’à `65 bps` si `bid_size` / `ask_size >= 100`
+- TTL `market_cap_refreshed_at <= 45 jours` (mode par défaut : `warn_skip_filter` si la fraîcheur n’est pas exploitable)
 - exclusion si `earnings_date` tombe dans les `3` prochains jours
 
 L'option legacy `--preset strict` reste tolérée comme alias de compatibilité, mais n'est plus nécessaire.
@@ -134,7 +136,10 @@ L'IHM expose désormais les options CLI réellement supportées par ce point d'e
 - `min-market-cap`
 - `min-beta-126`
 - `max-spread-bps`
+- `spread-data-quality-mode`
 - `earnings-blackout-days`
+- `earnings-data-quality-mode`
+- `market-cap-data-quality-mode`
 - `max-anomaly-count`
 - `sector-cap-ratio`
 - `log-level`
@@ -237,9 +242,35 @@ Le module met à jour `stock_scores` avec les colonnes avancées comme :
 - `earnings_date`
 - `days_to_earnings`
 - `earnings_blackout`
+- `candidate_rank`
+- `raw_final_score`
+- `normalized_total_score`
+- `normalized_rsi`
+- `total_score_neutralized`
+- `relative_strength_index_neutralized`
+- `trend_vcp_component`
+- `total_score_component`
+- `rsi_component`
+- `atr_pct_20`
+- `weekly_trend_score`
+- `high_52w_proximity`
+- `volatility_ratio`
+- `selector_signal_mode`
+- `selection_explanation`
 - drapeaux / colonnes de sélection finale
 
-Les facteurs `atr_pct_20`, `weekly_trend_score` et `high_52w_proximity` sont aujourd'hui utilisés dans le pipeline de sélection en mémoire et dans le résultat retourné par `AlphaScanner`, mais ne sont pas persistés tels quels dans `stock_scores` par défaut.
+Le `run_summary` persiste aussi désormais :
+
+- `top_candidate_explanations`
+- `preselection_rejections`
+- `data_quality_gate`
+- `skipped_filters`
+
+L’IHM peut donc relire à la fois :
+
+- l’explicabilité des candidats retenus ;
+- les raisons principales des rejets de pré-sélection SQL ;
+- les filtres désactivés dynamiquement via fallback data-quality.
 
 ---
 
@@ -321,3 +352,36 @@ Ordre conseillé :
 python -m screener.stock_screener
 python -m selector.alpha_scanner --selection-size 100
 ```
+
+---
+
+## 9. Workflow standard — ajout d’un nouveau filtre
+
+Checklist recommandée :
+
+1. **Configuration**
+   - ajouter le seuil / mode dans `selector/config.py` ;
+   - si le filtre appartient au preset partagé, propager aussi via `core/filter_profiles.py`.
+2. **Données d’entrée**
+   - décider si le filtre vit en pré-sélection SQL, en filtrage pandas, ou dans un overlay optionnel (`quotes`, `earnings`, `metadata`) ;
+   - si la source est externe et fragile, ajouter/étendre le check dans `selector/db_io.py::build_data_quality_gate()`.
+3. **Filtrage métier**
+   - implémenter la logique dans `selector/filters.py` ;
+   - incrémenter un compteur dédié `rejected_<nom_du_filtre>` dans `apply_filters_with_stats()`.
+4. **Observabilité**
+   - exposer le nouveau compteur dans `_summarize_zero_candidate_filters()` si le filtre peut devenir un goulot d’étranglement ;
+   - compléter le `run_summary` si le filtre produit un contexte spécifique (payload, fallback, samples, etc.).
+5. **Persistance / IHM**
+   - si le filtre génère une donnée utile au post-mortem, la persister via `selector/ranking.py` / `selector/db_io.py` ;
+   - ajouter l’exposition IHM nécessaire dans `ihm/services/run_summary.py` ou `ihm/pages/screening.py`.
+6. **Tests**
+   - ajouter au minimum :
+     - un test config/CLI,
+     - un test unitaire de filtre,
+     - un test run_summary/observabilité,
+     - un test d’intégration scanner si le filtre dépend d’une source SQL.
+7. **Validation finale**
+   - lancer Ruff sur le périmètre modifié ;
+   - relancer les tests selector + IHM touchés ;
+   - mettre à jour `prompt/refactor_selector.md` et cette doc si le contrat change.
+

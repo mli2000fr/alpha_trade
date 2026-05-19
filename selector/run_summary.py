@@ -81,6 +81,7 @@ def _build_cli_run_summary(
     run_status: str = "completed",
     failure_reason: str | None = None,
     data_quality_gate: dict[str, object] | None = None,
+    preselection_rejections: dict[str, object] | None = None,
 ) -> dict[str, object]:
     selected_symbols = (
         result["symbol"].astype(str).tolist()[:5]
@@ -101,7 +102,10 @@ def _build_cli_run_summary(
     max_final_score = None
     avg_final_score = None
     if "final_score" in result.columns and not result.empty:
-        numeric_final_score = pd.to_numeric(result["final_score"], errors="coerce").dropna()
+        numeric_final_score = pd.Series(
+            pd.to_numeric(result["final_score"], errors="coerce"),
+            index=result.index,
+        ).dropna()
         if not numeric_final_score.empty:
             max_final_score = round(float(numeric_final_score.max()), 4)
             avg_final_score = round(float(numeric_final_score.mean()), 4)
@@ -144,8 +148,19 @@ def _build_cli_run_summary(
         "min_quote_size": config.min_quote_size,
         "market_cap_max_age_days": config.market_cap_max_age_days,
         "earnings_blackout_days": config.earnings_blackout_days,
+        "data_quality_modes": {
+            "spread": config.spread_data_quality_mode,
+            "earnings_blackout": config.earnings_data_quality_mode,
+            "market_cap_ttl": config.market_cap_filter_data_quality_mode,
+        },
+        "skipped_filters": (
+            list(data_quality_gate.get("skipped_filters", []))
+            if isinstance(data_quality_gate, dict)
+            else []
+        ),
         "small_selected_sectors": small_selected_sectors,
         "top_candidate_explanations": top_candidate_explanations,
+        "preselection_rejections": preselection_rejections,
         "data_quality_gate": data_quality_gate,
         # Phase 3.3.b — agrégat des rejets par filtre (cross-chunks).
         "rejected_by_filter": dict(sorted((rejected_by_filter or {}).items())),

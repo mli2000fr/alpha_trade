@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from selector import db_io as selector_db_io
 from selector.alpha_scanner import AlphaScanner, AlphaScannerConfig, SelectorDataQualityError
 
 
@@ -712,6 +713,257 @@ def test_run_blocks_when_quotes_and_earnings_are_stale() -> None:
     payload = exc_info.value.payload
     assert payload["status"] == "blocked"
     assert set(payload["blocking_checks"]) == {"quotes", "earnings"}
+
+
+def test_build_data_quality_gate_can_warn_and_skip_filters_when_configured() -> None:
+    engine = _create_shared_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_metadata (
+                    symbol TEXT PRIMARY KEY,
+                    company_name TEXT,
+                    asset_class TEXT,
+                    status TEXT,
+                    tradable BOOLEAN,
+                    bars_available BOOLEAN,
+                    market_cap REAL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO stock_metadata(symbol, company_name, asset_class, status, tradable, bars_available, market_cap) "
+                "VALUES ('AAA', 'AAA Common Stock', 'us_equity', 'active', 1, 1, 5000000000.0)"
+            )
+        )
+
+    config = AlphaScannerConfig.strict_swing_cash(
+        spread_data_quality_mode="warn_skip_filter",
+        earnings_data_quality_mode="warn_skip_filter",
+        market_cap_filter_data_quality_mode="warn_skip_filter",
+    )
+    payload = selector_db_io.build_data_quality_gate(
+        engine,
+        config,
+        reference_date=date(2026, 5, 19),
+    )
+
+    assert payload["status"] == "warning"
+    assert payload["blocking_checks"] == []
+    assert set(payload["warning_checks"]) == {"quotes", "earnings", "market_cap"}
+    assert set(payload["skipped_filters"]) == {"spread", "earnings_blackout", "market_cap_ttl"}
+    assert payload["checks"]["quotes"]["applied_filter_fallback"] == "skip_filter"
+    assert payload["checks"]["earnings"]["applied_filter_fallback"] == "skip_filter"
+    assert payload["checks"]["market_cap"]["applied_filter_fallback"] == "skip_filter"
+
+
+def test_run_warn_skip_filter_disables_runtime_filters_without_blocking(monkeypatch) -> None:
+    scanner = AlphaScanner(
+        engine=_create_shared_sqlite_engine(),
+        config=AlphaScannerConfig.strict_swing_cash(
+            selection_size=1,
+            chunk_size=1,
+            max_workers=1,
+            spread_data_quality_mode="warn_skip_filter",
+            earnings_data_quality_mode="warn_skip_filter",
+        ),
+    )
+    captured_runtime_configs: list[tuple[object, object]] = []
+
+    monkeypatch.setattr(
+        scanner,
+        "preflight_data_quality",
+        lambda: {
+            "status": "warning",
+            "blocking_checks": [],
+            "warning_checks": ["quotes", "earnings"],
+            "skipped_filters": ["spread", "earnings_blackout"],
+            "checks": {
+                "quotes": {"applied_filter_fallback": "skip_filter", "filter_key": "spread"},
+                "earnings": {"applied_filter_fallback": "skip_filter", "filter_key": "earnings_blackout"},
+            },
+        },
+    )
+    monkeypatch.setattr(scanner, "_capture_preselection_audit", lambda: {})
+    monkeypatch.setattr(scanner, "_reset_selector_outputs", lambda: None)
+    monkeypatch.setattr(scanner, "_iter_eligible_symbol_chunks", lambda: iter([["AAA"]]))
+    monkeypatch.setattr(
+        scanner,
+        "_process_chunk",
+        lambda symbols: (
+            captured_runtime_configs.append((scanner.config.max_spread_bps, scanner.config.earnings_blackout_days))
+            or pd.DataFrame(
+                [
+                    {
+                        "symbol": "AAA",
+                        "sector": "Tech",
+                        "final_score": 0.9,
+                        "trend_score": 0.8,
+                        "vcp_score": 0.7,
+                        "avg_dollar_volume_20d": 40_000_000.0,
+                    }
+                ]
+            )
+        ),
+    )
+    monkeypatch.setattr(scanner, "rank_and_select", lambda merged_df: merged_df.assign(rank=[1]).copy())
+    monkeypatch.setattr(scanner, "update_database", lambda selected_df, scored_df=None: len(selected_df))
+
+    result = scanner.run()
+
+    assert result["symbol"].tolist() == ["AAA"]
+    assert captured_runtime_configs == [(None, None)]
+    assert scanner.config.max_spread_bps == pytest.approx(40.0)
+    assert scanner.config.earnings_blackout_days == 3
+
+
+def test_build_preselection_rejection_audit_exposes_reason_counts_and_samples() -> None:
+    engine = _create_shared_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_bars_daily (
+                    symbol TEXT NOT NULL,
+                    date DATETIME NOT NULL,
+                    close REAL NOT NULL,
+                    volume REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    PRIMARY KEY(symbol, date)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_metadata (
+                    symbol TEXT PRIMARY KEY,
+                    company_name TEXT,
+                    asset_class TEXT,
+                    status TEXT,
+                    tradable BOOLEAN,
+                    bars_available BOOLEAN,
+                    history_status TEXT,
+                    sector TEXT,
+                    market_cap REAL
+                )
+                """
+            )
+        )
+
+        eligible_market, _ = _make_market_frame("PASS", "Technology", drift=0.40, rows=260, volume=900_000.0)
+        cheap_market, _ = _make_market_frame("CHEAP", "Technology", drift=0.10, base_price=4.0, rows=260, volume=900_000.0)
+        illiquid_market, _ = _make_market_frame("ILLQ", "Technology", drift=0.10, rows=260, volume=10_000.0)
+        short_market, _ = _make_market_frame("SHORT", "Technology", drift=0.10, rows=120, volume=900_000.0)
+        etf_market, _ = _make_market_frame("ETF1", "Unknown", drift=0.20, rows=260, volume=900_000.0)
+        blocked_market, _ = _make_market_frame("BLOCK", "Technology", drift=0.20, rows=260, volume=900_000.0)
+        missing_market, _ = _make_market_frame("MISS", "Technology", drift=0.20, rows=260, volume=900_000.0)
+        pd.concat(
+            [
+                eligible_market,
+                cheap_market,
+                illiquid_market,
+                short_market,
+                etf_market,
+                blocked_market,
+                missing_market,
+            ],
+            ignore_index=True,
+        ).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "PASS",
+                    "company_name": "Pass Corp",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "history_status": "ready",
+                    "sector": "Technology",
+                    "market_cap": 5_000_000_000.0,
+                },
+                {
+                    "symbol": "CHEAP",
+                    "company_name": "Cheap Corp",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "history_status": "ready",
+                    "sector": "Technology",
+                    "market_cap": 5_000_000_000.0,
+                },
+                {
+                    "symbol": "ILLQ",
+                    "company_name": "Illiquid Corp",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "history_status": "ready",
+                    "sector": "Technology",
+                    "market_cap": 5_000_000_000.0,
+                },
+                {
+                    "symbol": "SHORT",
+                    "company_name": "Short History Corp",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "history_status": "ready",
+                    "sector": "Technology",
+                    "market_cap": 5_000_000_000.0,
+                },
+                {
+                    "symbol": "ETF1",
+                    "company_name": "ETF One",
+                    "asset_class": "etf",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "history_status": "ready",
+                    "sector": None,
+                    "market_cap": None,
+                },
+                {
+                    "symbol": "BLOCK",
+                    "company_name": "Blocked Corp",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "history_status": "provider_error",
+                    "sector": "Technology",
+                    "market_cap": 5_000_000_000.0,
+                },
+            ]
+        ).to_sql("stock_metadata", conn, if_exists="append", index=False)
+
+    payload = selector_db_io.build_preselection_rejection_audit(
+        engine,
+        AlphaScannerConfig(selection_size=5, max_workers=1),
+        {"symbol", "history_status"},
+    )
+
+    assert payload["status"] == "ok"
+    assert payload["input_symbols"] == 7
+    assert payload["eligible_symbols"] == 1
+    assert payload["rejected_symbols"] == 6
+    assert payload["reason_counts"]["below_min_close"] == 1
+    assert payload["reason_counts"]["below_liquidity_threshold"] == 1
+    assert payload["reason_counts"]["insufficient_history"] == 1
+    assert payload["reason_counts"]["non_us_equity"] == 1
+    assert payload["reason_counts"]["history_status_blocked"] == 1
+    assert payload["reason_counts"]["metadata_missing"] == 1
+    assert payload["sample_symbols_by_reason"]["below_min_close"] == ["CHEAP"]
+    assert payload["sample_symbols_by_reason"]["metadata_missing"] == ["MISS"]
 
 
 def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> None:

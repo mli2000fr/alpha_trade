@@ -359,13 +359,13 @@ Ajouter dans le `run_summary` :
 
 ## P2 — recommandé moyen terme
 - [x] Normaliser tout `selector/` via Ruff sans changement métier.
-- [ ] Persister davantage de facteurs utiles au post-mortem.
+- [x] Persister davantage de facteurs utiles au post-mortem.
 - [x] Enrichir `run_summary` avec alertes secteurs trop petits et diagnostics data quality.
 
 ## P3 — recommandé plus long terme
-- [ ] Introduire un mode de fallback explicite configurable par filtre externe (spread, earnings, market cap freshness).
+- [x] Introduire un mode de fallback explicite configurable par filtre externe (spread, earnings, market cap freshness).
 - [ ] Industrialiser l’ablation de filtres / A-B tests de profils.
-- [ ] Documenter un workflow standard “ajout d’un nouveau filtre” (code + tests + observabilité).
+- [x] Documenter un workflow standard “ajout d’un nouveau filtre” (code + tests + observabilité).
 
 ---
 
@@ -610,4 +610,120 @@ Le module `selector` franchit un cran supplémentaire côté usage production :
 - elle est visible à la fois dans le `run_summary` et dans l’IHM `Screening` ;
 - l’exposition est **compatibile migration progressive** grâce à la lecture dynamique du schéma ;
 - le terrain est prêt pour une future **API dédiée** sans redéfinir le contrat métier.
+
+## 12. 5e passe — rejets de pré-sélection persistés + fallback data-quality configurable
+
+### Axe retenu
+Pour cette 5e passe, les deux chantiers restants les plus rentables ont été traités ensemble :
+
+- **persistance de l’explicabilité des rejets de pré-sélection SQL** ;
+- **fallback data-quality configurable par filtre** (`block` / `warn_skip_filter`).
+
+### 12.1 Vérification du prompt restant
+À l’issue de cette passe, l’état du prompt est le suivant :
+
+- persistance de facteurs post-mortem : **faite** ;
+- payload complet d’explicabilité candidat IHM/API : **fait** ;
+- fallback data-quality configurable : **fait** ;
+- documentation du workflow “ajout d’un nouveau filtre” : **faite** ;
+- industrialisation des ablations/A-B tests de profils : **reste le principal point ouvert**.
+
+### 12.2 Persistance des rejets de pré-sélection
+Ajout de `selector/db_io.py::build_preselection_rejection_audit()`.
+
+Ce helper :
+- reconstruit l’univers brut `stock_bars_daily` + `stock_metadata` avant le scan chunké ;
+- classe chaque symbole rejeté selon une **raison exclusive** cohérente avec la pré-sélection SQL ;
+- persiste dans le `run_summary` un payload `preselection_rejections` contenant :
+  - `input_symbols`
+  - `eligible_symbols`
+  - `rejected_symbols`
+  - `eligible_ratio`
+  - `reason_counts`
+  - `sample_symbols_by_reason`
+  - `top_reasons`
+
+Les rejets typiques explicités sont par exemple :
+- `metadata_missing`
+- `non_us_equity`
+- `history_status_blocked`
+- `insufficient_history`
+- `below_min_close`
+- `below_liquidity_threshold`
+
+Conséquence : le run history/IHM ne contient plus seulement les rejets **post-fusion pandas**, mais aussi une trace exploitable des pertes d’univers **avant même le chargement multi-chunks**.
+
+### 12.3 Fallback data-quality configurable par filtre
+`AlphaScannerConfig` expose désormais trois modes indépendants :
+
+- `spread_data_quality_mode`
+- `earnings_data_quality_mode`
+- `market_cap_filter_data_quality_mode`
+
+Valeurs supportées :
+- `block`
+- `warn_skip_filter`
+
+Comportement mis en place :
+- si le mode est `block`, le `preflight` échoue comme avant ;
+- si le mode est `warn_skip_filter`, le `preflight` passe en état `warning`, le `run_summary` liste `skipped_filters`, et le scanner désactive **uniquement** le filtre concerné pour ce run ;
+- la fraîcheur `market_cap` TTL adopte par défaut le mode **`warn_skip_filter`** pour rester compatible avec les environnements progressivement migrés.
+
+Le `data_quality_gate` couvre maintenant explicitement :
+- `quotes` / filtre `spread`
+- `earnings` / filtre `earnings_blackout`
+- `market_cap` / filtre `market_cap_ttl`
+
+### 12.4 Exposition IHM
+`ihm/services/run_summary.py` expose maintenant aussi pour `alpha_scanner` :
+
+- une ligne de détail sur les **filtres sautés** par fallback data-quality ;
+- une ligne synthétique sur la **pré-sélection SQL** avec ratios, top raisons et échantillons de symboles.
+
+### 12.5 Documentation
+`doc/selector.md` a été remis à jour pour :
+
+- refléter la persistance réelle des facteurs selector ;
+- documenter les nouveaux flags CLI de fallback data-quality ;
+- ajouter un workflow standard “ajout d’un nouveau filtre”.
+
+### Fichiers modifiés — 5e passe
+- `selector/config.py`
+- `selector/cli.py`
+- `selector/db_io.py`
+- `selector/scanner.py`
+- `selector/run_summary.py`
+- `ihm/services/run_summary.py`
+- `tests/test_selector_alpha_scanner.py`
+- `tests/test_alpha_scanner.py`
+- `tests/test_selector_run_summaries.py`
+- `tests/test_ihm_run_summary.py`
+- `doc/selector.md`
+
+### Validation exécutée — 5e passe
+
+```powershell
+Set-Location "F:\projets"
+python -m ruff check selector\config.py selector\cli.py selector\db_io.py selector\scanner.py selector\run_summary.py ihm\services\run_summary.py tests\test_selector_alpha_scanner.py tests\test_alpha_scanner.py tests\test_selector_run_summaries.py tests\test_ihm_run_summary.py --output-format concise
+```
+
+```powershell
+Set-Location "F:\projets"
+python -m pytest tests\test_selector_alpha_scanner.py tests\test_alpha_scanner.py tests\test_selector_run_summaries.py tests\test_ihm_run_summary.py --no-cov -q
+```
+
+```powershell
+Set-Location "F:\projets"
+python -m pytest tests\test_selector_alpha_scanner.py tests\test_selector_run_summaries.py tests\test_ihm_run_summary.py tests\test_ihm_run_summary_component.py tests\test_services_queries.py tests\test_pages_screening.py tests\test_alpha_scanner.py tests\test_selector_reference.py --no-cov -q
+```
+
+### Verdict 5e passe
+Le module `selector` couvre désormais l’essentiel des points concrets du prompt initial :
+
+- observabilité plus complète sur l’entrée d’univers ;
+- comportement data-quality plus fin et plus opérable ;
+- compatibilité préservée avec un rollout progressif des sources externes ;
+- documentation métier/technique réalignée sur l’état réel du code.
+
+Le **seul chantier important explicitement laissé ouvert** dans le prompt est désormais l’industrialisation des **ablations de filtres / A-B tests de profils**.
 
