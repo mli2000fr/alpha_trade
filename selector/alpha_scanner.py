@@ -21,13 +21,12 @@ from __future__ import annotations
 
 import logging
 
-import pandas as pd  # re-exported for legacy monkeypatch (tests)
+import pandas as pd
 
 # Pure modules re-exported (Phase 3.3.a - already extracted).
 from core.run_summary import attach_schema_version, merge_iex_bias_counters
-
 from selector.cli import _build_arg_parser, _build_config_from_args, main
-from selector.config import AlphaScannerConfig, PRICE_COLUMNS, RUN_SUMMARY_PREFIX
+from selector.config import PRICE_COLUMNS, RUN_SUMMARY_PREFIX, AlphaScannerConfig
 from selector.factors import (
     FACTOR_COLUMNS,
     compute_factor_frame,
@@ -58,13 +57,14 @@ from selector.run_summary import (
     _summarize_zero_candidate_filters,
     _utc_now_naive,
 )
-from selector.scanner import AlphaScanner
+from selector.scanner import AlphaScanner, SelectorDataQualityError
 
 LOGGER = logging.getLogger(__name__)
 
 
 __all__ = [
     "AlphaScanner",
+    "SelectorDataQualityError",
     "AlphaScannerConfig",
     # Constants (preserved for backwards compatibility)
     "FACTOR_COLUMNS",
@@ -98,6 +98,7 @@ __all__ = [
     "_summarize_zero_candidate_filters",
     "attach_schema_version",
     "merge_iex_bias_counters",
+    "pd",
 ]
 
 

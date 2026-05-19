@@ -6,5 +6,7 @@ appelants legacy (IHM ``ihm/services/pipeline_runner.py``, scripts
 ``from core.filter_profiles import ...``.
 """
 from __future__ import annotations
+
 from core.filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
+
 __all__ = ["STRICT_SWING_CASH_FILTERS", "StrictFilterProfile"]

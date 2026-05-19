@@ -15,11 +15,16 @@ from __future__ import annotations
 import math
 
 import pandas as pd
-from hypothesis import HealthCheck, given, settings
-from hypothesis import strategies as st
+import pytest
 
 from selector.config import AlphaScannerConfig
 from selector.ranking import apply_sector_neutrality, rank_and_select
+
+hypothesis = pytest.importorskip("hypothesis")
+HealthCheck = hypothesis.HealthCheck
+given = hypothesis.given
+settings = hypothesis.settings
+st = hypothesis.strategies
 
 
 # Univers de secteurs réduit pour la stratégie hypothesis.

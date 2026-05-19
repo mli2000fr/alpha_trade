@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pandas as pd
 
 from core.filter_profiles import STRICT_SWING_CASH_FILTERS
-
+from core.run_summary import attach_schema_version
 from selector.config import RUN_SUMMARY_PREFIX
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 def _utc_now_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _build_run_id(prefix: str) -> str:
@@ -39,11 +39,14 @@ def _emit_run_summary(summary: dict[str, object]) -> None:
 
 def _build_cli_run_summary(
     *,
-    config: "AlphaScannerConfig",
+    config: AlphaScannerConfig,
     result: pd.DataFrame,
     started_at: datetime,
     finished_at: datetime,
     rejected_by_filter: dict[str, int] | None = None,
+    run_status: str = "completed",
+    failure_reason: str | None = None,
+    data_quality_gate: dict[str, object] | None = None,
 ) -> dict[str, object]:
     selected_symbols = (
         result["symbol"].astype(str).tolist()[:5]
@@ -69,9 +72,19 @@ def _build_cli_run_summary(
             max_final_score = round(float(numeric_final_score.max()), 4)
             avg_final_score = round(float(numeric_final_score.mean()), 4)
 
-    return {
+    small_selected_sectors = {
+        sector: count
+        for sector, count in sector_breakdown.items()
+        if int(count) < 3
+    }
+
+    return attach_schema_version({
         "run_id": _build_run_id("alpha-scanner"),
-        "preset_profile": STRICT_SWING_CASH_FILTERS.name,
+        "run_status": str(run_status).strip() or "completed",
+        "failure_reason": failure_reason,
+        "preset_profile": str(getattr(config, "preset_profile", STRICT_SWING_CASH_FILTERS.name)).strip()
+        or STRICT_SWING_CASH_FILTERS.name,
+        "preset_profile_version": getattr(config, "preset_profile_version", None),
         "started_at": started_at.isoformat(timespec="seconds"),
         "finished_at": finished_at.isoformat(timespec="seconds"),
         "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
@@ -96,9 +109,11 @@ def _build_cli_run_summary(
         "min_quote_size": config.min_quote_size,
         "market_cap_max_age_days": config.market_cap_max_age_days,
         "earnings_blackout_days": config.earnings_blackout_days,
+        "small_selected_sectors": small_selected_sectors,
+        "data_quality_gate": data_quality_gate,
         # Phase 3.3.b — agrégat des rejets par filtre (cross-chunks).
         "rejected_by_filter": dict(sorted((rejected_by_filter or {}).items())),
-    }
+    })
 
 
 def _summarize_zero_candidate_filters(rejected_by_filter: dict[str, int] | None) -> str:

@@ -8,8 +8,9 @@ les requêtes SELECT / UPDATE et l'introspection schéma.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Sequence, cast
+from collections.abc import Callable, Iterator, Sequence
+from datetime import UTC, date, datetime, timedelta
+from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 from sqlalchemy import bindparam, inspect, text
@@ -24,6 +25,146 @@ if TYPE_CHECKING:
     from selector.config import AlphaScannerConfig
 
 LOGGER = logging.getLogger("selector.alpha_scanner")
+
+DATA_QUALITY_QUOTE_MAX_AGE_DAYS = 5
+
+
+def _has_table(engine: Engine, table_name: str) -> bool:
+    try:
+        return bool(inspect(engine).has_table(table_name))
+    except Exception:
+        LOGGER.debug("Inspection table %s indisponible.", table_name, exc_info=True)
+        return False
+
+
+def _read_scalar_date(
+    engine: Engine,
+    stmt,
+    params: dict[str, object] | None = None,
+) -> date | None:
+    try:
+        with engine.connect() as conn:
+            value = conn.execute(stmt, params or {}).scalar()
+    except SQLAlchemyError:
+        LOGGER.debug("Lecture scalaire date indisponible pour le preflight selector.", exc_info=True)
+        return None
+    if value is None:
+        return None
+    timestamp = pd.to_datetime(value, errors="coerce", utc=False)
+    if pd.isna(timestamp):
+        return None
+    return timestamp.date()
+
+
+def build_data_quality_gate(
+    engine: Engine,
+    config: AlphaScannerConfig,
+    *,
+    reference_date: date | None = None,
+) -> dict[str, object]:
+    effective_reference_date = reference_date or date.today()
+    checks = {
+        "quotes": _build_quotes_quality_check(engine, config, effective_reference_date),
+        "earnings": _build_earnings_quality_check(engine, config, effective_reference_date),
+    }
+    blocking_checks = [name for name, payload in checks.items() if payload.get("status") == "blocked"]
+    return {
+        "status": "blocked" if blocking_checks else "ok",
+        "reference_date": effective_reference_date.isoformat(),
+        "blocking_checks": blocking_checks,
+        "checks": checks,
+    }
+
+
+def _build_quotes_quality_check(
+    engine: Engine,
+    config: AlphaScannerConfig,
+    reference_date: date,
+) -> dict[str, object]:
+    if config.max_spread_bps is None:
+        return {"enabled": False, "status": "disabled", "reason": "spread_filter_disabled"}
+    if not _has_table(engine, "stock_quote_snapshots"):
+        return {
+            "enabled": True,
+            "status": "blocked",
+            "reason": "quotes_table_missing",
+            "max_age_days": DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
+        }
+    latest_quote_date = _read_scalar_date(
+        engine,
+        text("SELECT MAX(quote_date) FROM stock_quote_snapshots WHERE quote_date <= :reference_date"),
+        {"reference_date": reference_date},
+    )
+    if latest_quote_date is None:
+        return {
+            "enabled": True,
+            "status": "blocked",
+            "reason": "quotes_unavailable",
+            "max_age_days": DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
+        }
+    age_days = max((reference_date - latest_quote_date).days, 0)
+    return {
+        "enabled": True,
+        "status": "ok" if age_days <= DATA_QUALITY_QUOTE_MAX_AGE_DAYS else "blocked",
+        "reason": "ok" if age_days <= DATA_QUALITY_QUOTE_MAX_AGE_DAYS else "quotes_stale",
+        "latest_quote_date": latest_quote_date.isoformat(),
+        "age_days": age_days,
+        "max_age_days": DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
+    }
+
+
+def _build_earnings_quality_check(
+    engine: Engine,
+    config: AlphaScannerConfig,
+    reference_date: date,
+) -> dict[str, object]:
+    if config.earnings_blackout_days is None:
+        return {"enabled": False, "status": "disabled", "reason": "earnings_filter_disabled"}
+    required_horizon_days = max(int(config.earnings_blackout_days), 1)
+    required_until = reference_date + timedelta(days=required_horizon_days)
+    if not _has_table(engine, "stock_earnings_calendar"):
+        return {
+            "enabled": True,
+            "status": "blocked",
+            "reason": "earnings_table_missing",
+            "required_until": required_until.isoformat(),
+            "required_horizon_days": required_horizon_days,
+        }
+    latest_earnings_date = _read_scalar_date(
+        engine,
+        text("SELECT MAX(earnings_date) FROM stock_earnings_calendar"),
+    )
+    next_earnings_date = _read_scalar_date(
+        engine,
+        text("SELECT MIN(earnings_date) FROM stock_earnings_calendar WHERE earnings_date >= :reference_date"),
+        {"reference_date": reference_date},
+    )
+    if latest_earnings_date is None:
+        return {
+            "enabled": True,
+            "status": "blocked",
+            "reason": "earnings_unavailable",
+            "required_until": required_until.isoformat(),
+            "required_horizon_days": required_horizon_days,
+        }
+    if next_earnings_date is None:
+        return {
+            "enabled": True,
+            "status": "blocked",
+            "reason": "earnings_no_future_coverage",
+            "latest_earnings_date": latest_earnings_date.isoformat(),
+            "required_until": required_until.isoformat(),
+            "required_horizon_days": required_horizon_days,
+        }
+    return {
+        "enabled": True,
+        "status": "ok" if latest_earnings_date >= required_until else "blocked",
+        "reason": "ok" if latest_earnings_date >= required_until else "earnings_horizon_too_short",
+        "next_earnings_date": next_earnings_date.isoformat(),
+        "latest_earnings_date": latest_earnings_date.isoformat(),
+        "required_until": required_until.isoformat(),
+        "required_horizon_days": required_horizon_days,
+    }
 
 
 def get_stock_metadata_columns(engine: Engine) -> set[str]:
@@ -47,7 +188,7 @@ def get_stock_quote_snapshots_columns(engine: Engine) -> set[str]:
         return set()
 
 
-def fetch_market_data(engine: Engine, config: "AlphaScannerConfig", symbols: Sequence[str]) -> pd.DataFrame:
+def fetch_market_data(engine: Engine, config: AlphaScannerConfig, symbols: Sequence[str]) -> pd.DataFrame:
     if not symbols:
         return pd.DataFrame(columns=PRICE_COLUMNS)
     LOGGER.debug("Chargement market data | symboles=%s", len(symbols))
@@ -74,7 +215,7 @@ def fetch_market_data(engine: Engine, config: "AlphaScannerConfig", symbols: Seq
     return market_data
 
 
-def fetch_scores(engine: Engine, config: "AlphaScannerConfig", symbols: Sequence[str]) -> pd.DataFrame:
+def fetch_scores(engine: Engine, config: AlphaScannerConfig, symbols: Sequence[str]) -> pd.DataFrame:
     if not symbols:
         return pd.DataFrame(columns=SCORE_COLUMNS)
     LOGGER.debug("Chargement scores auxiliaires | symboles=%s", len(symbols))
@@ -163,7 +304,7 @@ def fetch_instrument_metadata(
 
 
 def load_benchmark_returns(
-    engine: Engine, config: "AlphaScannerConfig", start_date: date, end_date: date
+    engine: Engine, config: AlphaScannerConfig, start_date: date, end_date: date
 ) -> pd.DataFrame:
     stmt = text(
         f"""
@@ -248,7 +389,7 @@ def fetch_quote_snapshots(
 
 def fetch_next_earnings(
     engine: Engine,
-    config: "AlphaScannerConfig",
+    config: AlphaScannerConfig,
     symbols: Sequence[str],
     *,
     reference_date: date | None = None,
@@ -298,7 +439,7 @@ def fetch_next_earnings(
 
 def iter_eligible_symbol_chunks(
     engine: Engine,
-    config: "AlphaScannerConfig",
+    config: AlphaScannerConfig,
     metadata_columns: set[str],
 ) -> Iterator[list[str]]:
     """Filtre SQL brut: liquidité 20j, close > min_close, historique >= min_history_days."""
@@ -373,7 +514,7 @@ def iter_eligible_symbol_chunks(
         offset += config.chunk_size
 
 
-def reset_selector_outputs(engine: Engine, config: "AlphaScannerConfig") -> None:
+def reset_selector_outputs(engine: Engine, config: AlphaScannerConfig) -> None:
     reset_stmt = text(
         f"""
         UPDATE {config.score_table}
@@ -401,7 +542,7 @@ def reset_selector_outputs(engine: Engine, config: "AlphaScannerConfig") -> None
         raise RuntimeError("Impossible de réinitialiser les colonnes selector avant exécution.") from exc
 
 
-def prepare_scores_snapshot(scored_df: Optional[pd.DataFrame]) -> list[dict[str, object]]:
+def prepare_scores_snapshot(scored_df: pd.DataFrame | None) -> list[dict[str, object]]:
     if scored_df is None or scored_df.empty:
         return []
     available_columns = [c for c in PERSISTED_SELECTOR_SCORE_COLUMNS if c in scored_df.columns]
@@ -426,9 +567,9 @@ def prepare_scores_snapshot(scored_df: Optional[pd.DataFrame]) -> list[dict[str,
 
 def update_database(
     engine: Engine,
-    config: "AlphaScannerConfig",
+    config: AlphaScannerConfig,
     selected_df: pd.DataFrame,
-    scored_df: Optional[pd.DataFrame] = None,
+    scored_df: pd.DataFrame | None = None,
     *,
     progress: Callable[..., None] | None = None,
     snapshot_date_override: date | None = None,
@@ -462,7 +603,7 @@ def update_database(
         WHERE symbol IN :symbols
         """
     ).bindparams(bindparam("symbols", expanding=True))
-    updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    updated_at = datetime.now(UTC).replace(tzinfo=None)
 
     LOGGER.info(
         "Mise a jour DB | table=%s snapshot_scores=%s candidats=%s batch_size=%s",
@@ -571,6 +712,7 @@ __all__ = [
     "reset_selector_outputs",
     "prepare_scores_snapshot",
     "update_database",
+    "build_data_quality_gate",
     "get_stock_metadata_columns",
     "get_stock_quote_snapshots_columns",
 ]

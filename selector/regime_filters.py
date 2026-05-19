@@ -16,6 +16,7 @@ pour permettre une intégration progressive (live + backtest + tests).
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -26,26 +27,53 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 
+def _normalize_symbol_set(values: Iterable[object] | None) -> set[str]:
+    return {
+        str(value).strip().upper()
+        for value in (values or [])
+        if str(value).strip()
+    }
+
+
+def _normalize_sector_set(values: Iterable[object] | None) -> set[str]:
+    return {
+        str(value).strip().casefold()
+        for value in (values or [])
+        if str(value).strip()
+    }
+
+
 def apply_earnings_shield_to_candidates(
-    df: pd.DataFrame,
-    snapshot: "MarketRegimeSnapshot | None",
+    df: pd.DataFrame | None,
+    snapshot: MarketRegimeSnapshot | None,
     *,
     score_column: str = "score",
     symbol_column: str = "symbol",
 ) -> pd.DataFrame:
     """Filtre / pénalise les candidats touchés par l'earnings shield."""
-    if df is None or df.empty or snapshot is None or not snapshot.earnings_shielded_symbols:
-        return df
-    out = df.copy()
+    if df is None:
+        return pd.DataFrame()
+    frame = df
+    if (
+        frame.empty
+        or snapshot is None
+        or not snapshot.earnings_shielded_symbols
+        or symbol_column not in frame.columns
+    ):
+        return frame
+    out = frame.copy()
     syms = out[symbol_column].astype(str).str.upper()
-    blocked_mask = syms.isin(
-        {s for s, m in snapshot.earnings_shielded_symbols.items() if m == "strict_block"}
+    blocked_symbols = _normalize_symbol_set(
+        s for s, mode in snapshot.earnings_shielded_symbols.items() if mode == "strict_block"
     )
+    blocked_mask = syms.isin(blocked_symbols)
     if blocked_mask.any():
         LOGGER.info("earnings_shield strict_block: %d candidats exclus", int(blocked_mask.sum()))
         out = out.loc[~blocked_mask].copy()
         syms = out[symbol_column].astype(str).str.upper()
-    neg_set = {s for s, m in snapshot.earnings_shielded_symbols.items() if m == "negative_score"}
+    neg_set = _normalize_symbol_set(
+        s for s, mode in snapshot.earnings_shielded_symbols.items() if mode == "negative_score"
+    )
     if neg_set and score_column in out.columns:
         neg_mask = syms.isin(neg_set)
         if neg_mask.any():
@@ -55,63 +83,81 @@ def apply_earnings_shield_to_candidates(
 
 
 def apply_buyback_blackout_to_candidates(
-    df: pd.DataFrame,
-    snapshot: "MarketRegimeSnapshot | None",
+    df: pd.DataFrame | None,
+    snapshot: MarketRegimeSnapshot | None,
     *,
     score_column: str = "score",
     symbol_column: str = "symbol",
 ) -> pd.DataFrame:
     """Applique le multiplicateur ML buyback blackout sur la colonne ``score``."""
-    if df is None or df.empty or snapshot is None or not snapshot.buyback_blackout_symbols:
-        return df
-    if score_column not in df.columns:
-        return df
-    out = df.copy()
+    if df is None:
+        return pd.DataFrame()
+    frame = df
+    if (
+        frame.empty
+        or snapshot is None
+        or not snapshot.buyback_blackout_symbols
+        or score_column not in frame.columns
+        or symbol_column not in frame.columns
+    ):
+        return frame
+    out = frame.copy()
     syms = out[symbol_column].astype(str).str.upper()
+    normalized_multipliers = {
+        str(symbol).strip().upper(): float(mult)
+        for symbol, mult in snapshot.buyback_blackout_symbols.items()
+        if str(symbol).strip()
+    }
     affected = 0
-    for symbol, mult in snapshot.buyback_blackout_symbols.items():
-        mask = syms == str(symbol).upper()
+    for symbol, mult in normalized_multipliers.items():
+        mask = syms == symbol
         if mask.any():
             out.loc[mask, score_column] = out.loc[mask, score_column].astype(float) * float(mult)
             affected += int(mask.sum())
     if affected:
-        LOGGER.info("buyback_blackout: %d candidats pénalisés (mult x%.2f)", affected, mult)
+        LOGGER.info("buyback_blackout: %d candidats pénalisés", affected)
     return out
 
 
 def apply_yield_filter_to_candidates(
-    df: pd.DataFrame,
-    snapshot: "MarketRegimeSnapshot | None",
+    df: pd.DataFrame | None,
+    snapshot: MarketRegimeSnapshot | None,
     *,
     sector_column: str = "sector",
     symbol_column: str = "symbol",
 ) -> pd.DataFrame:
     """Exclut les secteurs blacklistés et les symboles bloqués (high beta géré ailleurs)."""
-    if df is None or df.empty or snapshot is None:
-        return df
+    if df is None:
+        return pd.DataFrame()
+    frame = df
+    if frame.empty or snapshot is None:
+        return frame
     if not snapshot.blocked_sectors and not snapshot.blocked_symbols:
-        return df
-    out = df.copy()
+        return frame
+    out = frame.copy()
     if snapshot.blocked_sectors and sector_column in out.columns:
-        out = out.loc[~out[sector_column].astype(str).isin(snapshot.blocked_sectors)].copy()
+        blocked_sectors = _normalize_sector_set(snapshot.blocked_sectors)
+        normalized_sectors = out[sector_column].astype(str).str.strip().str.casefold()
+        out = out.loc[~normalized_sectors.isin(blocked_sectors)].copy()
     if snapshot.blocked_symbols and symbol_column in out.columns:
+        blocked_symbols = _normalize_symbol_set(snapshot.blocked_symbols)
         out = out.loc[
-            ~out[symbol_column].astype(str).str.upper().isin(
-                {s.upper() for s in snapshot.blocked_symbols}
-            )
+            ~out[symbol_column].astype(str).str.strip().str.upper().isin(blocked_symbols)
         ].copy()
     return out
 
 
 def apply_full_regime_to_candidates(
-    df: pd.DataFrame,
-    snapshot: "MarketRegimeSnapshot | None",
+    df: pd.DataFrame | None,
+    snapshot: MarketRegimeSnapshot | None,
     *,
     score_column: str = "score",
     sector_column: str = "sector",
     symbol_column: str = "symbol",
 ) -> pd.DataFrame:
     """Pipeline complet : yield filter + earnings shield + buyback blackout."""
+    if df is None:
+        return pd.DataFrame()
     out = apply_yield_filter_to_candidates(
         df, snapshot, sector_column=sector_column, symbol_column=symbol_column
     )

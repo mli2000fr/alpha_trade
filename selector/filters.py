@@ -75,7 +75,7 @@ ETF_NAME_PATTERNS = (
 
 def apply_filters_with_stats(
     merged_df: pd.DataFrame,
-    config: "AlphaScannerConfig",
+    config: AlphaScannerConfig,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     """Applique les filtres univers et retourne ``(df_filtré, stats_par_filtre)``."""
     if merged_df.empty:

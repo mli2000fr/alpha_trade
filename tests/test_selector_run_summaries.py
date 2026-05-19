@@ -40,6 +40,9 @@ class _FakeScanner:
             "rejected_market_cap_stale": 0,
         }
 
+    def get_last_data_quality_gate(self) -> dict[str, object]:
+        return {"status": "ok", "reference_date": "2026-04-30", "blocking_checks": [], "checks": {}}
+
 
 def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> None:
     monkeypatch.setattr(_selector_cli, "configure_root_logging", lambda **kwargs: None)
@@ -92,7 +95,10 @@ def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> Non
 
     stdout = capsys.readouterr().out.strip().splitlines()
     payload = _payload_from_stdout(stdout[0], alpha_scanner.RUN_SUMMARY_PREFIX)
+    assert payload["schema_version"] == 1
     assert payload["requested_selection_size"] == 80
+    assert payload["preset_profile"] == "strict_swing_cash"
+    assert payload["preset_profile_version"] == "v1"
     assert payload["selected_candidates"] == 3
     assert payload["selected_sectors"] == 2
     assert payload["workers"] == 6
@@ -111,6 +117,38 @@ def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> Non
     assert "max_spread_bps_iex" in payload
     assert "min_quote_size" in payload
     assert "market_cap_max_age_days" in payload
+    assert payload["data_quality_gate"]["status"] == "ok"
+
+
+def test_alpha_scanner_main_emits_blocked_summary_on_data_quality_gate(monkeypatch, capsys) -> None:
+    class _BlockedScanner:
+        def __init__(self, engine=None, config=None) -> None:
+            self.config = config
+
+        def run(self) -> pd.DataFrame:
+            raise alpha_scanner.SelectorDataQualityError(
+                {
+                    "status": "blocked",
+                    "reference_date": "2026-04-30",
+                    "blocking_checks": ["quotes"],
+                    "checks": {
+                        "quotes": {"status": "blocked", "reason": "quotes_stale"},
+                    },
+                }
+            )
+
+    monkeypatch.setattr(_selector_cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(_selector_cli, "AlphaScanner", _BlockedScanner)
+    monkeypatch.setattr(sys, "argv", ["alpha_scanner.py"])
+
+    alpha_scanner.main()
+
+    stdout = capsys.readouterr().out.strip().splitlines()
+    payload = _payload_from_stdout(stdout[0], alpha_scanner.RUN_SUMMARY_PREFIX)
+    assert payload["run_status"] == "blocked"
+    assert payload["failure_reason"] == "data_quality_gate_blocked"
+    assert payload["data_quality_gate"]["blocking_checks"] == ["quotes"]
+    assert stdout[1] == "Run bloqué par le data quality gate selector."
 
 
 def test_alpha_scanner_run_emits_live_progress(monkeypatch) -> None:
@@ -141,6 +179,7 @@ def test_alpha_scanner_run_emits_live_progress(monkeypatch) -> None:
     progress_payloads: list[dict[str, object]] = []
     scanner.progress_callback = progress_payloads.append
 
+    monkeypatch.setattr(scanner, "preflight_data_quality", lambda: {"status": "ok", "blocking_checks": []})
     monkeypatch.setattr(scanner, "_reset_selector_outputs", lambda: None)
     monkeypatch.setattr(scanner, "_iter_eligible_symbol_chunks", lambda: iter([["AAA", "BBB"], ["CCC"]]))
     monkeypatch.setattr(

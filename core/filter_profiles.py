@@ -37,6 +37,7 @@ class StrictFilterProfile:
     min_close: float
     min_avg_dollar_volume_20d: float
     max_volatility_ratio: float
+    version: str = "v1"
     min_relative_strength_index: float | None = None
     min_high_52w_proximity: float | None = None
     min_weekly_trend_score: float | None = None

@@ -33,6 +33,8 @@ def test_alpha_scanner_config_rejects_invalid_max_volatility_ratio() -> None:
 def test_alpha_scanner_config_strict_swing_cash_uses_shared_profile() -> None:
     config = AlphaScannerConfig.strict_swing_cash(selection_size=42)
 
+    assert config.preset_profile == "strict_swing_cash"
+    assert config.preset_profile_version == "v1"
     assert config.min_close == pytest.approx(10.0)
     assert config.liquidity_threshold == pytest.approx(30_000_000.0)
     assert config.max_volatility_ratio == pytest.approx(0.9)

@@ -6,15 +6,16 @@ import argparse
 import logging
 from datetime import date
 
-from common.utils import configure_root_logging
+import pandas as pd
 
+from common.utils import configure_root_logging
 from selector.config import AlphaScannerConfig
 from selector.run_summary import (
     _build_cli_run_summary,
     _emit_run_summary,
     _utc_now_naive,
 )
-from selector.scanner import AlphaScanner
+from selector.scanner import AlphaScanner, SelectorDataQualityError
 
 LOGGER = logging.getLogger("selector.alpha_scanner")
 
@@ -109,7 +110,24 @@ def main() -> None:
             scanner.snapshot_date_override = date.fromisoformat(args.trade_date.strip())
         except ValueError:
             LOGGER.warning("Argument --trade-date=%r invalide ; fallback date.today().", args.trade_date)
-    result = scanner.run()
+    try:
+        result = scanner.run()
+    except SelectorDataQualityError as exc:
+        finished_at = _utc_now_naive()
+        _emit_run_summary(
+            _build_cli_run_summary(
+                config=config,
+                result=pd.DataFrame(),
+                started_at=started_at,
+                finished_at=finished_at,
+                rejected_by_filter={},
+                run_status="blocked",
+                failure_reason="data_quality_gate_blocked",
+                data_quality_gate=exc.payload,
+            )
+        )
+        print("Run bloqué par le data quality gate selector.")
+        return
     finished_at = _utc_now_naive()
 
     rejected_by_filter: dict[str, int] = {}
@@ -127,13 +145,14 @@ def main() -> None:
             started_at=started_at,
             finished_at=finished_at,
             rejected_by_filter=rejected_by_filter,
+            data_quality_gate=getattr(scanner, "get_last_data_quality_gate", lambda: None)(),
         )
     )
 
     # Sprint S2 (A-017, A-023) — check télémétrie data_source en fin de run.
     try:
-        from dataIntegrityEngine.data_source_health import check_data_source_homogeneity
         from database.connection import get_sqlalchemy_engine
+        from dataIntegrityEngine.data_source_health import check_data_source_homogeneity
 
         mix_check = check_data_source_homogeneity(get_sqlalchemy_engine())
         _emit_run_summary({"data_source_mix_check": mix_check})

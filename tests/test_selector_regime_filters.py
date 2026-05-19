@@ -42,6 +42,15 @@ def test_earnings_shield_negative_score_overrides_score():
     assert aapl["score"] == -1.0
 
 
+def test_earnings_shield_normalizes_snapshot_symbol_case():
+    snap = MarketRegimeSnapshot(
+        trade_date=date(2025, 5, 1),
+        earnings_shielded_symbols={" aapl ": "strict_block"},
+    )
+    out = apply_earnings_shield_to_candidates(_df(), snap)
+    assert "AAPL" not in set(out["symbol"])
+
+
 def test_buyback_blackout_multiplies_score():
     snap = MarketRegimeSnapshot(
         trade_date=date(2025, 5, 1),
@@ -58,6 +67,25 @@ def test_yield_filter_excludes_blocked_sectors():
     )
     out = apply_yield_filter_to_candidates(_df(), snap)
     assert set(out["symbol"]) == {"JPM"}
+
+
+def test_yield_filter_normalizes_sector_case_and_whitespace():
+    snap = MarketRegimeSnapshot(
+        trade_date=date(2025, 5, 1),
+        blocked_sectors=(" technology ", "TECH"),
+    )
+    out = apply_yield_filter_to_candidates(_df(), snap)
+    assert set(out["symbol"]) == {"JPM"}
+
+
+def test_buyback_blackout_is_noop_when_symbol_column_missing():
+    snap = MarketRegimeSnapshot(
+        trade_date=date(2025, 5, 1),
+        buyback_blackout_symbols={"AAPL": 0.7},
+    )
+    df = pd.DataFrame({"ticker": ["AAPL"], "score": [1.0]})
+    out = apply_buyback_blackout_to_candidates(df, snap)
+    pd.testing.assert_frame_equal(out, df)
 
 
 def test_full_regime_pipeline_combines_all_filters():

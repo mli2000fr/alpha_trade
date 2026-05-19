@@ -19,6 +19,8 @@ PRICE_COLUMNS = ["symbol", "date", "close", "volume", "high", "low"]
 
 @dataclass(frozen=True, slots=True)
 class AlphaScannerConfig:
+    preset_profile: str = "custom"
+    preset_profile_version: str | None = None
     price_table: str = "stock_bars_daily"
     score_table: str = "stock_scores"
     chunk_size: int = 500
@@ -73,8 +75,12 @@ class AlphaScannerConfig:
         cls,
         profile: StrictFilterProfile,
         **overrides: object,
-    ) -> "AlphaScannerConfig":
-        merged_kwargs: dict[str, object] = dict(profile.to_scanner_config_kwargs())
+    ) -> AlphaScannerConfig:
+        merged_kwargs: dict[str, object] = {
+            "preset_profile": profile.name,
+            "preset_profile_version": profile.version,
+            **profile.to_scanner_config_kwargs(),
+        }
         # Phase 3.3.c/d — merger les extensions IEX/TTL.
         for key, value in profile.iex_extensions().items():
             if value is not None:
@@ -84,7 +90,7 @@ class AlphaScannerConfig:
         return cls(**merged_kwargs)
 
     @classmethod
-    def strict_swing_cash(cls, **overrides: object) -> "AlphaScannerConfig":
+    def strict_swing_cash(cls, **overrides: object) -> AlphaScannerConfig:
         return cls.from_filter_profile(STRICT_SWING_CASH_FILTERS, **overrides)
 
     def __post_init__(self) -> None:

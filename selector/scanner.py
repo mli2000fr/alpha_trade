@@ -21,16 +21,15 @@ import logging
 import os
 import threading
 from collections import Counter
+from collections.abc import Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from datetime import date, datetime, timezone
-from typing import Optional, Sequence
+from datetime import UTC, date, datetime
 
 import pandas as pd
 from sqlalchemy.engine import Engine
 
 from core.run_summary import attach_live_progress
 from database.connection import get_sqlalchemy_engine
-
 from selector import db_io as _db_io
 from selector.config import AlphaScannerConfig
 from selector.factors import compute_factor_frame, winsorize_and_normalize
@@ -51,6 +50,14 @@ from selector.run_summary import _summarize_zero_candidate_filters
 LOGGER = logging.getLogger("selector.alpha_scanner")
 
 
+class SelectorDataQualityError(RuntimeError):
+    """Préflight bloquant : les sources externes requises pour les filtres actifs sont insuffisantes."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        super().__init__("AlphaScanner bloqué par le data quality gate.")
+        self.payload = payload
+
+
 class AlphaScanner:
     """Scanner multi-facteurs basé sur prix journaliers + table auxiliaire de scores.
 
@@ -69,6 +76,7 @@ class AlphaScanner:
         self._stock_quote_snapshots_columns_cache: set[str] | None = None
         self._aggregated_filter_stats: Counter[str] = Counter()
         self._filter_stats_lock = threading.Lock()
+        self._last_data_quality_gate: dict[str, object] | None = None
         self.progress_callback = None
 
     # ------------------------------------------------------------------
@@ -78,6 +86,19 @@ class AlphaScanner:
         """Phase 3.3.b — snapshot agrégé (cross-chunks) des stats de filtrage."""
         with self._filter_stats_lock:
             return dict(self._aggregated_filter_stats)
+
+    def get_last_data_quality_gate(self) -> dict[str, object] | None:
+        return dict(self._last_data_quality_gate) if self._last_data_quality_gate else None
+
+    def preflight_data_quality(self, *, reference_date: date | None = None) -> dict[str, object]:
+        effective_reference_date = reference_date or getattr(self, "snapshot_date_override", None) or date.today()
+        payload = _db_io.build_data_quality_gate(
+            self.engine,
+            self.config,
+            reference_date=effective_reference_date,
+        )
+        self._last_data_quality_gate = payload
+        return payload
 
     def _get_stock_metadata_columns(self) -> set[str]:
         if self._stock_metadata_columns_cache is None:
@@ -179,7 +200,7 @@ class AlphaScanner:
     # Persistance DB (délégation)
     # ------------------------------------------------------------------
     def update_database(
-        self, selected_df: pd.DataFrame, scored_df: Optional[pd.DataFrame] = None
+        self, selected_df: pd.DataFrame, scored_df: pd.DataFrame | None = None
     ) -> int:
         return _db_io.update_database(
             self.engine,
@@ -195,7 +216,7 @@ class AlphaScanner:
             self._aggregated_filter_stats.clear()
         _db_io.reset_selector_outputs(self.engine, self.config)
 
-    def _prepare_scores_snapshot(self, scored_df: Optional[pd.DataFrame]) -> list[dict[str, object]]:
+    def _prepare_scores_snapshot(self, scored_df: pd.DataFrame | None) -> list[dict[str, object]]:
         return _db_io.prepare_scores_snapshot(scored_df)
 
     def _iter_eligible_symbol_chunks(self):
@@ -208,7 +229,7 @@ class AlphaScanner:
     # ------------------------------------------------------------------
     def run(self) -> pd.DataFrame:
         """Exécute le scan complet et retourne le Top N final."""
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
         LOGGER.info(
             "Demarrage AlphaScanner | table_prix=%s table_scores=%s chunk_size=%s selection=%s workers=%s",
             self.config.price_table,
@@ -217,6 +238,15 @@ class AlphaScanner:
             self.config.selection_size,
             self._resolve_worker_count(),
         )
+
+        data_quality_gate = self.preflight_data_quality()
+        if data_quality_gate.get("status") == "blocked":
+            LOGGER.error(
+                "AlphaScanner bloque par le data quality gate | reference_date=%s blocking_checks=%s",
+                data_quality_gate.get("reference_date"),
+                data_quality_gate.get("blocking_checks", []),
+            )
+            raise SelectorDataQualityError(data_quality_gate)
 
         self._reset_selector_outputs()
 
@@ -306,7 +336,7 @@ class AlphaScanner:
 
         self.update_database(selected, merged_candidates)
 
-        elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+        elapsed = (datetime.now(UTC) - started_at).total_seconds()
 
         if selected.empty:
             zero_candidate_diagnostic = _summarize_zero_candidate_filters(
@@ -414,16 +444,16 @@ class AlphaScanner:
     # ------------------------------------------------------------------
     @staticmethod
     def _winsorize_and_normalize(
-        series: Optional[pd.Series],
+        series: pd.Series | None,
         lower_pct: float = 0.01,
         upper_pct: float = 0.99,
     ) -> pd.Series:
         return winsorize_and_normalize(series, lower_pct=lower_pct, upper_pct=upper_pct)
 
     @staticmethod
-    def _normalize_zero_one(series: Optional[pd.Series]) -> pd.Series:
+    def _normalize_zero_one(series: pd.Series | None) -> pd.Series:
         return winsorize_and_normalize(series)
 
 
-__all__ = ["AlphaScanner"]
+__all__ = ["AlphaScanner", "SelectorDataQualityError"]
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
 import logging
+from datetime import UTC, date, datetime
 from typing import cast
 
 import numpy as np
@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
-from selector.alpha_scanner import AlphaScanner, AlphaScannerConfig
+from selector.alpha_scanner import AlphaScanner, AlphaScannerConfig, SelectorDataQualityError
 
 
 def _create_shared_sqlite_engine():
@@ -30,7 +30,7 @@ def _make_market_frame(
     volume: float = 600_000.0,
     noise_scale: float = 0.002,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
-    dates = pd.bdate_range(end=datetime.now(timezone.utc), periods=rows)
+    dates = pd.bdate_range(end=datetime.now(UTC), periods=rows)
     trend = np.linspace(0.0, drift, rows)
     noise = np.sin(np.linspace(0.0, 12.0, rows)) * noise_scale
     close = base_price * (1.0 + trend + noise)
@@ -55,9 +55,121 @@ def _make_market_frame(
         "anomaly_count": 0,
         "missing_days_count": 0,
         "is_candidate": 0,
-        "last_updated_scan": datetime.now(timezone.utc).replace(tzinfo=None),
+        "last_updated_scan": datetime.now(UTC).replace(tzinfo=None),
     }
     return market, score_row
+
+
+def _seed_selector_run_universe(engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_bars_daily (
+                    symbol TEXT NOT NULL,
+                    date DATETIME NOT NULL,
+                    close REAL NOT NULL,
+                    volume REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    PRIMARY KEY(symbol, date)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_scores (
+                    symbol TEXT PRIMARY KEY,
+                    liquidity_val REAL,
+                    relative_strength_index REAL,
+                    total_score REAL,
+                    trend_score REAL,
+                    vcp_score REAL,
+                    final_score REAL,
+                    sector TEXT,
+                    market_cap REAL,
+                    beta_126 REAL,
+                    spread_bps REAL,
+                    earnings_date DATE,
+                    days_to_earnings INTEGER,
+                    earnings_blackout INTEGER DEFAULT 0,
+                    anomaly_count INTEGER,
+                    missing_days_count INTEGER,
+                    sanitizer_status TEXT DEFAULT 'success',
+                    is_candidate INTEGER NOT NULL DEFAULT 0,
+                    last_updated_scan DATETIME
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_metadata (
+                    symbol TEXT PRIMARY KEY,
+                    company_name TEXT,
+                    asset_class TEXT,
+                    status TEXT,
+                    tradable BOOLEAN,
+                    bars_available BOOLEAN,
+                    sector TEXT,
+                    market_cap REAL
+                )
+                """
+            )
+        )
+
+        markets: list[pd.DataFrame] = []
+        scores: list[dict[str, object]] = []
+        metadata_rows: list[dict[str, object]] = []
+        definitions = [
+            ("AAA", "Technology", 0.50),
+            ("AAB", "Technology", 0.40),
+            ("BBB", "Finance", 0.35),
+            ("BBC", "Finance", 0.25),
+            ("CCC", "Healthcare", 0.32),
+            ("CCD", "Healthcare", 0.22),
+            ("DDD", "Energy", 0.30),
+            ("DDE", "Energy", 0.18),
+        ]
+        for symbol, sector, drift in definitions:
+            market_frame, score_row = _make_market_frame(symbol, sector, drift=drift, rows=260)
+            markets.append(market_frame)
+            scores.append(score_row)
+            metadata_rows.append(
+                {
+                    "symbol": symbol,
+                    "company_name": f"{symbol} Common Stock",
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": True,
+                    "bars_available": True,
+                    "sector": sector,
+                    "market_cap": 5_000_000_000.0,
+                }
+            )
+
+        etf_market, etf_score = _make_market_frame("ETF1", "Unknown", drift=0.60, rows=260)
+        markets.append(etf_market)
+        scores.append(etf_score)
+        metadata_rows.append(
+            {
+                "symbol": "ETF1",
+                "company_name": "Vanguard Total Bond Market ETF",
+                "asset_class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "bars_available": True,
+                "sector": None,
+                "market_cap": None,
+            }
+        )
+
+        pd.concat(markets, ignore_index=True).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
+        pd.DataFrame(scores).to_sql("stock_scores", conn, if_exists="append", index=False)
+        pd.DataFrame(metadata_rows).to_sql("stock_metadata", conn, if_exists="append", index=False)
 
 
 def test_compute_factors_prefers_trending_and_tighter_symbols() -> None:
@@ -485,6 +597,77 @@ def test_update_database_persists_selector_scores() -> None:
     ]
 
 
+def test_run_is_invariant_to_chunk_size_for_same_universe() -> None:
+    engine = _create_shared_sqlite_engine()
+    _seed_selector_run_universe(engine)
+
+    scanner_chunk_2 = AlphaScanner(
+        engine=engine,
+        config=AlphaScannerConfig(selection_size=4, chunk_size=2, update_batch_size=2, max_workers=1),
+    )
+    scanner_chunk_5 = AlphaScanner(
+        engine=engine,
+        config=AlphaScannerConfig(selection_size=4, chunk_size=5, update_batch_size=2, max_workers=1),
+    )
+
+    result_chunk_2 = scanner_chunk_2.run()
+    result_chunk_5 = scanner_chunk_5.run()
+
+    assert result_chunk_2["symbol"].tolist() == result_chunk_5["symbol"].tolist()
+    assert result_chunk_2["rank"].tolist() == result_chunk_5["rank"].tolist()
+
+
+def test_run_blocks_when_quotes_and_earnings_are_stale() -> None:
+    engine = _create_shared_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_quote_snapshots (
+                    symbol TEXT NOT NULL,
+                    quote_date DATE NOT NULL,
+                    spread_bps REAL,
+                    PRIMARY KEY(symbol, quote_date)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE stock_earnings_calendar (
+                    symbol TEXT NOT NULL,
+                    earnings_date DATE NOT NULL,
+                    PRIMARY KEY(symbol, earnings_date)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO stock_quote_snapshots(symbol, quote_date, spread_bps) VALUES ('AAA', '2026-04-01', 12.0)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO stock_earnings_calendar(symbol, earnings_date) VALUES ('AAA', '2026-04-15')"
+            )
+        )
+
+    scanner = AlphaScanner(
+        engine=engine,
+        config=AlphaScannerConfig.strict_swing_cash(selection_size=5, chunk_size=2, max_workers=1),
+    )
+    scanner.snapshot_date_override = date(2026, 5, 19)
+
+    with pytest.raises(SelectorDataQualityError) as exc_info:
+        scanner.run()
+
+    payload = exc_info.value.payload
+    assert payload["status"] == "blocked"
+    assert set(payload["blocking_checks"]) == {"quotes", "earnings"}
+
+
 def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> None:
     engine = _create_shared_sqlite_engine()
     with engine.begin() as conn:
@@ -606,7 +789,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
                 "anomaly_count": 0,
                 "missing_days_count": 0,
                 "is_candidate": 1,
-                "last_updated_scan": datetime.now(timezone.utc).replace(tzinfo=None),
+                "last_updated_scan": datetime.now(UTC).replace(tzinfo=None),
             }
         )
 
@@ -860,6 +1043,7 @@ def test_run_supports_strict_swing_preset_filters() -> None:
         engine=engine,
         config=AlphaScannerConfig.strict_swing_cash(selection_size=5, chunk_size=2, max_workers=1, min_beta_126=None),
     )
+    scanner.snapshot_date_override = date(2026, 4, 22)
 
     result = scanner.run()
 

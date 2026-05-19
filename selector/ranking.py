@@ -102,7 +102,7 @@ OUTPUT_COLUMNS = [
 def merge_scores(
     computed_df: pd.DataFrame,
     scores_df: pd.DataFrame,
-    config: "AlphaScannerConfig",
+    config: AlphaScannerConfig,
 ) -> pd.DataFrame:
     """
     Fusionne facteurs recalculés et scores auxiliaires.
@@ -160,7 +160,7 @@ def merge_scores(
 
 def apply_factor_neutralization(
     df: pd.DataFrame,
-    config: "AlphaScannerConfig",
+    config: AlphaScannerConfig,
 ) -> pd.DataFrame:
     """
     Neutralisation cross-sectorielle (P0) — appliquée sur l'univers COMPLET
@@ -238,7 +238,7 @@ def apply_factor_neutralization(
 
 def apply_sector_neutrality(
     ranked_df: pd.DataFrame,
-    config: "AlphaScannerConfig",
+    config: AlphaScannerConfig,
 ) -> pd.DataFrame:
     """Sélection round-robin avec plafond sectoriel."""
     if ranked_df.empty:
@@ -263,7 +263,7 @@ def apply_sector_neutrality(
         sector: group.reset_index(drop=True)
         for sector, group in prepared.groupby("sector", sort=False)
     }
-    pointers = {sector: 0 for sector in groups}
+    pointers = dict.fromkeys(groups, 0)
     counts: Counter[str] = Counter()
     selected_rows: list[pd.Series] = []
 
@@ -305,7 +305,7 @@ def apply_sector_neutrality(
 
 def rank_and_select(
     merged_df: pd.DataFrame,
-    config: "AlphaScannerConfig",
+    config: AlphaScannerConfig,
 ) -> pd.DataFrame:
     """Trie, neutralise par secteur et retourne le top final."""
     if merged_df.empty:

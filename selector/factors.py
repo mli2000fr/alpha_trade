@@ -16,7 +16,7 @@ appelle ``compute_factor_frame`` ici.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -52,7 +52,7 @@ FACTOR_COLUMNS = [
 
 
 def winsorize_and_normalize(
-    series: Optional[pd.Series],
+    series: pd.Series | None,
     lower_pct: float = 0.01,
     upper_pct: float = 0.99,
 ) -> pd.Series:
@@ -88,7 +88,7 @@ def winsorize_and_normalize(
 def compute_factor_frame(
     market_data: pd.DataFrame,
     benchmark_returns: pd.DataFrame,
-    config: "AlphaScannerConfig",
+    config: AlphaScannerConfig,
 ) -> pd.DataFrame:
     """
     Calcule MA, range 52 semaines, trend_score Minervini et VCP score.
