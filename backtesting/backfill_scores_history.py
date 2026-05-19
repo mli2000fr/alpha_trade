@@ -117,7 +117,7 @@ class BackfillScoresHistoryService:
         config_fingerprint: str | None = None,
     ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
-        self.screener_config = screener_config or ScreenerConfig()
+        self.screener_config = screener_config or ScreenerConfig.strict_swing_cash()
         self.scanner_config = scanner_config or AlphaScannerConfig.strict_swing_cash()
         self.sentiment_config = sentiment_config or SentimentBoostConfig()
         self.screener_max_workers = screener_max_workers

@@ -19,7 +19,7 @@ from screener.models import ScreenerConfig
 from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SCREENER_CONFIG = ScreenerConfig()
+DEFAULT_SCREENER_CONFIG = ScreenerConfig.strict_swing_cash()
 
 
 def _resolve_bars_provider_for_ihm() -> str:

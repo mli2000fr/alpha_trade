@@ -194,7 +194,7 @@ def test_build_pipeline_command_omits_account_for_global_steps() -> None:
         "--benchmark",
         "SPY",
         "--liquidity-threshold-usd",
-        "10000000.0",
+        "30000000.0",
         "--min-relative-strength-index",
         "100.0",
         "--historical-range-lookback-days",

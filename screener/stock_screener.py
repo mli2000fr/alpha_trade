@@ -383,15 +383,16 @@ def run_screener(
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
+    strict_defaults = ScreenerConfig.strict_swing_cash()
     parser = argparse.ArgumentParser(description="Stock screener haute performance")
-    parser.add_argument("--chunk-size", type=int, default=500, help="Taille des chunks de symboles")
+    parser.add_argument("--chunk-size", type=int, default=strict_defaults.chunk_size, help="Taille des chunks de symboles")
     parser.add_argument("--max-workers", type=int, default=None, help="Nombre de processus")
-    parser.add_argument("--benchmark", type=str, default="SPY", help="Symbole benchmark")
-    parser.add_argument("--liquidity-threshold-usd", type=float, default=10_000_000.0, help="Seuil minimal de liquidité moyenne en dollars")
-    parser.add_argument("--min-relative-strength-index", type=float, default=100.0, help="Force relative minimale vs benchmark")
-    parser.add_argument("--historical-range-lookback-days", type=int, default=504, help="Fenêtre calendaire du range historique utilisé pour scorer la proximité des highs")
-    parser.add_argument("--min-historical-range-score", type=float, default=70.0, help="Score minimal de position dans le range historique")
-    parser.add_argument("--first-pass-window-days", type=int, default=400, help="Fenêtre calendaire chargée en passe 1")
+    parser.add_argument("--benchmark", type=str, default=strict_defaults.benchmark_symbol, help="Symbole benchmark")
+    parser.add_argument("--liquidity-threshold-usd", type=float, default=strict_defaults.liquidity_threshold_usd, help="Seuil minimal de liquidité moyenne en dollars")
+    parser.add_argument("--min-relative-strength-index", type=float, default=strict_defaults.min_relative_strength_index, help="Force relative minimale vs benchmark")
+    parser.add_argument("--historical-range-lookback-days", type=int, default=strict_defaults.historical_range_lookback_days, help="Fenêtre calendaire du range historique utilisé pour scorer la proximité des highs")
+    parser.add_argument("--min-historical-range-score", type=float, default=strict_defaults.min_historical_range_score, help="Score minimal de position dans le range historique")
+    parser.add_argument("--first-pass-window-days", type=int, default=strict_defaults.first_pass_window_days, help="Fenêtre calendaire chargée en passe 1")
     parser.add_argument("--disable-two-pass-loading", action="store_true", help="Désactive le chargement en 2 passes")
     parser.add_argument(
         "--trade-date",
@@ -415,7 +416,7 @@ def main() -> None:
             snapshot_date_override = date.fromisoformat(args.trade_date.strip())
         except ValueError:
             LOGGER.warning("Argument --trade-date=%r invalide ; fallback date.today().", args.trade_date)
-    config = ScreenerConfig(
+    config = ScreenerConfig.strict_swing_cash(
         chunk_size=args.chunk_size,
         benchmark_symbol=args.benchmark,
         liquidity_threshold_usd=args.liquidity_threshold_usd,

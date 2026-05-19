@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from core.filter_profiles import STRICT_SWING_CASH_FILTERS
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CAPITAL_PRESETS_CONFIG_PATH = PROJECT_ROOT / "config" / "capital_presets.yaml"
 DETECTED_EQUITY_PLACEHOLDER = "__DETECTED_EQUITY__"
@@ -190,9 +192,11 @@ def capital_preset_fingerprint(preset: CapitalPreset) -> str:
 
 def build_screener_config_kwargs_from_preset(preset: CapitalPreset) -> dict[str, Any]:
     values = preset.values
+    default_liquidity_threshold = float(STRICT_SWING_CASH_FILTERS.min_avg_dollar_volume_20d)
+    default_relative_strength = float(STRICT_SWING_CASH_FILTERS.min_relative_strength_index or 100.0)
     return {
-        "liquidity_threshold_usd": float(values.get("screener_liquidity_threshold_usd", 10_000_000.0)),
-        "min_relative_strength_index": float(values.get("screener_min_relative_strength_index", 100.0)),
+        "liquidity_threshold_usd": float(values.get("screener_liquidity_threshold_usd", default_liquidity_threshold)),
+        "min_relative_strength_index": float(values.get("screener_min_relative_strength_index", default_relative_strength)),
         "historical_range_lookback_days": int(values.get("screener_historical_range_lookback_days", 504)),
         "min_historical_range_score": float(values.get("screener_min_historical_range_score", 70.0)),
         "first_pass_window_days": int(values.get("screener_first_pass_window_days", 400)),

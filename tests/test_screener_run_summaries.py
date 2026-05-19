@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import cast
 
 import pandas as pd
 
 from screener import stock_screener
 from screener.models import ScreenerChunkMetrics
+from screener.models import ScreenerConfig
 from screener.models import ScreenerRunReport
 
 
@@ -125,6 +127,40 @@ def test_stock_screener_main_uses_trade_date_as_as_of_date(monkeypatch) -> None:
 
     assert str(captured["as_of_date"]) == "2026-04-19"
     assert str(captured["snapshot_date"]) == "2026-04-19"
+
+
+def test_stock_screener_main_uses_strict_swing_cash_defaults(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(stock_screener, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(stock_screener, "_emit_run_summary", lambda payload: None)
+    monkeypatch.setattr(
+        stock_screener,
+        "run_screener_with_report",
+        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None: captured.update(
+            {"config": config}
+        )
+        or (
+            pd.DataFrame(),
+            ScreenerRunReport(
+                run_id="stock-screener-20260425010101-abc123",
+                benchmark_symbol=config.benchmark_symbol,
+                chunk_size=config.chunk_size,
+                workers=max_workers or 4,
+                as_of_date=None,
+                started_at="2026-04-25T01:01:01",
+                finished_at="2026-04-25T01:01:03",
+            ),
+        ),
+    )
+    monkeypatch.setattr(sys, "argv", ["stock_screener.py"])
+
+    stock_screener.main()
+
+    config = cast(ScreenerConfig, captured["config"])
+    assert config.min_close_price == 10.0
+    assert config.liquidity_threshold_usd == 30_000_000.0
+    assert config.min_relative_strength_index == 100.0
 
 
 def test_run_screener_with_report_emits_live_progress_callbacks(monkeypatch) -> None:

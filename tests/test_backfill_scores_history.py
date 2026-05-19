@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from backtesting.backfill_scores_history import BackfillScoresHistoryService, SELECTOR_FILTER_STAT_KEYS
+from screener.models import ScreenerConfig
 
 
 def _build_sqlite_engine():
@@ -20,6 +21,12 @@ def _build_sqlite_engine():
             )
         )
     return engine
+
+
+def test_backfill_service_defaults_to_strict_swing_cash_screener_config() -> None:
+    service = BackfillScoresHistoryService(engine=_build_sqlite_engine(), screener_max_workers=1)
+
+    assert service.screener_config == ScreenerConfig.strict_swing_cash()
 
 
 def test_resolve_end_date_uses_previous_bar_before_first_existing_snapshot() -> None:

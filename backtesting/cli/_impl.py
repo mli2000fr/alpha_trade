@@ -395,7 +395,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     diag_p.add_argument(
         "--liquidity-threshold-values",
-        default="5000000,10000000,20000000",
+        default="20000000,30000000,40000000",
         help="Liste CSV des seuils liquidity_threshold_usd à tester",
     )
     diag_p.add_argument(
@@ -553,14 +553,16 @@ def _run_statistical_validation(
 
     import json as _json
     import pandas as _pd
-    from backtesting.statistical_validation import BootstrapResult, bootstrap_trades, parameter_sensitivity
-    from backtesting.report import _get_closed_trades  # best-effort — peut ne pas exister
+    from backtesting.statistical_validation import bootstrap_trades, parameter_sensitivity
+    from backtesting.report import _extract_closed_trades_df
 
     # --- G1. Bootstrap ---
     if bootstrap_n > 0:
         _safe_print(f"\n📐 Bootstrap Monte Carlo ({bootstrap_n} itérations)...")
         try:
-            closed_trades = _get_closed_trades(pf)
+            closed_trades = _extract_closed_trades_df(pf)
+            if closed_trades is None:
+                raise AttributeError("closed_trades_df indisponible")
         except Exception:
             try:
                 closed_trades = pf.closed_trades.records_readable
@@ -1436,7 +1438,7 @@ def _run_backfill_scores_history(args: argparse.Namespace) -> None:
     )
 
     service = BackfillScoresHistoryService(
-        screener_config=ScreenerConfig(chunk_size=args.chunk_size, **screener_kwargs),
+        screener_config=ScreenerConfig.strict_swing_cash(chunk_size=args.chunk_size, **screener_kwargs),
         scanner_config=AlphaScannerConfig.strict_swing_cash(
             chunk_size=args.chunk_size,
             selection_size=effective_selection_size,
@@ -1500,7 +1502,7 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
     hist_score_values = _parse_csv_values(args.historical_range_score_values, cast_type=float)
     liquidity_values = _parse_csv_values(args.liquidity_threshold_values, cast_type=float)
 
-    base_screener_config = ScreenerConfig(chunk_size=args.chunk_size)
+    base_screener_config = ScreenerConfig.strict_swing_cash(chunk_size=args.chunk_size)
     if args.mode == "grid":
         scenarios = build_screener_grid_scenarios(
             base_screener_config,

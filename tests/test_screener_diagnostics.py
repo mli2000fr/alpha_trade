@@ -50,6 +50,12 @@ def test_build_screener_oat_scenarios_includes_baseline_and_unique_variants() ->
     assert scenarios[4].screener_config.liquidity_threshold_usd == 5_000_000.0
 
 
+def test_screener_diagnostics_service_defaults_to_strict_swing_cash_baseline() -> None:
+    service = ScreenerDiagnosticsService(engine=object())
+
+    assert service.base_screener_config == ScreenerConfig.strict_swing_cash()
+
+
 def test_summarize_screener_diagnostics_adds_baseline_deltas() -> None:
     daily = pd.DataFrame(
         [

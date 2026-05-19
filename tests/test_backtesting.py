@@ -3363,6 +3363,7 @@ class TestCLI:
     def test_run_backfill_scores_history_prefers_explicit_selection_size_without_duplicate_kwarg(self, monkeypatch):
         import argparse
         import backtesting.cli._impl as cli
+        from screener.models import ScreenerConfig
 
         captured: dict[str, object] = {}
 
@@ -3424,6 +3425,11 @@ class TestCLI:
 
         cli._run_backfill_scores_history(args)
 
+        screener_config = cast(ScreenerConfig, captured["screener_config"])
+        assert screener_config.min_close_price == 10.0
+        assert screener_config.liquidity_threshold_usd == 1_000_000.0
+        assert screener_config.chunk_size == 500
+
         scanner_kwargs = cast(dict[str, object], captured["scanner_kwargs"])
         assert scanner_kwargs["selection_size"] == 50
         assert scanner_kwargs["chunk_size"] == 500
@@ -3461,6 +3467,127 @@ class TestCLI:
         assert args.limit_days == 15
         assert args.max_scenarios == 12
         assert args.output_dir == "artifacts/screener_diagnostics/run_1"
+
+    def test_parse_diagnose_screener_command_uses_strict_liquidity_defaults(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "diagnose-screener",
+            "--start", "2025-01-01",
+        ])
+
+        assert args.liquidity_threshold_values == "20000000,30000000,40000000"
+
+    def test_run_screener_diagnostics_uses_strict_swing_cash_baseline(self, monkeypatch):
+        import argparse
+        import backtesting.cli._impl as cli
+        import backtesting.screener_diagnostics as diagnostics
+        from screener.models import ScreenerConfig
+
+        captured: dict[str, object] = {}
+
+        class FakeDiagnosticsService:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def analyze_period(self, *, start_date, end_date, scenarios, limit_days):
+                return SimpleNamespace(
+                    summary_metrics=pd.DataFrame([{"scenario_name": "baseline", "overall_score": 1.0}]),
+                    daily_metrics=pd.DataFrame([{"scenario_name": "baseline"}]),
+                    summary_metrics_by_regime=pd.DataFrame([{"scenario_name": "baseline", "market_regime": "bull"}]),
+                    baseline_name="baseline",
+                    trading_dates=[date(2025, 1, 2)],
+                )
+
+        monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(diagnostics, "ScreenerDiagnosticsService", FakeDiagnosticsService)
+        monkeypatch.setattr(diagnostics, "build_screener_grid_scenarios", lambda *args, **kwargs: [{"name": "baseline"}])
+        monkeypatch.setattr(diagnostics, "build_screener_oat_scenarios", lambda *args, **kwargs: [{"name": "baseline"}])
+        monkeypatch.setattr(
+            diagnostics,
+            "recommend_screener_scenarios",
+            lambda *args, **kwargs: (pd.DataFrame([{"scenario_name": "baseline", "overall_score": 1.0}]), {"status": "skip"}),
+        )
+        monkeypatch.setattr(
+            diagnostics,
+            "recommend_screener_scenarios_by_regime",
+            lambda *args, **kwargs: (
+                pd.DataFrame([{"scenario_name": "baseline", "market_regime": "bull"}]),
+                {"status": "skip"},
+                pd.DataFrame([{"scenario_name": "baseline", "cross_regime_overall_score": 1.0}]),
+                {"status": "skip"},
+            ),
+        )
+        monkeypatch.setattr(
+            diagnostics,
+            "recommend_screener_scenarios_by_objective",
+            lambda *args, **kwargs: (pd.DataFrame([{"scenario_name": "baseline", "objective": "robust"}]), {"status": "skip", "objectives": {}}),
+        )
+        monkeypatch.setattr(
+            diagnostics,
+            "export_screener_diagnostics",
+            lambda *args, **kwargs: {
+                "summary_metrics": "summary_metrics.csv",
+                "daily_metrics": "daily_metrics.csv",
+                "scenarios": "scenarios.csv",
+                "metadata": "metadata.json",
+            },
+        )
+        monkeypatch.setattr(
+            diagnostics,
+            "export_screener_recommendations",
+            lambda *args, **kwargs: {
+                "scenario_recommendations": "scenario_recommendations.csv",
+                "recommendation_summary": "recommendation_summary.json",
+            },
+        )
+        monkeypatch.setattr(
+            diagnostics,
+            "export_screener_regime_recommendations",
+            lambda *args, **kwargs: {
+                "scenario_recommendations_by_regime": "scenario_recommendations_by_regime.csv",
+                "cross_regime_recommendations": "cross_regime_recommendations.csv",
+                "cross_regime_recommendation_summary": "cross_regime_recommendation_summary.json",
+            },
+        )
+        monkeypatch.setattr(
+            diagnostics,
+            "export_screener_objective_recommendations",
+            lambda *args, **kwargs: {
+                "scenario_recommendations_by_objective": "scenario_recommendations_by_objective.csv",
+                "recommendation_summary_by_objective": "recommendation_summary_by_objective.json",
+            },
+        )
+        monkeypatch.setattr(diagnostics, "validate_recommendations_holdout", lambda *args, **kwargs: ({}, pd.DataFrame()))
+        monkeypatch.setattr(diagnostics, "export_holdout_validation", lambda *args, **kwargs: {})
+
+        args = argparse.Namespace(
+            start="2025-01-01",
+            end="2025-03-31",
+            rs_values="100,102,105",
+            range_lookback_values="252,504,756",
+            historical_range_score_values="65,70,75",
+            liquidity_threshold_values="20000000,30000000,40000000",
+            mode="oat",
+            limit_days=None,
+            chunk_size=500,
+            selection_size=100,
+            max_positions=20,
+            screener_workers=None,
+            max_scenarios=64,
+            output_dir="artifacts/screener_diagnostics",
+            holdout_train_end=None,
+            holdout_min_regime_days=20,
+            holdout_top_k=3,
+        )
+
+        cli._run_screener_diagnostics(args)
+
+        base_screener_config = cast(ScreenerConfig, captured["base_screener_config"])
+        assert base_screener_config.min_close_price == 10.0
+        assert base_screener_config.liquidity_threshold_usd == 30_000_000.0
+        assert base_screener_config.chunk_size == 500
 
     def test_parse_recommend_screener_command(self):
         from backtesting.cli import _build_parser

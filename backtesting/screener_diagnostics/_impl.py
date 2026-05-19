@@ -1363,7 +1363,7 @@ class ScreenerDiagnosticsService:
         forward_return_horizons: Sequence[int] = DEFAULT_FORWARD_HORIZONS,
     ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
-        self.base_screener_config = base_screener_config or ScreenerConfig()
+        self.base_screener_config = base_screener_config or ScreenerConfig.strict_swing_cash()
         self.scanner_config = scanner_config or AlphaScannerConfig.strict_swing_cash()
         self.sentiment_config = sentiment_config or SentimentBoostConfig()
         self.risk_config = risk_config or RiskConfig()
