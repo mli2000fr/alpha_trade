@@ -20,7 +20,7 @@ def test_stock_screener_main_emits_structured_summary(monkeypatch, capsys) -> No
     monkeypatch.setattr(
         stock_screener,
         "run_screener_with_report",
-        lambda config, max_workers=None, snapshot_date=None, progress_callback=None: (
+        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None: (
             pd.DataFrame(),
             ScreenerRunReport(
                 run_id="stock-screener-20260425010101-abc123",
@@ -82,6 +82,49 @@ def test_stock_screener_main_emits_structured_summary(monkeypatch, capsys) -> No
     assert payload["benchmark_symbol"] == "QQQ"
     assert payload["symbols_final"] == 120
     assert payload["rows_avoided_estimate"] == 250000
+
+
+def test_stock_screener_main_uses_trade_date_as_as_of_date(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(stock_screener, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(stock_screener, "_emit_run_summary", lambda payload: None)
+    monkeypatch.setattr(
+        stock_screener,
+        "run_screener_with_report",
+        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None: captured.update(
+            {
+                "as_of_date": as_of_date,
+                "snapshot_date": snapshot_date,
+            }
+        )
+        or (
+            pd.DataFrame(),
+            ScreenerRunReport(
+                run_id="stock-screener-20260425010101-abc123",
+                benchmark_symbol=config.benchmark_symbol,
+                chunk_size=config.chunk_size,
+                workers=max_workers or 4,
+                as_of_date=as_of_date.isoformat() if as_of_date else None,
+                started_at="2026-04-25T01:01:01",
+                finished_at="2026-04-25T01:01:03",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "stock_screener.py",
+            "--trade-date",
+            "2026-04-19",
+        ],
+    )
+
+    stock_screener.main()
+
+    assert str(captured["as_of_date"]) == "2026-04-19"
+    assert str(captured["snapshot_date"]) == "2026-04-19"
 
 
 def test_run_screener_with_report_emits_live_progress_callbacks(monkeypatch) -> None:

@@ -178,6 +178,10 @@ class ScreenerRunReport:
     pass1_seconds: float = 0.0
     pass2_seconds: float = 0.0
     upsert_seconds: float = 0.0
+    persistence_status: str = "pending"
+    persisted_rows: int = 0
+    purge_performed: bool = False
+    archive_performed: bool = False
 
     @property
     def chunk_failure_ratio(self) -> float:

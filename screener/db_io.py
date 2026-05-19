@@ -443,10 +443,14 @@ def upsert_scores_snapshot(
 	*,
 	capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
 	config_fingerprint: str | None = None,
+	delete_existing_on_empty: bool = False,
+	purge_missing: bool = True,
+	archive_snapshot: bool = True,
 ) -> None:
 	if scores_df.empty:
-		with engine.begin() as conn:
-			conn.execute(text("DELETE FROM stock_scores"))
+		if delete_existing_on_empty:
+			with engine.begin() as conn:
+				conn.execute(text("DELETE FROM stock_scores"))
 		return
 
 	scores_df = _enrich_scores_with_metadata_sector(engine, scores_df)
@@ -474,22 +478,24 @@ def upsert_scores_snapshot(
 			}
 			conn.execute(stmt.on_duplicate_key_update(**update_dict))
 
-	_purge_missing_scores(engine, symbols)
+	if purge_missing:
+		_purge_missing_scores(engine, symbols)
 
 	# --- Archivage automatique dans stock_scores_history ---
-	try:
-		archive_scores_snapshot(
-			engine,
-			snapshot_date=snapshot_date,
-			capital_preset_key=capital_preset_key,
-			config_fingerprint=config_fingerprint,
-		)
-	except Exception:
-		# L'archivage ne doit jamais casser le pipeline principal.
-		# Si la table n'existe pas encore, on ignore silencieusement.
-		import logging
-		logging.getLogger(__name__).warning(
-			"Archivage stock_scores_history echoue (table absente ?). Le pipeline principal n'est pas affecte.",
-			exc_info=True,
-		)
+	if archive_snapshot:
+		try:
+			archive_scores_snapshot(
+				engine,
+				snapshot_date=snapshot_date,
+				capital_preset_key=capital_preset_key,
+				config_fingerprint=config_fingerprint,
+			)
+		except Exception:
+			# L'archivage ne doit jamais casser le pipeline principal.
+			# Si la table n'existe pas encore, on ignore silencieusement.
+			import logging
+			logging.getLogger(__name__).warning(
+				"Archivage stock_scores_history echoue (table absente ?). Le pipeline principal n'est pas affecte.",
+				exc_info=True,
+			)
 

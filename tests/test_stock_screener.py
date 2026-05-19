@@ -30,7 +30,7 @@ def _immediate_wait(pending, return_when=None):
     return set(pending), set()
 
 
-def test_run_screener_upserts_snapshot(monkeypatch) -> None:
+def test_run_screener_preserves_previous_snapshot_when_run_is_empty(monkeypatch) -> None:
     calls: list[tuple[str, int]] = []
     fake_engine = object()
 
@@ -48,7 +48,32 @@ def test_run_screener_upserts_snapshot(monkeypatch) -> None:
     scores = run_screener(ScreenerConfig(), max_workers=1)
 
     assert scores.empty
-    assert calls == [("upsert", 0)]
+    assert calls == []
+
+
+def test_run_screener_with_report_marks_empty_run_as_preserved(monkeypatch) -> None:
+    calls: list[tuple[str, int]] = []
+    fake_engine = object()
+
+    monkeypatch.setattr("screener.stock_screener.get_engine", lambda: fake_engine)
+    monkeypatch.setattr(
+        "screener.stock_screener.load_spy_return_6m",
+        lambda engine, config, as_of_date=None: 0.05,
+    )
+    monkeypatch.setattr("screener.stock_screener.iter_symbol_chunks", lambda engine, chunk_size: iter(()))
+    monkeypatch.setattr(
+        "screener.stock_screener.upsert_scores_snapshot",
+        lambda engine, df, chunksize=1000, snapshot_date=None: calls.append(("upsert", len(df))),
+    )
+
+    scores, report = run_screener_with_report(ScreenerConfig(), max_workers=1)
+
+    assert scores.empty
+    assert calls == []
+    assert report.persistence_status == "preserved_previous_scores_empty_run"
+    assert report.persisted_rows == 0
+    assert report.purge_performed is False
+    assert report.archive_performed is False
 
 
 def test_run_screener_with_report_aggregates_two_pass_metrics(monkeypatch) -> None:
@@ -118,3 +143,69 @@ def test_run_screener_with_report_aggregates_two_pass_metrics(monkeypatch) -> No
     assert report.symbols_pass_relative_strength == 1
     assert report.symbols_final == 1
     assert report.rows_avoided_estimate == 2519
+    assert report.persistence_status == "replaced_scores_full_run"
+    assert report.persisted_rows == 1
+    assert report.purge_performed is True
+    assert report.archive_performed is True
+
+
+def test_run_screener_with_report_preserves_previous_snapshot_when_chunk_failures_exist(monkeypatch) -> None:
+    upsert_calls: list[tuple[object, int]] = []
+    fake_engine = object()
+    chunk_scores = pd.DataFrame(
+        [
+            {
+                "symbol": "AAA",
+                "liquidity_val": 10.0,
+                "relative_strength_index": 110.0,
+                "historical_range_score": 80.0,
+                "total_score": 95.0,
+                "last_updated_score": pd.Timestamp("2026-04-24 00:00:00"),
+                "is_candidate": 0,
+                "sector": None,
+                "last_updated_scan": pd.Timestamp("2026-04-24 00:00:00"),
+            }
+        ]
+    )
+    failed_chunk_metrics = ScreenerChunkMetrics(
+        input_symbols=2,
+        recent_rows_loaded=480,
+        range_rows_loaded=1,
+        symbols_pass_history=2,
+        symbols_pass_liquidity=1,
+        symbols_pass_relative_strength=1,
+        symbols_final=1,
+        failed=True,
+        error_message="db timeout",
+    )
+
+    monkeypatch.setattr("screener.stock_screener.get_engine", lambda: fake_engine)
+    monkeypatch.setattr("screener.stock_screener.ProcessPoolExecutor", _ImmediateExecutor)
+    monkeypatch.setattr("screener.stock_screener.wait", _immediate_wait)
+    monkeypatch.setattr(
+        "screener.stock_screener.load_spy_return_6m",
+        lambda engine, config, as_of_date=None: 0.05,
+    )
+    monkeypatch.setattr(
+        "screener.stock_screener.iter_symbol_chunks",
+        lambda engine, chunk_size: iter([["AAA", "BBB"]]),
+    )
+    monkeypatch.setattr(
+        "screener.stock_screener._process_chunk_two_passes",
+        lambda symbols, config_dict, spy_return_6m, as_of_date_iso: (chunk_scores.copy(), failed_chunk_metrics),
+    )
+    monkeypatch.setattr(
+        "screener.stock_screener.upsert_scores_snapshot",
+        lambda engine, df, chunksize=1000, snapshot_date=None: upsert_calls.append((engine, len(df))),
+    )
+
+    scores, report = run_screener_with_report(ScreenerConfig(), max_workers=1)
+
+    assert list(scores["symbol"]) == ["AAA"]
+    assert upsert_calls == []
+    assert report.chunk_failures == 1
+    assert report.symbols_final == 1
+    assert report.persistence_status == "preserved_previous_scores_partial_run"
+    assert report.persisted_rows == 0
+    assert report.purge_performed is False
+    assert report.archive_performed is False

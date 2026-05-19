@@ -76,10 +76,18 @@ class _FakeInsert:
         return ("upsert", self.records, kwargs)
 
 
-def test_upsert_scores_snapshot_deletes_all_when_snapshot_is_empty() -> None:
+def test_upsert_scores_snapshot_preserves_existing_rows_when_snapshot_is_empty_by_default() -> None:
     engine = _FakeEngine()
 
     db_io.upsert_scores_snapshot(engine, pd.DataFrame(), chunksize=2)
+
+    assert engine.connection.executed == []
+
+
+def test_upsert_scores_snapshot_can_delete_all_when_empty_if_explicitly_requested() -> None:
+    engine = _FakeEngine()
+
+    db_io.upsert_scores_snapshot(engine, pd.DataFrame(), chunksize=2, delete_existing_on_empty=True)
 
     assert len(engine.connection.executed) == 1
     statement, params = engine.connection.executed[0]
@@ -217,6 +225,43 @@ def test_upsert_scores_snapshot_accepts_legacy_last_updated_and_top_swing(monkey
     assert record["sector"] == "Healthcare"
     assert record["sanitizer_status"] == "pending"
     assert record["last_updated_scan"].isoformat(sep=" ") == "2026-01-01 00:00:00"
+
+
+def test_upsert_scores_snapshot_can_skip_purge_and_archive(monkeypatch) -> None:
+    engine = _FakeEngine()
+    purge_calls: list[list[str]] = []
+    archive_calls: list[tuple[object, object]] = []
+
+    monkeypatch.setattr(db_io, "_get_scores_table", lambda current_engine: object())
+    monkeypatch.setattr(db_io, "mysql_insert", lambda table: _FakeInsert())
+    monkeypatch.setattr(db_io, "_enrich_scores_with_metadata_sector", lambda current_engine, df: df)
+    monkeypatch.setattr(db_io, "_enrich_scores_with_audit", lambda current_engine, df: df)
+    monkeypatch.setattr(db_io, "_purge_missing_scores", lambda current_engine, symbols: purge_calls.append(symbols))
+    monkeypatch.setattr(
+        db_io,
+        "archive_scores_snapshot",
+        lambda current_engine, snapshot_date=None, **kwargs: archive_calls.append((current_engine, snapshot_date)) or 0,
+    )
+
+    scores_df = pd.DataFrame([
+        {
+            "symbol": "AAPL",
+            "liquidity_val": 1.0,
+            "relative_strength_index": 0.5,
+            "historical_range_score": 0.3,
+            "total_score": 0.8,
+            "last_updated_score": "2025-01-01",
+            "is_candidate": 1,
+            "sector": "Tech",
+            "last_updated_scan": "2025-01-01",
+        }
+    ])
+
+    db_io.upsert_scores_snapshot(engine, scores_df, chunksize=1000, purge_missing=False, archive_snapshot=False)
+
+    assert len(engine.connection.executed) == 1
+    assert purge_calls == []
+    assert archive_calls == []
 
 
 def test_iter_symbol_chunks_reads_from_stock_bars_daily() -> None:

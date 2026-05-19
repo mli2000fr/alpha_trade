@@ -217,6 +217,10 @@ def run_screener_with_report(
     :param snapshot_date: Date logique d'archivage dans ``stock_scores_history``.
         Si None, défaut ``date.today()``. À spécifier quand le workflow IHM a figé
         un ``trade_date`` partagé pour garantir la cohérence multi-étapes.
+
+    Politique P0 de persistance : seul un run complet et non vide peut remplacer
+    ``stock_scores`` et archiver ``stock_scores_history``. Un run vide ou partiel
+    préserve explicitement le snapshot précédent.
     """
     started_at = _utc_now_naive()
     start_perf = time.perf_counter()
@@ -247,6 +251,10 @@ def run_screener_with_report(
         "pass1_seconds": 0.0,
         "pass2_seconds": 0.0,
         "upsert_seconds": 0.0,
+        "persistence_status": "pending",
+        "persisted_rows": 0,
+        "purge_performed": False,
+        "archive_performed": False,
     }
 
     benchmark_started = time.perf_counter()
@@ -300,9 +308,35 @@ def run_screener_with_report(
 
     summary["symbols_final"] = len(final_scores)
 
-    upsert_started = time.perf_counter()
-    upsert_scores_snapshot(engine, final_scores, chunksize=1000, snapshot_date=snapshot_date)
-    summary["upsert_seconds"] = round(time.perf_counter() - upsert_started, 4)
+    # Politique P0 : ne jamais détruire ni tronquer ``stock_scores`` sur un run
+    # vide ou partiel. Le snapshot précédent reste la source de vérité tant que
+    # le run courant n'est pas complet et non vide.
+    if final_scores.empty:
+        summary["persistence_status"] = "preserved_previous_scores_empty_run"
+        LOGGER.error(
+            "Persistance screener ignoree : run vide, snapshot precedent preserve | as_of=%s targeted_symbols=%s chunk_failures=%s",
+            as_of_iso or "live",
+            summary["targeted_symbols"],
+            summary["chunk_failures"],
+        )
+    elif int(summary["chunk_failures"]) > 0:
+        summary["persistence_status"] = "preserved_previous_scores_partial_run"
+        LOGGER.error(
+            "Persistance screener ignoree : run partiel, snapshot precedent preserve | as_of=%s chunk_failures=%s chunks_completed=%s/%s symbols_final=%s",
+            as_of_iso or "live",
+            summary["chunk_failures"],
+            summary["chunks_completed"],
+            summary["chunks_total"],
+            len(final_scores),
+        )
+    else:
+        upsert_started = time.perf_counter()
+        upsert_scores_snapshot(engine, final_scores, chunksize=1000, snapshot_date=snapshot_date)
+        summary["upsert_seconds"] = round(time.perf_counter() - upsert_started, 4)
+        summary["persistence_status"] = "replaced_scores_full_run"
+        summary["persisted_rows"] = len(final_scores)
+        summary["purge_performed"] = True
+        summary["archive_performed"] = True
 
     finished_at = _utc_now_naive()
     summary["finished_at"] = finished_at.isoformat(timespec="seconds")
@@ -394,6 +428,7 @@ def main() -> None:
     _, report = run_screener_with_report(
         config=config,
         max_workers=args.max_workers,
+        as_of_date=snapshot_date_override,
         snapshot_date=snapshot_date_override,
         progress_callback=lambda payload: _emit_run_summary(payload),
     )
