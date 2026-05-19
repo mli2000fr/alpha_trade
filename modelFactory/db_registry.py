@@ -3,14 +3,19 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from database.stock_scores import list_candidate_symbols as list_candidate_stock_score_symbols
+from database.stock_scores import (
+    list_candidate_symbols as list_candidate_stock_score_symbols,
+)
+from database.stock_scores import (
+    load_candidate_selector_context as load_candidate_stock_score_context,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -140,7 +145,7 @@ def insert_training_run(engine: Engine, run_id: str, registry_id: int, symbol: s
                 "INSERT INTO model_training_run (run_id, registry_id, symbol, status, started_at) "
                 "VALUES (:rid, :reg, :sym, :st, :now)"
             ),
-            {"rid": run_id, "reg": registry_id, "sym": symbol, "st": status, "now": datetime.now(timezone.utc)},
+            {"rid": run_id, "reg": registry_id, "sym": symbol, "st": status, "now": datetime.now(UTC)},
         )
 
 
@@ -206,7 +211,7 @@ def count_completed_runs(
     engine: Engine,
     symbol: str,
     model_name: str,
-) -> tuple[int, "datetime | None"]:
+) -> tuple[int, datetime | None]:
     """Phase 4.2.e — quarantaine champion.
 
     Retourne ``(nb_runs_completed, first_completed_at)`` pour un couple
@@ -374,6 +379,13 @@ def load_candidate_symbols(engine: Engine) -> list[str]:
     symbols = list_candidate_stock_score_symbols(engine=engine)
     LOGGER.info("load_candidate_symbols count=%d", len(symbols))
     return symbols
+
+
+def load_candidate_selector_context(engine: Engine, *, limit: int | None = None) -> pd.DataFrame:
+    """Charge le contexte selector disponible pour l'univers candidat courant."""
+    frame = load_candidate_stock_score_context(engine=engine, limit=limit)
+    LOGGER.info("load_candidate_selector_context rows=%d cols=%d", len(frame), len(frame.columns))
+    return frame
 
 
 def load_stock_bars_daily_symbols(engine: Engine) -> list[str]:

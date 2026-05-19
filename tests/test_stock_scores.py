@@ -18,6 +18,9 @@ class _FakeExecuteResult:
     def scalars(self):
         return _FakeScalarResult(self._values)
 
+    def mappings(self):
+        return _FakeScalarResult(self._values)
+
 
 class _FakeConnection:
     def __init__(self, values):
@@ -79,3 +82,64 @@ def test_list_candidate_symbols_rejects_invalid_limit() -> None:
         assert "limit" in str(exc)
     else:
         raise AssertionError("ValueError attendu")
+
+
+def test_load_candidate_selector_context_exposes_available_selector_columns() -> None:
+    metadata = MetaData()
+    table = Table(
+        "stock_scores",
+        metadata,
+        Column("symbol", String(20), primary_key=True),
+        Column("is_candidate", Boolean),
+        Column("total_score", Float),
+        Column("trend_score", Float),
+        Column("selector_signal_mode", String(32)),
+        Column("selection_explanation", String(255)),
+        Column("atr_pct_20", Float),
+    )
+    fake_connection = _FakeConnection(
+        [
+            {
+                "symbol": " msft ",
+                "trend_score": 0.88,
+                "selector_signal_mode": "strict",
+                "selection_explanation": "breakout propre",
+                "atr_pct_20": 0.032,
+            },
+            {
+                "symbol": "AAPL",
+                "trend_score": 0.83,
+                "selector_signal_mode": "strict",
+                "selection_explanation": "leader sectoriel",
+                "atr_pct_20": 0.028,
+            },
+        ]
+    )
+
+    frame = stock_scores.load_candidate_selector_context(
+        engine=_FakeEngine(fake_connection),
+        stock_scores=table,
+        limit=10,
+    )
+
+    assert frame.to_dict(orient="records") == [
+        {
+            "symbol": "MSFT",
+            "trend_score": 0.88,
+            "selector_signal_mode": "strict",
+            "selection_explanation": "breakout propre",
+            "atr_pct_20": 0.032,
+        },
+        {
+            "symbol": "AAPL",
+            "trend_score": 0.83,
+            "selector_signal_mode": "strict",
+            "selection_explanation": "leader sectoriel",
+            "atr_pct_20": 0.028,
+        },
+    ]
+    statement_sql = str(fake_connection.statement).lower()
+    assert "is_candidate" in statement_sql
+    assert "selection_explanation" in statement_sql
+    assert "selector_signal_mode" in statement_sql
+

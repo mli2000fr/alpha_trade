@@ -76,6 +76,30 @@ class _FakeInsert:
         return ("upsert", self.records, kwargs)
 
 
+def test_archivable_score_columns_include_selector_explainability_fields() -> None:
+  expected_columns = {
+    "candidate_rank",
+    "raw_final_score",
+    "normalized_total_score",
+    "normalized_rsi",
+    "total_score_neutralized",
+    "relative_strength_index_neutralized",
+    "trend_vcp_component",
+    "total_score_component",
+    "rsi_component",
+    "atr_pct_20",
+    "weekly_trend_score",
+    "high_52w_proximity",
+    "volatility_ratio",
+    "selector_signal_mode",
+    "selection_explanation",
+  }
+
+  assert expected_columns.issubset(set(db_io.ARCHIVABLE_SCORE_COLUMNS))
+  assert expected_columns.issubset(db_io.DEFAULT_STOCK_SCORES_COLUMNS)
+  assert expected_columns.issubset(db_io.DEFAULT_STOCK_SCORES_HISTORY_COLUMNS)
+
+
 def test_upsert_scores_snapshot_preserves_existing_rows_when_snapshot_is_empty_by_default() -> None:
     engine = _FakeEngine()
 

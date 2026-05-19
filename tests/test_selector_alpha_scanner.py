@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from pathlib import Path
 from typing import cast
 
 import pandas as pd
@@ -16,6 +17,7 @@ from selector.alpha_scanner import (
     _build_arg_parser,
     _build_config_from_args,
     _summarize_zero_candidate_filters,
+    load_selector_ablation_plan_from_file,
 )
 
 
@@ -183,6 +185,21 @@ def test_cli_can_load_selector_ablation_plan_from_json(tmp_path) -> None:
     assert [variant.variant_id for variant in config.ablation_plan.variants] == ["no_spread", "looser_rsi"]
     assert config.ablation_plan.variants[0].disabled_filters == ("spread",)
     assert config.ablation_plan.variants[1].config_overrides == {"min_relative_strength_index": 95.0}
+
+
+def test_repo_ready_ablation_preset_is_loadable() -> None:
+    preset_path = Path(__file__).resolve().parents[1] / "config" / "selector_ablation_strict_swing_shadow.yaml"
+
+    plan = load_selector_ablation_plan_from_file(preset_path)
+
+    assert plan.mode == "shadow"
+    assert [variant.variant_id for variant in plan.variants] == [
+        "no_spread",
+        "no_earnings_blackout",
+        "trend_floor_relaxed",
+        "no_ma200",
+        "midcap_flex",
+    ]
 
 
 def test_cli_without_preset_uses_strict_profile_implicitly() -> None:

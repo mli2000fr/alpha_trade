@@ -1,0 +1,43 @@
+# Preset d'ablation prêt à l'emploi pour comparer des variantes utiles du
+# profil strict_swing_cash sans impacter la persistance live.
+#
+# Usage :
+#   python -m selector.alpha_scanner --ablation-mode shadow --ablation-config .\config\selector_ablation_strict_swing_shadow.yaml
+#
+# Les variantes proposées couvrent 5 questions opérationnelles fréquentes :
+# - impact du filtre de spread / quote size ;
+# - coût d'opportunité du blackout earnings ;
+# - intérêt d'un assouplissement modéré du momentum ;
+# - coût du garde-fou tendance long terme (MA200) ;
+# - ouverture prudente vers les mid caps liquides.
+mode: shadow
+artifact_dir: artifacts/selector/ablation/strict_swing_cash
+variants:
+  - variant_id: no_spread
+    description: Mesure l'impact du filtre microstructure spread/quote_size sur l'univers final.
+    disabled_filters:
+      - spread
+
+  - variant_id: no_earnings_blackout
+    description: Mesure le coût d'opportunité du blackout résultats autour des publications.
+    disabled_filters:
+      - earnings_blackout
+
+  - variant_id: trend_floor_relaxed
+    description: Assouplit légèrement RSI relatif, proximité du plus haut annuel et weekly trend pour capter les leaders plus tôt.
+    config_overrides:
+      min_relative_strength_index: 95.0
+      min_high_52w_proximity: 0.7
+      min_weekly_trend_score: 0.8
+
+  - variant_id: no_ma200
+    description: Évalue le coût du garde-fou de tendance long terme au-dessus de la MM200.
+    disabled_filters:
+      - ma200
+
+  - variant_id: midcap_flex
+    description: Ouvre l'univers aux large/mid caps solides avec un minimum de capitalisation plus permissif.
+    config_overrides:
+      min_market_cap: 1000000000.0
+      market_cap_max_age_days: 45
+

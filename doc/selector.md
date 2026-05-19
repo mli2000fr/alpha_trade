@@ -351,6 +351,20 @@ Conséquence importante : on obtient un vrai A/B de filtres/profils, mais **sans
 python -m selector.alpha_scanner --ablation-mode shadow --ablation-config .\selector_ablation.json
 ```
 
+Preset prêt à l'emploi recommandé pour le profil strict swing :
+
+```powershell
+python -m selector.alpha_scanner --ablation-mode shadow --ablation-config .\config\selector_ablation_strict_swing_shadow.yaml
+```
+
+Le preset versionné `config/selector_ablation_strict_swing_shadow.yaml` compare 5 variantes utiles autour de `strict_swing_cash` :
+
+- `no_spread` : mesure le coût du filtre microstructure / quotes ;
+- `no_earnings_blackout` : mesure le coût d’opportunité du blackout earnings ;
+- `trend_floor_relaxed` : assouplit légèrement RSI relatif / 52w / weekly trend ;
+- `no_ma200` : mesure le coût du garde-fou MM200 ;
+- `midcap_flex` : ouvre prudemment l’univers aux mid caps liquides.
+
 ### 7.3 Exemple de fichier JSON/YAML
 
 ```json

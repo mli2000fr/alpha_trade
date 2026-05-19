@@ -1,7 +1,9 @@
+from typing import cast
 from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+from sqlalchemy.engine import Engine
 
 from modelFactory import db_registry
 
@@ -118,5 +120,28 @@ def test_insert_predictions_uses_current_schema_columns_only():
     assert "decision_threshold" in sql_text
     assert params["selected_model"] == "lightgbm"
     assert params["signal_label"] == "long"
+
+
+def test_load_candidate_selector_context_delegates_to_stock_scores(monkeypatch) -> None:
+    expected = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "final_score": 0.91,
+                "selector_signal_mode": "strict",
+                "selection_explanation": "breakout + RS",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        db_registry,
+        "load_candidate_stock_score_context",
+        lambda engine, limit=None: expected,
+    )
+
+    result = db_registry.load_candidate_selector_context(cast(Engine, object()), limit=5)
+
+    assert result.equals(expected)
 
 
