@@ -364,7 +364,7 @@ Ajouter dans le `run_summary` :
 
 ## P3 — recommandé plus long terme
 - [x] Introduire un mode de fallback explicite configurable par filtre externe (spread, earnings, market cap freshness).
-- [ ] Industrialiser l’ablation de filtres / A-B tests de profils.
+- [x] Industrialiser l’ablation de filtres / A-B tests de profils.
 - [x] Documenter un workflow standard “ajout d’un nouveau filtre” (code + tests + observabilité).
 
 ---
@@ -725,5 +725,115 @@ Le module `selector` couvre désormais l’essentiel des points concrets du prom
 - compatibilité préservée avec un rollout progressif des sources externes ;
 - documentation métier/technique réalignée sur l’état réel du code.
 
-Le **seul chantier important explicitement laissé ouvert** dans le prompt est désormais l’industrialisation des **ablations de filtres / A-B tests de profils**.
+Le prompt initial `selector` est désormais couvert sur ses gros chantiers structurants.
+
+## 13. 6e passe — industrialisation d’un mode d’ablation / A-B des filtres
+
+### Axe retenu
+Pour cette 6e passe, le dernier gros point restant a été traité :
+
+- **industrialiser un mode d’ablation / A-B des filtres et profils dans `selector`**.
+
+### 13.1 Design retenu
+Le choix retenu est un mode **`shadow`** à faible risque :
+
+- la variante **primaire** garde le contrat métier live et la persistance DB ;
+- les variantes secondaires s’exécutent **en shadow** sur le même run ;
+- elles partagent la préparation des chunks (prices/scores/metadata/overlays) puis appliquent leur propre config de filtre/ranking ;
+- seules leurs sorties d’observabilité sont persistées dans le `run_summary` + un artefact JSON hors base.
+
+Ce design évite de casser `stock_scores`, `stock_scores_history` et toute la chaîne aval (`risk_management`, `execution`) tout en fournissant un vrai A/B exploitable.
+
+### 13.2 Contrat de configuration
+Ajout dans `selector/config.py` de :
+
+- `SelectorVariantSpec`
+- `SelectorAblationPlan`
+- modes `off` / `shadow`
+- chargement depuis fichier JSON/YAML (`load_selector_ablation_plan_from_file`)
+
+Chaque variante peut :
+
+- désactiver explicitement un ou plusieurs filtres supportés (`disabled_filters`) ;
+- ou surcharger certains seuils via `config_overrides`.
+
+### 13.3 Runtime scanner
+`selector/scanner.py` supporte maintenant :
+
+- la résolution d’une liste de variantes runtime à partir du primaire ;
+- l’exécution multi-variantes **sur une préparation de chunk partagée** ;
+- la conservation de l’agrégat `rejected_by_filter` du primaire ;
+- un getter `get_last_ablation_summary()`.
+
+Garde-fou important :
+
+- une variante shadow **ne peut pas réactiver** un filtre déjà désactivé sur le primaire par le `data_quality_gate`.
+
+### 13.4 Observabilité et artefacts
+Le `run_summary` selector expose désormais un bloc `ablation` contenant notamment :
+
+- `mode`
+- `variant_count`
+- `artifact_path`
+- `primary`
+- `variants[]`
+  - `variant_id`
+  - `disabled_filters`
+  - `skipped_filters`
+  - `config_diff`
+  - `selected_candidates`
+  - `top_symbols`
+  - `overlap_with_primary`
+  - `selection_diff`
+  - `rejected_by_filter`
+
+En complément, un artefact JSON détaillé est écrit dans :
+
+- `artifacts/selector/ablation/*.json`
+
+### 13.5 IHM et documentation
+L’IHM `run_summary` alpha scanner affiche maintenant aussi :
+
+- le nombre de variantes shadow ;
+- le chemin de l’artefact ;
+- les ajouts / retraits principaux par variante ;
+- l’overlap avec le primaire.
+
+`doc/selector.md` a été enrichi avec :
+
+- les flags CLI `--ablation-mode` / `--ablation-config` ;
+- un exemple de fichier JSON ;
+- la liste des filtres désactivables ;
+- le contrat d’observabilité associé.
+
+### 13.6 Fichiers modifiés — 6e passe
+- `selector/config.py`
+- `selector/ablation.py`
+- `selector/scanner.py`
+- `selector/run_summary.py`
+- `selector/cli.py`
+- `selector/alpha_scanner.py`
+- `ihm/services/run_summary.py`
+- `tests/test_selector_alpha_scanner.py`
+- `tests/test_alpha_scanner.py`
+- `tests/test_selector_run_summaries.py`
+- `tests/test_ihm_run_summary.py`
+- `doc/selector.md`
+
+### 13.7 Validation exécutée — 6e passe
+
+```powershell
+Set-Location "F:\projets"
+python -m ruff check selector\config.py selector\ablation.py selector\scanner.py selector\run_summary.py selector\cli.py selector\alpha_scanner.py ihm\services\run_summary.py tests\test_selector_alpha_scanner.py tests\test_alpha_scanner.py tests\test_selector_run_summaries.py tests\test_ihm_run_summary.py --output-format concise
+```
+
+```powershell
+Set-Location "F:\projets"
+python -m pytest tests\test_selector_alpha_scanner.py tests\test_alpha_scanner.py tests\test_selector_run_summaries.py tests\test_ihm_run_summary.py --no-cov -q
+```
+
+```powershell
+Set-Location "F:\projets"
+python -m pytest tests\test_selector_alpha_scanner.py tests\test_selector_run_summaries.py tests\test_ihm_run_summary.py tests\test_ihm_run_summary_component.py tests\test_ihm_pipeline_runner.py tests\test_services_queries.py tests\test_pages_screening.py tests\test_alpha_scanner.py tests\test_selector_reference.py --no-cov -q
+```
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -10,8 +12,16 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from selector import ablation as selector_ablation
 from selector import db_io as selector_db_io
-from selector.alpha_scanner import AlphaScanner, AlphaScannerConfig, SelectorDataQualityError
+from selector import scanner as selector_scanner_module
+from selector.alpha_scanner import (
+    AlphaScanner,
+    AlphaScannerConfig,
+    SelectorAblationPlan,
+    SelectorDataQualityError,
+    SelectorVariantSpec,
+)
 
 
 def _create_shared_sqlite_engine():
@@ -818,6 +828,127 @@ def test_run_warn_skip_filter_disables_runtime_filters_without_blocking(monkeypa
     assert captured_runtime_configs == [(None, None)]
     assert scanner.config.max_spread_bps == pytest.approx(40.0)
     assert scanner.config.earnings_blackout_days == 3
+
+
+def test_resolve_runtime_variants_rejects_reactivating_filter_skipped_by_data_quality() -> None:
+    base_config = AlphaScannerConfig.strict_swing_cash(
+        ablation_plan=SelectorAblationPlan(
+            mode="shadow",
+            variants=(
+                SelectorVariantSpec(
+                    variant_id="reactivate_spread",
+                    config_overrides={
+                        "max_spread_bps": 20.0,
+                        "max_spread_bps_iex": 30.0,
+                        "min_quote_size": 100.0,
+                    },
+                ),
+            ),
+        )
+    )
+    primary_runtime_config = AlphaScannerConfig.strict_swing_cash(max_spread_bps=None)
+
+    with pytest.raises(ValueError, match="réactive le filtre `spread`"):
+        selector_ablation.resolve_runtime_variants(
+            base_config=base_config,
+            primary_runtime_config=primary_runtime_config,
+            data_quality_gate={"skipped_filters": ["spread"]},
+        )
+
+
+def test_run_shadow_ablation_publishes_variant_summary_and_artifact(tmp_path, monkeypatch) -> None:
+    scanner = AlphaScanner(
+        engine=_create_shared_sqlite_engine(),
+        config=AlphaScannerConfig.strict_swing_cash(
+            selection_size=3,
+            chunk_size=2,
+            max_workers=1,
+            ablation_plan=SelectorAblationPlan(
+                mode="shadow",
+                artifact_dir=str(tmp_path),
+                variants=(
+                    SelectorVariantSpec(variant_id="no_spread", disabled_filters=("spread",)),
+                    SelectorVariantSpec(
+                        variant_id="looser_rsi",
+                        config_overrides={"min_relative_strength_index": 95.0},
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    primary_candidates = pd.DataFrame(
+        [
+            {"symbol": "AAA", "sector": "Tech", "final_score": 0.95, "avg_dollar_volume_20d": 40_000_000.0},
+            {"symbol": "BBB", "sector": "Health", "final_score": 0.90, "avg_dollar_volume_20d": 35_000_000.0},
+        ]
+    )
+    no_spread_candidates = pd.DataFrame(
+        [
+            {"symbol": "AAA", "sector": "Tech", "final_score": 0.95, "avg_dollar_volume_20d": 40_000_000.0},
+            {"symbol": "BBB", "sector": "Health", "final_score": 0.90, "avg_dollar_volume_20d": 35_000_000.0},
+            {"symbol": "CCC", "sector": "Energy", "final_score": 0.88, "avg_dollar_volume_20d": 33_000_000.0},
+        ]
+    )
+    looser_rsi_candidates = pd.DataFrame(
+        [
+            {"symbol": "AAA", "sector": "Tech", "final_score": 0.95, "avg_dollar_volume_20d": 40_000_000.0},
+            {"symbol": "DDD", "sector": "Finance", "final_score": 0.91, "avg_dollar_volume_20d": 31_000_000.0},
+        ]
+    )
+
+    monkeypatch.setattr(scanner, "preflight_data_quality", lambda: {"status": "ok", "blocking_checks": [], "skipped_filters": []})
+    monkeypatch.setattr(scanner, "_capture_preselection_audit", lambda: {})
+    monkeypatch.setattr(scanner, "_reset_selector_outputs", lambda: None)
+    monkeypatch.setattr(
+        scanner,
+        "_scan_ablation_candidates",
+        lambda runtime_variants: (
+            {
+                "primary": primary_candidates,
+                "no_spread": no_spread_candidates,
+                "looser_rsi": looser_rsi_candidates,
+            },
+            {
+                "primary": {"input": 4, "output": 2, "rejected_spread": 2},
+                "no_spread": {"input": 4, "output": 3, "rejected_spread": 0},
+                "looser_rsi": {"input": 4, "output": 2, "rejected_relative_strength": 0},
+            },
+            {
+                "eligible_symbols": 4,
+                "chunks_submitted": 1,
+                "chunks_completed": 1,
+                "chunks_total": 1,
+            },
+        ),
+    )
+    monkeypatch.setattr(selector_scanner_module, "apply_factor_neutralization", lambda df, config: df.copy())
+    monkeypatch.setattr(
+        selector_scanner_module,
+        "rank_and_select",
+        lambda df, config: df.sort_values("final_score", ascending=False).head(config.selection_size).reset_index(drop=True).assign(
+            rank=lambda frame: range(1, len(frame) + 1)
+        ),
+    )
+    monkeypatch.setattr(scanner, "update_database", lambda selected_df, scored_df=None: len(selected_df))
+
+    result = scanner.run()
+
+    assert result["symbol"].tolist() == ["AAA", "BBB"]
+    assert scanner.get_aggregated_filter_stats()["rejected_spread"] == 2
+    ablation_summary = scanner.get_last_ablation_summary()
+    assert ablation_summary is not None
+    assert ablation_summary["mode"] == "shadow"
+    assert ablation_summary["variant_count"] == 2
+    variants = cast(list[dict[str, object]], ablation_summary["variants"])
+    assert [variant["variant_id"] for variant in variants] == ["no_spread", "looser_rsi"]
+    assert variants[0]["selection_diff"]["added_symbols"] == ["CCC"]
+    assert variants[1]["selection_diff"]["added_symbols"] == ["DDD"]
+    artifact_path = str(ablation_summary["artifact_path"])
+    artifact_payload = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
+    assert artifact_payload["primary"]["selected_symbols"] == ["AAA", "BBB"]
+    assert artifact_payload["variants"][0]["selected_symbols"] == ["AAA", "BBB", "CCC"]
+    assert artifact_payload["variants"][1]["selected_symbols"] == ["AAA", "DDD"]
 
 
 def test_build_preselection_rejection_audit_exposes_reason_counts_and_samples() -> None:

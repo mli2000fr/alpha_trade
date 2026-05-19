@@ -316,6 +316,61 @@ def _format_alpha_scanner_preselection_detail_line(summary: Mapping[str, object]
     return line
 
 
+def _format_alpha_scanner_ablation_detail_lines(summary: Mapping[str, object]) -> list[str]:
+    payload = summary.get("ablation")
+    if not isinstance(payload, Mapping):
+        return []
+    mode = str(payload.get("mode") or "").strip()
+    variants = payload.get("variants")
+    if mode != "shadow" or not isinstance(variants, list) or not variants:
+        return []
+    artifact_path = str(payload.get("artifact_path") or "").strip()
+    lines = [f"Ablation selector : {len(variants)} variante(s) shadow comparées au primaire."]
+    if artifact_path:
+        lines.append(f"Artefact ablation : {artifact_path}")
+    for variant in variants[:3]:
+        if not isinstance(variant, Mapping):
+            continue
+        variant_id = str(variant.get("variant_id") or "").strip()
+        selected_candidates = _to_int(variant.get("selected_candidates"))
+        disabled_filters_raw = variant.get("disabled_filters")
+        disabled_filters = (
+            [str(value).strip() for value in disabled_filters_raw if str(value).strip()]
+            if isinstance(disabled_filters_raw, SequenceABC) and not isinstance(disabled_filters_raw, (str, bytes))
+            else []
+        )
+        overlap = variant.get("overlap_with_primary") if isinstance(variant.get("overlap_with_primary"), Mapping) else {}
+        overlap_count = _to_int(overlap.get("count"))
+        overlap_ratio = _to_float(overlap.get("ratio_vs_primary"))
+        selection_diff = variant.get("selection_diff") if isinstance(variant.get("selection_diff"), Mapping) else {}
+        added_symbols = selection_diff.get("added_symbols")
+        removed_symbols = selection_diff.get("removed_symbols")
+        added_text = (
+            ", ".join(str(symbol) for symbol in added_symbols if str(symbol).strip())
+            if isinstance(added_symbols, SequenceABC) and not isinstance(added_symbols, (str, bytes))
+            else ""
+        )
+        removed_text = (
+            ", ".join(str(symbol) for symbol in removed_symbols if str(symbol).strip())
+            if isinstance(removed_symbols, SequenceABC) and not isinstance(removed_symbols, (str, bytes))
+            else ""
+        )
+        line = f"Variante `{variant_id}` : retenus={selected_candidates}"
+        if disabled_filters:
+            line += f", filtres désactivés={', '.join(disabled_filters)}"
+        if overlap_count > 0:
+            if overlap_ratio is not None:
+                line += f", overlap primaire={overlap_count} ({overlap_ratio * 100.0:.2f}%)"
+            else:
+                line += f", overlap primaire={overlap_count}"
+        if added_text:
+            line += f", ajouts={added_text}"
+        if removed_text:
+            line += f", retraits={removed_text}"
+        lines.append(line + ".")
+    return lines
+
+
 def get_run_summary(record: Mapping[str, object] | None) -> dict[str, object]:
     if not record:
         return {}
@@ -577,6 +632,7 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
         preselection_line = _format_alpha_scanner_preselection_detail_line(summary)
         if preselection_line:
             lines.append(preselection_line)
+        lines.extend(_format_alpha_scanner_ablation_detail_lines(summary))
         top_candidates = summary.get("top_candidate_explanations")
         if isinstance(top_candidates, list):
             for candidate in top_candidates[:3]:

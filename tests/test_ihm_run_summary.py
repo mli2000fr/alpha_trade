@@ -424,6 +424,23 @@ def test_get_run_summary_detail_lines_exposes_alpha_scanner_top_candidate_explai
                         }
                     ],
                 },
+                "ablation": {
+                    "mode": "shadow",
+                    "variant_count": 1,
+                    "artifact_path": "F:/projets/artifacts/selector/ablation/demo.json",
+                    "variants": [
+                        {
+                            "variant_id": "no_spread",
+                            "disabled_filters": ["spread"],
+                            "selected_candidates": 6,
+                            "overlap_with_primary": {"count": 5, "ratio_vs_primary": 1.0},
+                            "selection_diff": {
+                                "added_symbols": ["AMD"],
+                                "removed_symbols": [],
+                            },
+                        }
+                    ],
+                },
                 "top_candidate_explanations": [
                     {
                         "rank": 1,
@@ -457,6 +474,10 @@ def test_get_run_summary_detail_lines_exposes_alpha_scanner_top_candidate_explai
     assert any("market_cap_ttl" in line for line in lines)
     assert any("Préselection SQL" in line for line in lines)
     assert any("history_status bloqué=3" in line for line in lines)
+    assert any("Ablation selector" in line for line in lines)
+    assert any("Artefact ablation" in line for line in lines)
+    assert any("Variante `no_spread`" in line for line in lines)
+    assert any("ajouts=AMD" in line for line in lines)
     assert any("Top #1 AAPL" in line for line in lines)
     assert any("mode=sector_neutralized" in line for line in lines)
     assert any("trend/VCP=0.4100" in line for line in lines)

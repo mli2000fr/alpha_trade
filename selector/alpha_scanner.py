@@ -26,7 +26,14 @@ import pandas as pd
 # Pure modules re-exported (Phase 3.3.a - already extracted).
 from core.run_summary import attach_schema_version, merge_iex_bias_counters
 from selector.cli import _build_arg_parser, _build_config_from_args, main
-from selector.config import PRICE_COLUMNS, RUN_SUMMARY_PREFIX, AlphaScannerConfig
+from selector.config import (
+    PRICE_COLUMNS,
+    RUN_SUMMARY_PREFIX,
+    AlphaScannerConfig,
+    SelectorAblationPlan,
+    SelectorVariantSpec,
+    load_selector_ablation_plan_from_file,
+)
 from selector.factors import (
     FACTOR_COLUMNS,
     compute_factor_frame,
@@ -66,6 +73,8 @@ __all__ = [
     "AlphaScanner",
     "SelectorDataQualityError",
     "AlphaScannerConfig",
+    "SelectorAblationPlan",
+    "SelectorVariantSpec",
     # Constants (preserved for backwards compatibility)
     "FACTOR_COLUMNS",
     "SCORE_COLUMNS",
@@ -91,6 +100,7 @@ __all__ = [
     "main",
     "_build_arg_parser",
     "_build_config_from_args",
+    "load_selector_ablation_plan_from_file",
     "_utc_now_naive",
     "_build_run_id",
     "_emit_run_summary",

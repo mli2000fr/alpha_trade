@@ -140,6 +140,8 @@ L'IHM expose désormais les options CLI réellement supportées par ce point d'e
 - `earnings-blackout-days`
 - `earnings-data-quality-mode`
 - `market-cap-data-quality-mode`
+- `ablation-mode`
+- `ablation-config`
 - `max-anomaly-count`
 - `sector-cap-ratio`
 - `log-level`
@@ -265,12 +267,14 @@ Le `run_summary` persiste aussi désormais :
 - `preselection_rejections`
 - `data_quality_gate`
 - `skipped_filters`
+- `ablation`
 
 L’IHM peut donc relire à la fois :
 
 - l’explicabilité des candidats retenus ;
 - les raisons principales des rejets de pré-sélection SQL ;
 - les filtres désactivés dynamiquement via fallback data-quality.
+- les variantes shadow d’ablation comparées au primaire, avec overlap et chemins d’artefacts JSON.
 
 ---
 
@@ -327,7 +331,110 @@ with engine.connect() as conn:
 
 ---
 
-## 7. Tests
+## 7. Mode d’ablation / A-B des filtres
+
+Le selector supporte maintenant un mode **shadow** d’ablation pour comparer proprement des variantes de filtres/profils sans casser la persistance live.
+
+### 7.1 Principes
+
+- le **primaire** reste le run métier de référence ;
+- seules les sorties du primaire sont persistées dans `stock_scores` / `stock_scores_history` ;
+- les variantes d’ablation sont exécutées **en shadow** sur le même univers présélectionné et les mêmes chunks préparés ;
+- chaque variante produit un résumé compact dans `run_summary["ablation"]` ;
+- un artefact JSON détaillé est écrit dans `artifacts/selector/ablation/` (ou dans le dossier configuré).
+
+Conséquence importante : on obtient un vrai A/B de filtres/profils, mais **sans multiplier les écritures DB** ni perturber le contrat aval de `risk_management`.
+
+### 7.2 Activation CLI
+
+```powershell
+python -m selector.alpha_scanner --ablation-mode shadow --ablation-config .\selector_ablation.json
+```
+
+### 7.3 Exemple de fichier JSON/YAML
+
+```json
+{
+  "mode": "shadow",
+  "artifact_dir": "artifacts/selector/ablation",
+  "variants": [
+    {
+      "variant_id": "no_spread",
+      "disabled_filters": ["spread"]
+    },
+    {
+      "variant_id": "looser_rsi",
+      "config_overrides": {
+        "min_relative_strength_index": 95.0
+      }
+    }
+  ]
+}
+```
+
+### 7.4 Filtres désactivables nativement
+
+Les clés `disabled_filters` supportées sont actuellement :
+
+- `volatility`
+- `atr`
+- `relative_strength`
+- `ma200`
+- `high_52w`
+- `weekly_trend`
+- `market_cap`
+- `market_cap_ttl`
+- `beta`
+- `spread`
+- `earnings_blackout`
+
+### 7.5 Overrides supportés
+
+Les variantes peuvent aussi ajuster certains seuils via `config_overrides`, notamment :
+
+- `selection_size`
+- les seuils de filtres (`max_volatility_ratio`, `min_relative_strength_index`, `min_high_52w_proximity`, `min_weekly_trend_score`, `min_atr_pct_20`, `max_atr_pct_20`, `min_market_cap`, `min_beta_126`, `max_spread_bps`, `max_spread_bps_iex`, `min_quote_size`, `market_cap_max_age_days`, `earnings_blackout_days`)
+- `require_above_ma200`
+- `max_anomaly_count`, `max_missing_days_count`
+- `sector_cap_ratio`, `neutralize_by_sector`
+- les poids de score (`weight_trend_vcp`, `weight_total_score`, `weight_rsi`)
+
+### 7.6 Contrat d’observabilité
+
+Le bloc `run_summary["ablation"]` expose typiquement :
+
+- `mode`
+- `variant_count`
+- `artifact_path`
+- `primary`
+- `variants[]` avec pour chaque variante :
+  - `variant_id`
+  - `disabled_filters`
+  - `skipped_filters`
+  - `config_diff`
+  - `selected_candidates`
+  - `top_symbols`
+  - `overlap_with_primary`
+  - `selection_diff`
+  - `rejected_by_filter`
+
+L’IHM `run_summary` affiche ensuite :
+
+- le nombre de variantes shadow ;
+- le chemin de l’artefact ;
+- les principaux ajouts/retraits vs primaire ;
+- l’overlap avec la sélection de référence.
+
+### 7.7 Interaction avec le data quality gate
+
+Le `data_quality_gate` du primaire reste **autoritaire** :
+
+- si un filtre est désactivé par fallback data-quality sur le primaire, une variante shadow ne peut pas le réactiver ;
+- cela évite de comparer des variantes sur une source explicitement jugée non exploitable.
+
+---
+
+## 8. Tests
 
 ### Tests ciblés selector
 
@@ -337,7 +444,7 @@ python -m pytest tests/test_selector_alpha_scanner.py tests/test_alpha_scanner.p
 
 ---
 
-## 8. Recommandation pratique
+## 9. Recommandation pratique
 
 Ordre conseillé :
 
@@ -355,7 +462,7 @@ python -m selector.alpha_scanner --selection-size 100
 
 ---
 
-## 9. Workflow standard — ajout d’un nouveau filtre
+## 10. Workflow standard — ajout d’un nouveau filtre
 
 Checklist recommandée :
 

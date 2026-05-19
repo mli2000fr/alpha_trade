@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import cast
 
@@ -10,6 +11,8 @@ from sqlalchemy.engine import Engine
 from selector.alpha_scanner import (
     AlphaScanner,
     AlphaScannerConfig,
+    SelectorAblationPlan,
+    SelectorVariantSpec,
     _build_arg_parser,
     _build_config_from_args,
     _summarize_zero_candidate_filters,
@@ -129,6 +132,57 @@ def test_cli_can_override_data_quality_modes_per_filter() -> None:
     assert config.spread_data_quality_mode == "warn_skip_filter"
     assert config.earnings_data_quality_mode == "warn_skip_filter"
     assert config.market_cap_filter_data_quality_mode == "warn_skip_filter"
+
+
+def test_selector_variant_spec_rejects_unknown_disabled_filter() -> None:
+    with pytest.raises(ValueError, match="Filtre d'ablation inconnu"):
+        SelectorVariantSpec(variant_id="bad", disabled_filters=("unknown_filter",))
+
+
+def test_selector_ablation_plan_requires_variants_in_shadow_mode() -> None:
+    with pytest.raises(ValueError, match="mode=shadow"):
+        SelectorAblationPlan(mode="shadow")
+
+
+def test_cli_can_load_selector_ablation_plan_from_json(tmp_path) -> None:
+    config_path = tmp_path / "selector_ablation.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mode": "shadow",
+                "artifact_dir": str(tmp_path / "artifacts"),
+                "variants": [
+                    {
+                        "variant_id": "no_spread",
+                        "disabled_filters": ["spread"],
+                    },
+                    {
+                        "variant_id": "looser_rsi",
+                        "config_overrides": {"min_relative_strength_index": 95.0},
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    args = _build_arg_parser().parse_args(
+        [
+            "--ablation-mode",
+            "shadow",
+            "--ablation-config",
+            str(config_path),
+        ]
+    )
+
+    config = _build_config_from_args(args)
+
+    assert config.ablation_plan is not None
+    assert config.ablation_plan.mode == "shadow"
+    assert [variant.variant_id for variant in config.ablation_plan.variants] == ["no_spread", "looser_rsi"]
+    assert config.ablation_plan.variants[0].disabled_filters == ("spread",)
+    assert config.ablation_plan.variants[1].config_overrides == {"min_relative_strength_index": 95.0}
 
 
 def test_cli_without_preset_uses_strict_profile_implicitly() -> None:

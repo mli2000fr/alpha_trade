@@ -32,6 +32,12 @@ from sqlalchemy.engine import Engine
 from core.run_summary import attach_live_progress
 from database.connection import get_sqlalchemy_engine
 from selector import db_io as _db_io
+from selector.ablation import (
+    RuntimeSelectorVariant,
+    build_ablation_summary_and_artifact,
+    resolve_runtime_variants,
+    write_ablation_artifact,
+)
 from selector.config import AlphaScannerConfig
 from selector.factors import compute_factor_frame, winsorize_and_normalize
 from selector.filters import (
@@ -46,7 +52,7 @@ from selector.ranking import (
     merge_scores,
     rank_and_select,
 )
-from selector.run_summary import _summarize_zero_candidate_filters
+from selector.run_summary import _build_run_id, _summarize_zero_candidate_filters
 
 LOGGER = logging.getLogger("selector.alpha_scanner")
 
@@ -79,6 +85,7 @@ class AlphaScanner:
         self._filter_stats_lock = threading.Lock()
         self._last_data_quality_gate: dict[str, object] | None = None
         self._last_preselection_audit: dict[str, object] | None = None
+        self._last_ablation_summary: dict[str, object] | None = None
         self.progress_callback = None
 
     # ------------------------------------------------------------------
@@ -94,6 +101,9 @@ class AlphaScanner:
 
     def get_last_preselection_audit(self) -> dict[str, object] | None:
         return dict(self._last_preselection_audit) if self._last_preselection_audit else None
+
+    def get_last_ablation_summary(self) -> dict[str, object] | None:
+        return dict(self._last_ablation_summary) if self._last_ablation_summary else None
 
     def preflight_data_quality(self, *, reference_date: date | None = None) -> dict[str, object]:
         effective_reference_date = reference_date or getattr(self, "snapshot_date_override", None) or date.today()
@@ -272,6 +282,219 @@ class AlphaScanner:
             self.engine, self.config, self._get_stock_metadata_columns()
         )
 
+    def _scan_primary_candidates(self) -> tuple[pd.DataFrame, dict[str, int]]:
+        all_frames: list[pd.DataFrame] = []
+        workers = self._resolve_worker_count()
+        max_in_flight = max(2, workers * 2)
+        pending: set[Future[pd.DataFrame]] = set()
+        submitted_chunks = 0
+        completed_chunks = 0
+        symbol_chunks = list(self._iter_eligible_symbol_chunks())
+        eligible_symbols = sum(len(chunk) for chunk in symbol_chunks)
+        total_chunks = len(symbol_chunks)
+
+        def _scan_progress() -> None:
+            self._emit_live_progress(
+                current=completed_chunks,
+                total=total_chunks,
+                label="🎯 Progression Alpha Scanner — scan multi-facteurs",
+                phase="scan_chunks",
+                extra_summary={
+                    "eligible_symbols": eligible_symbols,
+                    "chunks_submitted": submitted_chunks,
+                    "chunks_completed": completed_chunks,
+                    "chunks_total": total_chunks,
+                    "selected_candidates": sum(len(frame) for frame in all_frames),
+                },
+            )
+
+        _scan_progress()
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for symbols in symbol_chunks:
+                while len(pending) >= max_in_flight:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    completed_chunks += self._collect_completed(done, all_frames)
+                    _scan_progress()
+                    LOGGER.info(
+                        "Progression scan | chunks_termines=%s chunks_soumis=%s en_vol=%s candidats_cumules=%s",
+                        completed_chunks,
+                        submitted_chunks,
+                        len(pending),
+                        sum(len(frame) for frame in all_frames),
+                    )
+                pending.add(executor.submit(self._process_chunk, symbols))
+                submitted_chunks += 1
+                _scan_progress()
+                LOGGER.info(
+                    "Chunk soumis | index=%s taille=%s en_vol=%s",
+                    submitted_chunks,
+                    len(symbols),
+                    len(pending),
+                )
+
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                completed_chunks += self._collect_completed(done, all_frames)
+                _scan_progress()
+                LOGGER.info(
+                    "Progression scan | chunks_termines=%s chunks_soumis=%s en_vol=%s candidats_cumules=%s",
+                    completed_chunks,
+                    submitted_chunks,
+                    len(pending),
+                    sum(len(frame) for frame in all_frames),
+                )
+
+        merged_candidates = pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
+        LOGGER.info("Agregation terminee | lignes_candidates=%s", len(merged_candidates))
+        return merged_candidates, {
+            "eligible_symbols": eligible_symbols,
+            "chunks_submitted": submitted_chunks,
+            "chunks_completed": completed_chunks,
+            "chunks_total": total_chunks,
+        }
+
+    def _process_chunk_variants(
+        self,
+        symbols: Sequence[str],
+        runtime_variants: Sequence[RuntimeSelectorVariant],
+        as_of_date: date | None = None,
+    ) -> tuple[dict[str, pd.DataFrame], dict[str, dict[str, int]]]:
+        try:
+            LOGGER.debug("Debut chunk ablation | symboles=%s variantes=%s", len(symbols), len(runtime_variants))
+            needs_quotes = any(variant.config.max_spread_bps is not None for variant in runtime_variants)
+            needs_earnings = any(
+                variant.config.earnings_blackout_days is not None for variant in runtime_variants
+            )
+            market_data = self.fetch_market_data(symbols)
+            computed = self.compute_factors(market_data)
+            scores = self.fetch_scores(symbols)
+            metadata_df = self.fetch_instrument_metadata(symbols)
+            quotes_df = (
+                self.fetch_quote_snapshots(symbols, reference_date=as_of_date)
+                if needs_quotes
+                else pd.DataFrame()
+            )
+            earnings_df = (
+                self.fetch_next_earnings(symbols, reference_date=as_of_date)
+                if needs_earnings
+                else pd.DataFrame()
+            )
+            merged = self.merge_scores(computed, scores)
+            merged = self._enrich_and_filter_equities(merged, metadata_df)
+            merged = self._merge_optional_symbol_overlays(merged, quotes_df, earnings_df)
+            frames_by_variant: dict[str, pd.DataFrame] = {}
+            stats_by_variant: dict[str, dict[str, int]] = {}
+            for variant in runtime_variants:
+                filtered, chunk_stats = apply_filters_with_stats(merged, variant.config)
+                LOGGER.debug(
+                    "Chunk ablation variante | variant=%s fusion=%s filtre=%s disabled_filters=%s skipped_filters=%s",
+                    variant.variant_id,
+                    len(merged),
+                    len(filtered),
+                    list(variant.disabled_filters),
+                    list(variant.skipped_filters),
+                )
+                frames_by_variant[variant.variant_id] = filtered
+                stats_by_variant[variant.variant_id] = chunk_stats
+            return frames_by_variant, stats_by_variant
+        except Exception:
+            LOGGER.exception("Chunk ablation en echec | symboles=%s", len(symbols))
+            return ({variant.variant_id: pd.DataFrame() for variant in runtime_variants}, {})
+
+    def _collect_completed_variant_results(
+        self,
+        done: set[Future[tuple[dict[str, pd.DataFrame], dict[str, dict[str, int]]]]],
+        all_frames_by_variant: dict[str, list[pd.DataFrame]],
+        aggregated_stats_by_variant: dict[str, Counter[str]],
+    ) -> int:
+        completed = 0
+        for future in done:
+            frames_by_variant, stats_by_variant = future.result()
+            completed += 1
+            for variant_id, frame in frames_by_variant.items():
+                if not frame.empty:
+                    all_frames_by_variant.setdefault(variant_id, []).append(frame)
+            for variant_id, stats in stats_by_variant.items():
+                counter = aggregated_stats_by_variant.setdefault(variant_id, Counter())
+                for key, value in stats.items():
+                    counter[key] += int(value)
+        return completed
+
+    def _scan_ablation_candidates(
+        self,
+        runtime_variants: Sequence[RuntimeSelectorVariant],
+    ) -> tuple[dict[str, pd.DataFrame], dict[str, dict[str, int]], dict[str, int]]:
+        all_frames_by_variant = {variant.variant_id: [] for variant in runtime_variants}
+        aggregated_stats_by_variant: dict[str, Counter[str]] = {
+            variant.variant_id: Counter() for variant in runtime_variants
+        }
+        workers = self._resolve_worker_count()
+        max_in_flight = max(2, workers * 2)
+        pending: set[Future[tuple[dict[str, pd.DataFrame], dict[str, dict[str, int]]]]] = set()
+        submitted_chunks = 0
+        completed_chunks = 0
+        symbol_chunks = list(self._iter_eligible_symbol_chunks())
+        eligible_symbols = sum(len(chunk) for chunk in symbol_chunks)
+        total_chunks = len(symbol_chunks)
+
+        def _scan_progress() -> None:
+            primary_frames = all_frames_by_variant.get("primary", [])
+            self._emit_live_progress(
+                current=completed_chunks,
+                total=total_chunks,
+                label="🎯 Progression Alpha Scanner — scan multi-facteurs",
+                phase="scan_chunks",
+                extra_summary={
+                    "eligible_symbols": eligible_symbols,
+                    "chunks_submitted": submitted_chunks,
+                    "chunks_completed": completed_chunks,
+                    "chunks_total": total_chunks,
+                    "selected_candidates": sum(len(frame) for frame in primary_frames),
+                    "ablation_variants": len(runtime_variants) - 1,
+                },
+            )
+
+        _scan_progress()
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for symbols in symbol_chunks:
+                while len(pending) >= max_in_flight:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    completed_chunks += self._collect_completed_variant_results(
+                        done,
+                        all_frames_by_variant,
+                        aggregated_stats_by_variant,
+                    )
+                    _scan_progress()
+                pending.add(executor.submit(self._process_chunk_variants, symbols, tuple(runtime_variants)))
+                submitted_chunks += 1
+                _scan_progress()
+
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                completed_chunks += self._collect_completed_variant_results(
+                    done,
+                    all_frames_by_variant,
+                    aggregated_stats_by_variant,
+                )
+                _scan_progress()
+
+        merged_candidates_by_variant = {
+            variant_id: pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            for variant_id, frames in all_frames_by_variant.items()
+        }
+        stats_by_variant = {
+            variant_id: dict(counter)
+            for variant_id, counter in aggregated_stats_by_variant.items()
+        }
+        return merged_candidates_by_variant, stats_by_variant, {
+            "eligible_symbols": eligible_symbols,
+            "chunks_submitted": submitted_chunks,
+            "chunks_completed": completed_chunks,
+            "chunks_total": total_chunks,
+        }
+
     # ------------------------------------------------------------------
     # Orchestration multi-thread
     # ------------------------------------------------------------------
@@ -289,6 +512,7 @@ class AlphaScanner:
 
         data_quality_gate = self.preflight_data_quality()
         self._last_preselection_audit = None
+        self._last_ablation_summary = None
         if data_quality_gate.get("status") == "blocked":
             LOGGER.error(
                 "AlphaScanner bloque par le data quality gate | reference_date=%s blocking_checks=%s",
@@ -299,82 +523,65 @@ class AlphaScanner:
 
         runtime_config = self._build_runtime_config_from_data_quality_gate(data_quality_gate)
         self._capture_preselection_audit()
+        runtime_variants = resolve_runtime_variants(
+            base_config=self.config,
+            primary_runtime_config=runtime_config,
+            data_quality_gate=data_quality_gate,
+        )
 
         original_config = self.config
         self.config = runtime_config
         try:
             self._reset_selector_outputs()
 
-            all_frames: list[pd.DataFrame] = []
-            workers = self._resolve_worker_count()
-            max_in_flight = max(2, workers * 2)
-            pending: set[Future[pd.DataFrame]] = set()
-            submitted_chunks = 0
-            completed_chunks = 0
-            symbol_chunks = list(self._iter_eligible_symbol_chunks())
-            eligible_symbols = sum(len(chunk) for chunk in symbol_chunks)
-            total_chunks = len(symbol_chunks)
-
-            def _scan_progress() -> None:
-                self._emit_live_progress(
-                    current=completed_chunks,
-                    total=total_chunks,
-                    label="🎯 Progression Alpha Scanner — scan multi-facteurs",
-                    phase="scan_chunks",
-                    extra_summary={
-                        "eligible_symbols": eligible_symbols,
-                        "chunks_submitted": submitted_chunks,
-                        "chunks_completed": completed_chunks,
-                        "chunks_total": total_chunks,
-                        "selected_candidates": sum(len(frame) for frame in all_frames),
-                    },
-                )
-
-            _scan_progress()
-
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                for symbols in symbol_chunks:
-                    while len(pending) >= max_in_flight:
-                        done, pending = wait(pending, return_when=FIRST_COMPLETED)
-                        completed_chunks += self._collect_completed(done, all_frames)
-                        _scan_progress()
-                        LOGGER.info(
-                            "Progression scan | chunks_termines=%s chunks_soumis=%s en_vol=%s candidats_cumules=%s",
-                            completed_chunks,
-                            submitted_chunks,
-                            len(pending),
-                            sum(len(frame) for frame in all_frames),
-                        )
-                    pending.add(executor.submit(self._process_chunk, symbols))
-                    submitted_chunks += 1
-                    _scan_progress()
+            if len(runtime_variants) == 1:
+                merged_candidates, scan_meta = self._scan_primary_candidates()
+                merged_candidates = self._apply_factor_neutralization(merged_candidates)
+                selected = self.rank_and_select(merged_candidates)
+                scored_for_persistence = merged_candidates.copy()
+            else:
+                merged_candidates_by_variant, stats_by_variant, scan_meta = self._scan_ablation_candidates(runtime_variants)
+                primary_variant = runtime_variants[0]
+                primary_stats = stats_by_variant.get(primary_variant.variant_id, {})
+                with self._filter_stats_lock:
+                    self._aggregated_filter_stats.clear()
+                    for key, value in primary_stats.items():
+                        self._aggregated_filter_stats[key] += int(value)
+                scored_candidates_by_variant: dict[str, pd.DataFrame] = {}
+                selected_by_variant: dict[str, pd.DataFrame] = {}
+                for variant in runtime_variants:
+                    merged_variant = merged_candidates_by_variant.get(variant.variant_id, pd.DataFrame())
+                    scored_variant = apply_factor_neutralization(merged_variant, variant.config)
+                    selected_variant = rank_and_select(scored_variant, variant.config)
+                    scored_candidates_by_variant[variant.variant_id] = scored_variant
+                    selected_by_variant[variant.variant_id] = selected_variant
                     LOGGER.info(
-                        "Chunk soumis | index=%s taille=%s en_vol=%s",
-                        submitted_chunks,
-                        len(symbols),
-                        len(pending),
+                        "Ablation selector | variant=%s selected=%s disabled_filters=%s skipped_filters=%s",
+                        variant.variant_id,
+                        len(selected_variant),
+                        list(variant.disabled_filters),
+                        list(variant.skipped_filters),
                     )
-
-                while pending:
-                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
-                    completed_chunks += self._collect_completed(done, all_frames)
-                    _scan_progress()
-                    LOGGER.info(
-                        "Progression scan | chunks_termines=%s chunks_soumis=%s en_vol=%s candidats_cumules=%s",
-                        completed_chunks,
-                        submitted_chunks,
-                        len(pending),
-                        sum(len(frame) for frame in all_frames),
+                selected = selected_by_variant.get(primary_variant.variant_id, pd.DataFrame())
+                scored_for_persistence = scored_candidates_by_variant.get(primary_variant.variant_id, pd.DataFrame()).copy()
+                plan = getattr(self.config, "ablation_plan", None)
+                if plan is not None:
+                    artifact_stem = _build_run_id("alpha-scanner-ablation")
+                    summary_payload, artifact_payload = build_ablation_summary_and_artifact(
+                        plan=plan,
+                        runtime_variants=tuple(runtime_variants),
+                        selected_by_variant=selected_by_variant,
+                        rejected_by_filter_by_variant=stats_by_variant,
+                        artifact_path=None,
                     )
+                    artifact_path = write_ablation_artifact(
+                        plan=plan,
+                        artifact_payload=artifact_payload,
+                        artifact_stem=artifact_stem,
+                    )
+                    summary_payload["artifact_path"] = artifact_path
+                    self._last_ablation_summary = summary_payload
 
-            merged_candidates = pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
-            LOGGER.info("Agregation terminee | lignes_candidates=%s", len(merged_candidates))
-
-            # Neutralisation cross-sectorielle sur l'univers COMPLET.
-            merged_candidates = self._apply_factor_neutralization(merged_candidates)
-
-            selected = self.rank_and_select(merged_candidates)
-            scored_for_persistence = merged_candidates.copy()
             if not scored_for_persistence.empty:
                 if not selected.empty and {"symbol", "rank"}.issubset(selected.columns):
                     candidate_rank_map = selected.set_index("symbol")["rank"]
@@ -383,16 +590,17 @@ class AlphaScanner:
                     scored_for_persistence["candidate_rank"] = pd.NA
 
             self._emit_live_progress(
-                current=total_chunks,
-                total=total_chunks,
+                current=scan_meta["chunks_total"],
+                total=scan_meta["chunks_total"],
                 label="🎯 Progression Alpha Scanner — sélection finale",
                 phase="rank_select",
                 extra_summary={
-                    "eligible_symbols": eligible_symbols,
-                    "chunks_submitted": submitted_chunks,
-                    "chunks_completed": completed_chunks,
-                    "chunks_total": total_chunks,
+                    "eligible_symbols": scan_meta["eligible_symbols"],
+                    "chunks_submitted": scan_meta["chunks_submitted"],
+                    "chunks_completed": scan_meta["chunks_completed"],
+                    "chunks_total": scan_meta["chunks_total"],
                     "selected_candidates": int(len(selected)),
+                    "ablation_variants": len(runtime_variants) - 1,
                 },
             )
 

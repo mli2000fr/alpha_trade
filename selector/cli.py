@@ -5,11 +5,19 @@ from __future__ import annotations
 import argparse
 import logging
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 
 from common.utils import configure_root_logging
-from selector.config import SUPPORTED_DATA_QUALITY_MODES, AlphaScannerConfig
+from selector.config import (
+    ABLATION_MODE_OFF,
+    SUPPORTED_ABLATION_MODES,
+    SUPPORTED_DATA_QUALITY_MODES,
+    AlphaScannerConfig,
+    SelectorAblationPlan,
+    load_selector_ablation_plan_from_file,
+)
 from selector.run_summary import (
     _build_cli_run_summary,
     _emit_run_summary,
@@ -59,6 +67,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--require-above-ma200", action="store_true", default=False, help="Exige latest_close > MA200")
     parser.add_argument("--max-anomaly-count", type=int, default=20, help="Nombre maximum d'anomalies accepté par titre")
     parser.add_argument("--sector-cap-ratio", type=float, default=0.30, help="Plafond par secteur, ex. 0.30 = 30%%")
+    parser.add_argument(
+        "--ablation-mode",
+        choices=sorted(SUPPORTED_ABLATION_MODES),
+        default=None,
+        help="Mode d'ablation selector: off ou shadow (variantes non persistées, comparées au primaire).",
+    )
+    parser.add_argument(
+        "--ablation-config",
+        type=str,
+        default=None,
+        help="Chemin vers un fichier JSON/YAML décrivant les variantes d'ablation selector.",
+    )
     parser.add_argument("--log-level", type=str, default="INFO", help="Niveau de log (DEBUG, INFO, WARNING, ERROR)")
     parser.add_argument(
         "--trade-date",
@@ -70,6 +90,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def _build_config_from_args(args: argparse.Namespace) -> AlphaScannerConfig:
+    ablation_plan: SelectorAblationPlan | None = None
+    if args.ablation_config:
+        ablation_plan = load_selector_ablation_plan_from_file(Path(args.ablation_config))
+    if args.ablation_mode is not None:
+        if ablation_plan is None:
+            ablation_plan = SelectorAblationPlan(mode=args.ablation_mode)
+        else:
+            ablation_plan = SelectorAblationPlan(
+                mode=args.ablation_mode,
+                variants=ablation_plan.variants,
+                artifact_dir=ablation_plan.artifact_dir,
+            )
+    if ablation_plan is not None and ablation_plan.mode == ABLATION_MODE_OFF:
+        ablation_plan = ablation_plan if ablation_plan.variants else None
+
     threshold_overrides: dict[str, object] = {}
     if args.liquidity_threshold is not None:
         threshold_overrides["liquidity_threshold"] = args.liquidity_threshold
@@ -110,6 +145,7 @@ def _build_config_from_args(args: argparse.Namespace) -> AlphaScannerConfig:
         "max_workers": args.max_workers,
         "max_anomaly_count": args.max_anomaly_count,
         "sector_cap_ratio": args.sector_cap_ratio,
+        "ablation_plan": ablation_plan,
         **threshold_overrides,
     }
 
@@ -149,6 +185,7 @@ def main() -> None:
                 failure_reason="data_quality_gate_blocked",
                 data_quality_gate=exc.payload,
                 preselection_rejections=getattr(scanner, "get_last_preselection_audit", lambda: None)(),
+                ablation=getattr(scanner, "get_last_ablation_summary", lambda: None)(),
             )
         )
         print("Run bloqué par le data quality gate selector.")
@@ -172,6 +209,7 @@ def main() -> None:
             rejected_by_filter=rejected_by_filter,
             data_quality_gate=getattr(scanner, "get_last_data_quality_gate", lambda: None)(),
             preselection_rejections=getattr(scanner, "get_last_preselection_audit", lambda: None)(),
+            ablation=getattr(scanner, "get_last_ablation_summary", lambda: None)(),
         )
     )
 

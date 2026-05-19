@@ -112,6 +112,28 @@ class _FakeScanner:
             ],
         }
 
+    def get_last_ablation_summary(self) -> dict[str, object]:
+        return {
+            "mode": "shadow",
+            "variant_count": 1,
+            "artifact_path": "F:/projets/artifacts/selector/ablation/demo.json",
+            "primary": {
+                "variant_id": "primary",
+                "selected_candidates": 3,
+                "top_symbols": ["AAPL", "NVDA", "JPM"],
+            },
+            "variants": [
+                {
+                    "variant_id": "no_spread",
+                    "disabled_filters": ["spread"],
+                    "selected_candidates": 4,
+                    "top_symbols": ["AAPL", "NVDA", "JPM", "AMD"],
+                    "overlap_with_primary": {"count": 3, "ratio_vs_primary": 1.0},
+                    "selection_diff": {"added_symbols": ["AMD"], "removed_symbols": []},
+                }
+            ],
+        }
+
 
 def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> None:
     monkeypatch.setattr(_selector_cli, "configure_root_logging", lambda **kwargs: None)
@@ -195,6 +217,10 @@ def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> Non
     assert payload["skipped_filters"] == ["market_cap_ttl"]
     assert payload["preselection_rejections"]["input_symbols"] == 12
     assert payload["preselection_rejections"]["reason_counts"]["history_status_blocked"] == 3
+    assert payload["ablation"]["mode"] == "shadow"
+    assert payload["ablation"]["variant_count"] == 1
+    assert payload["ablation"]["variants"][0]["variant_id"] == "no_spread"
+    assert payload["ablation"]["variants"][0]["selection_diff"]["added_symbols"] == ["AMD"]
     assert payload["top_candidate_explanations"][0]["symbol"] == "AAPL"
     assert payload["top_candidate_explanations"][0]["selector_signal_mode"] == "sector_neutralized"
     explainability_payload = payload["top_candidate_explanations"][0]["candidate_explainability_payload"]

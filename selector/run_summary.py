@@ -82,6 +82,7 @@ def _build_cli_run_summary(
     failure_reason: str | None = None,
     data_quality_gate: dict[str, object] | None = None,
     preselection_rejections: dict[str, object] | None = None,
+    ablation: dict[str, object] | None = None,
 ) -> dict[str, object]:
     selected_symbols = (
         result["symbol"].astype(str).tolist()[:5]
@@ -161,6 +162,7 @@ def _build_cli_run_summary(
         "small_selected_sectors": small_selected_sectors,
         "top_candidate_explanations": top_candidate_explanations,
         "preselection_rejections": preselection_rejections,
+        "ablation": ablation,
         "data_quality_gate": data_quality_gate,
         # Phase 3.3.b — agrégat des rejets par filtre (cross-chunks).
         "rejected_by_filter": dict(sorted((rejected_by_filter or {}).items())),
