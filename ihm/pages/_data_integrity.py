@@ -349,7 +349,7 @@ def _render_import_news_panel(
     _ensure_date_input_state(IMPORT_NEWS_START_DATE_KEY, IMPORT_NEWS_START_DATE_WIDGET_KEY, default_start)
     _ensure_date_input_state(IMPORT_NEWS_END_DATE_KEY, IMPORT_NEWS_END_DATE_WIDGET_KEY, default_end)
 
-    with st.expander("**Traitement par étape**", expanded=False):
+    with st.expander("**Sentiement - Traitement par étape**", expanded=False):
         st.caption(
             "Ce bloc auxiliaire permet de lancer **pas à pas** les 5 sous-étapes de la nouvelle étape 7, "
             "en réutilisant les paramètres déjà saisis dans l'IHM (provider, fenêtre, symboles, seuils, batch sizes, caps contextuels, etc.). "
