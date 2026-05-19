@@ -210,6 +210,32 @@ _SUMMARY_METADATA_KEYS = {
 }
 _CAPTION_EXCLUDED_KEYS = _SUMMARY_METADATA_KEYS | {"history_status_counts", "status_breakdown"}
 
+_SCREENER_PERSISTENCE_STATUS_LABELS = {
+    "pending": "persistance en attente",
+    "replaced_scores_full_run": "snapshot remplacé",
+    "preserved_previous_scores_empty_run": "snapshot préservé (run vide)",
+    "preserved_previous_scores_partial_run": "snapshot préservé (run partiel)",
+}
+_SCREENER_DETAIL_SAMPLE_LIMIT = 3
+
+
+def _get_screener_persistence_status(summary: Mapping[str, object]) -> str:
+    return str(summary.get("persistence_status") or "").strip()
+
+
+def _get_screener_persistence_label(summary: Mapping[str, object]) -> str | None:
+    raw_status = _get_screener_persistence_status(summary)
+    if not raw_status:
+        return None
+    return _SCREENER_PERSISTENCE_STATUS_LABELS.get(raw_status, raw_status)
+
+
+def _get_screener_chunk_error_samples(summary: Mapping[str, object]) -> list[Mapping[str, object]]:
+    raw_samples = summary.get("chunk_error_samples")
+    if not isinstance(raw_samples, list):
+        return []
+    return [sample for sample in raw_samples if isinstance(sample, Mapping)]
+
 
 def get_run_summary(record: Mapping[str, object] | None) -> dict[str, object]:
     if not record:
@@ -250,6 +276,13 @@ def get_run_summary_metric_items(record: Mapping[str, object] | None) -> list[tu
     specs = RUN_SUMMARY_METRICS.get(_step_key(record), [])
     if specs:
         items = [(label, summary.get(key)) for label, key in specs if summary.get(key) not in (None, "")]
+        if _step_key(record) == "stock_screener":
+            failure_ratio = _to_float(summary.get("chunk_failure_ratio"))
+            if failure_ratio is not None and failure_ratio > 0:
+                items.append(("Ratio KO", f"{failure_ratio * 100.0:.2f}%"))
+            persistence_label = _get_screener_persistence_label(summary)
+            if persistence_label:
+                items.append(("Persistance", persistence_label))
         stooq_status = get_stooq_cross_check_status(record)
         if _step_key(record) == "import_alpaca_bar" and stooq_status is not None:
             items.append(("Stooq", stooq_status))
@@ -391,6 +424,64 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
             )
         if resolved_device_name:
             lines.append(f"Device d'inférence résolu : {resolved_device_name}.")
+
+    if step_key == "stock_screener":
+        persistence_status = _get_screener_persistence_status(summary)
+        persistence_label = _get_screener_persistence_label(summary)
+        chunk_failures = _to_int(summary.get("chunk_failures", 0))
+        chunks_total = _to_int(summary.get("chunks_total", 0))
+        chunk_failure_ratio = _to_float(summary.get("chunk_failure_ratio")) or 0.0
+        chunk_error_samples = _get_screener_chunk_error_samples(summary)
+        sample_count = len(chunk_error_samples)
+
+        if persistence_status == "replaced_scores_full_run":
+            persisted_rows = _to_int(summary.get("persisted_rows", 0))
+            lines.append(
+                "Persistance screener : snapshot `stock_scores` remplacé et archivé "
+                f"(`persistence_status={persistence_status}`, lignes persistées={persisted_rows})."
+            )
+        elif persistence_status == "preserved_previous_scores_partial_run":
+            lines.append(
+                "Persistance screener : snapshot précédent conservé car le run est partiel "
+                f"(`persistence_status={persistence_status}`, pas de purge sur `stock_scores`)."
+            )
+        elif persistence_status == "preserved_previous_scores_empty_run":
+            lines.append(
+                "Persistance screener : snapshot précédent conservé car le run est vide "
+                f"(`persistence_status={persistence_status}`, pas de purge sur `stock_scores`)."
+            )
+        elif persistence_label:
+            lines.append(
+                f"Persistance screener : {persistence_label} (`persistence_status={persistence_status}`)."
+            )
+
+        if chunk_failures > 0:
+            lines.append(
+                "Chunks screener en échec : "
+                f"{chunk_failures}/{chunks_total} ({chunk_failure_ratio * 100.0:.2f}%)."
+            )
+            if sample_count > 0:
+                lines.append(
+                    "Échantillons d'erreur conservés dans `chunk_error_samples` : "
+                    f"{sample_count}."
+                )
+                for index, sample in enumerate(chunk_error_samples[:_SCREENER_DETAIL_SAMPLE_LIMIT], start=1):
+                    input_symbols = _to_int(sample.get("input_symbols", 0))
+                    error_message = str(sample.get("error_message") or "inconnue").strip()
+                    sample_symbols_raw = sample.get("sample_symbols")
+                    if isinstance(sample_symbols_raw, SequenceABC) and not isinstance(sample_symbols_raw, (str, bytes)):
+                        sample_symbols = ", ".join(str(symbol) for symbol in sample_symbols_raw if str(symbol).strip())
+                    else:
+                        sample_symbols = ""
+                    sample_suffix = f" — symboles={sample_symbols}" if sample_symbols else ""
+                    lines.append(
+                        f"Chunk KO {index}/{sample_count} — input={input_symbols}{sample_suffix} — erreur={error_message}."
+                    )
+                if sample_count > _SCREENER_DETAIL_SAMPLE_LIMIT:
+                    remaining_samples = sample_count - _SCREENER_DETAIL_SAMPLE_LIMIT
+                    lines.append(
+                        f"{remaining_samples} autre(s) échantillon(s) restent disponibles dans le payload brut."
+                    )
 
     if step_key != "sync_earnings_calendar":
         return lines

@@ -320,8 +320,30 @@ python -m dataIntegrityEngine.update_sector
 ```powershell
 python -m screener.stock_screener
 python -m screener.stock_screener --chunk-size 500 --max-workers 8 --benchmark SPY
+python -m screener.stock_screener --trade-date 2026-04-17
 python -m selector.alpha_scanner
 ```
+
+Notes opérateur sur `stock_screener` :
+
+- le runtime CLI est désormais aligné sur la baseline stricte `STRICT_SWING_CASH_FILTERS` ;
+- `--trade-date` borne aussi les lectures via `as_of_date` pour garder une cohérence PIT ;
+- un run vide ou partiel **ne remplace pas** `stock_scores` : le snapshot précédent est conservé ;
+- le `run_summary` structuré expose notamment `persistence_status`, `chunk_failure_ratio` et `chunk_error_samples` (échantillon borné d'erreurs de chunks).
+
+### Bench outillage pipeline
+
+```powershell
+python scripts/bench_full_pipeline.py --symbols 5000 --output artifacts/benchmarks
+```
+
+Le JSON généré dans `artifacts/benchmarks/` contient désormais, pour chaque stage, un bloc :
+
+- `seconds`
+- `error`
+- `details`
+
+Voir `doc/perf_pipeline.md` pour le format exact et la méthodologie de mesure.
 
 ### Sentiment
 

@@ -14,6 +14,55 @@
 
 ## 2. Procédures clés
 
+### `stock_screener` termine en partial run
+
+**Symptôme** : le `run_summary` ou l'IHM affiche un état de persistance du type
+`preserved_previous_scores_partial_run`. Cela signifie que le run a calculé une
+photo incomplète (`chunk_failures > 0`) et que `stock_scores` **n'a pas été
+remplacée** : le snapshot précédent a été conservé volontairement.
+
+**Impact** : pas de purge destructive, mais l'univers visible en base reflète
+encore le dernier run complet. Il faut traiter l'incident de collecte / calcul
+avant de considérer le screener du jour comme exploitable.
+
+**Détection** :
+
+- dans l'IHM (`Overview`, `Pipeline`, `Screening`), le résumé du `stock_screener`
+  doit mentionner un libellé opérateur du type `snapshot préservé (run partiel)` ;
+- dans le payload brut, confirmer :
+  - `persistence_status=preserved_previous_scores_partial_run`
+  - `chunk_failures > 0`
+  - `chunk_error_samples` non vide si des erreurs ont été échantillonnées.
+
+**Action 1ère ligne** :
+
+1. Lire le résumé IHM puis ouvrir le payload brut pour récupérer :
+   `run_id`, `chunk_failures`, `chunk_failure_ratio`, `chunk_error_samples`.
+2. Contrôler les logs du run `stock_screener` avec le `run_id` : chercher
+   `Run screener partiel preserve` puis `Chunks screener en echec`.
+3. Identifier si l'erreur est :
+   - **provider / DB transitoire** (`timeout`, `connection reset`, etc.) → rejouer le screener ;
+   - **benchmark / données manquantes** (`SPY` absent, univers vide) → vérifier l'ingestion amont avant replay ;
+   - **erreur de code reproductible** → geler le replay et escalader vers l'équipe dev.
+4. Avant tout replay, vérifier si les étapes amont du jour sont saines :
+   `import_alpaca_bar`, `data_sanitizer_daily`, `update_sector` si concerné.
+5. Relancer ensuite le screener seulement après correction du point amont.
+
+**Commandes utiles** :
+
+```powershell
+python -m screener.stock_screener --trade-date 2026-04-17
+python -m dataIntegrityEngine.import_alpaca_bar
+python -m dataIntegrityEngine.data_sanitizer_daily
+```
+
+**Critères de sortie d'incident** :
+
+- `persistence_status=replaced_scores_full_run`
+- `chunk_failures == 0`
+- `persisted_rows > 0`
+- l'IHM n'affiche plus `snapshot préservé (run partiel)` pour le dernier run.
+
 ### Positions sans protection broker-side (TP/SL manquants)
 
 **Symptôme** : une position est ouverte (entrée `FILLED`) mais aucun

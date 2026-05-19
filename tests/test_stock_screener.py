@@ -1,3 +1,5 @@
+import logging
+
 import pandas as pd
 
 from screener.models import ScreenerChunkMetrics, ScreenerConfig
@@ -217,3 +219,102 @@ def test_run_screener_with_report_preserves_previous_snapshot_when_chunk_failure
             "error_message": "db timeout",
         }
     ]
+
+
+def test_run_screener_with_report_logs_enriched_partial_run_context(monkeypatch, caplog) -> None:
+    fake_engine = object()
+    chunk_scores = pd.DataFrame(
+        [
+            {
+                "symbol": "AAA",
+                "liquidity_val": 10.0,
+                "relative_strength_index": 110.0,
+                "historical_range_score": 80.0,
+                "total_score": 95.0,
+                "last_updated_score": pd.Timestamp("2026-04-24 00:00:00"),
+                "is_candidate": 0,
+                "sector": None,
+                "last_updated_scan": pd.Timestamp("2026-04-24 00:00:00"),
+            }
+        ]
+    )
+    failed_chunk_metrics = ScreenerChunkMetrics(
+        input_symbols=2,
+        recent_rows_loaded=480,
+        range_rows_loaded=1,
+        symbols_pass_history=2,
+        symbols_pass_liquidity=1,
+        symbols_pass_relative_strength=1,
+        symbols_final=1,
+        failed=True,
+        error_message="db timeout",
+    )
+
+    monkeypatch.setattr("screener.stock_screener.get_engine", lambda: fake_engine)
+    monkeypatch.setattr("screener.stock_screener.ProcessPoolExecutor", _ImmediateExecutor)
+    monkeypatch.setattr("screener.stock_screener.wait", _immediate_wait)
+    monkeypatch.setattr(
+        "screener.stock_screener.load_spy_return_6m",
+        lambda engine, config, as_of_date=None: 0.05,
+    )
+    monkeypatch.setattr(
+        "screener.stock_screener.iter_symbol_chunks",
+        lambda engine, chunk_size: iter([["AAA", "BBB"]]),
+    )
+    monkeypatch.setattr(
+        "screener.stock_screener._process_chunk_two_passes",
+        lambda symbols, config_dict, spy_return_6m, as_of_date_iso: (chunk_scores.copy(), failed_chunk_metrics),
+    )
+    monkeypatch.setattr(
+        "screener.stock_screener.upsert_scores_snapshot",
+        lambda engine, df, chunksize=1000, snapshot_date=None: None,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _, report = run_screener_with_report(ScreenerConfig(), max_workers=1)
+
+    assert report.persistence_status == "preserved_previous_scores_partial_run"
+    assert f"run_id={report.run_id}" in caplog.text
+    assert "Run screener partiel preserve" in caplog.text
+    assert "ratio=100.00%" in caplog.text
+    assert "sample_count=1" in caplog.text
+    assert "sample=1/1" in caplog.text
+    assert "error=db timeout" in caplog.text
+
+
+def test_run_screener_with_report_caps_chunk_error_samples(monkeypatch) -> None:
+    fake_engine = object()
+
+    monkeypatch.setattr("screener.stock_screener.get_engine", lambda: fake_engine)
+    monkeypatch.setattr("screener.stock_screener.ProcessPoolExecutor", _ImmediateExecutor)
+    monkeypatch.setattr("screener.stock_screener.wait", _immediate_wait)
+    monkeypatch.setattr(
+        "screener.stock_screener.load_spy_return_6m",
+        lambda engine, config, as_of_date=None: 0.05,
+    )
+    monkeypatch.setattr(
+        "screener.stock_screener.iter_symbol_chunks",
+        lambda engine, chunk_size: iter([[f"SYM{i}", f"ALT{i}"] for i in range(6)]),
+    )
+
+    def _failed_chunk(symbols, config_dict, spy_return_6m, as_of_date_iso):
+        return pd.DataFrame(), ScreenerChunkMetrics(
+            input_symbols=len(symbols),
+            failed=True,
+            error_message=f"chunk failure {symbols[0]}",
+        )
+
+    monkeypatch.setattr("screener.stock_screener._process_chunk_two_passes", _failed_chunk)
+    monkeypatch.setattr(
+        "screener.stock_screener.upsert_scores_snapshot",
+        lambda engine, df, chunksize=1000, snapshot_date=None: None,
+    )
+
+    scores, report = run_screener_with_report(ScreenerConfig(), max_workers=1)
+
+    assert scores.empty
+    assert report.chunk_failures == 6
+    assert len(report.chunk_error_samples) == 5
+    sample_errors = {sample["error_message"] for sample in report.chunk_error_samples}
+    assert sample_errors.issubset({f"chunk failure SYM{i}" for i in range(6)})
+    assert "chunk failure SYM0" in sample_errors

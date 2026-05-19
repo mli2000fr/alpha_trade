@@ -50,7 +50,11 @@ $env:PASSWORD_DB = "pass"
 
 `run_screener()` accepte une date `as_of_date` côté code pour un usage backtest / backfill.
 
-Le point d'entrée CLI standard fonctionne, lui, en mode courant sans argument PIT exposé.
+Le point d'entrée CLI expose désormais `--trade-date YYYY-MM-DD` :
+
+- cette date devient la borne de lecture `as_of_date` ;
+- elle est aussi utilisée comme `snapshot_date` pour l'archivage PIT ;
+- en l'absence d'argument, le mode live courant reste le défaut.
 
 ---
 
@@ -96,6 +100,12 @@ python -m screener.stock_screener --historical-range-lookback-days 504 --min-his
 
 ```powershell
 python -m screener.stock_screener --first-pass-window-days 400
+```
+
+### Run PIT cohérent à une date métier donnée
+
+```powershell
+python -m screener.stock_screener --trade-date 2026-04-17
 ```
 
 ### Désactiver le mode 2 passes
@@ -144,7 +154,13 @@ Point important :
 5. applique une **passe 1 récente** (historique minimum, prix minimum, liquidité, force relative) ;
 6. applique une **passe 2 historique agrégée** (lecture `MIN(low)` / `MAX(high)` seulement pour les survivants) ;
 7. concatène les résultats ;
-8. écrit un snapshot dans `stock_scores`.
+8. remplace `stock_scores` **uniquement si le run est complet et non vide**.
+
+Politique de persistance opérateur :
+
+- **run complet et non vide** → remplacement de `stock_scores` + archivage `stock_scores_history` ;
+- **run vide** → conservation explicite du snapshot précédent ;
+- **run partiel (`chunk_failures > 0`)** → conservation explicite du snapshot précédent.
 
 ### 4.2 Scores calculés
 
@@ -163,7 +179,13 @@ Le `total_score` est désormais un **score normalisé cross-sectionnel** (0 → 
 
 Cela évite qu'un facteur exprimé sur une échelle différente domine artificiellement le ranking final.
 
-Par défaut, les poids sont désormais plus orientés swing cash :
+Par défaut, le CLI live utilise désormais la baseline stricte `STRICT_SWING_CASH_FILTERS` :
+
+- prix minimal : `10 USD`
+- liquidité minimale : `30 000 000 USD`
+- force relative minimale : `100`
+
+Les poids restent plus orientés swing cash :
 
 - liquidité : `15%`
 - force relative : `55%`
@@ -184,7 +206,7 @@ Le screener élimine notamment les symboles qui ne respectent pas :
 
 1. un seuil minimal de liquidité ;
 2. un historique minimal suffisant (`min_history_days`, 252 jours par défaut) ;
-3. un prix de clôture minimal (`min_close_price`, 5 USD par défaut) ;
+3. un prix de clôture minimal (`min_close_price`, 10 USD par défaut en CLI live strict) ;
 4. une force relative minimale vs benchmark (`min_relative_strength_index`, 100 par défaut) ;
 5. une proximité suffisante des highs récents via un range borné (`historical_range_lookback_days`, 504 jours par défaut ; `min_historical_range_score`, 70 par défaut) ;
 6. une référence benchmark exploitable.
@@ -225,6 +247,9 @@ Champs notables :
 
 - `targeted_symbols`
 - `chunks_total`
+- `chunk_failures`
+- `chunk_failure_ratio`
+- `chunk_error_samples`
 - `recent_rows_loaded`
 - `range_rows_loaded`
 - `symbols_pass_history`
@@ -236,13 +261,27 @@ Champs notables :
 - `pass1_seconds`
 - `pass2_seconds`
 - `upsert_seconds`
+- `persistence_status`
+- `persisted_rows`
 - `duration_seconds`
+
+`chunk_error_samples` est volontairement **borné** : il s'agit d'un petit échantillon des chunks en échec (taille du chunk, quelques symboles, message d'erreur) pour accélérer le diagnostic opérateur sans gonfler excessivement le `run_summary`.
 
 Ces résumés sont consommés côté IHM pour :
 
 - la page `Pipeline` (run individuel + historique) ;
 - la page `Overview` (résumés pipeline récents) ;
 - la page `Screening` (contexte pipeline & qualité amont).
+
+Pour `stock_screener`, l'IHM humanise aussi désormais `persistence_status` dans
+les captions / détails :
+
+- `replaced_scores_full_run` → `snapshot remplacé`
+- `preserved_previous_scores_empty_run` → `snapshot préservé (run vide)`
+- `preserved_previous_scores_partial_run` → `snapshot préservé (run partiel)`
+
+En cas de partial run, utiliser le runbook opérateur :
+[`doc/runbook_24_7.md`](runbook_24_7.md).
 
 ---
 

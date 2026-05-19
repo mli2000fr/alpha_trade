@@ -314,6 +314,71 @@ def test_build_run_summary_caption_uses_screener_metrics_mapping() -> None:
     assert "pass rs=180" in caption
 
 
+def test_build_run_summary_caption_humanizes_stock_screener_partial_run_persistence() -> None:
+    caption = build_run_summary_caption(
+        {
+            "step_key": "stock_screener",
+            "run_summary": {
+                "targeted_symbols": 12,
+                "symbols_final": 3,
+                "symbols_pass_history": 8,
+                "symbols_pass_liquidity": 4,
+                "symbols_pass_relative_strength": 3,
+                "chunk_failures": 2,
+                "chunk_failure_ratio": 0.25,
+                "persistence_status": "preserved_previous_scores_partial_run",
+            },
+        }
+    )
+
+    assert "chunks ko=2" in caption
+    assert "ratio ko=25.00%" in caption
+    assert "persistance=snapshot préservé (run partiel)" in caption
+
+
+def test_get_run_summary_detail_lines_exposes_stock_screener_partial_run_context() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "stock_screener",
+            "run_summary": {
+                "chunk_failures": 1,
+                "chunks_total": 4,
+                "chunk_failure_ratio": 0.25,
+                "persistence_status": "preserved_previous_scores_partial_run",
+                "chunk_error_samples": [
+                    {
+                        "input_symbols": 2,
+                        "sample_symbols": ["AAA", "BBB"],
+                        "error_message": "db timeout",
+                    }
+                ],
+            },
+        }
+    )
+
+    assert any("preserved_previous_scores_partial_run" in line for line in lines)
+    assert any("1/4 (25.00%)" in line for line in lines)
+    assert any("chunk_error_samples" in line for line in lines)
+    assert any("AAA, BBB" in line for line in lines)
+    assert any("db timeout" in line for line in lines)
+
+
+def test_get_run_summary_detail_lines_exposes_stock_screener_full_run_persistence() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "stock_screener",
+            "run_summary": {
+                "chunk_failures": 0,
+                "persistence_status": "replaced_scores_full_run",
+                "persisted_rows": 42,
+            },
+        }
+    )
+
+    assert any("replaced_scores_full_run" in line for line in lines)
+    assert any("lignes persistées=42" in line for line in lines)
+
+
 def test_build_run_summary_caption_uses_alpha_scanner_metrics_mapping() -> None:
     caption = build_run_summary_caption(
         {

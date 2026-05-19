@@ -230,6 +230,22 @@ def _log_run_report(report: ScreenerRunReport) -> None:
     LOGGER.info("Resume screener | %s", report.to_summary_dict())
 
 
+def _log_chunk_error_samples(report: ScreenerRunReport) -> None:
+    if not report.chunk_error_samples:
+        return
+    sample_count = len(report.chunk_error_samples)
+    for index, sample in enumerate(report.chunk_error_samples, start=1):
+        LOGGER.warning(
+            "Chunk screener en echec | run_id=%s sample=%s/%s input_symbols=%s sample_symbols=%s error=%s",
+            report.run_id,
+            index,
+            sample_count,
+            sample.get("input_symbols"),
+            sample.get("sample_symbols"),
+            sample.get("error_message"),
+        )
+
+
 def run_screener_with_report(
     config: ScreenerConfig,
     max_workers: Optional[int] = None,
@@ -371,13 +387,40 @@ def run_screener_with_report(
     report = _build_run_report(summary)
     _log_run_report(report)
 
+    if report.persistence_status == "preserved_previous_scores_partial_run":
+        LOGGER.error(
+            "Run screener partiel preserve | run_id=%s as_of=%s chunk_failures=%s chunks_completed=%s/%s ratio=%.2f%% symbols_final=%s sample_count=%s",
+            report.run_id,
+            report.as_of_date or "live",
+            report.chunk_failures,
+            report.chunks_completed,
+            report.chunks_total,
+            report.chunk_failure_ratio * 100.0,
+            report.symbols_final,
+            len(report.chunk_error_samples),
+        )
+    elif report.persistence_status == "preserved_previous_scores_empty_run" and report.chunk_failures > 0:
+        LOGGER.error(
+            "Run screener vide preserve avec echecs chunks | run_id=%s as_of=%s chunk_failures=%s chunks_completed=%s/%s ratio=%.2f%% sample_count=%s",
+            report.run_id,
+            report.as_of_date or "live",
+            report.chunk_failures,
+            report.chunks_completed,
+            report.chunks_total,
+            report.chunk_failure_ratio * 100.0,
+            len(report.chunk_error_samples),
+        )
+
     if report.chunk_failures > 0:
         LOGGER.warning(
-            "Chunks screener en echec | chunk_failures=%s chunks_total=%s samples=%s",
+            "Chunks screener en echec | run_id=%s chunk_failures=%s chunks_total=%s ratio=%.2f%% sample_count=%s",
+            report.run_id,
             report.chunk_failures,
             report.chunks_total,
-            report.chunk_error_samples,
+            report.chunk_failure_ratio * 100.0,
+            len(report.chunk_error_samples),
         )
+        _log_chunk_error_samples(report)
 
     if final_scores.empty:
         LOGGER.critical(
