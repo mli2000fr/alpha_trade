@@ -74,6 +74,7 @@ def test_run_screener_with_report_marks_empty_run_as_preserved(monkeypatch) -> N
     assert report.persisted_rows == 0
     assert report.purge_performed is False
     assert report.archive_performed is False
+    assert report.chunk_error_samples == []
 
 
 def test_run_screener_with_report_aggregates_two_pass_metrics(monkeypatch) -> None:
@@ -209,3 +210,10 @@ def test_run_screener_with_report_preserves_previous_snapshot_when_chunk_failure
     assert report.persisted_rows == 0
     assert report.purge_performed is False
     assert report.archive_performed is False
+    assert report.chunk_error_samples == [
+        {
+            "input_symbols": 2,
+            "sample_symbols": ["AAA", "BBB"],
+            "error_message": "db timeout",
+        }
+    ]

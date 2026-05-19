@@ -29,6 +29,8 @@ LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 APPROX_TRADING_DAYS_PER_YEAR = 252
 CHUNK_FAILURE_RATIO_WARNING_THRESHOLD = 0.05
+CHUNK_ERROR_SAMPLE_LIMIT = 5
+CHUNK_SYMBOL_SAMPLE_LIMIT = 3
 
 
 def _utc_now_naive() -> datetime:
@@ -189,10 +191,33 @@ def _merge_run_metrics(summary: dict[str, object], chunk_metrics: ScreenerChunkM
     summary["pass2_seconds"] = round(float(summary["pass2_seconds"]) + float(chunk_metrics.pass2_seconds), 4)
 
 
-def _append_completed_results(done, all_results: List[pd.DataFrame], summary: dict[str, object]) -> None:
+def _record_chunk_error_sample(
+    summary: dict[str, object],
+    chunk_metrics: ScreenerChunkMetrics,
+    chunk_symbols: List[str],
+) -> None:
+    if not chunk_metrics.failed or not chunk_metrics.error_message:
+        return
+    error_samples = summary.setdefault("chunk_error_samples", [])
+    if not isinstance(error_samples, list):
+        return
+    if len(error_samples) >= CHUNK_ERROR_SAMPLE_LIMIT:
+        return
+    error_samples.append(
+        {
+            "input_symbols": int(chunk_metrics.input_symbols),
+            "sample_symbols": [str(symbol) for symbol in chunk_symbols[:CHUNK_SYMBOL_SAMPLE_LIMIT]],
+            "error_message": str(chunk_metrics.error_message),
+        }
+    )
+
+
+def _append_completed_results(done, all_results: List[pd.DataFrame], summary: dict[str, object], pending: dict) -> None:
     for future in done:
+        chunk_symbols = list(pending.pop(future, []))
         chunk_result, chunk_metrics = future.result()
         _merge_run_metrics(summary, chunk_metrics)
+        _record_chunk_error_sample(summary, chunk_metrics, chunk_symbols)
         if not chunk_result.empty:
             all_results.append(chunk_result)
 
@@ -255,6 +280,7 @@ def run_screener_with_report(
         "persisted_rows": 0,
         "purge_performed": False,
         "archive_performed": False,
+        "chunk_error_samples": [],
     }
 
     benchmark_started = time.perf_counter()
@@ -264,7 +290,7 @@ def run_screener_with_report(
     max_in_flight = max(2, workers * 2)
     config_dict = config.to_dict()
     all_results: List[pd.DataFrame] = []
-    pending = set()
+    pending: dict[object, List[str]] = {}
 
     LOGGER.info(
         "Demarrage screener | benchmark=%s chunk_size=%s workers=%s as_of=%s two_pass=%s first_pass_window_days=%s effective_first_pass_window_days=%s",
@@ -285,15 +311,16 @@ def run_screener_with_report(
     with ProcessPoolExecutor(max_workers=workers) as executor:
         for symbol_chunk in symbol_chunks:
             while len(pending) >= max_in_flight:
-                done, pending = wait(pending, return_when=FIRST_COMPLETED)
-                _append_completed_results(done, all_results, summary)
+                done, _ = wait(set(pending), return_when=FIRST_COMPLETED)
+                _append_completed_results(done, all_results, summary, pending)
                 _emit_live_progress(progress_callback, summary)
 
-            pending.add(executor.submit(_process_chunk_two_passes, symbol_chunk, config_dict, spy_return_6m, as_of_iso))
+            future = executor.submit(_process_chunk_two_passes, symbol_chunk, config_dict, spy_return_6m, as_of_iso)
+            pending[future] = list(symbol_chunk)
 
         while pending:
-            done, pending = wait(pending, return_when=FIRST_COMPLETED)
-            _append_completed_results(done, all_results, summary)
+            done, _ = wait(set(pending), return_when=FIRST_COMPLETED)
+            _append_completed_results(done, all_results, summary, pending)
             _emit_live_progress(progress_callback, summary)
 
     if all_results:
@@ -343,6 +370,14 @@ def run_screener_with_report(
     summary["duration_seconds"] = round(time.perf_counter() - start_perf, 4)
     report = _build_run_report(summary)
     _log_run_report(report)
+
+    if report.chunk_failures > 0:
+        LOGGER.warning(
+            "Chunks screener en echec | chunk_failures=%s chunks_total=%s samples=%s",
+            report.chunk_failures,
+            report.chunks_total,
+            report.chunk_error_samples,
+        )
 
     if final_scores.empty:
         LOGGER.critical(

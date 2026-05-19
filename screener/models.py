@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from math import ceil
 from typing import Any, ClassVar
 
@@ -182,6 +182,7 @@ class ScreenerRunReport:
     persisted_rows: int = 0
     purge_performed: bool = False
     archive_performed: bool = False
+    chunk_error_samples: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def chunk_failure_ratio(self) -> float:

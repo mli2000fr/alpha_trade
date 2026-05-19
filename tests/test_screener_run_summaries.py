@@ -86,6 +86,48 @@ def test_stock_screener_main_emits_structured_summary(monkeypatch, capsys) -> No
     assert payload["rows_avoided_estimate"] == 250000
 
 
+def test_stock_screener_main_emits_chunk_error_samples_when_available(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(stock_screener, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(
+        stock_screener,
+        "run_screener_with_report",
+        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None: (
+            pd.DataFrame(),
+            ScreenerRunReport(
+                run_id="stock-screener-20260425010101-abc123",
+                benchmark_symbol=config.benchmark_symbol,
+                chunk_size=config.chunk_size,
+                workers=max_workers or 4,
+                as_of_date=None,
+                started_at="2026-04-25T01:01:01",
+                finished_at="2026-04-25T01:01:03",
+                chunk_failures=1,
+                chunks_total=3,
+                chunk_error_samples=[
+                    {
+                        "input_symbols": 2,
+                        "sample_symbols": ["AAA", "BBB"],
+                        "error_message": "db timeout",
+                    }
+                ],
+            ),
+        ),
+    )
+    monkeypatch.setattr(sys, "argv", ["stock_screener.py"])
+
+    stock_screener.main()
+
+    payload = _payload_from_stdout(capsys.readouterr().out.strip(), stock_screener.RUN_SUMMARY_PREFIX)
+    assert payload["chunk_failures"] == 1
+    assert payload["chunk_error_samples"] == [
+        {
+            "input_symbols": 2,
+            "sample_symbols": ["AAA", "BBB"],
+            "error_message": "db timeout",
+        }
+    ]
+
+
 def test_stock_screener_main_uses_trade_date_as_as_of_date(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
