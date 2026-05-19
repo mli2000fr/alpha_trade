@@ -550,6 +550,21 @@ def test_update_database_persists_selector_scores() -> None:
                     earnings_date DATE,
                     days_to_earnings INTEGER,
                     earnings_blackout INTEGER DEFAULT 0,
+                    candidate_rank INTEGER,
+                    raw_final_score REAL,
+                    normalized_total_score REAL,
+                    normalized_rsi REAL,
+                    total_score_neutralized REAL,
+                    relative_strength_index_neutralized REAL,
+                    trend_vcp_component REAL,
+                    total_score_component REAL,
+                    rsi_component REAL,
+                    atr_pct_20 REAL,
+                    weekly_trend_score REAL,
+                    high_52w_proximity REAL,
+                    volatility_ratio REAL,
+                    selector_signal_mode TEXT,
+                    selection_explanation TEXT,
                     is_candidate INTEGER NOT NULL DEFAULT 0,
                     last_updated_scan DATETIME
                 )
@@ -571,11 +586,41 @@ def test_update_database_persists_selector_scores() -> None:
                 "symbol": "AAA", "trend_score": 0.80, "vcp_score": 0.60, "final_score": 1.10,
                 "market_cap": 5_000_000_000.0, "beta_126": 1.15, "spread_bps": 12.0,
                 "earnings_date": date(2026, 4, 30), "days_to_earnings": 8, "earnings_blackout": 0,
+                "candidate_rank": 1,
+                "raw_final_score": 1.10,
+                "normalized_total_score": 0.72,
+                "normalized_rsi": 0.66,
+                "total_score_neutralized": 0.70,
+                "relative_strength_index_neutralized": 0.61,
+                "trend_vcp_component": 0.35,
+                "total_score_component": 0.42,
+                "rsi_component": 0.33,
+                "atr_pct_20": 0.028,
+                "weekly_trend_score": 0.91,
+                "high_52w_proximity": 0.88,
+                "volatility_ratio": 0.54,
+                "selector_signal_mode": "sector_neutralized",
+                "selection_explanation": "mode=sector_neutralized; trend_vcp=0.3500; total=0.4200; rsi=0.3300; final=1.1000",
             },
             {
                 "symbol": "BBB", "trend_score": 0.55, "vcp_score": 0.40, "final_score": 0.82,
                 "market_cap": 3_000_000_000.0, "beta_126": 0.95, "spread_bps": 30.0,
                 "earnings_date": date(2026, 4, 24), "days_to_earnings": 2, "earnings_blackout": 1,
+                "candidate_rank": None,
+                "raw_final_score": 0.82,
+                "normalized_total_score": 0.44,
+                "normalized_rsi": 0.31,
+                "total_score_neutralized": 0.40,
+                "relative_strength_index_neutralized": 0.27,
+                "trend_vcp_component": 0.24,
+                "total_score_component": 0.34,
+                "rsi_component": 0.24,
+                "atr_pct_20": 0.019,
+                "weekly_trend_score": 0.73,
+                "high_52w_proximity": 0.76,
+                "volatility_ratio": 0.62,
+                "selector_signal_mode": "sector_neutralized",
+                "selection_explanation": "mode=sector_neutralized; trend_vcp=0.2400; total=0.3400; rsi=0.2400; final=0.8200",
             },
         ]
     )
@@ -586,14 +631,15 @@ def test_update_database_persists_selector_scores() -> None:
         rows = conn.execute(
             text(
                 "SELECT symbol, trend_score, vcp_score, final_score, market_cap, beta_126, spread_bps, days_to_earnings, earnings_blackout, is_candidate "
+                ", candidate_rank, atr_pct_20, weekly_trend_score, high_52w_proximity, volatility_ratio, trend_vcp_component, total_score_component, rsi_component, selector_signal_mode, selection_explanation "
                 "FROM stock_scores ORDER BY symbol"
             )
         ).fetchall()
 
     assert updated_count == 1
     assert rows == [
-        ("AAA", 0.8, 0.6, 1.1, 5_000_000_000.0, 1.15, 12.0, 8, 0, 1),
-        ("BBB", 0.55, 0.4, 0.82, 3_000_000_000.0, 0.95, 30.0, 2, 1, 0),
+        ("AAA", 0.8, 0.6, 1.1, 5_000_000_000.0, 1.15, 12.0, 8, 0, 1, 1, 0.028, 0.91, 0.88, 0.54, 0.35, 0.42, 0.33, "sector_neutralized", "mode=sector_neutralized; trend_vcp=0.3500; total=0.4200; rsi=0.3300; final=1.1000"),
+        ("BBB", 0.55, 0.4, 0.82, 3_000_000_000.0, 0.95, 30.0, 2, 1, 0, None, 0.019, 0.73, 0.76, 0.62, 0.24, 0.34, 0.24, "sector_neutralized", "mode=sector_neutralized; trend_vcp=0.2400; total=0.3400; rsi=0.2400; final=0.8200"),
     ]
 
 

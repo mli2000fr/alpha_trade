@@ -1,15 +1,15 @@
 """Helpers de normalisation / agrégation / présentation des run_summary IHM."""
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from collections.abc import Sequence as SequenceABC
-from typing import Any, Iterable, Mapping, Sequence, cast
+from typing import Any, cast
 
 from ihm.services.pipeline_runner import (
     get_pipeline_auxiliary_steps,
     get_pipeline_steps,
     parse_pipeline_step_number,
 )
-
 
 RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
     "ml_train": [
@@ -235,6 +235,42 @@ def _get_screener_chunk_error_samples(summary: Mapping[str, object]) -> list[Map
     if not isinstance(raw_samples, list):
         return []
     return [sample for sample in raw_samples if isinstance(sample, Mapping)]
+
+
+def _format_alpha_scanner_candidate_detail_line(candidate: Mapping[str, object]) -> str | None:
+    explainability = candidate.get("candidate_explainability_payload")
+    payload = dict(cast(Mapping[str, object], explainability)) if isinstance(explainability, Mapping) else {}
+    identity = payload.get("identity") if isinstance(payload.get("identity"), Mapping) else {}
+    selection = payload.get("selection_context") if isinstance(payload.get("selection_context"), Mapping) else {}
+    components = payload.get("score_components") if isinstance(payload.get("score_components"), Mapping) else {}
+    outputs = payload.get("score_outputs") if isinstance(payload.get("score_outputs"), Mapping) else {}
+
+    rank = _to_int(identity.get("rank") or candidate.get("rank"))
+    symbol = str(identity.get("symbol") or candidate.get("symbol") or "").strip()
+    if not symbol:
+        return None
+    mode = str(selection.get("selector_signal_mode") or candidate.get("selector_signal_mode") or "").strip()
+    final_score = _to_float(outputs.get("final_score") or candidate.get("final_score"))
+    trend_component = _to_float(components.get("trend_vcp_component") or candidate.get("trend_vcp_component"))
+    total_component = _to_float(components.get("total_score_component") or candidate.get("total_score_component"))
+    rsi_component = _to_float(components.get("rsi_component") or candidate.get("rsi_component"))
+    explanation = str(selection.get("selection_explanation") or candidate.get("selection_explanation") or "").strip()
+
+    parts = [f"Top #{rank or '—'} {symbol}"]
+    if mode:
+        parts.append(f"mode={mode}")
+    if final_score is not None:
+        parts.append(f"final={final_score:.4f}")
+    if trend_component is not None:
+        parts.append(f"trend/VCP={trend_component:.4f}")
+    if total_component is not None:
+        parts.append(f"total={total_component:.4f}")
+    if rsi_component is not None:
+        parts.append(f"RSI={rsi_component:.4f}")
+    line = " — ".join(parts) + "."
+    if explanation:
+        line += f" Explication : {explanation}."
+    return line
 
 
 def get_run_summary(record: Mapping[str, object] | None) -> dict[str, object]:
@@ -482,6 +518,16 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
                     lines.append(
                         f"{remaining_samples} autre(s) échantillon(s) restent disponibles dans le payload brut."
                     )
+
+    if step_key == "alpha_scanner":
+        top_candidates = summary.get("top_candidate_explanations")
+        if isinstance(top_candidates, list):
+            for candidate in top_candidates[:3]:
+                if not isinstance(candidate, Mapping):
+                    continue
+                detail_line = _format_alpha_scanner_candidate_detail_line(candidate)
+                if detail_line:
+                    lines.append(detail_line)
 
     if step_key != "sync_earnings_calendar":
         return lines

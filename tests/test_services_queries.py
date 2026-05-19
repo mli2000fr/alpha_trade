@@ -97,6 +97,116 @@ def test_services_queries_importable():
     assert hasattr(queries, "__doc__")
 
 
+def test_get_stock_scores_builds_schema_aware_query_and_attaches_explainability_payload(monkeypatch):
+    import pandas as pd
+
+    queries.get_stock_scores.clear()
+    calls: list[str] = []
+
+    def fake_safe_query(query, params=None):
+        calls.append(query)
+        if query.startswith("SHOW COLUMNS FROM stock_scores"):
+            return pd.DataFrame(
+                {
+                    "Field": [
+                        "symbol",
+                        "sector",
+                        "is_candidate",
+                        "candidate_rank",
+                        "total_score",
+                        "final_score",
+                        "final_score_sentiment",
+                        "trend_score",
+                        "vcp_score",
+                        "relative_strength_index",
+                        "trend_vcp_component",
+                        "total_score_component",
+                        "rsi_component",
+                        "selector_signal_mode",
+                        "selection_explanation",
+                    ]
+                }
+            )
+        return pd.DataFrame(
+            [
+                {
+                    "symbol": "AAPL",
+                    "sector": "Technology",
+                    "is_candidate": 1,
+                    "candidate_rank": 1,
+                    "total_score": 91.0,
+                    "final_score": 0.88,
+                    "final_score_sentiment": 0.55,
+                    "trend_score": 0.82,
+                    "vcp_score": 0.71,
+                    "relative_strength_index": 67.0,
+                    "trend_vcp_component": 0.41,
+                    "total_score_component": 0.29,
+                    "rsi_component": 0.18,
+                    "selector_signal_mode": "sector_neutralized",
+                    "selection_explanation": "mode=sector_neutralized; trend_vcp=0.4100; total=0.2900; rsi=0.1800; final=0.8800",
+                }
+            ]
+        )
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_stock_scores()
+
+    assert len(calls) == 2
+    assert "candidate_rank" in calls[1]
+    assert "selector_signal_mode" in calls[1]
+    payload = df.iloc[0]["candidate_explainability_payload"]
+    assert payload["identity"]["symbol"] == "AAPL"
+    assert payload["identity"]["candidate_rank"] == 1
+    assert payload["score_components"]["trend_vcp_component"] == 0.41
+    assert payload["selection_context"]["selector_signal_mode"] == "sector_neutralized"
+
+
+def test_get_stock_scores_avoids_selecting_missing_explainability_columns(monkeypatch):
+    import pandas as pd
+
+    queries.get_stock_scores.clear()
+    calls: list[str] = []
+
+    def fake_safe_query(query, params=None):
+        calls.append(query)
+        if query.startswith("SHOW COLUMNS FROM stock_scores"):
+            return pd.DataFrame(
+                {
+                    "Field": [
+                        "symbol",
+                        "sector",
+                        "is_candidate",
+                        "total_score",
+                        "final_score",
+                        "final_score_sentiment",
+                    ]
+                }
+            )
+        return pd.DataFrame(
+            [
+                {
+                    "symbol": "MSFT",
+                    "sector": "Technology",
+                    "is_candidate": 0,
+                    "total_score": 88.0,
+                    "final_score": 0.73,
+                    "final_score_sentiment": 0.44,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_stock_scores()
+
+    assert "trend_vcp_component" not in calls[1]
+    payload = df.iloc[0]["candidate_explainability_payload"]
+    assert payload["identity"]["symbol"] == "MSFT"
+    assert payload["score_components"]["trend_vcp_component"] is None
+
+
 def test_get_backtesting_pit_history_diagnostic_reports_available_history(monkeypatch):
     queries.get_backtesting_pit_history_diagnostic.clear()
 

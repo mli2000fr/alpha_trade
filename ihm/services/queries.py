@@ -1,17 +1,18 @@
 """ihm/services/queries.py — Requêtes SQL centralisées pour l'IHM."""
 from __future__ import annotations
 
-from datetime import date, datetime
 import json
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
 
 from database.run_business_summaries import parse_summary_json
 from ihm.services.alpha_scanner_threshold_presets import DEFAULT_ALPHA_SCANNER_DEPENDENCY_THRESHOLDS
-from ihm.services.run_summary import build_run_summary_caption
 from ihm.services.db import get_last_query_error, safe_query, safe_scalar
+from ihm.services.run_summary import build_run_summary_caption
 from ihm.services.screener_preferences import load_persisted_alpha_scanner_dependency_thresholds
+from selector.explainability import build_candidate_explainability_payload
 
 ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL = """
     SELECT COUNT(DISTINCT sm.symbol)
@@ -28,6 +29,50 @@ ALPHA_SCANNER_ELIGIBLE_UNIVERSE_SQL = """
 """
 
 ALPHA_SCANNER_DEPENDENCY_THRESHOLDS: dict[str, dict[str, float]] = DEFAULT_ALPHA_SCANNER_DEPENDENCY_THRESHOLDS
+STOCK_SCORES_BASE_COLUMNS = [
+    "symbol",
+    "sector",
+    "is_candidate",
+    "candidate_rank",
+    "total_score",
+    "final_score",
+    "final_score_sentiment",
+    "trend_score",
+    "vcp_score",
+    "signal_active",
+    "total_news",
+    "anomaly_count",
+    "missing_days_count",
+    "last_updated_score",
+    "last_updated_scan",
+    "last_updated_sentiment",
+]
+STOCK_SCORES_EXPLAINABILITY_COLUMNS = [
+    "relative_strength_index",
+    "market_cap",
+    "beta_126",
+    "spread_bps",
+    "earnings_date",
+    "days_to_earnings",
+    "earnings_blackout",
+    "raw_final_score",
+    "normalized_total_score",
+    "normalized_rsi",
+    "total_score_neutralized",
+    "relative_strength_index_neutralized",
+    "trend_vcp_component",
+    "total_score_component",
+    "rsi_component",
+    "atr_pct_20",
+    "weekly_trend_score",
+    "high_52w_proximity",
+    "volatility_ratio",
+    "selector_signal_mode",
+    "selection_explanation",
+    "liquidity_val",
+    "sanitizer_status",
+    "history_days",
+]
 
 
 def _coerce_date(value: object) -> date | None:
@@ -76,6 +121,56 @@ def _parse_json_object(value: object) -> dict[str, object]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _get_table_columns(table_name: str) -> set[str]:
+    columns_df = safe_query(f"SHOW COLUMNS FROM {table_name}")
+    if columns_df.empty or "Field" not in columns_df.columns:
+        return set()
+    return {
+        str(value).strip()
+        for value in columns_df["Field"].tolist()
+        if str(value).strip()
+    }
+
+
+def _build_stock_scores_query(available_columns: set[str]) -> str:
+    selected_columns = [
+        column
+        for column in [*STOCK_SCORES_BASE_COLUMNS, *STOCK_SCORES_EXPLAINABILITY_COLUMNS]
+        if column in available_columns
+    ]
+    if not selected_columns:
+        selected_columns = ["symbol", "sector", "is_candidate", "total_score", "final_score", "final_score_sentiment"]
+    order_by_parts: list[str] = []
+    if "is_candidate" in available_columns:
+        order_by_parts.append("COALESCE(is_candidate, 0) DESC")
+    if "candidate_rank" in available_columns:
+        order_by_parts.append("CASE WHEN candidate_rank IS NULL THEN 1 ELSE 0 END ASC")
+        order_by_parts.append("candidate_rank ASC")
+    for column in ("final_score_sentiment", "final_score", "total_score"):
+        if column in available_columns:
+            order_by_parts.append(f"{column} DESC")
+    if "symbol" in available_columns:
+        order_by_parts.append("symbol ASC")
+    order_by_clause = ", ".join(order_by_parts) or "symbol ASC"
+    return (
+        "SELECT "
+        + ", ".join(selected_columns)
+        + " FROM stock_scores ORDER BY "
+        + order_by_clause
+    )
+
+
+def _attach_candidate_explainability_payloads(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    enriched = df.copy()
+    enriched["candidate_explainability_payload"] = enriched.apply(
+        lambda row: build_candidate_explainability_payload(row.to_dict()),
+        axis=1,
+    )
+    return enriched
 
 
 def get_alpha_scanner_dependency_thresholds() -> dict[str, dict[str, float]]:
@@ -468,14 +563,9 @@ def get_latest_exec_run() -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_stock_scores() -> pd.DataFrame:
-    return safe_query("""
-        SELECT symbol, sector, is_candidate, total_score, final_score, final_score_sentiment,
-               trend_score, vcp_score, signal_active, total_news,
-               anomaly_count, missing_days_count,
-               last_updated_score, last_updated_scan, last_updated_sentiment
-        FROM stock_scores
-        ORDER BY final_score_sentiment DESC, total_score DESC
-    """)
+    available_columns = _get_table_columns("stock_scores")
+    query = _build_stock_scores_query(available_columns)
+    return _attach_candidate_explainability_payloads(safe_query(query))
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Iterator, Optional
 
 import pandas as pd
-from sqlalchemy import MetaData, Table, bindparam, text
+from sqlalchemy import MetaData, Table, bindparam, inspect, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import Engine
 
@@ -26,6 +26,66 @@ REQUIRED_SCORE_COLUMNS = (
 	"sanitizer_status",
 	"last_updated_scan",
 )
+ARCHIVABLE_SCORE_COLUMNS = (
+	"symbol",
+	"sector",
+	"liquidity_val",
+	"relative_strength_index",
+	"historical_range_score",
+	"total_score",
+	"trend_score",
+	"vcp_score",
+	"final_score",
+	"market_cap",
+	"beta_126",
+	"spread_bps",
+	"earnings_date",
+	"days_to_earnings",
+	"earnings_blackout",
+	"candidate_rank",
+	"raw_final_score",
+	"normalized_total_score",
+	"normalized_rsi",
+	"total_score_neutralized",
+	"relative_strength_index_neutralized",
+	"trend_vcp_component",
+	"total_score_component",
+	"rsi_component",
+	"atr_pct_20",
+	"weekly_trend_score",
+	"high_52w_proximity",
+	"volatility_ratio",
+	"selector_signal_mode",
+	"selection_explanation",
+	"is_candidate",
+	"sentiment_net_agg",
+	"sector_impact_agg",
+	"company_idio_score",
+	"macro_regime_score",
+	"company_idio_signal_norm",
+	"macro_regime_signal_norm",
+	"company_idio_component",
+	"macro_regime_component",
+	"quant_component",
+	"final_score_sentiment",
+	"final_score_walk_forward",
+	"walk_forward_sentiment_weight",
+	"walk_forward_macro_weight",
+	"walk_forward_quant_weight",
+	"calibration_run_id",
+	"calibration_source",
+	"signal_active",
+	"anomaly_count",
+	"missing_days_count",
+	"sanitizer_status",
+)
+DEFAULT_STOCK_SCORES_COLUMNS = set(ARCHIVABLE_SCORE_COLUMNS)
+DEFAULT_STOCK_SCORES_HISTORY_COLUMNS = {
+	"snapshot_date",
+	"capital_preset_key",
+	"config_fingerprint",
+	*ARCHIVABLE_SCORE_COLUMNS,
+}
 
 
 def get_engine() -> Engine:
@@ -35,6 +95,13 @@ def get_engine() -> Engine:
 def _get_scores_table(engine: Engine) -> Table:
 	metadata = MetaData()
 	return Table("stock_scores", metadata, autoload_with=engine)
+
+
+def _get_table_columns(engine: Engine, table_name: str, fallback: set[str]) -> set[str]:
+	try:
+		return {str(column.get("name")) for column in inspect(engine).get_columns(table_name)}
+	except Exception:
+		return set(fallback)
 
 
 def _purge_missing_scores(engine: Engine, symbols: list[str]) -> None:
@@ -366,63 +433,29 @@ def archive_scores_snapshot(
 	"""
 	ref_date = snapshot_date or date.today()
 	resolved_preset_key = str(capital_preset_key or DEFAULT_CAPITAL_PRESET_KEY).strip() or DEFAULT_CAPITAL_PRESET_KEY
-	stmt = text("""
-		INSERT INTO stock_scores_history
-			(snapshot_date, capital_preset_key, config_fingerprint, symbol, sector,
-			 liquidity_val, relative_strength_index, historical_range_score, total_score,
-			 trend_score, vcp_score, final_score, is_candidate,
-			 sentiment_net_agg, sector_impact_agg, company_idio_score, macro_regime_score,
-			 company_idio_signal_norm, macro_regime_signal_norm,
-			 company_idio_component, macro_regime_component, quant_component,
-			 final_score_sentiment, final_score_walk_forward,
-			 walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
-			 calibration_run_id, calibration_source,
-			 signal_active,
-			 anomaly_count, missing_days_count, sanitizer_status)
-		SELECT
-			:snapshot_date, :capital_preset_key, :config_fingerprint, symbol, sector,
-			liquidity_val, relative_strength_index, historical_range_score, total_score,
-			trend_score, vcp_score, final_score, is_candidate,
-			sentiment_net_agg, sector_impact_agg, company_idio_score, macro_regime_score,
-			company_idio_signal_norm, macro_regime_signal_norm,
-			company_idio_component, macro_regime_component, quant_component,
-			final_score_sentiment, final_score_walk_forward,
-			walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
-			calibration_run_id, calibration_source,
-			signal_active,
-			anomaly_count, missing_days_count, sanitizer_status
-		FROM stock_scores
-		ON DUPLICATE KEY UPDATE
-			sector                  = VALUES(sector),
-			liquidity_val           = VALUES(liquidity_val),
-			relative_strength_index = VALUES(relative_strength_index),
-			historical_range_score  = VALUES(historical_range_score),
-			total_score             = VALUES(total_score),
-			trend_score             = VALUES(trend_score),
-			vcp_score               = VALUES(vcp_score),
-			final_score             = VALUES(final_score),
-			is_candidate            = VALUES(is_candidate),
-			sentiment_net_agg       = VALUES(sentiment_net_agg),
-			sector_impact_agg       = VALUES(sector_impact_agg),
-			company_idio_score      = VALUES(company_idio_score),
-			macro_regime_score      = VALUES(macro_regime_score),
-			company_idio_signal_norm = VALUES(company_idio_signal_norm),
-			macro_regime_signal_norm = VALUES(macro_regime_signal_norm),
-			company_idio_component  = VALUES(company_idio_component),
-			macro_regime_component  = VALUES(macro_regime_component),
-			quant_component         = VALUES(quant_component),
-			final_score_sentiment   = VALUES(final_score_sentiment),
-			final_score_walk_forward = VALUES(final_score_walk_forward),
-			walk_forward_sentiment_weight = VALUES(walk_forward_sentiment_weight),
-			walk_forward_macro_weight = VALUES(walk_forward_macro_weight),
-			walk_forward_quant_weight = VALUES(walk_forward_quant_weight),
-			calibration_run_id      = VALUES(calibration_run_id),
-			calibration_source      = VALUES(calibration_source),
-			signal_active           = VALUES(signal_active),
-			anomaly_count           = VALUES(anomaly_count),
-			missing_days_count      = VALUES(missing_days_count),
-			sanitizer_status        = VALUES(sanitizer_status)
-	""")
+	source_columns = _get_table_columns(engine, "stock_scores", DEFAULT_STOCK_SCORES_COLUMNS)
+	target_columns = _get_table_columns(engine, "stock_scores_history", DEFAULT_STOCK_SCORES_HISTORY_COLUMNS)
+	archivable_columns = [
+		column for column in ARCHIVABLE_SCORE_COLUMNS
+		if column in source_columns and column in target_columns
+	]
+	if not archivable_columns:
+		return 0
+	insert_columns = ["snapshot_date", "capital_preset_key", "config_fingerprint", *archivable_columns]
+	select_columns = [":snapshot_date", ":capital_preset_key", ":config_fingerprint", *archivable_columns]
+	update_columns = [column for column in archivable_columns if column != "symbol"]
+	if not update_columns:
+		update_columns = [archivable_columns[0]]
+	update_clause = ",\n\t\t\t".join(f"{column} = VALUES({column})" for column in update_columns)
+	stmt = text(
+		"INSERT INTO stock_scores_history\n"
+		f"\t({', '.join(insert_columns)})\n"
+		"\tSELECT\n"
+		f"\t\t{', '.join(select_columns)}\n"
+		"\tFROM stock_scores\n"
+		"\tON DUPLICATE KEY UPDATE\n"
+		f"\t\t\t{update_clause}"
+	)
 	with engine.begin() as conn:
 		result = conn.execute(
 			stmt,

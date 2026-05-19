@@ -22,9 +22,39 @@ class _FakeScanner:
     def run(self) -> pd.DataFrame:
         return pd.DataFrame(
             [
-                {"rank": 1, "symbol": "AAPL", "sector": "Tech", "final_score": 0.88},
-                {"rank": 2, "symbol": "NVDA", "sector": "Tech", "final_score": 0.81},
-                {"rank": 3, "symbol": "JPM", "sector": "Financials", "final_score": 0.74},
+                {
+                    "rank": 1,
+                    "symbol": "AAPL",
+                    "sector": "Tech",
+                    "final_score": 0.88,
+                    "trend_vcp_component": 0.41,
+                    "total_score_component": 0.29,
+                    "rsi_component": 0.18,
+                    "selector_signal_mode": "sector_neutralized",
+                    "selection_explanation": "mode=sector_neutralized; trend_vcp=0.4100; total=0.2900; rsi=0.1800; final=0.8800",
+                },
+                {
+                    "rank": 2,
+                    "symbol": "NVDA",
+                    "sector": "Tech",
+                    "final_score": 0.81,
+                    "trend_vcp_component": 0.39,
+                    "total_score_component": 0.25,
+                    "rsi_component": 0.17,
+                    "selector_signal_mode": "sector_neutralized",
+                    "selection_explanation": "mode=sector_neutralized; trend_vcp=0.3900; total=0.2500; rsi=0.1700; final=0.8100",
+                },
+                {
+                    "rank": 3,
+                    "symbol": "JPM",
+                    "sector": "Financials",
+                    "final_score": 0.74,
+                    "trend_vcp_component": 0.36,
+                    "total_score_component": 0.22,
+                    "rsi_component": 0.16,
+                    "selector_signal_mode": "sector_neutralized",
+                    "selection_explanation": "mode=sector_neutralized; trend_vcp=0.3600; total=0.2200; rsi=0.1600; final=0.7400",
+                },
             ]
         )
 
@@ -118,6 +148,13 @@ def test_alpha_scanner_main_emits_structured_summary(monkeypatch, capsys) -> Non
     assert "min_quote_size" in payload
     assert "market_cap_max_age_days" in payload
     assert payload["data_quality_gate"]["status"] == "ok"
+    assert payload["top_candidate_explanations"][0]["symbol"] == "AAPL"
+    assert payload["top_candidate_explanations"][0]["selector_signal_mode"] == "sector_neutralized"
+    explainability_payload = payload["top_candidate_explanations"][0]["candidate_explainability_payload"]
+    assert explainability_payload["identity"]["symbol"] == "AAPL"
+    assert explainability_payload["identity"]["rank"] == 1
+    assert explainability_payload["score_components"]["trend_vcp_component"] == 0.41
+    assert explainability_payload["selection_context"]["selector_signal_mode"] == "sector_neutralized"
 
 
 def test_alpha_scanner_main_emits_blocked_summary_on_data_quality_gate(monkeypatch, capsys) -> None:

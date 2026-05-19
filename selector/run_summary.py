@@ -17,6 +17,7 @@ import pandas as pd
 from core.filter_profiles import STRICT_SWING_CASH_FILTERS
 from core.run_summary import attach_schema_version
 from selector.config import RUN_SUMMARY_PREFIX
+from selector.explainability import build_candidate_explainability_payload
 
 if TYPE_CHECKING:
     from selector.config import AlphaScannerConfig
@@ -35,6 +36,39 @@ def _emit_run_summary(summary: dict[str, object]) -> None:
         f"{RUN_SUMMARY_PREFIX}{json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}",
         flush=True,
     )
+
+
+def _build_top_candidate_explanations(result: pd.DataFrame, *, limit: int = 5) -> list[dict[str, object]]:
+    if result.empty or "symbol" not in result.columns:
+        return []
+    rows: list[dict[str, object]] = []
+    for _, row in result.head(limit).iterrows():
+        explainability_payload = build_candidate_explainability_payload(row.to_dict())
+        rows.append(
+            {
+                "rank": int(row["rank"]) if "rank" in result.columns and pd.notna(row.get("rank")) else None,
+                "symbol": str(row.get("symbol") or "").strip(),
+                "sector": None if pd.isna(row.get("sector")) else str(row.get("sector")),
+                "final_score": None if pd.isna(row.get("final_score")) else round(float(row.get("final_score")), 4),
+                "trend_vcp_component": None
+                if pd.isna(row.get("trend_vcp_component"))
+                else round(float(row.get("trend_vcp_component")), 4),
+                "total_score_component": None
+                if pd.isna(row.get("total_score_component"))
+                else round(float(row.get("total_score_component")), 4),
+                "rsi_component": None
+                if pd.isna(row.get("rsi_component"))
+                else round(float(row.get("rsi_component")), 4),
+                "selector_signal_mode": None
+                if pd.isna(row.get("selector_signal_mode"))
+                else str(row.get("selector_signal_mode")),
+                "selection_explanation": None
+                if pd.isna(row.get("selection_explanation"))
+                else str(row.get("selection_explanation")),
+                "candidate_explainability_payload": explainability_payload,
+            }
+        )
+    return rows
 
 
 def _build_cli_run_summary(
@@ -77,6 +111,7 @@ def _build_cli_run_summary(
         for sector, count in sector_breakdown.items()
         if int(count) < 3
     }
+    top_candidate_explanations = _build_top_candidate_explanations(result)
 
     return attach_schema_version({
         "run_id": _build_run_id("alpha-scanner"),
@@ -110,6 +145,7 @@ def _build_cli_run_summary(
         "market_cap_max_age_days": config.market_cap_max_age_days,
         "earnings_blackout_days": config.earnings_blackout_days,
         "small_selected_sectors": small_selected_sectors,
+        "top_candidate_explanations": top_candidate_explanations,
         "data_quality_gate": data_quality_gate,
         # Phase 3.3.b — agrégat des rejets par filtre (cross-chunks).
         "rejected_by_filter": dict(sorted((rejected_by_filter or {}).items())),

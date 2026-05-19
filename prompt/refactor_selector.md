@@ -404,3 +404,210 @@ Les prochains gains de valeur se situent désormais surtout sur :
 - l’**industrialisation des profils/versioning avancé** ;
 - l’**explicabilité fine par candidat**.
 
+---
+
+## 10. 3e passe — orientée « expert production »
+
+### Objectif
+Cette 3e passe a ciblé explicitement :
+- la **persistance de facteurs additionnels** dans `stock_scores` et `stock_scores_history` ;
+- l’**explicabilité par candidat** ;
+- la **compatibilité de persistance PIT** malgré une migration de schéma progressive.
+
+### Implémentation réalisée
+
+#### 10.1 Persistance enrichie dans `stock_scores`
+Le payload selector persisté contient désormais, en plus des colonnes historiques :
+- `candidate_rank`
+- `raw_final_score`
+- `normalized_total_score`
+- `normalized_rsi`
+- `total_score_neutralized`
+- `relative_strength_index_neutralized`
+- `trend_vcp_component`
+- `total_score_component`
+- `rsi_component`
+- `atr_pct_20`
+- `weekly_trend_score`
+- `high_52w_proximity`
+- `volatility_ratio`
+- `selector_signal_mode`
+- `selection_explanation`
+
+Bénéfices :
+- meilleur post-mortem quantitatif ;
+- meilleure lecture des composantes du score final ;
+- meilleure auditabilité des runs selector et des snapshots PIT.
+
+#### 10.2 Explicabilité par candidat
+Le module `selector/ranking.py` produit maintenant une **décomposition explicite du score final** :
+- contribution `trend_vcp_component`
+- contribution `total_score_component`
+- contribution `rsi_component`
+- mode de score (`factor_only`, `multi_factor`, `sector_neutralized`)
+- résumé texte compact via `selection_explanation`
+
+Le `run_summary` expose aussi `top_candidate_explanations` pour les premiers candidats sélectionnés.
+
+#### 10.3 Compatibilité schéma / rollout progressif
+La persistance selector et l’archivage `stock_scores_history` ont été durcis pour rester compatibles :
+- avec une table déjà migrée ;
+- avec une table encore partiellement legacy ;
+- avec un archivage PIT exécuté avant/après migration complète.
+
+Concrètement :
+- `selector/db_io.py` fait des `UPDATE` dynamiques selon les colonnes réellement présentes ;
+- `selector/db_io.py::reset_selector_outputs` ne réinitialise que les colonnes existantes ;
+- `screener/db_io.py::archive_scores_snapshot` construit un `INSERT ... SELECT` dynamique basé sur l’intersection des colonnes source/cible.
+
+Cela réduit le risque opérationnel lors d’un déploiement par étapes.
+
+### Artefacts ajoutés
+- migration Alembic : `alembic/versions/0029_selector_explainability_persistence.py`
+- SQL d’upgrade manuel : `database/sql/stock/stock_scores_selector_explainability_upgrade.sql`
+
+### Fichiers modifiés / ajoutés — 3e passe
+- `selector/ranking.py`
+- `selector/db_io.py`
+- `selector/scanner.py`
+- `selector/run_summary.py`
+- `screener/db_io.py`
+- `database/sql/stock/stock_scores.sql`
+- `database/sql/stock/stock_scores_history.sql`
+- `database/sql/stock/stock_scores_selector_explainability_upgrade.sql`
+- `alembic/versions/0029_selector_explainability_persistence.py`
+- `tests/test_alpha_scanner.py`
+- `tests/test_selector_run_summaries.py`
+
+### Validation exécutée — 3e passe
+
+```powershell
+Set-Location "F:\projets"
+python -m pytest tests/test_alpha_scanner.py tests/test_selector_run_summaries.py tests/test_screener_db_io.py --no-cov -q
+```
+
+```powershell
+Set-Location "F:\projets"
+python -m pytest tests/test_selector_alpha_scanner.py tests/test_alpha_scanner.py tests/test_alpha_scanner_sector_neutrality_property.py tests/test_selector_run_summaries.py tests/test_selector_regime_filters.py tests/test_selector_reference.py --no-cov -q
+```
+
+```powershell
+Set-Location "F:\projets"
+python -m ruff check selector\ranking.py selector\db_io.py selector\scanner.py selector\run_summary.py tests\test_alpha_scanner.py tests\test_selector_run_summaries.py alembic\versions\0029_selector_explainability_persistence.py --output-format concise
+```
+
+Résultat :
+- tests ciblés 3e passe : **OK** ;
+- batterie selector ciblée : **OK** ;
+- lint Ruff périmètre selector + migration : **OK**.
+
+> Note : `screener/db_io.py` a été durci fonctionnellement pour l’archivage PIT, mais n’a pas été inclus dans le lint strict final de cette passe car ce fichier historique reste tabulé et ferait remonter des warnings de style hérités non spécifiques à cette évolution.
+
+## 11. 4e passe — exposition IHM/API d’un payload d’explicabilité candidat complet
+
+### Axe retenu
+Pour cette 4e passe, l’axe retenu a été :
+
+- **exposition IHM/API d’un `candidate explainability payload` complet**.
+
+Ce choix est le plus cohérent avec l’état atteint en 3e passe :
+- `selector/ranking.py` calcule déjà les composantes détaillées du score ;
+- `selector/db_io.py` les persiste dans `stock_scores` ;
+- `selector/run_summary.py` exposait déjà une version partielle via `top_candidate_explanations`.
+
+### Implémentation réalisée
+
+#### 11.1 Contrat canonique partagé
+Ajout du helper partagé :
+
+- `selector/explainability.py::build_candidate_explainability_payload()`
+
+Le payload canonique regroupe désormais explicitement :
+- `identity`
+- `score_inputs`
+- `score_components`
+- `score_outputs`
+- `technical_context`
+- `risk_context`
+- `earnings_context`
+- `quality_context`
+- `selection_context`
+
+Objectif : éviter toute divergence entre le live selector, la lecture IHM depuis `stock_scores` et une future exposition API dédiée.
+
+#### 11.2 Run summary enrichi
+`selector/run_summary.py` enrichit maintenant chaque entrée de `top_candidate_explanations` avec :
+
+- `candidate_explainability_payload`
+
+tout en conservant les champs plats historiques (`symbol`, `final_score`, `trend_vcp_component`, `selection_explanation`, etc.) pour compatibilité ascendante.
+
+#### 11.3 Lecture IHM/API `stock_scores` durcie
+`ihm/services/queries.py::get_stock_scores()` a été rendu :
+
+- **schema-aware** via `SHOW COLUMNS FROM stock_scores` ;
+- compatible **legacy / post-migration** ;
+- enrichi d’une colonne :
+  - `candidate_explainability_payload`
+
+Ainsi l’IHM n’échoue pas si certaines colonnes d’explicabilité ne sont pas encore présentes ; elle dégrade proprement le payload avec des champs `null` là où le schéma n’est pas encore migré.
+
+#### 11.4 Exposition opérateur dans la page `Screening`
+`ihm/pages/screening.py` expose maintenant :
+
+- un tableau principal plus compact pour l’opérateur ;
+- un panneau **"Explainability candidat"** alimenté par la ligne sélectionnée ;
+- affichage direct du payload complet via `st.json(...)`.
+
+Cela fournit une vraie lecture post-mortem / investigation sans devoir aller relire la base manuellement.
+
+#### 11.5 Exposition complémentaire dans les détails de run summary IHM
+`ihm/services/run_summary.py` ajoute aussi des lignes de détail Alpha Scanner pour les top candidats, par exemple :
+
+- rang/symbole
+- mode de scoring
+- score final
+- composantes principales
+- synthèse `selection_explanation`
+
+### Fichiers modifiés — 4e passe
+- `selector/explainability.py`
+- `selector/run_summary.py`
+- `ihm/services/queries.py`
+- `ihm/services/run_summary.py`
+- `ihm/pages/screening.py`
+- `tests/test_selector_run_summaries.py`
+- `tests/test_ihm_run_summary.py`
+- `tests/test_services_queries.py`
+- `tests/test_pages_screening.py`
+
+### Validation exécutée — 4e passe
+
+```powershell
+Set-Location "F:\projets"
+python -m ruff check selector\explainability.py selector\run_summary.py ihm\services\queries.py ihm\services\run_summary.py ihm\pages\screening.py tests\test_selector_run_summaries.py tests\test_ihm_run_summary.py tests\test_services_queries.py tests\test_pages_screening.py --output-format concise
+```
+
+```powershell
+Set-Location "F:\projets"
+python -m pytest tests\test_selector_run_summaries.py tests\test_ihm_run_summary.py tests\test_services_queries.py tests\test_pages_screening.py tests\test_alpha_scanner.py --no-cov -q
+```
+
+```powershell
+Set-Location "F:\projets"
+python -m pytest tests\test_selector_alpha_scanner.py tests\test_selector_run_summaries.py tests\test_ihm_run_summary.py tests\test_ihm_run_summary_component.py tests\test_services_queries.py tests\test_pages_screening.py tests\test_alpha_scanner.py tests\test_selector_reference.py --no-cov -q
+```
+
+Résultat :
+- lint Ruff du périmètre modifié : **OK** ;
+- tests ciblés 4e passe : **OK** ;
+- validation élargie selector/IHM impactée : **OK**.
+
+### Verdict 4e passe
+Le module `selector` franchit un cran supplémentaire côté usage production :
+
+- l’explicabilité candidat est désormais **contractualisée** ;
+- elle est visible à la fois dans le `run_summary` et dans l’IHM `Screening` ;
+- l’exposition est **compatibile migration progressive** grâce à la lecture dynamique du schéma ;
+- le terrain est prêt pour une future **API dédiée** sans redéfinir le contrat métier.
+

@@ -27,6 +27,82 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger("selector.alpha_scanner")
 
 DATA_QUALITY_QUOTE_MAX_AGE_DAYS = 5
+DEFAULT_SELECTOR_SCORE_TABLE_COLUMNS = {
+    "symbol",
+    "trend_score",
+    "vcp_score",
+    "final_score",
+    "market_cap",
+    "beta_126",
+    "spread_bps",
+    "earnings_date",
+    "days_to_earnings",
+    "earnings_blackout",
+    "is_candidate",
+    "last_updated_scan",
+    "candidate_rank",
+    "raw_final_score",
+    "normalized_total_score",
+    "normalized_rsi",
+    "total_score_neutralized",
+    "relative_strength_index_neutralized",
+    "trend_vcp_component",
+    "total_score_component",
+    "rsi_component",
+    "atr_pct_20",
+    "weekly_trend_score",
+    "high_52w_proximity",
+    "volatility_ratio",
+    "selector_signal_mode",
+    "selection_explanation",
+}
+RESET_NULL_COLUMNS = [
+    "trend_score",
+    "vcp_score",
+    "final_score",
+    "market_cap",
+    "beta_126",
+    "spread_bps",
+    "earnings_date",
+    "days_to_earnings",
+    "candidate_rank",
+    "raw_final_score",
+    "normalized_total_score",
+    "normalized_rsi",
+    "total_score_neutralized",
+    "relative_strength_index_neutralized",
+    "trend_vcp_component",
+    "total_score_component",
+    "rsi_component",
+    "atr_pct_20",
+    "weekly_trend_score",
+    "high_52w_proximity",
+    "volatility_ratio",
+    "selector_signal_mode",
+    "selection_explanation",
+]
+SNAPSHOT_NUMERIC_COLUMNS = [
+    "trend_score",
+    "vcp_score",
+    "final_score",
+    "market_cap",
+    "beta_126",
+    "spread_bps",
+    "candidate_rank",
+    "raw_final_score",
+    "normalized_total_score",
+    "normalized_rsi",
+    "total_score_neutralized",
+    "relative_strength_index_neutralized",
+    "trend_vcp_component",
+    "total_score_component",
+    "rsi_component",
+    "atr_pct_20",
+    "weekly_trend_score",
+    "high_52w_proximity",
+    "volatility_ratio",
+]
+SNAPSHOT_TEXT_COLUMNS = ["selector_signal_mode", "selection_explanation"]
 
 
 def _has_table(engine: Engine, table_name: str) -> bool:
@@ -35,6 +111,19 @@ def _has_table(engine: Engine, table_name: str) -> bool:
     except Exception:
         LOGGER.debug("Inspection table %s indisponible.", table_name, exc_info=True)
         return False
+
+
+def get_table_columns(
+    engine: Engine,
+    table_name: str,
+    *,
+    fallback_columns: set[str] | None = None,
+) -> set[str]:
+    try:
+        return {str(column.get("name")) for column in inspect(engine).get_columns(table_name)}
+    except Exception:
+        LOGGER.debug("Inspection colonnes %s indisponible.", table_name, exc_info=True)
+        return set(fallback_columns or set())
 
 
 def _read_scalar_date(
@@ -82,13 +171,19 @@ def _build_quotes_quality_check(
     reference_date: date,
 ) -> dict[str, object]:
     if config.max_spread_bps is None:
-        return {"enabled": False, "status": "disabled", "reason": "spread_filter_disabled"}
+        return {
+            "enabled": False,
+            "status": "disabled",
+            "reason": "spread_filter_disabled",
+            "recommended_action": "none",
+        }
     if not _has_table(engine, "stock_quote_snapshots"):
         return {
             "enabled": True,
             "status": "blocked",
             "reason": "quotes_table_missing",
             "max_age_days": DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
+            "recommended_action": "refresh_stock_quote_snapshots_or_disable_spread_filter",
         }
     latest_quote_date = _read_scalar_date(
         engine,
@@ -101,12 +196,16 @@ def _build_quotes_quality_check(
             "status": "blocked",
             "reason": "quotes_unavailable",
             "max_age_days": DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
+            "recommended_action": "refresh_stock_quote_snapshots_or_disable_spread_filter",
         }
     age_days = max((reference_date - latest_quote_date).days, 0)
     return {
         "enabled": True,
         "status": "ok" if age_days <= DATA_QUALITY_QUOTE_MAX_AGE_DAYS else "blocked",
         "reason": "ok" if age_days <= DATA_QUALITY_QUOTE_MAX_AGE_DAYS else "quotes_stale",
+        "recommended_action": "none"
+        if age_days <= DATA_QUALITY_QUOTE_MAX_AGE_DAYS
+        else "refresh_stock_quote_snapshots_or_disable_spread_filter",
         "latest_quote_date": latest_quote_date.isoformat(),
         "age_days": age_days,
         "max_age_days": DATA_QUALITY_QUOTE_MAX_AGE_DAYS,
@@ -119,7 +218,12 @@ def _build_earnings_quality_check(
     reference_date: date,
 ) -> dict[str, object]:
     if config.earnings_blackout_days is None:
-        return {"enabled": False, "status": "disabled", "reason": "earnings_filter_disabled"}
+        return {
+            "enabled": False,
+            "status": "disabled",
+            "reason": "earnings_filter_disabled",
+            "recommended_action": "none",
+        }
     required_horizon_days = max(int(config.earnings_blackout_days), 1)
     required_until = reference_date + timedelta(days=required_horizon_days)
     if not _has_table(engine, "stock_earnings_calendar"):
@@ -129,6 +233,7 @@ def _build_earnings_quality_check(
             "reason": "earnings_table_missing",
             "required_until": required_until.isoformat(),
             "required_horizon_days": required_horizon_days,
+            "recommended_action": "refresh_stock_earnings_calendar_or_disable_earnings_filter",
         }
     latest_earnings_date = _read_scalar_date(
         engine,
@@ -146,6 +251,7 @@ def _build_earnings_quality_check(
             "reason": "earnings_unavailable",
             "required_until": required_until.isoformat(),
             "required_horizon_days": required_horizon_days,
+            "recommended_action": "refresh_stock_earnings_calendar_or_disable_earnings_filter",
         }
     if next_earnings_date is None:
         return {
@@ -155,11 +261,15 @@ def _build_earnings_quality_check(
             "latest_earnings_date": latest_earnings_date.isoformat(),
             "required_until": required_until.isoformat(),
             "required_horizon_days": required_horizon_days,
+            "recommended_action": "refresh_stock_earnings_calendar_or_disable_earnings_filter",
         }
     return {
         "enabled": True,
         "status": "ok" if latest_earnings_date >= required_until else "blocked",
         "reason": "ok" if latest_earnings_date >= required_until else "earnings_horizon_too_short",
+        "recommended_action": "none"
+        if latest_earnings_date >= required_until
+        else "refresh_stock_earnings_calendar_or_disable_earnings_filter",
         "next_earnings_date": next_earnings_date.isoformat(),
         "latest_earnings_date": latest_earnings_date.isoformat(),
         "required_until": required_until.isoformat(),
@@ -515,24 +625,25 @@ def iter_eligible_symbol_chunks(
 
 
 def reset_selector_outputs(engine: Engine, config: AlphaScannerConfig) -> None:
-    reset_stmt = text(
-        f"""
-        UPDATE {config.score_table}
-        SET trend_score = NULL,
-            vcp_score = NULL,
-            final_score = NULL,
-            market_cap = NULL,
-            beta_126 = NULL,
-            spread_bps = NULL,
-            earnings_date = NULL,
-            days_to_earnings = NULL,
-            earnings_blackout = 0,
-            is_candidate = 0
-        """
-    )
-    LOGGER.info(
-        "Reset selector avant run | table=%s colonnes=[trend_score, vcp_score, final_score, market_cap, beta_126, spread_bps, earnings_date, days_to_earnings, earnings_blackout, is_candidate]",
+    available_columns = get_table_columns(
+        engine,
         config.score_table,
+        fallback_columns=DEFAULT_SELECTOR_SCORE_TABLE_COLUMNS,
+    )
+    assignments: list[str] = []
+    assignments.extend(f"{column} = NULL" for column in RESET_NULL_COLUMNS if column in available_columns)
+    if "earnings_blackout" in available_columns:
+        assignments.append("earnings_blackout = 0")
+    if "is_candidate" in available_columns:
+        assignments.append("is_candidate = 0")
+    if not assignments:
+        LOGGER.info("Reset selector saute | table=%s aucune colonne applicable", config.score_table)
+        return
+    reset_stmt = text(f"UPDATE {config.score_table} SET " + ", ".join(assignments))
+    LOGGER.info(
+        "Reset selector avant run | table=%s colonnes=%s",
+        config.score_table,
+        sorted(assignments),
     )
     try:
         with engine.begin() as conn:
@@ -545,21 +656,30 @@ def reset_selector_outputs(engine: Engine, config: AlphaScannerConfig) -> None:
 def prepare_scores_snapshot(scored_df: pd.DataFrame | None) -> list[dict[str, object]]:
     if scored_df is None or scored_df.empty:
         return []
-    available_columns = [c for c in PERSISTED_SELECTOR_SCORE_COLUMNS if c in scored_df.columns]
-    if available_columns != PERSISTED_SELECTOR_SCORE_COLUMNS:
-        missing = [c for c in PERSISTED_SELECTOR_SCORE_COLUMNS if c not in available_columns]
-        raise ValueError(f"Colonnes selector manquantes pour persistance: {missing}")
-    snapshot = scored_df.loc[:, PERSISTED_SELECTOR_SCORE_COLUMNS].copy()
+    available_columns = set(scored_df.columns)
+    missing_required = [
+        column
+        for column in ("symbol", "trend_score", "vcp_score", "final_score")
+        if column not in available_columns
+    ]
+    if missing_required:
+        raise ValueError(f"Colonnes selector manquantes pour persistance: {missing_required}")
+    snapshot = scored_df.copy()
+    for column in PERSISTED_SELECTOR_SCORE_COLUMNS:
+        if column not in snapshot.columns:
+            snapshot[column] = pd.NA
+    snapshot = snapshot.loc[:, PERSISTED_SELECTOR_SCORE_COLUMNS].copy()
     snapshot = snapshot.dropna(subset=["symbol"]).drop_duplicates(subset=["symbol"], keep="last")
-    for column in ["trend_score", "vcp_score", "final_score"]:
-        snapshot[column] = pd.to_numeric(snapshot[column], errors="coerce")
-    for column in ["market_cap", "beta_126", "spread_bps"]:
-        snapshot[column] = pd.to_numeric(snapshot[column], errors="coerce")
+    for column in SNAPSHOT_NUMERIC_COLUMNS:
+        if column in snapshot.columns:
+            snapshot[column] = pd.to_numeric(snapshot[column], errors="coerce")
     snapshot["days_to_earnings"] = pd.to_numeric(snapshot["days_to_earnings"], errors="coerce")
     snapshot["earnings_blackout"] = (
         pd.to_numeric(snapshot["earnings_blackout"], errors="coerce").fillna(0).astype(int)
     )
     snapshot["earnings_date"] = pd.to_datetime(snapshot["earnings_date"], errors="coerce", utc=False).dt.date
+    for column in SNAPSHOT_TEXT_COLUMNS:
+        snapshot[column] = snapshot[column].where(snapshot[column].notna(), None)
     snapshot = snapshot.astype(object)
     snapshot = snapshot.where(pd.notna(snapshot), None)
     return snapshot.to_dict(orient="records")
@@ -579,30 +699,41 @@ def update_database(
         selected_df["symbol"].astype(str).dropna().tolist() if not selected_df.empty else []
     )
     scores_snapshot = prepare_scores_snapshot(scored_df)
-    reset_stmt = text(f"UPDATE {config.score_table} SET is_candidate = 0")
-    score_stmt = text(
-        f"""
-        UPDATE {config.score_table}
-        SET trend_score = :trend_score,
-            vcp_score = :vcp_score,
-            final_score = :final_score,
-            market_cap = :market_cap,
-            beta_126 = :beta_126,
-            spread_bps = :spread_bps,
-            earnings_date = :earnings_date,
-            days_to_earnings = :days_to_earnings,
-            earnings_blackout = :earnings_blackout,
-            last_updated_scan = :updated_at
-        WHERE symbol = :symbol
-        """
+    available_columns = get_table_columns(
+        engine,
+        config.score_table,
+        fallback_columns=DEFAULT_SELECTOR_SCORE_TABLE_COLUMNS,
     )
-    mark_stmt = text(
-        f"""
-        UPDATE {config.score_table}
-        SET is_candidate = 1
-        WHERE symbol IN :symbols
-        """
-    ).bindparams(bindparam("symbols", expanding=True))
+    reset_stmt = (
+        text(f"UPDATE {config.score_table} SET is_candidate = 0")
+        if "is_candidate" in available_columns
+        else None
+    )
+    persisted_update_columns = [
+        column for column in PERSISTED_SELECTOR_SCORE_COLUMNS
+        if column != "symbol" and column in available_columns
+    ]
+    set_clauses = [f"{column} = :{column}" for column in persisted_update_columns]
+    if "last_updated_scan" in available_columns:
+        set_clauses.append("last_updated_scan = :updated_at")
+    score_stmt = (
+        text(
+            f"UPDATE {config.score_table} SET " + ", ".join(set_clauses) + " WHERE symbol = :symbol"
+        )
+        if set_clauses
+        else None
+    )
+    mark_stmt = (
+        text(
+            f"""
+            UPDATE {config.score_table}
+            SET is_candidate = 1
+            WHERE symbol IN :symbols
+            """
+        ).bindparams(bindparam("symbols", expanding=True))
+        if "is_candidate" in available_columns
+        else None
+    )
     updated_at = datetime.now(UTC).replace(tzinfo=None)
 
     LOGGER.info(
@@ -615,10 +746,10 @@ def update_database(
 
     total_score_batches = max(
         (len(scores_snapshot) + config.update_batch_size - 1) // config.update_batch_size, 0
-    )
+    ) if score_stmt is not None else 0
     total_candidate_batches = max(
         (len(selected_symbols) + config.update_batch_size - 1) // config.update_batch_size, 0
-    )
+    ) if mark_stmt is not None else 0
     total_db_batches = total_score_batches + total_candidate_batches
     completed_db_batches = 0
 
@@ -643,8 +774,13 @@ def update_database(
     try:
         with engine.begin() as conn:
             for start in range(0, len(scores_snapshot), config.update_batch_size):
+                if score_stmt is None:
+                    break
                 score_batch = [
-                    {**row, "updated_at": updated_at}
+                    {
+                        **{key: value for key, value in row.items() if key in {"symbol", *persisted_update_columns}},
+                        "updated_at": updated_at,
+                    }
                     for row in scores_snapshot[start:start + config.update_batch_size]
                 ]
                 if not score_batch:
@@ -658,9 +794,12 @@ def update_database(
                 )
                 completed_db_batches += 1
                 _emit()
-            conn.execute(reset_stmt)
-            LOGGER.info("Mise a jour DB | reset is_candidate=0 effectue")
+            if reset_stmt is not None:
+                conn.execute(reset_stmt)
+                LOGGER.info("Mise a jour DB | reset is_candidate=0 effectue")
             for start in range(0, len(selected_symbols), config.update_batch_size):
+                if mark_stmt is None:
+                    break
                 batch = selected_symbols[start:start + config.update_batch_size]
                 if not batch:
                     continue

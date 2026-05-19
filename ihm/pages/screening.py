@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 import streamlit as st
 
-from ihm.pages import run_page_if_standalone
 from ihm.components.alpha_scanner_dependency import render_alpha_scanner_dependency_panel
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
 from ihm.components.metrics import metric_row
@@ -14,21 +14,24 @@ from ihm.components.screener_artifacts import (
     build_screener_artifact_history_dataframe,
     render_shared_screener_artifact_selector,
 )
-from ihm.components.tables import show_dataframe
 from ihm.components.symbol_table import render_symbol_table
+from ihm.components.tables import show_dataframe
+from ihm.pages import run_page_if_standalone
+from ihm.services.db import db_available
+from ihm.services.pipeline_runner import get_pipeline_steps, parse_pipeline_step_number
+from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
+from ihm.services.queries import (
+    get_alpha_scanner_dependency_diagnostic,
+    get_stale_market_cap_stats,
+    get_stock_scores,
+)
+from ihm.services.run_summary import build_latest_run_summary_rows, build_pipeline_flow_caption
 from ihm.services.screener_recommendations import (
     list_screener_csv_files,
     load_screener_csv_preview,
     load_screener_recommendation_report,
 )
-from ihm.services.db import db_available
-from ihm.services.pipeline_runner import get_pipeline_steps, parse_pipeline_step_number
-from ihm.services.process_registry import list_active_pipeline_runs, load_pipeline_history
-from ihm.services.run_summary import (
-    build_latest_run_summary_rows,
-    build_pipeline_flow_caption,
-)
-from ihm.services.queries import get_alpha_scanner_dependency_diagnostic, get_stock_scores, get_stale_market_cap_stats
+from selector.explainability import build_candidate_explainability_payload
 
 SCREENER_ARTIFACT_SELECTBOX_KEY = "screening_screener_artifacts_dir_select"
 SCREENER_CSV_PREVIEW_SELECTBOX_KEY = "screening_screener_csv_preview_select"
@@ -40,7 +43,7 @@ _QUALITY_SUMMARY_LABEL_OVERRIDES = {
 
 
 def _quality_summary_label(step) -> str:
-    return _QUALITY_SUMMARY_LABEL_OVERRIDES.get(step.key, step.name)
+    return str(_QUALITY_SUMMARY_LABEL_OVERRIDES.get(step.key, step.name) or step.name)
 
 
 def _merge_pipeline_runs() -> list[dict[str, object]]:
@@ -132,12 +135,44 @@ def _build_csv_preview_inventory_dataframe(files: list[dict[str, object]]) -> pd
     return frame.loc[:, available_columns].rename(columns=column_labels)
 
 
+def _build_screening_display_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    preferred_columns = [
+        "symbol",
+        "sector",
+        "is_candidate",
+        "candidate_rank",
+        "selector_signal_mode",
+        "final_score",
+        "total_score",
+        "trend_score",
+        "vcp_score",
+        "spread_bps",
+        "days_to_earnings",
+        "anomaly_count",
+        "missing_days_count",
+        "selection_explanation",
+        "last_updated_scan",
+        "last_updated_sentiment",
+    ]
+    available_columns = [column for column in preferred_columns if column in df.columns]
+    return df.loc[:, available_columns].copy() if available_columns else df.copy()
+
+
+def _resolve_candidate_explainability_payload(row: pd.Series) -> dict[str, object]:
+    raw_payload = row.get("candidate_explainability_payload")
+    if isinstance(raw_payload, dict):
+        return raw_payload
+    return build_candidate_explainability_payload(cast(dict[str, object], row.to_dict()))
+
+
 def _render_screener_csv_preview(artifacts_dir: str, selected_entry: dict[str, object]) -> None:
     st.subheader("🔎 Exploration détaillée des CSV screener")
     st.caption(
         "Prévisualisation bornée des CSV du répertoire screener sélectionné dans l'historique global."
     )
-    summary = selected_entry.get("summary") if isinstance(selected_entry.get("summary"), dict) else None
+    summary = cast(dict[str, Any] | None, selected_entry.get("summary") if isinstance(selected_entry.get("summary"), dict) else None)
     available_files = list_screener_csv_files(artifacts_dir, summary=summary)
     if not available_files:
         st.info("Aucun CSV screener prévisualisable détecté dans le répertoire sélectionné.")
@@ -164,7 +199,7 @@ def _render_screener_csv_preview(artifacts_dir: str, selected_entry: dict[str, o
             "Lignes à prévisualiser",
             min_value=10,
             max_value=500,
-            value=int(st.session_state.get(SCREENER_CSV_PREVIEW_ROWS_KEY, 100)),
+            value=int(st.session_state.get(SCREENER_CSV_PREVIEW_ROWS_KEY, 100) or 100),
             step=10,
             key=SCREENER_CSV_PREVIEW_ROWS_KEY,
             help="Lecture bornée pour éviter de charger tout le CSV en mémoire dans l'IHM.",
@@ -187,7 +222,9 @@ def _render_screener_csv_preview(artifacts_dir: str, selected_entry: dict[str, o
     metric_col2.metric("Lignes totales", preview.get("total_rows") if preview.get("total_rows") is not None else "—")
     metric_col3.metric("Colonnes", int(preview.get("column_count") or 0))
 
-    inventory_df = _build_csv_preview_inventory_dataframe(preview.get("available_files") if isinstance(preview.get("available_files"), list) else [])
+    inventory_df = _build_csv_preview_inventory_dataframe(
+        cast(list[dict[str, object]], preview.get("available_files") if isinstance(preview.get("available_files"), list) else [])
+    )
     if not inventory_df.empty:
         with st.expander("📁 Inventaire des CSV prévisualisables", expanded=False):
             st.dataframe(inventory_df, use_container_width=True, hide_index=True)
@@ -318,7 +355,7 @@ def render() -> None:
             history_title="🗃️ Historique global des répertoires screener",
         )
         if selected_artifacts_dir:
-            recommendations_tab, csv_tab = st.tabs(["🎯 Recommandations", "🔎 CSV"]) 
+            recommendations_tab, csv_tab = st.tabs(["🎯 Recommandations", "🔎 CSV"])
             with recommendations_tab:
                 _render_objective_recommendations(selected_artifacts_dir)
             with csv_tab:
@@ -358,13 +395,34 @@ def render() -> None:
     with st.container(border=True):
         st.subheader("4. Résultats filtrés")
         st.caption(f"{len(filtered)} ligne(s) après filtrage sur {total} symbole(s) chargés.")
-        render_symbol_table(
-            filtered,
+        filtered_display = _build_screening_display_dataframe(filtered)
+        selected_symbol = render_symbol_table(
+            filtered_display,
             key="screening_filtered_results",
             symbol_col="symbol",
             title=f"Résultats ({len(filtered)} lignes)",
             height=500,
         )
+
+    with st.container(border=True):
+        st.subheader("5. Explainability candidat")
+        st.caption(
+            "Payload détaillé prêt pour investigation opérateur / exposition API, construit à partir des colonnes selector persistées."
+        )
+        if not selected_symbol:
+            st.info("Sélectionne une ligne dans le tableau ci-dessus pour afficher son payload d'explicabilité complet.")
+            return
+        selected_rows = filtered[filtered["symbol"].astype(str) == str(selected_symbol)] if "symbol" in filtered.columns else pd.DataFrame()
+        if selected_rows.empty:
+            st.info("Impossible de retrouver le symbole sélectionné dans le DataFrame filtré courant.")
+            return
+        selected_row = selected_rows.iloc[0]
+        payload = _resolve_candidate_explainability_payload(selected_row)
+        selection_context = payload.get("selection_context") if isinstance(payload.get("selection_context"), dict) else {}
+        explanation = str(selection_context.get("selection_explanation") or "").strip()
+        if explanation:
+            st.caption(f"Synthèse : {explanation}")
+        st.json(payload)
 
 
 run_page_if_standalone(__name__, render)

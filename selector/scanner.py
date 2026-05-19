@@ -319,6 +319,13 @@ class AlphaScanner:
         merged_candidates = self._apply_factor_neutralization(merged_candidates)
 
         selected = self.rank_and_select(merged_candidates)
+        scored_for_persistence = merged_candidates.copy()
+        if not scored_for_persistence.empty:
+            if not selected.empty and {"symbol", "rank"}.issubset(selected.columns):
+                candidate_rank_map = selected.set_index("symbol")["rank"]
+                scored_for_persistence["candidate_rank"] = scored_for_persistence["symbol"].map(candidate_rank_map)
+            elif "candidate_rank" not in scored_for_persistence.columns:
+                scored_for_persistence["candidate_rank"] = pd.NA
 
         self._emit_live_progress(
             current=total_chunks,
@@ -334,7 +341,7 @@ class AlphaScanner:
             },
         )
 
-        self.update_database(selected, merged_candidates)
+        self.update_database(selected, scored_for_persistence)
 
         elapsed = (datetime.now(UTC) - started_at).total_seconds()
 

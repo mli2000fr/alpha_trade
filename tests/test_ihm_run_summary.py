@@ -91,7 +91,7 @@ def test_import_bars_summary_caption_and_details_expose_stooq_cross_check_status
 
     assert "stooq=désactivé" in caption
     assert get_stooq_cross_check_status(record) == "désactivé"
-    assert any("Cross-check Stooq : désactivé." == line for line in detail_lines)
+    assert any(line == "Cross-check Stooq : désactivé." for line in detail_lines)
 
 
 def test_aggregate_workflow_run_summary_uses_weighted_average_and_latest_thresholds() -> None:
@@ -398,6 +398,46 @@ def test_build_run_summary_caption_uses_alpha_scanner_metrics_mapping() -> None:
     assert "retenus=18" in caption
     assert "secteurs=7" in caption
     assert "fill=0.36" in caption
+
+
+def test_get_run_summary_detail_lines_exposes_alpha_scanner_top_candidate_explainability() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "alpha_scanner",
+            "run_summary": {
+                "top_candidate_explanations": [
+                    {
+                        "rank": 1,
+                        "symbol": "AAPL",
+                        "final_score": 0.88,
+                        "trend_vcp_component": 0.41,
+                        "total_score_component": 0.29,
+                        "rsi_component": 0.18,
+                        "selector_signal_mode": "sector_neutralized",
+                        "selection_explanation": "mode=sector_neutralized; trend_vcp=0.4100; total=0.2900; rsi=0.1800; final=0.8800",
+                        "candidate_explainability_payload": {
+                            "identity": {"rank": 1, "symbol": "AAPL"},
+                            "score_components": {
+                                "trend_vcp_component": 0.41,
+                                "total_score_component": 0.29,
+                                "rsi_component": 0.18,
+                            },
+                            "score_outputs": {"final_score": 0.88},
+                            "selection_context": {
+                                "selector_signal_mode": "sector_neutralized",
+                                "selection_explanation": "mode=sector_neutralized; trend_vcp=0.4100; total=0.2900; rsi=0.1800; final=0.8800",
+                            },
+                        },
+                    }
+                ]
+            },
+        }
+    )
+
+    assert any("Top #1 AAPL" in line for line in lines)
+    assert any("mode=sector_neutralized" in line for line in lines)
+    assert any("trend/VCP=0.4100" in line for line in lines)
+    assert any("mode=sector_neutralized" in line for line in lines if "Explication :" in line)
 
 
 def test_build_run_summary_caption_uses_sentiment_pipeline_metrics_mapping() -> None:

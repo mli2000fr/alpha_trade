@@ -49,7 +49,7 @@ SCORE_COLUMNS = [
     "anomaly_count",
     "missing_days_count",
 ]
-PERSISTED_SELECTOR_SCORE_COLUMNS = [
+PERSISTED_SELECTOR_REQUIRED_COLUMNS = [
     "symbol",
     "trend_score",
     "vcp_score",
@@ -61,9 +61,31 @@ PERSISTED_SELECTOR_SCORE_COLUMNS = [
     "days_to_earnings",
     "earnings_blackout",
 ]
+PERSISTED_SELECTOR_OPTIONAL_COLUMNS = [
+    "candidate_rank",
+    "raw_final_score",
+    "normalized_total_score",
+    "normalized_rsi",
+    "total_score_neutralized",
+    "relative_strength_index_neutralized",
+    "trend_vcp_component",
+    "total_score_component",
+    "rsi_component",
+    "atr_pct_20",
+    "weekly_trend_score",
+    "high_52w_proximity",
+    "volatility_ratio",
+    "selector_signal_mode",
+    "selection_explanation",
+]
+PERSISTED_SELECTOR_SCORE_COLUMNS = [
+    *PERSISTED_SELECTOR_REQUIRED_COLUMNS,
+    *PERSISTED_SELECTOR_OPTIONAL_COLUMNS,
+]
 OUTPUT_COLUMNS = [
     "rank",
     "symbol",
+    "candidate_rank",
     "sector",
     "latest_close",
     "avg_dollar_volume_20d",
@@ -74,6 +96,15 @@ OUTPUT_COLUMNS = [
     "vcp_score",
     "raw_final_score",
     "final_score",
+    "trend_vcp_component",
+    "total_score_component",
+    "rsi_component",
+    "normalized_total_score",
+    "normalized_rsi",
+    "total_score_neutralized",
+    "relative_strength_index_neutralized",
+    "selector_signal_mode",
+    "selection_explanation",
     "volatility_ratio",
     "atr_20",
     "atr_pct_20",
@@ -98,6 +129,68 @@ OUTPUT_COLUMNS = [
     "missing_days_count",
 ]
 
+SELECTION_EXPLANATION_MAX_LENGTH = 255
+
+
+def _safe_float(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_selection_explanation(row: pd.Series) -> str:
+    parts = [f"mode={str(row.get('selector_signal_mode') or 'factor_only').strip() or 'factor_only'}"]
+    for label, column in (
+        ("trend_vcp", "trend_vcp_component"),
+        ("total", "total_score_component"),
+        ("rsi", "rsi_component"),
+    ):
+        value = _safe_float(row.get(column))
+        if value is not None:
+            parts.append(f"{label}={value:.4f}")
+    final_score = _safe_float(row.get("final_score"))
+    if final_score is not None:
+        parts.append(f"final={final_score:.4f}")
+    explanation = "; ".join(parts)
+    return explanation[:SELECTION_EXPLANATION_MAX_LENGTH]
+
+
+def _apply_selection_explainability(
+    df: pd.DataFrame,
+    *,
+    trend_vcp_component: pd.Series,
+    total_score_component: pd.Series,
+    rsi_component: pd.Series,
+    aux_mode_label: str,
+) -> pd.DataFrame:
+    result = df.copy()
+    result["trend_vcp_component"] = pd.Series(
+        pd.to_numeric(trend_vcp_component, errors="coerce"),
+        index=result.index,
+    ).fillna(0.0)
+    result["total_score_component"] = pd.Series(
+        pd.to_numeric(total_score_component, errors="coerce"),
+        index=result.index,
+    ).fillna(0.0)
+    result["rsi_component"] = pd.Series(
+        pd.to_numeric(rsi_component, errors="coerce"),
+        index=result.index,
+    ).fillna(0.0)
+    result["selector_signal_mode"] = "factor_only"
+    aux_mask = result[["total_score_component", "rsi_component"]].abs().sum(axis=1) > 1e-12
+    result.loc[aux_mask, "selector_signal_mode"] = aux_mode_label
+    result["raw_final_score"] = (
+        result["trend_vcp_component"]
+        + result["total_score_component"]
+        + result["rsi_component"]
+    )
+    result["final_score"] = result["raw_final_score"]
+    result["selection_explanation"] = result.apply(_build_selection_explanation, axis=1)
+    return result
+
 
 def merge_scores(
     computed_df: pd.DataFrame,
@@ -117,12 +210,7 @@ def merge_scores(
     """
     if computed_df.empty:
         return pd.DataFrame(
-            columns=FACTOR_COLUMNS + SCORE_COLUMNS + [
-                "normalized_total_score",
-                "normalized_rsi",
-                "raw_final_score",
-                "final_score",
-            ]
+            columns=FACTOR_COLUMNS + SCORE_COLUMNS + PERSISTED_SELECTOR_OPTIONAL_COLUMNS
         )
 
     scores = scores_df.copy() if not scores_df.empty else pd.DataFrame(columns=SCORE_COLUMNS)
@@ -148,14 +236,24 @@ def merge_scores(
         merged["trend_score"].fillna(0.0) + merged["vcp_score"].fillna(0.0)
     )
     aux_mask = merged[["total_score", "relative_strength_index"]].notna().any(axis=1)
-    merged["raw_final_score"] = factor_component
-    merged.loc[aux_mask, "raw_final_score"] = (
-        config.weight_trend_vcp * factor_component[aux_mask]
-        + config.weight_total_score * merged.loc[aux_mask, "normalized_total_score"].fillna(0.0)
-        + config.weight_rsi * merged.loc[aux_mask, "normalized_rsi"].fillna(0.0)
+    trend_component = factor_component.copy()
+    total_component = pd.Series(0.0, index=merged.index, dtype=float)
+    rsi_component = pd.Series(0.0, index=merged.index, dtype=float)
+    trend_component.loc[aux_mask] = config.weight_trend_vcp * factor_component[aux_mask]
+    total_component.loc[aux_mask] = (
+        config.weight_total_score * merged.loc[aux_mask, "normalized_total_score"].fillna(0.0)
     )
-    merged["final_score"] = merged["raw_final_score"]
-    return merged
+    rsi_component.loc[aux_mask] = config.weight_rsi * merged.loc[aux_mask, "normalized_rsi"].fillna(0.0)
+    merged["candidate_rank"] = np.nan
+    merged["total_score_neutralized"] = np.nan
+    merged["relative_strength_index_neutralized"] = np.nan
+    return _apply_selection_explainability(
+        merged,
+        trend_vcp_component=trend_component,
+        total_score_component=total_component,
+        rsi_component=rsi_component,
+        aux_mode_label="multi_factor",
+    )
 
 
 def apply_factor_neutralization(
@@ -225,15 +323,30 @@ def apply_factor_neutralization(
     if total_neutralized is not None:
         aux_mask |= total_neutralized.notna()
 
-    result["raw_final_score"] = factor_component
+    result["total_score_neutralized"] = (
+        pd.to_numeric(total_neutralized, errors="coerce") if total_neutralized is not None else np.nan
+    )
+    result["relative_strength_index_neutralized"] = (
+        pd.to_numeric(rsi_neutralized, errors="coerce") if rsi_neutralized is not None else np.nan
+    )
+    trend_component = factor_component.copy()
+    total_component = pd.Series(0.0, index=result.index, dtype=float)
+    rsi_component = pd.Series(0.0, index=result.index, dtype=float)
     if aux_mask.any():
-        result.loc[aux_mask, "raw_final_score"] = (
-            config.weight_trend_vcp * factor_component[aux_mask]
-            + config.weight_total_score * (total_neutralized[aux_mask].fillna(0.0) if total_neutralized is not None else 0.0)
-            + config.weight_rsi * (rsi_neutralized[aux_mask].fillna(0.0) if rsi_neutralized is not None else 0.0)
-        )
-    result["final_score"] = result["raw_final_score"]
-    return result
+        trend_component.loc[aux_mask] = config.weight_trend_vcp * factor_component[aux_mask]
+        if total_neutralized is not None:
+            total_component.loc[aux_mask] = (
+                config.weight_total_score * total_neutralized[aux_mask].fillna(0.0)
+            )
+        if rsi_neutralized is not None:
+            rsi_component.loc[aux_mask] = config.weight_rsi * rsi_neutralized[aux_mask].fillna(0.0)
+    return _apply_selection_explainability(
+        result,
+        trend_vcp_component=trend_component,
+        total_score_component=total_component,
+        rsi_component=rsi_component,
+        aux_mode_label="sector_neutralized",
+    )
 
 
 def apply_sector_neutrality(
@@ -326,6 +439,7 @@ def rank_and_select(
         ascending=False,
     ).reset_index(drop=True)
     selected.insert(0, "rank", np.arange(1, len(selected) + 1))
+    selected["candidate_rank"] = selected["rank"]
     LOGGER.info("Classement termine | selection_finale=%s top3=%s", len(selected), selected["symbol"].head(3).tolist())
     for column in OUTPUT_COLUMNS:
         if column not in selected.columns:

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from ihm.pages import screening
+
 
 def test_pages_screening_importable():
     assert hasattr(screening, "__doc__")
@@ -155,6 +158,31 @@ def test_build_csv_preview_inventory_dataframe_exposes_csv_inventory() -> None:
     assert inventory_df.iloc[0]["Fichier"] == "summary_metrics.csv"
 
 
+def test_build_screening_display_dataframe_keeps_operator_columns() -> None:
+    df = screening.pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "sector": "Technology",
+                "is_candidate": 1,
+                "candidate_rank": 1,
+                "selector_signal_mode": "sector_neutralized",
+                "final_score": 0.88,
+                "total_score": 91.0,
+                "selection_explanation": "mode=sector_neutralized",
+                "candidate_explainability_payload": {"identity": {"symbol": "AAPL"}},
+            }
+        ]
+    )
+
+    out = screening._build_screening_display_dataframe(df)
+
+    assert "symbol" in out.columns
+    assert "candidate_rank" in out.columns
+    assert "selection_explanation" in out.columns
+    assert "candidate_explainability_payload" not in out.columns
+
+
 def test_format_csv_preview_option_includes_label_lines_and_size() -> None:
     label = screening._format_csv_preview_option(
         {
@@ -251,8 +279,76 @@ def test_render_screening_no_warning_when_market_cap_fresh(monkeypatch) -> None:
 
     screening.render()
 
-    market_cap_warnings = [w for w in warnings_emitted if "market_cap" in w.lower() or "45" in w or "market_cap" in w]
     assert not any("market_cap" in w.lower() and "20" in w for w in warnings_emitted)
+
+
+def test_render_screening_exposes_candidate_explainability_payload(monkeypatch) -> None:
+    import pandas as pd
+
+    selected_payloads: list[dict[str, object]] = []
+
+    monkeypatch.setattr(screening, "db_available", lambda: True)
+    monkeypatch.setattr(
+        screening,
+        "get_stock_scores",
+        lambda: pd.DataFrame(
+            {
+                "symbol": ["AAPL"],
+                "sector": ["Technology"],
+                "is_candidate": [1],
+                "candidate_rank": [1],
+                "total_score": [91.0],
+                "final_score": [0.88],
+                "trend_score": [0.82],
+                "vcp_score": [0.71],
+                "trend_vcp_component": [0.41],
+                "total_score_component": [0.29],
+                "rsi_component": [0.18],
+                "selector_signal_mode": ["sector_neutralized"],
+                "selection_explanation": ["mode=sector_neutralized; trend_vcp=0.4100; total=0.2900; rsi=0.1800; final=0.8800"],
+                "candidate_explainability_payload": [
+                    {
+                        "identity": {"symbol": "AAPL", "candidate_rank": 1},
+                        "score_components": {
+                            "trend_vcp_component": 0.41,
+                            "total_score_component": 0.29,
+                            "rsi_component": 0.18,
+                        },
+                        "selection_context": {
+                            "selector_signal_mode": "sector_neutralized",
+                            "selection_explanation": "mode=sector_neutralized; trend_vcp=0.4100; total=0.2900; rsi=0.1800; final=0.8800",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+    monkeypatch.setattr(screening, "get_stale_market_cap_stats", lambda **kwargs: {"stale_pct": 5.0, "stale_symbols": 5, "total_symbols": 100})
+    monkeypatch.setattr(screening.st, "header", lambda *a, **k: None)
+    monkeypatch.setattr(screening.st, "caption", lambda *a, **k: None)
+    monkeypatch.setattr(screening.st, "subheader", lambda *a, **k: None)
+    monkeypatch.setattr(screening.st, "container", lambda *a, **k: _DummyContainer())
+    monkeypatch.setattr(screening.st, "columns", lambda n: [_DummyContext()] * n)
+    monkeypatch.setattr(screening.st, "text_input", lambda *a, **k: "")
+    monkeypatch.setattr(screening.st, "selectbox", lambda *a, **k: "Tous")
+    monkeypatch.setattr(screening.st, "checkbox", lambda *a, **k: False)
+    monkeypatch.setattr(screening.st, "slider", lambda *a, **k: 0.0)
+    monkeypatch.setattr(screening.st, "info", lambda *a, **k: None)
+    monkeypatch.setattr(screening.st, "json", lambda payload, *a, **k: selected_payloads.append(payload))
+    monkeypatch.setattr(screening, "get_alpha_scanner_dependency_diagnostic", lambda: {})
+    monkeypatch.setattr(screening, "render_alpha_scanner_dependency_panel", lambda *a, **k: None)
+    monkeypatch.setattr(screening, "render_shared_screener_artifact_selector", lambda **k: ("", {}))
+    monkeypatch.setattr(screening, "render_symbol_table", lambda *a, **k: "AAPL")
+    monkeypatch.setattr(screening, "_merge_pipeline_runs", lambda: [])
+    monkeypatch.setattr(screening, "show_dataframe", lambda *a, **k: None)
+    monkeypatch.setattr(screening, "metric_row", lambda *a, **k: None)
+
+    screening.render()
+
+    assert selected_payloads
+    payload = selected_payloads[0]
+    assert payload["identity"]["symbol"] == "AAPL"
+    assert payload["selection_context"]["selector_signal_mode"] == "sector_neutralized"
 
 
 class _DummyContainer:
