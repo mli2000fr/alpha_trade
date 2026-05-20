@@ -271,6 +271,165 @@ def _normalize_count_mapping(value: object) -> dict[str, int]:
     return normalized
 
 
+def _normalize_trade_date_series(frame: pd.DataFrame) -> pd.Series:
+    if "trade_date" not in frame.columns or frame.empty:
+        return pd.Series(dtype="datetime64[ns]")
+    return pd.to_datetime(frame["trade_date"], errors="coerce").dt.normalize()
+
+
+def _infer_score_source_counts(scores_day: pd.DataFrame) -> dict[str, int]:
+    if scores_day.empty:
+        return {}
+    if "score_source" in scores_day.columns and scores_day["score_source"].notna().any():
+        source_series = scores_day["score_source"].astype("string")
+    else:
+        inferred = pd.Series(pd.NA, index=scores_day.index, dtype="object")
+        if "final_score_walk_forward" in scores_day.columns:
+            mask = scores_day["final_score_walk_forward"].notna()
+            inferred = inferred.where(~mask, "final_score_walk_forward")
+        if "final_score_sentiment" in scores_day.columns:
+            mask = inferred.isna() & scores_day["final_score_sentiment"].notna()
+            inferred = inferred.where(~mask, "final_score_sentiment")
+        if "final_score" in scores_day.columns:
+            mask = inferred.isna() & scores_day["final_score"].notna()
+            inferred = inferred.where(~mask, "final_score")
+        source_series = inferred.astype("string")
+    counts = source_series.dropna().value_counts()
+    return {str(key): int(value) for key, value in counts.items()}
+
+
+def _sorted_unique_symbols(frame: pd.DataFrame, *, mask: pd.Series | None = None) -> list[str]:
+    if frame.empty or "symbol" not in frame.columns:
+        return []
+    working = frame.loc[mask] if mask is not None else frame
+    if working.empty:
+        return []
+    return sorted({str(symbol).strip().upper() for symbol in working["symbol"].dropna().tolist() if str(symbol).strip()})
+
+
+def build_replay_diagnostic_summary(
+    *,
+    scores_df: pd.DataFrame,
+    predictions_df: pd.DataFrame | None,
+    signals_df: pd.DataFrame | None,
+    fidelity_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Construit un diagnostic court par séance pour expliquer le replay backtest.
+
+    Le payload est volontairement compact et orienté debug opérateur : couverture
+    scores/sentiment/ML, sélections de la séance et sources de score dominantes.
+    """
+    normalized_scores = scores_df.copy() if isinstance(scores_df, pd.DataFrame) else pd.DataFrame()
+    normalized_preds = predictions_df.copy() if isinstance(predictions_df, pd.DataFrame) else pd.DataFrame()
+    normalized_signals = signals_df.copy() if isinstance(signals_df, pd.DataFrame) else pd.DataFrame()
+
+    if not normalized_scores.empty:
+        normalized_scores["trade_date"] = _normalize_trade_date_series(normalized_scores)
+    if not normalized_preds.empty:
+        normalized_preds["trade_date"] = _normalize_trade_date_series(normalized_preds)
+    if not normalized_signals.empty and "trade_date" in normalized_signals.columns:
+        normalized_signals["trade_date"] = _normalize_trade_date_series(normalized_signals)
+
+    all_dates: set[pd.Timestamp] = set()
+    for frame in (normalized_scores, normalized_preds, normalized_signals):
+        if isinstance(frame, pd.DataFrame) and not frame.empty and "trade_date" in frame.columns:
+            all_dates.update(pd.DatetimeIndex(frame["trade_date"].dropna().tolist()))
+
+    sessions: list[dict[str, Any]] = []
+    for trade_date in sorted(all_dates):
+        scores_day = normalized_scores.loc[normalized_scores["trade_date"] == trade_date].copy() if not normalized_scores.empty else pd.DataFrame()
+        preds_day = normalized_preds.loc[normalized_preds["trade_date"] == trade_date].copy() if not normalized_preds.empty else pd.DataFrame()
+        signals_day = normalized_signals.loc[normalized_signals["trade_date"] == trade_date].copy() if not normalized_signals.empty else pd.DataFrame()
+
+        candidate_symbols = _sorted_unique_symbols(scores_day)
+        prediction_symbols = set(_sorted_unique_symbols(preds_day))
+        if "selected" in signals_day.columns:
+            selected_mask = signals_day["selected"].fillna(False).astype(bool)
+            selected_symbols = _sorted_unique_symbols(signals_day, mask=selected_mask)
+            selected_count = int(selected_mask.sum())
+            selected_score_source_counts = _infer_score_source_counts(signals_day.loc[selected_mask])
+        else:
+            selected_symbols = _sorted_unique_symbols(signals_day)
+            selected_count = len(selected_symbols)
+            selected_score_source_counts = _infer_score_source_counts(signals_day)
+
+        missing_sentiment_mask = (
+            scores_day["final_score_sentiment"].isna()
+            if "final_score_sentiment" in scores_day.columns
+            else pd.Series(False, index=scores_day.index)
+        )
+        missing_sentiment_symbols = _sorted_unique_symbols(scores_day, mask=missing_sentiment_mask)
+        missing_ml_symbols = sorted(set(candidate_symbols) - prediction_symbols)
+
+        session_payload = {
+            "trade_date": pd.Timestamp(trade_date).date().isoformat(),
+            "candidate_rows": int(len(scores_day)),
+            "candidate_symbols": candidate_symbols,
+            "candidate_symbol_count": len(candidate_symbols),
+            "score_source_counts": _infer_score_source_counts(scores_day),
+            "predictions_rows": int(len(preds_day)),
+            "prediction_symbol_count": len(prediction_symbols),
+            "missing_sentiment_rows": int(missing_sentiment_mask.sum()) if len(scores_day) else 0,
+            "missing_sentiment_symbols": missing_sentiment_symbols,
+            "missing_ml_symbol_count": len(missing_ml_symbols),
+            "missing_ml_symbols": missing_ml_symbols,
+            "selected_count": selected_count,
+            "selected_symbols": selected_symbols,
+            "selected_score_source_counts": selected_score_source_counts,
+            "degraded": bool(missing_sentiment_symbols or missing_ml_symbols),
+        }
+        sessions.append(session_payload)
+
+    degraded_sessions = [session["trade_date"] for session in sessions if bool(session.get("degraded", False))]
+    return {
+        "taxonomy_version": fidelity_manifest.get("taxonomy_version", 1),
+        "engine_mode": fidelity_manifest.get("engine_mode"),
+        "requested_window": dict(fidelity_manifest.get("requested_window", {})) if isinstance(fidelity_manifest.get("requested_window"), Mapping) else {},
+        "session_count": len(sessions),
+        "degraded_session_count": len(degraded_sessions),
+        "degraded_sessions": degraded_sessions,
+        "sessions": sessions,
+    }
+
+
+def save_replay_diagnostic_summary(summary: Mapping[str, Any], output_dir: Path) -> dict[str, Path]:
+    """Sauvegarde le diagnostic court par séance en JSON canonique + CSV aplati."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "replay_diagnostic_summary.json"
+    csv_path = output_dir / "replay_diagnostic_sessions.csv"
+    json_path.write_text(json.dumps(dict(summary), ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+    sessions = summary.get("sessions", []) if isinstance(summary, Mapping) else []
+    rows: list[dict[str, object]] = []
+    if isinstance(sessions, Sequence) and not isinstance(sessions, (str, bytes)):
+        for session in sessions:
+            if not isinstance(session, Mapping):
+                continue
+            rows.append(
+                {
+                    "trade_date": session.get("trade_date"),
+                    "candidate_rows": session.get("candidate_rows", 0),
+                    "candidate_symbol_count": session.get("candidate_symbol_count", 0),
+                    "score_source_counts": json.dumps(session.get("score_source_counts", {}), ensure_ascii=False, sort_keys=True),
+                    "predictions_rows": session.get("predictions_rows", 0),
+                    "prediction_symbol_count": session.get("prediction_symbol_count", 0),
+                    "missing_sentiment_rows": session.get("missing_sentiment_rows", 0),
+                    "missing_sentiment_symbols": ", ".join(_normalize_string_list(session.get("missing_sentiment_symbols", []))),
+                    "missing_ml_symbol_count": session.get("missing_ml_symbol_count", 0),
+                    "missing_ml_symbols": ", ".join(_normalize_string_list(session.get("missing_ml_symbols", []))),
+                    "selected_count": session.get("selected_count", 0),
+                    "selected_symbols": ", ".join(_normalize_string_list(session.get("selected_symbols", []))),
+                    "selected_score_source_counts": json.dumps(session.get("selected_score_source_counts", {}), ensure_ascii=False, sort_keys=True),
+                    "degraded": bool(session.get("degraded", False)),
+                }
+            )
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    return {
+        "replay_diagnostic_summary_json": json_path,
+        "replay_diagnostic_sessions_csv": csv_path,
+    }
+
+
 def _build_scores_provenance(score_payload: Mapping[str, Any], *, requested_score_column: str | None) -> dict[str, object]:
     source_table = str(score_payload.get("source_table") or "unknown")
     fallback_used = bool(score_payload.get("fallback_used", False))

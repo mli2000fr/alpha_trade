@@ -1891,6 +1891,20 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
             with st.expander("Motifs normalisés de dégradation", expanded=False):
                 st.json(degraded_reason_details)
 
+    replay_diagnostic_payload = _load_json_artifact_from_paths(artifacts, "replay_diagnostic_summary_json")
+    if replay_diagnostic_payload:
+        st.markdown("**🗓️ Replay diagnostique court par séance**")
+        diag_col1, diag_col2, diag_col3 = st.columns(3)
+        diag_col1.metric("Séances diagnostiquées", _to_int(replay_diagnostic_payload.get("session_count")))
+        diag_col2.metric("Séances dégradées", _to_int(replay_diagnostic_payload.get("degraded_session_count")))
+        diag_col3.metric("Mode moteur", _coerce_metric_text(replay_diagnostic_payload.get("engine_mode")))
+        replay_rows = _build_replay_diagnostic_session_rows(replay_diagnostic_payload)
+        if not replay_rows.empty:
+            with st.expander("Aperçu du diagnostic par séance", expanded=False):
+                st.dataframe(replay_rows, use_container_width=True, hide_index=True)
+        with st.expander("Payload brut replay_diagnostic_summary.json", expanded=False):
+            st.json(replay_diagnostic_payload)
+
     # Glossaire local pour rappel des indicateurs (Phase G3).
     with st.expander("📚 Glossaire — comprendre les indicateurs", expanded=False):
         st.markdown(
@@ -2067,6 +2081,48 @@ def _build_fidelity_ml_cause_rows(fidelity: dict[str, object]) -> pd.DataFrame:
         }
         for cause, count in cause_breakdown.items()
     ]
+    return pd.DataFrame(rows)
+
+
+def _load_json_artifact_from_paths(artifacts: dict[str, object], artifact_key: str) -> dict[str, object] | None:
+    artifact_path = artifacts.get(artifact_key)
+    if not artifact_path:
+        return None
+    try:
+        path = Path(str(artifact_path))
+    except Exception:
+        return None
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return cast(dict[str, object], payload) if isinstance(payload, dict) else None
+
+
+def _build_replay_diagnostic_session_rows(payload: dict[str, object]) -> pd.DataFrame:
+    sessions = payload.get("sessions", [])
+    if not isinstance(sessions, list) or not sessions:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        rows.append(
+            {
+                "Séance": _coerce_metric_text(session.get("trade_date")),
+                "Candidats": _to_int(session.get("candidate_rows")),
+                "Sources score": _coerce_metric_text(session.get("score_source_counts")),
+                "Prédictions": _to_int(session.get("predictions_rows")),
+                "Manquants sentiment": _to_int(session.get("missing_sentiment_rows")),
+                "Symboles ML manquants": ", ".join(
+                    str(symbol) for symbol in cast(list[object], session.get("missing_ml_symbols", []))
+                ) if isinstance(session.get("missing_ml_symbols", []), list) else "—",
+                "Sélections": _to_int(session.get("selected_count")),
+                "Dégradée": "oui" if bool(session.get("degraded", False)) else "non",
+            }
+        )
     return pd.DataFrame(rows)
 
 

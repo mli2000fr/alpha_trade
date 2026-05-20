@@ -520,6 +520,53 @@ class TestFidelityManifestSprint1:
         assert summary["component_status"]["ml"]["status"] == "degraded"
         assert summary["provenance"]["ml"]["effective_strategy"] == "use-persisted"
 
+    def test_build_replay_diagnostic_summary_groups_short_window_by_session(self):
+        from backtesting.fidelity import build_replay_diagnostic_summary
+
+        scores_df = pd.DataFrame(
+            {
+                "symbol": ["AAA", "BBB", "AAA"],
+                "trade_date": pd.to_datetime(["2025-01-02", "2025-01-02", "2025-01-03"]),
+                "final_score": [0.5, 0.6, 0.7],
+                "final_score_sentiment": [0.55, None, 0.72],
+                "score_source": ["final_score_sentiment", "final_score", "final_score_sentiment"],
+            }
+        )
+        predictions_df = pd.DataFrame(
+            {
+                "symbol": ["AAA"],
+                "trade_date": pd.to_datetime(["2025-01-02"]),
+                "predicted_proba": [0.66],
+            }
+        )
+        signals_df = pd.DataFrame(
+            {
+                "symbol": ["AAA", "AAA"],
+                "trade_date": pd.to_datetime(["2025-01-02", "2025-01-03"]),
+                "selected": [True, True],
+                "score_source": ["final_score_sentiment", "final_score_sentiment"],
+            }
+        )
+
+        payload = build_replay_diagnostic_summary(
+            scores_df=scores_df,
+            predictions_df=predictions_df,
+            signals_df=signals_df,
+            fidelity_manifest={
+                "taxonomy_version": 1,
+                "engine_mode": "research",
+                "requested_window": {"start_date": "2025-01-02", "end_date": "2025-01-03"},
+            },
+        )
+
+        assert payload["session_count"] == 2
+        assert payload["degraded_session_count"] == 2
+        first_session = payload["sessions"][0]
+        assert first_session["trade_date"] == "2025-01-02"
+        assert first_session["candidate_rows"] == 2
+        assert first_session["selected_count"] == 1
+        assert first_session["missing_ml_symbols"] == ["BBB"]
+
 
 # ---------------------------------------------------------------------------
 # Phase E.3 (refactor v2) — _RunState invariant

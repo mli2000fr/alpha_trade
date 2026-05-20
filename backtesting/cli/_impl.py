@@ -732,8 +732,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     from backtesting.fidelity import (
         PitHistoryRequiredError,
+        build_replay_diagnostic_summary,
         PitMlStrategyUnsupportedError,
         build_fidelity_manifest,
+        save_replay_diagnostic_summary,
         save_coverage_summary,
         save_fidelity_manifest,
     )
@@ -1319,6 +1321,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
         requested_score_column=str(args.score_column or "auto"),
         walk_forward_artifacts_dir=str(args.walk_forward_artifacts_dir or ""),
     )
+    replay_diagnostic_summary = build_replay_diagnostic_summary(
+        scores_df=scores_df,
+        predictions_df=preds_df if isinstance(preds_df, pd.DataFrame) else None,
+        signals_df=signals_df if isinstance(signals_df, pd.DataFrame) else None,
+        fidelity_manifest=fidelity_manifest,
+    )
 
     common_params: dict[str, object] = {
         "start": args.start,
@@ -1458,6 +1466,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
         artifact_paths["fidelity_manifest_json"] = str(fidelity_manifest_path)
         coverage_summary_path = save_coverage_summary(fidelity_manifest, output_dir)
         artifact_paths["coverage_summary_json"] = str(coverage_summary_path)
+        replay_diagnostic_paths = save_replay_diagnostic_summary(replay_diagnostic_summary, output_dir)
+        artifact_paths.update({key: str(path) for key, path in replay_diagnostic_paths.items()})
         if phase2_risk_result is not None:
             from backtesting.risk_bridge import save_phase2_risk_artifacts
 
@@ -1513,6 +1523,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
         _safe_print(f"   → {trade_audit_csv_path}")
         _safe_print(f"   → {fidelity_manifest_path}")
         _safe_print(f"   → {coverage_summary_path}")
+        for path in replay_diagnostic_paths.values():
+            _safe_print(f"   → {path}")
 
     # 6. Artefacts
     if not args.no_save:

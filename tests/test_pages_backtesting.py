@@ -1,4 +1,5 @@
 import pandas as pd
+import json
 
 from ihm.pages import backtesting
 
@@ -184,6 +185,50 @@ def test_build_fidelity_ml_cause_rows_exposes_breakdown() -> None:
 
     assert list(rows["Cause ML"]) == ["prediction_missing", "artifact_missing"]
     assert list(rows["Occurrences"]) == [3, 1]
+
+
+def test_load_json_artifact_from_paths_reads_existing_payload(tmp_path) -> None:
+    artifact_path = tmp_path / "replay_diagnostic_summary.json"
+    artifact_path.write_text(json.dumps({"session_count": 2}), encoding="utf-8")
+
+    payload = backtesting._load_json_artifact_from_paths(
+        {"replay_diagnostic_summary_json": str(artifact_path)},
+        "replay_diagnostic_summary_json",
+    )
+
+    assert payload == {"session_count": 2}
+
+
+def test_build_replay_diagnostic_session_rows_formats_expected_columns() -> None:
+    rows = backtesting._build_replay_diagnostic_session_rows(
+        {
+            "sessions": [
+                {
+                    "trade_date": "2025-01-02",
+                    "candidate_rows": 5,
+                    "score_source_counts": {"final_score_sentiment": 3, "final_score": 2},
+                    "predictions_rows": 4,
+                    "missing_sentiment_rows": 1,
+                    "missing_ml_symbols": ["MSFT"],
+                    "selected_count": 2,
+                    "degraded": True,
+                }
+            ]
+        }
+    )
+
+    assert list(rows.columns) == [
+        "Séance",
+        "Candidats",
+        "Sources score",
+        "Prédictions",
+        "Manquants sentiment",
+        "Symboles ML manquants",
+        "Sélections",
+        "Dégradée",
+    ]
+    assert rows.iloc[0]["Séance"] == "2025-01-02"
+    assert rows.iloc[0]["Dégradée"] == "oui"
 
 
 def test_build_screener_artifact_objective_rows_formats_expected_columns() -> None:

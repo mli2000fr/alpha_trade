@@ -403,16 +403,24 @@ Le Sprint 2 n’est **pas entièrement clos**, mais un incrément utile et testa
   - ajout d’une vue `Provenance Sprint 2 — scores / sentiment / ML` ;
   - ajout d’une vue `Causes ML normalisées` ;
   - contrat conservé additif, sans nouvelle clé racine.
+- ajout d’un artefact de replay diagnostique court par séance :
+  - `replay_diagnostic_summary.json` (canonique, orienté debug) ;
+  - `replay_diagnostic_sessions.csv` (aplati, lisible rapidement) ;
+  - résumé par `trade_date` de la couverture score/sentiment/ML, des sélections et des sources de score.
+- compatibilité IHM vérifiée aussi pour cet artefact :
+  - ajout d’une vue `Replay diagnostique court par séance` ;
+  - lecture passive depuis `report.json[artifacts]` ;
+  - aucun impact sur les rapports historiques dépourvus de cet artefact.
 
 #### Ce que ce slice Sprint 2 ne couvre pas encore complètement
 - pas encore de contrat amont standardisé `selector snapshot id / model run id / artifact lineage id` ;
-- pas encore de replay diagnostique court matérialisé dans un artefact dédié séance par séance ;
+- le replay diagnostique court existe désormais, mais reste un résumé compact et non encore un journal d’attribution complet par composant + symbole + séance ;
 - la distinction fine des cas ML reste basée sur l’état runtime du predictor, donc utile mais encore best-effort ;
 - l’attribution des écarts reste principalement orientée run et symbole, pas encore complète par date-clé.
 
 ### Prochaines actions à lancer sans attendre
 1. Formaliser un identifiant de provenance amont pour snapshots selector / runs modelFactory / artefacts de rebuild.
-2. Produire une première fenêtre de replay diagnostique court avec écarts journalisés sur quelques séances.
+2. Enrichir le replay diagnostique court avec une attribution plus riche par composant / symbole critique / séance.
 3. Préparer une première fenêtre `compare-to-live` courte sur un run réel récent.
 4. Étendre le contrat de couverture vers une matrice par symbole / par séance si le besoin opérateur se confirme.
 

@@ -2504,11 +2504,17 @@ class TestCLI:
         assert report_payload["fidelity"]["component_status"]["walk_forward"]["status"] == "ok"
         artifacts = cast(dict[str, str], report_payload["artifacts"])
         assert artifacts["coverage_summary_json"].endswith("coverage_summary.json")
+        assert artifacts["replay_diagnostic_summary_json"].endswith("replay_diagnostic_summary.json")
+        assert artifacts["replay_diagnostic_sessions_csv"].endswith("replay_diagnostic_sessions.csv")
         assert artifacts["equity_curve_csv"].endswith("equity_curve.csv")
         assert artifacts["trades_csv"].endswith("trades.csv")
         assert artifacts["fidelity_manifest_json"].endswith("fidelity_manifest.json")
         assert (output_dir / "report.json").exists()
         assert (output_dir / "coverage_summary.json").exists()
+        replay_payload = json.loads((output_dir / "replay_diagnostic_summary.json").read_text(encoding="utf-8"))
+        assert replay_payload["session_count"] == 1
+        assert replay_payload["sessions"][0]["selected_symbols"] == ["BBB"]
+        assert (output_dir / "replay_diagnostic_sessions.csv").exists()
 
     def test_run_backtest_phase2_risk_uses_bridge_signals_and_artifacts(self, monkeypatch, tmp_path):
         import argparse
