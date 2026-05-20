@@ -483,10 +483,19 @@ Le Sprint 5 est maintenant **livré sur un slice étendu et directement exploita
 - durcissement du matching live côté exécution :
   - tentative de résolution du `exec_run_id` live via le `risk_run_id` provenant de `risk_decisions` ;
   - fallback explicite sur le dernier `execution_run` du jour si le matching par run n’est pas disponible ;
+- réalignement plus fin du matching live côté risk :
+  - rechargement best-effort des `risk_decisions` au `risk_run_id` exact quand il est disponible ;
+  - chargement des `portfolio_targets` live au `risk_run_id` exact avant fallback daté ;
+  - enrichissement additif du `matching_context` avec la base réellement utilisée pour `risk_decisions` et `portfolio_targets`.
 - extension du rapport `compare-to-live` aux couches lifecycle suivantes :
   - `fills` : fills d’entrée replay vs `execution_broker_fills` live du run d’exécution matché ;
   - `exits` : exits replay vs lots live clos issus du `open_exec_run_id` matché ;
   - `pnl` : PnL réalisé replay vs PnL réalisé live reconstruit depuis `execution_position_lots` ;
+- durcissement de robustesse sur les sections lifecycle :
+  - normalisation des timestamps timezone-aware pour éviter les faux `missing_replay` sur les fills rejoués ;
+  - inférence robuste des actions `BUY/SELL` depuis `side` côté live ;
+  - inférence des quantités comparables depuis `filled_qty` / `closed_qty` lorsque `approved_shares` n’existe pas ;
+  - compatibilité durcie avec `pd.NA` sur l’agrégation des sections `fills / exits / PnL`.
 - ajout d’un `matching_context` par séance dans le payload pour exposer :
   - `risk_run_id` live retenu ;
   - `exec_run_id` live retenu ;
@@ -506,6 +515,8 @@ Le Sprint 5 est maintenant **livré sur un slice étendu et directement exploita
 - lorsqu’un historique live comparable existe, le run peut produire un rapport unique sans investigation SQL manuelle ;
 - les divergences majeures candidates / risk / targets / execution targets / fills / exits / PnL deviennent visibles et triées ;
 - le matching live n’est plus seulement journalier : il utilise le couple `risk_run_id` / `exec_run_id` quand possible ;
+- les `portfolio_targets` et, best-effort, les `risk_decisions` sont désormais réalignés sur le `risk_run_id` exact quand ce contexte est disponible ;
+- les sections `fills / exits / PnL` résistent mieux aux schémas live hétérogènes (timestamps timezone-aware, quantités/fills non exprimés sous `approved_shares`) ;
 - l’IHM peut charger ce rapport sans casser les runs historiques dépourvus de cet artefact.
 
 #### Limites résiduelles après ce slice Sprint 5
@@ -513,6 +524,7 @@ Le Sprint 5 est maintenant **livré sur un slice étendu et directement exploita
 - le matching multi-comptes / multi-runs parallèles reste centré sur `account_id=default` dans l’intégration CLI actuelle ;
 - le score global de fidélité reste volontairement simple et agrégatif ; il n’est pas encore pondéré par la gravité métier ou l’impact économique ;
 - l’attribution causale détaillée des écarts broker (retries, partial fills complexes, annulations intermédiaires) peut encore être approfondie au-delà du résumé actuel.
+- le réalignement `risk_decisions` sur `risk_run_id` reste best-effort et dépend des traces effectivement persistées dans les tables live ; en cas de vide, le fallback daté demeure actif.
 
 ### Prochaines actions à lancer sans attendre
 1. Pondérer le score global par gravité métier / impact exécution pour éviter un score trop purement structurel.

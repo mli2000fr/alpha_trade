@@ -3075,6 +3075,7 @@ class TestCLI:
         monkeypatch.setattr(report, "save_trades_csv", fake_save_trades_csv)
         monkeypatch.setattr(report, "save_equity_curve", fake_save_equity_curve)
         monkeypatch.setattr(report, "save_report_json", fake_save_report_json)
+        captured_portfolio_target_calls: list[dict[str, object]] = []
         monkeypatch.setattr(
             risk_db_io.RiskRepository,
             "load_risk_decisions_for_date",
@@ -3090,9 +3091,30 @@ class TestCLI:
             ),
         )
         monkeypatch.setattr(
+            risk_db_io.RiskRepository,
+            "load_risk_decisions_for_run_id",
+            lambda self, run_id, account_id=None: pd.DataFrame(
+                {
+                    "symbol": ["AAPL"],
+                    "decision": ["BUY"],
+                    "approved_shares": [10],
+                    "target_weight": [0.1],
+                    "conviction_score": [0.75],
+                    "run_id": [run_id],
+                }
+            ),
+        )
+        monkeypatch.setattr(
             execution_db_io.ExecutionRepository,
             "load_portfolio_targets",
-            lambda self, risk_run_id=None, trade_date=None, account_id=None: [
+            lambda self, risk_run_id=None, trade_date=None, account_id=None: captured_portfolio_target_calls.append(
+                {
+                    "risk_run_id": risk_run_id,
+                    "trade_date": trade_date,
+                    "account_id": account_id,
+                }
+            )
+            or [
                 SimpleNamespace(
                     symbol="AAPL",
                     target_shares=10,
@@ -3183,6 +3205,15 @@ class TestCLI:
         assert compare_payload["sessions"][0]["risk_compare"]["status"] == "aligned"
         assert compare_payload["sessions"][0]["portfolio_compare"]["status"] == "aligned"
         assert compare_payload["sessions"][0]["execution_compare"]["divergence_kind_counts"] == {"qty_mismatch": 1}
+        assert compare_payload["sessions"][0]["matching_context"]["risk_decisions_basis"] == "risk_run_id"
+        assert compare_payload["sessions"][0]["matching_context"]["portfolio_targets_basis"] == "risk_run_id"
+        assert captured_portfolio_target_calls == [
+            {
+                "risk_run_id": "live-risk-1",
+                "trade_date": date(2025, 1, 1),
+                "account_id": "default",
+            }
+        ]
         assert (output_dir / "compare_to_live_sessions.csv").exists()
         assert (output_dir / "compare_to_live_summary.md").exists()
 

@@ -1551,10 +1551,28 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     )
                     if fallback_exec_run_id is not None:
                         exec_context = execution_repo.load_execution_run_context(exec_run_id=fallback_exec_run_id)
+                        if exec_context is not None:
+                            match_basis = "exec_run_id_fallback"
+                risk_decisions_basis = "trade_date_latest"
+                exec_risk_run_id = str(exec_context.get("risk_run_id") or "").strip() if isinstance(exec_context, dict) else ""
+                if exec_risk_run_id:
+                    risk_run_id = exec_risk_run_id
+                if risk_run_id:
+                    try:
+                        exact_risk_decisions = risk_repo.load_risk_decisions_for_run_id(
+                            risk_run_id,
+                            account_id="default",
+                        )
+                    except Exception:
+                        exact_risk_decisions = pd.DataFrame()
+                    if isinstance(exact_risk_decisions, pd.DataFrame) and not exact_risk_decisions.empty:
+                        live_risk_decisions[trade_key] = exact_risk_decisions
+                        risk_decisions_basis = "risk_run_id"
                 try:
                     live_portfolio_targets[trade_key] = cast(
                         list[object],
                         execution_repo.load_portfolio_targets(
+                            risk_run_id=risk_run_id,
                             trade_date=trade_day,
                             account_id="default",
                         ),
@@ -1595,6 +1613,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     "risk_run_id": risk_run_id,
                     "exec_run_id": exec_context.get("exec_run_id") if isinstance(exec_context, dict) else None,
                     "match_basis": match_basis,
+                    "risk_decisions_basis": risk_decisions_basis,
+                    "portfolio_targets_basis": "risk_run_id" if risk_run_id else "trade_date_latest",
                 }
 
             compare_to_live_summary = build_compare_to_live_summary(

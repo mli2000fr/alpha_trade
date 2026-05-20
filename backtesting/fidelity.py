@@ -277,6 +277,16 @@ def _normalize_trade_date_series(frame: pd.DataFrame) -> pd.Series:
     return pd.to_datetime(frame["trade_date"], errors="coerce").dt.normalize()
 
 
+def _normalize_timestamp_value(value: object) -> pd.Timestamp:
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if pd.isna(timestamp):
+        return pd.NaT
+    normalized = pd.Timestamp(timestamp)
+    if normalized.tzinfo is not None:
+        normalized = normalized.tz_convert("UTC").tz_localize(None)
+    return normalized.normalize()
+
+
 def _infer_score_source_counts(scores_day: pd.DataFrame) -> dict[str, int]:
     if scores_day.empty:
         return {}
@@ -975,7 +985,9 @@ def _first_present_text(series: pd.Series | None) -> str | None:
     if not isinstance(series, pd.Series):
         return None
     for value in series.tolist():
-        text = str(value or "").strip()
+        if pd.isna(value):
+            continue
+        text = str(value).strip()
         if text:
             return text
     return None
@@ -996,10 +1008,25 @@ def _aggregate_trade_compare_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
     normalized = frame.copy()
     if "symbol" in normalized.columns:
         normalized["symbol"] = normalized["symbol"].astype(str).str.strip().str.upper()
+    if "side" in normalized.columns:
+        normalized_side = normalized["side"].astype(str).str.strip().str.upper()
+        inferred_decision = normalized_side.map({"BUY": "BUY", "SELL": "SELL", "LONG": "BUY", "SHORT": "SELL"})
+    else:
+        inferred_decision = pd.Series(pd.NA, index=normalized.index, dtype="object")
     if "decision" not in normalized.columns:
-        normalized["decision"] = None
+        normalized["decision"] = inferred_decision
+    else:
+        normalized["decision"] = normalized["decision"].where(normalized["decision"].notna(), inferred_decision)
     if "approved_shares" not in normalized.columns:
-        normalized["approved_shares"] = 0.0
+        quantity_source = None
+        for candidate_column in ("filled_qty", "closed_qty", "target_shares", "shares"):
+            if candidate_column in normalized.columns:
+                quantity_source = candidate_column
+                break
+        if quantity_source is not None:
+            normalized["approved_shares"] = normalized[quantity_source]
+        else:
+            normalized["approved_shares"] = 0.0
     normalized["approved_shares"] = pd.to_numeric(normalized["approved_shares"], errors="coerce").fillna(0.0)
     if "avg_fill_price" in normalized.columns:
         normalized["avg_fill_price"] = pd.to_numeric(normalized["avg_fill_price"], errors="coerce")
@@ -1616,15 +1643,15 @@ def build_compare_to_live_summary(
         research_selected_symbols = _research_selected_symbols_for_date(research_signals_df, trade_date)
         live_candidate_symbols = _normalize_live_buy_symbol_set(live_risk_day)
         risk_day = _portfolio_entries_to_compare_frame(
-            [entry for entry in risk_entries if pd.Timestamp(getattr(entry, "score_snapshot_date", pd.NaT)).normalize() == trade_date],
+            [entry for entry in risk_entries if _normalize_timestamp_value(getattr(entry, "score_snapshot_date", pd.NaT)) == trade_date],
             run_id="backtest_risk",
         )
         execution_day = _execution_targets_to_compare_frame(
-            [target for target in execution_targets if pd.Timestamp(getattr(target, "trade_date", pd.NaT)).normalize() == trade_date],
+            [target for target in execution_targets if _normalize_timestamp_value(getattr(target, "trade_date", pd.NaT)) == trade_date],
             run_id="backtest_execution",
         )
         replay_fills_day = _execution_fills_to_compare_frame(
-            [fill for fill in execution_fills if pd.Timestamp(_extract_compare_value(fill, "fill_timestamp", pd.NaT)).normalize() == trade_date],
+            [fill for fill in execution_fills if _normalize_timestamp_value(_extract_compare_value(fill, "fill_timestamp", pd.NaT)) == trade_date],
             run_id="backtest_execution_fills",
         )
         replay_exits_day = _exit_signals_to_compare_frame(
@@ -1641,7 +1668,7 @@ def build_compare_to_live_summary(
             [
                 entry
                 for entry in risk_entries
-                if pd.Timestamp(getattr(entry, "score_snapshot_date", pd.NaT)).normalize() == trade_date
+                if _normalize_timestamp_value(getattr(entry, "score_snapshot_date", pd.NaT)) == trade_date
                 and _safe_int(getattr(entry, "approved_shares", 0), 0) > 0
             ],
             run_id="backtest_portfolio",
