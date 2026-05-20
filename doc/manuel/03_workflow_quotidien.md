@@ -15,14 +15,14 @@ ressemble à ceci :
                   └──────────────────┬───────────────────┘
                                      ▼
         ┌────────────────────────────────────────────────────┐
-        │ 1. DATA          : import des cours, secteurs       │
+        │ 1. DATA          : OHLCV + qualité + quotes + ERN   │
         │ 2. SCREENER      : trouver l'univers liquide        │
-        │ 3. SELECTOR      : top 50 des candidats techniques  │
-        │ 4. SENTIMENT     : actu / FinBERT / boost           │
+        │ 3. SELECTOR      : top candidats techniques         │
+        │ 4. SENTIMENT     : news / relevance / FinBERT       │
         │ 5. ML            : prédire la probabilité de hausse │
         │ 6. RISK          : sizing, contraintes secteur      │
         │ 7. EXECUTION     : envoyer les ordres au broker     │
-        │ 8. CORP ACTIONS  : appliquer dividendes / splits    │
+        │ 8. CORP ACTIONS  : sync + application               │
         │ 9. SUPERVISION   : watcher de protection (24h)      │
         └────────────────────────────────────────────────────┘
                                      ▼
@@ -32,7 +32,7 @@ ressemble à ceci :
                   └──────────────────────────────────────┘
 ```
 
-## 3.2 Détail des 9 étapes
+## 3.2 Détail des 9 macro-étapes
 
 ### Étape 1 — DATA (import & nettoyage)
 
@@ -44,7 +44,7 @@ secteurs, les calendriers de résultats et nettoie les anomalies.
 
 **Durée** : 5-15 minutes selon votre connexion.
 
-**Page IHM** : 🔄 Pipeline → étapes 1, 2, 3, 4 + auxiliaires B1, B2.
+**Page IHM** : 🔄 Pipeline → étapes `1` à `5` pour la partie données marché, plus auxiliaires `B1/B2/B3` pour le bootstrap ou les refreshs manuels.
 
 ### Étape 2 — SCREENER (filtre liquide)
 
@@ -72,6 +72,16 @@ secteur.
 
 **Effet** : ce score boost ou pénalise le `final_score` du selector
 (`final_score_sentiment`).
+
+**Ordre canonique IHM / backend pour l'étape 7** :
+
+1. import news brut sur `stock_scores_all` ;
+2. backfill `relevance_score` sur les candidats ;
+3. scoring FinBERT standard ;
+4. scoring FinBERT contextuel ;
+5. agrégation journalière ticker/secteur en dernier.
+
+Le bloc `7bis` visible dans l'IHM sert uniquement de **maintenance / replay** : il n'est plus une étape du workflow cœur.
 
 ### Étape 5 — ML (prédiction de hausse)
 
@@ -137,7 +147,7 @@ chez le broker. Si un ordre disparaît mystérieusement, il en remet un.
 ## 3.4 Bonne nouvelle : tout est automatisable depuis 1 bouton
 
 Sur la page **🔄 Pipeline**, le bouton **« Lancer le workflow complet »**
-exécute les étapes 1 à 7 dans le bon ordre, en arrière-plan. Vous pouvez
+exécute le workflow cœur **1 → 14** dans le bon ordre, en arrière-plan. Vous pouvez
 fermer le navigateur, ça continue.
 
 > Voir [04_page_pipeline.md](04_page_pipeline.md) pour le pas-à-pas.

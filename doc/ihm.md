@@ -289,7 +289,7 @@ Pour `signal_aggregator`, l'IHM expose désormais :
 
 Points importants :
 
-- le step `7. Sentiment Pipeline` applique désormais un **scope mixte canonique** : import brut large sur `stock_scores_all`, scoring standard / `relevance_score` / contextual sur les **candidats** (ou override CSV), reconstruction des features ticker sur les **candidats** et des features secteur sur le **scope large importé** ;
+- le step `7. Sentiment Pipeline` applique désormais un **scope mixte canonique** : import brut large sur `stock_scores_all`, `relevance_score` / scoring standard / scoring contextual sur les **candidats** (ou override CSV), puis reconstruction des features ticker sur les **candidats** et des features secteur sur le **scope large importé** ;
 - si `symbols` est laissé vide côté IHM, seules les **sous-étapes ciblées candidats** rechargent automatiquement `stock_scores.is_candidate = 1` ; l'univers d'import canonique du step 7, lui, reste `stock_scores_all` ;
 - le mode `Event Sentiment — mode de scoring` ne sert pas au même usage selon le choix retenu :
   - `Standard only` pour remplir ou rattraper `news_sentiment` ;
@@ -298,7 +298,7 @@ Points importants :
 - la case `Ajouter le contextual à ce backfill 7bis` du bloc `7bis — Backfill relevance / contextual` n'est **pas un doublon** de ce mode : elle ajoute uniquement le rescoring contextuel au step dédié `python -m event_sentiment.relevance_backfill` ;
 - pour changer l'univers d'**import brut** lui-même (au lieu du scope candidats des sous-étapes ticker), il faut utiliser `7.bis — Import des news brutes` ;
 - ordre recommandé pour enrichir un corpus existant : `Contextual only` puis `Rebuild daily sentiment features only`, puis éventuellement `signal_aggregator` si l'on veut refléter immédiatement les nouvelles features dans `stock_scores` ;
-- dans le workflow complet IHM, ce step `7bis` est exécuté automatiquement entre `7. Sentiment Pipeline` et `8. Signal Aggregator` ;
+- le bloc `7bis — Backfill relevance / contextual` reste un **outil auxiliaire de maintenance / replay** : il n'est plus exécuté automatiquement par le workflow cœur `1 → 14` ;
 - `signal_aggregator` réutilise le champ global `trade date` de la page quand il est renseigné ;
 - le poids quantitatif reste implicite et vaut `1 - sentiment_weight - macro_weight`, conformément au backend ;
 - l'IHM consomme aussi désormais les `run_summary` structurés de `sentiment_pipeline` et `signal_aggregator` pour afficher des métriques comme `resolved_symbols`, `fetched_articles`, `loaded_symbols`, `updated_symbols`, `signal_active_symbols` ou `avg_final_score_sentiment` dans `Pipeline`, `Overview` et `Screening`.

@@ -93,14 +93,14 @@ Le bandeau passe à 🟢 **« Pipeline terminé avec succès »** et la page
 
 | # | Step | Rôle | Durée typique |
 |---|---|---|---|
-| 1 | Import Alpaca Assets | Liste des actions cotées | < 1 min |
-| 2 | Import Alpaca Bar (ou EODHD) | Cours OHLCV du jour | 3-10 min |
-| 3 | Data Sanitizer | Détection anomalies prix | 2 min |
-| 4 | Update Sector | Mise à jour secteurs | 1 min |
-| 5 | Stock Screener | Filtre liquidité | 2-5 min |
-| 6 | Alpha Scanner (Selector) | Top 15-50 candidats | 3-8 min |
-| 7 | Event Sentiment | Ingest news | 2-5 min |
-| 8 | Signal Aggregator | Boost sentiment | < 1 min |
+| 1 | Import Alpaca Bar (ou EODHD) | Cours OHLCV du jour | 3-10 min |
+| 2 | Data Sanitizer Daily | Détection anomalies prix | 2 min |
+| 3 | Stock Screener | Filtre liquidité / force relative / range | 2-5 min |
+| 4 | Sync Latest Quotes | Snapshot bid/ask pour le filtre de spread | < 1 min |
+| 5 | Sync Earnings Calendar | Calendrier résultats pour le blackout earnings | < 1 min |
+| 6 | Alpha Scanner (Selector) | Top candidats multi-facteurs | 3-8 min |
+| 7 | Sentiment Pipeline | Import news + relevance + standard + contextual + agrégation features | 2-5 min |
+| 8 | Signal Aggregator | Fusion quant + sentiment + macro | < 1 min |
 | 9 | ML Train (si rebuild) | Entraînement modèles | 5-30 min |
 | 10 | ML Predict | Prédictions | 1-2 min |
 | 11 | Risk Management | Sizing & contraintes | < 1 min |
@@ -115,19 +115,20 @@ Sous l'onglet « **Centre d'exécution avancé** » :
 
 | Step | Quand l'utiliser |
 |---|---|
-| **B1 — Sync Latest Quotes** | Avant ouverture US, pour avoir les pre-market |
-| **B2 — Sync Earnings Calendar** | 1×/semaine (résultats trimestriels) |
+| **B1 — Import Alpaca Assets** | Bootstrap / réconciliation univers tradable |
+| **B2 — Update Sector** | Refresh manuel des secteurs / fondamentaux |
 | **B3 — Backfill EODHD** | 1× au tout début (5-10 ans d'historique) |
 
-## Sous-panneau `7.bis Import des news brutes`
+## Sous-panneau auxiliaire `Traitement par étape`
 
-Dans le bloc pipeline, l'étape `7.bis` permet maintenant de piloter finement l'import news avant relance du scoring sentiment.
+Dans le bloc pipeline, le panneau auxiliaire **Traitement par étape** permet de piloter finement l'import news, les replays sentiment et la reconstruction des features sans modifier le workflow cœur `1 → 14`.
 
 Vous pouvez régler :
 
 - la **date de début** / **date de fin** ;
 - l'**univers de symboles** :
-  - `stock_scores` (défaut recommandé),
+  - `stock_scores_all` (défaut recommandé),
+  - `stock_scores`,
   - `candidates`,
   - `stock_bars_daily` (mode large historique) ;
 - une **liste explicite de symboles** (`CSV`) si vous voulez cibler quelques valeurs ;
@@ -140,7 +141,7 @@ Avant même de cliquer sur le bouton, la page affiche désormais un **résumé l
 - extrait des premiers symboles ;
 - erreur visible si le cap `max-symbols` bloquerait le lancement.
 
-👉 Conseil pratique : laissez `stock_scores` par défaut, ou renseignez une shortlist `CSV` si vous ne voulez retraiter que quelques titres. N'utilisez `stock_bars_daily` que si vous savez pourquoi vous acceptez un univers potentiellement très large.
+👉 Conseil pratique : laissez `stock_scores_all` / le scope proposé par défaut, ou renseignez une shortlist `CSV` si vous ne voulez retraiter que quelques titres. N'utilisez `stock_bars_daily` que si vous savez pourquoi vous acceptez un univers potentiellement très large.
 
 ## Event Sentiment — mini guide d'usage IHM
 
@@ -149,26 +150,26 @@ Le bloc **Event Sentiment** applique désormais un **flux canonique fixe** pour 
 | Sous-étape | Scope canonique |
 |---|---|
 | Import news brut | `stock_scores_all` |
-| Scoring standard | candidats du jour (ou override CSV) |
 | `relevance_score` | candidats du jour (ou override CSV) |
+| Scoring standard | candidats du jour (ou override CSV) |
 | Scoring contextuel | candidats du jour (ou override CSV) |
 | Features ticker | candidats du jour |
 | Features secteur | univers large importé |
 
 Le champ `CSV` du bloc `Event Sentiment` ne sert donc plus à changer l'univers d'**import brut** du step 7 ; il ne pilote que les sous-étapes ciblées candidats. Pour un import manuel sur un autre univers, utilisez `7.bis`.
 
-### Point important : pas de doublon avec `7bis — Backfill relevance / contextual`
+### Point important : pas de doublon avec les outils auxiliaires de backfill
 
-La case **`Ajouter le contextual à ce backfill 7bis`** du bloc `7bis` ne pilote **pas** le run principal `event_sentiment`.
+La case **`Ajouter le contextual à ce backfill 7bis`** du bloc de maintenance ne pilote **pas** le run principal `event_sentiment`.
 
 Elle sert uniquement au step dédié `python -m event_sentiment.relevance_backfill` pour rejouer le backfill relevance/contextuel sur une fenêtre déjà importée.
 
 En résumé :
 
 - **step 7** = flux canonique à scopes mixtes ;
-- **7bis** = outils manuels/backfill pour changer l'univers d'import, rejouer un scoring ciblé ou reconstruire l'historique.
+- **outil auxiliaire de maintenance** = changer l'univers d'import, rejouer un scoring ciblé ou reconstruire l'historique.
 
-Dans le workflow complet IHM, `7bis` est exécuté automatiquement **entre `7. Sentiment Pipeline` et `8. Signal Aggregator`**.
+Dans le workflow complet IHM, `7bis` **n'est plus exécuté automatiquement** : il reste un outil auxiliaire pour replay / maintenance sentiment.
 
 ### Ordre recommandé en pratique
 

@@ -176,6 +176,8 @@ python -m dataIntegrityEngine.sync_earnings_calendar
 python -m selector.alpha_scanner
 
 # 7. Pipeline news FinBERT + agrégats ticker/secteur
+#    Ordre canonique interne : import news large -> relevance backfill ->
+#    scoring standard -> scoring contextuel -> agrégation journalière
 python -m event_sentiment
 
 # 8. Fusion quant + sentiment + macro → score final
@@ -214,7 +216,7 @@ python -m corporate_actions apply
 | 4 | `sync_latest_quotes` | Snapshot bid/ask pour le filtre de spread aval |
 | 5 | `sync_earnings_calendar` | Calendrier earnings pour blackout résultats |
 | 6 | `alpha_scanner` | Ranking Minervini/VCP, neutralisation sectorielle |
-| 7 | `event_sentiment` | News → FinBERT → features sentiment |
+| 7 | `event_sentiment` | News → relevance → FinBERT standard → FinBERT contextuel → features sentiment |
 | 8 | `signal_aggregator` | Fusion quant (75%) + sentiment (15%) + macro (10%) |
 | 9 | `modelFactory --mode train` | Entraînement LSTM+Attention *(périodique)* |
 | 10 | `modelFactory --mode predict` | Inférence → `predicted_proba` *(quotidien)* |
@@ -356,6 +358,16 @@ python -m event_sentiment --start-utc 2026-01-01T00:00:00Z --end-utc 2026-01-31T
 python -m event_sentiment.signal_aggregator
 python -m event_sentiment.signal_aggregator --all-symbols --trade-date 2026-04-17
 ```
+
+Le launcher IHM `7. Sentiment Pipeline` ne lance pas un simple `python -m event_sentiment` monolithique :
+
+1. import news brut sur `stock_scores_all` ;
+2. backfill `relevance_score` sur le scope candidats (ou override CSV) ;
+3. scoring FinBERT standard sur le scope candidats ;
+4. scoring FinBERT contextuel sur le scope candidats ;
+5. `history_backfill` en dernier pour reconstruire `ticker_daily_sentiment_features` / `sector_daily_sentiment_features` à partir des scores déjà persistés.
+
+Cette mise en ordre est volontaire : l'agrégation journalière reste **après** le scoring contextuel afin de bénéficier du fallback `COALESCE(news_ticker_sentiment, news_sentiment)` lors de la reconstruction des features downstream.
 
 > `event_sentiment` utilise désormais `eodhd` comme provider news par défaut.
 > Les providers `alpaca` et `finnhub` restent disponibles via `--news-provider`.

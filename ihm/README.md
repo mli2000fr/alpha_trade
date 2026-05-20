@@ -100,7 +100,17 @@ Le paramètre `Cap dur paires contextuelles / run` est un cap **par run** : `500
 
 La case `Ajouter le contextual à ce backfill 7bis` du bloc `7bis — Backfill relevance / contextual` n'est pas un doublon : elle agit uniquement sur le step dédié `relevance_backfill`. En pratique, pour enrichir un historique existant, l'ordre conseillé est : `Contextual only` puis `Rebuild daily sentiment features only`, puis éventuellement `Signal Aggregator`.
 
-Le step `7bis — Backfill relevance / contextual` sert à **recalculer la pertinence article → symbole** dans `news_ticker_map` et, si demandé, à **ajouter le scoring FinBERT contextualisé** dans `news_ticker_sentiment` sur une fenêtre déjà importée. Il est utile quand vous voulez rejouer/affiner le signal sans relancer tout l'import news. Dans le workflow complet lancé depuis l'IHM, il est inclus automatiquement **entre `7. Sentiment Pipeline` et `8. Signal Aggregator`**.
+Le step `7bis — Backfill relevance / contextual` sert à **recalculer la pertinence article → symbole** dans `news_ticker_map` et, si demandé, à **ajouter le scoring FinBERT contextualisé** dans `news_ticker_sentiment` sur une fenêtre déjà importée. Il reste un **outil auxiliaire de maintenance / replay** : il n'est plus une étape cœur du workflow quotidien `1 → 14`.
+
+Le step `7. Sentiment Pipeline` exécute désormais lui-même la chaîne canonique suivante :
+
+1. import news brut sur `stock_scores_all` ;
+2. `relevance_score` sur les candidats (ou override CSV) ;
+3. scoring FinBERT standard sur les candidats ;
+4. scoring FinBERT contextuel sur les candidats ;
+5. agrégation journalière en dernier.
+
+Cette séquence garde volontairement l'agrégation en **dernier** pour reconstruire les features ticker/secteur à partir des scores contextuels déjà persistés quand ils existent.
 
 Pour `signal_aggregator`, la page réutilise le champ global `trade date` quand il est renseigné et calcule le poids quantitatif implicite `1 - sentiment_weight - macro_weight` comme le backend.
 
