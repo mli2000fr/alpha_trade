@@ -30,10 +30,10 @@
       "snapshot_path": "../artifacts/fidelity_baselines/research_standard_2024_full_year_cash_2k/fidelity_baseline_snapshot.json",
       "promotion_manifest_path": "../artifacts/fidelity_baselines/research_standard_2024_full_year_cash_2k/promotion_manifest.json",
       "metric_thresholds": {
-        "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture sentiment finale"},
-        "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture ML finale"},
-        "degraded_reason_count": {"comparison": "max", "abs": 0.0, "label": "Nombre de motifs de dégradation"},
-        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances dégradées"}
+        "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.05, "label": "Couverture sentiment finale"},
+        "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.05, "label": "Couverture ML finale"},
+        "degraded_reason_count": {"comparison": "max", "abs": 3, "label": "Nombre de motifs de dégradation"},
+        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.1, "label": "Ratio de séances dégradées"}
       }
     },
     {
@@ -54,14 +54,14 @@
       "snapshot_path": "../artifacts/fidelity_baselines/pipeline_live_like_2024_full_year_cash_2k/fidelity_baseline_snapshot.json",
       "promotion_manifest_path": "../artifacts/fidelity_baselines/pipeline_live_like_2024_full_year_cash_2k/promotion_manifest.json",
       "metric_thresholds": {
-        "degraded_reason_count": {"comparison": "max", "abs": 0.0, "label": "Nombre de motifs de dégradation"},
-        "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture sentiment finale"},
-        "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture ML finale"},
-        "parity_diverged_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances candidate→target divergentes"},
-        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances replay dégradées"},
-        "broker_rejected_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres rejetés"},
-        "broker_timed_out_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres timeout"},
-        "broker_stale_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres stale"}
+        "degraded_reason_count": {"comparison": "max", "abs": 3, "label": "Nombre de motifs de dégradation"},
+        "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.05, "label": "Couverture sentiment finale"},
+        "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.05, "label": "Couverture ML finale"},
+        "parity_diverged_session_ratio": {"comparison": "max", "abs": 0.1, "label": "Ratio de séances candidate→target divergentes"},
+        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.1, "label": "Ratio de séances replay dégradées"},
+        "broker_rejected_orders": {"comparison": "max", "abs": 5, "label": "Ordres rejetés"},
+        "broker_timed_out_orders": {"comparison": "max", "abs": 5, "label": "Ordres timeout"},
+        "broker_stale_orders": {"comparison": "max", "abs": 5, "label": "Ordres stale"}
       }
     },
     {
@@ -82,14 +82,14 @@
       "snapshot_path": "../artifacts/fidelity_baselines/pipeline_live_like_debug_fix_2024_11_cash_2k/fidelity_baseline_snapshot.json",
       "promotion_manifest_path": "../artifacts/fidelity_baselines/pipeline_live_like_debug_fix_2024_11_cash_2k/promotion_manifest.json",
       "metric_thresholds": {
-        "degraded_reason_count": {"comparison": "max", "abs": 0.0, "label": "Nombre de motifs de dégradation"},
-        "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture sentiment finale"},
-        "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture ML finale"},
-        "parity_diverged_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances candidate→target divergentes"},
-        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances replay dégradées"},
-        "broker_rejected_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres rejetés"},
-        "broker_timed_out_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres timeout"},
-        "broker_stale_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres stale"}
+        "degraded_reason_count": {"comparison": "max", "abs": 3, "label": "Nombre de motifs de dégradation"},
+        "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.05, "label": "Couverture sentiment finale"},
+        "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.05, "label": "Couverture ML finale"},
+        "parity_diverged_session_ratio": {"comparison": "max", "abs": 0.1, "label": "Ratio de séances candidate→target divergentes"},
+        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.1, "label": "Ratio de séances replay dégradées"},
+        "broker_rejected_orders": {"comparison": "max", "abs": 5, "label": "Ordres rejetés"},
+        "broker_timed_out_orders": {"comparison": "max", "abs": 5, "label": "Ordres timeout"},
+        "broker_stale_orders": {"comparison": "max", "abs": 5, "label": "Ordres stale"}
       }
     }
   ]

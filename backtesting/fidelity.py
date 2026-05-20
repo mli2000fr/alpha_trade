@@ -1813,16 +1813,51 @@ def build_compare_to_live_summary(
     fills_scores = score_accumulator["fills"]
     exits_scores = score_accumulator["exits"]
     pnl_scores = score_accumulator["pnl"]
-    all_scores = candidate_scores + risk_scores + portfolio_scores + execution_scores + fills_scores + exits_scores + pnl_scores
+    # Score de fidélité global pondéré par proximité au fill réel :
+    # pnl=4, fills=4, exits=3, execution=3, portfolio=2, risk=2, candidates=1
+    _SECTION_WEIGHTS: dict[str, int] = {
+        "candidates": 1,
+        "risk": 2,
+        "portfolio": 2,
+        "execution": 3,
+        "exits": 3,
+        "fills": 4,
+        "pnl": 4,
+    }
+    _avg = lambda scores: round(sum(scores) / len(scores), 6) if scores else None
+
+    def _weighted_fidelity_score(
+        per_section: dict[str, list[float]],
+        weights: dict[str, int],
+    ) -> float:
+        total_weight = 0.0
+        total_weighted = 0.0
+        for key, w in weights.items():
+            scores = per_section.get(key, [])
+            if scores:
+                total_weighted += sum(scores) / len(scores) * w
+                total_weight += w
+        return round(total_weighted / total_weight, 6) if total_weight > 0 else 0.0
+
+    _per_section: dict[str, list[float]] = {
+        "candidates": candidate_scores,
+        "risk": risk_scores,
+        "portfolio": portfolio_scores,
+        "execution": execution_scores,
+        "fills": fills_scores,
+        "exits": exits_scores,
+        "pnl": pnl_scores,
+    }
     global_scores = {
-        "candidate_alignment_score": round(sum(candidate_scores) / len(candidate_scores), 6) if candidate_scores else 0.0,
-        "risk_alignment_score": round(sum(risk_scores) / len(risk_scores), 6) if risk_scores else 0.0,
-        "portfolio_alignment_score": round(sum(portfolio_scores) / len(portfolio_scores), 6) if portfolio_scores else 0.0,
-        "execution_alignment_score": round(sum(execution_scores) / len(execution_scores), 6) if execution_scores else 0.0,
-        "fills_alignment_score": round(sum(fills_scores) / len(fills_scores), 6) if fills_scores else 0.0,
-        "exits_alignment_score": round(sum(exits_scores) / len(exits_scores), 6) if exits_scores else 0.0,
-        "pnl_alignment_score": round(sum(pnl_scores) / len(pnl_scores), 6) if pnl_scores else 0.0,
-        "fidelity_score": round(sum(all_scores) / len(all_scores), 6) if all_scores else 0.0,
+        "candidate_alignment_score": _avg(candidate_scores) if candidate_scores else 0.0,
+        "risk_alignment_score": _avg(risk_scores) if risk_scores else 0.0,
+        "portfolio_alignment_score": _avg(portfolio_scores) if portfolio_scores else 0.0,
+        "execution_alignment_score": _avg(execution_scores) if execution_scores else 0.0,
+        "fills_alignment_score": _avg(fills_scores) if fills_scores else 0.0,
+        "exits_alignment_score": _avg(exits_scores) if exits_scores else 0.0,
+        "pnl_alignment_score": _avg(pnl_scores) if pnl_scores else 0.0,
+        "fidelity_score": _weighted_fidelity_score(_per_section, _SECTION_WEIGHTS),
+        "fidelity_score_method": "weighted_by_proximity_to_fill",
     }
     live_session_count = sum(
         1

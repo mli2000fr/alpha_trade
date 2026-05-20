@@ -1,6 +1,7 @@
 """Replay d'exécution Phase 3 strictement opt-in pour le backtesting."""
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -111,7 +112,12 @@ def _entry_to_target(
     )
 
 
-def _build_synthetic_fill_attempts(*, execution_day: pd.Timestamp, target_qty: float) -> list[_SyntheticFillAttempt]:
+def _build_synthetic_fill_attempts(
+    *,
+    execution_day: pd.Timestamp,
+    target_qty: float,
+    symbol: str = "",
+) -> list[_SyntheticFillAttempt]:
     base_dt = execution_day.date()
     submitted_at = datetime.combine(base_dt, time(14, 30), tzinfo=timezone.utc)
     first_fill_at = datetime.combine(base_dt, time(14, 35), tzinfo=timezone.utc)
@@ -123,7 +129,9 @@ def _build_synthetic_fill_attempts(*, execution_day: pd.Timestamp, target_qty: f
     final_retry_submitted_at = datetime.combine(base_dt, time(14, 45), tzinfo=timezone.utc)
     retry_fill_at = datetime.combine(base_dt, time(14, 46), tzinfo=timezone.utc)
     normalized_target_qty = max(float(target_qty), 0.0)
-    resubmit_chain_id = f"retry_chain_{uuid.uuid4().hex[:10]}"
+    # resubmit_chain_id déterministe : basé sur symbol + date + qty pour garantir la reproductibilité
+    _chain_seed = f"{symbol}_{base_dt}_{normalized_target_qty:.4f}"
+    resubmit_chain_id = f"retry_chain_{hashlib.md5(_chain_seed.encode(), usedforsecurity=False).hexdigest()[:10]}"
     if normalized_target_qty <= 1.0:
         return [
             _SyntheticFillAttempt(
@@ -409,6 +417,7 @@ def simulate_phase3_execution_replay(
         attempt_plan = _build_synthetic_fill_attempts(
             execution_day=execution_day,
             target_qty=float(target.target_shares),
+            symbol=target.symbol,
         )
         intent_fills = _execution_fills_from_attempts(
             intent=intent,
