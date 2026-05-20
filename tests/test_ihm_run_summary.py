@@ -788,6 +788,33 @@ def test_get_run_summary_detail_lines_exposes_broader_empirical_risk_calibration
                     "requested_horizon_days": 5,
                     "requested_lookback_months": 12,
                     "fallback_level": "same_regime_nearest_window",
+                    "fallback_reason": "niveau=same_regime_nearest_window; requested=regime=capital_preservation|horizon=5d|window=12m; resolved=regime=capital_preservation|horizon=5d|window=6m",
+                    "fallback_journal": [
+                        {
+                            "rank": 1,
+                            "level": "exact_segment",
+                            "eligible_candidates": 0,
+                            "blocked_candidates": 1,
+                            "outcome": "blocked_candidate_available",
+                            "selected": False,
+                        },
+                        {
+                            "rank": 2,
+                            "level": "regime_all",
+                            "eligible_candidates": 0,
+                            "blocked_candidates": 0,
+                            "outcome": "no_candidate",
+                            "selected": False,
+                        },
+                        {
+                            "rank": 3,
+                            "level": "same_regime_nearest_window",
+                            "eligible_candidates": 1,
+                            "blocked_candidates": 0,
+                            "outcome": "selected",
+                            "selected": True,
+                        },
+                    ],
                     "best_weights": {
                         "score_weight": 0.30,
                         "prediction_weight": 0.70,
@@ -800,6 +827,8 @@ def test_get_run_summary_detail_lines_exposes_broader_empirical_risk_calibration
     assert any("Calibration empirique risk appliquée" in line for line in lines)
     assert any("fenêtre=12→6m" in line for line in lines)
     assert any("fallback=same_regime_nearest_window" in line for line in lines)
+    assert any("raison=niveau=same_regime_nearest_window" in line for line in lines)
+    assert any("journal fallback : exact_segment:blocked_candidate_available[e=0,b=1]" in line for line in lines)
 
 
 def test_get_run_summary_detail_lines_exposes_postmortem_artifacts_for_risk_management() -> None:

@@ -111,3 +111,34 @@ def test_build_drift_metrics_exposes_abs_maxima() -> None:
     assert metrics["max_abs_final_value_drift_pct"] == 0.12
 
 
+def test_build_drift_chart_frames_returns_summary_and_detail_series() -> None:
+    all_drifts = pd.DataFrame(
+        [
+            {
+                "comparison_kind": "vs_all_same_horizon_window",
+                "target_segment_key": "regime=all|horizon=5d|window=12m",
+                "metric_delta": -0.2,
+                "final_value_drift_pct": -0.12,
+                "abs_metric_delta": 0.2,
+                "abs_final_value_drift_pct": 0.12,
+            },
+            {
+                "comparison_kind": "vs_reference_live_segment",
+                "target_segment_key": "regime=all|horizon=5d|window=12m",
+                "metric_delta": 0.1,
+                "final_value_drift_pct": 0.08,
+                "abs_metric_delta": 0.1,
+                "abs_final_value_drift_pct": 0.08,
+            },
+        ]
+    )
+    selected_drifts = all_drifts.iloc[[0]].copy()
+
+    chart_frames = weights_calibration_runs._build_drift_chart_frames(all_drifts, selected_drifts=selected_drifts)
+
+    assert list(chart_frames["summary_chart"].columns) == ["max_abs_metric_delta", "max_abs_final_value_drift_pct"]
+    assert "vs_all_same_horizon_window" in chart_frames["summary_chart"].index
+    assert list(chart_frames["detail_chart"].columns) == ["metric_delta", "final_value_drift_pct"]
+    assert "regime=all|horizon=5d|window=12m" in chart_frames["detail_chart"].index
+
+

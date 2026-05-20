@@ -327,6 +327,9 @@ def _build_conviction_weights_calibration(
                         empirical_risk_calibration.get("market_regime_fallback_used")
                     ),
                     "runtime_fallback_level": empirical_risk_calibration.get("fallback_level"),
+                    "runtime_fallback_reason": empirical_risk_calibration.get("fallback_reason"),
+                    "runtime_fallback_journal": empirical_risk_calibration.get("fallback_journal") or [],
+                    "runtime_fallback_policy_source": empirical_risk_calibration.get("fallback_policy_source"),
                     "runtime_eligible_for_live": empirical_risk_calibration.get("eligible_for_live"),
                     "runtime_eligibility_reason": empirical_risk_calibration.get("eligibility_reason"),
                 }
@@ -381,6 +384,9 @@ def _build_conviction_weights_calibration(
                     empirical_risk_calibration.get("market_regime_fallback_used")
                 ),
                 "runtime_fallback_level": empirical_risk_calibration.get("fallback_level"),
+                "runtime_fallback_reason": empirical_risk_calibration.get("fallback_reason"),
+                "runtime_fallback_journal": empirical_risk_calibration.get("fallback_journal") or [],
+                "runtime_fallback_policy_source": empirical_risk_calibration.get("fallback_policy_source"),
                 "runtime_eligible_for_live": empirical_risk_calibration.get("eligible_for_live"),
                 "runtime_eligibility_reason": empirical_risk_calibration.get("eligibility_reason"),
             }

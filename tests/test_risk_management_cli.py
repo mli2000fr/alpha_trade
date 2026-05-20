@@ -699,6 +699,18 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
                 "market_regime_mode": "capital_preservation",
                 "requested_market_regime_mode": market_regime_mode,
                 "market_regime_fallback_used": False,
+                "fallback_reason": "niveau=exact_segment; requested=regime=capital_preservation|horizon=5d|window=12m; resolved=regime=capital_preservation|horizon=5d|window=12m",
+                "fallback_journal": [
+                    {
+                        "rank": 1,
+                        "level": "exact_segment",
+                        "eligible_candidates": 1,
+                        "blocked_candidates": 0,
+                        "outcome": "selected",
+                        "selected": True,
+                    }
+                ],
+                "fallback_policy_source": "config_yaml",
                 "source": "weights_calibration_runs",
                 "best_weights": {
                     "score_weight": 0.25,
@@ -767,6 +779,9 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
     assert captured["summary"]["conviction_weights_calibration"]["runtime_requested_segment_key"] == "regime=capital_preservation|horizon=5d|window=12m"
     assert captured["summary"]["conviction_weights_calibration"]["runtime_requested_horizon_days"] == 5
     assert captured["summary"]["conviction_weights_calibration"]["runtime_requested_lookback_months"] == 12
+    assert captured["summary"]["conviction_weights_calibration"]["runtime_fallback_reason"].startswith("niveau=exact_segment")
+    assert captured["summary"]["conviction_weights_calibration"]["runtime_fallback_policy_source"] == "config_yaml"
+    assert captured["summary"]["conviction_weights_calibration"]["runtime_fallback_journal"][0]["level"] == "exact_segment"
     assert captured["summary"]["conviction_weights_calibration"]["runtime_applied"] is True
     assert captured["summary"]["conviction_weights_calibration"]["runtime_market_regime_mode"] == "capital_preservation"
 

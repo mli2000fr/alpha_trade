@@ -382,6 +382,13 @@ def test_load_latest_empirical_risk_calibration_falls_back_to_same_regime_neares
     assert calibration["requested_segment_key"] == "regime=capital_preservation|horizon=5d|window=12m"
     assert calibration["market_regime_fallback_used"] is True
     assert calibration["fallback_level"] == "same_regime_nearest_window"
+    assert calibration["fallback_policy_source"] in {"config_yaml", "defaults", "defaults_invalid_config", "defaults_on_config_error"}
+    assert isinstance(calibration["fallback_journal"], list)
+    assert calibration["fallback_journal"][0]["level"] == "exact_segment"
+    assert calibration["fallback_journal"][0]["outcome"] == "no_candidate"
+    assert calibration["fallback_journal"][2]["level"] == "same_regime_nearest_window"
+    assert calibration["fallback_journal"][2]["selected"] is True
+    assert "niveau=same_regime_nearest_window" in str(calibration["fallback_reason"])
 
 
 @pytest.mark.unit
@@ -415,6 +422,52 @@ def test_load_latest_empirical_risk_calibration_prefers_eligible_broader_fallbac
     assert calibration["status"] == "selected"
     assert calibration["eligible_for_live"] is True
     assert calibration["fallback_level"] == "same_regime_nearest_window"
+    assert calibration["fallback_journal"][0]["outcome"] == "blocked_candidate_available"
+
+
+@pytest.mark.unit
+def test_load_latest_empirical_risk_calibration_honors_yaml_fallback_policy_order(monkeypatch) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO weights_calibration_runs (
+                run_id, scope, market_regime_mode, horizon_days, lookback_months, eligible_for_live,
+                window_start, window_end, metric_name, metric_value, best_weights, candidates, schema_version
+            ) VALUES
+                ('risk-cap-6m', 'risk', 'capital_preservation', 5, 6, 1, '2025-01-01', '2026-03-31', 'sharpe', 1.18,
+                 '{"score_weight": 0.22, "prediction_weight": 0.78}', '[]', 2),
+                ('risk-all-24m', 'risk', 'all', 5, 24, 1, '2025-01-01', '2026-03-31', 'sharpe', 1.10,
+                 '{"score_weight": 0.35, "prediction_weight": 0.65}', '[]', 2)
+        """))
+    monkeypatch.setattr(
+        "risk_management.db_io.load_config",
+        lambda: {
+            "risk_management": {
+                "empirical_calibration": {
+                    "fallback_levels": [
+                        "exact_segment",
+                        "regime_all",
+                        "regime_all_nearest_window",
+                        "same_regime_nearest_window",
+                    ]
+                }
+            }
+        },
+    )
+    repo = RiskRepository(engine=engine)
+
+    calibration = repo.load_latest_empirical_risk_calibration(
+        date(2026, 4, 1),
+        market_regime_mode="capital_preservation",
+        horizon_days=5,
+        lookback_months=12,
+    )
+
+    assert calibration is not None
+    assert calibration["run_id"] == "risk-all-24m"
+    assert calibration["fallback_level"] == "regime_all_nearest_window"
+    assert calibration["fallback_policy_source"] == "config_yaml"
 
 
 @pytest.mark.unit

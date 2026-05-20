@@ -163,6 +163,55 @@ def _build_drift_metrics(df: pd.DataFrame) -> dict[str, object]:
     }
 
 
+def _build_drift_chart_frames(
+    all_drifts: pd.DataFrame,
+    *,
+    selected_drifts: pd.DataFrame | None = None,
+) -> dict[str, pd.DataFrame]:
+    summary_chart = pd.DataFrame()
+    if not all_drifts.empty and "comparison_kind" in all_drifts.columns:
+        summary_chart = all_drifts.copy()
+        aggregation: dict[str, str] = {}
+        if "abs_metric_delta" in summary_chart.columns:
+            aggregation["abs_metric_delta"] = "max"
+        if "abs_final_value_drift_pct" in summary_chart.columns:
+            aggregation["abs_final_value_drift_pct"] = "max"
+        if aggregation:
+            summary_chart = (
+                summary_chart.groupby("comparison_kind", dropna=False)
+                .agg(aggregation)
+                .rename(
+                    columns={
+                        "abs_metric_delta": "max_abs_metric_delta",
+                        "abs_final_value_drift_pct": "max_abs_final_value_drift_pct",
+                    }
+                )
+                .sort_index()
+            )
+        else:
+            summary_chart = pd.DataFrame(index=sorted(all_drifts["comparison_kind"].dropna().astype(str).unique().tolist()))
+
+    detail_source = selected_drifts if selected_drifts is not None and not selected_drifts.empty else all_drifts
+    detail_chart = pd.DataFrame()
+    if not detail_source.empty:
+        detail_chart = detail_source.copy()
+        label_source = detail_chart.get("target_segment_key")
+        if label_source is None or label_source.isna().all():
+            label_source = detail_chart.get("source_segment_key")
+        if label_source is not None:
+            detail_chart["drift_label"] = label_source.fillna("unknown").astype(str)
+        else:
+            detail_chart["drift_label"] = detail_chart.index.astype(str)
+        value_columns = [
+            column
+            for column in ["metric_delta", "final_value_drift_pct"]
+            if column in detail_chart.columns
+        ]
+        if value_columns:
+            detail_chart = detail_chart[["drift_label", *value_columns]].drop_duplicates(subset=["drift_label"]).set_index("drift_label")
+    return {"summary_chart": summary_chart, "detail_chart": detail_chart}
+
+
 def render() -> None:
     st.header("🧮 Weights Calibration Runs")
     st.caption(
@@ -365,6 +414,16 @@ def render() -> None:
                 else "—",
             )
             with st.expander("📉 Drifts inter-segments", expanded=False):
+                chart_frames = _build_drift_chart_frames(
+                    drift_frames["all"],
+                    selected_drifts=drift_frames["selected"],
+                )
+                if not chart_frames["summary_chart"].empty:
+                    st.caption("Vue graphique — amplitude max par type de comparaison")
+                    st.bar_chart(chart_frames["summary_chart"], use_container_width=True)
+                if not chart_frames["detail_chart"].empty:
+                    st.caption("Vue graphique — dérives du run sélectionné")
+                    st.bar_chart(chart_frames["detail_chart"], use_container_width=True)
                 if not drift_frames["summary"].empty:
                     st.caption("Synthèse par type de comparaison")
                     st.dataframe(drift_frames["summary"], use_container_width=True, hide_index=True)
