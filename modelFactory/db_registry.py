@@ -20,6 +20,144 @@ from database.stock_scores import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _normalize_symbols(symbols: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol).strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        normalized.append(symbol)
+    return normalized
+
+
+def _normalize_signal_modes(signal_modes: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in signal_modes or ():
+        value = str(raw_value).strip().lower()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return tuple(normalized)
+
+
+def has_selector_universe_filter(
+    *,
+    signal_modes: tuple[str, ...] | list[str] | None = None,
+    max_candidate_rank: int | None = None,
+    exclude_earnings_blackout: bool = False,
+) -> bool:
+    return bool(_normalize_signal_modes(signal_modes) or max_candidate_rank is not None or exclude_earnings_blackout)
+
+
+def filter_symbols_by_selector_context(
+    engine: Engine,
+    symbols: list[str],
+    *,
+    signal_modes: tuple[str, ...] | list[str] | None = None,
+    max_candidate_rank: int | None = None,
+    exclude_earnings_blackout: bool = False,
+) -> tuple[list[str], dict[str, Any]]:
+    normalized_symbols = _normalize_symbols(symbols)
+    normalized_signal_modes = _normalize_signal_modes(signal_modes)
+    criteria_enabled = has_selector_universe_filter(
+        signal_modes=normalized_signal_modes,
+        max_candidate_rank=max_candidate_rank,
+        exclude_earnings_blackout=exclude_earnings_blackout,
+    )
+    summary: dict[str, Any] = {
+        "enabled": criteria_enabled,
+        "applied": False,
+        "input_symbol_count": len(normalized_symbols),
+        "output_symbol_count": len(normalized_symbols),
+        "signal_modes": list(normalized_signal_modes),
+        "max_candidate_rank": max_candidate_rank,
+        "exclude_earnings_blackout": bool(exclude_earnings_blackout),
+        "reason": None,
+    }
+    if not normalized_symbols or not criteria_enabled:
+        return normalized_symbols, summary
+
+    try:
+        context_df = load_candidate_selector_context(engine)
+    except Exception as exc:  # noqa: BLE001
+        summary["reason"] = f"selector_context_unavailable:{type(exc).__name__}"
+        LOGGER.warning(
+            "filter_symbols_by_selector_context unavailable symbols=%d reason=%s",
+            len(normalized_symbols),
+            summary["reason"],
+        )
+        return normalized_symbols, summary
+
+    if context_df.empty or "symbol" not in context_df.columns:
+        summary["reason"] = "selector_context_empty"
+        LOGGER.warning("filter_symbols_by_selector_context empty_context symbols=%d", len(normalized_symbols))
+        return normalized_symbols, summary
+
+    required_columns: list[str] = []
+    if normalized_signal_modes:
+        required_columns.append("selector_signal_mode")
+    if max_candidate_rank is not None:
+        required_columns.append("candidate_rank")
+    if exclude_earnings_blackout:
+        required_columns.append("earnings_blackout")
+    missing_columns = [column for column in required_columns if column not in context_df.columns]
+    if missing_columns:
+        summary["reason"] = f"selector_context_missing_columns:{','.join(sorted(missing_columns))}"
+        LOGGER.warning(
+            "filter_symbols_by_selector_context missing_columns=%s symbols=%d",
+            ",".join(sorted(missing_columns)),
+            len(normalized_symbols),
+        )
+        return normalized_symbols, summary
+
+    working_df = context_df.copy()
+    working_df["symbol"] = working_df["symbol"].astype(str).str.strip().str.upper()
+    working_df = working_df[working_df["symbol"].isin(normalized_symbols)].copy()
+    if working_df.empty:
+        summary["applied"] = True
+        summary["output_symbol_count"] = 0
+        summary["reason"] = "selector_context_no_overlap"
+        return [], summary
+
+    if normalized_signal_modes:
+        working_df = working_df[
+            working_df["selector_signal_mode"].astype(str).str.strip().str.lower().isin(normalized_signal_modes)
+        ]
+    if max_candidate_rank is not None:
+        candidate_rank = pd.to_numeric(working_df["candidate_rank"], errors="coerce")
+        working_df = working_df[candidate_rank.notna() & (candidate_rank <= float(max_candidate_rank))]
+    if exclude_earnings_blackout:
+        earnings_blackout = working_df["earnings_blackout"].fillna(False)
+        blackout_mask = earnings_blackout.astype(str).str.strip().str.lower().isin({"1", "true", "yes"})
+        if getattr(earnings_blackout, "dtype", None) == bool:
+            blackout_mask = earnings_blackout.astype(bool)
+        working_df = working_df[~blackout_mask]
+
+    filtered_symbols = _normalize_symbols(working_df["symbol"].tolist())
+    summary.update(
+        {
+            "applied": True,
+            "output_symbol_count": len(filtered_symbols),
+            "excluded_symbol_count": max(0, len(normalized_symbols) - len(filtered_symbols)),
+            "matched_context_rows": int(len(working_df)),
+            "reason": "selector_context_filtered",
+        }
+    )
+    LOGGER.info(
+        "filter_symbols_by_selector_context symbols_in=%d symbols_out=%d signal_modes=%s max_candidate_rank=%s exclude_earnings_blackout=%s",
+        len(normalized_symbols),
+        len(filtered_symbols),
+        list(normalized_signal_modes),
+        max_candidate_rank,
+        exclude_earnings_blackout,
+    )
+    return filtered_symbols, summary
+
+
 def _optional_float(value: Any) -> float | None:
     if value is None:
         return None

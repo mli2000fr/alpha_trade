@@ -837,6 +837,26 @@ def test_build_pipeline_command_ml_train_can_target_all_stock_bars_daily_symbols
     assert train_cmd[train_cmd.index("--symbol-source") + 1] == "stock-bars-daily"
 
 
+def test_build_pipeline_command_ml_train_exposes_selector_context_and_universe_filters() -> None:
+    command = build_pipeline_command(
+        "ml_train",
+        PipelineLaunchOptions(
+            ml_include_selector_context=True,
+            ml_selector_universe_signal_modes=("strict", "sector_neutralized"),
+            ml_selector_universe_max_candidate_rank=25,
+            ml_selector_universe_exclude_earnings_blackout=True,
+        ),
+    )
+
+    assert "--include-selector-context" in command
+    assert "--selector-universe-signal-modes" in command
+    signal_mode_index = command.index("--selector-universe-signal-modes")
+    assert command[signal_mode_index + 1 : signal_mode_index + 3] == ["strict", "sector_neutralized"]
+    assert "--selector-universe-max-candidate-rank" in command
+    assert command[command.index("--selector-universe-max-candidate-rank") + 1] == "25"
+    assert "--selector-universe-exclude-earnings-blackout" in command
+
+
 def test_build_pipeline_command_import_news() -> None:
     options = PipelineLaunchOptions(
         news_import_start_date="2026-04-01",

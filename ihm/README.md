@@ -79,6 +79,13 @@ Le bloc de paramètres expose aussi les options réellement supportées côté b
 - `sync_earnings_calendar` (`from-date`, `to-date`, `limit`, `sleep-seconds`) ;
 - `update_sector` (`limit`, `sleep-seconds`, `log-every`).
 
+Le panneau `ML Train` expose désormais aussi deux familles complémentaires de réglages selector-driven :
+
+- **features selector PIT-safe** : case `Inclure les features contexte selector`, qui transmet `--include-selector-context` à `modelFactory` ;
+- **filtrage d'univers ML courant** : expander dédié permettant de filtrer l'univers de `ml_train` / `ml_predict` selon `selector_signal_mode`, `candidate_rank` max et l'exclusion `earnings_blackout`.
+
+Important : ce second mécanisme agit sur la **liste de symboles** traités par le run courant, pas sur les features historiques. Il sert à aligner plus finement le scope ML avec la shortlist selector du jour sans casser le contrat PIT-safe des features.
+
 Pour `Alpha Scanner`, l'IHM transmet explicitement les valeurs affichées au launcher `python -m selector.alpha_scanner ...` afin de reproduire le profil partagé strict `STRICT_SWING_CASH_FILTERS` ou de le surcharger proprement. Dans cette UI, `0` sur `max workers` signifie **auto**.
 
 Pour `event_sentiment`, laisser les symboles vides signifie : reprendre automatiquement l'univers candidat `stock_scores.is_candidate = 1`. Le sélecteur **Event Sentiment — source news** propose désormais `eodhd`, `alpaca`, `finnhub`, avec **`eodhd` par défaut**. L'IHM transmet explicitement `--news-provider eodhd` au backend si l'utilisateur ne change rien, et les checkpoints restent isolés par `source_name`.

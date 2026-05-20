@@ -37,6 +37,11 @@ Dans le pipeline quotidien, `modelFactory` intervient après :
 - le pipeline sentiment (`ticker_daily_sentiment_features`) si activé ;
 - le `signal_aggregator` qui prépare l'univers final candidat.
 
+L'univers résolu peut désormais être **resserré optionnellement** via le snapshot
+selector courant (`stock_scores`) avant `train` comme avant `predict`.
+Ce filtre n'altère pas les features PIT-safe calculées dans l'historique : il agit
+uniquement sur la **liste de symboles retenus** pour le run courant.
+
 Il intervient en deux temps :
 
 1. **`train`** : entraînement périodique des modèles et publication des artefacts ;
@@ -212,6 +217,10 @@ python -m modelFactory --mode predict
 | `--forecast-horizon` | horizon de prédiction |
 | `--training-start-date` | date minimale des barres utilisées pour le training (`YYYY-MM-DD`, défaut `2020-01-01`) |
 | `--include-sentiment` | ajoute les features sentiment ticker |
+| `--include-selector-context` | ajoute les features PIT-safe de contexte selector |
+| `--selector-universe-signal-modes ...` | borne l'univers courant aux `selector_signal_mode` demandés |
+| `--selector-universe-max-candidate-rank` | borne l'univers courant aux symboles avec `candidate_rank <= N` |
+| `--selector-universe-exclude-earnings-blackout` | exclut du run courant les symboles `earnings_blackout=1` |
 | `--enable-cross-sectional` | active les features cross-sectionnelles |
 | `--cross-sectional-min-universe` | taille minimale d'univers par date |
 | `--feature-set v1|expert` | set de features |
@@ -321,16 +330,30 @@ python -m modelFactory.run_predict --accelerator auto
 
 Si `--symbols` est absent, `load_candidate_symbols()` lit `stock_scores.is_candidate = 1`.
 
+Si au moins une option `--selector-universe-*` est activée, `modelFactory`
+recharge ensuite le snapshot courant `stock_scores` via
+`load_candidate_selector_context()` et applique, dans cet ordre :
+
+1. filtre `selector_signal_mode` si demandé ;
+2. filtre `candidate_rank <= N` si demandé ;
+3. exclusion `earnings_blackout` si demandée.
+
+Ce mécanisme est volontairement **fail-open** : si le snapshot selector n'est pas
+lisible ou si les colonnes requises sont absentes, le run continue avec l'univers
+initial et journalise la raison. L'objectif est d'éviter de bloquer un train/predict
+de production pour une simple indisponibilité du contexte selector courant.
+
 ### 6.2 Orchestration batch
 
 `run_training_batch()` :
 
 1. résout l'univers ;
-2. choisit le parallélisme effectif ;
-3. force `effective_workers = 1` si le GPU est demandé ou détecté en mode `auto` ;
-4. entraîne chaque symbole ;
-5. entraîne éventuellement le modèle global ;
-6. réinjecte les routes et la gouvernance du `global_model` dans les artefacts symbole.
+2. applique éventuellement le filtre d'univers selector-driven ;
+3. choisit le parallélisme effectif ;
+4. force `effective_workers = 1` si le GPU est demandé ou détecté en mode `auto` ;
+5. entraîne chaque symbole ;
+6. entraîne éventuellement le modèle global ;
+7. réinjecte les routes et la gouvernance du `global_model` dans les artefacts symbole.
 
 ### 6.3 `train_symbol()` — détail par symbole
 

@@ -15,6 +15,13 @@ patterns annonciateurs de hausses. À chaque nouvelle journée, il regarde
 les caractéristiques (prix, volume, indicateurs techniques…) et donne une
 **probabilité** entre 0 et 1.
 
+
+Le modèle peut aussi utiliser un **contexte selector** : rang candidat,
+mode de signal (`strict`, `sector_neutralized`), blackout earnings, etc.
+Ce contexte peut servir soit comme **feature supplémentaire**, soit comme
+**filtre d'univers** pour décider quels symboles seront réellement entraînés
+ou scorés sur le run courant.
+
 ### Champion-challenger
 
 L'application entraîne **plusieurs** modèles en parallèle (LSTM, LightGBM,
@@ -42,6 +49,14 @@ champion, métriques (AUC, precision_long…).
 
 Pour chaque candidat : `probability_long`, `decision` (`long` / `flat`).
 Triable par probabilité.
+
+La page affiche maintenant aussi un résumé de l'**univers ML selector-driven**
+porté par les artefacts :
+
+- features selector activées ou non ;
+- `selector_signal_mode` autorisés ;
+- `candidate_rank` maximum éventuel ;
+- exclusion éventuelle des titres en `earnings_blackout`.
 
 ### Section 3 — Métriques de validation
 
@@ -71,6 +86,9 @@ Graphiques : AUC, precision/recall, calibration. Comprendre :
 - ❌ « Je relance un rebuild-all chaque jour » → consomme énormément de
   CPU/GPU pour rien. Une fois par semaine suffit.
 - ❌ « Le champion change tous les jours » → c'est normal, ne pas s'inquiéter.
+- ❌ « J'active un filtre d'univers selector puis j'oublie qu'il réduit le scope ML » →
+  toujours vérifier dans la page ML le résumé `Univers ML selector-driven`
+  avant d'interpréter un nombre faible de symboles entraînés ou scorés.
 
 ## Pour un micro-compte 2 000 €
 

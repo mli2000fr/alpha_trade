@@ -33,7 +33,12 @@ def _make_opts(**overrides) -> argparse.Namespace:
 
 def _make_cfg() -> TrainingConfig:
     return TrainingConfig(
-        data=DataConfig(training_start_date=date(2020, 1, 1)),
+        data=DataConfig(
+            training_start_date=date(2020, 1, 1),
+            selector_universe_signal_modes=("strict",),
+            selector_universe_max_candidate_rank=25,
+            selector_universe_exclude_earnings_blackout=True,
+        ),
         model=ModelConfig(),
         calibration=CalibrationConfig(method="none"),
         walk_forward=WalkForwardConfig(),
@@ -65,6 +70,9 @@ def test_build_run_summary_contains_required_fields() -> None:
     assert summary["walkforward_enabled"] is True
     assert summary["ml_mode"] == "rebuild-all"
     assert summary["training_start_date"] == "2020-01-01"
+    assert summary["selector_universe_signal_modes"] == ["strict"]
+    assert summary["selector_universe_max_candidate_rank"] == 25
+    assert summary["selector_universe_exclude_earnings_blackout"] is True
     assert "feature_fingerprint" in summary
     assert summary["reproducibility_seed"] == 42
     assert summary["reproducibility_deterministic"] is True

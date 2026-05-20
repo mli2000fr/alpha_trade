@@ -168,6 +168,10 @@ DEFAULT_ML_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_ML_DEFAULT_CHAMPION = "lstm_attention"
 DEFAULT_ML_MODE = "rebuild-missing"
 DEFAULT_ML_TRAINING_START_DATE = "2020-01-01"
+DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT = False
+DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES: tuple[str, ...] = ()
+DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK: int | None = None
+DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT = False
 DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE = 20
 DEFAULT_ML_CALIBRATION_MIN_SAMPLES = 64
 DEFAULT_ML_CALIBRATION_MAX_ITER = 100
@@ -257,6 +261,7 @@ class PipelineLaunchOptions:
     execution_debug: bool = DEFAULT_EXEC_DEBUG
     ml_accelerator: MLAccelerator = "auto"
     ml_include_sentiment: bool = True
+    ml_include_selector_context: bool = DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT
     ml_enable_lightgbm: bool = True
     ml_enable_catboost: bool = True
     ml_enable_global_model: bool = False
@@ -296,6 +301,9 @@ class PipelineLaunchOptions:
     ml_mode: MLMode = DEFAULT_ML_MODE
     ml_training_start_date: str = DEFAULT_ML_TRAINING_START_DATE
     ml_train_symbol_source: MLTrainSymbolSource = "candidates"
+    ml_selector_universe_signal_modes: tuple[str, ...] = DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES
+    ml_selector_universe_max_candidate_rank: int | None = DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK
+    ml_selector_universe_exclude_earnings_blackout: bool = DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
     ml_default_champion: MLDefaultChampion = DEFAULT_ML_DEFAULT_CHAMPION  # type: ignore[assignment]
@@ -1411,6 +1419,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     ml_benchmark_symbol = _normalize_symbol(options.ml_benchmark_symbol, DEFAULT_ML_BENCHMARK_SYMBOL)
     ml_artifacts_dir = (options.ml_artifacts_dir or "").strip() or DEFAULT_ML_ARTIFACTS_DIR
     ml_symbol_source = "stock-bars-daily" if options.ml_train_symbol_source == "stock_bars_daily" else "candidates"
+    ml_selector_signal_modes = [
+        str(value).strip().lower()
+        for value in (options.ml_selector_universe_signal_modes or ())
+        if str(value).strip()
+    ]
 
     if step_key == "import_alpaca_assets":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
@@ -1929,6 +1942,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--watchdog-timeout-seconds", str(int(options.ml_watchdog_timeout_seconds))])
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
+        if options.ml_include_selector_context:
+            command.append("--include-selector-context")
         if options.ml_debug_train:
             command.append("--debug-train")
         if options.ml_enable_lightgbm:
@@ -1937,6 +1952,19 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--enable-catboost")
         if options.ml_enable_global_model:
             command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
+        if ml_selector_signal_modes:
+            command.append("--selector-universe-signal-modes")
+            command.extend(ml_selector_signal_modes)
+        if (
+            options.ml_selector_universe_max_candidate_rank is not None
+            and int(options.ml_selector_universe_max_candidate_rank) > 0
+        ):
+            command.extend([
+                "--selector-universe-max-candidate-rank",
+                str(int(options.ml_selector_universe_max_candidate_rank)),
+            ])
+        if options.ml_selector_universe_exclude_earnings_blackout:
+            command.append("--selector-universe-exclude-earnings-blackout")
         if options.ml_enable_cross_sectional:
             command.append("--enable-cross-sectional")
         if options.ml_select_champion:

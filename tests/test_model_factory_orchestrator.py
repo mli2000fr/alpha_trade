@@ -32,6 +32,36 @@ def test_run_training_batch_loads_stock_bars_daily_symbols_when_requested(monkey
     assert [result.symbol for result in results] == ["AAPL", "MSFT"]
 
 
+def test_run_training_batch_applies_selector_universe_filter(monkeypatch, tmp_path) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(
+            selector_universe_signal_modes=("strict",),
+            selector_universe_max_candidate_rank=10,
+            selector_universe_exclude_earnings_blackout=True,
+        ),
+        model=ModelConfig(max_epochs=1),
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+
+    monkeypatch.setattr(orchestrator, "load_candidate_symbols", lambda engine: ["AAPL", "MSFT", "NVDA"])
+    monkeypatch.setattr(
+        orchestrator,
+        "filter_symbols_by_selector_context",
+        lambda engine, symbols, **kwargs: (["AAPL"], {"enabled": True, "applied": True, "input_symbol_count": 3, "output_symbol_count": 1, "reason": "selector_context_filtered"}),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_train_worker",
+        lambda symbol, cfg: orchestrator.TrainResult(symbol, f"run-{symbol}", "completed"),
+    )
+
+    results = orchestrator.run_training_batch(cfg, engine=object(), symbols=None)
+
+    assert [result.symbol for result in results] == ["AAPL"]
+
+
 def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -> None:
     cfg = TrainingConfig(
         data=DataConfig(enable_cross_sectional_features=True, benchmark_symbol="SPY"),

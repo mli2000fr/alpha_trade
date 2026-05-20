@@ -61,6 +61,23 @@ def test_cli_parser_accepts_cross_sectional_options() -> None:
     assert opts.cross_sectional_min_universe == 12
 
 
+def test_cli_parser_accepts_selector_universe_filter_options() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "train",
+        "--include-selector-context",
+        "--selector-universe-signal-modes", "strict", "sector_neutralized",
+        "--selector-universe-max-candidate-rank", "25",
+        "--selector-universe-exclude-earnings-blackout",
+    ])
+
+    assert opts.include_selector_context is True
+    assert opts.selector_universe_signal_modes == ["strict", "sector_neutralized"]
+    assert opts.selector_universe_max_candidate_rank == 25
+    assert opts.selector_universe_exclude_earnings_blackout is True
+
+
 def test_cli_parser_accepts_global_model_options() -> None:
     parser = cli.build_arg_parser()
 

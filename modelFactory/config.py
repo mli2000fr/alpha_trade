@@ -6,6 +6,18 @@ from datetime import date
 from pathlib import Path
 
 
+def _normalize_selector_signal_modes(signal_modes: tuple[str, ...]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in signal_modes:
+        value = str(raw_value).strip().lower()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return tuple(normalized)
+
+
 @dataclass(frozen=True, slots=True)
 class DataConfig:
     """Paramètres de chargement et préparation des données."""
@@ -27,8 +39,13 @@ class DataConfig:
     target_down_threshold: float = 0.0
     decision_threshold: float = 0.5
     training_start_date: date | None = date(2020, 1, 1)
+    selector_universe_signal_modes: tuple[str, ...] = ()
+    selector_universe_max_candidate_rank: int | None = None
+    selector_universe_exclude_earnings_blackout: bool = False
 
     def __post_init__(self) -> None:
+        normalized_signal_modes = _normalize_selector_signal_modes(self.selector_universe_signal_modes)
+        object.__setattr__(self, "selector_universe_signal_modes", normalized_signal_modes)
         if self.sequence_length < 1:
             raise ValueError("sequence_length doit être >= 1.")
         if self.forecast_horizon < 1:
@@ -55,6 +72,8 @@ class DataConfig:
             raise ValueError("benchmark_symbol ne doit pas être vide.")
         if self.training_start_date is not None and not isinstance(self.training_start_date, date):
             raise ValueError("training_start_date doit être une instance date ou None.")
+        if self.selector_universe_max_candidate_rank is not None and self.selector_universe_max_candidate_rank < 1:
+            raise ValueError("selector_universe_max_candidate_rank doit être >= 1.")
 
 
 @dataclass(frozen=True, slots=True)

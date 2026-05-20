@@ -37,6 +37,19 @@ SYMBOL_SOURCES = ("candidates", "stock-bars-daily")
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
 
 
+def _parse_selector_signal_modes_arg(values: list[str] | None) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in values or []:
+        for part in str(raw_value).split(","):
+            value = part.strip().lower()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            normalized.append(value)
+    return tuple(normalized)
+
+
 def _parse_iso_date_arg(value: str) -> date:
     try:
         return date.fromisoformat(str(value).strip())
@@ -141,6 +154,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Inclure les features sentiment (ticker_daily_sentiment_features) dans le modèle")
     p.add_argument("--include-selector-context", action="store_true", default=False,
                    help="Inclure un contexte selector PIT-safe issu de stock_scores_history dans les features ML")
+    p.add_argument(
+        "--selector-universe-signal-modes",
+        nargs="*",
+        default=None,
+        help="Filtre optionnel de l’univers ML courant selon stock_scores.selector_signal_mode (liste ou valeurs séparées par des virgules)",
+    )
+    p.add_argument(
+        "--selector-universe-max-candidate-rank",
+        type=int,
+        default=None,
+        help="Filtre optionnel de l’univers ML courant : ne conserve que les symboles avec candidate_rank <= N",
+    )
+    p.add_argument(
+        "--selector-universe-exclude-earnings-blackout",
+        action="store_true",
+        default=False,
+        help="Filtre optionnel de l’univers ML courant : exclut les symboles marqués earnings_blackout dans stock_scores",
+    )
     p.add_argument("--enable-cross-sectional", action="store_true", default=False,
                    help="Active les features cross-sectionnelles PIT-safe calculées depuis l'univers historique")
     p.add_argument("--cross-sectional-min-universe", type=int, default=20,
@@ -250,6 +281,9 @@ def main(args: list[str] | None = None) -> None:
             training_start_date=opts.training_start_date,
             include_sentiment_features=opts.include_sentiment,
             include_selector_context_features=opts.include_selector_context,
+            selector_universe_signal_modes=_parse_selector_signal_modes_arg(opts.selector_universe_signal_modes),
+            selector_universe_max_candidate_rank=opts.selector_universe_max_candidate_rank,
+            selector_universe_exclude_earnings_blackout=opts.selector_universe_exclude_earnings_blackout,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
             feature_set=opts.feature_set,
@@ -410,7 +444,7 @@ def main(args: list[str] | None = None) -> None:
         print(f"{'=' * 60}")
 
     elif opts.mode == "predict":
-        from modelFactory.db_registry import insert_predictions, load_candidate_symbols
+        from modelFactory.db_registry import filter_symbols_by_selector_context, insert_predictions, load_candidate_symbols
         from modelFactory.predictor import predict_batch
         from modelFactory.drift_monitor import compute_drift
         from modelFactory.drift_policy import (
@@ -420,6 +454,21 @@ def main(args: list[str] | None = None) -> None:
             summary_fields as _drift_summary_fields,
         )
         symbols = opts.symbols or load_candidate_symbols(engine)
+        symbols, selector_filter_summary = filter_symbols_by_selector_context(
+            engine,
+            symbols,
+            signal_modes=cfg.data.selector_universe_signal_modes,
+            max_candidate_rank=cfg.data.selector_universe_max_candidate_rank,
+            exclude_earnings_blackout=cfg.data.selector_universe_exclude_earnings_blackout,
+        )
+        if selector_filter_summary.get("enabled"):
+            LOGGER.info(
+                "predict selector_universe_filter applied=%s input=%s output=%s reason=%s",
+                selector_filter_summary.get("applied"),
+                selector_filter_summary.get("input_symbol_count"),
+                selector_filter_summary.get("output_symbol_count"),
+                selector_filter_summary.get("reason"),
+            )
         preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, accelerator=opts.accelerator)
 
         # Sprint S4 (A-021) — drift gate / kill switch ML
@@ -551,6 +600,9 @@ def _build_run_summary(
         "ml_mode": str(getattr(opts, "ml_mode", "rebuild-all")),
         "training_start_date": cfg.data.training_start_date.isoformat() if cfg.data.training_start_date is not None else None,
         "symbol_source": str(getattr(opts, "symbol_source", "candidates")),
+        "selector_universe_signal_modes": list(cfg.data.selector_universe_signal_modes),
+        "selector_universe_max_candidate_rank": cfg.data.selector_universe_max_candidate_rank,
+        "selector_universe_exclude_earnings_blackout": bool(cfg.data.selector_universe_exclude_earnings_blackout),
         "debug_train_enabled": bool(getattr(opts, "debug_train", False)),
         "heartbeat_interval_seconds": float(getattr(opts, "heartbeat_interval_seconds", DEFAULT_HEARTBEAT_INTERVAL_SECONDS) or 0.0),
         "watchdog_timeout_seconds": int(getattr(opts, "watchdog_timeout_seconds", 0) or 0),

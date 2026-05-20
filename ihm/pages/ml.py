@@ -463,6 +463,18 @@ def render() -> None:
             f"Métrique champion : `{champion.get('selection_metric', '—')}` | "
             f"Score champion : `{champion.get('selection_score', '—')}`"
         )
+        selector_filter = report.get("selector_universe_filter") or {}
+        selector_signal_modes = selector_filter.get("selector_universe_signal_modes") or []
+        selector_rank_max = selector_filter.get("selector_universe_max_candidate_rank")
+        selector_exclude_blackout = bool(selector_filter.get("selector_universe_exclude_earnings_blackout"))
+        selector_context_features_enabled = bool(selector_filter.get("include_selector_context_features"))
+        selector_filter_parts = [
+            f"features selector={'on' if selector_context_features_enabled else 'off'}",
+            f"signal_modes={','.join(selector_signal_modes) if selector_signal_modes else 'all'}",
+            f"rank_max={selector_rank_max if selector_rank_max is not None else 'off'}",
+            f"exclude_blackout={'on' if selector_exclude_blackout else 'off'}",
+        ]
+        st.caption("Univers ML selector-driven : " + " | ".join(selector_filter_parts))
         st.caption(
             f"Config : `{report['config_path']}` | Metrics : `{report['metrics_path']}`"
         )

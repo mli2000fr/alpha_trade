@@ -49,6 +49,23 @@ def test_data_config_accepts_cross_sectional_fields() -> None:
     assert cfg.cross_sectional_min_universe == 10
 
 
+def test_data_config_accepts_selector_universe_filter_fields() -> None:
+    cfg = config.DataConfig(
+        selector_universe_signal_modes=(" strict ", "sector_neutralized", "strict"),
+        selector_universe_max_candidate_rank=25,
+        selector_universe_exclude_earnings_blackout=True,
+    )
+
+    assert cfg.selector_universe_signal_modes == ("strict", "sector_neutralized")
+    assert cfg.selector_universe_max_candidate_rank == 25
+    assert cfg.selector_universe_exclude_earnings_blackout is True
+
+
+def test_data_config_rejects_selector_universe_max_candidate_rank_below_one() -> None:
+    with pytest.raises(ValueError, match="selector_universe_max_candidate_rank"):
+        config.DataConfig(selector_universe_max_candidate_rank=0)
+
+
 def test_data_config_rejects_cross_sectional_min_universe_below_two() -> None:
     with pytest.raises(ValueError, match="cross_sectional_min_universe"):
         config.DataConfig(cross_sectional_min_universe=1)

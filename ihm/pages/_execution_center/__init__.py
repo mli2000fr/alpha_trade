@@ -111,6 +111,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_FORECAST_HORIZON,
     DEFAULT_ML_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_ML_HIDDEN_SIZE,
+    DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT,
     DEFAULT_ML_LGBM_LEARNING_RATE,
     DEFAULT_ML_LGBM_MAX_DEPTH,
     DEFAULT_ML_LGBM_N_ESTIMATORS,
@@ -123,6 +124,9 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_MIN_ACTION_RATE,
     DEFAULT_ML_MIN_PRECISION_LONG,
     DEFAULT_ML_MIN_TRADES_FRACTION,
+    DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT,
+    DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK,
+    DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES,
     DEFAULT_ML_ARTIFACTS_DIR,
     DEFAULT_ML_BATCH_SIZE,
     DEFAULT_ML_BENCHMARK_SYMBOL,
@@ -2697,6 +2701,64 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "`refresh-stale` = reconstruire si le modèle est absent, obsolète ou hors contrat de features / date de début d'historique."
         )
 
+        with st.expander("ML — Filtrage d'univers optionnel via le contexte selector", expanded=False):
+            st.caption(
+                "Ce filtre borne l'univers courant avant `ml_train` et `ml_predict` en s'appuyant sur le snapshot courant `stock_scores`. "
+                "Tu peux ne garder que certains `selector_signal_mode`, imposer un `candidate_rank` max ou exclure les lignes en `earnings_blackout`."
+            )
+            ml_selector_filter_col1, ml_selector_filter_col2, ml_selector_filter_col3 = st.columns(3)
+            with ml_selector_filter_col1:
+                ml_selector_universe_signal_modes_selection = cast(
+                    list[str],
+                    st.multiselect(
+                        "selector_signal_mode autorisés",
+                        options=["strict", "sector_neutralized"],
+                        default=list(
+                            st.session_state.get(
+                                "pipeline_ml_selector_universe_signal_modes",
+                                list(DEFAULT_ML_SELECTOR_UNIVERSE_SIGNAL_MODES),
+                            )
+                        ),
+                        key="pipeline_ml_selector_universe_signal_modes",
+                        help="Vide = pas de filtre sur `selector_signal_mode`.",
+                    ),
+                )
+            with ml_selector_filter_col2:
+                ml_selector_universe_max_candidate_rank_raw = int(
+                    st.number_input(
+                        "candidate_rank max",
+                        min_value=0,
+                        max_value=10_000,
+                        value=int(
+                            st.session_state.get(
+                                "pipeline_ml_selector_universe_max_candidate_rank",
+                                DEFAULT_ML_SELECTOR_UNIVERSE_MAX_CANDIDATE_RANK or 0,
+                            )
+                            or 0
+                        ),
+                        step=1,
+                        key="pipeline_ml_selector_universe_max_candidate_rank",
+                        help="0 = désactivé. Exemple : 25 pour conserver uniquement le top 25 selector courant.",
+                    )
+                )
+                ml_selector_universe_max_candidate_rank = (
+                    int(ml_selector_universe_max_candidate_rank_raw)
+                    if int(ml_selector_universe_max_candidate_rank_raw) > 0
+                    else None
+                )
+            with ml_selector_filter_col3:
+                ml_selector_universe_exclude_earnings_blackout = st.checkbox(
+                    "Exclure earnings_blackout",
+                    value=bool(
+                        st.session_state.get(
+                            "pipeline_ml_selector_universe_exclude_earnings_blackout",
+                            DEFAULT_ML_SELECTOR_UNIVERSE_EXCLUDE_EARNINGS_BLACKOUT,
+                        )
+                    ),
+                    key="pipeline_ml_selector_universe_exclude_earnings_blackout",
+                    help="Filtre dur sur `stock_scores.earnings_blackout = 0`.",
+                )
+
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
         with ml_opt_col1:
             ml_include_sentiment = st.checkbox(
@@ -2704,6 +2766,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 value=bool(st.session_state.get("pipeline_ml_include_sentiment", True)),
                 key="pipeline_ml_include_sentiment",
                 help="Ajoute `--include-sentiment` à `ml_train`.",
+            )
+            ml_include_selector_context = st.checkbox(
+                "Inclure les features contexte selector",
+                value=bool(st.session_state.get("pipeline_ml_include_selector_context", DEFAULT_ML_INCLUDE_SELECTOR_CONTEXT)),
+                key="pipeline_ml_include_selector_context",
+                help="Ajoute `--include-selector-context` pour enrichir le dataset ML avec un contexte PIT-safe issu de `stock_scores_history`.",
             )
             ml_enable_lightgbm = st.checkbox(
                 "Comparer LightGBM local",
@@ -3415,6 +3483,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             execution_debug=bool(execution_debug),
             ml_accelerator=cast(Any, ml_accelerator),
             ml_include_sentiment=bool(ml_include_sentiment),
+            ml_include_selector_context=bool(ml_include_selector_context),
             ml_enable_lightgbm=bool(ml_enable_lightgbm),
             ml_enable_catboost=bool(ml_enable_catboost),
             ml_enable_global_model=bool(ml_enable_global_model),
@@ -3451,6 +3520,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_hidden_size=int(ml_hidden_size),
             ml_mode=cast(Any, ml_mode),
             ml_training_start_date=ml_training_start_date.isoformat(),
+            ml_selector_universe_signal_modes=tuple(
+                str(value).strip().lower()
+                for value in ml_selector_universe_signal_modes_selection
+                if str(value).strip()
+            ),
+            ml_selector_universe_max_candidate_rank=ml_selector_universe_max_candidate_rank,
+            ml_selector_universe_exclude_earnings_blackout=bool(ml_selector_universe_exclude_earnings_blackout),
             ml_artifacts_dir=str(ml_artifacts_dir or DEFAULT_ML_ARTIFACTS_DIR).strip() or DEFAULT_ML_ARTIFACTS_DIR,
             ml_benchmark_symbol=str(ml_benchmark_symbol or DEFAULT_ML_BENCHMARK_SYMBOL).strip().upper() or DEFAULT_ML_BENCHMARK_SYMBOL,
             ml_default_champion=cast(Any, ml_default_champion),

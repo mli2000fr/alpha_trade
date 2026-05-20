@@ -145,3 +145,64 @@ def test_load_candidate_selector_context_delegates_to_stock_scores(monkeypatch) 
     assert result.equals(expected)
 
 
+def test_filter_symbols_by_selector_context_applies_all_supported_filters(monkeypatch) -> None:
+    monkeypatch.setattr(
+        db_registry,
+        "load_candidate_selector_context",
+        lambda engine: pd.DataFrame(
+            [
+                {
+                    "symbol": "AAPL",
+                    "selector_signal_mode": "strict",
+                    "candidate_rank": 4,
+                    "earnings_blackout": False,
+                },
+                {
+                    "symbol": "MSFT",
+                    "selector_signal_mode": "sector_neutralized",
+                    "candidate_rank": 11,
+                    "earnings_blackout": False,
+                },
+                {
+                    "symbol": "NVDA",
+                    "selector_signal_mode": "strict",
+                    "candidate_rank": 2,
+                    "earnings_blackout": True,
+                },
+            ]
+        ),
+    )
+
+    filtered, summary = db_registry.filter_symbols_by_selector_context(
+        cast(Engine, object()),
+        ["AAPL", "MSFT", "NVDA"],
+        signal_modes=("strict",),
+        max_candidate_rank=5,
+        exclude_earnings_blackout=True,
+    )
+
+    assert filtered == ["AAPL"]
+    assert summary["enabled"] is True
+    assert summary["applied"] is True
+    assert summary["output_symbol_count"] == 1
+
+
+def test_filter_symbols_by_selector_context_fails_open_when_required_columns_are_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        db_registry,
+        "load_candidate_selector_context",
+        lambda engine: pd.DataFrame([{"symbol": "AAPL"}, {"symbol": "MSFT"}]),
+    )
+
+    filtered, summary = db_registry.filter_symbols_by_selector_context(
+        cast(Engine, object()),
+        ["AAPL", "MSFT"],
+        signal_modes=("strict",),
+    )
+
+    assert filtered == ["AAPL", "MSFT"]
+    assert summary["enabled"] is True
+    assert summary["applied"] is False
+    assert "selector_context_missing_columns" in str(summary["reason"])
+
+

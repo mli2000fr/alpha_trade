@@ -27,7 +27,12 @@ from modelFactory.features import build_feature_contract
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.features import normalize_feature_columns
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
-from modelFactory.db_registry import load_candidate_symbols, load_stock_bars_daily_symbols, replace_model_governance
+from modelFactory.db_registry import (
+    filter_symbols_by_selector_context,
+    load_candidate_symbols,
+    load_stock_bars_daily_symbols,
+    replace_model_governance,
+)
 from modelFactory.global_model import train_global_model
 from modelFactory.runtime_status import update_runtime_status
 from modelFactory.trainer import TrainResult, train_symbol
@@ -346,6 +351,23 @@ def run_training_batch(
             symbols = load_stock_bars_daily_symbols(engine)
         else:
             symbols = load_candidate_symbols(engine)
+
+    if symbols:
+        symbols, selector_filter_summary = filter_symbols_by_selector_context(
+            engine,
+            symbols,
+            signal_modes=cfg.data.selector_universe_signal_modes,
+            max_candidate_rank=cfg.data.selector_universe_max_candidate_rank,
+            exclude_earnings_blackout=cfg.data.selector_universe_exclude_earnings_blackout,
+        )
+        if selector_filter_summary.get("enabled"):
+            LOGGER.info(
+                "run_training_batch selector_universe_filter applied=%s input=%s output=%s reason=%s",
+                selector_filter_summary.get("applied"),
+                selector_filter_summary.get("input_symbol_count"),
+                selector_filter_summary.get("output_symbol_count"),
+                selector_filter_summary.get("reason"),
+            )
 
     if not symbols:
         LOGGER.warning("run_training_batch no_candidates")
