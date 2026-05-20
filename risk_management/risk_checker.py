@@ -6,6 +6,7 @@ import logging
 from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.constraints import ConstraintChecker, PortfolioState
+from risk_management.enums import DecisionReasonCode
 
 LOGGER = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class RiskCheckerImpl:
         self._constraints = ConstraintChecker(config)
         self._sector_map: dict[str, str] = sector_map or {}
         self._last_decision_reason = "OK"
-        self._last_decision_reason_code = "ok"
+        self._last_decision_reason_code = DecisionReasonCode.OK
 
     # --- Protocol RiskChecker -------------------------------------------
     def check_position_size(self, symbol: str, proposed_shares: float, price: float) -> float:
@@ -35,7 +36,7 @@ class RiskCheckerImpl:
         if self._cb.is_active():
             LOGGER.warning("Circuit breaker actif — position rejetee pour %s.", symbol)
             self._last_decision_reason = "circuit breaker actif"
-            self._last_decision_reason_code = "circuit_breaker_active"
+            self._last_decision_reason_code = DecisionReasonCode.CIRCUIT_BREAKER_ACTIVE
             return 0.0
         sector = self._sector_map.get(symbol, "UNKNOWN")
         approved, reason = self._constraints.check(
@@ -57,7 +58,7 @@ class RiskCheckerImpl:
     def get_last_decision_reason(self) -> str:
         return self._last_decision_reason
 
-    def get_last_decision_reason_code(self) -> str:
+    def get_last_decision_reason_code(self) -> DecisionReasonCode:
         return self._last_decision_reason_code
 
     # --- helpers pour portfolio_builder ----------------------------------

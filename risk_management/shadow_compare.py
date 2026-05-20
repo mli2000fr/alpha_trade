@@ -84,21 +84,21 @@ def compare_runs(
     per_symbol: list[dict[str, Any]] = []
 
     for sym in common:
-        l = live.loc[sym]
-        s = sim.loc[sym]
+        live_row = live.loc[sym]
+        sim_row = sim.loc[sym]
         entry: dict[str, Any] = {"symbol": sym}
-        if not np.isnan(l.get(qty_col, np.nan)) and not np.isnan(s.get(qty_col, np.nan)):
-            denom = max(abs(s[qty_col]), 1e-9)
-            d = (l[qty_col] - s[qty_col]) / denom
+        if not np.isnan(live_row.get(qty_col, np.nan)) and not np.isnan(sim_row.get(qty_col, np.nan)):
+            denom = max(abs(sim_row[qty_col]), 1e-9)
+            d = (live_row[qty_col] - sim_row[qty_col]) / denom
             qty_drifts.append(d)
             entry["qty_drift_pct"] = float(d)
-        if not np.isnan(l.get(price_col, np.nan)) and not np.isnan(s.get(price_col, np.nan)):
-            denom = max(abs(s[price_col]), 1e-9)
-            d = (l[price_col] - s[price_col]) / denom
+        if not np.isnan(live_row.get(price_col, np.nan)) and not np.isnan(sim_row.get(price_col, np.nan)):
+            denom = max(abs(sim_row[price_col]), 1e-9)
+            d = (live_row[price_col] - sim_row[price_col]) / denom
             price_drifts.append(d)
             entry["price_drift_pct"] = float(d)
-        if not np.isnan(l.get(conviction_col, np.nan)) and not np.isnan(s.get(conviction_col, np.nan)):
-            d = float(l[conviction_col] - s[conviction_col])
+        if not np.isnan(live_row.get(conviction_col, np.nan)) and not np.isnan(sim_row.get(conviction_col, np.nan)):
+            d = float(live_row[conviction_col] - sim_row[conviction_col])
             conv_drifts.append(d)
             entry["conviction_drift"] = d
         per_symbol.append(entry)

@@ -13,6 +13,7 @@ from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.constraints import PortfolioState
 from risk_management.correlation_filter import filter_correlated
+from risk_management.enums import Decision, DecisionReasonCode, SizingMethod
 from risk_management.kelly import KellySizer
 from risk_management.models import (
     CandidateScore,
@@ -69,6 +70,65 @@ class PortfolioBuilder:
             )
         )
 
+    def _build_enriched_candidates(
+        self,
+        candidates: list[CandidateScore],
+        predictions: dict[str, PredictionInfo],
+        win_rates: dict[str, WinRateInfo],
+    ) -> list[EnrichedCandidate]:
+        enriched: list[EnrichedCandidate] = []
+        for candidate in candidates:
+            prediction = predictions.get(candidate.symbol)
+            win_rate = win_rates.get(candidate.symbol)
+            predicted_proba = prediction.predicted_proba if prediction else None
+            historical_win_rate = win_rate.directional_accuracy if win_rate else None
+            conviction = _fuse_conviction(
+                quant_score=candidate.score_used,
+                predicted_proba=predicted_proba,
+                weights=ConvictionWeights(
+                    score_weight=self._cfg.score_weight,
+                    prediction_weight=self._cfg.prediction_weight,
+                ),
+            )
+            enriched.append(
+                EnrichedCandidate(
+                    symbol=candidate.symbol,
+                    sector=candidate.sector,
+                    score_used=candidate.score_used,
+                    score_source=candidate.score_source,
+                    predicted_proba=predicted_proba,
+                    historical_win_rate=historical_win_rate,
+                    conviction_score=conviction,
+                    company_idio_score=candidate.company_idio_score,
+                    macro_regime_score=candidate.macro_regime_score,
+                    company_idio_signal_norm=candidate.company_idio_signal_norm,
+                    macro_regime_signal_norm=candidate.macro_regime_signal_norm,
+                    company_idio_component=candidate.company_idio_component,
+                    macro_regime_component=candidate.macro_regime_component,
+                    quant_component=candidate.quant_component,
+                    walk_forward_sentiment_weight=candidate.walk_forward_sentiment_weight,
+                    walk_forward_macro_weight=candidate.walk_forward_macro_weight,
+                    walk_forward_quant_weight=candidate.walk_forward_quant_weight,
+                    calibration_run_id=candidate.calibration_run_id,
+                    calibration_source=candidate.calibration_source,
+                    snapshot_date=candidate.snapshot_date,
+                    prediction_asof_date=prediction.prediction_date if prediction else None,
+                    ml_metrics_asof_date=win_rate.asof_date if win_rate else None,
+                    candidate_rank=candidate.candidate_rank,
+                    selector_signal_mode=candidate.selector_signal_mode,
+                    selection_explanation=candidate.selection_explanation,
+                    selector_earnings_blackout=candidate.selector_earnings_blackout,
+                )
+            )
+        enriched.sort(
+            key=lambda entry: (
+                -entry.conviction_score,
+                entry.candidate_rank if entry.candidate_rank is not None else 10**9,
+                entry.symbol,
+            )
+        )
+        return enriched
+
     def build(
         self,
         candidates: list[CandidateScore],
@@ -82,99 +142,23 @@ class PortfolioBuilder:
         win_rates = win_rates or {}
         total_candidates = len(candidates)
 
-        # 1. Enrichir en EnrichedCandidate
-        enriched: list[EnrichedCandidate] = []
-        for c in candidates:
-            pred = predictions.get(c.symbol)
-            wr = win_rates.get(c.symbol)
-            pp = pred.predicted_proba if pred else None
-            hw = wr.directional_accuracy if wr else None
-            conv = _fuse_conviction(
-                quant_score=c.score_used,
-                predicted_proba=pp,
-                weights=ConvictionWeights(
-                    score_weight=self._cfg.score_weight,
-                    prediction_weight=self._cfg.prediction_weight,
-                ),
-            )
-            enriched.append(EnrichedCandidate(
-                symbol=c.symbol, sector=c.sector, score_used=c.score_used, score_source=c.score_source,
-                predicted_proba=pp, historical_win_rate=hw, conviction_score=conv,
-                company_idio_score=c.company_idio_score,
-                macro_regime_score=c.macro_regime_score,
-                company_idio_signal_norm=c.company_idio_signal_norm,
-                macro_regime_signal_norm=c.macro_regime_signal_norm,
-                company_idio_component=c.company_idio_component,
-                macro_regime_component=c.macro_regime_component,
-                quant_component=c.quant_component,
-                walk_forward_sentiment_weight=c.walk_forward_sentiment_weight,
-                walk_forward_macro_weight=c.walk_forward_macro_weight,
-                walk_forward_quant_weight=c.walk_forward_quant_weight,
-                calibration_run_id=c.calibration_run_id,
-                calibration_source=c.calibration_source,
-                snapshot_date=c.snapshot_date,
-                prediction_asof_date=pred.prediction_date if pred else None,
-                ml_metrics_asof_date=wr.asof_date if wr else None,
-                candidate_rank=c.candidate_rank,
-                selector_signal_mode=c.selector_signal_mode,
-                selection_explanation=c.selection_explanation,
-                selector_earnings_blackout=c.selector_earnings_blackout,
-            ))
+        # 1. Enrichir puis trier par conviction DESC
+        enriched = self._build_enriched_candidates(candidates, predictions, win_rates)
+        enriched_by_symbol = {entry.symbol: entry for entry in enriched}
 
-        # 2. Trier par conviction DESC
-        enriched.sort(
-            key=lambda e: (
-                -e.conviction_score,
-                e.candidate_rank if e.candidate_rank is not None else 10**9,
-                e.symbol,
-            )
-        )
-        enriched = [
-            EnrichedCandidate(
-                symbol=e.symbol,
-                sector=e.sector,
-                score_used=e.score_used,
-                score_source=e.score_source,
-                predicted_proba=e.predicted_proba,
-                historical_win_rate=e.historical_win_rate,
-                conviction_score=e.conviction_score,
-                company_idio_score=e.company_idio_score,
-                macro_regime_score=e.macro_regime_score,
-                company_idio_signal_norm=e.company_idio_signal_norm,
-                macro_regime_signal_norm=e.macro_regime_signal_norm,
-                company_idio_component=e.company_idio_component,
-                macro_regime_component=e.macro_regime_component,
-                quant_component=e.quant_component,
-                walk_forward_sentiment_weight=e.walk_forward_sentiment_weight,
-                walk_forward_macro_weight=e.walk_forward_macro_weight,
-                walk_forward_quant_weight=e.walk_forward_quant_weight,
-                calibration_run_id=e.calibration_run_id,
-                calibration_source=e.calibration_source,
-                snapshot_date=e.snapshot_date,
-                prediction_asof_date=e.prediction_asof_date,
-                ml_metrics_asof_date=e.ml_metrics_asof_date,
-                candidate_rank=e.candidate_rank,
-                selector_signal_mode=e.selector_signal_mode,
-                selection_explanation=e.selection_explanation,
-                selector_earnings_blackout=e.selector_earnings_blackout,
-            )
-            for e in enriched
-        ]
-
-        # 3. Filtre corrélation
+        # 2. Filtre corrélation
         entries: list[PortfolioEntry] = []
         if return_matrix is not None and not return_matrix.empty:
             retained, rejections = filter_correlated(
                 enriched, return_matrix, self._cfg.correlation_threshold, self._cfg.correlation_min_overlap,
             )
             for rej in rejections:
-                # find the enriched candidate for the rejected symbol
-                ec = next(e for e in enriched if e.symbol == rej.rejected_symbol)
+                ec = enriched_by_symbol[rej.rejected_symbol]
                 reason = f"corrélation {rej.correlation_value:.2f} > {rej.threshold} avec {rej.blocker_symbol}"
                 reason = reason[:255]
                 entries.append(self._make_entry_v2(
-                    ec, prices.get(ec.symbol), 0, 0, "REJECTED", reason,
-                    decision_reason_code="correlation_filter",
+                    ec, prices.get(ec.symbol), 0, 0, Decision.REJECTED, reason,
+                    decision_reason_code=DecisionReasonCode.CORRELATION_FILTER,
                     correlation_blocker=rej.blocker_symbol,
                     correlation_value=rej.correlation_value,
                 ))
@@ -196,7 +180,7 @@ class PortfolioBuilder:
                 item="filtre corrélation" if processed_candidates > 0 else None,
             )
 
-        # 4. Sizing + contraintes
+        # 3. Sizing + contraintes
         sector_map = {c.symbol: c.sector for c in candidates}
         state = PortfolioState()
         checker = RiskCheckerImpl(
@@ -218,9 +202,9 @@ class PortfolioBuilder:
                         pi,
                         0,
                         0,
-                        "REJECTED",
+                        Decision.REJECTED,
                         "prix indisponible",
-                        decision_reason_code="missing_price",
+                        decision_reason_code=DecisionReasonCode.MISSING_PRICE,
                     )
                 )
                 processed_candidates += 1
@@ -247,8 +231,8 @@ class PortfolioBuilder:
 
             if sizing.proposed_shares < 1:
                 entries.append(self._make_entry_v2(
-                    ec, pi, 0, 0, "REJECTED", "sizing insuffisant",
-                    decision_reason_code=str(sizing.method or "sizing_rejected"),
+                    ec, pi, 0, 0, Decision.REJECTED, "sizing insuffisant",
+                    decision_reason_code=DecisionReasonCode(str(sizing.method or SizingMethod.UNKNOWN)),
                     sizing_method=sizing.method,
                 ))
                 processed_candidates += 1
@@ -272,7 +256,7 @@ class PortfolioBuilder:
                 reason = checker.get_last_decision_reason()
                 reason_code = checker.get_last_decision_reason_code()
                 entries.append(self._make_entry_v2(
-                    ec, pi, sizing.proposed_shares, 0, "REJECTED", reason,
+                    ec, pi, sizing.proposed_shares, 0, Decision.REJECTED, reason,
                     decision_reason_code=reason_code,
                     sizing_method=sizing.method,
                 ))
@@ -292,9 +276,9 @@ class PortfolioBuilder:
                 )
                 continue
 
-            decision = "ACCEPTED" if approved == sizing.proposed_shares else "REDUCED"
-            reason = "OK" if decision == "ACCEPTED" else checker.get_last_decision_reason()
-            reason_code = "ok" if decision == "ACCEPTED" else checker.get_last_decision_reason_code()
+            decision = Decision.ACCEPTED if approved == sizing.proposed_shares else Decision.REDUCED
+            reason = "OK" if decision == Decision.ACCEPTED else checker.get_last_decision_reason()
+            reason_code = DecisionReasonCode.OK if decision == Decision.ACCEPTED else checker.get_last_decision_reason_code()
             checker.accept(ec.symbol, ec.sector, approved, pi.last_close)
             accepted_rank += 1
 
@@ -379,10 +363,10 @@ class PortfolioBuilder:
         pi: PriceInfo | None,
         proposed: int,
         approved: int,
-        decision: str,
+        decision: Decision,
         reason: str,
-        decision_reason_code: str | None = None,
-        sizing_method: str = "",
+        decision_reason_code: DecisionReasonCode | None = None,
+        sizing_method: SizingMethod = SizingMethod.UNKNOWN,
         correlation_blocker: str | None = None,
         correlation_value: float | None = None,
     ) -> PortfolioEntry:

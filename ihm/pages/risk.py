@@ -3,12 +3,18 @@ from __future__ import annotations
 
 import streamlit as st
 
-from ihm.components.run_summary import render_persistent_business_summary
-from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable, render_query_diagnostic
+from ihm.components.run_summary import render_persistent_business_summary
 from ihm.components.symbol_table import render_symbol_table
+from ihm.pages import run_page_if_standalone
 from ihm.services.db import db_available, get_last_query_error
-from ihm.services.queries import get_latest_run_business_summary, get_portfolio_targets, get_risk_decisions, get_risk_run_ids
+from ihm.services.queries import (
+    get_latest_run_business_summary,
+    get_portfolio_targets,
+    get_risk_decisions,
+    get_risk_run_ids,
+    get_shadow_drift_runs,
+)
 from ihm.services.run_summary import get_run_summary
 
 
@@ -46,6 +52,74 @@ def _render_ml_gate_status(record: dict[str, object] | None) -> None:
         )
 
 
+def _render_shadow_compare(summary: dict[str, object], selected_run: str | None) -> None:
+    payload = summary.get("shadow_compare") if isinstance(summary.get("shadow_compare"), dict) else {}
+    history = get_shadow_drift_runs(selected_run, limit=10) if selected_run else get_shadow_drift_runs(limit=10)
+    if not payload and history.empty:
+        return
+
+    with st.expander("🪞 Shadow compare", expanded=False):
+        status = str(payload.get("status") or "").strip() if payload else ""
+        if status == "compared":
+            reference_run_id = str(payload.get("reference_run_id") or "—").strip()
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Run de référence", reference_run_id)
+            c2.metric("Drift qty moyen", payload.get("avg_qty_drift_pct"))
+            c3.metric("Drift prix moyen", payload.get("avg_price_drift_pct"))
+            st.caption(
+                f"Conviction drift={payload.get('avg_conviction_drift')} | "
+                f"only_live={payload.get('symbols_only_in_live_count', 0)} | "
+                f"only_ref={payload.get('symbols_only_in_reference_count', 0)}"
+            )
+        elif status == "missing_reference":
+            st.info("Aucun run de référence disponible pour le shadow compare de ce portefeuille.")
+        elif status == "unavailable":
+            st.warning(f"Shadow compare indisponible : {payload.get('error') or 'erreur inconnue'}")
+        elif status == "disabled" and not history.empty:
+            st.caption("Aucun shadow compare n'a été demandé sur ce run, mais des rapports historiques sont disponibles.")
+
+        if not history.empty:
+            cols = [
+                column
+                for column in [
+                    "run_id",
+                    "compared_at",
+                    "live_run_id",
+                    "simulated_run_id",
+                    "avg_qty_drift_pct",
+                    "avg_price_drift_pct",
+                    "avg_conviction_drift",
+                ]
+                if column in history.columns
+            ]
+            st.dataframe(history[cols] if cols else history, use_container_width=True)
+
+
+def _render_postmortem_artifacts(summary: dict[str, object]) -> None:
+    payload = summary.get("postmortem_artifacts") if isinstance(summary.get("postmortem_artifacts"), dict) else {}
+    if not payload:
+        return
+
+    with st.expander("🧪 Post-mortem risk", expanded=False):
+        top_rejections = payload.get("top_rejection_reason_codes")
+        top_reductions = payload.get("top_reduction_reason_codes")
+        sector_breakdown = payload.get("sector_breakdown")
+        external_coverage = payload.get("external_source_coverage")
+        regime_summary = payload.get("regime_summary")
+
+        if isinstance(external_coverage, dict):
+            st.json({"external_source_coverage": external_coverage, "regime_summary": regime_summary})
+        if isinstance(top_rejections, list) and top_rejections:
+            st.markdown("**Top rejets structurés**")
+            st.dataframe(top_rejections, use_container_width=True)
+        if isinstance(top_reductions, list) and top_reductions:
+            st.markdown("**Top réductions structurées**")
+            st.dataframe(top_reductions, use_container_width=True)
+        if isinstance(sector_breakdown, list) and sector_breakdown:
+            st.markdown("**Détail secteur**")
+            st.dataframe(sector_breakdown, use_container_width=True)
+
+
 def render() -> None:
     st.header("⚖️ Risk Management")
 
@@ -80,6 +154,9 @@ def render() -> None:
         max_metrics=12,
     )
     _render_ml_gate_status(summary_record)
+    summary = get_run_summary(summary_record)
+    _render_shadow_compare(summary, selected_run)
+    _render_postmortem_artifacts(summary)
 
     # --- Décisions ---
     st.subheader("📋 Décisions de risque")

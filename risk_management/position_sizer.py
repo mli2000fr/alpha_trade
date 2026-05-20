@@ -5,6 +5,7 @@ import logging
 import math
 
 from risk_management.config import RiskConfig
+from risk_management.enums import SizingMethod
 from risk_management.models import PriceInfo, SizingResult
 
 LOGGER = logging.getLogger(__name__)
@@ -31,19 +32,19 @@ class PositionSizer:
 
         if price <= 0:
             LOGGER.warning("Prix <= 0 pour %s — rejet.", symbol)
-            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected_invalid_price")
+            return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_INVALID_PRICE)
 
         # --- ATR-based sizing strict ---
         if price_info.atr_20 is None or price_info.atr_20 <= 0:
             LOGGER.info("ATR indisponible pour %s — rejet explicite.", symbol)
-            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected_atr_missing")
+            return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_ATR_MISSING)
 
         risk_budget = self._cfg.account_equity * self._cfg.risk_per_trade_pct * max(0.0, self._cfg.risk_multiplier)
         risk_per_share = price_info.atr_20 * self._cfg.atr_stop_multiple
         if risk_per_share <= 0:
-            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected_atr_missing")
+            return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_ATR_MISSING)
         shares = math.floor(risk_budget / risk_per_share)
-        method = "atr"
+        method = SizingMethod.ATR
 
         shares = max(shares, 0)
 
@@ -51,9 +52,9 @@ class PositionSizer:
         min_notional = self._cfg.effective_min_notional
         if shares * price < min_notional:
             method_rej = (
-                "rejected_notional_below_enforced"
+                SizingMethod.REJECTED_NOTIONAL_BELOW_ENFORCED
                 if self._cfg.enforce_min_notional is not None
-                else "rejected_notional"
+                else SizingMethod.REJECTED_NOTIONAL
             )
             LOGGER.info(
                 "Notional insuffisant pour %s — rejet (shares=%d price=%.2f notional=%.2f min=%.2f).",
@@ -64,6 +65,6 @@ class PositionSizer:
         # au moins 1 share
         if shares < 1:
             LOGGER.info("Moins de 1 share pour %s — rejet.", symbol)
-            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected_zero_shares")
+            return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_ZERO_SHARES)
 
         return SizingResult(symbol=symbol, proposed_shares=shares, method=method)

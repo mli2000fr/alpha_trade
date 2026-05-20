@@ -112,7 +112,7 @@ class RiskConfig:
             return max(0, int(self.effective_max_positions_override))
         return int(self.max_positions)
 
-    def to_conviction_weights(self) -> "ConvictionWeights":
+    def to_conviction_weights(self) -> ConvictionWeights:
         """Phase 5.1.b — Adapte les pondérations risk vers ``core.conviction.ConvictionWeights``.
 
         Centralise la fusion conviction (cf. `prompt/refactor/plan_phase5.md` §5.1.b).

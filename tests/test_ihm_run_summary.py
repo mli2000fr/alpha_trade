@@ -690,6 +690,74 @@ def test_get_run_summary_detail_lines_exposes_equity_preflight_and_reason_codes_
     assert any(line == "Motifs structurés de réduction : constraint_max_position_weight=1." for line in lines)
 
 
+def test_get_run_summary_detail_lines_exposes_shadow_compare_for_risk_management() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "risk_management",
+            "run_summary": {
+                "shadow_compare": {
+                    "status": "compared",
+                    "reference_run_id": "risk-prev",
+                    "avg_qty_drift_pct": 0.125,
+                    "avg_price_drift_pct": -0.02,
+                    "avg_conviction_drift": 0.015,
+                }
+            },
+        }
+    )
+
+    assert any("Shadow compare risk : référence=risk-prev" in line for line in lines)
+    assert any("qty=0.1250" in line for line in lines)
+    assert any("prix=-0.0200" in line for line in lines)
+
+
+def test_get_run_summary_detail_lines_exposes_empirical_risk_calibration_for_risk_management() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "risk_management",
+            "run_summary": {
+                "empirical_risk_calibration": {
+                    "run_id": "risk-cal-001",
+                    "metric_name": "sharpe",
+                    "metric_value": 1.2345,
+                    "best_weights": {
+                        "score_weight": 0.25,
+                        "prediction_weight": 0.75,
+                        "kelly_fraction_multiplier": 0.50,
+                    },
+                }
+            },
+        }
+    )
+
+    assert any("Calibration empirique risk appliquée : run=risk-cal-001" in line for line in lines)
+    assert any("conviction=0.25/0.75" in line for line in lines)
+    assert any("kelly_mult=0.50" in line for line in lines)
+
+
+def test_get_run_summary_detail_lines_exposes_postmortem_artifacts_for_risk_management() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "risk_management",
+            "run_summary": {
+                "postmortem_artifacts": {
+                    "top_rejection_reason_codes": [
+                        {"code": "constraint_max_positions", "count": 3},
+                        {"code": "correlation_filter", "count": 1},
+                    ],
+                    "sector_breakdown": [
+                        {"sector": "Tech", "retained": 2, "target_weight": 0.22},
+                        {"sector": "Finance", "retained": 1, "target_weight": 0.10},
+                    ],
+                }
+            },
+        }
+    )
+
+    assert any(line == "Post-mortem risk — top rejets : constraint_max_positions=3, correlation_filter=1." for line in lines)
+    assert any("Post-mortem risk — secteurs : Tech: retenus=2, poids=22.00%" in line for line in lines)
+
+
 def test_get_run_summary_detail_lines_exposes_selector_telemetry_for_execution() -> None:
     lines = get_run_summary_detail_lines(
         {

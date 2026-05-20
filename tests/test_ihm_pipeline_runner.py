@@ -178,6 +178,20 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     assert "--as-of" in ca_apply_command
 
 
+def test_build_pipeline_command_propagates_risk_shadow_compare_options() -> None:
+    options = PipelineLaunchOptions(
+        trade_date="2026-04-19",
+        risk_enable_shadow_compare=True,
+        risk_shadow_compare_run_id="risk-ref-001",
+    )
+
+    risk_command = build_pipeline_command("risk_management", options)
+
+    assert "--enable-shadow-compare" in risk_command
+    assert "--shadow-compare-run-id" in risk_command
+    assert risk_command[risk_command.index("--shadow-compare-run-id") + 1] == "risk-ref-001"
+
+
 
 def test_build_pipeline_command_omits_account_for_global_steps() -> None:
     options = PipelineLaunchOptions(account_id="test2", trade_date="2026-04-19")

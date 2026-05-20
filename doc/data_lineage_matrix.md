@@ -72,7 +72,7 @@
 | execution_kill_switch_runs *(Phase 5.2.c)* | execution_engine cancel-all | watcher, ihm | computed | — | manual | P1 |
 | execution_locks | watcher / executor | mutual exclusion | computed | — | on-event | P1 |
 | watcher_heartbeats *(Phase 1.2)* | watcher.protection_watcher | ihm, alerting | computed | — | continuous | P1 |
-| shadow_drift_runs *(Phase 7.7)* | risk_management.shadow_compare | ops review | computed | — | manual | P3 |
+| shadow_drift_runs *(Phase 7.7 / P3)* | risk_management.shadow_compare | ops review, ihm | computed | — | on-demand | P3 |
 | broker_positions_snapshots *(Sprint S3)* | execution_engine.snapshots | risk_management (PnL J) | broker | Alpaca | daily | P1 |
 
 ## 5. Corporate actions
@@ -88,7 +88,7 @@
 | Table | Producteur (CLI / module) | Consommateurs | Source upstream | Provider actif | Fréquence | Criticité |
 |---|---|---|---|---|---|---|
 | backtest_runs | backtesting.cli | ihm | computed | — | manual | P3 |
-| weights_calibration_runs *(Phase 7.2)* | backtesting.weights_calibration | risk_management (poids cible) | computed | — | weekly | P3 |
+| weights_calibration_runs *(Phase 7.2 / P3)* | backtesting.weights_calibration | risk_management (conviction/Kelly live), ops | computed | — | on-demand / quarterly | P3 |
 | cleaning_audit_runs | dataIntegrityEngine.data_sanitizer_daily | ops, ihm | computed (cross-check Stooq best-effort) | Stooq | daily | P2 |
 | cleaning_audit_quotes_runs *(Phase 3.1)* | sync_latest_quotes | ops | computed | — | daily | P2 |
 | cleaning_audit_earnings_runs *(Phase 3.1)* | sync_earnings_calendar | ops | computed | — | daily | P3 |

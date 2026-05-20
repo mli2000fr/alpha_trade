@@ -526,6 +526,9 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
         preflight_payload = summary.get("preflight_data_quality") if isinstance(summary.get("preflight_data_quality"), Mapping) else {}
         rejection_reason_code_counts = summary.get("rejection_reason_code_counts")
         reduction_reason_code_counts = summary.get("reduction_reason_code_counts")
+        empirical_calibration_payload = summary.get("empirical_risk_calibration") if isinstance(summary.get("empirical_risk_calibration"), Mapping) else {}
+        shadow_compare_payload = summary.get("shadow_compare") if isinstance(summary.get("shadow_compare"), Mapping) else {}
+        postmortem_payload = summary.get("postmortem_artifacts") if isinstance(summary.get("postmortem_artifacts"), Mapping) else {}
         if gate_enabled is False:
             lines.append(
                 f"Gate ML désactivé : action={gate_action}, drift={drift_status}, raison={gate_reason}."
@@ -589,6 +592,72 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
         )
         if reduction_codes_line:
             lines.append(reduction_codes_line)
+        if empirical_calibration_payload:
+            calibration_run_id = str(empirical_calibration_payload.get("run_id") or "—").strip()
+            metric_name = str(empirical_calibration_payload.get("metric_name") or "unknown").strip()
+            metric_value = _to_float(empirical_calibration_payload.get("metric_value"))
+            best_weights = empirical_calibration_payload.get("best_weights")
+            line = f"Calibration empirique risk appliquée : run={calibration_run_id}, métrique={metric_name}"
+            if metric_value is not None:
+                line += f", valeur={metric_value:.4f}"
+            if isinstance(best_weights, Mapping):
+                score_weight = _to_float(best_weights.get("score_weight"))
+                prediction_weight = _to_float(best_weights.get("prediction_weight"))
+                kelly_fraction_multiplier = _to_float(best_weights.get("kelly_fraction_multiplier"))
+                if score_weight is not None and prediction_weight is not None:
+                    line += f", conviction={score_weight:.2f}/{prediction_weight:.2f}"
+                if kelly_fraction_multiplier is not None:
+                    line += f", kelly_mult={kelly_fraction_multiplier:.2f}"
+            lines.append(line + ".")
+        if shadow_compare_payload:
+            shadow_status = str(shadow_compare_payload.get("status") or "").strip()
+            if shadow_status == "compared":
+                reference_run_id = str(shadow_compare_payload.get("reference_run_id") or "—").strip()
+                qty_drift = _to_float(shadow_compare_payload.get("avg_qty_drift_pct"))
+                price_drift = _to_float(shadow_compare_payload.get("avg_price_drift_pct"))
+                conviction_drift = _to_float(shadow_compare_payload.get("avg_conviction_drift"))
+                line = f"Shadow compare risk : référence={reference_run_id}"
+                if qty_drift is not None:
+                    line += f", qty={qty_drift:.4f}"
+                if price_drift is not None:
+                    line += f", prix={price_drift:.4f}"
+                if conviction_drift is not None:
+                    line += f", conviction={conviction_drift:.4f}"
+                lines.append(line + ".")
+            elif shadow_status == "missing_reference":
+                lines.append("Shadow compare risk : aucun run de référence disponible.")
+            elif shadow_status == "unavailable":
+                lines.append(
+                    f"Shadow compare risk indisponible : {str(shadow_compare_payload.get('error') or 'erreur inconnue').strip()}."
+                )
+        if postmortem_payload:
+            top_rejections = postmortem_payload.get("top_rejection_reason_codes")
+            if isinstance(top_rejections, SequenceABC) and not isinstance(top_rejections, (str, bytes)):
+                formatted_rejections: list[str] = []
+                for item in top_rejections[:3]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    code = str(item.get("code") or "").strip()
+                    count = _to_int(item.get("count"))
+                    if code and count > 0:
+                        formatted_rejections.append(f"{code}={count}")
+                if formatted_rejections:
+                    lines.append("Post-mortem risk — top rejets : " + ", ".join(formatted_rejections) + ".")
+            sector_breakdown = postmortem_payload.get("sector_breakdown")
+            if isinstance(sector_breakdown, SequenceABC) and not isinstance(sector_breakdown, (str, bytes)):
+                sector_parts: list[str] = []
+                for item in sector_breakdown[:3]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    sector = str(item.get("sector") or "UNKNOWN").strip() or "UNKNOWN"
+                    retained = _to_int(item.get("retained"))
+                    target_weight = _to_float(item.get("target_weight"))
+                    piece = f"{sector}: retenus={retained}"
+                    if target_weight is not None:
+                        piece += f", poids={target_weight:.2%}"
+                    sector_parts.append(piece)
+                if sector_parts:
+                    lines.append("Post-mortem risk — secteurs : " + " | ".join(sector_parts) + ".")
 
     if step_key == "ml_train":
         training_start_date = str(summary.get("training_start_date") or "").strip()

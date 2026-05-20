@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 from collections import Counter
+from dataclasses import replace
 from datetime import date, datetime
 
 import pandas as pd
@@ -235,6 +236,331 @@ def _build_preflight_data_quality(
     }
 
 
+def _entries_to_shadow_compare_frame(entries: list[PortfolioEntry]) -> pd.DataFrame:
+    rows = [
+        {
+            "symbol": entry.symbol,
+            "qty": int(entry.approved_shares),
+            "price": float(entry.entry_price),
+            "conviction": float(entry.conviction_score or 0.0),
+        }
+        for entry in entries
+        if int(entry.approved_shares or 0) > 0
+    ]
+    return pd.DataFrame(rows, columns=["symbol", "qty", "price", "conviction"])
+
+
+def _risk_decisions_to_shadow_compare_frame(decisions: pd.DataFrame) -> pd.DataFrame:
+    if decisions is None or decisions.empty:
+        return pd.DataFrame(columns=["symbol", "qty", "price", "conviction"])
+    work = decisions.copy()
+    approved = pd.to_numeric(work.get("approved_shares"), errors="coerce").fillna(0)
+    work = work.loc[approved > 0].copy()
+    if work.empty:
+        return pd.DataFrame(columns=["symbol", "qty", "price", "conviction"])
+    return pd.DataFrame(
+        {
+            "symbol": work["symbol"].astype(str).str.strip().str.upper(),
+            "qty": pd.to_numeric(work.get("approved_shares"), errors="coerce").fillna(0).astype(int),
+            "price": pd.to_numeric(work.get("entry_price"), errors="coerce").fillna(0.0).astype(float),
+            "conviction": pd.to_numeric(work.get("conviction_score"), errors="coerce").fillna(0.0).astype(float),
+        }
+    )
+
+
+def _build_conviction_weights_calibration(
+    candidates: list[object],
+    retained_entries: list[PortfolioEntry],
+    empirical_risk_calibration: dict[str, object] | None = None,
+) -> dict[str, object]:
+    calibration_rows = [
+        (
+            str(getattr(item, "symbol", "") or "").strip().upper(),
+            str(getattr(item, "calibration_source", "") or "").strip(),
+            str(getattr(item, "calibration_run_id", "") or "").strip(),
+        )
+        for item in [*retained_entries, *candidates]
+        if str(getattr(item, "calibration_source", "") or "").strip()
+        or str(getattr(item, "calibration_run_id", "") or "").strip()
+    ]
+    calibrated_symbols = {symbol for symbol, _, _ in calibration_rows if symbol}
+    sources = sorted({source for _, source, _ in calibration_rows if source})
+    run_ids = sorted({run_id for _, _, run_id in calibration_rows if run_id})
+    if not calibration_rows:
+        payload = {
+            "source": "default",
+            "calibration_run_id": None,
+            "distinct_sources": [],
+            "distinct_calibration_run_ids": [],
+            "applied_candidates": 0,
+            "retained_candidates": 0,
+        }
+        if empirical_risk_calibration:
+            payload.update(
+                {
+                    "source": str(empirical_risk_calibration.get("source") or "weights_calibration_runs"),
+                    "calibration_run_id": empirical_risk_calibration.get("run_id"),
+                    "runtime_applied": True,
+                    "runtime_metric_name": empirical_risk_calibration.get("metric_name"),
+                    "runtime_metric_value": empirical_risk_calibration.get("metric_value"),
+                    "runtime_window_start": (
+                        empirical_risk_calibration["window_start"].isoformat()
+                        if empirical_risk_calibration.get("window_start") is not None
+                        else None
+                    ),
+                    "runtime_window_end": (
+                        empirical_risk_calibration["window_end"].isoformat()
+                        if empirical_risk_calibration.get("window_end") is not None
+                        else None
+                    ),
+                    "runtime_best_weights": empirical_risk_calibration.get("best_weights") or {},
+                }
+            )
+        return payload
+    source = "default"
+    if sources:
+        source = sources[0] if len(sources) == 1 else "mixed"
+    elif run_ids:
+        source = "run_id_only"
+    payload = {
+        "source": source,
+        "calibration_run_id": run_ids[0] if len(run_ids) == 1 else None,
+        "distinct_sources": sources,
+        "distinct_calibration_run_ids": run_ids,
+        "applied_candidates": len(calibrated_symbols),
+        "retained_candidates": sum(
+            1
+            for entry in retained_entries
+            if str(entry.calibration_source or "").strip() or str(entry.calibration_run_id or "").strip()
+        ),
+    }
+    if empirical_risk_calibration:
+        payload.update(
+            {
+                "runtime_applied": True,
+                "runtime_source": empirical_risk_calibration.get("source"),
+                "runtime_calibration_run_id": empirical_risk_calibration.get("run_id"),
+                "runtime_metric_name": empirical_risk_calibration.get("metric_name"),
+                "runtime_metric_value": empirical_risk_calibration.get("metric_value"),
+                "runtime_window_start": (
+                    empirical_risk_calibration["window_start"].isoformat()
+                    if empirical_risk_calibration.get("window_start") is not None
+                    else None
+                ),
+                "runtime_window_end": (
+                    empirical_risk_calibration["window_end"].isoformat()
+                    if empirical_risk_calibration.get("window_end") is not None
+                    else None
+                ),
+                "runtime_best_weights": empirical_risk_calibration.get("best_weights") or {},
+            }
+        )
+    return payload
+
+
+def _load_empirical_risk_calibration(
+    repo: RiskRepository,
+    *,
+    trade_date: date,
+    run_id: str | None,
+    disabled: bool,
+) -> dict[str, object] | None:
+    if disabled:
+        return None
+    loader = getattr(repo, "load_latest_empirical_risk_calibration", None)
+    if not callable(loader):
+        return None
+    try:
+        payload = loader(trade_date, run_id=run_id)
+    except Exception:
+        LOGGER.warning("Calibration empirique risk indisponible pour trade_date=%s", trade_date, exc_info=True)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _apply_empirical_risk_calibration(
+    config: RiskConfig,
+    calibration: dict[str, object] | None,
+) -> RiskConfig:
+    if not calibration:
+        return config
+    best_weights = calibration.get("best_weights")
+    if not isinstance(best_weights, dict):
+        return config
+    overrides: dict[str, float] = {}
+    if {"score_weight", "prediction_weight"} <= set(best_weights):
+        score_weight = float(best_weights["score_weight"])
+        prediction_weight = float(best_weights["prediction_weight"])
+        if abs((score_weight + prediction_weight) - 1.0) <= 1e-6:
+            overrides["score_weight"] = score_weight
+            overrides["prediction_weight"] = prediction_weight
+    for field_name in ("kelly_fraction_multiplier", "min_effective_probability", "assumed_payoff_ratio"):
+        if field_name in best_weights:
+            overrides[field_name] = float(best_weights[field_name])
+    if not overrides:
+        return config
+    LOGGER.info(
+        "Calibration empirique risk appliquée | run_id=%s metric=%s value=%s overrides=%s",
+        calibration.get("run_id"),
+        calibration.get("metric_name"),
+        calibration.get("metric_value"),
+        overrides,
+    )
+    return replace(config, **overrides)
+
+
+def _top_count_items(counts: dict[str, int], *, limit: int = 5) -> list[dict[str, object]]:
+    return [
+        {"code": code, "count": int(count)}
+        for code, count in sorted(counts.items(), key=lambda item: (-int(item[1]), item[0]))[:limit]
+        if int(count) > 0
+    ]
+
+
+def _build_postmortem_artifacts(
+    *,
+    candidates: list[object],
+    entries: list[PortfolioEntry],
+    retained_entries: list[PortfolioEntry],
+    rejection_reason_code_counts: dict[str, int],
+    reduction_reason_code_counts: dict[str, int],
+    prices: dict[str, object],
+    predictions: dict[str, object],
+    win_rates: dict[str, object],
+    return_matrix: pd.DataFrame,
+    regime_snapshot_payload: dict[str, object] | None,
+    config: RiskConfig,
+    regime_allow_new_entries: bool,
+) -> dict[str, object]:
+    sector_rollup: dict[str, dict[str, object]] = {}
+    for candidate in candidates:
+        sector = str(getattr(candidate, "sector", "UNKNOWN") or "UNKNOWN")
+        bucket = sector_rollup.setdefault(
+            sector,
+            {"sector": sector, "candidates": 0, "retained": 0, "rejected": 0, "target_notional": 0.0, "target_weight": 0.0},
+        )
+        bucket["candidates"] = int(bucket["candidates"]) + 1
+    for entry in entries:
+        sector = str(entry.sector or "UNKNOWN")
+        bucket = sector_rollup.setdefault(
+            sector,
+            {"sector": sector, "candidates": 0, "retained": 0, "rejected": 0, "target_notional": 0.0, "target_weight": 0.0},
+        )
+        if int(entry.approved_shares or 0) > 0:
+            bucket["retained"] = int(bucket["retained"]) + 1
+            bucket["target_notional"] = round(float(bucket["target_notional"]) + float(entry.target_notional or 0.0), 2)
+            bucket["target_weight"] = round(float(bucket["target_weight"]) + float(entry.target_weight or 0.0), 4)
+        else:
+            bucket["rejected"] = int(bucket["rejected"]) + 1
+    sector_breakdown = sorted(
+        sector_rollup.values(),
+        key=lambda item: (-float(item["target_weight"]), -int(item["retained"]), str(item["sector"])),
+    )
+    matrix_empty = bool(getattr(return_matrix, "empty", True))
+    return {
+        "top_rejection_reason_codes": _top_count_items(rejection_reason_code_counts),
+        "top_reduction_reason_codes": _top_count_items(reduction_reason_code_counts),
+        "sector_breakdown": sector_breakdown,
+        "external_source_coverage": {
+            "candidate_count": len(candidates),
+            "price_symbols": len(prices),
+            "prediction_symbols": len(predictions),
+            "win_rate_symbols": len(win_rates),
+            "correlation_matrix_rows": int(return_matrix.shape[0]) if not matrix_empty else 0,
+            "correlation_matrix_columns": int(return_matrix.shape[1]) if not matrix_empty else 0,
+            "retained_symbols": len(retained_entries),
+        },
+        "regime_summary": {
+            "applied": regime_snapshot_payload is not None,
+            "mode": regime_snapshot_payload.get("mode") if regime_snapshot_payload else None,
+            "allow_new_entries": regime_allow_new_entries,
+            "reasons": list(regime_snapshot_payload.get("reasons") or []) if regime_snapshot_payload else [],
+            "risk_multiplier": float(config.risk_multiplier),
+            "effective_max_positions": int(config.effective_max_positions),
+            "effective_min_notional": float(config.effective_min_notional),
+            "max_tickers_per_sector": int(config.max_tickers_per_sector) if config.max_tickers_per_sector is not None else None,
+        },
+    }
+
+
+def _run_shadow_compare(
+    *,
+    enabled: bool,
+    reference_run_id: str | None,
+    trade_date: date,
+    run_id: str,
+    account_id: str | None,
+    entries: list[PortfolioEntry],
+    repo: RiskRepository,
+    dry_run: bool,
+) -> dict[str, object]:
+    if not enabled:
+        return {"enabled": False, "status": "disabled", "reference_run_id": None, "report": None}
+
+    try:
+        from risk_management.shadow_compare import compare_runs, persist_shadow_run
+
+        reference_source = "explicit_run_id" if reference_run_id else "latest_trade_date"
+        if reference_run_id:
+            reference_decisions = repo.load_risk_decisions_for_run_id(reference_run_id, account_id=account_id)
+        else:
+            reference_decisions = repo.load_risk_decisions_for_date(trade_date, account_id=account_id)
+            if not reference_decisions.empty and "run_id" in reference_decisions.columns:
+                resolved_run_id = str(reference_decisions.iloc[0].get("run_id") or "").strip()
+                reference_run_id = resolved_run_id or None
+
+        if reference_decisions.empty or reference_run_id is None:
+            return {
+                "enabled": True,
+                "status": "missing_reference",
+                "reference_source": reference_source,
+                "reference_run_id": reference_run_id,
+                "report": None,
+            }
+
+        live_orders = _entries_to_shadow_compare_frame(entries)
+        reference_orders = _risk_decisions_to_shadow_compare_frame(reference_decisions)
+        report = compare_runs(
+            live_orders,
+            reference_orders,
+            live_run_id=run_id,
+            simulated_run_id=reference_run_id,
+        )
+        report_payload = report.to_payload()
+        persisted_report_id = None
+        persist_error = None
+        if not dry_run:
+            try:
+                persisted_report_id = persist_shadow_run(report, engine=repo.engine)
+            except Exception as exc:  # pragma: no cover - best effort persistance
+                persist_error = str(exc)
+                LOGGER.warning("Shadow compare non persisté pour run_id=%s", run_id, exc_info=True)
+        return {
+            "enabled": True,
+            "status": "compared",
+            "reference_source": reference_source,
+            "reference_run_id": reference_run_id,
+            "persisted_report_id": persisted_report_id,
+            "persist_error": persist_error,
+            "symbols_only_in_live_count": len(report.symbols_only_in_live),
+            "symbols_only_in_reference_count": len(report.symbols_only_in_sim),
+            "avg_qty_drift_pct": report.avg_qty_drift_pct,
+            "avg_price_drift_pct": report.avg_price_drift_pct,
+            "avg_conviction_drift": report.avg_conviction_drift,
+            "report": report_payload,
+        }
+    except Exception as exc:  # pragma: no cover - best effort shadow compare
+        LOGGER.warning("Shadow compare indisponible pour run_id=%s", run_id, exc_info=True)
+        return {
+            "enabled": True,
+            "status": "unavailable",
+            "reference_source": "explicit_run_id" if reference_run_id else "latest_trade_date",
+            "reference_run_id": reference_run_id,
+            "error": str(exc),
+            "report": None,
+        }
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Module de gestion de risque Alpha Trade")
     p.add_argument("--account-equity", type=float, default=100_000.0)
@@ -268,6 +594,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Override du seuil perte journalière circuit breaker (ex: 0.03 = 3%%). Défaut config.yaml.",
+    )
+    p.add_argument(
+        "--enable-shadow-compare",
+        action="store_true",
+        default=False,
+        help="Compare le run courant avec le dernier run risk persiste du même jour ou avec --shadow-compare-run-id.",
+    )
+    p.add_argument(
+        "--shadow-compare-run-id",
+        type=str,
+        default=None,
+        help="Run de référence explicite pour le shadow compare (sinon dernier run du trade_date).",
+    )
+    p.add_argument(
+        "--disable-empirical-calibration",
+        action="store_true",
+        default=False,
+        help="Désactive l'application best-effort du dernier run weights_calibration_runs de scope risk.",
+    )
+    p.add_argument(
+        "--empirical-calibration-run-id",
+        type=str,
+        default=None,
+        help="Run de calibration risk explicite à appliquer (sinon dernier window_end <= trade_date).",
     )
     return p
 
@@ -420,6 +770,13 @@ def main(args: list[str] | None = None) -> None:
         from risk_management.regime_apply import apply_snapshot
 
         config = apply_snapshot(config, regime_snapshot)
+    empirical_risk_calibration = _load_empirical_risk_calibration(
+        repo,
+        trade_date=trade_date,
+        run_id=str(args.empirical_calibration_run_id or "").strip() or None,
+        disabled=bool(args.disable_empirical_calibration),
+    )
+    config = _apply_empirical_risk_calibration(config, empirical_risk_calibration)
     regime_allow_new_entries = bool(
         getattr(regime_snapshot, "allow_new_entries", True) if regime_snapshot is not None else True
     )
@@ -584,6 +941,16 @@ def main(args: list[str] | None = None) -> None:
     )
 
     run_id = build_run_id()
+    shadow_compare_summary = _run_shadow_compare(
+        enabled=bool(args.enable_shadow_compare),
+        reference_run_id=str(args.shadow_compare_run_id or "").strip() or None,
+        trade_date=trade_date,
+        run_id=run_id,
+        account_id=effective_account_id,
+        entries=entries,
+        repo=repo,
+        dry_run=bool(config.dry_run),
+    )
     _print_summary(entries, run_id, trade_date)
 
     n_dec = 0
@@ -612,6 +979,11 @@ def main(args: list[str] | None = None) -> None:
     reduced_entries = [entry for entry in entries if entry.approved_shares > 0 and str(entry.decision).upper() == "REDUCED"]
     rejected_entries = [entry for entry in entries if entry.approved_shares == 0]
     retained_entries = [entry for entry in entries if entry.approved_shares > 0]
+    conviction_weights_calibration = _build_conviction_weights_calibration(
+        candidates,
+        retained_entries,
+        empirical_risk_calibration=empirical_risk_calibration,
+    )
     total_target_notional = sum(entry.target_notional for entry in retained_entries)
     gross_exposure_pct = (total_target_notional / effective_equity) if effective_equity > 0 else 0.0
     max_target_weight = max((entry.target_weight for entry in retained_entries), default=0.0)
@@ -661,6 +1033,20 @@ def main(args: list[str] | None = None) -> None:
     rejected_for_notional = int(sizing_method_counts.get("rejected_notional", 0)) + rejected_for_notional_below_enforced
     rejected_for_zero_shares = int(sizing_method_counts.get("rejected_zero_shares", 0))
     rejected_for_invalid_price = int(sizing_method_counts.get("rejected_invalid_price", 0))
+    postmortem_artifacts = _build_postmortem_artifacts(
+        candidates=candidates,
+        entries=entries,
+        retained_entries=retained_entries,
+        rejection_reason_code_counts=rejection_reason_code_counts,
+        reduction_reason_code_counts=reduction_reason_code_counts,
+        prices=prices,
+        predictions=predictions,
+        win_rates=win_rates,
+        return_matrix=return_matrix,
+        regime_snapshot_payload=regime_snapshot_payload,
+        config=config,
+        regime_allow_new_entries=regime_allow_new_entries,
+    )
     finished_at = datetime.now()
     summary = {
         "run_id": run_id,
@@ -734,11 +1120,11 @@ def main(args: list[str] | None = None) -> None:
             "prediction_weight": float(config.prediction_weight),
             "source": "core.conviction",
         },
-        # Phase 5.1.c — placeholder calibration (cf. backlog Phase 7)
-        "conviction_weights_calibration": {
-            "source": "default",
-            "calibration_run_id": None,
-        },
+        # Phase 5.1.c / P3 — traçabilité calibration upstream effectivement transportée.
+        "conviction_weights_calibration": conviction_weights_calibration,
+        "empirical_risk_calibration": empirical_risk_calibration,
+        "shadow_compare": shadow_compare_summary,
+        "postmortem_artifacts": postmortem_artifacts,
         **ml_gate_state.to_summary(),
     }
     summary = attach_schema_version(summary, version=1)

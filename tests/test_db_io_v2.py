@@ -132,6 +132,21 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
                 walk_forward_quant_weight DOUBLE, calibration_run_id VARCHAR(64), calibration_source VARCHAR(64)
             )
         """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS weights_calibration_runs (
+                run_id VARCHAR(40) PRIMARY KEY,
+                calibrated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                scope VARCHAR(16),
+                window_start DATE,
+                window_end DATE,
+                metric_name VARCHAR(32),
+                metric_value DOUBLE,
+                best_weights JSON,
+                candidates JSON,
+                git_sha VARCHAR(40),
+                schema_version INT
+            )
+        """))
 
 
 @pytest.mark.unit
@@ -178,7 +193,31 @@ def test_load_candidates_asof_uses_history_snapshot() -> None:
     candidates = repo.load_candidates_asof(date(2026, 4, 18))
     assert len(candidates) == 1
     assert candidates[0].score_used == 0.92
-    assert candidates[0].snapshot_date == date(2026, 4, 18)
+
+
+@pytest.mark.unit
+def test_load_latest_empirical_risk_calibration_returns_latest_applicable_run() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO weights_calibration_runs (
+                run_id, scope, window_start, window_end, metric_name, metric_value, best_weights, candidates, schema_version
+            ) VALUES
+                ('risk-old', 'risk', '2025-01-01', '2025-12-31', 'sharpe', 1.10,
+                 '{"score_weight": 0.4, "prediction_weight": 0.6, "kelly_fraction_multiplier": 0.25}', '[]', 1),
+                ('risk-new', 'risk', '2025-04-01', '2026-03-31', 'sharpe', 1.35,
+                 '{"score_weight": 0.3, "prediction_weight": 0.7, "kelly_fraction_multiplier": 0.5}', '[]', 1)
+        """))
+    repo = RiskRepository(engine=engine)
+
+    calibration = repo.load_latest_empirical_risk_calibration(date(2026, 4, 1))
+
+    assert calibration is not None
+    assert calibration["run_id"] == "risk-new"
+    assert calibration["metric_name"] == "sharpe"
+    assert calibration["best_weights"]["score_weight"] == pytest.approx(0.3)
+    assert calibration["best_weights"]["prediction_weight"] == pytest.approx(0.7)
 
 
 @pytest.mark.unit

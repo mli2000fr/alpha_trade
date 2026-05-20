@@ -13,6 +13,7 @@ import pytest
 from backtesting.weights_calibration import (
     CalibrationResult,
     calibrate_conviction,
+    calibrate_conviction_kelly,
     calibrate_sentiment,
     metric_hit_rate,
     metric_information_coefficient,
@@ -81,6 +82,61 @@ def test_calibrate_conviction_validates_inputs() -> None:
         )
 
 
+def test_calibrate_conviction_kelly_returns_valid_result() -> None:
+    rng = np.random.default_rng(11)
+    n_days = 20
+    names_per_day = 6
+    dates = [date(2025, 1, 1 + idx // names_per_day) for idx in range(n_days * names_per_day)]
+    quant = rng.uniform(0.2, 0.9, n_days * names_per_day)
+    proba = rng.uniform(0.45, 0.8, n_days * names_per_day)
+    hist_wr = rng.uniform(0.48, 0.75, n_days * names_per_day)
+    forward_returns = ((proba - 0.5) * 0.08) + rng.normal(0.0, 0.01, n_days * names_per_day)
+
+    result = calibrate_conviction_kelly(
+        snapshot_dates=dates,
+        quant_scores=quant,
+        predicted_proba=proba,
+        historical_win_rate=hist_wr,
+        forward_returns=forward_returns,
+        metric_name="sharpe",
+        conviction_grid_step=0.2,
+        kelly_fraction_multipliers=(0.10, 0.25),
+        min_effective_probabilities=(0.50, 0.55),
+        assumed_payoff_ratios=(1.0, 1.5),
+        top_n=3,
+        window=(date(2025, 1, 1), date(2025, 1, 20)),
+    )
+
+    assert isinstance(result, CalibrationResult)
+    assert result.scope == "risk"
+    assert result.metric_name == "sharpe"
+    assert result.best_weights["score_weight"] + result.best_weights["prediction_weight"] == pytest.approx(1.0)
+    assert result.best_weights["kelly_fraction_multiplier"] in {0.10, 0.25}
+    assert result.best_weights["min_effective_probability"] in {0.50, 0.55}
+    assert result.best_weights["assumed_payoff_ratio"] in {1.0, 1.5}
+    assert len(result.candidates) > 0
+
+
+def test_calibrate_conviction_kelly_validates_inputs() -> None:
+    with pytest.raises(ValueError, match="longueurs incohérentes"):
+        calibrate_conviction_kelly(
+            snapshot_dates=[date(2025, 1, 1)],
+            quant_scores=[0.1],
+            predicted_proba=[0.6, 0.7],
+            historical_win_rate=[0.55],
+            forward_returns=[0.01],
+        )
+    with pytest.raises(ValueError, match="Métrique risque inconnue"):
+        calibrate_conviction_kelly(
+            snapshot_dates=[date(2025, 1, 1)] * 12,
+            quant_scores=[0.5] * 12,
+            predicted_proba=[0.6] * 12,
+            historical_win_rate=[0.55] * 12,
+            forward_returns=[0.01] * 12,
+            metric_name="unknown",
+        )
+
+
 def test_calibrate_sentiment_grid_normalisation() -> None:
     rng = np.random.default_rng(3)
     quant = rng.uniform(0, 1, 80)
@@ -107,7 +163,7 @@ def test_calibrate_sentiment_grid_normalisation() -> None:
 
 def test_validate_walk_forward_weights_clips_above_max() -> None:
     """Poids au-dessus de WEIGHT_MAX doit être clippé avec warning."""
-    from backtesting.walk_forward import WalkForwardWeights, validate_walk_forward_weights, WEIGHT_MAX
+    from backtesting.walk_forward import WEIGHT_MAX, WalkForwardWeights, validate_walk_forward_weights
     w = WalkForwardWeights(sentiment_weight=0.20, macro_weight=0.10, quant_weight=0.80)
     validated = validate_walk_forward_weights(w, strict=False)
     assert validated.quant_weight == pytest.approx(WEIGHT_MAX)
@@ -116,7 +172,7 @@ def test_validate_walk_forward_weights_clips_above_max() -> None:
 
 def test_validate_walk_forward_weights_clips_below_min() -> None:
     """Poids en dessous de WEIGHT_MIN doit être clippé."""
-    from backtesting.walk_forward import WalkForwardWeights, validate_walk_forward_weights, WEIGHT_MIN
+    from backtesting.walk_forward import WEIGHT_MIN, WalkForwardWeights, validate_walk_forward_weights
     w = WalkForwardWeights(sentiment_weight=0.01, macro_weight=0.10, quant_weight=0.40)
     validated = validate_walk_forward_weights(w, strict=False)
     assert validated.sentiment_weight == pytest.approx(WEIGHT_MIN)
@@ -157,7 +213,7 @@ def test_validate_walk_forward_weights_preserves_metadata() -> None:
 
 def test_walk_forward_risk_params_returns_best_combo_sharpe() -> None:
     """walk_forward_risk_params doit retourner le meilleur combo sur un dataset test."""
-    from backtesting.walk_forward import walk_forward_risk_params, RiskParamResult
+    from backtesting.walk_forward import RiskParamResult, walk_forward_risk_params
 
     rng = np.random.default_rng(42)
     returns = rng.normal(0.001, 0.02, 60)

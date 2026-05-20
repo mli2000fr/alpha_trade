@@ -604,6 +604,35 @@ def get_portfolio_targets(run_id: str | None = None) -> pd.DataFrame:
     """)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_shadow_drift_runs(live_run_id: str | None = None, limit: int = 20) -> pd.DataFrame:
+    params: dict[str, object] | None = None
+    if live_run_id:
+        params = {"live_run_id": live_run_id}
+        return safe_query(
+            f"""
+            SELECT run_id, compared_at, live_run_id, simulated_run_id,
+                   avg_qty_drift_pct, avg_price_drift_pct, avg_conviction_drift,
+                   symbols_only_in_live, symbols_only_in_sim, payload, schema_version
+            FROM shadow_drift_runs
+            WHERE live_run_id = :live_run_id
+            ORDER BY compared_at DESC, run_id DESC
+            LIMIT {limit}
+            """,
+            params,
+        )
+    return safe_query(
+        f"""
+        SELECT run_id, compared_at, live_run_id, simulated_run_id,
+               avg_qty_drift_pct, avg_price_drift_pct, avg_conviction_drift,
+               symbols_only_in_live, symbols_only_in_sim, payload, schema_version
+        FROM shadow_drift_runs
+        ORDER BY compared_at DESC, run_id DESC
+        LIMIT {limit}
+        """
+    )
+
+
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------

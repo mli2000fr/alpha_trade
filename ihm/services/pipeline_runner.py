@@ -8,10 +8,11 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.signal_aggregator import SentimentBoostConfig
@@ -33,7 +34,7 @@ def _resolve_bars_provider_for_ihm() -> str:
         cfg = load_config() or {}
     except Exception:
         return "alpaca"
-    return str(((cfg.get("market_data") or {}).get("bars_provider", "alpaca"))).lower()
+    return str((cfg.get("market_data") or {}).get("bars_provider", "alpaca")).lower()
 DEFAULT_SCREENER_CHUNK_SIZE = DEFAULT_SCREENER_CONFIG.chunk_size
 DEFAULT_SCREENER_BENCHMARK_SYMBOL = DEFAULT_SCREENER_CONFIG.benchmark_symbol
 DEFAULT_SCREENER_LIQUIDITY_THRESHOLD_USD = DEFAULT_SCREENER_CONFIG.liquidity_threshold_usd
@@ -335,6 +336,8 @@ class PipelineLaunchOptions:
     risk_enable_kelly: bool = DEFAULT_RISK_ENABLE_KELLY
     risk_payoff_ratio: float = DEFAULT_RISK_PAYOFF_RATIO
     risk_kelly_fraction_multiplier: float = DEFAULT_RISK_KELLY_FRACTION_MULTIPLIER
+    risk_enable_shadow_compare: bool = False
+    risk_shadow_compare_run_id: str | None = None
     risk_dry_run: bool = False
     risk_log_level: str = DEFAULT_RISK_LOG_LEVEL
     news_import_start_date: str | None = None
@@ -2063,6 +2066,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         ]
         if options.risk_enable_kelly:
             command.append("--enable-kelly-sizing")
+        if options.risk_enable_shadow_compare:
+            command.append("--enable-shadow-compare")
+        if options.risk_shadow_compare_run_id:
+            command.extend(["--shadow-compare-run-id", str(options.risk_shadow_compare_run_id)])
         if options.risk_dry_run:
             command.append("--dry-run")
         if trade_date:

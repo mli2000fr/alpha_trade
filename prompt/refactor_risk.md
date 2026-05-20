@@ -2,6 +2,13 @@
 
 _Date : 2026-05-20_
 
+> **Mise à jour d'avancement — 2026-05-20 (après implémentation P2/P3 ciblée)**
+>
+> - **P2 livré sur le périmètre `risk_management`** : `ruff check risk_management` OK, doc réalignée, redondances builder réduites, standardisation `SizingMethod` / `DecisionReasonCode` effectivement utilisée.
+> - **P0 / P1 revérifiés** : les items ciblés sont désormais effectivement câblés et couverts par tests ciblés (régime live, circuit breaker notify-once, Kelly effectif, agrégation notional, equity breakdown PIT, motifs structurés, preflight data-quality, métadonnées summary).
+> - **P3 désormais livré sur un premier niveau opérationnel** : shadow compare pilotable depuis le runtime/IHM, artefacts de post-mortem enrichis exposés dans le `run_summary`, et première boucle empirique de calibration conviction/Kelly branchée via `weights_calibration_runs`.
+> - **Reste ouvert en P3** : montée en gamme de la calibration empirique (objectifs business plus riches, gouvernance/monitoring, optimisation plus fine que la première boucle actuelle).
+
 ## 1. Périmètre audité
 
 Fichiers principaux relus :
@@ -436,32 +443,34 @@ Le module expose déjà un placeholder de calibration, mais la logique reste enc
 ## 8. Plan d’amélioration priorisé
 
 ## P0 — à traiter en premier
-- [ ] Câbler `service.market` + `risk_management/regime_apply.py` dans `risk_management/cli.py`.
-- [ ] Rendre `CircuitBreaker` idempotent côté alerting (une notification max par run/instance).
-- [ ] Harmoniser `KellySizer` avec `RiskConfig.effective_*` et `risk_multiplier`.
-- [ ] Corriger l’agrégation `rejected_for_notional` pour inclure les rejets “below_enforced”.
-- [ ] Corriger la logique PIT de `load_account_equity_breakdown()`.
+- [x] Câbler `service.market` + `risk_management/regime_apply.py` dans `risk_management/cli.py`.
+- [x] Rendre `CircuitBreaker` idempotent côté alerting (une notification max par run/instance).
+- [x] Harmoniser `KellySizer` avec `RiskConfig.effective_*` et `risk_multiplier`.
+- [x] Corriger l’agrégation `rejected_for_notional` pour inclure les rejets “below_enforced”.
+- [x] Corriger la logique PIT de `load_account_equity_breakdown()`.
 
 ## P1 — amélioration court terme recommandée
-- [ ] Propager des raisons de rejet/réduction structurées jusqu’au `run_summary`.
-- [ ] Ajouter un préflight data-quality pour : snapshot equity, couverture ATR, fraîcheur candidat PIT, matrice de corrélation.
-- [ ] Exposer dans le `run_summary` : `equity_source`, `equity_fallback_used`, `snapshot_freshness_days`, `regime_snapshot_applied`.
-- [ ] Ajouter les tests manquants :
+- [x] Propager des raisons de rejet/réduction structurées jusqu’au `run_summary`.
+- [x] Ajouter un préflight data-quality pour : snapshot equity, couverture ATR, fraîcheur candidat PIT, matrice de corrélation.
+- [x] Exposer dans le `run_summary` : `equity_source`, `equity_fallback_used`, `snapshot_freshness_days`, `regime_snapshot_applied`.
+- [x] Ajouter les tests manquants :
   - Kelly + régime ;
   - anti-spam circuit breaker ;
   - dividendes PIT cutoff ;
   - comptage notional “below_enforced”.
 
 ## P2 — professionnalisation du package
-- [ ] Passer `ruff check risk_management` à **OK**.
-- [ ] Réaligner `doc/risk_management.md` sur le code réel.
-- [ ] Réduire les petites redondances du builder.
-- [ ] Standardiser les noms / enums de `sizing_method` et `decision_reason`.
+- [x] Passer `ruff check risk_management` à **OK**.
+- [x] Réaligner `doc/risk_management.md` sur le code réel.
+- [x] Réduire les petites redondances du builder.
+- [x] Standardiser les noms / enums de `sizing_method` et `decision_reason`.
 
 ## P3 — moyen terme / montée en gamme
-- [ ] Intégrer un mode shadow compare pilotable depuis le runtime/IHM.
-- [ ] Brancher une calibration empirique des poids conviction/Kelly.
-- [ ] Ajouter des artefacts de post-mortem plus riches par run :
+- [x] Intégrer un mode shadow compare pilotable depuis le runtime/IHM.
+- [x] Brancher une calibration empirique des poids conviction/Kelly.
+  - état actuel : première boucle active branchée via `backtesting.weights_calibration.EmpiricalRiskCalibrator`, `scripts/run_quarterly_weights_calibration.py` et lecture live `weights_calibration_runs` dans `risk_management/cli.py`.
+  - reste à faire : enrichir la gouvernance/optimisation de cette boucle (objectifs business, monitoring drift dédié, segmentation par régime/horizon).
+- [x] Ajouter des artefacts de post-mortem plus riches par run :
   - top rejets par contrainte ;
   - détail secteur ;
   - résumé du régime appliqué ;
@@ -504,6 +513,13 @@ Le module expose déjà un placeholder de calibration, mais la logique reste enc
 - Kelly pas totalement aligné avec les règles effectives ;
 - décomposition d’equity pas complètement PIT-safe ;
 - doc et lint en retard sur le code.
+
+### Mise à jour après livraison P2 / amorçage P3
+- le retard **doc + lint** sur le périmètre `risk_management` est désormais résorbé ;
+- le builder a été allégé (suppression de redondances et lookup corrélation optimisé) ;
+- le shadow compare n'est plus un îlot isolé : il est pilotable via CLI/IHM et peut persister dans `shadow_drift_runs` ;
+- la calibration conviction/Kelly n'est plus seulement tracée : une première boucle empirique est désormais disponible et applicable en live via `weights_calibration_runs` ;
+- les items P0/P1 identifiés dans cet audit ont été revérifiés comme livrés par le runtime et les tests ciblés.
 
 ### Verdict
 Le module `risk_management` est **bon**, mais **pas encore homogène** sur ses exigences de production avancée.

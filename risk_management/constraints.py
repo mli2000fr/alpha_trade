@@ -5,17 +5,18 @@ import logging
 from dataclasses import dataclass
 
 from risk_management.config import RiskConfig
+from risk_management.enums import DecisionReasonCode
 
 LOGGER = logging.getLogger(__name__)
 
 _REASON_TO_CODE = {
-    "OK": "ok",
-    "max_positions atteint": "constraint_max_positions",
-    "max_tickers_per_sector atteint": "constraint_max_tickers_per_sector",
-    "max_gross_exposure atteint": "constraint_max_gross_exposure",
-    "max_position_weight atteint": "constraint_max_position_weight",
-    "max_sector_weight atteint": "constraint_max_sector_weight",
-    "min_position_notional non atteint": "constraint_min_position_notional",
+    "OK": DecisionReasonCode.OK,
+    "max_positions atteint": DecisionReasonCode.CONSTRAINT_MAX_POSITIONS,
+    "max_tickers_per_sector atteint": DecisionReasonCode.CONSTRAINT_MAX_TICKERS_PER_SECTOR,
+    "max_gross_exposure atteint": DecisionReasonCode.CONSTRAINT_MAX_GROSS_EXPOSURE,
+    "max_position_weight atteint": DecisionReasonCode.CONSTRAINT_MAX_POSITION_WEIGHT,
+    "max_sector_weight atteint": DecisionReasonCode.CONSTRAINT_MAX_SECTOR_WEIGHT,
+    "min_position_notional non atteint": DecisionReasonCode.CONSTRAINT_MIN_POSITION_NOTIONAL,
 }
 
 
@@ -41,8 +42,8 @@ class ConstraintChecker:
         self._cfg = config
 
     @staticmethod
-    def reason_to_code(reason: str) -> str:
-        return _REASON_TO_CODE.get(str(reason or "").strip() or "OK", "constraint_unknown")
+    def reason_to_code(reason: str) -> DecisionReasonCode:
+        return _REASON_TO_CODE.get(str(reason or "").strip() or "OK", DecisionReasonCode.CONSTRAINT_UNKNOWN)
 
     def check(
         self,

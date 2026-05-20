@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.weights_calibration_runs (
     run_id          VARCHAR(40) NOT NULL,
     calibrated_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     scope           VARCHAR(16) NOT NULL
-        COMMENT 'conviction | sentiment',
+        COMMENT 'conviction | sentiment | risk',
     window_start    DATE        NOT NULL,
     window_end      DATE        NOT NULL,
     metric_name     VARCHAR(32) NOT NULL
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.weights_calibration_runs (
     schema_version  INT         NOT NULL DEFAULT 1,
     PRIMARY KEY (run_id),
     KEY ix_weights_cal_scope_calibrated_at (scope, calibrated_at),
-    CONSTRAINT chk_weights_cal_scope CHECK (scope IN ('conviction','sentiment'))
+    CONSTRAINT chk_weights_cal_scope CHECK (scope IN ('conviction','sentiment','risk'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    COMMENT='Phase 7.2 — calibration empirique poids conviction/sentiment';
+    COMMENT='Phase 7.2 / P3 — calibration empirique poids conviction/sentiment/risk';
 

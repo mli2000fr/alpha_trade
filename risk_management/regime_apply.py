@@ -29,7 +29,7 @@ LOGGER = logging.getLogger(__name__)
 
 def apply_snapshot(
     cfg: RiskConfig,
-    snapshot: "MarketRegimeSnapshot | None",
+    snapshot: MarketRegimeSnapshot | None,
 ) -> RiskConfig:
     """Retourne un nouveau ``RiskConfig`` ajusté au snapshot de régime."""
     if snapshot is None:

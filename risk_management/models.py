@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from risk_management.enums import Decision, DecisionReasonCode, SizingMethod
+
 
 @dataclass(frozen=True, slots=True)
 class CandidateScore:
@@ -46,7 +48,7 @@ class SizingResult:
     """Résultat du calcul de taille de position."""
     symbol: str
     proposed_shares: int
-    method: str  # "atr" | "equal_weight"
+    method: SizingMethod
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,9 +64,9 @@ class PortfolioEntry:
     approved_shares: int
     target_notional: float
     target_weight: float
-    decision: str          # "ACCEPTED" | "REDUCED" | "REJECTED"
+    decision: Decision
     decision_reason: str
-    decision_reason_code: str | None = None
+    decision_reason_code: DecisionReasonCode | None = None
 
     # --- V2 audit fields ---
     conviction_score: float = 0.0
@@ -72,7 +74,7 @@ class PortfolioEntry:
     historical_win_rate: float | None = None
     effective_probability: float | None = None
     kelly_fraction: float | None = None
-    sizing_method: str = ""
+    sizing_method: SizingMethod = SizingMethod.UNKNOWN
     correlation_blocker: str | None = None
     correlation_value: float | None = None
     company_idio_score: float | None = None

@@ -8,7 +8,8 @@ import pandas as pd
 import pytest
 
 from risk_management import cli
-from risk_management.models import AccountRiskSnapshot
+from risk_management.enums import Decision
+from risk_management.models import AccountRiskSnapshot, PortfolioEntry
 from service.market.models import MarketRegimeSnapshot
 
 
@@ -568,5 +569,172 @@ def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> 
     assert captured["summary"]["regime_mode"] == "close_only"
     assert captured["summary"]["preflight_data_quality"]["checks"]["atr_coverage"]["status"] == "skipped_by_regime"
     assert captured["summary"]["preflight_data_quality"]["checks"]["correlation_matrix"]["status"] == "skipped_by_regime"
+
+
+def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {}
+
+        def load_candidates_asof(self, trade_date):
+            from risk_management.models import CandidateScore
+
+            return [
+                CandidateScore(
+                    "AAPL",
+                    "Tech",
+                    0.9,
+                    calibration_run_id="calib-1",
+                    calibration_source="walk_forward",
+                )
+            ]
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            from risk_management.models import PriceInfo
+
+            return {"AAPL": PriceInfo(symbol="AAPL", last_close=100.0, atr_20=5.0, price_asof_date=trade_date, atr_asof_date=trade_date)}
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame([[0.01]], columns=["AAPL"])
+
+        def load_risk_decisions_for_date(self, trade_date, account_id=None):
+            return pd.DataFrame(
+                [
+                    {
+                        "run_id": "prev-risk-run",
+                        "symbol": "AAPL",
+                        "approved_shares": 8,
+                        "entry_price": 95.0,
+                        "conviction_score": 0.75,
+                    }
+                ]
+            )
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl, circuit_breaker=None):
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            return [
+                PortfolioEntry(
+                    symbol="AAPL",
+                    sector="Tech",
+                    entry_price=100.0,
+                    score_used=0.9,
+                    score_source="final_score_sentiment",
+                    atr_20=5.0,
+                    proposed_shares=10,
+                    approved_shares=10,
+                    target_notional=1_000.0,
+                    target_weight=0.01,
+                    decision=Decision.ACCEPTED,
+                    decision_reason="OK",
+                    conviction_score=0.8,
+                    sizing_method="atr",
+                    calibration_run_id="calib-1",
+                    calibration_source="walk_forward",
+                )
+            ]
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+
+    cli.main(["--trade-date", "2026-05-01", "--dry-run", "--enable-shadow-compare"])
+
+    shadow_compare = captured["summary"]["shadow_compare"]
+    assert shadow_compare["status"] == "compared"
+    assert shadow_compare["reference_run_id"] == "prev-risk-run"
+    assert shadow_compare["report"]["schema_version"] == 1
+    assert captured["summary"]["conviction_weights_calibration"]["source"] == "walk_forward"
+    assert captured["summary"]["conviction_weights_calibration"]["calibration_run_id"] == "calib-1"
+    assert captured["summary"]["postmortem_artifacts"]["regime_summary"]["allow_new_entries"] is True
+    assert captured["summary"]["postmortem_artifacts"]["sector_breakdown"][0]["sector"] == "Tech"
+
+
+def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {}
+
+        def load_latest_empirical_risk_calibration(self, trade_date, run_id=None):
+            return {
+                "run_id": "risk-cal-001",
+                "metric_name": "sharpe",
+                "metric_value": 1.42,
+                "window_start": date(2025, 1, 1),
+                "window_end": date(2026, 3, 31),
+                "source": "weights_calibration_runs",
+                "best_weights": {
+                    "score_weight": 0.25,
+                    "prediction_weight": 0.75,
+                    "kelly_fraction_multiplier": 0.5,
+                    "min_effective_probability": 0.55,
+                    "assumed_payoff_ratio": 2.0,
+                },
+            }
+
+        def load_candidates_asof(self, trade_date):
+            return []
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            return {}
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame()
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl, circuit_breaker=None):
+            captured["config"] = config
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            return []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+
+    cli.main(["--trade-date", "2026-05-01", "--dry-run", "--enable-kelly-sizing"])
+
+    assert captured["config"].score_weight == pytest.approx(0.25)
+    assert captured["config"].prediction_weight == pytest.approx(0.75)
+    assert captured["config"].kelly_fraction_multiplier == pytest.approx(0.5)
+    assert captured["config"].min_effective_probability == pytest.approx(0.55)
+    assert captured["config"].assumed_payoff_ratio == pytest.approx(2.0)
+    assert captured["summary"]["empirical_risk_calibration"]["run_id"] == "risk-cal-001"
+    assert captured["summary"]["conviction_weights_calibration"]["runtime_applied"] is True
 
 

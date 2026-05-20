@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from core.feature_flags import is_ml_disabled
 
@@ -28,9 +28,9 @@ class MlGateState:
 
     enabled: bool
     reason: str
-    decision_id: Optional[str] = None
-    drift_status: Optional[str] = None
-    action: Optional[str] = None
+    decision_id: str | None = None
+    drift_status: str | None = None
+    action: str | None = None
 
     def to_summary(self) -> dict[str, Any]:
         return {
@@ -42,7 +42,7 @@ class MlGateState:
         }
 
 
-def load_latest_ml_gate_decision(engine: Any) -> Optional[dict]:
+def load_latest_ml_gate_decision(engine: Any) -> dict | None:
     """Charge le dernier ``payload`` ``drift_policy_decision`` (ou None)."""
     if engine is None:
         return None

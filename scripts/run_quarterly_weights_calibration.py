@@ -1,7 +1,7 @@
-"""Sprint S11 / S11.1 — Job trimestriel de calibration des poids sentiment.
+"""Sprint S11 / P3 — Job trimestriel de calibration empirique conviction/Kelly.
 
 Industrialise la chaîne :
-``backtesting.sentiment_calibration.SentimentWeightCalibrator.walk_forward_backtest``
+``backtesting.weights_calibration.EmpiricalRiskCalibrator.walk_forward_backtest``
 
 Sortie :
 - ``artifacts/weights_calibration_runs/<YYYY-MM-DD>/calibration.json``
@@ -25,9 +25,9 @@ import json
 import logging
 import sys
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 LOGGER = logging.getLogger("scripts.run_quarterly_weights_calibration")
 
@@ -48,7 +48,7 @@ def _months_back(reference: date, months: int) -> date:
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Job trimestriel de calibration des poids sentiment (Sprint S11 / S11.1)."
+        description="Job trimestriel de calibration empirique conviction/Kelly (Sprint S11 / P3)."
     )
     p.add_argument(
         "--end",
@@ -87,7 +87,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _load_previous_calibration(output_root: Path, current_dir: Path) -> Optional[dict[str, Any]]:
+def _load_previous_calibration(output_root: Path, current_dir: Path) -> dict[str, Any] | None:
     """Trouve le dossier daté précédent (le plus récent) et charge ``calibration.json``."""
     if not output_root.exists():
         return None
@@ -136,7 +136,7 @@ def _normalize_dates(payload: dict[str, Any]) -> dict[str, Any]:
 
 def run(
     *,
-    end: Optional[date] = None,
+    end: date | None = None,
     lookback_months: int = 12,
     threshold_drift_pct: float = 0.05,
     output_root: Path = DEFAULT_OUTPUT_ROOT,
@@ -162,9 +162,9 @@ def run(
     )
 
     if calibrator_factory is None:
-        from backtesting.sentiment_calibration import SentimentWeightCalibrator
+        from backtesting.weights_calibration import EmpiricalRiskCalibrator
 
-        calibrator_factory = lambda: SentimentWeightCalibrator()  # noqa: E731
+        calibrator_factory = lambda: EmpiricalRiskCalibrator()  # noqa: E731
 
     try:
         calibrator = calibrator_factory()
@@ -196,7 +196,7 @@ def run(
 
     # Comparaison au précédent run.
     previous = _load_previous_calibration(output_root, run_dir)
-    drift_pct: Optional[float] = None
+    drift_pct: float | None = None
     if previous is not None and "final_value" in previous and "final_value" in payload:
         try:
             drift_pct = _compute_drift_pct(
@@ -240,7 +240,7 @@ def run(
     return 0
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
     logging.basicConfig(
         level=getattr(logging, args.log_level),

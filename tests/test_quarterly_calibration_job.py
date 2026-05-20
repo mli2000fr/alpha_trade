@@ -7,7 +7,6 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 from scripts.run_quarterly_weights_calibration import run
 

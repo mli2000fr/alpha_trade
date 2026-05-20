@@ -32,6 +32,9 @@ Ce document résume le fonctionnement du module `risk_management/` et les comman
 | `risk_management/db_io.py` | Chargement candidats, prix, prédictions, historique |
 | `risk_management/audit.py` | Persistance décisions et cibles |
 | `risk_management/config.py` | Paramètres immuables |
+| `risk_management/regime_apply.py` | Application des overrides de régime live/backtest |
+| `risk_management/shadow_compare.py` | Diff offline/piloté entre deux runs risk |
+| `risk_management/enums.py` | Valeurs canonisées `sizing_method` / `decision_reason_code` |
 
 ---
 
@@ -41,16 +44,23 @@ Ce document résume le fonctionnement du module `risk_management/` et les comman
 
 #### Obligatoires
 
-- `stock_scores`
+- `stock_scores_history`
 - `stock_bars_daily`
 - `risk_decisions`
 - `portfolio_targets`
+- `run_business_summaries`
 
 #### Optionnelles mais très utiles
 
 - `model_predictions`
+- `model_metrics`
+- `model_training_run`
+- `account_risk_snapshots`
+- `broker_account_snapshots`
+- `broker_positions_snapshots`
 - historique de rendements suffisant dans `stock_bars_daily`
-- `portfolio_cash_ledger` si l'on veut que les dividendes cumulés soient réintégrés dans l'equity effective
+- `portfolio_cash_ledger` si l'on veut réintégrer les dividendes PIT dans la décomposition d'equity
+- `shadow_drift_runs` si l'on veut persister les comparaisons shadow
 
 ### 2.2 Variables d'environnement minimales
 
@@ -63,10 +73,12 @@ $env:PASSWORD_DB = "pass"
 
 Le module charge principalement :
 
-- les candidats depuis `stock_scores`,
+- les candidats depuis `stock_scores_history` avec fallback PIT `snapshot_date <= trade_date`,
 - les prix / ATR depuis `stock_bars_daily`,
 - les prédictions depuis `model_predictions`,
-- les win rates et rendements historiques via le repository de risque.
+- les win rates via `model_metrics` + `model_training_run`,
+- l'equity effective via `account_risk_snapshots` ou fallback broker / CLI,
+- le snapshot de régime live via `service.market` quand disponible.
 
 ---
 
@@ -102,6 +114,18 @@ python -m risk_management.run_risk --trade-date 2026-04-21
 python -m risk_management.run_risk --enable-kelly-sizing --correlation-threshold 0.80 --correlation-lookback-days 60 --correlation-min-overlap 40
 ```
 
+### Shadow compare piloté
+
+```powershell
+python -m risk_management.run_risk --enable-shadow-compare
+```
+
+### Shadow compare avec run de référence explicite
+
+```powershell
+python -m risk_management.run_risk --enable-shadow-compare --shadow-compare-run-id risk-20260520-001
+```
+
 ### Multi-comptes
 
 ```powershell
@@ -116,12 +140,14 @@ python -m risk_management.run_risk --account-equity 100000 --account live1
 
 Le CLI :
 
-1. construit un `RiskConfig` ;
-2. charge les candidats ;
-3. charge les prix et ATR ;
-4. charge les prédictions ML ;
-5. charge les win rates ;
-6. charge la matrice de rendements.
+1. résout le compte et l'equity effective ;
+2. construit un `RiskConfig` ;
+3. résout le snapshot de régime live et applique `risk_management.regime_apply.apply_snapshot()` ;
+4. charge les candidats PIT ;
+5. charge les prix / ATR, prédictions ML, win rates et matrice de rendements ;
+6. construit le portefeuille via `PortfolioBuilder.build()` ;
+7. émet un `run_summary` riche (préflight, régime, ML gate, equity, post-mortem) ;
+8. persiste décisions / targets, puis optionnellement un rapport de shadow compare.
 
 ### 4.2 Construction des entrées
 
@@ -151,7 +177,7 @@ Par défaut, le builder marque `score_source = final_score_sentiment`, ce qui fa
 > Le module `risk_management.conviction` reste exposé en wrapper rétrocompat,
 > mais émet désormais un `DeprecationWarning` ; à ne plus utiliser dans le code neuf.
 
-### 4.3.bis Pondérations conviction (40 / 60)
+### 4.3.bis Pondérations conviction (40 / 60) et calibration empirique
 
 Convention historique du projet : `score_weight = 0.40`, `prediction_weight = 0.60`
 (voir `RiskConfig` et `core.conviction.ConvictionWeights`).
@@ -162,16 +188,59 @@ Hypothèses :
   quant pur sur l'horizon swing typique 5–15 jours ;
 - les poids somment exactement à 1.0 (validation `__post_init__`).
 
-**Plan de calibration empirique (backlog Phase 7)** : reposer sur un backtest
-glissant 6 mois (table `weights_calibration_runs`) pour optimiser le couple
-`(score_weight, prediction_weight)` par horizon / régime de volatilité. En
-attendant, le `run_summary` expose `conviction_weights_calibration =
-{"source": "default", "calibration_run_id": null}` afin de tracer qu'aucune
-calibration personnalisée n'est encore active.
+Le `run_summary` expose désormais deux blocs complémentaires :
 
-### 4.4 Dividendes cumulés
+- `conviction_weights_calibration` pour la traçabilité des calibrations déjà transportées par les candidats ;
+- `empirical_risk_calibration` pour la calibration empirique runtime appliquée depuis `weights_calibration_runs`.
 
-Le CLI tente d'ajouter au capital de base le total des dividendes cumulés issus de `corporate_actions`, quand cette information est disponible.
+Le bloc `conviction_weights_calibration` contient :
+
+- `source` ;
+- `calibration_run_id` ;
+- `distinct_sources` ;
+- `distinct_calibration_run_ids` ;
+- `applied_candidates` ;
+- `retained_candidates`.
+
+Cela permet de tracer proprement une calibration upstream déjà transportée par
+les candidats.
+
+Le bloc `empirical_risk_calibration` contient notamment :
+
+- `run_id` ;
+- `metric_name` / `metric_value` ;
+- `window_start` / `window_end` ;
+- `best_weights` avec au minimum `score_weight`, `prediction_weight`, `kelly_fraction_multiplier`, `min_effective_probability`, `assumed_payoff_ratio`.
+
+Par défaut, le CLI applique en best-effort le dernier run `weights_calibration_runs`
+de `scope = 'risk'` dont `window_end <= trade_date`. Cela permet de piloter
+réellement les poids conviction et les paramètres Kelly clés.
+
+Options associées :
+
+```powershell
+python -m risk_management.run_risk --disable-empirical-calibration
+python -m risk_management.run_risk --empirical-calibration-run-id wcr-20260520-001
+```
+
+Job batch associé :
+
+```powershell
+python -m scripts.run_quarterly_weights_calibration --end 2026-05-20 --lookback-months 12
+```
+
+### 4.4 Equity effective et dividendes PIT
+
+Le moteur de risque :
+
+- privilégie `account_risk_snapshots` pour l'equity de sizing ;
+- fallback sur `broker_account_snapshots` quand nécessaire ;
+- fallback final sur `--account-equity` côté CLI/IHM si aucun snapshot exploitable n'est disponible ;
+- expose une décomposition best-effort via `broker_account_snapshots`, `broker_positions_snapshots` et `portfolio_cash_ledger`.
+
+Les dividendes ne sont pas lus depuis un module abstrait `corporate_actions`,
+mais depuis `portfolio_cash_ledger` avec filtre point-in-time quand la colonne
+`created_at` est disponible.
 
 ### 4.5 Persistance
 
@@ -189,12 +258,26 @@ l'IHM). Champs Phase 5 :
 |---|---|
 | `schema_version` | Version du payload (1, ajoutée Phase 5.1.a). |
 | `account_equity_breakdown` | Décomposition de l'equity (cash, settled_cash, long_positions_value, short_positions_value, dividends_ledger, total, source). Source ∈ {`broker_account_snapshots`, `missing`}. |
+| `equity_source` / `equity_fallback_used` / `snapshot_freshness_days` | Source effective de l'equity utilisée pour le sizing et niveau de fraîcheur. |
+| `regime_snapshot_applied` / `regime_mode` / `regime_snapshot` | Traçabilité du régime live appliqué et des overrides effectifs. |
+| `preflight_data_quality` | Contrat best-effort sur equity snapshot, fraîcheur candidats PIT, couverture ATR et matrice de corrélation. |
+| `rejection_reason_code_counts` / `reduction_reason_code_counts` | Motifs structurés normalisés jusqu'au payload final. |
 | `conviction_weights` | `{score_weight, prediction_weight, source: "core.conviction"}`. Trace l'utilisation de l'API centralisée. |
-| `conviction_weights_calibration` | `{source: "default", calibration_run_id: null}`. Placeholder pour la calibration empirique Phase 7. |
+| `conviction_weights_calibration` | Trace la calibration upstream effectivement transportée (`source`, `calibration_run_id`, listes distinctes, volumes candidats). |
+| `empirical_risk_calibration` | Calibration empirique live appliquée depuis `weights_calibration_runs` (`run_id`, métrique, fenêtre, meilleurs paramètres conviction/Kelly). |
+| `shadow_compare` | Résultat optionnel d'un diff du run courant contre un run de référence (`--enable-shadow-compare`). |
+| `postmortem_artifacts` | Artefacts enrichis : top rejets/réductions, détail secteur, résumé régime, couverture effective des sources externes. |
 
 L'`account_equity_breakdown` est best-effort : aucune exception ne remonte au
 CLI. Si les tables `broker_account_snapshots` / `broker_positions_snapshots` /
 `portfolio_cash_ledger` sont absentes, le payload conserve `source="missing"`.
+
+Le bloc `shadow_compare` est lui aussi best-effort :
+
+- `status="disabled"` si l'option n'est pas activée ;
+- `status="missing_reference"` si aucun run de référence n'est disponible ;
+- `status="compared"` si le rapport a été calculé ;
+- `status="unavailable"` si la comparaison ou la persistance a échoué.
 
 ---
 
@@ -204,7 +287,7 @@ CLI. Si les tables `broker_account_snapshots` / `broker_positions_snapshots` /
 
 Causes probables :
 
-1. `stock_scores` peu alimentée ;
+1. `stock_scores_history` peu alimentée ;
 2. pipeline amont non exécuté ;
 3. `is_candidate = 1` trop restrictif.
 
@@ -220,7 +303,9 @@ Causes probables :
 
 ### 5.3 Composante ML absente
 
-Le module peut continuer même si certaines prédictions ML sont absentes, mais la conviction sera moins riche qu'en production complète.
+Le module peut continuer même si certaines prédictions ML sont absentes, et
+peut même ignorer volontairement `model_predictions` si le `ml_gate` le
+désactive. Le `run_summary` et l'IHM exposent cet état explicitement.
 
 ---
 
@@ -251,13 +336,19 @@ with engine.connect() as conn:
 ### Tests ciblés logique risque
 
 ```powershell
-python -m pytest tests/test_risk_management_portfolio_builder.py tests/test_risk_management_position_sizer.py tests/test_risk_management_constraints.py tests/test_risk_management_circuit_breaker.py tests/test_risk_management_risk_checker.py tests/test_risk_management_conviction.py tests/test_risk_management_correlation_filter.py -q -o addopts=""
+python -m pytest tests/test_portfolio_builder.py tests/test_position_sizer.py tests/test_constraints.py tests/test_circuit_breaker.py tests/test_risk_checker.py tests/test_kelly_sizer.py tests/test_risk_shadow_compare.py -q -o addopts=""
 ```
 
 ### Tests CLI et repository
 
 ```powershell
-python -m pytest tests/test_risk_management_cli.py tests/test_risk_management_db_io.py tests/test_risk_management_run_risk.py tests/test_risk_management_main.py -q -o addopts=""
+python -m pytest tests/test_risk_management_cli.py tests/test_risk_management_run_summary.py tests/test_db_io_v2.py tests/test_risk_regime_apply.py tests/test_position_sizer_telemetry.py -q -o addopts=""
+```
+
+### Lint ciblé package risk
+
+```powershell
+python -m ruff check risk_management tests/test_risk_management_cli.py tests/test_risk_management_run_summary.py tests/test_risk_shadow_compare.py --output-format concise
 ```
 
 ---
@@ -269,7 +360,8 @@ Ordre conseillé :
 1. produire `stock_scores` et `final_score_sentiment` ;
 2. produire les prédictions ML si disponibles ;
 3. lancer `run_risk` ;
-4. vérifier `portfolio_targets` avant de passer à l'exécution.
+4. vérifier `portfolio_targets` et le `run_summary` risk (régime, preflight, ML gate, equity) ;
+5. si besoin, activer `--enable-shadow-compare` pour auditer la dérive par rapport à un run de référence.
 
 ### Séquence recommandée
 

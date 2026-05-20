@@ -1,7 +1,9 @@
 """Accès base de données pour le module risk_management."""
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any
 
@@ -677,6 +679,72 @@ class RiskRepository:
             breakdown["total"] = round(cash + long_v + short_v, 2)
         return breakdown
 
+    def load_latest_empirical_risk_calibration(
+        self,
+        trade_date: date,
+        *,
+        run_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Charge le dernier run de calibration empirique risk applicable.
+
+        Best-effort : retourne ``None`` si la table n'existe pas, si aucun run ne
+        matche, ou si le JSON des poids est illisible.
+        """
+        table_columns = self._get_table_columns("weights_calibration_runs")
+        if not table_columns:
+            return None
+        params: dict[str, Any] = {"scope": "risk"}
+        where_clauses = ["scope = :scope"]
+        if run_id is not None:
+            where_clauses.append("run_id = :run_id")
+            params["run_id"] = run_id
+        else:
+            where_clauses.append("window_end <= :trade_date")
+            params["trade_date"] = trade_date
+        query = text(
+            f"""
+            SELECT run_id, calibrated_at, window_start, window_end,
+                   metric_name, metric_value, best_weights, schema_version
+            FROM weights_calibration_runs
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY window_end DESC, calibrated_at DESC, run_id DESC
+            LIMIT 1
+            """
+        )
+        try:
+            with self.engine.connect() as conn:
+                row = conn.execute(query, params).mappings().first()
+        except Exception:
+            LOGGER.warning("Impossible de charger weights_calibration_runs pour trade_date=%s", trade_date, exc_info=True)
+            return None
+        if row is None:
+            return None
+        raw_best_weights = row.get("best_weights")
+        if isinstance(raw_best_weights, Mapping):
+            best_weights = dict(raw_best_weights)
+        elif isinstance(raw_best_weights, str):
+            try:
+                parsed = json.loads(raw_best_weights)
+            except json.JSONDecodeError:
+                LOGGER.warning("best_weights illisible pour weights_calibration_runs.run_id=%s", row.get("run_id"))
+                return None
+            if not isinstance(parsed, dict):
+                return None
+            best_weights = parsed
+        else:
+            return None
+        return {
+            "run_id": str(row.get("run_id") or "").strip() or None,
+            "calibrated_at": str(row.get("calibrated_at") or "").strip() or None,
+            "window_start": self._coerce_date(row.get("window_start")),
+            "window_end": self._coerce_date(row.get("window_end")),
+            "metric_name": str(row.get("metric_name") or "").strip() or None,
+            "metric_value": float(row["metric_value"]) if row.get("metric_value") is not None else None,
+            "schema_version": int(row["schema_version"]) if row.get("schema_version") is not None else None,
+            "best_weights": best_weights,
+            "source": "weights_calibration_runs",
+        }
+
     # ------------------------------------------------------------------
     # Écriture
     # ------------------------------------------------------------------
@@ -721,6 +789,38 @@ class RiskRepository:
         if not rows:
             return pd.DataFrame()
         return pd.DataFrame([dict(r) for r in rows])
+
+    def load_risk_decisions_for_run_id(
+        self,
+        run_id: str,
+        *,
+        account_id: str | None = None,
+    ) -> pd.DataFrame:
+        """Charge les décisions ``risk_decisions`` d'un ``run_id`` donné."""
+        params: dict[str, Any] = {"run_id": run_id}
+        account_clause = ""
+        if account_id is not None:
+            account_clause = " AND account_id = :account_id"
+            params["account_id"] = account_id
+        query = text(
+            f"""
+            SELECT run_id, trade_date, symbol, decision, approved_shares,
+                   target_weight, conviction_score, predicted_proba,
+                   score_used, score_source, sector, account_id, entry_price
+            FROM risk_decisions
+            WHERE run_id = :run_id{account_clause}
+            ORDER BY COALESCE(candidate_rank, 999999), created_at DESC, symbol ASC
+            """
+        )
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(query, params).mappings().all()
+        except Exception as exc:  # pragma: no cover - best effort lecture
+            LOGGER.warning("[shadow_compare] lecture risk_decisions impossible pour run_id=%s: %s", run_id, exc)
+            return pd.DataFrame()
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([dict(row) for row in rows])
 
     def write_risk_decisions(self, records: list[dict[str, Any]], account_id: str | None = None) -> int:
         """Insère dans risk_decisions via le schéma canonique Sprint 1."""

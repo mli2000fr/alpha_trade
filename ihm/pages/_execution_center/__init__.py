@@ -1368,9 +1368,9 @@ def _render_screener_block() -> dict[str, Any]:
 def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[str, Any]:
     """Sous-bloc « Paramètres Risk Management » de ``_build_launch_options``.
 
-    Retourne les 15 valeurs ``risk_*`` consommées par
+    Retourne les valeurs ``risk_*`` consommées par
     :class:`PipelineLaunchOptions` (sizing, conviction, contraintes
-    portefeuille, Kelly avancé, log level).
+    portefeuille, Kelly avancé, shadow compare, log level).
     """
     st.markdown("#### Paramètres Risk Management (`python -m risk_management`)")
     st.caption(
@@ -1543,6 +1543,21 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
                     key="pipeline_risk_log_level",
                 ),
             )
+            risk_enable_shadow_compare = st.checkbox(
+                "Activer shadow compare",
+                value=bool(st.session_state.get("pipeline_risk_enable_shadow_compare", False)),
+                key="pipeline_risk_enable_shadow_compare",
+                help="Compare le portefeuille courant avec le dernier run risk du même trade_date, ou avec un run explicite ci-dessous.",
+            )
+            risk_shadow_compare_run_id = cast(
+                str,
+                st.text_input(
+                    "Risk — run_id shadow compare (optionnel)",
+                    value=str(st.session_state.get("pipeline_risk_shadow_compare_run_id", "") or ""),
+                    key="pipeline_risk_shadow_compare_run_id",
+                    help="Laisser vide pour comparer avec le dernier run risk persisté du même jour/compte.",
+                ),
+            ).strip() or None
 
     conviction_total = round(risk_score_weight + risk_prediction_weight, 4)
     if abs(conviction_total - 1.0) > 0.001:
@@ -1559,6 +1574,8 @@ def _render_risk_block(selected_capital_preset: CapitalPreset | None) -> dict[st
         "risk_correlation_threshold": risk_correlation_threshold,
         "risk_correlation_lookback_days": risk_correlation_lookback_days,
         "risk_enable_kelly": risk_enable_kelly,
+        "risk_enable_shadow_compare": risk_enable_shadow_compare,
+        "risk_shadow_compare_run_id": risk_shadow_compare_run_id,
         "risk_dry_run": risk_dry_run,
         "risk_payoff_ratio": risk_payoff_ratio,
         "risk_kelly_fraction_multiplier": risk_kelly_fraction_multiplier,

@@ -5,6 +5,7 @@ import logging
 import math
 
 from risk_management.config import RiskConfig
+from risk_management.enums import SizingMethod
 from risk_management.models import PriceInfo, SizingResult
 from risk_management.position_sizer import PositionSizer
 
@@ -30,7 +31,7 @@ class KellySizer:
         price = price_info.last_close
 
         if price <= 0:
-            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected_invalid_price")
+            return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_INVALID_PRICE)
 
         # 1. Probabilité effective
         pp = predicted_proba if predicted_proba is not None else cfg.default_win_rate
@@ -65,11 +66,11 @@ class KellySizer:
             risk_per_share = price_info.atr_20 * cfg.atr_stop_multiple
             atr_shares_cap = math.floor(risk_budget / risk_per_share)
             proposed = min(kelly_shares, atr_shares_cap)
-            method = "kelly_atr"
+            method = SizingMethod.KELLY_ATR
         else:
             # 7. Pas d'ATR
             proposed = kelly_shares
-            method = "kelly_only"
+            method = SizingMethod.KELLY_ONLY
 
         proposed = max(proposed, 0)
 
@@ -78,14 +79,14 @@ class KellySizer:
         if proposed * price < min_notional:
             LOGGER.info("Notional Kelly insuffisant pour %s — rejet.", symbol)
             method_rej = (
-                "rejected_notional_below_enforced"
+                SizingMethod.REJECTED_NOTIONAL_BELOW_ENFORCED
                 if cfg.enforce_min_notional is not None
-                else "rejected_notional"
+                else SizingMethod.REJECTED_NOTIONAL
             )
             return SizingResult(symbol=symbol, proposed_shares=0, method=method_rej)
 
         if proposed < 1:
-            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected_zero_shares")
+            return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_ZERO_SHARES)
 
         return SizingResult(symbol=symbol, proposed_shares=proposed, method=method)
 
