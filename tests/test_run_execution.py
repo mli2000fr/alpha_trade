@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import run_execution
 
 
@@ -60,7 +62,11 @@ def test_run_bridges_executor_live_progress_to_run_summaries(monkeypatch) -> Non
             self.pnl = pnl
 
     monkeypatch.setattr(run_execution, "configure_root_logging", lambda **kwargs: None)
-    monkeypatch.setattr(run_execution, "emit_run_summary", lambda summary: emitted_payloads.append(dict(summary)))
+    monkeypatch.setattr(
+        run_execution,
+        "emit_run_summary",
+        lambda summary: emitted_payloads.append(cast(dict[str, object], dict(cast(dict[str, Any], summary)))),
+    )
     monkeypatch.setattr(run_execution, "persist_run_business_summary", lambda **kwargs: None)
 
     import execution_engine.audit as execution_audit
@@ -88,6 +94,31 @@ def test_run_bridges_executor_live_progress_to_run_summaries(monkeypatch) -> Non
 
 def test_run_execution_importable():
     assert hasattr(run_execution, "__doc__")
+
+
+def test_resolve_mode_from_broker_mode_prefers_simulate_when_dry_run() -> None:
+    assert run_execution.resolve_mode_from_broker_mode(broker_mode="paper", dry_run=True) == "simulate"
+    assert run_execution.resolve_mode_from_broker_mode(broker_mode="paper", dry_run=False) == "paper"
+    assert run_execution.resolve_mode_from_broker_mode(broker_mode="live", dry_run=False) == "live"
+
+
+def test_build_runtime_preset_accepts_executor_compat_overrides() -> None:
+    preset = run_execution._build_runtime_preset(
+        "paper",
+        submission_window="pre_open",
+        trailing_activation_trigger="profit_pct",
+        trailing_activation_profit_pct=0.04,
+        protection_transition_timeout_seconds=12,
+        fill_timeout_seconds=240,
+        max_slippage_bps=15,
+    )
+
+    assert preset["submission_window"] == "pre_open"
+    assert preset["trailing_activation_trigger"] == "profit_pct"
+    assert preset["trailing_activation_profit_pct"] == 0.04
+    assert preset["protection_transition_timeout_seconds"] == 12
+    assert preset["fill_timeout_seconds"] == 240
+    assert preset["max_slippage_bps"] == 15
 
 
 def test_build_parser_defaults_to_overnight_cash_swing_inputs() -> None:

@@ -6,14 +6,17 @@
 > switch oublié, ML drifté, dry-run absent) avant tout ordre live.
 > **Outils** : `python -m execution_engine.preflight` (checks programmatiques),
 > `python scripts/run_pre_live_checklist.py` (wrapper qui archive le rapport).
+> **Doctrine launcher** : `run_execution.py` = launcher canonique du flux
+> `run` ; `python -m execution_engine` = compatibilité `run` + `cancel-all`
+> natif.
 
 ---
 
 ## 1. À faire la veille (J-1)
 
 - [ ] **Run paper complet** vert exécuté dans la journée
-      (`python run_execution.py --account <id> --broker-mode paper`).
-- [ ] **Dry-run live** validé (`python run_execution.py --account <id> --broker-mode live --dry-run`).
+      (`python run_execution.py paper --account <id>`).
+- [ ] **Dry-run live** validé (`python run_execution.py live --account <id> --dry-run`).
 - [ ] **Snapshot DB** récent (sauvegarde `alpha_trade.sql` ou équivalent).
 - [ ] **Drift ML OK** : dernier `ml_drift_runs` n'est pas en `ALERT`
       (`SELECT status, payload FROM ml_drift_runs ORDER BY computed_at DESC LIMIT 1;`).

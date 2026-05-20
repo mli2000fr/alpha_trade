@@ -130,6 +130,10 @@ pouvez aussi le lancer seul :
 2. Confirmez le mode (`simulate` / `paper` / `live`).
 3. Suivez en temps réel.
 
+> ℹ️ Pour le flux `run`, le launcher canonique reste `run_execution.py`.
+> `python -m execution_engine` est conservé surtout pour compatibilité
+> historique sur `run` et pour le kill switch `cancel-all`.
+
 ## Premier ordre en paper trading — checklist
 
 - [ ] Compte Alpaca paper créé
@@ -145,15 +149,24 @@ Si tous coches : cliquez « Lancer Execution » en mode `paper`.
 
 ## Annulation d'urgence (« kill switch »)
 
-> ⚠️ **GAP CONNU** : à la date de rédaction, le bouton « Annuler tous les
-> ordres » n'est **pas encore exposé dans l'IHM** (cf. matrice IHM↔CLI).
-> En attendant, ouvrez PowerShell et tapez :
->
-> ```powershell
-> python -m execution_engine cancel-all --account <votre_account_id> --confirm-account <votre_account_id> --broker-mode paper --reason "annulation manuelle"
-> ```
->
-> Remplacez `paper` par `live` si vous êtes en argent réel.
+Le bouton **« Kill switch / Annuler tous les ordres »** est désormais exposé
+dans la page **Execution**.
+
+Utilisation recommandée :
+
+1. vérifiez le compte sélectionné ;
+2. utilisez `dry-run` si vous voulez d'abord lister les ordres ouverts sans
+   rien annuler ;
+3. en `live`, ressaisissez exactement l'identifiant du compte demandé par
+   l'écran ;
+4. déclenchez ensuite l'annulation globale.
+
+Si l'IHM n'est pas accessible, la CLI native de secours reste :
+
+```powershell
+python -m execution_engine cancel-all --account <votre_account_id> --dry-run
+python -m execution_engine cancel-all --account <votre_account_id> --broker-mode live --confirm-account <votre_account_id> --reason "annulation manuelle"
+```
 
 ## Pour passer en live (un jour)
 

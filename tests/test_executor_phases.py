@@ -7,12 +7,9 @@ broker mock) est planifiée dans une PR S26.3.b dédiée.
 """
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from execution_engine import executor_phases as ep
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -147,4 +144,3 @@ def test_run_phases_returns_metrics_even_on_first_phase_abort():
     assert metrics["preset"] == "value"  # état préexistant préservé
     assert metrics["status"] == "ABORTED"
     assert executor.calls == ["init_and_preflight"]
-

@@ -23,10 +23,13 @@ Le projet s'appuie principalement sur **Python 3.12**, **MySQL**, **SQLAlchemy**
 >   dans `doc/dataIntegrityEngine.md`.
 >
 > - **Sécurité opérationnelle** :
->   - `run_execution.py` en mode `paper` / `live` lève désormais une
+>   - `run_execution.py` est le **launcher canonique** du flux `run`
+>     (`simulate | paper | live | check`). En mode `paper` / `live`, il lève désormais une
 >     `RuntimeError` si `broker.get_account_equity()` échoue (plus de fallback
 >     silencieux à 100 000 $).
 >   - Le mode `live` exige la ressaisie exacte du label du compte broker.
+>   - `python -m execution_engine` reste une **façade de compatibilité**
+>     pour le flux `run` ; la sous-commande `cancel-all` y reste native.
 >   - Les secrets DB (`LOGIN_DB`, `PASSWORD_DB`) doivent être en variables
 >     d'environnement ; les valeurs sentinelles `pass`, `user`, `changeme`
 >     sont rejetées au démarrage. `config.yaml` n'utilise que des
@@ -392,9 +395,19 @@ python run_execution.py paper
 python run_execution.py paper --account live1
 python run_execution.py live --account live1
 python run_execution.py check
-python -m execution_engine
-python -m execution_engine --account live1
+
+# Façade de compatibilité historique pour le flux run
+python -m execution_engine --broker-mode paper --dry-run
+python -m execution_engine --account live1 --run-id risk-123
+
+# Kill switch global natif
+python -m execution_engine cancel-all --account paper1 --dry-run
+python -m execution_engine cancel-all --account live1 --broker-mode live --confirm-account live1 --reason "incident"
 ```
+
+Doctrine opérateur : `run_execution.py` est le launcher canonique du flux
+`run`. `python -m execution_engine` reste disponible pour compatibilité sur ce
+flux et conserve `cancel-all` comme point d'entrée natif.
 
 ### Machine Learning
 
@@ -487,7 +500,7 @@ python run_execution.py check
 ```text
 alpha_trade/
 ├── run.py                      ← point d'entrée IHM (python run.py)
-├── run_execution.py            ← point d'entrée exécution ordres
+├── run_execution.py            ← launcher canonique du flux run d'exécution
 ├── run_execution_protection_watch.py
 ├── config.yaml
 ├── config/
@@ -614,7 +627,8 @@ Migration : `database/sql/migration_add_account_id.sql` ou Alembic `alembic upgr
 
 - Le projet repose sur une base MySQL correctement initialisée avec les schémas SQL du dépôt.
 - `run.py` est le point d'entrée pour lancer l'IHM (`python run.py`).
-- `run_execution.py` est le point d'entrée le plus pratique pour l'exécution opérateur.
+- `run_execution.py` est le launcher canonique du flux `run` pour l'exécution opérateur.
+- `python -m execution_engine` reste une façade de compatibilité pour `run` et le point d'entrée natif de `cancel-all`.
 - L'IHM permet la **supervision et le lancement des pipelines** depuis l'interface web.
 - Les commandes `paper` et surtout `live` nécessitent une validation attentive des variables d'environnement et de la configuration broker.
 

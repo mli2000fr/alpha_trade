@@ -94,7 +94,7 @@ d'armer TP/SL.
 
 1. Lancer un watcher one-shot pour armer immédiatement les protections
    manquantes (filet `_arm_missing_protections`) :
-   ```bash
+   ```powershell
    python run_execution_protection_watch.py --mode once --account <id>
    ```
 2. Vérifier les métriques émises dans le `run_summary` :
@@ -116,20 +116,20 @@ d'armer TP/SL.
 
 ### Bascule broker Alpaca → IBKR (read-only failover)
 
-```bash
+```powershell
 # Vérifier circuit breaker actif
 python -m execution_engine.preflight --account default
-# Forcer failover (set env)
-export ALPHA_TRADE_BROKER_FAILOVER=ibkr_readonly
-# Redémarrer pipeline (writes suspendues)
-python run_execution.py --broker-mode paper --skip-writes
+# Forcer failover (session PowerShell courante)
+$env:ALPHA_TRADE_BROKER_FAILOVER = "ibkr_readonly"
+# Rejouer l'exécution en mode simulation pour garder le chemin run canonique sans writes broker
+python run_execution.py simulate --account default
 ```
 
 ### Restore from backup (RPO ≤ 5 min)
 
-```bash
-python scripts/restore_from_backup.py \
-    --backup-id <latest> \
+```powershell
+python scripts/restore_from_backup.py `
+    --backup-id <latest> `
     --target-db alpha_trade_restore
 ```
 
@@ -137,7 +137,7 @@ Cf. `doc/disaster_recovery.md` pour RTO ≤ 30 min.
 
 ### Vérification audit chain HMAC
 
-```bash
+```powershell
 python scripts/verify_audit_chain.py --since 7d
 ```
 

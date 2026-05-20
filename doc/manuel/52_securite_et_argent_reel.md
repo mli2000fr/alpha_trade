@@ -114,7 +114,9 @@
 
 ## 🆘 En cas de panique
 
-1. **Kill switch** : annuler tous les ordres ouverts :
+1. **Kill switch** : depuis la page **Execution**, utilisez d'abord le bouton
+   **« Kill switch / Annuler tous les ordres »** si l'IHM est disponible.
+   En secours, la CLI native reste :
    ```powershell
    python -m execution_engine cancel-all `
      --account <votre_account_id> `

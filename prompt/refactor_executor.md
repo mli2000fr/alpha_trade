@@ -62,8 +62,8 @@ compte implicite**, des **defaults CLI** et du **branchage YAML partagé**.
 
 ### Verdict détaillé
 - **P0 bloquants** : 2 trouvés, 2 corrigés.
-- **P1 cohérence opérationnelle** : 2 trouvés, 2 corrigés.
-- **P2 / gouvernance / dette** : plusieurs points restent ouverts.
+- **P1 cohérence opérationnelle** : 3 trouvés, 3 corrigés.
+- **P2 / gouvernance / dette** : le périmètre audité est désormais largement stabilisé ; ne restent surtout que des sujets d’extension hors de ce scope.
 
 ---
 
@@ -251,10 +251,10 @@ risk consommées.
 
 ## 6.2 Anomalies / incohérences restantes
 
-## A-EXE-001 — `python -m execution_engine` n’est pas en parité fonctionnelle avec `run_execution.py`
+## A-EXE-001 — Doctrine launcher execution unifiée
 
-### Constat
-Le wrapper `run_execution.py` ajoute des comportements absents du CLI direct
+### Constat initial
+Le wrapper `run_execution.py` ajoutait des comportements absents du CLI direct
 `execution_engine` :
 - preflight live bloquant
 - hard fail si equity broker indisponible
@@ -269,14 +269,36 @@ Deux entry points “execution” existent avec des niveaux de sécurité diffé
 Un opérateur peut croire lancer l’équivalent du run canonique alors qu’il lance
 une version plus bas niveau.
 
+### Doctrine retenue
+`run_execution.py` devient le **launcher canonique unique** pour le flux `run`.
+
+`python -m execution_engine` reste supporté, mais comme **façade de compatibilité**
+qui délègue le sous-chemin `run` à `run_execution.py`. La sous-commande
+`cancel-all` reste native à `execution_engine`.
+
+### Correction appliquée
+- `execution_engine/cli.py` délègue désormais le flux `run` vers :
+  - `run_execution.resolve_mode_from_broker_mode(...)`
+  - `run_execution.abort_missing_env(...)`
+  - `run_execution.run(...)`
+- `run_execution.py` expose explicitement le helper canonique de résolution de
+  mode et accepte les overrides runtime nécessaires au shim de compatibilité
+  (`submission_window`, trailing activation, timeouts, slippage, batch, etc.)
+- le CLI direct `execution_engine` expose désormais aussi les flags canoniques
+  manquants (`--debug`, `--auto-rebalance`, `--submission-window`,
+  `--auto-watcher`)
+- `doc/execution_engine.md` documente cette doctrine opérateur
+
 ### Statut
-**Non corrigé** dans cet audit.
+**Corrigé**.
 
 ### Recommandation
-Choisir explicitement une doctrine :
-1. soit `run_execution.py` devient le **seul** launcher opérateur recommandé ;
-2. soit `execution_engine/cli.py` est enrichi pour converger vers la même
-   sémantique de sécurité.
+Conserver cette gouvernance :
+1. toute nouvelle option opérateur `run` est d’abord implémentée dans
+   `run_execution.py` ;
+2. `execution_engine/cli.py` ne fait que la relayer si une compatibilité
+   historique est nécessaire ;
+3. `cancel-all` reste un point d’entrée natif spécifique à `execution_engine`.
 
 ---
 
@@ -346,23 +368,33 @@ La passe initiale laissait encore des dettes Ruff sur le périmètre audité.
 La passe suivante a nettoyé le sous-périmètre ciblé :
 - `execution_engine/config.py`
 - `execution_engine/cli.py`
+- `execution_engine/db_io.py`
 - `run_execution.py`
 - `ihm/services/pipeline_runner.py`
 - `tests/test_execution_engine_config.py`
+- `tests/test_execution_db_io.py`
 - `tests/test_execution_cli_cancel_all.py`
 - `tests/test_run_execution.py`
 - `tests/test_run_execution_blocks_on_preflight_fail.py`
 - `tests/test_ihm_pipeline_runner.py`
 - `tests/test_config_yaml_schema.py`
+- `tests/test_executor.py`
+- `tests/test_execution_engine_executor.py`
+- `tests/test_executor_phases.py`
+
+La passe Ruff complémentaire a confirmé que `execution_engine/db_io.py` est
+désormais propre sur ce périmètre, et a nettoyé les tests executor historiques
+restants (notamment `datetime.UTC`, imports et variables locales inutilisées).
 
 Des dettes Ruff plus larges restent possibles hors de ce sous-périmètre,
-notamment dans `execution_engine/db_io.py` et certains tests executor historiques.
+mais elles ne concernent plus `execution_engine/db_io.py` ni les tests executor
+historiques explicitement traités ici.
 
 ### Risque
 Dette de maintenabilité, bruit CI, signal qualité dégradé.
 
 ### Statut
-**Corrigé sur le périmètre ciblé de cette passe**.
+**Corrigé sur le périmètre ciblé de cette passe, y compris `db_io.py` et les tests executor historiques prioritaires**.
 
 ### Recommandation
 Poursuivre séparément la réduction de dette sur le périmètre executor élargi,
@@ -374,7 +406,7 @@ sans le mélanger à des changements de contrat runtime.
 
 ## P0 — Robustesse cross-step / contrats runtime
 1. **Conserver la normalisation `default`** désormais en place.
-2. Ajouter un test d’intégration complet :
+2. **Conserver** le test d’intégration complet désormais ajouté sur la chaîne
    `risk_management -> run_business_summaries -> execution_engine.load_portfolio_targets()`
    pour les cas :
    - compte explicite
@@ -382,21 +414,16 @@ sans le mélanger à des changements de contrat runtime.
    - dernier run à 0 cible
 
 ## P1 — Convergence des lanceurs execution
-1. Décider si `run_execution.py` est le launcher canonique unique.
-2. Si non, remonter dans `execution_engine/cli.py` :
-   - preflight live
-   - circuit breaker injecté
-   - broker equity hard gate
-   - market regime preflight
-   - feature flags
-3. Harmoniser les noms d’arguments entre les deux CLI quand c’est possible :
-   - `--date` vs `--trade-date`
-   - `--run-id` vs `--risk-run-id`
+1. **Conserver** `run_execution.py` comme launcher canonique unique du flux `run`.
+2. Maintenir `execution_engine/cli.py` comme shim de compatibilité pour `run`
+   et point d’entrée natif pour `cancel-all`.
+3. Continuer à harmoniser les noms d’arguments entre les deux CLI quand c’est
+   pertinent, mais sans recréer de logique métier dupliquée.
 
 ## P1 — Éliminer les paramètres fantômes
-1. Brancher ou supprimer `execution.modes`.
-2. Conserver le test anti-régression pour `risk_management.trailing_stop` désormais branché.
-3. Ajouter un test anti-paramètre fantôme pour `execution.modes` si la section reste.
+1. Conserver l’absence de `execution.modes` dans `config.yaml`.
+2. Maintenir le garde-fou `tests/test_config_yaml_schema.py::test_execution_modes_section_is_absent`.
+3. Conserver le test anti-régression pour `risk_management.trailing_stop` désormais branché.
 
 ## P2 — Hygiène / observabilité
 1. Passe Ruff dédiée sur :
@@ -405,9 +432,9 @@ sans le mélanger à des changements de contrat runtime.
    - `run_execution.py`
 2. Remplacer progressivement `timezone.utc` par `datetime.UTC` sur le périmètre
    executor si le style du repo converge vers cette règle.
-3. Clarifier la doc opérateur :
-   - quand utiliser `run_execution.py`
-   - quand `python -m execution_engine` est acceptable
+3. **Conserver** la doc opérateur désormais clarifiée :
+   - `run_execution.py` = launcher canonique
+   - `python -m execution_engine` = compatibilité `run` + `cancel-all` natif
 
 ---
 
@@ -437,6 +464,34 @@ python -m ruff check execution_engine\config.py execution_engine\cli.py run_exec
 All checks passed!
 ```
 
+## Validation complémentaire — passe Ruff executor élargie
+```powershell
+Set-Location "F:\projets"
+python -m ruff check execution_engine\config.py execution_engine\cli.py execution_engine\db_io.py run_execution.py ihm\services\pipeline_runner.py tests\test_execution_engine_config.py tests\test_execution_db_io.py tests\test_execution_cli_cancel_all.py tests\test_run_execution.py tests\test_run_execution_blocks_on_preflight_fail.py tests\test_ihm_pipeline_runner.py tests\test_config_yaml_schema.py tests\test_executor.py tests\test_execution_engine_executor.py tests\test_executor_phases.py --output-format concise
+python -m pytest tests\test_execution_engine_config.py tests\test_execution_db_io.py tests\test_execution_cli_cancel_all.py tests\test_run_execution.py tests\test_run_execution_blocks_on_preflight_fail.py tests\test_ihm_pipeline_runner.py tests\test_config_yaml_schema.py tests\test_executor.py tests\test_execution_engine_executor.py tests\test_executor_phases.py --no-cov -q
+```
+
+### Résultat
+```text
+All checks passed!
+............................................................................................................................................................................................ [100%]
+```
+
+## Validation complémentaire — fermeture A-EXE-001
+```powershell
+Set-Location "F:\projets"
+python -m pytest tests\test_execution_cli_cancel_all.py tests\test_run_execution.py tests\test_run_execution_blocks_on_preflight_fail.py tests\test_execution_db_io.py tests\test_ihm_pipeline_runner.py tests\test_entrypoints_and_market_calendar.py --no-cov -q
+python -m ruff check execution_engine\cli.py run_execution.py execution_engine\__main__.py execution_engine\db_io.py tests\test_execution_cli_cancel_all.py tests\test_run_execution.py tests\test_run_execution_blocks_on_preflight_fail.py tests\test_execution_db_io.py tests\test_ihm_pipeline_runner.py tests\test_entrypoints_and_market_calendar.py doc\execution_engine.md --output-format concise
+python -m pytest tests\test_execution_engine_config.py tests\test_execution_db_io.py tests\test_execution_cli_cancel_all.py tests\test_run_execution.py tests\test_run_execution_blocks_on_preflight_fail.py tests\test_ihm_pipeline_runner.py tests\test_config_yaml_schema.py tests\test_executor.py tests\test_execution_engine_executor.py tests\test_executor_phases.py tests\test_entrypoints_and_market_calendar.py --no-cov -q
+```
+
+### Résultat
+```text
+..................................................................................................................... [100%]
+All checks passed!
+............................................................................................................................................................................................................. [100%]
+```
+
 ## Lint ciblé exécuté
 ```powershell
 Set-Location "F:\projets"
@@ -445,7 +500,8 @@ python -m ruff check execution_engine\config.py execution_engine\cli.py executio
 
 ### Résultat
 - **pas de régression fonctionnelle bloquante détectée**
-- **dettes Ruff résiduelles** encore présentes sur le périmètre executor/tests
+- **la dette Ruff initiale a été résorbée sur le périmètre executor/tests explicitement traité dans cet audit**
+- des écarts peuvent encore subsister hors de ce sous-ensemble, notamment dans d’autres modules non audités ici
 
 ---
 
@@ -456,9 +512,15 @@ python -m ruff check execution_engine\config.py execution_engine\cli.py executio
 - `execution_engine/cli.py`
 - `execution_engine/config.py`
 - `run_execution.py`
+- `doc/execution_engine.md`
 - `tests/test_execution_db_io.py`
 - `tests/test_execution_cli_cancel_all.py`
 - `tests/test_execution_engine_config.py`
+- `tests/test_executor.py`
+- `tests/test_execution_engine_executor.py`
+- `tests/test_executor_phases.py`
+- `tests/test_run_execution.py`
+- `tests/test_entrypoints_and_market_calendar.py`
 
 ---
 
@@ -470,9 +532,15 @@ avec `risk_management` sur les points les plus sensibles du contrat runtime :
 - compte implicite `default`
 - defaults opérateur cohérents
 - consommation effective du YAML `risk_management.trailing_stop`
+- doctrine launcher unifiée (`run_execution.py` canonique, `execution_engine` en shim de compatibilité pour `run`)
+- test cross-step complet `run_business_summaries -> load_portfolio_targets()`
 
 Les principaux risques résiduels ne portent plus sur le **mapping risk → execution**
-lui-même, mais sur la **coexistence de deux launchers execution de niveau de
-sécurité différent** et sur quelques **leviers YAML / IHM possiblement fantômes ou
-historiques**.
+ni sur la **coexistence de deux launchers execution divergents**. Les travaux
+restants relèvent désormais surtout d’extensions hors de ce périmètre audité
+(nouveaux launchers, nouvelle doc transverse, nouvelles surfaces de lint non
+encore visées).
+
+Les sujets initialement ouverts sur la **doctrine opérateur** et le **test
+cross-step** ont été refermés dans cette passe.
 

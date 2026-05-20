@@ -22,7 +22,7 @@
 
 ```
 alpha_trade/
-├── run_execution.py              ← Point d'entrée principal (CLI interactif ou arguments)
+├── run_execution.py              ← Launcher canonique du flux `run` (CLI interactif ou arguments)
 ├── run_execution_protection_watch.py ← Point d'entrée opérateur du watcher post-exécution
 ├── pyproject.toml                ← Config build, dépendances, ruff, mypy
 ├── requirements.txt / -dev.txt   ← Dépendances runtime et dev
@@ -325,17 +325,21 @@ Le bridge Python impose plusieurs garde-fous :
 
 ## 5. Flux Techniques
 
+> **Doctrine launcher execution (A-EXE-001)**
+> - `run_execution.py` = launcher canonique unique du flux `run`
+> - `python -m execution_engine` = shim de compatibilité pour `run`
+> - `python -m execution_engine cancel-all` = kill switch global natif
+
 ### 5.1 Initialisation (`run_execution.py`)
 
-```python
-config   = ExecutionConfig(**preset, account_id="live1")  # ou None pour le compte par défaut
-repo     = ExecutionRepository()              # lazy SQLAlchemy engine
-client   = AlpacaTradingClient(broker_mode, account_id="live1")  # credentials résolues via AccountRegistry
-broker   = BrokerAdapter(client, config)      # couche d'isolation
-oco      = OcoManager(broker, repo)           # OCO synthétique
-executor = ProductionExecutor(config, repo, broker, oco)
-metrics  = executor.execute_run(risk_run_id, trade_date)
-```
+Le launcher canonique construit ensuite, dans cet ordre :
+
+- une `ExecutionConfig` résolue depuis les presets/overrides et le compte ;
+- un `ExecutionRepository` pour la persistance SQL ;
+- un `AlpacaTradingClient` résolu via `AccountRegistry` ;
+- un `BrokerAdapter` ;
+- un `OcoManager` ;
+- puis un `ProductionExecutor` qui exécute `execute_run(risk_run_id, trade_date)`.
 
 ### 5.2 Appels API
 
@@ -612,6 +616,13 @@ python -m risk_management.run_risk --account-equity 100000 --account live1
 python run_execution.py paper --account live1
 python -m corporate_actions sync --account live1
 python -m corporate_actions apply --account live1
+
+# Compatibilité historique pour le flux run :
+python -m execution_engine --broker-mode paper --dry-run
+
+# Kill switch global natif :
+python -m execution_engine cancel-all --account live1 --dry-run
+python -m execution_engine cancel-all --account live1 --broker-mode live --confirm-account live1 --reason "incident"
 ```
 
 Notes ML GPU :

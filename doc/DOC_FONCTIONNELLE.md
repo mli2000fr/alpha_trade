@@ -52,6 +52,11 @@ Un opérateur lance quotidiennement le pipeline dans l'ordre suivant :
 
 L'opérateur supervise l'ensemble via l'**IHM Streamlit** (`ihm/app.py`).
 
+> **Doctrine opérateur execution** : `run_execution.py` est le launcher
+> canonique du flux `run` (`simulate | paper | live | check`).
+> `python -m execution_engine` reste une façade de compatibilité pour ce flux
+> et conserve `cancel-all` comme point d'entrée natif du kill switch global.
+
 ---
 
 ## 2. Fonctionnalités Principales
@@ -296,7 +301,12 @@ python run_execution.py paper --account default      # exécuter sur le compte p
 python run_execution.py live --account live1          # exécuter sur le compte live
 python -m risk_management.run_risk --account live1    # risk pour le compte live
 python -m corporate_actions apply --account live1     # appliquer CA sur le compte live
+python -m execution_engine cancel-all --account live1 --broker-mode live --confirm-account live1 --reason "incident"  # kill switch global natif
 ```
+
+Pour le flux `run`, le chemin recommandé reste `run_execution.py`. La CLI
+`python -m execution_engine` sert surtout de compatibilité historique pour
+`run` et de point d'entrée natif pour `cancel-all`.
 
 ### 2.11 Watcher de protections post-exécution
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -32,7 +33,7 @@ def _make_parent_intent() -> OrderIntent:
 
 
 def _make_order(*, status: str, filled_qty: float = 10.0, avg_fill_price: float | None = 151.0) -> BrokerOrder:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return BrokerOrder(
         broker_order_id=f"broker-{status.lower()}",
         client_order_id=f"client-{status.lower()}",
@@ -242,7 +243,7 @@ def test_execute_run_emits_live_progress_payloads(monkeypatch) -> None:
         repo,
         broker,
         oco,
-        progress_callback=lambda payload: progress_payloads.append(dict(payload)),
+        progress_callback=lambda payload: progress_payloads.append(cast(dict[str, object], dict(cast(dict[str, Any], payload)))),
     )
 
     metrics = executor.execute_run(risk_run_id="risk-1", trade_date=date(2026, 5, 1))

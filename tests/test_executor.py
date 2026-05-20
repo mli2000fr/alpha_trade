@@ -1,7 +1,7 @@
 """Tests for execution_engine.executor."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
 
 from execution_engine.audit import build_execution_run_summary
@@ -31,7 +31,7 @@ def _filled_order(intent_id: str = "i1", symbol: str = "AAPL") -> BrokerOrder:
         symbol=symbol, side="buy", qty=100, filled_qty=100,
         avg_fill_price=150.2, status=OrderStatus.FILLED, order_type="market",
         limit_price=None, stop_price=None, trail_percent=None,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
     )
 
 
@@ -41,7 +41,7 @@ def _accepted_order(intent_id: str = "i1", symbol: str = "AAPL") -> BrokerOrder:
         symbol=symbol, side="buy", qty=100, filled_qty=0,
         avg_fill_price=None, status=OrderStatus.SUBMITTED, order_type="market",
         limit_price=None, stop_price=None, trail_percent=None,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
     )
 
 
@@ -244,7 +244,7 @@ class TestExecutor:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=False)
         executor, repo, broker, _ = _make_executor(cfg)
         broker.is_market_open.return_value = False
-        metrics = executor.execute_run(risk_run_id="r1")
+        executor.execute_run(risk_run_id="r1")
         broker.submit_intent.assert_not_called()
 
     def test_market_closed_with_allow_outside_rth_submits_and_skips_polling(self) -> None:
@@ -291,7 +291,7 @@ class TestExecutor:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, max_slippage_bps=5)
         executor, repo, broker, _ = _make_executor(cfg)
         # fill at 150.2 vs decision 150.0 = ~13 bps > 5
-        metrics = executor.execute_run(risk_run_id="r1")
+        executor.execute_run(risk_run_id="r1")
         event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
         assert EventType.SLIPPAGE_ALERT in event_types
 
@@ -366,9 +366,16 @@ class TestExecutor:
         assert EventType.CHILDREN_DEFERRED_ACCOUNT_CONSTRAINT in event_types
 
     def test_children_use_target_risk_fields_for_tp_and_initial_stop(self) -> None:
-        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, profit_taker_pct=0.02, trailing_stop_pct=0.05)
-        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
-        parent = executor._repo.load_portfolio_targets.return_value[0]
+        cfg = ExecutionConfig(
+            dry_run=False,
+            allow_outside_rth=True,
+            swing_only=False,
+            profit_taker_pct=0.02,
+            trailing_stop_pct=0.05,
+        )
+        targets = [_target()]
+        executor, repo, broker, _ = _make_executor(cfg, targets=targets)
+        parent = targets[0]
         parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
         filled_order = _filled_order(intent_id=parent_intent.intent_id)
 
@@ -390,9 +397,16 @@ class TestExecutor:
         assert stop_intent.stop_price == 140.0
 
     def test_children_fallback_to_trailing_if_initial_stop_submit_fails(self) -> None:
-        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, profit_taker_pct=0.02, trailing_stop_pct=0.05)
-        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
-        parent = executor._repo.load_portfolio_targets.return_value[0]
+        cfg = ExecutionConfig(
+            dry_run=False,
+            allow_outside_rth=True,
+            swing_only=False,
+            profit_taker_pct=0.02,
+            trailing_stop_pct=0.05,
+        )
+        targets = [_target()]
+        executor, repo, broker, _ = _make_executor(cfg, targets=targets)
+        parent = targets[0]
         parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
         filled_order = _filled_order(intent_id=parent_intent.intent_id)
         broker.submit_intent.side_effect = [_accepted_order(intent_id="tp", symbol="AAPL"), Exception("stop rejected"), _accepted_order(intent_id="trail", symbol="AAPL")]
@@ -426,6 +440,7 @@ class TestExecutor:
         cfg = ExecutionConfig(
             dry_run=False,
             allow_outside_rth=True,
+            swing_only=False,
             profit_taker_pct=0.02,
             trailing_stop_pct=0.05,
             protection_transition_timeout_seconds=1,
@@ -433,14 +448,15 @@ class TestExecutor:
             trailing_activation_trigger="multiple_r",
             trailing_activation_r_multiple=1.0,
         )
-        executor, repo, broker, _ = _make_executor(cfg, targets=[_target()])
-        parent = executor._repo.load_portfolio_targets.return_value[0]
+        targets = [_target()]
+        executor, repo, broker, _ = _make_executor(cfg, targets=targets)
+        parent = targets[0]
         parent_intent = build_entry_intents([parent], cfg, "exec-1")[0]
         filled_order = _filled_order(intent_id=parent_intent.intent_id)
 
         broker.submit_intent.side_effect = [
-            BrokerOrder("tp1", "ctp1", "tp", "AAPL", "sell", 100, 0, None, OrderStatus.SUBMITTED, "limit", 170.2, None, None, datetime.now(timezone.utc), datetime.now(timezone.utc)),
-            BrokerOrder("stop1", "cstop1", "stop", "AAPL", "sell", 100, 0, None, OrderStatus.SUBMITTED, "stop", None, 140.0, None, datetime.now(timezone.utc), datetime.now(timezone.utc)),
+            BrokerOrder("tp1", "ctp1", "tp", "AAPL", "sell", 100, 0, None, OrderStatus.SUBMITTED, "limit", 170.2, None, None, datetime.now(UTC), datetime.now(UTC)),
+            BrokerOrder("stop1", "cstop1", "stop", "AAPL", "sell", 100, 0, None, OrderStatus.SUBMITTED, "stop", None, 140.0, None, datetime.now(UTC), datetime.now(UTC)),
         ]
 
         metrics = {

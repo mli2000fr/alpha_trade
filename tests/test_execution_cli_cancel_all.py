@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import os
-import sys
-import types
 from datetime import datetime
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -42,6 +41,40 @@ def test_cli_run_accepts_run_execution_aliases() -> None:
     assert args.command == "run"
     assert args.trade_date == "2026-04-19"
     assert args.risk_run_id == "risk-123"
+
+
+def test_cli_run_accepts_canonical_paper_mode_syntax() -> None:
+    args = exec_cli.parse_args(["paper", "--run-id", "risk-123"])
+
+    assert args.command == "run"
+    assert args.broker_mode == "paper"
+    assert args.dry_run is False
+    assert args.risk_run_id == "risk-123"
+
+
+def test_cli_run_accepts_canonical_simulate_mode_syntax() -> None:
+    args = exec_cli.parse_args(["simulate", "--run-id", "risk-123"])
+
+    assert args.command == "run"
+    assert args.broker_mode == "paper"
+    assert args.dry_run is True
+    assert args.risk_run_id == "risk-123"
+
+
+def test_cli_run_accepts_canonical_launcher_flags() -> None:
+    args = exec_cli.parse_args([
+        "--broker-mode", "paper",
+        "--auto-rebalance",
+        "--auto-watcher",
+        "--submission-window", "pre_open",
+        "--debug",
+    ])
+
+    assert args.command == "run"
+    assert args.auto_rebalance is True
+    assert args.auto_watcher is True
+    assert args.submission_window == "pre_open"
+    assert args.debug is True
 
 
 def test_cli_explicit_run_subcommand() -> None:
@@ -96,26 +129,51 @@ def test_cli_main_exports_feature_flags_before_running(monkeypatch) -> None:
     assert seen == {"disable_sentiment": "1", "disable_ml": "1"}
 
 
-def test_cli_run_aborts_on_live_preflight_fail(monkeypatch) -> None:
-    class _Check:
-        name = "alpaca_key"
-        status = "fail"
-        message = "missing ALPACA_API_KEY"
+def test_cli_run_delegates_to_canonical_run_execution_launcher(monkeypatch) -> None:
+    captured: dict[str, object] = {}
 
-    class _Report:
-        passed = False
-        checks = (_Check(),)
+    monkeypatch.setattr(
+        exec_cli.run_execution,
+        "resolve_mode_from_broker_mode",
+        lambda *, broker_mode, dry_run: "simulate" if dry_run else broker_mode,
+    )
+    monkeypatch.setattr(
+        exec_cli.run_execution,
+        "abort_missing_env",
+        lambda **kwargs: captured.setdefault("abort", dict(kwargs)),
+    )
+    monkeypatch.setattr(
+        exec_cli.run_execution,
+        "run",
+        lambda **kwargs: captured.setdefault("run", dict(kwargs)),
+    )
 
-    fake_module = types.ModuleType("execution_engine.preflight")
-    fake_module.run_preflight = lambda **_: _Report()
+    exec_cli.main([
+        "--broker-mode", "paper",
+        "--dry-run",
+        "--date", "2026-04-19",
+        "--run-id", "risk-123",
+        "--account", "paper1",
+        "--auto-rebalance",
+        "--auto-watcher",
+        "--debug",
+        "--submission-window", "pre_open",
+        "--disable-sentiment",
+        "--disable-ml",
+    ])
 
-    monkeypatch.setitem(sys.modules, "execution_engine.preflight", fake_module)
-    monkeypatch.setattr(exec_cli, "configure_root_logging", lambda **_: None)
-
-    with pytest.raises(SystemExit) as excinfo:
-        exec_cli.main(["run", "--broker-mode", "live", "--account", "default"])
-
-    assert excinfo.value.code == 2
+    assert captured["abort"] == {"account_id": "paper1", "mode": "simulate"}
+    forwarded = cast(dict[str, Any], captured["run"])
+    assert forwarded["mode"] == "simulate"
+    assert forwarded["run_id"] == "risk-123"
+    assert forwarded["trade_date"] == "2026-04-19"
+    assert forwarded["account_id"] == "paper1"
+    assert forwarded["auto_rebalance"] is True
+    assert forwarded["auto_watcher"] is True
+    assert forwarded["debug"] is True
+    assert forwarded["submission_window"] == "pre_open"
+    assert os.environ.get("ALPHA_TRADE_DISABLE_SENTIMENT") == "1"
+    assert os.environ.get("ALPHA_TRADE_DISABLE_ML") == "1"
 
 
 # ---------------------------------------------------------------------------

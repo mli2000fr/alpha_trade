@@ -352,6 +352,81 @@ PRESETS: dict[str, dict] = {
 # Lancement
 # ---------------------------------------------------------------------------
 
+
+def resolve_mode_from_broker_mode(*, broker_mode: str, dry_run: bool) -> str:
+    """Convertit le contrat historique executor (`broker_mode` + `dry_run`) en mode canonique."""
+    return "simulate" if dry_run else str(broker_mode)
+
+
+def _build_runtime_preset(
+    mode: str,
+    *,
+    allow_outside_rth: bool = False,
+    auto_rebalance: bool = False,
+    account_type: str = "cash",
+    pdt_rule: str = "off",
+    swing_only: bool = True,
+    submission_window: str | None = None,
+    take_profit_pct: float | None = None,
+    trailing_stop_pct: float | None = None,
+    trailing_activation_trigger: str | None = None,
+    trailing_activation_r_multiple: float | None = None,
+    trailing_activation_profit_pct: float | None = None,
+    protection_transition_timeout_seconds: int | None = None,
+    protection_transition_poll_interval_seconds: float | None = None,
+    entry_order_type: str | None = None,
+    limit_price_buffer_bps: int | None = None,
+    max_order_retries: int | None = None,
+    poll_interval_seconds: float | None = None,
+    fill_timeout_seconds: int | None = None,
+    cancel_timeout_seconds: int | None = None,
+    max_slippage_bps: int | None = None,
+    execution_batch_size: int | None = None,
+    inter_order_delay_ms: int | None = None,
+) -> dict:
+    preset = dict(PRESETS[mode])
+    if allow_outside_rth:
+        preset["allow_outside_rth"] = True
+    if auto_rebalance:
+        preset["auto_rebalance_on_reconcile"] = True
+    if take_profit_pct is not None:
+        preset["profit_taker_pct"] = take_profit_pct
+    if trailing_stop_pct is not None:
+        preset["trailing_stop_pct"] = trailing_stop_pct
+    preset["account_type"] = account_type
+    preset["pdt_rule"] = pdt_rule
+    preset["swing_only"] = swing_only
+    preset["submission_window"] = submission_window or preset.get("submission_window", "both")
+    if trailing_activation_trigger is not None:
+        preset["trailing_activation_trigger"] = trailing_activation_trigger
+    if trailing_activation_r_multiple is not None:
+        preset["trailing_activation_r_multiple"] = trailing_activation_r_multiple
+    if trailing_activation_profit_pct is not None:
+        preset["trailing_activation_profit_pct"] = trailing_activation_profit_pct
+    if protection_transition_timeout_seconds is not None:
+        preset["protection_transition_timeout_seconds"] = protection_transition_timeout_seconds
+    if protection_transition_poll_interval_seconds is not None:
+        preset["protection_transition_poll_interval_seconds"] = protection_transition_poll_interval_seconds
+    if entry_order_type is not None:
+        preset["entry_order_type"] = entry_order_type
+    if limit_price_buffer_bps is not None:
+        preset["limit_price_buffer_bps"] = limit_price_buffer_bps
+    if max_order_retries is not None:
+        preset["max_order_retries"] = max_order_retries
+    if poll_interval_seconds is not None:
+        preset["poll_interval_seconds"] = poll_interval_seconds
+    if fill_timeout_seconds is not None:
+        preset["fill_timeout_seconds"] = fill_timeout_seconds
+    if cancel_timeout_seconds is not None:
+        preset["cancel_timeout_seconds"] = cancel_timeout_seconds
+    if max_slippage_bps is not None:
+        preset["max_slippage_bps"] = max_slippage_bps
+    if execution_batch_size is not None:
+        preset["execution_batch_size"] = execution_batch_size
+    if inter_order_delay_ms is not None:
+        preset["inter_order_delay_ms"] = inter_order_delay_ms
+    return preset
+
 def _launch_post_watcher(
     *,
     summary: dict,
@@ -410,6 +485,20 @@ def run(
     skip_preflight: bool = False,
     take_profit_pct: float | None = None,
     trailing_stop_pct: float | None = None,
+    trailing_activation_trigger: str | None = None,
+    trailing_activation_r_multiple: float | None = None,
+    trailing_activation_profit_pct: float | None = None,
+    protection_transition_timeout_seconds: int | None = None,
+    protection_transition_poll_interval_seconds: float | None = None,
+    entry_order_type: str | None = None,
+    limit_price_buffer_bps: int | None = None,
+    max_order_retries: int | None = None,
+    poll_interval_seconds: float | None = None,
+    fill_timeout_seconds: int | None = None,
+    cancel_timeout_seconds: int | None = None,
+    max_slippage_bps: int | None = None,
+    execution_batch_size: int | None = None,
+    inter_order_delay_ms: int | None = None,
 ) -> None:
     level = logging.DEBUG if debug else logging.INFO
     configure_root_logging(
@@ -419,20 +508,31 @@ def run(
         datefmt="%H:%M:%S",
     )
 
-    # Overrider allow_outside_rth si demande explicitement
-    preset = dict(PRESETS[mode])  # copie mutable
-    if allow_outside_rth:
-        preset["allow_outside_rth"] = True
-    if auto_rebalance:
-        preset["auto_rebalance_on_reconcile"] = True
-    if take_profit_pct is not None:
-        preset["profit_taker_pct"] = take_profit_pct
-    if trailing_stop_pct is not None:
-        preset["trailing_stop_pct"] = trailing_stop_pct
-    preset["account_type"] = account_type
-    preset["pdt_rule"] = pdt_rule
-    preset["swing_only"] = swing_only
-    preset["submission_window"] = submission_window
+    preset = _build_runtime_preset(
+        mode,
+        allow_outside_rth=allow_outside_rth,
+        auto_rebalance=auto_rebalance,
+        account_type=account_type,
+        pdt_rule=pdt_rule,
+        swing_only=swing_only,
+        submission_window=submission_window,
+        take_profit_pct=take_profit_pct,
+        trailing_stop_pct=trailing_stop_pct,
+        trailing_activation_trigger=trailing_activation_trigger,
+        trailing_activation_r_multiple=trailing_activation_r_multiple,
+        trailing_activation_profit_pct=trailing_activation_profit_pct,
+        protection_transition_timeout_seconds=protection_transition_timeout_seconds,
+        protection_transition_poll_interval_seconds=protection_transition_poll_interval_seconds,
+        entry_order_type=entry_order_type,
+        limit_price_buffer_bps=limit_price_buffer_bps,
+        max_order_retries=max_order_retries,
+        poll_interval_seconds=poll_interval_seconds,
+        fill_timeout_seconds=fill_timeout_seconds,
+        cancel_timeout_seconds=cancel_timeout_seconds,
+        max_slippage_bps=max_slippage_bps,
+        execution_batch_size=execution_batch_size,
+        inter_order_delay_ms=inter_order_delay_ms,
+    )
 
     mode_label = {
         "simulate": f"{CYAN}SIMULATION (dry-run){RESET}",
@@ -884,6 +984,11 @@ def main() -> None:
         skip_preflight = False
         take_profit_pct = None
         trailing_stop_pct = None
+        trailing_activation_trigger = None
+        trailing_activation_r_multiple = None
+        trailing_activation_profit_pct = None
+        protection_transition_timeout_seconds = None
+        protection_transition_poll_interval_seconds = None
     else:
         mode              = args.mode
         run_id            = args.run_id
@@ -900,16 +1005,11 @@ def main() -> None:
         skip_preflight    = bool(getattr(args, "skip_preflight", False))
         take_profit_pct   = args.profit_taker_pct
         trailing_stop_pct = args.trailing_stop_pct
-        if args.trailing_activation_trigger is not None:
-            PRESETS[mode]["trailing_activation_trigger"] = args.trailing_activation_trigger
-        if args.trailing_activation_r_multiple is not None:
-            PRESETS[mode]["trailing_activation_r_multiple"] = args.trailing_activation_r_multiple
-        if args.trailing_activation_profit_pct is not None:
-            PRESETS[mode]["trailing_activation_profit_pct"] = args.trailing_activation_profit_pct
-        if args.protection_transition_timeout_seconds is not None:
-            PRESETS[mode]["protection_transition_timeout_seconds"] = args.protection_transition_timeout_seconds
-        if args.protection_transition_poll_interval_seconds is not None:
-            PRESETS[mode]["protection_transition_poll_interval_seconds"] = args.protection_transition_poll_interval_seconds
+        trailing_activation_trigger = args.trailing_activation_trigger
+        trailing_activation_r_multiple = args.trailing_activation_r_multiple
+        trailing_activation_profit_pct = args.trailing_activation_profit_pct
+        protection_transition_timeout_seconds = args.protection_transition_timeout_seconds
+        protection_transition_poll_interval_seconds = args.protection_transition_poll_interval_seconds
 
     abort_missing_env(account_id=account_id, mode=mode)
     run(
@@ -928,6 +1028,11 @@ def main() -> None:
         skip_preflight=skip_preflight,
         take_profit_pct=take_profit_pct,
         trailing_stop_pct=trailing_stop_pct,
+        trailing_activation_trigger=trailing_activation_trigger,
+        trailing_activation_r_multiple=trailing_activation_r_multiple,
+        trailing_activation_profit_pct=trailing_activation_profit_pct,
+        protection_transition_timeout_seconds=protection_transition_timeout_seconds,
+        protection_transition_poll_interval_seconds=protection_transition_poll_interval_seconds,
     )
 
 

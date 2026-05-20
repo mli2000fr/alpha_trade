@@ -18,8 +18,8 @@ Ce document résume le fonctionnement du module `execution_engine/` et les comma
 | Fichier | Rôle |
 |---|---|
 | `execution_engine/__init__.py` | Package Python |
-| `execution_engine/__main__.py` | Point d'entrée `python -m execution_engine` |
-| `execution_engine/cli.py` | CLI bas niveau du moteur d'exécution |
+| `execution_engine/__main__.py` | Point d'entrée `python -m execution_engine` (façade de compatibilité) |
+| `execution_engine/cli.py` | Shim CLI : délègue le chemin `run` vers `run_execution.py`, garde `cancel-all` natif |
 | `execution_engine/executor.py` | Orchestrateur principal `ProductionExecutor` |
 | `execution_engine/broker_adapter.py` | Adaptation des intents vers le broker |
 | `execution_engine/order_intents.py` | Construction des ordres d'entrée et de rebalance |
@@ -30,7 +30,7 @@ Ce document résume le fonctionnement du module `execution_engine/` et les comma
 | `execution_engine/db_io.py` | Persistance SQL du module |
 | `execution_engine/models.py` | Modèles métiers d'exécution |
 | `execution_engine/config.py` | Paramètres immuables de l'exécution |
-| `run_execution.py` | Point d'entrée opérateur recommandé |
+| `run_execution.py` | Launcher canonique du flux `run` |
 
 ---
 
@@ -81,11 +81,22 @@ Il supporte aussi désormais des contraintes de compte/trading explicites :
 
 ## 3. Commandes utiles
 
-### Point d'entrée opérateur recommandé
+### Launcher canonique du flux `run`
 
 ```powershell
 python run_execution.py
 ```
+
+### Compatibilité CLI historique
+
+```powershell
+python -m execution_engine --broker-mode paper --dry-run
+python -m execution_engine --broker-mode live --account live1 --run-id risk-123
+```
+
+Le point d'entrée `python -m execution_engine` reste supporté pour compatibilité,
+mais il délègue désormais le flux `run` au launcher canonique `run_execution.py`.
+La sous-commande `cancel-all`, elle, reste native à `execution_engine`.
 
 ### Simulation pure
 
@@ -251,7 +262,7 @@ pour faciliter le pointage opérateur.
 Pour annuler **tous** les ordres open d'un compte broker en une seule
 commande (sans passer par l'IHM ou un script ad-hoc) :
 
-```bash
+```powershell
 # Mode paper — exécution réelle des cancels
 python -m execution_engine cancel-all --account paper1 --reason "incident X"
 

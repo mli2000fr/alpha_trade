@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from database.run_business_summaries import persist_run_business_summary
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import (
     BrokerOrder,
@@ -473,6 +474,114 @@ class TestExecutionDbIo:
             """))
 
         targets = repo.load_portfolio_targets(trade_date=date(2026, 5, 1), account_id="default")
+
+        assert targets == []
+
+    def test_load_latest_portfolio_targets_cross_step_with_persisted_summary_for_explicit_account(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
+                    sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction, created_at)
+                VALUES ('risk-live-1', 'live1', '2026-05-02', 'MSFT', 1, 'long', 5, 300.0,
+                    7.0, '2026-05-02', '2026-05-02', 280.0, 20.0,
+                    100.0, 100.0, 1500.0, 0.25,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1, '2026-05-02 08:00:00')
+            """))
+
+        persisted = persist_run_business_summary(
+            summary={"run_id": "risk-live-1", "target_positions": 1},
+            step_key="risk_management",
+            run_kind="step",
+            status="completed",
+            summary_run_id="risk-live-1",
+            entity_run_id="risk-live-1",
+            account_id="live1",
+            trade_date=date(2026, 5, 2),
+            started_at="2026-05-02T08:00:00",
+            finished_at="2026-05-02T08:00:10",
+            engine=engine,
+        )
+
+        targets = repo.load_portfolio_targets(trade_date=date(2026, 5, 2), account_id="live1")
+
+        assert persisted == 1
+        assert [target.symbol for target in targets] == ["MSFT"]
+
+    def test_load_latest_portfolio_targets_cross_step_with_persisted_summary_for_default_account(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
+                    sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction, created_at)
+                VALUES ('risk-default-1', 'default', '2026-05-03', 'AAPL', 1, 'long', 10, 150.0,
+                    5.0, '2026-05-03', '2026-05-03', 140.0, 10.0,
+                    100.0, 100.0, 1500.0, 0.75,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1, '2026-05-03 08:00:00')
+            """))
+
+        persisted = persist_run_business_summary(
+            summary={"run_id": "risk-default-1", "target_positions": 1},
+            step_key="risk_management",
+            run_kind="step",
+            status="completed",
+            summary_run_id="risk-default-1",
+            entity_run_id="risk-default-1",
+            account_id="default",
+            trade_date=date(2026, 5, 3),
+            started_at="2026-05-03T08:00:00",
+            finished_at="2026-05-03T08:00:10",
+            engine=engine,
+        )
+
+        targets = repo.load_portfolio_targets(trade_date=date(2026, 5, 3), account_id="default")
+
+        assert persisted == 1
+        assert [target.symbol for target in targets] == ["AAPL"]
+
+    def test_load_latest_portfolio_targets_cross_step_returns_empty_when_persisted_latest_summary_has_zero_targets(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
+                    sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction, created_at)
+                VALUES ('risk-stale', 'default', '2026-05-04', 'AAPL', 1, 'long', 10, 150.0,
+                    5.0, '2026-05-04', '2026-05-04', 140.0, 10.0,
+                    100.0, 100.0, 1500.0, 0.75,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1, '2026-05-04 07:00:00')
+            """))
+
+        persist_run_business_summary(
+            summary={"run_id": "risk-stale", "target_positions": 1},
+            step_key="risk_management",
+            run_kind="step",
+            status="completed",
+            summary_run_id="risk-stale",
+            entity_run_id="risk-stale",
+            account_id="default",
+            trade_date=date(2026, 5, 4),
+            started_at="2026-05-04T07:00:00",
+            finished_at="2026-05-04T07:00:10",
+            engine=engine,
+        )
+        persist_run_business_summary(
+            summary={"run_id": "risk-zero", "target_positions": 0},
+            step_key="risk_management",
+            run_kind="step",
+            status="completed",
+            summary_run_id="risk-zero",
+            entity_run_id="risk-zero",
+            account_id="default",
+            trade_date=date(2026, 5, 4),
+            started_at="2026-05-04T07:30:00",
+            finished_at="2026-05-04T07:30:10",
+            engine=engine,
+        )
+
+        targets = repo.load_portfolio_targets(trade_date=date(2026, 5, 4), account_id="default")
 
         assert targets == []
 

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import date
 import importlib.util
-from pathlib import Path
 import runpy
 import subprocess
 import sys
+from contextlib import contextmanager
+from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -17,7 +17,6 @@ import event_sentiment.cli
 import execution_engine.cli
 import risk_management.cli
 from backtesting import cli as backtesting_cli
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUN_PY_PATH = str(PROJECT_ROOT / "run.py")
