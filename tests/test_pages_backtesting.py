@@ -140,6 +140,52 @@ def test_build_fidelity_coverage_rows_exposes_missing_symbols() -> None:
     assert rows.iloc[1]["Symboles dégradants"] == "MSFT, NVDA"
 
 
+def test_build_fidelity_provenance_rows_exposes_sources_and_tags() -> None:
+    rows = backtesting._build_fidelity_provenance_rows(
+        {
+            "provenance": {
+                "scores": {
+                    "provenance_kind": "persisted_history",
+                    "source_table": "stock_scores_history",
+                    "score_column_requested": "auto",
+                },
+                "sentiment": {
+                    "requested_mode": "auto",
+                    "source_tags": ["persisted_scores_snapshot", "walk_forward_overlay"],
+                    "walk_forward_artifact_path": "artifacts/wf/run_1/latest_best_weights.json",
+                },
+                "ml": {
+                    "effective_strategy": "rebuild-missing",
+                    "source_tags": ["persisted_predictions", "rebuilt_predictions"],
+                },
+            }
+        }
+    )
+
+    assert list(rows["Composant"]) == ["scores", "sentiment", "ml"]
+    assert rows.iloc[0]["Type"] == "persisted_history"
+    assert "walk_forward_overlay" in rows.iloc[1]["Source / tags"]
+    assert rows.iloc[2]["Détail clé"] == "rebuild-missing"
+
+
+def test_build_fidelity_ml_cause_rows_exposes_breakdown() -> None:
+    rows = backtesting._build_fidelity_ml_cause_rows(
+        {
+            "provenance": {
+                "ml": {
+                    "missing_cause_breakdown": {
+                        "prediction_missing": 3,
+                        "artifact_missing": 1,
+                    }
+                }
+            }
+        }
+    )
+
+    assert list(rows["Cause ML"]) == ["prediction_missing", "artifact_missing"]
+    assert list(rows["Occurrences"]) == [3, 1]
+
+
 def test_build_screener_artifact_objective_rows_formats_expected_columns() -> None:
     rows = backtesting._build_screener_artifact_objective_rows(
         {

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -59,6 +59,30 @@ REASON_TAXONOMY: dict[str, dict[str, str]] = {
         "category": "artifact",
         "severity": "warning",
         "label": "Artefact walk-forward demandé mais indisponible.",
+    },
+    "prediction_missing": {
+        "component": "ml",
+        "category": "missing_cause",
+        "severity": "warning",
+        "label": "Prédiction persistée absente et aucun artefact exploitable invoqué.",
+    },
+    "artifact_missing": {
+        "component": "ml",
+        "category": "missing_cause",
+        "severity": "warning",
+        "label": "Artefact ML requis manquant pour reconstruire la prédiction.",
+    },
+    "artifact_invalid": {
+        "component": "ml",
+        "category": "missing_cause",
+        "severity": "warning",
+        "label": "Artefact ML présent mais invalide, corrompu ou incompatible.",
+    },
+    "rebuild_unavailable": {
+        "component": "ml",
+        "category": "missing_cause",
+        "severity": "warning",
+        "label": "Rebuild ML tenté mais non exploitable faute de contexte suffisant.",
     },
 }
 
@@ -207,6 +231,124 @@ def _extract_component_reasons(component: str, reasons: Sequence[str]) -> list[s
     return extracted
 
 
+def _normalize_string_list(values: object) -> list[str]:
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized
+
+
+def _normalize_symbol_cause_mapping(value: object) -> dict[str, list[str]]:
+    if not isinstance(value, Mapping):
+        return {}
+    normalized: dict[str, list[str]] = {}
+    for raw_symbol, raw_causes in value.items():
+        symbol = str(raw_symbol or "").strip().upper()
+        if not symbol:
+            continue
+        causes = _normalize_reason_list(raw_causes)
+        if causes:
+            normalized[symbol] = causes
+    return normalized
+
+
+def _normalize_count_mapping(value: object) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    normalized: dict[str, int] = {}
+    for raw_key, raw_count in value.items():
+        key = _normalize_reason(raw_key)
+        count = _safe_int(raw_count)
+        if key and count > 0:
+            normalized[key] = count
+    return normalized
+
+
+def _build_scores_provenance(score_payload: Mapping[str, Any], *, requested_score_column: str | None) -> dict[str, object]:
+    source_table = str(score_payload.get("source_table") or "unknown")
+    fallback_used = bool(score_payload.get("fallback_used", False))
+    provenance_kind = "persisted_history"
+    if source_table == "stock_scores" or fallback_used:
+        provenance_kind = "current_snapshot_fallback"
+    return {
+        "component": "scores",
+        "provenance_kind": provenance_kind,
+        "source_table": source_table,
+        "strict_pit_requested": bool(score_payload.get("strict_pit_requested", False)),
+        "strict_pit_satisfied": bool(score_payload.get("strict_pit_satisfied", False)),
+        "history_table_exists": bool(score_payload.get("history_table_exists", False)),
+        "history_rows_found": _safe_int(score_payload.get("history_rows_found", 0)),
+        "capital_preset_key": score_payload.get("capital_preset_key"),
+        "config_fingerprint_present": bool(score_payload.get("config_fingerprint_present", False)),
+        "score_column_requested": requested_score_column or "auto",
+    }
+
+
+def _build_sentiment_provenance(sentiment_payload: Mapping[str, Any], *, sentiment_mode: str) -> dict[str, object]:
+    source_tags: list[str] = []
+    if sentiment_mode == "off":
+        source_tags.append("disabled")
+    else:
+        source_tags.append("persisted_scores_snapshot")
+        if _safe_int(sentiment_payload.get("rebuilt_dates_succeeded", 0)) > 0:
+            source_tags.append("rebuilt_missing_snapshots")
+        if _safe_int(sentiment_payload.get("rows_filled_from_final_score", 0)) > 0:
+            source_tags.append("fallback_final_score")
+        if bool(sentiment_payload.get("walk_forward_overlay_applied", False)):
+            source_tags.append("walk_forward_overlay")
+    return {
+        "component": "sentiment",
+        "requested_mode": sentiment_payload.get("requested_mode", sentiment_mode),
+        "engine_mode": sentiment_payload.get("engine_mode"),
+        "source_tags": source_tags,
+        "rebuilt_dates_attempted": _safe_int(sentiment_payload.get("rebuilt_dates_attempted", 0)),
+        "rebuilt_dates_succeeded": _safe_int(sentiment_payload.get("rebuilt_dates_succeeded", 0)),
+        "rows_filled_from_final_score": _safe_int(sentiment_payload.get("rows_filled_from_final_score", 0)),
+        "writeback_enabled": bool(sentiment_payload.get("writeback_enabled", False)),
+        "writeback_performed": bool(sentiment_payload.get("writeback_performed", False)),
+        "walk_forward_overlay_applied": bool(sentiment_payload.get("walk_forward_overlay_applied", False)),
+        "walk_forward_artifact_path": sentiment_payload.get("walk_forward_artifact_path"),
+    }
+
+
+def _build_ml_provenance(ml_payload: Mapping[str, Any], *, ml_mode: str, ml_pit_strategy: str) -> dict[str, object]:
+    source_tags: list[str] = []
+    if ml_mode == "off":
+        source_tags.append("disabled")
+    else:
+        if _safe_int(ml_payload.get("predictions_input_rows", 0)) > 0:
+            source_tags.append("persisted_predictions")
+        if _safe_int(ml_payload.get("rebuilt_prediction_rows", 0)) > 0:
+            source_tags.append("rebuilt_predictions")
+        if _safe_int(ml_payload.get("missing_prediction_keys_after", 0)) > 0:
+            source_tags.append("remaining_missing_predictions")
+        if not source_tags:
+            source_tags.append("no_prediction_coverage")
+    return {
+        "component": "ml",
+        "requested_mode": ml_payload.get("requested_mode", ml_mode),
+        "requested_strategy": ml_payload.get("requested_strategy", ml_pit_strategy),
+        "effective_strategy": ml_payload.get("effective_strategy", ml_pit_strategy),
+        "engine_mode": ml_payload.get("engine_mode"),
+        "source_tags": source_tags,
+        "predictions_input_rows": _safe_int(ml_payload.get("predictions_input_rows", 0)),
+        "expected_symbol_dates": _safe_int(ml_payload.get("expected_symbol_dates", 0)),
+        "rebuilt_prediction_rows": _safe_int(ml_payload.get("rebuilt_prediction_rows", 0)),
+        "rebuild_attempted": bool(ml_payload.get("rebuild_attempted", False)),
+        "persist_enabled": bool(ml_payload.get("persist_enabled", False)),
+        "persist_performed": bool(ml_payload.get("persist_performed", False)),
+        "missing_cause_breakdown": _normalize_count_mapping(ml_payload.get("missing_cause_breakdown", {})),
+        "missing_causes_by_symbol": _normalize_symbol_cause_mapping(ml_payload.get("missing_causes_by_symbol", {})),
+    }
+
+
 class PitHistoryRequiredError(RuntimeError):
     """Levée quand un run pipeline exige un historique PIT indisponible."""
 
@@ -329,6 +471,8 @@ class MlPreparationDiagnostics:
     rebuild_attempted: bool = False
     persist_enabled: bool = False
     persist_performed: bool = False
+    missing_cause_breakdown: dict[str, int] = field(default_factory=dict)
+    missing_causes_by_symbol: dict[str, tuple[str, ...]] = field(default_factory=dict)
     degraded_reasons: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
@@ -347,6 +491,11 @@ class MlPreparationDiagnostics:
             "rebuild_attempted": bool(self.rebuild_attempted),
             "persist_enabled": bool(self.persist_enabled),
             "persist_performed": bool(self.persist_performed),
+            "missing_cause_breakdown": {str(key): int(value) for key, value in self.missing_cause_breakdown.items()},
+            "missing_causes_by_symbol": {
+                str(symbol): list(causes)
+                for symbol, causes in self.missing_causes_by_symbol.items()
+            },
             "degraded_reasons": list(self.degraded_reasons),
         }
 
@@ -478,6 +627,12 @@ def build_fidelity_manifest(
         ),
     }
 
+    provenance_payload = {
+        "scores": _build_scores_provenance(score_payload, requested_score_column=requested_score_column),
+        "sentiment": _build_sentiment_provenance(sentiment_payload, sentiment_mode=sentiment_mode),
+        "ml": _build_ml_provenance(ml_payload, ml_mode=ml_mode, ml_pit_strategy=ml_pit_strategy),
+    }
+
     return {
         "taxonomy_version": 1,
         "components": list(FIDELITY_COMPONENTS),
@@ -493,6 +648,7 @@ def build_fidelity_manifest(
         },
         "capital_preset_key": capital_preset_key,
         "coverage": coverage_payload,
+        "provenance": provenance_payload,
         "component_status": component_status,
         "summary": {
             "enabled_components": [name for name, payload in component_status.items() if bool(payload.get("enabled", False))],
@@ -524,6 +680,9 @@ def build_coverage_summary(manifest: Mapping[str, Any]) -> dict[str, Any]:
     coverage = manifest.get("coverage", {})
     if not isinstance(coverage, Mapping):
         coverage = {}
+    provenance = manifest.get("provenance", {})
+    if not isinstance(provenance, Mapping):
+        provenance = {}
     return {
         "taxonomy_version": manifest.get("taxonomy_version", 1),
         "engine_mode": manifest.get("engine_mode"),
@@ -535,6 +694,7 @@ def build_coverage_summary(manifest: Mapping[str, Any]) -> dict[str, Any]:
         "requested_window": dict(manifest.get("requested_window", {})) if isinstance(manifest.get("requested_window"), Mapping) else {},
         "component_status": {str(name): dict(payload) for name, payload in component_status.items()},
         "coverage": {str(name): dict(payload) for name, payload in coverage.items()},
+        "provenance": {str(name): dict(payload) for name, payload in provenance.items()},
         "summary": dict(manifest.get("summary", {})) if isinstance(manifest.get("summary"), Mapping) else {},
     }
 

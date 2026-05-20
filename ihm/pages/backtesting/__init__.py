@@ -1876,6 +1876,16 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
             with st.expander("Coverage Sprint 1 — sentiment / ML", expanded=False):
                 st.dataframe(coverage_rows, use_container_width=True, hide_index=True)
 
+        provenance_rows = _build_fidelity_provenance_rows(fidelity)
+        if not provenance_rows.empty:
+            with st.expander("Provenance Sprint 2 — scores / sentiment / ML", expanded=False):
+                st.dataframe(provenance_rows, use_container_width=True, hide_index=True)
+
+        ml_cause_rows = _build_fidelity_ml_cause_rows(fidelity)
+        if not ml_cause_rows.empty:
+            with st.expander("Causes ML normalisées", expanded=False):
+                st.dataframe(ml_cause_rows, use_container_width=True, hide_index=True)
+
         degraded_reason_details = fidelity.get("degraded_reason_details", [])
         if isinstance(degraded_reason_details, list) and degraded_reason_details:
             with st.expander("Motifs normalisés de dégradation", expanded=False):
@@ -2010,6 +2020,53 @@ def _build_fidelity_coverage_rows(fidelity: dict[str, object]) -> pd.DataFrame:
                 "Symboles dégradants": ", ".join(str(symbol) for symbol in missing_after) if missing_after else "—",
             }
         )
+    return pd.DataFrame(rows)
+
+
+def _build_fidelity_provenance_rows(fidelity: dict[str, object]) -> pd.DataFrame:
+    provenance = fidelity.get("provenance", {})
+    if not isinstance(provenance, dict) or not provenance:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for component_name in ("scores", "sentiment", "ml"):
+        payload = provenance.get(component_name)
+        if not isinstance(payload, dict):
+            continue
+        source_tags = payload.get("source_tags", [])
+        if not isinstance(source_tags, list):
+            source_tags = []
+        rows.append(
+            {
+                "Composant": component_name,
+                "Type": _coerce_metric_text(payload.get("provenance_kind") or payload.get("requested_mode") or payload.get("effective_strategy")),
+                "Source / tags": ", ".join(str(tag) for tag in source_tags) if source_tags else _coerce_metric_text(payload.get("source_table")),
+                "Détail clé": _coerce_metric_text(
+                    payload.get("score_column_requested")
+                    or payload.get("walk_forward_artifact_path")
+                    or payload.get("effective_strategy")
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _build_fidelity_ml_cause_rows(fidelity: dict[str, object]) -> pd.DataFrame:
+    provenance = fidelity.get("provenance", {})
+    if not isinstance(provenance, dict):
+        return pd.DataFrame()
+    ml_payload = provenance.get("ml", {})
+    if not isinstance(ml_payload, dict):
+        return pd.DataFrame()
+    cause_breakdown = ml_payload.get("missing_cause_breakdown", {})
+    if not isinstance(cause_breakdown, dict) or not cause_breakdown:
+        return pd.DataFrame()
+    rows = [
+        {
+            "Cause ML": str(cause),
+            "Occurrences": _to_int(count),
+        }
+        for cause, count in cause_breakdown.items()
+    ]
     return pd.DataFrame(rows)
 
 

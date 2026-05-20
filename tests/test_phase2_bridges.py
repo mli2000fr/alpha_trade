@@ -8,6 +8,96 @@ import pandas as pd
 import pytest
 
 
+@pytest.mark.parametrize(
+    ("score_column", "expected_sources"),
+    [
+        (
+            None,
+            {
+                "AAA": "final_score_walk_forward",
+                "BBB": "final_score_sentiment",
+                "CCC": "final_score",
+            },
+        ),
+        (
+            "final_score_sentiment",
+            {
+                "AAA": "final_score_sentiment",
+                "BBB": "final_score_sentiment",
+                "CCC": "final_score",
+            },
+        ),
+        (
+            "final_score",
+            {
+                "AAA": "final_score",
+                "BBB": "final_score",
+                "CCC": "final_score",
+            },
+        ),
+    ],
+)
+def test_signal_replay_and_risk_bridge_keep_same_score_cascade(score_column, expected_sources) -> None:
+    from backtesting.risk_bridge import build_phase2_risk_result
+    from backtesting.signal_replay import replay_signals
+    from risk_management.config import RiskConfig
+
+    trade_dates = pd.date_range("2025-01-01", periods=30, freq="D")
+    snapshot_ts = trade_dates[-1]
+    close_df = pd.DataFrame(
+        {
+            "AAA": [100.0 + idx for idx in range(len(trade_dates))],
+            "BBB": [80.0 + idx for idx in range(len(trade_dates))],
+            "CCC": [60.0 + idx for idx in range(len(trade_dates))],
+        },
+        index=trade_dates,
+    )
+    high_df = close_df + 1.0
+    low_df = close_df - 1.0
+    scores_df = pd.DataFrame(
+        {
+            "symbol": ["AAA", "BBB", "CCC"],
+            "trade_date": [snapshot_ts, snapshot_ts, snapshot_ts],
+            "final_score": [0.20, 0.70, 0.90],
+            "final_score_sentiment": [0.60, 0.75, None],
+            "final_score_walk_forward": [0.95, None, None],
+            "sector": ["Tech", "Health", "Energy"],
+        }
+    )
+
+    replay_df = replay_signals(
+        scores_df,
+        predictions_df=None,
+        score_column=score_column,
+        max_positions=10,
+    )
+    phase2_result = build_phase2_risk_result(
+        scores_df=scores_df,
+        predictions_df=pd.DataFrame(),
+        close_df=close_df,
+        high_df=high_df,
+        low_df=low_df,
+        risk_config=RiskConfig(
+            account_equity=100_000.0,
+            max_positions=10,
+            max_position_weight=1.0,
+            max_sector_weight=1.0,
+            max_gross_exposure=1.0,
+            min_position_notional=1.0,
+        ),
+        score_column=score_column,
+    )
+
+    replay_by_symbol = replay_df.set_index("symbol")
+    entries_by_symbol = {entry.symbol: entry for entry in phase2_result.entries}
+
+    assert set(entries_by_symbol) == {"AAA", "BBB", "CCC"}
+    for symbol, expected_source in expected_sources.items():
+        assert replay_by_symbol.loc[symbol, "score_source"] == expected_source
+        assert entries_by_symbol[symbol].score_source == expected_source
+        assert float(replay_by_symbol.loc[symbol, "score"]) == pytest.approx(entries_by_symbol[symbol].score_used)
+
+
 def test_build_phase2_risk_result_generates_entries_and_signals() -> None:
     from backtesting.risk_bridge import build_phase2_risk_result
     from risk_management.config import RiskConfig

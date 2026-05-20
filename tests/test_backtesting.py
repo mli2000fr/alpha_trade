@@ -644,6 +644,66 @@ class TestResilience:
 
         assert prepared.diagnostics.missing_symbols_before == ("MSFT",)
         assert prepared.diagnostics.missing_symbols_after == ("MSFT",)
+        assert prepared.diagnostics.missing_cause_breakdown == {"prediction_missing": 1}
+        assert prepared.diagnostics.missing_causes_by_symbol == {"MSFT": ("prediction_missing",)}
+
+    def test_prepare_predictions_rebuild_missing_classifies_artifact_missing(self, monkeypatch):
+        from backtesting import resilience
+
+        scores = pd.DataFrame({
+            "symbol": ["MSFT"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+        })
+        preds = pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
+
+        monkeypatch.setattr(resilience, "predict_symbol", lambda *args, **kwargs: None)
+        monkeypatch.setattr(resilience, "reset_runtime_status", lambda initial=None: None)
+        monkeypatch.setattr(
+            resilience,
+            "snapshot_runtime_status",
+            lambda: {"last_artifact_issue_reason": "config_missing"},
+        )
+
+        prepared = resilience.prepare_predictions_for_ml_mode(
+            None,  # type: ignore[arg-type]
+            scores,
+            preds,
+            ml_mode="rebuild-missing",
+            artifacts_dir=Path("artifacts/models"),
+            return_diagnostics=True,
+        )
+
+        assert prepared.diagnostics.missing_cause_breakdown == {"artifact_missing": 1}
+        assert prepared.diagnostics.missing_causes_by_symbol == {"MSFT": ("artifact_missing",)}
+
+    def test_prepare_predictions_rebuild_missing_classifies_artifact_invalid(self, monkeypatch):
+        from backtesting import resilience
+
+        scores = pd.DataFrame({
+            "symbol": ["NVDA"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+        })
+        preds = pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
+
+        monkeypatch.setattr(resilience, "predict_symbol", lambda *args, **kwargs: None)
+        monkeypatch.setattr(resilience, "reset_runtime_status", lambda initial=None: None)
+        monkeypatch.setattr(
+            resilience,
+            "snapshot_runtime_status",
+            lambda: {"last_artifact_issue_reason": "lstm_checkpoint_corrupted:lstm_attention"},
+        )
+
+        prepared = resilience.prepare_predictions_for_ml_mode(
+            None,  # type: ignore[arg-type]
+            scores,
+            preds,
+            ml_mode="rebuild-missing",
+            artifacts_dir=Path("artifacts/models"),
+            return_diagnostics=True,
+        )
+
+        assert prepared.diagnostics.missing_cause_breakdown == {"artifact_invalid": 1}
+        assert prepared.diagnostics.missing_causes_by_symbol == {"NVDA": ("artifact_invalid",)}
 
     def test_prepare_predictions_ml_rebuild_missing_calls_predictor(self, monkeypatch):
         from backtesting import resilience
@@ -2438,6 +2498,8 @@ class TestCLI:
         assert report_payload["params"]["engine_mode"] == "research"
         assert report_payload["fidelity"]["strict_pit_requested"] is False
         assert report_payload["fidelity"]["coverage"]["sentiment"]["rows_input"] == len(scores_df)
+        assert report_payload["fidelity"]["provenance"]["scores"]["provenance_kind"] == "persisted_history"
+        assert report_payload["fidelity"]["provenance"]["ml"]["missing_cause_breakdown"] == {"prediction_missing": 2}
         assert report_payload["fidelity"]["component_status"]["bars"]["status"] == "ok"
         assert report_payload["fidelity"]["component_status"]["walk_forward"]["status"] == "ok"
         artifacts = cast(dict[str, str], report_payload["artifacts"])

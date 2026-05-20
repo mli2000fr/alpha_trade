@@ -491,6 +491,8 @@ class TestFidelityManifestSprint1:
                 missing_prediction_keys_after=2,
                 missing_symbols_before=("MSFT",),
                 missing_symbols_after=("MSFT",),
+                missing_cause_breakdown={"prediction_missing": 2},
+                missing_causes_by_symbol={"MSFT": ("prediction_missing",)},
                 degraded_reasons=("ml_predictions_missing",),
             ),
             sentiment_mode="auto",
@@ -511,8 +513,12 @@ class TestFidelityManifestSprint1:
         assert manifest["component_status"]["walk_forward"]["status"] == "degraded"
         assert manifest["coverage"]["sentiment"]["missing_symbols_before"] == ["AAPL"]
         assert manifest["coverage"]["ml"]["rows_missing_after"] == 2
+        assert manifest["provenance"]["scores"]["provenance_kind"] == "current_snapshot_fallback"
+        assert manifest["provenance"]["ml"]["missing_cause_breakdown"] == {"prediction_missing": 2}
+        assert manifest["provenance"]["ml"]["missing_causes_by_symbol"] == {"MSFT": ["prediction_missing"]}
         assert summary["degraded"] is True
         assert summary["component_status"]["ml"]["status"] == "degraded"
+        assert summary["provenance"]["ml"]["effective_strategy"] == "use-persisted"
 
 
 # ---------------------------------------------------------------------------

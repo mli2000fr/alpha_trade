@@ -342,6 +342,10 @@ Ordre conseillé :
 - artefact `coverage_summary.json` produit à chaque run avec `output_dir` ;
 - résumé de fidélité affichable côté `ihm/pages/backtesting/__init__.py` sans casser le contrat racine de `report.json` ;
 - tests ciblés ajoutés sur le manifeste Sprint 1, les artefacts et le rendu IHM.
+- test de non-régression `signal_replay` vs `risk_bridge` ajouté sur plusieurs cascades de score (`auto`, `final_score_sentiment`, `final_score`) ;
+- premier slice Sprint 2 livré avec bloc `provenance` pour `scores`, `sentiment` et `ml` ;
+- normalisation des causes ML manquantes : `prediction_missing`, `artifact_missing`, `artifact_invalid`, `rebuild_unavailable` ;
+- résumé IHM enrichi pour afficher la provenance et les causes ML normalisées.
 
 ### Clôture Sprint 1 — état réel après implémentation
 Le Sprint 1 est **livré sur son axe principal**, avec un périmètre volontairement additif et compatible avec l’existant.
@@ -374,13 +378,41 @@ Le Sprint 1 est **livré sur son axe principal**, avec un périmètre volontaire
 
 #### Limites encore ouvertes après Sprint 1
 - la granularité reste principalement **au niveau run**, pas encore par séance complète ;
-- le détail ML ne distingue pas encore finement `prediction_missing` / `artifact_missing` / `artifact_invalid` ;
+- le détail ML ne distinguait pas encore finement `prediction_missing` / `artifact_missing` / `artifact_invalid` avant l’ouverture du slice Sprint 2 ;
 - la matrice explicite `persisté / reconstruit / fallback / absent` n’est pas encore formalisée par symbole ;
 - l’IHM expose un résumé opérateur utile, mais pas encore une navigation analytique avancée composant ↔ symbole ↔ séance.
 
+### Clôture partielle Sprint 2 — état réel après cette passe
+Le Sprint 2 n’est **pas entièrement clos**, mais un incrément utile et testable a été livré.
+
+#### Livré dans ce slice Sprint 2
+- ajout d’un bloc `provenance` additif dans `report.json[fidelity]`, `fidelity_manifest.json` et `coverage_summary.json` ;
+- provenance explicitée pour :
+  - `scores` : source PIT historisée vs fallback snapshot courant ;
+  - `sentiment` : persisté / rebuild snapshot / fallback `final_score` / overlay walk-forward ;
+  - `ml` : persisté / rebuild / manquants résiduels + stratégie effective.
+- enrichissement des diagnostics ML avec :
+  - `missing_cause_breakdown` ;
+  - `missing_causes_by_symbol`.
+- première normalisation opératoire des causes ML :
+  - `prediction_missing` ;
+  - `artifact_missing` ;
+  - `artifact_invalid` ;
+  - `rebuild_unavailable`.
+- compatibilité IHM vérifiée :
+  - ajout d’une vue `Provenance Sprint 2 — scores / sentiment / ML` ;
+  - ajout d’une vue `Causes ML normalisées` ;
+  - contrat conservé additif, sans nouvelle clé racine.
+
+#### Ce que ce slice Sprint 2 ne couvre pas encore complètement
+- pas encore de contrat amont standardisé `selector snapshot id / model run id / artifact lineage id` ;
+- pas encore de replay diagnostique court matérialisé dans un artefact dédié séance par séance ;
+- la distinction fine des cas ML reste basée sur l’état runtime du predictor, donc utile mais encore best-effort ;
+- l’attribution des écarts reste principalement orientée run et symbole, pas encore complète par date-clé.
+
 ### Prochaines actions à lancer sans attendre
-1. Ajouter au manifeste une distinction explicite `prediction_missing` vs `artifact_missing` vs `artifact_invalid`.
-2. Introduire un test de non-régression `signal_replay` vs `risk_bridge` sur plusieurs cascades de score.
+1. Formaliser un identifiant de provenance amont pour snapshots selector / runs modelFactory / artefacts de rebuild.
+2. Produire une première fenêtre de replay diagnostique court avec écarts journalisés sur quelques séances.
 3. Préparer une première fenêtre `compare-to-live` courte sur un run réel récent.
 4. Étendre le contrat de couverture vers une matrice par symbole / par séance si le besoin opérateur se confirme.
 

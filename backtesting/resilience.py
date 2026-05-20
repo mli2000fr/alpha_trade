@@ -1,6 +1,7 @@
 """Politiques de résilience pour ML et sentiment dans le backtesting."""
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date
 import logging
 from pathlib import Path
@@ -18,11 +19,17 @@ from backtesting.fidelity import (
 )
 from backtesting.walk_forward import apply_walk_forward_weights, resolve_latest_walk_forward_weights
 from modelFactory.predictor import predict_symbol
+from modelFactory.runtime_status import reset_runtime_status, snapshot_runtime_status
 
 LOGGER = logging.getLogger(__name__)
 
 MLMode = str
 SentimentMode = str
+
+ML_MISSING_CAUSE_PREDICTION_MISSING = "prediction_missing"
+ML_MISSING_CAUSE_ARTIFACT_MISSING = "artifact_missing"
+ML_MISSING_CAUSE_ARTIFACT_INVALID = "artifact_invalid"
+ML_MISSING_CAUSE_REBUILD_UNAVAILABLE = "rebuild_unavailable"
 
 
 def _normalize_dates(df: pd.DataFrame, date_col: str = "trade_date") -> pd.DataFrame:
@@ -72,6 +79,24 @@ def _merge_prediction_frames(existing: pd.DataFrame, rebuilt: pd.DataFrame) -> p
     merged_df = pd.DataFrame(merged)
     deduped = merged_df.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
     return pd.DataFrame(deduped)
+
+
+def _classify_ml_missing_cause_from_runtime_status(status: dict[str, object]) -> str:
+    raw_reason = str(status.get("last_artifact_issue_reason") or "").strip().lower()
+    if raw_reason:
+        if any(token in raw_reason for token in ("invalid", "corrupted", "incompatible", "violation", "read_failed", "payload_not_object")):
+            return ML_MISSING_CAUSE_ARTIFACT_INVALID
+        if "missing" in raw_reason:
+            return ML_MISSING_CAUSE_ARTIFACT_MISSING
+    return ML_MISSING_CAUSE_REBUILD_UNAVAILABLE
+
+
+def _freeze_missing_causes_by_symbol(symbol_causes: dict[str, set[str]]) -> dict[str, tuple[str, ...]]:
+    return {
+        symbol: tuple(sorted(causes))
+        for symbol, causes in sorted(symbol_causes.items())
+        if causes
+    }
 
 
 def _rebuild_prediction_frame(
@@ -377,6 +402,13 @@ def prepare_predictions_for_ml_mode(
         diagnostics.degraded_reasons = ("ml_predictions_missing",)
         diagnostics.missing_prediction_keys_after = len(missing_keys)
         diagnostics.missing_symbols_after = diagnostics.missing_symbols_before
+        diagnostics.missing_cause_breakdown = {
+            ML_MISSING_CAUSE_PREDICTION_MISSING: len(missing_keys),
+        }
+        diagnostics.missing_causes_by_symbol = {
+            symbol: (ML_MISSING_CAUSE_PREDICTION_MISSING,)
+            for symbol in diagnostics.missing_symbols_before
+        }
         LOGGER.warning(
             "ML PIT strategy=use-persisted — %s prédiction(s) manquante(s), aucun rebuild tenté.",
             len(missing_keys),
@@ -397,6 +429,13 @@ def prepare_predictions_for_ml_mode(
         diagnostics.degraded_reasons = ("ml_predictions_missing",)
         diagnostics.missing_prediction_keys_after = len(missing_keys)
         diagnostics.missing_symbols_after = diagnostics.missing_symbols_before
+        diagnostics.missing_cause_breakdown = {
+            ML_MISSING_CAUSE_PREDICTION_MISSING: len(missing_keys),
+        }
+        diagnostics.missing_causes_by_symbol = {
+            symbol: (ML_MISSING_CAUSE_PREDICTION_MISSING,)
+            for symbol in diagnostics.missing_symbols_before
+        }
         return _build_result(existing, diagnostics)
 
     if ml_mode != "rebuild-missing" and effective_strategy != "rebuild-missing":
@@ -410,9 +449,12 @@ def prepare_predictions_for_ml_mode(
     diagnostics.persist_enabled = engine_mode != "pipeline"
     rebuilt_frames: list[pd.DataFrame] = []
     failed = 0
+    cause_breakdown: dict[str, int] = defaultdict(int)
+    missing_causes_by_symbol: dict[str, set[str]] = defaultdict(set)
     for symbol, trade_key in missing_keys:
         normalized_trade_date = pd.Timestamp(trade_key).date()
         try:
+            reset_runtime_status({})
             pred_df = _rebuild_prediction_frame(
                 symbol=symbol,
                 trade_date=normalized_trade_date,
@@ -424,8 +466,14 @@ def prepare_predictions_for_ml_mode(
                 rebuilt_frames.append(pred_df)
             else:
                 failed += 1
+                cause = _classify_ml_missing_cause_from_runtime_status(snapshot_runtime_status())
+                cause_breakdown[cause] += 1
+                missing_causes_by_symbol[symbol].add(cause)
         except Exception:
             failed += 1
+            cause = _classify_ml_missing_cause_from_runtime_status(snapshot_runtime_status())
+            cause_breakdown[cause] += 1
+            missing_causes_by_symbol[symbol].add(cause)
             LOGGER.warning(
                 "Échec reconstruction prediction symbol=%s date=%s — fallback sans ML.",
                 symbol,
@@ -449,6 +497,8 @@ def prepare_predictions_for_ml_mode(
     remaining_missing_keys = sorted(expected_keys - present_after_rebuild)
     diagnostics.missing_prediction_keys_after = len(remaining_missing_keys)
     diagnostics.missing_symbols_after = tuple(sorted({symbol for symbol, _trade_date in remaining_missing_keys}))
+    diagnostics.missing_cause_breakdown = dict(sorted(cause_breakdown.items()))
+    diagnostics.missing_causes_by_symbol = _freeze_missing_causes_by_symbol(missing_causes_by_symbol)
 
     if failed > 0:
         LOGGER.warning(
