@@ -134,6 +134,28 @@ def _normalize_dates(payload: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _normalize_result_payload(result: Any) -> dict[str, Any]:
+    return _normalize_dates(_serialize_result(result))
+
+
+def _extract_reference_final_value(payload: dict[str, Any]) -> float | None:
+    if "final_value" in payload:
+        try:
+            return float(payload["final_value"])
+        except (TypeError, ValueError):
+            return None
+    segments = payload.get("segments")
+    if not isinstance(segments, dict):
+        return None
+    baseline = segments.get("all")
+    if not isinstance(baseline, dict) or "final_value" not in baseline:
+        return None
+    try:
+        return float(baseline["final_value"])
+    except (TypeError, ValueError):
+        return None
+
+
 def run(
     *,
     end: date | None = None,
@@ -168,11 +190,20 @@ def run(
 
     try:
         calibrator = calibrator_factory()
-        result_tuple = calibrator.walk_forward_backtest(
-            start_date=start_date,
-            end_date=end_date,
-            output_dir=run_dir,
-        )
+        if hasattr(calibrator, "walk_forward_backtests_by_regime"):
+            result_by_regime = calibrator.walk_forward_backtests_by_regime(
+                start_date=start_date,
+                end_date=end_date,
+                output_dir=run_dir,
+            )
+        else:
+            result_by_regime = {
+                "all": calibrator.walk_forward_backtest(
+                    start_date=start_date,
+                    end_date=end_date,
+                    output_dir=run_dir,
+                )
+            }
     except Exception as exc:
         LOGGER.exception("Calibration trimestrielle a échoué : %s", exc)
         (run_dir / "calibration_error.json").write_text(
@@ -181,29 +212,40 @@ def run(
         )
         return 1
 
-    # walk_forward_backtest renvoie un tuple (result, fold_df, oos_df, signals_df, artifacts).
-    if isinstance(result_tuple, tuple) and result_tuple:
-        result = result_tuple[0]
-        artifacts = result_tuple[4] if len(result_tuple) >= 5 else {}
+    baseline_tuple = result_by_regime.get("all") or next(iter(result_by_regime.values()))
+    if isinstance(baseline_tuple, tuple) and baseline_tuple:
+        baseline_result = baseline_tuple[0]
+        baseline_artifacts = baseline_tuple[4] if len(baseline_tuple) >= 5 else {}
     else:
-        result = result_tuple
-        artifacts = {}
+        baseline_result = baseline_tuple
+        baseline_artifacts = {}
 
-    payload = _normalize_dates(_serialize_result(result))
-    payload["artifacts"] = artifacts
+    payload = _normalize_result_payload(baseline_result)
+    payload["artifacts"] = baseline_artifacts
+    payload["segments"] = {}
+    payload["artifacts_by_regime"] = {}
+    for regime_mode, result_tuple in result_by_regime.items():
+        if isinstance(result_tuple, tuple) and result_tuple:
+            result = result_tuple[0]
+            artifacts = result_tuple[4] if len(result_tuple) >= 5 else {}
+        else:
+            result = result_tuple
+            artifacts = {}
+        payload["segments"][regime_mode] = _normalize_result_payload(result)
+        payload["artifacts_by_regime"][regime_mode] = artifacts
     payload["lookback_months"] = lookback_months
     payload["threshold_drift_pct"] = threshold_drift_pct
 
     # Comparaison au précédent run.
     previous = _load_previous_calibration(output_root, run_dir)
     drift_pct: float | None = None
-    if previous is not None and "final_value" in previous and "final_value" in payload:
+    current_final_value = _extract_reference_final_value(payload)
+    previous_final_value = _extract_reference_final_value(previous) if previous is not None else None
+    if current_final_value is not None and previous_final_value is not None:
         try:
-            drift_pct = _compute_drift_pct(
-                float(payload["final_value"]), float(previous["final_value"])
-            )
+            drift_pct = _compute_drift_pct(current_final_value, previous_final_value)
             payload["drift_vs_previous_pct"] = drift_pct
-            payload["previous_final_value"] = float(previous["final_value"])
+            payload["previous_final_value"] = previous_final_value
         except (TypeError, ValueError):
             LOGGER.warning("final_value non numérique : drift non calculé.")
 

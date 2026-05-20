@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-
 NavigationGroup = Literal[
     "pipeline",
     "support",
@@ -64,6 +63,7 @@ SUPPORT_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
     NavigationPage("🛟 Supervision Ops", "supervision_ops", "ihm.pages.supervision_ops", "support"),
     NavigationPage("🔧 Infra & Backups", "ops_infra", "ihm.pages.ops_infra", "support"),
     NavigationPage("🧪 Backtesting", "backtesting", "ihm.pages.backtesting", "support"),
+    NavigationPage("🧮 Calibrations poids", "weights_calibration_runs", "ihm.pages.weights_calibration_runs", "support"),
     NavigationPage("🔀 Parité Backtest ↔ Live", "parity", "ihm.pages.parity", "support"),
     NavigationPage("🗃️ Administration DB", "db_admin", "ihm.pages.db_admin", "support"),
     NavigationPage("⚙️ Paramètres / Santé", "settings", "ihm.pages.settings", "support"),
@@ -136,6 +136,7 @@ def get_navigation_sections() -> tuple[NavigationSection, ...]:
             pages=(
                 _get_page("screening"),
                 _get_page("backtesting"),
+                _get_page("weights_calibration_runs"),
                 _get_page("parity"),
                 _get_page("ml"),
             ),
@@ -195,7 +196,7 @@ def build_primary_navigation_caption() -> str:
 def build_support_navigation_caption() -> str:
     return (
         "Pages hors workflow quotidien : Supervision Ops → Backtesting → "
-        "Parité Backtest ↔ Live → Administration DB → Paramètres / Santé → "
+        "Calibrations poids → Parité Backtest ↔ Live → Administration DB → Paramètres / Santé → "
         "Tax Compliance → Compliance & Audit → Glossaire"
     )
 

@@ -633,6 +633,91 @@ def get_shadow_drift_runs(live_run_id: str | None = None, limit: int = 20) -> pd
     )
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_weights_calibration_runs(
+    *,
+    run_id: str | None = None,
+    scope: str | None = None,
+    market_regime_mode: str | None = None,
+    limit: int = 200,
+) -> pd.DataFrame:
+    available_columns = _get_table_columns("weights_calibration_runs")
+    if not available_columns:
+        return pd.DataFrame()
+
+    selected_columns = [
+        column
+        for column in [
+            "run_id",
+            "calibrated_at",
+            "scope",
+            "market_regime_mode",
+            "window_start",
+            "window_end",
+            "metric_name",
+            "metric_value",
+            "observations_evaluated",
+            "scenarios_evaluated",
+            "latest_best_scenario_name",
+            "final_value",
+            "total_return_pct",
+            "sharpe_ratio",
+            "max_drawdown_pct",
+            "best_weights",
+            "candidates",
+            "artifact_dir",
+            "git_sha",
+            "schema_version",
+        ]
+        if column in available_columns
+    ]
+    if not selected_columns:
+        selected_columns = ["run_id"]
+
+    params: dict[str, object] = {}
+    conditions: list[str] = []
+    if run_id:
+        params["run_id"] = run_id
+        conditions.append("run_id = :run_id")
+    if scope:
+        params["scope"] = str(scope).strip().lower()
+        conditions.append("LOWER(COALESCE(scope, '')) = :scope")
+    if market_regime_mode and "market_regime_mode" in available_columns:
+        params["market_regime_mode"] = str(market_regime_mode).strip().lower() or "all"
+        conditions.append("LOWER(COALESCE(market_regime_mode, 'all')) = :market_regime_mode")
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return safe_query(
+        f"""
+        SELECT {', '.join(selected_columns)}
+        FROM weights_calibration_runs
+        {where_clause}
+        ORDER BY COALESCE(window_end, DATE('1970-01-01')) DESC,
+                 COALESCE(calibrated_at, window_end) DESC,
+                 run_id DESC
+        LIMIT {limit}
+        """,
+        params or None,
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_weights_calibration_run_ids(
+    *,
+    scope: str | None = None,
+    market_regime_mode: str | None = None,
+    limit: int = 100,
+) -> list[str]:
+    df = get_weights_calibration_runs(
+        scope=scope,
+        market_regime_mode=market_regime_mode,
+        limit=limit,
+    )
+    if df.empty or "run_id" not in df.columns:
+        return []
+    return [str(value).strip() for value in df["run_id"].tolist() if str(value).strip()]
+
+
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------

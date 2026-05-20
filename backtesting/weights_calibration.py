@@ -35,6 +35,22 @@ from core.conviction import ConvictionWeights, SentimentFusionWeights, fuse, fus
 LOGGER = logging.getLogger(__name__)
 
 ScoreMetric = Callable[[np.ndarray, np.ndarray], float]
+CALIBRATION_SCHEMA_VERSION = 2
+MARKET_REGIME_ALL = "all"
+KNOWN_MARKET_REGIME_MODES = {
+    MARKET_REGIME_ALL,
+    "normal",
+    "capital_preservation",
+    "close_only",
+    "cash_only",
+}
+
+
+def normalize_market_regime_mode(value: object) -> str:
+    text_value = str(value or "").strip().lower()
+    if not text_value:
+        return MARKET_REGIME_ALL
+    return text_value if text_value in KNOWN_MARKET_REGIME_MODES else MARKET_REGIME_ALL
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +126,7 @@ class CalibrationResult:
     metric_name: str
     best_weights: dict[str, float]
     metric_value: float
+    market_regime_mode: str = MARKET_REGIME_ALL
     candidates: list[CalibrationCandidate] = field(default_factory=list)
     window_start: date | None = None
     window_end: date | None = None
@@ -120,12 +137,13 @@ class CalibrationResult:
             "metric_name": self.metric_name,
             "best_weights": self.best_weights,
             "metric_value": self.metric_value,
+            "market_regime_mode": self.market_regime_mode,
             "candidates": [
                 {"weights": c.weights, "metric_value": c.metric_value} for c in self.candidates
             ],
             "window_start": self.window_start.isoformat() if self.window_start else None,
             "window_end": self.window_end.isoformat() if self.window_end else None,
-            "schema_version": 1,
+            "schema_version": CALIBRATION_SCHEMA_VERSION,
         }
 
 
@@ -145,6 +163,7 @@ class EmpiricalRiskCalibrationRun:
     calibration_run_id: str | None = None
     best_weights: dict[str, float] = field(default_factory=dict)
     artifact_dir: str | None = None
+    market_regime_mode: str = MARKET_REGIME_ALL
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +224,7 @@ def calibrate_conviction(
     metric_name: str = "ic",
     grid_step: float = 0.05,
     window: tuple[date, date] | None = None,
+    market_regime_mode: str = MARKET_REGIME_ALL,
 ) -> CalibrationResult:
     """Calibre ``ConvictionWeights`` sur l'historique fourni.
 
@@ -249,6 +269,7 @@ def calibrate_conviction(
         metric_name=metric_name,
         best_weights=best.weights,
         metric_value=best.metric_value,
+        market_regime_mode=normalize_market_regime_mode(market_regime_mode),
         candidates=candidates,
         window_start=start,
         window_end=end,
@@ -264,6 +285,7 @@ def calibrate_sentiment(
     metric_name: str = "ic",
     grid_step: float = 0.1,
     window: tuple[date, date] | None = None,
+    market_regime_mode: str = MARKET_REGIME_ALL,
 ) -> CalibrationResult:
     """Calibre ``SentimentFusionWeights`` (triplet quant/sentiment/macro)."""
     if metric_name not in METRICS:
@@ -311,6 +333,7 @@ def calibrate_sentiment(
         metric_name=metric_name,
         best_weights=best.weights,
         metric_value=best.metric_value,
+        market_regime_mode=normalize_market_regime_mode(market_regime_mode),
         candidates=candidates,
         window_start=start,
         window_end=end,
@@ -384,6 +407,7 @@ def calibrate_conviction_kelly(
     top_n: int = 20,
     max_position_weight: float = 0.10,
     window: tuple[date, date] | None = None,
+    market_regime_mode: str = MARKET_REGIME_ALL,
 ) -> CalibrationResult:
     """Calibre conjointement les poids de conviction et les paramètres Kelly.
 
@@ -463,6 +487,7 @@ def calibrate_conviction_kelly(
         metric_name=metric_name,
         best_weights=best.weights,
         metric_value=best.metric_value,
+        market_regime_mode=normalize_market_regime_mode(market_regime_mode),
         candidates=candidates,
         window_start=start,
         window_end=end,
@@ -488,6 +513,44 @@ class EmpiricalRiskCalibrator:
             LOGGER.debug("Impossible d'inspecter la table %s pour calibration risque.", table_name, exc_info=True)
             return set()
 
+    def _resolve_market_regime_modes(self, snapshot_dates: Sequence[pd.Timestamp]) -> dict[date, str]:
+        unique_dates = sorted({ts.date() for ts in snapshot_dates if not pd.isna(ts)})
+        if not unique_dates:
+            return {}
+        try:
+            from common.config_loader import load_config
+            from service.market import (
+                DbSentimentScoreProvider,
+                build_default_macro_provider,
+                build_snapshot,
+                parse_market_regimes,
+            )
+
+            yaml_cfg = load_config() or {}
+            market_regimes_cfg = parse_market_regimes(yaml_cfg.get("market_regimes"))
+            if not getattr(market_regimes_cfg, "enabled", False):
+                return {}
+            macro_provider = build_default_macro_provider(yaml_cfg)
+        except Exception:
+            LOGGER.info("Segmentation par régime indisponible : fallback `all`.", exc_info=True)
+            return {}
+
+        resolved: dict[date, str] = {}
+        for snapshot_date in unique_dates:
+            try:
+                snapshot = build_snapshot(
+                    snapshot_date,
+                    config=market_regimes_cfg,
+                    execution_context="backtest",
+                    macro_provider=macro_provider,
+                    sentiment_score_provider=DbSentimentScoreProvider(snapshot_date, engine=self.engine),
+                )
+            except Exception:
+                LOGGER.debug("Snapshot de régime introuvable pour %s ; fallback `all`.", snapshot_date, exc_info=True)
+                continue
+            resolved[snapshot_date] = normalize_market_regime_mode(getattr(snapshot, "mode", MARKET_REGIME_ALL))
+        return resolved
+
     def load_dataset(
         self,
         *,
@@ -495,6 +558,7 @@ class EmpiricalRiskCalibrator:
         end_date: date,
         horizon_days: int = 5,
         candidates_only: bool = True,
+        include_market_regime: bool = True,
     ) -> pd.DataFrame:
         from sqlalchemy import text
 
@@ -610,7 +674,50 @@ class EmpiricalRiskCalibrator:
             "historical_win_rate",
             "forward_return",
         ]].dropna()
-        return dataset.reset_index(drop=True)
+        dataset = dataset.reset_index(drop=True)
+        dataset["market_regime_mode"] = MARKET_REGIME_ALL
+        if include_market_regime and not dataset.empty:
+            resolved_modes = self._resolve_market_regime_modes(dataset["snapshot_date"].tolist())
+            if resolved_modes:
+                dataset["market_regime_mode"] = (
+                    dataset["snapshot_date"].dt.date.map(resolved_modes).fillna("normal")
+                )
+        return dataset
+
+    def _build_run_summary(
+        self,
+        *,
+        calibration: CalibrationResult,
+        dataset: pd.DataFrame,
+        daily_returns: np.ndarray,
+        best_weights: dict[str, float],
+        output_path: Path,
+    ) -> EmpiricalRiskCalibrationRun:
+        equity_curve = 100_000.0 * np.cumprod(1.0 + daily_returns)
+        final_value = float(equity_curve[-1]) if equity_curve.size else 100_000.0
+        peak = np.maximum.accumulate(equity_curve) if equity_curve.size else np.asarray([100_000.0])
+        drawdowns = (equity_curve / peak) - 1.0 if equity_curve.size else np.asarray([0.0])
+        return EmpiricalRiskCalibrationRun(
+            start_date=calibration.window_start or pd.Timestamp(dataset["snapshot_date"].min()).date(),
+            end_date=calibration.window_end or pd.Timestamp(dataset["snapshot_date"].max()).date(),
+            observations_evaluated=len(dataset),
+            scenarios_evaluated=len(calibration.candidates),
+            latest_best_scenario_name=(
+                f"score_{best_weights['score_weight']:.2f}_pred_{best_weights['prediction_weight']:.2f}"
+                f"__kelly_{best_weights['kelly_fraction_multiplier']:.2f}"
+                f"__minp_{best_weights['min_effective_probability']:.2f}"
+                f"__payoff_{best_weights['assumed_payoff_ratio']:.2f}"
+            ),
+            metric_name=calibration.metric_name,
+            metric_value=float(calibration.metric_value),
+            final_value=final_value,
+            total_return_pct=((final_value / 100_000.0) - 1.0) * 100.0,
+            sharpe_ratio=metric_strategy_sharpe(daily_returns),
+            max_drawdown_pct=float(np.min(drawdowns) * 100.0) if drawdowns.size else 0.0,
+            best_weights={key: float(value) for key, value in best_weights.items()},
+            artifact_dir=str(output_path),
+            market_regime_mode=normalize_market_regime_mode(calibration.market_regime_mode),
+        )
 
     def walk_forward_backtest(
         self,
@@ -626,24 +733,34 @@ class EmpiricalRiskCalibrator:
         min_effective_probabilities: Sequence[float] = (0.50, 0.52, 0.55),
         assumed_payoff_ratios: Sequence[float] = (1.0, 1.5, 2.0),
         candidates_only: bool = True,
+        market_regime_mode: str = MARKET_REGIME_ALL,
+        dataset: pd.DataFrame | None = None,
     ) -> tuple[EmpiricalRiskCalibrationRun, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
-        dataset = self.load_dataset(
+        resolved_market_regime_mode = normalize_market_regime_mode(market_regime_mode)
+        work_dataset = dataset.copy() if dataset is not None else self.load_dataset(
             start_date=start_date,
             end_date=end_date,
             horizon_days=horizon_days,
             candidates_only=candidates_only,
         )
-        if dataset.empty:
-            raise ValueError("EmpiricalRiskCalibrator : dataset vide, calibration impossible.")
+        if resolved_market_regime_mode != MARKET_REGIME_ALL and "market_regime_mode" in work_dataset.columns:
+            work_dataset = work_dataset.loc[
+                work_dataset["market_regime_mode"].astype(str).str.lower() == resolved_market_regime_mode
+            ].reset_index(drop=True)
+        if work_dataset.empty:
+            raise ValueError(
+                "EmpiricalRiskCalibrator : dataset vide, calibration impossible"
+                f" pour le segment régime `{resolved_market_regime_mode}`."
+            )
 
         calibration = calibrate_conviction_kelly(
-            snapshot_dates=dataset["snapshot_date"].tolist(),
-            quant_scores=dataset["quant_score"].tolist(),
-            predicted_proba=dataset["predicted_proba"].tolist(),
-            historical_win_rate=dataset["historical_win_rate"].tolist(),
-            forward_returns=dataset["forward_return"].tolist(),
+            snapshot_dates=work_dataset["snapshot_date"].tolist(),
+            quant_scores=work_dataset["quant_score"].tolist(),
+            predicted_proba=work_dataset["predicted_proba"].tolist(),
+            historical_win_rate=work_dataset["historical_win_rate"].tolist(),
+            forward_returns=work_dataset["forward_return"].tolist(),
             metric_name=metric_name,
             conviction_grid_step=conviction_grid_step,
             kelly_fraction_multipliers=kelly_fraction_multipliers,
@@ -651,6 +768,7 @@ class EmpiricalRiskCalibrator:
             assumed_payoff_ratios=assumed_payoff_ratios,
             top_n=top_n,
             window=(start_date, end_date),
+            market_regime_mode=resolved_market_regime_mode,
         )
 
         best_weights = calibration.best_weights
@@ -664,33 +782,35 @@ class EmpiricalRiskCalibrator:
                         prediction_weight=float(best_weights["prediction_weight"]),
                     ),
                 )
-                for row in dataset.itertuples(index=False)
+                for row in work_dataset.itertuples(index=False)
             ],
             dtype=float,
         )
         kelly_fraction = _compute_kelly_fraction(
-            dataset["predicted_proba"].to_numpy(dtype=float),
-            dataset["historical_win_rate"].to_numpy(dtype=float),
+            work_dataset["predicted_proba"].to_numpy(dtype=float),
+            work_dataset["historical_win_rate"].to_numpy(dtype=float),
             kelly_fraction_multiplier=float(best_weights["kelly_fraction_multiplier"]),
             min_effective_probability=float(best_weights["min_effective_probability"]),
             assumed_payoff_ratio=float(best_weights["assumed_payoff_ratio"]),
         )
         daily_returns = _weighted_daily_strategy_returns(
-            dataset["snapshot_date"].tolist(),
+            work_dataset["snapshot_date"].tolist(),
             fused,
             kelly_fraction,
-            dataset["forward_return"].to_numpy(dtype=float),
+            work_dataset["forward_return"].to_numpy(dtype=float),
             top_n=int(best_weights.get("top_n", top_n)),
         )
-        equity_curve = 100_000.0 * np.cumprod(1.0 + daily_returns)
-        final_value = float(equity_curve[-1]) if equity_curve.size else 100_000.0
-        peak = np.maximum.accumulate(equity_curve) if equity_curve.size else np.asarray([100_000.0])
-        drawdowns = (equity_curve / peak) - 1.0 if equity_curve.size else np.asarray([0.0])
-
-        calibration_run_id = persist_calibration_run(calibration, engine=self.engine)
+        run_summary = self._build_run_summary(
+            calibration=calibration,
+            dataset=work_dataset,
+            daily_returns=daily_returns,
+            best_weights=best_weights,
+            output_path=output_path,
+        )
+        calibration_run_id = persist_calibration_run(calibration, engine=self.engine, run_summary=run_summary)
         daily_returns_df = pd.DataFrame(
             {
-                "snapshot_date": sorted(pd.to_datetime(pd.Series(dataset["snapshot_date"]).dropna().unique())),
+                "snapshot_date": sorted(pd.to_datetime(pd.Series(work_dataset["snapshot_date"]).dropna().unique())),
                 "strategy_return": daily_returns,
             }
         )
@@ -706,7 +826,7 @@ class EmpiricalRiskCalibrator:
         dataset_csv = output_path / "conviction_kelly_dataset.csv"
         candidates_csv = output_path / "conviction_kelly_candidates.csv"
         daily_returns_csv = output_path / "conviction_kelly_daily_returns.csv"
-        dataset.to_csv(dataset_csv, index=False)
+        work_dataset.to_csv(dataset_csv, index=False)
         candidates_df.to_csv(candidates_csv, index=False)
         daily_returns_df.to_csv(daily_returns_csv, index=False)
         artifacts = {
@@ -715,27 +835,68 @@ class EmpiricalRiskCalibrator:
             "daily_returns_csv": str(daily_returns_csv),
         }
         run_summary = EmpiricalRiskCalibrationRun(
+            **{
+                **run_summary.__dict__,
+                "calibration_run_id": calibration_run_id,
+            }
+        )
+        return run_summary, candidates_df, daily_returns_df, work_dataset, artifacts
+
+    def walk_forward_backtests_by_regime(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        output_dir: str | Path,
+        top_n: int = 20,
+        horizon_days: int = 5,
+        metric_name: str = "sharpe",
+        conviction_grid_step: float = 0.1,
+        kelly_fraction_multipliers: Sequence[float] = (0.10, 0.25, 0.50),
+        min_effective_probabilities: Sequence[float] = (0.50, 0.52, 0.55),
+        assumed_payoff_ratios: Sequence[float] = (1.0, 1.5, 2.0),
+        candidates_only: bool = True,
+    ) -> dict[str, tuple[EmpiricalRiskCalibrationRun, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]]:
+        dataset = self.load_dataset(
             start_date=start_date,
             end_date=end_date,
-            observations_evaluated=len(dataset),
-            scenarios_evaluated=len(calibration.candidates),
-            latest_best_scenario_name=(
-                f"score_{best_weights['score_weight']:.2f}_pred_{best_weights['prediction_weight']:.2f}"
-                f"__kelly_{best_weights['kelly_fraction_multiplier']:.2f}"
-                f"__minp_{best_weights['min_effective_probability']:.2f}"
-                f"__payoff_{best_weights['assumed_payoff_ratio']:.2f}"
-            ),
-            metric_name=calibration.metric_name,
-            metric_value=float(calibration.metric_value),
-            final_value=final_value,
-            total_return_pct=((final_value / 100_000.0) - 1.0) * 100.0,
-            sharpe_ratio=metric_strategy_sharpe(daily_returns),
-            max_drawdown_pct=float(np.min(drawdowns) * 100.0) if drawdowns.size else 0.0,
-            calibration_run_id=calibration_run_id,
-            best_weights={key: float(value) for key, value in best_weights.items()},
-            artifact_dir=str(output_path),
+            horizon_days=horizon_days,
+            candidates_only=candidates_only,
         )
-        return run_summary, candidates_df, daily_returns_df, dataset, artifacts
+        if dataset.empty:
+            raise ValueError("EmpiricalRiskCalibrator : dataset vide, calibration impossible.")
+
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        regime_modes = [
+            mode
+            for mode in sorted({normalize_market_regime_mode(value) for value in dataset.get("market_regime_mode", pd.Series(dtype=str)).tolist()})
+            if mode != MARKET_REGIME_ALL
+        ]
+        results: dict[str, tuple[EmpiricalRiskCalibrationRun, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]] = {}
+        for regime_mode in [MARKET_REGIME_ALL, *regime_modes]:
+            segment_output = output_path if regime_mode == MARKET_REGIME_ALL else output_path / regime_mode
+            try:
+                results[regime_mode] = self.walk_forward_backtest(
+                    start_date=start_date,
+                    end_date=end_date,
+                    output_dir=segment_output,
+                    top_n=top_n,
+                    horizon_days=horizon_days,
+                    metric_name=metric_name,
+                    conviction_grid_step=conviction_grid_step,
+                    kelly_fraction_multipliers=kelly_fraction_multipliers,
+                    min_effective_probabilities=min_effective_probabilities,
+                    assumed_payoff_ratios=assumed_payoff_ratios,
+                    candidates_only=candidates_only,
+                    market_regime_mode=regime_mode,
+                    dataset=dataset,
+                )
+            except ValueError:
+                if regime_mode == MARKET_REGIME_ALL:
+                    raise
+                LOGGER.info("Segment régime `%s` ignoré : dataset insuffisant.", regime_mode, exc_info=True)
+        return results
 
 
 # ---------------------------------------------------------------------------
@@ -748,6 +909,7 @@ def persist_calibration_run(
     engine: Any,
     git_sha: str | None = None,
     run_id: str | None = None,
+    run_summary: EmpiricalRiskCalibrationRun | None = None,
 ) -> str:
     """Insère ``result`` dans ``weights_calibration_runs``.
 
@@ -755,36 +917,79 @@ def persist_calibration_run(
     de garder le module testable sans DB.
     """
     from sqlalchemy import text  # import paresseux
+    from sqlalchemy import inspect
 
     rid = run_id or f"wcr-{uuid.uuid4().hex[:12]}"
     payload = result.to_payload()
+    try:
+        available_columns = {str(column["name"]) for column in inspect(engine).get_columns("weights_calibration_runs")}
+    except Exception:
+        available_columns = {
+            "run_id",
+            "calibrated_at",
+            "scope",
+            "window_start",
+            "window_end",
+            "metric_name",
+            "metric_value",
+            "best_weights",
+            "candidates",
+            "git_sha",
+            "schema_version",
+            "market_regime_mode",
+            "observations_evaluated",
+            "scenarios_evaluated",
+            "latest_best_scenario_name",
+            "final_value",
+            "total_return_pct",
+            "sharpe_ratio",
+            "max_drawdown_pct",
+            "artifact_dir",
+        }
+    values: dict[str, Any] = {
+        "run_id": rid,
+        "calibrated_at": datetime.utcnow(),
+        "scope": result.scope,
+        "window_start": result.window_start,
+        "window_end": result.window_end,
+        "metric_name": result.metric_name,
+        "metric_value": result.metric_value,
+        "best_weights": json.dumps(result.best_weights),
+        "candidates": json.dumps(payload["candidates"]),
+        "git_sha": git_sha,
+        "schema_version": CALIBRATION_SCHEMA_VERSION,
+        "market_regime_mode": normalize_market_regime_mode(result.market_regime_mode),
+    }
+    if run_summary is not None:
+        values.update(
+            {
+                "observations_evaluated": int(run_summary.observations_evaluated),
+                "scenarios_evaluated": int(run_summary.scenarios_evaluated),
+                "latest_best_scenario_name": run_summary.latest_best_scenario_name,
+                "final_value": float(run_summary.final_value),
+                "total_return_pct": float(run_summary.total_return_pct),
+                "sharpe_ratio": float(run_summary.sharpe_ratio),
+                "max_drawdown_pct": float(run_summary.max_drawdown_pct),
+                "artifact_dir": run_summary.artifact_dir,
+            }
+        )
+    insert_columns = [column for column in values if column in available_columns]
+    insert_params = {column: values[column] for column in insert_columns}
     with engine.begin() as conn:
         conn.execute(
             text(
                 """
                 INSERT INTO weights_calibration_runs
-                    (run_id, calibrated_at, scope, window_start, window_end,
-                     metric_name, metric_value, best_weights, candidates,
-                     git_sha, schema_version)
+                    ({columns})
                 VALUES
-                    (:run_id, :calibrated_at, :scope, :window_start, :window_end,
-                     :metric_name, :metric_value, :best_weights, :candidates,
-                     :git_sha, :schema_version)
+                    ({placeholders})
                 """
+                .format(
+                    columns=", ".join(insert_columns),
+                    placeholders=", ".join(f":{column}" for column in insert_columns),
+                )
             ),
-            {
-                "run_id": rid,
-                "calibrated_at": datetime.utcnow(),
-                "scope": result.scope,
-                "window_start": result.window_start,
-                "window_end": result.window_end,
-                "metric_name": result.metric_name,
-                "metric_value": result.metric_value,
-                "best_weights": json.dumps(result.best_weights),
-                "candidates": json.dumps(payload["candidates"]),
-                "git_sha": git_sha,
-                "schema_version": 1,
-            },
+            insert_params,
         )
     return rid
 
@@ -794,6 +999,7 @@ __all__ = [
     "CalibrationCandidate",
     "EmpiricalRiskCalibrationRun",
     "EmpiricalRiskCalibrator",
+    "MARKET_REGIME_ALL",
     "METRICS",
     "RISK_METRICS",
     "calibrate_conviction",
@@ -803,6 +1009,7 @@ __all__ = [
     "metric_hit_rate",
     "metric_strategy_log_growth",
     "metric_strategy_sharpe",
+    "normalize_market_regime_mode",
     "persist_calibration_run",
 ]
 

@@ -209,12 +209,17 @@ Le bloc `empirical_risk_calibration` contient notamment :
 
 - `run_id` ;
 - `metric_name` / `metric_value` ;
+- `market_regime_mode` / `requested_market_regime_mode` / `market_regime_fallback_used` ;
 - `window_start` / `window_end` ;
 - `best_weights` avec au minimum `score_weight`, `prediction_weight`, `kelly_fraction_multiplier`, `min_effective_probability`, `assumed_payoff_ratio`.
 
 Par défaut, le CLI applique en best-effort le dernier run `weights_calibration_runs`
-de `scope = 'risk'` dont `window_end <= trade_date`. Cela permet de piloter
-réellement les poids conviction et les paramètres Kelly clés.
+de `scope = 'risk'` dont `window_end <= trade_date`, en privilégiant le segment
+`market_regime_mode` correspondant au régime live courant (`normal`,
+`capital_preservation`, `close_only`, `cash_only`) puis en retombant sur `all`
+si aucun run segmenté n'est disponible. Cela permet de piloter réellement les
+poids conviction et les paramètres Kelly clés avec une calibration cohérente du
+régime marché.
 
 Options associées :
 

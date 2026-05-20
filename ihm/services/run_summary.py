@@ -596,10 +596,20 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
             calibration_run_id = str(empirical_calibration_payload.get("run_id") or "—").strip()
             metric_name = str(empirical_calibration_payload.get("metric_name") or "unknown").strip()
             metric_value = _to_float(empirical_calibration_payload.get("metric_value"))
+            resolved_regime_mode = str(empirical_calibration_payload.get("market_regime_mode") or "all").strip()
+            requested_regime_mode = str(
+                empirical_calibration_payload.get("requested_market_regime_mode") or resolved_regime_mode or "all"
+            ).strip()
+            fallback_used = bool(empirical_calibration_payload.get("market_regime_fallback_used"))
             best_weights = empirical_calibration_payload.get("best_weights")
             line = f"Calibration empirique risk appliquée : run={calibration_run_id}, métrique={metric_name}"
             if metric_value is not None:
                 line += f", valeur={metric_value:.4f}"
+            if requested_regime_mode:
+                if fallback_used and resolved_regime_mode:
+                    line += f", régime={requested_regime_mode}→{resolved_regime_mode}"
+                elif resolved_regime_mode:
+                    line += f", régime={resolved_regime_mode}"
             if isinstance(best_weights, Mapping):
                 score_weight = _to_float(best_weights.get("score_weight"))
                 prediction_weight = _to_float(best_weights.get("prediction_weight"))

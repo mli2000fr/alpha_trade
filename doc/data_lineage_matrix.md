@@ -88,7 +88,7 @@
 | Table | Producteur (CLI / module) | Consommateurs | Source upstream | Provider actif | Fréquence | Criticité |
 |---|---|---|---|---|---|---|
 | backtest_runs | backtesting.cli | ihm | computed | — | manual | P3 |
-| weights_calibration_runs *(Phase 7.2 / P3)* | backtesting.weights_calibration | risk_management (conviction/Kelly live), ops | computed | — | on-demand / quarterly | P3 |
+| weights_calibration_runs *(Phase 7.2 / P3)* | backtesting.weights_calibration | risk_management (conviction/Kelly live), ops, ihm (`weights_calibration_runs`) | computed | — | on-demand / quarterly | P3 |
 | cleaning_audit_runs | dataIntegrityEngine.data_sanitizer_daily | ops, ihm | computed (cross-check Stooq best-effort) | Stooq | daily | P2 |
 | cleaning_audit_quotes_runs *(Phase 3.1)* | sync_latest_quotes | ops | computed | — | daily | P2 |
 | cleaning_audit_earnings_runs *(Phase 3.1)* | sync_earnings_calendar | ops | computed | — | daily | P3 |

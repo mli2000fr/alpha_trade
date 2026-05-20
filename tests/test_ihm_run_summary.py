@@ -720,6 +720,9 @@ def test_get_run_summary_detail_lines_exposes_empirical_risk_calibration_for_ris
                     "run_id": "risk-cal-001",
                     "metric_name": "sharpe",
                     "metric_value": 1.2345,
+                    "market_regime_mode": "all",
+                    "requested_market_regime_mode": "capital_preservation",
+                    "market_regime_fallback_used": True,
                     "best_weights": {
                         "score_weight": 0.25,
                         "prediction_weight": 0.75,
@@ -731,6 +734,7 @@ def test_get_run_summary_detail_lines_exposes_empirical_risk_calibration_for_ris
     )
 
     assert any("Calibration empirique risk appliquée : run=risk-cal-001" in line for line in lines)
+    assert any("régime=capital_preservation→all" in line for line in lines)
     assert any("conviction=0.25/0.75" in line for line in lines)
     assert any("kelly_mult=0.50" in line for line in lines)
 

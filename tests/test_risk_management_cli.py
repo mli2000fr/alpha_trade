@@ -678,13 +678,17 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
         def load_account_equity_breakdown(self, account_id, trade_date):
             return {}
 
-        def load_latest_empirical_risk_calibration(self, trade_date, run_id=None):
+        def load_latest_empirical_risk_calibration(self, trade_date, run_id=None, market_regime_mode=None):
+            captured["requested_market_regime_mode"] = market_regime_mode
             return {
                 "run_id": "risk-cal-001",
                 "metric_name": "sharpe",
                 "metric_value": 1.42,
                 "window_start": date(2025, 1, 1),
                 "window_end": date(2026, 3, 31),
+                "market_regime_mode": "capital_preservation",
+                "requested_market_regime_mode": market_regime_mode,
+                "market_regime_fallback_used": False,
                 "source": "weights_calibration_runs",
                 "best_weights": {
                     "score_weight": 0.25,
@@ -721,6 +725,17 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
     monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
     monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
     monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(
+        cli,
+        "_resolve_market_regime_snapshot",
+        lambda trade_date, effective_equity, repo: MarketRegimeSnapshot(
+            trade_date=trade_date,
+            mode="capital_preservation",
+            risk_multiplier=1.0,
+            allow_new_entries=True,
+            reasons=(),
+        ),
+    )
     monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
     monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
     monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
@@ -734,7 +749,10 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
     assert captured["config"].kelly_fraction_multiplier == pytest.approx(0.5)
     assert captured["config"].min_effective_probability == pytest.approx(0.55)
     assert captured["config"].assumed_payoff_ratio == pytest.approx(2.0)
+    assert captured["requested_market_regime_mode"] == "capital_preservation"
     assert captured["summary"]["empirical_risk_calibration"]["run_id"] == "risk-cal-001"
+    assert captured["summary"]["empirical_risk_calibration"]["market_regime_mode"] == "capital_preservation"
     assert captured["summary"]["conviction_weights_calibration"]["runtime_applied"] is True
+    assert captured["summary"]["conviction_weights_calibration"]["runtime_market_regime_mode"] == "capital_preservation"
 
 

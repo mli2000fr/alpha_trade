@@ -11,7 +11,9 @@ import numpy as np
 import pytest
 
 from backtesting.weights_calibration import (
+    MARKET_REGIME_ALL,
     CalibrationResult,
+    EmpiricalRiskCalibrator,
     calibrate_conviction,
     calibrate_conviction_kelly,
     calibrate_sentiment,
@@ -59,7 +61,7 @@ def test_calibrate_conviction_returns_valid_result() -> None:
     assert result.best_weights["prediction_weight"] >= result.best_weights["score_weight"]
     assert len(result.candidates) > 0
     payload = result.to_payload()
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["window_start"] == "2024-01-01"
 
 
@@ -115,6 +117,75 @@ def test_calibrate_conviction_kelly_returns_valid_result() -> None:
     assert result.best_weights["min_effective_probability"] in {0.50, 0.55}
     assert result.best_weights["assumed_payoff_ratio"] in {1.0, 1.5}
     assert len(result.candidates) > 0
+
+
+def test_walk_forward_backtests_by_regime_returns_all_and_regime_segments(monkeypatch, tmp_path) -> None:
+    calibrator = EmpiricalRiskCalibrator(engine=object())
+    work_df = __import__("pandas").DataFrame(
+        [
+            {
+                "snapshot_date": date(2025, 1, 2),
+                "symbol": "AAPL",
+                "quant_score": 0.8,
+                "predicted_proba": 0.7,
+                "historical_win_rate": 0.6,
+                "forward_return": 0.02,
+                "market_regime_mode": "normal",
+            },
+            {
+                "snapshot_date": date(2025, 1, 3),
+                "symbol": "MSFT",
+                "quant_score": 0.7,
+                "predicted_proba": 0.68,
+                "historical_win_rate": 0.58,
+                "forward_return": 0.01,
+                "market_regime_mode": "capital_preservation",
+            },
+        ]
+    )
+
+    monkeypatch.setattr(calibrator, "load_dataset", lambda **kwargs: work_df)
+    monkeypatch.setattr(
+        calibrator,
+        "walk_forward_backtest",
+        lambda **kwargs: (
+            type(
+                "_RunSummary",
+                (),
+                {
+                    "start_date": kwargs["start_date"],
+                    "end_date": kwargs["end_date"],
+                    "observations_evaluated": 1,
+                    "scenarios_evaluated": 1,
+                    "latest_best_scenario_name": f"scenario-{kwargs['market_regime_mode']}",
+                    "metric_name": "sharpe",
+                    "metric_value": 1.0,
+                    "final_value": 101000.0,
+                    "total_return_pct": 1.0,
+                    "sharpe_ratio": 1.0,
+                    "max_drawdown_pct": -1.0,
+                    "calibration_run_id": f"run-{kwargs['market_regime_mode']}",
+                    "best_weights": {"score_weight": 0.4, "prediction_weight": 0.6},
+                    "artifact_dir": str(tmp_path / kwargs["market_regime_mode"]),
+                    "market_regime_mode": kwargs["market_regime_mode"],
+                },
+            )(),
+            __import__("pandas").DataFrame(),
+            __import__("pandas").DataFrame(),
+            kwargs["dataset"],
+            {},
+        ),
+    )
+
+    results = calibrator.walk_forward_backtests_by_regime(
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 1, 31),
+        output_dir=tmp_path,
+    )
+
+    assert MARKET_REGIME_ALL in results
+    assert "normal" in results
+    assert "capital_preservation" in results
 
 
 def test_calibrate_conviction_kelly_validates_inputs() -> None:

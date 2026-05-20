@@ -97,6 +97,76 @@ def test_services_queries_importable():
     assert hasattr(queries, "__doc__")
 
 
+def test_get_weights_calibration_runs_builds_schema_aware_query(monkeypatch):
+    import pandas as pd
+
+    queries.get_weights_calibration_runs.clear()
+    calls: list[tuple[str, dict[str, object] | None]] = []
+
+    monkeypatch.setattr(
+        queries,
+        "_get_table_columns",
+        lambda table_name: {
+            "run_id",
+            "calibrated_at",
+            "scope",
+            "market_regime_mode",
+            "window_start",
+            "window_end",
+            "metric_name",
+            "metric_value",
+            "best_weights",
+            "candidates",
+            "final_value",
+            "schema_version",
+        },
+    )
+
+    def fake_safe_query(query, params=None):
+        calls.append((query, params))
+        return pd.DataFrame([
+            {
+                "run_id": "wcr-001",
+                "scope": "risk",
+                "market_regime_mode": "capital_preservation",
+                "metric_name": "sharpe",
+                "metric_value": 1.42,
+            }
+        ])
+
+    monkeypatch.setattr(queries, "safe_query", fake_safe_query)
+
+    df = queries.get_weights_calibration_runs(
+        scope="risk",
+        market_regime_mode="capital_preservation",
+        limit=25,
+    )
+
+    assert not df.empty
+    assert calls
+    query, params = calls[0]
+    assert "market_regime_mode" in query
+    assert "LOWER(COALESCE(scope, '')) = :scope" in query
+    assert "LOWER(COALESCE(market_regime_mode, 'all')) = :market_regime_mode" in query
+    assert "LIMIT 25" in query
+    assert params == {"scope": "risk", "market_regime_mode": "capital_preservation"}
+
+
+def test_get_weights_calibration_run_ids_returns_run_id_list(monkeypatch):
+    import pandas as pd
+
+    queries.get_weights_calibration_run_ids.clear()
+    monkeypatch.setattr(
+        queries,
+        "get_weights_calibration_runs",
+        lambda **kwargs: pd.DataFrame([{"run_id": "wcr-002"}, {"run_id": "wcr-001"}]),
+    )
+
+    run_ids = queries.get_weights_calibration_run_ids(scope="risk", market_regime_mode="all", limit=10)
+
+    assert run_ids == ["wcr-002", "wcr-001"]
+
+
 def test_get_stock_scores_builds_schema_aware_query_and_attaches_explainability_payload(monkeypatch):
     import pandas as pd
 

@@ -57,6 +57,26 @@ class _FakeCalibrator:
         )
 
 
+class _FakeSegmentedCalibrator:
+    def walk_forward_backtests_by_regime(self, *, start_date, end_date, output_dir):
+        return {
+            "all": (
+                _make_result(120_000.0),
+                pd.DataFrame(),
+                pd.DataFrame(),
+                pd.DataFrame(),
+                {"dataset_csv": str(Path(output_dir) / "conviction_kelly_dataset.csv")},
+            ),
+            "capital_preservation": (
+                _make_result(115_000.0),
+                pd.DataFrame(),
+                pd.DataFrame(),
+                pd.DataFrame(),
+                {"dataset_csv": str(Path(output_dir) / "capital_preservation" / "conviction_kelly_dataset.csv")},
+            ),
+        }
+
+
 def test_quarterly_job_writes_calibration_json(tmp_path: Path):
     rc = run(
         end=date(2026, 4, 1),
@@ -71,6 +91,23 @@ def test_quarterly_job_writes_calibration_json(tmp_path: Path):
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["final_value"] == 120_000.0
     assert payload["lookback_months"] == 12
+
+
+def test_quarterly_job_writes_segmented_payload_when_calibrator_supports_regimes(tmp_path: Path):
+    rc = run(
+        end=date(2026, 4, 1),
+        lookback_months=12,
+        output_root=tmp_path,
+        no_alert=True,
+        calibrator_factory=lambda: _FakeSegmentedCalibrator(),
+    )
+
+    assert rc == 0
+    payload = json.loads((tmp_path / "2026-04-01" / "calibration.json").read_text(encoding="utf-8"))
+    assert payload["final_value"] == 120_000.0
+    assert payload["segments"]["all"]["final_value"] == 120_000.0
+    assert payload["segments"]["capital_preservation"]["final_value"] == 115_000.0
+    assert "capital_preservation" in payload["artifacts_by_regime"]
 
 
 def test_quarterly_job_emits_alert_on_drift_above_threshold(tmp_path: Path):

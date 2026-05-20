@@ -7,7 +7,7 @@ _Date : 2026-05-20_
 > - **P2 livré sur le périmètre `risk_management`** : `ruff check risk_management` OK, doc réalignée, redondances builder réduites, standardisation `SizingMethod` / `DecisionReasonCode` effectivement utilisée.
 > - **P0 / P1 revérifiés** : les items ciblés sont désormais effectivement câblés et couverts par tests ciblés (régime live, circuit breaker notify-once, Kelly effectif, agrégation notional, equity breakdown PIT, motifs structurés, preflight data-quality, métadonnées summary).
 > - **P3 désormais livré sur un premier niveau opérationnel** : shadow compare pilotable depuis le runtime/IHM, artefacts de post-mortem enrichis exposés dans le `run_summary`, et première boucle empirique de calibration conviction/Kelly branchée via `weights_calibration_runs`.
-> - **Reste ouvert en P3** : montée en gamme de la calibration empirique (objectifs business plus riches, gouvernance/monitoring, optimisation plus fine que la première boucle actuelle).
+> - **Reste ouvert en P3** : montée en gamme de la calibration empirique au-delà de la première boucle désormais segmentée par régime marché (objectifs business plus riches, gouvernance/monitoring, optimisation plus fine, segmentation horizon multi-fenêtres).
 
 ## 1. Périmètre audité
 
@@ -469,7 +469,8 @@ Le module expose déjà un placeholder de calibration, mais la logique reste enc
 - [x] Intégrer un mode shadow compare pilotable depuis le runtime/IHM.
 - [x] Brancher une calibration empirique des poids conviction/Kelly.
   - état actuel : première boucle active branchée via `backtesting.weights_calibration.EmpiricalRiskCalibrator`, `scripts/run_quarterly_weights_calibration.py` et lecture live `weights_calibration_runs` dans `risk_management/cli.py`.
-  - reste à faire : enrichir la gouvernance/optimisation de cette boucle (objectifs business, monitoring drift dédié, segmentation par régime/horizon).
+  - montée en gamme livrée : segmentation par `market_regime_mode`, fallback live `régime courant → all`, payload batch trimestriel consolidé par segment, page IHM dédiée `weights_calibration_runs`.
+  - reste à faire : enrichir la gouvernance/optimisation de cette boucle (objectifs business, monitoring drift dédié, segmentation horizon multi-fenêtres / multi-objectifs).
 - [x] Ajouter des artefacts de post-mortem plus riches par run :
   - top rejets par contrainte ;
   - détail secteur ;

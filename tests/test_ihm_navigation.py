@@ -18,6 +18,7 @@ def test_navigation_sidebar_order_matches_pipeline_then_support_pages() -> None:
         # Sprint S5 — page Infra & Backups
         "ops_infra",
         "backtesting",
+        "weights_calibration_runs",
         "parity",
         "db_admin",
         "settings",
@@ -36,6 +37,7 @@ def test_navigation_captions_explain_pipeline_and_support_sections() -> None:
     assert "corporate actions" in navigation.build_primary_navigation_caption().lower()
     assert "hors workflow quotidien" in navigation.build_support_navigation_caption().lower()
     assert "supervision ops" in navigation.build_support_navigation_caption().lower()
+    assert "calibrations poids" in navigation.build_support_navigation_caption().lower()
 
 
 def test_navigation_sections_expose_logical_groups() -> None:
@@ -77,4 +79,11 @@ def test_compliance_section_includes_tax_and_audit_pages() -> None:
     sections = {s.key: s for s in navigation.get_navigation_sections()}
     compliance_keys = {p.key for p in sections["compliance"].pages}
     assert {"tax_compliance", "compliance_audit", "glossary"} <= compliance_keys
+
+
+def test_research_section_includes_weights_calibration_runs_page() -> None:
+    sections = {s.key: s for s in navigation.get_navigation_sections()}
+    research_keys = {p.key for p in sections["research"].pages}
+    assert "weights_calibration_runs" in research_keys
+
 

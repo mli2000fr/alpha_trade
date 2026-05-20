@@ -137,12 +137,21 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
                 run_id VARCHAR(40) PRIMARY KEY,
                 calibrated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 scope VARCHAR(16),
+                market_regime_mode VARCHAR(32) DEFAULT 'all',
                 window_start DATE,
                 window_end DATE,
                 metric_name VARCHAR(32),
                 metric_value DOUBLE,
                 best_weights JSON,
                 candidates JSON,
+                observations_evaluated INT,
+                scenarios_evaluated INT,
+                latest_best_scenario_name VARCHAR(255),
+                final_value DOUBLE,
+                total_return_pct DOUBLE,
+                sharpe_ratio DOUBLE,
+                max_drawdown_pct DOUBLE,
+                artifact_dir VARCHAR(512),
                 git_sha VARCHAR(40),
                 schema_version INT
             )
@@ -202,11 +211,11 @@ def test_load_latest_empirical_risk_calibration_returns_latest_applicable_run() 
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO weights_calibration_runs (
-                run_id, scope, window_start, window_end, metric_name, metric_value, best_weights, candidates, schema_version
+                run_id, scope, market_regime_mode, window_start, window_end, metric_name, metric_value, best_weights, candidates, schema_version
             ) VALUES
-                ('risk-old', 'risk', '2025-01-01', '2025-12-31', 'sharpe', 1.10,
+                ('risk-old', 'risk', 'all', '2025-01-01', '2025-12-31', 'sharpe', 1.10,
                  '{"score_weight": 0.4, "prediction_weight": 0.6, "kelly_fraction_multiplier": 0.25}', '[]', 1),
-                ('risk-new', 'risk', '2025-04-01', '2026-03-31', 'sharpe', 1.35,
+                ('risk-new', 'risk', 'all', '2025-04-01', '2026-03-31', 'sharpe', 1.35,
                  '{"score_weight": 0.3, "prediction_weight": 0.7, "kelly_fraction_multiplier": 0.5}', '[]', 1)
         """))
     repo = RiskRepository(engine=engine)
@@ -218,6 +227,61 @@ def test_load_latest_empirical_risk_calibration_returns_latest_applicable_run() 
     assert calibration["metric_name"] == "sharpe"
     assert calibration["best_weights"]["score_weight"] == pytest.approx(0.3)
     assert calibration["best_weights"]["prediction_weight"] == pytest.approx(0.7)
+    assert calibration["market_regime_mode"] == "all"
+
+
+@pytest.mark.unit
+def test_load_latest_empirical_risk_calibration_prefers_requested_market_regime_mode() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO weights_calibration_runs (
+                run_id, scope, market_regime_mode, window_start, window_end, metric_name, metric_value, best_weights, candidates, schema_version
+            ) VALUES
+                ('risk-all', 'risk', 'all', '2025-01-01', '2026-03-31', 'sharpe', 1.20,
+                 '{"score_weight": 0.4, "prediction_weight": 0.6}', '[]', 2),
+                ('risk-cap-pres', 'risk', 'capital_preservation', '2025-01-01', '2026-03-31', 'sharpe', 1.35,
+                 '{"score_weight": 0.2, "prediction_weight": 0.8}', '[]', 2)
+        """))
+    repo = RiskRepository(engine=engine)
+
+    calibration = repo.load_latest_empirical_risk_calibration(
+        date(2026, 4, 1),
+        market_regime_mode="capital_preservation",
+    )
+
+    assert calibration is not None
+    assert calibration["run_id"] == "risk-cap-pres"
+    assert calibration["market_regime_mode"] == "capital_preservation"
+    assert calibration["requested_market_regime_mode"] == "capital_preservation"
+    assert calibration["market_regime_fallback_used"] is False
+
+
+@pytest.mark.unit
+def test_load_latest_empirical_risk_calibration_falls_back_to_all_market_regime_mode() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO weights_calibration_runs (
+                run_id, scope, market_regime_mode, window_start, window_end, metric_name, metric_value, best_weights, candidates, schema_version
+            ) VALUES
+                ('risk-all', 'risk', 'all', '2025-01-01', '2026-03-31', 'sharpe', 1.20,
+                 '{"score_weight": 0.4, "prediction_weight": 0.6}', '[]', 2)
+        """))
+    repo = RiskRepository(engine=engine)
+
+    calibration = repo.load_latest_empirical_risk_calibration(
+        date(2026, 4, 1),
+        market_regime_mode="close_only",
+    )
+
+    assert calibration is not None
+    assert calibration["run_id"] == "risk-all"
+    assert calibration["market_regime_mode"] == "all"
+    assert calibration["requested_market_regime_mode"] == "close_only"
+    assert calibration["market_regime_fallback_used"] is True
 
 
 @pytest.mark.unit

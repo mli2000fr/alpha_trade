@@ -314,6 +314,11 @@ def _build_conviction_weights_calibration(
                         else None
                     ),
                     "runtime_best_weights": empirical_risk_calibration.get("best_weights") or {},
+                    "runtime_market_regime_mode": empirical_risk_calibration.get("market_regime_mode"),
+                    "runtime_requested_market_regime_mode": empirical_risk_calibration.get("requested_market_regime_mode"),
+                    "runtime_market_regime_fallback_used": bool(
+                        empirical_risk_calibration.get("market_regime_fallback_used")
+                    ),
                 }
             )
         return payload
@@ -353,6 +358,11 @@ def _build_conviction_weights_calibration(
                     else None
                 ),
                 "runtime_best_weights": empirical_risk_calibration.get("best_weights") or {},
+                "runtime_market_regime_mode": empirical_risk_calibration.get("market_regime_mode"),
+                "runtime_requested_market_regime_mode": empirical_risk_calibration.get("requested_market_regime_mode"),
+                "runtime_market_regime_fallback_used": bool(
+                    empirical_risk_calibration.get("market_regime_fallback_used")
+                ),
             }
         )
     return payload
@@ -363,6 +373,7 @@ def _load_empirical_risk_calibration(
     *,
     trade_date: date,
     run_id: str | None,
+    market_regime_mode: str | None,
     disabled: bool,
 ) -> dict[str, object] | None:
     if disabled:
@@ -371,7 +382,7 @@ def _load_empirical_risk_calibration(
     if not callable(loader):
         return None
     try:
-        payload = loader(trade_date, run_id=run_id)
+        payload = loader(trade_date, run_id=run_id, market_regime_mode=market_regime_mode)
     except Exception:
         LOGGER.warning("Calibration empirique risk indisponible pour trade_date=%s", trade_date, exc_info=True)
         return None
@@ -770,10 +781,14 @@ def main(args: list[str] | None = None) -> None:
         from risk_management.regime_apply import apply_snapshot
 
         config = apply_snapshot(config, regime_snapshot)
+    requested_calibration_market_regime_mode = (
+        str(getattr(regime_snapshot, "mode", "") or "").strip().lower() or "all"
+    )
     empirical_risk_calibration = _load_empirical_risk_calibration(
         repo,
         trade_date=trade_date,
         run_id=str(args.empirical_calibration_run_id or "").strip() or None,
+        market_regime_mode=requested_calibration_market_regime_mode,
         disabled=bool(args.disable_empirical_calibration),
     )
     config = _apply_empirical_risk_calibration(config, empirical_risk_calibration)

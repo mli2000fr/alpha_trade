@@ -684,6 +684,7 @@ class RiskRepository:
         trade_date: date,
         *,
         run_id: str | None = None,
+        market_regime_mode: str | None = None,
     ) -> dict[str, Any] | None:
         """Charge le dernier run de calibration empirique risk applicable.
 
@@ -693,21 +694,54 @@ class RiskRepository:
         table_columns = self._get_table_columns("weights_calibration_runs")
         if not table_columns:
             return None
+        requested_market_regime_mode = str(market_regime_mode or "").strip().lower() or "all"
         params: dict[str, Any] = {"scope": "risk"}
         where_clauses = ["scope = :scope"]
+        select_columns = [
+            "run_id",
+            "calibrated_at",
+            "window_start",
+            "window_end",
+            "metric_name",
+            "metric_value",
+            "best_weights",
+            "schema_version",
+        ]
+        order_by = "window_end DESC, calibrated_at DESC, run_id DESC"
+        has_market_regime_mode = "market_regime_mode" in table_columns
+        if has_market_regime_mode:
+            select_columns.append("market_regime_mode")
         if run_id is not None:
             where_clauses.append("run_id = :run_id")
             params["run_id"] = run_id
         else:
             where_clauses.append("window_end <= :trade_date")
             params["trade_date"] = trade_date
+            if has_market_regime_mode:
+                params["fallback_market_regime_mode"] = "all"
+                if requested_market_regime_mode == "all":
+                    where_clauses.append(
+                        "LOWER(COALESCE(market_regime_mode, :fallback_market_regime_mode)) = :fallback_market_regime_mode"
+                    )
+                else:
+                    params["requested_market_regime_mode"] = requested_market_regime_mode
+                    where_clauses.append(
+                        "LOWER(COALESCE(market_regime_mode, :fallback_market_regime_mode)) "
+                        "IN (:requested_market_regime_mode, :fallback_market_regime_mode)"
+                    )
+                    order_by = (
+                        "CASE "
+                        "WHEN LOWER(COALESCE(market_regime_mode, :fallback_market_regime_mode)) = :requested_market_regime_mode THEN 0 "
+                        "WHEN LOWER(COALESCE(market_regime_mode, :fallback_market_regime_mode)) = :fallback_market_regime_mode THEN 1 "
+                        "ELSE 2 END, "
+                        + order_by
+                    )
         query = text(
             f"""
-            SELECT run_id, calibrated_at, window_start, window_end,
-                   metric_name, metric_value, best_weights, schema_version
+            SELECT {', '.join(select_columns)}
             FROM weights_calibration_runs
             WHERE {' AND '.join(where_clauses)}
-            ORDER BY window_end DESC, calibrated_at DESC, run_id DESC
+            ORDER BY {order_by}
             LIMIT 1
             """
         )
@@ -733,6 +767,11 @@ class RiskRepository:
             best_weights = parsed
         else:
             return None
+        resolved_market_regime_mode = (
+            str(row.get("market_regime_mode") or "").strip().lower() or "all"
+            if has_market_regime_mode
+            else "all"
+        )
         return {
             "run_id": str(row.get("run_id") or "").strip() or None,
             "calibrated_at": str(row.get("calibrated_at") or "").strip() or None,
@@ -741,6 +780,13 @@ class RiskRepository:
             "metric_name": str(row.get("metric_name") or "").strip() or None,
             "metric_value": float(row["metric_value"]) if row.get("metric_value") is not None else None,
             "schema_version": int(row["schema_version"]) if row.get("schema_version") is not None else None,
+            "market_regime_mode": resolved_market_regime_mode,
+            "requested_market_regime_mode": requested_market_regime_mode,
+            "market_regime_fallback_used": (
+                run_id is None
+                and requested_market_regime_mode != "all"
+                and resolved_market_regime_mode != requested_market_regime_mode
+            ),
             "best_weights": best_weights,
             "source": "weights_calibration_runs",
         }
