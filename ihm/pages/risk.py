@@ -77,7 +77,7 @@ def render() -> None:
     summary_record = get_latest_run_business_summary(step_key="risk_management", entity_run_id=selected_run)
     render_persistent_business_summary(
         summary_record,
-        max_metrics=9,
+        max_metrics=12,
     )
     _render_ml_gate_status(summary_record)
 

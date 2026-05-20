@@ -395,6 +395,9 @@ def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -
     assert ps_script.index("Calcul relevance_score (scope candidats / override CSV)") < ps_script.index(
         "Scoring FinBERT standard (scope candidats / override CSV)"
     )
+    assert ps_script.index("Scoring FinBERT contextuel (scope candidats / override CSV)") < ps_script.index(
+        "Agregation features : ticker=candidats, secteur=scope large importe"
+    )
 
 
 def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_options() -> None:
@@ -449,6 +452,9 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
     assert ps_script.index("Calcul relevance_score (scope candidats / override CSV)") < ps_script.index(
         "Scoring FinBERT standard (scope candidats / override CSV)"
     )
+    assert ps_script.index("Scoring FinBERT contextuel (scope candidats / override CSV)") < ps_script.index(
+        "Agregation features : ticker=candidats, secteur=scope large importe"
+    )
 
 
 def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_with_explicit_thresholds() -> None:
@@ -482,6 +488,9 @@ def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_wit
     assert "--ticker-symbols AAPL" in ps_script
     assert ps_script.index("Calcul relevance_score (scope candidats / override CSV)") < ps_script.index(
         "Scoring FinBERT standard (scope candidats / override CSV)"
+    )
+    assert ps_script.index("Scoring FinBERT contextuel (scope candidats / override CSV)") < ps_script.index(
+        "Agregation features : ticker=candidats, secteur=scope large importe"
     )
 
 

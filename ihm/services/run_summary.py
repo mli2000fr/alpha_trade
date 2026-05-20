@@ -114,6 +114,9 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Acceptés", "accepted_symbols"),
         ("Réduits", "reduced_symbols"),
         ("Rejetés", "rejected_symbols"),
+        ("Ranks selector", "selector_rank_available"),
+        ("Couverture selector", "selector_rank_coverage_pct"),
+        ("Blackout selector", "selector_earnings_blackout_candidates"),
         ("Expo brute", "gross_exposure_pct"),
         ("Poids max", "max_target_weight"),
         ("Risque init.", "total_initial_risk_dollars"),
@@ -129,6 +132,9 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
         ("Échecs", "failed_orders"),
         ("Ignorés", "skipped_orders"),
         ("Taux d'exécution", "fill_rate"),
+        ("Ranks selector", "selector_rank_available"),
+        ("Couverture selector", "selector_rank_coverage_pct"),
+        ("Blackout selector", "selector_earnings_blackout_targets"),
         ("Notional cible", "total_target_notional"),
         ("Risque init.", "total_initial_risk_dollars"),
         ("Stops broker", "targets_with_broker_initial_stop"),
@@ -371,6 +377,21 @@ def _format_alpha_scanner_ablation_detail_lines(summary: Mapping[str, object]) -
     return lines
 
 
+def _format_selector_mode_counts_line(label: str, payload: object) -> str | None:
+    if not isinstance(payload, Mapping):
+        return None
+    parts: list[str] = []
+    for mode, value in payload.items():
+        mode_label = str(mode or "unknown").strip() or "unknown"
+        count = _to_int(value)
+        if count <= 0:
+            continue
+        parts.append(f"{mode_label}={count}")
+    if not parts:
+        return None
+    return f"{label} : {', '.join(parts)}."
+
+
 def get_run_summary(record: Mapping[str, object] | None) -> dict[str, object]:
     if not record:
         return {}
@@ -496,6 +517,9 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
         gate_action = str(summary.get("ml_gate_action") or "allow").strip()
         drift_status = str(summary.get("ml_gate_drift_status") or "n/a").strip()
         coverage = _to_float(summary.get("prediction_coverage_pct"))
+        selector_rank_available = _to_int(summary.get("selector_rank_available"))
+        selector_rank_coverage_pct = _to_float(summary.get("selector_rank_coverage_pct"))
+        selector_blackout = _to_int(summary.get("selector_earnings_blackout_candidates"))
         if gate_enabled is False:
             lines.append(
                 f"Gate ML désactivé : action={gate_action}, drift={drift_status}, raison={gate_reason}."
@@ -508,6 +532,26 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
             lines.append(
                 f"Gate ML actif avec drift={drift_status} (action={gate_action}, raison={gate_reason})."
             )
+        if selector_rank_available > 0:
+            selector_line = f"Selector : rang disponible pour {selector_rank_available} symbole(s)"
+            if selector_rank_coverage_pct is not None:
+                selector_line += f" (couverture={selector_rank_coverage_pct:.2f})"
+            selector_line += "."
+            lines.append(selector_line)
+        if selector_blackout > 0:
+            lines.append(f"Selector : {selector_blackout} candidat(s) tagué(s) earnings blackout.")
+        selector_modes_line = _format_selector_mode_counts_line(
+            "Selector modes candidats",
+            summary.get("selector_signal_mode_counts"),
+        )
+        if selector_modes_line:
+            lines.append(selector_modes_line)
+        retained_selector_modes_line = _format_selector_mode_counts_line(
+            "Selector modes retenus",
+            summary.get("retained_selector_signal_mode_counts"),
+        )
+        if retained_selector_modes_line:
+            lines.append(retained_selector_modes_line)
 
     if step_key == "ml_train":
         training_start_date = str(summary.get("training_start_date") or "").strip()
@@ -641,6 +685,25 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
                 detail_line = _format_alpha_scanner_candidate_detail_line(candidate)
                 if detail_line:
                     lines.append(detail_line)
+
+    if step_key == "execution":
+        selector_rank_available = _to_int(summary.get("selector_rank_available"))
+        selector_rank_coverage_pct = _to_float(summary.get("selector_rank_coverage_pct"))
+        selector_blackout = _to_int(summary.get("selector_earnings_blackout_targets"))
+        if selector_rank_available > 0:
+            selector_line = f"Selector transporté jusqu'à l'exécution pour {selector_rank_available} cible(s)"
+            if selector_rank_coverage_pct is not None:
+                selector_line += f" (couverture={selector_rank_coverage_pct:.2f})"
+            selector_line += "."
+            lines.append(selector_line)
+        if selector_blackout > 0:
+            lines.append(f"Execution : {selector_blackout} cible(s) marquée(s) earnings blackout côté selector.")
+        selector_modes_line = _format_selector_mode_counts_line(
+            "Selector modes exécutés",
+            summary.get("selector_signal_mode_counts"),
+        )
+        if selector_modes_line:
+            lines.append(selector_modes_line)
 
     if step_key != "sync_earnings_calendar":
         return lines

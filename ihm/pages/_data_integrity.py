@@ -82,14 +82,16 @@ def _ensure_date_input_state(canonical_key: str, widget_key: str, fallback: Date
     que, si le widget est recréé après un rerun classique, il reparte de la
     dernière date validée et non du défaut `today-7/today`.
     """
+    had_persisted_canonical = canonical_key in st.session_state and bool(str(st.session_state.get(canonical_key) or "").strip())
     canonical_value = _coerce_date_text(st.session_state.get(canonical_key), fallback)
     if canonical_key not in st.session_state or not str(st.session_state.get(canonical_key) or "").strip():
         st.session_state[canonical_key] = canonical_value
 
     last_synced_key = _date_last_synced_key(widget_key)
     if widget_key not in st.session_state:
-        st.session_state[widget_key] = canonical_value
-        st.session_state[last_synced_key] = canonical_value
+        if had_persisted_canonical:
+            st.session_state[widget_key] = canonical_value
+            st.session_state[last_synced_key] = canonical_value
     else:
         previous_synced = str(st.session_state.get(last_synced_key) or "").strip()
         current_widget_value = str(st.session_state.get(widget_key) or "").strip()
@@ -349,7 +351,7 @@ def _render_import_news_panel(
     _ensure_date_input_state(IMPORT_NEWS_START_DATE_KEY, IMPORT_NEWS_START_DATE_WIDGET_KEY, default_start)
     _ensure_date_input_state(IMPORT_NEWS_END_DATE_KEY, IMPORT_NEWS_END_DATE_WIDGET_KEY, default_end)
 
-    with st.expander("**Sentiement - Traitement par étape**", expanded=False):
+    with st.expander("**Traitement par étape**", expanded=False):
         st.caption(
             "Ce bloc auxiliaire permet de lancer **pas à pas** les 5 sous-étapes de la nouvelle étape 7, "
             "en réutilisant les paramètres déjà saisis dans l'IHM (provider, fenêtre, symboles, seuils, batch sizes, caps contextuels, etc.). "
@@ -361,12 +363,12 @@ def _render_import_news_panel(
                 "1. **Import news** : importe les news brutes sur la fenêtre ciblée et alimente déjà `news_raw` + `news_ticker_map`.\n"
                 "2. **Calcul `relevance_score` (Niveau 2/3)** : complète/backfill `news_ticker_map.relevance_score` en pur Python sur les lignes de `news_ticker_map` déjà créées par l'import.\n"
                 "3. **Scoring FinBERT standard (sans features)** : remplit `news_sentiment` sans encore reconstruire les agrégats journaliers.\n"
-                "4. **Agrégation features journalières** : reconstruit `ticker_daily_sentiment_features` / `sector_daily_sentiment_features`.\n"
-                "5. **Scoring FinBERT contextuel (Niveau 4)** : enrichit `news_ticker_sentiment` sur les couples `(article, symbole)` compatibles avec le scope et les seuils configurés."
+                "4. **Scoring FinBERT contextuel (Niveau 4)** : enrichit `news_ticker_sentiment` sur les couples `(article, symbole)` compatibles avec le scope et les seuils configurés.\n"
+                "5. **Agrégation features journalières** : reconstruit `ticker_daily_sentiment_features` / `sector_daily_sentiment_features` en tenant compte du fallback `COALESCE(news_ticker_sentiment, news_sentiment)`."
             )
             st.info(
-                "**Ordre recommandé :** ① Import news → ② relevance backfill → ③ scoring standard → ④ agrégation journalière → ⑤ scoring contextuel.\n\n"
-                "⚠️ Le scoring contextuel est volontairement placé en dernier dans cet outil manuel pour refléter la nouvelle orchestration métier visible dans l'IHM Pipeline."
+                "**Ordre recommandé :** ① Import news → ② relevance backfill → ③ scoring standard → ④ scoring contextuel → ⑤ agrégation journalière.\n\n"
+                "ℹ️ L'agrégation journalière doit rester en dernier pour reconstruire les features ticker/secteur à partir des scores contextuels déjà persistés quand ils existent."
             )
 
         date_col1, date_col2 = st.columns(2)
@@ -582,22 +584,22 @@ def _render_import_news_panel(
                 "stop": "⏹️ Arrêter le scoring standard",
             },
             {
-                "key": "rebuild_daily_sentiment_features_only",
-                "label": "🧱 Agrégation features journalières",
-                "run_label": "Traitement par étape — 4. Agrégation features journalières",
-                "caption": "Sous-étape 4 — Agrégation features journalières (ticker/secteur)",
-                "preview": format_command_for_display(build_pipeline_command("rebuild_daily_sentiment_features_only", import_options)),
-                "success": "Agrégation des features journalières démarrée en arrière-plan",
-                "stop": "⏹️ Arrêter l'agrégation journalière",
-            },
-            {
                 "key": "sentiment_contextual_scoring",
                 "label": "🎯 Scoring FinBERT contextuel (Niveau 4)",
-                "run_label": "Traitement par étape — 5. Scoring FinBERT contextuel (Niveau 4)",
-                "caption": "Sous-étape 5 — Scoring FinBERT contextuel (Niveau 4 — `news_ticker_sentiment`)",
+                "run_label": "Traitement par étape — 4. Scoring FinBERT contextuel (Niveau 4)",
+                "caption": "Sous-étape 4 — Scoring FinBERT contextuel (Niveau 4 — `news_ticker_sentiment`)",
                 "preview": format_command_for_display(build_pipeline_command("sentiment_contextual_scoring", import_options)),
                 "success": "Scoring FinBERT contextuel démarré en arrière-plan",
                 "stop": "⏹️ Arrêter le scoring contextuel",
+            },
+            {
+                "key": "rebuild_daily_sentiment_features_only",
+                "label": "🧱 Agrégation features journalières",
+                "run_label": "Traitement par étape — 5. Agrégation features journalières",
+                "caption": "Sous-étape 5 — Agrégation features journalières (ticker/secteur)",
+                "preview": format_command_for_display(build_pipeline_command("rebuild_daily_sentiment_features_only", import_options)),
+                "success": "Agrégation des features journalières démarrée en arrière-plan",
+                "stop": "⏹️ Arrêter l'agrégation journalière",
             },
         ]
         st.caption(f"Fenêtre appliquée : {cast(DateValue, start_value).isoformat()} → {cast(DateValue, end_value).isoformat()}")

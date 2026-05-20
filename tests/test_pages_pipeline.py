@@ -145,8 +145,8 @@ def test_render_import_news_panel_previews_use_selected_date_window(monkeypatch)
         "import_news",
         "sentiment_relevance_backfill",
         "sentiment_standard_scoring",
-        "rebuild_daily_sentiment_features_only",
         "sentiment_contextual_scoring",
+        "rebuild_daily_sentiment_features_only",
     ]
     assert all(start == "2022-01-01" for _key, start, _end in preview_calls)
     assert all(end == "2022-01-31" for _key, _start, end in preview_calls)

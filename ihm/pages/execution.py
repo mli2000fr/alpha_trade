@@ -193,7 +193,7 @@ def render() -> None:
         )
     )
 
-    render_persistent_business_summary(summary_record, max_metrics=9)
+    render_persistent_business_summary(summary_record, max_metrics=12)
 
     summary = get_run_summary(summary_record)
     watcher_summary = get_run_summary(watcher_summary_record)

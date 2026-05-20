@@ -210,6 +210,9 @@ def test_build_run_summary_caption_uses_enriched_risk_management_metrics_mapping
                 "accepted_symbols": 6,
                 "reduced_symbols": 2,
                 "rejected_symbols": 4,
+                "selector_rank_available": 10,
+                "selector_rank_coverage_pct": 0.83,
+                "selector_earnings_blackout_candidates": 2,
                 "gross_exposure_pct": 0.62,
                 "max_target_weight": 0.10,
                 "total_initial_risk_dollars": 3200.0,
@@ -221,6 +224,9 @@ def test_build_run_summary_caption_uses_enriched_risk_management_metrics_mapping
 
     assert "cibles=12" in caption
     assert "acceptés=6" in caption
+    assert "ranks selector=10" in caption
+    assert "couverture selector=0.83" in caption
+    assert "blackout selector=2" in caption
     assert "expo brute=0.62" in caption
     assert "couverture atr=0.92" in caption
 
@@ -236,6 +242,9 @@ def test_build_run_summary_caption_uses_enriched_execution_metrics_mapping() -> 
                 "failed_orders": 1,
                 "skipped_orders": 0,
                 "fill_rate": 0.75,
+                "selector_rank_available": 5,
+                "selector_rank_coverage_pct": 1.0,
+                "selector_earnings_blackout_targets": 1,
                 "total_target_notional": 24500.0,
                 "total_initial_risk_dollars": 1800.0,
                 "targets_with_broker_initial_stop": 4,
@@ -243,6 +252,9 @@ def test_build_run_summary_caption_uses_enriched_execution_metrics_mapping() -> 
         }
     )
 
+    assert "ranks selector=5" in caption
+    assert "couverture selector=1.0" in caption
+    assert "blackout selector=1" in caption
     assert "notional cible=24500.0" in caption
     assert "risque init.=1800.0" in caption
     assert "stops broker=4" in caption
@@ -629,6 +641,44 @@ def test_get_run_summary_detail_lines_exposes_ml_gate_kill_switch_for_risk_manag
     assert any("Gate ML désactivé" in line for line in lines)
     assert any("drift=ALERT" in line for line in lines)
     assert any("Couverture ML nulle attendue" in line for line in lines)
+
+
+def test_get_run_summary_detail_lines_exposes_selector_telemetry_for_risk_management() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "risk_management",
+            "run_summary": {
+                "selector_rank_available": 8,
+                "selector_rank_coverage_pct": 0.8,
+                "selector_earnings_blackout_candidates": 2,
+                "selector_signal_mode_counts": {"strict": 5, "sector_neutralized": 3},
+                "retained_selector_signal_mode_counts": {"strict": 4, "sector_neutralized": 1},
+            },
+        }
+    )
+
+    assert any("Selector : rang disponible pour 8 symbole(s)" in line for line in lines)
+    assert any("earnings blackout" in line for line in lines)
+    assert any(line == "Selector modes candidats : strict=5, sector_neutralized=3." for line in lines)
+    assert any(line == "Selector modes retenus : strict=4, sector_neutralized=1." for line in lines)
+
+
+def test_get_run_summary_detail_lines_exposes_selector_telemetry_for_execution() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "execution",
+            "run_summary": {
+                "selector_rank_available": 3,
+                "selector_rank_coverage_pct": 1.0,
+                "selector_earnings_blackout_targets": 1,
+                "selector_signal_mode_counts": {"strict": 2, "sector_neutralized": 1},
+            },
+        }
+    )
+
+    assert any("Selector transporté jusqu'à l'exécution pour 3 cible(s)" in line for line in lines)
+    assert any("earnings blackout" in line for line in lines)
+    assert any(line == "Selector modes exécutés : strict=2, sector_neutralized=1." for line in lines)
 
 
 def test_get_run_summary_detail_lines_exposes_ml_predict_fallbacks_and_artifact_issues() -> None:
