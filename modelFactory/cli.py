@@ -33,7 +33,13 @@ from modelFactory.runtime_status import increment_runtime_counter, reset_runtime
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
-SYMBOL_SOURCES = ("candidates", "stock-bars-daily")
+SYMBOL_SOURCES = (
+    "candidates",
+    "stock-bars-daily",
+    "stock-scores",
+    "stock-scores-history",
+    "stock-scores-all",
+)
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
 
 
@@ -135,7 +141,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default="candidates",
         choices=list(SYMBOL_SOURCES),
-        help="Source des symboles quand --symbols n'est pas fourni : candidates | stock-bars-daily",
+        help=(
+            "Source des symboles quand --symbols n'est pas fourni : candidates | stock-bars-daily | "
+            "stock-scores | stock-scores-history | stock-scores-all"
+        ),
     )
     p.add_argument("--max-workers", type=int, default=4)
     p.add_argument("--max-epochs", type=int, default=50)
@@ -444,7 +453,11 @@ def main(args: list[str] | None = None) -> None:
         print(f"{'=' * 60}")
 
     elif opts.mode == "predict":
-        from modelFactory.db_registry import filter_symbols_by_selector_context, insert_predictions, load_candidate_symbols
+        from modelFactory.db_registry import (
+            filter_symbols_by_selector_context,
+            insert_predictions,
+            load_symbols_for_source,
+        )
         from modelFactory.predictor import predict_batch
         from modelFactory.drift_monitor import compute_drift
         from modelFactory.drift_policy import (
@@ -453,7 +466,7 @@ def main(args: list[str] | None = None) -> None:
             persist_kill_switch_event,
             summary_fields as _drift_summary_fields,
         )
-        symbols = opts.symbols or load_candidate_symbols(engine)
+        symbols = opts.symbols or load_symbols_for_source(engine, str(opts.symbol_source or "candidates"))
         symbols, selector_filter_summary = filter_symbols_by_selector_context(
             engine,
             symbols,

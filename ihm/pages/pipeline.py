@@ -9,9 +9,11 @@ ré-exports ci-dessous.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 import streamlit as st
+from database.connection import get_sqlalchemy_engine
+from modelFactory.db_registry import filter_symbols_by_selector_context, load_symbols_for_source
 
 from ihm.components.watcher_documentation import render_watcher_documentation_panel
 from ihm.pages import run_page_if_standalone
@@ -96,6 +98,31 @@ from ihm.services.pipeline_runner import (
 )
 from ihm.services.process_registry import stop_pipeline_run
 from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
+
+
+ML_TRAIN_SYMBOL_SOURCE_OPTIONS = (
+    "stock_scores",
+    "stock_scores_history",
+    "stock_scores_all",
+    "candidates",
+    "stock_bars_daily",
+)
+
+ML_TRAIN_SYMBOL_SOURCE_LABELS = {
+    "stock_scores": "Snapshot courant stock_scores",
+    "stock_scores_history": "Historique PIT stock_scores_history",
+    "stock_scores_all": "Union stock_scores + stock_scores_history",
+    "candidates": "Candidats du jour",
+    "stock_bars_daily": "Univers large stock_bars_daily",
+}
+
+ML_TRAIN_SYMBOL_SOURCE_TO_CLI = {
+    "stock_scores": "stock-scores",
+    "stock_scores_history": "stock-scores-history",
+    "stock_scores_all": "stock-scores-all",
+    "candidates": "candidates",
+    "stock_bars_daily": "stock-bars-daily",
+}
 
 
 def _build_execution_mode_banner_payload(
@@ -308,7 +335,42 @@ def _render_ml_inspection_link(step_key: str) -> None:
         st.rerun()
 
 
-def _render_ml_train_all_symbols_block(
+@st.cache_data(ttl=60, show_spinner=False)
+def _resolve_ml_train_scope_preview(
+    symbol_source: str,
+    selector_signal_modes: tuple[str, ...],
+    selector_max_candidate_rank: int | None,
+    selector_exclude_earnings_blackout: bool,
+) -> dict[str, object]:
+    engine = get_sqlalchemy_engine()
+    cli_symbol_source = ML_TRAIN_SYMBOL_SOURCE_TO_CLI.get(symbol_source, "candidates")
+    resolved_symbols = load_symbols_for_source(engine, cli_symbol_source)
+    filtered_symbols = resolved_symbols
+    selector_summary: dict[str, object] = {
+        "enabled": False,
+        "applied": False,
+        "input_symbol_count": len(resolved_symbols),
+        "output_symbol_count": len(resolved_symbols),
+    }
+    if resolved_symbols:
+        candidate_filtered_symbols, selector_summary = filter_symbols_by_selector_context(
+            engine,
+            resolved_symbols,
+            signal_modes=selector_signal_modes,
+            max_candidate_rank=selector_max_candidate_rank,
+            exclude_earnings_blackout=selector_exclude_earnings_blackout,
+        )
+        if selector_summary.get("enabled") and selector_summary.get("applied"):
+            filtered_symbols = candidate_filtered_symbols
+    return {
+        "symbol_count": len(filtered_symbols),
+        "raw_symbol_count": len(resolved_symbols),
+        "sample_symbols": filtered_symbols[:10],
+        "selector_summary": selector_summary,
+    }
+
+
+def _render_ml_train_scope_block(
     options: PipelineLaunchOptions,
     *,
     workflow_active: bool,
@@ -316,26 +378,93 @@ def _render_ml_train_all_symbols_block(
     db_config: dict[str, str | None],
     all_runs: list[dict[str, object]],
 ) -> None:
-    # NOTE: l'ancien comptage `SELECT COUNT(DISTINCT symbol) FROM stock_bars_daily`
-    # a été retiré car il ralentissait l'affichage de la page Pipeline (12k+ lignes
-    # à scanner à chaque rendu). Le CLI `ml_train --symbol-source stock_bars_daily`
-    # gère lui-même le cas "univers vide" et journalise le résultat.
     disabled = workflow_active or bool(active_for_step)
     if workflow_active:
-        st.caption("Workflow complet en cours : le lancement 'tous les symbols' est temporairement désactivé.")
+        st.caption("Workflow complet en cours : le lancement ML ciblé est temporairement désactivé.")
     elif active_for_step:
-        st.caption("Un run `ML Train` est déjà actif : le lancement 'tous les symbols' attend la fin de ce run.")
+        st.caption("Un run `ML Train` est déjà actif : le lancement ML ciblé attend la fin de ce run.")
+
+    current_symbol_source = str(
+        st.session_state.get("pipeline_ml_train_symbol_source", getattr(options, "ml_train_symbol_source", "candidates"))
+    ).strip().lower()
+    if current_symbol_source not in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
+        current_symbol_source = "candidates"
+
+    selected_symbol_source = str(
+        st.selectbox(
+            "Univers de symboles à entraîner",
+            options=ML_TRAIN_SYMBOL_SOURCE_OPTIONS,
+            index=ML_TRAIN_SYMBOL_SOURCE_OPTIONS.index(current_symbol_source),
+            key="pipeline_ml_train_symbol_source",
+            format_func=lambda value: ML_TRAIN_SYMBOL_SOURCE_LABELS.get(str(value), str(value)),
+            help=(
+                "Choisissez le même type de périmètre que pour l'import news : snapshot courant, historique PIT, union large, "
+                "candidats du jour ou univers complet `stock_bars_daily`."
+            ),
+        )
+    )
+    st.caption(
+        "`stock_scores_all` = union `stock_scores` + `stock_scores_history` ; `stock_scores` = snapshot courant ; "
+        "`stock_scores_history` = historique PIT ; `candidates` = candidats du jour ; `stock_bars_daily` = univers large."
+    )
+
+    try:
+        scope_preview = _resolve_ml_train_scope_preview(
+            selected_symbol_source,
+            tuple(str(value).strip().lower() for value in (options.ml_selector_universe_signal_modes or ()) if str(value).strip()),
+            options.ml_selector_universe_max_candidate_rank,
+            bool(options.ml_selector_universe_exclude_earnings_blackout),
+        )
+    except Exception as exc:
+        st.warning(f"Impossible de prévisualiser l'univers ML : {exc}")
+        scope_preview = None
+
+    if isinstance(scope_preview, dict):
+        raw_symbol_count_raw = scope_preview.get("raw_symbol_count", 0)
+        raw_symbol_count = int(raw_symbol_count_raw) if isinstance(raw_symbol_count_raw, (int, float, str)) else 0
+        symbol_count_raw = scope_preview.get("symbol_count", 0)
+        symbol_count = int(symbol_count_raw) if isinstance(symbol_count_raw, (int, float, str)) else 0
+        sample_symbols_values = scope_preview.get("sample_symbols", [])
+        sample_symbols = [
+            str(value)
+            for value in (sample_symbols_values if isinstance(sample_symbols_values, (list, tuple)) else [])
+            if str(value).strip()
+        ]
+        selector_summary = scope_preview.get("selector_summary") if isinstance(scope_preview.get("selector_summary"), dict) else {}
+
+        metric_col1, metric_col2 = st.columns(2)
+        with metric_col1:
+            st.metric("Symboles résolus", raw_symbol_count)
+        with metric_col2:
+            st.metric("Symboles entraînés", symbol_count)
+
+        if selector_summary.get("enabled") and selector_summary.get("applied"):
+            st.caption(
+                "Filtre selector appliqué : "
+                f"{selector_summary.get('input_symbol_count', raw_symbol_count)} → {selector_summary.get('output_symbol_count', symbol_count)} symboles."
+            )
+        elif selector_summary.get("enabled"):
+            st.caption(
+                "Filtre selector configuré mais non appliqué en prévisualisation "
+                f"({selector_summary.get('reason', 'raison indisponible')})."
+            )
+
+        if symbol_count == 0:
+            st.warning("Aucun symbole ne serait entraîné avec les paramètres ML actuels.")
+        elif sample_symbols:
+            preview_suffix = " …" if symbol_count > len(sample_symbols) else ""
+            st.caption("Extrait des premiers symboles entraînés : `" + ", ".join(sample_symbols) + preview_suffix + "`")
 
     if st.button(
-        "Entrainer tous les symbols",
-        key="run_pipeline_step_ml_train_all_symbols",
+        "Entraîner l'univers sélectionné",
+        key="run_pipeline_step_ml_train_scoped",
         use_container_width=True,
         disabled=disabled,
     ):
         _launch_pipeline_step(
             "ml_train",
-            "9. ML Train (Model Factory) — tous les symbols",
-            replace(options, ml_train_symbol_source="stock_bars_daily"),
+            f"9. ML Train (Model Factory) — {ML_TRAIN_SYMBOL_SOURCE_LABELS.get(selected_symbol_source, selected_symbol_source)}",
+            replace(options, ml_train_symbol_source=cast(Any, selected_symbol_source)),
             db_config,
             all_runs,
         )
@@ -463,7 +592,7 @@ def _render_launchable_step_panel(
 
             if step.key == "ml_train":
                 st.divider()
-                _render_ml_train_all_symbols_block(
+                _render_ml_train_scope_block(
                     options,
                     workflow_active=workflow_active,
                     active_for_step=active_for_step,

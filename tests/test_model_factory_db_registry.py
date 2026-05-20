@@ -206,3 +206,11 @@ def test_filter_symbols_by_selector_context_fails_open_when_required_columns_are
     assert "selector_context_missing_columns" in str(summary["reason"])
 
 
+def test_load_symbols_for_source_dispatches_stock_scores_all(monkeypatch) -> None:
+    monkeypatch.setattr(db_registry, "load_stock_scores_all_symbols", lambda engine: ["AAPL", "MSFT"])
+
+    result = db_registry.load_symbols_for_source(cast(Engine, object()), "stock-scores-all")
+
+    assert result == ["AAPL", "MSFT"]
+
+

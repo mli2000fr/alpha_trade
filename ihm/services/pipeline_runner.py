@@ -209,7 +209,13 @@ MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost", "global_model"]
 MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
-MLTrainSymbolSource = Literal["candidates", "stock_bars_daily"]
+MLTrainSymbolSource = Literal[
+    "stock_scores",
+    "stock_scores_history",
+    "stock_scores_all",
+    "candidates",
+    "stock_bars_daily",
+]
 NewsImportSymbolSource = Literal[
     "stock_scores",
     "stock_scores_history",
@@ -1421,7 +1427,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     ca_end_date = _normalize_optional_date(options.corporate_actions_end_date)
     ml_benchmark_symbol = _normalize_symbol(options.ml_benchmark_symbol, DEFAULT_ML_BENCHMARK_SYMBOL)
     ml_artifacts_dir = (options.ml_artifacts_dir or "").strip() or DEFAULT_ML_ARTIFACTS_DIR
-    ml_symbol_source = "stock-bars-daily" if options.ml_train_symbol_source == "stock_bars_daily" else "candidates"
+    ml_symbol_source = {
+        "stock_scores": "stock-scores",
+        "stock_scores_history": "stock-scores-history",
+        "stock_scores_all": "stock-scores-all",
+        "candidates": "candidates",
+        "stock_bars_daily": "stock-bars-daily",
+    }.get(str(options.ml_train_symbol_source or "candidates"), "candidates")
     ml_selector_signal_modes = [
         str(value).strip().lower()
         for value in (options.ml_selector_universe_signal_modes or ())

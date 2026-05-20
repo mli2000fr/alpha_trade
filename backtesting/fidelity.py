@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -79,6 +79,8 @@ class SentimentPreparationDiagnostics:
     rows_input: int
     rows_missing_before: int = 0
     rows_missing_after: int = 0
+    missing_symbols_before: tuple[str, ...] = ()
+    missing_symbols_after: tuple[str, ...] = ()
     rows_filled_from_final_score: int = 0
     rebuilt_dates_attempted: int = 0
     rebuilt_dates_succeeded: int = 0
@@ -95,6 +97,8 @@ class SentimentPreparationDiagnostics:
             "rows_input": int(self.rows_input),
             "rows_missing_before": int(self.rows_missing_before),
             "rows_missing_after": int(self.rows_missing_after),
+            "missing_symbols_before": list(self.missing_symbols_before),
+            "missing_symbols_after": list(self.missing_symbols_after),
             "rows_filled_from_final_score": int(self.rows_filled_from_final_score),
             "rebuilt_dates_attempted": int(self.rebuilt_dates_attempted),
             "rebuilt_dates_succeeded": int(self.rebuilt_dates_succeeded),
@@ -121,6 +125,8 @@ class MlPreparationDiagnostics:
     predictions_input_rows: int
     expected_symbol_dates: int
     missing_prediction_keys: int
+    missing_symbols_before: tuple[str, ...] = ()
+    missing_symbols_after: tuple[str, ...] = ()
     rebuilt_prediction_rows: int = 0
     rebuild_attempted: bool = False
     persist_enabled: bool = False
@@ -136,6 +142,8 @@ class MlPreparationDiagnostics:
             "predictions_input_rows": int(self.predictions_input_rows),
             "expected_symbol_dates": int(self.expected_symbol_dates),
             "missing_prediction_keys": int(self.missing_prediction_keys),
+            "missing_symbols_before": list(self.missing_symbols_before),
+            "missing_symbols_after": list(self.missing_symbols_after),
             "rebuilt_prediction_rows": int(self.rebuilt_prediction_rows),
             "rebuild_attempted": bool(self.rebuild_attempted),
             "persist_enabled": bool(self.persist_enabled),

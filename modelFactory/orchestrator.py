@@ -29,8 +29,7 @@ from modelFactory.features import normalize_feature_columns
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 from modelFactory.db_registry import (
     filter_symbols_by_selector_context,
-    load_candidate_symbols,
-    load_stock_bars_daily_symbols,
+    load_symbols_for_source,
     replace_model_governance,
 )
 from modelFactory.global_model import train_global_model
@@ -38,7 +37,13 @@ from modelFactory.runtime_status import update_runtime_status
 from modelFactory.trainer import TrainResult, train_symbol
 
 LOGGER = logging.getLogger(__name__)
-SymbolSource = Literal["candidates", "stock-bars-daily"]
+SymbolSource = Literal[
+    "candidates",
+    "stock-bars-daily",
+    "stock-scores",
+    "stock-scores-history",
+    "stock-scores-all",
+]
 
 
 def _inject_global_model_into_symbol_artifacts(
@@ -347,10 +352,7 @@ def run_training_batch(
         Liste de TrainResult.
     """
     if symbols is None:
-        if symbol_source == "stock-bars-daily":
-            symbols = load_stock_bars_daily_symbols(engine)
-        else:
-            symbols = load_candidate_symbols(engine)
+        symbols = load_symbols_for_source(engine, symbol_source)
 
     if symbols:
         symbols, selector_filter_summary = filter_symbols_by_selector_context(

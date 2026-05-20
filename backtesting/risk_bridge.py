@@ -8,6 +8,7 @@ from typing import Callable, Iterable, TYPE_CHECKING
 
 import pandas as pd
 
+from backtesting.signal_replay import _pick_score_column
 from risk_management.config import RiskConfig
 from risk_management.models import CandidateScore, PortfolioEntry, PredictionInfo, PriceInfo
 from risk_management.portfolio_builder import PortfolioBuilder
@@ -56,6 +57,17 @@ def _resolve_float(row: pd.Series, column: str) -> float | None:
     if value is None or pd.isna(value):
         return None
     return float(value)
+
+
+def _prepare_score_columns(scores_df: pd.DataFrame, *, preferred_score_column: str | None = None) -> pd.DataFrame:
+    prepared = _normalize_trade_dates(scores_df)
+    score_series, source_series = _pick_score_column(prepared, preferred=preferred_score_column)
+    prepared["score"] = score_series.values
+    if "score_source" in prepared.columns:
+        prepared["score_source"] = prepared["score_source"].where(prepared["score_source"].notna(), source_series.values)
+    else:
+        prepared["score_source"] = source_series.values
+    return prepared
 
 
 def _build_candidates(scores_df: pd.DataFrame, snapshot_date: date) -> list[CandidateScore]:
@@ -218,6 +230,7 @@ def build_phase2_risk_result(
     high_df: pd.DataFrame,
     low_df: pd.DataFrame,
     risk_config: RiskConfig,
+    score_column: str | None = None,
     correlation_lookback_days: int | None = None,
     market_regimes_config: "MarketRegimesConfig | None" = None,
     equity_provider: Callable[[date], float] | None = None,
@@ -232,7 +245,7 @@ def build_phase2_risk_result(
     :func:`risk_management.regime_apply.apply_snapshot`. Cela garantit la parité
     avec le live (``run_execution.py``).
     """
-    normalized_scores = _normalize_trade_dates(scores_df)
+    normalized_scores = _prepare_score_columns(scores_df, preferred_score_column=score_column)
     snapshot_dates = sorted({pd.Timestamp(value).date() for value in normalized_scores["trade_date"].dropna().tolist()})
     all_entries: list[PortfolioEntry] = []
     signal_frames: list[pd.DataFrame] = []

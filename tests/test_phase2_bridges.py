@@ -83,6 +83,49 @@ def test_build_phase2_risk_result_generates_entries_and_signals() -> None:
     assert int(signal.get("approved_shares", 0)) == int(entry.approved_shares)
 
 
+def test_build_phase2_risk_result_uses_walk_forward_score_when_available() -> None:
+    from backtesting.risk_bridge import build_phase2_risk_result
+    from risk_management.config import RiskConfig
+
+    trade_dates = pd.date_range("2025-01-01", periods=25, freq="D")
+    close_values = [100.0 + idx for idx in range(len(trade_dates))]
+    high_values = [value + 1.0 for value in close_values]
+    low_values = [value - 1.0 for value in close_values]
+
+    scores_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL"],
+            "trade_date": [trade_dates[-1]],
+            "final_score": [0.80],
+            "final_score_sentiment": [0.82],
+            "final_score_walk_forward": [0.93],
+            "sector": ["Tech"],
+        }
+    )
+    close_df = pd.DataFrame({"AAPL": close_values}, index=trade_dates)
+    high_df = pd.DataFrame({"AAPL": high_values}, index=trade_dates)
+    low_df = pd.DataFrame({"AAPL": low_values}, index=trade_dates)
+
+    result = build_phase2_risk_result(
+        scores_df=scores_df,
+        predictions_df=pd.DataFrame(),
+        close_df=close_df,
+        high_df=high_df,
+        low_df=low_df,
+        risk_config=RiskConfig(
+            account_equity=100_000.0,
+            max_positions=5,
+            max_position_weight=0.20,
+            max_sector_weight=1.0,
+            max_gross_exposure=1.0,
+            min_position_notional=500.0,
+        ),
+    )
+
+    assert result.entries[0].score_used == pytest.approx(0.93)
+    assert result.entries[0].score_source == "final_score_walk_forward"
+
+
 def test_build_phase2_risk_result_preserves_empty_signal_schema_when_all_entries_rejected() -> None:
     from backtesting.risk_bridge import build_phase2_risk_result
     from risk_management.config import RiskConfig

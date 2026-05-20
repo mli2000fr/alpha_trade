@@ -43,6 +43,20 @@ def _expected_symbol_dates(scores_df: pd.DataFrame) -> set[tuple[str, pd.Timesta
     }
 
 
+def _extract_unique_symbols(frame: pd.DataFrame, *, mask: pd.Series | None = None) -> tuple[str, ...]:
+    if frame.empty or "symbol" not in frame.columns:
+        return ()
+    working = frame.loc[mask] if mask is not None else frame
+    if working.empty:
+        return ()
+    values = {
+        str(symbol).strip().upper()
+        for symbol in working["symbol"].dropna().tolist()
+        if str(symbol).strip()
+    }
+    return tuple(sorted(values))
+
+
 def _ensure_dataframe(value: object) -> pd.DataFrame:
     if isinstance(value, pd.DataFrame):
         return value.copy()
@@ -137,6 +151,7 @@ def prepare_scores_for_sentiment_mode(
         engine_mode=engine_mode,
         rows_input=len(result),
         rows_missing_before=int(result["final_score_sentiment"].isna().sum()),
+        missing_symbols_before=_extract_unique_symbols(result, mask=result["final_score_sentiment"].isna()),
     )
 
     if sentiment_mode == "off":
@@ -145,6 +160,7 @@ def prepare_scores_for_sentiment_mode(
         diagnostics.rows_filled_from_final_score = len(result)
         result, diagnostics.walk_forward_overlay_applied, diagnostics.walk_forward_artifact_path = _apply_walk_forward_overlay(result, walk_forward_artifacts_dir)
         diagnostics.rows_missing_after = int(result["final_score_sentiment"].isna().sum())
+        diagnostics.missing_symbols_after = _extract_unique_symbols(result, mask=result["final_score_sentiment"].isna())
         return _build_result(result, diagnostics)
 
     missing_mask = result["final_score_sentiment"].isna()
@@ -159,6 +175,7 @@ def prepare_scores_for_sentiment_mode(
             )
         result, diagnostics.walk_forward_overlay_applied, diagnostics.walk_forward_artifact_path = _apply_walk_forward_overlay(result, walk_forward_artifacts_dir)
         diagnostics.rows_missing_after = int(result["final_score_sentiment"].isna().sum())
+        diagnostics.missing_symbols_after = _extract_unique_symbols(result, mask=result["final_score_sentiment"].isna())
         return _build_result(result, diagnostics)
 
     if sentiment_mode != "rebuild-missing":
@@ -172,6 +189,7 @@ def prepare_scores_for_sentiment_mode(
     if not missing_dates:
         result, diagnostics.walk_forward_overlay_applied, diagnostics.walk_forward_artifact_path = _apply_walk_forward_overlay(result, walk_forward_artifacts_dir)
         diagnostics.rows_missing_after = int(result["final_score_sentiment"].isna().sum())
+        diagnostics.missing_symbols_after = _extract_unique_symbols(result, mask=result["final_score_sentiment"].isna())
         return _build_result(result, diagnostics)
 
     LOGGER.warning(
@@ -253,6 +271,7 @@ def prepare_scores_for_sentiment_mode(
     diagnostics.degraded_reasons = tuple(degraded_reasons)
     refreshed, diagnostics.walk_forward_overlay_applied, diagnostics.walk_forward_artifact_path = _apply_walk_forward_overlay(refreshed, walk_forward_artifacts_dir)
     diagnostics.rows_missing_after = int(refreshed["final_score_sentiment"].isna().sum())
+    diagnostics.missing_symbols_after = _extract_unique_symbols(refreshed, mask=refreshed["final_score_sentiment"].isna())
     return _build_result(refreshed, diagnostics)
 
 
@@ -348,11 +367,14 @@ def prepare_predictions_for_ml_mode(
 
     missing_keys = sorted(expected_keys - present_keys)
     diagnostics.missing_prediction_keys = len(missing_keys)
+    diagnostics.missing_symbols_before = tuple(sorted({symbol for symbol, _trade_date in missing_keys}))
     if not missing_keys:
+        diagnostics.missing_symbols_after = ()
         return _build_result(existing, diagnostics)
 
     if effective_strategy == "use-persisted":
         diagnostics.degraded_reasons = ("ml_predictions_missing",)
+        diagnostics.missing_symbols_after = diagnostics.missing_symbols_before
         LOGGER.warning(
             "ML PIT strategy=use-persisted — %s prédiction(s) manquante(s), aucun rebuild tenté.",
             len(missing_keys),
@@ -371,6 +393,7 @@ def prepare_predictions_for_ml_mode(
             len(missing_keys),
         )
         diagnostics.degraded_reasons = ("ml_predictions_missing",)
+        diagnostics.missing_symbols_after = diagnostics.missing_symbols_before
         return _build_result(existing, diagnostics)
 
     if ml_mode != "rebuild-missing" and effective_strategy != "rebuild-missing":
@@ -414,6 +437,15 @@ def prepare_predictions_for_ml_mode(
         diagnostics.rebuilt_prediction_rows = len(rebuilt_df)
         diagnostics.persist_performed = diagnostics.persist_enabled and not rebuilt_df.empty
 
+    present_after_rebuild: set[tuple[str, pd.Timestamp]] = set()
+    if not existing.empty:
+        present_after_rebuild = {
+            (str(symbol), pd.Timestamp(trade_date))
+            for symbol, trade_date in existing[["symbol", "trade_date"]].dropna().drop_duplicates().itertuples(index=False, name=None)
+        }
+    remaining_missing_keys = sorted(expected_keys - present_after_rebuild)
+    diagnostics.missing_symbols_after = tuple(sorted({symbol for symbol, _trade_date in remaining_missing_keys}))
+
     if failed > 0:
         LOGGER.warning(
             "ML mode=rebuild-missing — %s prédiction(s) n'ont pas pu être reconstruites, fallback sans ML.",
@@ -422,7 +454,7 @@ def prepare_predictions_for_ml_mode(
     degraded_reasons: list[str] = []
     if failed > 0:
         degraded_reasons.append("ml_rebuild_partial_failure")
-    if diagnostics.rebuilt_prediction_rows < len(missing_keys):
+    if remaining_missing_keys:
         degraded_reasons.append("ml_predictions_missing")
     diagnostics.degraded_reasons = tuple(dict.fromkeys(degraded_reasons))
     return _build_result(existing, diagnostics)

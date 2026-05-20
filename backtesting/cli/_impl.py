@@ -61,6 +61,73 @@ def _safe_print(*values: object, sep: str = " ", end: str = "\n") -> None:
         sys.stdout.write(sanitized)
 
 
+def _extract_symbols_for_log(symbols: object) -> list[str]:
+    if not isinstance(symbols, (list, tuple, set)):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in symbols:
+        symbol = str(value or "").strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        normalized.append(symbol)
+    return normalized
+
+
+def _format_symbol_preview(symbols: list[str], *, limit: int = 20) -> str:
+    if not symbols:
+        return ""
+    preview = ", ".join(symbols[:limit])
+    if len(symbols) > limit:
+        preview += f" … (+{len(symbols) - limit})"
+    return preview
+
+
+def _emit_backtest_missing_coverage_logs(
+    *,
+    sentiment_mode: str,
+    sentiment_diagnostics: object | None,
+    ml_mode: str,
+    ml_diagnostics: object | None,
+) -> None:
+    sentiment_missing_before = _extract_symbols_for_log(getattr(sentiment_diagnostics, "missing_symbols_before", ()))
+    if sentiment_mode != "off" and sentiment_missing_before:
+        message = (
+            f"⚠️ Sentiment — symboles sans score sentiment avant fallback/rebuild ({len(sentiment_missing_before)}) : "
+            f"{_format_symbol_preview(sentiment_missing_before)}"
+        )
+        LOGGER.warning(message)
+        _safe_print(f"   {message}\n")
+
+    sentiment_missing_after = _extract_symbols_for_log(getattr(sentiment_diagnostics, "missing_symbols_after", ()))
+    if sentiment_mode != "off" and sentiment_missing_after:
+        message = (
+            f"⚠️ Sentiment — symboles encore sans score sentiment après préparation ({len(sentiment_missing_after)}) : "
+            f"{_format_symbol_preview(sentiment_missing_after)}"
+        )
+        LOGGER.warning(message)
+        _safe_print(f"   {message}\n")
+
+    ml_missing_before = _extract_symbols_for_log(getattr(ml_diagnostics, "missing_symbols_before", ()))
+    if ml_mode != "off" and ml_missing_before:
+        message = (
+            f"⚠️ ML — symboles sans prédiction / modèle entraîné disponible avant fallback/rebuild ({len(ml_missing_before)}) : "
+            f"{_format_symbol_preview(ml_missing_before)}"
+        )
+        LOGGER.warning(message)
+        _safe_print(f"   {message}\n")
+
+    ml_missing_after = _extract_symbols_for_log(getattr(ml_diagnostics, "missing_symbols_after", ()))
+    if ml_mode != "off" and ml_missing_after:
+        message = (
+            f"⚠️ ML — symboles encore sans couverture prédictive après préparation ({len(ml_missing_after)}) : "
+            f"{_format_symbol_preview(ml_missing_after)}"
+        )
+        LOGGER.warning(message)
+        _safe_print(f"   {message}\n")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m backtesting",
@@ -914,6 +981,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
     else:
         preds_df = prepared_predictions
         ml_diagnostics = None
+    _emit_backtest_missing_coverage_logs(
+        sentiment_mode=str(args.sentiment_mode or "auto"),
+        sentiment_diagnostics=sentiment_diagnostics,
+        ml_mode=str(args.ml_mode or "auto"),
+        ml_diagnostics=ml_diagnostics,
+    )
 
     # 2. Pivoter OHLCV
     pivoted = pivot_ohlcv(ohlcv_df)
@@ -981,6 +1054,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             high_df=pivoted["high"],
             low_df=pivoted["low"],
             risk_config=phase2_risk_config,
+            score_column=None if args.score_column == "auto" else args.score_column,
             market_regimes_config=_mr_cfg_for_bt,
             macro_provider=_macro_provider_for_bt,
         )
@@ -1682,12 +1756,23 @@ def _run_screener_diagnostics(args: argparse.Namespace) -> None:
             if column in result.summary_metrics.columns
         ]
         preview = result.summary_metrics.loc[:, preferred_columns].copy()
-        sort_column = (
-            "portfolio_forward_return_20d_mean"
-            if "portfolio_forward_return_20d_mean" in preview.columns
-            else "portfolio_survival_ratio_mean"
+        sort_column = next(
+            (
+                column
+                for column in (
+                    "portfolio_forward_return_20d_mean",
+                    "portfolio_survival_ratio_mean",
+                    "delta_portfolio_forward_return_20d_mean",
+                    "delta_portfolio_survival_ratio_mean",
+                )
+                if column in preview.columns
+            ),
+            None,
         )
-        preview = preview.sort_values(sort_column, ascending=False).head(10)
+        if sort_column is not None:
+            preview = preview.sort_values(sort_column, ascending=False).head(10)
+        else:
+            preview = preview.head(10)
         _safe_print("Top scénarios (aperçu):")
         _safe_print(preview.to_string(index=False))
         _safe_print()

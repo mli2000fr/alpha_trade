@@ -19,8 +19,7 @@ def test_run_training_batch_loads_stock_bars_daily_symbols_when_requested(monkey
         accelerator="cpu",
     )
 
-    monkeypatch.setattr(orchestrator, "load_stock_bars_daily_symbols", lambda engine: ["AAPL", "MSFT"])
-    monkeypatch.setattr(orchestrator, "load_candidate_symbols", lambda engine: [])
+    monkeypatch.setattr(orchestrator, "load_symbols_for_source", lambda engine, symbol_source: ["AAPL", "MSFT"])
     monkeypatch.setattr(
         orchestrator,
         "_train_worker",
@@ -45,7 +44,7 @@ def test_run_training_batch_applies_selector_universe_filter(monkeypatch, tmp_pa
         accelerator="cpu",
     )
 
-    monkeypatch.setattr(orchestrator, "load_candidate_symbols", lambda engine: ["AAPL", "MSFT", "NVDA"])
+    monkeypatch.setattr(orchestrator, "load_symbols_for_source", lambda engine, symbol_source: ["AAPL", "MSFT", "NVDA"])
     monkeypatch.setattr(
         orchestrator,
         "filter_symbols_by_selector_context",

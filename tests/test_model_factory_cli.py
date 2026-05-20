@@ -119,6 +119,17 @@ def test_cli_parser_accepts_symbol_source_option() -> None:
     assert opts.symbol_source == "stock-bars-daily"
 
 
+def test_cli_parser_accepts_stock_scores_all_symbol_source_option() -> None:
+    parser = cli.build_arg_parser()
+
+    opts = parser.parse_args([
+        "--mode", "train",
+        "--symbol-source", "stock-scores-all",
+    ])
+
+    assert opts.symbol_source == "stock-scores-all"
+
+
 def test_cli_parser_accepts_debug_train_and_watchdog_options() -> None:
     parser = cli.build_arg_parser()
 

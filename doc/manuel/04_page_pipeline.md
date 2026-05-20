@@ -101,7 +101,7 @@ Le bandeau passe à 🟢 **« Pipeline terminé avec succès »** et la page
 | 6 | Alpha Scanner (Selector) | Top candidats multi-facteurs | 3-8 min |
 | 7 | Sentiment Pipeline | Import news + relevance + standard + contextual + agrégation features | 2-5 min |
 | 8 | Signal Aggregator | Fusion quant + sentiment + macro | < 1 min |
-| 9 | ML Train (si rebuild) | Entraînement modèles | 5-30 min |
+| 9 | ML Train (si rebuild) | Entraînement modèles sur l'univers sélectionné | 5-30 min |
 | 10 | ML Predict | Prédictions | 1-2 min |
 | 11 | Risk Management | Sizing & contraintes | < 1 min |
 | 12 | Execution | Envoi ordres broker | 1-3 min |
@@ -119,9 +119,9 @@ Sous l'onglet « **Centre d'exécution avancé** » :
 | **B2 — Update Sector** | Refresh manuel des secteurs / fondamentaux |
 | **B3 — Backfill EODHD** | 1× au tout début (5-10 ans d'historique) |
 
-## Sous-panneau auxiliaire `Traitement par étape`
+## Sous-panneau auxiliaire `News-Sentiement Traitement par étape`
 
-Dans le bloc pipeline, le panneau auxiliaire **Traitement par étape** permet de piloter finement l'import news, les replays sentiment et la reconstruction des features sans modifier le workflow cœur `1 → 14`.
+Dans le bloc pipeline, le panneau auxiliaire **News-Sentiement Traitement par étape** permet de piloter finement l'import news, les replays sentiment et la reconstruction des features sans modifier le workflow cœur `1 → 14`.
 
 Vous pouvez régler :
 
@@ -142,6 +142,20 @@ Avant même de cliquer sur le bouton, la page affiche désormais un **résumé l
 - erreur visible si le cap `max-symbols` bloquerait le lancement.
 
 👉 Conseil pratique : laissez `stock_scores_all` / le scope proposé par défaut, ou renseignez une shortlist `CSV` si vous ne voulez retraiter que quelques titres. N'utilisez `stock_bars_daily` que si vous savez pourquoi vous acceptez un univers potentiellement très large.
+
+## ML Train — choix de l'univers à entraîner
+
+Dans l'étape **9. ML Train (Model Factory)**, le bouton historique « tous les symbols » est remplacé par un ciblage explicite de l'univers d'entraînement.
+
+Les mêmes périmètres métier que pour l'import news sont disponibles :
+
+- `stock_scores`
+- `stock_scores_history`
+- `stock_scores_all`
+- `candidates`
+- `stock_bars_daily`
+
+La page affiche aussi une prévisualisation live du volume de symboles effectivement entraînés, après éventuel filtrage selector (`selector_signal_mode`, `candidate_rank`, `earnings_blackout`).
 
 ## Event Sentiment — mini guide d'usage IHM
 

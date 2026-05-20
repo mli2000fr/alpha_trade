@@ -44,6 +44,12 @@ def _normalize_signal_modes(signal_modes: tuple[str, ...] | list[str] | None) ->
     return tuple(normalized)
 
 
+def _load_distinct_symbols(engine: Engine, query: str) -> list[str]:
+    with engine.connect() as conn:
+        rows = conn.execute(text(query)).scalars().all()
+    return _normalize_symbols([str(symbol) for symbol in rows if symbol])
+
+
 def has_selector_universe_filter(
     *,
     signal_modes: tuple[str, ...] | list[str] | None = None,
@@ -128,7 +134,7 @@ def filter_symbols_by_selector_context(
             working_df["selector_signal_mode"].astype(str).str.strip().str.lower().isin(normalized_signal_modes)
         ]
     if max_candidate_rank is not None:
-        candidate_rank = pd.to_numeric(working_df["candidate_rank"], errors="coerce")
+        candidate_rank = pd.Series(pd.to_numeric(working_df["candidate_rank"], errors="coerce"), index=working_df.index)
         working_df = working_df[candidate_rank.notna() & (candidate_rank <= float(max_candidate_rank))]
     if exclude_earnings_blackout:
         earnings_blackout = working_df["earnings_blackout"].fillna(False)
@@ -524,6 +530,69 @@ def load_candidate_selector_context(engine: Engine, *, limit: int | None = None)
     frame = load_candidate_stock_score_context(engine=engine, limit=limit)
     LOGGER.info("load_candidate_selector_context rows=%d cols=%d", len(frame), len(frame.columns))
     return frame
+
+
+def load_stock_scores_symbols(engine: Engine) -> list[str]:
+    """Charge tous les symboles distincts présents dans ``stock_scores``."""
+    symbols = _load_distinct_symbols(
+        engine,
+        """
+        SELECT DISTINCT UPPER(TRIM(symbol)) AS symbol
+        FROM stock_scores
+        WHERE COALESCE(TRIM(symbol), '') <> ''
+        ORDER BY symbol
+        """,
+    )
+    LOGGER.info("load_stock_scores_symbols count=%d", len(symbols))
+    return symbols
+
+
+def load_stock_scores_history_symbols(engine: Engine) -> list[str]:
+    """Charge tous les symboles distincts présents dans ``stock_scores_history``."""
+    symbols = _load_distinct_symbols(
+        engine,
+        """
+        SELECT DISTINCT UPPER(TRIM(symbol)) AS symbol
+        FROM stock_scores_history
+        WHERE COALESCE(TRIM(symbol), '') <> ''
+        ORDER BY symbol
+        """,
+    )
+    LOGGER.info("load_stock_scores_history_symbols count=%d", len(symbols))
+    return symbols
+
+
+def load_stock_scores_all_symbols(engine: Engine) -> list[str]:
+    """Charge l’union dédupliquée ``stock_scores`` + ``stock_scores_history``."""
+    symbols = _load_distinct_symbols(
+        engine,
+        """
+        SELECT DISTINCT UPPER(TRIM(symbol)) AS symbol
+        FROM (
+            SELECT symbol FROM stock_scores
+            UNION
+            SELECT symbol FROM stock_scores_history
+        ) combined_symbols
+        WHERE COALESCE(TRIM(symbol), '') <> ''
+        ORDER BY symbol
+        """,
+    )
+    LOGGER.info("load_stock_scores_all_symbols count=%d", len(symbols))
+    return symbols
+
+
+def load_symbols_for_source(engine: Engine, symbol_source: str) -> list[str]:
+    """Résout l’univers ML demandé via un identifiant de source stable."""
+    normalized_source = str(symbol_source or "candidates").strip().lower()
+    if normalized_source == "stock-bars-daily":
+        return load_stock_bars_daily_symbols(engine)
+    if normalized_source == "stock-scores":
+        return load_stock_scores_symbols(engine)
+    if normalized_source == "stock-scores-history":
+        return load_stock_scores_history_symbols(engine)
+    if normalized_source == "stock-scores-all":
+        return load_stock_scores_all_symbols(engine)
+    return load_candidate_symbols(engine)
 
 
 def load_stock_bars_daily_symbols(engine: Engine) -> list[str]:

@@ -1,7 +1,7 @@
 """ihm/pages/_data_integrity.py — Phase 6.2 (Backlog L10).
 
-Panneau auxiliaire « Traitement par étape » pour piloter manuellement
-les sous-étapes de l'étape 7 Sentiment Pipeline.
+Panneau auxiliaire « News-Sentiement Traitement par étape » pour piloter
+manuellement les sous-étapes de l'étape 7 Sentiment Pipeline.
 """
 from __future__ import annotations
 
@@ -351,7 +351,7 @@ def _render_import_news_panel(
     _ensure_date_input_state(IMPORT_NEWS_START_DATE_KEY, IMPORT_NEWS_START_DATE_WIDGET_KEY, default_start)
     _ensure_date_input_state(IMPORT_NEWS_END_DATE_KEY, IMPORT_NEWS_END_DATE_WIDGET_KEY, default_end)
 
-    with st.expander("**Traitement par étape**", expanded=False):
+    with st.expander("**News-Sentiement Traitement par étape**", expanded=False):
         st.caption(
             "Ce bloc auxiliaire permet de lancer **pas à pas** les 5 sous-étapes de la nouvelle étape 7, "
             "en réutilisant les paramètres déjà saisis dans l'IHM (provider, fenêtre, symboles, seuils, batch sizes, caps contextuels, etc.). "
@@ -559,7 +559,7 @@ def _render_import_news_panel(
             {
                 "key": "import_news",
                 "label": "📰 Import news",
-                "run_label": "Traitement par étape — 1. Import news",
+                "run_label": "News-Sentiement Traitement par étape — 1. Import news",
                 "caption": "Sous-étape 1 — Import news",
                 "preview": format_command_for_display(build_pipeline_command("import_news", import_options)),
                 "success": "Import news démarré en arrière-plan",
@@ -568,7 +568,7 @@ def _render_import_news_panel(
             {
                 "key": "sentiment_relevance_backfill",
                 "label": "🧮 Calcul relevance_score (Niveau 2/3)",
-                "run_label": "Traitement par étape — 2. Calcul relevance_score (Niveau 2/3)",
+                "run_label": "News-Sentiement Traitement par étape — 2. Calcul relevance_score (Niveau 2/3)",
                 "caption": "Sous-étape 2 — Calcul `relevance_score` (Niveau 2/3)",
                 "preview": format_command_for_display(build_pipeline_command("sentiment_relevance_backfill", import_options)),
                 "success": "Calcul relevance_score démarré en arrière-plan",
@@ -577,7 +577,7 @@ def _render_import_news_panel(
             {
                 "key": "sentiment_standard_scoring",
                 "label": "🧠 Scoring FinBERT standard (sans features)",
-                "run_label": "Traitement par étape — 3. Scoring FinBERT standard (sans features)",
+                "run_label": "News-Sentiement Traitement par étape — 3. Scoring FinBERT standard (sans features)",
                 "caption": "Sous-étape 3 — Scoring FinBERT standard (sans features)",
                 "preview": format_command_for_display(build_pipeline_command("sentiment_standard_scoring", import_options)),
                 "success": "Scoring FinBERT standard démarré en arrière-plan",
@@ -586,7 +586,7 @@ def _render_import_news_panel(
             {
                 "key": "sentiment_contextual_scoring",
                 "label": "🎯 Scoring FinBERT contextuel (Niveau 4)",
-                "run_label": "Traitement par étape — 4. Scoring FinBERT contextuel (Niveau 4)",
+                "run_label": "News-Sentiement Traitement par étape — 4. Scoring FinBERT contextuel (Niveau 4)",
                 "caption": "Sous-étape 4 — Scoring FinBERT contextuel (Niveau 4 — `news_ticker_sentiment`)",
                 "preview": format_command_for_display(build_pipeline_command("sentiment_contextual_scoring", import_options)),
                 "success": "Scoring FinBERT contextuel démarré en arrière-plan",
@@ -595,7 +595,7 @@ def _render_import_news_panel(
             {
                 "key": "rebuild_daily_sentiment_features_only",
                 "label": "🧱 Agrégation features journalières",
-                "run_label": "Traitement par étape — 5. Agrégation features journalières",
+                "run_label": "News-Sentiement Traitement par étape — 5. Agrégation features journalières",
                 "caption": "Sous-étape 5 — Agrégation features journalières (ticker/secteur)",
                 "preview": format_command_for_display(build_pipeline_command("rebuild_daily_sentiment_features_only", import_options)),
                 "success": "Agrégation des features journalières démarrée en arrière-plan",

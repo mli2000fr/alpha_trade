@@ -598,6 +598,53 @@ class TestResilience:
         assert len(result) == 1
         assert result.iloc[0]["symbol"] == "AAPL"
 
+    def test_prepare_scores_diagnostics_expose_missing_sentiment_symbols(self):
+        from backtesting.resilience import prepare_scores_for_sentiment_mode
+
+        memory_engine: Engine = create_engine("sqlite:///:memory:")
+        scores = pd.DataFrame({
+            "symbol": ["AAPL", "MSFT"],
+            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+            "final_score": [0.7, 0.6],
+            "final_score_sentiment": [None, 0.8],
+        })
+
+        prepared = prepare_scores_for_sentiment_mode(
+            memory_engine,
+            scores,
+            sentiment_mode="auto",
+            return_diagnostics=True,
+        )
+
+        assert prepared.diagnostics.missing_symbols_before == ("AAPL",)
+        assert prepared.diagnostics.missing_symbols_after == ()
+
+    def test_prepare_predictions_diagnostics_expose_missing_ml_symbols(self):
+        from backtesting.resilience import prepare_predictions_for_ml_mode
+
+        scores = pd.DataFrame({
+            "symbol": ["AAPL", "MSFT"],
+            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+        })
+        preds = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "predicted_proba": [0.6],
+            "predicted_class": [1],
+        })
+
+        prepared = prepare_predictions_for_ml_mode(
+            None,  # type: ignore[arg-type]
+            scores,
+            preds,
+            ml_mode="auto",
+            artifacts_dir=Path("artifacts/models"),
+            return_diagnostics=True,
+        )
+
+        assert prepared.diagnostics.missing_symbols_before == ("MSFT",)
+        assert prepared.diagnostics.missing_symbols_after == ("MSFT",)
+
     def test_prepare_predictions_ml_rebuild_missing_calls_predictor(self, monkeypatch):
         from backtesting import resilience
 
@@ -734,6 +781,29 @@ class TestResilience:
                 engine_mode="pipeline",
                 ml_pit_strategy="walk-forward-train-then-predict",
             )
+
+
+def test_emit_backtest_missing_coverage_logs_lists_missing_symbols(monkeypatch) -> None:
+    import backtesting.cli._impl as cli_impl
+
+    printed: list[str] = []
+    monkeypatch.setattr(cli_impl, "_safe_print", lambda *args, **kwargs: printed.append(" ".join(str(arg) for arg in args)))
+
+    cli_impl._emit_backtest_missing_coverage_logs(
+        sentiment_mode="auto",
+        sentiment_diagnostics=SimpleNamespace(
+            missing_symbols_before=("AAPL", "MSFT"),
+            missing_symbols_after=("MSFT",),
+        ),
+        ml_mode="auto",
+        ml_diagnostics=SimpleNamespace(
+            missing_symbols_before=("NVDA",),
+            missing_symbols_after=("NVDA",),
+        ),
+    )
+
+    assert any("AAPL" in message and "MSFT" in message for message in printed)
+    assert any("NVDA" in message for message in printed)
 
 
 # ============================================================

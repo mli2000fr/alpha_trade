@@ -768,7 +768,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
     st.session_state["pipeline_sentiment_enable_contextual_scoring"] = sentiment_enable_contextual_scoring
     st.info(
         "Le mode de scoring n'est plus configurable ici : l'étape 7 fusionnée exécute toujours la chaîne complète "
-        "standard → relevance_score → agrégation journalière → contextuel. Pour rejouer uniquement une sous-étape, utilisez le panneau `7.bis Traitement par étape`."
+        "standard → relevance_score → agrégation journalière → contextuel. Pour rejouer uniquement une sous-étape, utilisez le panneau `News-Sentiement Traitement par étape`."
     )
 
     with st.expander("Performance FinBERT / backlog pending", expanded=False):
@@ -2717,6 +2717,17 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             "Rappel modes ML : `rebuild-all` = tout reconstruire ; `rebuild-missing` = seulement les symboles sans modèle ; "
             "`refresh-stale` = reconstruire si le modèle est absent, obsolète ou hors contrat de features / date de début d'historique."
         )
+        ml_train_symbol_source = str(
+            st.session_state.get("pipeline_ml_train_symbol_source", "candidates") or "candidates"
+        ).strip().lower()
+        if ml_train_symbol_source not in {
+            "stock_scores",
+            "stock_scores_history",
+            "stock_scores_all",
+            "candidates",
+            "stock_bars_daily",
+        }:
+            ml_train_symbol_source = "candidates"
 
         with st.expander("ML — Filtrage d'univers optionnel via le contexte selector", expanded=False):
             st.caption(
@@ -3537,6 +3548,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_hidden_size=int(ml_hidden_size),
             ml_mode=cast(Any, ml_mode),
             ml_training_start_date=ml_training_start_date.isoformat(),
+            ml_train_symbol_source=cast(Any, ml_train_symbol_source),
             ml_selector_universe_signal_modes=tuple(
                 str(value).strip().lower()
                 for value in ml_selector_universe_signal_modes_selection

@@ -865,6 +865,14 @@ def test_build_pipeline_command_ml_train_can_target_all_stock_bars_daily_symbols
     assert train_cmd[train_cmd.index("--symbol-source") + 1] == "stock-bars-daily"
 
 
+def test_build_pipeline_command_ml_train_can_target_stock_scores_all_universe() -> None:
+    options = PipelineLaunchOptions(ml_train_symbol_source="stock_scores_all")
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "stock-scores-all"
+
+
 def test_build_pipeline_command_ml_train_exposes_selector_context_and_universe_filters() -> None:
     command = build_pipeline_command(
         "ml_train",
