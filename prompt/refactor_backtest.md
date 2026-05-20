@@ -382,8 +382,8 @@ Le Sprint 1 est **livré sur son axe principal**, avec un périmètre volontaire
 - la matrice explicite `persisté / reconstruit / fallback / absent` n’est pas encore formalisée par symbole ;
 - l’IHM expose un résumé opérateur utile, mais pas encore une navigation analytique avancée composant ↔ symbole ↔ séance.
 
-### Clôture partielle Sprint 2 — état réel après cette passe
-Le Sprint 2 n’est **pas entièrement clos**, mais un incrément utile et testable a été livré.
+### Clôture Sprint 2 — état réel après cette passe
+Le Sprint 2 est désormais **clos sur son périmètre opérationnel principal**, avec un contrat additif, testable et exploitable côté backtest + IHM.
 
 #### Livré dans ce slice Sprint 2
 - ajout d’un bloc `provenance` additif dans `report.json[fidelity]`, `fidelity_manifest.json` et `coverage_summary.json` ;
@@ -407,22 +407,34 @@ Le Sprint 2 n’est **pas entièrement clos**, mais un incrément utile et testa
   - `replay_diagnostic_summary.json` (canonique, orienté debug) ;
   - `replay_diagnostic_sessions.csv` (aplati, lisible rapidement) ;
   - résumé par `trade_date` de la couverture score/sentiment/ML, des sélections et des sources de score.
+- enrichissement du replay diagnostique court avec :
+  - `degraded_components` par séance ;
+  - `component_attribution` par séance ;
+  - `critical_symbol` et `critical_symbols` ;
+  - `provenance_refs` (snapshot scores, runs ML, refs risk/execution lorsque disponibles).
 - compatibilité IHM vérifiée aussi pour cet artefact :
   - ajout d’une vue `Replay diagnostique court par séance` ;
   - lecture passive depuis `report.json[artifacts]` ;
+  - aperçu enrichi avec composants dégradés, symbole critique et référence de provenance ;
   - aucun impact sur les rapports historiques dépourvus de cet artefact.
 
-#### Ce que ce slice Sprint 2 ne couvre pas encore complètement
-- pas encore de contrat amont standardisé `selector snapshot id / model run id / artifact lineage id` ;
-- le replay diagnostique court existe désormais, mais reste un résumé compact et non encore un journal d’attribution complet par composant + symbole + séance ;
-- la distinction fine des cas ML reste basée sur l’état runtime du predictor, donc utile mais encore best-effort ;
-- l’attribution des écarts reste principalement orientée run et symbole, pas encore complète par date-clé.
+#### Critères Sprint 2 désormais couverts
+- un run peut expliciter la provenance de ses entrées critiques (`scores`, `sentiment`, `ML`) ;
+- un run peut distinguer les principales causes ML manquantes (`prediction_missing`, `artifact_missing`, `artifact_invalid`, `rebuild_unavailable`) ;
+- un opérateur peut repérer par séance quels composants sont dégradés et quel symbole est le plus critique ;
+- l’IHM peut consommer ces informations sans rupture de contrat.
+
+#### Limites résiduelles après clôture Sprint 2
+- le contrat amont `selector snapshot id / model run id / artifact lineage id` reste encore partiellement implicite selon les sources disponibles ;
+- le replay diagnostique court reste un résumé compact, pas encore un journal exhaustif d’attribution live/backtest ;
+- la distinction fine des cas ML repose encore partiellement sur l’état runtime du predictor, donc utile mais encore best-effort ;
+- l’attribution détaillée par date-clé reste à approfondir si l’objectif devient une comparaison live/backtest complète.
 
 ### Prochaines actions à lancer sans attendre
-1. Formaliser un identifiant de provenance amont pour snapshots selector / runs modelFactory / artefacts de rebuild.
-2. Enrichir le replay diagnostique court avec une attribution plus riche par composant / symbole critique / séance.
-3. Préparer une première fenêtre `compare-to-live` courte sur un run réel récent.
-4. Étendre le contrat de couverture vers une matrice par symbole / par séance si le besoin opérateur se confirme.
+1. Préparer une première fenêtre `compare-to-live` courte sur un run réel récent.
+2. Étendre le contrat de couverture vers une matrice plus fine par symbole / par séance si le besoin opérateur se confirme.
+3. Formaliser davantage les identifiants de provenance amont si une traçabilité réglementaire plus forte devient nécessaire.
+4. Enchaîner sur le Sprint 3 pour verrouiller la convergence candidate → target.
 
 ---
 

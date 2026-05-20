@@ -556,6 +556,22 @@ class TestFidelityManifestSprint1:
                 "taxonomy_version": 1,
                 "engine_mode": "research",
                 "requested_window": {"start_date": "2025-01-02", "end_date": "2025-01-03"},
+                "provenance": {
+                    "scores": {
+                        "source_table": "stock_scores_history",
+                        "capital_preset_key": "capital_50001_100000",
+                        "config_fingerprint_present": True,
+                        "provenance_kind": "persisted_history",
+                    },
+                    "ml": {
+                        "missing_causes_by_symbol": {"BBB": ["prediction_missing"]},
+                    },
+                },
+                "component_status": {
+                    "walk_forward": {"details": {"requested": False}, "status": "disabled"},
+                    "risk": {"details": {"enabled": False}},
+                    "execution": {"details": {"enabled": False}},
+                },
             },
         )
 
@@ -566,6 +582,15 @@ class TestFidelityManifestSprint1:
         assert first_session["candidate_rows"] == 2
         assert first_session["selected_count"] == 1
         assert first_session["missing_ml_symbols"] == ["BBB"]
+        assert first_session["degraded_components"] == ["sentiment", "ml"]
+        assert first_session["critical_symbol"] == {
+            "symbol": "BBB",
+            "selected": False,
+            "components": ["ml", "sentiment", "scores"],
+            "reasons": ["sentiment_missing", "prediction_missing", "score_fallback_final_score"],
+            "score_source": "final_score",
+        }
+        assert first_session["provenance_refs"]["scores_snapshot_id"] == "2025-01-02|stock_scores_history|capital_50001_100000|present"
 
 
 # ---------------------------------------------------------------------------

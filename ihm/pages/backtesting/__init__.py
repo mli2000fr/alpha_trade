@@ -2120,6 +2120,19 @@ def _build_replay_diagnostic_session_rows(payload: dict[str, object]) -> pd.Data
                     str(symbol) for symbol in cast(list[object], session.get("missing_ml_symbols", []))
                 ) if isinstance(session.get("missing_ml_symbols", []), list) else "—",
                 "Sélections": _to_int(session.get("selected_count")),
+                "Composants dégradés": ", ".join(
+                    str(component) for component in cast(list[object], session.get("degraded_components", []))
+                ) if isinstance(session.get("degraded_components", []), list) else "—",
+                "Symbole critique": _coerce_metric_text(
+                    session.get("critical_symbol", {}).get("symbol")
+                    if isinstance(session.get("critical_symbol"), dict)
+                    else None
+                ),
+                "Réf provenance": _coerce_metric_text(
+                    session.get("provenance_refs", {}).get("scores_snapshot_id")
+                    if isinstance(session.get("provenance_refs"), dict)
+                    else None
+                ),
                 "Dégradée": "oui" if bool(session.get("degraded", False)) else "non",
             }
         )

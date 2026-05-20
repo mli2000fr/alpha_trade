@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from collections.abc import Mapping, Sequence
 
 import pandas as pd
@@ -307,6 +307,174 @@ def _sorted_unique_symbols(frame: pd.DataFrame, *, mask: pd.Series | None = None
     return sorted({str(symbol).strip().upper() for symbol in working["symbol"].dropna().tolist() if str(symbol).strip()})
 
 
+def _sorted_unique_values(frame: pd.DataFrame, column: str) -> list[str]:
+    if frame.empty or column not in frame.columns:
+        return []
+    return sorted({str(value).strip() for value in frame[column].dropna().tolist() if str(value).strip()})
+
+
+def _status_from_flag(degraded: bool) -> str:
+    return "degraded" if degraded else "ok"
+
+
+def _extract_run_level_ref(component_details: Mapping[str, Any], *paths: tuple[str, ...]) -> str | None:
+    current: object = component_details
+    for key in paths:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+    text = str(current or "").strip()
+    return text or None
+
+
+def _build_session_scores_snapshot_id(
+    *,
+    trade_date: pd.Timestamp,
+    scores_day: pd.DataFrame,
+    scores_provenance: Mapping[str, Any],
+) -> str:
+    capital_preset_key = None
+    config_fingerprint = None
+    if not scores_day.empty and "capital_preset_key" in scores_day.columns:
+        capital_values = _sorted_unique_values(scores_day, "capital_preset_key")
+        capital_preset_key = capital_values[0] if capital_values else None
+    if not scores_day.empty and "config_fingerprint" in scores_day.columns:
+        fingerprint_values = _sorted_unique_values(scores_day, "config_fingerprint")
+        config_fingerprint = fingerprint_values[0] if fingerprint_values else None
+    capital_preset_key = capital_preset_key or str(scores_provenance.get("capital_preset_key") or "na")
+    config_fingerprint = config_fingerprint or (
+        "present" if bool(scores_provenance.get("config_fingerprint_present", False)) else "na"
+    )
+    source_table = str(scores_provenance.get("source_table") or "unknown")
+    return f"{pd.Timestamp(trade_date).date().isoformat()}|{source_table}|{capital_preset_key}|{config_fingerprint}"
+
+
+def _build_component_attribution(
+    *,
+    score_source_counts: Mapping[str, int],
+    selected_score_source_counts: Mapping[str, int],
+    missing_sentiment_symbols: Sequence[str],
+    missing_ml_symbols: Sequence[str],
+    ml_missing_causes_by_symbol: Mapping[str, Sequence[str]],
+    walk_forward_symbols: Sequence[str],
+    selected_symbols: Sequence[str],
+    signals_day: pd.DataFrame,
+    provenance_refs: Mapping[str, Any],
+    fidelity_manifest: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    risk_details = cast(Mapping[str, Any], cast(Mapping[str, Any], fidelity_manifest.get("component_status", {})).get("risk", {}).get("details", {})) if isinstance(cast(Mapping[str, Any], fidelity_manifest.get("component_status", {})).get("risk", {}), Mapping) else {}
+    execution_details = cast(Mapping[str, Any], cast(Mapping[str, Any], fidelity_manifest.get("component_status", {})).get("execution", {}).get("details", {})) if isinstance(cast(Mapping[str, Any], fidelity_manifest.get("component_status", {})).get("execution", {}), Mapping) else {}
+
+    risk_signal_count = int(len(signals_day)) if not signals_day.empty and "decision" in signals_day.columns else int(len(selected_symbols))
+    execution_signal_count = int(len(signals_day)) if not signals_day.empty and any(col in signals_day.columns for col in ("execution_date", "fill_price", "filled_qty", "replay_exit_reason")) else 0
+    walk_forward_requested = bool(cast(Mapping[str, Any], fidelity_manifest.get("component_status", {})).get("walk_forward", {}).get("details", {}).get("requested", False)) if isinstance(cast(Mapping[str, Any], fidelity_manifest.get("component_status", {})).get("walk_forward", {}), Mapping) else False
+
+    component_attribution: dict[str, Any] = {
+        "scores": {
+            "status": _status_from_flag(str(cast(Mapping[str, Any], fidelity_manifest.get("provenance", {})).get("scores", {}).get("provenance_kind", "persisted_history")) != "persisted_history"),
+            "score_source_counts": dict(score_source_counts),
+            "snapshot_id": provenance_refs.get("scores_snapshot_id"),
+        },
+        "sentiment": {
+            "status": _status_from_flag(bool(missing_sentiment_symbols)),
+            "missing_symbol_count": len(missing_sentiment_symbols),
+            "missing_symbols": list(missing_sentiment_symbols),
+        },
+        "ml": {
+            "status": _status_from_flag(bool(missing_ml_symbols)),
+            "missing_symbol_count": len(missing_ml_symbols),
+            "missing_symbols": list(missing_ml_symbols),
+            "missing_causes_by_symbol": {str(symbol): list(causes) for symbol, causes in ml_missing_causes_by_symbol.items()},
+            "ml_run_ids": list(provenance_refs.get("ml_run_ids", [])),
+        },
+        "walk_forward": {
+            "status": _status_from_flag(bool(walk_forward_requested and not walk_forward_symbols and cast(Mapping[str, Any], fidelity_manifest.get("component_status", {})).get("walk_forward", {}).get("status") == "degraded")),
+            "applied_symbol_count": len(walk_forward_symbols),
+            "applied_symbols": list(walk_forward_symbols),
+            "selected_score_source_counts": dict(selected_score_source_counts),
+        },
+        "risk": {
+            "status": _status_from_flag(bool(risk_details.get("enabled", False)) and risk_signal_count == 0 and bool(selected_symbols) is False),
+            "enabled": bool(risk_details.get("enabled", False)),
+            "signal_count": risk_signal_count,
+            "risk_run_id": provenance_refs.get("risk_run_id"),
+        },
+        "execution": {
+            "status": _status_from_flag(bool(execution_details.get("enabled", False)) and execution_signal_count == 0 and bool(selected_symbols) is True),
+            "enabled": bool(execution_details.get("enabled", False)),
+            "signal_count": execution_signal_count,
+            "exec_run_id": provenance_refs.get("exec_run_id"),
+        },
+    }
+    degraded_components = [
+        component_name
+        for component_name, payload in component_attribution.items()
+        if isinstance(payload, Mapping) and str(payload.get("status") or "") == "degraded"
+    ]
+    return component_attribution, degraded_components
+
+
+def _build_critical_symbol_payload(
+    *,
+    candidate_symbols: Sequence[str],
+    selected_symbols: Sequence[str],
+    missing_sentiment_symbols: Sequence[str],
+    missing_ml_symbols: Sequence[str],
+    ml_missing_causes_by_symbol: Mapping[str, Sequence[str]],
+    walk_forward_symbols: Sequence[str],
+    score_source_by_symbol: Mapping[str, str],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    criticality_order = {
+        "execution": 6,
+        "risk": 5,
+        "ml": 4,
+        "sentiment": 3,
+        "walk_forward": 2,
+        "scores": 1,
+    }
+    selected_set = set(selected_symbols)
+    missing_sentiment_set = set(missing_sentiment_symbols)
+    missing_ml_set = set(missing_ml_symbols)
+    walk_forward_set = set(walk_forward_symbols)
+    symbol_payloads: list[dict[str, Any]] = []
+
+    for symbol in candidate_symbols:
+        components: set[str] = set()
+        reasons: list[str] = []
+        if symbol in missing_sentiment_set:
+            components.add("sentiment")
+            reasons.append("sentiment_missing")
+        if symbol in missing_ml_set:
+            components.add("ml")
+            reasons.extend(list(ml_missing_causes_by_symbol.get(symbol, ["prediction_missing"])))
+        source = str(score_source_by_symbol.get(symbol) or "")
+        if source == "final_score":
+            components.add("scores")
+            reasons.append("score_fallback_final_score")
+        if symbol in walk_forward_set:
+            components.add("walk_forward")
+        if not components:
+            continue
+        criticality = sum(criticality_order.get(component, 0) for component in components) + (10 if symbol in selected_set else 0)
+        symbol_payloads.append(
+            {
+                "symbol": symbol,
+                "selected": bool(symbol in selected_set),
+                "components": sorted(components, key=lambda component: (-criticality_order.get(component, 0), component)),
+                "reasons": list(dict.fromkeys(reasons)),
+                "score_source": source or None,
+                "criticality": criticality,
+            }
+        )
+
+    symbol_payloads.sort(key=lambda item: (-int(item.get("criticality", 0)), str(item.get("symbol") or "")))
+    top_symbol = symbol_payloads[0] if symbol_payloads else None
+    if top_symbol is not None:
+        top_symbol = {key: value for key, value in top_symbol.items() if key != "criticality"}
+    sanitized_payloads = [{key: value for key, value in payload.items() if key != "criticality"} for payload in symbol_payloads]
+    return top_symbol, sanitized_payloads
+
+
 def build_replay_diagnostic_summary(
     *,
     scores_df: pd.DataFrame,
@@ -322,6 +490,21 @@ def build_replay_diagnostic_summary(
     normalized_scores = scores_df.copy() if isinstance(scores_df, pd.DataFrame) else pd.DataFrame()
     normalized_preds = predictions_df.copy() if isinstance(predictions_df, pd.DataFrame) else pd.DataFrame()
     normalized_signals = signals_df.copy() if isinstance(signals_df, pd.DataFrame) else pd.DataFrame()
+    provenance_payload = fidelity_manifest.get("provenance", {})
+    if not isinstance(provenance_payload, Mapping):
+        provenance_payload = {}
+    component_status_payload = fidelity_manifest.get("component_status", {})
+    if not isinstance(component_status_payload, Mapping):
+        component_status_payload = {}
+    walk_forward_component = component_status_payload.get("walk_forward", {})
+    if not isinstance(walk_forward_component, Mapping):
+        walk_forward_component = {}
+    risk_component = component_status_payload.get("risk", {})
+    if not isinstance(risk_component, Mapping):
+        risk_component = {}
+    execution_component = component_status_payload.get("execution", {})
+    if not isinstance(execution_component, Mapping):
+        execution_component = {}
 
     if not normalized_scores.empty:
         normalized_scores["trade_date"] = _normalize_trade_date_series(normalized_scores)
@@ -343,6 +526,26 @@ def build_replay_diagnostic_summary(
 
         candidate_symbols = _sorted_unique_symbols(scores_day)
         prediction_symbols = set(_sorted_unique_symbols(preds_day))
+        score_source_counts = _infer_score_source_counts(scores_day)
+        score_source_by_symbol = {}
+        if not scores_day.empty:
+            inferred_sources = _infer_score_source_counts(scores_day)
+            if "score_source" in scores_day.columns and scores_day["score_source"].notna().any():
+                score_source_by_symbol = {
+                    str(row["symbol"]).strip().upper(): str(row["score_source"])
+                    for _, row in scores_day[["symbol", "score_source"]].dropna().drop_duplicates(subset=["symbol"], keep="last").iterrows()
+                }
+            else:
+                for _, row in scores_day.iterrows():
+                    symbol = str(row.get("symbol") or "").strip().upper()
+                    if not symbol:
+                        continue
+                    if pd.notna(row.get("final_score_walk_forward")):
+                        score_source_by_symbol[symbol] = "final_score_walk_forward"
+                    elif pd.notna(row.get("final_score_sentiment")):
+                        score_source_by_symbol[symbol] = "final_score_sentiment"
+                    elif pd.notna(row.get("final_score")):
+                        score_source_by_symbol[symbol] = "final_score"
         if "selected" in signals_day.columns:
             selected_mask = signals_day["selected"].fillna(False).astype(bool)
             selected_symbols = _sorted_unique_symbols(signals_day, mask=selected_mask)
@@ -360,13 +563,60 @@ def build_replay_diagnostic_summary(
         )
         missing_sentiment_symbols = _sorted_unique_symbols(scores_day, mask=missing_sentiment_mask)
         missing_ml_symbols = sorted(set(candidate_symbols) - prediction_symbols)
+        walk_forward_symbols = sorted(
+            {
+                symbol
+                for symbol, source in score_source_by_symbol.items()
+                if source == "final_score_walk_forward"
+            }
+        )
+        ml_missing_causes_by_symbol = {}
+        ml_provenance = provenance_payload.get("ml", {})
+        if isinstance(ml_provenance, Mapping):
+            raw_causes_by_symbol = ml_provenance.get("missing_causes_by_symbol", {})
+            if isinstance(raw_causes_by_symbol, Mapping):
+                for symbol in missing_ml_symbols:
+                    causes = raw_causes_by_symbol.get(symbol, [])
+                    ml_missing_causes_by_symbol[symbol] = _normalize_reason_list(causes)
+        provenance_refs = {
+            "scores_snapshot_id": _build_session_scores_snapshot_id(
+                trade_date=trade_date,
+                scores_day=scores_day,
+                scores_provenance=cast(Mapping[str, Any], provenance_payload.get("scores", {})) if isinstance(provenance_payload.get("scores", {}), Mapping) else {},
+            ),
+            "ml_run_ids": _sorted_unique_values(preds_day, "run_id"),
+            "calibration_run_ids": _sorted_unique_values(scores_day, "calibration_run_id"),
+            "risk_run_id": _extract_run_level_ref(cast(Mapping[str, Any], risk_component.get("details", {})), "diagnostics", "risk_run_id") or _extract_run_level_ref(cast(Mapping[str, Any], execution_component.get("details", {})), "phase2_execution", "risk_run_id"),
+            "exec_run_id": _extract_run_level_ref(cast(Mapping[str, Any], execution_component.get("details", {})), "phase2_execution", "exec_run_id") or _extract_run_level_ref(cast(Mapping[str, Any], execution_component.get("details", {})), "phase3_execution_replay", "exec_run_id"),
+        }
+        component_attribution, degraded_components = _build_component_attribution(
+            score_source_counts=score_source_counts,
+            selected_score_source_counts=selected_score_source_counts,
+            missing_sentiment_symbols=missing_sentiment_symbols,
+            missing_ml_symbols=missing_ml_symbols,
+            ml_missing_causes_by_symbol=ml_missing_causes_by_symbol,
+            walk_forward_symbols=walk_forward_symbols,
+            selected_symbols=selected_symbols,
+            signals_day=signals_day,
+            provenance_refs=provenance_refs,
+            fidelity_manifest=fidelity_manifest,
+        )
+        critical_symbol, critical_symbols = _build_critical_symbol_payload(
+            candidate_symbols=candidate_symbols,
+            selected_symbols=selected_symbols,
+            missing_sentiment_symbols=missing_sentiment_symbols,
+            missing_ml_symbols=missing_ml_symbols,
+            ml_missing_causes_by_symbol=ml_missing_causes_by_symbol,
+            walk_forward_symbols=walk_forward_symbols,
+            score_source_by_symbol=score_source_by_symbol,
+        )
 
         session_payload = {
             "trade_date": pd.Timestamp(trade_date).date().isoformat(),
             "candidate_rows": int(len(scores_day)),
             "candidate_symbols": candidate_symbols,
             "candidate_symbol_count": len(candidate_symbols),
-            "score_source_counts": _infer_score_source_counts(scores_day),
+            "score_source_counts": score_source_counts,
             "predictions_rows": int(len(preds_day)),
             "prediction_symbol_count": len(prediction_symbols),
             "missing_sentiment_rows": int(missing_sentiment_mask.sum()) if len(scores_day) else 0,
@@ -376,7 +626,12 @@ def build_replay_diagnostic_summary(
             "selected_count": selected_count,
             "selected_symbols": selected_symbols,
             "selected_score_source_counts": selected_score_source_counts,
-            "degraded": bool(missing_sentiment_symbols or missing_ml_symbols),
+            "degraded_components": degraded_components,
+            "component_attribution": component_attribution,
+            "critical_symbol": critical_symbol,
+            "critical_symbols": critical_symbols,
+            "provenance_refs": provenance_refs,
+            "degraded": bool(degraded_components),
         }
         sessions.append(session_payload)
 
@@ -420,6 +675,13 @@ def save_replay_diagnostic_summary(summary: Mapping[str, Any], output_dir: Path)
                     "selected_count": session.get("selected_count", 0),
                     "selected_symbols": ", ".join(_normalize_string_list(session.get("selected_symbols", []))),
                     "selected_score_source_counts": json.dumps(session.get("selected_score_source_counts", {}), ensure_ascii=False, sort_keys=True),
+                    "degraded_components": ", ".join(_normalize_string_list(session.get("degraded_components", []))),
+                    "critical_symbol": session.get("critical_symbol", {}).get("symbol") if isinstance(session.get("critical_symbol"), Mapping) else None,
+                    "critical_components": ", ".join(_normalize_string_list(session.get("critical_symbol", {}).get("components", []))) if isinstance(session.get("critical_symbol"), Mapping) else "",
+                    "scores_snapshot_id": session.get("provenance_refs", {}).get("scores_snapshot_id") if isinstance(session.get("provenance_refs"), Mapping) else None,
+                    "ml_run_ids": ", ".join(_normalize_string_list(session.get("provenance_refs", {}).get("ml_run_ids", []))) if isinstance(session.get("provenance_refs"), Mapping) else "",
+                    "risk_run_id": session.get("provenance_refs", {}).get("risk_run_id") if isinstance(session.get("provenance_refs"), Mapping) else None,
+                    "exec_run_id": session.get("provenance_refs", {}).get("exec_run_id") if isinstance(session.get("provenance_refs"), Mapping) else None,
                     "degraded": bool(session.get("degraded", False)),
                 }
             )

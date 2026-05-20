@@ -331,12 +331,12 @@ def load_predictions(
     columns = _get_table_columns(engine, "model_predictions")
     if not columns:
         LOGGER.warning("model_predictions introuvable — prédictions ML ignorées.")
-        return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
+        return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class", "run_id", "created_at"])
 
     date_col = "trade_date" if "trade_date" in columns else "prediction_date" if "prediction_date" in columns else None
     if date_col is None:
         LOGGER.warning("Aucune colonne date compatible dans model_predictions — prédictions ML ignorées.")
-        return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class"])
+        return pd.DataFrame(columns=["symbol", "trade_date", "predicted_proba", "predicted_class", "run_id", "created_at"])
 
     params: dict[str, object] = {"start": start, "end": end}
     where_symbols = ""
@@ -351,13 +351,18 @@ def load_predictions(
         SELECT symbol,
                {date_col} AS trade_date,
                predicted_proba,
-               predicted_class
+               predicted_class,
+               {_optional_select(columns, 'run_id')},
+               {_optional_select(columns, 'created_at')}
         FROM model_predictions
         WHERE {date_col} BETWEEN :start AND :end{where_symbols}
         ORDER BY {date_col}, symbol
     """)
     with engine.connect() as conn:
-        df = pd.read_sql(query, conn, params=params, parse_dates=["trade_date"])
+        parse_dates = ["trade_date"]
+        if "created_at" in columns:
+            parse_dates.append("created_at")
+        df = pd.read_sql(query, conn, params=params, parse_dates=parse_dates)
     LOGGER.info("Prédictions ML chargées : %d lignes (filter symbols=%s)", len(df), bool(symbols))
     return df
 

@@ -2514,6 +2514,15 @@ class TestCLI:
         replay_payload = json.loads((output_dir / "replay_diagnostic_summary.json").read_text(encoding="utf-8"))
         assert replay_payload["session_count"] == 1
         assert replay_payload["sessions"][0]["selected_symbols"] == ["BBB"]
+        assert replay_payload["sessions"][0]["degraded_components"] == ["ml"]
+        assert replay_payload["sessions"][0]["critical_symbol"] == {
+            "symbol": "BBB",
+            "selected": True,
+            "components": ["ml", "walk_forward"],
+            "reasons": ["prediction_missing"],
+            "score_source": "final_score_walk_forward",
+        }
+        assert replay_payload["sessions"][0]["provenance_refs"]["ml_run_ids"] == []
         assert (output_dir / "replay_diagnostic_sessions.csv").exists()
 
     def test_run_backtest_phase2_risk_uses_bridge_signals_and_artifacts(self, monkeypatch, tmp_path):

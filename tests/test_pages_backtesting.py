@@ -211,6 +211,9 @@ def test_build_replay_diagnostic_session_rows_formats_expected_columns() -> None
                     "missing_sentiment_rows": 1,
                     "missing_ml_symbols": ["MSFT"],
                     "selected_count": 2,
+                    "degraded_components": ["ml", "sentiment"],
+                    "critical_symbol": {"symbol": "MSFT"},
+                    "provenance_refs": {"scores_snapshot_id": "2025-01-02|stock_scores_history|capital_50001_100000|present"},
                     "degraded": True,
                 }
             ]
@@ -225,9 +228,13 @@ def test_build_replay_diagnostic_session_rows_formats_expected_columns() -> None
         "Manquants sentiment",
         "Symboles ML manquants",
         "Sélections",
+        "Composants dégradés",
+        "Symbole critique",
+        "Réf provenance",
         "Dégradée",
     ]
     assert rows.iloc[0]["Séance"] == "2025-01-02"
+    assert rows.iloc[0]["Symbole critique"] == "MSFT"
     assert rows.iloc[0]["Dégradée"] == "oui"
 
 
