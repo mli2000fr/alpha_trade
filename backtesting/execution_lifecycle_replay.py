@@ -70,6 +70,12 @@ def build_phase4_protection_replay(
     targets_by_symbol = {target.symbol: target for target in execution_result.targets}
 
     protection_rows: list[dict[str, object]] = []
+    # order_lifecycle_frame est initialisé depuis Phase 3 et sera enrichi
+    # avec les ordres de protection enfant (TP, initial_stop, trailing_stop)
+    order_lifecycle_frame = ensure_order_lifecycle_frame(execution_replay_result.order_lifecycle_frame).copy()
+    for timestamp_column in ("active_from", "terminal_event_date"):
+        if timestamp_column in order_lifecycle_frame.columns:
+            order_lifecycle_frame[timestamp_column] = order_lifecycle_frame[timestamp_column].astype(object)
     for signal_row in execution_replay_result.signals_df.to_dict("records"):
         symbol = str(signal_row.get("symbol") or "")
         if not symbol:
@@ -147,6 +153,102 @@ def build_phase4_protection_replay(
             }
         )
 
+        # ---- Ajout des ordres de protection dans order_lifecycle_frame ----
+        # Chaque enfant (TP, initial_stop, trailing_stop) est enregistré avec
+        # son état initial pour permettre un suivi complet du lifecycle broker-like
+        # à travers les Phases 5 et 7.
+        oco_group_id = f"oco_{entry_intent.intent_id}"
+        order_group_id_val = str(signal_row.get("order_group_id") or entry_intent.intent_id)
+        trade_date_ts = pd.Timestamp(signal_row.get("trade_date")) if signal_row.get("trade_date") is not None and pd.notna(signal_row.get("trade_date")) else None
+        execution_date_ts = pd.Timestamp(signal_row.get("execution_date")) if signal_row.get("execution_date") is not None and pd.notna(signal_row.get("execution_date")) else None
+
+        child_intent_defs = []
+        if take_profit_intent is not None:
+            child_intent_defs.append(
+                {
+                    "intent_id": take_profit_intent.intent_id,
+                    "intent_role": IntentRole.TAKE_PROFIT,
+                    "order_type": "limit",
+                    "limit_price": float(take_profit_intent.limit_price) if take_profit_intent.limit_price is not None else None,
+                    "stop_price": None,
+                    "trail_percent": None,
+                    "broker_state": "working",
+                    "order_status": OrderStatus.SUBMITTED,
+                }
+            )
+        if initial_stop_intent is not None:
+            child_intent_defs.append(
+                {
+                    "intent_id": initial_stop_intent.intent_id,
+                    "intent_role": IntentRole.INITIAL_STOP,
+                    "order_type": "stop",
+                    "limit_price": None,
+                    "stop_price": float(initial_stop_intent.stop_price) if initial_stop_intent.stop_price is not None else None,
+                    "trail_percent": None,
+                    "broker_state": "working",
+                    "order_status": OrderStatus.SUBMITTED,
+                }
+            )
+        if trailing_stop_intent is not None:
+            child_intent_defs.append(
+                {
+                    "intent_id": trailing_stop_intent.intent_id,
+                    "intent_role": IntentRole.TRAILING_STOP,
+                    "order_type": "trailing_stop",
+                    "limit_price": None,
+                    "stop_price": None,
+                    "trail_percent": float(trailing_stop_intent.trail_percent) if trailing_stop_intent.trail_percent is not None else None,
+                    "broker_state": "held",
+                    "order_status": OrderStatus.HELD,
+                }
+            )
+
+        for child_def in child_intent_defs:
+            new_child_row: dict[str, object] = {
+                "trade_date": trade_date_ts,
+                "execution_date": execution_date_ts,
+                "symbol": symbol,
+                "risk_run_id": str(signal_row.get("risk_run_id") or ""),
+                "exec_run_id": str(signal_row.get("exec_run_id") or ""),
+                "order_group_id": order_group_id_val,
+                "oco_group_id": oco_group_id,
+                "intent_id": child_def["intent_id"],
+                "parent_intent_id": entry_intent.intent_id,
+                "broker_order_id": None,
+                "intent_role": child_def["intent_role"],
+                "side": "SELL",
+                "order_type": child_def["order_type"],
+                "attempt_no": 1,
+                "order_qty": float(fill_summary.get("filled_qty") or 0.0),
+                "filled_qty": None,
+                "cumulative_filled_qty": None,
+                "remaining_qty": None,
+                "limit_price": child_def["limit_price"],
+                "stop_price": child_def["stop_price"],
+                "trail_percent": child_def["trail_percent"],
+                "lifecycle_phase": "phase4_protection_replay",
+                "broker_state": child_def["broker_state"],
+                "order_status": child_def["order_status"],
+                "synthetic_partial_fill": False,
+                "synthetic_retry": False,
+                "synthetic_cancel": False,
+                "synthetic_reject": False,
+                "synthetic_timeout": False,
+                "attempt_outcome": None,
+                "resubmit_of_attempt_no": None,
+                "resubmit_chain_id": None,
+                "retry_reason": None,
+                "state_reason": "protection_submitted_after_fill",
+                "active_from": execution_date_ts,
+                "terminal_event_date": None,
+            }
+            # Concaténer dans order_lifecycle_frame via une ligne additionnelle
+            new_row_df = pd.DataFrame([new_child_row], columns=order_lifecycle_frame.columns if not order_lifecycle_frame.empty else list(new_child_row.keys()))
+            for col in order_lifecycle_frame.columns if not order_lifecycle_frame.empty else []:
+                if col not in new_row_df.columns:
+                    new_row_df[col] = None
+            order_lifecycle_frame = pd.concat([order_lifecycle_frame, new_row_df.loc[:, order_lifecycle_frame.columns if not order_lifecycle_frame.empty else list(new_child_row.keys())]], ignore_index=True)
+
     protection_frame = pd.DataFrame(protection_rows)
     if protection_frame.empty:
         signals_df = execution_replay_result.signals_df.copy()
@@ -157,7 +259,9 @@ def build_phase4_protection_replay(
             how="left",
         )
 
-    order_lifecycle_frame = ensure_order_lifecycle_frame(execution_replay_result.order_lifecycle_frame)
+    # order_lifecycle_frame a déjà été enrichi avec les ordres de protection enfant
+    # dans la boucle ci-dessus. On normalise les colonnes sans le réinitialiser.
+    order_lifecycle_frame = ensure_order_lifecycle_frame(order_lifecycle_frame)
     broker_event_frame = ensure_broker_event_frame(execution_replay_result.event_frame)
     diagnostics = {
         "signals_input": len(execution_replay_result.signals_df),

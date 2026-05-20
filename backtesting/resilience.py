@@ -82,12 +82,26 @@ def _merge_prediction_frames(existing: pd.DataFrame, rebuilt: pd.DataFrame) -> p
 
 
 def _classify_ml_missing_cause_from_runtime_status(status: dict[str, object]) -> str:
+    """Classifie la cause d'un échec de prédiction ML depuis le runtime_status.
+
+    Retourne l'une des constantes ML_MISSING_CAUSE_* :
+    - ``artifact_invalid``  : artefact présent mais corrompu / incompatible.
+    - ``artifact_missing``  : artefact physiquement absent.
+    - ``prediction_missing`` : runtime_status entièrement vide —  aucun artefact n'a
+      été tenté (ni chargé, ni signalé).  Différent de rebuild_unavailable.
+    - ``rebuild_unavailable``: rebuild tenté mais non exploitable (contexte insuffisant,
+      artefact chargé mais prédiction vide pour une autre raison).
+    """
     raw_reason = str(status.get("last_artifact_issue_reason") or "").strip().lower()
     if raw_reason:
         if any(token in raw_reason for token in ("invalid", "corrupted", "incompatible", "violation", "read_failed", "payload_not_object")):
             return ML_MISSING_CAUSE_ARTIFACT_INVALID
         if "missing" in raw_reason:
             return ML_MISSING_CAUSE_ARTIFACT_MISSING
+    # Runtime status vide ou sans last_artifact_issue_reason : aucun artefact
+    # n'a été chargé/signalé — on distingue ce cas de rebuild_unavailable.
+    if not status or not any(str(value or "").strip() for value in status.values()):
+        return ML_MISSING_CAUSE_PREDICTION_MISSING
     return ML_MISSING_CAUSE_REBUILD_UNAVAILABLE
 
 

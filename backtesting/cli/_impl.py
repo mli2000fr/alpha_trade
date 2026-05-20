@@ -747,12 +747,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
         build_fidelity_baseline_snapshot,
         PitHistoryRequiredError,
         build_replay_diagnostic_summary,
+        build_fidelity_symbol_matrix,
         PitMlStrategyUnsupportedError,
         build_fidelity_manifest,
         save_candidate_target_parity_summary,
         save_compare_to_live_summary,
         save_fidelity_baseline_comparison,
         save_fidelity_baseline_snapshot,
+        save_fidelity_symbol_matrix,
         save_replay_diagnostic_summary,
         save_coverage_summary,
         save_fidelity_manifest,
@@ -1542,6 +1544,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
         artifact_paths["fidelity_manifest_json"] = str(fidelity_manifest_path)
         coverage_summary_path = save_coverage_summary(fidelity_manifest, output_dir)
         artifact_paths["coverage_summary_json"] = str(coverage_summary_path)
+        # Matrice symbole × état PIT (anomalie 5.5)
+        fidelity_symbol_matrix = build_fidelity_symbol_matrix(
+            scores_df=scores_df,
+            predictions_df=preds_df if isinstance(preds_df, pd.DataFrame) else None,
+            fidelity_manifest=fidelity_manifest,
+        )
+        symbol_matrix_paths = save_fidelity_symbol_matrix(fidelity_symbol_matrix, output_dir)
+        artifact_paths.update({key: str(path) for key, path in symbol_matrix_paths.items()})
         replay_diagnostic_paths = save_replay_diagnostic_summary(replay_diagnostic_summary, output_dir)
         artifact_paths.update({key: str(path) for key, path in replay_diagnostic_paths.items()})
         candidate_target_parity_paths: dict[str, str] = {}

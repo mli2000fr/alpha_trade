@@ -1970,8 +1970,67 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
         if not replay_rows.empty:
             with st.expander("Aperçu du diagnostic par séance", expanded=False):
                 st.dataframe(replay_rows, use_container_width=True, hide_index=True)
+        # ── Drill-down analytique composant → symbole (post-Sprint 2)
+        sessions_list = replay_diagnostic_payload.get("sessions", [])
+        if isinstance(sessions_list, list) and sessions_list:
+            with st.expander("🔍 Drill-down composant → symbole", expanded=False):
+                _DRILLDOWN_COMPONENTS = ["sentiment", "ml", "scores", "walk_forward", "risk", "execution"]
+                available_degraded_components: set[str] = set()
+                for _s in sessions_list:
+                    if isinstance(_s, dict):
+                        for _c in _s.get("degraded_components", []):
+                            available_degraded_components.add(str(_c))
+                filter_components = sorted(available_degraded_components) if available_degraded_components else _DRILLDOWN_COMPONENTS
+                selected_component = st.selectbox(
+                    "Composant à analyser",
+                    options=["(tous)"] + filter_components,
+                    key="drilldown_component_select",
+                )
+                drilldown_rows: list[dict[str, object]] = []
+                for session in sessions_list:
+                    if not isinstance(session, dict):
+                        continue
+                    trade_date = session.get("trade_date", "")
+                    critical_symbols = session.get("critical_symbols", [])
+                    if not isinstance(critical_symbols, list):
+                        continue
+                    for sym_payload in critical_symbols:
+                        if not isinstance(sym_payload, dict):
+                            continue
+                        sym_components = [str(c) for c in sym_payload.get("components", [])]
+                        if selected_component != "(tous)" and selected_component not in sym_components:
+                            continue
+                        drilldown_rows.append(
+                            {
+                                "Séance": trade_date,
+                                "Symbole": sym_payload.get("symbol", ""),
+                                "Sélectionné": "oui" if bool(sym_payload.get("selected", False)) else "non",
+                                "Composants dégradés": ", ".join(sym_components),
+                                "Raisons": ", ".join(str(r) for r in sym_payload.get("reasons", [])),
+                                "Source score": _coerce_metric_text(sym_payload.get("score_source")),
+                            }
+                        )
+                if drilldown_rows:
+                    st.dataframe(drilldown_rows, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucun symbole critique trouvé pour ce filtre composant.")
         with st.expander("Payload brut replay_diagnostic_summary.json", expanded=False):
             st.json(replay_diagnostic_payload)
+
+    # ── Matrice fidélité symbole × état PIT (anomalie 5.5)
+    fidelity_symbol_matrix_payload = _load_json_artifact_from_paths(artifacts, "fidelity_symbol_matrix_json")
+    if fidelity_symbol_matrix_payload:
+        st.markdown("**🗺️ Matrice fidélité symbole × état PIT**")
+        matrix_col1, matrix_col2, matrix_col3 = st.columns(3)
+        matrix_col1.metric("Symboles analysés", _to_int(fidelity_symbol_matrix_payload.get("symbol_count")))
+        matrix_col2.metric("Symboles dégradés", _to_int(fidelity_symbol_matrix_payload.get("degraded_symbol_count")))
+        matrix_col3.metric("Mode moteur", _coerce_metric_text(fidelity_symbol_matrix_payload.get("engine_mode")))
+        symbol_matrix_rows = _build_fidelity_symbol_matrix_rows(fidelity_symbol_matrix_payload)
+        if not symbol_matrix_rows.empty:
+            with st.expander("Aperçu de la matrice symbole × état PIT", expanded=False):
+                st.dataframe(symbol_matrix_rows, use_container_width=True, hide_index=True)
+        with st.expander("Payload brut fidelity_symbol_matrix.json", expanded=False):
+            st.json(fidelity_symbol_matrix_payload)
 
     candidate_target_payload = _load_json_artifact_from_paths(artifacts, "candidate_target_parity_summary_json")
     if candidate_target_payload:
@@ -2478,6 +2537,33 @@ def _build_fidelity_baseline_check_rows(payload: dict[str, object]) -> pd.DataFr
                 "Delta": _coerce_metric_text(check.get("delta")),
                 "Tolérance": _coerce_metric_text(check.get("tolerance_abs")),
                 "Statut": _coerce_metric_text(check.get("status")),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _build_fidelity_symbol_matrix_rows(payload: dict[str, object]) -> pd.DataFrame:
+    """Construit un DataFrame tabulaire depuis la matrice symbole × état PIT."""
+    symbols = payload.get("symbols", [])
+    if not isinstance(symbols, list) or not symbols:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for entry in symbols:
+        if not isinstance(entry, dict):
+            continue
+        rows.append(
+            {
+                "Symbole": _coerce_metric_text(entry.get("symbol")),
+                "Séances": _to_int(entry.get("session_count")),
+                "Scores": _coerce_metric_text(entry.get("scores_state")),
+                "Source score": _coerce_metric_text(entry.get("score_source")),
+                "Sentiment": _coerce_metric_text(entry.get("sentiment_state")),
+                "ML": _coerce_metric_text(entry.get("ml_state")),
+                "Causes ML": ", ".join(
+                    str(c) for c in cast(list[object], entry.get("ml_missing_causes", []))
+                ) if isinstance(entry.get("ml_missing_causes"), list) else "—",
+                "Walk-forward": _coerce_metric_text(entry.get("walk_forward_state")),
+                "Dégradé": "oui" if bool(entry.get("degraded", False)) else "non",
             }
         )
     return pd.DataFrame(rows)

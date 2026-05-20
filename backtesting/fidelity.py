@@ -2992,6 +2992,166 @@ def save_coverage_summary(manifest: Mapping[str, Any], output_dir: Path) -> Path
     return filepath
 
 
+def build_fidelity_symbol_matrix(
+    *,
+    scores_df: pd.DataFrame,
+    predictions_df: pd.DataFrame | None,
+    fidelity_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Construit une matrice symbole × état PIT pour chaque composant.
+
+    Pour chaque symbole candidat du run, détermine son état par composant :
+    ``persisted`` / ``rebuilt`` / ``fallback`` / ``absent``.
+
+    Cette matrice permet d'identifier rapidement quels symboles ont dégradé
+    quelle couche (scores, sentiment, ml, walk_forward).
+    """
+    normalized_scores = scores_df.copy() if isinstance(scores_df, pd.DataFrame) else pd.DataFrame()
+    normalized_preds = predictions_df.copy() if isinstance(predictions_df, pd.DataFrame) else pd.DataFrame()
+    if not normalized_scores.empty:
+        normalized_scores["trade_date"] = _normalize_trade_date_series(normalized_scores)
+    if not normalized_preds.empty:
+        normalized_preds["trade_date"] = _normalize_trade_date_series(normalized_preds)
+
+    provenance_payload = fidelity_manifest.get("provenance", {})
+    if not isinstance(provenance_payload, Mapping):
+        provenance_payload = {}
+
+    scores_provenance = cast(Mapping[str, Any], provenance_payload.get("scores", {})) if isinstance(provenance_payload.get("scores"), Mapping) else {}
+    ml_provenance = cast(Mapping[str, Any], provenance_payload.get("ml", {})) if isinstance(provenance_payload.get("ml"), Mapping) else {}
+
+    scores_provenance_kind = str(scores_provenance.get("provenance_kind") or "persisted_history")
+    ml_source_tags: list[str] = list(ml_provenance.get("source_tags", []))
+    ml_causes_by_symbol: dict[str, list[str]] = {
+        str(symbol): list(causes)
+        for symbol, causes in _normalize_symbol_cause_mapping(ml_provenance.get("missing_causes_by_symbol", {})).items()
+    }
+
+    # Ensemble des symboles prédits disponibles (toutes séances)
+    predicted_symbols: set[str] = set()
+    rebuilt_symbols: set[str] = set()
+    if not normalized_preds.empty and "symbol" in normalized_preds.columns:
+        predicted_symbols = {str(symbol).strip().upper() for symbol in normalized_preds["symbol"].dropna().tolist() if str(symbol).strip()}
+    # Déterminer les symboles reconstruits depuis les source_tags ML
+    if "rebuilt_predictions" in ml_source_tags and not normalized_preds.empty and "predicted_source" in normalized_preds.columns:
+        rebuilt_symbols = {
+            str(row["symbol"]).strip().upper()
+            for _, row in normalized_preds[["symbol", "predicted_source"]].dropna(subset=["symbol"]).iterrows()
+            if str(row.get("predicted_source") or "").strip().lower() == "rebuilt"
+        }
+
+    # All candidate symbols across all sessions
+    candidate_symbols = _sorted_unique_symbols(normalized_scores) if not normalized_scores.empty else []
+    matrix_rows: list[dict[str, Any]] = []
+
+    for symbol in candidate_symbols:
+        symbol_scores = normalized_scores.loc[normalized_scores["symbol"].astype(str).str.upper() == symbol.upper()] if not normalized_scores.empty and "symbol" in normalized_scores.columns else pd.DataFrame()
+        session_count = int(symbol_scores["trade_date"].nunique()) if not symbol_scores.empty and "trade_date" in symbol_scores.columns else 0
+
+        # Scores state
+        if scores_provenance_kind == "current_snapshot_fallback":
+            scores_state = "fallback"
+        else:
+            scores_state = "persisted"
+
+        # Score source (walk_forward / sentiment / base)
+        score_source: str | None = None
+        if not symbol_scores.empty:
+            if "score_source" in symbol_scores.columns and symbol_scores["score_source"].notna().any():
+                source_values = symbol_scores["score_source"].dropna().astype(str).tolist()
+                score_source = source_values[-1] if source_values else None
+            elif "final_score_walk_forward" in symbol_scores.columns and symbol_scores["final_score_walk_forward"].notna().any():
+                score_source = "final_score_walk_forward"
+            elif "final_score_sentiment" in symbol_scores.columns and symbol_scores["final_score_sentiment"].notna().any():
+                score_source = "final_score_sentiment"
+            elif "final_score" in symbol_scores.columns and symbol_scores["final_score"].notna().any():
+                score_source = "final_score"
+
+        # Sentiment state
+        if not symbol_scores.empty and "final_score_sentiment" in symbol_scores.columns:
+            sentiment_na_count = int(symbol_scores["final_score_sentiment"].isna().sum())
+            sentiment_total = int(len(symbol_scores))
+            if sentiment_na_count == sentiment_total:
+                sentiment_state = "absent"
+            elif sentiment_na_count > 0:
+                sentiment_state = "fallback"
+            else:
+                sentiment_state = "persisted"
+        else:
+            sentiment_state = "absent"
+
+        # ML state
+        if symbol in predicted_symbols:
+            if symbol in rebuilt_symbols:
+                ml_state = "rebuilt"
+            else:
+                ml_state = "persisted"
+        else:
+            ml_state = "absent"
+        ml_causes: list[str] = ml_causes_by_symbol.get(symbol, [])
+
+        # Walk-forward state
+        walk_forward_state = "applied" if score_source == "final_score_walk_forward" else "not_applied"
+
+        matrix_rows.append(
+            {
+                "symbol": symbol,
+                "session_count": session_count,
+                "scores_state": scores_state,
+                "score_source": score_source,
+                "sentiment_state": sentiment_state,
+                "ml_state": ml_state,
+                "ml_missing_causes": ml_causes,
+                "walk_forward_state": walk_forward_state,
+                "degraded": bool(sentiment_state in ("fallback", "absent") or ml_state == "absent" or scores_state == "fallback"),
+            }
+        )
+
+    matrix_rows.sort(key=lambda row: (-int(bool(row.get("degraded", False))), str(row.get("symbol") or "")))
+    degraded_count = sum(1 for row in matrix_rows if bool(row.get("degraded", False)))
+    return {
+        "taxonomy_version": int(fidelity_manifest.get("taxonomy_version", 1)),
+        "engine_mode": fidelity_manifest.get("engine_mode"),
+        "symbol_count": len(matrix_rows),
+        "degraded_symbol_count": degraded_count,
+        "component_states": ["persisted", "rebuilt", "fallback", "absent"],
+        "symbols": matrix_rows,
+    }
+
+
+def save_fidelity_symbol_matrix(matrix: Mapping[str, Any], output_dir: Path) -> dict[str, Path]:
+    """Sauvegarde la matrice symbole × état PIT en JSON canonique + CSV aplati."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "fidelity_symbol_matrix.json"
+    csv_path = output_dir / "fidelity_symbol_matrix.csv"
+    json_path.write_text(json.dumps(dict(matrix), ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+    symbols = matrix.get("symbols", []) if isinstance(matrix, Mapping) else []
+    rows: list[dict[str, object]] = []
+    if isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
+        for entry in symbols:
+            if not isinstance(entry, Mapping):
+                continue
+            rows.append(
+                {
+                    "symbol": entry.get("symbol"),
+                    "session_count": entry.get("session_count", 0),
+                    "scores_state": entry.get("scores_state"),
+                    "score_source": entry.get("score_source"),
+                    "sentiment_state": entry.get("sentiment_state"),
+                    "ml_state": entry.get("ml_state"),
+                    "ml_missing_causes": ", ".join(_normalize_string_list(entry.get("ml_missing_causes", []))),
+                    "walk_forward_state": entry.get("walk_forward_state"),
+                    "degraded": bool(entry.get("degraded", False)),
+                }
+            )
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    return {
+        "fidelity_symbol_matrix_json": json_path,
+        "fidelity_symbol_matrix_csv": csv_path,
+    }
+
+
 __all__ = [
     "PitHistoryRequiredError",
     "PitMlStrategyUnsupportedError",
@@ -3009,12 +3169,16 @@ __all__ = [
     "build_fidelity_baseline_snapshot",
     "build_coverage_summary",
     "build_fidelity_manifest",
+    "build_fidelity_symbol_matrix",
+    "build_replay_diagnostic_summary",
     "save_fidelity_baseline_comparison",
     "save_fidelity_baseline_snapshot",
     "save_fidelity_manifest",
+    "save_fidelity_symbol_matrix",
     "save_candidate_target_parity_summary",
     "save_compare_to_live_summary",
     "save_coverage_summary",
+    "save_replay_diagnostic_summary",
 ]
 
 

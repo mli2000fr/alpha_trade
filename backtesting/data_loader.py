@@ -347,6 +347,9 @@ def load_predictions(
             where_symbols = f" AND symbol IN ({placeholders})"
             params.update({f"sym_{i}": sym for i, sym in enumerate(unique_symbols)})
 
+    def _optional_select(columns: set[str], column: str) -> str:  # noqa: redefinition-ok
+        return column if column in columns else f"NULL AS {column}"
+
     query = text(f"""
         SELECT symbol,
                {date_col} AS trade_date,
