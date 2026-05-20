@@ -50,3 +50,64 @@ def test_build_overview_metrics_exposes_latest_run_context() -> None:
     assert metrics["latest_metric"] == "sharpe=1.2345"
     assert metrics["eligible_segments"] == 1
 
+
+def test_prepare_drift_frames_sorts_and_summarizes_selected_run() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "run_id": "wcsd-001",
+                "comparison_kind": "vs_reference_live_segment",
+                "source_run_id": "wcr-002",
+                "metric_delta": 0.10,
+                "final_value_drift_pct": 0.08,
+                "compared_at": "2026-05-20T10:00:00",
+            },
+            {
+                "run_id": "wcsd-002",
+                "comparison_kind": "vs_all_same_horizon_window",
+                "source_run_id": "wcr-002",
+                "metric_delta": -0.20,
+                "final_value_drift_pct": -0.12,
+                "compared_at": "2026-05-20T11:00:00",
+            },
+            {
+                "run_id": "wcsd-003",
+                "comparison_kind": "vs_reference_live_segment",
+                "source_run_id": "wcr-001",
+                "metric_delta": 0.05,
+                "final_value_drift_pct": 0.02,
+                "compared_at": "2026-05-20T09:00:00",
+            },
+        ]
+    )
+
+    frames = weights_calibration_runs._prepare_drift_frames(df, selected_run_id="wcr-002")
+
+    assert list(frames["selected"]["run_id"]) == ["wcsd-002", "wcsd-001"]
+    assert set(frames["summary"]["comparison_kind"]) == {
+        "vs_all_same_horizon_window",
+        "vs_reference_live_segment",
+    }
+    summary_rows = {
+        row["comparison_kind"]: row for row in frames["summary"].to_dict("records")
+    }
+    assert summary_rows["vs_all_same_horizon_window"]["max_abs_final_value_drift_pct"] == 0.12
+    assert summary_rows["vs_reference_live_segment"]["drift_rows"] == 2
+
+
+def test_build_drift_metrics_exposes_abs_maxima() -> None:
+    df = pd.DataFrame(
+        [
+            {"comparison_kind": "vs_all_same_horizon_window", "abs_metric_delta": 0.2, "abs_final_value_drift_pct": 0.12},
+            {"comparison_kind": "vs_reference_live_segment", "abs_metric_delta": 0.1, "abs_final_value_drift_pct": 0.08},
+        ]
+    )
+
+    metrics = weights_calibration_runs._build_drift_metrics(df)
+
+    assert metrics["drift_rows"] == 2
+    assert metrics["comparison_kinds"] == 2
+    assert metrics["max_abs_metric_delta"] == 0.2
+    assert metrics["max_abs_final_value_drift_pct"] == 0.12
+
+

@@ -690,8 +690,11 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
                 "window_end": date(2026, 3, 31),
                 "status": "selected",
                 "segment_key": "regime=capital_preservation|horizon=5d|window=12m",
+                "requested_segment_key": "regime=capital_preservation|horizon=5d|window=12m",
                 "horizon_days": horizon_days,
                 "lookback_months": lookback_months,
+                "requested_horizon_days": horizon_days,
+                "requested_lookback_months": lookback_months,
                 "eligible_for_live": True,
                 "market_regime_mode": "capital_preservation",
                 "requested_market_regime_mode": market_regime_mode,
@@ -761,6 +764,9 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
     assert captured["requested_lookback_months"] == 12
     assert captured["summary"]["empirical_risk_calibration"]["run_id"] == "risk-cal-001"
     assert captured["summary"]["empirical_risk_calibration"]["market_regime_mode"] == "capital_preservation"
+    assert captured["summary"]["conviction_weights_calibration"]["runtime_requested_segment_key"] == "regime=capital_preservation|horizon=5d|window=12m"
+    assert captured["summary"]["conviction_weights_calibration"]["runtime_requested_horizon_days"] == 5
+    assert captured["summary"]["conviction_weights_calibration"]["runtime_requested_lookback_months"] == 12
     assert captured["summary"]["conviction_weights_calibration"]["runtime_applied"] is True
     assert captured["summary"]["conviction_weights_calibration"]["runtime_market_regime_mode"] == "capital_preservation"
 

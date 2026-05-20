@@ -350,6 +350,74 @@ def test_load_latest_empirical_risk_calibration_blocks_ineligible_segment_for_li
 
 
 @pytest.mark.unit
+def test_load_latest_empirical_risk_calibration_falls_back_to_same_regime_nearest_window() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO weights_calibration_runs (
+                run_id, scope, market_regime_mode, horizon_days, lookback_months, eligible_for_live,
+                window_start, window_end, metric_name, metric_value, best_weights, candidates, schema_version
+            ) VALUES
+                ('risk-cap-6m', 'risk', 'capital_preservation', 5, 6, 1, '2025-01-01', '2026-03-31', 'sharpe', 1.18,
+                 '{"score_weight": 0.22, "prediction_weight": 0.78}', '[]', 2),
+                ('risk-all-24m', 'risk', 'all', 5, 24, 1, '2025-01-01', '2026-03-31', 'sharpe', 1.10,
+                 '{"score_weight": 0.35, "prediction_weight": 0.65}', '[]', 2)
+        """))
+    repo = RiskRepository(engine=engine)
+
+    calibration = repo.load_latest_empirical_risk_calibration(
+        date(2026, 4, 1),
+        market_regime_mode="capital_preservation",
+        horizon_days=5,
+        lookback_months=12,
+    )
+
+    assert calibration is not None
+    assert calibration["run_id"] == "risk-cap-6m"
+    assert calibration["market_regime_mode"] == "capital_preservation"
+    assert calibration["lookback_months"] == 6
+    assert calibration["requested_horizon_days"] == 5
+    assert calibration["requested_lookback_months"] == 12
+    assert calibration["requested_segment_key"] == "regime=capital_preservation|horizon=5d|window=12m"
+    assert calibration["market_regime_fallback_used"] is True
+    assert calibration["fallback_level"] == "same_regime_nearest_window"
+
+
+@pytest.mark.unit
+def test_load_latest_empirical_risk_calibration_prefers_eligible_broader_fallback_over_blocked_exact_segment() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO weights_calibration_runs (
+                run_id, scope, market_regime_mode, horizon_days, lookback_months, eligible_for_live,
+                eligibility_reason, window_start, window_end, metric_name, metric_value, best_weights, candidates, schema_version
+            ) VALUES
+                ('risk-cap-blocked', 'risk', 'capital_preservation', 5, 12, 0,
+                 'insufficient_snapshot_days', '2025-01-01', '2026-03-31', 'sharpe', 1.05,
+                 '{"score_weight": 0.2, "prediction_weight": 0.8}', '[]', 2),
+                ('risk-cap-6m', 'risk', 'capital_preservation', 5, 6, 1,
+                 NULL, '2025-01-01', '2026-03-31', 'sharpe', 1.15,
+                 '{"score_weight": 0.3, "prediction_weight": 0.7}', '[]', 2)
+        """))
+    repo = RiskRepository(engine=engine)
+
+    calibration = repo.load_latest_empirical_risk_calibration(
+        date(2026, 4, 1),
+        market_regime_mode="capital_preservation",
+        horizon_days=5,
+        lookback_months=12,
+    )
+
+    assert calibration is not None
+    assert calibration["run_id"] == "risk-cap-6m"
+    assert calibration["status"] == "selected"
+    assert calibration["eligible_for_live"] is True
+    assert calibration["fallback_level"] == "same_regime_nearest_window"
+
+
+@pytest.mark.unit
 def test_load_candidates_asof_propagates_selector_metadata() -> None:
     engine = create_engine("sqlite:///:memory:")
     _create_tables(engine)

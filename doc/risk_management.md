@@ -210,22 +210,44 @@ Le bloc `empirical_risk_calibration` contient notamment :
 - `run_id` ;
 - `metric_name` / `metric_value` ;
 - `market_regime_mode` / `requested_market_regime_mode` / `market_regime_fallback_used` ;
+- `segment_key` / `requested_segment_key` ;
+- `horizon_days` / `lookback_months` ;
+- `requested_horizon_days` / `requested_lookback_months` ;
+- `eligible_for_live` / `eligibility_reason` / `status` / `fallback_level` ;
 - `window_start` / `window_end` ;
 - `best_weights` avec au minimum `score_weight`, `prediction_weight`, `kelly_fraction_multiplier`, `min_effective_probability`, `assumed_payoff_ratio`.
 
 Par défaut, le CLI applique en best-effort le dernier run `weights_calibration_runs`
 de `scope = 'risk'` dont `window_end <= trade_date`, en privilégiant le segment
 `market_regime_mode` correspondant au régime live courant (`normal`,
-`capital_preservation`, `close_only`, `cash_only`) puis en retombant sur `all`
-si aucun run segmenté n'est disponible. Cela permet de piloter réellement les
-poids conviction et les paramètres Kelly clés avec une calibration cohérente du
-régime marché.
+`capital_preservation`, `close_only`, `cash_only`) selon une hiérarchie
+déterministe et gouvernée :
+
+1. segment exact `(régime, horizon, fenêtre)` ;
+2. segment `regime=all` à horizon/fenêtre identiques ;
+3. segment du même régime à horizon identique et fenêtre la plus proche ;
+4. segment `regime=all` à horizon identique et fenêtre la plus proche ;
+5. segment du même régime à fenêtre identique et horizon le plus proche ;
+6. segment `regime=all` à fenêtre identique et horizon le plus proche ;
+7. segment du même régime le plus proche sur les deux dimensions ;
+8. segment `regime=all` le plus proche sur les deux dimensions.
+
+Les garde-fous de gouvernance restent prioritaires : un segment n'est promu en
+live que si `eligible_for_live = true`. Si aucun segment éligible n'est trouvé,
+le runtime retourne soit un segment bloqué (`status="blocked_by_governance"`),
+soit `None` et revient aux poids statiques de configuration. Le niveau exact de
+repli est tracé dans `fallback_level`.
+
+Cela permet de piloter réellement les poids conviction et les paramètres Kelly
+clés avec une calibration cohérente du régime marché tout en conservant une
+promotion live suffisamment alimentée en données.
 
 Options associées :
 
 ```powershell
 python -m risk_management.run_risk --disable-empirical-calibration
 python -m risk_management.run_risk --empirical-calibration-run-id wcr-20260520-001
+python -m risk_management.run_risk --empirical-calibration-horizon-days 5 --empirical-calibration-lookback-months 12
 ```
 
 Job batch associé :
@@ -269,9 +291,29 @@ l'IHM). Champs Phase 5 :
 | `rejection_reason_code_counts` / `reduction_reason_code_counts` | Motifs structurés normalisés jusqu'au payload final. |
 | `conviction_weights` | `{score_weight, prediction_weight, source: "core.conviction"}`. Trace l'utilisation de l'API centralisée. |
 | `conviction_weights_calibration` | Trace la calibration upstream effectivement transportée (`source`, `calibration_run_id`, listes distinctes, volumes candidats). |
-| `empirical_risk_calibration` | Calibration empirique live appliquée depuis `weights_calibration_runs` (`run_id`, métrique, fenêtre, meilleurs paramètres conviction/Kelly). |
+| `empirical_risk_calibration` | Calibration empirique live résolue depuis `weights_calibration_runs` (`run_id`, segment demandé/résolu, statut de gouvernance, `fallback_level`, meilleurs paramètres conviction/Kelly). |
 | `shadow_compare` | Résultat optionnel d'un diff du run courant contre un run de référence (`--enable-shadow-compare`). |
 | `postmortem_artifacts` | Artefacts enrichis : top rejets/réductions, détail secteur, résumé régime, couverture effective des sources externes. |
+
+### 4.6.b Drifts inter-segments et IHM opérateur
+
+Le job trimestriel `scripts.run_quarterly_weights_calibration` peut persister des
+comparaisons inter-segments dans `weights_calibration_segment_drifts`. Deux
+comparaisons sont suivies à ce stade :
+
+- `vs_all_same_horizon_window` ;
+- `vs_reference_live_segment`.
+
+La page IHM `weights_calibration_runs` expose :
+
+- l'historique des runs segmentés ;
+- le statut de promotion live (`eligible_for_live`) ;
+- un résumé des drifts par `comparison_kind` ;
+- les drifts du run sélectionné ;
+- le batch complet trié par ampleur de dérive absolue.
+
+Cette vue sert d'outil de gouvernance opérateur : vérifier qu'un fallback live
+plus large reste cohérent avec le segment de référence avant promotion.
 
 L'`account_equity_breakdown` est best-effort : aucune exception ne remonte au
 CLI. Si les tables `broker_account_snapshots` / `broker_positions_snapshots` /

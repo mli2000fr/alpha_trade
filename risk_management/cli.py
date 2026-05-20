@@ -316,8 +316,11 @@ def _build_conviction_weights_calibration(
                     ),
                     "runtime_best_weights": empirical_risk_calibration.get("best_weights") or {},
                     "runtime_segment_key": empirical_risk_calibration.get("segment_key"),
+                    "runtime_requested_segment_key": empirical_risk_calibration.get("requested_segment_key"),
                     "runtime_horizon_days": empirical_risk_calibration.get("horizon_days"),
                     "runtime_lookback_months": empirical_risk_calibration.get("lookback_months"),
+                    "runtime_requested_horizon_days": empirical_risk_calibration.get("requested_horizon_days"),
+                    "runtime_requested_lookback_months": empirical_risk_calibration.get("requested_lookback_months"),
                     "runtime_market_regime_mode": empirical_risk_calibration.get("market_regime_mode"),
                     "runtime_requested_market_regime_mode": empirical_risk_calibration.get("requested_market_regime_mode"),
                     "runtime_market_regime_fallback_used": bool(
@@ -367,8 +370,11 @@ def _build_conviction_weights_calibration(
                 ),
                 "runtime_best_weights": empirical_risk_calibration.get("best_weights") or {},
                 "runtime_segment_key": empirical_risk_calibration.get("segment_key"),
+                "runtime_requested_segment_key": empirical_risk_calibration.get("requested_segment_key"),
                 "runtime_horizon_days": empirical_risk_calibration.get("horizon_days"),
                 "runtime_lookback_months": empirical_risk_calibration.get("lookback_months"),
+                "runtime_requested_horizon_days": empirical_risk_calibration.get("requested_horizon_days"),
+                "runtime_requested_lookback_months": empirical_risk_calibration.get("requested_lookback_months"),
                 "runtime_market_regime_mode": empirical_risk_calibration.get("market_regime_mode"),
                 "runtime_requested_market_regime_mode": empirical_risk_calibration.get("requested_market_regime_mode"),
                 "runtime_market_regime_fallback_used": bool(

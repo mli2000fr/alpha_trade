@@ -606,6 +606,12 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
             segment_key = str(empirical_calibration_payload.get("segment_key") or "").strip()
             horizon_days = _to_int(empirical_calibration_payload.get("horizon_days"))
             lookback_months = _to_int(empirical_calibration_payload.get("lookback_months"))
+            requested_horizon_days = _to_int(
+                empirical_calibration_payload.get("requested_horizon_days")
+            )
+            requested_lookback_months = _to_int(
+                empirical_calibration_payload.get("requested_lookback_months")
+            )
             eligibility_reason = str(empirical_calibration_payload.get("eligibility_reason") or "").strip()
             best_weights = empirical_calibration_payload.get("best_weights")
             line_prefix = (
@@ -621,10 +627,22 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
                     line += f", régime={requested_regime_mode}→{resolved_regime_mode}"
                 elif resolved_regime_mode:
                     line += f", régime={resolved_regime_mode}"
-            if horizon_days is not None:
-                line += f", horizon={horizon_days}j"
-            if lookback_months is not None:
-                line += f", fenêtre={lookback_months}m"
+            resolved_horizon_days = horizon_days if horizon_days is not None else requested_horizon_days
+            resolved_lookback_months = lookback_months if lookback_months is not None else requested_lookback_months
+            if requested_horizon_days is not None:
+                if resolved_horizon_days is not None and resolved_horizon_days != requested_horizon_days:
+                    line += f", horizon={requested_horizon_days}→{resolved_horizon_days}j"
+                else:
+                    line += f", horizon={requested_horizon_days}j"
+            elif resolved_horizon_days is not None:
+                line += f", horizon={resolved_horizon_days}j"
+            if requested_lookback_months is not None:
+                if resolved_lookback_months is not None and resolved_lookback_months != requested_lookback_months:
+                    line += f", fenêtre={requested_lookback_months}→{resolved_lookback_months}m"
+                else:
+                    line += f", fenêtre={requested_lookback_months}m"
+            elif resolved_lookback_months is not None:
+                line += f", fenêtre={resolved_lookback_months}m"
             if segment_key:
                 line += f", segment={segment_key}"
             if fallback_level and fallback_level not in {"", "exact_segment"}:

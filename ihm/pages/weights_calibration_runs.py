@@ -80,6 +80,89 @@ def _build_overview_metrics(df: pd.DataFrame) -> dict[str, object]:
     }
 
 
+def _prepare_drift_frames(
+    df: pd.DataFrame,
+    *,
+    selected_run_id: str | None = None,
+) -> dict[str, pd.DataFrame]:
+    if df.empty:
+        empty = pd.DataFrame()
+        return {"all": empty, "selected": empty, "summary": empty}
+
+    prepared = df.copy()
+    for column in ("metric_delta", "final_value_drift_pct"):
+        if column in prepared.columns:
+            prepared[column] = pd.to_numeric(prepared[column], errors="coerce")
+            prepared[f"abs_{column}"] = prepared[column].abs()
+    sort_columns = [
+        column
+        for column in ["abs_final_value_drift_pct", "abs_metric_delta", "compared_at"]
+        if column in prepared.columns
+    ]
+    ascending = [False] * len(sort_columns)
+    if sort_columns:
+        prepared = prepared.sort_values(by=sort_columns, ascending=ascending, kind="mergesort").reset_index(drop=True)
+
+    selected = prepared
+    if selected_run_id and "source_run_id" in prepared.columns:
+        selected = prepared.loc[prepared["source_run_id"].astype(str) == str(selected_run_id)].reset_index(drop=True)
+
+    summary = pd.DataFrame()
+    if "comparison_kind" in prepared.columns:
+        grouped = prepared.groupby("comparison_kind", dropna=False)
+        summary = grouped.size().rename("drift_rows").to_frame().reset_index()
+        if "abs_metric_delta" in prepared.columns:
+            summary = summary.merge(
+                grouped["abs_metric_delta"].max().rename("max_abs_metric_delta").reset_index(),
+                on="comparison_kind",
+                how="left",
+            )
+        if "abs_final_value_drift_pct" in prepared.columns:
+            summary = summary.merge(
+                grouped["abs_final_value_drift_pct"].max().rename("max_abs_final_value_drift_pct").reset_index(),
+                on="comparison_kind",
+                how="left",
+            )
+        if "compared_at" in prepared.columns:
+            summary = summary.merge(
+                grouped["compared_at"].max().rename("latest_compared_at").reset_index(),
+                on="comparison_kind",
+                how="left",
+            )
+        summary = summary.sort_values(by=["drift_rows", "comparison_kind"], ascending=[False, True], kind="mergesort")
+
+    return {"all": prepared, "selected": selected, "summary": summary.reset_index(drop=True)}
+
+
+def _build_drift_metrics(df: pd.DataFrame) -> dict[str, object]:
+    if df.empty:
+        return {
+            "drift_rows": 0,
+            "comparison_kinds": 0,
+            "max_abs_metric_delta": None,
+            "max_abs_final_value_drift_pct": None,
+        }
+    max_abs_metric_delta = None
+    if "abs_metric_delta" in df.columns:
+        metric_series = pd.to_numeric(df["abs_metric_delta"], errors="coerce").dropna()
+        if not metric_series.empty:
+            max_abs_metric_delta = float(metric_series.max())
+    max_abs_final_value_drift_pct = None
+    if "abs_final_value_drift_pct" in df.columns:
+        final_value_series = pd.to_numeric(df["abs_final_value_drift_pct"], errors="coerce").dropna()
+        if not final_value_series.empty:
+            max_abs_final_value_drift_pct = float(final_value_series.max())
+    comparison_kinds = 0
+    if "comparison_kind" in df.columns:
+        comparison_kinds = int(df["comparison_kind"].fillna("unknown").astype(str).nunique())
+    return {
+        "drift_rows": int(len(df)),
+        "comparison_kinds": comparison_kinds,
+        "max_abs_metric_delta": max_abs_metric_delta,
+        "max_abs_final_value_drift_pct": max_abs_final_value_drift_pct,
+    }
+
+
 def render() -> None:
     st.header("🧮 Weights Calibration Runs")
     st.caption(
@@ -258,12 +341,40 @@ def render() -> None:
     if calibration_batch_id:
         drifts_df = get_weights_calibration_segment_drifts(
             calibration_batch_id=calibration_batch_id,
-            source_run_id=str(selected_row.get("run_id") or "").strip() or None,
-            limit=50,
+            limit=200,
         )
         if not drifts_df.empty:
+            drift_frames = _prepare_drift_frames(
+                drifts_df,
+                selected_run_id=str(selected_row.get("run_id") or "").strip() or None,
+            )
+            drift_metrics = _build_drift_metrics(drift_frames["selected"] if not drift_frames["selected"].empty else drift_frames["all"])
+            drift_col1, drift_col2, drift_col3, drift_col4 = st.columns(4)
+            drift_col1.metric("Drifts batch", drift_metrics["drift_rows"])
+            drift_col2.metric("Types", drift_metrics["comparison_kinds"])
+            drift_col3.metric(
+                "Max |Δ métrique|",
+                f"{float(drift_metrics['max_abs_metric_delta']):.4f}"
+                if drift_metrics["max_abs_metric_delta"] is not None
+                else "—",
+            )
+            drift_col4.metric(
+                "Max |Δ final_value|",
+                f"{float(drift_metrics['max_abs_final_value_drift_pct']):.2%}"
+                if drift_metrics["max_abs_final_value_drift_pct"] is not None
+                else "—",
+            )
             with st.expander("📉 Drifts inter-segments", expanded=False):
-                st.dataframe(drifts_df, use_container_width=True, hide_index=True)
+                if not drift_frames["summary"].empty:
+                    st.caption("Synthèse par type de comparaison")
+                    st.dataframe(drift_frames["summary"], use_container_width=True, hide_index=True)
+                if not drift_frames["selected"].empty:
+                    st.caption("Drifts reliés au run sélectionné")
+                    st.dataframe(drift_frames["selected"], use_container_width=True, hide_index=True)
+                elif "source_run_id" in drift_frames["all"].columns:
+                    st.info("Aucun drift directement rattaché au run sélectionné dans ce batch ; affichage du batch complet.")
+                st.caption("Batch complet trié par ampleur de dérive")
+                st.dataframe(drift_frames["all"], use_container_width=True, hide_index=True)
 
 
 run_page_if_standalone(__name__, render)

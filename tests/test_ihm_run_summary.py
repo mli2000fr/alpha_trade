@@ -770,6 +770,38 @@ def test_get_run_summary_detail_lines_exposes_blocked_empirical_risk_calibration
     assert any("gouvernance=insufficient_snapshot_days" in line for line in lines)
 
 
+def test_get_run_summary_detail_lines_exposes_broader_empirical_risk_calibration_fallback_window() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "risk_management",
+            "run_summary": {
+                "empirical_risk_calibration": {
+                    "run_id": "risk-cal-fallback-6m",
+                    "status": "selected",
+                    "metric_name": "sharpe",
+                    "metric_value": 1.12,
+                    "segment_key": "regime=capital_preservation|horizon=5d|window=6m",
+                    "market_regime_mode": "capital_preservation",
+                    "requested_market_regime_mode": "capital_preservation",
+                    "horizon_days": 5,
+                    "lookback_months": 6,
+                    "requested_horizon_days": 5,
+                    "requested_lookback_months": 12,
+                    "fallback_level": "same_regime_nearest_window",
+                    "best_weights": {
+                        "score_weight": 0.30,
+                        "prediction_weight": 0.70,
+                    },
+                }
+            },
+        }
+    )
+
+    assert any("Calibration empirique risk appliquée" in line for line in lines)
+    assert any("fenêtre=12→6m" in line for line in lines)
+    assert any("fallback=same_regime_nearest_window" in line for line in lines)
+
+
 def test_get_run_summary_detail_lines_exposes_postmortem_artifacts_for_risk_management() -> None:
     lines = get_run_summary_detail_lines(
         {

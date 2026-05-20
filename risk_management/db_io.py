@@ -730,12 +730,6 @@ class RiskRepository:
         else:
             where_clauses.append("window_end <= :trade_date")
             params["trade_date"] = trade_date
-            if "horizon_days" in table_columns and requested_horizon_days is not None:
-                where_clauses.append("horizon_days = :horizon_days")
-                params["horizon_days"] = requested_horizon_days
-            if "lookback_months" in table_columns and requested_lookback_months is not None:
-                where_clauses.append("lookback_months = :lookback_months")
-                params["lookback_months"] = requested_lookback_months
         query = text(
             f"""
             SELECT {', '.join(select_columns)}
@@ -754,6 +748,13 @@ class RiskRepository:
         if not rows:
             return None
         has_eligible_for_live = "eligible_for_live" in table_columns
+        requested_segment_key = None
+        if requested_horizon_days is not None and requested_lookback_months is not None:
+            requested_segment_key = (
+                f"regime={requested_market_regime_mode}"
+                f"|horizon={requested_horizon_days}d"
+                f"|window={requested_lookback_months}m"
+            )
 
         def _parse_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
             raw_best_weights = row.get("best_weights")
@@ -801,65 +802,235 @@ class RiskRepository:
         parsed_rows = [parsed for row in rows if (parsed := _parse_row(row)) is not None]
         if not parsed_rows:
             return None
+        for index, row in enumerate(parsed_rows):
+            row["_order_index"] = index
         if run_id is not None:
             selected = parsed_rows[0]
             selected["requested_market_regime_mode"] = requested_market_regime_mode
             selected["requested_horizon_days"] = requested_horizon_days
             selected["requested_lookback_months"] = requested_lookback_months
+            selected["requested_segment_key"] = requested_segment_key
             selected["market_regime_fallback_used"] = False
             selected["fallback_level"] = "exact_run_id"
             selected["status"] = "selected" if selected.get("eligible_for_live", True) else "blocked_by_governance"
             return selected
 
-        eligible_exact = [
-            row
-            for row in parsed_rows
-            if row.get("eligible_for_live", True)
-            and row.get("market_regime_mode") == requested_market_regime_mode
-        ]
-        eligible_fallback = [
-            row
-            for row in parsed_rows
-            if row.get("eligible_for_live", True)
-            and row.get("market_regime_mode") == "all"
-        ]
-        blocked_exact = [
-            row
-            for row in parsed_rows
-            if not row.get("eligible_for_live", True)
-            and row.get("market_regime_mode") == requested_market_regime_mode
-        ]
-        blocked_fallback = [
-            row
-            for row in parsed_rows
-            if not row.get("eligible_for_live", True)
-            and row.get("market_regime_mode") == "all"
-        ]
+        def _matches_regime(row: Mapping[str, Any], regime_mode: str) -> bool:
+            return str(row.get("market_regime_mode") or "all").strip().lower() == regime_mode
+
+        def _matches_exact_horizon(row: Mapping[str, Any]) -> bool:
+            return requested_horizon_days is None or _optional_int(row.get("horizon_days")) == requested_horizon_days
+
+        def _matches_exact_lookback(row: Mapping[str, Any]) -> bool:
+            return requested_lookback_months is None or _optional_int(row.get("lookback_months")) == requested_lookback_months
+
+        def _horizon_distance(row: Mapping[str, Any]) -> int:
+            value = _optional_int(row.get("horizon_days"))
+            if requested_horizon_days is None:
+                return 0
+            if value is None:
+                return 10_000
+            return abs(value - requested_horizon_days)
+
+        def _lookback_distance(row: Mapping[str, Any]) -> int:
+            value = _optional_int(row.get("lookback_months"))
+            if requested_lookback_months is None:
+                return 0
+            if value is None:
+                return 10_000
+            return abs(value - requested_lookback_months)
+
+        def _sorted_rows(
+            candidates: list[dict[str, Any]],
+            *,
+            sort_by_horizon: bool = False,
+            sort_by_lookback: bool = False,
+        ) -> list[dict[str, Any]]:
+            return sorted(
+                candidates,
+                key=lambda row: (
+                    _horizon_distance(row) if sort_by_horizon else 0,
+                    _lookback_distance(row) if sort_by_lookback else 0,
+                    int(row.get("_order_index") or 0),
+                ),
+            )
+
+        def _level_candidates(
+            rows_subset: list[dict[str, Any]],
+            *,
+            regime_mode: str,
+            exact_horizon: bool | None = None,
+            exact_lookback: bool | None = None,
+            sort_by_horizon: bool = False,
+            sort_by_lookback: bool = False,
+        ) -> list[dict[str, Any]]:
+            filtered_subset = [row for row in rows_subset if _matches_regime(row, regime_mode)]
+            if exact_horizon is not None:
+                filtered_subset = [row for row in filtered_subset if _matches_exact_horizon(row) is exact_horizon]
+            if exact_lookback is not None:
+                filtered_subset = [row for row in filtered_subset if _matches_exact_lookback(row) is exact_lookback]
+            return _sorted_rows(
+                filtered_subset,
+                sort_by_horizon=sort_by_horizon,
+                sort_by_lookback=sort_by_lookback,
+            )
+
+        eligible_rows = [row for row in parsed_rows if row.get("eligible_for_live", True)]
+        blocked_rows = [row for row in parsed_rows if not row.get("eligible_for_live", True)]
+        regime_modes = [requested_market_regime_mode]
+        if requested_market_regime_mode != "all":
+            regime_modes.append("all")
+
+        selection_levels: list[tuple[str, str, list[dict[str, Any]]]] = []
+        blocked_levels: list[tuple[str, str, list[dict[str, Any]]]] = []
+
+        for regime_mode in regime_modes:
+            level_prefix = "exact_segment" if regime_mode == requested_market_regime_mode else "regime_all"
+            selection_levels.append(
+                (
+                    level_prefix,
+                    "selected",
+                    _level_candidates(
+                        eligible_rows,
+                        regime_mode=regime_mode,
+                        exact_horizon=True,
+                        exact_lookback=True,
+                    ),
+                )
+            )
+            blocked_levels.append(
+                (
+                    f"blocked_governance_{level_prefix}",
+                    "blocked_by_governance",
+                    _level_candidates(
+                        blocked_rows,
+                        regime_mode=regime_mode,
+                        exact_horizon=True,
+                        exact_lookback=True,
+                    ),
+                )
+            )
+
+        if requested_lookback_months is not None:
+            for regime_mode in regime_modes:
+                level_prefix = (
+                    "same_regime_nearest_window"
+                    if regime_mode == requested_market_regime_mode
+                    else "regime_all_nearest_window"
+                )
+                selection_levels.append(
+                    (
+                        level_prefix,
+                        "selected",
+                        _level_candidates(
+                            eligible_rows,
+                            regime_mode=regime_mode,
+                            exact_horizon=True,
+                            exact_lookback=False,
+                            sort_by_lookback=True,
+                        ),
+                    )
+                )
+                blocked_levels.append(
+                    (
+                        f"blocked_governance_{level_prefix}",
+                        "blocked_by_governance",
+                        _level_candidates(
+                            blocked_rows,
+                            regime_mode=regime_mode,
+                            exact_horizon=True,
+                            exact_lookback=False,
+                            sort_by_lookback=True,
+                        ),
+                    )
+                )
+
+        if requested_horizon_days is not None:
+            for regime_mode in regime_modes:
+                level_prefix = (
+                    "same_regime_nearest_horizon"
+                    if regime_mode == requested_market_regime_mode
+                    else "regime_all_nearest_horizon"
+                )
+                selection_levels.append(
+                    (
+                        level_prefix,
+                        "selected",
+                        _level_candidates(
+                            eligible_rows,
+                            regime_mode=regime_mode,
+                            exact_horizon=False,
+                            exact_lookback=True,
+                            sort_by_horizon=True,
+                        ),
+                    )
+                )
+                blocked_levels.append(
+                    (
+                        f"blocked_governance_{level_prefix}",
+                        "blocked_by_governance",
+                        _level_candidates(
+                            blocked_rows,
+                            regime_mode=regime_mode,
+                            exact_horizon=False,
+                            exact_lookback=True,
+                            sort_by_horizon=True,
+                        ),
+                    )
+                )
+
+        if requested_horizon_days is not None and requested_lookback_months is not None:
+            for regime_mode in regime_modes:
+                level_prefix = (
+                    "same_regime_nearest_segment"
+                    if regime_mode == requested_market_regime_mode
+                    else "regime_all_nearest_segment"
+                )
+                selection_levels.append(
+                    (
+                        level_prefix,
+                        "selected",
+                        _level_candidates(
+                            eligible_rows,
+                            regime_mode=regime_mode,
+                            exact_horizon=False,
+                            exact_lookback=False,
+                            sort_by_horizon=True,
+                            sort_by_lookback=True,
+                        ),
+                    )
+                )
+                blocked_levels.append(
+                    (
+                        f"blocked_governance_{level_prefix}",
+                        "blocked_by_governance",
+                        _level_candidates(
+                            blocked_rows,
+                            regime_mode=regime_mode,
+                            exact_horizon=False,
+                            exact_lookback=False,
+                            sort_by_horizon=True,
+                            sort_by_lookback=True,
+                        ),
+                    )
+                )
+
         selected = None
         fallback_level = "static_weights"
         status = "missing"
-        if eligible_exact:
-            selected = eligible_exact[0]
-            fallback_level = "exact_segment"
-            status = "selected"
-        elif requested_market_regime_mode != "all" and eligible_fallback:
-            selected = eligible_fallback[0]
-            fallback_level = "regime_all"
-            status = "selected"
-        elif blocked_exact:
-            selected = blocked_exact[0]
-            fallback_level = "blocked_governance_exact_segment"
-            status = "blocked_by_governance"
-        elif requested_market_regime_mode != "all" and blocked_fallback:
-            selected = blocked_fallback[0]
-            fallback_level = "blocked_governance_regime_all"
-            status = "blocked_by_governance"
+        for level_name, level_status, level_rows in [*selection_levels, *blocked_levels]:
+            if level_rows:
+                selected = level_rows[0]
+                fallback_level = level_name
+                status = level_status
+                break
         if selected is None:
             return None
         selected["requested_market_regime_mode"] = requested_market_regime_mode
         selected["requested_horizon_days"] = requested_horizon_days
         selected["requested_lookback_months"] = requested_lookback_months
-        selected["market_regime_fallback_used"] = fallback_level == "regime_all"
+        selected["requested_segment_key"] = requested_segment_key
+        selected["market_regime_fallback_used"] = fallback_level not in {"exact_segment", "exact_run_id"}
         selected["fallback_level"] = fallback_level
         selected["status"] = status
         return selected
