@@ -9,6 +9,8 @@ import pytest
 
 from risk_management import cli
 from risk_management.models import AccountRiskSnapshot
+from service.market.models import MarketRegimeSnapshot
+
 
 def test_cli_importable():
     assert hasattr(cli, "__doc__")
@@ -63,7 +65,7 @@ def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypa
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl):
+        def __init__(self, config, pnl, circuit_breaker=None):
             captured["config"] = config
             captured["pnl"] = pnl
 
@@ -127,7 +129,7 @@ def test_cli_main_treats_default_account_as_implicit_and_falls_back(monkeypatch)
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl):
+        def __init__(self, config, pnl, circuit_breaker=None):
             captured["config"] = config
             captured["pnl"] = pnl
 
@@ -191,7 +193,7 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl):
+        def __init__(self, config, pnl, circuit_breaker=None):
             captured["config"] = config
             captured["pnl"] = pnl
 
@@ -259,7 +261,7 @@ def test_cli_main_accepts_min_position_notional_argument(monkeypatch) -> None:
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl):
+        def __init__(self, config, pnl, circuit_breaker=None):
             captured["config"] = config
 
         def build(self, candidates, prices, predictions, win_rates, return_matrix):
@@ -327,7 +329,7 @@ def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl):
+        def __init__(self, config, pnl, circuit_breaker=None):
             captured["config"] = config
             captured["pnl"] = pnl
 
@@ -391,7 +393,7 @@ def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
             return pd.DataFrame()
 
     class _FakeBuilder:
-        def __init__(self, config, pnl):
+        def __init__(self, config, pnl, circuit_breaker=None):
             self.progress_callback = None
 
         def build(self, candidates, prices, predictions, win_rates, return_matrix):
@@ -428,5 +430,132 @@ def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
     assert any(payload.get("progress_phase") == "build_portfolio" for payload in live_payloads)
     assert any(payload.get("progress_phase") == "persist_results" for payload in live_payloads)
     assert final_payload["trade_date"] == "2026-05-01"
+
+
+def test_cli_main_applies_market_regime_overrides_to_builder(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {}
+
+        def load_candidates_asof(self, trade_date):
+            return []
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            return {}
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame()
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl, circuit_breaker=None):
+            captured["config"] = config
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            return []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+    monkeypatch.setattr(
+        cli,
+        "_resolve_market_regime_snapshot",
+        lambda trade_date, effective_equity, repo: MarketRegimeSnapshot(
+            trade_date=trade_date,
+            mode="capital_preservation",
+            risk_multiplier=0.5,
+            effective_max_positions=2,
+            enforced_min_notional=155.0,
+            max_tickers_per_sector=1,
+        ),
+    )
+
+    cli.main(["--trade-date", "2026-05-01", "--dry-run"])
+
+    assert captured["config"].risk_multiplier == pytest.approx(0.5)
+    assert captured["config"].effective_max_positions == 2
+    assert captured["config"].effective_min_notional == pytest.approx(155.0)
+    assert captured["config"].max_tickers_per_sector == 1
+    assert captured["summary"]["regime_snapshot_applied"] is True
+    assert captured["summary"]["regime_mode"] == "capital_preservation"
+
+
+def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> None:
+    captured: dict[str, object] = {"build_called": False}
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, account_id, trade_date):
+            return None
+
+        def load_account_equity_breakdown(self, account_id, trade_date):
+            return {}
+
+        def load_candidates_asof(self, trade_date):
+            from risk_management.models import CandidateScore
+
+            return [CandidateScore("AAPL", "Tech", 0.9), CandidateScore("MSFT", "Tech", 0.8)]
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            raise AssertionError("Les prix ne doivent pas être chargés si le régime bloque les entrées")
+
+        def load_predictions_asof(self, symbols, trade_date):
+            raise AssertionError("Les prédictions ne doivent pas être chargées si le régime bloque les entrées")
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            raise AssertionError("Les win rates ne doivent pas être chargés si le régime bloque les entrées")
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            raise AssertionError("La matrice de rendements ne doit pas être chargée si le régime bloque les entrées")
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl, circuit_breaker=None):
+            captured["build_called"] = True
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            captured["build_called"] = True
+            return []
+
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(cli, "persist_decisions", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_portfolio_targets", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
+    monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
+    monkeypatch.setattr(
+        cli,
+        "_resolve_market_regime_snapshot",
+        lambda trade_date, effective_equity, repo: MarketRegimeSnapshot(
+            trade_date=trade_date,
+            mode="close_only",
+            allow_new_entries=False,
+            reasons=("sentiment_critical",),
+        ),
+    )
+
+    cli.main(["--trade-date", "2026-05-01", "--dry-run"])
+
+    assert captured["build_called"] is False
+    assert captured["summary"]["entries_blocked_by_regime"] == 2
+    assert captured["summary"]["regime_allow_new_entries"] is False
+    assert captured["summary"]["regime_mode"] == "close_only"
 
 

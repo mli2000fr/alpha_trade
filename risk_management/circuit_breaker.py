@@ -8,7 +8,8 @@ est lazily importée pour éviter de polluer les imports du moteur risk.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any
 
 from risk_management.config import RiskConfig
 
@@ -21,6 +22,15 @@ class PnLSnapshot:
     portfolio_high_watermark: float | None = None
     portfolio_current_value: float | None = None
     daily_pnl: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CircuitBreakerStatus:
+    """Statut évalué du circuit breaker, sans effet de bord."""
+
+    active: bool
+    trigger: str | None = None
+    payload: dict[str, Any] | None = None
 
 
 def _try_send_alert(event: str, payload: dict) -> None:
@@ -38,27 +48,57 @@ class CircuitBreaker:
     def __init__(self, config: RiskConfig, pnl: PnLSnapshot | None = None) -> None:
         self._cfg = config
         self._pnl = pnl or PnLSnapshot()
+        self._last_notified_signature: str | None = None
+
+    def status(self) -> CircuitBreakerStatus:
+        """Évalue le statut courant sans journalisation ni notification."""
+        drawdown_status = self._evaluate_drawdown()
+        if drawdown_status.active:
+            return drawdown_status
+        daily_loss_status = self._evaluate_daily_loss()
+        if daily_loss_status.active:
+            return daily_loss_status
+        return CircuitBreakerStatus(active=False)
 
     def is_active(self) -> bool:
         """Retourne True si un circuit breaker est déclenché."""
-        if self._check_drawdown():
-            return True
-        if self._check_daily_loss():
-            return True
-        return False
+        return self.status().active
+
+    def notify_if_active(self) -> bool:
+        """Envoie au plus une alerte par statut déclenché."""
+        status = self.status()
+        if not status.active or not status.trigger or not status.payload:
+            return False
+        signature = f"{status.trigger}:{status.payload}"
+        if signature == self._last_notified_signature:
+            return False
+        self._last_notified_signature = signature
+        if status.trigger == "drawdown":
+            LOGGER.warning(
+                "Circuit breaker drawdown: %.2f%% >= seuil %.2f%%",
+                float(status.payload["drawdown_pct"]),
+                float(status.payload["threshold_pct"]),
+            )
+        elif status.trigger == "daily_loss":
+            LOGGER.warning(
+                "Circuit breaker daily loss: %.2f%% >= seuil %.2f%%",
+                float(status.payload["daily_loss_pct"]),
+                float(status.payload["threshold_pct"]),
+            )
+        _try_send_alert(event="circuit_breaker_fired", payload=status.payload)
+        return True
 
     # ------------------------------------------------------------------
-    def _check_drawdown(self) -> bool:
+    def _evaluate_drawdown(self) -> CircuitBreakerStatus:
         hwm = self._pnl.portfolio_high_watermark
         cur = self._pnl.portfolio_current_value
         if hwm is None or cur is None or hwm <= 0:
-            return False
+            return CircuitBreakerStatus(active=False)
         dd = (hwm - cur) / hwm
         if dd >= self._cfg.max_portfolio_drawdown_pct:
-            LOGGER.warning("Circuit breaker drawdown: %.2f%% >= seuil %.2f%%", dd * 100, self._cfg.max_portfolio_drawdown_pct * 100)
-            # Sprint S3 / A-013 — alerte email best-effort.
-            _try_send_alert(
-                event="circuit_breaker_fired",
+            return CircuitBreakerStatus(
+                active=True,
+                trigger="drawdown",
                 payload={
                     "trigger": "drawdown",
                     "drawdown_pct": round(dd * 100, 2),
@@ -67,22 +107,20 @@ class CircuitBreaker:
                     "portfolio_current_value": cur,
                 },
             )
-            return True
-        return False
+        return CircuitBreakerStatus(active=False)
 
-    def _check_daily_loss(self) -> bool:
+    def _evaluate_daily_loss(self) -> CircuitBreakerStatus:
         daily = self._pnl.daily_pnl
         if daily is None:
-            return False
+            return CircuitBreakerStatus(active=False)
         equity = self._cfg.account_equity
         if equity <= 0:
-            return False
+            return CircuitBreakerStatus(active=False)
         loss_pct = abs(min(daily, 0.0)) / equity
         if loss_pct >= self._cfg.max_daily_loss_pct:
-            LOGGER.warning("Circuit breaker daily loss: %.2f%% >= seuil %.2f%%", loss_pct * 100, self._cfg.max_daily_loss_pct * 100)
-            # Sprint S3 / A-013 — alerte email best-effort.
-            _try_send_alert(
-                event="circuit_breaker_fired",
+            return CircuitBreakerStatus(
+                active=True,
+                trigger="daily_loss",
                 payload={
                     "trigger": "daily_loss",
                     "daily_loss_pct": round(loss_pct * 100, 2),
@@ -91,5 +129,4 @@ class CircuitBreaker:
                     "account_equity": equity,
                 },
             )
-            return True
-        return False
+        return CircuitBreakerStatus(active=False)

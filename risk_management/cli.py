@@ -6,6 +6,7 @@ import logging
 from collections import Counter
 from datetime import date, datetime
 
+from common.config_loader import load_config
 from common.utils import configure_root_logging
 from core.run_summary import attach_live_progress, attach_schema_version
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
@@ -40,6 +41,57 @@ def _emit_live_progress(
             item=item,
         )
     )
+
+
+def _resolve_market_regime_snapshot(
+    trade_date: date,
+    effective_equity: float,
+    repo: RiskRepository,
+) -> object | None:
+    """Construit le snapshot de régime live si la couche est activée."""
+    try:
+        from service.market import (
+            DbSentimentScoreProvider,
+            build_default_macro_provider,
+            build_snapshot,
+            parse_market_regimes,
+        )
+    except Exception:
+        LOGGER.warning("Couche service.market indisponible pour risk_management.", exc_info=True)
+        return None
+
+    try:
+        yaml_cfg = load_config()
+        market_regimes_cfg = parse_market_regimes((yaml_cfg or {}).get("market_regimes"))
+        if not market_regimes_cfg.enabled:
+            return None
+        macro_provider = build_default_macro_provider(yaml_cfg)
+        sentiment_provider = DbSentimentScoreProvider(trade_date, engine=getattr(repo, "engine", None))
+        return build_snapshot(
+            trade_date,
+            config=market_regimes_cfg,
+            equity=float(effective_equity),
+            execution_context="live",
+            macro_provider=macro_provider,
+            sentiment_score_provider=sentiment_provider,
+        )
+    except Exception:
+        LOGGER.warning("Construction du snapshot de régime impossible côté risk_management.", exc_info=True)
+        return None
+
+
+def _serialize_market_regime_snapshot(snapshot: object | None) -> dict[str, object] | None:
+    """Sérialise un snapshot de régime pour le run_summary."""
+    if snapshot is None:
+        return None
+    payload: object | None = None
+    if hasattr(snapshot, "to_summary_dict"):
+        payload = snapshot.to_summary_dict()
+    elif hasattr(snapshot, "to_dict"):
+        payload = snapshot.to_dict()
+    elif isinstance(snapshot, dict):
+        payload = snapshot
+    return dict(payload) if isinstance(payload, dict) else None
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -95,7 +147,7 @@ def _print_summary(entries: list[PortfolioEntry], run_id: str, trade_date: date)
               f"score={e.score_used:.4f} ({e.score_source})  "
               f"conviction={e.conviction_score:.4f}  sizing={e.sizing_method}")
     if rejected:
-        print(f"  --- rejetes ---")
+        print("  --- rejetes ---")
         for e in rejected:
             print(f"  {e.symbol:<8} {e.decision:<10} raison={e.decision_reason}")
     print()
@@ -221,6 +273,19 @@ def main(args: list[str] | None = None) -> None:
             else RiskConfig.__dataclass_fields__["max_daily_loss_pct"].default
         ),
     )
+    regime_snapshot = _resolve_market_regime_snapshot(trade_date, effective_equity, repo)
+    regime_snapshot_payload = _serialize_market_regime_snapshot(regime_snapshot)
+    if regime_snapshot is not None:
+        from risk_management.regime_apply import apply_snapshot
+
+        config = apply_snapshot(config, regime_snapshot)
+    regime_allow_new_entries = bool(
+        getattr(regime_snapshot, "allow_new_entries", True) if regime_snapshot is not None else True
+    )
+    regime_entries_blocked = 0
+
+    circuit_breaker = CircuitBreaker(config, pnl_snapshot)
+    circuit_breaker.notify_if_active()
 
     LOGGER.info("Chargement des candidats…")
     candidates = repo.load_candidates_asof(trade_date)
@@ -234,22 +299,8 @@ def main(args: list[str] | None = None) -> None:
         unit="étapes",
     )
 
-    symbols = [c.symbol for c in candidates]
-    LOGGER.info("Chargement des prix et ATR…")
-    prices = repo.load_prices_asof(symbols, trade_date, atr_window=config.atr_window)
-    LOGGER.info("Prix charges pour %d symboles.", len(prices))
-    _emit_live_progress(
-        dict(progress_context, targeted_symbols=len(candidates), price_symbols=len(prices)),
-        current=3,
-        total=progress_total_steps,
-        label="🛡️ Progression risk management — chargement prix & ATR",
-        phase="load_prices",
-    )
-
-    # --- V2 data loading ---
-    LOGGER.info("Chargement des predictions ML…")
-    predictions = repo.load_predictions_asof(symbols, trade_date)
     from risk_management.ml_gate import resolve_ml_gate_state
+
     ml_gate_state = resolve_ml_gate_state(getattr(repo, "engine", None))
     LOGGER.info(
         "ML gate | enabled=%s reason=%s decision_id=%s drift_status=%s action=%s",
@@ -259,52 +310,115 @@ def main(args: list[str] | None = None) -> None:
         ml_gate_state.drift_status,
         ml_gate_state.action,
     )
-    LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
-    _emit_live_progress(
-        dict(progress_context, targeted_symbols=len(candidates), prediction_symbols=len(predictions)),
-        current=4,
-        total=progress_total_steps,
-        label="🛡️ Progression risk management — chargement des prédictions ML",
-        phase="load_predictions",
-    )
 
-    LOGGER.info("Chargement des win rates…")
-    win_rates = repo.load_win_rates_asof(symbols, trade_date)
-    LOGGER.info("Win rates charges pour %d symboles.", len(win_rates))
-    _emit_live_progress(
-        dict(progress_context, targeted_symbols=len(candidates), win_rate_symbols=len(win_rates)),
-        current=5,
-        total=progress_total_steps,
-        label="🛡️ Progression risk management — chargement des win rates",
-        phase="load_win_rates",
-    )
+    symbols = [c.symbol for c in candidates]
+    if regime_allow_new_entries:
+        LOGGER.info("Chargement des prix et ATR…")
+        prices = repo.load_prices_asof(symbols, trade_date, atr_window=config.atr_window)
+        LOGGER.info("Prix charges pour %d symboles.", len(prices))
+        _emit_live_progress(
+            dict(progress_context, targeted_symbols=len(candidates), price_symbols=len(prices)),
+            current=3,
+            total=progress_total_steps,
+            label="🛡️ Progression risk management — chargement prix & ATR",
+            phase="load_prices",
+        )
 
-    LOGGER.info("Chargement de la matrice de rendements…")
-    return_matrix = repo.load_return_matrix_asof(symbols, trade_date, config.correlation_lookback_days)
-    LOGGER.info("Matrice de rendements : %s", return_matrix.shape if not return_matrix.empty else "vide")
-    _emit_live_progress(
-        dict(
-            progress_context,
-            targeted_symbols=len(candidates),
-            return_matrix_rows=int(return_matrix.shape[0]) if not return_matrix.empty else 0,
-            return_matrix_columns=int(return_matrix.shape[1]) if not return_matrix.empty else 0,
-        ),
-        current=6,
-        total=progress_total_steps,
-        label="🛡️ Progression risk management — chargement de la matrice de rendements",
-        phase="load_return_matrix",
-    )
+        LOGGER.info("Chargement des predictions ML…")
+        predictions = repo.load_predictions_asof(symbols, trade_date)
+        LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
+        _emit_live_progress(
+            dict(progress_context, targeted_symbols=len(candidates), prediction_symbols=len(predictions)),
+            current=4,
+            total=progress_total_steps,
+            label="🛡️ Progression risk management — chargement des prédictions ML",
+            phase="load_predictions",
+        )
 
-    builder = PortfolioBuilder(config, pnl=pnl_snapshot)
-    builder.progress_callback = emit_run_summary
-    entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
-    _emit_live_progress(
-        dict(progress_context, targeted_symbols=len(candidates), built_entries=len(entries)),
-        current=7,
-        total=progress_total_steps,
-        label="🛡️ Progression risk management — portefeuille construit",
-        phase="build_portfolio",
-    )
+        LOGGER.info("Chargement des win rates…")
+        win_rates = repo.load_win_rates_asof(symbols, trade_date)
+        LOGGER.info("Win rates charges pour %d symboles.", len(win_rates))
+        _emit_live_progress(
+            dict(progress_context, targeted_symbols=len(candidates), win_rate_symbols=len(win_rates)),
+            current=5,
+            total=progress_total_steps,
+            label="🛡️ Progression risk management — chargement des win rates",
+            phase="load_win_rates",
+        )
+
+        LOGGER.info("Chargement de la matrice de rendements…")
+        return_matrix = repo.load_return_matrix_asof(symbols, trade_date, config.correlation_lookback_days)
+        LOGGER.info("Matrice de rendements : %s", return_matrix.shape if not return_matrix.empty else "vide")
+        _emit_live_progress(
+            dict(
+                progress_context,
+                targeted_symbols=len(candidates),
+                return_matrix_rows=int(return_matrix.shape[0]) if not return_matrix.empty else 0,
+                return_matrix_columns=int(return_matrix.shape[1]) if not return_matrix.empty else 0,
+            ),
+            current=6,
+            total=progress_total_steps,
+            label="🛡️ Progression risk management — chargement de la matrice de rendements",
+            phase="load_return_matrix",
+        )
+
+        builder = PortfolioBuilder(config, pnl=pnl_snapshot, circuit_breaker=circuit_breaker)
+        builder.progress_callback = emit_run_summary
+        entries = builder.build(candidates, prices, predictions, win_rates, return_matrix)
+        _emit_live_progress(
+            dict(progress_context, targeted_symbols=len(candidates), built_entries=len(entries)),
+            current=7,
+            total=progress_total_steps,
+            label="🛡️ Progression risk management — portefeuille construit",
+            phase="build_portfolio",
+        )
+    else:
+        regime_entries_blocked = len(candidates)
+        prices = {}
+        predictions = {}
+        win_rates = {}
+        entries = []
+        _emit_live_progress(
+            dict(progress_context, targeted_symbols=len(candidates), price_symbols=0),
+            current=3,
+            total=progress_total_steps,
+            label="🛡️ Progression risk management — chargement prix & ATR",
+            phase="load_prices",
+        )
+        _emit_live_progress(
+            dict(progress_context, targeted_symbols=len(candidates), prediction_symbols=0),
+            current=4,
+            total=progress_total_steps,
+            label="🛡️ Progression risk management — chargement des prédictions ML",
+            phase="load_predictions",
+        )
+        _emit_live_progress(
+            dict(progress_context, targeted_symbols=len(candidates), win_rate_symbols=0),
+            current=5,
+            total=progress_total_steps,
+            label="🛡️ Progression risk management — chargement des win rates",
+            phase="load_win_rates",
+        )
+        _emit_live_progress(
+            dict(progress_context, targeted_symbols=len(candidates), return_matrix_rows=0, return_matrix_columns=0),
+            current=6,
+            total=progress_total_steps,
+            label="🛡️ Progression risk management — chargement de la matrice de rendements",
+            phase="load_return_matrix",
+        )
+        LOGGER.warning(
+            "Le régime marché bloque les nouvelles entrées | mode=%s raisons=%s candidats_bloques=%d",
+            getattr(regime_snapshot, "mode", "unknown"),
+            list(getattr(regime_snapshot, "reasons", ()) or ()),
+            regime_entries_blocked,
+        )
+        _emit_live_progress(
+            dict(progress_context, targeted_symbols=len(candidates), built_entries=0, entries_blocked_by_regime=regime_entries_blocked),
+            current=7,
+            total=progress_total_steps,
+            label="🛡️ Progression risk management — portefeuille construit",
+            phase="build_portfolio",
+        )
 
     run_id = build_run_id()
     _print_summary(entries, run_id, trade_date)
@@ -374,7 +488,8 @@ def main(args: list[str] | None = None) -> None:
         if int(getattr(candidate, "selector_earnings_blackout", 0) or 0) > 0
     )
     rejected_for_atr_missing = int(sizing_method_counts.get("rejected_atr_missing", 0))
-    rejected_for_notional = int(sizing_method_counts.get("rejected_notional", 0))
+    rejected_for_notional_below_enforced = int(sizing_method_counts.get("rejected_notional_below_enforced", 0))
+    rejected_for_notional = int(sizing_method_counts.get("rejected_notional", 0)) + rejected_for_notional_below_enforced
     rejected_for_zero_shares = int(sizing_method_counts.get("rejected_zero_shares", 0))
     rejected_for_invalid_price = int(sizing_method_counts.get("rejected_invalid_price", 0))
     finished_at = datetime.now()
@@ -384,10 +499,12 @@ def main(args: list[str] | None = None) -> None:
         "started_at": started_at.isoformat(timespec="seconds"),
         "finished_at": finished_at.isoformat(timespec="seconds"),
         "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+        "loaded_candidates": len(candidates),
         "targeted_symbols": len(entries),
         "accepted_symbols": len(accepted_entries),
         "reduced_symbols": len(reduced_entries),
         "rejected_symbols": len(rejected_entries),
+        "entries_blocked_by_regime": regime_entries_blocked,
         "target_positions": len(retained_entries),
         "total_target_shares": int(sum(entry.approved_shares for entry in retained_entries)),
         "total_target_notional": round(total_target_notional, 2),
@@ -404,6 +521,7 @@ def main(args: list[str] | None = None) -> None:
         # Sprint S3 / A-010 — télémétrie sizing dédiée (visible IHM/CI).
         "rejected_for_atr_missing": rejected_for_atr_missing,
         "rejected_for_notional": rejected_for_notional,
+        "rejected_for_notional_below_enforced": rejected_for_notional_below_enforced,
         "rejected_for_zero_shares": rejected_for_zero_shares,
         "rejected_for_invalid_price": rejected_for_invalid_price,
         "sizing_method_counts": sizing_method_counts,
@@ -417,11 +535,22 @@ def main(args: list[str] | None = None) -> None:
             "max_portfolio_drawdown_pct": float(config.max_portfolio_drawdown_pct),
             "max_daily_loss_pct": float(config.max_daily_loss_pct),
         },
+        "risk_controls_effective": {
+            "risk_multiplier": float(config.risk_multiplier),
+            "effective_max_positions": int(config.effective_max_positions),
+            "effective_min_notional": float(config.effective_min_notional),
+            "max_tickers_per_sector": int(config.max_tickers_per_sector) if config.max_tickers_per_sector is not None else None,
+        },
         "dry_run": bool(config.dry_run),
         "effective_equity": round(float(effective_equity), 2),
         "account_equity": round(float(args.account_equity), 2),
         "account_snapshot_trade_date": account_snapshot.trade_date.isoformat() if account_snapshot is not None else None,
-        "circuit_breaker_active": CircuitBreaker(config, pnl_snapshot).is_active(),
+        "circuit_breaker_active": circuit_breaker.is_active(),
+        "regime_snapshot_applied": regime_snapshot is not None,
+        "regime_mode": regime_snapshot_payload.get("mode") if regime_snapshot_payload else None,
+        "regime_allow_new_entries": regime_allow_new_entries,
+        "regime_reasons": list(regime_snapshot_payload.get("reasons") or []) if regime_snapshot_payload else [],
+        "regime_snapshot": regime_snapshot_payload,
         # Phase 5.1.a — décomposition equity (cash + positions + dividendes ledger)
         "account_equity_breakdown": equity_breakdown,
         # Phase 5.1.b — pondérations conviction unifiées via core.conviction

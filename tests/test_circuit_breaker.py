@@ -62,6 +62,7 @@ def test_circuit_breaker_drawdown_calls_send_notification(monkeypatch) -> None:
     pnl = PnLSnapshot(portfolio_high_watermark=100_000, portfolio_current_value=84_000)
     cb = CircuitBreaker(_cfg(), pnl)
     assert cb.is_active() is True
+    assert cb.notify_if_active() is True
     assert len(calls) == 1
     assert calls[0]["event"] == "circuit_breaker_fired"
     assert calls[0]["payload"]["trigger"] == "drawdown"
@@ -78,6 +79,7 @@ def test_circuit_breaker_daily_loss_calls_send_notification(monkeypatch) -> None
     pnl = PnLSnapshot(daily_pnl=-5_500)
     cb = CircuitBreaker(_cfg(), pnl)
     assert cb.is_active() is True
+    assert cb.notify_if_active() is True
     assert len(calls) == 1
     assert calls[0]["event"] == "circuit_breaker_fired"
     assert calls[0]["payload"]["trigger"] == "daily_loss"
@@ -92,5 +94,24 @@ def test_circuit_breaker_no_trigger_no_notification(monkeypatch) -> None:
 
     cb = CircuitBreaker(_cfg())
     assert cb.is_active() is False
+    assert cb.notify_if_active() is False
     assert calls == []
+
+
+def test_circuit_breaker_notify_if_active_is_idempotent(monkeypatch) -> None:
+    import risk_management.circuit_breaker as cb_mod
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(cb_mod, "_try_send_alert", lambda event, payload: calls.append({"event": event, "payload": payload}))
+
+    cb = CircuitBreaker(
+        _cfg(),
+        PnLSnapshot(portfolio_high_watermark=100_000, portfolio_current_value=80_000),
+    )
+
+    assert cb.is_active() is True
+    assert cb.notify_if_active() is True
+    assert cb.notify_if_active() is False
+    assert len(calls) == 1
+
 

@@ -9,21 +9,21 @@ from risk_management.models import PriceInfo
 
 
 def _kelly_cfg(**overrides) -> RiskConfig:  # type: ignore[no-untyped-def]
-    defaults = dict(
-        account_equity=100_000,
-        risk_per_trade_pct=0.01,
-        atr_stop_multiple=2.0,
-        max_positions=10,
-        max_position_weight=0.10,
-        min_position_notional=500.0,
-        enable_kelly_sizing=True,
-        assumed_payoff_ratio=1.5,
-        kelly_fraction_multiplier=0.25,
-        min_effective_probability=0.52,
-        default_win_rate=0.55,
-        prediction_confidence_weight=0.60,
-        historical_win_rate_weight=0.40,
-    )
+    defaults = {
+        "account_equity": 100_000,
+        "risk_per_trade_pct": 0.01,
+        "atr_stop_multiple": 2.0,
+        "max_positions": 10,
+        "max_position_weight": 0.10,
+        "min_position_notional": 500.0,
+        "enable_kelly_sizing": True,
+        "assumed_payoff_ratio": 1.5,
+        "kelly_fraction_multiplier": 0.25,
+        "min_effective_probability": 0.52,
+        "default_win_rate": 0.55,
+        "prediction_confidence_weight": 0.60,
+        "historical_win_rate_weight": 0.40,
+    }
     defaults.update(overrides)
     return RiskConfig(**defaults)
 
@@ -88,7 +88,7 @@ def test_kelly_min_notional_rejection() -> None:
     pi = PriceInfo("AAPL", 150.0, 5.0)
     result = sizer.compute(pi, predicted_proba=0.55, historical_win_rate=0.55)
     assert result.proposed_shares == 0
-    assert result.method == "rejected"
+    assert result.method == "rejected_notional"
 
 
 @pytest.mark.unit
@@ -102,4 +102,35 @@ def test_fallback_equal_weight_when_no_data() -> None:
     result = sizer.compute(pi, predicted_proba=None, historical_win_rate=None)
     assert result.method == "kelly_only"
     assert result.proposed_shares >= 1
+
+
+@pytest.mark.unit
+def test_kelly_atr_cap_uses_risk_multiplier() -> None:
+    cfg = _kelly_cfg(risk_multiplier=0.5, max_position_weight=0.5)
+    sizer = KellySizer(cfg)
+    pi = PriceInfo("AAPL", 100.0, 2.0)
+
+    result = sizer.compute(pi, predicted_proba=0.90, historical_win_rate=0.80)
+
+    # Kelly très favorable, mais cap ATR piloté par risk_multiplier :
+    # budget = 100_000 * 1% * 0.5 = 500 ; risk/share = 2*2 = 4 ; cap = 125.
+    assert result.method == "kelly_atr"
+    assert result.proposed_shares == 125
+
+
+@pytest.mark.unit
+def test_kelly_uses_effective_min_notional_for_rejection() -> None:
+    cfg = _kelly_cfg(
+        account_equity=2_000.0,
+        min_position_notional=10.0,
+        enforce_min_notional=500.0,
+    )
+    sizer = KellySizer(cfg)
+    pi = PriceInfo("AAPL", 100.0, None)
+
+    result = sizer.compute(pi, predicted_proba=0.55, historical_win_rate=0.55)
+
+    assert result.proposed_shares == 0
+    assert result.method == "rejected_notional_below_enforced"
+
 

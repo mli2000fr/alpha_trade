@@ -30,7 +30,7 @@ class KellySizer:
         price = price_info.last_close
 
         if price <= 0:
-            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected")
+            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected_invalid_price")
 
         # 1. Probabilité effective
         pp = predicted_proba if predicted_proba is not None else cfg.default_win_rate
@@ -61,7 +61,7 @@ class KellySizer:
 
         # 6. Cap ATR
         if price_info.atr_20 is not None and price_info.atr_20 > 0:
-            risk_budget = cfg.account_equity * cfg.risk_per_trade_pct
+            risk_budget = cfg.account_equity * cfg.risk_per_trade_pct * max(0.0, cfg.risk_multiplier)
             risk_per_share = price_info.atr_20 * cfg.atr_stop_multiple
             atr_shares_cap = math.floor(risk_budget / risk_per_share)
             proposed = min(kelly_shares, atr_shares_cap)
@@ -74,12 +74,18 @@ class KellySizer:
         proposed = max(proposed, 0)
 
         # 8. Notional minimum
-        if proposed * price < cfg.min_position_notional:
+        min_notional = cfg.effective_min_notional
+        if proposed * price < min_notional:
             LOGGER.info("Notional Kelly insuffisant pour %s — rejet.", symbol)
-            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected")
+            method_rej = (
+                "rejected_notional_below_enforced"
+                if cfg.enforce_min_notional is not None
+                else "rejected_notional"
+            )
+            return SizingResult(symbol=symbol, proposed_shares=0, method=method_rej)
 
         if proposed < 1:
-            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected")
+            return SizingResult(symbol=symbol, proposed_shares=0, method="rejected_zero_shares")
 
         return SizingResult(symbol=symbol, proposed_shares=proposed, method=method)
 

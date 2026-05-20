@@ -211,6 +211,45 @@ class RiskRepository:
         except Exception:
             return None
 
+    def _load_latest_broker_account_snapshot_row(
+        self,
+        account_id: str,
+        trade_date: date,
+        *,
+        require_positive_equity: bool,
+    ) -> tuple[dict[str, Any] | None, set[str]]:
+        broker_columns = self._get_table_columns("broker_account_snapshots")
+        if not broker_columns:
+            return None, broker_columns
+
+        select_columns = [
+            column
+            for column in ("account_id", "cash", "settled_cash", "equity", "buying_power", "created_at")
+            if column in broker_columns
+        ]
+        where_clauses = ["account_id = :account_id", "DATE(created_at) <= :trade_date"]
+        params: dict[str, Any] = {"account_id": account_id, "trade_date": trade_date}
+        if "snapshot_kind" in broker_columns:
+            where_clauses.append("snapshot_kind = :snapshot_kind")
+            params["snapshot_kind"] = "preflight"
+        if require_positive_equity and "equity" in broker_columns:
+            where_clauses.append("equity IS NOT NULL AND equity > 0")
+        order_by = "created_at DESC"
+        if "id" in broker_columns:
+            order_by += ", id DESC"
+        stmt = text(
+            f"""
+            SELECT {", ".join(select_columns)}
+            FROM broker_account_snapshots
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY {order_by}
+            LIMIT 1
+            """
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt, params).mappings().first()
+        return (dict(row) if row is not None else None), broker_columns
+
     def load_prices(self, symbols: list[str], atr_window: int = 20, trade_date: date | None = None) -> dict[str, PriceInfo]:
         """Compatibilité API : charge les prix PIT à la date demandée."""
         return self.load_prices_asof(symbols, trade_date or date.today(), atr_window=atr_window)
@@ -464,7 +503,11 @@ class RiskRepository:
         account_id: str,
         trade_date: date,
     ) -> AccountRiskSnapshot | None:
-        broker_columns = self._get_table_columns("broker_account_snapshots")
+        row, broker_columns = self._load_latest_broker_account_snapshot_row(
+            account_id,
+            trade_date,
+            require_positive_equity=True,
+        )
         if not broker_columns:
             return None
 
@@ -476,19 +519,7 @@ class RiskRepository:
         # Hardening live : ignorer les snapshots dont l'equity est manquante ou ≤ 0
         # (cf. execution_engine.db_io.snapshot_broker_account & InvalidBrokerSnapshotError).
         where_clauses.append("equity IS NOT NULL AND equity > 0")
-        order_by = "created_at DESC"
-        if "id" in broker_columns:
-            order_by += ", id DESC"
 
-        latest_stmt = text(
-            f"""
-            SELECT account_id, cash, equity, buying_power, created_at
-            FROM broker_account_snapshots
-            WHERE {' AND '.join(where_clauses)}
-            ORDER BY {order_by}
-            LIMIT 1
-            """
-        )
         high_watermark_stmt = text(
             f"""
             SELECT MAX(equity) AS high_watermark
@@ -497,7 +528,6 @@ class RiskRepository:
             """
         )
         with self.engine.connect() as conn:
-            row = conn.execute(latest_stmt, params).mappings().first()
             if row is None:
                 LOGGER.warning(
                     "Aucun broker_account_snapshot exploitable (equity > 0) | account=%s trade_date=%s",
@@ -564,30 +594,19 @@ class RiskRepository:
 
         # 1) account snapshot
         try:
-            if self._get_table_columns("broker_account_snapshots"):
-                stmt = text(
-                    """
-                    SELECT equity, cash, settled_cash, created_at
-                    FROM broker_account_snapshots
-                    WHERE account_id = :account_id
-                      AND DATE(created_at) <= :trade_date
-                    ORDER BY created_at DESC, id DESC
-                    LIMIT 1
-                    """
+            row, broker_columns = self._load_latest_broker_account_snapshot_row(
+                resolved_account_id,
+                trade_date,
+                require_positive_equity=True,
+            )
+            if broker_columns and row is not None:
+                breakdown["cash"] = float(row["cash"]) if row.get("cash") is not None else None
+                breakdown["settled_cash"] = (
+                    float(row["settled_cash"]) if row.get("settled_cash") is not None else None
                 )
-                with self.engine.connect() as conn:
-                    row = conn.execute(
-                        stmt,
-                        {"account_id": resolved_account_id, "trade_date": trade_date},
-                    ).mappings().first()
-                if row is not None:
-                    breakdown["cash"] = float(row["cash"]) if row.get("cash") is not None else None
-                    breakdown["settled_cash"] = (
-                        float(row["settled_cash"]) if row.get("settled_cash") is not None else None
-                    )
-                    if row.get("created_at") is not None:
-                        breakdown["snapshot_at"] = str(row["created_at"])
-                    breakdown["source"] = "broker_account_snapshots"
+                if row.get("created_at") is not None:
+                    breakdown["snapshot_at"] = str(row["created_at"])
+                breakdown["source"] = "broker_account_snapshots"
         except Exception:
             LOGGER.warning("load_account_equity_breakdown: account snapshot fail", exc_info=True)
 
@@ -631,11 +650,15 @@ class RiskRepository:
             ledger_columns = self._get_table_columns("portfolio_cash_ledger")
             if ledger_columns:
                 has_account_id = "account_id" in ledger_columns
+                has_created_at = "created_at" in ledger_columns
                 where_clause = "entry_type = 'dividend_credit'"
-                params = {}
+                params: dict[str, Any] = {}
                 if has_account_id:
                     where_clause += " AND (account_id = :account_id OR account_id IS NULL)"
                     params["account_id"] = resolved_account_id
+                if has_created_at:
+                    where_clause += " AND DATE(created_at) <= :trade_date"
+                    params["trade_date"] = trade_date
                 stmt = text(f"SELECT COALESCE(SUM(amount), 0) AS total FROM portfolio_cash_ledger WHERE {where_clause}")
                 with self.engine.connect() as conn:
                     row = conn.execute(stmt, params).mappings().first()

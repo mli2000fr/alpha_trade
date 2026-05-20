@@ -501,3 +501,39 @@ def test_write_portfolio_targets_persists_walk_forward_metadata() -> None:
     assert row["decision_rank"] == 1
     assert row["stop_price_initial"] == 140.0
 
+
+@pytest.mark.unit
+def test_load_account_equity_breakdown_filters_future_dividends() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS portfolio_cash_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id VARCHAR(32),
+                entry_type VARCHAR(30),
+                amount DOUBLE,
+                created_at TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            INSERT INTO broker_account_snapshots (
+                account_id, snapshot_kind, cash, equity, buying_power, created_at
+            ) VALUES
+                ('paper', 'preflight', 1000, 1100, 1500, '2026-04-18 20:00:00')
+        """))
+        conn.execute(text("""
+            INSERT INTO portfolio_cash_ledger (account_id, entry_type, amount, created_at)
+            VALUES
+                ('paper', 'dividend_credit', 10.0, '2026-04-18 10:00:00'),
+                ('paper', 'dividend_credit', 20.0, '2026-04-19 10:00:00')
+        """))
+    repo = RiskRepository(engine=engine)
+
+    breakdown = repo.load_account_equity_breakdown("paper", date(2026, 4, 18))
+
+    assert breakdown["cash"] == 1000.0
+    assert breakdown["dividends_ledger"] == 10.0
+    assert breakdown["source"] == "broker_account_snapshots"
+
+

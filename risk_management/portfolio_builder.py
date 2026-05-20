@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from pandas import DataFrame
 
+from core.conviction import ConvictionWeights
+from core.conviction import fuse as _fuse_conviction
 from core.run_summary import attach_live_progress
+from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
 from risk_management.config import RiskConfig
 from risk_management.constraints import PortfolioState
-from core.conviction import ConvictionWeights, fuse as _fuse_conviction
 from risk_management.correlation_filter import filter_correlated
 from risk_management.kelly import KellySizer
 from risk_management.models import (
@@ -22,7 +24,6 @@ from risk_management.models import (
 )
 from risk_management.position_sizer import PositionSizer
 from risk_management.risk_checker import RiskCheckerImpl
-from risk_management.circuit_breaker import PnLSnapshot
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,11 +31,17 @@ LOGGER = logging.getLogger(__name__)
 class PortfolioBuilder:
     """Orchestre sizing + contraintes pour construire le portefeuille cible."""
 
-    def __init__(self, config: RiskConfig, pnl: PnLSnapshot | None = None) -> None:
+    def __init__(
+        self,
+        config: RiskConfig,
+        pnl: PnLSnapshot | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
+    ) -> None:
         self._cfg = config
         self._sizer = PositionSizer(config)
         self._kelly_sizer = KellySizer(config) if config.enable_kelly_sizing else None
         self._pnl = pnl
+        self._circuit_breaker = circuit_breaker
         self.progress_callback: Callable[[dict[str, object]], None] | None = None
 
     def _emit_progress(
@@ -68,7 +75,7 @@ class PortfolioBuilder:
         prices: dict[str, PriceInfo],
         predictions: dict[str, PredictionInfo] | None = None,
         win_rates: dict[str, WinRateInfo] | None = None,
-        return_matrix: Optional[DataFrame] = None,
+        return_matrix: DataFrame | None = None,
     ) -> list[PortfolioEntry]:
         """Construit la liste des PortfolioEntry."""
         predictions = predictions or {}
@@ -191,7 +198,13 @@ class PortfolioBuilder:
         # 4. Sizing + contraintes
         sector_map = {c.symbol: c.sector for c in candidates}
         state = PortfolioState()
-        checker = RiskCheckerImpl(self._cfg, state=state, pnl=self._pnl, sector_map=sector_map)
+        checker = RiskCheckerImpl(
+            self._cfg,
+            state=state,
+            pnl=self._pnl,
+            sector_map=sector_map,
+            circuit_breaker=self._circuit_breaker,
+        )
         equity = self._cfg.account_equity
         accepted_rank = 0
 

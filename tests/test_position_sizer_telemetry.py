@@ -13,7 +13,6 @@ Vérifie que :
 from __future__ import annotations
 
 import sys
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -24,7 +23,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from risk_management import cli as risk_cli
 from risk_management.config import RiskConfig
 from risk_management.models import (
-    AccountRiskSnapshot,
     CandidateScore,
     PriceInfo,
 )
@@ -132,4 +130,73 @@ def test_run_summary_contains_rejection_telemetry(stub_repo_with_rejects):
     assert final["rejected_for_notional"] >= 4
     assert isinstance(final["sizing_method_counts"], dict)
     assert sum(final["sizing_method_counts"].values()) == final["targeted_symbols"]
+
+
+def test_run_summary_aggregates_rejected_notional_below_enforced(monkeypatch) -> None:
+    from risk_management.models import PortfolioEntry
+
+    captured: dict[str, object] = {}
+
+    class _FakeRepo:
+        def load_account_risk_snapshot(self, *_):
+            return None
+
+        def load_account_equity_breakdown(self, *_):
+            return {}
+
+        def load_candidates_asof(self, _trade_date):
+            return []
+
+        def load_prices_asof(self, symbols, trade_date, atr_window=20):
+            return {}
+
+        def load_predictions_asof(self, symbols, trade_date):
+            return {}
+
+        def load_win_rates_asof(self, symbols, trade_date):
+            return {}
+
+        def load_return_matrix_asof(self, symbols, trade_date, lookback_days):
+            return pd.DataFrame()
+
+    class _FakeBuilder:
+        def __init__(self, config, pnl=None, circuit_breaker=None):
+            self.progress_callback = None
+
+        def build(self, candidates, prices, predictions, win_rates, return_matrix):
+            return [
+                PortfolioEntry(
+                    symbol="AAPL",
+                    sector="Tech",
+                    entry_price=100.0,
+                    score_used=0.9,
+                    score_source="x",
+                    atr_20=None,
+                    proposed_shares=0,
+                    approved_shares=0,
+                    target_notional=0.0,
+                    target_weight=0.0,
+                    decision="REJECTED",
+                    decision_reason="sizing insuffisant",
+                    sizing_method="rejected_notional_below_enforced",
+                )
+            ]
+
+    monkeypatch.setattr(risk_cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(risk_cli, "PortfolioBuilder", _FakeBuilder)
+    monkeypatch.setattr(risk_cli, "configure_root_logging", lambda **_: None)
+    monkeypatch.setattr(risk_cli, "persist_run_business_summary", lambda **kw: captured.setdefault("summary", kw["summary"]))
+    monkeypatch.setattr(risk_cli, "emit_run_summary", lambda payload: None)
+    monkeypatch.setattr(risk_cli, "_print_summary", lambda entries, run_id, trade_date: None)
+    monkeypatch.setattr(risk_cli, "_resolve_market_regime_snapshot", lambda trade_date, effective_equity, repo: None)
+
+    risk_cli.main([
+        "--trade-date", "2026-05-06",
+        "--dry-run",
+    ])
+
+    summary = captured["summary"]
+    assert summary["rejected_for_notional_below_enforced"] == 1
+    assert summary["rejected_for_notional"] == 1
+
 

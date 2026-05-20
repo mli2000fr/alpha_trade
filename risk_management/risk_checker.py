@@ -19,10 +19,11 @@ class RiskCheckerImpl:
         state: PortfolioState | None = None,
         pnl: PnLSnapshot | None = None,
         sector_map: dict[str, str] | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
     ) -> None:
         self._cfg = config
         self._state = state or PortfolioState()
-        self._cb = CircuitBreaker(config, pnl)
+        self._cb = circuit_breaker or CircuitBreaker(config, pnl)
         self._constraints = ConstraintChecker(config)
         self._sector_map: dict[str, str] = sector_map or {}
 
