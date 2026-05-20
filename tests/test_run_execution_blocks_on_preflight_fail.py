@@ -10,7 +10,6 @@ Couvre :
 """
 from __future__ import annotations
 
-import importlib
 import sys
 import types
 from pathlib import Path
@@ -87,10 +86,15 @@ def test_skip_preflight_flag_bypasses_check(run_execution_module, monkeypatch, c
     fake_module = types.ModuleType("execution_engine.preflight")
     fake_module.run_preflight = _spy
     monkeypatch.setitem(sys.modules, "execution_engine.preflight", fake_module)
+    import execution_engine.db_io as execution_db_io
 
-    # On laisse `run` planter plus tard (DB indisponible) : on n'attend pas
-    # la fin, on vérifie juste que preflight n'a pas été invoqué.
-    with pytest.raises(BaseException):
+    def _stop_repo(*args, **kwargs):
+        raise RuntimeError("stop after skip-preflight")
+
+    monkeypatch.setattr(execution_db_io, "ExecutionRepository", _stop_repo)
+
+    # On force un arrêt déterministe juste après la branche preflight.
+    with pytest.raises(RuntimeError, match="stop after skip-preflight"):
         run_execution_module.run(
             mode="live",
             run_id=None,
@@ -120,9 +124,14 @@ def test_paper_mode_does_not_invoke_preflight(run_execution_module, monkeypatch)
     fake_module = types.ModuleType("execution_engine.preflight")
     fake_module.run_preflight = _spy
     monkeypatch.setitem(sys.modules, "execution_engine.preflight", fake_module)
+    import execution_engine.db_io as execution_db_io
 
-    # On accepte n'importe quelle exception aval (DB indispo en CI).
-    try:
+    def _stop_repo(*args, **kwargs):
+        raise RuntimeError("stop in paper mode")
+
+    monkeypatch.setattr(execution_db_io, "ExecutionRepository", _stop_repo)
+
+    with pytest.raises(RuntimeError, match="stop in paper mode"):
         run_execution_module.run(
             mode="paper",
             run_id=None,
@@ -130,8 +139,6 @@ def test_paper_mode_does_not_invoke_preflight(run_execution_module, monkeypatch)
             debug=False,
             account_id="default",
         )
-    except BaseException:
-        pass
     assert called["n"] == 0, "preflight ne doit pas être invoqué en mode paper"
 
 

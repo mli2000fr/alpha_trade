@@ -12,27 +12,28 @@ import json
 import logging
 import uuid
 from datetime import date, datetime
+from typing import cast
 
+from common.utils import configure_root_logging
+from core.feature_flags import FeatureFlags
 from core.run_summary import attach_schema_version
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from execution_engine.audit import build_execution_run_summary
-from execution_engine.config import ExecutionConfig
-from execution_engine.db_io import ExecutionRepository
 from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.config import ExecutionConfig, load_trailing_stop_config_from_yaml
+from execution_engine.db_io import ExecutionRepository
 from execution_engine.executor import ProductionExecutor
 from execution_engine.models import EventType
 from execution_engine.oco_manager import OcoManager
 from service.alpaca.trading_client import AlpacaTradingClient
-from common.utils import configure_root_logging
-
 
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 
 
 def _add_run_arguments(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--trade-date", type=str, default=None)
-    p.add_argument("--risk-run-id", type=str, default=None)
+    p.add_argument("--trade-date", "--date", dest="trade_date", type=str, default=None)
+    p.add_argument("--risk-run-id", "--run-id", dest="risk_run_id", type=str, default=None)
     p.add_argument("--broker-mode", type=str, default="paper", choices=["paper", "live"])
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--entry-order-type", type=str, default="market", choices=["market", "limit"])
@@ -52,10 +53,21 @@ def _add_run_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--max-slippage-bps", type=int, default=30)
     p.add_argument("--execution-batch-size", type=int, default=20)
     p.add_argument("--inter-order-delay-ms", type=int, default=350)
-    p.add_argument("--account-type", type=str, default="margin", choices=["margin", "cash"])
-    p.add_argument("--pdt-rule", type=str, default="auto", choices=["auto", "off"])
-    p.add_argument("--swing-only", action="store_true")
+    p.add_argument("--account-type", type=str, default="cash", choices=["margin", "cash"])
+    p.add_argument("--pdt-rule", type=str, default="off", choices=["auto", "off"])
+    p.add_argument("--swing-only", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--account", type=str, default=None, help="Account ID multi-comptes (défaut: premier compte)")
+    p.add_argument("--skip-preflight", action="store_true", default=False)
+    p.add_argument(
+        "--disable-sentiment",
+        action="store_true",
+        help="Désactive la fusion sentiment (ALPHA_TRADE_DISABLE_SENTIMENT=1).",
+    )
+    p.add_argument(
+        "--disable-ml",
+        action="store_true",
+        help="Désactive la consommation des prédictions ML (ALPHA_TRADE_DISABLE_ML=1).",
+    )
     p.add_argument("--log-level", type=str, default="INFO")
 
 
@@ -126,6 +138,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    _apply_feature_flags(args)
     configure_root_logging(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         log_path="./log/execution_engine.log",
@@ -144,10 +157,55 @@ def main(argv: list[str] | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _apply_feature_flags(args: argparse.Namespace) -> None:
+    flags = FeatureFlags(
+        disable_sentiment=bool(getattr(args, "disable_sentiment", False)),
+        disable_ml=bool(getattr(args, "disable_ml", False)),
+    )
+    flags.export_env()
+    if flags.disable_sentiment or flags.disable_ml:
+        LOGGER.warning(
+            "[feature_flags] disable_sentiment=%s disable_ml=%s",
+            flags.disable_sentiment,
+            flags.disable_ml,
+        )
+
+
+def _resolve_execution_mode(config: ExecutionConfig) -> str:
+    if config.dry_run:
+        return "simulate"
+    return str(config.broker_mode)
+
+
+def _run_live_preflight(args: argparse.Namespace) -> None:
+    if str(args.broker_mode) != "live" or bool(args.dry_run):
+        return
+    if bool(getattr(args, "skip_preflight", False)):
+        LOGGER.warning("[execution.cli] --skip-preflight actif : checks live contournés.")
+        return
+
+    from execution_engine.preflight import run_preflight
+
+    account_id = str(getattr(args, "account", "") or "").strip() or "default"
+    report = run_preflight(account_id=account_id, broker_mode="live")
+    if report.passed:
+        return
+
+    for check in getattr(report, "checks", ()):
+        if getattr(check, "status", "") == "fail":
+            LOGGER.error("[execution.cli] preflight fail | %s: %s", check.name, check.message)
+    raise SystemExit(2)
+
+
 def _run_execution(args: argparse.Namespace) -> None:
     trade_date_val: date | None = None
     if args.trade_date:
-        trade_date_val = date.fromisoformat(args.trade_date)
+        try:
+            trade_date_val = date.fromisoformat(args.trade_date)
+        except ValueError as exc:
+            raise SystemExit(f"Format de date invalide: {args.trade_date!r}. Utilise YYYY-MM-DD.") from exc
+
+    _run_live_preflight(args)
 
     config = ExecutionConfig(
         broker_mode=args.broker_mode,
@@ -173,13 +231,33 @@ def _run_execution(args: argparse.Namespace) -> None:
         pdt_rule=args.pdt_rule,
         swing_only=args.swing_only,
         account_id=args.account,
+        trailing_stop=load_trailing_stop_config_from_yaml(),
     )
+    resolved_account_id = config.resolved_account_id
 
     repo = ExecutionRepository()
-    client = AlpacaTradingClient(broker_mode=config.broker_mode, account_id=args.account)
+    client = AlpacaTradingClient(broker_mode=config.broker_mode, account_id=resolved_account_id)
     broker = BrokerAdapter(client, config)
     oco = OcoManager(broker, repo)
-    executor = ProductionExecutor(config, repo, broker, oco)
+
+    from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
+    from risk_management.config import RiskConfig
+
+    equity = 100_000.0
+    if not config.dry_run:
+        equity = broker.get_account_equity()
+        if equity is None or equity <= 0:
+            raise RuntimeError(f"Equity broker invalide en mode {config.broker_mode}: {equity!r}")
+    pnl = PnLSnapshot(portfolio_current_value=equity, portfolio_high_watermark=equity)
+    circuit_breaker = CircuitBreaker(RiskConfig(account_equity=max(float(equity), 1.0)), pnl)
+    executor = ProductionExecutor(
+        config,
+        repo,
+        broker,
+        oco,
+        circuit_breaker=circuit_breaker,
+        progress_callback=lambda summary: emit_run_summary(summary),
+    )
 
     started_at = datetime.now()
     metrics = executor.execute_run(risk_run_id=args.risk_run_id, trade_date=trade_date_val)
@@ -188,9 +266,9 @@ def _run_execution(args: argparse.Namespace) -> None:
         metrics,
         started_at=started_at,
         finished_at=finished_at,
-        execution_mode="cli",
+        execution_mode=_resolve_execution_mode(config),
         broker_mode=config.broker_mode,
-        account_id=args.account,
+        account_id=resolved_account_id,
         account_type=config.account_type,
         effective_pdt_rule=config.effective_pdt_rule,
         swing_only=config.swing_only,
@@ -207,10 +285,10 @@ def _run_execution(args: argparse.Namespace) -> None:
             summary_run_id=str(summary.get("run_id", "") or "") or None,
             entity_run_id=str(summary.get("run_id", "") or "") or None,
             parent_summary_run_id=args.risk_run_id,
-            account_id=args.account,
-            trade_date=summary.get("trade_date"),
-            started_at=summary.get("started_at"),
-            finished_at=summary.get("finished_at"),
+            account_id=resolved_account_id,
+            trade_date=cast(object, summary.get("trade_date")),
+            started_at=cast(object, summary.get("started_at")),
+            finished_at=cast(object, summary.get("finished_at")),
         )
     except Exception:
         LOGGER.debug("Persistance run_business_summaries indisponible pour execution cli.", exc_info=True)

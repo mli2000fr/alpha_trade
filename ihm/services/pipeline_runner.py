@@ -617,7 +617,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         name="Execution",
         desc="Run overnight canonique : snapshot des targets, requests, ordres broker, fills observés, reconstruction positions/lots, réconciliation actionnable et TCA. Photographie aussi l'état broker du compte.",
         tables="execution_runs, execution_targets_snapshot, execution_order_requests, execution_broker_orders, execution_broker_fills, execution_positions, execution_position_lots, execution_reconciliation_results, execution_events, broker_positions_snapshots, broker_account_snapshots",
-        deps="run_risk",
+        deps="risk_management",
         account_usage="alpaca",
     ),
     PipelineStepDefinition(

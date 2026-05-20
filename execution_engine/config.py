@@ -1,8 +1,12 @@
 """Configuration immutable du module execution_engine."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal, cast
+
+from common.config_loader import load_config
+from service.market import parse_trailing_stop
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +40,28 @@ class TrailingStopConfig:
             raise ValueError("trailing_stop.break_even_after_atr_multiple doit être > 0.")
 
 
+def load_trailing_stop_config_from_yaml(raw_config: Mapping[str, Any] | None = None) -> TrailingStopConfig:
+    """Charge la config ``risk_management.trailing_stop`` depuis ``config.yaml``.
+
+    Retourne toujours une instance valide de ``TrailingStopConfig`` ; en absence
+    de section YAML, on retombe explicitement sur les valeurs par défaut.
+    """
+    yaml_cfg = raw_config if raw_config is not None else load_config()
+    risk_management_cfg = yaml_cfg.get("risk_management", {}) if isinstance(yaml_cfg, Mapping) else {}
+    trailing_stop_cfg = risk_management_cfg.get("trailing_stop") if isinstance(risk_management_cfg, Mapping) else None
+    parsed = parse_trailing_stop(trailing_stop_cfg)
+    return TrailingStopConfig(
+        enabled=bool(parsed.enabled),
+        mode=cast(Literal["fixed", "dynamic_atr"], str(parsed.mode)),
+        atr_period=int(parsed.atr_period),
+        atr_multiplier=float(parsed.atr_multiplier),
+        fallback_fixed_pct=float(parsed.fallback_fixed_pct),
+        break_even_after_atr_multiple=float(parsed.break_even_after_atr_multiple),
+        eod_check_time_est=str(parsed.eod_check_time_est),
+        apply_to_manual_orphan_buys=bool(parsed.apply_to_manual_orphan_buys),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionConfig:
     """Paramètres d'exécution — immutable après construction."""
@@ -46,9 +72,9 @@ class ExecutionConfig:
     account_id: str | None = None  # None = compte par défaut
     execution_profile: Literal["overnight_cash_swing", "custom", "legacy_intraday"] = "overnight_cash_swing"
     submission_window: Literal["post_close", "pre_open", "both"] = "both"
-    account_type: Literal["margin", "cash"] = "margin"
-    pdt_rule: Literal["auto", "off"] = "auto"
-    swing_only: bool = False
+    account_type: Literal["margin", "cash"] = "cash"
+    pdt_rule: Literal["auto", "off"] = "off"
+    swing_only: bool = True
     pdt_equity_threshold: float = 25_000.0
     max_day_trades: int = 3
     cash_settlement_days: int = 1

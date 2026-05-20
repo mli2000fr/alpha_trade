@@ -1,16 +1,18 @@
 """Tests Phase 5.2.c — kill switch global ``python -m execution_engine cancel-all``."""
 from __future__ import annotations
 
+import os
+import sys
+import types
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from execution_engine import cli as exec_cli
-from execution_engine.broker_adapter import BrokerAdapter, CancelResult
+from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.config import ExecutionConfig
 from service.alpaca.trading_client import BrokerApiError
-
 
 # ---------------------------------------------------------------------------
 # CLI parsing — sous-commandes
@@ -23,6 +25,23 @@ def test_cli_default_subcommand_is_run() -> None:
     assert args.command == "run"
     assert args.broker_mode == "paper"
     assert args.dry_run is True
+
+
+def test_cli_run_defaults_align_with_cash_swing_profile() -> None:
+    args = exec_cli.parse_args(["--broker-mode", "paper"])
+
+    assert args.command == "run"
+    assert args.account_type == "cash"
+    assert args.pdt_rule == "off"
+    assert args.swing_only is True
+
+
+def test_cli_run_accepts_run_execution_aliases() -> None:
+    args = exec_cli.parse_args(["--date", "2026-04-19", "--run-id", "risk-123"])
+
+    assert args.command == "run"
+    assert args.trade_date == "2026-04-19"
+    assert args.risk_run_id == "risk-123"
 
 
 def test_cli_explicit_run_subcommand() -> None:
@@ -41,16 +60,62 @@ def test_cli_cancel_all_subcommand_parses() -> None:
 
 def test_cli_cancel_all_live_requires_confirm_account() -> None:
     """Phase 5.2.c — garde-fou live : --confirm-account doit valoir --account."""
-    with patch.object(exec_cli, "ExecutionRepository"), patch.object(exec_cli, "AlpacaTradingClient"):
-        with pytest.raises(SystemExit):
+    with (
+        patch.object(exec_cli, "ExecutionRepository"),
+        patch.object(exec_cli, "AlpacaTradingClient"),
+        pytest.raises(SystemExit),
+    ):
             exec_cli.main(["cancel-all", "--account", "live1", "--broker-mode", "live"])
 
-    with patch.object(exec_cli, "ExecutionRepository"), patch.object(exec_cli, "AlpacaTradingClient"):
-        with pytest.raises(SystemExit):
+    with (
+        patch.object(exec_cli, "ExecutionRepository"),
+        patch.object(exec_cli, "AlpacaTradingClient"),
+        pytest.raises(SystemExit),
+    ):
             exec_cli.main([
                 "cancel-all", "--account", "live1", "--broker-mode", "live",
                 "--confirm-account", "live2",
             ])
+
+
+def test_cli_main_exports_feature_flags_before_running(monkeypatch) -> None:
+    seen: dict[str, str | None] = {}
+
+    def _capture(args) -> None:
+        seen["disable_sentiment"] = os.environ.get("ALPHA_TRADE_DISABLE_SENTIMENT")
+        seen["disable_ml"] = os.environ.get("ALPHA_TRADE_DISABLE_ML")
+        assert args.command == "run"
+
+    monkeypatch.delenv("ALPHA_TRADE_DISABLE_SENTIMENT", raising=False)
+    monkeypatch.delenv("ALPHA_TRADE_DISABLE_ML", raising=False)
+    monkeypatch.setattr(exec_cli, "configure_root_logging", lambda **_: None)
+    monkeypatch.setattr(exec_cli, "_run_execution", _capture)
+
+    exec_cli.main(["--disable-sentiment", "--disable-ml"])
+
+    assert seen == {"disable_sentiment": "1", "disable_ml": "1"}
+
+
+def test_cli_run_aborts_on_live_preflight_fail(monkeypatch) -> None:
+    class _Check:
+        name = "alpaca_key"
+        status = "fail"
+        message = "missing ALPACA_API_KEY"
+
+    class _Report:
+        passed = False
+        checks = (_Check(),)
+
+    fake_module = types.ModuleType("execution_engine.preflight")
+    fake_module.run_preflight = lambda **_: _Report()
+
+    monkeypatch.setitem(sys.modules, "execution_engine.preflight", fake_module)
+    monkeypatch.setattr(exec_cli, "configure_root_logging", lambda **_: None)
+
+    with pytest.raises(SystemExit) as excinfo:
+        exec_cli.main(["run", "--broker-mode", "live", "--account", "default"])
+
+    assert excinfo.value.code == 2
 
 
 # ---------------------------------------------------------------------------
@@ -133,9 +198,11 @@ def test_cancel_all_persists_kill_switch_run_and_emits_summary(capsys) -> None:
     ]
     fake_client.cancel_order.return_value = True
 
-    with patch.object(exec_cli, "ExecutionRepository", return_value=fake_repo), \
-         patch.object(exec_cli, "AlpacaTradingClient", return_value=fake_client), \
-         patch.object(exec_cli, "configure_root_logging"):
+    with (
+        patch.object(exec_cli, "ExecutionRepository", return_value=fake_repo),
+        patch.object(exec_cli, "AlpacaTradingClient", return_value=fake_client),
+        patch.object(exec_cli, "configure_root_logging"),
+    ):
         exec_cli.main([
             "cancel-all", "--account", "paper1", "--broker-mode", "paper",
             "--reason", "test kill",
@@ -156,9 +223,8 @@ def test_cancel_all_persists_kill_switch_run_and_emits_summary(capsys) -> None:
     # run_summary émis sur stdout
     captured = capsys.readouterr().out
     assert "::alpha_trade_run_summary::" in captured
-    summary_line = next(l for l in captured.splitlines() if l.startswith("::alpha_trade_run_summary::"))
-    import json as _json
-    payload = _json.loads(summary_line.removeprefix("::alpha_trade_run_summary::"))
+    summary_line = next(line for line in captured.splitlines() if line.startswith("::alpha_trade_run_summary::"))
+    payload = exec_cli.json.loads(summary_line.removeprefix("::alpha_trade_run_summary::"))
     assert payload["schema_version"] == 1
     assert payload["command"] == "cancel-all"
     assert payload["account_id"] == "paper1"
@@ -172,9 +238,11 @@ def test_cancel_all_dry_run_marks_dry_run_true(capsys) -> None:
     fake_client = MagicMock()
     fake_client.list_orders.return_value = [{"id": "ord-1", "symbol": "AAPL"}]
 
-    with patch.object(exec_cli, "ExecutionRepository", return_value=fake_repo), \
-         patch.object(exec_cli, "AlpacaTradingClient", return_value=fake_client), \
-         patch.object(exec_cli, "configure_root_logging"):
+    with (
+        patch.object(exec_cli, "ExecutionRepository", return_value=fake_repo),
+        patch.object(exec_cli, "AlpacaTradingClient", return_value=fake_client),
+        patch.object(exec_cli, "configure_root_logging"),
+    ):
         exec_cli.main([
             "cancel-all", "--account", "paper1", "--dry-run",
         ])

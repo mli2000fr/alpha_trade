@@ -1,6 +1,10 @@
 import pytest
 
-from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig
+from execution_engine.config import (
+    ExecutionConfig,
+    ProtectionWatcherServiceConfig,
+    load_trailing_stop_config_from_yaml,
+)
 
 
 @pytest.mark.parametrize(
@@ -75,6 +79,34 @@ def test_execution_config_resolves_explicit_account_id() -> None:
 
     assert cfg.resolved_account_id == "live1"
     assert cfg.submission_window == "pre_open"
+
+
+def test_load_trailing_stop_config_from_yaml_uses_risk_management_section() -> None:
+    cfg = load_trailing_stop_config_from_yaml(
+        {
+            "risk_management": {
+                "trailing_stop": {
+                    "enabled": True,
+                    "mode": "dynamic_atr",
+                    "atr_period": 21,
+                    "atr_multiplier": 3.0,
+                    "fallback_fixed_pct": 6.5,
+                    "break_even_after_atr_multiple": 1.5,
+                    "eod_check_time_est": "15:45",
+                    "apply_to_manual_orphan_buys": False,
+                }
+            }
+        }
+    )
+
+    assert cfg.enabled is True
+    assert cfg.mode == "dynamic_atr"
+    assert cfg.atr_period == 21
+    assert cfg.atr_multiplier == pytest.approx(3.0)
+    assert cfg.fallback_fixed_pct == pytest.approx(6.5)
+    assert cfg.break_even_after_atr_multiple == pytest.approx(1.5)
+    assert cfg.eod_check_time_est == "15:45"
+    assert cfg.apply_to_manual_orphan_buys is False
 
 
 @pytest.mark.parametrize(

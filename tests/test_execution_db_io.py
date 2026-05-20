@@ -1,14 +1,23 @@
 """Tests for execution_engine.db_io — SQLite in-memory."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
 from execution_engine.db_io import ExecutionRepository
-from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionReconciliationResult, OrderIntent, OrderStatus, ReconciliationStatus
+from execution_engine.models import (
+    BrokerOrder,
+    ExecutionFill,
+    ExecutionReconciliationResult,
+    OrderIntent,
+    OrderStatus,
+    ReconciliationStatus,
+)
+
+
 @pytest.fixture()
 def engine():
     e = create_engine(
@@ -439,6 +448,34 @@ class TestExecutionDbIo:
 
         assert targets == []
 
+    def test_load_latest_portfolio_targets_treats_null_summary_account_as_default(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                    atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
+                    risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
+                    sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction, created_at)
+                VALUES ('r-old', 'default', '2026-05-01', 'AAPL', 1, 'long', 10, 150.0,
+                    5.0, '2026-05-01', '2026-05-01', 140.0, 10.0,
+                    100.0, 100.0, 1500.0, 0.75,
+                    'Tech', 0.9, 'quant', 0.8, 'atr', 0.1, '2026-05-01 07:00:00')
+            """))
+            conn.execute(text("""
+                INSERT INTO run_business_summaries (
+                    summary_run_id, entity_run_id, step_key, run_kind, status, account_id, trade_date,
+                    started_at, finished_at, summary_json, created_at, updated_at
+                ) VALUES (
+                    'r-zero-null-account', 'r-zero-null-account', 'risk_management', 'step', 'completed', NULL, '2026-05-01',
+                    '2026-05-01 07:48:00', '2026-05-01 07:48:17',
+                    '{"run_id": "r-zero-null-account", "target_positions": 0}',
+                    '2026-05-01 07:48:17', '2026-05-01 07:48:17'
+                )
+            """))
+
+        targets = repo.load_portfolio_targets(trade_date=date(2026, 5, 1), account_id="default")
+
+        assert targets == []
+
     def test_load_latest_portfolio_targets_prefers_latest_risk_summary_run_id_over_older_created_at_rows(self, engine, repo) -> None:
         with engine.begin() as conn:
             conn.execute(text("""
@@ -550,7 +587,7 @@ class TestExecutionDbIo:
         assert items == []
 
     def test_load_pending_protection_watch_items_reads_v2_schema(self, engine, repo) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO execution_runs (exec_run_id, risk_run_id, trade_date, broker_mode, dry_run, status, started_at, total_targets, total_submitted, total_filled, account_id)
@@ -613,7 +650,7 @@ class TestExecutionDbIo:
         assert items[0].stop_price_initial == 141.0
 
     def test_load_open_child_orders_reads_v2_children_only(self, engine, repo) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO execution_order_requests (
@@ -677,8 +714,8 @@ class TestExecutionDbIo:
             "trail_percent": None,
             "status": "NEW",
             "failure_reason": None,
-            "created_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
         }
         with repo.engine.begin() as conn:
             conn.execute(text("""
@@ -718,7 +755,7 @@ class TestExecutionDbIo:
     def test_upsert_execution_broker_order_and_broker_fill(self, repo) -> None:
         intent = self._intent("exec-1", "req-1", "submit-1")
         repo.upsert_execution_order_request_from_intent(intent, account_id="acct-1", status=OrderStatus.SUBMITTED)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         order = BrokerOrder(
             broker_order_id="bo-1",
             client_order_id="submit-1",
@@ -816,7 +853,7 @@ class TestExecutionDbIo:
         assert targets[0].stop_price_initial == 140.0
 
     def test_load_open_reconciliation_order_state_and_protection_state(self, repo) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         parent_intent = self._intent("exec-1", "req-parent", "submit-parent")
         stop_intent = OrderIntent(
             intent_id="req-stop",
@@ -950,7 +987,7 @@ class TestExecutionDbIo:
         repo.upsert_execution_order_request_from_intent(intent_buy_2, account_id="acct-lots", status=OrderStatus.FILLED)
         repo.upsert_execution_order_request_from_intent(intent_sell, account_id="acct-lots", status=OrderStatus.FILLED)
 
-        base_ts = datetime(2026, 4, 26, 20, 0, tzinfo=timezone.utc)
+        base_ts = datetime(2026, 4, 26, 20, 0, tzinfo=UTC)
         fills = [
             ExecutionFill("fill-buy-1", "bo-buy-1", "req-buy-1", "AAPL", 10.0, 150.0, base_ts, 150.0, 0.0, 0.0),
             ExecutionFill("fill-buy-2", "bo-buy-2", "req-buy-2", "AAPL", 5.0, 152.0, base_ts.replace(minute=1), 152.0, 0.0, 0.0),
@@ -977,7 +1014,7 @@ class TestExecutionDbIo:
             "event_id": "ev1", "exec_run_id": "e1", "symbol": "AAPL",
             "event_type": "ORDER_SUBMITTED", "message": "test",
             "broker_order_id": None, "intent_id": None,
-            "payload_json": None, "created_at": datetime.now(timezone.utc),
+            "payload_json": None, "created_at": datetime.now(UTC),
         }
         repo.insert_execution_event(d)
         with repo.engine.connect() as conn:

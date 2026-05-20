@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import inspect, text
@@ -12,8 +12,17 @@ from sqlalchemy.exc import IntegrityError
 
 from database.connection import get_sqlalchemy_engine
 from database.run_business_summaries import parse_summary_json
-from execution_engine.models import ExecutionOrderRequest
-from execution_engine.models import BrokerOrder, ExecutionFill, ExecutionPosition, ExecutionPositionLot, ExecutionReconciliationResult, ExecutionTarget, OrderIntent, ProtectionWatchItem
+from execution_engine.models import (
+    BrokerOrder,
+    ExecutionFill,
+    ExecutionOrderRequest,
+    ExecutionPosition,
+    ExecutionPositionLot,
+    ExecutionReconciliationResult,
+    ExecutionTarget,
+    OrderIntent,
+    ProtectionWatchItem,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -177,13 +186,22 @@ class ExecutionRepository:
             return None, False
 
         where_trade_date = "AND trade_date = :trade_date" if trade_date is not None else ""
+        # Compatibilité historique : les anciens résumés risk du compte implicite
+        # ont parfois été persistés avec ``account_id IS NULL`` alors que les
+        # cibles ``portfolio_targets`` sont stockées sous ``default``.
+        # On considère donc ``NULL`` comme synonyme de ``default`` pour éviter
+        # les faux fallback vers d'anciens targets et pour préserver le garde-fou
+        # « dernier run = 0 cible ».
+        account_scope_clause = "AND account_id = :account_id"
+        if account_id == "default":
+            account_scope_clause = "AND (account_id = :account_id OR account_id IS NULL)"
         stmt = text(
             f"""
             SELECT summary_run_id, entity_run_id, summary_json
             FROM run_business_summaries
             WHERE step_key = 'risk_management'
               AND run_kind = 'step'
-              AND account_id = :account_id
+              {account_scope_clause}
               {where_trade_date}
             ORDER BY COALESCE(finished_at, started_at, created_at) DESC, summary_run_id DESC
             LIMIT 1
@@ -932,7 +950,7 @@ class ExecutionRepository:
         ttl_seconds: int = 3600,
     ) -> bool:
         resolved_account_id = account_id or "default"
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expires_at = now + timedelta(seconds=max(ttl_seconds, 1))
         purge_stmt = text("""
             DELETE FROM execution_locks
@@ -976,7 +994,7 @@ class ExecutionRepository:
     ) -> bool:
         """Prolonge le TTL d'un verrou encore détenu par ``exec_run_id``."""
         resolved_account_id = account_id or "default"
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=max(ttl_seconds, 1))
+        expires_at = datetime.now(UTC) + timedelta(seconds=max(ttl_seconds, 1))
         stmt = text("""
             UPDATE execution_locks
             SET expires_at = :expires_at
@@ -1029,7 +1047,7 @@ class ExecutionRepository:
             "pid": pid,
             "status": status,
             "last_error": (last_error or None),
-            "now": datetime.now(timezone.utc),
+            "now": datetime.now(UTC),
         }
         # MySQL : INSERT ... ON DUPLICATE KEY UPDATE
         stmt = text("""
@@ -1079,7 +1097,7 @@ class ExecutionRepository:
             + ", ".join(f":{column}" for column in insert_columns)
             + ")"
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         records = [
             {
                 "exec_run_id": exec_run_id,
@@ -1147,7 +1165,7 @@ class ExecutionRepository:
                 "trade_date": trade_date,
                 "broker_mode": broker_mode,
                 "dry_run": dry_run,
-                "started_at": datetime.now(timezone.utc),
+                "started_at": datetime.now(UTC),
                 "total_targets": total_targets,
                 "account_id": resolved_account_id,
                 "execution_profile": execution_profile,
@@ -1197,7 +1215,7 @@ class ExecutionRepository:
             conn.execute(stmt, {
                 "exec_run_id": exec_run_id,
                 "status": status,
-                "completed_at": datetime.now(timezone.utc),
+                "completed_at": datetime.now(UTC),
                 "total_submitted": total_submitted,
                 "total_filled": total_filled,
                 "error_message": error_message,
@@ -1251,8 +1269,8 @@ class ExecutionRepository:
             "trail_percent": intent.trail_percent,
             "status": status,
             "failure_reason": failure_reason,
-            "created_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
         }
         if self.engine.dialect.name == "sqlite":
             stmt = text("""
@@ -1330,8 +1348,8 @@ class ExecutionRepository:
             "trail_percent": order.trail_percent,
             "raw_payload_json": json.dumps(raw_payload) if raw_payload is not None else None,
             "raw_response_json": json.dumps(raw_response) if raw_response is not None else None,
-            "submitted_at": order.created_at or datetime.now(timezone.utc),
-            "last_seen_at": order.updated_at or datetime.now(timezone.utc),
+            "submitted_at": order.created_at or datetime.now(UTC),
+            "last_seen_at": order.updated_at or datetime.now(UTC),
         }
         if self.engine.dialect.name == "sqlite":
             stmt = text("""
@@ -1425,7 +1443,7 @@ class ExecutionRepository:
             "slippage_bps": fill.slippage_bps,
             "implementation_shortfall": fill.implementation_shortfall,
             "raw_fill_json": json.dumps(raw_fill) if raw_fill is not None else None,
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
         }
         with self.engine.begin() as conn:
             row["exec_run_id"] = conn.execute(lookup_stmt, {"request_id": fill.intent_id}).scalar()
@@ -1482,7 +1500,7 @@ class ExecutionRepository:
                 "buying_power": float(snapshot.get("buying_power", 0.0) or 0.0),
                 "daytrade_count": int(snapshot.get("daytrade_count", 0) or 0),
                 "raw_payload_json": json.dumps(snapshot),
-                "created_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(UTC),
             })
 
 
@@ -1515,7 +1533,7 @@ class ExecutionRepository:
                 (:exec_run_id, :broker_mode, :symbol, :qty, :avg_entry_price,
                  :market_value, :unrealized_pnl, :created_at, :account_id)
         """)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         records = [
             {
                 "exec_run_id": exec_run_id,
@@ -1553,7 +1571,7 @@ class ExecutionRepository:
                 :position_status, :last_broker_snapshot_at, :updated_at
             )
         """)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         records: list[dict[str, Any]] = []
         for position in positions:
             symbol = str(position.get("symbol", "") or "").strip().upper()
@@ -1626,7 +1644,7 @@ class ExecutionRepository:
             side = str(row["side"]).strip().lower()
             fill_qty = float(row.get("filled_qty") or 0.0)
             fill_price = float(row.get("avg_fill_price") or 0.0)
-            fill_timestamp = row.get("fill_timestamp") if isinstance(row.get("fill_timestamp"), datetime) else datetime.now(timezone.utc)
+            fill_timestamp = row.get("fill_timestamp") if isinstance(row.get("fill_timestamp"), datetime) else datetime.now(UTC)
             if fill_qty <= 0:
                 continue
             if side == "buy":
@@ -1648,7 +1666,7 @@ class ExecutionRepository:
                     "closed_at": None,
                     "exit_price": None,
                     "source_kind": "execution_broker_fill",
-                    "updated_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(UTC),
                 }
                 records.append(lot)
                 open_lots_by_symbol.setdefault(symbol, []).append(lot)
@@ -1660,7 +1678,7 @@ class ExecutionRepository:
                 lot = candidate_lots[0]
                 consume_qty = min(float(lot["remaining_qty"]), remaining_to_close)
                 lot["remaining_qty"] = max(float(lot["remaining_qty"]) - consume_qty, 0.0)
-                lot["updated_at"] = datetime.now(timezone.utc)
+                lot["updated_at"] = datetime.now(UTC)
                 remaining_to_close -= consume_qty
                 if lot["remaining_qty"] <= 1e-9:
                     lot["remaining_qty"] = 0.0
@@ -1723,7 +1741,7 @@ class ExecutionRepository:
                 "action": result.action,
                 "reconciliation_status": result.reconciliation_status,
                 "reason_code": result.reason_code,
-                "created_at": result.created_at or datetime.now(timezone.utc),
+                "created_at": result.created_at or datetime.now(UTC),
             }
             for result in results
         ]
@@ -1782,7 +1800,7 @@ class ExecutionRepository:
                 opened_qty=float(r["opened_qty"]),
                 remaining_qty=float(r["remaining_qty"]),
                 entry_price=float(r["entry_price"]),
-                opened_at=r["opened_at"] if isinstance(r.get("opened_at"), datetime) else datetime.now(timezone.utc),
+                opened_at=r["opened_at"] if isinstance(r.get("opened_at"), datetime) else datetime.now(UTC),
                 open_exec_run_id=str(r["open_exec_run_id"]) if r.get("open_exec_run_id") not in (None, "") else None,
                 open_request_id=str(r["open_request_id"]) if r.get("open_request_id") not in (None, "") else None,
                 open_fill_id=str(r["open_fill_id"]) if r.get("open_fill_id") not in (None, "") else None,

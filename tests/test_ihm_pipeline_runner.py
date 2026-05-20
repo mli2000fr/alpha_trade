@@ -39,6 +39,11 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
     ]
 
 
+def test_execution_step_depends_on_risk_management_contract_name() -> None:
+    execution_step = next(step for step in get_pipeline_steps() if step.key == "execution")
+    assert execution_step.deps == "risk_management"
+
+
 def test_pipeline_step_number_helpers_handle_main_suffixes_and_auxiliary_prefixes() -> None:
     assert parse_pipeline_step_number("7") == 7
     assert parse_pipeline_step_number("7bis") == 7

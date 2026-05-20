@@ -733,6 +733,7 @@ def main(args: list[str] | None = None) -> None:
     # valeur comme un compte implicite : si aucun snapshot n'est disponible, on
     # fallback sur `--account-equity` plutôt que de bloquer le pipeline.
     requested_account_id = None if (raw_account_id is None or raw_account_id.lower() == "default") else raw_account_id
+    resolved_account_scope = raw_account_id or "default"
 
     repo = RiskRepository()
     account_snapshot = repo.load_account_risk_snapshot(requested_account_id, trade_date)
@@ -798,7 +799,7 @@ def main(args: list[str] | None = None) -> None:
         "trade_date": trade_date.isoformat(),
         "dry_run": bool(args.dry_run),
         "effective_equity": round(float(effective_equity), 2),
-        "account_id": effective_account_id or raw_account_id or "default",
+        "account_id": effective_account_id or resolved_account_scope,
     }
     _emit_live_progress(
         dict(progress_context),
@@ -1024,7 +1025,7 @@ def main(args: list[str] | None = None) -> None:
         reference_run_id=str(args.shadow_compare_run_id or "").strip() or None,
         trade_date=trade_date,
         run_id=run_id,
-        account_id=effective_account_id,
+        account_id=effective_account_id or resolved_account_scope,
         entries=entries,
         repo=repo,
         dry_run=bool(config.dry_run),
@@ -1036,8 +1037,8 @@ def main(args: list[str] | None = None) -> None:
     if config.dry_run:
         LOGGER.info("Mode dry-run — aucune ecriture en DB.")
     else:
-        n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=effective_account_id)
-        n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=effective_account_id)
+        n_dec = persist_decisions(repo, entries, run_id, trade_date, account_id=effective_account_id or resolved_account_scope)
+        n_tgt = persist_portfolio_targets(repo, entries, run_id, trade_date, account_id=effective_account_id or resolved_account_scope)
         LOGGER.info("Ecrit %d decisions et %d cibles en DB.", n_dec, n_tgt)
 
     _emit_live_progress(
@@ -1213,7 +1214,7 @@ def main(args: list[str] | None = None) -> None:
         status="completed",
         summary_run_id=run_id,
         entity_run_id=run_id,
-        account_id=effective_account_id,
+        account_id=effective_account_id or resolved_account_scope,
         trade_date=trade_date,
         started_at=started_at,
         finished_at=finished_at,

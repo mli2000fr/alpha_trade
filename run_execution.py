@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 Alpha Trade -- Production Executor -- Point d'entree simplifie
 
@@ -26,8 +25,10 @@ import logging
 import os
 import subprocess
 import sys
+from collections.abc import Iterable
 from datetime import date, datetime
 from pathlib import Path
+from typing import Literal, cast
 
 from common.utils import configure_root_logging
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
@@ -401,9 +402,9 @@ def run(
     allow_outside_rth: bool = False,
     auto_rebalance: bool = False,
     account_id: str | None = None,
-    account_type: str = "margin",
-    pdt_rule: str = "auto",
-    swing_only: bool = False,
+    account_type: str = "cash",
+    pdt_rule: str = "off",
+    swing_only: bool = True,
     submission_window: str = "both",
     auto_watcher: bool = False,
     skip_preflight: bool = False,
@@ -460,14 +461,13 @@ def run(
     try:
         from execution_engine.audit import build_execution_run_summary
         from execution_engine.broker_adapter import BrokerAdapter
-        from execution_engine.config import ExecutionConfig
+        from execution_engine.config import ExecutionConfig, load_trailing_stop_config_from_yaml
         from execution_engine.db_io import ExecutionRepository
         from execution_engine.executor import ProductionExecutor
         from execution_engine.oco_manager import OcoManager
-        from service.alpaca.trading_client import AlpacaTradingClient
-        # Ajout pour circuit breaker
         from risk_management.circuit_breaker import CircuitBreaker, PnLSnapshot
         from risk_management.config import RiskConfig
+        from service.alpaca.trading_client import AlpacaTradingClient
     except ImportError as exc:
         print(f"{RED}Erreur d'import : {exc}{RESET}")
         print("-> Verifie que le projet est installe : pip install -e .")
@@ -525,7 +525,11 @@ def run(
             file=sys.stderr,
         )
 
-    config   = ExecutionConfig(**preset, account_id=account_id)
+    config   = ExecutionConfig(
+        **preset,
+        account_id=account_id,
+        trailing_stop=load_trailing_stop_config_from_yaml(),
+    )
     repo     = ExecutionRepository()
     client   = AlpacaTradingClient(broker_mode=config.broker_mode, account_id=account_id)
     broker   = BrokerAdapter(client, config)
@@ -584,12 +588,20 @@ def run(
         from common.config_loader import load_config as _load_config_yaml
         from execution_engine.market_regime_preflight import (
             derive_entry_mode as _derive_entry_mode,
+        )
+        from execution_engine.market_regime_preflight import (
             emit_preflight as _emit_preflight,
         )
         from service.market import (
             DbSentimentScoreProvider as _DbSentimentScoreProvider,
-            build_snapshot as _build_regime_snapshot,
+        )
+        from service.market import (
             build_default_macro_provider as _build_macro_provider,
+        )
+        from service.market import (
+            build_snapshot as _build_regime_snapshot,
+        )
+        from service.market import (
             parse_market_regimes as _parse_market_regimes,
         )
 
@@ -625,10 +637,14 @@ def run(
             print(_emit_preflight(_snap_dict))
         # Propagation du mode régime → ExecutionConfig.entry_mode
         # (ExecutionConfig est frozen → on reconstruit via dataclasses.replace)
-        _new_mode = _derive_entry_mode(_snap_dict)
+        _new_mode = cast(
+            Literal["normal", "close_only", "cash_only", "capital_preservation"],
+            _derive_entry_mode(_snap_dict),
+        )
         if _new_mode != config.entry_mode:
             from dataclasses import replace as _dc_replace
-            _reasons_list = _snap_dict.get("reasons") or []
+            _raw_reasons = _snap_dict.get("reasons")
+            _reasons_list = list(_raw_reasons) if isinstance(_raw_reasons, Iterable) and not isinstance(_raw_reasons, (str, bytes)) else []
             _reasons_str = ", ".join(str(r) for r in _reasons_list) if _reasons_list else "régime"
             print(
                 f"{YELLOW}[market_regime] entry_mode={config.entry_mode!r} → {_new_mode!r} "

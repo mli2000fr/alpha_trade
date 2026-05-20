@@ -95,6 +95,15 @@ def test_bars_provider_value_is_supported() -> None:
     assert md.get("bars_provider") in {"alpaca", "eodhd"}
 
 
+def test_execution_modes_section_is_absent() -> None:
+    cfg = _load()
+    execution_cfg = cfg.get("execution", {}) or {}
+    assert "modes" not in execution_cfg, (
+        "execution.modes est un levier fantôme: le runtime dérive entry_mode à partir du snapshot "
+        "market_regime et non depuis config.yaml. Ne réintroduisez pas cette section sans brancher sa lecture."
+    )
+
+
 def test_risk_management_empirical_calibration_section_has_only_known_keys() -> None:
     cfg = _load()
     risk_management_cfg = cfg.get("risk_management", {}) or {}

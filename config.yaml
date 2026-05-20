@@ -169,14 +169,6 @@ risk_management:
     eod_check_time_est: "15:50"
     apply_to_manual_orphan_buys: true
 
-# ---------------------------------------------------------------------------
-# Modes d'exécution (Axe C du plan). Pris en compte par ``execution_engine``
-# via ``ExecutionConfig.entry_mode``.
-# ---------------------------------------------------------------------------
-execution:
-  modes:
-    close_only_allows_position_management: true
-    cash_only_allows_new_entries: false
 
 # ---------------------------------------------------------------------------
 # Source primaire des barres OHLCV (`stock_bars` + `stock_bars_daily`).
