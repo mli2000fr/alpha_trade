@@ -238,6 +238,38 @@ def test_build_replay_diagnostic_session_rows_formats_expected_columns() -> None
     assert rows.iloc[0]["Dégradée"] == "oui"
 
 
+def test_build_candidate_target_parity_rows_formats_expected_columns() -> None:
+    rows = backtesting._build_candidate_target_parity_rows(
+        {
+            "sessions": [
+                {
+                    "trade_date": "2025-01-02",
+                    "parity_status": "diverged",
+                    "research_selected_count": 2,
+                    "risk_target_count": 1,
+                    "risk_rejected_count": 1,
+                    "research_only_symbols": ["BBB"],
+                    "risk_only_symbols": [],
+                    "divergence_reasons": ["research_only_candidates", "risk_rejections"],
+                }
+            ]
+        }
+    )
+
+    assert list(rows.columns) == [
+        "Séance",
+        "Statut",
+        "Research sélectionnés",
+        "Targets risk",
+        "Rejets risk",
+        "Research only",
+        "Risk only",
+        "Motifs divergence",
+    ]
+    assert rows.iloc[0]["Statut"] == "diverged"
+    assert rows.iloc[0]["Research only"] == "BBB"
+
+
 def test_build_screener_artifact_objective_rows_formats_expected_columns() -> None:
     rows = backtesting._build_screener_artifact_objective_rows(
         {

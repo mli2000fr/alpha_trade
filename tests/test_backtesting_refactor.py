@@ -592,6 +592,75 @@ class TestFidelityManifestSprint1:
         }
         assert first_session["provenance_refs"]["scores_snapshot_id"] == "2025-01-02|stock_scores_history|capital_50001_100000|present"
 
+    def test_build_candidate_target_parity_summary_exposes_rejections_and_divergences(self):
+        from datetime import date
+        from types import SimpleNamespace
+
+        from backtesting.fidelity import build_candidate_target_parity_summary
+
+        research_signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-02", "2025-01-02"]),
+                "symbol": ["AAA", "BBB"],
+                "selected": [True, True],
+                "rank": [1.0, 2.0],
+                "score": [0.9, 0.8],
+                "score_source": ["final_score_walk_forward", "final_score_sentiment"],
+                "conviction": [0.91, 0.82],
+                "conviction_source": ["core.conviction:score_only", "core.conviction:score_plus_prediction"],
+            }
+        )
+        risk_entries = [
+            SimpleNamespace(
+                symbol="AAA",
+                candidate_rank=1,
+                decision_rank=1,
+                score_used=0.9,
+                score_source="final_score_walk_forward",
+                conviction_score=0.91,
+                predicted_proba=None,
+                decision="ACCEPTED",
+                decision_reason="OK",
+                decision_reason_code="ok",
+                target_weight=0.2,
+                approved_shares=10,
+                score_snapshot_date=date(2025, 1, 2),
+                prediction_asof_date=None,
+            ),
+            SimpleNamespace(
+                symbol="BBB",
+                candidate_rank=2,
+                decision_rank=None,
+                score_used=0.8,
+                score_source="final_score_sentiment",
+                conviction_score=0.82,
+                predicted_proba=0.7,
+                decision="REJECTED",
+                decision_reason="constraint",
+                decision_reason_code="constraint_max_positions",
+                target_weight=0.0,
+                approved_shares=0,
+                score_snapshot_date=date(2025, 1, 2),
+                prediction_asof_date=date(2025, 1, 2),
+            ),
+        ]
+
+        payload = build_candidate_target_parity_summary(
+            research_signals_df=research_signals_df,
+            risk_entries=risk_entries,
+            phase2_mode="risk",
+        )
+
+        assert payload["session_count"] == 1
+        assert payload["diverged_session_count"] == 1
+        session = payload["sessions"][0]
+        assert session["research_only_symbols"] == ["BBB"]
+        assert session["risk_rejected_symbols"] == ["BBB"]
+        assert session["rejection_reason_counts"] == {"constraint_max_positions": 1}
+        assert session["divergence_reasons"] == ["research_only_candidates", "risk_rejections"]
+        assert session["common_rows"][0]["research_conviction_source"] == "core.conviction:score_only"
+        assert session["rejected_rows"][0]["decision_reason_code"] == "constraint_max_positions"
+
 
 # ---------------------------------------------------------------------------
 # Phase E.3 (refactor v2) — _RunState invariant

@@ -142,6 +142,11 @@ def replay_signals(
         prediction_weight=prediction_weight,
     )
     df["conviction"] = _vectorized_fuse(df["score"], df["predicted_proba"], weights)
+    df["conviction_source"] = np.where(
+        df["predicted_proba"].notna(),
+        "core.conviction:score_plus_prediction",
+        "core.conviction:score_only",
+    )
 
     df["rank"] = df.groupby("trade_date")["conviction"].rank(ascending=False, method="first")
     df["selected"] = df["rank"] <= max_positions

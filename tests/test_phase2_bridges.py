@@ -261,6 +261,9 @@ def test_build_phase2_risk_result_preserves_empty_signal_schema_when_all_entries
         "candidate_rank",
         "score",
         "score_source",
+        "conviction_score",
+        "conviction_source",
+        "predicted_proba",
         "selector_signal_mode",
         "selection_explanation",
         "selector_earnings_blackout",
@@ -269,6 +272,7 @@ def test_build_phase2_risk_result_preserves_empty_signal_schema_when_all_entries
         "approved_shares",
         "decision",
         "decision_reason",
+        "decision_reason_code",
     ]
 
 

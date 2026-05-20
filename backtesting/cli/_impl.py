@@ -731,10 +731,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
     import pandas as pd
 
     from backtesting.fidelity import (
+        build_candidate_target_parity_summary,
         PitHistoryRequiredError,
         build_replay_diagnostic_summary,
         PitMlStrategyUnsupportedError,
         build_fidelity_manifest,
+        save_candidate_target_parity_summary,
         save_replay_diagnostic_summary,
         save_coverage_summary,
         save_fidelity_manifest,
@@ -1022,12 +1024,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
     phase5_watcher_replay_result = None
     phase7_exit_lifecycle_result = None
     phase2_risk_run_id = f"bt_phase2_{start:%Y%m%d}_{end:%Y%m%d}"
+    research_signals_df = replay_signals(
+        scores_df,
+        preds_df if not preds_df.empty else None,
+        score_column=None if args.score_column == "auto" else args.score_column,
+        max_positions=args.max_positions,
+    )
     if phase2_mode == "off":
-        signals_df = replay_signals(
-            scores_df, preds_df if not preds_df.empty else None,
-            score_column=None if args.score_column == "auto" else args.score_column,
-            max_positions=args.max_positions,
-        )
+        signals_df = research_signals_df
     else:
         from backtesting.risk_bridge import build_phase2_risk_result
 
@@ -1327,6 +1331,15 @@ def _run_backtest(args: argparse.Namespace) -> None:
         signals_df=signals_df if isinstance(signals_df, pd.DataFrame) else None,
         fidelity_manifest=fidelity_manifest,
     )
+    candidate_target_parity_summary = (
+        build_candidate_target_parity_summary(
+            research_signals_df=research_signals_df,
+            risk_entries=phase2_risk_result.entries,
+            phase2_mode=phase2_mode,
+        )
+        if phase2_risk_result is not None
+        else None
+    )
 
     common_params: dict[str, object] = {
         "start": args.start,
@@ -1468,6 +1481,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
         artifact_paths["coverage_summary_json"] = str(coverage_summary_path)
         replay_diagnostic_paths = save_replay_diagnostic_summary(replay_diagnostic_summary, output_dir)
         artifact_paths.update({key: str(path) for key, path in replay_diagnostic_paths.items()})
+        candidate_target_parity_paths: dict[str, str] = {}
+        if candidate_target_parity_summary is not None:
+            candidate_target_parity_paths = {
+                key: str(path)
+                for key, path in save_candidate_target_parity_summary(candidate_target_parity_summary, output_dir).items()
+            }
+            artifact_paths.update(candidate_target_parity_paths)
         if phase2_risk_result is not None:
             from backtesting.risk_bridge import save_phase2_risk_artifacts
 
@@ -1524,6 +1544,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
         _safe_print(f"   → {fidelity_manifest_path}")
         _safe_print(f"   → {coverage_summary_path}")
         for path in replay_diagnostic_paths.values():
+            _safe_print(f"   → {path}")
+        for path in candidate_target_parity_paths.values():
             _safe_print(f"   → {path}")
 
     # 6. Artefacts

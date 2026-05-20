@@ -26,6 +26,9 @@ RISK_SIGNAL_COLUMNS = [
     "candidate_rank",
     "score",
     "score_source",
+    "conviction_score",
+    "conviction_source",
+    "predicted_proba",
     "selector_signal_mode",
     "selection_explanation",
     "selector_earnings_blackout",
@@ -34,6 +37,7 @@ RISK_SIGNAL_COLUMNS = [
     "approved_shares",
     "decision",
     "decision_reason",
+    "decision_reason_code",
 ]
 
 
@@ -209,6 +213,13 @@ def portfolio_entries_to_signals(entries: list[PortfolioEntry], snapshot_date: d
                 "candidate_rank": entry.candidate_rank,
                 "score": float(entry.score_used),
                 "score_source": entry.score_source,
+                "conviction_score": float(entry.conviction_score),
+                "conviction_source": (
+                    "core.conviction:score_plus_prediction"
+                    if entry.predicted_proba is not None
+                    else "core.conviction:score_only"
+                ),
+                "predicted_proba": float(entry.predicted_proba) if entry.predicted_proba is not None else None,
                 "selector_signal_mode": entry.selector_signal_mode,
                 "selection_explanation": entry.selection_explanation,
                 "selector_earnings_blackout": entry.selector_earnings_blackout,
@@ -217,6 +228,7 @@ def portfolio_entries_to_signals(entries: list[PortfolioEntry], snapshot_date: d
                 "approved_shares": int(entry.approved_shares),
                 "decision": entry.decision,
                 "decision_reason": entry.decision_reason,
+                "decision_reason_code": str(entry.decision_reason_code) if entry.decision_reason_code is not None else None,
             }
         )
     return pd.DataFrame(rows, columns=RISK_SIGNAL_COLUMNS)

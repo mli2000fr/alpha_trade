@@ -1905,6 +1905,20 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
         with st.expander("Payload brut replay_diagnostic_summary.json", expanded=False):
             st.json(replay_diagnostic_payload)
 
+    candidate_target_payload = _load_json_artifact_from_paths(artifacts, "candidate_target_parity_summary_json")
+    if candidate_target_payload:
+        st.markdown("**🎯 Parité candidate → target**")
+        parity_col1, parity_col2, parity_col3 = st.columns(3)
+        parity_col1.metric("Séances comparées", _to_int(candidate_target_payload.get("session_count")))
+        parity_col2.metric("Séances divergentes", _to_int(candidate_target_payload.get("diverged_session_count")))
+        parity_col3.metric("Mode Phase 2", _coerce_metric_text(candidate_target_payload.get("phase2_mode")))
+        parity_rows = _build_candidate_target_parity_rows(candidate_target_payload)
+        if not parity_rows.empty:
+            with st.expander("Aperçu candidate → target", expanded=False):
+                st.dataframe(parity_rows, use_container_width=True, hide_index=True)
+        with st.expander("Payload brut candidate_target_parity_summary.json", expanded=False):
+            st.json(candidate_target_payload)
+
     # Glossaire local pour rappel des indicateurs (Phase G3).
     with st.expander("📚 Glossaire — comprendre les indicateurs", expanded=False):
         st.markdown(
@@ -2134,6 +2148,29 @@ def _build_replay_diagnostic_session_rows(payload: dict[str, object]) -> pd.Data
                     else None
                 ),
                 "Dégradée": "oui" if bool(session.get("degraded", False)) else "non",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _build_candidate_target_parity_rows(payload: dict[str, object]) -> pd.DataFrame:
+    sessions = payload.get("sessions", [])
+    if not isinstance(sessions, list) or not sessions:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        rows.append(
+            {
+                "Séance": _coerce_metric_text(session.get("trade_date")),
+                "Statut": _coerce_metric_text(session.get("parity_status")),
+                "Research sélectionnés": _to_int(session.get("research_selected_count")),
+                "Targets risk": _to_int(session.get("risk_target_count")),
+                "Rejets risk": _to_int(session.get("risk_rejected_count")),
+                "Research only": ", ".join(str(symbol) for symbol in cast(list[object], session.get("research_only_symbols", []))) if isinstance(session.get("research_only_symbols", []), list) else "—",
+                "Risk only": ", ".join(str(symbol) for symbol in cast(list[object], session.get("risk_only_symbols", []))) if isinstance(session.get("risk_only_symbols", []), list) else "—",
+                "Motifs divergence": ", ".join(str(reason) for reason in cast(list[object], session.get("divergence_reasons", []))) if isinstance(session.get("divergence_reasons", []), list) else "—",
             }
         )
     return pd.DataFrame(rows)

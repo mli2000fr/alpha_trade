@@ -2559,6 +2559,20 @@ class TestCLI:
             "rank": [1.0],
             "score": [0.75],
             "score_source": ["risk_bridge"],
+            "conviction_score": [0.75],
+            "conviction_source": ["core.conviction:score_only"],
+            "predicted_proba": [None],
+            "decision_reason_code": ["ok"],
+        })
+        research_signals_df = pd.DataFrame({
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "symbol": ["AAPL"],
+            "selected": [True],
+            "rank": [1.0],
+            "score": [0.75],
+            "score_source": ["final_score_sentiment"],
+            "conviction": [0.75],
+            "conviction_source": ["core.conviction:score_only"],
         })
 
         class FakePF:
@@ -2607,12 +2621,29 @@ class TestCLI:
         })
         monkeypatch.setattr(resilience, "prepare_scores_for_sentiment_mode", lambda *args, **kwargs: scores_df.copy())
         monkeypatch.setattr(resilience, "prepare_predictions_for_ml_mode", lambda *args, **kwargs: pd.DataFrame())
-        monkeypatch.setattr(signal_replay, "replay_signals", lambda *args, **kwargs: pytest.fail("replay_signals ne doit pas être utilisé en phase2_mode=risk"))
+        monkeypatch.setattr(signal_replay, "replay_signals", lambda *args, **kwargs: research_signals_df.copy())
 
         def fake_build_phase2_risk_result(**kwargs):
             captured["risk_bridge_kwargs"] = kwargs
             return SimpleNamespace(
-                entries=[{"symbol": "AAPL"}],
+                entries=[
+                    SimpleNamespace(
+                        symbol="AAPL",
+                        candidate_rank=1,
+                        decision_rank=1,
+                        score_used=0.75,
+                        score_source="final_score_sentiment",
+                        conviction_score=0.75,
+                        predicted_proba=None,
+                        decision="ACCEPTED",
+                        decision_reason="OK",
+                        decision_reason_code="ok",
+                        target_weight=0.1,
+                        approved_shares=10,
+                        score_snapshot_date=date(2025, 1, 1),
+                        prediction_asof_date=None,
+                    )
+                ],
                 signals_df=phase2_signals_df.copy(),
                 diagnostics={
                     "snapshot_dates": 1,
@@ -2673,6 +2704,8 @@ class TestCLI:
         assert report_payload["params"]["phase2"]["execution_bridge"] is None
         artifacts = cast(dict[str, str], report_payload["artifacts"])
         assert artifacts["phase2_risk_summary_json"].endswith("phase2_risk_summary.json")
+        assert artifacts["candidate_target_parity_summary_json"].endswith("candidate_target_parity_summary.json")
+        assert artifacts["candidate_target_parity_sessions_csv"].endswith("candidate_target_parity_sessions.csv")
 
     def test_run_backtest_phase2_risk_execution_adds_execution_artifacts(self, monkeypatch, tmp_path):
         import argparse

@@ -692,6 +692,204 @@ def save_replay_diagnostic_summary(summary: Mapping[str, Any], output_dir: Path)
     }
 
 
+def _sorted_session_dates_from_frames(*frames: pd.DataFrame) -> list[pd.Timestamp]:
+    session_dates: set[pd.Timestamp] = set()
+    for frame in frames:
+        if not isinstance(frame, pd.DataFrame) or frame.empty or "trade_date" not in frame.columns:
+            continue
+        session_dates.update(pd.DatetimeIndex(pd.to_datetime(frame["trade_date"], errors="coerce").dropna().dt.normalize().tolist()))
+    return sorted(session_dates)
+
+
+def _normalize_research_selected_rows(research_signals_df: pd.DataFrame) -> pd.DataFrame:
+    if research_signals_df.empty:
+        return pd.DataFrame()
+    frame = research_signals_df.copy()
+    frame["trade_date"] = _normalize_trade_date_series(frame)
+    if "selected" in frame.columns:
+        frame = frame.loc[frame["selected"].fillna(False).astype(bool)].copy()
+    return frame
+
+
+def _portfolio_entries_to_parity_frame(entries: Sequence[object]) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for entry in entries:
+        symbol = str(getattr(entry, "symbol", "") or "").strip().upper()
+        snapshot_date = getattr(entry, "score_snapshot_date", None)
+        trade_date = pd.Timestamp(snapshot_date) if snapshot_date is not None else pd.NaT
+        rows.append(
+            {
+                "trade_date": trade_date,
+                "symbol": symbol,
+                "candidate_rank": getattr(entry, "candidate_rank", None),
+                "decision_rank": getattr(entry, "decision_rank", None),
+                "score_used": getattr(entry, "score_used", None),
+                "score_source": getattr(entry, "score_source", None),
+                "conviction_score": getattr(entry, "conviction_score", None),
+                "conviction_source": (
+                    "core.conviction:score_plus_prediction"
+                    if getattr(entry, "predicted_proba", None) is not None
+                    else "core.conviction:score_only"
+                ),
+                "predicted_proba": getattr(entry, "predicted_proba", None),
+                "decision": str(getattr(entry, "decision", "") or ""),
+                "decision_reason": getattr(entry, "decision_reason", None),
+                "decision_reason_code": str(getattr(entry, "decision_reason_code", "") or "") or None,
+                "target_weight": getattr(entry, "target_weight", None),
+                "approved_shares": getattr(entry, "approved_shares", None),
+                "score_snapshot_date": snapshot_date.isoformat() if hasattr(snapshot_date, "isoformat") else None,
+                "prediction_asof_date": (
+                    getattr(entry, "prediction_asof_date", None).isoformat()
+                    if hasattr(getattr(entry, "prediction_asof_date", None), "isoformat")
+                    else None
+                ),
+            }
+        )
+    frame = pd.DataFrame(rows)
+    if not frame.empty:
+        frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce").dt.normalize()
+    return frame
+
+
+def build_candidate_target_parity_summary(
+    *,
+    research_signals_df: pd.DataFrame,
+    risk_entries: Sequence[object],
+    phase2_mode: str,
+) -> dict[str, Any]:
+    """Construit un comparatif candidat research -> target risk par séance."""
+    normalized_research = _normalize_research_selected_rows(research_signals_df)
+    risk_frame = _portfolio_entries_to_parity_frame(risk_entries)
+    session_dates = _sorted_session_dates_from_frames(normalized_research, risk_frame)
+
+    sessions: list[dict[str, Any]] = []
+    for trade_date in session_dates:
+        research_day = normalized_research.loc[normalized_research["trade_date"] == trade_date].copy() if not normalized_research.empty else pd.DataFrame()
+        risk_day = risk_frame.loc[risk_frame["trade_date"] == trade_date].copy() if not risk_frame.empty else pd.DataFrame()
+        accepted_risk_day = risk_day.loc[pd.to_numeric(risk_day.get("approved_shares"), errors="coerce").fillna(0).astype(float) > 0].copy() if not risk_day.empty else pd.DataFrame()
+        rejected_risk_day = risk_day.loc[pd.to_numeric(risk_day.get("approved_shares"), errors="coerce").fillna(0).astype(float) <= 0].copy() if not risk_day.empty else pd.DataFrame()
+
+        research_symbols = _sorted_unique_symbols(research_day)
+        target_symbols = _sorted_unique_symbols(accepted_risk_day)
+        rejected_symbols = _sorted_unique_symbols(rejected_risk_day)
+        common_symbols = sorted(set(research_symbols) & set(target_symbols))
+        research_only_symbols = sorted(set(research_symbols) - set(target_symbols))
+        risk_only_symbols = sorted(set(target_symbols) - set(research_symbols))
+        rejection_reason_counts = {
+            str(key): int(value)
+            for key, value in rejected_risk_day["decision_reason_code"].dropna().astype(str).value_counts().items()
+        } if not rejected_risk_day.empty and "decision_reason_code" in rejected_risk_day.columns else {}
+
+        divergence_reasons: list[str] = []
+        if research_only_symbols:
+            divergence_reasons.append("research_only_candidates")
+        if risk_only_symbols:
+            divergence_reasons.append("risk_only_targets")
+        if not rejected_risk_day.empty:
+            divergence_reasons.append("risk_rejections")
+
+        common_rows: list[dict[str, object]] = []
+        for symbol in common_symbols:
+            research_row = research_day.loc[research_day["symbol"] == symbol].iloc[0]
+            risk_row = accepted_risk_day.loc[accepted_risk_day["symbol"] == symbol].iloc[0]
+            common_rows.append(
+                {
+                    "symbol": symbol,
+                    "research_rank": float(research_row.get("rank")) if pd.notna(research_row.get("rank")) else None,
+                    "research_score": float(research_row.get("score")) if pd.notna(research_row.get("score")) else None,
+                    "research_score_source": research_row.get("score_source"),
+                    "research_conviction": float(research_row.get("conviction")) if pd.notna(research_row.get("conviction")) else None,
+                    "research_conviction_source": research_row.get("conviction_source"),
+                    "risk_candidate_rank": int(risk_row.get("candidate_rank")) if pd.notna(risk_row.get("candidate_rank")) else None,
+                    "risk_decision_rank": int(risk_row.get("decision_rank")) if pd.notna(risk_row.get("decision_rank")) else None,
+                    "risk_score_used": float(risk_row.get("score_used")) if pd.notna(risk_row.get("score_used")) else None,
+                    "risk_score_source": risk_row.get("score_source"),
+                    "risk_conviction_score": float(risk_row.get("conviction_score")) if pd.notna(risk_row.get("conviction_score")) else None,
+                    "risk_conviction_source": risk_row.get("conviction_source"),
+                    "target_weight": float(risk_row.get("target_weight")) if pd.notna(risk_row.get("target_weight")) else None,
+                    "approved_shares": int(risk_row.get("approved_shares")) if pd.notna(risk_row.get("approved_shares")) else None,
+                }
+            )
+
+        rejected_rows: list[dict[str, object]] = []
+        for _, row in rejected_risk_day.iterrows():
+            rejected_rows.append(
+                {
+                    "symbol": row.get("symbol"),
+                    "candidate_rank": int(row.get("candidate_rank")) if pd.notna(row.get("candidate_rank")) else None,
+                    "score_used": float(row.get("score_used")) if pd.notna(row.get("score_used")) else None,
+                    "score_source": row.get("score_source"),
+                    "conviction_score": float(row.get("conviction_score")) if pd.notna(row.get("conviction_score")) else None,
+                    "conviction_source": row.get("conviction_source"),
+                    "decision": row.get("decision"),
+                    "decision_reason": row.get("decision_reason"),
+                    "decision_reason_code": row.get("decision_reason_code"),
+                }
+            )
+
+        sessions.append(
+            {
+                "trade_date": pd.Timestamp(trade_date).date().isoformat(),
+                "research_selected_count": len(research_symbols),
+                "risk_target_count": len(target_symbols),
+                "risk_rejected_count": len(rejected_symbols),
+                "common_symbol_count": len(common_symbols),
+                "research_only_symbols": research_only_symbols,
+                "risk_only_symbols": risk_only_symbols,
+                "risk_rejected_symbols": rejected_symbols,
+                "rejection_reason_counts": rejection_reason_counts,
+                "divergence_reasons": divergence_reasons,
+                "parity_status": "diverged" if divergence_reasons else "aligned",
+                "common_rows": common_rows,
+                "rejected_rows": rejected_rows,
+            }
+        )
+
+    diverged_sessions = [session["trade_date"] for session in sessions if session.get("parity_status") == "diverged"]
+    return {
+        "enabled": True,
+        "phase2_mode": phase2_mode,
+        "session_count": len(sessions),
+        "diverged_session_count": len(diverged_sessions),
+        "diverged_sessions": diverged_sessions,
+        "sessions": sessions,
+    }
+
+
+def save_candidate_target_parity_summary(summary: Mapping[str, Any], output_dir: Path) -> dict[str, Path]:
+    """Sauvegarde le comparatif candidate->target au format JSON + CSV."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "candidate_target_parity_summary.json"
+    csv_path = output_dir / "candidate_target_parity_sessions.csv"
+    json_path.write_text(json.dumps(dict(summary), ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    sessions = summary.get("sessions", []) if isinstance(summary, Mapping) else []
+    rows: list[dict[str, object]] = []
+    if isinstance(sessions, Sequence) and not isinstance(sessions, (str, bytes)):
+        for session in sessions:
+            if not isinstance(session, Mapping):
+                continue
+            rows.append(
+                {
+                    "trade_date": session.get("trade_date"),
+                    "parity_status": session.get("parity_status"),
+                    "research_selected_count": session.get("research_selected_count", 0),
+                    "risk_target_count": session.get("risk_target_count", 0),
+                    "risk_rejected_count": session.get("risk_rejected_count", 0),
+                    "common_symbol_count": session.get("common_symbol_count", 0),
+                    "research_only_symbols": ", ".join(_normalize_string_list(session.get("research_only_symbols", []))),
+                    "risk_only_symbols": ", ".join(_normalize_string_list(session.get("risk_only_symbols", []))),
+                    "risk_rejected_symbols": ", ".join(_normalize_string_list(session.get("risk_rejected_symbols", []))),
+                    "divergence_reasons": ", ".join(_normalize_string_list(session.get("divergence_reasons", []))),
+                    "rejection_reason_counts": json.dumps(session.get("rejection_reason_counts", {}), ensure_ascii=False, sort_keys=True),
+                }
+            )
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    return {
+        "candidate_target_parity_summary_json": json_path,
+        "candidate_target_parity_sessions_csv": csv_path,
+    }
+
+
 def _build_scores_provenance(score_payload: Mapping[str, Any], *, requested_score_column: str | None) -> dict[str, object]:
     source_table = str(score_payload.get("source_table") or "unknown")
     fallback_used = bool(score_payload.get("fallback_used", False))
@@ -1140,9 +1338,11 @@ __all__ = [
     "MlPreparationDiagnostics",
     "PreparedPredictionsResult",
     "REASON_TAXONOMY",
+    "build_candidate_target_parity_summary",
     "build_coverage_summary",
     "build_fidelity_manifest",
     "save_fidelity_manifest",
+    "save_candidate_target_parity_summary",
     "save_coverage_summary",
 ]
 

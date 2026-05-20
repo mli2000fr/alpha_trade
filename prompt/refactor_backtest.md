@@ -430,11 +430,43 @@ Le Sprint 2 est désormais **clos sur son périmètre opérationnel principal**,
 - la distinction fine des cas ML repose encore partiellement sur l’état runtime du predictor, donc utile mais encore best-effort ;
 - l’attribution détaillée par date-clé reste à approfondir si l’objectif devient une comparaison live/backtest complète.
 
+### Clôture Sprint 3 — état réel après cette passe
+Le Sprint 3 est désormais **clos sur son incrément prioritaire de convergence `candidate -> target`**, avec des artefacts de parité, des champs de contrat explicites et un affichage IHM passif compatible.
+
+#### Livré dans ce Sprint 3
+- contrat plus explicite `score_source / score_used / conviction_source` sur les signaux research et les signaux phase2 risk ;
+- enrichissement des signaux phase2 avec :
+  - `conviction_score` ;
+  - `conviction_source` ;
+  - `predicted_proba` ;
+  - `decision_reason_code`.
+- ajout d’un artefact dédié de parité `candidate -> target` :
+  - `candidate_target_parity_summary.json` ;
+  - `candidate_target_parity_sessions.csv`.
+- comparaison systématique par séance entre :
+  - candidats research retenus ;
+  - targets risk effectivement acceptés ;
+  - cibles rejetées avec motifs ;
+  - symboles `research_only` / `risk_only`.
+- comptage des rejets risk par `decision_reason_code` ;
+- exposition passive côté IHM avec une vue `Parité candidate → target`.
+
+#### Critères Sprint 3 désormais couverts
+- la parité `signal_replay` vs `risk_bridge` sur la cascade de score est verrouillée par test ;
+- les divergences `candidate -> target` sont mesurables par séance ;
+- les motifs de rejet risk deviennent visibles dans un artefact structuré ;
+- l’IHM peut consulter ce comparatif sans rupture de contrat historique.
+
+#### Limites résiduelles après clôture Sprint 3
+- le comparatif reste un résumé de parité et non encore une attribution causale exhaustive de tous les écarts live/backtest ;
+- les écarts `research_only` / `risk_only` sont identifiés, mais pas encore reliés à une hiérarchie métier consolidée de gravité ;
+- la convergence `candidate -> target` est maintenant observable, mais pas encore reliée à une fenêtre `compare-to-live` réelle.
+
 ### Prochaines actions à lancer sans attendre
 1. Préparer une première fenêtre `compare-to-live` courte sur un run réel récent.
-2. Étendre le contrat de couverture vers une matrice plus fine par symbole / par séance si le besoin opérateur se confirme.
-3. Formaliser davantage les identifiants de provenance amont si une traçabilité réglementaire plus forte devient nécessaire.
-4. Enchaîner sur le Sprint 3 pour verrouiller la convergence candidate → target.
+2. Construire le rapport canonique de divergence candidats / targets / intents / fills / exits / PnL (Sprint 5).
+3. Étendre le contrat de couverture vers une matrice plus fine par symbole / par séance si le besoin opérateur se confirme.
+4. Formaliser davantage les identifiants de provenance amont si une traçabilité réglementaire plus forte devient nécessaire.
 
 ---
 
