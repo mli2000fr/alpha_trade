@@ -31,6 +31,8 @@ def test_parameter_reference_rows_include_walk_forward_run_options() -> None:
     assert any(row["Paramètre"] == "phase4_mode" for row in run_rows)
     assert any(row["Paramètre"] == "phase5_mode" for row in run_rows)
     assert any(row["Paramètre"] == "phase7_mode" for row in run_rows)
+    assert any(row["Paramètre"] == "fidelity_baseline_id" for row in run_rows)
+    assert any(row["Paramètre"] == "fidelity_baseline_catalog" for row in run_rows)
 
 
 def test_run_configuration_preset_pipeline_live_like_exposes_expected_phase_chain() -> None:
@@ -373,6 +375,43 @@ def test_build_execution_broker_like_session_rows_formats_expected_columns() -> 
     assert rows.iloc[0]["Rejected"] == 1
     assert rows.iloc[0]["Timed out"] == 1
     assert rows.iloc[0]["Held"] == 1
+
+
+def test_build_fidelity_baseline_snapshot_rows_formats_expected_columns() -> None:
+    rows = backtesting._build_fidelity_baseline_snapshot_rows(
+        {
+            "metrics": {
+                "sentiment_coverage_ratio_after": 1.0,
+                "compare_live_fidelity_score": 0.975,
+            }
+        }
+    )
+
+    assert list(rows.columns) == ["Métrique", "Valeur"]
+    assert rows.iloc[0]["Métrique"] == "sentiment_coverage_ratio_after"
+
+
+def test_build_fidelity_baseline_check_rows_formats_expected_columns() -> None:
+    rows = backtesting._build_fidelity_baseline_check_rows(
+        {
+            "checks": [
+                {
+                    "label": "Score global compare-to-live",
+                    "check_type": "metric",
+                    "comparison": "min",
+                    "baseline_value": 0.98,
+                    "current_value": 0.97,
+                    "delta": -0.01,
+                    "tolerance_abs": 0.02,
+                    "status": "passed",
+                }
+            ]
+        }
+    )
+
+    assert list(rows.columns) == ["Check", "Type", "Comparaison", "Baseline", "Courant", "Delta", "Tolérance", "Statut"]
+    assert rows.iloc[0]["Type"] == "metric"
+    assert rows.iloc[0]["Statut"] == "passed"
 
 
 def test_build_screener_artifact_objective_rows_formats_expected_columns() -> None:

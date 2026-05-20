@@ -297,17 +297,21 @@ Construire un rapport canonique de divergence backtest ↔ live.
 Empêcher toute régression silencieuse du niveau de fidélité.
 
 ### Livrables
-- 3 à 5 fenêtres de référence ;
-- seuils de divergence acceptables ;
-- tests automatiques de fidélité.
+- catalogue versionné `config/fidelity_baseline_catalog.json` ;
+- snapshot canonique de run `fidelity_baseline_snapshot.json` ;
+- comparatif `fidelity_baseline_comparison.json` + `fidelity_baseline_comparison_checks.csv` ;
+- seuils de divergence acceptables par métrique ;
+- tests automatiques de fidélité + cohérence IHM.
 
 ### Tâches
 - figer des snapshots représentatifs ;
 - écrire des tests de dérive max ;
+- exposer les options baseline dans la CLI et l’IHM ;
 - documenter la procédure de promotion d’une baseline.
 
 ### Critères d’acceptation
-- une régression de fidélité devient détectable automatiquement en CI/local.
+- une régression de fidélité devient détectable automatiquement en CI/local ;
+- l’IHM reste compatible historique et affiche passivement les nouveaux artefacts lorsqu’ils sont présents.
 
 ---
 
@@ -654,7 +658,53 @@ Le Sprint 5 est maintenant **livré sur un slice étendu et directement exploita
 1. Pondérer le score global par gravité métier / impact exécution pour éviter un score trop purement structurel.
 2. Ajouter une vue IHM plus analytique (drill-down par composant puis symbole) si l’usage opérateur le justifie.
 3. Étendre le lifecycle broker-like aux cas plus complexes encore ouverts (annulations intermédiaires explicites, rejects/timeouts/retries plus réalistes, reconciliations manuelles, positions adoptées).
-4. Préparer ensuite les baselines de non-régression fidélité du Sprint 6 sur quelques fenêtres live de référence.
+4. Promouvoir maintenant 2 à 3 snapshots réels dans `artifacts/fidelity_baselines/...` pour alimenter le catalogue Sprint 6 avec des références live/backtest effectives.
+
+### Clôture Sprint 6 — état réel après cette passe
+Le Sprint 6 est maintenant **livré sur un premier slice complet et additif**, centré sur la mise en place des baselines de non-régression fidélité sans casser les runs historiques ni le contrat racine de `report.json`.
+
+#### Livré dans ce Sprint 6
+- ajout d’un **snapshot canonique de fidélité** produit à chaque run structuré :
+  - `fidelity_baseline_snapshot.json` ;
+  - métriques compactes dérivées de `fidelity_manifest`, `replay_diagnostic_summary`, `candidate_target_parity_summary`, `compare_to_live_summary` et `execution_broker_like_summary` quand disponibles ;
+  - conservation d’un format volontairement compact, stable et promouvable en baseline.
+- ajout d’un **comparatif baseline** opt-in :
+  - `fidelity_baseline_comparison.json` ;
+  - `fidelity_baseline_comparison_checks.csv` ;
+  - checks exacts sur la fenêtre et la chaîne de phases ;
+  - checks numériques avec tolérances `min` / `max` / `abs`.
+- ajout d’un **catalogue versionné** dans `config/fidelity_baseline_catalog.json` avec plusieurs entrées de référence et leurs seuils métier initiaux.
+- ajout des nouveaux flags CLI `run` :
+  - `--fidelity-baseline-id` ;
+  - `--fidelity-baseline-catalog`.
+- enrichissement du contrat IHM / runner avec ces deux options, propagées dans `BacktestRunOptions` puis dans la commande réellement lancée.
+- ajout de vues IHM passives et compatibles historique pour :
+  - `Snapshot baseline fidélité (Sprint 6)` ;
+  - `Non-régression fidélité vs baseline` ;
+  - avec lecture passive depuis `report.json[artifacts]` comme pour les autres artefacts additifs.
+- ajout de tests ciblés sur :
+  - le snapshot canonique ;
+  - la comparaison baseline via catalogue JSON ;
+  - le parsing CLI ;
+  - le runner IHM ;
+  - les helpers tabulaires IHM.
+
+#### Cohérence IHM vérifiée
+- aucune nouvelle clé racine n’est imposée dans `report.json` ;
+- les nouveaux artefacts restent strictement référencés via `report.json[artifacts]` ;
+- les runs historiques sans artefacts Sprint 6 continuent de s’afficher normalement ;
+- l’IHM expose seulement les nouveaux blocs si les artefacts correspondants existent.
+
+#### Critères Sprint 6 désormais couverts sur ce slice
+- un run structuré produit désormais une base canonique promouvable pour la non-régression fidélité ;
+- une comparaison baseline peut être exécutée automatiquement en local/CI dès lors qu’un catalogue + snapshot promu existent ;
+- les dérives sur la fenêtre, la chaîne de phases ou les métriques clés deviennent visibles dans un artefact structuré ;
+- l’IHM reste cohérente avec ce nouveau contrat additif.
+
+#### Limites résiduelles après ce Sprint 6
+- le dépôt contient pour l’instant surtout le **mécanisme** et un **catalogue d’entrée** ; les snapshots réellement promus doivent encore être produits depuis des runs de référence ;
+- les seuils initiaux sont prudents et devront être recalibrés après observation de fenêtres live plus nombreuses ;
+- la comparaison reste compacte : elle vise la détection de dérive, pas encore l’explication causale exhaustive de chaque point d’écart.
 
 ---
 

@@ -825,6 +825,118 @@ class TestFidelityManifestSprint1:
         assert payload["global_scores"]["portfolio_alignment_score"] == pytest.approx(1.0)
         assert payload["top_divergences"][0]["trade_date"] == "2025-01-02"
 
+    def test_build_fidelity_baseline_snapshot_exposes_compact_metrics(self, tmp_path):
+        from backtesting.fidelity import build_fidelity_baseline_snapshot
+
+        snapshot = build_fidelity_baseline_snapshot(
+            fidelity_manifest={
+                "taxonomy_version": 1,
+                "engine_mode": "pipeline",
+                "requested_window": {"start_date": "2025-01-02", "end_date": "2025-01-03"},
+                "capital_preset_key": "capital_50001_100000",
+                "degraded": False,
+                "degraded_reasons": [],
+                "coverage": {
+                    "sentiment": {"coverage_ratio_after": 1.0},
+                    "ml": {"coverage_ratio_after": 0.5},
+                },
+                "summary": {"degraded_components": []},
+                "component_status": {
+                    "execution": {
+                        "details": {
+                            "phase2_mode": "risk_execution",
+                            "phase3_mode": "execution_replay",
+                            "phase4_mode": "protection_replay",
+                            "phase5_mode": "watcher_replay",
+                            "phase7_mode": "exit_lifecycle_replay",
+                        }
+                    }
+                },
+            },
+            replay_diagnostic_summary={"session_count": 2, "degraded_session_count": 1},
+            candidate_target_parity_summary={"session_count": 2, "diverged_session_count": 1},
+            compare_to_live_summary={
+                "session_count": 2,
+                "live_session_count": 2,
+                "global_scores": {"fidelity_score": 0.97, "fills_alignment_score": 1.0},
+            },
+            execution_broker_like_summary={
+                "order_count": 8,
+                "order_status_counts": {"FILLED": 4, "CANCELED": 2},
+                "broker_semantics": {"rejected_orders": 1, "timed_out_orders": 0},
+                "broker_state_counts": {"stale": 0},
+            },
+            baseline_id="pipeline_live_like_smoke",
+        )
+
+        assert snapshot["baseline_id"] == "pipeline_live_like_smoke"
+        assert snapshot["phase_modes"]["phase7_mode"] == "exit_lifecycle_replay"
+        assert snapshot["metrics"]["ml_coverage_ratio_after"] == pytest.approx(0.5)
+        assert snapshot["metrics"]["replay_degraded_session_ratio"] == pytest.approx(0.5)
+        assert snapshot["metrics"]["compare_live_fidelity_score"] == pytest.approx(0.97)
+        assert snapshot["metrics"]["broker_filled_orders"] == pytest.approx(4.0)
+
+    def test_build_fidelity_baseline_comparison_detects_regression_against_catalog(self, tmp_path):
+        import json
+
+        from backtesting.fidelity import build_fidelity_baseline_comparison
+
+        baseline_snapshot_path = tmp_path / "baseline_snapshot.json"
+        baseline_snapshot_path.write_text(
+            json.dumps(
+                {
+                    "snapshot_version": 1,
+                    "requested_window": {"start_date": "2025-01-02", "end_date": "2025-01-03"},
+                    "phase_modes": {"phase7_mode": "exit_lifecycle_replay"},
+                    "metrics": {
+                        "compare_live_fidelity_score": 0.98,
+                        "sentiment_coverage_ratio_after": 1.0,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        catalog_path = tmp_path / "catalog.json"
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "baselines": [
+                        {
+                            "baseline_id": "pipeline_live_like_smoke",
+                            "label": "Smoke pipeline live-like",
+                            "snapshot_path": str(baseline_snapshot_path),
+                            "requested_window": {"start_date": "2025-01-02", "end_date": "2025-01-03"},
+                            "phase_modes": {"phase7_mode": "exit_lifecycle_replay"},
+                            "metric_thresholds": {
+                                "compare_live_fidelity_score": {"comparison": "min", "abs": 0.005},
+                                "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.0},
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        comparison = build_fidelity_baseline_comparison(
+            {
+                "requested_window": {"start_date": "2025-01-02", "end_date": "2025-01-03"},
+                "phase_modes": {"phase7_mode": "exit_lifecycle_replay"},
+                "metrics": {
+                    "compare_live_fidelity_score": 0.96,
+                    "sentiment_coverage_ratio_after": 1.0,
+                },
+            },
+            catalog_path=catalog_path,
+            baseline_id="pipeline_live_like_smoke",
+        )
+
+        assert comparison["status"] == "diverged"
+        assert comparison["baseline_id"] == "pipeline_live_like_smoke"
+        assert comparison["failed_count"] == 1
+        assert comparison["failed_checks"][0]["name"] == "compare_live_fidelity_score"
+
 
 # ---------------------------------------------------------------------------
 # Phase E.3 (refactor v2) — _RunState invariant

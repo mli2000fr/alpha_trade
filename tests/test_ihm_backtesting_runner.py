@@ -220,6 +220,24 @@ def test_build_backtesting_run_command_matches_pipeline_live_like_replay_preset(
 	assert "--phase7-mode" in command and command[command.index("--phase7-mode") + 1] == "exit_lifecycle_replay"
 
 
+def test_build_backtesting_run_command_includes_fidelity_baseline_flags():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			fidelity_baseline_id="pipeline_live_like_smoke",
+			fidelity_baseline_catalog="config/fidelity_baseline_catalog.json",
+		),
+	)
+
+	assert "--fidelity-baseline-id" in command
+	assert command[command.index("--fidelity-baseline-id") + 1] == "pipeline_live_like_smoke"
+	assert "--fidelity-baseline-catalog" in command
+	assert command[command.index("--fidelity-baseline-catalog") + 1] == "config/fidelity_baseline_catalog.json"
+
+
 def test_build_backtesting_diagnose_screener_command_includes_grid_parameters():
 	from ihm.services.backtesting_runner import DiagnoseScreenerOptions, build_backtesting_command
 

@@ -1892,6 +1892,433 @@ def save_compare_to_live_summary(summary: Mapping[str, Any], output_dir: Path) -
     }
 
 
+def _normalize_phase_modes_from_payload(*payloads: Mapping[str, Any] | None) -> dict[str, str]:
+    phase_modes: dict[str, str] = {}
+    for payload in payloads:
+        if not isinstance(payload, Mapping):
+            continue
+        for key, value in payload.items():
+            if not str(key).startswith("phase"):
+                continue
+            if not str(key).endswith("_mode"):
+                continue
+            text = str(value or "").strip()
+            if text:
+                phase_modes[str(key)] = text
+    return dict(sorted(phase_modes.items()))
+
+
+def _safe_ratio(numerator: object, denominator: object) -> float:
+    base = _safe_int(denominator, 0)
+    if base <= 0:
+        return 0.0
+    return float(_safe_int(numerator, 0)) / float(base)
+
+
+def _sanitize_baseline_id(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def build_fidelity_baseline_snapshot(
+    *,
+    fidelity_manifest: Mapping[str, Any],
+    replay_diagnostic_summary: Mapping[str, Any] | None = None,
+    candidate_target_parity_summary: Mapping[str, Any] | None = None,
+    compare_to_live_summary: Mapping[str, Any] | None = None,
+    execution_broker_like_summary: Mapping[str, Any] | None = None,
+    baseline_id: str | None = None,
+) -> dict[str, Any]:
+    """Construit un snapshot canonique compact pour la non-régression fidélité."""
+    manifest_requested_window = fidelity_manifest.get("requested_window", {})
+    requested_window = dict(manifest_requested_window) if isinstance(manifest_requested_window, Mapping) else {}
+    manifest_component_status = fidelity_manifest.get("component_status", {})
+    component_status = dict(manifest_component_status) if isinstance(manifest_component_status, Mapping) else {}
+    execution_component = component_status.get("execution", {}) if isinstance(component_status, Mapping) else {}
+    execution_details = execution_component.get("details", {}) if isinstance(execution_component, Mapping) else {}
+    compare_global_scores = compare_to_live_summary.get("global_scores", {}) if isinstance(compare_to_live_summary, Mapping) else {}
+    broker_semantics = execution_broker_like_summary.get("broker_semantics", {}) if isinstance(execution_broker_like_summary, Mapping) else {}
+    broker_status_counts = execution_broker_like_summary.get("order_status_counts", {}) if isinstance(execution_broker_like_summary, Mapping) else {}
+    broker_state_counts = execution_broker_like_summary.get("broker_state_counts", {}) if isinstance(execution_broker_like_summary, Mapping) else {}
+    phase_modes = _normalize_phase_modes_from_payload(
+        cast(Mapping[str, Any], fidelity_manifest.get("modes", {})) if isinstance(fidelity_manifest.get("modes", {}), Mapping) else {},
+        cast(Mapping[str, Any], execution_details) if isinstance(execution_details, Mapping) else {},
+        cast(Mapping[str, Any], execution_broker_like_summary.get("phase_modes", {})) if isinstance(execution_broker_like_summary, Mapping) else {},
+    )
+    available_sections = {
+        "fidelity_manifest": True,
+        "replay_diagnostic_summary": isinstance(replay_diagnostic_summary, Mapping) and bool(replay_diagnostic_summary),
+        "candidate_target_parity_summary": isinstance(candidate_target_parity_summary, Mapping) and bool(candidate_target_parity_summary),
+        "compare_to_live_summary": isinstance(compare_to_live_summary, Mapping) and bool(compare_to_live_summary),
+        "execution_broker_like_summary": isinstance(execution_broker_like_summary, Mapping) and bool(execution_broker_like_summary),
+    }
+    metrics = {
+        "degraded_reason_count": float(len(_normalize_reason_list(fidelity_manifest.get("degraded_reasons", [])))),
+        "sentiment_coverage_ratio_after": float(
+            cast(Mapping[str, Any], fidelity_manifest.get("coverage", {})).get("sentiment", {}).get("coverage_ratio_after", 1.0)
+            if isinstance(cast(Mapping[str, Any], fidelity_manifest.get("coverage", {})).get("sentiment", {}), Mapping)
+            else 1.0
+        ),
+        "ml_coverage_ratio_after": float(
+            cast(Mapping[str, Any], fidelity_manifest.get("coverage", {})).get("ml", {}).get("coverage_ratio_after", 1.0)
+            if isinstance(cast(Mapping[str, Any], fidelity_manifest.get("coverage", {})).get("ml", {}), Mapping)
+            else 1.0
+        ),
+        "replay_session_count": float(_safe_int(replay_diagnostic_summary.get("session_count", 0) if isinstance(replay_diagnostic_summary, Mapping) else 0)),
+        "replay_degraded_session_ratio": _safe_ratio(
+            replay_diagnostic_summary.get("degraded_session_count", 0) if isinstance(replay_diagnostic_summary, Mapping) else 0,
+            replay_diagnostic_summary.get("session_count", 0) if isinstance(replay_diagnostic_summary, Mapping) else 0,
+        ),
+        "parity_session_count": float(_safe_int(candidate_target_parity_summary.get("session_count", 0) if isinstance(candidate_target_parity_summary, Mapping) else 0)),
+        "parity_diverged_session_ratio": _safe_ratio(
+            candidate_target_parity_summary.get("diverged_session_count", 0) if isinstance(candidate_target_parity_summary, Mapping) else 0,
+            candidate_target_parity_summary.get("session_count", 0) if isinstance(candidate_target_parity_summary, Mapping) else 0,
+        ),
+        "compare_live_session_count": float(_safe_int(compare_to_live_summary.get("session_count", 0) if isinstance(compare_to_live_summary, Mapping) else 0)),
+        "compare_live_live_session_count": float(_safe_int(compare_to_live_summary.get("live_session_count", 0) if isinstance(compare_to_live_summary, Mapping) else 0)),
+        "compare_live_fidelity_score": float(compare_global_scores.get("fidelity_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
+        "compare_live_candidate_alignment_score": float(compare_global_scores.get("candidate_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
+        "compare_live_risk_alignment_score": float(compare_global_scores.get("risk_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
+        "compare_live_portfolio_alignment_score": float(compare_global_scores.get("portfolio_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
+        "compare_live_execution_alignment_score": float(compare_global_scores.get("execution_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
+        "compare_live_fills_alignment_score": float(compare_global_scores.get("fills_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
+        "compare_live_exits_alignment_score": float(compare_global_scores.get("exits_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
+        "compare_live_pnl_alignment_score": float(compare_global_scores.get("pnl_alignment_score", 0.0)) if isinstance(compare_global_scores, Mapping) else 0.0,
+        "broker_order_count": float(_safe_int(execution_broker_like_summary.get("order_count", 0) if isinstance(execution_broker_like_summary, Mapping) else 0)),
+        "broker_filled_orders": float(_safe_int(broker_status_counts.get("FILLED", 0) if isinstance(broker_status_counts, Mapping) else 0)),
+        "broker_canceled_orders": float(_safe_int(broker_status_counts.get("CANCELED", 0) if isinstance(broker_status_counts, Mapping) else 0)),
+        "broker_rejected_orders": float(_safe_int(broker_semantics.get("rejected_orders", 0) if isinstance(broker_semantics, Mapping) else 0)),
+        "broker_timed_out_orders": float(_safe_int(broker_semantics.get("timed_out_orders", 0) if isinstance(broker_semantics, Mapping) else 0)),
+        "broker_stale_orders": float(_safe_int(broker_state_counts.get("stale", 0) if isinstance(broker_state_counts, Mapping) else 0)),
+    }
+    return {
+        "snapshot_version": 1,
+        "baseline_id": _sanitize_baseline_id(baseline_id),
+        "engine_mode": fidelity_manifest.get("engine_mode"),
+        "requested_window": requested_window,
+        "capital_preset_key": fidelity_manifest.get("capital_preset_key"),
+        "phase_modes": phase_modes,
+        "available_sections": available_sections,
+        "metrics": {name: round(float(value), 6) for name, value in metrics.items()},
+        "summary": {
+            "degraded": bool(fidelity_manifest.get("degraded", False)),
+            "degraded_components": list(cast(Mapping[str, Any], fidelity_manifest.get("summary", {})).get("degraded_components", [])) if isinstance(cast(Mapping[str, Any], fidelity_manifest.get("summary", {})).get("degraded_components", []), Sequence) and not isinstance(cast(Mapping[str, Any], fidelity_manifest.get("summary", {})).get("degraded_components", []), (str, bytes)) else [],
+            "live_sections_available": [
+                section_name
+                for section_name in ("compare_to_live_summary", "execution_broker_like_summary")
+                if bool(available_sections.get(section_name, False))
+            ],
+        },
+        "sources": {
+            "fidelity_manifest": {
+                "taxonomy_version": fidelity_manifest.get("taxonomy_version", 1),
+                "strict_pit_requested": bool(fidelity_manifest.get("strict_pit_requested", False)),
+                "strict_pit_satisfied": bool(fidelity_manifest.get("strict_pit_satisfied", False)),
+            },
+            "replay_diagnostic_summary": {
+                "session_count": _safe_int(replay_diagnostic_summary.get("session_count", 0) if isinstance(replay_diagnostic_summary, Mapping) else 0),
+                "degraded_session_count": _safe_int(replay_diagnostic_summary.get("degraded_session_count", 0) if isinstance(replay_diagnostic_summary, Mapping) else 0),
+            },
+            "candidate_target_parity_summary": {
+                "session_count": _safe_int(candidate_target_parity_summary.get("session_count", 0) if isinstance(candidate_target_parity_summary, Mapping) else 0),
+                "diverged_session_count": _safe_int(candidate_target_parity_summary.get("diverged_session_count", 0) if isinstance(candidate_target_parity_summary, Mapping) else 0),
+            },
+            "compare_to_live_summary": {
+                "session_count": _safe_int(compare_to_live_summary.get("session_count", 0) if isinstance(compare_to_live_summary, Mapping) else 0),
+                "live_session_count": _safe_int(compare_to_live_summary.get("live_session_count", 0) if isinstance(compare_to_live_summary, Mapping) else 0),
+                "top_divergence_count": len(compare_to_live_summary.get("top_divergences", [])) if isinstance(compare_to_live_summary, Mapping) and isinstance(compare_to_live_summary.get("top_divergences", []), Sequence) and not isinstance(compare_to_live_summary.get("top_divergences", []), (str, bytes)) else 0,
+            },
+            "execution_broker_like_summary": {
+                "order_count": _safe_int(execution_broker_like_summary.get("order_count", 0) if isinstance(execution_broker_like_summary, Mapping) else 0),
+                "session_count": _safe_int(execution_broker_like_summary.get("session_count", 0) if isinstance(execution_broker_like_summary, Mapping) else 0),
+            },
+        },
+    }
+
+
+def save_fidelity_baseline_snapshot(snapshot: Mapping[str, Any], output_dir: Path) -> Path:
+    """Sauvegarde le snapshot canonique d'un run pour promotion/compare future."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filepath = output_dir / "fidelity_baseline_snapshot.json"
+    filepath.write_text(json.dumps(dict(snapshot), ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    return filepath
+
+
+def _load_json_mapping(path: Path) -> dict[str, Any] | None:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return dict(payload) if isinstance(payload, Mapping) else None
+
+
+def _resolve_baseline_entry(
+    catalog: Mapping[str, Any],
+    *,
+    baseline_id: str | None,
+    requested_window: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    baselines = catalog.get("baselines", [])
+    if not isinstance(baselines, Sequence) or isinstance(baselines, (str, bytes)):
+        return None
+    normalized_id = _sanitize_baseline_id(baseline_id)
+    exact_window = dict(requested_window) if isinstance(requested_window, Mapping) else {}
+    for entry in baselines:
+        if not isinstance(entry, Mapping):
+            continue
+        if normalized_id is not None and _sanitize_baseline_id(entry.get("baseline_id")) == normalized_id:
+            return dict(entry)
+    if normalized_id is not None:
+        return None
+    for entry in baselines:
+        if not isinstance(entry, Mapping):
+            continue
+        entry_window = entry.get("requested_window", {})
+        if isinstance(entry_window, Mapping) and dict(entry_window) == exact_window:
+            return dict(entry)
+    return None
+
+
+def _default_baseline_metric_thresholds() -> dict[str, dict[str, object]]:
+    return {
+        "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.0},
+        "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.0},
+        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0},
+        "parity_diverged_session_ratio": {"comparison": "max", "abs": 0.0},
+        "compare_live_fidelity_score": {"comparison": "min", "abs": 0.02},
+        "compare_live_candidate_alignment_score": {"comparison": "min", "abs": 0.02},
+        "compare_live_risk_alignment_score": {"comparison": "min", "abs": 0.02},
+        "compare_live_portfolio_alignment_score": {"comparison": "min", "abs": 0.02},
+        "compare_live_execution_alignment_score": {"comparison": "min", "abs": 0.02},
+        "compare_live_fills_alignment_score": {"comparison": "min", "abs": 0.02},
+        "compare_live_exits_alignment_score": {"comparison": "min", "abs": 0.02},
+        "compare_live_pnl_alignment_score": {"comparison": "min", "abs": 0.02},
+        "broker_stale_orders": {"comparison": "max", "abs": 0.0},
+    }
+
+
+def _normalize_metric_thresholds(value: object) -> dict[str, dict[str, object]]:
+    if not isinstance(value, Mapping):
+        return {}
+    normalized: dict[str, dict[str, object]] = {}
+    for raw_metric_name, raw_rule in value.items():
+        metric_name = str(raw_metric_name or "").strip()
+        if not metric_name or not isinstance(raw_rule, Mapping):
+            continue
+        comparison = str(raw_rule.get("comparison") or raw_rule.get("direction") or "abs").strip().lower()
+        tolerance_abs = float(raw_rule.get("abs", 0.0) or 0.0)
+        normalized[metric_name] = {
+            "comparison": comparison if comparison in {"abs", "min", "max"} else "abs",
+            "abs": tolerance_abs,
+            "label": str(raw_rule.get("label") or metric_name),
+        }
+    return normalized
+
+
+def _evaluate_numeric_baseline_check(
+    *,
+    metric_name: str,
+    baseline_value: object,
+    current_value: object,
+    rule: Mapping[str, object],
+) -> dict[str, object]:
+    baseline_float = float(baseline_value or 0.0)
+    current_float = float(current_value or 0.0)
+    comparison = str(rule.get("comparison") or "abs")
+    tolerance_abs = float(rule.get("abs", 0.0) or 0.0)
+    delta = round(current_float - baseline_float, 6)
+    failed = False
+    tolerated_min = baseline_float - tolerance_abs
+    tolerated_max = baseline_float + tolerance_abs
+    if comparison == "min":
+        failed = current_float < tolerated_min
+    elif comparison == "max":
+        failed = current_float > tolerated_max
+    else:
+        failed = abs(delta) > tolerance_abs
+    return {
+        "check_type": "metric",
+        "name": metric_name,
+        "label": str(rule.get("label") or metric_name),
+        "comparison": comparison,
+        "baseline_value": round(baseline_float, 6),
+        "current_value": round(current_float, 6),
+        "delta": delta,
+        "tolerance_abs": round(tolerance_abs, 6),
+        "status": "failed" if failed else "passed",
+    }
+
+
+def _evaluate_exact_mapping_check(
+    *,
+    name: str,
+    label: str,
+    baseline_value: object,
+    current_value: object,
+) -> dict[str, object]:
+    baseline_mapping = dict(baseline_value) if isinstance(baseline_value, Mapping) else {}
+    current_mapping = dict(current_value) if isinstance(current_value, Mapping) else {}
+    return {
+        "check_type": "metadata",
+        "name": name,
+        "label": label,
+        "comparison": "exact",
+        "baseline_value": baseline_mapping,
+        "current_value": current_mapping,
+        "status": "passed" if baseline_mapping == current_mapping else "failed",
+    }
+
+
+def build_fidelity_baseline_comparison(
+    current_snapshot: Mapping[str, Any],
+    *,
+    catalog_path: Path,
+    baseline_id: str | None = None,
+) -> dict[str, Any]:
+    """Compare un snapshot courant à une baseline décrite dans un catalogue JSON."""
+    catalog_payload = _load_json_mapping(catalog_path)
+    if catalog_payload is None:
+        return {
+            "comparison_version": 1,
+            "status": "missing_catalog",
+            "catalog_path": str(catalog_path),
+            "baseline_id": _sanitize_baseline_id(baseline_id),
+            "checks": [],
+        }
+
+    entry = _resolve_baseline_entry(
+        catalog_payload,
+        baseline_id=baseline_id,
+        requested_window=cast(Mapping[str, Any], current_snapshot.get("requested_window", {})) if isinstance(current_snapshot.get("requested_window", {}), Mapping) else {},
+    )
+    if entry is None:
+        return {
+            "comparison_version": 1,
+            "status": "missing_baseline",
+            "catalog_path": str(catalog_path),
+            "catalog_version": catalog_payload.get("version", 1),
+            "baseline_id": _sanitize_baseline_id(baseline_id),
+            "checks": [],
+        }
+
+    snapshot_path_raw = str(entry.get("snapshot_path") or "").strip()
+    resolved_snapshot_path = (catalog_path.parent / snapshot_path_raw).resolve() if snapshot_path_raw and not Path(snapshot_path_raw).is_absolute() else Path(snapshot_path_raw) if snapshot_path_raw else None
+    if resolved_snapshot_path is None:
+        return {
+            "comparison_version": 1,
+            "status": "missing_snapshot_path",
+            "catalog_path": str(catalog_path),
+            "catalog_version": catalog_payload.get("version", 1),
+            "baseline_id": _sanitize_baseline_id(entry.get("baseline_id")),
+            "baseline_label": entry.get("label"),
+            "checks": [],
+        }
+
+    baseline_snapshot = _load_json_mapping(resolved_snapshot_path)
+    if baseline_snapshot is None:
+        return {
+            "comparison_version": 1,
+            "status": "missing_snapshot",
+            "catalog_path": str(catalog_path),
+            "catalog_version": catalog_payload.get("version", 1),
+            "baseline_id": _sanitize_baseline_id(entry.get("baseline_id")),
+            "baseline_label": entry.get("label"),
+            "baseline_snapshot_path": str(resolved_snapshot_path),
+            "checks": [],
+        }
+
+    baseline_metrics = baseline_snapshot.get("metrics", {})
+    current_metrics = current_snapshot.get("metrics", {})
+    metric_thresholds = _default_baseline_metric_thresholds()
+    metric_thresholds.update(_normalize_metric_thresholds(entry.get("metric_thresholds", {})))
+    checks: list[dict[str, object]] = []
+    if isinstance(entry.get("requested_window", {}), Mapping):
+        checks.append(
+            _evaluate_exact_mapping_check(
+                name="requested_window",
+                label="Fenêtre demandée",
+                baseline_value=entry.get("requested_window", {}),
+                current_value=current_snapshot.get("requested_window", {}),
+            )
+        )
+    baseline_phase_modes = entry.get("phase_modes", baseline_snapshot.get("phase_modes", {}))
+    if isinstance(baseline_phase_modes, Mapping) and baseline_phase_modes:
+        checks.append(
+            _evaluate_exact_mapping_check(
+                name="phase_modes",
+                label="Chaîne de phases",
+                baseline_value=baseline_phase_modes,
+                current_value=current_snapshot.get("phase_modes", {}),
+            )
+        )
+    if isinstance(baseline_metrics, Mapping) and isinstance(current_metrics, Mapping):
+        for metric_name, rule in metric_thresholds.items():
+            if metric_name not in baseline_metrics or metric_name not in current_metrics:
+                continue
+            checks.append(
+                _evaluate_numeric_baseline_check(
+                    metric_name=metric_name,
+                    baseline_value=baseline_metrics.get(metric_name),
+                    current_value=current_metrics.get(metric_name),
+                    rule=rule,
+                )
+            )
+    failed_checks = [check for check in checks if str(check.get("status") or "") == "failed"]
+    passed_checks = [check for check in checks if str(check.get("status") or "") == "passed"]
+    return {
+        "comparison_version": 1,
+        "status": "aligned" if not failed_checks else "diverged",
+        "catalog_path": str(catalog_path),
+        "catalog_version": catalog_payload.get("version", 1),
+        "baseline_id": _sanitize_baseline_id(entry.get("baseline_id")),
+        "baseline_label": entry.get("label"),
+        "baseline_snapshot_path": str(resolved_snapshot_path),
+        "requested_window": dict(cast(Mapping[str, Any], current_snapshot.get("requested_window", {}))) if isinstance(current_snapshot.get("requested_window", {}), Mapping) else {},
+        "phase_modes": dict(cast(Mapping[str, Any], current_snapshot.get("phase_modes", {}))) if isinstance(current_snapshot.get("phase_modes", {}), Mapping) else {},
+        "checked_count": len(checks),
+        "passed_count": len(passed_checks),
+        "failed_count": len(failed_checks),
+        "failed_checks": failed_checks,
+        "checks": checks,
+        "baseline_metrics": dict(baseline_metrics) if isinstance(baseline_metrics, Mapping) else {},
+        "current_metrics": dict(current_metrics) if isinstance(current_metrics, Mapping) else {},
+    }
+
+
+def save_fidelity_baseline_comparison(comparison: Mapping[str, Any], output_dir: Path) -> dict[str, Path]:
+    """Sauvegarde le résultat de comparaison baseline fidélité en JSON + CSV."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "fidelity_baseline_comparison.json"
+    csv_path = output_dir / "fidelity_baseline_comparison_checks.csv"
+    json_path.write_text(json.dumps(dict(comparison), ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    checks = comparison.get("checks", []) if isinstance(comparison, Mapping) else []
+    rows: list[dict[str, object]] = []
+    if isinstance(checks, Sequence) and not isinstance(checks, (str, bytes)):
+        for check in checks:
+            if not isinstance(check, Mapping):
+                continue
+            rows.append(
+                {
+                    "name": check.get("name"),
+                    "label": check.get("label"),
+                    "check_type": check.get("check_type"),
+                    "comparison": check.get("comparison"),
+                    "status": check.get("status"),
+                    "baseline_value": json.dumps(check.get("baseline_value"), ensure_ascii=False, default=str),
+                    "current_value": json.dumps(check.get("current_value"), ensure_ascii=False, default=str),
+                    "delta": check.get("delta"),
+                    "tolerance_abs": check.get("tolerance_abs"),
+                }
+            )
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    return {
+        "fidelity_baseline_comparison_json": json_path,
+        "fidelity_baseline_comparison_checks_csv": csv_path,
+    }
+
+
 def _build_scores_provenance(score_payload: Mapping[str, Any], *, requested_score_column: str | None) -> dict[str, object]:
     source_table = str(score_payload.get("source_table") or "unknown")
     fallback_used = bool(score_payload.get("fallback_used", False))
@@ -2342,8 +2769,12 @@ __all__ = [
     "REASON_TAXONOMY",
     "build_candidate_target_parity_summary",
     "build_compare_to_live_summary",
+    "build_fidelity_baseline_comparison",
+    "build_fidelity_baseline_snapshot",
     "build_coverage_summary",
     "build_fidelity_manifest",
+    "save_fidelity_baseline_comparison",
+    "save_fidelity_baseline_snapshot",
     "save_fidelity_manifest",
     "save_candidate_target_parity_summary",
     "save_compare_to_live_summary",

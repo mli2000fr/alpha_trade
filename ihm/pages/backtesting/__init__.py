@@ -347,6 +347,8 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "phase4_mode", "Explication": "off = comportement Phase 3, protection_replay = rejoue les protections TP/stop/trailing issues des child intents d'exécution.", "Défaut": "off"},
             {"Paramètre": "phase5_mode", "Explication": "off = comportement Phase 4, watcher_replay = rejoue les transitions du watcher de protection (trigger -> promotion trailing) dans le moteur.", "Défaut": "off"},
             {"Paramètre": "phase7_mode", "Explication": "off = comportement Phase 5, exit_lifecycle_replay = rejoue l'issue terminale des child orders et l'annulation OCO du sibling.", "Défaut": "off"},
+            {"Paramètre": "fidelity_baseline_id", "Explication": "Identifiant optionnel de baseline fidélité à comparer au run courant (Sprint 6).", "Défaut": "None"},
+            {"Paramètre": "fidelity_baseline_catalog", "Explication": "Chemin optionnel vers le catalogue JSON des baselines fidélité. Si vide, la comparaison n'est pas déclenchée automatiquement.", "Défaut": "None"},
             {"Paramètre": "artifacts_dir", "Explication": "Dossier des artefacts modèles utilisés pour rebuild-missing.", "Défaut": "artifacts/models"},
             {"Paramètre": "score_column", "Explication": "Colonne de score privilégiée pour le replay : auto / walk-forward / sentiment / final.", "Défaut": "auto"},
             {"Paramètre": "walk_forward_artifacts_dir", "Explication": "Répertoire racine optionnel des artefacts de calibration walk-forward à appliquer au run standard.", "Défaut": "None"},
@@ -1110,6 +1112,21 @@ def _build_run_options() -> BacktestRunOptions:
             key="bt_run_walk_forward_artifacts_dir",
             help="Si renseigné, le backtest standard cherchera explicitement les meilleurs poids walk-forward dans ce répertoire.",
         )
+    baseline_col1, baseline_col2 = st.columns(2)
+    with baseline_col1:
+        fidelity_baseline_id = st.text_input(
+            "Baseline fidélité (optionnel)",
+            value=cast(str, st.session_state.get("bt_run_fidelity_baseline_id", "")),
+            key="bt_run_fidelity_baseline_id",
+            help="Active le comparatif Sprint 6 contre une baseline versionnée si l'identifiant existe dans le catalogue choisi.",
+        )
+    with baseline_col2:
+        fidelity_baseline_catalog = st.text_input(
+            "Catalogue baseline fidélité (optionnel)",
+            value=cast(str, st.session_state.get("bt_run_fidelity_baseline_catalog", "")),
+            key="bt_run_fidelity_baseline_catalog",
+            help="Chemin du catalogue JSON des baselines. Renseignez-le seulement si vous souhaitez exécuter la comparaison Sprint 6 sur ce run.",
+        )
 
     _render_pipeline_pit_hint(
         engine_mode=engine_mode,
@@ -1142,6 +1159,8 @@ def _build_run_options() -> BacktestRunOptions:
         phase4_mode=cast(Any, phase4_mode),
         phase5_mode=cast(Any, phase5_mode),
         phase7_mode=cast(Any, phase7_mode),
+        fidelity_baseline_id=fidelity_baseline_id.strip() or None,
+        fidelity_baseline_catalog=fidelity_baseline_catalog.strip() or None,
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
@@ -1937,6 +1956,56 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
         with st.expander("Payload brut compare_to_live_summary.json", expanded=False):
             st.json(compare_to_live_payload)
 
+    fidelity_baseline_snapshot_payload = _load_json_artifact_from_paths(artifacts, "fidelity_baseline_snapshot_json")
+    if fidelity_baseline_snapshot_payload:
+        st.markdown("**🧷 Snapshot baseline fidélité (Sprint 6)**")
+        snapshot_col1, snapshot_col2, snapshot_col3 = st.columns(3)
+        snapshot_col1.metric("Mode moteur", _coerce_metric_text(fidelity_baseline_snapshot_payload.get("engine_mode")))
+        snapshot_col2.metric(
+            "Fenêtre",
+            "{} → {}".format(
+                _coerce_metric_text(
+                    fidelity_baseline_snapshot_payload.get("requested_window", {}).get("start_date")
+                    if isinstance(fidelity_baseline_snapshot_payload.get("requested_window"), dict)
+                    else None
+                ),
+                _coerce_metric_text(
+                    fidelity_baseline_snapshot_payload.get("requested_window", {}).get("end_date")
+                    if isinstance(fidelity_baseline_snapshot_payload.get("requested_window"), dict)
+                    else None
+                ),
+            ),
+        )
+        snapshot_col3.metric(
+            "Sections disponibles",
+            sum(
+                1
+                for value in fidelity_baseline_snapshot_payload.get("available_sections", {}).values()
+                if bool(value)
+            ) if isinstance(fidelity_baseline_snapshot_payload.get("available_sections"), dict) else 0,
+        )
+        snapshot_rows = _build_fidelity_baseline_snapshot_rows(fidelity_baseline_snapshot_payload)
+        if not snapshot_rows.empty:
+            with st.expander("Aperçu snapshot baseline fidélité", expanded=False):
+                st.dataframe(snapshot_rows, use_container_width=True, hide_index=True)
+        with st.expander("Payload brut fidelity_baseline_snapshot.json", expanded=False):
+            st.json(fidelity_baseline_snapshot_payload)
+
+    fidelity_baseline_comparison_payload = _load_json_artifact_from_paths(artifacts, "fidelity_baseline_comparison_json")
+    if fidelity_baseline_comparison_payload:
+        st.markdown("**🧪 Non-régression fidélité vs baseline**")
+        baseline_col1, baseline_col2, baseline_col3, baseline_col4 = st.columns(4)
+        baseline_col1.metric("Statut", _coerce_metric_text(fidelity_baseline_comparison_payload.get("status")))
+        baseline_col2.metric("Baseline", _coerce_metric_text(fidelity_baseline_comparison_payload.get("baseline_id")))
+        baseline_col3.metric("Checks", _to_int(fidelity_baseline_comparison_payload.get("checked_count")))
+        baseline_col4.metric("Échecs", _to_int(fidelity_baseline_comparison_payload.get("failed_count")))
+        fidelity_baseline_rows = _build_fidelity_baseline_check_rows(fidelity_baseline_comparison_payload)
+        if not fidelity_baseline_rows.empty:
+            with st.expander("Aperçu des checks baseline fidélité", expanded=False):
+                st.dataframe(fidelity_baseline_rows, use_container_width=True, hide_index=True)
+        with st.expander("Payload brut fidelity_baseline_comparison.json", expanded=False):
+            st.json(fidelity_baseline_comparison_payload)
+
     execution_broker_like_payload = _load_json_artifact_from_paths(artifacts, "execution_broker_like_summary_json")
     if execution_broker_like_payload:
         st.markdown("**🏦 Exécution broker-like enrichie**")
@@ -2323,6 +2392,43 @@ def _build_compare_to_live_rows(payload: dict[str, object]) -> pd.DataFrame:
                     else None
                 ),
                 "Divergences clés": divergence_preview,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _build_fidelity_baseline_snapshot_rows(payload: dict[str, object]) -> pd.DataFrame:
+    metrics = payload.get("metrics", {})
+    if not isinstance(metrics, dict) or not metrics:
+        return pd.DataFrame()
+    rows = [
+        {
+            "Métrique": str(metric_name),
+            "Valeur": _coerce_metric_text(metric_value),
+        }
+        for metric_name, metric_value in metrics.items()
+    ]
+    return pd.DataFrame(rows)
+
+
+def _build_fidelity_baseline_check_rows(payload: dict[str, object]) -> pd.DataFrame:
+    checks = payload.get("checks", [])
+    if not isinstance(checks, list) or not checks:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        rows.append(
+            {
+                "Check": _coerce_metric_text(check.get("label") or check.get("name")),
+                "Type": _coerce_metric_text(check.get("check_type")),
+                "Comparaison": _coerce_metric_text(check.get("comparison")),
+                "Baseline": _coerce_metric_text(check.get("baseline_value")),
+                "Courant": _coerce_metric_text(check.get("current_value")),
+                "Delta": _coerce_metric_text(check.get("delta")),
+                "Tolérance": _coerce_metric_text(check.get("tolerance_abs")),
+                "Statut": _coerce_metric_text(check.get("status")),
             }
         )
     return pd.DataFrame(rows)

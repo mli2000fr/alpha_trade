@@ -1797,6 +1797,22 @@ class TestCLI:
         assert args.profile == "custom"
         assert args.account_type == "margin"
         assert args.pdt_rule == "auto"
+        assert args.fidelity_baseline_id is None
+        assert args.fidelity_baseline_catalog is None
+
+    def test_parse_run_command_accepts_fidelity_baseline_options(self):
+        from backtesting.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "run",
+            "--start", "2025-01-01",
+            "--fidelity-baseline-id", "pipeline_live_like_smoke",
+            "--fidelity-baseline-catalog", "config/fidelity_baseline_catalog.json",
+        ])
+
+        assert args.fidelity_baseline_id == "pipeline_live_like_smoke"
+        assert args.fidelity_baseline_catalog == "config/fidelity_baseline_catalog.json"
         assert args.swing_only is False
         assert args.sentiment_lookback == 365
         assert args.ml_mode == "auto"
@@ -3852,6 +3868,151 @@ class TestCLI:
         assert report_payload["params"]["phase7"]["exit_lifecycle_replay"]["bridge"] == "execution_engine.oco_manager+exit_lifecycle_replay"
         artifacts = cast(dict[str, str], report_payload["artifacts"])
         assert artifacts["phase7_exit_lifecycle_replay_summary_json"].endswith("phase7_exit_lifecycle_replay_summary.json")
+
+    def test_run_backtest_saves_fidelity_baseline_artifacts_when_requested(self, monkeypatch, tmp_path):
+        import argparse
+        import backtesting.cli as cli
+        from backtesting import data_loader, fidelity, report, resilience, signal_replay, simulator
+        from backtesting.fidelity import ScoreLoadDiagnostics, ScoreLoadResult
+        from database import connection
+
+        captured: dict[str, object] = {}
+        output_dir = tmp_path / "baseline_out"
+        idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        ohlcv_df = pd.DataFrame({
+            "symbol": ["AAPL", "AAPL"],
+            "trade_date": idx,
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1000, 1100],
+        })
+        scores_df = pd.DataFrame({
+            "symbol": ["AAPL"],
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "final_score": [0.7],
+            "final_score_sentiment": [0.75],
+            "sector": ["Tech"],
+            "is_candidate": [1],
+        })
+        signals_df = pd.DataFrame({
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "symbol": ["AAPL"],
+            "selected": [True],
+            "rank": [1.0],
+            "score_source": ["final_score_sentiment"],
+        })
+
+        class FakePF:
+            pass
+
+        class FakeReport:
+            def print_summary(self) -> None:
+                return None
+
+        class FakeBacktestEngine:
+            def __init__(self, cfg):
+                self.cfg = cfg
+
+            def run(self, **kwargs):
+                captured["signals_df"] = kwargs["signals_df"].copy()
+                return FakePF()
+
+        def fake_save_report_json(report_obj, *, output_dir, artifacts, params, diagnostics, **kwargs):
+            captured["report_payload"] = {
+                "artifacts": artifacts,
+                "params": params,
+                "diagnostics": diagnostics,
+                "fidelity": kwargs.get("fidelity", {}),
+            }
+            return output_dir / "report.json"
+
+        monkeypatch.setattr(cli, "_safe_print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(connection, "get_sqlalchemy_engine", lambda: object())
+        monkeypatch.setattr(data_loader, "load_ohlcv", lambda engine, start, end: ohlcv_df.copy())
+        monkeypatch.setattr(data_loader, "load_scores", lambda engine, start, end, capital_preset_key=None, **kwargs: ScoreLoadResult(
+            frame=scores_df.copy(),
+            diagnostics=ScoreLoadDiagnostics(
+                source_table="stock_scores_history",
+                strict_pit_requested=bool(kwargs.get("strict_pit", False)),
+                history_table_exists=True,
+                history_rows_found=len(scores_df),
+                capital_preset_key=capital_preset_key,
+            ),
+        ))
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
+            "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
+            "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
+            "high": df.pivot_table(index="trade_date", columns="symbol", values="high"),
+            "low": df.pivot_table(index="trade_date", columns="symbol", values="low"),
+        })
+        monkeypatch.setattr(resilience, "prepare_scores_for_sentiment_mode", lambda *args, **kwargs: scores_df.copy())
+        monkeypatch.setattr(resilience, "prepare_predictions_for_ml_mode", lambda *args, **kwargs: pd.DataFrame())
+        monkeypatch.setattr(signal_replay, "replay_signals", lambda *args, **kwargs: signals_df.copy())
+        monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
+        monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {"selected_count": 1})
+        monkeypatch.setattr(report, "generate_report", lambda pf, equity, **kwargs: FakeReport())
+        monkeypatch.setattr(report, "save_equity_curve", lambda *args, **kwargs: tmp_path / "eq.png")
+        monkeypatch.setattr(report, "save_equity_curve_csv", lambda *args, **kwargs: tmp_path / "eq.csv")
+        monkeypatch.setattr(report, "save_report_json", fake_save_report_json)
+        monkeypatch.setattr(report, "save_trades_csv", lambda *args, **kwargs: tmp_path / "trades.csv")
+        monkeypatch.setattr(fidelity, "build_fidelity_baseline_snapshot", lambda **kwargs: {
+            "snapshot_version": 1,
+            "baseline_id": kwargs.get("baseline_id"),
+            "requested_window": {"start_date": "2025-01-01", "end_date": "2025-01-02"},
+            "phase_modes": {"phase7_mode": "off"},
+            "metrics": {"compare_live_fidelity_score": 0.0},
+        })
+        monkeypatch.setattr(fidelity, "save_fidelity_baseline_snapshot", lambda snapshot, output_dir: output_dir / "fidelity_baseline_snapshot.json")
+        monkeypatch.setattr(fidelity, "build_fidelity_baseline_comparison", lambda snapshot, *, catalog_path, baseline_id=None: {
+            "comparison_version": 1,
+            "status": "aligned",
+            "baseline_id": baseline_id,
+            "checked_count": 2,
+            "failed_count": 0,
+            "checks": [],
+        })
+        monkeypatch.setattr(fidelity, "save_fidelity_baseline_comparison", lambda comparison, output_dir: {
+            "fidelity_baseline_comparison_json": output_dir / "fidelity_baseline_comparison.json",
+            "fidelity_baseline_comparison_checks_csv": output_dir / "fidelity_baseline_comparison_checks.csv",
+        })
+
+        args = argparse.Namespace(
+            start="2025-01-01",
+            end="2025-01-02",
+            equity=100_000.0,
+            tp=0.08,
+            ts=0.05,
+            max_positions=5,
+            fees=0.001,
+            account_type="margin",
+            pdt_rule="auto",
+            swing_only=False,
+            sentiment_lookback=365,
+            no_save=True,
+            ml_mode="auto",
+            sentiment_mode="auto",
+            artifacts_dir="artifacts/models",
+            output_dir=str(output_dir),
+            score_column="auto",
+            walk_forward_artifacts_dir=None,
+            engine_mode="research",
+            fidelity_baseline_id="pipeline_live_like_smoke",
+            fidelity_baseline_catalog="config/fidelity_baseline_catalog.json",
+            **self._CLI_NEUTRAL_DEFAULTS,
+        )
+
+        cli._run_backtest(args)
+
+        report_payload = cast(dict[str, object], captured["report_payload"])
+        artifacts = cast(dict[str, str], report_payload["artifacts"])
+        assert artifacts["fidelity_baseline_snapshot_json"].endswith("fidelity_baseline_snapshot.json")
+        assert artifacts["fidelity_baseline_comparison_json"].endswith("fidelity_baseline_comparison.json")
+        assert artifacts["fidelity_baseline_comparison_checks_csv"].endswith("fidelity_baseline_comparison_checks.csv")
+        assert report_payload["params"]["fidelity_baseline_id"] == "pipeline_live_like_smoke"
+        assert report_payload["params"]["fidelity_baseline_catalog"] == "config/fidelity_baseline_catalog.json"
 
     def test_parse_backfill_scores_history_command(self):
         from backtesting.cli import _build_parser

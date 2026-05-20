@@ -267,6 +267,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default="off",
         help="Phase 7 opt-in: `exit_lifecycle_replay` rejoue explicitement l'issue terminale des child orders (exit + annulation OCO du sibling) dans le moteur de backtest. Exige `--phase5-mode watcher_replay`.",
     )
+    run_p.add_argument(
+        "--fidelity-baseline-id",
+        default=None,
+        help="Identifiant optionnel d'une baseline de non-régression fidélité à comparer au run courant.",
+    )
+    run_p.add_argument(
+        "--fidelity-baseline-catalog",
+        default=None,
+        help="Chemin optionnel vers le catalogue JSON des baselines fidélité. Utilisé seulement si une comparaison baseline est demandée.",
+    )
     # Phase A.6 (refactor) — risk-free rate annualisé pour Sharpe/Sortino.
     run_p.add_argument(
         "--risk-free-rate",
@@ -733,12 +743,16 @@ def _run_backtest(args: argparse.Namespace) -> None:
     from backtesting.fidelity import (
         build_candidate_target_parity_summary,
         build_compare_to_live_summary,
+        build_fidelity_baseline_comparison,
+        build_fidelity_baseline_snapshot,
         PitHistoryRequiredError,
         build_replay_diagnostic_summary,
         PitMlStrategyUnsupportedError,
         build_fidelity_manifest,
         save_candidate_target_parity_summary,
         save_compare_to_live_summary,
+        save_fidelity_baseline_comparison,
+        save_fidelity_baseline_snapshot,
         save_replay_diagnostic_summary,
         save_coverage_summary,
         save_fidelity_manifest,
@@ -1411,6 +1425,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
         "phase4_mode": phase4_mode,
         "phase5_mode": phase5_mode,
         "phase7_mode": phase7_mode,
+        "fidelity_baseline_id": getattr(args, "fidelity_baseline_id", None),
+        "fidelity_baseline_catalog": getattr(args, "fidelity_baseline_catalog", None),
         "ml_pit_strategy": ml_pit_strategy,
         # Phase 6.1.a — fusion conviction unifiée via core.conviction.
         "conviction_weights": {
@@ -1536,6 +1552,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             }
             artifact_paths.update(candidate_target_parity_paths)
         compare_to_live_paths: dict[str, str] = {}
+        compare_to_live_summary: dict[str, object] | None = None
         try:
             from execution_engine.db_io import ExecutionRepository
             from risk_management.db_io import RiskRepository
@@ -1725,6 +1742,42 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 save_phase7_exit_lifecycle_replay_artifacts(phase7_exit_lifecycle_result, output_dir),
             )
             artifact_paths.update(phase7_artifacts)
+        fidelity_baseline_snapshot = build_fidelity_baseline_snapshot(
+            fidelity_manifest=fidelity_manifest,
+            replay_diagnostic_summary=replay_diagnostic_summary,
+            candidate_target_parity_summary=candidate_target_parity_summary,
+            compare_to_live_summary=compare_to_live_summary,
+            execution_broker_like_summary=execution_broker_like_summary,
+            baseline_id=str(getattr(args, "fidelity_baseline_id", "") or "").strip() or None,
+        )
+        fidelity_baseline_snapshot_path = save_fidelity_baseline_snapshot(fidelity_baseline_snapshot, output_dir)
+        artifact_paths["fidelity_baseline_snapshot_json"] = str(fidelity_baseline_snapshot_path)
+        fidelity_baseline_id = str(getattr(args, "fidelity_baseline_id", "") or "").strip() or None
+        fidelity_baseline_catalog_raw = str(getattr(args, "fidelity_baseline_catalog", "") or "").strip()
+        fidelity_baseline_catalog_path = (
+            Path(fidelity_baseline_catalog_raw)
+            if fidelity_baseline_catalog_raw
+            else (Path("config") / "fidelity_baseline_catalog.json" if fidelity_baseline_id else None)
+        )
+        if fidelity_baseline_catalog_path is not None:
+            fidelity_baseline_comparison = build_fidelity_baseline_comparison(
+                fidelity_baseline_snapshot,
+                catalog_path=fidelity_baseline_catalog_path,
+                baseline_id=fidelity_baseline_id,
+            )
+            fidelity_baseline_paths = {
+                key: str(path)
+                for key, path in save_fidelity_baseline_comparison(fidelity_baseline_comparison, output_dir).items()
+            }
+            artifact_paths.update(fidelity_baseline_paths)
+            _safe_print(
+                "   Sprint 6 baseline fidélité: status={} baseline={} checks={} failed={}\n".format(
+                    fidelity_baseline_comparison.get("status", "unknown"),
+                    fidelity_baseline_comparison.get("baseline_id") or fidelity_baseline_id or "auto",
+                    fidelity_baseline_comparison.get("checked_count", 0),
+                    fidelity_baseline_comparison.get("failed_count", 0),
+                )
+            )
         report_json_path = save_report_json(
             report,
             output_dir=output_dir,
@@ -1740,10 +1793,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
         _safe_print(f"   → {trade_audit_csv_path}")
         _safe_print(f"   → {fidelity_manifest_path}")
         _safe_print(f"   → {coverage_summary_path}")
+        _safe_print(f"   → {fidelity_baseline_snapshot_path}")
         for path in replay_diagnostic_paths.values():
             _safe_print(f"   → {path}")
         for path in candidate_target_parity_paths.values():
             _safe_print(f"   → {path}")
+        if fidelity_baseline_catalog_path is not None:
+            for path in fidelity_baseline_paths.values():
+                _safe_print(f"   → {path}")
 
     # 6. Artefacts
     if not args.no_save:

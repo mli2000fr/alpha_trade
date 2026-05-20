@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "description": "Catalogue versionné des baselines de non-régression fidélité Sprint 6.",
+  "promotion_notes": [
+    "Chaque baseline pointe vers un snapshot canonique fidelity_baseline_snapshot.json promu manuellement.",
+    "Les snapshot_path peuvent être relatifs à ce fichier ou absolus.",
+    "Les runs historiques restent compatibles : la comparaison n'est exécutée que si une baseline est demandée."
+  ],
+  "baselines": [
+    {
+      "baseline_id": "research_standard_smoke",
+      "label": "Smoke test research standard",
+      "requested_window": {
+        "start_date": "2025-01-01",
+        "end_date": "2025-01-31"
+      },
+      "phase_modes": {
+        "phase2_mode": "off",
+        "phase3_mode": "off",
+        "phase4_mode": "off",
+        "phase5_mode": "off",
+        "phase7_mode": "off"
+      },
+      "snapshot_path": "..\\artifacts\\fidelity_baselines\\research_standard_smoke\\fidelity_baseline_snapshot.json",
+      "metric_thresholds": {
+        "sentiment_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture sentiment finale"},
+        "ml_coverage_ratio_after": {"comparison": "min", "abs": 0.0, "label": "Couverture ML finale"},
+        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances dégradées"}
+      }
+    },
+    {
+      "baseline_id": "pipeline_live_like_smoke",
+      "label": "Smoke test pipeline live-like Phase 2→3→4→5→7",
+      "requested_window": {
+        "start_date": "2025-01-01",
+        "end_date": "2025-01-31"
+      },
+      "phase_modes": {
+        "phase2_mode": "risk_execution",
+        "phase3_mode": "execution_replay",
+        "phase4_mode": "protection_replay",
+        "phase5_mode": "watcher_replay",
+        "phase7_mode": "exit_lifecycle_replay"
+      },
+      "snapshot_path": "..\\artifacts\\fidelity_baselines\\pipeline_live_like_smoke\\fidelity_baseline_snapshot.json",
+      "metric_thresholds": {
+        "compare_live_fidelity_score": {"comparison": "min", "abs": 0.02, "label": "Score global compare-to-live"},
+        "compare_live_execution_alignment_score": {"comparison": "min", "abs": 0.02, "label": "Alignement exécution"},
+        "compare_live_fills_alignment_score": {"comparison": "min", "abs": 0.02, "label": "Alignement fills"},
+        "compare_live_exits_alignment_score": {"comparison": "min", "abs": 0.02, "label": "Alignement exits"},
+        "compare_live_pnl_alignment_score": {"comparison": "min", "abs": 0.02, "label": "Alignement PnL"},
+        "broker_stale_orders": {"comparison": "max", "abs": 0.0, "label": "Ordres stale"}
+      }
+    },
+    {
+      "baseline_id": "pipeline_live_like_regression_window_a",
+      "label": "Fenêtre de régression pipeline live-like A",
+      "requested_window": {
+        "start_date": "2025-02-01",
+        "end_date": "2025-03-31"
+      },
+      "phase_modes": {
+        "phase2_mode": "risk_execution",
+        "phase3_mode": "execution_replay",
+        "phase4_mode": "protection_replay",
+        "phase5_mode": "watcher_replay",
+        "phase7_mode": "exit_lifecycle_replay"
+      },
+      "snapshot_path": "..\\artifacts\\fidelity_baselines\\pipeline_live_like_regression_window_a\\fidelity_baseline_snapshot.json",
+      "metric_thresholds": {
+        "compare_live_fidelity_score": {"comparison": "min", "abs": 0.03, "label": "Score global compare-to-live"},
+        "parity_diverged_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances candidate→target divergentes"},
+        "replay_degraded_session_ratio": {"comparison": "max", "abs": 0.0, "label": "Ratio de séances replay dégradées"}
+      }
+    }
+  ]
+}

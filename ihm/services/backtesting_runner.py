@@ -44,6 +44,8 @@ class BacktestRunOptions:
     phase4_mode: Literal["off", "protection_replay"] = "off"
     phase5_mode: Literal["off", "watcher_replay"] = "off"
     phase7_mode: Literal["off", "exit_lifecycle_replay"] = "off"
+    fidelity_baseline_id: str | None = None
+    fidelity_baseline_catalog: str | None = None
     artifacts_dir: str = "artifacts/models"
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
@@ -193,6 +195,10 @@ def build_backtesting_command(
             command.extend(["--capital-preset-key", options.capital_preset_key])
         if options.walk_forward_artifacts_dir:
             command.extend(["--walk-forward-artifacts-dir", options.walk_forward_artifacts_dir])
+        if options.fidelity_baseline_id:
+            command.extend(["--fidelity-baseline-id", options.fidelity_baseline_id])
+        if options.fidelity_baseline_catalog:
+            command.extend(["--fidelity-baseline-catalog", options.fidelity_baseline_catalog])
         if options.swing_only:
             command.append("--swing-only")
         if options.output_dir:
