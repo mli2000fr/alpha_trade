@@ -392,6 +392,62 @@ def _format_selector_mode_counts_line(label: str, payload: object) -> str | None
     return f"{label} : {', '.join(parts)}."
 
 
+def _normalize_fallback_journal_entries(payload: object) -> list[Mapping[str, object]]:
+    if not isinstance(payload, SequenceABC) or isinstance(payload, (str, bytes)):
+        return []
+    return [entry for entry in payload if isinstance(entry, Mapping)]
+
+
+def _format_empirical_calibration_fallback_lines(payload: Mapping[str, object]) -> list[str]:
+    fallback_reason = str(payload.get("fallback_reason") or "").strip()
+    fallback_policy_source = str(payload.get("fallback_policy_source") or "").strip()
+    journal_entries = _normalize_fallback_journal_entries(payload.get("fallback_journal"))
+    lines: list[str] = []
+    if fallback_reason or fallback_policy_source:
+        line = "Calibration empirique risk — fallback détaillé"
+        if fallback_policy_source:
+            line += f" : source={fallback_policy_source}"
+        if fallback_reason:
+            separator = ", " if fallback_policy_source else " : "
+            line += f"{separator}raison={fallback_reason}"
+        lines.append(line + ".")
+    if not journal_entries:
+        return lines
+
+    compact_parts: list[str] = []
+    for entry in journal_entries[:5]:
+        level = str(entry.get("level") or "unknown").strip() or "unknown"
+        outcome = str(entry.get("outcome") or "unknown").strip() or "unknown"
+        eligible_candidates = _to_int(entry.get("eligible_candidates"))
+        blocked_candidates = _to_int(entry.get("blocked_candidates"))
+        compact_parts.append(
+            f"{level}:{outcome}[e={eligible_candidates},b={blocked_candidates}]"
+        )
+    if compact_parts:
+        lines.append("Calibration empirique risk — journal fallback : " + " | ".join(compact_parts) + ".")
+    for entry in journal_entries[:3]:
+        rank = _to_int(entry.get("rank"))
+        level = str(entry.get("level") or "unknown").strip() or "unknown"
+        outcome = str(entry.get("outcome") or "unknown").strip() or "unknown"
+        eligible_candidates = _to_int(entry.get("eligible_candidates"))
+        blocked_candidates = _to_int(entry.get("blocked_candidates"))
+        selected_status = str(entry.get("selected_status") or "").strip()
+        selected_segment_key = str(entry.get("selected_segment_key") or "").strip()
+        detail = (
+            f"Fallback #{rank} — niveau={level}, outcome={outcome}, "
+            f"candidats éligibles={eligible_candidates}, candidats bloqués={blocked_candidates}"
+        )
+        if selected_status:
+            detail += f", statut={selected_status}"
+        if selected_segment_key:
+            detail += f", segment={selected_segment_key}"
+        lines.append(detail + ".")
+    remaining_entries = len(journal_entries) - 3
+    if remaining_entries > 0:
+        lines.append(f"{remaining_entries} niveau(x) de fallback supplémentaire(s) restent disponibles dans le payload brut.")
+    return lines
+
+
 def get_run_summary(record: Mapping[str, object] | None) -> dict[str, object]:
     if not record:
         return {}
@@ -658,6 +714,7 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
                 if kelly_fraction_multiplier is not None:
                     line += f", kelly_mult={kelly_fraction_multiplier:.2f}"
             lines.append(line + ".")
+            lines.extend(_format_empirical_calibration_fallback_lines(empirical_calibration_payload))
         if shadow_compare_payload:
             shadow_status = str(shadow_compare_payload.get("status") or "").strip()
             if shadow_status == "compared":

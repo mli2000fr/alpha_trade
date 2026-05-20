@@ -121,6 +121,7 @@ def test_build_drift_chart_frames_returns_summary_and_detail_series() -> None:
                 "final_value_drift_pct": -0.12,
                 "abs_metric_delta": 0.2,
                 "abs_final_value_drift_pct": 0.12,
+                "compared_at": "2026-05-20T10:00:00",
             },
             {
                 "comparison_kind": "vs_reference_live_segment",
@@ -129,6 +130,7 @@ def test_build_drift_chart_frames_returns_summary_and_detail_series() -> None:
                 "final_value_drift_pct": 0.08,
                 "abs_metric_delta": 0.1,
                 "abs_final_value_drift_pct": 0.08,
+                "compared_at": "2026-05-20T11:00:00",
             },
         ]
     )
@@ -140,5 +142,8 @@ def test_build_drift_chart_frames_returns_summary_and_detail_series() -> None:
     assert "vs_all_same_horizon_window" in chart_frames["summary_chart"].index
     assert list(chart_frames["detail_chart"].columns) == ["metric_delta", "final_value_drift_pct"]
     assert "regime=all|horizon=5d|window=12m" in chart_frames["detail_chart"].index
+    assert list(chart_frames["metric_direction_chart"].columns) == ["metric_delta"]
+    assert list(chart_frames["final_value_direction_chart"].columns) == ["final_value_drift_pct"]
+    assert not chart_frames["timeline_chart"].empty
 
 

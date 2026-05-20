@@ -146,6 +146,19 @@ market_regimes:
 # (TrailingStopConfig) via ``service.market.parse_trailing_stop``.
 # ---------------------------------------------------------------------------
 risk_management:
+  empirical_calibration:
+    # Politique de fallback live pour `weights_calibration_runs`.
+    # Chaque niveau tente de résoudre un segment éligible (`eligible_for_live=1`).
+    # L'ordre ci-dessous reproduit le comportement P3+ par défaut.
+    fallback_levels:
+      - exact_segment
+      - regime_all
+      - same_regime_nearest_window
+      - regime_all_nearest_window
+      - same_regime_nearest_horizon
+      - regime_all_nearest_horizon
+      - same_regime_nearest_segment
+      - regime_all_nearest_segment
   trailing_stop:
     enabled: false
     mode: dynamic_atr            # fixed | dynamic_atr

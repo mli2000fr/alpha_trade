@@ -193,6 +193,9 @@ def _build_drift_chart_frames(
 
     detail_source = selected_drifts if selected_drifts is not None and not selected_drifts.empty else all_drifts
     detail_chart = pd.DataFrame()
+    metric_direction_chart = pd.DataFrame()
+    final_value_direction_chart = pd.DataFrame()
+    timeline_chart = pd.DataFrame()
     if not detail_source.empty:
         detail_chart = detail_source.copy()
         label_source = detail_chart.get("target_segment_key")
@@ -209,7 +212,62 @@ def _build_drift_chart_frames(
         ]
         if value_columns:
             detail_chart = detail_chart[["drift_label", *value_columns]].drop_duplicates(subset=["drift_label"]).set_index("drift_label")
-    return {"summary_chart": summary_chart, "detail_chart": detail_chart}
+        detailed_labels = detail_source.copy()
+        target_label_source = detailed_labels.get("target_segment_key")
+        if target_label_source is None or target_label_source.isna().all():
+            target_label_source = detailed_labels.get("source_segment_key")
+        comparison_label_source = detailed_labels.get("comparison_kind")
+        if target_label_source is not None:
+            detailed_labels["chart_label"] = target_label_source.fillna("unknown").astype(str)
+            if comparison_label_source is not None:
+                detailed_labels["chart_label"] = (
+                    comparison_label_source.fillna("unknown").astype(str)
+                    + " | "
+                    + detailed_labels["chart_label"]
+                )
+        else:
+            detailed_labels["chart_label"] = detailed_labels.index.astype(str)
+        if "metric_delta" in detailed_labels.columns:
+            metric_direction_chart = (
+                detailed_labels[["chart_label", "metric_delta"]]
+                .drop_duplicates(subset=["chart_label"])
+                .set_index("chart_label")
+            )
+            metric_direction_chart = metric_direction_chart.reindex(
+                metric_direction_chart["metric_delta"].abs().sort_values(ascending=False).index
+            )
+        if "final_value_drift_pct" in detailed_labels.columns:
+            final_value_direction_chart = (
+                detailed_labels[["chart_label", "final_value_drift_pct"]]
+                .drop_duplicates(subset=["chart_label"])
+                .set_index("chart_label")
+            )
+            final_value_direction_chart = final_value_direction_chart.reindex(
+                final_value_direction_chart["final_value_drift_pct"].abs().sort_values(ascending=False).index
+            )
+    timeline_source = detail_source if selected_drifts is not None and not detail_source.empty else all_drifts
+    if not timeline_source.empty and "compared_at" in timeline_source.columns:
+        timeline = timeline_source.copy()
+        timeline["compared_at"] = pd.to_datetime(timeline["compared_at"], errors="coerce")
+        timeline = timeline.dropna(subset=["compared_at"])
+        timeline_value_columns = [
+            column
+            for column in ["metric_delta", "final_value_drift_pct"]
+            if column in timeline.columns
+        ]
+        if not timeline.empty and timeline_value_columns:
+            timeline_chart = (
+                timeline.groupby("compared_at", dropna=False)[timeline_value_columns]
+                .mean()
+                .sort_index()
+            )
+    return {
+        "summary_chart": summary_chart,
+        "detail_chart": detail_chart,
+        "metric_direction_chart": metric_direction_chart,
+        "final_value_direction_chart": final_value_direction_chart,
+        "timeline_chart": timeline_chart,
+    }
 
 
 def render() -> None:
@@ -418,22 +476,40 @@ def render() -> None:
                     drift_frames["all"],
                     selected_drifts=drift_frames["selected"],
                 )
-                if not chart_frames["summary_chart"].empty:
-                    st.caption("Vue graphique — amplitude max par type de comparaison")
-                    st.bar_chart(chart_frames["summary_chart"], use_container_width=True)
-                if not chart_frames["detail_chart"].empty:
-                    st.caption("Vue graphique — dérives du run sélectionné")
-                    st.bar_chart(chart_frames["detail_chart"], use_container_width=True)
-                if not drift_frames["summary"].empty:
-                    st.caption("Synthèse par type de comparaison")
-                    st.dataframe(drift_frames["summary"], use_container_width=True, hide_index=True)
-                if not drift_frames["selected"].empty:
-                    st.caption("Drifts reliés au run sélectionné")
-                    st.dataframe(drift_frames["selected"], use_container_width=True, hide_index=True)
-                elif "source_run_id" in drift_frames["all"].columns:
-                    st.info("Aucun drift directement rattaché au run sélectionné dans ce batch ; affichage du batch complet.")
-                st.caption("Batch complet trié par ampleur de dérive")
-                st.dataframe(drift_frames["all"], use_container_width=True, hide_index=True)
+                tab_summary, tab_run, tab_timeline, tab_tables = st.tabs(
+                    ["Synthèse", "Run sélectionné", "Timeline", "Tables"]
+                )
+                with tab_summary:
+                    if not chart_frames["summary_chart"].empty:
+                        st.caption("Amplitude absolue max par type de comparaison")
+                        st.bar_chart(chart_frames["summary_chart"], use_container_width=True)
+                    if not drift_frames["summary"].empty:
+                        st.caption("Synthèse tabulaire par type de comparaison")
+                        st.dataframe(drift_frames["summary"], use_container_width=True, hide_index=True)
+                with tab_run:
+                    if not chart_frames["metric_direction_chart"].empty:
+                        st.caption("Δ métrique signé par segment de comparaison")
+                        st.bar_chart(chart_frames["metric_direction_chart"], use_container_width=True)
+                    if not chart_frames["final_value_direction_chart"].empty:
+                        st.caption("Δ final_value signé par segment de comparaison")
+                        st.bar_chart(chart_frames["final_value_direction_chart"], use_container_width=True)
+                    if not chart_frames["detail_chart"].empty:
+                        st.caption("Vue consolidée des dérives du run sélectionné")
+                        st.bar_chart(chart_frames["detail_chart"], use_container_width=True)
+                    elif "source_run_id" in drift_frames["all"].columns:
+                        st.info("Aucun drift directement rattaché au run sélectionné dans ce batch ; affichage du batch complet dans les autres onglets.")
+                with tab_timeline:
+                    if not chart_frames["timeline_chart"].empty:
+                        st.caption("Évolution moyenne des drifts sur le batch")
+                        st.line_chart(chart_frames["timeline_chart"], use_container_width=True)
+                    else:
+                        st.info("Timeline indisponible : la colonne `compared_at` ou les métriques de drift sont absentes.")
+                with tab_tables:
+                    if not drift_frames["selected"].empty:
+                        st.caption("Drifts reliés au run sélectionné")
+                        st.dataframe(drift_frames["selected"], use_container_width=True, hide_index=True)
+                    st.caption("Batch complet trié par ampleur de dérive")
+                    st.dataframe(drift_frames["all"], use_container_width=True, hide_index=True)
 
 
 run_page_if_standalone(__name__, render)

@@ -214,6 +214,7 @@ Le bloc `empirical_risk_calibration` contient notamment :
 - `horizon_days` / `lookback_months` ;
 - `requested_horizon_days` / `requested_lookback_months` ;
 - `eligible_for_live` / `eligibility_reason` / `status` / `fallback_level` ;
+- `fallback_reason` / `fallback_journal` / `fallback_policy_source` ;
 - `window_start` / `window_end` ;
 - `best_weights` avec au minimum `score_weight`, `prediction_weight`, `kelly_fraction_multiplier`, `min_effective_probability`, `assumed_payoff_ratio`.
 
@@ -232,6 +233,22 @@ déterministe et gouvernée :
 7. segment du même régime le plus proche sur les deux dimensions ;
 8. segment `regime=all` le plus proche sur les deux dimensions.
 
+Depuis P3+, cette hiérarchie n'est plus figée en dur : elle peut être surchargée
+dans `config.yaml` via `risk_management.empirical_calibration.fallback_levels`.
+Si la configuration est absente, invalide ou illisible, le runtime conserve la
+politique par défaut ci-dessus et trace la source effective dans
+`fallback_policy_source` (`config_yaml`, `defaults`, `defaults_invalid_config`,
+`defaults_on_config_error`).
+
+Le runtime conserve également un journal détaillé de résolution :
+
+- `fallback_reason` : raison synthétique humaine (niveau retenu, statut,
+  segment demandé, segment résolu, source de politique) ;
+- `fallback_journal` : liste ordonnée des niveaux tentés avec, pour chacun,
+  le nombre de candidats éligibles, le nombre de candidats bloqués par la
+  gouvernance et l'issue (`selected`, `blocked_candidate_available`,
+  `no_candidate`).
+
 Les garde-fous de gouvernance restent prioritaires : un segment n'est promu en
 live que si `eligible_for_live = true`. Si aucun segment éligible n'est trouvé,
 le runtime retourne soit un segment bloqué (`status="blocked_by_governance"`),
@@ -248,6 +265,18 @@ Options associées :
 python -m risk_management.run_risk --disable-empirical-calibration
 python -m risk_management.run_risk --empirical-calibration-run-id wcr-20260520-001
 python -m risk_management.run_risk --empirical-calibration-horizon-days 5 --empirical-calibration-lookback-months 12
+```
+
+Exemple de surcharge YAML :
+
+```yaml
+risk_management:
+  empirical_calibration:
+    fallback_levels:
+      - exact_segment
+      - regime_all
+      - regime_all_nearest_window
+      - same_regime_nearest_window
 ```
 
 Job batch associé :
@@ -309,11 +338,18 @@ La page IHM `weights_calibration_runs` expose :
 - l'historique des runs segmentés ;
 - le statut de promotion live (`eligible_for_live`) ;
 - un résumé des drifts par `comparison_kind` ;
+- des graphes directionnels (Δ métrique et Δ `final_value`) pour le run sélectionné ;
+- une timeline moyenne des drifts quand `compared_at` est disponible ;
 - les drifts du run sélectionné ;
 - le batch complet trié par ampleur de dérive absolue.
 
 Cette vue sert d'outil de gouvernance opérateur : vérifier qu'un fallback live
 plus large reste cohérent avec le segment de référence avant promotion.
+
+Le `run_summary` IHM affiche désormais aussi un journal détaillé des fallbacks
+de calibration empirique pour aider à comprendre pourquoi un segment exact a été
+ignoré (absence de candidat, segment bloqué par gouvernance, recours à une
+fenêtre/horizon plus large, etc.).
 
 L'`account_equity_breakdown` est best-effort : aucune exception ne remonte au
 CLI. Si les tables `broker_account_snapshots` / `broker_positions_snapshots` /

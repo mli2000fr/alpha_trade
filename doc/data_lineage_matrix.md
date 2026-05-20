@@ -117,6 +117,11 @@
   écrit un événement `ml_drift_runs.payload.gate_action='kill_switch_ml'`
   quand le drift atteint le statut `ALERT` ; le flag remonte dans
   `run_summary` ML (`ml_kill_switch_active`).
+- **Fallback calibrations empiriques** *(P3+)* : `risk_management.db_io`
+  résout `weights_calibration_runs` selon une politique configurable dans
+  `config.yaml › risk_management.empirical_calibration.fallback_levels` et
+  journalise chaque niveau tenté dans `run_summary.empirical_risk_calibration`
+  (`fallback_reason`, `fallback_journal`, `fallback_policy_source`).
 
 ---
 
