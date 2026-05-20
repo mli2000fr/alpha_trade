@@ -1919,6 +1919,24 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
         with st.expander("Payload brut candidate_target_parity_summary.json", expanded=False):
             st.json(candidate_target_payload)
 
+    compare_to_live_payload = _load_json_artifact_from_paths(artifacts, "compare_to_live_summary_json")
+    if compare_to_live_payload:
+        st.markdown("**🛰️ Compare-to-live professionnel**")
+        compare_col1, compare_col2, compare_col3 = st.columns(3)
+        compare_col1.metric("Séances comparées", _to_int(compare_to_live_payload.get("session_count")))
+        compare_col2.metric("Séances live exploitables", _to_int(compare_to_live_payload.get("live_session_count")))
+        global_scores = compare_to_live_payload.get("global_scores", {})
+        compare_col3.metric(
+            "Score global",
+            f"{_to_float(global_scores.get('fidelity_score') if isinstance(global_scores, dict) else 0.0):.3f}",
+        )
+        compare_rows = _build_compare_to_live_rows(compare_to_live_payload)
+        if not compare_rows.empty:
+            with st.expander("Aperçu compare-to-live", expanded=False):
+                st.dataframe(compare_rows, use_container_width=True, hide_index=True)
+        with st.expander("Payload brut compare_to_live_summary.json", expanded=False):
+            st.json(compare_to_live_payload)
+
     # Glossaire local pour rappel des indicateurs (Phase G3).
     with st.expander("📚 Glossaire — comprendre les indicateurs", expanded=False):
         st.markdown(
@@ -2171,6 +2189,71 @@ def _build_candidate_target_parity_rows(payload: dict[str, object]) -> pd.DataFr
                 "Research only": ", ".join(str(symbol) for symbol in cast(list[object], session.get("research_only_symbols", []))) if isinstance(session.get("research_only_symbols", []), list) else "—",
                 "Risk only": ", ".join(str(symbol) for symbol in cast(list[object], session.get("risk_only_symbols", []))) if isinstance(session.get("risk_only_symbols", []), list) else "—",
                 "Motifs divergence": ", ".join(str(reason) for reason in cast(list[object], session.get("divergence_reasons", []))) if isinstance(session.get("divergence_reasons", []), list) else "—",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _build_compare_to_live_rows(payload: dict[str, object]) -> pd.DataFrame:
+    sessions = payload.get("sessions", [])
+    if not isinstance(sessions, list) or not sessions:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        top_divergences = session.get("top_divergences", [])
+        divergence_preview = "—"
+        if isinstance(top_divergences, list) and top_divergences:
+            preview_parts: list[str] = []
+            for item in top_divergences[:3]:
+                if not isinstance(item, dict):
+                    continue
+                preview_parts.append(
+                    f"{_coerce_metric_text(item.get('component'))}:{_coerce_metric_text(item.get('symbol'))}:{_coerce_metric_text(item.get('divergence_kind'))}"
+                )
+            if preview_parts:
+                divergence_preview = " | ".join(preview_parts)
+        rows.append(
+            {
+                "Séance": _coerce_metric_text(session.get("trade_date")),
+                "Score fidélité": f"{_to_float(session.get('fidelity_score')):.3f}",
+                "Candidats": _coerce_metric_text(
+                    session.get("candidate_compare", {}).get("status")
+                    if isinstance(session.get("candidate_compare"), dict)
+                    else None
+                ),
+                "Risk live": _coerce_metric_text(
+                    session.get("risk_compare", {}).get("status")
+                    if isinstance(session.get("risk_compare"), dict)
+                    else None
+                ),
+                "Targets live": _coerce_metric_text(
+                    session.get("portfolio_compare", {}).get("status")
+                    if isinstance(session.get("portfolio_compare"), dict)
+                    else None
+                ),
+                "Exécution live": _coerce_metric_text(
+                    session.get("execution_compare", {}).get("status")
+                    if isinstance(session.get("execution_compare"), dict)
+                    else None
+                ),
+                "Fills live": _coerce_metric_text(
+                    session.get("fills_compare", {}).get("status")
+                    if isinstance(session.get("fills_compare"), dict)
+                    else None
+                ),
+                "Exits live": _coerce_metric_text(
+                    session.get("exits_compare", {}).get("status")
+                    if isinstance(session.get("exits_compare"), dict)
+                    else None
+                ),
+                "PnL live": _coerce_metric_text(
+                    session.get("pnl_compare", {}).get("status")
+                    if isinstance(session.get("pnl_compare"), dict)
+                    else None
+                ),
+                "Divergences clés": divergence_preview,
             }
         )
     return pd.DataFrame(rows)

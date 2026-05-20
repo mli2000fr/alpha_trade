@@ -661,6 +661,170 @@ class TestFidelityManifestSprint1:
         assert session["common_rows"][0]["research_conviction_source"] == "core.conviction:score_only"
         assert session["rejected_rows"][0]["decision_reason_code"] == "constraint_max_positions"
 
+    def test_build_compare_to_live_summary_exposes_scores_and_divergences(self):
+        from datetime import date
+        from types import SimpleNamespace
+
+        from backtesting.fidelity import build_compare_to_live_summary
+
+        research_signals_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-02", "2025-01-02"]),
+                "symbol": ["AAA", "BBB"],
+                "selected": [True, True],
+                "rank": [1.0, 2.0],
+            }
+        )
+        risk_entries = [
+            SimpleNamespace(
+                symbol="AAA",
+                score_snapshot_date=date(2025, 1, 2),
+                approved_shares=10,
+                target_weight=0.2,
+                conviction_score=0.8,
+                decision="ACCEPTED",
+            ),
+            SimpleNamespace(
+                symbol="BBB",
+                score_snapshot_date=date(2025, 1, 2),
+                approved_shares=0,
+                target_weight=0.0,
+                conviction_score=0.5,
+                decision="REJECTED",
+            ),
+        ]
+        execution_targets = [
+            SimpleNamespace(
+                symbol="AAA",
+                trade_date=date(2025, 1, 2),
+                target_shares=10,
+                target_weight=0.2,
+                conviction_score=0.8,
+                risk_run_id="bt-exec-1",
+            )
+        ]
+        execution_fills = [
+            SimpleNamespace(
+                symbol="AAA",
+                filled_qty=10,
+                avg_fill_price=100.0,
+                fill_timestamp=pd.Timestamp("2025-01-02 14:30:00", tz="UTC"),
+                intent_role="entry",
+                exec_run_id="bt-exec-1",
+            )
+        ]
+        exit_signals_df = pd.DataFrame(
+            {
+                "execution_date": pd.to_datetime(["2025-01-02"]),
+                "symbol": ["AAA"],
+                "filled_qty": [10.0],
+                "fill_price": [100.0],
+                "replay_exit_date": pd.to_datetime(["2025-01-08"]),
+                "replay_exit_price": [108.0],
+                "replay_exit_reason": ["take_profit"],
+            }
+        )
+
+        payload = build_compare_to_live_summary(
+            fidelity_manifest={
+                "engine_mode": "pipeline",
+                "requested_window": {"start_date": "2025-01-02", "end_date": "2025-01-02"},
+            },
+            research_signals_df=research_signals_df,
+            risk_entries=risk_entries,
+            execution_targets=execution_targets,
+            execution_fills=execution_fills,
+            exit_signals_df=exit_signals_df,
+            live_risk_decisions={
+                "2025-01-02": pd.DataFrame(
+                    {
+                        "symbol": ["AAA", "CCC"],
+                        "decision": ["BUY", "BUY"],
+                        "approved_shares": [10, 5],
+                        "target_weight": [0.2, 0.1],
+                        "conviction_score": [0.8, 0.6],
+                        "run_id": ["live-risk-1", "live-risk-1"],
+                    }
+                )
+            },
+            live_portfolio_targets={
+                "2025-01-02": [
+                    SimpleNamespace(
+                        symbol="AAA",
+                        target_shares=10,
+                        target_weight=0.2,
+                        conviction_score=0.8,
+                        risk_run_id="live-risk-1",
+                    )
+                ]
+            },
+            live_execution_targets={
+                "2025-01-02": [
+                    SimpleNamespace(
+                        symbol="AAA",
+                        target_shares=8,
+                        target_weight=0.16,
+                        conviction_score=0.8,
+                        risk_run_id="live-exec-1",
+                    )
+                ]
+            },
+            live_execution_fills={
+                "2025-01-02": pd.DataFrame(
+                    {
+                        "symbol": ["AAA"],
+                        "side": ["buy"],
+                        "filled_qty": [10.0],
+                        "avg_fill_price": [100.1],
+                        "intent_role": ["entry"],
+                        "fill_timestamp": pd.to_datetime(["2025-01-02 14:30:00"]),
+                        "run_id": ["live-exec-1"],
+                    }
+                )
+            },
+            live_position_lots={
+                "2025-01-02": pd.DataFrame(
+                    {
+                        "symbol": ["AAA"],
+                        "closed_qty": [10.0],
+                        "exit_price": [108.0],
+                        "closed_at": pd.to_datetime(["2025-01-08 15:45:00"]),
+                        "close_intent_role": ["take_profit"],
+                        "realized_pnl": [80.0],
+                        "run_id": ["live-close-1"],
+                    }
+                )
+            },
+            live_compare_context={
+                "2025-01-02": {
+                    "risk_run_id": "live-risk-1",
+                    "exec_run_id": "live-exec-1",
+                    "match_basis": "risk_run_id",
+                }
+            },
+            account_id="default",
+            phase2_mode="risk_execution",
+        )
+
+        assert payload["session_count"] == 1
+        assert payload["live_session_count"] == 1
+        assert payload["compare_sections"] == ["candidates", "risk_decisions", "portfolio_targets", "execution_targets", "fills", "exits", "pnl"]
+        session = payload["sessions"][0]
+        assert session["candidate_compare"]["status"] == "diverged"
+        assert session["candidate_compare"]["research_only_symbols"] == ["BBB"]
+        assert session["candidate_compare"]["live_only_symbols"] == ["CCC"]
+        assert session["fills_compare"]["status"] == "aligned"
+        assert session["exits_compare"]["status"] == "aligned"
+        assert session["pnl_compare"]["status"] == "aligned"
+        assert session["matching_context"]["exec_run_id"] == "live-exec-1"
+        assert payload["global_scores"]["fills_alignment_score"] > 0.0
+        assert payload["global_scores"]["pnl_alignment_score"] > 0.0
+        assert session["risk_compare"]["divergence_kind_counts"] == {"missing_live": 1, "missing_replay": 1}
+        assert session["portfolio_compare"]["status"] == "aligned"
+        assert session["execution_compare"]["divergence_kind_counts"] == {"qty_mismatch": 1}
+        assert payload["global_scores"]["portfolio_alignment_score"] == pytest.approx(1.0)
+        assert payload["top_divergences"][0]["trade_date"] == "2025-01-02"
+
 
 # ---------------------------------------------------------------------------
 # Phase E.3 (refactor v2) — _RunState invariant

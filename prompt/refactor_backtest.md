@@ -443,6 +443,10 @@ Le Sprint 3 est désormais **clos sur son incrément prioritaire de convergence 
 - ajout d’un artefact dédié de parité `candidate -> target` :
   - `candidate_target_parity_summary.json` ;
   - `candidate_target_parity_sessions.csv`.
+- ajout d’un premier artefact canonique `compare-to-live` strictement additif :
+  - `compare_to_live_summary.json` ;
+  - `compare_to_live_sessions.csv` ;
+  - `compare_to_live_summary.md`.
 - comparaison systématique par séance entre :
   - candidats research retenus ;
   - targets risk effectivement acceptés ;
@@ -462,11 +466,59 @@ Le Sprint 3 est désormais **clos sur son incrément prioritaire de convergence 
 - les écarts `research_only` / `risk_only` sont identifiés, mais pas encore reliés à une hiérarchie métier consolidée de gravité ;
 - la convergence `candidate -> target` est maintenant observable, mais pas encore reliée à une fenêtre `compare-to-live` réelle.
 
+### Clôture Sprint 5 — état réel après cette passe
+Le Sprint 5 est maintenant **livré sur un slice étendu et directement exploitable dans l'IHM**, avec un matching live plus robuste par `risk_run_id` / `exec_run_id` quand ces identifiants sont disponibles.
+
+#### Livré dans ce slice Sprint 5
+- ajout d’un rapport additif `compare-to-live` produit à côté des autres artefacts de run ;
+- conservation stricte du contrat racine de `report.json` :
+  - aucune nouvelle clé racine ;
+  - références d’artefacts uniquement via `report.json[artifacts]` ;
+- comparaison par séance sur quatre niveaux :
+  - `candidates` : sélection research vs symboles effectivement retenus côté `risk_decisions` live ;
+  - `risk_decisions` : décisions backtest Phase 2 vs décisions live persistées ;
+  - `portfolio_targets` : targets backtest vs `portfolio_targets` live ;
+  - `execution_targets` : targets d’exécution backtest vs `execution_targets_snapshot` live (dernier run du jour) ;
+- ajout d’un score global de fidélité et de scores par niveau ;
+- durcissement du matching live côté exécution :
+  - tentative de résolution du `exec_run_id` live via le `risk_run_id` provenant de `risk_decisions` ;
+  - fallback explicite sur le dernier `execution_run` du jour si le matching par run n’est pas disponible ;
+- extension du rapport `compare-to-live` aux couches lifecycle suivantes :
+  - `fills` : fills d’entrée replay vs `execution_broker_fills` live du run d’exécution matché ;
+  - `exits` : exits replay vs lots live clos issus du `open_exec_run_id` matché ;
+  - `pnl` : PnL réalisé replay vs PnL réalisé live reconstruit depuis `execution_position_lots` ;
+- ajout d’un `matching_context` par séance dans le payload pour exposer :
+  - `risk_run_id` live retenu ;
+  - `exec_run_id` live retenu ;
+  - `match_basis` (`risk_run_id` vs fallback daté) ;
+- extraction des top divergences ordonnées par séance / composant / symbole ;
+- export triple :
+  - JSON canonique pour automatisation ;
+  - CSV aplati pour lecture rapide ;
+  - Markdown synthétique pour revue humaine ;
+- IHM backtesting enrichie en mode passif avec une vue `Compare-to-live professionnel`.
+- cohérence IHM vérifiée et prolongée :
+  - nouvelles colonnes `Fills live`, `Exits live`, `PnL live` dans l’aperçu tabulaire ;
+  - chargement passif inchangé depuis `report.json[artifacts]` ;
+  - compatibilité conservée pour les runs historiques sans artefact Sprint 5.
+
+#### Critères Sprint 5 désormais couverts sur ce slice
+- lorsqu’un historique live comparable existe, le run peut produire un rapport unique sans investigation SQL manuelle ;
+- les divergences majeures candidates / risk / targets / execution targets / fills / exits / PnL deviennent visibles et triées ;
+- le matching live n’est plus seulement journalier : il utilise le couple `risk_run_id` / `exec_run_id` quand possible ;
+- l’IHM peut charger ce rapport sans casser les runs historiques dépourvus de cet artefact.
+
+#### Limites résiduelles après ce slice Sprint 5
+- les sections `fills / exits / PnL` restent best-effort et dépendent de la disponibilité des tables live `execution_broker_fills` et `execution_position_lots` ;
+- le matching multi-comptes / multi-runs parallèles reste centré sur `account_id=default` dans l’intégration CLI actuelle ;
+- le score global de fidélité reste volontairement simple et agrégatif ; il n’est pas encore pondéré par la gravité métier ou l’impact économique ;
+- l’attribution causale détaillée des écarts broker (retries, partial fills complexes, annulations intermédiaires) peut encore être approfondie au-delà du résumé actuel.
+
 ### Prochaines actions à lancer sans attendre
-1. Préparer une première fenêtre `compare-to-live` courte sur un run réel récent.
-2. Construire le rapport canonique de divergence candidats / targets / intents / fills / exits / PnL (Sprint 5).
-3. Étendre le contrat de couverture vers une matrice plus fine par symbole / par séance si le besoin opérateur se confirme.
-4. Formaliser davantage les identifiants de provenance amont si une traçabilité réglementaire plus forte devient nécessaire.
+1. Pondérer le score global par gravité métier / impact exécution pour éviter un score trop purement structurel.
+2. Ajouter une vue IHM plus analytique (drill-down par composant puis symbole) si l’usage opérateur le justifie.
+3. Étendre si nécessaire le compare-to-live aux cas broker plus complexes (partial fills multiples, retries, reconciliations manuelles, positions adoptées).
+4. Préparer ensuite les baselines de non-régression fidélité du Sprint 6 sur quelques fenêtres live de référence.
 
 ---
 

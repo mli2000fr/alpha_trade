@@ -961,6 +961,112 @@ class TestExecutionDbIo:
         assert targets[0].target_shares == 100
         assert targets[0].stop_price_initial == 140.0
 
+    def test_load_latest_execution_targets_snapshot_for_date_uses_latest_run(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO execution_runs (
+                    exec_run_id, risk_run_id, trade_date, broker_mode, dry_run, status,
+                    started_at, completed_at, total_targets, total_submitted, total_filled, account_id
+                ) VALUES (
+                    'exec-old', 'risk-old', '2026-04-27', 'paper', 0, 'COMPLETED',
+                    '2026-04-27 08:00:00', '2026-04-27 08:01:00', 1, 1, 1, 'acct-1'
+                ), (
+                    'exec-new', 'risk-new', '2026-04-27', 'paper', 0, 'COMPLETED',
+                    '2026-04-27 09:00:00', '2026-04-27 09:01:00', 1, 1, 1, 'acct-1'
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO execution_targets_snapshot (
+                    exec_run_id, account_id, risk_run_id, trade_date, symbol, side,
+                    target_shares, entry_price, target_weight, created_at
+                ) VALUES (
+                    'exec-old', 'acct-1', 'risk-old', '2026-04-27', 'AAPL', 'long',
+                    100, 150.0, 0.10, '2026-04-27 08:00:00'
+                ), (
+                    'exec-new', 'acct-1', 'risk-new', '2026-04-27', 'MSFT', 'long',
+                    50, 300.0, 0.12, '2026-04-27 09:00:00'
+                )
+            """))
+
+        exec_run_id = repo.load_latest_execution_run_id_for_date(
+            trade_date=date(2026, 4, 27),
+            account_id="acct-1",
+        )
+        targets = repo.load_latest_execution_targets_snapshot_for_date(
+            trade_date=date(2026, 4, 27),
+            account_id="acct-1",
+        )
+
+        assert exec_run_id == "exec-new"
+        assert [target.symbol for target in targets] == ["MSFT"]
+
+    def test_load_execution_run_context_fills_and_lots_for_open_run(self, engine, repo) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO execution_runs (
+                    exec_run_id, risk_run_id, trade_date, broker_mode, dry_run, status,
+                    started_at, completed_at, total_targets, total_submitted, total_filled, account_id
+                ) VALUES (
+                    'exec-match', 'risk-match', '2026-04-28', 'paper', 0, 'COMPLETED',
+                    '2026-04-28 09:00:00', '2026-04-28 09:01:00', 1, 1, 1, 'acct-1'
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO execution_order_requests (
+                    request_id, exec_run_id, account_id, risk_run_id, symbol, side, target_qty,
+                    order_type, business_key, submission_key, attempt_no, parent_request_id,
+                    intent_role, decision_price, status, created_at, updated_at
+                ) VALUES (
+                    'req-entry', 'exec-match', 'acct-1', 'risk-match', 'AAPL', 'buy', 10,
+                    'market', 'bk-entry', 'sub-entry', 1, NULL,
+                    'entry', 100.0, 'FILLED', '2026-04-28 09:00:00', '2026-04-28 09:00:00'
+                ), (
+                    'req-exit', 'exec-close', 'acct-1', 'risk-match', 'AAPL', 'sell', 10,
+                    'limit', 'bk-exit', 'sub-exit', 1, 'req-entry',
+                    'take_profit', 110.0, 'FILLED', '2026-04-29 09:30:00', '2026-04-29 09:30:00'
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO execution_broker_fills (
+                    fill_id, exec_run_id, account_id, broker_order_id, request_id,
+                    symbol, filled_qty, avg_fill_price, fill_timestamp, decision_price,
+                    slippage_bps, implementation_shortfall, created_at
+                ) VALUES (
+                    'fill-entry', 'exec-match', 'acct-1', 'bo-entry', 'req-entry',
+                    'AAPL', 10, 100.5, '2026-04-28 14:30:00', 100.0,
+                    5.0, 5.0, '2026-04-28 14:30:00'
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO execution_position_lots (
+                    lot_id, account_id, symbol, opened_qty, remaining_qty, entry_price,
+                    opened_at, open_exec_run_id, open_request_id, open_fill_id, lot_status,
+                    close_exec_run_id, close_request_id, close_fill_id, closed_at, exit_price,
+                    source_kind, updated_at
+                ) VALUES (
+                    'lot-1', 'acct-1', 'AAPL', 10, 0, 100.0,
+                    '2026-04-28 14:30:00', 'exec-match', 'req-entry', 'fill-entry', 'CLOSED',
+                    'exec-close', 'req-exit', 'fill-exit', '2026-04-29 15:45:00', 110.0,
+                    'execution_broker_fill', '2026-04-29 15:45:00'
+                )
+            """))
+
+        context = repo.load_execution_run_context_for_risk_run_id(
+            risk_run_id='risk-match',
+            account_id='acct-1',
+            trade_date=date(2026, 4, 28),
+        )
+        fills = repo.load_execution_fills_for_run(exec_run_id='exec-match', account_id='acct-1')
+        lots = repo.load_execution_position_lots_for_open_run(open_exec_run_id='exec-match', account_id='acct-1')
+
+        assert context is not None
+        assert context['exec_run_id'] == 'exec-match'
+        assert fills['symbol'].tolist() == ['AAPL']
+        assert fills['intent_role'].tolist() == ['entry']
+        assert lots['symbol'].tolist() == ['AAPL']
+        assert lots['close_intent_role'].tolist() == ['take_profit']
+        assert pytest.approx(float(lots['realized_pnl'].iloc[0]), rel=1e-9) == 100.0
+
     def test_load_open_reconciliation_order_state_and_protection_state(self, repo) -> None:
         now = datetime.now(UTC)
         parent_intent = self._intent("exec-1", "req-parent", "submit-parent")

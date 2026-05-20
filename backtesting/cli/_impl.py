@@ -732,11 +732,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     from backtesting.fidelity import (
         build_candidate_target_parity_summary,
+        build_compare_to_live_summary,
         PitHistoryRequiredError,
         build_replay_diagnostic_summary,
         PitMlStrategyUnsupportedError,
         build_fidelity_manifest,
         save_candidate_target_parity_summary,
+        save_compare_to_live_summary,
         save_replay_diagnostic_summary,
         save_coverage_summary,
         save_fidelity_manifest,
@@ -1488,6 +1490,136 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 for key, path in save_candidate_target_parity_summary(candidate_target_parity_summary, output_dir).items()
             }
             artifact_paths.update(candidate_target_parity_paths)
+        compare_to_live_paths: dict[str, str] = {}
+        try:
+            from execution_engine.db_io import ExecutionRepository
+            from risk_management.db_io import RiskRepository
+
+            compare_dates: set[pd.Timestamp] = set()
+            for frame in (scores_df, research_signals_df):
+                if isinstance(frame, pd.DataFrame) and not frame.empty and "trade_date" in frame.columns:
+                    compare_dates.update(
+                        pd.DatetimeIndex(pd.to_datetime(frame["trade_date"], errors="coerce").dropna().dt.normalize().tolist())
+                    )
+            if phase2_risk_result is not None:
+                for entry in phase2_risk_result.entries:
+                    snapshot_date = getattr(entry, "score_snapshot_date", None)
+                    if snapshot_date is None:
+                        continue
+                    compare_dates.add(pd.Timestamp(snapshot_date).normalize())
+            if phase2_execution_result is not None:
+                for target in phase2_execution_result.targets:
+                    target_date = getattr(target, "trade_date", None)
+                    if target_date is None:
+                        continue
+                    compare_dates.add(pd.Timestamp(target_date).normalize())
+
+            risk_repo = RiskRepository(engine)
+            execution_repo = ExecutionRepository(engine)
+            live_risk_decisions: dict[str, pd.DataFrame] = {}
+            live_portfolio_targets: dict[str, list[object]] = {}
+            live_execution_targets: dict[str, list[object]] = {}
+            live_execution_fills: dict[str, pd.DataFrame] = {}
+            live_position_lots: dict[str, pd.DataFrame] = {}
+            live_compare_context: dict[str, dict[str, object]] = {}
+            for trade_date in sorted(compare_dates):
+                trade_day = pd.Timestamp(trade_date).date()
+                trade_key = trade_day.isoformat()
+                live_risk_decisions[trade_key] = risk_repo.load_risk_decisions_for_date(
+                    trade_day,
+                    account_id="default",
+                )
+                risk_run_id = None
+                if not live_risk_decisions[trade_key].empty and "run_id" in live_risk_decisions[trade_key].columns:
+                    risk_run_values = live_risk_decisions[trade_key]["run_id"].dropna().astype(str)
+                    if not risk_run_values.empty:
+                        risk_run_id = str(risk_run_values.iloc[0]).strip() or None
+                exec_context = None
+                match_basis = "trade_date_latest"
+                if risk_run_id:
+                    exec_context = execution_repo.load_execution_run_context_for_risk_run_id(
+                        risk_run_id=risk_run_id,
+                        account_id="default",
+                        trade_date=trade_day,
+                    )
+                    if exec_context is not None:
+                        match_basis = "risk_run_id"
+                if exec_context is None:
+                    fallback_exec_run_id = execution_repo.load_latest_execution_run_id_for_date(
+                        trade_date=trade_day,
+                        account_id="default",
+                    )
+                    if fallback_exec_run_id is not None:
+                        exec_context = execution_repo.load_execution_run_context(exec_run_id=fallback_exec_run_id)
+                try:
+                    live_portfolio_targets[trade_key] = cast(
+                        list[object],
+                        execution_repo.load_portfolio_targets(
+                            trade_date=trade_day,
+                            account_id="default",
+                        ),
+                    )
+                except Exception:
+                    live_portfolio_targets[trade_key] = []
+                try:
+                    exec_run_id = str(exec_context.get("exec_run_id") or "").strip() if isinstance(exec_context, dict) else ""
+                    if exec_run_id:
+                        live_execution_targets[trade_key] = cast(
+                            list[object],
+                            execution_repo.load_execution_targets_snapshot(exec_run_id=exec_run_id),
+                        )
+                        live_execution_fills[trade_key] = execution_repo.load_execution_fills_for_run(
+                            exec_run_id=exec_run_id,
+                            account_id="default",
+                        )
+                        live_position_lots[trade_key] = execution_repo.load_execution_position_lots_for_open_run(
+                            open_exec_run_id=exec_run_id,
+                            account_id="default",
+                        )
+                    else:
+                        live_execution_targets[trade_key] = cast(
+                            list[object],
+                            execution_repo.load_latest_execution_targets_snapshot_for_date(
+                                trade_date=trade_day,
+                                account_id="default",
+                            ),
+                        )
+                        live_execution_fills[trade_key] = pd.DataFrame()
+                        live_position_lots[trade_key] = pd.DataFrame()
+                except Exception:
+                    live_execution_targets[trade_key] = []
+                    live_execution_fills[trade_key] = pd.DataFrame()
+                    live_position_lots[trade_key] = pd.DataFrame()
+                live_compare_context[trade_key] = {
+                    "trade_date": trade_key,
+                    "risk_run_id": risk_run_id,
+                    "exec_run_id": exec_context.get("exec_run_id") if isinstance(exec_context, dict) else None,
+                    "match_basis": match_basis,
+                }
+
+            compare_to_live_summary = build_compare_to_live_summary(
+                fidelity_manifest=fidelity_manifest,
+                research_signals_df=research_signals_df,
+                risk_entries=phase2_risk_result.entries if phase2_risk_result is not None else (),
+                execution_targets=phase2_execution_result.targets if phase2_execution_result is not None else (),
+                execution_fills=getattr(phase2_execution_result, "fills", ()) if phase2_execution_result is not None else (),
+                exit_signals_df=getattr(phase7_exit_lifecycle_result, "signals_df", pd.DataFrame()) if phase7_exit_lifecycle_result is not None else pd.DataFrame(),
+                live_risk_decisions=live_risk_decisions,
+                live_portfolio_targets=live_portfolio_targets,
+                live_execution_targets=live_execution_targets,
+                live_execution_fills=live_execution_fills,
+                live_position_lots=live_position_lots,
+                live_compare_context=live_compare_context,
+                account_id="default",
+                phase2_mode=phase2_mode,
+            )
+            compare_to_live_paths = {
+                key: str(path)
+                for key, path in save_compare_to_live_summary(compare_to_live_summary, output_dir).items()
+            }
+            artifact_paths.update(compare_to_live_paths)
+        except Exception:
+            LOGGER.warning("Compare-to-live Sprint 5 ignoré (données live indisponibles ?).", exc_info=True)
         if phase2_risk_result is not None:
             from backtesting.risk_bridge import save_phase2_risk_artifacts
 

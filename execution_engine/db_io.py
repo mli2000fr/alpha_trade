@@ -6,6 +6,7 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+import pandas as pd
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -524,6 +525,240 @@ class ExecutionRepository:
         with self.engine.connect() as conn:
             row = conn.execute(stmt, {"exec_run_id": exec_run_id}).mappings().first()
         return dict(row) if row is not None else None
+
+    def load_execution_run_context_for_risk_run_id(
+        self,
+        *,
+        risk_run_id: str,
+        account_id: str | None = None,
+        trade_date: date | None = None,
+    ) -> dict[str, Any] | None:
+        if not self._has_table("execution_runs"):
+            return None
+        normalized_risk_run_id = str(risk_run_id or "").strip()
+        if not normalized_risk_run_id:
+            return None
+        resolved_account_id = account_id or "default"
+        account_scope_clause = "AND account_id = :account_id"
+        if resolved_account_id == "default":
+            account_scope_clause = "AND (account_id = :account_id OR account_id IS NULL)"
+        trade_date_clause = "AND trade_date = :trade_date" if trade_date is not None else ""
+        stmt = text(
+            f"""
+            SELECT exec_run_id, risk_run_id, trade_date, broker_mode, status, account_id,
+                   execution_profile, submission_window, started_at, completed_at
+            FROM execution_runs
+            WHERE risk_run_id = :risk_run_id
+              {account_scope_clause}
+              {trade_date_clause}
+            ORDER BY COALESCE(completed_at, started_at) DESC, exec_run_id DESC
+            LIMIT 1
+            """
+        )
+        params: dict[str, Any] = {
+            "risk_run_id": normalized_risk_run_id,
+            "account_id": resolved_account_id,
+        }
+        if trade_date is not None:
+            params["trade_date"] = trade_date
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt, params).mappings().first()
+        return dict(row) if row is not None else None
+
+    def load_latest_execution_run_id_for_date(
+        self,
+        *,
+        trade_date: date,
+        account_id: str | None = None,
+    ) -> str | None:
+        if not self._has_table("execution_runs"):
+            return None
+        resolved_account_id = account_id or "default"
+        account_scope_clause = "AND account_id = :account_id"
+        if resolved_account_id == "default":
+            account_scope_clause = "AND (account_id = :account_id OR account_id IS NULL)"
+        stmt = text(
+            f"""
+            SELECT exec_run_id
+            FROM execution_runs
+            WHERE trade_date = :trade_date
+              {account_scope_clause}
+            ORDER BY COALESCE(completed_at, started_at) DESC, exec_run_id DESC
+            LIMIT 1
+            """
+        )
+        with self.engine.connect() as conn:
+            value = conn.execute(
+                stmt,
+                {"trade_date": trade_date, "account_id": resolved_account_id},
+            ).scalar()
+        text_value = str(value or "").strip()
+        return text_value or None
+
+    def load_latest_execution_targets_snapshot_for_date(
+        self,
+        *,
+        trade_date: date,
+        account_id: str | None = None,
+    ) -> list[ExecutionTarget]:
+        exec_run_id = self.load_latest_execution_run_id_for_date(
+            trade_date=trade_date,
+            account_id=account_id,
+        )
+        if exec_run_id is None:
+            return []
+        return self.load_execution_targets_snapshot(exec_run_id=exec_run_id)
+
+    def load_execution_fills_for_run(
+        self,
+        *,
+        exec_run_id: str,
+        account_id: str | None = None,
+    ) -> pd.DataFrame:
+        columns = [
+            "run_id",
+            "exec_run_id",
+            "risk_run_id",
+            "account_id",
+            "request_id",
+            "parent_request_id",
+            "intent_role",
+            "symbol",
+            "side",
+            "filled_qty",
+            "avg_fill_price",
+            "fill_timestamp",
+            "decision_price",
+            "slippage_bps",
+            "implementation_shortfall",
+        ]
+        if not self._has_table("execution_broker_fills") or not self._has_table("execution_order_requests"):
+            return pd.DataFrame(columns=columns)
+        params: dict[str, Any] = {"exec_run_id": exec_run_id}
+        account_clause = ""
+        if account_id is not None:
+            account_clause = " AND fill.account_id = :account_id"
+            params["account_id"] = account_id
+        stmt = text(
+            f"""
+            SELECT fill.exec_run_id AS run_id,
+                   fill.exec_run_id,
+                   req.risk_run_id,
+                   fill.account_id,
+                   fill.request_id,
+                   req.parent_request_id,
+                   req.intent_role,
+                   fill.symbol,
+                   req.side,
+                   fill.filled_qty,
+                   fill.avg_fill_price,
+                   fill.fill_timestamp,
+                   fill.decision_price,
+                   fill.slippage_bps,
+                   fill.implementation_shortfall
+            FROM execution_broker_fills fill
+            INNER JOIN execution_order_requests req
+                    ON req.request_id = fill.request_id
+            WHERE fill.exec_run_id = :exec_run_id{account_clause}
+            ORDER BY fill.fill_timestamp ASC, fill.fill_id ASC
+            """
+        )
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(stmt, params).mappings().all()
+        except Exception:
+            LOGGER.warning("load_execution_fills_for_run failed exec_run_id=%s", exec_run_id, exc_info=True)
+            return pd.DataFrame(columns=columns)
+        return pd.DataFrame([dict(row) for row in rows], columns=columns)
+
+    def load_execution_position_lots_for_open_run(
+        self,
+        *,
+        open_exec_run_id: str,
+        account_id: str | None = None,
+    ) -> pd.DataFrame:
+        columns = [
+            "lot_id",
+            "account_id",
+            "symbol",
+            "opened_qty",
+            "remaining_qty",
+            "entry_price",
+            "opened_at",
+            "open_exec_run_id",
+            "open_request_id",
+            "open_fill_id",
+            "lot_status",
+            "close_exec_run_id",
+            "close_request_id",
+            "close_fill_id",
+            "closed_at",
+            "exit_price",
+            "close_intent_role",
+            "close_side",
+            "closed_qty",
+            "realized_pnl",
+            "run_id",
+        ]
+        if not self._has_table("execution_position_lots"):
+            return pd.DataFrame(columns=columns)
+        params: dict[str, Any] = {"open_exec_run_id": open_exec_run_id}
+        account_clause = ""
+        if account_id is not None:
+            account_clause = " AND lot.account_id = :account_id"
+            params["account_id"] = account_id
+        close_join = ""
+        close_select = "NULL AS close_intent_role, NULL AS close_side"
+        if self._has_table("execution_order_requests"):
+            close_join = "LEFT JOIN execution_order_requests close_req ON close_req.request_id = lot.close_request_id"
+            close_select = "close_req.intent_role AS close_intent_role, close_req.side AS close_side"
+        stmt = text(
+            f"""
+            SELECT lot.lot_id,
+                   lot.account_id,
+                   lot.symbol,
+                   lot.opened_qty,
+                   lot.remaining_qty,
+                   lot.entry_price,
+                   lot.opened_at,
+                   lot.open_exec_run_id,
+                   lot.open_request_id,
+                   lot.open_fill_id,
+                   lot.lot_status,
+                   lot.close_exec_run_id,
+                   lot.close_request_id,
+                   lot.close_fill_id,
+                   lot.closed_at,
+                   lot.exit_price,
+                   {close_select},
+                   CASE
+                       WHEN lot.opened_qty IS NOT NULL AND lot.remaining_qty IS NOT NULL AND (lot.opened_qty - lot.remaining_qty) > 0
+                           THEN (lot.opened_qty - lot.remaining_qty)
+                       WHEN lot.opened_qty IS NOT NULL AND lot.remaining_qty IS NOT NULL
+                           THEN 0
+                       ELSE NULL
+                   END AS closed_qty,
+                   CASE
+                       WHEN lot.exit_price IS NOT NULL AND lot.entry_price IS NOT NULL AND lot.opened_qty IS NOT NULL AND lot.remaining_qty IS NOT NULL AND (lot.opened_qty - lot.remaining_qty) > 0
+                           THEN (lot.opened_qty - lot.remaining_qty) * (lot.exit_price - lot.entry_price)
+                       WHEN lot.exit_price IS NOT NULL AND lot.entry_price IS NOT NULL AND lot.opened_qty IS NOT NULL AND lot.remaining_qty IS NOT NULL
+                           THEN 0
+                       ELSE NULL
+                   END AS realized_pnl,
+                   COALESCE(lot.close_exec_run_id, lot.open_exec_run_id) AS run_id
+            FROM execution_position_lots lot
+            {close_join}
+            WHERE lot.open_exec_run_id = :open_exec_run_id{account_clause}
+            ORDER BY lot.opened_at ASC, lot.lot_id ASC
+            """
+        )
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(stmt, params).mappings().all()
+        except Exception:
+            LOGGER.warning("load_execution_position_lots_for_open_run failed open_exec_run_id=%s", open_exec_run_id, exc_info=True)
+            return pd.DataFrame(columns=columns)
+        return pd.DataFrame([dict(row) for row in rows], columns=columns)
 
     def load_open_child_orders(self, parent_intent_id: str) -> list[BrokerOrder]:
         v2_query = text("""

@@ -890,6 +890,981 @@ def save_candidate_target_parity_summary(summary: Mapping[str, Any], output_dir:
     }
 
 
+def _normalize_compare_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return pd.DataFrame(columns=["symbol", "decision", "approved_shares", "target_weight", "conviction_score", "run_id"])
+    normalized = frame.copy()
+    if "symbol" in normalized.columns:
+        normalized["symbol"] = normalized["symbol"].astype(str).str.strip().str.upper()
+    return normalized
+
+
+def _normalize_live_buy_symbol_set(frame: pd.DataFrame) -> list[str]:
+    if frame.empty or "symbol" not in frame.columns:
+        return []
+    decisions = frame.get("decision")
+    approved = pd.to_numeric(frame.get("approved_shares"), errors="coerce").fillna(0.0)
+    buy_like_mask = approved > 0
+    if isinstance(decisions, pd.Series):
+        normalized_decisions = decisions.astype(str).str.strip().str.upper()
+        buy_like_mask = buy_like_mask | normalized_decisions.isin({"BUY", "ACCEPTED", "LONG"})
+    return _sorted_unique_symbols(frame, mask=buy_like_mask)
+
+
+def _research_selected_symbols_for_date(research_signals_df: pd.DataFrame, trade_date: pd.Timestamp) -> list[str]:
+    if research_signals_df.empty or "trade_date" not in research_signals_df.columns:
+        return []
+    normalized = research_signals_df.copy()
+    normalized["trade_date"] = _normalize_trade_date_series(normalized)
+    normalized = normalized.loc[normalized["trade_date"] == trade_date].copy()
+    if normalized.empty:
+        return []
+    if "selected" in normalized.columns:
+        normalized = normalized.loc[normalized["selected"].fillna(False).astype(bool)].copy()
+    return _sorted_unique_symbols(normalized)
+
+
+def _portfolio_entries_to_compare_frame(entries: Sequence[object], *, run_id: str | None = None) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for entry in entries:
+        symbol = str(getattr(entry, "symbol", "") or "").strip().upper()
+        if not symbol:
+            continue
+        approved_shares = _safe_int(getattr(entry, "approved_shares", 0), 0)
+        raw_decision = str(getattr(entry, "decision", "") or "").strip().upper()
+        decision = "BUY" if approved_shares > 0 or raw_decision in {"ACCEPTED", "BUY", "LONG"} else "HOLD"
+        rows.append(
+            {
+                "symbol": symbol,
+                "decision": decision,
+                "approved_shares": approved_shares,
+                "target_weight": float(getattr(entry, "target_weight", 0.0) or 0.0),
+                "conviction_score": getattr(entry, "conviction_score", None),
+                "run_id": run_id,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _execution_targets_to_compare_frame(targets: Sequence[object], *, run_id: str | None = None) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for target in targets:
+        symbol = str(getattr(target, "symbol", "") or "").strip().upper()
+        if not symbol:
+            continue
+        rows.append(
+            {
+                "symbol": symbol,
+                "decision": "BUY",
+                "approved_shares": _safe_int(getattr(target, "target_shares", 0), 0),
+                "target_weight": float(getattr(target, "target_weight", 0.0) or 0.0),
+                "conviction_score": getattr(target, "conviction_score", None),
+                "run_id": run_id or getattr(target, "risk_run_id", None),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _extract_compare_value(item: object, name: str, default: object = None) -> object:
+    if isinstance(item, Mapping):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
+def _first_present_text(series: pd.Series | None) -> str | None:
+    if not isinstance(series, pd.Series):
+        return None
+    for value in series.tolist():
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _first_present_float(series: pd.Series | None) -> float | None:
+    if not isinstance(series, pd.Series):
+        return None
+    numeric = pd.to_numeric(series, errors="coerce").dropna()
+    if numeric.empty:
+        return None
+    return float(numeric.iloc[0])
+
+
+def _aggregate_trade_compare_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return pd.DataFrame(columns=["symbol", "decision", "approved_shares", "avg_fill_price", "detail_reason", "detail_date", "pnl", "run_id"])
+    normalized = frame.copy()
+    if "symbol" in normalized.columns:
+        normalized["symbol"] = normalized["symbol"].astype(str).str.strip().str.upper()
+    if "decision" not in normalized.columns:
+        normalized["decision"] = None
+    if "approved_shares" not in normalized.columns:
+        normalized["approved_shares"] = 0.0
+    normalized["approved_shares"] = pd.to_numeric(normalized["approved_shares"], errors="coerce").fillna(0.0)
+    if "avg_fill_price" in normalized.columns:
+        normalized["avg_fill_price"] = pd.to_numeric(normalized["avg_fill_price"], errors="coerce")
+    else:
+        normalized["avg_fill_price"] = pd.NA
+    if "pnl" in normalized.columns:
+        normalized["pnl"] = pd.to_numeric(normalized["pnl"], errors="coerce")
+    else:
+        normalized["pnl"] = pd.NA
+    if "detail_reason" not in normalized.columns:
+        normalized["detail_reason"] = None
+    if "detail_date" not in normalized.columns:
+        normalized["detail_date"] = None
+    if "run_id" not in normalized.columns:
+        normalized["run_id"] = None
+    rows: list[dict[str, object]] = []
+    for symbol, group in normalized.groupby("symbol", sort=False):
+        total_qty = float(pd.to_numeric(group["approved_shares"], errors="coerce").fillna(0.0).sum())
+        price_series = pd.to_numeric(group.get("avg_fill_price"), errors="coerce")
+        weighted_price = None
+        valid_prices = price_series.dropna()
+        if not valid_prices.empty:
+            qty_weights = pd.to_numeric(group.loc[valid_prices.index, "approved_shares"], errors="coerce").fillna(0.0)
+            positive_weight = float(qty_weights.sum())
+            if positive_weight > 0:
+                weighted_price = float((valid_prices * qty_weights).sum() / positive_weight)
+            else:
+                weighted_price = float(valid_prices.mean())
+        pnl_series = pd.to_numeric(group.get("pnl"), errors="coerce")
+        pnl_value = float(pnl_series.dropna().sum()) if isinstance(pnl_series, pd.Series) and not pnl_series.dropna().empty else None
+        detail_dates = pd.to_datetime(group.get("detail_date"), errors="coerce") if "detail_date" in group.columns else pd.Series(dtype="datetime64[ns]")
+        detail_date = None
+        if isinstance(detail_dates, pd.Series) and not detail_dates.dropna().empty:
+            detail_date = pd.Timestamp(detail_dates.dropna().max()).date().isoformat()
+        rows.append(
+            {
+                "symbol": symbol,
+                "decision": _first_present_text(group.get("decision")),
+                "approved_shares": total_qty,
+                "avg_fill_price": weighted_price,
+                "detail_reason": _first_present_text(group.get("detail_reason")),
+                "detail_date": detail_date,
+                "pnl": pnl_value,
+                "run_id": _first_present_text(group.get("run_id")),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _execution_fills_to_compare_frame(fills: Sequence[object], *, run_id: str | None = None) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for fill in fills:
+        symbol = str(_extract_compare_value(fill, "symbol", "") or "").strip().upper()
+        if not symbol:
+            continue
+        filled_qty = float(_extract_compare_value(fill, "filled_qty", 0.0) or 0.0)
+        rows.append(
+            {
+                "symbol": symbol,
+                "decision": "BUY" if filled_qty >= 0 else "SELL",
+                "approved_shares": abs(filled_qty),
+                "avg_fill_price": _extract_compare_value(fill, "avg_fill_price"),
+                "detail_reason": _extract_compare_value(fill, "intent_role"),
+                "detail_date": _extract_compare_value(fill, "fill_timestamp"),
+                "run_id": run_id or _extract_compare_value(fill, "run_id") or _extract_compare_value(fill, "exec_run_id"),
+            }
+        )
+    return _aggregate_trade_compare_frame(pd.DataFrame(rows))
+
+
+def _exit_signals_to_compare_frame(signals_df: pd.DataFrame, *, execution_date: pd.Timestamp) -> pd.DataFrame:
+    if not isinstance(signals_df, pd.DataFrame) or signals_df.empty:
+        return pd.DataFrame(columns=["symbol", "decision", "approved_shares", "avg_fill_price", "detail_reason", "detail_date", "run_id"])
+    frame = signals_df.copy()
+    if "execution_date" not in frame.columns:
+        return pd.DataFrame(columns=["symbol", "decision", "approved_shares", "avg_fill_price", "detail_reason", "detail_date", "run_id"])
+    frame["execution_date"] = pd.to_datetime(frame["execution_date"], errors="coerce").dt.normalize()
+    filtered = frame.loc[frame["execution_date"] == execution_date].copy()
+    if filtered.empty or "replay_exit_price" not in filtered.columns:
+        return pd.DataFrame(columns=["symbol", "decision", "approved_shares", "avg_fill_price", "detail_reason", "detail_date", "run_id"])
+    filtered = filtered.loc[pd.to_numeric(filtered["replay_exit_price"], errors="coerce").notna()].copy()
+    if filtered.empty:
+        return pd.DataFrame(columns=["symbol", "decision", "approved_shares", "avg_fill_price", "detail_reason", "detail_date", "run_id"])
+    rows = pd.DataFrame(
+        {
+            "symbol": filtered.get("symbol"),
+            "decision": "SELL",
+            "approved_shares": pd.to_numeric(filtered.get("filled_qty", filtered.get("approved_shares", 0.0)), errors="coerce").fillna(0.0).abs(),
+            "avg_fill_price": pd.to_numeric(filtered.get("replay_exit_price"), errors="coerce"),
+            "detail_reason": filtered.get("replay_exit_reason"),
+            "detail_date": filtered.get("replay_exit_date"),
+            "run_id": "backtest_exit_lifecycle",
+        }
+    )
+    return _aggregate_trade_compare_frame(rows)
+
+
+def _position_lots_to_exit_compare_frame(lots_df: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(lots_df, pd.DataFrame) or lots_df.empty:
+        return pd.DataFrame(columns=["symbol", "decision", "approved_shares", "avg_fill_price", "detail_reason", "detail_date", "run_id"])
+    frame = lots_df.copy()
+    closed_qty = pd.to_numeric(frame.get("closed_qty"), errors="coerce").fillna(0.0)
+    exit_price = pd.to_numeric(frame.get("exit_price"), errors="coerce")
+    filtered = frame.loc[(closed_qty > 0) & exit_price.notna()].copy()
+    if filtered.empty:
+        return pd.DataFrame(columns=["symbol", "decision", "approved_shares", "avg_fill_price", "detail_reason", "detail_date", "run_id"])
+    rows = pd.DataFrame(
+        {
+            "symbol": filtered.get("symbol"),
+            "decision": "SELL",
+            "approved_shares": pd.to_numeric(filtered.get("closed_qty"), errors="coerce").fillna(0.0),
+            "avg_fill_price": pd.to_numeric(filtered.get("exit_price"), errors="coerce"),
+            "detail_reason": filtered.get("close_intent_role"),
+            "detail_date": filtered.get("closed_at"),
+            "run_id": filtered.get("run_id"),
+        }
+    )
+    return _aggregate_trade_compare_frame(rows)
+
+
+def _exit_signals_to_pnl_frame(signals_df: pd.DataFrame, *, execution_date: pd.Timestamp) -> pd.DataFrame:
+    if not isinstance(signals_df, pd.DataFrame) or signals_df.empty:
+        return pd.DataFrame(columns=["symbol", "approved_shares", "pnl", "detail_date", "run_id"])
+    frame = signals_df.copy()
+    if "execution_date" not in frame.columns:
+        return pd.DataFrame(columns=["symbol", "approved_shares", "pnl", "detail_date", "run_id"])
+    frame["execution_date"] = pd.to_datetime(frame["execution_date"], errors="coerce").dt.normalize()
+    filtered = frame.loc[frame["execution_date"] == execution_date].copy()
+    if filtered.empty:
+        return pd.DataFrame(columns=["symbol", "approved_shares", "pnl", "detail_date", "run_id"])
+    exit_price = pd.to_numeric(filtered.get("replay_exit_price"), errors="coerce")
+    fill_price = pd.to_numeric(filtered.get("fill_price"), errors="coerce")
+    filled_qty = pd.to_numeric(filtered.get("filled_qty", filtered.get("approved_shares", 0.0)), errors="coerce").fillna(0.0)
+    filtered = filtered.loc[exit_price.notna() & fill_price.notna() & (filled_qty != 0)].copy()
+    if filtered.empty:
+        return pd.DataFrame(columns=["symbol", "approved_shares", "pnl", "detail_date", "run_id"])
+    rows = pd.DataFrame(
+        {
+            "symbol": filtered.get("symbol"),
+            "approved_shares": filled_qty.loc[filtered.index].abs(),
+            "pnl": (exit_price.loc[filtered.index] - fill_price.loc[filtered.index]) * filled_qty.loc[filtered.index],
+            "detail_date": filtered.get("replay_exit_date"),
+            "run_id": "backtest_exit_lifecycle",
+        }
+    )
+    return _aggregate_trade_compare_frame(rows)
+
+
+def _position_lots_to_pnl_frame(lots_df: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(lots_df, pd.DataFrame) or lots_df.empty:
+        return pd.DataFrame(columns=["symbol", "approved_shares", "pnl", "detail_date", "run_id"])
+    frame = lots_df.copy()
+    closed_qty = pd.to_numeric(frame.get("closed_qty"), errors="coerce").fillna(0.0)
+    pnl_series = pd.to_numeric(frame.get("realized_pnl"), errors="coerce")
+    filtered = frame.loc[(closed_qty > 0) & pnl_series.notna()].copy()
+    if filtered.empty:
+        return pd.DataFrame(columns=["symbol", "approved_shares", "pnl", "detail_date", "run_id"])
+    rows = pd.DataFrame(
+        {
+            "symbol": filtered.get("symbol"),
+            "approved_shares": pd.to_numeric(filtered.get("closed_qty"), errors="coerce").fillna(0.0),
+            "pnl": pd.to_numeric(filtered.get("realized_pnl"), errors="coerce"),
+            "detail_date": filtered.get("closed_at"),
+            "run_id": filtered.get("run_id"),
+        }
+    )
+    return _aggregate_trade_compare_frame(rows)
+
+
+def _qty_within_compare_tolerance(live_qty: float, replay_qty: float, *, pct: float = 0.05, abs_: float = 1.0) -> bool:
+    diff = abs(float(live_qty) - float(replay_qty))
+    if diff <= abs_:
+        return True
+    base = max(abs(float(live_qty)), abs(float(replay_qty)), 1.0)
+    return (diff / base) <= pct
+
+
+def _status_for_trade_section(*, live_available: bool, replay_available: bool, divergent: bool) -> str:
+    if not live_available and not replay_available:
+        return "disabled"
+    if not live_available:
+        return "missing_live"
+    if not replay_available:
+        return "missing_replay"
+    return "diverged" if divergent else "aligned"
+
+
+def _summarize_trade_lifecycle_section(
+    *,
+    component: str,
+    live_df: pd.DataFrame,
+    replay_df: pd.DataFrame,
+    live_available: bool,
+    comparison_basis: str | None = None,
+    price_tolerance_bps: float = 25.0,
+    compare_reason: bool = False,
+) -> dict[str, object]:
+    live_idx = {str(row.get("symbol")): row for row in _aggregate_trade_compare_frame(live_df).to_dict("records") if str(row.get("symbol") or "").strip()}
+    replay_idx = {str(row.get("symbol")): row for row in _aggregate_trade_compare_frame(replay_df).to_dict("records") if str(row.get("symbol") or "").strip()}
+    union_symbols = sorted(set(live_idx) | set(replay_idx))
+    divergence_kind_counts: dict[str, int] = {}
+    top_divergences: list[dict[str, object]] = []
+    price_deltas: list[float] = []
+    n_matched = 0
+    n_divergent = 0
+    for symbol in union_symbols:
+        live_row = live_idx.get(symbol)
+        replay_row = replay_idx.get(symbol)
+        divergence_kind = "match"
+        live_price = float(live_row.get("avg_fill_price") or 0.0) if live_row is not None and live_row.get("avg_fill_price") is not None else None
+        replay_price = float(replay_row.get("avg_fill_price") or 0.0) if replay_row is not None and replay_row.get("avg_fill_price") is not None else None
+        live_qty = float(live_row.get("approved_shares") or 0.0) if live_row is not None else 0.0
+        replay_qty = float(replay_row.get("approved_shares") or 0.0) if replay_row is not None else 0.0
+        if live_row is None:
+            divergence_kind = "missing_live"
+        elif replay_row is None:
+            divergence_kind = "missing_replay"
+        elif str(live_row.get("decision") or "").upper() != str(replay_row.get("decision") or "").upper():
+            divergence_kind = "action_mismatch"
+        elif not _qty_within_compare_tolerance(live_qty, replay_qty):
+            divergence_kind = "qty_mismatch"
+        elif compare_reason and str(live_row.get("detail_reason") or "").strip().lower() != str(replay_row.get("detail_reason") or "").strip().lower():
+            divergence_kind = "reason_mismatch"
+        elif live_price is not None and replay_price is not None:
+            base = max(abs(live_price), abs(replay_price), 1e-9)
+            delta_bps = abs(live_price - replay_price) / base * 10000.0
+            price_deltas.append(delta_bps)
+            if delta_bps > price_tolerance_bps:
+                divergence_kind = "price_mismatch"
+        if divergence_kind == "match":
+            n_matched += 1
+            continue
+        n_divergent += 1
+        divergence_kind_counts[divergence_kind] = divergence_kind_counts.get(divergence_kind, 0) + 1
+        if len(top_divergences) < 5:
+            top_divergences.append(
+                {
+                    "component": component,
+                    "symbol": symbol,
+                    "divergence_kind": divergence_kind,
+                    "live_qty": live_qty,
+                    "replay_qty": replay_qty,
+                    "live_price": live_price,
+                    "replay_price": replay_price,
+                    "live_reason": live_row.get("detail_reason") if live_row is not None else None,
+                    "replay_reason": replay_row.get("detail_reason") if replay_row is not None else None,
+                    "live_date": live_row.get("detail_date") if live_row is not None else None,
+                    "replay_date": replay_row.get("detail_date") if replay_row is not None else None,
+                }
+            )
+    divergence_score = (n_divergent / len(union_symbols)) if union_symbols else 0.0
+    replay_available = bool(replay_idx)
+    status = _status_for_trade_section(live_available=live_available, replay_available=replay_available, divergent=n_divergent > 0)
+    payload: dict[str, object] = {
+        "component": component,
+        "status": status,
+        "live_available": bool(live_available),
+        "replay_available": replay_available,
+        "comparable": bool(live_available and replay_available),
+        "n_symbols_live": len(live_idx),
+        "n_symbols_replay": len(replay_idx),
+        "n_matched": n_matched,
+        "n_divergent": n_divergent,
+        "divergence_score": round(float(divergence_score), 6),
+        "alignment_score": round(float(1.0 - divergence_score), 6) if live_available and replay_available else 0.0,
+        "live_run_id": _first_present_text(_aggregate_trade_compare_frame(live_df).get("run_id")),
+        "replay_run_id": _first_present_text(_aggregate_trade_compare_frame(replay_df).get("run_id")),
+        "divergence_kind_counts": divergence_kind_counts,
+        "top_divergences": top_divergences,
+        "mean_price_delta_bps": round(float(sum(price_deltas) / len(price_deltas)), 6) if price_deltas else 0.0,
+        "max_price_delta_bps": round(float(max(price_deltas)), 6) if price_deltas else 0.0,
+    }
+    if comparison_basis:
+        payload["comparison_basis"] = comparison_basis
+    return payload
+
+
+def _summarize_pnl_section(
+    *,
+    live_df: pd.DataFrame,
+    replay_df: pd.DataFrame,
+    live_available: bool,
+    comparison_basis: str | None = None,
+    pnl_tolerance_abs: float = 5.0,
+    pnl_tolerance_pct: float = 0.10,
+) -> dict[str, object]:
+    live_idx = {str(row.get("symbol")): row for row in _aggregate_trade_compare_frame(live_df).to_dict("records") if str(row.get("symbol") or "").strip()}
+    replay_idx = {str(row.get("symbol")): row for row in _aggregate_trade_compare_frame(replay_df).to_dict("records") if str(row.get("symbol") or "").strip()}
+    union_symbols = sorted(set(live_idx) | set(replay_idx))
+    divergence_kind_counts: dict[str, int] = {}
+    top_divergences: list[dict[str, object]] = []
+    n_matched = 0
+    n_divergent = 0
+    for symbol in union_symbols:
+        live_row = live_idx.get(symbol)
+        replay_row = replay_idx.get(symbol)
+        divergence_kind = "match"
+        live_pnl = float(live_row.get("pnl") or 0.0) if live_row is not None else 0.0
+        replay_pnl = float(replay_row.get("pnl") or 0.0) if replay_row is not None else 0.0
+        live_qty = float(live_row.get("approved_shares") or 0.0) if live_row is not None else 0.0
+        replay_qty = float(replay_row.get("approved_shares") or 0.0) if replay_row is not None else 0.0
+        if live_row is None:
+            divergence_kind = "missing_live"
+        elif replay_row is None:
+            divergence_kind = "missing_replay"
+        elif not _qty_within_compare_tolerance(live_qty, replay_qty):
+            divergence_kind = "qty_mismatch"
+        else:
+            diff = abs(live_pnl - replay_pnl)
+            base = max(abs(live_pnl), abs(replay_pnl), 1.0)
+            if diff > pnl_tolerance_abs and (diff / base) > pnl_tolerance_pct:
+                divergence_kind = "pnl_mismatch"
+        if divergence_kind == "match":
+            n_matched += 1
+            continue
+        n_divergent += 1
+        divergence_kind_counts[divergence_kind] = divergence_kind_counts.get(divergence_kind, 0) + 1
+        if len(top_divergences) < 5:
+            top_divergences.append(
+                {
+                    "component": "pnl",
+                    "symbol": symbol,
+                    "divergence_kind": divergence_kind,
+                    "live_pnl": live_pnl,
+                    "replay_pnl": replay_pnl,
+                    "live_qty": live_qty,
+                    "replay_qty": replay_qty,
+                }
+            )
+    divergence_score = (n_divergent / len(union_symbols)) if union_symbols else 0.0
+    replay_available = bool(replay_idx)
+    status = _status_for_trade_section(live_available=live_available, replay_available=replay_available, divergent=n_divergent > 0)
+    total_live_pnl = float(sum(float(row.get("pnl") or 0.0) for row in live_idx.values()))
+    total_replay_pnl = float(sum(float(row.get("pnl") or 0.0) for row in replay_idx.values()))
+    payload: dict[str, object] = {
+        "component": "pnl",
+        "status": status,
+        "live_available": bool(live_available),
+        "replay_available": replay_available,
+        "comparable": bool(live_available and replay_available),
+        "n_symbols_live": len(live_idx),
+        "n_symbols_replay": len(replay_idx),
+        "n_matched": n_matched,
+        "n_divergent": n_divergent,
+        "divergence_score": round(float(divergence_score), 6),
+        "alignment_score": round(float(1.0 - divergence_score), 6) if live_available and replay_available else 0.0,
+        "live_run_id": _first_present_text(_aggregate_trade_compare_frame(live_df).get("run_id")),
+        "replay_run_id": _first_present_text(_aggregate_trade_compare_frame(replay_df).get("run_id")),
+        "realized_pnl_live": round(total_live_pnl, 6),
+        "realized_pnl_replay": round(total_replay_pnl, 6),
+        "realized_pnl_gap": round(total_live_pnl - total_replay_pnl, 6),
+        "divergence_kind_counts": divergence_kind_counts,
+        "top_divergences": top_divergences,
+    }
+    if comparison_basis:
+        payload["comparison_basis"] = comparison_basis
+    return payload
+
+
+def _build_candidate_live_compare_section(
+    *,
+    research_selected_symbols: Sequence[str],
+    live_candidate_symbols: Sequence[str],
+    live_available: bool,
+) -> dict[str, object]:
+    research_set = {str(symbol).strip().upper() for symbol in research_selected_symbols if str(symbol or "").strip()}
+    live_set = {str(symbol).strip().upper() for symbol in live_candidate_symbols if str(symbol or "").strip()}
+    union = sorted(research_set | live_set)
+    intersection = sorted(research_set & live_set)
+    research_only = sorted(research_set - live_set)
+    live_only = sorted(live_set - research_set)
+    alignment_score = (len(intersection) / len(union)) if union else 1.0
+    status = "missing_live"
+    if live_available:
+        status = "aligned" if not research_only and not live_only else "diverged"
+    top_divergences = [
+        {
+            "component": "candidates",
+            "symbol": symbol,
+            "divergence_kind": "missing_live_candidate",
+        }
+        for symbol in research_only[:5]
+    ] + [
+        {
+            "component": "candidates",
+            "symbol": symbol,
+            "divergence_kind": "unexpected_live_candidate",
+        }
+        for symbol in live_only[:5]
+    ]
+    return {
+        "component": "candidates",
+        "status": status,
+        "live_available": bool(live_available),
+        "research_selected_count": len(research_set),
+        "live_candidate_count": len(live_set),
+        "intersection_count": len(intersection),
+        "alignment_score": round(float(alignment_score), 6),
+        "research_only_symbols": research_only,
+        "live_only_symbols": live_only,
+        "top_divergences": top_divergences,
+    }
+
+
+def _summarize_parity_section(
+    *,
+    component: str,
+    live_df: pd.DataFrame,
+    replay_df: pd.DataFrame,
+    trade_date: pd.Timestamp,
+    account_id: str,
+    live_available: bool,
+    comparison_basis: str | None = None,
+) -> dict[str, object]:
+    from backtesting.parity import compare_decisions
+
+    report = compare_decisions(
+        _normalize_compare_frame(live_df),
+        _normalize_compare_frame(replay_df),
+        trade_date=trade_date.date(),
+        account_id=account_id,
+    )
+    divergence_kind_counts: dict[str, int] = {}
+    top_divergences: list[dict[str, object]] = []
+    for row in report.rows:
+        if row.divergence_kind == "match":
+            continue
+        divergence_kind_counts[row.divergence_kind] = divergence_kind_counts.get(row.divergence_kind, 0) + 1
+        if len(top_divergences) < 5:
+            top_divergences.append(
+                {
+                    "component": component,
+                    "symbol": row.symbol,
+                    "divergence_kind": row.divergence_kind,
+                    "live_decision": row.live_decision,
+                    "replay_decision": row.replay_decision,
+                    "live_qty": row.live_qty,
+                    "replay_qty": row.replay_qty,
+                }
+            )
+    status = "missing_live"
+    if live_available:
+        status = "aligned" if report.n_divergent == 0 else "diverged"
+    payload: dict[str, object] = {
+        "component": component,
+        "status": status,
+        "live_available": bool(live_available),
+        "n_symbols_live": int(report.n_symbols_live),
+        "n_symbols_replay": int(report.n_symbols_replay),
+        "n_matched": int(report.n_matched),
+        "n_divergent": int(report.n_divergent),
+        "divergence_score": round(float(report.divergence_score), 6),
+        "alignment_score": round(float(1.0 - report.divergence_score), 6),
+        "live_run_id": report.live_run_id,
+        "replay_run_id": report.replay_run_id,
+        "divergence_kind_counts": divergence_kind_counts,
+        "top_divergences": top_divergences,
+    }
+    if comparison_basis:
+        payload["comparison_basis"] = comparison_basis
+    return payload
+
+
+def _collect_compare_session_dates(
+    *,
+    fidelity_manifest: Mapping[str, Any],
+    research_signals_df: pd.DataFrame,
+    risk_entries: Sequence[object],
+    live_risk_decisions: Mapping[str, pd.DataFrame],
+    live_portfolio_targets: Mapping[str, Sequence[object]],
+    live_execution_targets: Mapping[str, Sequence[object]],
+) -> list[pd.Timestamp]:
+    dates: set[pd.Timestamp] = set()
+    if isinstance(research_signals_df, pd.DataFrame) and not research_signals_df.empty and "trade_date" in research_signals_df.columns:
+        dates.update(pd.DatetimeIndex(_normalize_trade_date_series(research_signals_df).dropna().tolist()))
+    for entry in risk_entries:
+        snapshot_date = getattr(entry, "score_snapshot_date", None)
+        if snapshot_date is None:
+            continue
+        try:
+            dates.add(pd.Timestamp(snapshot_date).normalize())
+        except Exception:
+            continue
+    for mapping in (live_risk_decisions, live_portfolio_targets, live_execution_targets):
+        if not isinstance(mapping, Mapping):
+            continue
+        for raw_key in mapping:
+            try:
+                dates.add(pd.Timestamp(str(raw_key)).normalize())
+            except Exception:
+                continue
+    return sorted(dates)
+
+
+def _build_compare_to_live_markdown(summary: Mapping[str, Any]) -> str:
+    global_scores = summary.get("global_scores", {}) if isinstance(summary.get("global_scores", {}), Mapping) else {}
+    top_divergences = summary.get("top_divergences", []) if isinstance(summary.get("top_divergences", []), Sequence) and not isinstance(summary.get("top_divergences", []), (str, bytes)) else []
+    lines = [
+        "# Compare-to-live professionnel",
+        "",
+        f"- Account: {summary.get('account_id') or 'default'}",
+        f"- Fenêtre: {summary.get('requested_window', {}).get('start_date') if isinstance(summary.get('requested_window', {}), Mapping) else '—'} → {summary.get('requested_window', {}).get('end_date') if isinstance(summary.get('requested_window', {}), Mapping) else '—'}",
+        f"- Séances comparées: {summary.get('session_count', 0)}",
+        f"- Séances avec live exploitable: {summary.get('live_session_count', 0)}",
+        f"- Score global: {global_scores.get('fidelity_score', 0.0):.3f}" if isinstance(global_scores.get('fidelity_score'), (int, float)) else "- Score global: —",
+        "",
+        "## Scores par niveau",
+    ]
+    for key in (
+        "candidate_alignment_score",
+        "risk_alignment_score",
+        "portfolio_alignment_score",
+        "execution_alignment_score",
+        "fills_alignment_score",
+        "exits_alignment_score",
+        "pnl_alignment_score",
+    ):
+        value = global_scores.get(key)
+        if isinstance(value, (int, float)):
+            lines.append(f"- {key}: {float(value):.3f}")
+    lines.append("")
+    lines.append("## Top divergences")
+    if top_divergences:
+        for item in top_divergences[:10]:
+            if not isinstance(item, Mapping):
+                continue
+            lines.append(
+                "- "
+                f"{item.get('trade_date', '—')} | {item.get('component', 'unknown')} | "
+                f"{item.get('symbol', '—')} | {item.get('divergence_kind', 'unknown')}"
+            )
+    else:
+        lines.append("- Aucune divergence majeure détectée sur les sections comparables.")
+    return "\n".join(lines) + "\n"
+
+
+def build_compare_to_live_summary(
+    *,
+    fidelity_manifest: Mapping[str, Any],
+    research_signals_df: pd.DataFrame,
+    risk_entries: Sequence[object],
+    execution_targets: Sequence[object],
+    execution_fills: Sequence[object] = (),
+    exit_signals_df: pd.DataFrame | None = None,
+    live_risk_decisions: Mapping[str, pd.DataFrame] | None = None,
+    live_portfolio_targets: Mapping[str, Sequence[object]] | None = None,
+    live_execution_targets: Mapping[str, Sequence[object]] | None = None,
+    live_execution_fills: Mapping[str, pd.DataFrame] | None = None,
+    live_position_lots: Mapping[str, pd.DataFrame] | None = None,
+    live_compare_context: Mapping[str, Mapping[str, Any]] | None = None,
+    account_id: str = "default",
+    phase2_mode: str = "off",
+) -> dict[str, Any]:
+    normalized_live_risk = {
+        str(key): _normalize_compare_frame(value)
+        for key, value in (live_risk_decisions or {}).items()
+        if isinstance(value, pd.DataFrame)
+    }
+    normalized_live_portfolio = {
+        str(key): list(value)
+        for key, value in (live_portfolio_targets or {}).items()
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+    }
+    normalized_live_execution = {
+        str(key): list(value)
+        for key, value in (live_execution_targets or {}).items()
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+    }
+    normalized_live_execution_fills = {
+        str(key): _aggregate_trade_compare_frame(value)
+        for key, value in (live_execution_fills or {}).items()
+        if isinstance(value, pd.DataFrame)
+    }
+    normalized_live_position_lots = {
+        str(key): value.copy()
+        for key, value in (live_position_lots or {}).items()
+        if isinstance(value, pd.DataFrame)
+    }
+
+    session_dates = _collect_compare_session_dates(
+        fidelity_manifest=fidelity_manifest,
+        research_signals_df=research_signals_df,
+        risk_entries=risk_entries,
+        live_risk_decisions=normalized_live_risk,
+        live_portfolio_targets=normalized_live_portfolio,
+        live_execution_targets=normalized_live_execution,
+    )
+
+    sessions: list[dict[str, Any]] = []
+    all_top_divergences: list[dict[str, object]] = []
+    score_accumulator: dict[str, list[float]] = {
+        "candidates": [],
+        "risk": [],
+        "portfolio": [],
+        "execution": [],
+        "fills": [],
+        "exits": [],
+        "pnl": [],
+    }
+    for trade_date in session_dates:
+        trade_date_key = pd.Timestamp(trade_date).date().isoformat()
+        live_risk_day = normalized_live_risk.get(trade_date_key, pd.DataFrame())
+        live_portfolio_day = _execution_targets_to_compare_frame(
+            normalized_live_portfolio.get(trade_date_key, []),
+            run_id=f"live_portfolio:{trade_date_key}",
+        )
+        live_execution_day = _execution_targets_to_compare_frame(
+            normalized_live_execution.get(trade_date_key, []),
+            run_id=f"live_execution:{trade_date_key}",
+        )
+        live_execution_fills_day = _aggregate_trade_compare_frame(normalized_live_execution_fills.get(trade_date_key, pd.DataFrame()))
+        live_position_lots_day = normalized_live_position_lots.get(trade_date_key, pd.DataFrame())
+
+        research_selected_symbols = _research_selected_symbols_for_date(research_signals_df, trade_date)
+        live_candidate_symbols = _normalize_live_buy_symbol_set(live_risk_day)
+        risk_day = _portfolio_entries_to_compare_frame(
+            [entry for entry in risk_entries if pd.Timestamp(getattr(entry, "score_snapshot_date", pd.NaT)).normalize() == trade_date],
+            run_id="backtest_risk",
+        )
+        execution_day = _execution_targets_to_compare_frame(
+            [target for target in execution_targets if pd.Timestamp(getattr(target, "trade_date", pd.NaT)).normalize() == trade_date],
+            run_id="backtest_execution",
+        )
+        replay_fills_day = _execution_fills_to_compare_frame(
+            [fill for fill in execution_fills if pd.Timestamp(_extract_compare_value(fill, "fill_timestamp", pd.NaT)).normalize() == trade_date],
+            run_id="backtest_execution_fills",
+        )
+        replay_exits_day = _exit_signals_to_compare_frame(
+            exit_signals_df if isinstance(exit_signals_df, pd.DataFrame) else pd.DataFrame(),
+            execution_date=trade_date,
+        )
+        replay_pnl_day = _exit_signals_to_pnl_frame(
+            exit_signals_df if isinstance(exit_signals_df, pd.DataFrame) else pd.DataFrame(),
+            execution_date=trade_date,
+        )
+        live_exits_day = _position_lots_to_exit_compare_frame(live_position_lots_day)
+        live_pnl_day = _position_lots_to_pnl_frame(live_position_lots_day)
+        portfolio_day = _portfolio_entries_to_compare_frame(
+            [
+                entry
+                for entry in risk_entries
+                if pd.Timestamp(getattr(entry, "score_snapshot_date", pd.NaT)).normalize() == trade_date
+                and _safe_int(getattr(entry, "approved_shares", 0), 0) > 0
+            ],
+            run_id="backtest_portfolio",
+        )
+
+        candidate_section = _build_candidate_live_compare_section(
+            research_selected_symbols=research_selected_symbols,
+            live_candidate_symbols=live_candidate_symbols,
+            live_available=bool(not live_risk_day.empty),
+        )
+        risk_section = _summarize_parity_section(
+            component="risk_decisions",
+            live_df=live_risk_day,
+            replay_df=risk_day,
+            trade_date=trade_date,
+            account_id=account_id,
+            live_available=bool(not live_risk_day.empty),
+        )
+        portfolio_section = _summarize_parity_section(
+            component="portfolio_targets",
+            live_df=live_portfolio_day,
+            replay_df=portfolio_day,
+            trade_date=trade_date,
+            account_id=account_id,
+            live_available=bool(not live_portfolio_day.empty),
+            comparison_basis="risk_targets_vs_live_portfolio_targets",
+        )
+        execution_section = _summarize_parity_section(
+            component="execution_targets",
+            live_df=live_execution_day,
+            replay_df=execution_day,
+            trade_date=trade_date,
+            account_id=account_id,
+            live_available=bool(not live_execution_day.empty),
+            comparison_basis="execution_targets_snapshot",
+        )
+        fills_section = _summarize_trade_lifecycle_section(
+            component="fills",
+            live_df=live_execution_fills_day,
+            replay_df=replay_fills_day,
+            live_available=bool(not live_execution_fills_day.empty),
+            comparison_basis="execution_broker_fills_by_exec_run",
+        )
+        exits_section = _summarize_trade_lifecycle_section(
+            component="exits",
+            live_df=live_exits_day,
+            replay_df=replay_exits_day,
+            live_available=bool(not live_exits_day.empty),
+            comparison_basis="closed_lots_by_open_exec_run",
+            compare_reason=True,
+        )
+        pnl_section = _summarize_pnl_section(
+            live_df=live_pnl_day,
+            replay_df=replay_pnl_day,
+            live_available=bool(not live_pnl_day.empty),
+            comparison_basis="realized_pnl_from_closed_lots",
+        )
+
+        session_scores = [
+            float(candidate_section.get("alignment_score", 0.0)) if bool(candidate_section.get("live_available", False)) else None,
+            float(risk_section.get("alignment_score", 0.0)) if bool(risk_section.get("live_available", False)) else None,
+            float(portfolio_section.get("alignment_score", 0.0)) if bool(portfolio_section.get("live_available", False)) else None,
+            float(execution_section.get("alignment_score", 0.0)) if bool(execution_section.get("live_available", False)) else None,
+            float(fills_section.get("alignment_score", 0.0)) if bool(fills_section.get("comparable", False)) else None,
+            float(exits_section.get("alignment_score", 0.0)) if bool(exits_section.get("comparable", False)) else None,
+            float(pnl_section.get("alignment_score", 0.0)) if bool(pnl_section.get("comparable", False)) else None,
+        ]
+        comparable_scores = [score for score in session_scores if isinstance(score, float)]
+        fidelity_score = (sum(comparable_scores) / len(comparable_scores)) if comparable_scores else 0.0
+
+        session_top_divergences: list[dict[str, object]] = []
+        for section in (candidate_section, risk_section, portfolio_section, execution_section, fills_section, exits_section, pnl_section):
+            top_items = section.get("top_divergences", [])
+            if not isinstance(top_items, Sequence) or isinstance(top_items, (str, bytes)):
+                continue
+            for item in top_items[:3]:
+                if not isinstance(item, Mapping):
+                    continue
+                enriched = {"trade_date": trade_date_key, **dict(item)}
+                session_top_divergences.append(enriched)
+                all_top_divergences.append(enriched)
+
+        if bool(candidate_section.get("live_available", False)):
+            score_accumulator["candidates"].append(float(candidate_section.get("alignment_score", 0.0)))
+        if bool(risk_section.get("live_available", False)):
+            score_accumulator["risk"].append(float(risk_section.get("alignment_score", 0.0)))
+        if bool(portfolio_section.get("live_available", False)):
+            score_accumulator["portfolio"].append(float(portfolio_section.get("alignment_score", 0.0)))
+        if bool(execution_section.get("live_available", False)):
+            score_accumulator["execution"].append(float(execution_section.get("alignment_score", 0.0)))
+        if bool(fills_section.get("comparable", False)):
+            score_accumulator["fills"].append(float(fills_section.get("alignment_score", 0.0)))
+        if bool(exits_section.get("comparable", False)):
+            score_accumulator["exits"].append(float(exits_section.get("alignment_score", 0.0)))
+        if bool(pnl_section.get("comparable", False)):
+            score_accumulator["pnl"].append(float(pnl_section.get("alignment_score", 0.0)))
+
+        sessions.append(
+            {
+                "trade_date": trade_date_key,
+                "matching_context": dict(live_compare_context.get(trade_date_key, {})) if isinstance(live_compare_context, Mapping) and isinstance(live_compare_context.get(trade_date_key, {}), Mapping) else {},
+                "live_presence": {
+                    "risk_decisions": not live_risk_day.empty,
+                    "portfolio_targets": not live_portfolio_day.empty,
+                    "execution_targets": not live_execution_day.empty,
+                    "fills": not live_execution_fills_day.empty,
+                    "exits": not live_exits_day.empty,
+                    "pnl": not live_pnl_day.empty,
+                },
+                "counts": {
+                    "research_selected": len(research_selected_symbols),
+                    "live_candidates": len(live_candidate_symbols),
+                    "backtest_risk_rows": len(risk_day),
+                    "live_risk_rows": len(live_risk_day),
+                    "backtest_portfolio_rows": int(portfolio_section.get("n_symbols_replay", 0)),
+                    "live_portfolio_rows": int(portfolio_section.get("n_symbols_live", 0)),
+                    "backtest_execution_rows": int(execution_section.get("n_symbols_replay", 0)),
+                    "live_execution_rows": int(execution_section.get("n_symbols_live", 0)),
+                    "backtest_fill_rows": int(fills_section.get("n_symbols_replay", 0)),
+                    "live_fill_rows": int(fills_section.get("n_symbols_live", 0)),
+                    "backtest_exit_rows": int(exits_section.get("n_symbols_replay", 0)),
+                    "live_exit_rows": int(exits_section.get("n_symbols_live", 0)),
+                    "backtest_pnl_rows": int(pnl_section.get("n_symbols_replay", 0)),
+                    "live_pnl_rows": int(pnl_section.get("n_symbols_live", 0)),
+                },
+                "candidate_compare": candidate_section,
+                "risk_compare": risk_section,
+                "portfolio_compare": portfolio_section,
+                "execution_compare": execution_section,
+                "fills_compare": fills_section,
+                "exits_compare": exits_section,
+                "pnl_compare": pnl_section,
+                "fidelity_score": round(float(fidelity_score), 6),
+                "top_divergences": session_top_divergences[:10],
+            }
+        )
+
+    candidate_scores = score_accumulator["candidates"]
+    risk_scores = score_accumulator["risk"]
+    portfolio_scores = score_accumulator["portfolio"]
+    execution_scores = score_accumulator["execution"]
+    fills_scores = score_accumulator["fills"]
+    exits_scores = score_accumulator["exits"]
+    pnl_scores = score_accumulator["pnl"]
+    all_scores = candidate_scores + risk_scores + portfolio_scores + execution_scores + fills_scores + exits_scores + pnl_scores
+    global_scores = {
+        "candidate_alignment_score": round(sum(candidate_scores) / len(candidate_scores), 6) if candidate_scores else 0.0,
+        "risk_alignment_score": round(sum(risk_scores) / len(risk_scores), 6) if risk_scores else 0.0,
+        "portfolio_alignment_score": round(sum(portfolio_scores) / len(portfolio_scores), 6) if portfolio_scores else 0.0,
+        "execution_alignment_score": round(sum(execution_scores) / len(execution_scores), 6) if execution_scores else 0.0,
+        "fills_alignment_score": round(sum(fills_scores) / len(fills_scores), 6) if fills_scores else 0.0,
+        "exits_alignment_score": round(sum(exits_scores) / len(exits_scores), 6) if exits_scores else 0.0,
+        "pnl_alignment_score": round(sum(pnl_scores) / len(pnl_scores), 6) if pnl_scores else 0.0,
+        "fidelity_score": round(sum(all_scores) / len(all_scores), 6) if all_scores else 0.0,
+    }
+    live_session_count = sum(
+        1
+        for session in sessions
+        if isinstance(session.get("live_presence"), Mapping) and any(bool(value) for value in cast(Mapping[str, object], session.get("live_presence", {})).values())
+    )
+    top_divergences_sorted = sorted(
+        all_top_divergences,
+        key=lambda item: (str(item.get("trade_date") or ""), str(item.get("component") or ""), str(item.get("symbol") or "")),
+    )
+    return {
+        "enabled": True,
+        "account_id": account_id,
+        "engine_mode": fidelity_manifest.get("engine_mode"),
+        "phase2_mode": phase2_mode,
+        "requested_window": dict(fidelity_manifest.get("requested_window", {})) if isinstance(fidelity_manifest.get("requested_window", {}), Mapping) else {},
+        "compare_sections": ["candidates", "risk_decisions", "portfolio_targets", "execution_targets", "fills", "exits", "pnl"],
+        "session_count": len(sessions),
+        "live_session_count": live_session_count,
+        "global_scores": global_scores,
+        "top_divergences": top_divergences_sorted[:20],
+        "sessions": sessions,
+    }
+
+
+def save_compare_to_live_summary(summary: Mapping[str, Any], output_dir: Path) -> dict[str, Path]:
+    """Sauvegarde le rapport compare-to-live en JSON + CSV + Markdown."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "compare_to_live_summary.json"
+    csv_path = output_dir / "compare_to_live_sessions.csv"
+    markdown_path = output_dir / "compare_to_live_summary.md"
+    payload = dict(summary)
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    sessions = summary.get("sessions", []) if isinstance(summary, Mapping) else []
+    rows: list[dict[str, object]] = []
+    if isinstance(sessions, Sequence) and not isinstance(sessions, (str, bytes)):
+        for session in sessions:
+            if not isinstance(session, Mapping):
+                continue
+            rows.append(
+                {
+                    "trade_date": session.get("trade_date"),
+                    "fidelity_score": session.get("fidelity_score", 0.0),
+                    "candidate_status": session.get("candidate_compare", {}).get("status") if isinstance(session.get("candidate_compare"), Mapping) else None,
+                    "candidate_alignment_score": session.get("candidate_compare", {}).get("alignment_score") if isinstance(session.get("candidate_compare"), Mapping) else None,
+                    "risk_status": session.get("risk_compare", {}).get("status") if isinstance(session.get("risk_compare"), Mapping) else None,
+                    "risk_divergence_score": session.get("risk_compare", {}).get("divergence_score") if isinstance(session.get("risk_compare"), Mapping) else None,
+                    "portfolio_status": session.get("portfolio_compare", {}).get("status") if isinstance(session.get("portfolio_compare"), Mapping) else None,
+                    "portfolio_divergence_score": session.get("portfolio_compare", {}).get("divergence_score") if isinstance(session.get("portfolio_compare"), Mapping) else None,
+                    "execution_status": session.get("execution_compare", {}).get("status") if isinstance(session.get("execution_compare"), Mapping) else None,
+                    "execution_divergence_score": session.get("execution_compare", {}).get("divergence_score") if isinstance(session.get("execution_compare"), Mapping) else None,
+                    "fills_status": session.get("fills_compare", {}).get("status") if isinstance(session.get("fills_compare"), Mapping) else None,
+                    "fills_divergence_score": session.get("fills_compare", {}).get("divergence_score") if isinstance(session.get("fills_compare"), Mapping) else None,
+                    "exits_status": session.get("exits_compare", {}).get("status") if isinstance(session.get("exits_compare"), Mapping) else None,
+                    "exits_divergence_score": session.get("exits_compare", {}).get("divergence_score") if isinstance(session.get("exits_compare"), Mapping) else None,
+                    "pnl_status": session.get("pnl_compare", {}).get("status") if isinstance(session.get("pnl_compare"), Mapping) else None,
+                    "pnl_divergence_score": session.get("pnl_compare", {}).get("divergence_score") if isinstance(session.get("pnl_compare"), Mapping) else None,
+                    "top_divergences": json.dumps(session.get("top_divergences", []), ensure_ascii=False, default=str),
+                }
+            )
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    markdown_path.write_text(_build_compare_to_live_markdown(summary), encoding="utf-8")
+    return {
+        "compare_to_live_summary_json": json_path,
+        "compare_to_live_sessions_csv": csv_path,
+        "compare_to_live_summary_md": markdown_path,
+    }
+
+
 def _build_scores_provenance(score_payload: Mapping[str, Any], *, requested_score_column: str | None) -> dict[str, object]:
     source_table = str(score_payload.get("source_table") or "unknown")
     fallback_used = bool(score_payload.get("fallback_used", False))
@@ -1339,10 +2314,12 @@ __all__ = [
     "PreparedPredictionsResult",
     "REASON_TAXONOMY",
     "build_candidate_target_parity_summary",
+    "build_compare_to_live_summary",
     "build_coverage_summary",
     "build_fidelity_manifest",
     "save_fidelity_manifest",
     "save_candidate_target_parity_summary",
+    "save_compare_to_live_summary",
     "save_coverage_summary",
 ]
 
