@@ -11,7 +11,6 @@ import torch
 
 from modelFactory.config import ReproducibilityConfig
 
-
 _MAX_NUMPY_SEED = 2 ** 32
 _MAX_TORCH_SEED = 2 ** 63 - 1
 
@@ -45,7 +44,8 @@ def build_torch_generator(seed: int) -> torch.Generator:
 def apply_reproducibility(config: ReproducibilityConfig, *, context: str | None = None) -> dict[str, Any]:
     """Applique la politique de reproductibilité au process courant."""
     resolved_seed = normalize_seed(config.seed)
-    os.environ["PYTHONHASHSEED"] = str(resolved_seed)
+    python_hash_seed = resolved_seed % _MAX_NUMPY_SEED
+    os.environ["PYTHONHASHSEED"] = str(python_hash_seed)
     if config.deterministic:
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
@@ -69,6 +69,7 @@ def apply_reproducibility(config: ReproducibilityConfig, *, context: str | None 
 
     return {
         "seed": resolved_seed,
+        "python_hash_seed": int(python_hash_seed),
         "deterministic_requested": bool(config.deterministic),
         "deterministic_applied": deterministic_applied,
         "context": context,
