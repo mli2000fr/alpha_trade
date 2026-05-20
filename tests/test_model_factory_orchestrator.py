@@ -49,7 +49,7 @@ def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -
     monkeypatch.setattr(orchestrator, "load_symbol_sentiment", lambda engine, symbol, end_date=None, start_date=None: "sentiment")
     monkeypatch.setattr(orchestrator, "load_universe_bars", lambda engine, symbols, end_date=None, start_date=None: {"symbols": list(symbols), "start_date": start_date, "end_date": end_date})
 
-    def fake_train_symbol(symbol, bars, cfg, engine, sentiment_df=None, benchmark_df=None, universe_df=None):
+    def fake_train_symbol(symbol, bars, cfg, engine, sentiment_df=None, benchmark_df=None, universe_df=None, selector_df=None):
         captured["symbol"] = symbol
         captured["universe_df"] = universe_df
         return orchestrator.TrainResult(symbol, "run-1", "completed")
@@ -63,6 +63,37 @@ def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -
     assert captured["universe_df"]["symbols"] == ["AAPL", "MSFT"]
     assert captured["universe_df"]["end_date"] == date(2026, 4, 17)
     assert captured["universe_df"]["start_date"] == date(2020, 1, 1)
+
+
+def test_train_worker_loads_selector_context_when_enabled(monkeypatch) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(include_selector_context_features=True),
+        model=ModelConfig(max_epochs=1),
+        accelerator="cpu",
+    )
+    captured: dict[str, object] = {}
+
+    import database.connection as db_connection
+
+    monkeypatch.setattr(db_connection, "get_sqlalchemy_engine", lambda: object())
+    monkeypatch.setattr(orchestrator, "load_symbol_latest_bar_date", lambda engine, symbol: date(2026, 4, 17))
+    monkeypatch.setattr(orchestrator, "load_symbol_bars", lambda engine, symbol, end_date=None, start_date=None: {"symbol": symbol})
+    monkeypatch.setattr(orchestrator, "load_symbol_selector_context", lambda engine, symbol, end_date=None, start_date=None: {"symbol": symbol, "end_date": end_date, "start_date": start_date})
+
+    def fake_train_symbol(symbol, bars, cfg, engine, sentiment_df=None, benchmark_df=None, universe_df=None, selector_df=None):
+        captured["symbol"] = symbol
+        captured["selector_df"] = selector_df
+        return orchestrator.TrainResult(symbol, "run-1", "completed")
+
+    monkeypatch.setattr(orchestrator, "train_symbol", fake_train_symbol)
+
+    result = orchestrator._train_worker("AAPL", cfg)
+
+    assert result.status == "completed"
+    assert captured["symbol"] == "AAPL"
+    assert captured["selector_df"]["symbol"] == "AAPL"
+    assert captured["selector_df"]["end_date"] == date(2026, 4, 17)
+    assert captured["selector_df"]["start_date"] == date(2020, 1, 1)
 
 
 def test_run_training_batch_injects_global_model_into_symbol_artifacts(monkeypatch, tmp_path) -> None:

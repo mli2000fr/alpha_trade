@@ -331,6 +331,7 @@ def _build_feature_contract_for_columns(cfg: TrainingConfig, feature_columns: li
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        include_selector_context=cfg.data.include_selector_context_features,
         feature_columns=feature_columns,
         scaler_feature_names=feature_columns,
     )
@@ -367,6 +368,7 @@ def _prepare_target_optimization_summary(
     sentiment_df: "pd.DataFrame | None" = None,
     benchmark_df: "pd.DataFrame | None" = None,
     universe_df: "pd.DataFrame | None" = None,
+    selector_df: "pd.DataFrame | None" = None,
 ) -> dict[str, Any]:
     prepared_df = prepare_symbol_frame(
         bars_df,
@@ -374,6 +376,7 @@ def _prepare_target_optimization_summary(
         sentiment_df=sentiment_df,
         benchmark_df=benchmark_df,
         universe_df=universe_df,
+        selector_df=selector_df,
     )
     split = chrono_split(
         prepared_df,
@@ -717,6 +720,7 @@ def _run_walk_forward_validation(
         cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        include_selector_context=cfg.data.include_selector_context_features,
     )
     fold_metrics: list[dict[str, Any]] = []
     walk_forward_seed = derive_seed(cfg.reproducibility.seed, "walk_forward", symbol)
@@ -897,6 +901,7 @@ def train_symbol(
     sentiment_df: "pd.DataFrame | None" = None,
     benchmark_df: "pd.DataFrame | None" = None,
     universe_df: "pd.DataFrame | None" = None,
+    selector_df: "pd.DataFrame | None" = None,
 ) -> TrainResult:
     """Entraîne un modèle LSTM+Attention pour un symbole unique.
 
@@ -940,6 +945,7 @@ def train_symbol(
                 sentiment_df=sentiment_df,
                 benchmark_df=benchmark_df,
                 universe_df=universe_df,
+                selector_df=selector_df,
             )
             selected_horizon = int(target_optimization_summary.get("selected_horizon", cfg.data.forecast_horizon))
             selected_up_threshold = float(target_optimization_summary.get("selected_target_up_threshold", cfg.data.target_up_threshold))
@@ -975,6 +981,8 @@ def train_symbol(
             datamodule_kwargs["benchmark_df"] = benchmark_df
         if universe_df is not None:
             datamodule_kwargs["universe_df"] = universe_df
+        if selector_df is not None:
+            datamodule_kwargs["selector_df"] = selector_df
         datamodule_signature = inspect.signature(SymbolDataModule)
         if "reproducibility_seed" in datamodule_signature.parameters:
             datamodule_kwargs["reproducibility_seed"] = derive_seed(symbol_seed, "symbol_datamodule")
@@ -1135,6 +1143,7 @@ def train_symbol(
             include_sentiment=effective_cfg.data.include_sentiment_features,
             feature_set=effective_cfg.data.feature_set,
             include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
+            include_selector_context=effective_cfg.data.include_selector_context_features,
             feature_columns=list(dm.scaler.feature_names),
             scaler_feature_names=list(dm.scaler.feature_names),
         )
@@ -1242,6 +1251,7 @@ def train_symbol(
                 include_sentiment=effective_cfg.data.include_sentiment_features,
                 feature_set=effective_cfg.data.feature_set,
                 include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
+                include_selector_context=effective_cfg.data.include_selector_context_features,
                 feature_columns=list(dm.scaler.feature_names),
             ),
         }

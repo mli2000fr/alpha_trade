@@ -3,23 +3,46 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from typing import Any
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 LOGGER = logging.getLogger(__name__)
 
+SELECTOR_HISTORY_CONTEXT_COLUMNS: tuple[str, ...] = (
+    "trend_score",
+    "vcp_score",
+    "final_score",
+    "raw_final_score",
+    "candidate_rank",
+    "atr_pct_20",
+    "weekly_trend_score",
+    "high_52w_proximity",
+    "volatility_ratio",
+    "earnings_blackout",
+    "selector_signal_mode",
+)
+
+
+def _get_table_columns(engine: Engine, table_name: str) -> set[str]:
+    try:
+        return {str(column.get("name")) for column in inspect(engine).get_columns(table_name)}
+    except Exception:  # noqa: BLE001
+        LOGGER.debug("_get_table_columns failed table=%s", table_name, exc_info=True)
+        return set()
+
 
 def _coerce_date_value(value: object) -> date | None:
-    if value is None or pd.isna(value):
+    if value is None or bool(pd.isna(value)):
         return None
     if isinstance(value, pd.Timestamp):
         return value.date()
     if isinstance(value, date):
         return value
     try:
-        return pd.Timestamp(value).date()
+        return pd.Timestamp(cast(Any, value)).date()
     except Exception:  # noqa: BLE001
         LOGGER.debug("_coerce_date_value failed value=%r", value, exc_info=True)
         return None
@@ -256,5 +279,85 @@ def load_symbols_sentiment(
         df = pd.read_sql(query, conn, params=params, parse_dates=["trade_date"])
     LOGGER.info("load_symbols_sentiment symbols=%d start_date=%s end_date=%s rows=%d", len(symbols), start_date, end_date, len(df))
     return df
+
+
+def load_symbols_selector_context(
+    engine: Engine,
+    symbols: list[str],
+    end_date: date | None = None,
+    start_date: date | None = None,
+) -> pd.DataFrame:
+    """Charge le contexte selector PIT-safe depuis stock_scores_history.
+
+    Retourne un DataFrame avec au minimum :
+    - symbol
+    - date (projection de snapshot_date)
+    - sous-ensemble des colonnes selector disponibles dans le schéma courant
+    """
+    expected_columns = ["symbol", "date", *SELECTOR_HISTORY_CONTEXT_COLUMNS]
+    if not symbols:
+        return pd.DataFrame(columns=expected_columns)
+
+    available_columns = _get_table_columns(engine, "stock_scores_history")
+    if "symbol" not in available_columns or "snapshot_date" not in available_columns:
+        LOGGER.info("load_symbols_selector_context unavailable missing_required_columns=%s", sorted(available_columns))
+        return pd.DataFrame(columns=expected_columns)
+
+    selected_columns = [
+        column for column in SELECTOR_HISTORY_CONTEXT_COLUMNS if column in available_columns
+    ]
+    in_clause, params = _build_in_clause(symbols)
+    where_clauses = [f"symbol IN ({in_clause})"]
+    if start_date is not None:
+        where_clauses.append("snapshot_date >= :start_date")
+        params["start_date"] = start_date
+    if end_date is not None:
+        where_clauses.append("snapshot_date <= :end_date")
+        params["end_date"] = end_date
+    where_clause = " AND ".join(where_clauses)
+    select_list = ["symbol", "snapshot_date AS `date`", *selected_columns]
+    query = text(
+        "SELECT "
+        + ", ".join(select_list)
+        + f" FROM stock_scores_history WHERE {where_clause} ORDER BY symbol, snapshot_date"
+    )
+    with engine.connect() as conn:
+        df = pd.read_sql(query, conn, params=params, parse_dates=["date"])
+
+    if df.empty:
+        return pd.DataFrame(columns=["symbol", "date", *selected_columns])
+
+    df["symbol"] = df["symbol"].astype(str).str.strip().str.upper()
+    df = df[df["symbol"] != ""].copy()
+    for missing_column in SELECTOR_HISTORY_CONTEXT_COLUMNS:
+        if missing_column not in df.columns:
+            df[missing_column] = pd.NA
+    LOGGER.info(
+        "load_symbols_selector_context symbols=%d start_date=%s end_date=%s rows=%d cols=%d",
+        len(symbols),
+        start_date,
+        end_date,
+        len(df),
+        len(df.columns),
+    )
+    return df.loc[:, expected_columns].copy()
+
+
+def load_symbol_selector_context(
+    engine: Engine,
+    symbol: str,
+    end_date: date | None = None,
+    start_date: date | None = None,
+) -> pd.DataFrame:
+    """Wrapper mono-symbole autour de load_symbols_selector_context."""
+    normalized_symbol = str(symbol).strip().upper()
+    if not normalized_symbol:
+        return pd.DataFrame(columns=["symbol", "date", *SELECTOR_HISTORY_CONTEXT_COLUMNS])
+    return load_symbols_selector_context(
+        engine,
+        [normalized_symbol],
+        end_date=end_date,
+        start_date=start_date,
+    )
 
 

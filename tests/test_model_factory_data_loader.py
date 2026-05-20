@@ -102,3 +102,57 @@ def test_load_symbol_latest_bar_dates_builds_grouped_query(monkeypatch) -> None:
     }
 
 
+def test_load_symbols_selector_context_builds_history_query_and_backfills_missing_columns(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConn()
+
+    def fake_read_sql(query, conn, params=None, parse_dates=None):
+        captured["sql"] = str(query)
+        captured["params"] = dict(params or {})
+        captured["parse_dates"] = parse_dates
+        return data_loader.pd.DataFrame(
+            {
+                "symbol": ["aapl"],
+                "date": [data_loader.pd.Timestamp("2026-04-17")],
+                "trend_score": [0.81],
+                "selector_signal_mode": ["sector_neutralized"],
+            }
+        )
+
+    monkeypatch.setattr(
+        data_loader,
+        "_get_table_columns",
+        lambda engine, table_name: {"symbol", "snapshot_date", "trend_score", "selector_signal_mode"},
+    )
+    monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
+
+    result = data_loader.load_symbols_selector_context(
+        FakeEngine(),
+        ["AAPL"],
+        start_date=data_loader.date(2026, 1, 1),
+        end_date=data_loader.date(2026, 4, 17),
+    )
+
+    assert "FROM stock_scores_history" in str(captured["sql"])
+    assert "snapshot_date AS `date`" in str(captured["sql"])
+    assert captured["params"] == {
+        "sym_0": "AAPL",
+        "start_date": data_loader.date(2026, 1, 1),
+        "end_date": data_loader.date(2026, 4, 17),
+    }
+    assert captured["parse_dates"] == ["date"]
+    assert result.loc[0, "symbol"] == "AAPL"
+    assert result.loc[0, "trend_score"] == 0.81
+    assert data_loader.pd.isna(result.loc[0, "vcp_score"])
+
+

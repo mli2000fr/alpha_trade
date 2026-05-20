@@ -18,6 +18,7 @@ from modelFactory.data_loader import (
     load_symbol_bars,
     load_symbol_latest_bar_date,
     load_symbol_latest_bar_dates,
+    load_symbol_selector_context,
     load_symbol_sentiment,
     load_universe_bars,
     resolve_training_start_date,
@@ -173,11 +174,13 @@ def _filter_symbols_by_mode(
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        include_selector_context=cfg.data.include_selector_context_features,
     )
     current_contract = build_feature_contract(
         include_sentiment=cfg.data.include_sentiment_features,
         feature_set=cfg.data.feature_set,
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        include_selector_context=cfg.data.include_selector_context_features,
     )
 
     def _parse_iso_date(value: object) -> date | None:
@@ -287,6 +290,14 @@ def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] 
             end_date=history_end_date,
             start_date=history_start_date,
         )
+    selector_df = None
+    if cfg.data.include_selector_context_features:
+        selector_df = load_symbol_selector_context(
+            engine,
+            symbol,
+            end_date=history_end_date,
+            start_date=history_start_date,
+        )
     universe_df = None
     if cfg.data.enable_cross_sectional_features:
         effective_universe = list(dict.fromkeys((universe_symbols or []) + [symbol]))
@@ -296,7 +307,16 @@ def _train_worker(symbol: str, cfg: TrainingConfig, universe_symbols: list[str] 
             end_date=history_end_date,
             start_date=history_start_date,
         )
-    return train_symbol(symbol, bars, cfg, engine, sentiment_df=sentiment_df, benchmark_df=benchmark_df, universe_df=universe_df)
+    return train_symbol(
+        symbol,
+        bars,
+        cfg,
+        engine,
+        sentiment_df=sentiment_df,
+        benchmark_df=benchmark_df,
+        universe_df=universe_df,
+        selector_df=selector_df,
+    )
 
 
 def run_training_batch(

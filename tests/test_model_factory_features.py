@@ -128,3 +128,54 @@ def test_get_feature_columns_can_include_cross_sectional_features() -> None:
     assert "ret_20_rank" in cols
 
 
+def test_get_feature_columns_can_include_selector_context_features() -> None:
+    cols = features.get_feature_columns(include_selector_context=True)
+
+    assert "selector_trend_score" in cols
+    assert "selector_mode_sector_neutralized" in cols
+
+
+def test_compute_features_merges_selector_context_pit_safely() -> None:
+    n = 90
+    dates = pd.date_range("2020-01-01", periods=n, freq="D")
+    close = pd.Series(100.0 + np.arange(n), dtype=float)
+    bars = pd.DataFrame(
+        {
+            "symbol": ["AAPL"] * n,
+            "date": dates,
+            "open": close * 0.99,
+            "high": close * 1.01,
+            "low": close * 0.98,
+            "close": close,
+            "volume": np.linspace(1_000_000, 1_100_000, n),
+            "adj_close": close,
+            "vwap": close,
+            "daily_return": 0.0,
+            "is_filled": 0,
+        }
+    )
+    selector_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL", "AAPL"],
+            "date": [dates[-2], dates[-1]],
+            "trend_score": [0.74, 0.82],
+            "candidate_rank": [7, 3],
+            "earnings_blackout": [0, 1],
+            "selector_signal_mode": ["strict", "sector_neutralized"],
+        }
+    )
+
+    result = features.compute_features(
+        bars,
+        selector_df=selector_df,
+        include_selector_context=True,
+    )
+
+    assert not result.empty
+    last_row = result.iloc[-1]
+    assert last_row["selector_trend_score"] == 0.82
+    assert last_row["selector_candidate_rank"] == 3.0
+    assert last_row["selector_earnings_blackout"] == 1.0
+    assert last_row["selector_mode_sector_neutralized"] == 1.0
+
+

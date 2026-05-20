@@ -280,6 +280,7 @@ class SymbolDataModule(L.LightningDataModule):
         sentiment_df: pd.DataFrame | None = None,
         benchmark_df: pd.DataFrame | None = None,
         universe_df: pd.DataFrame | None = None,
+        selector_df: pd.DataFrame | None = None,
         reproducibility_seed: int = 42,
     ) -> None:
         super().__init__()
@@ -289,11 +290,13 @@ class SymbolDataModule(L.LightningDataModule):
         self.sentiment_df = sentiment_df
         self.benchmark_df = benchmark_df
         self.universe_df = universe_df
+        self.selector_df = selector_df
         self.reproducibility_seed = int(reproducibility_seed)
         self._feature_cols = get_feature_columns(
             data_cfg.include_sentiment_features,
             feature_set=data_cfg.feature_set,
             include_cross_sectional=data_cfg.enable_cross_sectional_features,
+            include_selector_context=data_cfg.include_selector_context_features,
         )
         self.scaler = FeatureScaler(feature_names=self._feature_cols)
         self.train_ds: Optional[SequenceDataset] = None
@@ -320,6 +323,7 @@ class SymbolDataModule(L.LightningDataModule):
             sentiment_df=self.sentiment_df,
             benchmark_df=self.benchmark_df,
             universe_df=self.universe_df,
+            selector_df=self.selector_df,
         )
         self.prepared_df = df
         self.cross_sectional_diagnostics = dict(df.attrs.get("cross_sectional_diagnostics", {}))
@@ -376,6 +380,7 @@ def prepare_symbol_frame(
     sentiment_df: pd.DataFrame | None = None,
     benchmark_df: pd.DataFrame | None = None,
     universe_df: pd.DataFrame | None = None,
+    selector_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Prépare le DataFrame final features + target pour un symbole."""
     df = compute_features(
@@ -384,6 +389,8 @@ def prepare_symbol_frame(
         include_sentiment=data_cfg.include_sentiment_features,
         benchmark_df=benchmark_df,
         feature_set=data_cfg.feature_set,
+        selector_df=selector_df,
+        include_selector_context=data_cfg.include_selector_context_features,
     )
     cross_sectional_diagnostics: dict[str, object] = {}
     if data_cfg.enable_cross_sectional_features:
@@ -405,6 +412,7 @@ def prepare_symbol_frame(
         data_cfg.include_sentiment_features,
         feature_set=data_cfg.feature_set,
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
+        include_selector_context=data_cfg.include_selector_context_features,
     )
     df = df.dropna(subset=active_features).reset_index(drop=True)
     df.attrs["cross_sectional_diagnostics"] = cross_sectional_diagnostics

@@ -17,6 +17,7 @@ class DataConfig:
     val_ratio: float = 0.15
     # test = 1 - train - val
     include_sentiment_features: bool = False
+    include_selector_context_features: bool = False
     enable_cross_sectional_features: bool = False
     cross_sectional_min_universe: int = 20
     feature_set: str = "v1"  # v1 | expert

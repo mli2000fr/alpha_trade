@@ -44,6 +44,12 @@ def test_fingerprint_changes_with_cross_sectional() -> None:
     assert fp_no != fp_yes
 
 
+def test_fingerprint_changes_with_selector_context() -> None:
+    fp_no = fingerprint(include_selector_context=False)
+    fp_yes = fingerprint(include_selector_context=True)
+    assert fp_no != fp_yes
+
+
 def test_fingerprint_is_deterministic() -> None:
     fp1 = fingerprint(include_sentiment=True, feature_set="expert", include_cross_sectional=True)
     fp2 = fingerprint(include_sentiment=True, feature_set="expert", include_cross_sectional=True)

@@ -22,7 +22,20 @@ Cette note synthétise l’état de compatibilité autour des enrichissements r�
 - Le contrat opérationnel reste : **`screener` doit précéder `selector`** dans le pipeline quotidien.
 - Si on relance `screener` seul après un run `selector`, les colonnes selector déjà présentes dans `stock_scores` ne sont pas explicitement remises à zéro par `screener` ; elles seront réécrites proprement au prochain run `selector`.
 
-## 3. Aval : compatibilité `selector` → `modelFactory`
+## 3. Aval immédiat : compatibilité `selector` → `event_sentiment`
+
+### Compatible
+
+- `event_sentiment/signal_aggregator.py` consomme uniquement un sous-ensemble stable de `stock_scores` (`symbol`, `final_score`, `sector`, plus quelques scores quantitatifs legacy) et **n'échoue pas** si `stock_scores` contient des colonnes selector supplémentaires.
+- La fusion sentiment opère sur une copie du snapshot chargé puis `save_to_db()` ne met à jour que les colonnes sentiment/fusion (`final_score_sentiment`, `sentiment_net_agg`, `signal_active`, etc.).
+- En conséquence, les enrichissements selector récents (`candidate_rank`, `selector_signal_mode`, `selection_explanation`, `atr_pct_20`, `weekly_trend_score`, `high_52w_proximity`, `volatility_ratio`, …) sont **compatibles schéma** avec le module sentiment : ils ne sont ni requis, ni écrasés par l’agrégateur.
+
+### Point d’attention
+
+- Le module sentiment ne **valorise pas encore** ces nouveaux champs selector dans sa logique de fusion : aujourd’hui, ils restent transparents pour `signal_aggregator`.
+- Le contrat opérationnel reste inchangé : `selector` alimente d’abord `stock_scores`, puis `event_sentiment` enrichit ce snapshot avec `final_score_sentiment`.
+
+## 4. Aval : compatibilité `selector` → `modelFactory`
 
 ### Compatible
 
@@ -51,9 +64,10 @@ Champs exposés si présents dans le schéma courant :
 - `atr_pct_20`, `weekly_trend_score`, `high_52w_proximity`, `volatility_ratio`
 - `selector_signal_mode`, `selection_explanation`
 
-## 4. Conclusion
+## 5. Conclusion
 
 - **`screener` → `selector` : compatible** dans l’ordre de pipeline prévu.
+- **`selector` → `event_sentiment` : compatible schéma**, sans écrasement des nouveaux champs selector.
 - **`selector` → `modelFactory` : compatible schéma**, avec lecture de l’univers inchangée.
-- **Les nouveaux champs selector sont exploitables côté `modelFactory`**, mais ils ne sont pas encore branchés automatiquement dans la feature engineering ou l’orchestration d’entraînement : une utilisation métier ultérieure devra les connecter explicitement aux features / labels concernés.
+- **Les nouveaux champs selector sont désormais exploitables côté `modelFactory`** via un premier branchement PIT-safe en features tabulaires de contexte candidat ; un usage métier plus poussé pourra ensuite les connecter à des règles de filtrage d’univers ML plus sélectives.
 

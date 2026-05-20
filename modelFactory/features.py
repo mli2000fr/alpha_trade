@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -56,11 +55,53 @@ SENTIMENT_FEATURE_COLUMNS: list[str] = [
     "major_event_flag",
 ]
 
+SELECTOR_CONTEXT_FEATURE_COLUMNS: list[str] = [
+    "selector_trend_score",
+    "selector_vcp_score",
+    "selector_final_score",
+    "selector_raw_final_score",
+    "selector_candidate_rank",
+    "selector_atr_pct_20",
+    "selector_weekly_trend_score",
+    "selector_high_52w_proximity",
+    "selector_volatility_ratio",
+    "selector_earnings_blackout",
+    "selector_mode_sector_neutralized",
+]
+
+_SELECTOR_CONTEXT_SOURCE_TO_FEATURE = {
+    "trend_score": "selector_trend_score",
+    "vcp_score": "selector_vcp_score",
+    "final_score": "selector_final_score",
+    "raw_final_score": "selector_raw_final_score",
+    "candidate_rank": "selector_candidate_rank",
+    "atr_pct_20": "selector_atr_pct_20",
+    "weekly_trend_score": "selector_weekly_trend_score",
+    "high_52w_proximity": "selector_high_52w_proximity",
+    "volatility_ratio": "selector_volatility_ratio",
+    "earnings_blackout": "selector_earnings_blackout",
+}
+
+_SELECTOR_CONTEXT_DEFAULTS = {
+    "selector_trend_score": 0.0,
+    "selector_vcp_score": 0.0,
+    "selector_final_score": 0.0,
+    "selector_raw_final_score": 0.0,
+    "selector_candidate_rank": 0.0,
+    "selector_atr_pct_20": 0.0,
+    "selector_weekly_trend_score": 0.0,
+    "selector_high_52w_proximity": 0.0,
+    "selector_volatility_ratio": 0.0,
+    "selector_earnings_blackout": 0.0,
+    "selector_mode_sector_neutralized": 0.0,
+}
+
 
 def get_feature_columns(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
+    include_selector_context: bool = False,
 ) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnel sentiment)."""
     cols = list(FEATURE_COLUMNS)
@@ -72,6 +113,8 @@ def get_feature_columns(
         cols.extend(CROSS_SECTIONAL_FEATURE_COLUMNS)
     if include_sentiment:
         cols.extend(SENTIMENT_FEATURE_COLUMNS)
+    if include_selector_context:
+        cols.extend(SELECTOR_CONTEXT_FEATURE_COLUMNS)
     return cols
 
 
@@ -80,6 +123,7 @@ def fingerprint(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
+    include_selector_context: bool = False,
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -93,12 +137,14 @@ def fingerprint(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
+        include_selector_context=include_selector_context,
     ))
     payload = {
         "columns": columns,
         "feature_set": feature_set,
         "include_sentiment": bool(include_sentiment),
         "include_cross_sectional": bool(include_cross_sectional),
+        "include_selector_context": bool(include_selector_context),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -118,6 +164,7 @@ def build_feature_contract(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
+    include_selector_context: bool = False,
     feature_columns: list[str] | None = None,
     scaler_feature_names: list[str] | None = None,
 ) -> dict[str, object]:
@@ -126,6 +173,7 @@ def build_feature_contract(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
+        include_selector_context=include_selector_context,
     ))
     contract: dict[str, object] = {
         "schema_version": 1,
@@ -135,6 +183,7 @@ def build_feature_contract(
             include_sentiment=include_sentiment,
             feature_set=feature_set,
             include_cross_sectional=include_cross_sectional,
+            include_selector_context=include_selector_context,
             feature_columns=resolved_columns,
         ),
         "require_exact_order": True,
@@ -151,6 +200,7 @@ def validate_feature_contract(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
+    include_selector_context: bool = False,
     persisted_feature_columns: object = None,
     persisted_feature_fingerprint: object = None,
     scaler_feature_names: object = None,
@@ -163,11 +213,13 @@ def validate_feature_contract(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
+        include_selector_context=include_selector_context,
     )
     expected_fingerprint = fingerprint(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
+        include_selector_context=include_selector_context,
         feature_columns=expected_columns,
     )
 
@@ -188,6 +240,7 @@ def validate_feature_contract(
             include_sentiment=include_sentiment,
             feature_set=feature_set,
             include_cross_sectional=include_cross_sectional,
+            include_selector_context=include_selector_context,
             feature_columns=contract_columns,
         )
     else:
@@ -261,10 +314,12 @@ def validate_feature_contract(
 
 def compute_features(
     df: pd.DataFrame,
-    sentiment_df: Optional[pd.DataFrame] = None,
+    sentiment_df: pd.DataFrame | None = None,
     include_sentiment: bool = False,
-    benchmark_df: Optional[pd.DataFrame] = None,
+    benchmark_df: pd.DataFrame | None = None,
     feature_set: str = "v1",
+    selector_df: pd.DataFrame | None = None,
+    include_selector_context: bool = False,
 ) -> pd.DataFrame:
     """Ajoute les features dérivées à un DataFrame de bars trié par date.
 
@@ -410,8 +465,45 @@ def compute_features(
             else:
                 df[col] = df[col].fillna(0.0).astype(float)
 
+    if include_selector_context:
+        if selector_df is not None and not selector_df.empty:
+            selector = selector_df.copy()
+            if "snapshot_date" in selector.columns and "date" not in selector.columns:
+                selector = selector.rename(columns={"snapshot_date": "date"})
+            if "date" in selector.columns:
+                selector["date"] = pd.to_datetime(selector["date"])
+            merge_keys = [column for column in ["symbol", "date"] if column in selector.columns and column in df.columns]
+            if merge_keys:
+                selector_columns = [
+                    *merge_keys,
+                    *[column for column in _SELECTOR_CONTEXT_SOURCE_TO_FEATURE if column in selector.columns],
+                    *(["selector_signal_mode"] if "selector_signal_mode" in selector.columns else []),
+                ]
+                selector = selector.loc[:, selector_columns].copy()
+                selector = selector.drop_duplicates(subset=merge_keys, keep="last")
+                rename_map = {
+                    source: target
+                    for source, target in _SELECTOR_CONTEXT_SOURCE_TO_FEATURE.items()
+                    if source in selector.columns
+                }
+                selector = selector.rename(columns=rename_map)
+                if "selector_signal_mode" in selector.columns:
+                    selector["selector_mode_sector_neutralized"] = (
+                        selector["selector_signal_mode"].astype(str).str.strip().str.lower() == "sector_neutralized"
+                    ).astype(float)
+                df = df.merge(selector, on=merge_keys, how="left")
+        for col, default in _SELECTOR_CONTEXT_DEFAULTS.items():
+            if col not in df.columns:
+                df[col] = default
+            else:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(default).astype(float)
+
     # Determine active feature columns
-    active_features = get_feature_columns(include_sentiment, feature_set=feature_set)
+    active_features = get_feature_columns(
+        include_sentiment,
+        feature_set=feature_set,
+        include_selector_context=include_selector_context,
+    )
 
     # Drop warm-up NaN rows (rolling windows need ~60 rows)
     df = df.dropna(subset=active_features).reset_index(drop=True)

@@ -416,6 +416,94 @@ def test_save_to_db_rejects_missing_required_columns() -> None:
         aggregator.save_to_db(pd.DataFrame([{"symbol": "AAPL"}]))
 
 
+def test_save_to_db_preserves_existing_selector_columns() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as conn:
+        conn.execute(text(
+            """
+            CREATE TABLE stock_scores (
+                symbol TEXT PRIMARY KEY,
+                selector_signal_mode TEXT,
+                selection_explanation TEXT,
+                sentiment_net_agg REAL,
+                sector_impact_agg REAL,
+                company_idio_score REAL,
+                macro_regime_score REAL,
+                sentiment_signal_norm REAL,
+                macro_signal_norm REAL,
+                company_idio_signal_norm REAL,
+                macro_regime_signal_norm REAL,
+                company_idio_component REAL,
+                macro_regime_component REAL,
+                quant_component REAL,
+                final_score_sentiment REAL,
+                final_score_walk_forward REAL,
+                walk_forward_sentiment_weight REAL,
+                walk_forward_macro_weight REAL,
+                walk_forward_quant_weight REAL,
+                calibration_run_id TEXT,
+                calibration_source TEXT,
+                signal_active INTEGER,
+                major_event_flag_agg INTEGER,
+                macro_event_flag_agg INTEGER,
+                total_news INTEGER,
+                last_updated_sentiment TIMESTAMP
+            )
+            """
+        ))
+        conn.execute(
+            text(
+                "INSERT INTO stock_scores(symbol, selector_signal_mode, selection_explanation) VALUES (:symbol, :mode, :explanation)"
+            ),
+            {"symbol": "AAPL", "mode": "sector_neutralized", "explanation": "mode=sector_neutralized; breakout"},
+        )
+
+    aggregator = SentimentSignalAggregator(engine=engine)
+    updated = aggregator.save_to_db(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "AAPL",
+                    "sentiment_net_agg": 0.4,
+                    "sector_impact_agg": 0.1,
+                    "company_idio_score": 0.4,
+                    "macro_regime_score": 0.1,
+                    "sentiment_signal_norm": 0.7,
+                    "macro_signal_norm": 0.55,
+                    "company_idio_signal_norm": 0.7,
+                    "macro_regime_signal_norm": 0.55,
+                    "company_idio_component": 0.1,
+                    "macro_regime_component": 0.05,
+                    "quant_component": 0.6,
+                    "final_score_sentiment": 0.75,
+                    "final_score_walk_forward": None,
+                    "walk_forward_sentiment_weight": None,
+                    "walk_forward_macro_weight": None,
+                    "walk_forward_quant_weight": None,
+                    "calibration_run_id": None,
+                    "calibration_source": None,
+                    "signal_active": True,
+                    "major_event_flag_agg": 1,
+                    "macro_event_flag_agg": 0,
+                    "total_news": 4,
+                }
+            ]
+        )
+    )
+
+    assert updated == 1
+    with engine.connect() as conn:
+        stored = conn.execute(
+            text("SELECT selector_signal_mode, selection_explanation, final_score_sentiment FROM stock_scores WHERE symbol = :symbol"),
+            {"symbol": "AAPL"},
+        ).mappings().first()
+
+    assert stored is not None
+    assert stored["selector_signal_mode"] == "sector_neutralized"
+    assert stored["selection_explanation"] == "mode=sector_neutralized; breakout"
+    assert stored["final_score_sentiment"] == pytest.approx(0.75)
+
+
 def test_merge_sanitizes_symbols_scores_and_missing_sectors(monkeypatch) -> None:
     aggregator = SentimentSignalAggregator(
         engine=cast(Engine, object()),

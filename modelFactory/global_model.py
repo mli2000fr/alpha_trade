@@ -16,6 +16,7 @@ from modelFactory.cross_sectional import build_cross_sectional_features, merge_c
 from modelFactory.dataset import chrono_split_by_dates
 from modelFactory.data_loader import (
     load_benchmark_bars,
+    load_symbols_selector_context,
     load_symbols_sentiment,
     load_universe_bars,
     load_universe_latest_bar_date,
@@ -48,6 +49,7 @@ def _prepare_global_symbol_frame(
     benchmark_df: pd.DataFrame | None,
     sentiment_df: pd.DataFrame | None,
     cross_sectional_df: pd.DataFrame | None,
+    selector_df: pd.DataFrame | None,
 ) -> pd.DataFrame:
     effective_data_cfg = replace(
         cfg.data,
@@ -59,6 +61,8 @@ def _prepare_global_symbol_frame(
         include_sentiment=effective_data_cfg.include_sentiment_features,
         benchmark_df=benchmark_df,
         feature_set=effective_data_cfg.feature_set,
+        selector_df=selector_df,
+        include_selector_context=effective_data_cfg.include_selector_context_features,
     )
     if effective_data_cfg.enable_cross_sectional_features:
         df = merge_cross_sectional_features(df, cross_sectional_df)
@@ -74,6 +78,7 @@ def _prepare_global_symbol_frame(
         effective_data_cfg.include_sentiment_features,
         feature_set=effective_data_cfg.feature_set,
         include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
+        include_selector_context=effective_data_cfg.include_selector_context_features,
     )
     df = df.dropna(subset=active_features).reset_index(drop=True)
     df = df.loc[df["target"].notna() & df["future_return"].notna()].reset_index(drop=True)
@@ -185,6 +190,15 @@ def train_global_model(
             start_date=history_start_date,
         )
 
+    selector_context_df = None
+    if effective_data_cfg.include_selector_context_features:
+        selector_context_df = load_symbols_selector_context(
+            engine,
+            symbols,
+            end_date=history_end_date,
+            start_date=history_start_date,
+        )
+
     cross_sectional_df = None
     cross_sectional_diagnostics: dict[str, Any] = {}
     if effective_data_cfg.enable_cross_sectional_features:
@@ -202,12 +216,18 @@ def train_global_model(
         symbol_sentiment = None
         if sentiment_df is not None and not sentiment_df.empty:
             symbol_sentiment = sentiment_df[sentiment_df["symbol"] == symbol].copy().reset_index(drop=True)
+        symbol_selector_df = None
+        if selector_context_df is not None and not selector_context_df.empty:
+            symbol_selector_df = selector_context_df[
+                selector_context_df["symbol"] == symbol
+            ].copy().reset_index(drop=True)
         prepared = _prepare_global_symbol_frame(
             bars_df,
             cfg=replace(cfg, data=effective_data_cfg),
             benchmark_df=benchmark_df,
             sentiment_df=symbol_sentiment,
             cross_sectional_df=cross_sectional_df,
+            selector_df=symbol_selector_df,
         )
         if prepared.empty:
             continue
@@ -230,11 +250,13 @@ def train_global_model(
         effective_data_cfg.include_sentiment_features,
         feature_set=effective_data_cfg.feature_set,
         include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
+        include_selector_context=effective_data_cfg.include_selector_context_features,
     )
     feature_contract = build_feature_contract(
         include_sentiment=effective_data_cfg.include_sentiment_features,
         feature_set=effective_data_cfg.feature_set,
         include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
+        include_selector_context=effective_data_cfg.include_selector_context_features,
         feature_columns=feature_columns,
         scaler_feature_names=feature_columns,
     )
@@ -344,6 +366,7 @@ def train_global_model(
             include_sentiment=effective_data_cfg.include_sentiment_features,
             feature_set=effective_data_cfg.feature_set,
             include_cross_sectional=effective_data_cfg.enable_cross_sectional_features,
+            include_selector_context=effective_data_cfg.include_selector_context_features,
             feature_columns=feature_columns,
         ),
     }

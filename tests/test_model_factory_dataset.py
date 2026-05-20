@@ -152,6 +152,43 @@ def test_prepare_symbol_frame_merges_cross_sectional_features() -> None:
     assert prepared.attrs["cross_sectional_diagnostics"]["enabled"] is True
 
 
+def test_prepare_symbol_frame_merges_selector_context_features() -> None:
+    n = 260
+    dates = pd.date_range("2020-01-01", periods=n, freq="D")
+    close = pd.Series([100.0 + i for i in range(n)], dtype=float)
+    bars = pd.DataFrame(
+        {
+            "symbol": ["AAPL"] * n,
+            "date": dates,
+            "open": close * 0.99,
+            "high": close * 1.01,
+            "low": close * 0.98,
+            "close": close,
+            "volume": [1_000_000.0] * n,
+            "adj_close": close,
+            "vwap": close,
+            "daily_return": [0.0] * n,
+            "is_filled": [0] * n,
+        }
+    )
+    selector_df = pd.DataFrame(
+        {
+            "symbol": ["AAPL"],
+            "date": [dates[-1]],
+            "trend_score": [0.88],
+            "vcp_score": [0.66],
+            "selector_signal_mode": ["sector_neutralized"],
+        }
+    )
+    cfg = dataset.DataConfig(include_selector_context_features=True)
+
+    prepared = dataset.prepare_symbol_frame(bars, cfg, selector_df=selector_df)
+
+    assert "selector_trend_score" in prepared.columns
+    assert "selector_mode_sector_neutralized" in prepared.columns
+    assert prepared.iloc[-1]["selector_trend_score"] == 0.88
+
+
 def test_future_return_not_in_feature_columns() -> None:
     """Anti-leakage : future_return ne doit jamais apparaître dans FEATURE_COLUMNS.
 

@@ -12,8 +12,8 @@ import pytest
 import torch
 from sqlalchemy.engine import Engine
 
-from modelFactory import predictor
 from modelFactory import features as model_factory_features
+from modelFactory import predictor
 from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.runtime_status import reset_runtime_status, snapshot_runtime_status
 
@@ -24,6 +24,7 @@ def _contract(
     include_sentiment: bool = False,
     feature_set: str = "v1",
     include_cross_sectional: bool = False,
+    include_selector_context: bool = False,
 ) -> dict:
     """Construit un feature_contract minimal valide pour les tests.
 
@@ -35,6 +36,7 @@ def _contract(
         include_sentiment=include_sentiment,
         feature_set=feature_set,
         include_cross_sectional=include_cross_sectional,
+        include_selector_context=include_selector_context,
         feature_columns=feature_columns,
     )
     return {
@@ -45,6 +47,33 @@ def _contract(
         "require_exact_order": True,
         "allow_extra_runtime_columns": True,
     }
+
+
+def _feature_frame_stub(frame: pd.DataFrame):
+    def _stub(
+        bars,
+        sentiment_df=None,
+        include_sentiment=False,
+        benchmark_df=None,
+        feature_set="v1",
+        selector_df=None,
+        include_selector_context=False,
+    ):
+        return frame.copy()
+
+    return _stub
+
+
+def _feature_columns_stub(columns: list[str]):
+    def _stub(
+        include_sentiment=False,
+        feature_set="v1",
+        include_cross_sectional=False,
+        include_selector_context=False,
+    ):
+        return list(columns)
+
+    return _stub
 
 
 class PickleableFakeGlobalModel:
@@ -232,17 +261,17 @@ def test_predict_symbol_returns_dataframe_and_persists(tmp_path: Path, monkeypat
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         predictor,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
@@ -345,17 +374,17 @@ def test_predict_symbol_applies_saved_calibration_and_decision_threshold(tmp_pat
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         predictor,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
@@ -427,17 +456,17 @@ def test_predict_symbol_supports_cross_sectional_features(tmp_path: Path, monkey
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         predictor,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1", "ret_20_rank"],
+        _feature_columns_stub(["feat1", "ret_20_rank"]),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1", "ret_20_rank"],
+        _feature_columns_stub(["feat1", "ret_20_rank"]),
     )
     monkeypatch.setattr(
         predictor,
@@ -463,6 +492,90 @@ def test_predict_symbol_supports_cross_sectional_features(tmp_path: Path, monkey
     row = result.to_dict(orient="records")[0]
     assert row["selected_model"] == "lstm_attention"
     assert row["predicted_class"] == 1
+
+
+def test_predict_symbol_loads_selector_context_when_enabled(tmp_path: Path, monkeypatch) -> None:
+    symbol = "AAPL"
+    symbol_dir = tmp_path / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "best.ckpt").write_text("checkpoint", encoding="utf-8")
+    with open(symbol_dir / "scaler.pkl", "wb") as fh:
+        pickle.dump(
+            {
+                "mean": [0.0, 0.0],
+                "std": [1.0, 1.0],
+                "features": ["feat1", "selector_trend_score"],
+            },
+            cast(Any, fh),
+        )
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "sequence_length": 2,
+                    "forecast_horizon": 1,
+                    "include_sentiment_features": False,
+                    "include_selector_context_features": True,
+                },
+                "run_id": "run-config",
+                "feature_contract": _contract(["feat1", "selector_trend_score"], include_selector_context=True),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bars = pd.DataFrame({"close": list(range(62))})
+    features = pd.DataFrame(
+        {
+            "feat1": [float(i) for i in range(62)],
+            "selector_trend_score": [0.82] * 62,
+        }
+    )
+    captured: dict[str, object] = {}
+
+    class FakeModel:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, x):
+            return torch.tensor([[0.0, 2.0]], dtype=torch.float32), torch.tensor([[1.0]])
+
+    monkeypatch.setattr(predictor, "load_training_run", lambda engine, symbol, run_id=None: None)
+    monkeypatch.setattr(predictor, "load_symbol_bars", lambda engine, symbol, end_date=None: bars.copy())
+    monkeypatch.setattr(
+        predictor,
+        "load_symbol_selector_context",
+        lambda engine, symbol, end_date=None, start_date=None: captured.update({"symbol": symbol, "end_date": end_date}) or pd.DataFrame(
+            {
+                "symbol": [symbol],
+                "date": [pd.Timestamp("2026-04-21")],
+                "trend_score": [0.82],
+            }
+        ),
+    )
+    monkeypatch.setattr(predictor, "compute_features", _feature_frame_stub(features))
+    monkeypatch.setattr(predictor, "get_feature_columns", _feature_columns_stub(["feat1", "selector_trend_score"]))
+    monkeypatch.setattr(model_factory_features, "get_feature_columns", _feature_columns_stub(["feat1", "selector_trend_score"]))
+    monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(
+        predictor.LSTMAttentionModule,
+        "load_from_checkpoint",
+        lambda path, map_location=None: FakeModel(),
+    )
+
+    result = predictor.predict_symbol(
+        symbol,
+        artifacts_dir=tmp_path,
+        engine=cast(Engine, object()),
+        prediction_date=date(2026, 4, 21),
+        persist=False,
+    )
+
+    assert result is not None
+    assert captured == {"symbol": "AAPL", "end_date": date(2026, 4, 21)}
 
 
 @pytest.mark.parametrize(
@@ -523,12 +636,12 @@ def test_predict_symbol_can_route_to_local_tabular_model(
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
 
     result = predictor.predict_symbol(
@@ -606,12 +719,12 @@ def test_predict_symbol_can_route_to_global_model(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
 
     result = predictor.predict_symbol(
@@ -680,17 +793,17 @@ def test_predict_symbol_falls_back_to_lstm_when_selected_tabular_route_is_unserv
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         predictor,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
@@ -747,7 +860,7 @@ def test_predict_symbol_aborts_on_feature_fingerprint_drift(tmp_path: Path, monk
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
 
     result = predictor.predict_symbol(
@@ -816,12 +929,12 @@ def test_predict_symbol_falls_back_to_lstm_when_selected_tabular_model_is_corrup
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
@@ -890,12 +1003,12 @@ def test_predict_symbol_ignores_corrupted_calibrator_and_records_runtime_status(
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(
@@ -973,17 +1086,17 @@ def test_predict_symbol_aborts_when_scaler_feature_contract_mismatches_config(tm
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         predictor,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
 
@@ -1056,17 +1169,17 @@ def test_predict_symbol_persistence_failure_is_best_effort(tmp_path: Path, monke
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         predictor,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(predictor.LSTMAttentionModule, "load_from_checkpoint", lambda path, map_location=None: FakeModel())
@@ -1138,12 +1251,12 @@ def test_predict_symbol_falls_back_to_lstm_when_tabular_runtime_is_incompatible(
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(predictor.LSTMAttentionModule, "load_from_checkpoint", lambda path, map_location=None: FakeLstm())
@@ -1213,12 +1326,12 @@ def test_predict_symbol_ignores_runtime_incompatible_calibrator(tmp_path: Path, 
     monkeypatch.setattr(
         predictor,
         "compute_features",
-        lambda bars, sentiment_df=None, include_sentiment=False, benchmark_df=None, feature_set="v1": features.copy(),
+        _feature_frame_stub(features),
     )
     monkeypatch.setattr(
         model_factory_features,
         "get_feature_columns",
-        lambda include_sentiment=False, feature_set="v1", include_cross_sectional=False: ["feat1"],
+        _feature_columns_stub(["feat1"]),
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(predictor.LSTMAttentionModule, "load_from_checkpoint", lambda path, map_location=None: FakeModel())
