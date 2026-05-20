@@ -6,8 +6,8 @@ _Date : 2026-05-20_
 >
 > - **P2 livré sur le périmètre `risk_management`** : `ruff check risk_management` OK, doc réalignée, redondances builder réduites, standardisation `SizingMethod` / `DecisionReasonCode` effectivement utilisée.
 > - **P0 / P1 revérifiés** : les items ciblés sont désormais effectivement câblés et couverts par tests ciblés (régime live, circuit breaker notify-once, Kelly effectif, agrégation notional, equity breakdown PIT, motifs structurés, preflight data-quality, métadonnées summary).
-> - **P3 désormais livré sur un premier niveau opérationnel** : shadow compare pilotable depuis le runtime/IHM, artefacts de post-mortem enrichis exposés dans le `run_summary`, et première boucle empirique de calibration conviction/Kelly branchée via `weights_calibration_runs`.
-> - **Reste ouvert en P3** : montée en gamme de la calibration empirique au-delà de la première boucle désormais segmentée par régime marché (objectifs business plus riches, gouvernance/monitoring, optimisation plus fine, segmentation horizon multi-fenêtres).
+> - **P3 désormais livré à un niveau opérationnel avancé** : shadow compare pilotable depuis le runtime/IHM, artefacts de post-mortem enrichis exposés dans le `run_summary`, et boucle empirique de calibration conviction/Kelly branchée via `weights_calibration_runs` avec segmentation `régime × horizon × fenêtre`, gouvernance live, drifts inter-segments, fallback détaillé et politique YAML configurable.
+> - **Reste ouvert en P3** : montée en gamme métier de cette boucle empirique (objectifs business plus riches, monitoring/audit persisté des fallbacks live, visualisations encore plus avancées, multi-objectifs éventuels).
 
 ## 1. Périmètre audité
 
@@ -71,23 +71,24 @@ Le module `risk_management` est **globalement sérieux, utile et déjà assez in
 - la couverture de tests ciblés est bonne, y compris sur des invariants métier concrets.
 
 ### Conclusion
-Le module est **fonctionnel et plutôt mature**, mais il n’est **pas encore au niveau “professionnel / expert” homogène sur tout son périmètre**.
+Le module est **fonctionnel, mature et désormais cohérent** sur les anomalies
+structurantes initialement identifiées dans cet audit.
 
-Les principaux écarts observés ne relèvent pas d’un manque de structure, mais de **quelques incohérences importantes entre le design annoncé et le runtime réel** :
-1. le **régime marché n’est pas appliqué côté live** alors qu’un helper dédié existe et que la doc l’annonce ;
-2. le **circuit breaker est side-effecting** et peut déclencher plusieurs alertes identiques sur un même run ;
-3. le **chemin Kelly n’est pas aligné** avec les règles régime / télémétrie du chemin ATR ;
-4. la **décomposition d’equity** n’est pas complètement cohérente point-in-time ;
-5. l’**observabilité des raisons de rejet** reste trop agrégée à certains endroits ;
-6. la **documentation du module n’est plus alignée** avec le code réel ;
-7. le package n’est **pas Ruff-clean** sur son périmètre propre.
+Les écarts qui motivaient le plan P0/P1/P2 ont été corrigés dans le runtime,
+les tests ciblés et la documentation. Le travail P3 a en outre dépassé la
+première boucle prévue initialement en ajoutant une segmentation gouvernée des
+calibrations empiriques et une visibilité opérateur dédiée dans l’IHM.
+
+Les écarts encore ouverts ne relèvent plus du “correctif de cohérence”, mais de
+la **montée en gamme avancée** : politiques opérateur plus fines, audit persisté
+des fallbacks live, enrichissement visuel, et optimisation multi-objectifs.
 
 ### Verdict
 - **Fonctionnel** : oui.
 - **Maintenable** : oui, plutôt.
 - **Solide en tests** : oui.
-- **Parité live / backtest / doc** : **encore incomplète**.
-- **Niveau “expert production”** : **atteignable rapidement**, mais nécessite une passe ciblée sur les anomalies structurantes ci-dessous.
+- **Parité live / backtest / doc** : **nettement réalignée**.
+- **Niveau “expert production”** : **proche sur le périmètre corrigé**, avec un reste de professionnalisation orienté gouvernance et exploitation avancée plutôt que corrections bloquantes.
 
 ---
 
@@ -117,14 +118,10 @@ python -m ruff check risk_management tests\test_portfolio_builder.py tests\test_
 
 ### Résultat constaté
 - batterie de tests ciblée : **OK** ;
-- lint Ruff ciblé : **KO** avec plusieurs remarques de qualité/statique, dont certaines dans `risk_management/` lui-même.
-
-Exemples côté package :
-- `risk_management/circuit_breaker.py` : import inutile ;
-- `risk_management/cli.py` : `f-string` sans placeholder ;
-- `risk_management/portfolio_builder.py` : imports/typing modernisables ;
-- `risk_management/shadow_compare.py` : nom ambigu `l` ;
-- `risk_management/ml_gate.py`, `risk_management/config.py`, `risk_management/regime_apply.py` : modernisation typing.
+- `ruff check risk_management` : **OK** ;
+- la commande Ruff élargie sur les tests directs du périmètre a été nettoyée et
+  sert désormais de garde-fou additionnel pour éviter un retour des dettes de
+  qualité autour de `risk_management`.
 
 ---
 
@@ -154,7 +151,7 @@ Exemples côté package :
 - `ml_gate.py` : kill-switch ML effectif.
 - `audit.py` : sérialisation / persistance des sorties.
 - `regime_apply.py` : adaptation `RiskConfig` à un `MarketRegimeSnapshot`.
-- `shadow_compare.py` : comparaison offline de runs.
+- `shadow_compare.py` : comparaison auditée de runs, réutilisée par le runtime et l’IHM.
 
 ### Appréciation
 L’architecture est bonne : le module n’est pas monolithique, et l’assemblage principal reste lisible.
@@ -209,200 +206,67 @@ Les écritures `risk_decisions` / `portfolio_targets` s’adaptent aux colonnes 
 
 ---
 
-## 6. Anomalies détectées
+## 6. Anomalies initiales et statut de résolution
 
-## 6.1 Anomalie A1 — `regime_apply.py` existe mais n’est pas câblé dans le live
+Les anomalies structurantes identifiées lors de l’audit initial ont été
+revérifiées et sont désormais considérées comme **corrigées** sur le périmètre
+runtime / tests / IHM correspondant.
 
-### Symptôme
-`risk_management/regime_apply.py` annonce explicitement être utilisé par :
-- `risk_management/cli.py` (live),
-- `backtesting/risk_bridge.py` (backtest).
+## 6.1 A1 — câblage live du régime marché
 
-En pratique, la recherche d’usage montre un câblage réel dans les tests et dans `backtesting/risk_bridge.py`, **mais pas dans `risk_management/cli.py`**.
+**Statut : résolu.**
 
-### Impact
-Le live `risk_management` ne bénéficie donc pas des ajustements de régime pourtant modélisés :
-- `risk_multiplier` ;
-- `effective_max_positions_override` ;
-- `enforce_min_notional` ;
-- `max_tickers_per_sector`.
+Le runtime `risk_management.cli` résout désormais un `MarketRegimeSnapshot`,
+applique `apply_snapshot()` et expose les overrides effectifs dans le
+`run_summary` (`regime_snapshot_applied`, `regime_mode`,
+`risk_controls_effective`, etc.). La parité live / backtest est réalignée sur
+ce point.
 
-Conséquence :
-- **divergence live vs backtest** ;
-- divergence live vs doc ;
-- perte de valeur de la couche `service.market` pour le sizing live.
+## 6.2 A2 — side effects répétés du circuit breaker
 
-### Gravité
-**Haute**.
+**Statut : résolu.**
 
-### Recommandation
-Brancher un vrai préflight régime dans `cli.py` :
-- résolution du `MarketRegimeSnapshot` du jour ;
-- application via `apply_snapshot()` ;
-- exposition du snapshot / des overrides effectifs dans le `run_summary`.
+Le circuit breaker sépare maintenant l’évaluation pure (`status()` /
+`is_active()`) de la notification best-effort idempotente
+(`notify_if_active()`). Les tests couvrent le comportement notify-once.
 
----
+## 6.3 A3 — alignement Kelly / ATR régime-aware
 
-## 6.2 Anomalie A2 — `CircuitBreaker.is_active()` a des effets de bord répétés
+**Statut : résolu.**
 
-### Symptôme
-`CircuitBreaker.is_active()` n’est pas purement évaluative : elle peut envoyer une notification email via `_try_send_alert()`.
+`KellySizer` tient compte de `risk_multiplier`, s’appuie sur
+`effective_min_notional` et remonte des `SizingMethod` détaillés alignés avec le
+chemin ATR.
 
-Or cette méthode est appelée à plusieurs endroits sur un même run :
-- par `RiskCheckerImpl.check_position_size()` pour chaque candidat ;
-- indirectement lors de la construction finale du `run_summary`.
+## 6.4 A4 — agrégation des rejets notionnels
 
-### Impact
-Si le circuit breaker est actif, un même run peut produire :
-- plusieurs alertes identiques ;
-- du bruit opérateur ;
-- des notifications redondantes ;
-- une sémantique difficile à raisonner en production.
+**Statut : résolu.**
 
-### Gravité
-**Haute**.
+Le `run_summary` additionne désormais `rejected_notional` et
+`rejected_notional_below_enforced`, tout en exposant le détail fin pour audit.
 
-### Recommandation
-Séparer :
-- une méthode **pure** d’évaluation (`evaluate()` / `status()`),
-- une logique d’alerte **notify-once** ou **notify-on-transition**.
+## 6.5 A5 — cohérence PIT de `load_account_equity_breakdown()`
 
-Ajouter un test garantissant qu’un run avec circuit breaker actif n’émet **qu’une seule notification**.
+**Statut : résolu.**
 
----
+Le cutoff `portfolio_cash_ledger.created_at <= trade_date` est appliqué, la
+lecture broker est réalignée en best-effort sur la logique de snapshot, et le
+summary expose explicitement la source/fraîcheur d’equity utilisée.
 
-## 6.3 Anomalie A3 — `KellySizer` n’est pas cohérent avec le chemin ATR régime-aware
+## 6.6 A6 — granularité des raisons de rejet
 
-### Symptôme
-`risk_management/kelly.py` ne réutilise pas complètement les règles effectives introduites côté config/sizer ATR :
-- le budget ATR Kelly ne tient pas compte de `risk_multiplier` ;
-- le contrôle de notional utilise `cfg.min_position_notional` au lieu de `cfg.effective_min_notional` ;
-- les rejets remontent avec `method="rejected"`, alors que le chemin ATR distingue les causes (`rejected_atr_missing`, `rejected_notional`, etc.).
+**Statut : résolu.**
 
-### Impact
-Le comportement diffère selon que Kelly est activé ou non :
-- le régime marché n’est pas appliqué de manière homogène ;
-- la télémétrie de rejet devient moins exploitable ;
-- les comptes petits / défensifs peuvent être traités différemment selon le sizer choisi.
+Les refus/réductions sont désormais propagés via `DecisionReasonCode` jusque
+dans les `PortfolioEntry`, les agrégats de `run_summary` et les détails IHM.
 
-### Gravité
-**Haute**.
+## 6.7 A7 — doc / outillage en retard
 
-### Recommandation
-Refactoriser le sizing pour partager un noyau commun :
-- un calcul Kelly pour la proposition initiale ;
-- puis un post-traitement commun de type `apply_effective_risk_controls(...)` ;
-- et une télémétrie de rejet harmonisée.
+**Statut : résolu sur le package, avec garde-fous supplémentaires.**
 
-Ajouter des tests spécifiques Kelly + `risk_multiplier` + `enforce_min_notional`.
-
----
-
-## 6.4 Anomalie A4 — le `run_summary` sous-compte certains rejets notionnels
-
-### Symptôme
-`PositionSizer.compute()` peut retourner :
-- `rejected_notional`
-- `rejected_notional_below_enforced`
-
-Mais `risk_management/cli.py` n’agrège dans `rejected_for_notional` que :
-- `sizing_method_counts.get("rejected_notional", 0)`
-
-### Impact
-Dès qu’un régime ou une surcharge de config active `enforce_min_notional`, le compteur principal de rejet notionnel devient **partiellement faux**.
-
-L’opérateur voit alors un run_summary incomplet alors même que le détail fin existe déjà dans `sizing_method_counts`.
-
-### Gravité
-**Moyenne à haute**.
-
-### Recommandation
-Agrégation à corriger pour inclure :
-- `rejected_notional`
-- `rejected_notional_below_enforced`
-
-et, idéalement, exposer explicitement les deux dans le payload final.
-
----
-
-## 6.5 Anomalie A5 — `load_account_equity_breakdown()` n’est pas totalement cohérent point-in-time
-
-### Symptôme
-Plusieurs points fragilisent `RiskRepository.load_account_equity_breakdown()` :
-
-1. le cumul `portfolio_cash_ledger` ne filtre pas `created_at <= trade_date` ;
-2. la sélection du snapshot broker n’est pas alignée avec la logique plus stricte de `load_account_risk_snapshot()` ;
-3. la requête compte suppose `ORDER BY created_at DESC, id DESC` sans garde explicite sur la présence de `id` ;
-4. la décomposition best-effort peut donc diverger silencieusement de l’equity réellement utilisée pour le run.
-
-### Impact
-- pollution PIT possible par des dividendes futurs ;
-- incohérence entre `effective_equity` et `account_equity_breakdown` ;
-- dégradation silencieuse à `source="missing"` selon le schéma disponible.
-
-### Gravité
-**Haute** pour la qualité d’auditabilité, **moyenne** pour le moteur de sizing lui-même.
-
-### Recommandation
-Introduire un helper unique “equity snapshot as-of” partagé :
-- même logique de snapshot principal ;
-- garde schema-aware sur `id`, `snapshot_kind`, `created_at` ;
-- filtre PIT sur `portfolio_cash_ledger.created_at <= trade_date`.
-
-Ajouter un test d’intégration dédié sur le cutoff des dividendes.
-
----
-
-## 6.6 Anomalie A6 — la granularité des raisons de rejet est perdue en sortie builder
-
-### Symptôme
-`ConstraintChecker.check()` calcule une raison fine (`max_positions atteint`, `max_sector_weight atteint`, etc.).
-Mais `PortfolioBuilder.build()` transforme ensuite une partie des refus en raisons génériques :
-- `contrainte de risque`
-- `réduit par contraintes`
-
-### Impact
-On perd une partie de l’explicabilité opérateur alors que l’information existe déjà au bon niveau.
-
-En production, cela complique les diagnostics de type :
-- saturation de slots ;
-- secteur déjà plein ;
-- plafond gross exposure ;
-- min notional ;
-- blocage circuit breaker.
-
-### Gravité
-**Moyenne**.
-
-### Recommandation
-Propager des raisons structurées jusqu’à `PortfolioEntry`, puis au `run_summary`, par exemple :
-- `constraint_max_positions`
-- `constraint_max_sector_weight`
-- `constraint_max_gross_exposure`
-- `constraint_max_tickers_per_sector`
-- `circuit_breaker_active`
-
----
-
-## 6.7 Anomalie A7 — documentation et outillage ne reflètent plus l’état réel du module
-
-### Symptôme
-`doc/risk_management.md` diverge du code sur plusieurs points importants :
-- la doc parle encore de `stock_scores`, alors que le live lit `stock_scores_history` avec fallback PIT ;
-- la doc décrit un ajout de dividendes “depuis corporate_actions”, alors que le code lit `portfolio_cash_ledger` ;
-- la doc ne couvre pas correctement le `ml_gate`, le fallback d’equity broker, ni le transport de métadonnées selector ;
-- le package n’est pas Ruff-clean.
-
-### Impact
-- onboarding trompeur ;
-- erreurs d’exploitation ;
-- dette de crédibilité documentaire.
-
-### Gravité
-**Moyenne**.
-
-### Recommandation
-Mettre à jour la doc **après** correction des anomalies P0/P1, puis faire une passe Ruff ciblée sur `risk_management/`.
+`doc/risk_management.md` est réalignée sur le code réel, `ruff check
+risk_management` est vert, et une passe supplémentaire sur les tests directs du
+périmètre complète désormais le garde-fou qualité autour du module.
 
 ---
 
@@ -423,9 +287,12 @@ C’est parfois le bon comportement, mais il manque un contrat explicite du type
 
 selon la criticité de la donnée.
 
-## 7.2 `shadow_compare.py` reste un îlot utile mais isolé
-Le composant est testable et propre, mais il n’est pas réellement intégré au runtime `risk_management`.
-C’est un bon candidat pour une future montée en gamme, pas un défaut bloquant immédiat.
+## 7.2 Audit persistant des fallbacks live encore perfectible
+
+Le runtime trace désormais finement `fallback_level`, `fallback_reason`,
+`fallback_journal` et `fallback_policy_source` pour les calibrations empiriques.
+Le prochain cran naturel serait de persister ces décisions dans une table dédiée
+ou de les exposer plus largement dans les vues opérateur longitudinales.
 
 ## 7.3 Quelques nettoyages internes sont encore possibles
 Exemples :
@@ -435,8 +302,13 @@ Exemples :
 
 Ce sont des sujets de qualité, pas des bugs critiques.
 
-## 7.4 Calibration conviction / Kelly encore très statique
-Le module expose déjà un placeholder de calibration, mais la logique reste encore essentiellement paramétrique et non pilotée par calibration empirique active.
+## 7.4 Calibration conviction / Kelly : boucle active, montée en gamme encore ouverte
+
+Ce constat historique n’est plus vrai au premier ordre : une calibration
+empirique active existe désormais côté runtime. Le risque résiduel se situe
+désormais sur la montée en gamme de cette boucle (objectifs business,
+visualisations plus riches, gouvernance avancée, multi-objectifs), pas sur son
+absence.
 
 ---
 
@@ -509,11 +381,9 @@ Le module expose déjà un placeholder de calibration, mais la logique reste enc
 - compatibilité de persistance pragmatique.
 
 ### Ce qui empêche encore un verdict “expert production” plein
-- incohérence live/backtest sur le régime ;
-- side effects répétés du circuit breaker ;
-- Kelly pas totalement aligné avec les règles effectives ;
-- décomposition d’equity pas complètement PIT-safe ;
-- doc et lint en retard sur le code.
+- politique de data-quality encore implicite avant construction du portefeuille ;
+- audit longitudinal des fallbacks live encore perfectible ;
+- montée en gamme métier de la boucle de calibration empirique encore ouverte.
 
 ### Mise à jour après livraison P2 / amorçage P3
 - le retard **doc + lint** sur le périmètre `risk_management` est désormais résorbé ;
@@ -523,12 +393,14 @@ Le module expose déjà un placeholder de calibration, mais la logique reste enc
 - les items P0/P1 identifiés dans cet audit ont été revérifiés comme livrés par le runtime et les tests ciblés.
 
 ### Verdict
-Le module `risk_management` est **bon**, mais **pas encore homogène** sur ses exigences de production avancée.
+Le module `risk_management` est **bon et désormais cohérent** sur le périmètre
+des anomalies initialement auditées.
 
 La bonne nouvelle est que les écarts identifiés sont :
 - **concrets** ;
 - **limitables en portée** ;
 - **corrigeables sans réécriture**.
 
-Une passe courte mais disciplinée sur les points P0/P1 suffirait à faire passer le module d’un niveau “robuste et utile” à un niveau **nettement plus professionnel, cohérent et expert**.
+Le reste du travail ne relève plus d’une remise à niveau P0/P1, mais d’une
+montée en gamme de gouvernance, d’exploitation et d’ergonomie opérateur.
 

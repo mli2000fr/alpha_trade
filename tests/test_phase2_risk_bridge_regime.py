@@ -7,6 +7,7 @@ import pandas as pd
 
 from backtesting.risk_bridge import build_phase2_risk_result
 from risk_management.config import RiskConfig
+from service.market import reset_cache
 from service.market.config import (
     BuybackBlackoutConfig,
     CalendarPatternConfig,
@@ -18,7 +19,6 @@ from service.market.config import (
     VixConfig,
     YieldsConfig,
 )
-from service.market import reset_cache
 
 
 def _make_inputs(trade_date: date):

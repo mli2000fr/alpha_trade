@@ -27,7 +27,6 @@ from common.capital_presets import load_capital_presets
 from risk_management.cli import build_arg_parser
 from risk_management.config import RiskConfig
 
-
 REQUIRED_KEYS = ("risk_max_drawdown_pct", "risk_max_daily_loss_pct")
 
 
@@ -230,5 +229,4 @@ def test_all_presets_selector_min_close_gte_10(presets):
             f"{preset.key}: selector_min_close={min_close} < 10.0 — "
             f"non aligné avec STRICT_SWING_CASH_FILTERS.min_close=10.0"
         )
-
 

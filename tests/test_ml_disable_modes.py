@@ -16,8 +16,6 @@ import json
 from types import SimpleNamespace
 
 import pandas as pd
-import pytest
-
 
 # --------------------------------------------------------------------------
 # core.feature_flags
@@ -213,7 +211,7 @@ def test_ml_kill_switch_propagation_end_to_end(monkeypatch):
     vérifie que ``RiskRepository.load_predictions_asof`` court-circuite."""
     from datetime import date as _date
 
-    from risk_management import db_io as risk_db_io, ml_gate
+    from risk_management import ml_gate
     from risk_management.db_io import RiskRepository
 
     monkeypatch.delenv("ALPHA_TRADE_DISABLE_ML", raising=False)

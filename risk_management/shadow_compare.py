@@ -1,14 +1,15 @@
-"""Phase 7.7 — Shadow compare **offline** (audit_global §7.7).
+"""Phase 7.7 — Shadow compare runtime / IHM des runs risk.
 
-Compare deux runs (live vs simulé) déjà persistés et calcule un rapport de
-drift symboles / quantités / prix / convictions. Le mode shadow **live
-continu** (boucle parallèle) reste backlog Long terme : cf.
-``prompt/refactor/backlog_long_terme.md``.
+Compare deux runs (courant vs référence) déjà matérialisés en DataFrames
+d'orders et calcule un rapport de drift sur les symboles, quantités, prix et
+convictions. Le composant est :
 
-API minimale, indépendante de la DB : la fonction principale travaille sur
-deux DataFrames d'orders (un par run). Le câblage CLI / repository est laissé
-à un futur sprint (l'intérêt principal Phase 7 est d'avoir l'algorithme de
-diff testable et la table de persistance prête).
+- réutilisé par ``risk_management.cli`` pour un shadow compare best-effort ;
+- persistable dans ``shadow_drift_runs`` ;
+- consultable depuis l'IHM.
+
+Le mode shadow *continu* en boucle parallèle reste un sujet distinct de plus
+long terme ; le présent module couvre la comparaison ponctuelle et auditée.
 """
 from __future__ import annotations
 
@@ -16,13 +17,20 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _number_or_none(row: pd.Series, key: str) -> float | None:
+    value = row.get(key, np.nan)
+    if pd.isna(value):
+        return None
+    return float(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +76,8 @@ def compare_runs(
       optionnelles ; les drifts associés sont ``None`` si absents.
     - Une ligne = un order par symbole. En cas de doublons, l'agrégation est
       ``sum`` pour qty, ``mean`` pour price/conviction.
+    - Le rapport est consommable tel quel par le runtime risk, l'IHM et la
+      persistance SQL via :func:`persist_shadow_run`.
     """
     live = _normalize(live_orders, symbol_col, qty_col, price_col, conviction_col)
     sim = _normalize(simulated_orders, symbol_col, qty_col, price_col, conviction_col)
@@ -87,18 +97,24 @@ def compare_runs(
         live_row = live.loc[sym]
         sim_row = sim.loc[sym]
         entry: dict[str, Any] = {"symbol": sym}
-        if not np.isnan(live_row.get(qty_col, np.nan)) and not np.isnan(sim_row.get(qty_col, np.nan)):
-            denom = max(abs(sim_row[qty_col]), 1e-9)
-            d = (live_row[qty_col] - sim_row[qty_col]) / denom
+        live_qty = _number_or_none(live_row, qty_col)
+        sim_qty = _number_or_none(sim_row, qty_col)
+        if live_qty is not None and sim_qty is not None:
+            denom = max(abs(sim_qty), 1e-9)
+            d = (live_qty - sim_qty) / denom
             qty_drifts.append(d)
             entry["qty_drift_pct"] = float(d)
-        if not np.isnan(live_row.get(price_col, np.nan)) and not np.isnan(sim_row.get(price_col, np.nan)):
-            denom = max(abs(sim_row[price_col]), 1e-9)
-            d = (live_row[price_col] - sim_row[price_col]) / denom
+        live_price = _number_or_none(live_row, price_col)
+        sim_price = _number_or_none(sim_row, price_col)
+        if live_price is not None and sim_price is not None:
+            denom = max(abs(sim_price), 1e-9)
+            d = (live_price - sim_price) / denom
             price_drifts.append(d)
             entry["price_drift_pct"] = float(d)
-        if not np.isnan(live_row.get(conviction_col, np.nan)) and not np.isnan(sim_row.get(conviction_col, np.nan)):
-            d = float(live_row[conviction_col] - sim_row[conviction_col])
+        live_conviction = _number_or_none(live_row, conviction_col)
+        sim_conviction = _number_or_none(sim_row, conviction_col)
+        if live_conviction is not None and sim_conviction is not None:
+            d = live_conviction - sim_conviction
             conv_drifts.append(d)
             entry["conviction_drift"] = d
         per_symbol.append(entry)
@@ -142,7 +158,7 @@ def _normalize(
 
 
 def persist_shadow_run(report: ShadowDriftReport, *, engine: Any, run_id: str | None = None) -> str:
-    """Insère ``report`` dans ``shadow_drift_runs``."""
+    """Insère ``report`` dans ``shadow_drift_runs`` pour audit IHM/runtime."""
     from sqlalchemy import text
 
     rid = run_id or f"shd-{uuid.uuid4().hex[:12]}"
@@ -164,7 +180,7 @@ def persist_shadow_run(report: ShadowDriftReport, *, engine: Any, run_id: str | 
             ),
             {
                 "run_id": rid,
-                "compared_at": datetime.utcnow(),
+                "compared_at": datetime.now(UTC),
                 "live": report.live_run_id,
                 "sim": report.simulated_run_id,
                 "only_live": json.dumps(report.symbols_only_in_live),

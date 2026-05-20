@@ -1,9 +1,13 @@
 """Circuit breaker — coupe les allocations si drawdown/perte excessive.
 
-Sprint S3 / A-013 : ``is_active()`` émet désormais une notification email
-(best-effort, silencieuse si le notificateur n'est pas configuré) quand un
-circuit breaker se déclenche. La dépendance vers ``ihm.services.email_notifier``
-est lazily importée pour éviter de polluer les imports du moteur risk.
+Sprint S3 / A-013 : l'évaluation est désormais explicitement scindée en deux :
+
+- ``status()`` / ``is_active()`` restent purs et sans effet de bord ;
+- ``notify_if_active()`` envoie au plus une notification best-effort par
+  statut déclenché.
+
+La dépendance vers ``ihm.services.email_notifier`` est importée à la volée pour
+éviter de polluer les imports du moteur risk.
 """
 from __future__ import annotations
 

@@ -9,7 +9,7 @@ from service.market.models import MarketRegimeSnapshot
 
 
 def _make_snap(**kwargs) -> MarketRegimeSnapshot:
-    base = dict(trade_date=date(2025, 5, 1))
+    base = {"trade_date": date(2025, 5, 1)}
     base.update(kwargs)
     return MarketRegimeSnapshot(**base)  # type: ignore[arg-type]
 
