@@ -64,6 +64,7 @@ class PortfolioEntry:
     target_weight: float
     decision: str          # "ACCEPTED" | "REDUCED" | "REJECTED"
     decision_reason: str
+    decision_reason_code: str | None = None
 
     # --- V2 audit fields ---
     conviction_score: float = 0.0
@@ -174,6 +175,7 @@ class AccountRiskSnapshot:
     daily_realized_pnl: float | None = None
     daily_unrealized_pnl: float | None = None
     daily_total_pnl: float | None = None
+    source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

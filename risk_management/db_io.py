@@ -495,6 +495,7 @@ class RiskRepository:
                     daily_realized_pnl=float(row["daily_realized_pnl"]) if row.get("daily_realized_pnl") is not None else None,
                     daily_unrealized_pnl=float(row["daily_unrealized_pnl"]) if row.get("daily_unrealized_pnl") is not None else None,
                     daily_total_pnl=float(row["daily_total_pnl"]) if row.get("daily_total_pnl") is not None else None,
+                    source="account_risk_snapshots",
                 )
         return self._load_broker_snapshot_as_account_risk_snapshot(resolved_account_id, trade_date)
 
@@ -558,6 +559,7 @@ class RiskRepository:
             daily_realized_pnl=None,
             daily_unrealized_pnl=None,
             daily_total_pnl=None,
+            source="broker_account_snapshots",
         )
 
     def load_account_equity_breakdown(
@@ -725,7 +727,7 @@ class RiskRepository:
         if not records:
             return 0
         canonical_columns = [
-            "run_id", "trade_date", "symbol", "decision", "reason", "score_used",
+            "run_id", "trade_date", "symbol", "decision", "reason", "reason_code", "score_used",
             "score_source", "entry_price", "atr_20", "proposed_shares", "approved_shares",
             "target_weight", "sector", "conviction_score", "predicted_proba",
             "historical_win_rate", "effective_probability", "kelly_fraction",
@@ -765,7 +767,7 @@ class RiskRepository:
             return 0
         canonical_columns = [
             "run_id", "trade_date", "symbol", "shares", "entry_price", "atr_20", "target_weight",
-            "sector", "score_used", "score_source", "conviction_score", "sizing_method",
+            "sector", "score_used", "score_source", "reason_code", "conviction_score", "sizing_method",
             "kelly_fraction", "company_idio_score", "macro_regime_score",
             "company_idio_signal_norm", "macro_regime_signal_norm",
             "company_idio_component", "macro_regime_component", "quant_component",

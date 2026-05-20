@@ -88,6 +88,10 @@ def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypa
     assert captured["pnl"].portfolio_current_value == pytest.approx(100_000.0)
     assert captured["summary"]["effective_equity"] == pytest.approx(100_000.0)
     assert captured["summary"]["account_snapshot_trade_date"] is None
+    assert captured["summary"]["equity_source"] == "cli_account_equity_fallback"
+    assert captured["summary"]["equity_fallback_used"] is True
+    assert captured["summary"]["snapshot_freshness_days"] is None
+    assert captured["summary"]["preflight_data_quality"]["checks"]["equity_snapshot"]["status"] == "fallback"
 
 
 def test_cli_main_treats_default_account_as_implicit_and_falls_back(monkeypatch) -> None:
@@ -354,6 +358,10 @@ def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -
     assert captured["config"].account_equity == pytest.approx(2_000.0)
     assert captured["summary"]["effective_equity"] == pytest.approx(2_000.0)
     assert captured["summary"]["account_snapshot_trade_date"] == "2026-04-30"
+    assert captured["summary"]["equity_source"] == "broker_account_snapshots"
+    assert captured["summary"]["equity_fallback_used"] is False
+    assert captured["summary"]["snapshot_freshness_days"] == 1
+    assert captured["summary"]["preflight_data_quality"]["checks"]["equity_snapshot"]["status"] == "stale"
 
 
 def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
@@ -494,6 +502,7 @@ def test_cli_main_applies_market_regime_overrides_to_builder(monkeypatch) -> Non
     assert captured["config"].max_tickers_per_sector == 1
     assert captured["summary"]["regime_snapshot_applied"] is True
     assert captured["summary"]["regime_mode"] == "capital_preservation"
+    assert captured["summary"]["risk_controls_effective"]["risk_multiplier"] == pytest.approx(0.5)
 
 
 def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> None:
@@ -557,5 +566,7 @@ def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> 
     assert captured["summary"]["entries_blocked_by_regime"] == 2
     assert captured["summary"]["regime_allow_new_entries"] is False
     assert captured["summary"]["regime_mode"] == "close_only"
+    assert captured["summary"]["preflight_data_quality"]["checks"]["atr_coverage"]["status"] == "skipped_by_regime"
+    assert captured["summary"]["preflight_data_quality"]["checks"]["correlation_matrix"]["status"] == "skipped_by_regime"
 
 

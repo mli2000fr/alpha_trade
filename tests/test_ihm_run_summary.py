@@ -663,6 +663,33 @@ def test_get_run_summary_detail_lines_exposes_selector_telemetry_for_risk_manage
     assert any(line == "Selector modes retenus : strict=4, sector_neutralized=1." for line in lines)
 
 
+def test_get_run_summary_detail_lines_exposes_equity_preflight_and_reason_codes_for_risk_management() -> None:
+    lines = get_run_summary_detail_lines(
+        {
+            "step_key": "risk_management",
+            "run_summary": {
+                "equity_source": "broker_account_snapshots",
+                "equity_fallback_used": False,
+                "snapshot_freshness_days": 1,
+                "preflight_data_quality": {
+                    "status": "warning",
+                    "warnings": [
+                        "Snapshot equity daté de J-1.",
+                        "Couverture ATR partielle (50%).",
+                    ],
+                },
+                "rejection_reason_code_counts": {"constraint_max_positions": 2},
+                "reduction_reason_code_counts": {"constraint_max_position_weight": 1},
+            },
+        }
+    )
+
+    assert any("Equity source : broker_account_snapshots" in line for line in lines)
+    assert any("Préflight data-quality risk : status=warning" in line for line in lines)
+    assert any(line == "Motifs structurés de rejet : constraint_max_positions=2." for line in lines)
+    assert any(line == "Motifs structurés de réduction : constraint_max_position_weight=1." for line in lines)
+
+
 def test_get_run_summary_detail_lines_exposes_selector_telemetry_for_execution() -> None:
     lines = get_run_summary_detail_lines(
         {

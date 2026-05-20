@@ -10,15 +10,15 @@ from risk_management.portfolio_builder import PortfolioBuilder
 
 
 def _cfg(**overrides) -> RiskConfig:  # type: ignore[no-untyped-def]
-    defaults = dict(
-        account_equity=100_000,
-        risk_per_trade_pct=0.01,
-        atr_stop_multiple=2.0,
-        max_positions=3,
-        max_position_weight=0.10,
-        max_sector_weight=0.30,
-        min_position_notional=500.0,
-    )
+    defaults = {
+        "account_equity": 100_000,
+        "risk_per_trade_pct": 0.01,
+        "atr_stop_multiple": 2.0,
+        "max_positions": 3,
+        "max_position_weight": 0.10,
+        "max_sector_weight": 0.30,
+        "min_position_notional": 500.0,
+    }
     defaults.update(overrides)
     return RiskConfig(**defaults)
 
@@ -54,6 +54,7 @@ def test_missing_price_rejected() -> None:
     entries = builder.build(cands, {})
     assert entries[0].decision == "REJECTED"
     assert "prix" in entries[0].decision_reason
+    assert entries[0].decision_reason_code == "missing_price"
 
 
 def test_missing_atr_rejected() -> None:
@@ -64,6 +65,7 @@ def test_missing_atr_rejected() -> None:
     )
     assert entries[0].decision == "REJECTED"
     assert "sizing" in entries[0].decision_reason
+    assert entries[0].decision_reason_code == "rejected_atr_missing"
 
 
 def test_accepted_entries_have_positive_weight() -> None:
@@ -92,6 +94,7 @@ def test_v2_correlation_rejection_appears_in_entries() -> None:
     entries = builder.build(_candidates(), _prices(), return_matrix=mat)
     corr_rejected = [e for e in entries if e.correlation_blocker is not None]
     assert len(corr_rejected) >= 1
+    assert all(entry.decision_reason_code == "correlation_filter" for entry in corr_rejected)
 
 
 def test_v2_kelly_sizing_used_when_enabled() -> None:

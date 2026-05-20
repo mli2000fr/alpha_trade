@@ -174,6 +174,7 @@ class PortfolioBuilder:
                 reason = reason[:255]
                 entries.append(self._make_entry_v2(
                     ec, prices.get(ec.symbol), 0, 0, "REJECTED", reason,
+                    decision_reason_code="correlation_filter",
                     correlation_blocker=rej.blocker_symbol,
                     correlation_value=rej.correlation_value,
                 ))
@@ -211,7 +212,17 @@ class PortfolioBuilder:
         for ec in retained:
             pi = prices.get(ec.symbol)
             if pi is None or pi.last_close <= 0:
-                entries.append(self._make_entry_v2(ec, pi, 0, 0, "REJECTED", "prix indisponible"))
+                entries.append(
+                    self._make_entry_v2(
+                        ec,
+                        pi,
+                        0,
+                        0,
+                        "REJECTED",
+                        "prix indisponible",
+                        decision_reason_code="missing_price",
+                    )
+                )
                 processed_candidates += 1
                 self._emit_progress(
                     {
@@ -237,6 +248,7 @@ class PortfolioBuilder:
             if sizing.proposed_shares < 1:
                 entries.append(self._make_entry_v2(
                     ec, pi, 0, 0, "REJECTED", "sizing insuffisant",
+                    decision_reason_code=str(sizing.method or "sizing_rejected"),
                     sizing_method=sizing.method,
                 ))
                 processed_candidates += 1
@@ -257,11 +269,11 @@ class PortfolioBuilder:
 
             approved = int(checker.check_position_size(ec.symbol, sizing.proposed_shares, pi.last_close))
             if approved < 1:
-                reason = "contrainte de risque"
-                if checker.is_circuit_breaker_active():
-                    reason = "circuit breaker actif"
+                reason = checker.get_last_decision_reason()
+                reason_code = checker.get_last_decision_reason_code()
                 entries.append(self._make_entry_v2(
                     ec, pi, sizing.proposed_shares, 0, "REJECTED", reason,
+                    decision_reason_code=reason_code,
                     sizing_method=sizing.method,
                 ))
                 processed_candidates += 1
@@ -281,7 +293,8 @@ class PortfolioBuilder:
                 continue
 
             decision = "ACCEPTED" if approved == sizing.proposed_shares else "REDUCED"
-            reason = "OK" if decision == "ACCEPTED" else "réduit par contraintes"
+            reason = "OK" if decision == "ACCEPTED" else checker.get_last_decision_reason()
+            reason_code = "ok" if decision == "ACCEPTED" else checker.get_last_decision_reason_code()
             checker.accept(ec.symbol, ec.sector, approved, pi.last_close)
             accepted_rank += 1
 
@@ -310,7 +323,7 @@ class PortfolioBuilder:
                 score_used=ec.score_used, score_source=ec.score_source,
                 atr_20=pi.atr_20, proposed_shares=sizing.proposed_shares,
                 approved_shares=approved, target_notional=notional, target_weight=weight,
-                decision=decision, decision_reason=reason,
+                decision=decision, decision_reason=reason, decision_reason_code=reason_code,
                 conviction_score=ec.conviction_score, predicted_proba=ec.predicted_proba,
                 historical_win_rate=ec.historical_win_rate, effective_probability=p_eff,
                 kelly_fraction=kf, sizing_method=sizing.method,
@@ -368,6 +381,7 @@ class PortfolioBuilder:
         approved: int,
         decision: str,
         reason: str,
+        decision_reason_code: str | None = None,
         sizing_method: str = "",
         correlation_blocker: str | None = None,
         correlation_value: float | None = None,
@@ -379,7 +393,7 @@ class PortfolioBuilder:
             score_used=ec.score_used, score_source=ec.score_source,
             atr_20=atr, proposed_shares=proposed, approved_shares=approved,
             target_notional=approved * price, target_weight=0.0,
-            decision=decision, decision_reason=reason,
+            decision=decision, decision_reason=reason, decision_reason_code=decision_reason_code,
             conviction_score=ec.conviction_score, predicted_proba=ec.predicted_proba,
             historical_win_rate=ec.historical_win_rate, sizing_method=sizing_method,
             correlation_blocker=correlation_blocker, correlation_value=correlation_value,

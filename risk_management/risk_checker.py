@@ -26,12 +26,16 @@ class RiskCheckerImpl:
         self._cb = circuit_breaker or CircuitBreaker(config, pnl)
         self._constraints = ConstraintChecker(config)
         self._sector_map: dict[str, str] = sector_map or {}
+        self._last_decision_reason = "OK"
+        self._last_decision_reason_code = "ok"
 
     # --- Protocol RiskChecker -------------------------------------------
     def check_position_size(self, symbol: str, proposed_shares: float, price: float) -> float:
         """Retourne le nombre de parts autorisé (<= proposed_shares)."""
         if self._cb.is_active():
             LOGGER.warning("Circuit breaker actif — position rejetee pour %s.", symbol)
+            self._last_decision_reason = "circuit breaker actif"
+            self._last_decision_reason_code = "circuit_breaker_active"
             return 0.0
         sector = self._sector_map.get(symbol, "UNKNOWN")
         approved, reason = self._constraints.check(
@@ -41,12 +45,20 @@ class RiskCheckerImpl:
             price=price,
             state=self._state,
         )
+        self._last_decision_reason = reason
+        self._last_decision_reason_code = self._constraints.reason_to_code(reason)
         if approved < proposed_shares and reason != "OK":
             LOGGER.info("Position reduite pour %s: %s -> %s (%s)", symbol, int(proposed_shares), approved, reason)
         return float(approved)
 
     def is_circuit_breaker_active(self) -> bool:
         return self._cb.is_active()
+
+    def get_last_decision_reason(self) -> str:
+        return self._last_decision_reason
+
+    def get_last_decision_reason_code(self) -> str:
+        return self._last_decision_reason_code
 
     # --- helpers pour portfolio_builder ----------------------------------
     def accept(self, symbol: str, sector: str, shares: int, price: float) -> None:

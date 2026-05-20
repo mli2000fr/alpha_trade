@@ -18,6 +18,8 @@ def test_check_position_size_within_limits(config: RiskConfig) -> None:
     rc = RiskCheckerImpl(config, sector_map={"AAPL": "Tech"})
     approved = rc.check_position_size("AAPL", 50.0, 100.0)
     assert approved == 50.0
+    assert rc.get_last_decision_reason() == "OK"
+    assert rc.get_last_decision_reason_code() == "ok"
 
 
 def test_circuit_breaker_rejects(config: RiskConfig) -> None:
@@ -26,6 +28,17 @@ def test_circuit_breaker_rejects(config: RiskConfig) -> None:
     assert rc.is_circuit_breaker_active() is True
     approved = rc.check_position_size("AAPL", 50.0, 100.0)
     assert approved == 0.0
+    assert rc.get_last_decision_reason_code() == "circuit_breaker_active"
+
+
+def test_constraint_rejection_exposes_structured_reason_code(config: RiskConfig) -> None:
+    rc = RiskCheckerImpl(config, state=PortfolioState(position_count=5), sector_map={"AAPL": "Tech"})
+
+    approved = rc.check_position_size("AAPL", 50.0, 100.0)
+
+    assert approved == 0.0
+    assert rc.get_last_decision_reason() == "max_positions atteint"
+    assert rc.get_last_decision_reason_code() == "constraint_max_positions"
 
 
 def test_accept_updates_state(config: RiskConfig) -> None:

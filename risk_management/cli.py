@@ -6,6 +6,8 @@ import logging
 from collections import Counter
 from datetime import date, datetime
 
+import pandas as pd
+
 from common.config_loader import load_config
 from common.utils import configure_root_logging
 from core.run_summary import attach_live_progress, attach_schema_version
@@ -92,6 +94,145 @@ def _serialize_market_regime_snapshot(snapshot: object | None) -> dict[str, obje
     elif isinstance(snapshot, dict):
         payload = snapshot
     return dict(payload) if isinstance(payload, dict) else None
+
+
+def _build_preflight_data_quality(
+    *,
+    trade_date: date,
+    account_snapshot: object | None,
+    effective_equity: float,
+    requested_equity: float,
+    equity_breakdown: dict[str, object],
+    candidates: list[object],
+    prices: dict[str, object] | None,
+    return_matrix: object | None,
+    regime_allow_new_entries: bool,
+) -> dict[str, object]:
+    checks: dict[str, dict[str, object]] = {}
+    warnings: list[str] = []
+
+    snapshot_trade_date = getattr(account_snapshot, "trade_date", None)
+    snapshot_source = str(getattr(account_snapshot, "source", "") or "").strip() or None
+    snapshot_freshness_days = (
+        max((trade_date - snapshot_trade_date).days, 0)
+        if snapshot_trade_date is not None
+        else None
+    )
+    equity_source = snapshot_source or "cli_account_equity_fallback"
+    equity_fallback_used = account_snapshot is None
+    equity_status = "ok"
+    if equity_fallback_used:
+        equity_status = "fallback"
+        warnings.append("Equity broker indisponible : fallback sur --account-equity.")
+    elif snapshot_freshness_days and snapshot_freshness_days > 0:
+        equity_status = "stale"
+        warnings.append(f"Snapshot equity daté de J-{snapshot_freshness_days}.")
+    checks["equity_snapshot"] = {
+        "status": equity_status,
+        "source": equity_source,
+        "fallback_used": equity_fallback_used,
+        "snapshot_trade_date": snapshot_trade_date.isoformat() if snapshot_trade_date is not None else None,
+        "freshness_days": snapshot_freshness_days,
+        "effective_equity": round(float(effective_equity), 2),
+        "requested_equity": round(float(requested_equity), 2),
+        "breakdown_source": equity_breakdown.get("source"),
+    }
+
+    candidate_dates = sorted(
+        {
+            snapshot_date
+            for candidate in candidates
+            if (snapshot_date := getattr(candidate, "snapshot_date", None)) is not None
+        }
+    )
+    candidate_snapshot_date = candidate_dates[-1] if candidate_dates else None
+    candidate_freshness_days = (
+        max((trade_date - candidate_snapshot_date).days, 0)
+        if candidate_snapshot_date is not None
+        else None
+    )
+    candidate_status = "ok"
+    if not candidates:
+        candidate_status = "empty"
+    elif candidate_snapshot_date is None:
+        candidate_status = "missing"
+        warnings.append("Fraîcheur PIT des candidats indisponible.")
+    elif candidate_freshness_days and candidate_freshness_days > 0:
+        candidate_status = "stale"
+        warnings.append(f"Snapshot candidats daté de J-{candidate_freshness_days}.")
+    checks["candidate_snapshot"] = {
+        "status": candidate_status,
+        "loaded_candidates": len(candidates),
+        "snapshot_date": candidate_snapshot_date.isoformat() if candidate_snapshot_date is not None else None,
+        "freshness_days": candidate_freshness_days,
+        "distinct_snapshot_dates": [item.isoformat() for item in candidate_dates],
+    }
+
+    if not regime_allow_new_entries:
+        atr_status = "skipped_by_regime"
+        atr_available = 0
+        atr_coverage_pct = None
+    else:
+        resolved_prices = prices or {}
+        atr_available = sum(
+            1
+            for price_info in resolved_prices.values()
+            if getattr(price_info, "atr_20", None) is not None and float(getattr(price_info, "atr_20", 0) or 0) > 0
+        )
+        atr_coverage_pct = (atr_available / len(candidates)) if candidates else None
+        atr_status = "ok"
+        if not candidates:
+            atr_status = "empty"
+        elif atr_coverage_pct == 0:
+            atr_status = "missing"
+            warnings.append("Couverture ATR nulle sur les candidats chargés.")
+        elif atr_coverage_pct is not None and atr_coverage_pct < 0.8:
+            atr_status = "partial"
+            warnings.append(f"Couverture ATR partielle ({atr_coverage_pct:.0%}).")
+    checks["atr_coverage"] = {
+        "status": atr_status,
+        "available_symbols": atr_available,
+        "coverage_pct": round(float(atr_coverage_pct), 4) if atr_coverage_pct is not None else None,
+    }
+
+    if not regime_allow_new_entries:
+        corr_status = "skipped_by_regime"
+        corr_rows = 0
+        corr_columns = 0
+        corr_coverage_pct = None
+        matched_symbols = 0
+    else:
+        matrix = return_matrix
+        matrix_empty = bool(getattr(matrix, "empty", True))
+        matrix_columns = set(getattr(matrix, "columns", [])) if not matrix_empty else set()
+        candidate_symbols = [str(getattr(candidate, "symbol", "")).strip().upper() for candidate in candidates]
+        matched_symbols = sum(1 for symbol in candidate_symbols if symbol in matrix_columns)
+        corr_rows = int(getattr(matrix, "shape", (0, 0))[0]) if not matrix_empty else 0
+        corr_columns = int(getattr(matrix, "shape", (0, 0))[1]) if not matrix_empty else 0
+        corr_coverage_pct = (matched_symbols / len(candidate_symbols)) if candidate_symbols else None
+        corr_status = "ok"
+        if len(candidate_symbols) <= 1:
+            corr_status = "not_applicable"
+        elif matrix_empty:
+            corr_status = "missing"
+            warnings.append("Matrice de corrélation vide.")
+        elif corr_coverage_pct is not None and corr_coverage_pct < 0.8:
+            corr_status = "partial"
+            warnings.append(f"Couverture symboles matrice de corrélation partielle ({corr_coverage_pct:.0%}).")
+    checks["correlation_matrix"] = {
+        "status": corr_status,
+        "rows": corr_rows,
+        "columns": corr_columns,
+        "matched_symbols": matched_symbols,
+        "coverage_pct": round(float(corr_coverage_pct), 4) if corr_coverage_pct is not None else None,
+    }
+
+    overall_status = "warning" if any(check["status"] in {"fallback", "stale", "missing", "partial"} for check in checks.values()) else "ok"
+    return {
+        "status": overall_status,
+        "checks": checks,
+        "warnings": warnings,
+    }
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -283,6 +424,15 @@ def main(args: list[str] | None = None) -> None:
         getattr(regime_snapshot, "allow_new_entries", True) if regime_snapshot is not None else True
     )
     regime_entries_blocked = 0
+    snapshot_source = str(getattr(account_snapshot, "source", "") or "").strip()
+    breakdown_source = str(equity_breakdown.get("source") or "").strip()
+    equity_source = snapshot_source or (breakdown_source if account_snapshot is not None else "cli_account_equity_fallback")
+    equity_fallback_used = account_snapshot is None
+    snapshot_freshness_days = (
+        max((trade_date - account_snapshot.trade_date).days, 0)
+        if account_snapshot is not None
+        else None
+    )
 
     circuit_breaker = CircuitBreaker(config, pnl_snapshot)
     circuit_breaker.notify_if_active()
@@ -377,6 +527,7 @@ def main(args: list[str] | None = None) -> None:
         prices = {}
         predictions = {}
         win_rates = {}
+        return_matrix = pd.DataFrame()
         entries = []
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), price_symbols=0),
@@ -419,6 +570,18 @@ def main(args: list[str] | None = None) -> None:
             label="🛡️ Progression risk management — portefeuille construit",
             phase="build_portfolio",
         )
+
+    preflight_data_quality = _build_preflight_data_quality(
+        trade_date=trade_date,
+        account_snapshot=account_snapshot,
+        effective_equity=effective_equity,
+        requested_equity=requested_equity,
+        equity_breakdown=equity_breakdown,
+        candidates=candidates,
+        prices=prices,
+        return_matrix=return_matrix,
+        regime_allow_new_entries=regime_allow_new_entries,
+    )
 
     run_id = build_run_id()
     _print_summary(entries, run_id, trade_date)
@@ -463,6 +626,12 @@ def main(args: list[str] | None = None) -> None:
     atr_coverage_pct = (atr_available_symbols / len(entries)) if entries else 0.0
     prediction_coverage_pct = (prediction_available_symbols / len(entries)) if entries else 0.0
     rejection_reason_counts = dict(Counter(str(entry.decision_reason or "").strip() or "UNKNOWN" for entry in rejected_entries))
+    rejection_reason_code_counts = dict(
+        Counter(str(entry.decision_reason_code or "").strip() or "unknown" for entry in rejected_entries)
+    )
+    reduction_reason_code_counts = dict(
+        Counter(str(entry.decision_reason_code or "").strip() or "unknown" for entry in reduced_entries)
+    )
     # Sprint S3 / A-010 — télémétrie sizing : on agrège par ``sizing_method``
     # (tagué dans ``risk_management.position_sizer``) pour exposer combien de
     # candidats ont été rejetés faute d'ATR ou faute de notional minimum.
@@ -518,6 +687,8 @@ def main(args: list[str] | None = None) -> None:
         "atr_coverage_pct": round(atr_coverage_pct, 4),
         "prediction_coverage_pct": round(prediction_coverage_pct, 4),
         "rejection_reason_counts": rejection_reason_counts,
+        "rejection_reason_code_counts": rejection_reason_code_counts,
+        "reduction_reason_code_counts": reduction_reason_code_counts,
         # Sprint S3 / A-010 — télémétrie sizing dédiée (visible IHM/CI).
         "rejected_for_atr_missing": rejected_for_atr_missing,
         "rejected_for_notional": rejected_for_notional,
@@ -544,6 +715,9 @@ def main(args: list[str] | None = None) -> None:
         "dry_run": bool(config.dry_run),
         "effective_equity": round(float(effective_equity), 2),
         "account_equity": round(float(args.account_equity), 2),
+        "equity_source": equity_source,
+        "equity_fallback_used": equity_fallback_used,
+        "snapshot_freshness_days": snapshot_freshness_days,
         "account_snapshot_trade_date": account_snapshot.trade_date.isoformat() if account_snapshot is not None else None,
         "circuit_breaker_active": circuit_breaker.is_active(),
         "regime_snapshot_applied": regime_snapshot is not None,
@@ -551,6 +725,7 @@ def main(args: list[str] | None = None) -> None:
         "regime_allow_new_entries": regime_allow_new_entries,
         "regime_reasons": list(regime_snapshot_payload.get("reasons") or []) if regime_snapshot_payload else [],
         "regime_snapshot": regime_snapshot_payload,
+        "preflight_data_quality": preflight_data_quality,
         # Phase 5.1.a — décomposition equity (cash + positions + dividendes ledger)
         "account_equity_breakdown": equity_breakdown,
         # Phase 5.1.b — pondérations conviction unifiées via core.conviction

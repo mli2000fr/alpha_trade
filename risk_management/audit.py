@@ -34,6 +34,7 @@ def persist_decisions(
             "symbol": e.symbol,
             "decision": e.decision,
             "reason": e.decision_reason,
+            "reason_code": e.decision_reason_code,
             "score_used": e.score_used,
             "score_source": e.score_source,
             "entry_price": e.entry_price,
@@ -126,6 +127,7 @@ def persist_portfolio_targets(
             "sector": e.sector,
             "score_used": e.score_used,
             "score_source": e.score_source,
+            "reason_code": e.decision_reason_code,
             # --- V2 audit fields ---
             "conviction_score": e.conviction_score,
             "sizing_method": e.sizing_method,

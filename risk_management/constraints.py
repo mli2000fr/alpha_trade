@@ -8,6 +8,16 @@ from risk_management.config import RiskConfig
 
 LOGGER = logging.getLogger(__name__)
 
+_REASON_TO_CODE = {
+    "OK": "ok",
+    "max_positions atteint": "constraint_max_positions",
+    "max_tickers_per_sector atteint": "constraint_max_tickers_per_sector",
+    "max_gross_exposure atteint": "constraint_max_gross_exposure",
+    "max_position_weight atteint": "constraint_max_position_weight",
+    "max_sector_weight atteint": "constraint_max_sector_weight",
+    "min_position_notional non atteint": "constraint_min_position_notional",
+}
+
 
 @dataclass(slots=True)
 class PortfolioState:
@@ -29,6 +39,10 @@ class ConstraintChecker:
 
     def __init__(self, config: RiskConfig) -> None:
         self._cfg = config
+
+    @staticmethod
+    def reason_to_code(reason: str) -> str:
+        return _REASON_TO_CODE.get(str(reason or "").strip() or "OK", "constraint_unknown")
 
     def check(
         self,

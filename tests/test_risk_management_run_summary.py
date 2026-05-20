@@ -5,9 +5,11 @@ import warnings
 from datetime import date
 
 import pytest
+from sqlalchemy import create_engine
 
 from core.conviction import ConvictionWeights, fuse
 from risk_management.config import RiskConfig
+from risk_management.db_io import RiskRepository
 
 
 def test_to_conviction_weights_returns_typed_object() -> None:
@@ -63,6 +65,19 @@ def _build_minimal_summary_via_repo() -> dict:
     summary = {
         "run_id": "rid",
         "trade_date": date(2026, 4, 27).isoformat(),
+        "equity_source": "broker_account_snapshots",
+        "equity_fallback_used": False,
+        "snapshot_freshness_days": 1,
+        "preflight_data_quality": {
+            "status": "warning",
+            "checks": {
+                "equity_snapshot": {"status": "stale"},
+                "candidate_snapshot": {"status": "ok"},
+            },
+            "warnings": ["Snapshot equity daté de J-1."],
+        },
+        "rejection_reason_code_counts": {"constraint_max_positions": 2},
+        "reduction_reason_code_counts": {"constraint_max_position_weight": 1},
         "account_equity_breakdown": {
             "cash": 100.0,
             "long_positions_value": 50.0,
@@ -119,10 +134,29 @@ def test_summary_contains_conviction_weights_calibration_placeholder() -> None:
     assert calib["calibration_run_id"] is None
 
 
+def test_summary_contains_equity_metadata_fields() -> None:
+    summary = _build_minimal_summary_via_repo()
+    assert summary["equity_source"] == "broker_account_snapshots"
+    assert summary["equity_fallback_used"] is False
+    assert summary["snapshot_freshness_days"] == 1
+
+
+def test_summary_contains_preflight_data_quality_payload() -> None:
+    summary = _build_minimal_summary_via_repo()
+    payload = summary["preflight_data_quality"]
+    assert payload["status"] == "warning"
+    assert "checks" in payload
+    assert payload["warnings"]
+
+
+def test_summary_contains_structured_reason_counts() -> None:
+    summary = _build_minimal_summary_via_repo()
+    assert summary["rejection_reason_code_counts"]["constraint_max_positions"] == 2
+    assert summary["reduction_reason_code_counts"]["constraint_max_position_weight"] == 1
+
+
 def test_load_account_equity_breakdown_returns_missing_source_when_no_tables() -> None:
     """En l'absence des tables, source='missing' et aucune exception."""
-    from sqlalchemy import create_engine
-    from risk_management.db_io import RiskRepository
 
     engine = create_engine("sqlite:///:memory:")
     repo = RiskRepository(engine=engine)

@@ -517,9 +517,15 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
         gate_action = str(summary.get("ml_gate_action") or "allow").strip()
         drift_status = str(summary.get("ml_gate_drift_status") or "n/a").strip()
         coverage = _to_float(summary.get("prediction_coverage_pct"))
+        equity_source = str(summary.get("equity_source") or "").strip()
+        equity_fallback_used = bool(summary.get("equity_fallback_used"))
+        snapshot_freshness_days = _to_int(summary.get("snapshot_freshness_days"))
         selector_rank_available = _to_int(summary.get("selector_rank_available"))
         selector_rank_coverage_pct = _to_float(summary.get("selector_rank_coverage_pct"))
         selector_blackout = _to_int(summary.get("selector_earnings_blackout_candidates"))
+        preflight_payload = summary.get("preflight_data_quality") if isinstance(summary.get("preflight_data_quality"), Mapping) else {}
+        rejection_reason_code_counts = summary.get("rejection_reason_code_counts")
+        reduction_reason_code_counts = summary.get("reduction_reason_code_counts")
         if gate_enabled is False:
             lines.append(
                 f"Gate ML désactivé : action={gate_action}, drift={drift_status}, raison={gate_reason}."
@@ -532,6 +538,25 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
             lines.append(
                 f"Gate ML actif avec drift={drift_status} (action={gate_action}, raison={gate_reason})."
             )
+        if equity_source:
+            equity_line = f"Equity source : {equity_source}"
+            if equity_fallback_used:
+                equity_line += " (fallback actif)"
+            elif snapshot_freshness_days is not None and snapshot_freshness_days > 0:
+                equity_line += f" (fraîcheur=J-{snapshot_freshness_days})"
+            lines.append(equity_line + ".")
+        if preflight_payload:
+            preflight_status = str(preflight_payload.get("status") or "ok").strip()
+            warnings_payload = preflight_payload.get("warnings")
+            warning_text = (
+                "; ".join(str(item).strip() for item in warnings_payload if str(item).strip())
+                if isinstance(warnings_payload, SequenceABC) and not isinstance(warnings_payload, (str, bytes))
+                else ""
+            )
+            line = f"Préflight data-quality risk : status={preflight_status}"
+            if warning_text:
+                line += f" — {warning_text}"
+            lines.append(line + ".")
         if selector_rank_available > 0:
             selector_line = f"Selector : rang disponible pour {selector_rank_available} symbole(s)"
             if selector_rank_coverage_pct is not None:
@@ -552,6 +577,18 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
         )
         if retained_selector_modes_line:
             lines.append(retained_selector_modes_line)
+        rejection_codes_line = _format_selector_mode_counts_line(
+            "Motifs structurés de rejet",
+            rejection_reason_code_counts,
+        )
+        if rejection_codes_line:
+            lines.append(rejection_codes_line)
+        reduction_codes_line = _format_selector_mode_counts_line(
+            "Motifs structurés de réduction",
+            reduction_reason_code_counts,
+        )
+        if reduction_codes_line:
+            lines.append(reduction_codes_line)
 
     if step_key == "ml_train":
         training_start_date = str(summary.get("training_start_date") or "").strip()
