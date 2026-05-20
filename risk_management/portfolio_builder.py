@@ -108,10 +108,20 @@ class PortfolioBuilder:
                 snapshot_date=c.snapshot_date,
                 prediction_asof_date=pred.prediction_date if pred else None,
                 ml_metrics_asof_date=wr.asof_date if wr else None,
+                candidate_rank=c.candidate_rank,
+                selector_signal_mode=c.selector_signal_mode,
+                selection_explanation=c.selection_explanation,
+                selector_earnings_blackout=c.selector_earnings_blackout,
             ))
 
         # 2. Trier par conviction DESC
-        enriched.sort(key=lambda e: e.conviction_score, reverse=True)
+        enriched.sort(
+            key=lambda e: (
+                -e.conviction_score,
+                e.candidate_rank if e.candidate_rank is not None else 10**9,
+                e.symbol,
+            )
+        )
         enriched = [
             EnrichedCandidate(
                 symbol=e.symbol,
@@ -136,9 +146,12 @@ class PortfolioBuilder:
                 snapshot_date=e.snapshot_date,
                 prediction_asof_date=e.prediction_asof_date,
                 ml_metrics_asof_date=e.ml_metrics_asof_date,
-                candidate_rank=i,
+                candidate_rank=e.candidate_rank,
+                selector_signal_mode=e.selector_signal_mode,
+                selection_explanation=e.selection_explanation,
+                selector_earnings_blackout=e.selector_earnings_blackout,
             )
-            for i, e in enumerate(enriched, start=1)
+            for e in enriched
         ]
 
         # 3. Filtre corrélation
@@ -311,6 +324,9 @@ class PortfolioBuilder:
                 atr_asof_date=pi.atr_asof_date,
                 prediction_asof_date=ec.prediction_asof_date,
                 ml_metrics_asof_date=ec.ml_metrics_asof_date,
+                selector_signal_mode=ec.selector_signal_mode,
+                selection_explanation=ec.selection_explanation,
+                selector_earnings_blackout=ec.selector_earnings_blackout,
             ))
             processed_candidates += 1
             self._emit_progress(
@@ -372,4 +388,7 @@ class PortfolioBuilder:
             atr_asof_date=pi.atr_asof_date if pi else None,
             prediction_asof_date=ec.prediction_asof_date,
             ml_metrics_asof_date=ec.ml_metrics_asof_date,
+            selector_signal_mode=ec.selector_signal_mode,
+            selection_explanation=ec.selection_explanation,
+            selector_earnings_blackout=ec.selector_earnings_blackout,
         )

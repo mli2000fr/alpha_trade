@@ -22,7 +22,9 @@ def engine():
             CREATE TABLE portfolio_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id VARCHAR(32), account_id VARCHAR(64) DEFAULT 'default', trade_date DATE, symbol VARCHAR(20),
-                    decision_rank INT, side VARCHAR(10),
+                    candidate_rank INT, decision_rank INT,
+                    selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
+                    side VARCHAR(10),
                     shares INT, entry_price DOUBLE, atr_20 DOUBLE,
                     price_asof_date DATE, atr_asof_date DATE,
                     stop_price_initial DOUBLE, risk_per_share DOUBLE,
@@ -49,7 +51,9 @@ def engine():
             CREATE TABLE execution_targets_snapshot (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 exec_run_id VARCHAR(32), account_id VARCHAR(64), risk_run_id VARCHAR(32),
-                trade_date DATE, symbol VARCHAR(20), decision_rank INT, side VARCHAR(10),
+                trade_date DATE, symbol VARCHAR(20), candidate_rank INT, decision_rank INT,
+                selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
+                side VARCHAR(10),
                 target_shares INT, entry_price DOUBLE, target_weight DOUBLE, sector VARCHAR(60),
                 conviction_score DOUBLE, sizing_method VARCHAR(20), kelly_fraction DOUBLE,
                 atr_20 DOUBLE, price_asof_date DATE, atr_asof_date DATE,
@@ -316,11 +320,13 @@ class TestExecutionDbIo:
     def test_load_portfolio_targets(self, engine, repo) -> None:
         with engine.begin() as conn:
             conn.execute(text("""
-                INSERT INTO portfolio_targets (run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                INSERT INTO portfolio_targets (run_id, trade_date, symbol, candidate_rank, decision_rank, selector_signal_mode,
+                    selection_explanation, selector_earnings_blackout, side, shares, entry_price,
                     account_id, atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
                     risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
                     sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction)
-                VALUES ('r1', '2026-04-18', 'AAPL', 1, 'long', 100, 150.0,
+                VALUES ('r1', '2026-04-18', 'AAPL', 7, 1, 'sector_neutralized',
+                    'mode=sector_neutralized; rank=7', 1, 'long', 100, 150.0,
                     'default',
                     5.0, '2026-04-18', '2026-04-18', 140.0, 10.0,
                     1000.0, 1000.0, 15000.0, 0.05,
@@ -330,7 +336,11 @@ class TestExecutionDbIo:
         assert len(targets) == 1
         assert targets[0].symbol == "AAPL"
         assert targets[0].target_shares == 100
+        assert targets[0].candidate_rank == 7
         assert targets[0].decision_rank == 1
+        assert targets[0].selector_signal_mode == "sector_neutralized"
+        assert targets[0].selection_explanation == "mode=sector_neutralized; rank=7"
+        assert targets[0].selector_earnings_blackout == 1
         assert targets[0].stop_price_initial == 140.0
         assert targets[0].risk_per_share == 10.0
         assert targets[0].target_notional == 15000.0
@@ -490,11 +500,13 @@ class TestExecutionDbIo:
     def test_snapshot_execution_targets(self, engine, repo) -> None:
         with engine.begin() as conn:
             conn.execute(text("""
-                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, decision_rank, side, shares, entry_price,
+                INSERT INTO portfolio_targets (run_id, account_id, trade_date, symbol, candidate_rank, decision_rank, selector_signal_mode,
+                    selection_explanation, selector_earnings_blackout, side, shares, entry_price,
                     atr_20, price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
                     risk_budget_dollars, initial_risk_dollars, target_notional, target_weight,
                     sector, score_used, score_source, conviction_score, sizing_method, kelly_fraction)
-                VALUES ('r1', 'default', '2026-04-18', 'AAPL', 1, 'long', 100, 150.0,
+                VALUES ('r1', 'default', '2026-04-18', 'AAPL', 3, 1, 'strict',
+                    'mode=strict; rank=3', 0, 'long', 100, 150.0,
                     5.0, '2026-04-18', '2026-04-18', 140.0, 10.0,
                     1000.0, 1000.0, 15000.0, 0.05,
                     'Tech', 0.9, 'quant', 0.8, 'atr', 0.1)
@@ -505,11 +517,15 @@ class TestExecutionDbIo:
 
         assert inserted == 1
         with repo.engine.connect() as conn:
-            row = conn.execute(text("SELECT exec_run_id, account_id, symbol FROM execution_targets_snapshot WHERE exec_run_id = 'e-snap'"))\
+            row = conn.execute(text("SELECT exec_run_id, account_id, symbol, candidate_rank, selector_signal_mode, selection_explanation, selector_earnings_blackout FROM execution_targets_snapshot WHERE exec_run_id = 'e-snap'"))\
                 .mappings().first()
         assert row is not None
         assert row["account_id"] == "default"
         assert row["symbol"] == "AAPL"
+        assert row["candidate_rank"] == 3
+        assert row["selector_signal_mode"] == "strict"
+        assert row["selection_explanation"] == "mode=strict; rank=3"
+        assert row["selector_earnings_blackout"] == 0
 
     def test_load_pending_protection_watch_items_does_not_fallback_to_legacy(self, engine, repo) -> None:
         with engine.begin() as conn:
@@ -774,12 +790,14 @@ class TestExecutionDbIo:
         with repo.engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO execution_targets_snapshot (
-                    exec_run_id, account_id, risk_run_id, trade_date, symbol, decision_rank, side,
+                    exec_run_id, account_id, risk_run_id, trade_date, symbol, candidate_rank, decision_rank,
+                    selector_signal_mode, selection_explanation, selector_earnings_blackout, side,
                     target_shares, entry_price, target_weight, sector, conviction_score, sizing_method,
                     kelly_fraction, atr_20, price_asof_date, atr_asof_date, stop_price_initial,
                     risk_per_share, risk_budget_dollars, initial_risk_dollars, target_notional, created_at
                 ) VALUES (
-                    'exec-snap-1', 'acct-1', 'risk-1', '2026-04-26', 'AAPL', 1, 'long',
+                    'exec-snap-1', 'acct-1', 'risk-1', '2026-04-26', 'AAPL', 4, 1,
+                    'strict', 'mode=strict; rank=4', 1, 'long',
                     100, 150.0, 0.05, 'Tech', 0.8, 'atr',
                     0.1, 5.0, '2026-04-26', '2026-04-26', 140.0,
                     10.0, 1000.0, 1000.0, 15000.0, CURRENT_TIMESTAMP
@@ -790,6 +808,10 @@ class TestExecutionDbIo:
 
         assert len(targets) == 1
         assert targets[0].symbol == "AAPL"
+        assert targets[0].candidate_rank == 4
+        assert targets[0].selector_signal_mode == "strict"
+        assert targets[0].selection_explanation == "mode=strict; rank=4"
+        assert targets[0].selector_earnings_blackout == 1
         assert targets[0].target_shares == 100
         assert targets[0].stop_price_initial == 140.0
 

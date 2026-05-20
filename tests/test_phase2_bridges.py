@@ -26,6 +26,10 @@ def test_build_phase2_risk_result_generates_entries_and_signals() -> None:
             "score": [0.82],
             "score_source": ["final_score_sentiment"],
             "sector": ["Tech"],
+            "candidate_rank": [6],
+            "selector_signal_mode": ["sector_neutralized"],
+            "selection_explanation": ["mode=sector_neutralized; rank=6"],
+            "earnings_blackout": [1],
         }
     )
     predictions_df = pd.DataFrame(
@@ -72,6 +76,10 @@ def test_build_phase2_risk_result_generates_entries_and_signals() -> None:
     signal = result.signals_df.iloc[0]
     assert signal["symbol"] == "AAPL"
     assert bool(signal["selected"]) is True
+    assert int(signal["candidate_rank"]) == 6
+    assert signal["selector_signal_mode"] == "sector_neutralized"
+    assert signal["selection_explanation"] == "mode=sector_neutralized; rank=6"
+    assert int(signal["selector_earnings_blackout"]) == 1
     assert int(signal.get("approved_shares", 0)) == int(entry.approved_shares)
 
 
@@ -117,8 +125,12 @@ def test_build_phase2_risk_result_preserves_empty_signal_schema_when_all_entries
         "symbol",
         "selected",
         "rank",
+        "candidate_rank",
         "score",
         "score_source",
+        "selector_signal_mode",
+        "selection_explanation",
+        "selector_earnings_blackout",
         "target_weight",
         "target_notional",
         "approved_shares",
@@ -179,7 +191,11 @@ def test_simulate_phase2_execution_generates_targets_intents_and_fills() -> None
         conviction_score=0.83,
         sizing_method="atr",
         kelly_fraction=0.10,
+        candidate_rank=2,
         decision_rank=1,
+        selector_signal_mode="strict",
+        selection_explanation="mode=strict; rank=2",
+        selector_earnings_blackout=0,
         stop_price_initial=118.45,
         risk_per_share=5.0,
         risk_budget_dollars=1_000.0,
@@ -214,6 +230,10 @@ def test_simulate_phase2_execution_generates_targets_intents_and_fills() -> None
     assert len(result.child_intents) >= 2
     assert len(result.fills) == 1
     assert result.targets[0].symbol == "AAPL"
+    assert result.targets[0].candidate_rank == 2
+    assert result.targets[0].selector_signal_mode == "strict"
+    assert result.targets[0].selection_explanation == "mode=strict; rank=2"
+    assert result.targets[0].selector_earnings_blackout == 0
     assert result.entry_intents[0].symbol == "AAPL"
     assert result.fills[0].avg_fill_price == 123.45
     assert result.tca_summary["total_filled"] == 1
@@ -243,7 +263,11 @@ def test_simulate_phase3_execution_replay_generates_replay_signals() -> None:
         decision_reason="OK",
         conviction_score=0.83,
         sizing_method="atr",
+        candidate_rank=9,
         decision_rank=1,
+        selector_signal_mode="sector_neutralized",
+        selection_explanation="mode=sector_neutralized; rank=9",
+        selector_earnings_blackout=1,
         stop_price_initial=118.45,
         risk_per_share=5.0,
         risk_budget_dollars=1_000.0,
@@ -279,6 +303,10 @@ def test_simulate_phase3_execution_replay_generates_replay_signals() -> None:
     assert signal["trade_date"] == pd.Timestamp("2025-01-01")
     assert signal["execution_date"] == pd.Timestamp("2025-01-02")
     assert signal["symbol"] == "AAPL"
+    assert int(signal["candidate_rank"]) == 9
+    assert signal["selector_signal_mode"] == "sector_neutralized"
+    assert signal["selection_explanation"] == "mode=sector_neutralized; rank=9"
+    assert int(signal["selector_earnings_blackout"]) == 1
     assert float(signal["filled_qty"]) == 40.0
     assert float(signal["fill_price"]) == 105.0
 

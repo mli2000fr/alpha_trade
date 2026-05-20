@@ -4,7 +4,9 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import date
-from typing import Any
+from typing import Any, cast
+
+from sqlalchemy.engine import Engine
 
 from risk_management.db_io import RiskRepository
 from risk_management.models import PortfolioEntry
@@ -62,6 +64,9 @@ def persist_decisions(
             "calibration_run_id": e.calibration_run_id,
             "calibration_source": e.calibration_source,
             "candidate_rank": e.candidate_rank,
+            "selector_signal_mode": e.selector_signal_mode,
+            "selection_explanation": e.selection_explanation,
+            "selector_earnings_blackout": e.selector_earnings_blackout,
             "decision_rank": e.decision_rank,
             "target_notional": e.target_notional,
             "stop_price_initial": e.stop_price_initial,
@@ -83,7 +88,7 @@ def persist_decisions(
 
         engine = getattr(repo, "engine", None)
         if engine is not None:
-            AuditChainRepository(engine).append(
+            AuditChainRepository(cast(Engine, engine)).append(
                 "risk_runs",
                 run_id,
                 {
@@ -137,6 +142,10 @@ def persist_portfolio_targets(
             "walk_forward_quant_weight": e.walk_forward_quant_weight,
             "calibration_run_id": e.calibration_run_id,
             "calibration_source": e.calibration_source,
+            "candidate_rank": e.candidate_rank,
+            "selector_signal_mode": e.selector_signal_mode,
+            "selection_explanation": e.selection_explanation,
+            "selector_earnings_blackout": e.selector_earnings_blackout,
             "decision_rank": e.decision_rank,
             "target_notional": e.target_notional,
             "stop_price_initial": e.stop_price_initial,

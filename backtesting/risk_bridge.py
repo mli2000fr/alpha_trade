@@ -22,8 +22,12 @@ RISK_SIGNAL_COLUMNS = [
     "symbol",
     "selected",
     "rank",
+    "candidate_rank",
     "score",
     "score_source",
+    "selector_signal_mode",
+    "selection_explanation",
+    "selector_earnings_blackout",
     "target_weight",
     "target_notional",
     "approved_shares",
@@ -81,6 +85,12 @@ def _build_candidates(scores_df: pd.DataFrame, snapshot_date: date) -> list[Cand
                 calibration_run_id=str(row.get("calibration_run_id")) if row.get("calibration_run_id") is not None and not pd.isna(row.get("calibration_run_id")) else None,
                 calibration_source=str(row.get("calibration_source")) if row.get("calibration_source") is not None and not pd.isna(row.get("calibration_source")) else None,
                 snapshot_date=snapshot_date,
+                candidate_rank=int(row.get("candidate_rank")) if row.get("candidate_rank") is not None and not pd.isna(row.get("candidate_rank")) else None,
+                selector_signal_mode=str(row.get("selector_signal_mode")) if row.get("selector_signal_mode") is not None and not pd.isna(row.get("selector_signal_mode")) else None,
+                selection_explanation=str(row.get("selection_explanation")) if row.get("selection_explanation") is not None and not pd.isna(row.get("selection_explanation")) else None,
+                selector_earnings_blackout=int(row.get("selector_earnings_blackout")) if row.get("selector_earnings_blackout") is not None and not pd.isna(row.get("selector_earnings_blackout")) else (
+                    int(row.get("earnings_blackout")) if row.get("earnings_blackout") is not None and not pd.isna(row.get("earnings_blackout")) else None
+                ),
             )
         )
     return candidates
@@ -184,8 +194,12 @@ def portfolio_entries_to_signals(entries: list[PortfolioEntry], snapshot_date: d
                 "symbol": entry.symbol,
                 "selected": True,
                 "rank": float(entry.decision_rank or entry.candidate_rank or idx),
+                "candidate_rank": entry.candidate_rank,
                 "score": float(entry.score_used),
                 "score_source": entry.score_source,
+                "selector_signal_mode": entry.selector_signal_mode,
+                "selection_explanation": entry.selection_explanation,
+                "selector_earnings_blackout": entry.selector_earnings_blackout,
                 "target_weight": float(entry.target_weight),
                 "target_notional": float(entry.target_notional),
                 "approved_shares": int(entry.approved_shares),

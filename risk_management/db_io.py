@@ -18,6 +18,22 @@ from risk_management.models import AccountRiskSnapshot, CandidateScore, Predicti
 LOGGER = logging.getLogger(__name__)
 
 
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
+
+
 class RiskRepository:
     """Lecture/écriture SQL pour le module risk_management."""
 
@@ -85,10 +101,16 @@ class RiskRepository:
             "walk_forward_macro_weight",
             "walk_forward_quant_weight",
         ]
-        optional_text_columns = ["calibration_run_id", "calibration_source"]
+        optional_int_columns = ["candidate_rank", "earnings_blackout"]
+        optional_text_columns = [
+            "calibration_run_id",
+            "calibration_source",
+            "selector_signal_mode",
+            "selection_explanation",
+        ]
         optional_selects = [
             f"s.{column}" if column in stock_score_columns else f"NULL AS {column}"
-            for column in [*optional_float_columns, *optional_text_columns]
+            for column in [*optional_float_columns, *optional_int_columns, *optional_text_columns]
         ]
         query = text(f"""
             SELECT
@@ -155,6 +177,10 @@ class RiskRepository:
                 calibration_run_id=str(r["calibration_run_id"]) if r.get("calibration_run_id") is not None else None,
                 calibration_source=str(r["calibration_source"]) if r.get("calibration_source") is not None else None,
                 snapshot_date=self._coerce_date(r.get("snapshot_date")),
+                candidate_rank=_optional_int(r.get("candidate_rank")),
+                selector_signal_mode=_optional_text(r.get("selector_signal_mode")),
+                selection_explanation=_optional_text(r.get("selection_explanation")),
+                selector_earnings_blackout=_optional_int(r.get("earnings_blackout")),
             )
             for r in rows
         ]
@@ -686,44 +712,26 @@ class RiskRepository:
             "company_idio_component", "macro_regime_component", "quant_component",
             "walk_forward_sentiment_weight", "walk_forward_macro_weight", "walk_forward_quant_weight",
             "calibration_run_id", "calibration_source", "account_id", "candidate_rank",
+            "selector_signal_mode", "selection_explanation", "selector_earnings_blackout",
             "decision_rank", "target_notional", "stop_price_initial", "risk_per_share",
             "risk_budget_dollars", "initial_risk_dollars", "score_snapshot_date",
             "price_asof_date", "atr_asof_date", "prediction_asof_date", "ml_metrics_asof_date",
         ]
-        normalized_records = [
-            {column: record.get(column) for column in canonical_columns} | {"account_id": record.get("account_id") or account_id or "default"}
-            for record in records
-        ]
-        stmt = text("""
-            INSERT INTO risk_decisions
-                (run_id, trade_date, symbol, decision, reason, score_used,
-                 score_source, entry_price, atr_20, proposed_shares, approved_shares,
-                 target_weight, sector, conviction_score, predicted_proba,
-                 historical_win_rate, effective_probability, kelly_fraction,
-                 sizing_method, correlation_blocker, correlation_value,
-                 company_idio_score, macro_regime_score,
-                 company_idio_signal_norm, macro_regime_signal_norm,
-                 company_idio_component, macro_regime_component, quant_component,
-                 walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
-                 calibration_run_id, calibration_source, account_id, candidate_rank,
-                 decision_rank, target_notional, stop_price_initial, risk_per_share,
-                 risk_budget_dollars, initial_risk_dollars, score_snapshot_date,
-                 price_asof_date, atr_asof_date, prediction_asof_date, ml_metrics_asof_date)
-            VALUES
-                (:run_id, :trade_date, :symbol, :decision, :reason, :score_used,
-                 :score_source, :entry_price, :atr_20, :proposed_shares, :approved_shares,
-                 :target_weight, :sector, :conviction_score, :predicted_proba,
-                 :historical_win_rate, :effective_probability, :kelly_fraction,
-                 :sizing_method, :correlation_blocker, :correlation_value,
-                 :company_idio_score, :macro_regime_score,
-                 :company_idio_signal_norm, :macro_regime_signal_norm,
-                 :company_idio_component, :macro_regime_component, :quant_component,
-                 :walk_forward_sentiment_weight, :walk_forward_macro_weight, :walk_forward_quant_weight,
-                 :calibration_run_id, :calibration_source, :account_id, :candidate_rank,
-                 :decision_rank, :target_notional, :stop_price_initial, :risk_per_share,
-                 :risk_budget_dollars, :initial_risk_dollars, :score_snapshot_date,
-                 :price_asof_date, :atr_asof_date, :prediction_asof_date, :ml_metrics_asof_date)
-        """)
+        available_columns = self._get_table_columns("risk_decisions")
+        insert_columns = [column for column in canonical_columns if not available_columns or column in available_columns]
+        normalized_records = []
+        for record in records:
+            payload = {column: record.get(column) for column in insert_columns}
+            if "account_id" in insert_columns:
+                payload["account_id"] = record.get("account_id") or account_id or "default"
+            normalized_records.append(payload)
+        stmt = text(
+            "INSERT INTO risk_decisions ("
+            + ", ".join(insert_columns)
+            + ") VALUES ("
+            + ", ".join(f":{column}" for column in insert_columns)
+            + ")"
+        )
         with self.engine.begin() as conn:
             conn.execute(stmt, normalized_records)
         return len(records)
@@ -739,36 +747,26 @@ class RiskRepository:
             "company_idio_signal_norm", "macro_regime_signal_norm",
             "company_idio_component", "macro_regime_component", "quant_component",
             "walk_forward_sentiment_weight", "walk_forward_macro_weight", "walk_forward_quant_weight",
-            "calibration_run_id", "calibration_source", "account_id", "decision_rank",
+            "calibration_run_id", "calibration_source", "account_id", "candidate_rank",
+            "selector_signal_mode", "selection_explanation", "selector_earnings_blackout", "decision_rank",
             "target_notional", "stop_price_initial", "risk_per_share", "risk_budget_dollars",
             "initial_risk_dollars", "price_asof_date", "atr_asof_date",
         ]
-        normalized_records = [
-            {column: record.get(column) for column in canonical_columns} | {"account_id": record.get("account_id") or account_id or "default"}
-            for record in records
-        ]
-        stmt = text("""
-            INSERT INTO portfolio_targets
-                (run_id, trade_date, symbol, shares, entry_price, atr_20, target_weight,
-                 sector, score_used, score_source, conviction_score, sizing_method,
-                 kelly_fraction, company_idio_score, macro_regime_score,
-                 company_idio_signal_norm, macro_regime_signal_norm,
-                 company_idio_component, macro_regime_component, quant_component,
-                 walk_forward_sentiment_weight, walk_forward_macro_weight, walk_forward_quant_weight,
-                 calibration_run_id, calibration_source, account_id, decision_rank,
-                 target_notional, stop_price_initial, risk_per_share, risk_budget_dollars,
-                 initial_risk_dollars, price_asof_date, atr_asof_date)
-            VALUES
-                (:run_id, :trade_date, :symbol, :shares, :entry_price, :atr_20, :target_weight,
-                 :sector, :score_used, :score_source, :conviction_score, :sizing_method,
-                 :kelly_fraction, :company_idio_score, :macro_regime_score,
-                 :company_idio_signal_norm, :macro_regime_signal_norm,
-                 :company_idio_component, :macro_regime_component, :quant_component,
-                 :walk_forward_sentiment_weight, :walk_forward_macro_weight, :walk_forward_quant_weight,
-                 :calibration_run_id, :calibration_source, :account_id, :decision_rank,
-                 :target_notional, :stop_price_initial, :risk_per_share, :risk_budget_dollars,
-                 :initial_risk_dollars, :price_asof_date, :atr_asof_date)
-        """)
+        available_columns = self._get_table_columns("portfolio_targets")
+        insert_columns = [column for column in canonical_columns if not available_columns or column in available_columns]
+        normalized_records = []
+        for record in records:
+            payload = {column: record.get(column) for column in insert_columns}
+            if "account_id" in insert_columns:
+                payload["account_id"] = record.get("account_id") or account_id or "default"
+            normalized_records.append(payload)
+        stmt = text(
+            "INSERT INTO portfolio_targets ("
+            + ", ".join(insert_columns)
+            + ") VALUES ("
+            + ", ".join(f":{column}" for column in insert_columns)
+            + ")"
+        )
         with self.engine.begin() as conn:
             conn.execute(stmt, normalized_records)
         return len(records)

@@ -736,6 +736,35 @@ def test_get_execution_targets_snapshot_scopes_exec_run(monkeypatch):
     queries.get_execution_targets_snapshot.clear()
     captured = {}
 
+    monkeypatch.setattr(
+        queries,
+        "_get_table_columns",
+        lambda table_name: {
+            "exec_run_id",
+            "account_id",
+            "risk_run_id",
+            "trade_date",
+            "symbol",
+            "candidate_rank",
+            "decision_rank",
+            "selector_signal_mode",
+            "selection_explanation",
+            "selector_earnings_blackout",
+            "side",
+            "target_shares",
+            "entry_price",
+            "target_weight",
+            "stop_price_initial",
+            "risk_per_share",
+            "risk_budget_dollars",
+            "initial_risk_dollars",
+            "target_notional",
+            "price_asof_date",
+            "atr_asof_date",
+            "created_at",
+        },
+    )
+
     def fake_safe_query(query, params=None):
         captured["query"] = query
         captured["params"] = params
@@ -746,6 +775,10 @@ def test_get_execution_targets_snapshot_scopes_exec_run(monkeypatch):
     queries.get_execution_targets_snapshot("exec-42")
 
     assert "FROM execution_targets_snapshot" in captured["query"]
+    assert "candidate_rank" in captured["query"]
+    assert "selector_signal_mode" in captured["query"]
+    assert "selection_explanation" in captured["query"]
+    assert "selector_earnings_blackout" in captured["query"]
     assert "WHERE exec_run_id = :eid" in captured["query"]
     assert captured["params"] == {"eid": "exec-42"}
 

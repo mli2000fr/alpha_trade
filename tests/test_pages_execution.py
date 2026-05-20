@@ -76,7 +76,21 @@ def _patch_common(monkeypatch, *, fills: pd.DataFrame, reconciliation: pd.DataFr
         "remaining_day_trade_slots": 0,
         "message": "snapshot broker preflight",
     })
-    monkeypatch.setattr(execution, "get_execution_targets_snapshot", lambda exec_run_id: pd.DataFrame({"symbol": ["AAPL"], "target_shares": [100], "entry_price": [150.0]}))
+    monkeypatch.setattr(
+        execution,
+        "get_execution_targets_snapshot",
+        lambda exec_run_id: pd.DataFrame(
+            {
+                "symbol": ["AAPL"],
+                "candidate_rank": [4],
+                "selector_signal_mode": ["strict"],
+                "selection_explanation": ["mode=strict; rank=4"],
+                "selector_earnings_blackout": [0],
+                "target_shares": [100],
+                "entry_price": [150.0],
+            }
+        ),
+    )
     monkeypatch.setattr(execution, "get_execution_orders", lambda exec_run_id, **kwargs: pd.DataFrame({"symbol": ["AAPL"], "status": ["SUBMITTED"], "parent_intent_id": [None]}))
     monkeypatch.setattr(execution, "get_execution_fills", lambda exec_run_id, **kwargs: fills)
     monkeypatch.setattr(execution, "get_broker_positions", lambda account_id=None: pd.DataFrame({"symbol": ["AAPL"], "qty": [100]}))
@@ -137,6 +151,23 @@ def test_render_does_not_fallback_to_portfolio_targets_when_snapshot_missing(mon
 
     assert any("Aucun snapshot de cibles figé" in str(message) for message in calls["infos"])
     assert any("portfolio_targets" in str(message) for message in calls["infos"])
+
+
+def test_render_execution_snapshot_displays_selector_columns_when_available(monkeypatch) -> None:
+    calls = _patch_common(monkeypatch, fills=pd.DataFrame(), reconciliation=pd.DataFrame())
+
+    execution.render()
+
+    target_tables = [
+        df for title, df in calls["dataframes"]
+        if title == "🎯 Snapshot des cibles consommées — contexte risk/selector figé"
+    ]
+    assert target_tables
+    snapshot_df = target_tables[0]
+    assert "candidate_rank" in snapshot_df.columns
+    assert "selector_signal_mode" in snapshot_df.columns
+    assert "selection_explanation" in snapshot_df.columns
+    assert "selector_earnings_blackout" in snapshot_df.columns
 
 
 def test_render_separates_run_scope_and_account_scope_context(monkeypatch) -> None:

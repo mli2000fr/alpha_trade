@@ -13,8 +13,8 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from collections import Counter
 from typing import Any, Callable, Optional
 
 from core.run_summary import attach_live_progress
@@ -54,14 +54,8 @@ from execution_engine.models import (
 from execution_engine.oco_manager import OcoManager
 from execution_engine.order_intents import (
     build_entry_intents,
-    build_initial_stop_intent,
-    build_take_profit_intent,
-    build_trailing_stop_intent,
-    build_rebalance_sell_intent,
-    build_rebalance_buy_intent,
     intent_to_alpaca_payload,
     resolve_initial_stop_price,
-    resolve_trailing_activation_price,
 )
 from execution_engine.protection_transition import (
     maybe_activate_dynamic_trailing as _maybe_activate_dynamic_trailing_impl,
@@ -70,9 +64,6 @@ from execution_engine.reconciliation import reconcile_execution_state
 from execution_engine.state_machine import is_terminal
 from execution_engine.tca import build_tca_summary, compute_implementation_shortfall, compute_slippage_bps
 from service.alpaca.trading_client import BrokerApiError
-
-LOGGER = logging.getLogger(__name__)
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -205,6 +196,24 @@ class ProductionExecutor:
             metrics["targets_with_broker_initial_stop"] = sum(
                 1 for t in targets
                 if resolve_initial_stop_price(float(t.entry_price), t) is not None
+            )
+            metrics["selector_signal_mode_counts"] = dict(
+                Counter(
+                    str(getattr(target, "selector_signal_mode", "") or "").strip() or "unknown"
+                    for target in targets
+                )
+            )
+            metrics["selector_rank_available"] = sum(
+                1 for target in targets if getattr(target, "candidate_rank", None) is not None
+            )
+            metrics["selector_rank_coverage_pct"] = round(
+                (float(metrics["selector_rank_available"]) / float(len(targets))) * 100.0,
+                2,
+            ) if targets else 0.0
+            metrics["selector_earnings_blackout_targets"] = sum(
+                1
+                for target in targets
+                if int(getattr(target, "selector_earnings_blackout", 0) or 0) > 0
             )
             metrics["targets_eligible_for_dynamic_trailing"] = int(metrics["targets_with_broker_initial_stop"]) if self._cfg.enable_dynamic_trailing_transition else 0
             metrics["targets_with_trailing_fallback"] = max(

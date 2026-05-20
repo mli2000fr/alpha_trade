@@ -25,6 +25,10 @@ class CandidateScore:
     calibration_run_id: str | None = None
     calibration_source: str | None = None
     snapshot_date: date | None = None
+    candidate_rank: int | None = None
+    selector_signal_mode: str | None = None
+    selection_explanation: str | None = None
+    selector_earnings_blackout: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +97,9 @@ class PortfolioEntry:
     atr_asof_date: date | None = None
     prediction_asof_date: date | None = None
     ml_metrics_asof_date: date | None = None
+    selector_signal_mode: str | None = None
+    selection_explanation: str | None = None
+    selector_earnings_blackout: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +157,9 @@ class EnrichedCandidate:
     prediction_asof_date: date | None = None
     ml_metrics_asof_date: date | None = None
     candidate_rank: int | None = None
+    selector_signal_mode: str | None = None
+    selection_explanation: str | None = None
+    selector_earnings_blackout: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

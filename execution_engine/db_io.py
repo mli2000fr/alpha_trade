@@ -91,6 +91,76 @@ class ExecutionRepository:
         except Exception:
             return False
 
+    def _get_table_columns(self, table_name: str) -> set[str]:
+        try:
+            return {
+                str(column.get("name", "")).strip()
+                for column in inspect(self.engine).get_columns(table_name)
+                if str(column.get("name", "")).strip()
+            }
+        except Exception:
+            return set()
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _optional_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        text_value = str(value).strip()
+        return text_value or None
+
+    def _portfolio_targets_select_clause(self) -> str:
+        available_columns = self._get_table_columns("portfolio_targets")
+        required_columns = [
+            "run_id", "trade_date", "symbol", "decision_rank", "side", "shares", "entry_price",
+            "atr_20", "price_asof_date", "atr_asof_date", "stop_price_initial",
+            "risk_per_share", "risk_budget_dollars", "initial_risk_dollars",
+            "target_notional", "target_weight", "sector", "conviction_score",
+            "sizing_method", "kelly_fraction",
+        ]
+        optional_columns = [
+            "candidate_rank",
+            "selector_signal_mode",
+            "selection_explanation",
+            "selector_earnings_blackout",
+        ]
+        select_parts = [*required_columns]
+        select_parts.extend(
+            column if column in available_columns else f"NULL AS {column}"
+            for column in optional_columns
+        )
+        return ",\n                       ".join(select_parts)
+
+    def _execution_targets_snapshot_select_clause(self) -> str:
+        available_columns = self._get_table_columns("execution_targets_snapshot")
+        required_columns = [
+            "risk_run_id", "trade_date", "symbol", "decision_rank", "side", "target_shares",
+            "entry_price", "target_weight", "sector", "conviction_score", "sizing_method",
+            "kelly_fraction", "atr_20", "price_asof_date", "atr_asof_date",
+            "stop_price_initial", "risk_per_share", "risk_budget_dollars",
+            "initial_risk_dollars", "target_notional",
+        ]
+        optional_columns = [
+            "candidate_rank",
+            "selector_signal_mode",
+            "selection_explanation",
+            "selector_earnings_blackout",
+        ]
+        select_parts = [*required_columns]
+        select_parts.extend(
+            column if column in available_columns else f"NULL AS {column}"
+            for column in optional_columns
+        )
+        return ",\n                   ".join(select_parts)
+
     def _resolve_latest_risk_run_from_summary(
         self,
         *,
@@ -153,13 +223,10 @@ class ExecutionRepository:
     ) -> list[ExecutionTarget]:
         """Charge les cibles depuis portfolio_targets."""
         resolved_account_id = account_id or "default"
+        select_clause = self._portfolio_targets_select_clause()
         if risk_run_id:
-            query = text("""
-                SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
-                       atr_20, price_asof_date, atr_asof_date, stop_price_initial,
-                       risk_per_share, risk_budget_dollars, initial_risk_dollars,
-                       target_notional, target_weight, sector, conviction_score,
-                       sizing_method, kelly_fraction
+            query = text(f"""
+                SELECT {select_clause}
                 FROM portfolio_targets
                 WHERE run_id = :run_id
                   AND account_id = :account_id
@@ -179,12 +246,8 @@ class ExecutionRepository:
                 )
                 return []
             if latest_risk_run_id:
-                query = text("""
-                    SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
-                           atr_20, price_asof_date, atr_asof_date, stop_price_initial,
-                           risk_per_share, risk_budget_dollars, initial_risk_dollars,
-                           target_notional, target_weight, sector, conviction_score,
-                           sizing_method, kelly_fraction
+                query = text(f"""
+                    SELECT {select_clause}
                     FROM portfolio_targets
                     WHERE run_id = :run_id
                       AND account_id = :account_id
@@ -194,12 +257,8 @@ class ExecutionRepository:
             else:
             # Dernier run_id par MAX(created_at)
                 if trade_date:
-                    query = text("""
-                        SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
-                               atr_20, price_asof_date, atr_asof_date, stop_price_initial,
-                               risk_per_share, risk_budget_dollars, initial_risk_dollars,
-                               target_notional, target_weight, sector, conviction_score,
-                               sizing_method, kelly_fraction
+                    query = text(f"""
+                        SELECT {select_clause}
                         FROM portfolio_targets
                         WHERE run_id = (
                             SELECT run_id FROM portfolio_targets
@@ -212,12 +271,8 @@ class ExecutionRepository:
                     """)
                     params = {"trade_date": trade_date, "account_id": resolved_account_id}
                 else:
-                    query = text("""
-                        SELECT run_id, trade_date, symbol, decision_rank, side, shares, entry_price,
-                               atr_20, price_asof_date, atr_asof_date, stop_price_initial,
-                               risk_per_share, risk_budget_dollars, initial_risk_dollars,
-                               target_notional, target_weight, sector, conviction_score,
-                               sizing_method, kelly_fraction
+                    query = text(f"""
+                        SELECT {select_clause}
                         FROM portfolio_targets
                         WHERE run_id = (
                             SELECT run_id FROM portfolio_targets
@@ -244,7 +299,11 @@ class ExecutionRepository:
                 conviction_score=float(r["conviction_score"]) if r.get("conviction_score") is not None else None,
                 sizing_method=str(r["sizing_method"]) if r.get("sizing_method") else None,
                 kelly_fraction=float(r["kelly_fraction"]) if r.get("kelly_fraction") is not None else None,
+                candidate_rank=self._optional_int(r.get("candidate_rank")),
                 decision_rank=int(r["decision_rank"]) if r.get("decision_rank") is not None else None,
+                selector_signal_mode=self._optional_text(r.get("selector_signal_mode")),
+                selection_explanation=self._optional_text(r.get("selection_explanation")),
+                selector_earnings_blackout=self._optional_int(r.get("selector_earnings_blackout")),
                 side=str(r["side"]) if r.get("side") else None,
                 atr_20=float(r["atr_20"]) if r.get("atr_20") is not None else None,
                 price_asof_date=r["price_asof_date"] if isinstance(r.get("price_asof_date"), date) else (date.fromisoformat(str(r["price_asof_date"])) if r.get("price_asof_date") else None),
@@ -333,12 +392,9 @@ class ExecutionRepository:
             return list(conn.execute(stmt, {"account_id": account_id}).mappings().all())
 
     def load_execution_targets_snapshot(self, *, exec_run_id: str) -> list[ExecutionTarget]:
-        stmt = text("""
-            SELECT risk_run_id, trade_date, symbol, decision_rank, side, target_shares,
-                   entry_price, target_weight, sector, conviction_score, sizing_method,
-                   kelly_fraction, atr_20, price_asof_date, atr_asof_date,
-                   stop_price_initial, risk_per_share, risk_budget_dollars,
-                   initial_risk_dollars, target_notional
+        select_clause = self._execution_targets_snapshot_select_clause()
+        stmt = text(f"""
+            SELECT {select_clause}
             FROM execution_targets_snapshot
             WHERE exec_run_id = :exec_run_id
             ORDER BY COALESCE(decision_rank, 999999), symbol ASC
@@ -357,7 +413,11 @@ class ExecutionRepository:
                 conviction_score=float(r["conviction_score"]) if r.get("conviction_score") is not None else None,
                 sizing_method=str(r["sizing_method"]) if r.get("sizing_method") is not None else None,
                 kelly_fraction=float(r["kelly_fraction"]) if r.get("kelly_fraction") is not None else None,
+                candidate_rank=self._optional_int(r.get("candidate_rank")),
                 decision_rank=int(r["decision_rank"]) if r.get("decision_rank") is not None else None,
+                selector_signal_mode=self._optional_text(r.get("selector_signal_mode")),
+                selection_explanation=self._optional_text(r.get("selection_explanation")),
+                selector_earnings_blackout=self._optional_int(r.get("selector_earnings_blackout")),
                 side=str(r["side"]) if r.get("side") else None,
                 atr_20=float(r["atr_20"]) if r.get("atr_20") is not None else None,
                 price_asof_date=r["price_asof_date"] if isinstance(r.get("price_asof_date"), date) else (date.fromisoformat(str(r["price_asof_date"])) if r.get("price_asof_date") else None),
@@ -1002,20 +1062,23 @@ class ExecutionRepository:
         if not targets:
             return 0
         resolved_account_id = account_id or "default"
-        stmt = text("""
-            INSERT INTO execution_targets_snapshot
-                (exec_run_id, account_id, risk_run_id, trade_date, symbol, decision_rank,
-                 side, target_shares, entry_price, target_weight, sector,
-                 conviction_score, sizing_method, kelly_fraction, atr_20,
-                 price_asof_date, atr_asof_date, stop_price_initial, risk_per_share,
-                 risk_budget_dollars, initial_risk_dollars, target_notional, created_at)
-            VALUES
-                (:exec_run_id, :account_id, :risk_run_id, :trade_date, :symbol, :decision_rank,
-                 :side, :target_shares, :entry_price, :target_weight, :sector,
-                 :conviction_score, :sizing_method, :kelly_fraction, :atr_20,
-                 :price_asof_date, :atr_asof_date, :stop_price_initial, :risk_per_share,
-                 :risk_budget_dollars, :initial_risk_dollars, :target_notional, :created_at)
-        """)
+        available_columns = self._get_table_columns("execution_targets_snapshot")
+        canonical_columns = [
+            "exec_run_id", "account_id", "risk_run_id", "trade_date", "symbol", "candidate_rank", "decision_rank",
+            "selector_signal_mode", "selection_explanation", "selector_earnings_blackout", "side",
+            "target_shares", "entry_price", "target_weight", "sector", "conviction_score",
+            "sizing_method", "kelly_fraction", "atr_20", "price_asof_date", "atr_asof_date",
+            "stop_price_initial", "risk_per_share", "risk_budget_dollars", "initial_risk_dollars",
+            "target_notional", "created_at",
+        ]
+        insert_columns = [column for column in canonical_columns if not available_columns or column in available_columns]
+        stmt = text(
+            "INSERT INTO execution_targets_snapshot ("
+            + ", ".join(insert_columns)
+            + ") VALUES ("
+            + ", ".join(f":{column}" for column in insert_columns)
+            + ")"
+        )
         now = datetime.now(timezone.utc)
         records = [
             {
@@ -1024,7 +1087,11 @@ class ExecutionRepository:
                 "risk_run_id": target.risk_run_id,
                 "trade_date": target.trade_date,
                 "symbol": target.symbol,
+                "candidate_rank": target.candidate_rank,
                 "decision_rank": target.decision_rank,
+                "selector_signal_mode": target.selector_signal_mode,
+                "selection_explanation": target.selection_explanation,
+                "selector_earnings_blackout": target.selector_earnings_blackout,
                 "side": target.side,
                 "target_shares": target.target_shares,
                 "entry_price": target.entry_price,
@@ -1045,6 +1112,7 @@ class ExecutionRepository:
             }
             for target in targets
         ]
+        records = [{column: record.get(column) for column in insert_columns} for record in records]
         with self.engine.begin() as conn:
             conn.execute(stmt, records)
         return len(records)

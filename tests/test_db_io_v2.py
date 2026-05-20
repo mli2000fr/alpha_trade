@@ -19,6 +19,10 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
                 final_score DOUBLE,
                 final_score_sentiment DOUBLE,
                 final_score_walk_forward DOUBLE,
+                candidate_rank INT,
+                earnings_blackout INT,
+                selector_signal_mode VARCHAR(32),
+                selection_explanation VARCHAR(255),
                 is_candidate INT,
                 walk_forward_sentiment_weight DOUBLE,
                 walk_forward_macro_weight DOUBLE,
@@ -91,6 +95,7 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id VARCHAR(32), account_id VARCHAR(32), trade_date DATE, symbol VARCHAR(20),
                 candidate_rank INT, decision_rank INT,
+                selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
                 decision VARCHAR(20), reason VARCHAR(255), score_used DOUBLE,
                 score_source VARCHAR(40), score_snapshot_date DATE,
                 entry_price DOUBLE, atr_20 DOUBLE, price_asof_date DATE, proposed_shares INT,
@@ -112,7 +117,9 @@ def _create_tables(engine):  # type: ignore[no-untyped-def]
             CREATE TABLE IF NOT EXISTS portfolio_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id VARCHAR(32), account_id VARCHAR(32), trade_date DATE, symbol VARCHAR(20),
-                decision_rank INT, side VARCHAR(10),
+                candidate_rank INT, decision_rank INT,
+                selector_signal_mode VARCHAR(32), selection_explanation VARCHAR(255), selector_earnings_blackout INT,
+                side VARCHAR(10),
                 shares INT, entry_price DOUBLE, atr_20 DOUBLE, price_asof_date DATE,
                 stop_price_initial DOUBLE, risk_per_share DOUBLE, risk_budget_dollars DOUBLE,
                 initial_risk_dollars DOUBLE, target_notional DOUBLE, target_weight DOUBLE,
@@ -172,6 +179,30 @@ def test_load_candidates_asof_uses_history_snapshot() -> None:
     assert len(candidates) == 1
     assert candidates[0].score_used == 0.92
     assert candidates[0].snapshot_date == date(2026, 4, 18)
+
+
+@pytest.mark.unit
+def test_load_candidates_asof_propagates_selector_metadata() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    _create_tables(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO stock_scores_history (
+                snapshot_date, symbol, sector, final_score_sentiment, final_score_walk_forward, candidate_rank,
+                earnings_blackout, selector_signal_mode, selection_explanation, is_candidate
+            )
+            VALUES
+                ('2026-04-18', 'AAPL', 'Tech', 0.81, 0.92, 7, 1, 'sector_neutralized', 'mode=sector_neutralized; rank=7', 1)
+        """))
+    repo = RiskRepository(engine=engine)
+
+    candidates = repo.load_candidates_asof(date(2026, 4, 18))
+
+    assert len(candidates) == 1
+    assert candidates[0].candidate_rank == 7
+    assert candidates[0].selector_signal_mode == "sector_neutralized"
+    assert candidates[0].selection_explanation == "mode=sector_neutralized; rank=7"
+    assert candidates[0].selector_earnings_blackout == 1
 
 
 @pytest.mark.unit
@@ -371,6 +402,9 @@ def test_write_risk_decisions_persists_walk_forward_metadata() -> None:
             "calibration_run_id": "wf-001",
             "calibration_source": "walk_forward",
             "candidate_rank": 1,
+            "selector_signal_mode": "strict",
+            "selection_explanation": "mode=strict; rank=1",
+            "selector_earnings_blackout": 0,
             "decision_rank": 1,
             "target_notional": 6000.0,
             "stop_price_initial": 140.0,
@@ -395,6 +429,9 @@ def test_write_risk_decisions_persists_walk_forward_metadata() -> None:
     assert row["calibration_run_id"] == "wf-001"
     assert row["account_id"] == "paper"
     assert row["atr_20"] == 5.0
+    assert row["selector_signal_mode"] == "strict"
+    assert row["selection_explanation"] == "mode=strict; rank=1"
+    assert row["selector_earnings_blackout"] == 0
     assert row["risk_per_share"] == 10.0
     assert row["score_snapshot_date"] == "2026-04-18"
 
@@ -432,6 +469,10 @@ def test_write_portfolio_targets_persists_walk_forward_metadata() -> None:
             "walk_forward_quant_weight": 0.7,
             "calibration_run_id": "wf-001",
             "calibration_source": "walk_forward",
+            "candidate_rank": 3,
+            "selector_signal_mode": "sector_neutralized",
+            "selection_explanation": "mode=sector_neutralized; rank=3",
+            "selector_earnings_blackout": 0,
             "decision_rank": 1,
             "target_notional": 6000.0,
             "stop_price_initial": 140.0,
@@ -452,6 +493,10 @@ def test_write_portfolio_targets_persists_walk_forward_metadata() -> None:
     assert row["quant_component"] == 0.67
     assert row["calibration_source"] == "walk_forward"
     assert row["account_id"] == "paper"
+    assert row["candidate_rank"] == 3
+    assert row["selector_signal_mode"] == "sector_neutralized"
+    assert row["selection_explanation"] == "mode=sector_neutralized; rank=3"
+    assert row["selector_earnings_blackout"] == 0
     assert row["atr_20"] == 5.0
     assert row["decision_rank"] == 1
     assert row["stop_price_initial"] == 140.0

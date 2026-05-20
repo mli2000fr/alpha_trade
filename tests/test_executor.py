@@ -137,6 +137,10 @@ class TestExecutor:
                 "targets_with_broker_initial_stop": 2,
                 "targets_eligible_for_dynamic_trailing": 2,
                 "targets_with_trailing_fallback": 1,
+                "selector_signal_mode_counts": {"strict": 2, "sector_neutralized": 1},
+                "selector_rank_available": 3,
+                "selector_rank_coverage_pct": 100.0,
+                "selector_earnings_blackout_targets": 1,
                 "child_take_profit_orders_submitted": 1,
                 "child_initial_stop_orders_submitted": 1,
                 "child_trailing_stop_orders_submitted": 0,
@@ -169,6 +173,10 @@ class TestExecutor:
         assert summary["targets_with_broker_initial_stop"] == 2
         assert summary["targets_eligible_for_dynamic_trailing"] == 2
         assert summary["targets_with_trailing_fallback"] == 1
+        assert summary["selector_signal_mode_counts"] == {"strict": 2, "sector_neutralized": 1}
+        assert summary["selector_rank_available"] == 3
+        assert summary["selector_rank_coverage_pct"] == 100.0
+        assert summary["selector_earnings_blackout_targets"] == 1
         assert summary["dynamic_trailing_activations"] == 0
         assert summary["stale_price_targets"] == 1
         assert summary["broker_orders_synced"] == 2

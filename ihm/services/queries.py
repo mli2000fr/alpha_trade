@@ -818,13 +818,43 @@ def get_execution_fills(
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_execution_targets_snapshot(exec_run_id: str) -> pd.DataFrame:
+    available_columns = _get_table_columns("execution_targets_snapshot")
+    selected_columns = [
+        "exec_run_id",
+        "account_id",
+        "risk_run_id",
+        "trade_date",
+        "symbol",
+        *(
+            ["candidate_rank"]
+            if "candidate_rank" in available_columns
+            else []
+        ),
+        "decision_rank",
+        *(
+            ["selector_signal_mode", "selection_explanation", "selector_earnings_blackout"]
+            if {"selector_signal_mode", "selection_explanation", "selector_earnings_blackout"} & available_columns
+            else []
+        ),
+        "side",
+        "target_shares",
+        "entry_price",
+        "target_weight",
+        "stop_price_initial",
+        "risk_per_share",
+        "risk_budget_dollars",
+        "initial_risk_dollars",
+        "target_notional",
+        "price_asof_date",
+        "atr_asof_date",
+        "created_at",
+    ]
+    selected_columns = [column for column in selected_columns if column in available_columns]
+    if not selected_columns:
+        selected_columns = ["exec_run_id", "risk_run_id", "trade_date", "symbol", "target_shares", "entry_price"]
     return safe_query(
-        """
-        SELECT exec_run_id, account_id, risk_run_id, trade_date, symbol,
-               decision_rank, side, target_shares, entry_price, target_weight,
-               stop_price_initial, risk_per_share, risk_budget_dollars,
-               initial_risk_dollars, target_notional, price_asof_date, atr_asof_date,
-               created_at
+        f"""
+        SELECT {', '.join(selected_columns)}
         FROM execution_targets_snapshot
         WHERE exec_run_id = :eid
         ORDER BY COALESCE(decision_rank, 999999), target_weight DESC, symbol ASC

@@ -250,7 +250,7 @@ def main(args: list[str] | None = None) -> None:
     LOGGER.info("Chargement des predictions ML…")
     predictions = repo.load_predictions_asof(symbols, trade_date)
     from risk_management.ml_gate import resolve_ml_gate_state
-    ml_gate_state = resolve_ml_gate_state(repo.engine)
+    ml_gate_state = resolve_ml_gate_state(getattr(repo, "engine", None))
     LOGGER.info(
         "ML gate | enabled=%s reason=%s decision_id=%s drift_status=%s action=%s",
         ml_gate_state.enabled,
@@ -355,6 +355,24 @@ def main(args: list[str] | None = None) -> None:
     sizing_method_counts: dict[str, int] = dict(
         Counter(str(getattr(entry, "sizing_method", "") or "").strip() or "unknown" for entry in entries)
     )
+    selector_signal_mode_counts = dict(
+        Counter(
+            str(getattr(candidate, "selector_signal_mode", "") or "").strip() or "unknown"
+            for candidate in candidates
+        )
+    )
+    retained_selector_signal_mode_counts = dict(
+        Counter(
+            str(getattr(entry, "selector_signal_mode", "") or "").strip() or "unknown"
+            for entry in retained_entries
+        )
+    )
+    selector_rank_available = sum(1 for candidate in candidates if getattr(candidate, "candidate_rank", None) is not None)
+    selector_earnings_blackout_candidates = sum(
+        1
+        for candidate in candidates
+        if int(getattr(candidate, "selector_earnings_blackout", 0) or 0) > 0
+    )
     rejected_for_atr_missing = int(sizing_method_counts.get("rejected_atr_missing", 0))
     rejected_for_notional = int(sizing_method_counts.get("rejected_notional", 0))
     rejected_for_zero_shares = int(sizing_method_counts.get("rejected_zero_shares", 0))
@@ -389,6 +407,11 @@ def main(args: list[str] | None = None) -> None:
         "rejected_for_zero_shares": rejected_for_zero_shares,
         "rejected_for_invalid_price": rejected_for_invalid_price,
         "sizing_method_counts": sizing_method_counts,
+        "selector_signal_mode_counts": selector_signal_mode_counts,
+        "retained_selector_signal_mode_counts": retained_selector_signal_mode_counts,
+        "selector_rank_available": selector_rank_available,
+        "selector_rank_coverage_pct": round((selector_rank_available / len(candidates)), 4) if candidates else 0.0,
+        "selector_earnings_blackout_candidates": selector_earnings_blackout_candidates,
         # Sprint S3 / A-011 — visibilité des seuils circuit breaker effectifs.
         "circuit_breaker_thresholds": {
             "max_portfolio_drawdown_pct": float(config.max_portfolio_drawdown_pct),

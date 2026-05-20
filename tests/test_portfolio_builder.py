@@ -158,3 +158,27 @@ def test_builder_propagates_walk_forward_metadata() -> None:
     assert entry.calibration_run_id == "wf-001"
 
 
+def test_builder_preserves_selector_rank_and_metadata() -> None:
+    builder = PortfolioBuilder(_cfg())
+    entries = builder.build(
+        [
+            CandidateScore(
+                "AAPL",
+                "Tech",
+                0.91,
+                candidate_rank=5,
+                selector_signal_mode="sector_neutralized",
+                selection_explanation="mode=sector_neutralized; rank=5",
+                selector_earnings_blackout=0,
+            )
+        ],
+        {"AAPL": PriceInfo("AAPL", 150.0, 5.0)},
+    )
+
+    entry = entries[0]
+    assert entry.candidate_rank == 5
+    assert entry.selector_signal_mode == "sector_neutralized"
+    assert entry.selection_explanation == "mode=sector_neutralized; rank=5"
+    assert entry.selector_earnings_blackout == 0
+
+

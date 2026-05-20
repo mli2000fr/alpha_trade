@@ -1,7 +1,7 @@
 """ihm/pages/execution.py — Suivi des runs d'exécution."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
@@ -250,9 +250,10 @@ def render() -> None:
         st.subheader("🎯 Snapshot des cibles consommées")
         target_columns = [
             column for column in [
-                "symbol", "decision_rank", "target_shares", "entry_price", "target_weight",
-                "stop_price_initial", "risk_per_share", "risk_budget_dollars", "initial_risk_dollars",
-                "target_notional", "price_asof_date", "atr_asof_date",
+                "symbol", "candidate_rank", "decision_rank", "selector_signal_mode",
+                "selector_earnings_blackout", "selection_explanation", "target_shares", "entry_price",
+                "target_weight", "stop_price_initial", "risk_per_share", "risk_budget_dollars",
+                "initial_risk_dollars", "target_notional", "price_asof_date", "atr_asof_date",
             ]
             if column in snapshot_targets.columns
         ]
@@ -260,6 +261,7 @@ def render() -> None:
             snapshot_targets[target_columns],
             key="exec_targets_snapshot",
             symbol_col="symbol",
+            title="🎯 Snapshot des cibles consommées — contexte risk/selector figé",
             height=260,
         )
     else:
