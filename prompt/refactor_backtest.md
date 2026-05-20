@@ -336,12 +336,53 @@ Ordre conseillé :
 ### Déjà traité maintenant
 - logs explicites des symboles sans couverture sentiment / ML ;
 - réalignement de la source de score utilisée par le bridge Phase 2 risk.
+- taxonomie normalisée des motifs de dégradation dans `backtesting/fidelity.py` ;
+- granularité par composant dans le manifeste (`bars`, `scores`, `sentiment`, `ml`, `walk_forward`, `risk`, `execution`) ;
+- bloc `coverage` structuré pour sentiment / ML avec ratios, compteurs et listes de symboles ;
+- artefact `coverage_summary.json` produit à chaque run avec `output_dir` ;
+- résumé de fidélité affichable côté `ihm/pages/backtesting/__init__.py` sans casser le contrat racine de `report.json` ;
+- tests ciblés ajoutés sur le manifeste Sprint 1, les artefacts et le rendu IHM.
+
+### Clôture Sprint 1 — état réel après implémentation
+Le Sprint 1 est **livré sur son axe principal**, avec un périmètre volontairement additif et compatible avec l’existant.
+
+#### Livré
+- `report.json[fidelity]` enrichi avec :
+  - `taxonomy_version` ;
+  - `degraded_reason_details` ;
+  - `coverage` ;
+  - `component_status` ;
+  - `summary.enabled_components / degraded_components`.
+- `fidelity_manifest.json` aligné sur ce contrat enrichi.
+- `coverage_summary.json` ajouté comme artefact structuré dédié exploitation/debug.
+- `backtesting/cli/_impl.py` alimente désormais des détails composant pour :
+  - `bars` (fenêtre chargée, warm-up, cardinalités) ;
+  - `risk` (activation + diagnostics bridge) ;
+  - `execution` (activation + diagnostics phases 2/3/4/5/7).
+- l’IHM backtesting affiche désormais un résumé de fidélité du run :
+  - statut PIT ;
+  - run dégradé ou non ;
+  - vue composant par composant ;
+  - coverage sentiment / ML ;
+  - motifs normalisés.
+
+#### Vérification de cohérence IHM
+- le contrat a été gardé **strictement additif** dans `report.json` ;
+- aucune nouvelle clé racine n’a été introduite ;
+- l’IHM continue à lire `report.json` et peut ignorer les nouveaux sous-blocs si absents ;
+- `coverage_summary.json` reste un artefact complémentaire, la source principale pour l’IHM demeurant `report.json[fidelity]`.
+
+#### Limites encore ouvertes après Sprint 1
+- la granularité reste principalement **au niveau run**, pas encore par séance complète ;
+- le détail ML ne distingue pas encore finement `prediction_missing` / `artifact_missing` / `artifact_invalid` ;
+- la matrice explicite `persisté / reconstruit / fallback / absent` n’est pas encore formalisée par symbole ;
+- l’IHM expose un résumé opérateur utile, mais pas encore une navigation analytique avancée composant ↔ symbole ↔ séance.
 
 ### Prochaines actions à lancer sans attendre
 1. Ajouter au manifeste une distinction explicite `prediction_missing` vs `artifact_missing` vs `artifact_invalid`.
-2. Produire un artefact `coverage_summary.json` par run.
-3. Introduire un test de non-régression `signal_replay` vs `risk_bridge` sur plusieurs cascades de score.
-4. Préparer une première fenêtre `compare-to-live` courte sur un run réel récent.
+2. Introduire un test de non-régression `signal_replay` vs `risk_bridge` sur plusieurs cascades de score.
+3. Préparer une première fenêtre `compare-to-live` courte sur un run réel récent.
+4. Étendre le contrat de couverture vers une matrice par symbole / par séance si le besoin opérateur se confirme.
 
 ---
 

@@ -446,6 +446,75 @@ class TestReportSchema:
         validate_report_payload(payload, strict=False)
 
 
+class TestFidelityManifestSprint1:
+    def test_build_coverage_summary_exposes_component_status_and_reasons(self):
+        from backtesting.fidelity import (
+            MlPreparationDiagnostics,
+            ScoreLoadDiagnostics,
+            SentimentPreparationDiagnostics,
+            build_coverage_summary,
+            build_fidelity_manifest,
+        )
+        from datetime import date
+
+        manifest = build_fidelity_manifest(
+            engine_mode="research",
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 31),
+            capital_preset_key="capital_50001_100000",
+            score_diagnostics=ScoreLoadDiagnostics(
+                source_table="stock_scores",
+                strict_pit_requested=False,
+                history_table_exists=False,
+                history_rows_found=0,
+                fallback_used=True,
+                degraded_reasons=("stock_scores_history_missing",),
+            ),
+            sentiment_diagnostics=SentimentPreparationDiagnostics(
+                requested_mode="auto",
+                engine_mode="research",
+                rows_input=4,
+                rows_missing_before=1,
+                rows_missing_after=0,
+                missing_symbols_before=("AAPL",),
+                missing_symbols_after=(),
+                degraded_reasons=("sentiment_missing_fallback_final_score",),
+            ),
+            ml_diagnostics=MlPreparationDiagnostics(
+                requested_mode="auto",
+                requested_strategy="auto",
+                effective_strategy="use-persisted",
+                engine_mode="research",
+                predictions_input_rows=2,
+                expected_symbol_dates=4,
+                missing_prediction_keys=2,
+                missing_prediction_keys_after=2,
+                missing_symbols_before=("MSFT",),
+                missing_symbols_after=("MSFT",),
+                degraded_reasons=("ml_predictions_missing",),
+            ),
+            sentiment_mode="auto",
+            ml_mode="auto",
+            ml_pit_strategy="auto",
+            component_details={
+                "bars": {"enabled": True, "rows_loaded": 100},
+                "risk": {"enabled": False},
+                "execution": {"enabled": False},
+            },
+            requested_score_column="auto",
+            walk_forward_artifacts_dir="artifacts/walk_forward",
+        )
+
+        summary = build_coverage_summary(manifest)
+
+        assert manifest["component_status"]["scores"]["status"] == "degraded"
+        assert manifest["component_status"]["walk_forward"]["status"] == "degraded"
+        assert manifest["coverage"]["sentiment"]["missing_symbols_before"] == ["AAPL"]
+        assert manifest["coverage"]["ml"]["rows_missing_after"] == 2
+        assert summary["degraded"] is True
+        assert summary["component_status"]["ml"]["status"] == "degraded"
+
+
 # ---------------------------------------------------------------------------
 # Phase E.3 (refactor v2) — _RunState invariant
 # ---------------------------------------------------------------------------

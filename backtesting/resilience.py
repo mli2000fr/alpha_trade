@@ -369,11 +369,13 @@ def prepare_predictions_for_ml_mode(
     diagnostics.missing_prediction_keys = len(missing_keys)
     diagnostics.missing_symbols_before = tuple(sorted({symbol for symbol, _trade_date in missing_keys}))
     if not missing_keys:
+        diagnostics.missing_prediction_keys_after = 0
         diagnostics.missing_symbols_after = ()
         return _build_result(existing, diagnostics)
 
     if effective_strategy == "use-persisted":
         diagnostics.degraded_reasons = ("ml_predictions_missing",)
+        diagnostics.missing_prediction_keys_after = len(missing_keys)
         diagnostics.missing_symbols_after = diagnostics.missing_symbols_before
         LOGGER.warning(
             "ML PIT strategy=use-persisted — %s prédiction(s) manquante(s), aucun rebuild tenté.",
@@ -393,6 +395,7 @@ def prepare_predictions_for_ml_mode(
             len(missing_keys),
         )
         diagnostics.degraded_reasons = ("ml_predictions_missing",)
+        diagnostics.missing_prediction_keys_after = len(missing_keys)
         diagnostics.missing_symbols_after = diagnostics.missing_symbols_before
         return _build_result(existing, diagnostics)
 
@@ -444,6 +447,7 @@ def prepare_predictions_for_ml_mode(
             for symbol, trade_date in existing[["symbol", "trade_date"]].dropna().drop_duplicates().itertuples(index=False, name=None)
         }
     remaining_missing_keys = sorted(expected_keys - present_after_rebuild)
+    diagnostics.missing_prediction_keys_after = len(remaining_missing_keys)
     diagnostics.missing_symbols_after = tuple(sorted({symbol for symbol, _trade_date in remaining_missing_keys}))
 
     if failed > 0:

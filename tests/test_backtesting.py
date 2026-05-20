@@ -2437,11 +2437,16 @@ class TestCLI:
         assert report_payload["params"]["score_column"] == "auto"
         assert report_payload["params"]["engine_mode"] == "research"
         assert report_payload["fidelity"]["strict_pit_requested"] is False
+        assert report_payload["fidelity"]["coverage"]["sentiment"]["rows_input"] == len(scores_df)
+        assert report_payload["fidelity"]["component_status"]["bars"]["status"] == "ok"
+        assert report_payload["fidelity"]["component_status"]["walk_forward"]["status"] == "ok"
         artifacts = cast(dict[str, str], report_payload["artifacts"])
+        assert artifacts["coverage_summary_json"].endswith("coverage_summary.json")
         assert artifacts["equity_curve_csv"].endswith("equity_curve.csv")
         assert artifacts["trades_csv"].endswith("trades.csv")
         assert artifacts["fidelity_manifest_json"].endswith("fidelity_manifest.json")
         assert (output_dir / "report.json").exists()
+        assert (output_dir / "coverage_summary.json").exists()
 
     def test_run_backtest_phase2_risk_uses_bridge_signals_and_artifacts(self, monkeypatch, tmp_path):
         import argparse

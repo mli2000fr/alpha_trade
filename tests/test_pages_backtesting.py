@@ -93,6 +93,53 @@ def test_parameter_reference_rows_include_backfill_capital_preset_options() -> N
     assert any(row["Paramètre"] == "capital_preset_key" for row in backfill_rows)
 
 
+def test_build_fidelity_component_rows_formats_expected_columns() -> None:
+    rows = backtesting._build_fidelity_component_rows(
+        {
+            "components": ["bars", "scores", "sentiment"],
+            "component_status": {
+                "bars": {"status": "ok", "enabled": True, "degraded_reasons": []},
+                "scores": {
+                    "status": "degraded",
+                    "enabled": True,
+                    "degraded_reasons": ["stock_scores_history_missing"],
+                },
+                "sentiment": {"status": "disabled", "enabled": False, "degraded_reasons": []},
+            },
+        }
+    )
+
+    assert list(rows.columns) == ["Composant", "État", "Activé", "Motifs"]
+    assert rows.iloc[0]["État"] == "🟢 OK"
+    assert rows.iloc[1]["Motifs"] == "stock_scores_history_missing"
+    assert rows.iloc[2]["Activé"] == "non"
+
+
+def test_build_fidelity_coverage_rows_exposes_missing_symbols() -> None:
+    rows = backtesting._build_fidelity_coverage_rows(
+        {
+            "coverage": {
+                "sentiment": {
+                    "rows_input": 10,
+                    "coverage_ratio_after": 0.9,
+                    "rows_missing_after": 1,
+                    "missing_symbols_after": ["AAPL"],
+                },
+                "ml": {
+                    "rows_input": 10,
+                    "coverage_ratio_after": 0.8,
+                    "rows_missing_after": 2,
+                    "missing_symbols_after": ["MSFT", "NVDA"],
+                },
+            }
+        }
+    )
+
+    assert list(rows["Couverture"]) == ["sentiment", "ml"]
+    assert rows.iloc[0]["Couverture finale"] == "90.0%"
+    assert rows.iloc[1]["Symboles dégradants"] == "MSFT, NVDA"
+
+
 def test_build_screener_artifact_objective_rows_formats_expected_columns() -> None:
     rows = backtesting._build_screener_artifact_objective_rows(
         {

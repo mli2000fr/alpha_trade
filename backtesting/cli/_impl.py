@@ -734,6 +734,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         PitHistoryRequiredError,
         PitMlStrategyUnsupportedError,
         build_fidelity_manifest,
+        save_coverage_summary,
         save_fidelity_manifest,
     )
     from database.connection import get_sqlalchemy_engine
@@ -1245,6 +1246,60 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
     output_dir = Path(args.output_dir) if args.output_dir else None
     artifact_paths: dict[str, str] = {}
+    bars_component_details = {
+        "enabled": True,
+        "rows_loaded": int(len(ohlcv_df)),
+        "symbols_loaded": int(ohlcv_df["symbol"].nunique()) if "symbol" in ohlcv_df.columns else 0,
+        "requested_start_date": start.isoformat(),
+        "requested_end_date": end.isoformat(),
+        "loaded_start_date": str(pd.Timestamp(ohlcv_df["trade_date"].min()).date()) if "trade_date" in ohlcv_df.columns and not ohlcv_df.empty else None,
+        "loaded_end_date": str(pd.Timestamp(ohlcv_df["trade_date"].max()).date()) if "trade_date" in ohlcv_df.columns and not ohlcv_df.empty else None,
+        "warmup_start_date": ohlcv_start.isoformat(),
+        "calendar_sessions_loaded": int(len(execution_pivoted["close"].index)),
+    }
+    risk_component_details = {
+        "enabled": phase2_risk_result is not None,
+        "mode": phase2_mode,
+        "diagnostics": dict(phase2_risk_result.diagnostics) if phase2_risk_result is not None else {},
+    }
+    execution_component_details = {
+        "enabled": any(
+            result is not None
+            for result in (
+                phase2_execution_result,
+                phase3_execution_replay_result,
+                phase4_protection_replay_result,
+                phase5_watcher_replay_result,
+                phase7_exit_lifecycle_result,
+            )
+        ),
+        "phase2_mode": phase2_mode,
+        "phase3_mode": phase3_mode,
+        "phase4_mode": phase4_mode,
+        "phase5_mode": phase5_mode,
+        "phase7_mode": phase7_mode,
+        "phase2_execution": dict(phase2_execution_result.diagnostics) if phase2_execution_result is not None else {},
+        "phase3_execution_replay": (
+            dict(phase3_execution_replay_result.diagnostics)
+            if phase3_execution_replay_result is not None
+            else {}
+        ),
+        "phase4_protection_replay": (
+            dict(phase4_protection_replay_result.diagnostics)
+            if phase4_protection_replay_result is not None
+            else {}
+        ),
+        "phase5_watcher_replay": (
+            dict(phase5_watcher_replay_result.diagnostics)
+            if phase5_watcher_replay_result is not None
+            else {}
+        ),
+        "phase7_exit_lifecycle_replay": (
+            dict(phase7_exit_lifecycle_result.diagnostics)
+            if phase7_exit_lifecycle_result is not None
+            else {}
+        ),
+    }
     fidelity_manifest = build_fidelity_manifest(
         engine_mode=engine_mode,
         start_date=start,
@@ -1256,6 +1311,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
         sentiment_mode=args.sentiment_mode,
         ml_mode=args.ml_mode,
         ml_pit_strategy=ml_pit_strategy,
+        component_details={
+            "bars": bars_component_details,
+            "risk": risk_component_details,
+            "execution": execution_component_details,
+        },
+        requested_score_column=str(args.score_column or "auto"),
+        walk_forward_artifacts_dir=str(args.walk_forward_artifacts_dir or ""),
     )
 
     common_params: dict[str, object] = {
@@ -1394,6 +1456,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
         artifact_paths["trade_audit_csv"] = str(trade_audit_csv_path)
         fidelity_manifest_path = save_fidelity_manifest(fidelity_manifest, output_dir)
         artifact_paths["fidelity_manifest_json"] = str(fidelity_manifest_path)
+        coverage_summary_path = save_coverage_summary(fidelity_manifest, output_dir)
+        artifact_paths["coverage_summary_json"] = str(coverage_summary_path)
         if phase2_risk_result is not None:
             from backtesting.risk_bridge import save_phase2_risk_artifacts
 
@@ -1448,6 +1512,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         _safe_print(f"   → {equity_curve_csv_path}")
         _safe_print(f"   → {trade_audit_csv_path}")
         _safe_print(f"   → {fidelity_manifest_path}")
+        _safe_print(f"   → {coverage_summary_path}")
 
     # 6. Artefacts
     if not args.no_save:

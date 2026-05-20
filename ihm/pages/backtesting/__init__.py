@@ -1789,6 +1789,7 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     params = cast(dict[str, object], report_payload.get("params", {}))
     artifacts = cast(dict[str, object], report_payload.get("artifacts", {}))
     diagnostics = cast(dict[str, object], report_payload.get("diagnostics", {}))
+    fidelity = cast(dict[str, object], report_payload.get("fidelity", {}))
 
     st.markdown("**📌 KPIs du rapport**")
     col1, col2, col3, col4 = st.columns(4)
@@ -1849,6 +1850,36 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
                 "à l'identique (git SHA, version Python, hash dataset, seed)."
             )
             st.json(run_metadata)
+
+    if fidelity:
+        st.markdown("**🧪 Fidélité observable du run**")
+        fidelity_summary = fidelity.get("summary", {})
+        if not isinstance(fidelity_summary, dict):
+            fidelity_summary = {}
+        fidelity_col1, fidelity_col2, fidelity_col3, fidelity_col4 = st.columns(4)
+        fidelity_col1.metric("Strict PIT demandé", "oui" if bool(fidelity.get("strict_pit_requested", False)) else "non")
+        fidelity_col2.metric("Strict PIT satisfait", "oui" if bool(fidelity.get("strict_pit_satisfied", False)) else "non")
+        fidelity_col3.metric("Run dégradé", "oui" if bool(fidelity.get("degraded", False)) else "non")
+        degraded_components = fidelity_summary.get("degraded_components", [])
+        fidelity_col4.metric(
+            "Composants dégradés",
+            len(degraded_components) if isinstance(degraded_components, list) else 0,
+        )
+
+        component_rows = _build_fidelity_component_rows(fidelity)
+        if not component_rows.empty:
+            with st.expander("Vue composant par composant", expanded=False):
+                st.dataframe(component_rows, use_container_width=True, hide_index=True)
+
+        coverage_rows = _build_fidelity_coverage_rows(fidelity)
+        if not coverage_rows.empty:
+            with st.expander("Coverage Sprint 1 — sentiment / ML", expanded=False):
+                st.dataframe(coverage_rows, use_container_width=True, hide_index=True)
+
+        degraded_reason_details = fidelity.get("degraded_reason_details", [])
+        if isinstance(degraded_reason_details, list) and degraded_reason_details:
+            with st.expander("Motifs normalisés de dégradation", expanded=False):
+                st.json(degraded_reason_details)
 
     # Glossaire local pour rappel des indicateurs (Phase G3).
     with st.expander("📚 Glossaire — comprendre les indicateurs", expanded=False):
@@ -1919,6 +1950,67 @@ def _coerce_metric_text(value: object) -> str:
         return "—"
     text = str(value).strip()
     return text or "—"
+
+
+def _format_fidelity_status(status: object) -> str:
+    normalized = str(status or "").strip().lower()
+    return {
+        "ok": "🟢 OK",
+        "degraded": "🟠 Dégradé",
+        "disabled": "⚪ Désactivé",
+    }.get(normalized, normalized or "—")
+
+
+def _build_fidelity_component_rows(fidelity: dict[str, object]) -> pd.DataFrame:
+    component_status = fidelity.get("component_status", {})
+    if not isinstance(component_status, dict) or not component_status:
+        return pd.DataFrame()
+    ordered_components = fidelity.get("components")
+    if isinstance(ordered_components, list) and ordered_components:
+        component_names = [str(name) for name in ordered_components if str(name) in component_status]
+    else:
+        component_names = list(component_status)
+    rows: list[dict[str, object]] = []
+    for name in component_names:
+        payload = component_status.get(name)
+        if not isinstance(payload, dict):
+            continue
+        reasons = payload.get("degraded_reasons", [])
+        if not isinstance(reasons, list):
+            reasons = []
+        rows.append(
+            {
+                "Composant": name,
+                "État": _format_fidelity_status(payload.get("status")),
+                "Activé": "oui" if bool(payload.get("enabled", False)) else "non",
+                "Motifs": ", ".join(str(reason) for reason in reasons) if reasons else "—",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _build_fidelity_coverage_rows(fidelity: dict[str, object]) -> pd.DataFrame:
+    coverage = fidelity.get("coverage", {})
+    if not isinstance(coverage, dict) or not coverage:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for component_name in ("sentiment", "ml"):
+        payload = coverage.get(component_name)
+        if not isinstance(payload, dict):
+            continue
+        missing_after = payload.get("missing_symbols_after", [])
+        if not isinstance(missing_after, list):
+            missing_after = []
+        rows.append(
+            {
+                "Couverture": component_name,
+                "Lignes entrée": _to_int(payload.get("rows_input")),
+                "Couverture finale": f"{_to_float(payload.get('coverage_ratio_after')) * 100:.1f}%",
+                "Manquants finaux": _to_int(payload.get("rows_missing_after")),
+                "Symboles dégradants": ", ".join(str(symbol) for symbol in missing_after) if missing_after else "—",
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def _resolve_screener_artifact_summary(run_record: dict[str, object]) -> dict[str, object] | None:
