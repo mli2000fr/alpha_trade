@@ -312,6 +312,69 @@ def test_build_compare_to_live_rows_formats_expected_columns() -> None:
     assert "candidates:BBB:missing_live_candidate" in rows.iloc[0]["Divergences clés"]
 
 
+def test_build_execution_broker_like_session_rows_formats_expected_columns() -> None:
+    rows = backtesting._build_execution_broker_like_session_rows(
+        {
+            "sessions": [
+                {
+                    "trade_date": "2025-01-02",
+                    "symbols": ["AAA", "BBB"],
+                    "selected_signals": 2,
+                    "orders_total": 6,
+                    "filled_orders": 2,
+                    "partial_fill_orders": 1,
+                    "retry_orders": 3,
+                    "rejected_orders": 1,
+                    "timed_out_orders": 1,
+                    "working_orders": 2,
+                    "held_orders": 1,
+                    "canceled_orders": 1,
+                    "stale_orders": 0,
+                    "exit_filled_orders": 1,
+                    "trigger_hits": 1,
+                    "partial_fill_events": 1,
+                    "retry_events": 3,
+                    "cancel_events": 1,
+                    "reject_events": 1,
+                    "timeout_events": 1,
+                    "oco_cancels": 1,
+                }
+            ]
+        }
+    )
+
+    assert list(rows.columns) == [
+        "Séance",
+        "Symboles",
+        "Sélections",
+        "Ordres",
+        "Filled",
+        "Partial fills",
+        "Retries",
+        "Rejected",
+        "Timed out",
+        "Working",
+        "Held",
+        "Canceled",
+        "Stale",
+        "Exit fills",
+        "Triggers",
+        "Partial fill events",
+        "Retry events",
+        "Cancel events",
+        "Reject events",
+        "Timeout events",
+        "OCO cancels",
+    ]
+    assert rows.iloc[0]["Séance"] == "2025-01-02"
+    assert rows.iloc[0]["Symboles"] == "AAA, BBB"
+    assert rows.iloc[0]["Partial fills"] == 1
+    assert rows.iloc[0]["Retries"] == 3
+    assert rows.iloc[0]["Rejected"] == 1
+    assert rows.iloc[0]["Timed out"] == 1
+    assert rows.iloc[0]["Held"] == 1
+
+
 def test_build_screener_artifact_objective_rows_formats_expected_columns() -> None:
     rows = backtesting._build_screener_artifact_objective_rows(
         {

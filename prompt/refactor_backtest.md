@@ -466,6 +466,130 @@ Le Sprint 3 est désormais **clos sur son incrément prioritaire de convergence 
 - les écarts `research_only` / `risk_only` sont identifiés, mais pas encore reliés à une hiérarchie métier consolidée de gravité ;
 - la convergence `candidate -> target` est maintenant observable, mais pas encore reliée à une fenêtre `compare-to-live` réelle.
 
+### Clôture Sprint 4 — état réel après cette passe
+Le Sprint 4 est désormais **livré sur un slice broker-like additif et exploitable**, centré sur la lisibilité du lifecycle d’ordre Phase 3 → 7, sans casser les contrats historiques de `report.json`, des CSV déjà produits ni les vues IHM existantes.
+
+#### Livré dans ce Sprint 4
+- ajout d’un **journal canonique broker-like** commun aux phases 3/4/5/7 avec :
+  - `intent_id` parent / enfants ;
+  - `order_group_id` ;
+  - `oco_group_id` ;
+  - `intent_role` ;
+  - `order_status` ;
+  - `broker_state` ;
+  - `state_reason` ;
+  - dates d’activation / terminaison.
+- enrichissement des signaux Phase 3/4/7 avec des champs additifs de lifecycle :
+  - entrée : `entry_intent_id`, `entry_broker_order_id`, `entry_order_status`, `order_group_id`, `oco_group_id` ;
+  - protections : `replay_*_intent_id`, `replay_*_order_status`, `replay_oco_group_id` ;
+  - exit terminal : `replay_exit_intent_id`, `replay_exit_order_status`, `replay_canceled_sibling_intent_ids`.
+- sémantique broker-like explicitée sur les états aujourd’hui réellement simulés :
+  - `filled` ;
+  - `working` ;
+  - `held` ;
+  - `canceled` ;
+  - `stale`.
+- transition watcher enrichie :
+  - `PROTECTION_TRIGGER_HIT` ;
+  - `PROTECTION_TRANSITION_COMPLETED` ;
+  - annulation explicite du `initial_stop` quand le trailing devient actif.
+- clôture terminale enrichie en Phase 7 :
+  - fill explicite de l’ordre enfant qui gagne ;
+  - annulation OCO des frères encore actifs ;
+  - marquage `stale` / `EXPIRED` des protections restées ouvertes en fin de fenêtre.
+- ajout d’artefacts Sprint 4 communs et additifs, réécrits au fil des phases pour refléter l’état le plus riche atteint par le run :
+  - `execution_broker_like_order_lifecycle.csv` ;
+  - `execution_broker_like_events.csv` ;
+  - `execution_broker_like_summary.json`.
+- résumé broker-like injecté aussi dans les détails de fidélité composant `execution` pour rester visible côté `report.json[fidelity]`.
+
+#### Cohérence IHM vérifiée
+- l’IHM backtesting reste **passive et compatible historique** :
+  - aucun artefact racine existant n’est renommé ;
+  - aucune clé racine nouvelle n’est imposée dans `report.json` ;
+  - la nouvelle vue n’apparaît que si `execution_broker_like_summary.json` est présent.
+- ajout d’une vue dédiée `Exécution broker-like enrichie` avec :
+  - compteurs d’ordres `filled / canceled / stale` ;
+  - aperçu par séance ;
+  - consultation du payload brut pour debug exploitation.
+- les runs historiques dépourvus de cet artefact continuent à s’afficher sans rupture.
+
+#### Critères Sprint 4 désormais couverts sur ce slice
+- un lifecycle d’ordre complexe reste **lisible** dans les artefacts ;
+- les transitions watcher / exits / annulations OCO deviennent **attribuables** ;
+- les protections restées ouvertes en fin de fenêtre sont **explicitement marquées `stale`** ;
+- les artefacts sont **cohérents avec l’IHM** et réutilisables par les analyses futures `compare-to-live`.
+
+#### Incrément logique Sprint 4 livré ensuite — `partial fills + retries synthétiques`
+- enrichissement de `phase3_execution_replay` avec une simulation **déterministe et additive** de fills d’entrée multi-tentatives :
+  - premier fill partiel synthétique ;
+  - resoumission synthétique du reliquat ;
+  - complétion finale dans la même séance de replay ;
+  - conservation d’un `filled_qty` final agrégé côté signaux pour rester compatible avec les phases aval.
+- extension du journal broker-like avec colonnes additives :
+  - `attempt_no` ;
+  - `cumulative_filled_qty` ;
+  - `remaining_qty` ;
+  - `synthetic_partial_fill` ;
+  - `synthetic_retry` ;
+  - `retry_reason`.
+- enrichissement des événements broker-like avec comptage explicite des :
+  - `ORDER_PARTIALLY_FILLED` ;
+  - retries synthétiques ;
+  - quantités cumulées / restantes par tentative.
+- enrichissement additif des signaux Phase 3 avec :
+  - `entry_attempt_count` ;
+  - `entry_partial_fill_count` ;
+  - `entry_retry_count`.
+- durcissement Phase 4 pour agréger correctement plusieurs fills d’un même `intent_id` avant de calculer les protections/triggers.
+- cohérence IHM revalidée et enrichie côté `Exécution broker-like enrichie` :
+  - nouveaux compteurs `Partial fills` / `Retries` ;
+  - nouvelles colonnes par séance `Partial fills`, `Retries`, `Partial fill events`, `Retry events` ;
+  - compatibilité préservée pour les anciens payloads ne contenant pas ces clés.
+
+#### Clôture effective du reste du Sprint 4 — `annulations intermédiaires explicites + retry taxonomy reject/timeout/resubmit`
+- enrichissement de la taxonomie broker-like Phase 3 avec une chaîne synthétique plus réaliste pour les entrées volumineuses :
+  - `partial fill` ;
+  - annulation explicite du reliquat (`ORDER_CANCELED`) ;
+  - premier `resubmit` rejeté (`ORDER_REJECTED`) ;
+  - second `resubmit` expiré / timeout (`ORDER_TIMEOUT`) ;
+  - dernier `resubmit` exécuté (`ORDER_FILLED`).
+- conservation du contrat aval existant :
+  - les phases 4/5/7 continuent de consommer les **fills effectivement réussis** ;
+  - la quantité finale reste agrégée dans `signals_df[filled_qty]` ;
+  - aucune rupture sur les artefacts historiques ni sur `report.json`.
+- extension additive du journal `execution_broker_like_order_lifecycle.csv` avec :
+  - `attempt_outcome` ;
+  - `resubmit_of_attempt_no` ;
+  - `resubmit_chain_id` ;
+  - `synthetic_cancel` ;
+  - `synthetic_reject` ;
+  - `synthetic_timeout`.
+- extension additive du flux `execution_broker_like_events.csv` avec la même taxonomie d’issue par tentative.
+- enrichissement additif des signaux Phase 3 avec des compteurs dédiés :
+  - `entry_resubmit_count` ;
+  - `entry_cancel_count` ;
+  - `entry_reject_count` ;
+  - `entry_timeout_count` ;
+  - `entry_retry_chain_id`.
+- résumé broker-like enrichi avec compteurs globaux et par séance pour :
+  - `rejected_orders` ;
+  - `timed_out_orders` ;
+  - `cancel_events` ;
+  - `reject_events` ;
+  - `timeout_events`.
+- cohérence IHM revalidée une nouvelle fois :
+  - ajout passif des métriques `Ordres rejetés` et `Ordres timeout` ;
+  - ajout dans le tableau par séance des colonnes `Rejected`, `Timed out`, `Cancel events`, `Reject events`, `Timeout events` ;
+  - les anciens payloads continuent à s’afficher correctement car toutes les nouvelles clés restent optionnelles.
+
+#### Limites résiduelles après ce Sprint 4
+- la granularité reste encore **synthétique/backtest** et non issue d’observations broker persistées réelles ;
+- la taxonomie `reject -> timeout -> resubmit` est désormais présente, mais elle reste **déterministe et simplifiée** (pas encore de backoff temporel paramétrable, de throttling, ni d’erreurs broker contextualisées) ;
+- les prix de fills multi-tentatives restent volontairement simples dans ce slice et n’essaient pas encore de reproduire une microstructure intraday riche ;
+- les annulations/rejets/timeouts simulés restent centrés sur les **ordres d’entrée** ; les protections enfant Phase 4→7 ne simulent pas encore une taxonomie broker complète du même niveau ;
+- le rapprochement avec le live exploite désormais de meilleures clés de lifecycle, mais la matrice complète `fills/backtest vs fills/live` multi-tentatives reste encore à approfondir.
+
 ### Clôture Sprint 5 — état réel après cette passe
 Le Sprint 5 est maintenant **livré sur un slice étendu et directement exploitable dans l'IHM**, avec un matching live plus robuste par `risk_run_id` / `exec_run_id` quand ces identifiants sont disponibles.
 
@@ -529,7 +653,7 @@ Le Sprint 5 est maintenant **livré sur un slice étendu et directement exploita
 ### Prochaines actions à lancer sans attendre
 1. Pondérer le score global par gravité métier / impact exécution pour éviter un score trop purement structurel.
 2. Ajouter une vue IHM plus analytique (drill-down par composant puis symbole) si l’usage opérateur le justifie.
-3. Étendre si nécessaire le compare-to-live aux cas broker plus complexes (partial fills multiples, retries, reconciliations manuelles, positions adoptées).
+3. Étendre le lifecycle broker-like aux cas plus complexes encore ouverts (annulations intermédiaires explicites, rejects/timeouts/retries plus réalistes, reconciliations manuelles, positions adoptées).
 4. Préparer ensuite les baselines de non-régression fidélité du Sprint 6 sur quelques fenêtres live de référence.
 
 ---

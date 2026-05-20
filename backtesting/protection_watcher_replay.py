@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
+from backtesting.execution_broker_like import (
+    concat_broker_event_frames,
+    ensure_broker_event_frame,
+    ensure_order_lifecycle_frame,
+    save_execution_broker_like_artifacts,
+)
 from backtesting.execution_lifecycle_replay import ProtectionReplayResult
-from execution_engine.models import EventType
+from execution_engine.models import EventType, IntentRole, OrderStatus
 
 
 @dataclass(slots=True)
@@ -17,6 +23,8 @@ class ProtectionWatcherReplayResult:
     lifecycle_frame: pd.DataFrame
     event_frame: pd.DataFrame
     diagnostics: dict[str, object]
+    order_lifecycle_frame: pd.DataFrame = field(default_factory=pd.DataFrame)
+    broker_event_frame: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def _find_trigger_date(
@@ -56,6 +64,11 @@ def build_phase5_watcher_replay(
     trading_days = pd.DatetimeIndex(high_df.index)
     lifecycle_rows: list[dict[str, object]] = []
     event_rows: list[dict[str, object]] = []
+    broker_event_rows: list[dict[str, object]] = []
+    order_lifecycle_frame = ensure_order_lifecycle_frame(protection_replay_result.order_lifecycle_frame).copy()
+    for timestamp_column in ("active_from", "terminal_event_date"):
+        if timestamp_column in order_lifecycle_frame.columns:
+            order_lifecycle_frame[timestamp_column] = order_lifecycle_frame[timestamp_column].astype(object)
 
     for row in protection_replay_result.signals_df.to_dict("records"):
         symbol = str(row.get("symbol") or "")
@@ -66,6 +79,10 @@ def build_phase5_watcher_replay(
         trigger_price_raw = row.get("replay_trailing_activation_price")
         trigger_mode_raw = row.get("replay_trailing_activation_mode")
         trailing_stop_pct_raw = row.get("replay_trailing_stop_pct")
+        initial_stop_intent_id = str(row.get("replay_initial_stop_intent_id") or "").strip()
+        trailing_stop_intent_id = str(row.get("replay_trailing_stop_intent_id") or "").strip()
+        order_group_id = str(row.get("order_group_id") or "").strip() or None
+        oco_group_id = str(row.get("replay_oco_group_id") or row.get("oco_group_id") or "").strip() or None
 
         watcher_state = "not_applicable"
         trigger_date = None
@@ -107,6 +124,53 @@ def build_phase5_watcher_replay(
                     )
                 else:
                     watcher_state = "transitioned"
+                    if initial_stop_intent_id and not order_lifecycle_frame.empty and "intent_id" in order_lifecycle_frame.columns:
+                        initial_stop_mask = order_lifecycle_frame["intent_id"].astype(str) == initial_stop_intent_id
+                        order_lifecycle_frame.loc[initial_stop_mask, [
+                            "lifecycle_phase",
+                            "broker_state",
+                            "order_status",
+                            "state_reason",
+                            "terminal_event_date",
+                        ]] = [
+                            "phase5_watcher_replay",
+                            "canceled",
+                            OrderStatus.CANCELED,
+                            "replaced_by_trailing_stop",
+                            effective_date,
+                        ]
+                        if bool(initial_stop_mask.any()):
+                            broker_event_rows.append(
+                                {
+                                    "trade_date": pd.Timestamp(row.get("trade_date")) if row.get("trade_date") is not None and pd.notna(row.get("trade_date")) else None,
+                                    "execution_date": execution_date,
+                                    "symbol": symbol,
+                                    "event_date": effective_date,
+                                    "event_type": EventType.ORDER_CANCELED,
+                                    "intent_id": initial_stop_intent_id,
+                                    "parent_intent_id": order_group_id,
+                                    "order_group_id": order_group_id,
+                                    "oco_group_id": oco_group_id,
+                                    "intent_role": IntentRole.INITIAL_STOP,
+                                    "order_status": OrderStatus.CANCELED,
+                                    "message": f"Stop initial remplacé par trailing sur {symbol}",
+                                }
+                            )
+                    if trailing_stop_intent_id and not order_lifecycle_frame.empty and "intent_id" in order_lifecycle_frame.columns:
+                        trailing_stop_mask = order_lifecycle_frame["intent_id"].astype(str) == trailing_stop_intent_id
+                        order_lifecycle_frame.loc[trailing_stop_mask, [
+                            "lifecycle_phase",
+                            "broker_state",
+                            "order_status",
+                            "state_reason",
+                            "active_from",
+                        ]] = [
+                            "phase5_watcher_replay",
+                            "working",
+                            OrderStatus.SUBMITTED,
+                            "activated_after_watcher_trigger",
+                            effective_date,
+                        ]
                     event_rows.append(
                         {
                             "symbol": symbol,
@@ -143,6 +207,11 @@ def build_phase5_watcher_replay(
         )
 
     state_series = lifecycle_frame["watcher_transition_state"] if "watcher_transition_state" in lifecycle_frame.columns else pd.Series(dtype=str)
+    broker_event_frame = concat_broker_event_frames(
+        ensure_broker_event_frame(protection_replay_result.broker_event_frame),
+        ensure_broker_event_frame(pd.DataFrame(event_rows)),
+        ensure_broker_event_frame(pd.DataFrame(broker_event_rows)),
+    )
 
     diagnostics = {
         "signals_input": len(protection_replay_result.signals_df),
@@ -152,6 +221,8 @@ def build_phase5_watcher_replay(
         "transitioned_items": int((state_series == "transitioned").sum()) if not lifecycle_frame.empty else 0,
         "failed_items": int((state_series == "failed").sum()) if not lifecycle_frame.empty else 0,
         "events_generated": len(event_frame),
+        "canceled_initial_stop_orders": int((order_lifecycle_frame["state_reason"] == "replaced_by_trailing_stop").sum()) if not order_lifecycle_frame.empty else 0,
+        "activated_trailing_orders": int((order_lifecycle_frame["state_reason"] == "activated_after_watcher_trigger").sum()) if not order_lifecycle_frame.empty else 0,
         "bridge": "execution_engine.protection_watcher+watcher_replay",
     }
     return ProtectionWatcherReplayResult(
@@ -159,6 +230,8 @@ def build_phase5_watcher_replay(
         lifecycle_frame=lifecycle_frame,
         event_frame=event_frame,
         diagnostics=diagnostics,
+        order_lifecycle_frame=order_lifecycle_frame,
+        broker_event_frame=broker_event_frame,
     )
 
 
@@ -184,5 +257,19 @@ def save_phase5_watcher_replay_artifacts(result: ProtectionWatcherReplayResult, 
         encoding="utf-8",
     )
     artifact_paths["phase5_watcher_replay_summary_json"] = str(summary_json)
+    artifact_paths.update(
+        save_execution_broker_like_artifacts(
+            signals_df=result.signals_df,
+            order_lifecycle_frame=result.order_lifecycle_frame,
+            broker_event_frame=result.broker_event_frame,
+            output_dir=output_dir,
+            phase_modes={
+                "phase3_mode": "execution_replay",
+                "phase4_mode": "protection_replay",
+                "phase5_mode": "watcher_replay",
+            },
+            diagnostics={"phase5_watcher_replay": result.diagnostics},
+        )
+    )
     return artifact_paths
 

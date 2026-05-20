@@ -379,6 +379,7 @@ def test_simulate_phase2_execution_generates_targets_intents_and_fills() -> None
 def test_simulate_phase3_execution_replay_generates_replay_signals() -> None:
     from backtesting.execution_replay import simulate_phase3_execution_replay
     from execution_engine.config import ExecutionConfig
+    from execution_engine.models import EventType, IntentRole, OrderStatus
     from risk_management.models import PortfolioEntry
 
     open_df = pd.DataFrame(
@@ -446,12 +447,50 @@ def test_simulate_phase3_execution_replay_generates_replay_signals() -> None:
     assert int(signal["selector_earnings_blackout"]) == 1
     assert float(signal["filled_qty"]) == 40.0
     assert float(signal["fill_price"]) == 105.0
+    assert signal["entry_order_status"] == OrderStatus.FILLED
+    assert int(signal["entry_attempt_count"]) == 4
+    assert int(signal["entry_partial_fill_count"]) == 1
+    assert int(signal["entry_retry_count"]) == 3
+    assert int(signal["entry_resubmit_count"]) == 3
+    assert int(signal["entry_cancel_count"]) == 1
+    assert int(signal["entry_reject_count"]) == 1
+    assert int(signal["entry_timeout_count"]) == 1
+    assert pd.notna(signal["entry_retry_chain_id"])
+    assert result.execution_result.diagnostics["fills"] == 2
+    assert result.diagnostics["broker_like_orders"] == 7
+    assert result.diagnostics["partial_fill_orders"] == 1
+    assert result.diagnostics["retry_orders"] == 3
+    assert result.diagnostics["canceled_orders"] == 1
+    assert result.diagnostics["rejected_orders"] == 1
+    assert result.diagnostics["timed_out_orders"] == 1
+    assert result.diagnostics["held_orders"] == 1
+    assert set(result.order_lifecycle_frame["intent_role"]) == {
+        IntentRole.ENTRY,
+        IntentRole.TAKE_PROFIT,
+        IntentRole.TRAILING_STOP,
+        IntentRole.INITIAL_STOP,
+    }
+    entry_rows = result.order_lifecycle_frame[result.order_lifecycle_frame["intent_role"] == IntentRole.ENTRY].sort_values("attempt_no")
+    assert len(entry_rows) == 4
+    assert list(entry_rows["order_status"]) == [OrderStatus.CANCELED, OrderStatus.REJECTED, OrderStatus.EXPIRED, OrderStatus.FILLED]
+    assert list(entry_rows["synthetic_retry"].astype(bool)) == [False, True, True, True]
+    assert list(entry_rows["remaining_qty"]) == [16.0, 16.0, 16.0, 0.0]
+    assert list(entry_rows["attempt_outcome"]) == ["partial_fill_canceled", "rejected", "timed_out", "filled_after_resubmit"]
+    assert list(entry_rows["resubmit_of_attempt_no"].fillna(0).astype(int)) == [0, 1, 2, 3]
+    trailing_row = result.order_lifecycle_frame[result.order_lifecycle_frame["intent_role"] == IntentRole.TRAILING_STOP].iloc[0]
+    assert trailing_row["order_status"] == OrderStatus.HELD
+    assert trailing_row["broker_state"] == "held"
+    assert EventType.ORDER_PARTIALLY_FILLED in set(result.event_frame["event_type"])
+    assert EventType.ORDER_CANCELED in set(result.event_frame["event_type"])
+    assert EventType.ORDER_REJECTED in set(result.event_frame["event_type"])
+    assert EventType.ORDER_TIMEOUT in set(result.event_frame["event_type"])
 
 
 def test_build_phase4_protection_replay_enriches_signals_with_child_protections() -> None:
     from backtesting.execution_lifecycle_replay import build_phase4_protection_replay
     from backtesting.execution_replay import simulate_phase3_execution_replay
     from execution_engine.config import ExecutionConfig
+    from execution_engine.models import OrderStatus
     from risk_management.models import PortfolioEntry
 
     execution_config = ExecutionConfig(
@@ -513,6 +552,9 @@ def test_build_phase4_protection_replay_enriches_signals_with_child_protections(
     assert float(enriched_signal["replay_initial_stop_price"]) < float(enriched_signal["fill_price"])
     assert float(enriched_signal["replay_trailing_stop_pct"]) == pytest.approx(0.0476, rel=1e-2)
     assert float(enriched_signal["replay_trailing_activation_price"]) > float(enriched_signal["fill_price"])
+    assert enriched_signal["replay_trailing_stop_order_status"] == OrderStatus.HELD
+    assert pd.notna(enriched_signal["replay_take_profit_intent_id"])
+    assert pd.notna(enriched_signal["replay_oco_group_id"])
 
 
 def test_build_phase5_watcher_replay_generates_lifecycle_and_events() -> None:
@@ -520,7 +562,7 @@ def test_build_phase5_watcher_replay_generates_lifecycle_and_events() -> None:
     from backtesting.execution_replay import simulate_phase3_execution_replay
     from backtesting.protection_watcher_replay import build_phase5_watcher_replay
     from execution_engine.config import ExecutionConfig
-    from execution_engine.models import EventType
+    from execution_engine.models import EventType, IntentRole, OrderStatus
     from risk_management.models import PortfolioEntry
 
     execution_config = ExecutionConfig(
@@ -588,12 +630,22 @@ def test_build_phase5_watcher_replay_generates_lifecycle_and_events() -> None:
     assert lifecycle["watcher_transition_state"] == "transitioned"
     assert lifecycle["watcher_trigger_date"] == pd.Timestamp("2025-01-03")
     assert lifecycle["watcher_transition_effective_date"] == pd.Timestamp("2025-01-06")
+    trailing_row = watcher_result.order_lifecycle_frame[
+        watcher_result.order_lifecycle_frame["intent_role"] == IntentRole.TRAILING_STOP
+    ].iloc[0]
+    assert trailing_row["order_status"] == OrderStatus.SUBMITTED
+    assert trailing_row["broker_state"] == "working"
+    initial_stop_row = watcher_result.order_lifecycle_frame[
+        watcher_result.order_lifecycle_frame["intent_role"] == IntentRole.INITIAL_STOP
+    ].iloc[0]
+    assert initial_stop_row["order_status"] == OrderStatus.CANCELED
+    assert watcher_result.diagnostics["canceled_initial_stop_orders"] == 1
 
 
 def test_build_phase7_exit_lifecycle_replay_generates_terminal_exit_and_oco_cancel() -> None:
     from backtesting.exit_lifecycle_replay import build_phase7_exit_lifecycle_replay
     from backtesting.protection_watcher_replay import ProtectionWatcherReplayResult
-    from execution_engine.models import EventType
+    from execution_engine.models import EventType, OrderStatus
 
     trading_index = pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"])
     signals_df = pd.DataFrame(
@@ -606,6 +658,11 @@ def test_build_phase7_exit_lifecycle_replay_generates_terminal_exit_and_oco_canc
             "replay_take_profit_price": [150.0],
             "replay_initial_stop_price": [90.0],
             "replay_trailing_stop_pct": [0.05],
+            "order_group_id": ["entry_001"],
+            "replay_oco_group_id": ["oco_entry_001"],
+            "replay_take_profit_intent_id": ["tp_001"],
+            "replay_initial_stop_intent_id": ["stop_001"],
+            "replay_trailing_stop_intent_id": ["trail_001"],
             "watcher_transition_effective_date": pd.to_datetime(["2025-01-03"]),
         }
     )
@@ -614,6 +671,21 @@ def test_build_phase7_exit_lifecycle_replay_generates_terminal_exit_and_oco_canc
         lifecycle_frame=pd.DataFrame(),
         event_frame=pd.DataFrame(),
         diagnostics={"bridge": "execution_engine.protection_watcher+watcher_replay"},
+        order_lifecycle_frame=pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01", "2025-01-01", "2025-01-01"]),
+                "execution_date": pd.to_datetime(["2025-01-02", "2025-01-02", "2025-01-02", "2025-01-02"]),
+                "symbol": ["AAPL", "AAPL", "AAPL", "AAPL"],
+                "order_group_id": ["entry_001", "entry_001", "entry_001", "entry_001"],
+                "oco_group_id": ["oco_entry_001", "oco_entry_001", "oco_entry_001", "oco_entry_001"],
+                "intent_id": ["entry_001", "tp_001", "stop_001", "trail_001"],
+                "parent_intent_id": [None, "entry_001", "entry_001", "entry_001"],
+                "intent_role": ["entry", "take_profit", "initial_stop", "trailing_stop"],
+                "order_status": ["FILLED", "SUBMITTED", "CANCELED", "SUBMITTED"],
+                "broker_state": ["filled", "working", "canceled", "working"],
+            }
+        ),
+        broker_event_frame=pd.DataFrame(),
     )
     high_df = pd.DataFrame({"AAPL": [106.0, 107.0, 101.0]}, index=trading_index)
     low_df = pd.DataFrame({"AAPL": [99.0, 100.0, 99.0]}, index=trading_index)
@@ -633,11 +705,75 @@ def test_build_phase7_exit_lifecycle_replay_generates_terminal_exit_and_oco_canc
     assert exit_row["replay_exit_date"] == pd.Timestamp("2025-01-03")
     assert exit_row["replay_exit_reason"] == "trailing_stop"
     assert exit_row["replay_exit_intent_role"] == "trailing_stop"
+    assert exit_row["replay_exit_intent_id"] == "trail_001"
+    assert exit_row["replay_exit_order_status"] == OrderStatus.FILLED
     assert bool(exit_row["replay_oco_sibling_canceled"]) is True
     assert EventType.OCO_CANCEL_TRIGGERED in set(result.event_frame["event_type"])
     enriched_signal = result.signals_df.iloc[0]
     assert enriched_signal["replay_exit_reason"] == "trailing_stop"
     assert bool(enriched_signal["replay_oco_sibling_canceled"]) is True
+    trailing_row = result.order_lifecycle_frame[result.order_lifecycle_frame["intent_id"] == "trail_001"].iloc[0]
+    assert trailing_row["order_status"] == OrderStatus.FILLED
+    take_profit_row = result.order_lifecycle_frame[result.order_lifecycle_frame["intent_id"] == "tp_001"].iloc[0]
+    assert take_profit_row["order_status"] == OrderStatus.CANCELED
+    assert result.diagnostics["canceled_orders"] >= 1
+
+
+def test_build_phase7_exit_lifecycle_replay_marks_open_children_as_stale_when_no_exit_occurs() -> None:
+    from backtesting.exit_lifecycle_replay import build_phase7_exit_lifecycle_replay
+    from backtesting.protection_watcher_replay import ProtectionWatcherReplayResult
+    from execution_engine.models import OrderStatus
+
+    trading_index = pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"])
+    signals_df = pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2025-01-01"]),
+            "execution_date": pd.to_datetime(["2025-01-02"]),
+            "symbol": ["AAPL"],
+            "selected": [True],
+            "fill_price": [100.0],
+            "replay_take_profit_price": [150.0],
+            "replay_initial_stop_price": [90.0],
+            "replay_trailing_stop_pct": [0.05],
+            "replay_take_profit_intent_id": ["tp_002"],
+            "replay_initial_stop_intent_id": ["stop_002"],
+            "replay_trailing_stop_intent_id": ["trail_002"],
+        }
+    )
+    watcher_result = ProtectionWatcherReplayResult(
+        signals_df=signals_df,
+        lifecycle_frame=pd.DataFrame(),
+        event_frame=pd.DataFrame(),
+        diagnostics={"bridge": "execution_engine.protection_watcher+watcher_replay"},
+        order_lifecycle_frame=pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01", "2025-01-01"]),
+                "execution_date": pd.to_datetime(["2025-01-02", "2025-01-02", "2025-01-02"]),
+                "symbol": ["AAPL", "AAPL", "AAPL"],
+                "order_group_id": ["entry_002", "entry_002", "entry_002"],
+                "oco_group_id": ["oco_entry_002", "oco_entry_002", "oco_entry_002"],
+                "intent_id": ["tp_002", "stop_002", "trail_002"],
+                "parent_intent_id": ["entry_002", "entry_002", "entry_002"],
+                "intent_role": ["take_profit", "initial_stop", "trailing_stop"],
+                "order_status": ["SUBMITTED", "SUBMITTED", "HELD"],
+                "broker_state": ["working", "working", "held"],
+            }
+        ),
+        broker_event_frame=pd.DataFrame(),
+    )
+    high_df = pd.DataFrame({"AAPL": [101.0, 102.0, 103.0]}, index=trading_index)
+    low_df = pd.DataFrame({"AAPL": [99.0, 98.0, 97.0]}, index=trading_index)
+
+    result = build_phase7_exit_lifecycle_replay(
+        watcher_result,
+        high_df=high_df,
+        low_df=low_df,
+    )
+
+    assert result.exit_frame.empty
+    assert result.diagnostics["stale_orders"] == 3
+    assert set(result.order_lifecycle_frame["order_status"]) == {OrderStatus.EXPIRED}
+    assert set(result.order_lifecycle_frame["broker_state"]) == {"stale"}
 
 
 def test_save_phase7_exit_lifecycle_replay_artifacts_writes_expected_files(tmp_path) -> None:
@@ -648,6 +784,8 @@ def test_save_phase7_exit_lifecycle_replay_artifacts_writes_expected_files(tmp_p
         exit_frame=pd.DataFrame({"symbol": ["AAPL"], "replay_exit_reason": ["take_profit"]}),
         event_frame=pd.DataFrame({"symbol": ["AAPL"], "event_type": ["EXIT_FILLED_TAKE_PROFIT"]}),
         diagnostics={"exit_rows": 1, "events_generated": 1, "bridge": "execution_engine.oco_manager+exit_lifecycle_replay"},
+        order_lifecycle_frame=pd.DataFrame({"symbol": ["AAPL"], "order_status": ["FILLED"]}),
+        broker_event_frame=pd.DataFrame({"symbol": ["AAPL"], "event_type": ["ORDER_FILLED"]}),
     )
 
     artifact_paths = save_phase7_exit_lifecycle_replay_artifacts(result, tmp_path)
@@ -657,6 +795,9 @@ def test_save_phase7_exit_lifecycle_replay_artifacts_writes_expected_files(tmp_p
         "phase7_exit_lifecycle_replay_events_csv",
         "phase7_exit_lifecycle_replay_signals_csv",
         "phase7_exit_lifecycle_replay_summary_json",
+        "execution_broker_like_order_lifecycle_csv",
+        "execution_broker_like_events_csv",
+        "execution_broker_like_summary_json",
     }
     for path in artifact_paths.values():
         assert pd.notna(path)

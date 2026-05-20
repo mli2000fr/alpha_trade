@@ -3,15 +3,21 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, time, timezone
 from pathlib import Path
 
 import pandas as pd
 
+from backtesting.execution_broker_like import (
+    concat_broker_event_frames,
+    ensure_broker_event_frame,
+    ensure_order_lifecycle_frame,
+    save_execution_broker_like_artifacts,
+)
 from backtesting.execution_bridge import ExecutionBridgeResult, save_phase2_execution_artifacts
 from execution_engine.config import ExecutionConfig
-from execution_engine.models import ExecutionFill, ExecutionTarget, OrderIntent
+from execution_engine.models import EventType, ExecutionFill, ExecutionTarget, IntentRole, OrderIntent, OrderStatus
 from execution_engine.order_intents import (
     build_entry_intents,
     build_initial_stop_intent,
@@ -31,6 +37,33 @@ class ExecutionReplayResult:
     execution_result: ExecutionBridgeResult
     signals_df: pd.DataFrame
     diagnostics: dict[str, object]
+    order_lifecycle_frame: pd.DataFrame = field(default_factory=pd.DataFrame)
+    event_frame: pd.DataFrame = field(default_factory=pd.DataFrame)
+
+
+@dataclass(frozen=True, slots=True)
+class _SyntheticFillAttempt:
+    attempt_no: int
+    broker_order_id: str
+    requested_qty: float
+    filled_qty: float
+    cumulative_filled_qty: float
+    remaining_qty: float
+    submitted_at: datetime
+    terminal_event_at: datetime
+    order_status: str
+    broker_state: str
+    state_reason: str
+    attempt_outcome: str = "filled"
+    synthetic_partial_fill: bool = False
+    synthetic_retry: bool = False
+    synthetic_cancel: bool = False
+    synthetic_reject: bool = False
+    synthetic_timeout: bool = False
+    partial_fill_event_at: datetime | None = None
+    resubmit_of_attempt_no: int | None = None
+    resubmit_chain_id: str | None = None
+    retry_reason: str | None = None
 
 
 def _resolve_execution_day(snapshot_date: datetime | pd.Timestamp | object, trading_days: pd.DatetimeIndex) -> pd.Timestamp | None:
@@ -78,6 +111,233 @@ def _entry_to_target(
     )
 
 
+def _build_synthetic_fill_attempts(*, execution_day: pd.Timestamp, target_qty: float) -> list[_SyntheticFillAttempt]:
+    base_dt = execution_day.date()
+    submitted_at = datetime.combine(base_dt, time(14, 30), tzinfo=timezone.utc)
+    first_fill_at = datetime.combine(base_dt, time(14, 35), tzinfo=timezone.utc)
+    first_cancel_at = datetime.combine(base_dt, time(14, 36), tzinfo=timezone.utc)
+    retry_submitted_at = datetime.combine(base_dt, time(14, 40), tzinfo=timezone.utc)
+    retry_reject_at = datetime.combine(base_dt, time(14, 41), tzinfo=timezone.utc)
+    timeout_submitted_at = datetime.combine(base_dt, time(14, 43), tzinfo=timezone.utc)
+    timeout_at = datetime.combine(base_dt, time(14, 44), tzinfo=timezone.utc)
+    final_retry_submitted_at = datetime.combine(base_dt, time(14, 45), tzinfo=timezone.utc)
+    retry_fill_at = datetime.combine(base_dt, time(14, 46), tzinfo=timezone.utc)
+    normalized_target_qty = max(float(target_qty), 0.0)
+    resubmit_chain_id = f"retry_chain_{uuid.uuid4().hex[:10]}"
+    if normalized_target_qty <= 1.0:
+        return [
+            _SyntheticFillAttempt(
+                attempt_no=1,
+                broker_order_id=f"sim_{uuid.uuid4().hex[:12]}",
+                requested_qty=normalized_target_qty,
+                filled_qty=normalized_target_qty,
+                cumulative_filled_qty=normalized_target_qty,
+                remaining_qty=0.0,
+                submitted_at=submitted_at,
+                terminal_event_at=first_fill_at,
+                order_status=OrderStatus.FILLED,
+                broker_state="filled",
+                state_reason="entry_filled_next_session_open",
+                attempt_outcome="filled",
+            )
+        ]
+
+    first_fill_qty = float(int(normalized_target_qty * 0.6))
+    first_fill_qty = max(1.0, first_fill_qty)
+    if first_fill_qty >= normalized_target_qty:
+        first_fill_qty = max(1.0, normalized_target_qty - 1.0)
+    remaining_qty = max(normalized_target_qty - first_fill_qty, 0.0)
+    if remaining_qty <= 0.0:
+        return [
+            _SyntheticFillAttempt(
+                attempt_no=1,
+                broker_order_id=f"sim_{uuid.uuid4().hex[:12]}",
+                requested_qty=normalized_target_qty,
+                filled_qty=normalized_target_qty,
+                cumulative_filled_qty=normalized_target_qty,
+                remaining_qty=0.0,
+                submitted_at=submitted_at,
+                terminal_event_at=first_fill_at,
+                order_status=OrderStatus.FILLED,
+                broker_state="filled",
+                state_reason="entry_filled_next_session_open",
+                attempt_outcome="filled",
+            )
+        ]
+
+    if normalized_target_qty < 20.0:
+        return [
+            _SyntheticFillAttempt(
+                attempt_no=1,
+                broker_order_id=f"sim_{uuid.uuid4().hex[:12]}",
+                requested_qty=normalized_target_qty,
+                filled_qty=first_fill_qty,
+                cumulative_filled_qty=first_fill_qty,
+                remaining_qty=remaining_qty,
+                submitted_at=submitted_at,
+                terminal_event_at=first_cancel_at,
+                order_status=OrderStatus.CANCELED,
+                broker_state="canceled",
+                state_reason="partial_fill_canceled_for_resubmit",
+                attempt_outcome="partial_fill_canceled",
+                synthetic_partial_fill=True,
+                synthetic_cancel=True,
+                partial_fill_event_at=first_fill_at,
+                resubmit_chain_id=resubmit_chain_id,
+                retry_reason="resubmit_after_partial_cancel",
+            ),
+            _SyntheticFillAttempt(
+                attempt_no=2,
+                broker_order_id=f"sim_{uuid.uuid4().hex[:12]}",
+                requested_qty=remaining_qty,
+                filled_qty=remaining_qty,
+                cumulative_filled_qty=normalized_target_qty,
+                remaining_qty=0.0,
+                submitted_at=retry_submitted_at,
+                terminal_event_at=retry_fill_at,
+                order_status=OrderStatus.FILLED,
+                broker_state="filled",
+                state_reason="retry_filled_after_partial_cancel",
+                attempt_outcome="filled_after_resubmit",
+                synthetic_retry=True,
+                resubmit_of_attempt_no=1,
+                resubmit_chain_id=resubmit_chain_id,
+                retry_reason="resubmit_after_partial_cancel",
+            ),
+        ]
+
+    return [
+        _SyntheticFillAttempt(
+            attempt_no=1,
+            broker_order_id=f"sim_{uuid.uuid4().hex[:12]}",
+            requested_qty=normalized_target_qty,
+            filled_qty=first_fill_qty,
+            cumulative_filled_qty=first_fill_qty,
+            remaining_qty=remaining_qty,
+            submitted_at=submitted_at,
+            terminal_event_at=first_cancel_at,
+            order_status=OrderStatus.CANCELED,
+            broker_state="canceled",
+            state_reason="partial_fill_canceled_for_resubmit",
+            attempt_outcome="partial_fill_canceled",
+            synthetic_partial_fill=True,
+            synthetic_cancel=True,
+            partial_fill_event_at=first_fill_at,
+            resubmit_chain_id=resubmit_chain_id,
+            retry_reason="resubmit_after_partial_cancel",
+        ),
+        _SyntheticFillAttempt(
+            attempt_no=2,
+            broker_order_id=f"sim_{uuid.uuid4().hex[:12]}",
+            requested_qty=remaining_qty,
+            filled_qty=0.0,
+            cumulative_filled_qty=first_fill_qty,
+            remaining_qty=remaining_qty,
+            submitted_at=retry_submitted_at,
+            terminal_event_at=retry_reject_at,
+            order_status=OrderStatus.REJECTED,
+            broker_state="rejected",
+            state_reason="resubmit_rejected_before_fill",
+            attempt_outcome="rejected",
+            synthetic_retry=True,
+            synthetic_reject=True,
+            resubmit_of_attempt_no=1,
+            resubmit_chain_id=resubmit_chain_id,
+            retry_reason="resubmit_after_partial_cancel",
+        ),
+        _SyntheticFillAttempt(
+            attempt_no=3,
+            broker_order_id=f"sim_{uuid.uuid4().hex[:12]}",
+            requested_qty=remaining_qty,
+            filled_qty=0.0,
+            cumulative_filled_qty=first_fill_qty,
+            remaining_qty=remaining_qty,
+            submitted_at=timeout_submitted_at,
+            terminal_event_at=timeout_at,
+            order_status=OrderStatus.EXPIRED,
+            broker_state="timed_out",
+            state_reason="resubmit_timed_out_before_fill",
+            attempt_outcome="timed_out",
+            synthetic_retry=True,
+            synthetic_timeout=True,
+            resubmit_of_attempt_no=2,
+            resubmit_chain_id=resubmit_chain_id,
+            retry_reason="resubmit_after_reject",
+        ),
+        _SyntheticFillAttempt(
+            attempt_no=4,
+            broker_order_id=f"sim_{uuid.uuid4().hex[:12]}",
+            requested_qty=remaining_qty,
+            filled_qty=remaining_qty,
+            cumulative_filled_qty=normalized_target_qty,
+            remaining_qty=0.0,
+            submitted_at=final_retry_submitted_at,
+            terminal_event_at=retry_fill_at,
+            order_status=OrderStatus.FILLED,
+            broker_state="filled",
+            state_reason="retry_filled_after_timeout",
+            attempt_outcome="filled_after_resubmit",
+            synthetic_retry=True,
+            resubmit_of_attempt_no=3,
+            resubmit_chain_id=resubmit_chain_id,
+            retry_reason="resubmit_after_timeout",
+        ),
+    ]
+
+
+def _execution_fills_from_attempts(
+    *,
+    intent: OrderIntent,
+    symbol: str,
+    fill_price: float,
+    attempt_plan: list[_SyntheticFillAttempt],
+) -> list[ExecutionFill]:
+    fills: list[ExecutionFill] = []
+    for attempt in attempt_plan:
+        fill_timestamp = attempt.partial_fill_event_at or (
+            attempt.terminal_event_at if attempt.order_status == OrderStatus.FILLED and attempt.filled_qty > 0 else None
+        )
+        if fill_timestamp is None or attempt.filled_qty <= 0:
+            continue
+        fills.append(
+            ExecutionFill(
+                fill_id=f"fill_{uuid.uuid4().hex[:12]}",
+                broker_order_id=attempt.broker_order_id,
+                intent_id=intent.intent_id,
+                symbol=symbol,
+                filled_qty=float(attempt.filled_qty),
+                avg_fill_price=fill_price,
+                fill_timestamp=fill_timestamp,
+                decision_price=float(intent.decision_price),
+                slippage_bps=compute_slippage_bps(fill_price, float(intent.decision_price)),
+                implementation_shortfall=compute_implementation_shortfall(
+                    fill_price,
+                    float(intent.decision_price),
+                    float(attempt.filled_qty),
+                ),
+            )
+        )
+    return fills
+
+
+def _weighted_average_fill_price(fills: list[ExecutionFill]) -> float:
+    total_qty = float(sum(float(fill.filled_qty) for fill in fills))
+    if total_qty <= 0.0:
+        return 0.0
+    weighted_total = sum(float(fill.avg_fill_price) * float(fill.filled_qty) for fill in fills)
+    return float(weighted_total / total_qty)
+
+
+def _event_type_for_attempt_terminal_state(attempt: _SyntheticFillAttempt) -> str:
+    if attempt.synthetic_cancel:
+        return EventType.ORDER_CANCELED
+    if attempt.synthetic_reject:
+        return EventType.ORDER_REJECTED
+    if attempt.synthetic_timeout:
+        return EventType.ORDER_TIMEOUT
+    return EventType.ORDER_FILLED
+
+
 def simulate_phase3_execution_replay(
     entries: list[PortfolioEntry],
     *,
@@ -94,6 +354,8 @@ def simulate_phase3_execution_replay(
     child_intents: list[OrderIntent] = []
     fills: list[ExecutionFill] = []
     replay_rows: list[dict[str, object]] = []
+    order_lifecycle_rows: list[dict[str, object]] = []
+    event_rows: list[dict[str, object]] = []
 
     skipped_missing_snapshot = 0
     skipped_no_next_session = 0
@@ -144,29 +406,298 @@ def simulate_phase3_execution_replay(
             entry_price=fill_price,
         )
         intent = build_entry_intents([target], execution_config, effective_exec_run_id)[0]
-        fill_qty = float(target.target_shares)
-        fill_timestamp = datetime.combine(execution_day.date(), time(14, 30), tzinfo=timezone.utc)
-        fill = ExecutionFill(
-            fill_id=f"fill_{uuid.uuid4().hex[:12]}",
-            broker_order_id=f"sim_{uuid.uuid4().hex[:12]}",
-            intent_id=intent.intent_id,
-            symbol=target.symbol,
-            filled_qty=fill_qty,
-            avg_fill_price=fill_price,
-            fill_timestamp=fill_timestamp,
-            decision_price=float(intent.decision_price),
-            slippage_bps=compute_slippage_bps(fill_price, float(intent.decision_price)),
-            implementation_shortfall=compute_implementation_shortfall(fill_price, float(intent.decision_price), fill_qty),
+        attempt_plan = _build_synthetic_fill_attempts(
+            execution_day=execution_day,
+            target_qty=float(target.target_shares),
         )
+        intent_fills = _execution_fills_from_attempts(
+            intent=intent,
+            symbol=target.symbol,
+            fill_price=fill_price,
+            attempt_plan=attempt_plan,
+        )
+        fill_qty = float(sum(float(fill.filled_qty) for fill in intent_fills))
+        average_fill_price = _weighted_average_fill_price(intent_fills) if intent_fills else float(fill_price)
+        final_fill_timestamp = max((fill.fill_timestamp for fill in intent_fills), default=attempt_plan[-1].terminal_event_at)
+        final_broker_order_id = attempt_plan[-1].broker_order_id
+        partial_fill_count = sum(1 for attempt in attempt_plan if attempt.synthetic_partial_fill)
+        retry_count = sum(1 for attempt in attempt_plan if attempt.synthetic_retry)
+        cancel_count = sum(1 for attempt in attempt_plan if attempt.synthetic_cancel)
+        reject_count = sum(1 for attempt in attempt_plan if attempt.synthetic_reject)
+        timeout_count = sum(1 for attempt in attempt_plan if attempt.synthetic_timeout)
+        resubmit_count = sum(1 for attempt in attempt_plan if attempt.resubmit_of_attempt_no is not None)
+        retry_chain_id = next((attempt.resubmit_chain_id for attempt in attempt_plan if attempt.resubmit_chain_id), None)
 
         targets.append(target)
         entry_intents.append(intent)
-        fills.append(fill)
-        child_intents.append(build_take_profit_intent(intent, fill_qty, fill_price, execution_config, target=target))
-        child_intents.append(build_trailing_stop_intent(intent, fill_qty, fill_price, execution_config, target=target))
-        initial_stop = build_initial_stop_intent(intent, fill_qty, fill_price, execution_config, target=target)
+        fills.extend(intent_fills)
+        take_profit_intent = build_take_profit_intent(intent, fill_qty, average_fill_price, execution_config, target=target)
+        trailing_stop_intent = build_trailing_stop_intent(intent, fill_qty, average_fill_price, execution_config, target=target)
+        child_intents.append(take_profit_intent)
+        child_intents.append(trailing_stop_intent)
+        initial_stop = build_initial_stop_intent(intent, fill_qty, average_fill_price, execution_config, target=target)
         if initial_stop is not None:
             child_intents.append(initial_stop)
+        oco_group_id = f"oco_{intent.intent_id}"
+
+        for attempt in attempt_plan:
+            order_lifecycle_rows.append(
+                {
+                    "trade_date": pd.Timestamp(snapshot_date),
+                    "execution_date": execution_day,
+                    "symbol": entry.symbol,
+                    "risk_run_id": risk_run_id,
+                    "exec_run_id": effective_exec_run_id,
+                    "order_group_id": intent.intent_id,
+                    "oco_group_id": oco_group_id,
+                    "intent_id": intent.intent_id,
+                    "parent_intent_id": None,
+                    "broker_order_id": attempt.broker_order_id,
+                    "intent_role": IntentRole.ENTRY,
+                    "side": intent.side,
+                    "order_type": intent.order_type,
+                    "attempt_no": attempt.attempt_no,
+                    "order_qty": float(attempt.requested_qty),
+                    "filled_qty": float(attempt.filled_qty),
+                    "cumulative_filled_qty": float(attempt.cumulative_filled_qty),
+                    "remaining_qty": float(attempt.remaining_qty),
+                    "limit_price": intent.limit_price,
+                    "stop_price": intent.stop_price,
+                    "trail_percent": intent.trail_percent,
+                    "lifecycle_phase": "phase3_execution_replay",
+                    "broker_state": attempt.broker_state,
+                    "order_status": attempt.order_status,
+                    "synthetic_cancel": bool(attempt.synthetic_cancel),
+                    "synthetic_reject": bool(attempt.synthetic_reject),
+                    "synthetic_timeout": bool(attempt.synthetic_timeout),
+                    "attempt_outcome": attempt.attempt_outcome,
+                    "resubmit_of_attempt_no": attempt.resubmit_of_attempt_no,
+                    "resubmit_chain_id": attempt.resubmit_chain_id,
+                    "synthetic_partial_fill": bool(attempt.synthetic_partial_fill),
+                    "synthetic_retry": bool(attempt.synthetic_retry),
+                    "retry_reason": attempt.retry_reason,
+                    "state_reason": attempt.state_reason,
+                    "active_from": attempt.submitted_at,
+                    "terminal_event_date": attempt.terminal_event_at,
+                }
+            )
+        for child_intent, broker_state, order_status, state_reason in (
+            (take_profit_intent, "working", OrderStatus.SUBMITTED, "submitted_after_entry_fill"),
+            (trailing_stop_intent, "held", OrderStatus.HELD, "awaiting_watcher_activation"),
+            (initial_stop, "working", OrderStatus.SUBMITTED, "submitted_after_entry_fill"),
+        ):
+            if child_intent is None:
+                continue
+            order_lifecycle_rows.append(
+                {
+                    "trade_date": pd.Timestamp(snapshot_date),
+                    "execution_date": execution_day,
+                    "symbol": entry.symbol,
+                    "risk_run_id": risk_run_id,
+                    "exec_run_id": effective_exec_run_id,
+                    "order_group_id": intent.intent_id,
+                    "oco_group_id": oco_group_id,
+                    "intent_id": child_intent.intent_id,
+                    "parent_intent_id": child_intent.parent_intent_id,
+                    "broker_order_id": f"sim_{child_intent.intent_id[:12]}",
+                    "intent_role": child_intent.intent_role,
+                    "side": child_intent.side,
+                    "order_type": child_intent.order_type,
+                    "attempt_no": 1,
+                    "order_qty": float(child_intent.qty),
+                    "filled_qty": 0.0,
+                    "cumulative_filled_qty": 0.0,
+                    "remaining_qty": float(child_intent.qty),
+                    "limit_price": child_intent.limit_price,
+                    "stop_price": child_intent.stop_price,
+                    "trail_percent": child_intent.trail_percent,
+                    "lifecycle_phase": "phase3_execution_replay",
+                    "broker_state": broker_state,
+                    "order_status": order_status,
+                    "synthetic_cancel": False,
+                    "synthetic_reject": False,
+                    "synthetic_timeout": False,
+                    "attempt_outcome": "open",
+                    "resubmit_of_attempt_no": None,
+                    "resubmit_chain_id": None,
+                    "synthetic_partial_fill": False,
+                    "synthetic_retry": False,
+                    "retry_reason": None,
+                    "state_reason": state_reason,
+                    "active_from": final_fill_timestamp,
+                    "terminal_event_date": None,
+                }
+            )
+
+        for attempt in attempt_plan:
+            event_rows.append(
+                {
+                    "trade_date": pd.Timestamp(snapshot_date),
+                    "execution_date": execution_day,
+                    "symbol": entry.symbol,
+                    "event_date": attempt.submitted_at,
+                    "event_type": EventType.ORDER_SUBMITTED,
+                    "attempt_no": attempt.attempt_no,
+                    "intent_id": intent.intent_id,
+                    "parent_intent_id": None,
+                    "order_group_id": intent.intent_id,
+                    "oco_group_id": oco_group_id,
+                    "intent_role": IntentRole.ENTRY,
+                    "order_status": OrderStatus.SUBMITTED,
+                    "event_qty": float(attempt.requested_qty),
+                    "cumulative_filled_qty": float(max(attempt.cumulative_filled_qty - attempt.filled_qty, 0.0)),
+                    "remaining_qty": float(attempt.requested_qty),
+                    "synthetic_retry": bool(attempt.synthetic_retry),
+                    "synthetic_cancel": False,
+                    "synthetic_reject": False,
+                    "synthetic_timeout": False,
+                    "event_outcome": "submitted",
+                    "resubmit_of_attempt_no": attempt.resubmit_of_attempt_no,
+                    "resubmit_chain_id": attempt.resubmit_chain_id,
+                    "retry_reason": attempt.retry_reason,
+                    "message": (
+                        f"Entrée retry #{attempt.attempt_no} soumise pour {entry.symbol}"
+                        if attempt.synthetic_retry
+                        else f"Entrée soumise pour {entry.symbol}"
+                    ),
+                }
+            )
+            if attempt.synthetic_partial_fill and attempt.partial_fill_event_at is not None:
+                event_rows.append(
+                    {
+                        "trade_date": pd.Timestamp(snapshot_date),
+                        "execution_date": execution_day,
+                        "symbol": entry.symbol,
+                        "event_date": attempt.partial_fill_event_at,
+                        "event_type": EventType.ORDER_PARTIALLY_FILLED,
+                        "attempt_no": attempt.attempt_no,
+                        "intent_id": intent.intent_id,
+                        "parent_intent_id": None,
+                        "order_group_id": intent.intent_id,
+                        "oco_group_id": oco_group_id,
+                        "intent_role": IntentRole.ENTRY,
+                        "order_status": OrderStatus.PARTIALLY_FILLED,
+                        "event_qty": float(attempt.filled_qty),
+                        "cumulative_filled_qty": float(attempt.cumulative_filled_qty),
+                        "remaining_qty": float(attempt.remaining_qty),
+                        "synthetic_retry": bool(attempt.synthetic_retry),
+                        "synthetic_cancel": False,
+                        "synthetic_reject": False,
+                        "synthetic_timeout": False,
+                        "event_outcome": "partial_fill",
+                        "resubmit_of_attempt_no": attempt.resubmit_of_attempt_no,
+                        "resubmit_chain_id": attempt.resubmit_chain_id,
+                        "retry_reason": attempt.retry_reason,
+                        "message": f"Entrée partiellement exécutée pour {entry.symbol} ({attempt.filled_qty:.0f}/{target.target_shares:.0f})",
+                    }
+                )
+            event_rows.append(
+                {
+                    "trade_date": pd.Timestamp(snapshot_date),
+                    "execution_date": execution_day,
+                    "symbol": entry.symbol,
+                    "event_date": attempt.terminal_event_at,
+                    "event_type": _event_type_for_attempt_terminal_state(attempt),
+                    "attempt_no": attempt.attempt_no,
+                    "intent_id": intent.intent_id,
+                    "parent_intent_id": None,
+                    "order_group_id": intent.intent_id,
+                    "oco_group_id": oco_group_id,
+                    "intent_role": IntentRole.ENTRY,
+                    "order_status": attempt.order_status,
+                    "event_qty": float(attempt.remaining_qty if attempt.order_status != OrderStatus.FILLED else attempt.filled_qty),
+                    "cumulative_filled_qty": float(attempt.cumulative_filled_qty),
+                    "remaining_qty": float(attempt.remaining_qty),
+                    "synthetic_retry": bool(attempt.synthetic_retry),
+                    "synthetic_cancel": bool(attempt.synthetic_cancel),
+                    "synthetic_reject": bool(attempt.synthetic_reject),
+                    "synthetic_timeout": bool(attempt.synthetic_timeout),
+                    "event_outcome": attempt.attempt_outcome,
+                    "resubmit_of_attempt_no": attempt.resubmit_of_attempt_no,
+                    "resubmit_chain_id": attempt.resubmit_chain_id,
+                    "retry_reason": attempt.retry_reason,
+                    "message": (
+                        f"Reliquat annulé avant resubmit pour {entry.symbol}"
+                        if attempt.synthetic_cancel
+                        else (
+                            f"Retry rejeté pour {entry.symbol}"
+                            if attempt.synthetic_reject
+                            else (
+                                f"Retry expiré avant fill pour {entry.symbol}"
+                                if attempt.synthetic_timeout
+                                else (
+                                    f"Entrée complétée après retry pour {entry.symbol}"
+                                    if attempt.synthetic_retry
+                                    else f"Entrée exécutée au prochain open pour {entry.symbol}"
+                                )
+                            )
+                        )
+                    ),
+                }
+            )
+        event_rows.append(
+            {
+                "trade_date": pd.Timestamp(snapshot_date),
+                "execution_date": execution_day,
+                "symbol": entry.symbol,
+                "event_date": final_fill_timestamp,
+                "event_type": EventType.CHILDREN_SUBMITTED,
+                "attempt_no": len(attempt_plan),
+                "intent_id": intent.intent_id,
+                "parent_intent_id": None,
+                "order_group_id": intent.intent_id,
+                "oco_group_id": oco_group_id,
+                "intent_role": IntentRole.ENTRY,
+                "order_status": None,
+                "event_qty": float(fill_qty),
+                "cumulative_filled_qty": float(fill_qty),
+                "remaining_qty": 0.0,
+                "synthetic_retry": bool(retry_count > 0),
+                "synthetic_cancel": False,
+                "synthetic_reject": False,
+                "synthetic_timeout": False,
+                "event_outcome": "children_submitted",
+                "resubmit_of_attempt_no": None,
+                "resubmit_chain_id": retry_chain_id,
+                "retry_reason": attempt_plan[-1].retry_reason if retry_count > 0 else None,
+                "message": f"Protections OCO préparées pour {entry.symbol}",
+            }
+        )
+        for child_intent, child_status in (
+            (take_profit_intent, OrderStatus.SUBMITTED),
+            (trailing_stop_intent, OrderStatus.HELD),
+            (initial_stop, OrderStatus.SUBMITTED),
+        ):
+            if child_intent is None:
+                continue
+            event_rows.append(
+                {
+                    "trade_date": pd.Timestamp(snapshot_date),
+                    "execution_date": execution_day,
+                    "symbol": entry.symbol,
+                    "event_date": final_fill_timestamp,
+                    "event_type": EventType.ORDER_SUBMITTED,
+                    "attempt_no": 1,
+                    "intent_id": child_intent.intent_id,
+                    "parent_intent_id": child_intent.parent_intent_id,
+                    "order_group_id": intent.intent_id,
+                    "oco_group_id": oco_group_id,
+                    "intent_role": child_intent.intent_role,
+                    "order_status": child_status,
+                    "event_qty": float(child_intent.qty),
+                    "cumulative_filled_qty": 0.0,
+                    "remaining_qty": float(child_intent.qty),
+                    "synthetic_retry": False,
+                    "synthetic_cancel": False,
+                    "synthetic_reject": False,
+                    "synthetic_timeout": False,
+                    "event_outcome": "submitted",
+                    "resubmit_of_attempt_no": None,
+                    "resubmit_chain_id": None,
+                    "retry_reason": None,
+                    "message": f"Ordre enfant {child_intent.intent_role} soumis pour {entry.symbol}",
+                }
+            )
 
         replay_rows.append(
             {
@@ -185,9 +716,25 @@ def simulate_phase3_execution_replay(
                 "target_notional": float(entry.target_notional),
                 "approved_shares": int(entry.approved_shares),
                 "filled_qty": fill_qty,
-                "fill_price": fill_price,
+                "fill_price": average_fill_price,
+                "entry_fill_timestamp": final_fill_timestamp,
                 "decision": entry.decision,
                 "decision_reason": entry.decision_reason,
+                "risk_run_id": risk_run_id,
+                "exec_run_id": effective_exec_run_id,
+                "entry_intent_id": intent.intent_id,
+                "entry_broker_order_id": final_broker_order_id,
+                "order_group_id": intent.intent_id,
+                "oco_group_id": oco_group_id,
+                "entry_order_status": OrderStatus.FILLED,
+                "entry_attempt_count": len(attempt_plan),
+                "entry_partial_fill_count": partial_fill_count,
+                "entry_retry_count": retry_count,
+                "entry_resubmit_count": resubmit_count,
+                "entry_cancel_count": cancel_count,
+                "entry_reject_count": reject_count,
+                "entry_timeout_count": timeout_count,
+                "entry_retry_chain_id": retry_chain_id,
                 "execution_replay_mode": "execution_replay",
             }
         )
@@ -231,12 +778,30 @@ def simulate_phase3_execution_replay(
                 "approved_shares",
                 "filled_qty",
                 "fill_price",
+                "entry_fill_timestamp",
                 "decision",
                 "decision_reason",
+                "risk_run_id",
+                "exec_run_id",
+                "entry_intent_id",
+                "entry_broker_order_id",
+                "order_group_id",
+                "oco_group_id",
+                "entry_order_status",
+                "entry_attempt_count",
+                "entry_partial_fill_count",
+                "entry_retry_count",
+                "entry_resubmit_count",
+                "entry_cancel_count",
+                "entry_reject_count",
+                "entry_timeout_count",
+                "entry_retry_chain_id",
                 "execution_replay_mode",
             ]
         )
 
+    order_lifecycle_frame = ensure_order_lifecycle_frame(pd.DataFrame(order_lifecycle_rows))
+    event_frame = ensure_broker_event_frame(pd.DataFrame(event_rows))
     replay_diagnostics = {
         "requested_entries": len(entries),
         "eligible_entries": len(eligible_entries),
@@ -245,6 +810,15 @@ def simulate_phase3_execution_replay(
         "skipped_missing_snapshot": skipped_missing_snapshot,
         "skipped_no_next_session": skipped_no_next_session,
         "skipped_missing_open": skipped_missing_open,
+        "broker_like_orders": int(len(order_lifecycle_frame)),
+        "broker_like_events": int(len(event_frame)),
+        "filled_orders": int((order_lifecycle_frame["order_status"] == OrderStatus.FILLED).sum()) if not order_lifecycle_frame.empty else 0,
+        "partial_fill_orders": int(order_lifecycle_frame.get("synthetic_partial_fill", pd.Series(dtype=bool)).map(bool).sum()) if not order_lifecycle_frame.empty else 0,
+        "held_orders": int((order_lifecycle_frame["order_status"] == OrderStatus.HELD).sum()) if not order_lifecycle_frame.empty else 0,
+        "retry_orders": int(order_lifecycle_frame.get("synthetic_retry", pd.Series(dtype=bool)).map(bool).sum()) if not order_lifecycle_frame.empty else 0,
+        "canceled_orders": int(order_lifecycle_frame.get("synthetic_cancel", pd.Series(dtype=bool)).map(bool).sum()) if not order_lifecycle_frame.empty else 0,
+        "rejected_orders": int(order_lifecycle_frame.get("synthetic_reject", pd.Series(dtype=bool)).map(bool).sum()) if not order_lifecycle_frame.empty else 0,
+        "timed_out_orders": int(order_lifecycle_frame.get("synthetic_timeout", pd.Series(dtype=bool)).map(bool).sum()) if not order_lifecycle_frame.empty else 0,
         "exec_run_id": effective_exec_run_id,
         "bridge": "execution_engine.order_intents+tca+execution_replay",
     }
@@ -252,6 +826,8 @@ def simulate_phase3_execution_replay(
         execution_result=execution_result,
         signals_df=signals_df,
         diagnostics=replay_diagnostics,
+        order_lifecycle_frame=order_lifecycle_frame,
+        event_frame=event_frame,
     )
 
 
@@ -269,5 +845,15 @@ def save_phase3_execution_replay_artifacts(result: ExecutionReplayResult, output
         encoding="utf-8",
     )
     artifact_paths["phase3_execution_replay_summary_json"] = str(summary_path)
+    artifact_paths.update(
+        save_execution_broker_like_artifacts(
+            signals_df=result.signals_df,
+            order_lifecycle_frame=result.order_lifecycle_frame,
+            broker_event_frame=concat_broker_event_frames(result.event_frame),
+            output_dir=output_dir,
+            phase_modes={"phase3_mode": "execution_replay"},
+            diagnostics={"phase3_execution_replay": result.diagnostics},
+        )
+    )
     return artifact_paths
 

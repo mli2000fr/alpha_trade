@@ -1026,13 +1026,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
     phase5_watcher_replay_result = None
     phase7_exit_lifecycle_result = None
     phase2_risk_run_id = f"bt_phase2_{start:%Y%m%d}_{end:%Y%m%d}"
-    research_signals_df = replay_signals(
-        scores_df,
-        preds_df if not preds_df.empty else None,
-        score_column=None if args.score_column == "auto" else args.score_column,
-        max_positions=args.max_positions,
-    )
+    research_signals_df = pd.DataFrame()
     if phase2_mode == "off":
+        research_signals_df = replay_signals(
+            scores_df,
+            preds_df if not preds_df.empty else None,
+            score_column=None if args.score_column == "auto" else args.score_column,
+            max_positions=args.max_positions,
+        )
         signals_df = research_signals_df
     else:
         from backtesting.risk_bridge import build_phase2_risk_result
@@ -1068,6 +1069,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             macro_provider=_macro_provider_for_bt,
         )
         signals_df = phase2_risk_result.signals_df
+        research_signals_df = phase2_risk_result.signals_df.copy()
         _safe_print(
             "   Phase 2 risk bridge: snapshots={} entries={} accepted={} signals={}\n".format(
                 phase2_risk_result.diagnostics.get("snapshot_dates", 0),
@@ -1270,6 +1272,48 @@ def _run_backtest(args: argparse.Namespace) -> None:
         "mode": phase2_mode,
         "diagnostics": dict(phase2_risk_result.diagnostics) if phase2_risk_result is not None else {},
     }
+    execution_broker_like_summary: dict[str, object] | None = None
+    latest_execution_lifecycle_result = next(
+        (
+            result
+            for result in (
+                phase7_exit_lifecycle_result,
+                phase5_watcher_replay_result,
+                phase4_protection_replay_result,
+                phase3_execution_replay_result,
+            )
+            if result is not None
+        ),
+        None,
+    )
+    if latest_execution_lifecycle_result is not None:
+        try:
+            from backtesting.execution_broker_like import build_execution_broker_like_summary
+
+            execution_broker_like_summary = build_execution_broker_like_summary(
+                signals_df=getattr(latest_execution_lifecycle_result, "signals_df", pd.DataFrame()),
+                order_lifecycle_frame=getattr(latest_execution_lifecycle_result, "order_lifecycle_frame", pd.DataFrame()),
+                broker_event_frame=getattr(
+                    latest_execution_lifecycle_result,
+                    "broker_event_frame",
+                    getattr(latest_execution_lifecycle_result, "event_frame", pd.DataFrame()),
+                ),
+                phase_modes={
+                    "phase2_mode": phase2_mode,
+                    "phase3_mode": phase3_mode,
+                    "phase4_mode": phase4_mode,
+                    "phase5_mode": phase5_mode,
+                    "phase7_mode": phase7_mode,
+                },
+                diagnostics={
+                    "phase3_execution_replay": dict(phase3_execution_replay_result.diagnostics) if phase3_execution_replay_result is not None else {},
+                    "phase4_protection_replay": dict(phase4_protection_replay_result.diagnostics) if phase4_protection_replay_result is not None else {},
+                    "phase5_watcher_replay": dict(phase5_watcher_replay_result.diagnostics) if phase5_watcher_replay_result is not None else {},
+                    "phase7_exit_lifecycle_replay": dict(phase7_exit_lifecycle_result.diagnostics) if phase7_exit_lifecycle_result is not None else {},
+                },
+            )
+        except Exception:
+            execution_broker_like_summary = None
     execution_component_details = {
         "enabled": any(
             result is not None
@@ -1307,6 +1351,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             if phase7_exit_lifecycle_result is not None
             else {}
         ),
+        "broker_like": execution_broker_like_summary or {},
     }
     fidelity_manifest = build_fidelity_manifest(
         engine_mode=engine_mode,

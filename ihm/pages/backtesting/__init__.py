@@ -1937,6 +1937,75 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
         with st.expander("Payload brut compare_to_live_summary.json", expanded=False):
             st.json(compare_to_live_payload)
 
+    execution_broker_like_payload = _load_json_artifact_from_paths(artifacts, "execution_broker_like_summary_json")
+    if execution_broker_like_payload:
+        st.markdown("**🏦 Exécution broker-like enrichie**")
+        broker_col1, broker_col2, broker_col3, broker_col4 = st.columns(4)
+        broker_col5, broker_col6, broker_col7, broker_col8 = st.columns(4)
+        broker_col1.metric("Ordres journalisés", _to_int(execution_broker_like_payload.get("order_count")))
+        broker_col2.metric(
+            "Ordres filled",
+            _to_int(
+                execution_broker_like_payload.get("order_status_counts", {}).get("FILLED")
+                if isinstance(execution_broker_like_payload.get("order_status_counts"), dict)
+                else 0
+            ),
+        )
+        broker_col3.metric(
+            "Partial fills",
+            _to_int(
+                execution_broker_like_payload.get("broker_semantics", {}).get("partial_fill_orders")
+                if isinstance(execution_broker_like_payload.get("broker_semantics"), dict)
+                else 0
+            ),
+        )
+        broker_col4.metric(
+            "Ordres canceled",
+            _to_int(
+                execution_broker_like_payload.get("order_status_counts", {}).get("CANCELED")
+                if isinstance(execution_broker_like_payload.get("order_status_counts"), dict)
+                else 0
+            ),
+        )
+        broker_col5.metric(
+            "Retries",
+            _to_int(
+                execution_broker_like_payload.get("broker_semantics", {}).get("retry_orders")
+                if isinstance(execution_broker_like_payload.get("broker_semantics"), dict)
+                else 0
+            ),
+        )
+        broker_col6.metric(
+            "Ordres rejetés",
+            _to_int(
+                execution_broker_like_payload.get("broker_semantics", {}).get("rejected_orders")
+                if isinstance(execution_broker_like_payload.get("broker_semantics"), dict)
+                else 0
+            ),
+        )
+        broker_col7.metric(
+            "Ordres timeout",
+            _to_int(
+                execution_broker_like_payload.get("broker_semantics", {}).get("timed_out_orders")
+                if isinstance(execution_broker_like_payload.get("broker_semantics"), dict)
+                else 0
+            ),
+        )
+        broker_col8.metric(
+            "Ordres stale",
+            _to_int(
+                execution_broker_like_payload.get("broker_state_counts", {}).get("stale")
+                if isinstance(execution_broker_like_payload.get("broker_state_counts"), dict)
+                else 0
+            ),
+        )
+        broker_rows = _build_execution_broker_like_session_rows(execution_broker_like_payload)
+        if not broker_rows.empty:
+            with st.expander("Aperçu lifecycle broker-like par séance", expanded=False):
+                st.dataframe(broker_rows, use_container_width=True, hide_index=True)
+        with st.expander("Payload brut execution_broker_like_summary.json", expanded=False):
+            st.json(execution_broker_like_payload)
+
     # Glossaire local pour rappel des indicateurs (Phase G3).
     with st.expander("📚 Glossaire — comprendre les indicateurs", expanded=False):
         st.markdown(
@@ -2254,6 +2323,42 @@ def _build_compare_to_live_rows(payload: dict[str, object]) -> pd.DataFrame:
                     else None
                 ),
                 "Divergences clés": divergence_preview,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _build_execution_broker_like_session_rows(payload: dict[str, object]) -> pd.DataFrame:
+    sessions = payload.get("sessions", [])
+    if not isinstance(sessions, list) or not sessions:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        rows.append(
+            {
+                "Séance": _coerce_metric_text(session.get("trade_date")),
+                "Symboles": ", ".join(str(symbol) for symbol in cast(list[object], session.get("symbols", []))) if isinstance(session.get("symbols", []), list) else "—",
+                "Sélections": _to_int(session.get("selected_signals")),
+                "Ordres": _to_int(session.get("orders_total")),
+                "Filled": _to_int(session.get("filled_orders")),
+                "Partial fills": _to_int(session.get("partial_fill_orders")),
+                "Retries": _to_int(session.get("retry_orders")),
+                "Rejected": _to_int(session.get("rejected_orders")),
+                "Timed out": _to_int(session.get("timed_out_orders")),
+                "Working": _to_int(session.get("working_orders")),
+                "Held": _to_int(session.get("held_orders")),
+                "Canceled": _to_int(session.get("canceled_orders")),
+                "Stale": _to_int(session.get("stale_orders")),
+                "Exit fills": _to_int(session.get("exit_filled_orders")),
+                "Triggers": _to_int(session.get("trigger_hits")),
+                "Partial fill events": _to_int(session.get("partial_fill_events")),
+                "Retry events": _to_int(session.get("retry_events")),
+                "Cancel events": _to_int(session.get("cancel_events")),
+                "Reject events": _to_int(session.get("reject_events")),
+                "Timeout events": _to_int(session.get("timeout_events")),
+                "OCO cancels": _to_int(session.get("oco_cancels")),
             }
         )
     return pd.DataFrame(rows)
